@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "honcho-cli": {
+      "source": "plastic-labs/honcho",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/honcho-cli/SKILL.md",
+      "computedHash": "48eb8947cd4eebc8993d62967655be5a4de6fd6153f547e1bbc2d493a7f94c85"
+    },
+    "honcho-integration": {
+      "source": "plastic-labs/honcho",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/honcho-integration/SKILL.md",
+      "computedHash": "cd59dffb51d1900ce9a49e03e27ff1b8d22905fff8d4d306ffd4c7995c87cbb8"
+    }
+  }
+}
