@@ -22,24 +22,16 @@ enum HostedConfig {
         }
 
         /// Supabase project URL — direct reads (RLS守门) + Realtime + Auth.
+        /// Single project for now (no staging Supabase); both envs point at
+        /// the same backend until staging is provisioned.
         var supabaseURL: URL {
-            switch self {
-            case .staging:
-                return URL(string: "https://REPLACE-ME-staging.supabase.co")!
-            case .production:
-                return URL(string: "https://REPLACE-ME-prod.supabase.co")!
-            }
+            URL(string: "https://sslzhblojwkxfdyisity.supabase.co")!
         }
 
-        /// Public anon key for supabase-swift client. RLS守门, not a secret.
-        /// Real values land via build setting / Info.plist injection (TODO B9).
+        /// Public anon key for supabase-swift client. RLS守门, not a secret —
+        /// embedded in the binary by design.
         var supabaseAnonKey: String {
-            switch self {
-            case .staging:
-                return "REPLACE_ME_STAGING_ANON_KEY"
-            case .production:
-                return "REPLACE_ME_PROD_ANON_KEY"
-            }
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNzbHpoYmxvandreGZkeWlzaXR5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc2MTUwNzAsImV4cCI6MjA5MzE5MTA3MH0.GqN92fAn67SpeaaLNyrW5gFjlS0hhb41d5ziIwnfeHk"
         }
     }
 
