@@ -82,7 +82,6 @@
   // Secrets (set per-env via `wrangler secret put --env <env>`):
   //   SUPABASE_ANON_KEY
   //   SUPABASE_SERVICE_ROLE_KEY
-  //   SUPABASE_JWT_SECRET
   //   OPENROUTER_API_KEY
   //   DAYTONA_API_KEY
   //   DAYTONA_API_URL

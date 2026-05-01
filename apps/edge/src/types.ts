@@ -15,7 +15,6 @@ export interface Env {
   // ── Secrets (set via `wrangler secret put --env <env>`) ────────
   SUPABASE_ANON_KEY: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
-  SUPABASE_JWT_SECRET: string;
   OPENROUTER_API_KEY: string;
   DAYTONA_API_KEY: string;
   DAYTONA_API_URL: string;
