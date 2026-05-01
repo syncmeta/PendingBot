@@ -66,7 +66,7 @@
     "production": {
       "vars": {
         "ENVIRONMENT": "production",
-        "SUPABASE_URL": "https://REPLACE-ME-prod.supabase.co",
+        "SUPABASE_URL": "https://sslzhblojwkxfdyisity.supabase.co",
         "ALLOWED_ORIGIN": "https://bot.pendingname.com"
       },
       "routes": [
@@ -81,7 +81,7 @@
       "kv_namespaces": [
         {
           "binding": "MEMORY",
-          "id": "REPLACE-ME-prod-kv-id"
+          "id": "54b50e85e1884503b0d2c2884d531163"
         }
       ]
     }
