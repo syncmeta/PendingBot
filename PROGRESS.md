@@ -13,20 +13,30 @@
 | B1.5 — Worker query 层 + 主路由 stub | ⏳ 待开始 | - |
 | iOS Networking 层改造 | ⏳ 待开始 | - |
 
-## 睡前最终拍板的决定
+## 产品定位（重要）
+
+**单人开发但目标用户体验世界级**：假设多用户场景设计，成本敏感但不极端，UX 优先。代码量不是约束，但维护性是。详见 [11-scale-and-ux.md](.claude/plans/pendingbot-rewrite/11-scale-and-ux.md)。
+
+## 最终拍板的决定
 
 | 决定 | 选择 |
 |---|---|
 | Supabase region | **us-east-1**（锁死） |
-| 附件存储 | R2 保留，不换 Supabase Storage |
+| 附件存储 | R2 保留（CF 边缘 CDN 优势） |
 | 数据迁移 | 不迁旧 Fly，冷启动重建 |
-| Bot cold-start | identity quest meta-prompt（不塞 persona；让 bot 自己追寻独特性） |
-| 主键 ID | UUID v7（不用 v4） |
-| client_message_id 类型 | uuid（不用 text） |
-| 枚举字段 | text + CHECK constraint（不用 PG enum） |
+| Bot cold-start | identity-quest.md meta-prompt |
+| Prompts | 全部 markdown 文件 in `apps/edge/prompts/`（mirror 老 `apps/api/prompts/`），Wrangler text import |
+| 主键 ID | UUID v7 |
+| client_message_id 类型 | uuid |
+| 枚举字段 | text + CHECK constraint |
 | Review tab | 删除，集成进 message conv |
-| IM 预留 | 加 conversation_type / participants 表 / role='human' 占位 |
-| bot_reflections + Honcho bot peer | 双源并存，B7 实施时观察是否矛盾 |
+| IM 预留 | conversation_type / participants 表 / role='human' 占位 |
+| bot_reflections + Honcho 双源 | **辨证演进** —— 矛盾是 feature 不是 bug |
+| 暗色模式 | **做**（W0 加） |
+| 动效库 | Framer Motion |
+| 监控 | Sentry + Cloudflare Workers Observability + Better Stack uptime |
+| 缩略图 | R2 上传时同步生成 |
+| Push notification | iOS APNS + Web Push API |
 
 ## 醒来后请先看
 
@@ -53,10 +63,11 @@
 
 我**没有**这些 secrets 时仍然可以推进**本地工作**（脚手架、本地 Supabase、本地 wrangler dev、iOS 代码改造），所以先开干，等你醒来给 secrets 后再做需联网的事。
 
-## B7 时要观察验证的事
+## B7 时要观察的事（不是修复，是观察）
 
-- Honcho bot peer `observe_me=true` 派生的 representation 是否合理
+- Honcho bot peer `observe_me=true` 派生的 representation 演化轨迹
   - 跑几轮对话后用 `honcho peer chat bot-${botId} "describe yourself"` 看输出
-  - 不合理就回退 false 或改用其它机制
-- bot_reflections + Honcho 双源是否产生矛盾的 system prompt
-  - 看 bot 行为是否分裂；产生矛盾就改成单一源
+  - 噪音和矛盾**是预期的**——记录下来作为产品演化的数据点
+- bot_reflections + Honcho 双源在 system prompt 里的辨证效果
+  - 看 bot 是否真的从矛盾中长出连贯人格（产品差异化）
+  - 调整两源的措辞引导（在 system.md 和 review.md 里）让 LLM 更好 reconcile
