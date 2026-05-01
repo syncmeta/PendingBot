@@ -20,9 +20,6 @@ struct TabRoot: View {
                 SurfTabView()
                     .tabItem { Label("冲浪", systemImage: "water.waves") }
 
-                ReviewTabView()
-                    .tabItem { Label("回顾", systemImage: "magnifyingglass") }
-
                 MeTabView()
                     .tabItem { Label("我", systemImage: "person.crop.circle") }
             }
