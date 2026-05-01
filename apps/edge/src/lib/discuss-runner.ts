@@ -11,14 +11,26 @@ import { getPrompt } from '../llm/prompt-loader';
 //     between this bot and this user) as private context
 //   - "[PASS]" output means "I have nothing fresh to add" → skip insert
 //
-// One round per call: every selected bot speaks at most once. Re-call to
-// run another round.
+// Worker runs the conversation autonomously after a single client trigger:
+// loops "rounds" (each round = every selected bot speaks at most once)
+// until either:
+//   - all selected bots PASSed the entire round (nothing fresh) — natural
+//     terminate
+//   - MAX_ROUNDS hit
+//   - the conversation row's `last_turn_status` flipped to 'cancelled'
+//     by the client (POST /v1/discuss/:id/cancel)
+//
+// Each bot's reply is INSERTed into pendingbot.messages, which is in the
+// supabase_realtime publication — the client's conv channel auto-receives
+// each bubble live. No SSE on this path; per plan/03 long async tasks
+// belong to the Realtime path.
 
 // How many messages of the bot's *personal* history with this user to
 // include as private context. Keep tight — discuss is about reactions, not
 // re-litigating every prior conversation.
 const PERSONAL_HISTORY_LIMIT = 12;
 const PASS_TOKEN = '[PASS]';
+const MAX_ROUNDS = 6;
 
 export interface RunDiscussInput {
   env: Env;
@@ -103,7 +115,22 @@ export async function runDiscuss(input: RunDiscussInput): Promise<void> {
 
   const openai = openrouterClient(env);
 
-  for (const bot of orderedBots) {
+  // Multi-round loop. Re-check cancel between bots and between rounds.
+  let consecutivePassRound = 0;
+  outer:
+  for (let round = 0; round < MAX_ROUNDS; round++) {
+    let anyoneSpoke = false;
+
+    for (const bot of orderedBots) {
+      // Cancel check — runs both between rounds and between bots within a
+      // round. Latency between cancel signal and stop ≤ one bot's LLM call.
+      const { data: convRow } = await supa
+        .from('conversations')
+        .select('last_turn_status')
+        .eq('id', conversationId)
+        .single();
+      if (convRow?.last_turn_status === 'cancelled') break outer;
+
     const startedAt = Date.now();
     try {
       const personal = await fetchPersonalHistory(supa, userId, bot.id);
@@ -159,10 +186,11 @@ export async function runDiscuss(input: RunDiscussInput): Promise<void> {
           total_tokens: completion.usage?.total_tokens ?? 0,
           generation_id: completion.id,
           latency_ms: Date.now() - startedAt,
-          metadata: { bot_id: bot.id, action: 'pass' },
+          metadata: { bot_id: bot.id, action: 'pass', round },
         });
         continue;
       }
+      anyoneSpoke = true;
 
       // Insert bot message + append to running group history so subsequent
       // bots in this same round see it.
@@ -191,11 +219,26 @@ export async function runDiscuss(input: RunDiscussInput): Promise<void> {
         total_tokens: completion.usage?.total_tokens ?? 0,
         generation_id: completion.id,
         latency_ms: Date.now() - startedAt,
-        metadata: { bot_id: bot.id, action: 'reply' },
+        metadata: { bot_id: bot.id, action: 'reply', round },
       });
     } catch (err) {
       console.error('[discuss-runner] bot failed', bot.id, err);
       // Continue with the next bot — one bot's failure doesn't kill the round.
     }
-  }
+    } // end inner for-bots
+
+    // Natural terminate: full round of PASSes ⇒ everyone has nothing fresh.
+    if (!anyoneSpoke) {
+      consecutivePassRound++;
+      if (consecutivePassRound >= 1) break;
+    } else {
+      consecutivePassRound = 0;
+    }
+  } // end outer for-rounds
+
+  // Mark conv terminal (so cancel polling on the next call sees clean state).
+  await supa
+    .from('conversations')
+    .update({ last_turn_status: 'done' })
+    .eq('id', conversationId);
 }
