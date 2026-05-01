@@ -100,6 +100,7 @@ messageRoutes.post('/', async (c) => {
           env: c.env,
           conversationId: parsed.conversationId,
           parentMessageId: row.id as string,
+          userId,
           bot: { id: bot.id, model_id: bot.model_id, output_mode: bot.output_mode },
           recentContext: parsed.recentContext ?? [],
           newMessage: parsed.newMessage,

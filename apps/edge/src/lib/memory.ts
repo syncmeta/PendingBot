@@ -1,4 +1,5 @@
 import type { Env } from '../types';
+import { honchoClient, userPeerId, botPeerId } from './honcho';
 
 // Honcho memory cache backed by CF Workers KV. Two key namespaces:
 //   user:${userId}  — derived "what bots see in this user" (transparency UI only)
@@ -34,12 +35,35 @@ export async function putBotMemory(env: Env, botId: string, memory: Memory): Pro
 }
 
 // Refresh hooks — call from `ctx.waitUntil(...)` after each bot turn.
-// Implementations call Honcho's getUserProfile and write KV. Stubbed for now;
-// real impl lands in B7.
-export async function refreshUserMemory(_env: Env, _userId: string): Promise<void> {
-  // TODO(B7): call honcho.peer(userPeerId).context() and put to KV
+// Each peeks the live representation from Honcho, normalizes it, and overwrites
+// KV. Failure leaves the previous KV value intact (best-effort cache; never
+// blocks the LLM hot path).
+
+async function refreshFromHoncho(
+  env: Env,
+  kvKey: string,
+  peerId: string,
+): Promise<void> {
+  try {
+    const honcho = honchoClient(env);
+    const peer = await honcho.peer(peerId);
+    const ctx = await peer.context();
+    const memory: Memory = {
+      card: ctx.peerCard ?? [],
+      representation: ctx.representation ?? '',
+      syncedAt: new Date().toISOString(),
+    };
+    await env.MEMORY.put(kvKey, JSON.stringify(memory));
+  } catch (err) {
+    // Honcho hiccups shouldn't poison the cache. Old value stays.
+    console.warn('[memory] refresh failed', { kvKey, err: String(err) });
+  }
 }
 
-export async function refreshBotMemory(_env: Env, _botId: string): Promise<void> {
-  // TODO(B7): call honcho.peer(botPeerId).context() and put to KV
+export async function refreshUserMemory(env: Env, userId: string): Promise<void> {
+  await refreshFromHoncho(env, USER_PREFIX + userId, userPeerId(userId));
+}
+
+export async function refreshBotMemory(env: Env, botId: string): Promise<void> {
+  await refreshFromHoncho(env, BOT_PREFIX + botId, botPeerId(botId));
 }

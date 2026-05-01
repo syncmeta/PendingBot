@@ -3,6 +3,18 @@ import type { Env } from '../types';
 import { serviceClient } from './supabase';
 import { openrouterClient } from '../llm/client';
 import { buildMessages, type BuildMessagesInput } from '../llm/builder';
+import { getBotMemory, refreshBotMemory, refreshUserMemory } from './memory';
+import {
+  honchoClient,
+  userPeerId,
+  botPeerId,
+  conversationSessionId,
+} from './honcho';
+
+// How many bot_reflections rows to read for the self section. The schema's
+// idx_reflections_bot_user_time covers this exact (bot_id, user_id, created_at)
+// access pattern. 12 follows plan/02 and keeps prompt size bounded.
+const REFLECTIONS_LIMIT = 12;
 
 // Flush throttle: every FLUSH_MS or FLUSH_CHARS, whichever comes first.
 // Tuned for "feels live" vs "don't hammer Postgres".
@@ -17,6 +29,7 @@ export interface GenerateBotReplyInput {
   env: Env;
   conversationId: string;
   parentMessageId: string;
+  userId: string;
   bot: {
     id: string;
     model_id: string;
@@ -30,9 +43,26 @@ export interface GenerateBotReplyInput {
 // Designed for `ctx.waitUntil(...)`: rejections are caught and written to
 // the row's status, never propagated.
 export async function generateBotReply(input: GenerateBotReplyInput): Promise<void> {
-  const { env, conversationId, parentMessageId, bot, recentContext, newMessage } = input;
+  const { env, conversationId, parentMessageId, userId, bot, recentContext, newMessage } = input;
   const supa = serviceClient(env);
   const startedAt = Date.now();
+
+  // Self-section inputs are read in parallel with the prompt-build pipeline.
+  // Both fall back gracefully (null memory + empty reflections → identity quest).
+  const [botMemory, reflectionsRes] = await Promise.all([
+    getBotMemory(env, bot.id),
+    supa
+      .from('bot_reflections')
+      .select('kind, content')
+      .eq('bot_id', bot.id)
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(REFLECTIONS_LIMIT),
+  ]);
+  const reflections = (reflectionsRes.data ?? []) as Array<{
+    kind: 'limit' | 'grow' | 'keep';
+    content: string;
+  }>;
 
   // 1. Insert pending bot row. UUIDv7 in client_message_id keeps ordering
   // stable even if our INSERT lands microseconds before/after a sibling.
@@ -72,7 +102,7 @@ export async function generateBotReply(input: GenerateBotReplyInput): Promise<vo
     const stream = await openai.chat.completions.create(
       {
         model: bot.model_id,
-        messages: buildMessages({ bot, recentContext, newMessage }),
+        messages: buildMessages({ bot, botMemory, reflections, recentContext, newMessage }),
         stream: true,
         stream_options: { include_usage: true },
       },
@@ -151,6 +181,28 @@ export async function generateBotReply(input: GenerateBotReplyInput): Promise<vo
       latency_ms: Date.now() - startedAt,
       metadata: { bot_id: bot.id, status: finalStatus },
     });
+
+    // 5. Honcho ingest + cache refresh. Both peers observe_me=true so the
+    // user→bot turn pair updates each side's representation. We feed Honcho
+    // the literal turn (user message + bot reply) into the conv session,
+    // then trigger an async refresh of both KV caches. All best-effort.
+    if (finalStatus === 'done' && buf) {
+      try {
+        const honcho = honchoClient(env);
+        const session = await honcho.session(conversationSessionId(conversationId));
+        await session.addMessages([
+          { peerId: userPeerId(userId), content: newMessage },
+          { peerId: botPeerId(bot.id), content: buf },
+        ]);
+      } catch (err) {
+        console.warn('[bot-reply] honcho ingest failed', err);
+      }
+      // Refresh both caches in parallel; failure leaves prior KV intact.
+      await Promise.all([
+        refreshUserMemory(env, userId),
+        refreshBotMemory(env, bot.id),
+      ]);
+    }
   } catch (err) {
     // Network drop, model error, abort-without-stop, etc. Mark errored and
     // surface what we have so the client UI doesn't get stuck on 'streaming'.

@@ -1,14 +1,18 @@
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { getPrompt } from './prompt-loader';
+import type { Memory } from '../lib/memory';
 
-// Inputs the route handler hands us. Keep this surface minimal — Honcho
-// memory, skills, and bot_reflections land in B7 and slot into the same
-// builder, expanding the system message.
 export interface BuildMessagesInput {
   bot: {
     id: string;
     output_mode: 'single' | 'bubble';
   };
+  // Bot's own representation (Honcho passive observation) cached in KV.
+  // Null on cold start — we then fall back to the identity-quest meta-prompt.
+  botMemory: Memory | null;
+  // Three-bucket reflections persisted from review runs (most recent first).
+  // Empty on cold start; combined with botMemory drives the self section.
+  reflections: Array<{ kind: 'limit' | 'grow' | 'keep'; content: string }>;
   // Recent history from the client's local cache (POST body). Already
   // ordered ascending by created_at on the client side.
   recentContext: Array<{
@@ -34,14 +38,61 @@ function toLlmRole(role: 'user' | 'bot' | 'human' | 'log'): 'user' | 'assistant'
   return null; // logs (review/surf step entries) are not part of dialogue
 }
 
-export function buildMessages(input: BuildMessagesInput): ChatCompletionMessageParam[] {
-  const { bot, recentContext, newMessage, nowIso = new Date().toISOString() } = input;
+// Two-source dialectic per plan/02: passive Honcho representation +
+// reflective bot_reflections. On cold start (both empty) we hand the bot the
+// identity-quest meta-prompt — a motive, not a persona.
+function buildSelfSection(
+  botMemory: BuildMessagesInput['botMemory'],
+  reflections: BuildMessagesInput['reflections'],
+): string {
+  const hasMemory = !!botMemory && botMemory.representation.trim().length > 0;
+  const hasReflections = reflections.length > 0;
 
-  // System content: platform prompt + (B7: self section) + output mode.
-  // We keep the assembly explicit so future additions slot at named seams.
+  if (!hasMemory && !hasReflections) {
+    return getPrompt('identity-quest');
+  }
+
+  const parts: string[] = [];
+  if (hasMemory) {
+    parts.push(
+      `## How I observe myself (passive)\n${botMemory!.representation.trim()}`,
+    );
+  }
+  if (hasReflections) {
+    const grouped: Record<'limit' | 'grow' | 'keep', string[]> = {
+      limit: [],
+      grow: [],
+      keep: [],
+    };
+    for (const r of reflections) grouped[r.kind].push(r.content);
+    const lines: string[] = [];
+    if (grouped.limit.length) lines.push(`### Limitations\n- ${grouped.limit.join('\n- ')}`);
+    if (grouped.grow.length) lines.push(`### Traits to develop\n- ${grouped.grow.join('\n- ')}`);
+    if (grouped.keep.length) lines.push(`### Traits to preserve\n- ${grouped.keep.join('\n- ')}`);
+    parts.push(`## Things I've concluded about myself (from reflection)\n${lines.join('\n\n')}`);
+  }
+  if (hasMemory && hasReflections) {
+    parts.push(
+      '（这两份描述可能彼此矛盾——这是正常的。在矛盾中找到连贯的你。）',
+    );
+  }
+  return parts.join('\n\n');
+}
+
+export function buildMessages(input: BuildMessagesInput): ChatCompletionMessageParam[] {
+  const {
+    bot,
+    botMemory,
+    reflections,
+    recentContext,
+    newMessage,
+    nowIso = new Date().toISOString(),
+  } = input;
+
   const platform = getPrompt('system');
+  const selfSection = buildSelfSection(botMemory, reflections);
   const modeInstr = bot.output_mode === 'bubble' ? BUBBLE_INSTRUCTIONS : SINGLE_INSTRUCTIONS;
-  const systemContent = [platform, modeInstr].join('\n\n');
+  const systemContent = [platform, selfSection, modeInstr].filter(Boolean).join('\n\n');
 
   const messages: ChatCompletionMessageParam[] = [{ role: 'system', content: systemContent }];
 
