@@ -115,19 +115,3 @@ discussRoutes.post('/start', async (c) => {
 
   return c.json({ conversationId }, 202);
 });
-
-// POST /v1/discuss/:id/cancel — flag the discuss conv so the runner halts
-// at the next bot boundary (≤ one LLM call latency between signal and stop).
-discussRoutes.post('/:id/cancel', async (c) => {
-  const id = c.req.param('id');
-  const userJwt = c.var.userJwt!;
-  // Use the user client so RLS validates ownership instead of trusting the
-  // path id alone.
-  const supa = userClient(c.env, userJwt);
-  const { error } = await supa
-    .from('conversations')
-    .update({ last_turn_status: 'cancelled' })
-    .eq('id', id);
-  if (error) return c.json({ error: 'database', detail: error.message }, 500);
-  return c.json({ ok: true });
-});
