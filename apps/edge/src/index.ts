@@ -7,6 +7,7 @@ import { messageRoutes } from './routes/messages';
 import { uploadRoutes } from './routes/upload';
 import { surfRoutes } from './routes/surf';
 import { reviewRoutes } from './routes/review';
+import { meRoutes } from './routes/me';
 
 // Top-level Hono app. Routes mount under /v1/ to leave room for a future v2
 // (URL path = major-era versioning). Within v1, schema-driven compatibility
@@ -49,6 +50,7 @@ v1.route('/upload', uploadRoutes);
 v1.route('/uploads', uploadRoutes);   // GET /v1/uploads/:id
 v1.route('/surf', surfRoutes);
 v1.route('/review', reviewRoutes);
+v1.route('/me', meRoutes);
 
 app.route('/v1', v1);
 
