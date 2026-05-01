@@ -1,4 +1,5 @@
 import SwiftUI
+import Supabase
 
 /// 消息 tab — primary chat.
 ///
@@ -170,21 +171,76 @@ struct MessageTabView: View {
     private func reload() { Task { await load() } }
 
     private func load() async {
-        guard let api else { return }
         loading = true; defer { loading = false }
         do {
-            async let bots: [Bot] = api.get("api/mobile/bots")
-            async let convs: [Conversation] = api.get("api/mobile/conversations")
-            self.bots = try await bots
-            self.conversations = try await convs.sorted { $0.last_activity_at > $1.last_activity_at }
+            // Supabase direct reads — bots is open to authenticated users,
+            // conversations is RLS-gated on participant membership.
+            async let botRows: [BotRow] = SupabaseStack.shared.database
+                .from("bots")
+                .select("id, display_name, model_id")
+                .eq("is_active", value: true)
+                .execute()
+                .value
+            async let convRows: [ConvRow] = SupabaseStack.shared.database
+                .from("conversations")
+                .select("id, bot_id, user_id, title, feature, round_count, updated_at")
+                .order("updated_at", ascending: false)
+                .execute()
+                .value
+
+            self.bots = try await botRows.map(\.asBot)
+            self.conversations = try await convRows.map(\.asConversation)
         } catch is CancellationError {
-            // .task / .refreshable cancels the in-flight request when the user
-            // navigates away or pulls again — not a user-visible error.
+            // navigation / refreshable cancellation — silent
         } catch let error as NSError where error.domain == NSURLErrorDomain
             && error.code == NSURLErrorCancelled {
         } catch {
             self.error = error.localizedDescription
             Haptics.error()
+        }
+    }
+
+    // PostgREST decode shapes. Translated to view models (Bot / Conversation)
+    // immediately so the rest of the view doesn't need to know the wire form.
+    private struct BotRow: Decodable {
+        let id: String
+        let display_name: String
+        let model_id: String?
+        var asBot: Bot {
+            Bot(
+                id: id, display_name: display_name,
+                access_mode: nil, model: model_id,
+                default_model: model_id, user_model: nil
+            )
+        }
+    }
+    private struct ConvRow: Decodable {
+        let id: String
+        let bot_id: String?
+        let user_id: String?
+        let title: String?
+        let feature: String?
+        let round_count: Int?
+        let updated_at: String? // ISO 8601
+        var asConversation: Conversation {
+            let secs: Int = {
+                guard let updated_at,
+                      let d = ISO8601DateFormatter().date(from: updated_at) else { return 0 }
+                return Int(d.timeIntervalSince1970)
+            }()
+            return Conversation(
+                id: id,
+                bot_id: bot_id ?? "",
+                user_id: user_id ?? "",
+                title: title,
+                feature_type: feature,
+                last_activity_at: secs,
+                round_count: round_count,
+                bot_name: nil,
+                last_message_content: nil,
+                last_message_sender_type: nil,
+                model_override: nil
+            )
         }
     }
 

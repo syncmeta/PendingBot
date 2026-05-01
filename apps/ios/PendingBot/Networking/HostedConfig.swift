@@ -12,18 +12,13 @@ enum HostedConfig {
         case production
 
         /// Worker base — REST writes (POST /v1/messages, /v1/upload, etc).
+        /// Single Worker for now (no staging deployment); staging falls
+        /// through to production until a real staging Worker is provisioned.
         var workerURL: URL {
-            switch self {
-            case .staging:
-                return URL(string: "https://api-staging.pendingname.com")!
-            case .production:
-                return URL(string: "https://api.pendingname.com")!
-            }
+            URL(string: "https://api.pendingname.com")!
         }
 
         /// Supabase project URL — direct reads (RLS守门) + Realtime + Auth.
-        /// Single project for now (no staging Supabase); both envs point at
-        /// the same backend until staging is provisioned.
         var supabaseURL: URL {
             URL(string: "https://sslzhblojwkxfdyisity.supabase.co")!
         }
@@ -35,13 +30,9 @@ enum HostedConfig {
         }
     }
 
-    /// Active environment. Set once at app launch (e.g. from PendingBotApp).
-    /// Default below routes Debug builds to staging, Release to prod.
-    #if DEBUG
-    static var environment: Environment = .staging
-    #else
+    /// Active environment. There's only one backend right now; the enum
+    /// stays so we can re-introduce staging without churning call sites.
     static var environment: Environment = .production
-    #endif
 
     /// Convenience aliases — old code reads `HostedConfig.serverURL`. Until B9's
     /// full Networking rewrite, route this to the active env's worker.
