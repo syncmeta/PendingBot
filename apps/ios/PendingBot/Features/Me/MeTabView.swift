@@ -496,17 +496,14 @@ struct MeTabView: View {
     // ── Data ────────────────────────────────────────────────────────────────
 
     private func load() async {
-        guard let api else { return }
-        do {
-            async let p: MeProfile = api.get("api/me/profile")
-            async let pk: [AiPick] = api.get("api/me/picks")
-            async let portraits: [PortraitConversation] = api.get("api/portrait/conversations")
-            async let sources: [Conversation] = api.get("api/portrait/sources")
-            self.profile = try await p
-            self.picks = try await pk
-            self.portraitConvs = (try await portraits).sorted { $0.last_activity_at > $1.last_activity_at }
-            self.portraitSources = try await sources
-        } catch { self.error = error.localizedDescription }
+        // Legacy api/me/* and api/portrait/* endpoints don't exist on the
+        // new Worker. Until /v1/me/* (memory transparency, picks, portraits)
+        // ships, this view shows zero-state — display name + email come
+        // from AccountStore, the rest stays empty.
+        self.profile = nil
+        self.picks = []
+        self.portraitConvs = []
+        self.portraitSources = []
     }
 
     private func deletePortrait(_ conv: PortraitConversation) async {

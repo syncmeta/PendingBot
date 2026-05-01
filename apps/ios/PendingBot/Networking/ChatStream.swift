@@ -8,6 +8,9 @@ enum ChatEvent: Sendable {
     case bubble(id: String, index: Int, groupId: String, content: String)
     case done(groupId: String, totalContent: String)
     case interrupted(groupId: String, totalContent: String)
+    /// Bot used the [SILENT] control token — nothing to show, the turn
+    /// produced no message. UI should leave the conversation as-is.
+    case silent(groupId: String)
     case error(message: String)
     case unknown(name: String, raw: String)
 }
@@ -142,6 +145,8 @@ private func decode(eventName: String, dataJSON: String) -> ChatEvent {
             groupId: (json["bubble_group_id"] as? String) ?? "",
             totalContent: (json["total_content"] as? String) ?? ""
         )
+    case "silent":
+        return .silent(groupId: (json["bubble_group_id"] as? String) ?? "")
     case "error":
         return .error(message: (json["message"] as? String) ?? "")
     default:

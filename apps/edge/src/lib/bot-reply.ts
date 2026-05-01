@@ -19,6 +19,21 @@ const BUBBLE_DELIMITER = '\n---\n';
 // Magic number for reflection / metrics; the client uses the same threshold
 // to decide when to give up waiting for a delimiter and start streaming.
 export const BUBBLE_OVERFLOW_CHARS = 60;
+// Bot's "I have nothing to say" control token (system.md). Per-turn — when
+// the entire reply trims to this, drop the turn silently (no DB row, no
+// bubble event to client). Any other content carrying [SILENT] inline is
+// treated as literal text per the prompt's "要么仅输出[SILENT]，要么输出
+// 内容" rule.
+const SILENT_TOKEN = '[SILENT]';
+
+/// True while the running buffer could still resolve to exactly [SILENT].
+/// Empty buffer or any prefix of [SILENT] qualifies; anything longer than
+/// the token, or any byte that doesn't match the prefix, breaks the match.
+function couldStillBeSilent(s: string): boolean {
+  if (s.length === 0) return true;
+  if (s.length > SILENT_TOKEN.length) return false;
+  return SILENT_TOKEN.startsWith(s);
+}
 
 export interface RunChatTurnInput {
   env: Env;
@@ -109,6 +124,11 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   let bubbleIndex = 0;
   let pending = '';
   let totalContent = '';
+  // Bytes of `totalContent` already pushed to the SSE caller. Tokens are
+  // held back while the cumulative output could still resolve to [SILENT];
+  // once that ambiguity breaks, we replay the held bytes in one chunk and
+  // resume per-chunk streaming.
+  let emittedLen = 0;
   let bubblesInserted = 0;
   let usage: { input?: number; output?: number; total?: number } = {};
   let generationId: string | undefined;
@@ -160,7 +180,15 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       if (delta) {
         pending += delta;
         totalContent += delta;
-        emit('token', { delta });
+        // Hold token emissions while the cumulative output could still
+        // be [SILENT]. Once the prefix-match breaks, flush everything
+        // accumulated so far as a single token event and resume per-chunk
+        // streaming.
+        if (!couldStillBeSilent(totalContent.trimStart())) {
+          const toEmit = totalContent.slice(emittedLen);
+          if (toEmit) emit('token', { delta: toEmit });
+          emittedLen = totalContent.length;
+        }
 
         // Drain every complete bubble in `pending`. Since the delimiter is
         // multi-char, it may straddle chunks — indexOf handles that.
@@ -183,17 +211,30 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       }
     }
 
-    // Final tail (whatever survived without a trailing delimiter).
-    if (pending.trim()) {
+    // Bot used the "nothing to say" control token — drop the turn entirely.
+    // No bubble row, no client emission. The client just sees `silent`.
+    const trimmed = totalContent.trim();
+    if (trimmed === SILENT_TOKEN) {
+      emit('silent', { bubble_group_id: bubbleGroupId });
+      // Audit + memory bookkeeping still run below — the LLM call still
+      // happened and we want the cost recorded. Skip the bubble write and
+      // the 'done' event.
+      bubblesInserted = 0;
+      pending = '';
+      // Fall through to the audit insert; finalStatus accounting just below.
+    } else if (pending.trim()) {
+      // Final tail (whatever survived without a trailing delimiter).
       await emitBubble(pending.trim());
       pending = '';
     }
 
     const finalStatus: RunChatTurnResult['finalStatus'] = ac.signal.aborted ? 'interrupted' : 'done';
-    emit(finalStatus, {
-      bubble_group_id: bubbleGroupId,
-      total_content: totalContent,
-    });
+    if (trimmed !== SILENT_TOKEN) {
+      emit(finalStatus, {
+        bubble_group_id: bubbleGroupId,
+        total_content: totalContent,
+      });
+    }
 
     // Audit row (best-effort).
     await supa.from('audit_log').insert({

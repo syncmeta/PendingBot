@@ -574,7 +574,7 @@ struct ConversationView: View {
             return b
         }()
 
-        chatTurnTask = Task {
+        chatTurnTask = Task { @MainActor in
             let splitter = BubbleSplitter()
             let stream = ChatStream().send(body: body)
             do {
@@ -597,6 +597,13 @@ struct ConversationView: View {
                     case .interrupted(_, let total):
                         splitter.flushTail()
                         splitter.turnInterrupted(totalContent: total)
+                    case .silent:
+                        // Bot chose to say nothing — drop any buffered
+                        // tokens (held back by the Worker until SILENT
+                        // ambiguity broke), don't render any bubble.
+                        // No bubble events have been emitted by the
+                        // splitter yet, so just clear its buffer.
+                        _ = splitter.drain()
                     case .error(let msg):
                         splitter.reportError(msg)
                     case .unknown:
