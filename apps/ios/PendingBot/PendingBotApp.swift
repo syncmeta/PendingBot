@@ -14,10 +14,8 @@ struct PendingBotApp: App {
             RootView()
                 .environmentObject(accountStore)
                 .environmentObject(unreadStore)
-                // Two-color brand (#044735 + #fdfcfa) — light theme only.
-                // Following system would force us to design + maintain a
-                // dark variant we don't actually want.
-                .preferredColorScheme(.light)
+                // Follow the system trait — Theme palette has matched
+                // light + dark variants.
                 .tint(Theme.Palette.accent)
                 .background(Theme.Palette.canvas.ignoresSafeArea())
                 .onChange(of: accountStore.current) { _, new in
