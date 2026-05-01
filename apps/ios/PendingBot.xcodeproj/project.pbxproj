@@ -56,6 +56,7 @@
 		F21D3DA278967B87BA15A3EF /* ComposerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3085FEC82B399B97022B1078 /* ComposerView.swift */; };
 		3644B8742BA13D3463F89E73 /* SupabaseStack.swift in Sources */ = {isa = PBXBuildFile; fileRef = 755CCF76F1304BBF184B069F /* SupabaseStack.swift */; };
 		9AD8B0014D4118CB17C6D7F2 /* AppleSignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36C5C1F1F3A2139174BC4C4B /* AppleSignIn.swift */; };
+		33F024E77923DF8C2E142A1D /* RealtimeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9843FFF26D200B2BF5276758 /* RealtimeManager.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -106,6 +107,7 @@
 		FB16E5402FB9F31D68B74165 /* TabRoot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabRoot.swift; sourceTree = "<group>"; };
 		755CCF76F1304BBF184B069F /* SupabaseStack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseStack.swift; sourceTree = "<group>"; };
 		36C5C1F1F3A2139174BC4C4B /* AppleSignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSignIn.swift; sourceTree = "<group>"; };
+		9843FFF26D200B2BF5276758 /* RealtimeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeManager.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -245,6 +247,7 @@
 				520E0AE34E01CC3ECEF49928 /* WebSocketClient.swift */,
 				755CCF76F1304BBF184B069F /* SupabaseStack.swift */,
 				36C5C1F1F3A2139174BC4C4B /* AppleSignIn.swift */,
+				9843FFF26D200B2BF5276758 /* RealtimeManager.swift */,
 			);
 			path = Networking;
 			sourceTree = "<group>";
@@ -438,6 +441,7 @@
 				EAE5D86E4ECF3FDA0C9C43D3 /* WelcomeView.swift in Sources */,
 				3644B8742BA13D3463F89E73 /* SupabaseStack.swift in Sources */,
 				9AD8B0014D4118CB17C6D7F2 /* AppleSignIn.swift in Sources */,
+				33F024E77923DF8C2E142A1D /* RealtimeManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
