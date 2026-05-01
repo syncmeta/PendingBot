@@ -661,23 +661,54 @@ struct ConversationView: View {
     // ── REST: history + delete ─────────────────────────────────────────────
 
     private func loadSkills() async {
-        guard let api else { return }
-        do {
-            self.skills = try await api.get("api/skills")
-        } catch {
-            // Non-fatal — chip just stays empty if the request fails.
-            print("[skills] load failed: \(error)")
-        }
+        // Skills load left disabled until /v1/skills lands. The chip stays
+        // empty; chat is unaffected.
+        self.skills = []
     }
 
     private func loadHistory() async {
-        guard let api else { return }
         do {
-            let raw: [ChatMessage] = try await api.get(
-                "api/mobile/conversations/\(conversation.id)/messages",
-                query: [URLQueryItem(name: "limit", value: "100")]
-            )
-            self.messages = raw.sorted { $0.created_at < $1.created_at }
+            // Direct Supabase read — RLS gates participation. Excludes role='log'
+            // (review/surf step entries) which are rendered separately.
+            struct Row: Decodable {
+                let id: String
+                let conversation_id: String
+                let user_id: String?
+                let sender_bot_id: String?
+                let role: String
+                let content: String?
+                let created_at: String
+            }
+            let rows: [Row] = try await SupabaseStack.shared.database
+                .from("messages")
+                .select("id, conversation_id, user_id, sender_bot_id, role, content, created_at")
+                .eq("conversation_id", value: conversation.id)
+                .neq("role", value: "log")
+                .order("created_at", ascending: true)
+                .limit(200)
+                .execute()
+                .value
+            let fmt = ISO8601DateFormatter()
+            self.messages = rows.map { r in
+                let senderType: String = {
+                    switch r.role {
+                    case "bot": return "bot"
+                    case "log": return "system"
+                    default:    return "user"  // user / human → user
+                    }
+                }()
+                let senderId = r.role == "bot" ? (r.sender_bot_id ?? "") : (r.user_id ?? "")
+                let secs = fmt.date(from: r.created_at).map { Int($0.timeIntervalSince1970) } ?? 0
+                return ChatMessage(
+                    id: r.id,
+                    conversation_id: r.conversation_id,
+                    sender_type: senderType,
+                    sender_id: senderId,
+                    content: r.content ?? "",
+                    created_at: secs,
+                    attachments: nil
+                )
+            }
         } catch {
             self.error = error.localizedDescription
         }
