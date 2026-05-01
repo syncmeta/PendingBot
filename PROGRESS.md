@@ -8,18 +8,40 @@
 | 阶段 | 状态 | commit |
 |---|---|---|
 | 计划拆分 + IM/Review/Identity 调整 | ✅ done | `074d4bf` `5e42d88` `b68df3d` `3fca34b` `def5707` |
-| B0 — Edge 仓骨架 + Supabase 项目 | ✅ scaffold done | `38b5a73` |
+| B0 — Edge 仓骨架 + Supabase 项目 | ✅ done | `38b5a73` |
 | B1 — Postgres schema + RLS | ✅ migration written | (in `38b5a73`) |
-| typecheck / wrangler dev 验证 | 🔵 等 bun install 完成 | - |
-| B1.5 — Worker query 层 + 主路由 stub | ⏳ 待开始 | - |
-| iOS Networking 层改造 | ⏳ 待开始 | - |
+| typecheck / wrangler dev 验证 | ✅ pass | (各 typecheck 0 错；curl 三个路由都返预期) |
+| B2 — R2 binding + upload route | ✅ done | `bf49671` |
+| B3 — messages POST stub | ✅ done | `bf49671` |
+| iOS 结构改造（Discuss / Audit / HostedConfig / SPM） | ✅ done | `bf49671` (xcodebuild ✓) |
+| Supabase 真实连通性测试 | ⏳ 等你给 secrets | - |
+| B5 LLM 流式实装 + Realtime 验证 | ⏳ 待开始（需 secrets） | - |
+| B9 完整 iOS Networking 重写 | ⏳ 后续 | - |
 
-## B0 已落地的内容
+## 今晚已落地的内容
 
-- `apps/edge/` — wrangler.jsonc / Hono entry / health route / Supabase client / KV memory / Daytona sandbox interface / prompt-loader / 全套 prompts（含 identity-quest.md）
-- `packages/identity/` — Supabase JWT 校验 + Hono middleware
-- `packages/core/` — Tools registry interface
-- `supabase/` — config.toml + migrations/0001_init.sql（22 张表 + RLS + Realtime publication + UUID v7 helper + trigger maintain user_unread_counts）
+**apps/edge/ Worker**：
+- wrangler.jsonc / Hono entry / health / messages POST + stop / upload + GET
+- Supabase client（user + service role 双工厂）
+- KV memory（user:* / bot:* 两个 namespace）
+- Daytona sandbox interface（B7 真实现）
+- prompt-loader（markdown text imports）
+- 全套 prompts（mirror apps/api/prompts/，加 identity-quest.md，debate→discuss）
+
+**packages/**：
+- identity/ — Supabase JWT 校验 + Hono requireSession/requireAdmin middleware
+- core/ — Tools registry interface
+
+**supabase/**：
+- config.toml + migrations/0001_init.sql（22 张表 + RLS + Realtime publication + UUID v7 helper + user_unread_counts trigger）
+
+**iOS 结构改造**（不破坏编译；xcodebuild ✓）：
+- Features/Debate → Features/Discuss（含所有 swift 类型/调用/API path）
+- 删 Features/Audit
+- 删 MeTabView 中"Token 审计"卡片 + 相关 API 模型
+- HostedConfig 加 Environment enum + supabaseURL/AnonKey
+- project.yml 加 supabase-swift + GRDB.swift（Clerk 保留到 B9）
+- SSEClient/WebSocketClient 暂留（B9 真切 supabase-swift 时再删）
 
 ## 待你处理（醒来后）
 
