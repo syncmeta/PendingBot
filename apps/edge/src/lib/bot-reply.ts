@@ -1,35 +1,30 @@
 import { randomUUID } from 'node:crypto';
+import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import type { Env } from '../types';
 import { serviceClient } from './supabase';
 import { openrouterClient } from '../llm/client';
 import { buildMessages, type BuildMessagesInput } from '../llm/builder';
-import { getBotMemory, refreshBotMemory, refreshUserMemory } from './memory';
-import {
-  honchoClient,
-  userPeerId,
-  botPeerId,
-  conversationSessionId,
-} from './honcho';
+import { getBotMemory } from './memory';
 
-// How many bot_reflections rows to read for the self section. The schema's
-// idx_reflections_bot_user_time covers this exact (bot_id, user_id, created_at)
-// access pattern. 12 follows plan/02 and keeps prompt size bounded.
-const REFLECTIONS_LIMIT = 12;
+// Multi-bubble splitter — bot's reply may be one continuous block, or several
+// short bubbles separated by `\n---\n`. We split server-side so that:
+//   - the SSE caller can take the same stream and re-do the split locally
+//     (with its own overflow rule for "show streaming after >60 chars")
+//   - other devices read the conv from Supabase and get N pre-split message
+//     rows (sharing bubble_group_id)
+//
+// Backend's job is just to persist the canonical shape; the live UI rule is
+// in the client.
+const BUBBLE_DELIMITER = '\n---\n';
+// Magic number for reflection / metrics; the client uses the same threshold
+// to decide when to give up waiting for a delimiter and start streaming.
+export const BUBBLE_OVERFLOW_CHARS = 60;
 
-// Flush throttle: every FLUSH_MS or FLUSH_CHARS, whichever comes first.
-// Tuned for "feels live" vs "don't hammer Postgres".
-const FLUSH_MS = 80;
-const FLUSH_CHARS = 24;
-
-// Stop-poll cadence: every STOP_POLL_MS in wall time, re-read stop_requested
-// on the bot row. ~80ms cross-cloud → 200ms cadence ≈ 5 reads/sec, fine.
-const STOP_POLL_MS = 200;
-
-export interface GenerateBotReplyInput {
+export interface RunChatTurnInput {
   env: Env;
   conversationId: string;
-  parentMessageId: string;
   userId: string;
+  parentMessageId: string;     // user's just-inserted message id
   bot: {
     id: string;
     model_id: string;
@@ -37,19 +32,32 @@ export interface GenerateBotReplyInput {
   };
   recentContext: BuildMessagesInput['recentContext'];
   newMessage: string;
+  /// Caller-provided AbortSignal (typically `c.req.raw.signal`) — flips when
+  /// the SSE client closes the connection.
+  signal: AbortSignal;
+  /// Stream sink — invoked with each SSE event to push to the caller.
+  emit: (event: string, data: unknown) => void;
 }
 
-// Run the LLM call and stream tokens into a bot row via throttled UPDATE.
-// Designed for `ctx.waitUntil(...)`: rejections are caught and written to
-// the row's status, never propagated.
-export async function generateBotReply(input: GenerateBotReplyInput): Promise<void> {
-  const { env, conversationId, parentMessageId, userId, bot, recentContext, newMessage } = input;
+export interface RunChatTurnResult {
+  finalStatus: 'done' | 'interrupted' | 'error';
+  totalContent: string;
+  bubblesInserted: number;
+}
+
+// Drives one user→bot turn end to end. Caller wraps a Hono Response around
+// a ReadableStream; this function pulls LLM tokens, splits bubbles, persists
+// rows, and emits SSE events. Returns when the LLM stream ends (naturally
+// or via abort) so the caller can close the response.
+export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnResult> {
+  const {
+    env, conversationId, userId, parentMessageId,
+    bot, recentContext, newMessage, signal, emit,
+  } = input;
   const supa = serviceClient(env);
   const startedAt = Date.now();
 
-  // Self-section + skills inputs are read in parallel with prompt-build.
-  // All fall back gracefully (null memory + empty reflections + no skills →
-  // identity quest, no skills section).
+  // 1. Look up self section + skills in parallel. Same shape as B7.3.
   const [botMemory, reflectionsRes, skillsRes] = await Promise.all([
     getBotMemory(env, bot.id),
     supa
@@ -58,10 +66,7 @@ export async function generateBotReply(input: GenerateBotReplyInput): Promise<vo
       .eq('bot_id', bot.id)
       .eq('user_id', userId)
       .order('created_at', { ascending: false })
-      .limit(REFLECTIONS_LIMIT),
-    // Skills the user has installed for this conv (sub.conversation_id =
-    // conv) OR globally (sub.conversation_id IS NULL). The OR filter is
-    // expressed via PostgREST's `or=(...)` syntax.
+      .limit(12),
     supa
       .from('skill_subscriptions')
       .select('skills(frontmatter, body_md)')
@@ -72,12 +77,7 @@ export async function generateBotReply(input: GenerateBotReplyInput): Promise<vo
     kind: 'limit' | 'grow' | 'keep';
     content: string;
   }>;
-  // PostgREST returns the joined `skills` row as an array even for an FK
-  // many-to-one — flatten it.
-  type SkillRow = {
-    frontmatter: { name?: string; description?: string };
-    body_md: string;
-  };
+  type SkillRow = { frontmatter: { name?: string; description?: string }; body_md: string };
   const skills: Array<{ name: string; description: string; body: string }> = [];
   for (const row of skillsRes.data ?? []) {
     const joined = (row as { skills: SkillRow | SkillRow[] | null }).skills;
@@ -91,52 +91,60 @@ export async function generateBotReply(input: GenerateBotReplyInput): Promise<vo
     }
   }
 
-  // 1. Insert pending bot row. UUIDv7 in client_message_id keeps ordering
-  // stable even if our INSERT lands microseconds before/after a sibling.
-  const clientMessageId = randomUUID();
-  const { data: botRow, error: insertErr } = await supa
-    .from('messages')
-    .insert({
+  // 2. Build prompt. The builder marks the cache breakpoint per plan/02
+  // (every 4 rounds; see llm/builder.ts).
+  const messages = buildMessages({
+    bot, botMemory, reflections, skills, recentContext, newMessage,
+  });
+
+  // 3. Stream LLM. AbortSignal propagation: when the client disconnects,
+  // signal aborts → openai sdk aborts the upstream fetch.
+  const ac = new AbortController();
+  const onCallerAbort = () => ac.abort();
+  signal.addEventListener('abort', onCallerAbort, { once: true });
+
+  // Bubble grouping: every message in this turn shares one bubble_group_id
+  // so the client can group them visually under "this turn's reply".
+  const bubbleGroupId = randomUUID();
+  let bubbleIndex = 0;
+  let pending = '';
+  let totalContent = '';
+  let bubblesInserted = 0;
+  let usage: { input?: number; output?: number; total?: number } = {};
+  let generationId: string | undefined;
+
+  const emitBubble = async (text: string) => {
+    if (!text) return;
+    bubbleIndex++;
+    const bubbleId = randomUUID();
+    const clientMessageId = randomUUID();
+    await supa.from('messages').insert({
+      id: bubbleId,
       client_message_id: clientMessageId,
       conversation_id: conversationId,
       sender_bot_id: bot.id,
       role: 'bot',
-      status: 'streaming',
+      status: 'done',
+      content: text,
       parent_message_id: parentMessageId,
-      content_partial: '',
-    })
-    .select('id')
-    .single();
-  if (insertErr || !botRow) {
-    console.error('[bot-reply] insert failed', insertErr);
-    return;
-  }
-  const botMessageId = botRow.id as string;
-
-  // 2. Build prompt + open stream.
-  const openai = openrouterClient(env);
-  let buf = '';
-  let lastFlushAt = Date.now();
-  let lastFlushLen = 0;
-  let lastStopPollAt = Date.now();
-  let stopRequested = false;
-  let usage: { input?: number; output?: number; total?: number } = {};
-  let generationId: string | undefined;
-
-  const ac = new AbortController();
+      bubble_group_id: bubbleGroupId,
+    });
+    bubblesInserted++;
+    emit('bubble', {
+      id: bubbleId,
+      index: bubbleIndex,
+      bubble_group_id: bubbleGroupId,
+      content: text,
+    });
+  };
 
   try {
+    const openai = openrouterClient(env);
+    emit('typing', { state: 'thinking' });
     const stream = await openai.chat.completions.create(
       {
         model: bot.model_id,
-        messages: buildMessages({
-          bot,
-          botMemory,
-          reflections,
-          skills,
-          recentContext,
-          newMessage,
-        }),
+        messages,
         stream: true,
         stream_options: { include_usage: true },
       },
@@ -144,17 +152,28 @@ export async function generateBotReply(input: GenerateBotReplyInput): Promise<vo
     );
 
     for await (const chunk of stream) {
-      // OpenRouter sometimes injects an `id` on the first chunk we can use as
-      // the upstream generation id (for billing reconciliation).
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const cid = (chunk as any).id as string | undefined;
-      if (cid && !generationId) generationId = cid;
+      if (ac.signal.aborted) break;
+      const id = (chunk as { id?: string }).id;
+      if (id && !generationId) generationId = id;
 
       const delta = chunk.choices?.[0]?.delta?.content ?? '';
-      if (delta) buf += delta;
+      if (delta) {
+        pending += delta;
+        totalContent += delta;
+        emit('token', { delta });
 
-      // Final usage chunk (when stream_options.include_usage is set) carries
-      // an empty delta but a populated `usage` object.
+        // Drain every complete bubble in `pending`. Since the delimiter is
+        // multi-char, it may straddle chunks — indexOf handles that.
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const idx = pending.indexOf(BUBBLE_DELIMITER);
+          if (idx === -1) break;
+          const bubble = pending.slice(0, idx).trim();
+          pending = pending.slice(idx + BUBBLE_DELIMITER.length);
+          if (bubble) await emitBubble(bubble);
+        }
+      }
+
       if (chunk.usage) {
         usage = {
           input: chunk.usage.prompt_tokens,
@@ -162,49 +181,23 @@ export async function generateBotReply(input: GenerateBotReplyInput): Promise<vo
           total: chunk.usage.total_tokens,
         };
       }
-
-      const now = Date.now();
-      if (
-        delta &&
-        (buf.length - lastFlushLen >= FLUSH_CHARS || now - lastFlushAt >= FLUSH_MS)
-      ) {
-        await supa
-          .from('messages')
-          .update({ content_partial: buf })
-          .eq('id', botMessageId);
-        lastFlushAt = now;
-        lastFlushLen = buf.length;
-      }
-
-      if (now - lastStopPollAt >= STOP_POLL_MS) {
-        const { data: row } = await supa
-          .from('messages')
-          .select('stop_requested')
-          .eq('id', botMessageId)
-          .single();
-        lastStopPollAt = now;
-        if (row?.stop_requested) {
-          stopRequested = true;
-          ac.abort();
-          break;
-        }
-      }
     }
 
-    // 3. Finalize: copy buffer into content, clear partial, set terminal status.
-    const finalStatus = stopRequested ? 'interrupted' : 'done';
-    await supa
-      .from('messages')
-      .update({
-        content: buf,
-        content_partial: null,
-        status: finalStatus,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', botMessageId);
+    // Final tail (whatever survived without a trailing delimiter).
+    if (pending.trim()) {
+      await emitBubble(pending.trim());
+      pending = '';
+    }
 
-    // 4. Audit. Best-effort — failure here doesn't affect message visibility.
+    const finalStatus: RunChatTurnResult['finalStatus'] = ac.signal.aborted ? 'interrupted' : 'done';
+    emit(finalStatus, {
+      bubble_group_id: bubbleGroupId,
+      total_content: totalContent,
+    });
+
+    // Audit row (best-effort).
     await supa.from('audit_log').insert({
+      user_id: userId,
       conversation_id: conversationId,
       task_type: 'message_reply',
       model_id: bot.model_id,
@@ -213,44 +206,25 @@ export async function generateBotReply(input: GenerateBotReplyInput): Promise<vo
       total_tokens: usage.total ?? 0,
       generation_id: generationId,
       latency_ms: Date.now() - startedAt,
-      metadata: { bot_id: bot.id, status: finalStatus },
+      metadata: {
+        bot_id: bot.id,
+        status: finalStatus,
+        bubble_group_id: bubbleGroupId,
+        bubbles: bubblesInserted,
+      },
     });
 
-    // 5. Honcho ingest + cache refresh. Both peers observe_me=true so the
-    // user→bot turn pair updates each side's representation. We feed Honcho
-    // the literal turn (user message + bot reply) into the conv session,
-    // then trigger an async refresh of both KV caches. All best-effort.
-    if (finalStatus === 'done' && buf) {
-      try {
-        const honcho = honchoClient(env);
-        const session = await honcho.session(conversationSessionId(conversationId));
-        await session.addMessages([
-          { peerId: userPeerId(userId), content: newMessage },
-          { peerId: botPeerId(bot.id), content: buf },
-        ]);
-      } catch (err) {
-        console.warn('[bot-reply] honcho ingest failed', err);
-      }
-      // Refresh both caches in parallel; failure leaves prior KV intact.
-      await Promise.all([
-        refreshUserMemory(env, userId),
-        refreshBotMemory(env, bot.id),
-      ]);
-    }
+    return { finalStatus, totalContent, bubblesInserted };
   } catch (err) {
-    // Network drop, model error, abort-without-stop, etc. Mark errored and
-    // surface what we have so the client UI doesn't get stuck on 'streaming'.
-    const isAbortFromStop = stopRequested && (err as { name?: string })?.name === 'AbortError';
-    const status = isAbortFromStop ? 'interrupted' : 'error';
-    console.error('[bot-reply]', status, err);
-    await supa
-      .from('messages')
-      .update({
-        content: buf || null,
-        content_partial: null,
-        status,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', botMessageId);
+    const aborted = ac.signal.aborted;
+    // If pending has anything, save it as the last (interrupted) bubble.
+    if (pending.trim()) {
+      try { await emitBubble(pending.trim()); } catch {}
+    }
+    const status: RunChatTurnResult['finalStatus'] = aborted ? 'interrupted' : 'error';
+    emit(status, { message: aborted ? 'aborted' : String(err) });
+    return { finalStatus: status, totalContent, bubblesInserted };
+  } finally {
+    signal.removeEventListener('abort', onCallerAbort);
   }
 }
