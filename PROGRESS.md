@@ -37,6 +37,13 @@
 | 监控 | Sentry + Cloudflare Workers Observability + Better Stack uptime |
 | 缩略图 | R2 上传时同步生成 |
 | Push notification | iOS APNS + Web Push API |
+| API versioning | URL `/v1/` 大代际 + `X-Client-Version` header 细粒度（学 Stripe） |
+| Realtime 订阅 | 分层 channel：常驻 user-level + lazy conv-level；Postgres trigger 维护 `user_unread_counts` |
+| 消息编辑 | 链表模型（replaces/replaced_by），不直接改 content |
+| conversation_participants | 多态（user/bot 都作为成员），统一 RLS |
+| Surf UI | 独立 task panel，Claude Code Desktop 风格 |
+| Discuss UI | IM 群聊形态进主消息列表 |
+| 品牌 | pendingname.com / PendingBot 已锁定 |
 
 ## 醒来后请先看
 
