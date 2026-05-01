@@ -20,6 +20,9 @@ export interface Env {
   DAYTONA_API_URL: string;
   HONCHO_API_KEY: string;
   HONCHO_WORKSPACE_ID: string;
+  // Jina powers surf's web search + URL reader. Free tier requires no key
+  // but rate-limits aggressively; the key lifts those limits.
+  JINA_API_KEY: string;
 }
 
 // Hono's c.var slot — populated by middleware (auth, version, etc.)
