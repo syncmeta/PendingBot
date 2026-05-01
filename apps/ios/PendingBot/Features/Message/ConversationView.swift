@@ -26,6 +26,10 @@ struct ConversationView: View {
     @State private var modelOverride: String = ""    // "" = use bot default
     @State private var error: String?
     @State private var pending = false              // server is generating (bot_typing active)
+    /// Active SSE turn task; canceling it closes the stream which Worker
+    /// reads as request.signal.aborted (= interrupt). Set by sendViaSSE,
+    /// cleared on completion. Non-nil while a turn is in flight.
+    @State private var chatTurnTask: Task<Void, Never>?
     // Transient surf_status events from the in-flight 联网 search. Cleared
     // when the bot reply arrives. Displayed as an inline log above the
     // pending-typing row, mirroring the web's `.surf-log` panel.
@@ -525,20 +529,131 @@ struct ConversationView: View {
         photoPickerItems = []
         Haptics.send()
 
-        do {
-            try await ws.send(.chat(
-                botId: conversation.bot_id,
-                conversationId: conversation.id,
-                content: text,
-                attachmentIds: attachIds,
-                tone: chatTone,
-                streaming: streaming
-            ))
-        } catch {
-            self.error = "发送失败: \(error.localizedDescription)"
-            Haptics.error()
-        }
+        // Old WS path replaced — this turn flows through Worker SSE now.
+        // sendViaSSE owns the Task lifetime so the stop button can cancel it.
+        sendViaSSE(text: text, attachmentIds: attachIds)
         _ = api
+    }
+
+    /// Start the bot reply over SSE. Bubble emissions land in `messages`
+    /// via incremental insert/update. Cancel the returned Task (via the
+    /// stop button) to close the SSE — Worker observes request.signal.aborted
+    /// and stops the LLM stream.
+    private func sendViaSSE(text: String, attachmentIds: [String]) {
+        chatTurnTask?.cancel()
+        pending = true
+
+        let body: [String: Any] = {
+            let clientMsgId = UUID().uuidString.lowercased()
+            // Last 20 messages from local view as recentContext. Worker uses
+            // this in lieu of round-tripping Supabase to assemble history.
+            let recent = messages.suffix(20).map { m -> [String: Any] in
+                [
+                    "role": m.sender_type,
+                    "content": m.content,
+                    // Worker expects ISO 8601; ChatMessage stores epoch seconds.
+                    "created_at": ISO8601DateFormatter().string(
+                        from: Date(timeIntervalSince1970: TimeInterval(m.created_at))
+                    ),
+                ]
+            }
+            // Oldest msg id in local window — drives Honcho lazy refresh
+            // (memory.maybeRefresh on the Worker side).
+            let oldestId = messages.first { $0.id.range(of: "^[0-9a-f-]{36}$",
+                                                        options: .regularExpression) != nil }?.id
+            var b: [String: Any] = [
+                "conversationId": conversation.id,
+                "clientMessageId": clientMsgId,
+                "newMessage": text,
+                "recentContext": recent,
+            ]
+            if !attachmentIds.isEmpty { b["attachmentIds"] = attachmentIds }
+            if let oldestId { b["oldestContextMessageId"] = oldestId }
+            return b
+        }()
+
+        chatTurnTask = Task {
+            let splitter = BubbleSplitter()
+            let stream = ChatStream().send(body: body)
+            do {
+                for try await event in stream {
+                    if Task.isCancelled { break }
+                    switch event {
+                    case .typing:
+                        break // pending state already true
+                    case .token(let delta):
+                        splitter.accept(token: delta)
+                    case .bubble:
+                        // Server-side canonical bubble id arrived; we
+                        // already split client-side, no action needed —
+                        // local id is the source of truth for UI; the
+                        // server id is for cross-device sync via Realtime.
+                        break
+                    case .done(_, let total):
+                        splitter.flushTail()
+                        splitter.turnDone(totalContent: total)
+                    case .interrupted(_, let total):
+                        splitter.flushTail()
+                        splitter.turnInterrupted(totalContent: total)
+                    case .error(let msg):
+                        splitter.reportError(msg)
+                    case .unknown:
+                        break
+                    }
+                    applyBubbleEmissions(splitter.drain())
+                }
+                // Stream ended without an explicit done event (rare).
+                splitter.flushTail()
+                applyBubbleEmissions(splitter.drain())
+            } catch {
+                // Cancellation = user-initiated interrupt; not an error UI.
+                if !(error is CancellationError) {
+                    self.error = "发送失败: \(error.localizedDescription)"
+                    Haptics.error()
+                }
+                splitter.flushTail()
+                applyBubbleEmissions(splitter.drain())
+            }
+            pending = false
+            chatTurnTask = nil
+        }
+    }
+
+    /// Translate splitter emissions into mutations on the local `messages`
+    /// array. Begin = append a new bot message; append = mutate the last
+    /// one's content; end / turnDone / turnInterrupted are status signals
+    /// (no-op for now since ChatMessage doesn't carry a streaming flag).
+    private func applyBubbleEmissions(_ events: [BubbleEmission]) {
+        for evt in events {
+            switch evt {
+            case .begin(let id, _, let content):
+                messages.append(ChatMessage(
+                    id: "live-\(id.uuidString)",
+                    conversation_id: conversation.id,
+                    sender_type: "bot",
+                    sender_id: conversation.bot_id ?? "",
+                    content: content,
+                    created_at: Int(Date().timeIntervalSince1970),
+                    attachments: nil
+                ))
+            case .append(let id, let delta):
+                let key = "live-\(id.uuidString)"
+                if let idx = messages.lastIndex(where: { $0.id == key }) {
+                    let prev = messages[idx]
+                    messages[idx] = ChatMessage(
+                        id: prev.id, conversation_id: prev.conversation_id,
+                        sender_type: prev.sender_type, sender_id: prev.sender_id,
+                        content: prev.content + delta,
+                        created_at: prev.created_at,
+                        attachments: prev.attachments
+                    )
+                }
+            case .end, .turnDone, .turnInterrupted:
+                break
+            case .error(let m):
+                self.error = m
+            }
+        }
     }
 
     // ── REST: history + delete ─────────────────────────────────────────────
