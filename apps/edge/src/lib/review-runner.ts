@@ -1,20 +1,79 @@
 import { randomUUID } from 'node:crypto';
 import type { Env } from '../types';
 import { serviceClient } from './supabase';
+import { openrouterClient } from '../llm/client';
+import { getPrompt } from '../llm/prompt-loader';
+import { getBotMemory } from './memory';
 
-// Review agent runner.
+// Review agent runner — implements the integrated-into-message-stream review
+// per plan/03. Surfaces three families of log messages in the host conv:
+//   review:step    — running/done indicators for each phase
+//   review:card    — six cards (you|me × limit|grow|keep)
+//   review:closing — final note ('pass' or 'note')
 //
-// B6: scaffold — emits the canonical 3-message review shape (step → card →
-// closing) into the host message conversation, so any client subscribed to
-// the conv channel renders the special log bubbles. Real review LLM logic
-// (3-prompt chain + bot_reflections persistence) lands in B7.
+// The LLM call uses prompts/review.md as system, gets back a tagged response
+// (<你-局限>... etc.), parses, and persists `me` reflections to bot_reflections
+// for next-turn self section.
 //
-// Contract:
-//   1. Caller has INSERTed review_runs(status='running') and we own the
-//      remaining lifecycle.
-//   2. All surface to the user is via role='log' messages in the SAME
-//      conversation as the original chat (see plan/03 — review integrated).
-//   3. Finalize status to 'done' or 'error'.
+// Out of scope for this commit:
+//   - search round (review's <搜索> block; needs web search tool — defer)
+//   - delayed closing delivery (already moot per plan/03 — review lives in
+//     the host conv, no separate channel to bridge)
+
+const HISTORY_LIMIT = 30;
+
+const CARD_LABELS: Record<'you' | 'me', Record<'limit' | 'grow' | 'keep', string>> = {
+  you: { limit: '你的局限', grow: '你可以发扬的', keep: '你已经在保持的' },
+  me: { limit: '我的局限', grow: '我可以发扬的', keep: '我要继续守住的' },
+};
+
+const CARD_ORDER: Array<{ side: 'you' | 'me'; bucket: 'limit' | 'grow' | 'keep' }> = [
+  { side: 'you', bucket: 'limit' },
+  { side: 'you', bucket: 'grow' },
+  { side: 'you', bucket: 'keep' },
+  { side: 'me', bucket: 'limit' },
+  { side: 'me', bucket: 'grow' },
+  { side: 'me', bucket: 'keep' },
+];
+
+interface ParsedReview {
+  you: { limit: string[]; grow: string[]; keep: string[] };
+  me: { limit: string[]; grow: string[]; keep: string[] };
+  closing: string;
+}
+
+function extractTag(text: string, tag: string): string {
+  const m = text.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`));
+  return m?.[1]?.trim() ?? '';
+}
+
+function parseBulletList(raw: string): string[] {
+  if (!raw || raw.trim() === '无') return [];
+  const out: string[] = [];
+  for (const line of raw.split('\n')) {
+    const t = line.trim();
+    if (!t) continue;
+    const stripped = t.replace(/^[-*•]\s+/, '').replace(/^\d+[.、)]\s*/, '').trim();
+    if (stripped && stripped !== '无') out.push(stripped);
+  }
+  return out;
+}
+
+function parseReview(text: string): ParsedReview {
+  return {
+    you: {
+      limit: parseBulletList(extractTag(text, '你-局限')),
+      grow: parseBulletList(extractTag(text, '你-发扬')),
+      keep: parseBulletList(extractTag(text, '你-保持')),
+    },
+    me: {
+      limit: parseBulletList(extractTag(text, '我-局限')),
+      grow: parseBulletList(extractTag(text, '我-发扬')),
+      keep: parseBulletList(extractTag(text, '我-保持')),
+    },
+    closing: extractTag(text, '结语'),
+  };
+}
 
 export interface RunReviewInput {
   env: Env;
@@ -42,8 +101,9 @@ async function emitLog(
 }
 
 export async function runReview(input: RunReviewInput): Promise<void> {
-  const { env, reviewRunId, conversationId } = input;
+  const { env, reviewRunId, conversationId, userId, botId } = input;
   const supa = serviceClient(env);
+  const startedAt = Date.now();
 
   await supa
     .from('review_runs')
@@ -51,24 +111,189 @@ export async function runReview(input: RunReviewInput): Promise<void> {
     .eq('id', reviewRunId);
 
   try {
-    // TODO(B7): real review chain:
-    //   1. emit review:step{ step:'gather', status:'running' }
-    //   2. fetch last N messages, prompt eval.md → got 3-bucket reflections
-    //   3. emit review:step done; emit review:card×2 (you + me)
-    //   4. prompt followup.md → emit review:closing
-    //   5. INSERT bot_reflections rows (kind=limit/grow/keep)
-    //
-    // Stub here just emits the shape so UI can be built before B7 lands.
+    // Phase 1 — gather: pull history + bot model + prior reflections + memory.
     await emitLog(supa, conversationId, reviewRunId, 'review:step', {
-      step: 'placeholder',
-      label: 'Review scaffolded',
-      status: 'done',
+      step: 'gather',
+      label: '翻一翻最近的对话',
+      status: 'running',
     });
-    await emitLog(supa, conversationId, reviewRunId, 'review:closing', {
-      mode: 'note',
-      content: 'Review pipeline lands in B7.',
+    const [historyRes, botRes, reflectionsRes, botMemory] = await Promise.all([
+      supa
+        .from('messages')
+        .select('role, content, created_at')
+        .eq('conversation_id', conversationId)
+        .neq('role', 'log')
+        .order('created_at', { ascending: false })
+        .limit(HISTORY_LIMIT),
+      supa.from('bots').select('model_id').eq('id', botId).single(),
+      supa
+        .from('bot_reflections')
+        .select('kind, content')
+        .eq('bot_id', botId)
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(12),
+      getBotMemory(env, botId),
+    ]);
+    const history = (historyRes.data ?? []).reverse() as Array<{
+      role: 'user' | 'bot' | 'human';
+      content: string | null;
+      created_at: string;
+    }>;
+    if (history.length < 2) {
+      await emitLog(supa, conversationId, reviewRunId, 'review:step', {
+        step: 'gather',
+        label: '翻一翻最近的对话',
+        status: 'error',
+        detail: '聊得还不够，下次再回头看',
+      });
+      await supa
+        .from('review_runs')
+        .update({ status: 'done', finished_at: new Date().toISOString() })
+        .eq('id', reviewRunId);
+      return;
+    }
+    await emitLog(supa, conversationId, reviewRunId, 'review:step', {
+      step: 'gather',
+      label: '翻一翻最近的对话',
+      status: 'done',
+      detail: `${history.length} 条消息`,
     });
 
+    if (botRes.error || !botRes.data) {
+      throw new Error(`bot lookup failed: ${botRes.error?.message}`);
+    }
+    const modelId = botRes.data.model_id as string;
+
+    // Phase 2 — think: assemble lead-in (memory + prior reflections) and call LLM.
+    await emitLog(supa, conversationId, reviewRunId, 'review:step', {
+      step: 'thinking',
+      label: '慢慢想一遍',
+      status: 'running',
+      detail: `用 ${modelId}`,
+    });
+
+    const reflections = (reflectionsRes.data ?? []) as Array<{
+      kind: 'limit' | 'grow' | 'keep';
+      content: string;
+    }>;
+    const leadInParts: string[] = [];
+    if (botMemory && botMemory.representation.trim()) {
+      leadInParts.push(`我对自己的观察（被动）：\n${botMemory.representation.trim()}`);
+    }
+    if (reflections.length > 0) {
+      const grouped: Record<'limit' | 'grow' | 'keep', string[]> = { limit: [], grow: [], keep: [] };
+      for (const r of reflections) grouped[r.kind].push(r.content);
+      const lines: string[] = ['我（这个机器人）以前回顾时记下的心得：'];
+      if (grouped.limit.length) lines.push('— 我的局限：', ...grouped.limit.map((c) => `  · ${c}`));
+      if (grouped.grow.length) lines.push('— 我要发扬的：', ...grouped.grow.map((c) => `  · ${c}`));
+      if (grouped.keep.length) lines.push('— 我要守住的：', ...grouped.keep.map((c) => `  · ${c}`));
+      leadInParts.push(lines.join('\n'));
+    }
+    leadInParts.push('（以下是最近的对话历史）');
+    const leadIn = leadInParts.join('\n\n');
+
+    const llmHistory = history
+      .filter((m) => m.content && m.content.trim().length > 0)
+      .map((m) => ({
+        role: (m.role === 'user' || m.role === 'human' ? 'user' : 'assistant') as
+          | 'user'
+          | 'assistant',
+        content: m.content as string,
+      }));
+
+    const openai = openrouterClient(env);
+    const completion = await openai.chat.completions.create({
+      model: modelId,
+      messages: [
+        { role: 'system', content: getPrompt('review') },
+        { role: 'user', content: leadIn },
+        ...llmHistory,
+        {
+          role: 'user',
+          content: '请按系统指令对你和对方两边都做一遍回顾，按要求的分段输出。',
+        },
+      ],
+    });
+    const rawText = completion.choices[0]?.message?.content?.trim() ?? '';
+    const usage = completion.usage;
+
+    await emitLog(supa, conversationId, reviewRunId, 'review:step', {
+      step: 'thinking',
+      label: '慢慢想一遍',
+      status: 'done',
+      detail: `${((Date.now() - startedAt) / 1000).toFixed(1)}s · ${usage?.total_tokens ?? 0} tokens`,
+    });
+
+    // Phase 3 — parse + emit cards.
+    const parsed = parseReview(rawText);
+    for (const o of CARD_ORDER) {
+      const items = parsed[o.side][o.bucket];
+      await emitLog(supa, conversationId, reviewRunId, 'review:card', {
+        side: o.side,
+        bucket: o.bucket,
+        label: CARD_LABELS[o.side][o.bucket],
+        items,
+      });
+    }
+
+    // Phase 4 — persist `me` reflections so the bot accumulates self-knowledge.
+    let savedCount = 0;
+    const reflectionRows: Array<{
+      bot_id: string;
+      user_id: string;
+      review_run_id: string;
+      kind: 'limit' | 'grow' | 'keep';
+      content: string;
+    }> = [];
+    for (const bucket of ['limit', 'grow', 'keep'] as const) {
+      for (const item of parsed.me[bucket]) {
+        reflectionRows.push({
+          bot_id: botId,
+          user_id: userId,
+          review_run_id: reviewRunId,
+          kind: bucket,
+          content: item,
+        });
+      }
+    }
+    if (reflectionRows.length > 0) {
+      const { error: refErr } = await supa.from('bot_reflections').insert(reflectionRows);
+      if (refErr) console.warn('[review-runner] reflection insert failed', refErr);
+      else savedCount = reflectionRows.length;
+    }
+    await emitLog(supa, conversationId, reviewRunId, 'review:step', {
+      step: 'save',
+      label: '把这次的自己记下来',
+      status: 'done',
+      detail: `${savedCount} 条心得已存`,
+    });
+
+    // Phase 5 — closing line (pass or free-form note).
+    const closingRaw = parsed.closing.trim();
+    const isPass =
+      !closingRaw ||
+      closingRaw === '[PASS]' ||
+      closingRaw === '[OK]' ||
+      closingRaw === '[PENDING]';
+    await emitLog(supa, conversationId, reviewRunId, 'review:closing', {
+      mode: isPass ? 'pass' : 'note',
+      content: isPass ? '' : closingRaw,
+    });
+
+    // Audit + finalize.
+    await supa.from('audit_log').insert({
+      user_id: userId,
+      conversation_id: conversationId,
+      task_type: 'review',
+      model_id: modelId,
+      input_tokens: usage?.prompt_tokens ?? 0,
+      output_tokens: usage?.completion_tokens ?? 0,
+      total_tokens: usage?.total_tokens ?? 0,
+      generation_id: completion.id,
+      latency_ms: Date.now() - startedAt,
+      metadata: { review_run_id: reviewRunId, bot_id: botId },
+    });
     await supa
       .from('review_runs')
       .update({ status: 'done', finished_at: new Date().toISOString() })
