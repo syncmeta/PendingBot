@@ -57,6 +57,7 @@
 		33F024E77923DF8C2E142A1D /* RealtimeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9843FFF26D200B2BF5276758 /* RealtimeManager.swift */; };
 		361A8E69C4D9FFCB68D90DB5 /* ChatStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B6FB7767BD3A47DF853F93F /* ChatStream.swift */; };
 		50B96D7726761D850F97C182 /* BubbleSplitter.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7D2EE47BE02598CBC8E7875 /* BubbleSplitter.swift */; };
+		AD220C1C9745145348FD3CCA /* PushService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 252F0265F7340A8E2983C995 /* PushService.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -108,6 +109,7 @@
 		9843FFF26D200B2BF5276758 /* RealtimeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeManager.swift; sourceTree = "<group>"; };
 		6B6FB7767BD3A47DF853F93F /* ChatStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatStream.swift; sourceTree = "<group>"; };
 		C7D2EE47BE02598CBC8E7875 /* BubbleSplitter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BubbleSplitter.swift; sourceTree = "<group>"; };
+		252F0265F7340A8E2983C995 /* PushService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushService.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -241,6 +243,7 @@
 				36C5C1F1F3A2139174BC4C4B /* AppleSignIn.swift */,
 				9843FFF26D200B2BF5276758 /* RealtimeManager.swift */,
 				6B6FB7767BD3A47DF853F93F /* ChatStream.swift */,
+				252F0265F7340A8E2983C995 /* PushService.swift */,
 			);
 			path = Networking;
 			sourceTree = "<group>";
@@ -434,6 +437,7 @@
 				33F024E77923DF8C2E142A1D /* RealtimeManager.swift in Sources */,
 				361A8E69C4D9FFCB68D90DB5 /* ChatStream.swift in Sources */,
 				50B96D7726761D850F97C182 /* BubbleSplitter.swift in Sources */,
+				AD220C1C9745145348FD3CCA /* PushService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
