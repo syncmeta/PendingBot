@@ -115,3 +115,21 @@ discussRoutes.post('/start', async (c) => {
 
   return c.json({ conversationId }, 202);
 });
+
+// POST /v1/discuss/:id/cancel — flip last_turn_status='cancelled'. The
+// runner reads it at the top of every bot iteration and bails before the
+// next LLM call. Latency between signal and stop is bounded by the
+// currently-running bot's LLM call (no mid-call abort — we let the in-flight
+// bot finish; cancel kicks in before the *next* one).
+discussRoutes.post('/:id/cancel', async (c) => {
+  const id = c.req.param('id');
+  const userJwt = c.var.userJwt!;
+  // RLS-gate via user client (caller must be a participant).
+  const supa = userClient(c.env, userJwt);
+  const { error } = await supa
+    .from('conversations')
+    .update({ last_turn_status: 'cancelled' })
+    .eq('id', id);
+  if (error) return c.json({ error: 'database', detail: error.message }, 500);
+  return c.json({ ok: true });
+});

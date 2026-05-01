@@ -4,15 +4,22 @@ import { serviceClient } from './supabase';
 import { openrouterClient } from '../llm/client';
 import { getPrompt } from '../llm/prompt-loader';
 
-// Discuss runner — multi-bot group chat about a single user, user is in the
-// room as observer (read-only). Per plan/02 and prompts/discuss.md:
-//   - all bots see prior bot turns in the discuss conv
-//   - each bot also gets its own per-user chat history (the user_bot conv
-//     between this bot and this user) as private context
-//   - "[PASS]" output means "I have nothing fresh to add" → skip insert
+// Discuss runner — Worker plays the role of "IM client" for the participating
+// bots. Each bot turn:
+//   1. re-fetch latest group history from Supabase (so any user message
+//      injected mid-round is visible to the next bot to speak)
+//   2. check `conversations.last_turn_status` for a cancel signal flipped
+//      by POST /v1/discuss/:id/cancel → bail out cleanly
+//   3. call LLM for this bot
+//   4. INSERT reply into pendingbot.messages → Realtime auto-pushes to all
+//      subscribed clients (the user's app, other devices, etc)
 //
-// One round per call: every selected bot speaks at most once. Re-call to
-// run another round.
+// Single round per call: each selected bot speaks at most once. Re-trigger
+// from the client to run another round.
+//
+// The user can chat freely while this is running — their messages land in
+// Supabase the same way bot replies do, and step (1) above sees them on
+// the next iteration.
 
 // How many messages of the bot's *personal* history with this user to
 // include as private context. Keep tight — discuss is about reactions, not
@@ -86,24 +93,31 @@ export async function runDiscuss(input: RunDiscussInput): Promise<void> {
   const byId = new Map<string, BotRow>(botsData.map((b) => [b.id as string, b as BotRow]));
   const orderedBots = botIds.map((id) => byId.get(id)).filter((b): b is BotRow => !!b);
 
-  // Pull existing discuss messages (this conv only). Both prior rounds and
-  // any user "辟谣 / 注入观点" interjections.
-  const { data: priorMsgs } = await supa
-    .from('messages')
-    .select('role, content, sender_bot_id')
-    .eq('conversation_id', conversationId)
-    .neq('role', 'log')
-    .order('created_at', { ascending: true })
-    .limit(200);
-  const groupHistory = (priorMsgs ?? []) as Array<{
-    role: 'user' | 'bot' | 'human';
-    content: string | null;
-    sender_bot_id: string | null;
-  }>;
-
   const openai = openrouterClient(env);
 
   for (const bot of orderedBots) {
+    // Cancel check + fresh group history per bot. A single SELECT pulls
+    // both: fewer round trips than separate queries.
+    const { data: convRow } = await supa
+      .from('conversations')
+      .select('last_turn_status')
+      .eq('id', conversationId)
+      .single();
+    if (convRow?.last_turn_status === 'cancelled') break;
+
+    const { data: priorMsgs } = await supa
+      .from('messages')
+      .select('role, content, sender_bot_id')
+      .eq('conversation_id', conversationId)
+      .neq('role', 'log')
+      .order('created_at', { ascending: true })
+      .limit(200);
+    const groupHistory = (priorMsgs ?? []) as Array<{
+      role: 'user' | 'bot' | 'human';
+      content: string | null;
+      sender_bot_id: string | null;
+    }>;
+
     const startedAt = Date.now();
     try {
       const personal = await fetchPersonalHistory(supa, userId, bot.id);
@@ -164,21 +178,16 @@ export async function runDiscuss(input: RunDiscussInput): Promise<void> {
         continue;
       }
 
-      // Insert bot message + append to running group history so subsequent
-      // bots in this same round see it.
-      const inserted = {
+      // Insert bot message. Next bot's iteration re-reads from Supabase, so
+      // we don't need to mutate any in-process history cache here — DB is
+      // single source of truth.
+      await supa.from('messages').insert({
         client_message_id: randomUUID(),
         conversation_id: conversationId,
         sender_bot_id: bot.id,
         role: 'bot' as const,
         status: 'done' as const,
         content: text,
-      };
-      await supa.from('messages').insert(inserted);
-      groupHistory.push({
-        role: 'bot',
-        content: text,
-        sender_bot_id: bot.id,
       });
 
       await supa.from('audit_log').insert({
@@ -198,4 +207,13 @@ export async function runDiscuss(input: RunDiscussInput): Promise<void> {
       // Continue with the next bot — one bot's failure doesn't kill the round.
     }
   }
+
+  // Mark the conv terminal so a stale 'cancelled' from a prior round doesn't
+  // break the next /start. (No-op if already cancelled — we only set 'done'
+  // when we ran to completion.)
+  await supa
+    .from('conversations')
+    .update({ last_turn_status: 'done' })
+    .eq('id', conversationId)
+    .neq('last_turn_status', 'cancelled');
 }
