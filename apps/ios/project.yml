@@ -36,11 +36,24 @@ packages:
     url: https://github.com/gonzalezreal/swift-markdown-ui
     from: 2.4.0
   Clerk:
-    # Official iOS SDK — handles SIWA, Google OAuth, email-code, JWT
-    # session management. We use it on the hosted target only; self-host
-    # builds skip the dependency by stripping the import sites.
+    # LEGACY: Used to be the auth provider; will be removed in B9 when
+    # supabase-swift takes over Sign in with Apple + email magic-link flows.
+    # Kept on the dep list now so the existing Networking layer compiles
+    # untouched until that swap lands.
     url: https://github.com/clerk/clerk-ios
     from: 0.50.0
+  Supabase:
+    # supabase-swift — official iOS SDK covering Auth, PostgREST (RLS-gated
+    # direct DB reads), Realtime (postgres_changes / broadcast / presence),
+    # and Storage. Will gradually take over from Clerk + custom REST in B9.
+    url: https://github.com/supabase/supabase-swift
+    from: 2.0.0
+  GRDB:
+    # SQLite wrapper for the local mirror of pendingbot.* data. Used for
+    # offline reads, optimistic UI, multi-device sync via client_message_id
+    # upsert. Schema migration framework included.
+    url: https://github.com/groue/GRDB.swift
+    from: 6.0.0
 
 targets:
   PendingBot:
@@ -77,7 +90,7 @@ targets:
         # Without it SecItemAdd fails with errSecMissingEntitlement (-34018)
         # and the "未能完成操作 KeychainError 错误1" alert pops on Mac login.
         CODE_SIGN_ENTITLEMENTS: PendingBot/PendingBot.entitlements
-        CURRENT_PROJECT_VERSION: 3
+        CURRENT_PROJECT_VERSION: 2
         MARKETING_VERSION: "0.1.0"
         # Make Color.accentColor resolve to our asset-catalog AccentColor
         # (the deep forest green). Without this Xcode-generated setting,
@@ -89,6 +102,10 @@ targets:
         product: MarkdownUI
       - package: Clerk
         product: Clerk
+      - package: Supabase
+        product: Supabase
+      - package: GRDB
+        product: GRDB
     info:
       path: PendingBot/Resources/Info.plist
       properties:

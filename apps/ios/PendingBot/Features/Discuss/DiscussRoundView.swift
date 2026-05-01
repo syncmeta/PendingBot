@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// One debate's transcript. "继续" runs `/round`; "插话" sends a clarification;
+/// One discuss's transcript. "继续" runs `/round`; "插话" sends a clarification;
 /// "停止" pauses an in-flight round. Stream comes in over SSE.
 ///
 /// UI mirrors `ConversationView` (single-chat) but in group-chat form:
@@ -8,9 +8,9 @@ import SwiftUI
 /// like a 微信 group chat. The action buttons float over the transcript
 /// (matching the in-header back chevron's look) instead of sitting in a
 /// bottom toolbar.
-struct DebateRoundView: View {
-    let conversation: DebateConversation
-    /// Set when the user just created this debate — kicks off the first
+struct DiscussRoundView: View {
+    let conversation: DiscussConversation
+    /// Set when the user just created this discuss — kicks off the first
     /// round on appear so they don't have to tap "继续" once more.
     var autoStart: Bool = false
 
@@ -40,7 +40,7 @@ struct DebateRoundView: View {
                     LazyVStack(alignment: .leading, spacing: 2) {
                         Color.clear.frame(height: 8)
                         ForEach(messages) { msg in
-                            DebateBubble(message: msg,
+                            DiscussBubble(message: msg,
                                          bots: bots,
                                          conversationID: conversation.id)
                                 .id(msg.id)
@@ -234,7 +234,7 @@ struct DebateRoundView: View {
     private func refresh() async {
         guard let api else { return }
         do {
-            let raw: [ChatMessage] = try await api.get("api/debate/conversations/\(conversation.id)/messages")
+            let raw: [ChatMessage] = try await api.get("api/discuss/conversations/\(conversation.id)/messages")
             let sorted = raw.sorted { $0.created_at < $1.created_at }
             let known = Set(messages.map(\.id))
             let new = sorted.filter { !known.contains($0.id) }
@@ -247,7 +247,7 @@ struct DebateRoundView: View {
     private func load() async {
         guard let api else { return }
         do {
-            let raw: [ChatMessage] = try await api.get("api/debate/conversations/\(conversation.id)/messages")
+            let raw: [ChatMessage] = try await api.get("api/discuss/conversations/\(conversation.id)/messages")
             self.messages = raw.sorted { $0.created_at < $1.created_at }
         } catch { self.error = error.localizedDescription }
     }
@@ -257,7 +257,7 @@ struct DebateRoundView: View {
     private func reloadHeader() async {
         guard let api else { return }
         do {
-            let conv: DebateConversation = try await api.get("api/debate/conversations/\(conversation.id)")
+            let conv: DiscussConversation = try await api.get("api/discuss/conversations/\(conversation.id)")
             self.convTitle = conv.title
         } catch { /* keep previous title */ }
     }
@@ -276,7 +276,7 @@ struct DebateRoundView: View {
         streaming = true; defer { streaming = false; pausing = false }
         Haptics.tap()
         do {
-            let bytes = try await api.streamPost("api/debate/conversations/\(conversation.id)/round", body: Empty())
+            let bytes = try await api.streamPost("api/discuss/conversations/\(conversation.id)/round", body: Empty())
             for try await event in SSEClient.events(from: bytes) {
                 handleSSE(event)
             }
@@ -295,7 +295,7 @@ struct DebateRoundView: View {
         guard let api else { return }
         pausing = true
         do {
-            try await api.postVoid("api/debate/conversations/\(conversation.id)/pause")
+            try await api.postVoid("api/discuss/conversations/\(conversation.id)/pause")
             Haptics.tap()
         } catch {
             self.error = error.localizedDescription
@@ -311,7 +311,7 @@ struct DebateRoundView: View {
         streaming = true; defer { streaming = false; pausing = false }
         do {
             let bytes = try await api.streamPost(
-                "api/debate/conversations/\(conversation.id)/clarify",
+                "api/discuss/conversations/\(conversation.id)/clarify",
                 body: Body(content: text)
             )
             for try await event in SSEClient.events(from: bytes) {
@@ -347,7 +347,7 @@ struct DebateRoundView: View {
                 messages.append(ChatMessage(
                     id: payload.id,
                     conversation_id: conversation.id,
-                    sender_type: payload.sender_type ?? "debater",
+                    sender_type: payload.sender_type ?? "discusser",
                     sender_id: payload.sender_id ?? "",
                     content: "",
                     created_at: Int(Date().timeIntervalSince1970),
@@ -407,7 +407,7 @@ private struct StreamFrame: Decodable {
 /// Group-chat bubble. Bot rows: avatar + sender name above + surface bubble
 /// (mirrors `BubbleView.botLayout`). User "插话" rows: right-aligned tinted
 /// bubble (mirrors `BubbleView.userLayout`).
-private struct DebateBubble: View {
+private struct DiscussBubble: View {
     let message: ChatMessage
     let bots: [String: Bot]
     let conversationID: String
@@ -479,7 +479,7 @@ private struct DebateBubble: View {
     }
 
     /// "<display name> · <model>" when we have the bot in registry, else the
-    /// raw sender id (which is the bot id for debater rows).
+    /// raw sender id (which is the bot id for discussr rows).
     private var displayLabel: String {
         if let bot = bots[message.sender_id] {
             return bot.nameWithModel

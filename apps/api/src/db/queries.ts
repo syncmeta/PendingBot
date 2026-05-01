@@ -313,15 +313,6 @@ export function resetConversation(conversationId: string): string[] {
 // type for each conversation row. Powers the chat list "preview" line in
 // every IM-style frontend (web + iOS) without an N+1 query per row. Costs
 // one index seek per conv on (conversation_id, created_at DESC).
-/// Light helper for cleanup paths that need IDs but not the full join (e.g.
-/// the Honcho cascade in DELETE /api/auth/account). Cheap enough that it's
-/// fine to call right before `deleteUserCascade` wipes the rows.
-export function listConversationIdsByUser(userId: string): string[] {
-  return getDb().query<{ id: string }, [string]>(
-    'SELECT id FROM conversations WHERE user_id = ?'
-  ).all(userId).map(r => r.id);
-}
-
 export function listConversationsByUser(userId: string, featureType?: string) {
   const cols = `
     c.*,
@@ -1122,10 +1113,6 @@ export interface UserSettingsRow {
   user_id: string;
   openrouter_key_enc: Uint8Array | null;
   openrouter_key_last4: string | null;
-  /// Custom base URL for the OpenAI-compatible endpoint. null falls through
-  /// to OpenRouter's URL; set this when the user is BYOK'ing their own
-  /// gateway / OpenAI directly / self-hosted Anthropic proxy.
-  openrouter_base_url: string | null;
   jina_key_enc: Uint8Array | null;
   jina_key_last4: string | null;
   updated_at: number;
@@ -1138,20 +1125,16 @@ export function getUserSettings(userId: string): UserSettingsRow | null {
 }
 
 export function setOpenrouterByok(
-  userId: string,
-  enc: Uint8Array | null,
-  last4: string | null,
-  baseUrl: string | null = null,
+  userId: string, enc: Uint8Array | null, last4: string | null,
 ) {
   getDb().query(
-    `INSERT INTO user_settings (user_id, openrouter_key_enc, openrouter_key_last4, openrouter_base_url, updated_at)
-     VALUES (?, ?, ?, ?, unixepoch())
+    `INSERT INTO user_settings (user_id, openrouter_key_enc, openrouter_key_last4, updated_at)
+     VALUES (?, ?, ?, unixepoch())
      ON CONFLICT(user_id) DO UPDATE SET
        openrouter_key_enc = excluded.openrouter_key_enc,
        openrouter_key_last4 = excluded.openrouter_key_last4,
-       openrouter_base_url = excluded.openrouter_base_url,
        updated_at = unixepoch()`
-  ).run(userId, enc, last4, baseUrl);
+  ).run(userId, enc, last4);
 }
 
 export function setJinaByok(

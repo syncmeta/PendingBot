@@ -1,16 +1,75 @@
 import Foundation
 
-/// Build-time constants for the hosted PendingBot service. Self-host iOS
-/// builds will have a separate target that overrides these — for now,
-/// this single-target build always points at bot.pendingname.com.
+/// Build-time constants for the hosted PendingBot service.
+///
+/// Two environments — `staging` and `prod` — selectable at runtime. Debug
+/// builds default to staging; Release defaults to production. Manual override
+/// goes through `HostedConfig.environment = .staging` (e.g. from a debug menu)
+/// before the first network call lands.
 enum HostedConfig {
-    static let serverURL = URL(string: "https://bot.pendingname.com")!
+    enum Environment {
+        case staging
+        case production
+
+        /// Worker base — REST writes (POST /v1/messages, /v1/upload, etc).
+        var workerURL: URL {
+            switch self {
+            case .staging:
+                return URL(string: "https://api-staging.pendingname.com")!
+            case .production:
+                return URL(string: "https://api.pendingname.com")!
+            }
+        }
+
+        /// Supabase project URL — direct reads (RLS守门) + Realtime + Auth.
+        var supabaseURL: URL {
+            switch self {
+            case .staging:
+                return URL(string: "https://REPLACE-ME-staging.supabase.co")!
+            case .production:
+                return URL(string: "https://REPLACE-ME-prod.supabase.co")!
+            }
+        }
+
+        /// Public anon key for supabase-swift client. RLS守门, not a secret.
+        /// Real values land via build setting / Info.plist injection (TODO B9).
+        var supabaseAnonKey: String {
+            switch self {
+            case .staging:
+                return "REPLACE_ME_STAGING_ANON_KEY"
+            case .production:
+                return "REPLACE_ME_PROD_ANON_KEY"
+            }
+        }
+    }
+
+    /// Active environment. Set once at app launch (e.g. from PendingBotApp).
+    /// Default below routes Debug builds to staging, Release to prod.
+    #if DEBUG
+    static var environment: Environment = .staging
+    #else
+    static var environment: Environment = .production
+    #endif
+
+    /// Convenience aliases — old code reads `HostedConfig.serverURL`. Until B9's
+    /// full Networking rewrite, route this to the active env's worker.
+    static var serverURL: URL { environment.workerURL }
+    static var supabaseURL: URL { environment.supabaseURL }
+    static var supabaseAnonKey: String { environment.supabaseAnonKey }
+
     static let displayName = "大绿豆"
 }
 
-/// Network glue for the Clerk JWT → pbk_live_* exchange. Called from the
-/// WelcomeView after Clerk completes the email-code / OAuth dance and we
-/// have a session token.
+// ── Auth exchange ─────────────────────────────────────────────────────────
+//
+// HISTORICAL: This used to bridge Clerk JWT → pbk_live_* bearer key. The new
+// architecture replaces Clerk with Supabase Auth (Sign in with Apple via
+// supabase-swift). This struct is preserved so existing callers compile
+// while the auth migration lands in B9. New writes go through Supabase JWT
+// directly on the X-Supabase-Auth header — no exchange step needed.
+
+/// Network glue for the legacy Clerk JWT → pbk_live_* exchange.
+/// **Do not call from new code.** Will be removed when Supabase Auth lands.
 enum AuthExchange {
     struct Response: Decodable {
         let ok: Bool

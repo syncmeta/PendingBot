@@ -63,11 +63,15 @@ struct ReviewTabView: View {
     private var sidebarBody: some View {
         VStack(spacing: 0) {
             TabHeaderBar(title: "回顾") {
-                PlusButton(action: { creating = true }, disabled: bots.isEmpty)
+                Button { creating = true } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 17, weight: .medium))
+                }
+                .disabled(bots.isEmpty)
             }
             Group {
                 if conversations.isEmpty {
-                    EmptyHint(text: "点这里 和 AI 一起回顾", arrowToTopTrailing: true)
+                    EmptyHint(text: "和 AI 一起回顾、反思你们的过往")
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 8) {

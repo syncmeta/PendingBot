@@ -1,19 +1,19 @@
 import SwiftUI
 
-/// 议论 — multi-bot debate. List of past debates; "+" to start a new one
+/// 议论 — multi-bot discuss. List of past discusss; "+" to start a new one
 /// (pick topic + ≥2 bots). Detail view runs rounds via SSE.
 ///
 /// Compact: NavigationStack push. Regular (iPad landscape, Mac Catalyst):
 /// NavigationSplitView sidebar+detail. See MessageTabView for the same
 /// branching rationale.
-struct DebateTabView: View {
+struct DiscussTabView: View {
     @Environment(\.api) private var api
     @Environment(\.useSidebarLayout) private var sidebarLayout
-    @State private var conversations: [DebateConversation] = []
+    @State private var conversations: [DiscussConversation] = []
     @State private var bots: [Bot] = []
     @State private var creating = false
-    @State private var path: [DebateRoute] = []         // compact
-    @State private var selected: DebateRoute?           // regular
+    @State private var path: [DiscussRoute] = []         // compact
+    @State private var selected: DiscussRoute?           // regular
     @State private var error: String?
 
     var body: some View {
@@ -26,15 +26,15 @@ struct DebateTabView: View {
         }
         .task { await load() }
         .sheet(isPresented: $creating) {
-            NewDebateSheet(bots: bots) { result in
+            NewDiscussSheet(bots: bots) { result in
                 creating = false
                 switch result {
                 case .none: break
                 case .created(let created):
                     Task { await load() }
-                    // Push / open the just-created debate and auto-start so
+                    // Push / open the just-created discuss and auto-start so
                     // the user lands inside a stream that's already going.
-                    let route = DebateRoute(conv: created, autoStart: true)
+                    let route = DiscussRoute(conv: created, autoStart: true)
                     if sidebarLayout {
                         selected = route
                     } else {
@@ -50,8 +50,8 @@ struct DebateTabView: View {
             sidebarBody
                 .background(Theme.Palette.canvas.ignoresSafeArea())
                 .toolbar(.hidden, for: .navigationBar)
-                .navigationDestination(for: DebateRoute.self) { route in
-                    DebateRoundView(conversation: route.conv, autoStart: route.autoStart)
+                .navigationDestination(for: DiscussRoute.self) { route in
+                    DiscussRoundView(conversation: route.conv, autoStart: route.autoStart)
                 }
         }
         .toolbar(path.isEmpty ? .visible : .hidden, for: .tabBar)
@@ -65,7 +65,7 @@ struct DebateTabView: View {
                 .sidebarColumnWidth()
         } detail: {
             if let route = selected {
-                DebateRoundView(conversation: route.conv, autoStart: route.autoStart)
+                DiscussRoundView(conversation: route.conv, autoStart: route.autoStart)
                     .id(route.conv.id)
             } else {
                 EmptyDetailHint(text: "选一场议论", systemImage: "person.2.wave.2")
@@ -76,11 +76,15 @@ struct DebateTabView: View {
     private var sidebarBody: some View {
         VStack(spacing: 0) {
             TabHeaderBar(title: "议论") {
-                PlusButton(action: { creating = true }, disabled: bots.isEmpty)
+                Button { creating = true } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 17, weight: .medium))
+                }
+                .disabled(bots.isEmpty)
             }
             Group {
                 if conversations.isEmpty {
-                    EmptyHint(text: "点这里 让 AI 们议论你", arrowToTopTrailing: true)
+                    EmptyHint(text: "让 AI 们议论你")
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 8) {
@@ -104,7 +108,7 @@ struct DebateTabView: View {
     }
 
     @ViewBuilder
-    private func rowTap(_ conv: DebateConversation) -> some View {
+    private func rowTap(_ conv: DiscussConversation) -> some View {
         let row = runRow(title: conv.title ?? "议论",
                          subtitle: conv.bot_ids.map { "\($0.count) 机器人" },
                          active: false,
@@ -112,12 +116,12 @@ struct DebateTabView: View {
                          selected: sidebarLayout && selected?.conv.id == conv.id)
         if sidebarLayout {
             Button {
-                selected = DebateRoute(conv: conv, autoStart: false)
+                selected = DiscussRoute(conv: conv, autoStart: false)
                 Haptics.tap()
             } label: { row }
             .buttonStyle(.plain)
         } else {
-            NavigationLink(value: DebateRoute(conv: conv, autoStart: false)) { row }
+            NavigationLink(value: DiscussRoute(conv: conv, autoStart: false)) { row }
                 .buttonStyle(.plain)
         }
     }
@@ -125,40 +129,40 @@ struct DebateTabView: View {
     private func load() async {
         guard let api else { return }
         do {
-            async let convs: [DebateConversation] = api.get("api/debate/conversations")
+            async let convs: [DiscussConversation] = api.get("api/discuss/conversations")
             async let botList: [Bot] = api.get("api/mobile/bots")
             self.conversations = (try await convs).sorted { $0.last_activity_at > $1.last_activity_at }
             self.bots = try await botList
         } catch { self.error = error.localizedDescription }
     }
 
-    private func delete(_ conv: DebateConversation) async {
+    private func delete(_ conv: DiscussConversation) async {
         guard let api else { return }
         do {
-            try await api.deleteVoid("api/debate/conversations/\(conv.id)")
+            try await api.deleteVoid("api/discuss/conversations/\(conv.id)")
             conversations.removeAll { $0.id == conv.id }
             Haptics.success()
         } catch { self.error = error.localizedDescription }
     }
 }
 
-/// One stop on the debate navigation stack. `autoStart` is set when the user
-/// just created the debate so the round view starts streaming on appear.
-struct DebateRoute: Hashable {
-    let conv: DebateConversation
+/// One stop on the discuss navigation stack. `autoStart` is set when the user
+/// just created the discuss so the round view starts streaming on appear.
+struct DiscussRoute: Hashable {
+    let conv: DiscussConversation
     let autoStart: Bool
 }
 
-enum NewDebateResult {
+enum NewDiscussResult {
     case none
-    case created(DebateConversation)
+    case created(DiscussConversation)
 }
 
-private struct NewDebateSheet: View {
+private struct NewDiscussSheet: View {
     @Environment(\.api) private var api
     @Environment(\.dismiss) private var dismiss
     let bots: [Bot]
-    var onClose: (NewDebateResult) -> Void
+    var onClose: (NewDiscussResult) -> Void
 
     @State private var topic = ""
     /// IDs of the bots picked to participate. Defaults to "all configured
@@ -228,7 +232,7 @@ private struct NewDebateSheet: View {
     }
 
     private var topicCard: some View {
-        debateCard(title: "话题") {
+        discussCard(title: "话题") {
             TextField("讨论什么?", text: $topic, axis: .vertical)
                 .lineLimit(2...5)
                 .font(Theme.Fonts.rounded(size: 15, weight: .regular))
@@ -237,7 +241,7 @@ private struct NewDebateSheet: View {
     }
 
     private var participantsCard: some View {
-        debateCard(title: "参与机器人(≥ 2)") {
+        discussCard(title: "参与机器人(≥ 2)") {
             VStack(spacing: 6) {
                 ForEach(bots) { bot in
                     let on = selectedBotIds.contains(bot.id)
@@ -266,7 +270,7 @@ private struct NewDebateSheet: View {
     }
 
     private var roundCapCard: some View {
-        debateCard(title: "每轮最多消息数") {
+        discussCard(title: "每轮最多消息数") {
             HStack(spacing: 12) {
                 Stepper(value: $maxMessages, in: 1...200, step: 1) {
                     Text("\(maxMessages) 条")
@@ -278,7 +282,7 @@ private struct NewDebateSheet: View {
     }
 
     @ViewBuilder
-    private func debateCard<Content: View>(title: String,
+    private func discussCard<Content: View>(title: String,
                                            @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title)
@@ -308,8 +312,8 @@ private struct NewDebateSheet: View {
             let maxMessages: Int
         }
         do {
-            let created: DebateConversation = try await api.post(
-                "api/debate/conversations",
+            let created: DiscussConversation = try await api.post(
+                "api/discuss/conversations",
                 body: Body(topic: topic, botIds: pickedIds, maxMessages: maxMessages)
             )
             Haptics.success()

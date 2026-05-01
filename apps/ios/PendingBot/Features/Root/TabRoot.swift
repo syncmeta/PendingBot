@@ -14,7 +14,7 @@ struct TabRoot: View {
                 MessageTabView()
                     .tabItem { Label("消息", systemImage: "bubble.left") }
 
-                DebateTabView()
+                DiscussTabView()
                     .tabItem { Label("议论", systemImage: "person.2.wave.2") }
 
                 SurfTabView()
