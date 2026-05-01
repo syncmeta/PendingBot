@@ -13,6 +13,9 @@ export interface BuildMessagesInput {
   // Three-bucket reflections persisted from review runs (most recent first).
   // Empty on cold start; combined with botMemory drives the self section.
   reflections: Array<{ kind: 'limit' | 'grow' | 'keep'; content: string }>;
+  // Skills the user has subscribed (globally and/or for this conv). Each
+  // contributes a `## Skill: ...` block to system content.
+  skills: Array<{ name: string; description: string; body: string }>;
   // Recent history from the client's local cache (POST body). Already
   // ordered ascending by created_at on the client side.
   recentContext: Array<{
@@ -79,11 +82,22 @@ function buildSelfSection(
   return parts.join('\n\n');
 }
 
+function buildSkillsSection(skills: BuildMessagesInput['skills']): string {
+  if (!skills.length) return '';
+  return skills
+    .map(
+      (s) =>
+        `## Skill: ${s.name}\n**When to use**: ${s.description}\n\n${s.body}`,
+    )
+    .join('\n\n');
+}
+
 export function buildMessages(input: BuildMessagesInput): ChatCompletionMessageParam[] {
   const {
     bot,
     botMemory,
     reflections,
+    skills,
     recentContext,
     newMessage,
     nowIso = new Date().toISOString(),
@@ -91,8 +105,11 @@ export function buildMessages(input: BuildMessagesInput): ChatCompletionMessageP
 
   const platform = getPrompt('system');
   const selfSection = buildSelfSection(botMemory, reflections);
+  const skillsSection = buildSkillsSection(skills);
   const modeInstr = bot.output_mode === 'bubble' ? BUBBLE_INSTRUCTIONS : SINGLE_INSTRUCTIONS;
-  const systemContent = [platform, selfSection, modeInstr].filter(Boolean).join('\n\n');
+  const systemContent = [platform, selfSection, skillsSection, modeInstr]
+    .filter(Boolean)
+    .join('\n\n');
 
   const messages: ChatCompletionMessageParam[] = [{ role: 'system', content: systemContent }];
 

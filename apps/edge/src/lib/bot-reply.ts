@@ -47,9 +47,10 @@ export async function generateBotReply(input: GenerateBotReplyInput): Promise<vo
   const supa = serviceClient(env);
   const startedAt = Date.now();
 
-  // Self-section inputs are read in parallel with the prompt-build pipeline.
-  // Both fall back gracefully (null memory + empty reflections → identity quest).
-  const [botMemory, reflectionsRes] = await Promise.all([
+  // Self-section + skills inputs are read in parallel with prompt-build.
+  // All fall back gracefully (null memory + empty reflections + no skills →
+  // identity quest, no skills section).
+  const [botMemory, reflectionsRes, skillsRes] = await Promise.all([
     getBotMemory(env, bot.id),
     supa
       .from('bot_reflections')
@@ -58,11 +59,37 @@ export async function generateBotReply(input: GenerateBotReplyInput): Promise<vo
       .eq('user_id', userId)
       .order('created_at', { ascending: false })
       .limit(REFLECTIONS_LIMIT),
+    // Skills the user has installed for this conv (sub.conversation_id =
+    // conv) OR globally (sub.conversation_id IS NULL). The OR filter is
+    // expressed via PostgREST's `or=(...)` syntax.
+    supa
+      .from('skill_subscriptions')
+      .select('skills(frontmatter, body_md)')
+      .eq('user_id', userId)
+      .or(`conversation_id.eq.${conversationId},conversation_id.is.null`),
   ]);
   const reflections = (reflectionsRes.data ?? []) as Array<{
     kind: 'limit' | 'grow' | 'keep';
     content: string;
   }>;
+  // PostgREST returns the joined `skills` row as an array even for an FK
+  // many-to-one — flatten it.
+  type SkillRow = {
+    frontmatter: { name?: string; description?: string };
+    body_md: string;
+  };
+  const skills: Array<{ name: string; description: string; body: string }> = [];
+  for (const row of skillsRes.data ?? []) {
+    const joined = (row as { skills: SkillRow | SkillRow[] | null }).skills;
+    const arr = Array.isArray(joined) ? joined : joined ? [joined] : [];
+    for (const s of arr) {
+      skills.push({
+        name: s.frontmatter?.name ?? 'unnamed',
+        description: s.frontmatter?.description ?? '',
+        body: s.body_md,
+      });
+    }
+  }
 
   // 1. Insert pending bot row. UUIDv7 in client_message_id keeps ordering
   // stable even if our INSERT lands microseconds before/after a sibling.
@@ -102,7 +129,14 @@ export async function generateBotReply(input: GenerateBotReplyInput): Promise<vo
     const stream = await openai.chat.completions.create(
       {
         model: bot.model_id,
-        messages: buildMessages({ bot, botMemory, reflections, recentContext, newMessage }),
+        messages: buildMessages({
+          bot,
+          botMemory,
+          reflections,
+          skills,
+          recentContext,
+          newMessage,
+        }),
         stream: true,
         stream_options: { include_usage: true },
       },
