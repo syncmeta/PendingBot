@@ -160,7 +160,9 @@ struct ConversationView: View {
                     photoItems: $photoPickerItems,
                     cameraImage: $cameraImage,
                     canSend: canSend,
-                    onSend: { Task { await send() } }
+                    onSend: { Task { await send() } },
+                    isStreaming: chatTurnTask != nil,
+                    onStop: { chatTurnTask?.cancel() }
                 )
                 .readableColumnWidth()
             }

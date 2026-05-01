@@ -20,6 +20,10 @@ struct ComposerView: View {
     @Binding var cameraImage: UIImage?
     var canSend: Bool
     var onSend: () -> Void
+    /// True while a bot reply is streaming. Send button morphs into a stop
+    /// button — tapping it calls `onStop` which cancels the SSE turn task.
+    var isStreaming: Bool = false
+    var onStop: () -> Void = {}
 
     @State private var showActions = false
     @FocusState private var isFocused: Bool
@@ -80,19 +84,25 @@ struct ComposerView: View {
                             )
                     )
 
-                Button(action: onSend) {
-                    Image(systemName: "arrow.up")
+                Button(action: { isStreaming ? onStop() : onSend() }) {
+                    Image(systemName: isStreaming ? "stop.fill" : "arrow.up")
                         .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(canSend ? .white : Theme.Palette.inkMuted.opacity(0.5))
+                        .foregroundStyle(
+                            isStreaming || canSend
+                                ? .white
+                                : Theme.Palette.inkMuted.opacity(0.5)
+                        )
                         .frame(width: 38, height: 38)
                         .background(
                             Circle().fill(
-                                canSend ? Theme.Palette.accent : Theme.Palette.surfaceMuted
+                                isStreaming || canSend
+                                    ? Theme.Palette.accent
+                                    : Theme.Palette.surfaceMuted
                             )
                         )
                 }
                 .buttonStyle(.plain)
-                .disabled(!canSend)
+                .disabled(!isStreaming && !canSend)
             }
             .padding(.horizontal, Theme.Metrics.gutter)
             .padding(.top, 10)
