@@ -1,0 +1,91 @@
+{
+  // PendingBot Edge Worker — Hono on Cloudflare Workers
+  // ──────────────────────────────────────────────────────────────
+  // Resources used (each env binds its own instance):
+  //   UPLOADS  — R2 bucket (attachments)
+  //   MEMORY   — KV namespace (Honcho representation cache)
+  //
+  // Markdown text imports for the prompt library: see [[rules]].
+
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "pendingbot-edge",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-04-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Treat .md as raw text, importable as string. Powers prompts/*.md.
+  "rules": [
+    {
+      "type": "Text",
+      "globs": ["**/*.md"],
+      "fallthrough": true
+    }
+  ],
+
+  "observability": {
+    "enabled": true
+  },
+
+  // Default env (used by `wrangler dev`). Real bindings live under env.staging
+  // and env.production; the dev harness fills in stubs for R2/KV/etc.
+  "vars": {
+    "ENVIRONMENT": "dev"
+  },
+
+  "env": {
+    "staging": {
+      "vars": {
+        "ENVIRONMENT": "staging",
+        "SUPABASE_URL": "https://REPLACE-ME-staging.supabase.co",
+        "ALLOWED_ORIGIN": "https://bot-staging.pendingname.com"
+      },
+      "routes": [
+        { "pattern": "api-staging.pendingname.com", "custom_domain": true }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "UPLOADS",
+          "bucket_name": "pendingbot-uploads-staging"
+        }
+      ],
+      "kv_namespaces": [
+        {
+          "binding": "MEMORY",
+          "id": "REPLACE-ME-staging-kv-id"
+        }
+      ]
+    },
+    "production": {
+      "vars": {
+        "ENVIRONMENT": "production",
+        "SUPABASE_URL": "https://REPLACE-ME-prod.supabase.co",
+        "ALLOWED_ORIGIN": "https://bot.pendingname.com"
+      },
+      "routes": [
+        { "pattern": "api.pendingname.com", "custom_domain": true }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "UPLOADS",
+          "bucket_name": "pendingbot-uploads-prod"
+        }
+      ],
+      "kv_namespaces": [
+        {
+          "binding": "MEMORY",
+          "id": "REPLACE-ME-prod-kv-id"
+        }
+      ]
+    }
+  }
+
+  // Secrets (set per-env via `wrangler secret put --env <env>`):
+  //   SUPABASE_ANON_KEY
+  //   SUPABASE_SERVICE_ROLE_KEY
+  //   SUPABASE_JWT_SECRET
+  //   OPENROUTER_API_KEY
+  //   DAYTONA_API_KEY
+  //   DAYTONA_API_URL
+  //   HONCHO_API_KEY
+  //   HONCHO_WORKSPACE_ID
+}

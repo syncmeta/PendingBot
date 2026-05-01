@@ -1,0 +1,25 @@
+# Copy to `.dev.vars` (gitignored) and fill in for local `wrangler dev`.
+# In CI / deploy, use `wrangler secret put --env <env> <KEY>`.
+
+# Cloudflare account
+CF_ACCOUNT_ID=
+
+# Supabase (staging or local)
+SUPABASE_URL=http://localhost:54321
+SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+SUPABASE_JWT_SECRET=
+
+# CORS origin for dev (web client URL)
+ALLOWED_ORIGIN=http://localhost:5173
+
+# LLM
+OPENROUTER_API_KEY=
+
+# Sandbox
+DAYTONA_API_KEY=
+DAYTONA_API_URL=https://app.daytona.io
+
+# Memory
+HONCHO_API_KEY=
+HONCHO_WORKSPACE_ID=
