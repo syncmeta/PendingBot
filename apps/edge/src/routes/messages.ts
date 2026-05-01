@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
 import { serviceClient, userClient } from '../lib/supabase';
+import { generateBotReply } from '../lib/bot-reply';
 import type { AppBindings } from '../types';
 
 export const messageRoutes = new Hono<AppBindings>();
@@ -30,15 +31,11 @@ const PostBody = z.object({
 
 // POST /v1/messages
 //
-// B0/B1.5 STUB: the LLM call + streaming wiring lands in B5/B7. Today this
-// handler:
-//   - validates the user is a conversation_participants member (via RLS read)
-//   - inserts the user's message via service role (idempotent on client_message_id)
-//   - returns the inserted row
-//
-// The Realtime push is automatic — pendingbot.messages is in the publication,
-// so any client with a `conv:${id}` channel sees the INSERT immediately. This
-// is the link we want to verify end-to-end before B5 lands the LLM half.
+// 1. RLS-gate the user's membership in the conversation (read via user JWT).
+// 2. Idempotently insert the user's message via service role.
+// 3. Schedule the bot reply on `ctx.waitUntil`. The streaming runner inserts
+//    its own bot row + flushes content_partial via Realtime — clients see
+//    tokens by subscribing to the conv channel, no SSE on this endpoint.
 messageRoutes.post('/', async (c) => {
   const userId = c.var.userId!;
   const userJwt = c.var.userJwt!;
@@ -50,28 +47,17 @@ messageRoutes.post('/', async (c) => {
     return c.json({ error: 'invalid body', detail: String(err) }, 400);
   }
 
-  // Verify the user is a participant. We use the user JWT for the read so
-  // RLS is the gate — failure means "no row visible" not a 403, but the
-  // effect is the same: not allowed.
   const supaUser = userClient(c.env, userJwt);
   const { data: conv, error: convErr } = await supaUser
     .from('conversations')
     .select('id, conversation_type, bot_id')
     .eq('id', parsed.conversationId)
     .maybeSingle();
-  if (convErr) {
-    return c.json({ error: 'database', detail: convErr.message }, 500);
-  }
-  if (!conv) {
-    return c.json({ error: 'conversation not found or no access' }, 404);
-  }
+  if (convErr) return c.json({ error: 'database', detail: convErr.message }, 500);
+  if (!conv) return c.json({ error: 'conversation not found or no access' }, 404);
 
-  // INSERT user's message. ON CONFLICT (client_message_id) DO NOTHING handles
-  // retries from a flaky client. We then SELECT-back to get the canonical row
-  // (whether ours or a prior one with the same client_message_id).
   const supaService = serviceClient(c.env);
   const { error: insertErr } = await supaService
-    .schema('pendingbot')
     .from('messages')
     .upsert(
       {
@@ -85,13 +71,9 @@ messageRoutes.post('/', async (c) => {
       },
       { onConflict: 'client_message_id', ignoreDuplicates: true },
     );
-  if (insertErr) {
-    return c.json({ error: 'database', detail: insertErr.message }, 500);
-  }
+  if (insertErr) return c.json({ error: 'database', detail: insertErr.message }, 500);
 
-  // Read back the canonical row for response shape consistency.
   const { data: row, error: selectErr } = await supaService
-    .schema('pendingbot')
     .from('messages')
     .select('id, client_message_id, conversation_id, user_id, role, content, status, created_at')
     .eq('client_message_id', parsed.clientMessageId)
@@ -100,12 +82,34 @@ messageRoutes.post('/', async (c) => {
     return c.json({ error: 'database', detail: selectErr?.message ?? 'row missing' }, 500);
   }
 
-  // TODO(B5/B7): kick off LLM call here:
-  //   ctx.waitUntil(generateBotReply({ env: c.env, conv, userJwt, row, recentContext: parsed.recentContext }))
-  // For now we just acknowledge the user's write — the bot reply path is wired
-  // in when streaming + Realtime push is fully tested.
+  // Schedule bot reply only if the conv has a pinned bot. user_user / group
+  // conversations without a default bot don't auto-reply (group + discuss
+  // dispatch lands in their own routes).
+  let botReplyScheduled = false;
+  if (conv.bot_id) {
+    const { data: bot, error: botErr } = await supaService
+      .from('bots')
+      .select('id, model_id, output_mode, is_active')
+      .eq('id', conv.bot_id)
+      .single();
+    if (botErr || !bot) {
+      console.error('[messages] bot lookup failed', botErr);
+    } else if (bot.is_active) {
+      c.executionCtx.waitUntil(
+        generateBotReply({
+          env: c.env,
+          conversationId: parsed.conversationId,
+          parentMessageId: row.id as string,
+          bot: { id: bot.id, model_id: bot.model_id, output_mode: bot.output_mode },
+          recentContext: parsed.recentContext ?? [],
+          newMessage: parsed.newMessage,
+        }),
+      );
+      botReplyScheduled = true;
+    }
+  }
 
-  return c.json({ message: row, botReplyScheduled: false });
+  return c.json({ message: row, botReplyScheduled });
 });
 
 // POST /v1/messages/:id/stop — request the streaming bot reply for this turn
@@ -114,7 +118,6 @@ messageRoutes.post('/:id/stop', async (c) => {
   const id = c.req.param('id');
   const supa = serviceClient(c.env);
   const { error } = await supa
-    .schema('pendingbot')
     .from('messages')
     .update({ stop_requested: true })
     .eq('id', id)
