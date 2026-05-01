@@ -1,38 +1,37 @@
 import SwiftUI
-import UIKit
 
 /// One place to change the look. Mirrors the design language used across
 /// the PendingBot reference + the web `tokens.css`: deep-jade accent on
 /// warm-ink neutrals, editorial serif for titles, rounded sans for chrome.
 ///
-/// Each palette entry has matched light + dark variants so the app respects
-/// the system trait. Dark variant is hand-tuned (not just inverted): keeps
-/// the warm-cream feeling on light, and a warm-charcoal feeling on dark.
+/// Light-only theme — the brand is two anchor colors (#044735 + #fdfcfa)
+/// and we intentionally don't ship a dark variant for v1.
 enum Theme {
 
     // ── Palette ─────────────────────────────────────────────────────────────
 
     enum Palette {
-        /// Brand accent — light: #044735 (deep forest); dark: #7DC9A9 (lifted
-        /// for contrast on charcoal). Both read as "PendingBot green".
-        static let accent      = adaptive(light: 0x044735, dark: 0x7DC9A9)
-        static let accentHover = adaptive(light: 0x0A6049, dark: 0x95DABB)
-        /// Soft accent fill — user bubble + selected pills.
-        static let accentBg    = adaptive(light: 0xE3EEEA, dark: 0x1F2C26)
+        /// Brand accent — #044735 (deep forest green).
+        static let accent      = Color(hex: 0x044735)
+        /// Hover/pressed — slightly lighter so it reads as "lit up".
+        static let accentHover = Color(hex: 0x0A6049)
+        /// Soft accent fill — used for the user bubble + selected pills.
+        /// Tinted from #044735, washed toward the cream surface.
+        static let accentBg    = Color(hex: 0xE3EEEA)
 
-        /// Page canvas — light: warm off-white; dark: warm charcoal.
-        static let canvas        = adaptive(light: 0xFDFCFA, dark: 0x121110)
-        /// Cards / sheets — sits a hair above canvas.
-        static let surface       = adaptive(light: 0xFFFFFF, dark: 0x1A1917)
-        /// Chips / pills / muted bg fills.
-        static let surfaceMuted  = adaptive(light: 0xEFEEE9, dark: 0x24221E)
+        /// Page canvas — #fdfcfa (warm off-white).
+        static let canvas        = Color(hex: 0xFDFCFA)
+        /// Cards / sheets — pure white sits a hair above canvas.
+        static let surface       = Color(hex: 0xFFFFFF)
+        /// Subtler than surface — chips / pills / muted bg fills.
+        static let surfaceMuted  = Color(hex: 0xEFEEE9)
 
-        /// Primary ink — warm near-black on light, warm near-white on dark.
-        static let ink       = adaptive(light: 0x1B1A14, dark: 0xF1EFE7)
-        /// Secondary — labels, timestamps, descriptions.
-        static let inkMuted  = adaptive(light: 0x6E6A5C, dark: 0xA29D8E)
+        /// Primary ink — keep close to true black but warm.
+        static let ink       = Color(hex: 0x1B1A14)
+        /// Secondary — used for labels, timestamps, descriptions.
+        static let inkMuted  = Color(hex: 0x6E6A5C)
         /// Hairline borders — barely-there separators.
-        static let hairline  = adaptive(light: 0xE2E0D7, dark: 0x2D2B25)
+        static let hairline  = Color(hex: 0xE2E0D7)
 
         /// User-message bubble — same as accentBg, named for clarity.
         static let userBubble = accentBg
@@ -108,20 +107,4 @@ extension Color {
             opacity: alpha
         )
     }
-}
-
-// ── Adaptive light/dark color ───────────────────────────────────────────────
-
-/// Build a Color that resolves to one hex on light, another on dark — using
-/// UIColor's dynamicProvider under the hood so the system trait drives it.
-private func adaptive(light: UInt32, dark: UInt32) -> Color {
-    Color(uiColor: UIColor { trait in
-        let hex = trait.userInterfaceStyle == .dark ? dark : light
-        return UIColor(
-            red:   CGFloat((hex >> 16) & 0xFF) / 255,
-            green: CGFloat((hex >>  8) & 0xFF) / 255,
-            blue:  CGFloat( hex        & 0xFF) / 255,
-            alpha: 1
-        )
-    })
 }
