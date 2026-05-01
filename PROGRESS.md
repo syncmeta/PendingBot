@@ -7,11 +7,29 @@
 
 | 阶段 | 状态 | commit |
 |---|---|---|
-| 计划拆分 + IM/Review/Identity 调整 | ✅ done | (pending commit) |
-| B0 — Edge 仓骨架 + Supabase 项目 | ⏳ 等 secrets | - |
-| B1 — Postgres schema + RLS | ⏳ 等 secrets | - |
+| 计划拆分 + IM/Review/Identity 调整 | ✅ done | `074d4bf` `5e42d88` `b68df3d` `3fca34b` `def5707` |
+| B0 — Edge 仓骨架 + Supabase 项目 | ✅ scaffold done | `38b5a73` |
+| B1 — Postgres schema + RLS | ✅ migration written | (in `38b5a73`) |
+| typecheck / wrangler dev 验证 | 🔵 等 bun install 完成 | - |
 | B1.5 — Worker query 层 + 主路由 stub | ⏳ 待开始 | - |
 | iOS Networking 层改造 | ⏳ 待开始 | - |
+
+## B0 已落地的内容
+
+- `apps/edge/` — wrangler.jsonc / Hono entry / health route / Supabase client / KV memory / Daytona sandbox interface / prompt-loader / 全套 prompts（含 identity-quest.md）
+- `packages/identity/` — Supabase JWT 校验 + Hono middleware
+- `packages/core/` — Tools registry interface
+- `supabase/` — config.toml + migrations/0001_init.sql（22 张表 + RLS + Realtime publication + UUID v7 helper + trigger maintain user_unread_counts）
+
+## 待你处理（醒来后）
+
+1. `bun install` 完成后我跑 typecheck（如有错我会 fix + 再 commit）
+2. **真要测 Realtime 链路 + Supabase 连通性**：你需要给我以下 secrets 填 `apps/edge/.dev.vars`：
+   - SUPABASE_URL（staging project URL）
+   - SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY / SUPABASE_JWT_SECRET
+   - 或者本地装 Supabase CLI (`brew install supabase/tap/supabase`) 然后 `supabase start`，我用本地 URL
+3. CF API token（部署 staging worker 才需要；今晚不部署）
+4. 其它 secrets（OpenRouter / Daytona / Honcho）等到 B7 才用上
 
 ## 产品定位（重要）
 

@@ -31,7 +31,6 @@ struct MeTabView: View {
                         VStack(spacing: 22) {
                             profileCard
                             serverCard
-                            auditCard
                             skillsCard
                             botsCard
                             portraitCard
@@ -201,39 +200,6 @@ struct MeTabView: View {
                 Text("尚未添加服务器").font(Theme.Fonts.footnote)
                     .foregroundStyle(Theme.Palette.inkMuted)
             }
-        }
-    }
-
-    private var auditCard: some View {
-        card(title: "用量",
-             footer: "30 天内服务器累计的 token 用量与上游费用。点开看按任务 / 模型分布,以及最近调用。")
-        {
-            NavigationLink {
-                AuditView()
-                    .toolbar(.hidden, for: .tabBar)
-            } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: "chart.bar")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(Theme.Palette.accent)
-                        .frame(width: 36, height: 36)
-                        .background(Circle().fill(Theme.Palette.accentBg))
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Token 审计")
-                            .font(Theme.Fonts.rounded(size: 15, weight: .medium))
-                            .foregroundStyle(Theme.Palette.ink)
-                        Text("用量、费用、最近调用")
-                            .font(Theme.Fonts.caption)
-                            .foregroundStyle(Theme.Palette.inkMuted)
-                    }
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Theme.Palette.inkMuted.opacity(0.6))
-                }
-            }
-            .contentShape(Rectangle())
-            .buttonStyle(.plain)
         }
     }
 

@@ -44,7 +44,7 @@ struct EmptyDetailHint: View {
 }
 
 /// Default column-width preferences for a sidebar list. Pulled out so the
-/// four list-tabs (Message / Debate / Surf / Review) feel like one app.
+/// four list-tabs (Message / Discuss / Surf / Review) feel like one app.
 extension View {
     func sidebarColumnWidth() -> some View {
         navigationSplitViewColumnWidth(min: 280, ideal: 340, max: 420)

@@ -3,6 +3,8 @@ import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import type { AppBindings } from './types';
 import { healthRoutes } from './routes/health';
+import { messageRoutes } from './routes/messages';
+import { uploadRoutes } from './routes/upload';
 
 // Top-level Hono app. Routes mount under /v1/ to leave room for a future v2
 // (URL path = major-era versioning). Within v1, schema-driven compatibility
@@ -40,6 +42,9 @@ app.onError((err, c) => {
 // Routes — mounted under /v1/
 const v1 = new Hono<AppBindings>();
 v1.route('/health', healthRoutes);
+v1.route('/messages', messageRoutes);
+v1.route('/upload', uploadRoutes);
+v1.route('/uploads', uploadRoutes);   // GET /v1/uploads/:id
 
 app.route('/v1', v1);
 

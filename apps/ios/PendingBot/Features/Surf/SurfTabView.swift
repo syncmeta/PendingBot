@@ -261,7 +261,7 @@ struct EmptyResponse: Decodable {
     init(from decoder: Decoder) throws {}
 }
 
-/// Themed list-row used by surf / review / debate / portrait — card with
+/// Themed list-row used by surf / review / discuss / portrait — card with
 /// hairline border, serif title, rounded subtitle. Free function so each
 /// list view can share it without re-writing the chrome.
 @ViewBuilder

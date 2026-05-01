@@ -89,33 +89,6 @@ struct Attachment: Codable, Identifiable, Hashable {
     let url: String      // relative path, e.g. /uploads/<id>
 }
 
-struct AuditSummaryRow: Codable, Identifiable, Hashable {
-    let group_key: String
-    let count: Int
-    let total_input: Int?
-    let total_output: Int?
-    let total_tokens: Int?
-    let total_cost: Double?
-
-    var id: String { group_key }
-    var tokens: Int { total_tokens ?? 0 }
-    var cost: Double { total_cost ?? 0 }
-}
-
-struct AuditDetailRow: Codable, Identifiable, Hashable {
-    let id: Int
-    let conversation_id: String?
-    let task_type: String
-    let model: String
-    let input_tokens: Int
-    let output_tokens: Int
-    let total_tokens: Int
-    let cached_tokens: Int?
-    let cost_usd: Double?
-    let generation_id: String?
-    let latency_ms: Int?
-    let created_at: Int
-}
 
 struct OpenRouterModel: Codable, Identifiable, Hashable {
     let slug: String
@@ -183,7 +156,7 @@ struct ReviewConversation: Codable, Identifiable, Hashable {
     let status: String?
 }
 
-struct DebateConversation: Codable, Identifiable, Hashable {
+struct DiscussConversation: Codable, Identifiable, Hashable {
     let id: String
     let bot_id: String
     let user_id: String
@@ -193,7 +166,7 @@ struct DebateConversation: Codable, Identifiable, Hashable {
     let bot_ids: [String]?
     /// Per-session cap on messages per round. nil = orchestrator default.
     let max_messages: Int?
-    let round_count_debate: Int?
+    let round_count_discuss: Int?
 }
 
 struct PortraitConversation: Codable, Identifiable, Hashable {

@@ -36,11 +36,24 @@ packages:
     url: https://github.com/gonzalezreal/swift-markdown-ui
     from: 2.4.0
   Clerk:
-    # Official iOS SDK — handles SIWA, Google OAuth, email-code, JWT
-    # session management. We use it on the hosted target only; self-host
-    # builds skip the dependency by stripping the import sites.
+    # LEGACY: Used to be the auth provider; will be removed in B9 when
+    # supabase-swift takes over Sign in with Apple + email magic-link flows.
+    # Kept on the dep list now so the existing Networking layer compiles
+    # untouched until that swap lands.
     url: https://github.com/clerk/clerk-ios
     from: 0.50.0
+  Supabase:
+    # supabase-swift — official iOS SDK covering Auth, PostgREST (RLS-gated
+    # direct DB reads), Realtime (postgres_changes / broadcast / presence),
+    # and Storage. Will gradually take over from Clerk + custom REST in B9.
+    url: https://github.com/supabase/supabase-swift
+    from: 2.0.0
+  GRDB:
+    # SQLite wrapper for the local mirror of pendingbot.* data. Used for
+    # offline reads, optimistic UI, multi-device sync via client_message_id
+    # upsert. Schema migration framework included.
+    url: https://github.com/groue/GRDB.swift
+    from: 6.0.0
 
 targets:
   PendingBot:
@@ -89,6 +102,10 @@ targets:
         product: MarkdownUI
       - package: Clerk
         product: Clerk
+      - package: Supabase
+        product: Supabase
+      - package: GRDB
+        product: GRDB
     info:
       path: PendingBot/Resources/Info.plist
       properties:
