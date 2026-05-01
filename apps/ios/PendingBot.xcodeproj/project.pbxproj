@@ -55,6 +55,8 @@
 		3644B8742BA13D3463F89E73 /* SupabaseStack.swift in Sources */ = {isa = PBXBuildFile; fileRef = 755CCF76F1304BBF184B069F /* SupabaseStack.swift */; };
 		9AD8B0014D4118CB17C6D7F2 /* AppleSignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36C5C1F1F3A2139174BC4C4B /* AppleSignIn.swift */; };
 		33F024E77923DF8C2E142A1D /* RealtimeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9843FFF26D200B2BF5276758 /* RealtimeManager.swift */; };
+		361A8E69C4D9FFCB68D90DB5 /* ChatStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B6FB7767BD3A47DF853F93F /* ChatStream.swift */; };
+		50B96D7726761D850F97C182 /* BubbleSplitter.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7D2EE47BE02598CBC8E7875 /* BubbleSplitter.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -104,6 +106,8 @@
 		755CCF76F1304BBF184B069F /* SupabaseStack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseStack.swift; sourceTree = "<group>"; };
 		36C5C1F1F3A2139174BC4C4B /* AppleSignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSignIn.swift; sourceTree = "<group>"; };
 		9843FFF26D200B2BF5276758 /* RealtimeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeManager.swift; sourceTree = "<group>"; };
+		6B6FB7767BD3A47DF853F93F /* ChatStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatStream.swift; sourceTree = "<group>"; };
+		C7D2EE47BE02598CBC8E7875 /* BubbleSplitter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BubbleSplitter.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -143,6 +147,7 @@
 			isa = PBXGroup;
 			children = (
 				F932206D62405FD4C1F0143B /* BubbleView.swift */,
+				C7D2EE47BE02598CBC8E7875 /* BubbleSplitter.swift */,
 				37E2067C1C372EB858B6A6DC /* ChatActionSheet.swift */,
 				3085FEC82B399B97022B1078 /* ComposerView.swift */,
 				C99F8DD8956403453040B34E /* ConversationSettingsView.swift */,
@@ -235,6 +240,7 @@
 				755CCF76F1304BBF184B069F /* SupabaseStack.swift */,
 				36C5C1F1F3A2139174BC4C4B /* AppleSignIn.swift */,
 				9843FFF26D200B2BF5276758 /* RealtimeManager.swift */,
+				6B6FB7767BD3A47DF853F93F /* ChatStream.swift */,
 			);
 			path = Networking;
 			sourceTree = "<group>";
@@ -426,6 +432,8 @@
 				3644B8742BA13D3463F89E73 /* SupabaseStack.swift in Sources */,
 				9AD8B0014D4118CB17C6D7F2 /* AppleSignIn.swift in Sources */,
 				33F024E77923DF8C2E142A1D /* RealtimeManager.swift in Sources */,
+				361A8E69C4D9FFCB68D90DB5 /* ChatStream.swift in Sources */,
+				50B96D7726761D850F97C182 /* BubbleSplitter.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
