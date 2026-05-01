@@ -44,6 +44,7 @@
 | Surf UI | 独立 task panel，Claude Code Desktop 风格 |
 | Discuss UI | IM 群聊形态进主消息列表 |
 | 品牌 | pendingname.com / PendingBot 已锁定 |
+| Sandbox | Daytona（OSS Apache 2.0，managed Cloud 起步；用量稳定后可自托管） |
 
 ## 醒来后请先看
 
@@ -64,7 +65,7 @@
 - [ ] 创建 KV namespace: `pendingbot-memory-staging`
 - [ ] CF API Token
 - [ ] OpenRouter API key（顺手充 $5）
-- [ ] E2B API key
+- [ ] Daytona API key
 - [ ] Honcho API key + Workspace ID
 - [ ] secrets 写到 `apps/edge/.dev.vars`
 
