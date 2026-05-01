@@ -38,20 +38,12 @@ final class WebSocketClient: ObservableObject {
     // ── Lifecycle ───────────────────────────────────────────────────────────
 
     func connect() {
+        // Legacy /ws/mobile endpoint is gone in the new Worker; this client
+        // is a no-op shim until B9.3 wires Supabase Realtime channels.
+        // We expose the same surface so existing call sites compile, but no
+        // socket is actually opened.
         explicitlyDisconnected = false
-        guard status != .connected, status != .connecting else { return }
-        status = .connecting
-
-        var components = URLComponents(url: account.wsBase, resolvingAgainstBaseURL: false)!
-        components.queryItems = [URLQueryItem(name: "key", value: account.key)]
-        guard let url = components.url else { status = .disconnected; return }
-
-        let task = session.webSocketTask(with: url)
-        self.task = task
-        task.resume()
-        status = .connected
-        reconnectAttempts = 0
-        receiveLoop()
+        status = .disconnected
     }
 
     func disconnect() {

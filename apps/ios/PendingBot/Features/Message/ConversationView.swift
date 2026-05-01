@@ -92,7 +92,7 @@ struct ConversationView: View {
                             BubbleView(message: msg,
                                        botName: botName,
                                        conversationID: conversation.id,
-                                       serverURL: account?.serverURL,
+                                       serverURL: account?.workerURL,
                                        toolLog: pinnedToolLogs[msg.id])
                                 .id(msg.id)
                                 .contextMenu {

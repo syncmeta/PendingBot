@@ -26,7 +26,7 @@ struct TabRoot: View {
                 MeTabView()
                     .tabItem { Label("我", systemImage: "person.crop.circle") }
             }
-            .environment(\.api, APIClient(account: current))
+            .environment(\.api, APIClient())
             .environment(\.account, current)
             .onChange(of: store.current) { _, _ in Haptics.tap() }
         } else {

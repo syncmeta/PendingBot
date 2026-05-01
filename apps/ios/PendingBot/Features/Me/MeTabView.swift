@@ -1,5 +1,4 @@
 import SwiftUI
-import Clerk
 
 /// 我 — profile, 当前服务器, 画像, AI 收藏. Visual language mirrors the
 /// PendingBot settings sheet: canvas background, vertical stack of
@@ -84,7 +83,7 @@ struct MeTabView: View {
             Button("退出登录", role: .destructive) { signOut() }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("这台设备会忘掉「\(store.current?.name ?? "当前服务器")」的钥匙。服务端那边的会话和数据不受影响 — 之后用同一把钥匙还能再加回来。")
+            Text("这台设备会注销「\(store.current?.displayName ?? "当前账户")」的登录。服务端的对话和画像不受影响 — 重新用 Apple ID 登录即可恢复。")
         }
     }
 
@@ -178,11 +177,11 @@ struct MeTabView: View {
                             .frame(width: 36, height: 36)
                             .background(Circle().fill(Theme.Palette.accentBg))
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(current.name)
+                            Text(current.displayName)
                                 .font(Theme.Fonts.rounded(size: 15, weight: .medium))
                                 .foregroundStyle(Theme.Palette.ink)
                                 .lineLimit(1)
-                            Text(current.serverURL.absoluteString)
+                            Text(current.email ?? "")
                                 .font(Theme.Fonts.monoSmall)
                                 .foregroundStyle(Theme.Palette.inkMuted)
                                 .lineLimit(1)
@@ -520,13 +519,10 @@ struct MeTabView: View {
     }
 
     private func signOut() {
-        guard let current = store.current else { return }
-        store.remove(current)
-        // Also clear the Clerk SDK's local session — otherwise the next
-        // tap on "登录 / 注册" would auto-exchange that lingering session
-        // and put the user right back where they started.
-        Task { try? await Clerk.shared.signOut() }
-        Haptics.success()
+        Task {
+            await store.signOut()
+            Haptics.success()
+        }
     }
 
     private func deletePick(_ pick: AiPick) async {
