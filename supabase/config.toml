@@ -67,5 +67,3 @@ enabled = false
 [analytics]
 enabled = false
 
-[experimental]
-webhooks = { enabled = false }
