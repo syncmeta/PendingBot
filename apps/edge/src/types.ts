@@ -23,6 +23,14 @@ export interface Env {
   // Jina powers surf's web search + URL reader. Free tier requires no key
   // but rate-limits aggressively; the key lifts those limits.
   JINA_API_KEY: string;
+  // APNS: token-based auth, two .p8 keys (Apple recommends per-environment).
+  // Topic = the iOS app bundle id (key is restricted to it).
+  APNS_TEAM_ID: string;
+  APNS_TOPIC: string;
+  APNS_KEY_ID_DEV: string;
+  APNS_KEY_ID_PROD: string;
+  APNS_KEY_DEV: string;        // .p8 PEM content (secret)
+  APNS_KEY_PROD: string;       // .p8 PEM content (secret)
 }
 
 // Hono's c.var slot — populated by middleware (auth, version, etc.)

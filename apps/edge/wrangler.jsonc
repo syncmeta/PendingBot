@@ -26,6 +26,14 @@
     "enabled": true
   },
 
+  // Cron triggers (B8). Each pattern is matched in src/cron/index.ts.
+  "triggers": {
+    "crons": [
+      "0 3 * * 1",
+      "0 4 * * *"
+    ]
+  },
+
   // Default env (used by `wrangler dev`). Real bindings live under env.staging
   // and env.production; the dev harness fills in stubs for R2/KV/etc.
   "vars": {
@@ -83,6 +91,13 @@
   //   SUPABASE_ANON_KEY
   //   SUPABASE_SERVICE_ROLE_KEY
   //   OPENROUTER_API_KEY
+  //   JINA_API_KEY
+  //   APNS_TEAM_ID
+  //   APNS_TOPIC
+  //   APNS_KEY_ID_DEV
+  //   APNS_KEY_ID_PROD
+  //   APNS_KEY_DEV   (.p8 PEM content, multi-line)
+  //   APNS_KEY_PROD  (.p8 PEM content, multi-line)
   //   DAYTONA_API_KEY
   //   DAYTONA_API_URL
   //   HONCHO_API_KEY
