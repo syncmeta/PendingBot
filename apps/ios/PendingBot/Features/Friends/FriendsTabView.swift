@@ -272,13 +272,16 @@ private struct FriendRow: View {
                     .foregroundStyle(Theme.Palette.ink)
                     .lineLimit(1)
                 if kind == .bot, let tag = modelTag {
+                    // Match message-list model tag: muted ink fg + surface
+                    // muted bg, not the accent green.
                     Text(tag)
-                        .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
-                        .foregroundStyle(Theme.Palette.accent)
+                        .font(Theme.Fonts.rounded(size: 10, weight: .medium))
+                        .foregroundStyle(Theme.Palette.inkMuted)
                         .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(Theme.Palette.accentBg))
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Theme.Palette.surfaceMuted))
                         .lineLimit(1)
+                        .truncationMode(.middle)
                 }
             }
 
@@ -294,9 +297,12 @@ private struct FriendRow: View {
 private struct KindTag: View {
     let kind: FriendRow.Kind
     var body: some View {
+        // Mirror the message-list "primary name" capsule colors:
+        //   AI    → accent green fg + accentBg
+        //   人类   → dark purple fg + light purple bg
         let (text, fg, bg): (String, Color, Color) = kind == .bot
-            ? ("AI", Color(hex: 0x1F4F8A), Color(hex: 0xE6EEF8))
-            : ("人类", Color(hex: 0x6F4A1A), Color(hex: 0xF7ECDA))
+            ? ("AI", Theme.Palette.accent, Theme.Palette.accentBg)
+            : ("人类", Color(hex: 0x5B3D8A), Color(hex: 0xECE3F7))
         return Text(text)
             .font(.system(size: 10, weight: .semibold))
             .foregroundStyle(fg)
