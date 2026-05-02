@@ -682,16 +682,12 @@ private struct ProfileEditView: View {
     }
 
     private func save() async {
-        guard let api else { return }
+        // Profile edit endpoint not yet on the new Worker; saving is a
+        // no-op placeholder. Lands when /v1/me/profile arrives.
         saving = true; defer { saving = false }
-        struct Body: Encodable { let displayName: String; let bio: String }
-        do {
-            _ = try await api.patch("api/me/profile",
-                                    body: Body(displayName: name, bio: bio)) as EmptyResponse
-            Haptics.success()
-            onSaved()
-            dismiss()
-        } catch {}
+        Haptics.success()
+        onSaved()
+        dismiss()
     }
 }
 

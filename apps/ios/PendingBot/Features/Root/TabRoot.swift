@@ -1,10 +1,10 @@
 import SwiftUI
 
-/// Six-tab root mirroring the web UI's layout:
-/// 消息 / 议论 / 冲浪 / 回顾 / 画像 / 你
+/// Three-tab root: 消息 / 好友 / 我.
 ///
-/// Each child view receives a per-account APIClient via @EnvironmentObject so
-/// that switching accounts swaps everything in one shot.
+/// Discuss / Surf / Review tabs are gone — discuss conversations land in
+/// the message list with a 「议论」 badge; surf is accessed from a bot
+/// friend's view; review surfaces inline as log cards.
 struct TabRoot: View {
     @EnvironmentObject var store: AccountStore
 
@@ -14,11 +14,8 @@ struct TabRoot: View {
                 MessageTabView()
                     .tabItem { Label("消息", systemImage: "bubble.left") }
 
-                DiscussTabView()
-                    .tabItem { Label("议论", systemImage: "person.2.wave.2") }
-
-                SurfTabView()
-                    .tabItem { Label("冲浪", systemImage: "water.waves") }
+                FriendsTabView()
+                    .tabItem { Label("好友", systemImage: "person.2") }
 
                 MeTabView()
                     .tabItem { Label("我", systemImage: "person.crop.circle") }

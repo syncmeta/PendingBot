@@ -798,19 +798,11 @@ struct ConversationView: View {
     }
 
     private func patchConversationModel(slug: String?) async {
-        guard let api else { return }
-        struct Body: Encodable { let modelOverride: String? }
-        do {
-            _ = try await api.patch(
-                "api/mobile/conversations/\(conversation.id)",
-                body: Body(modelOverride: slug)
-            ) as EmptyResponse
-            Haptics.success()
-            onChange()
-        } catch {
-            self.error = "更换模型失败: \(error.localizedDescription)"
-            Haptics.error()
-        }
+        // Per-conv model override endpoint not yet on the new Worker; the
+        // conversation_settings sheet still calls this. UI affordance is
+        // present but the change doesn't persist until the route lands.
+        _ = slug
+        Haptics.tap()
     }
 
     private func patchBotUserModel(slug: String?) async {
