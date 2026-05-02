@@ -1,4 +1,5 @@
 import SwiftUI
+import Supabase
 
 /// Full skills management screen — opens from 「我」 → 技能.
 /// Lists every skill the user owns, lets them toggle / edit / delete /
@@ -157,19 +158,84 @@ struct SkillsView: View {
     // ── Data ────────────────────────────────────────────────────────────────
 
     private func load() async {
-        // /v1/skills doesn't exist on the new Worker yet; empty state until
-        // the skills CRUD route lands. Subscriptions will read direct from
-        // pendingbot.skill_subscriptions then.
-        self.skills = []
+        loading = true; defer { loading = false }
+        do {
+            // RLS hides bot-authored rows; this returns my own + system-public.
+            struct SkillRow: Decodable {
+                let id: String
+                let owner_id: String?
+                let frontmatter: SkillFrontmatter
+                let body_md: String
+                let updated_at: String?
+            }
+            struct SkillFrontmatter: Decodable {
+                let name: String?
+                let description: String?
+            }
+            struct SubRow: Decodable { let skill_id: String }
+
+            async let skillRows: [SkillRow] = SupabaseStack.shared.database
+                .from("skills")
+                .select("id, owner_id, frontmatter, body_md, updated_at")
+                .order("updated_at", ascending: false)
+                .execute()
+                .value
+            async let subRows: [SubRow] = SupabaseStack.shared.database
+                .from("skill_subscriptions")
+                .select("skill_id")
+                .is("conversation_id", value: nil)
+                .execute()
+                .value
+
+            let subscribed = Set(try await subRows.map(\.skill_id))
+            let fmt = ISO8601DateFormatter()
+            self.skills = try await skillRows.map { row in
+                SkillSummary(
+                    id: row.id,
+                    name: row.frontmatter.name ?? "未命名",
+                    description: row.frontmatter.description ?? "",
+                    enabled: subscribed.contains(row.id),
+                    source: nil,
+                    source_url: nil,
+                    license: nil,
+                    is_preset: row.owner_id == nil,
+                    body_length: row.body_md.count,
+                    updated_at: row.updated_at.flatMap(fmt.date(from:))
+                        .map { Int($0.timeIntervalSince1970) } ?? 0
+                )
+            }
+        } catch {
+            self.error = error.localizedDescription
+        }
     }
 
+    /// Toggle global subscription (`skill_subscriptions` row with
+    /// conversation_id IS NULL). Per-conv subscriptions surface in the
+    /// in-chat skills chip — not this screen.
     private func toggle(_ skill: SkillSummary, enabled: Bool) async {
-        guard let api else { return }
+        guard let userId = AccountStore.shared.current?.id else { return }
         pendingToggle.insert(skill.id)
         defer { pendingToggle.remove(skill.id) }
-        struct Body: Encodable { let enabled: Bool }
         do {
-            _ = try await api.patch("api/skills/\(skill.id)", body: Body(enabled: enabled)) as EmptyResponse
+            if enabled {
+                struct SubInsert: Encodable {
+                    let user_id: String
+                    let skill_id: String
+                    let conversation_id: String? = nil
+                }
+                try await SupabaseStack.shared.database
+                    .from("skill_subscriptions")
+                    .insert(SubInsert(user_id: userId, skill_id: skill.id))
+                    .execute()
+            } else {
+                try await SupabaseStack.shared.database
+                    .from("skill_subscriptions")
+                    .delete()
+                    .eq("user_id", value: userId)
+                    .eq("skill_id", value: skill.id)
+                    .is("conversation_id", value: nil)
+                    .execute()
+            }
             // Optimistically update local row.
             if let idx = skills.firstIndex(where: { $0.id == skill.id }) {
                 skills[idx] = SkillSummary(
@@ -186,23 +252,58 @@ struct SkillsView: View {
     }
 
     private func openEditor(_ skill: SkillSummary) async {
-        guard let api else { return }
         do {
-            let detail: SkillDetail = try await api.get("api/skills/\(skill.id)")
-            self.editingSkill = detail
+            struct Row: Decodable {
+                let id: String
+                let frontmatter: FM
+                let body_md: String
+                let owner_id: String?
+                let updated_at: String?
+                struct FM: Decodable { let name: String?; let description: String? }
+            }
+            let row: Row = try await SupabaseStack.shared.database
+                .from("skills")
+                .select("id, frontmatter, body_md, owner_id, updated_at")
+                .eq("id", value: skill.id)
+                .single()
+                .execute()
+                .value
+            let fmt = ISO8601DateFormatter()
+            let updatedSecs = row.updated_at.flatMap(fmt.date(from:))
+                .map { Int($0.timeIntervalSince1970) } ?? 0
+            self.editingSkill = SkillDetail(
+                id: row.id,
+                name: row.frontmatter.name ?? "未命名",
+                description: row.frontmatter.description ?? "",
+                enabled: skill.enabled,
+                source: nil, source_url: nil, license: nil,
+                is_preset: row.owner_id == nil,
+                body_length: row.body_md.count,
+                updated_at: updatedSecs,
+                body: row.body_md
+            )
         } catch {
             self.error = error.localizedDescription
         }
     }
 
     private func delete(_ skill: SkillSummary) async {
-        guard let api else { return }
         do {
-            try await api.deleteVoid("api/skills/\(skill.id)")
+            try await SupabaseStack.shared.database
+                .from("skills")
+                .delete()
+                .eq("id", value: skill.id)
+                .execute()
             skills.removeAll { $0.id == skill.id }
             Haptics.success()
         } catch {
-            self.error = error.localizedDescription
+            // RLS denies deletes on system-public skills (owner_id IS NULL)
+            // — surface that as a friendlier message than the raw PG error.
+            if skill.is_preset {
+                self.error = "预设技能不能删除"
+            } else {
+                self.error = error.localizedDescription
+            }
         }
     }
 }
@@ -392,32 +493,74 @@ struct SkillEditorSheet: View {
     }
 
     private func save() async {
-        guard let api, canSave else { return }
+        guard canSave, let userId = AccountStore.shared.current?.id else { return }
         saving = true; defer { saving = false }
 
-        struct CreateBody: Encodable {
-            let name: String; let description: String; let body: String; let enabled: Bool
-        }
-        struct PatchBody: Encodable {
-            let name: String; let description: String; let body: String; let enabled: Bool
-        }
         let trimmedName = name.trimmingCharacters(in: .whitespaces)
+        struct Frontmatter: Codable {
+            let name: String
+            let description: String
+        }
+        let fm = Frontmatter(name: trimmedName, description: description)
 
         do {
             switch mode {
             case .create, .createPrefilled:
-                struct R: Decodable { let id: String }
-                _ = try await api.post(
-                    "api/skills",
-                    body: CreateBody(name: trimmedName, description: description,
-                                     body: skillBody, enabled: enabled)
-                ) as R
+                struct Insert: Encodable {
+                    let owner_id: String
+                    let frontmatter: Frontmatter
+                    let body_md: String
+                    let visibility = "private"
+                }
+                struct InsertedId: Decodable { let id: String }
+                let inserted: InsertedId = try await SupabaseStack.shared.database
+                    .from("skills")
+                    .insert(Insert(owner_id: userId, frontmatter: fm, body_md: skillBody))
+                    .select("id")
+                    .single()
+                    .execute()
+                    .value
+                if enabled {
+                    struct SubInsert: Encodable {
+                        let user_id: String
+                        let skill_id: String
+                        let conversation_id: String? = nil
+                    }
+                    try await SupabaseStack.shared.database
+                        .from("skill_subscriptions")
+                        .insert(SubInsert(user_id: userId, skill_id: inserted.id))
+                        .execute()
+                }
             case .edit(let detail):
-                _ = try await api.patch(
-                    "api/skills/\(detail.id)",
-                    body: PatchBody(name: trimmedName, description: description,
-                                    body: skillBody, enabled: enabled)
-                ) as EmptyResponse
+                struct Patch: Encodable {
+                    let frontmatter: Frontmatter
+                    let body_md: String
+                }
+                try await SupabaseStack.shared.database
+                    .from("skills")
+                    .update(Patch(frontmatter: fm, body_md: skillBody))
+                    .eq("id", value: detail.id)
+                    .execute()
+                // Sync the global subscription state with the editor toggle.
+                if enabled && !detail.enabled {
+                    struct SubInsert: Encodable {
+                        let user_id: String
+                        let skill_id: String
+                        let conversation_id: String? = nil
+                    }
+                    try? await SupabaseStack.shared.database
+                        .from("skill_subscriptions")
+                        .insert(SubInsert(user_id: userId, skill_id: detail.id))
+                        .execute()
+                } else if !enabled && detail.enabled {
+                    try? await SupabaseStack.shared.database
+                        .from("skill_subscriptions")
+                        .delete()
+                        .eq("user_id", value: userId)
+                        .eq("skill_id", value: detail.id)
+                        .is("conversation_id", value: nil)
+                        .execute()
+                }
             }
             Haptics.success()
             onSaved()
