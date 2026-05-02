@@ -16,6 +16,10 @@ export interface BuildMessagesInput {
   // Skills the user has subscribed (globally and/or for this conv). Each
   // contributes a `## Skill: ...` block to system content.
   skills: Array<{ name: string; description: string; body: string }>;
+  // Bot's private "manual on relating to this user" — written by the bot
+  // itself over time, never shown to the user. Null when the bot hasn't
+  // written one yet (cold start).
+  botNote: string | null;
   // Recent history from the client's local cache (POST body). Already
   // ordered ascending by created_at on the client side.
   recentContext: Array<{
@@ -117,6 +121,16 @@ function buildSkillsSection(skills: BuildMessagesInput['skills']): string {
     .join('\n\n');
 }
 
+function buildBotNoteSection(note: string | null): string {
+  if (!note || !note.trim()) return '';
+  return [
+    '## 我对这个用户的私人笔记',
+    '（这份笔记是你过去自己整理的，对方看不到——交往时参考着用。）',
+    '',
+    note.trim(),
+  ].join('\n');
+}
+
 // Wraps a string content into the Anthropic content-block array form so we
 // can attach `cache_control` to it. OpenRouter passes this through to
 // Anthropic models; for non-Anthropic providers it's a no-op (they ignore
@@ -139,8 +153,9 @@ export function buildMessages(input: BuildMessagesInput): ChatCompletionMessageP
   const platform = getPrompt('system');
   const selfSection = buildSelfSection(botMemory, reflections);
   const skillsSection = buildSkillsSection(skills);
+  const botNoteSection = buildBotNoteSection(input.botNote);
   const modeInstr = bot.output_mode === 'bubble' ? BUBBLE_INSTRUCTIONS : SINGLE_INSTRUCTIONS;
-  const systemContent = [platform, selfSection, skillsSection, modeInstr]
+  const systemContent = [platform, selfSection, skillsSection, botNoteSection, modeInstr]
     .filter(Boolean)
     .join('\n\n');
 

@@ -72,8 +72,8 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   const supa = serviceClient(env);
   const startedAt = Date.now();
 
-  // 1. Look up self section + skills in parallel. Same shape as B7.3.
-  const [botMemory, reflectionsRes, skillsRes] = await Promise.all([
+  // 1. Look up self section + skills + bot-authored note in parallel.
+  const [botMemory, reflectionsRes, skillsRes, botNoteRes] = await Promise.all([
     getBotMemory(env, bot.id),
     supa
       .from('bot_reflections')
@@ -87,7 +87,16 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       .select('skills(frontmatter, body_md)')
       .eq('user_id', userId)
       .or(`conversation_id.eq.${conversationId},conversation_id.is.null`),
+    // Bot's private "manual on this user". RLS hides this row from the
+    // user; service_role here bypasses it.
+    supa
+      .from('skills')
+      .select('body_md')
+      .eq('bot_id', bot.id)
+      .eq('user_id', userId)
+      .maybeSingle(),
   ]);
+  const botNote = (botNoteRes.data?.body_md as string | undefined) ?? null;
   const reflections = (reflectionsRes.data ?? []) as Array<{
     kind: 'limit' | 'grow' | 'keep';
     content: string;
@@ -109,7 +118,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   // 2. Build prompt. The builder marks the cache breakpoint per plan/02
   // (every 4 rounds; see llm/builder.ts).
   const messages = buildMessages({
-    bot, botMemory, reflections, skills, recentContext, newMessage,
+    bot, botMemory, reflections, skills, botNote, recentContext, newMessage,
   });
 
   // 3. Stream LLM. AbortSignal propagation: when the client disconnects,
