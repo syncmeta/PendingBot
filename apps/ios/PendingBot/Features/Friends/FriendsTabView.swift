@@ -28,9 +28,30 @@ struct FriendsTabView: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            ZStack {
-                Theme.Palette.canvas.ignoresSafeArea()
-                List {
+            VStack(spacing: 0) {
+                TabHeaderBar(title: "好友") {
+                    HStack(spacing: 14) {
+                        Button {
+                            showingQR = true
+                            Haptics.tap()
+                        } label: {
+                            Image(systemName: "qrcode")
+                                .font(.system(size: 17, weight: .regular))
+                                .foregroundStyle(Theme.Palette.accent)
+                        }
+                        Button {
+                            addingFriend = true
+                            Haptics.tap()
+                        } label: {
+                            Image(systemName: "plus")
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundStyle(Theme.Palette.accent)
+                        }
+                    }
+                }
+                ZStack {
+                    Theme.Palette.canvas.ignoresSafeArea()
+                    List {
                     Section {
                         HStack {
                             Spacer()
@@ -103,27 +124,9 @@ struct FriendsTabView: View {
                 .listStyle(.insetGrouped)
                 .scrollContentBackground(.hidden)
                 .refreshable { await load() }
-            }
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        showingQR = true
-                        Haptics.tap()
-                    } label: { Image(systemName: "qrcode") }
-                    .foregroundStyle(Theme.Palette.accent)
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        addingFriend = true
-                        Haptics.tap()
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(Theme.Palette.accent)
-                    }
                 }
             }
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $addingFriend) {
                 AddFriendSheet { Task { await load() } }
                     .presentationDetents([.medium])
