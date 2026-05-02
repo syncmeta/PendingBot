@@ -323,6 +323,32 @@ struct MessageTabView: View {
             let plain = ISO8601DateFormatter()
             plain.formatOptions = [.withInternetDateTime]
             if let d = plain.date(from: s) { return Int(d.timeIntervalSince1970) }
+            // PostgREST sometimes hands back a Postgres-flavoured timestamp
+            // ("2026-05-02 14:30:00.123456+00" — space, no T) when the
+            // column is read via embed projections. Map it back to ISO.
+            let rfc3339 = s.replacingOccurrences(of: " ", with: "T")
+            if rfc3339 != s {
+                if let d = withFrac.date(from: rfc3339) { return Int(d.timeIntervalSince1970) }
+                if let d = plain.date(from: rfc3339) { return Int(d.timeIntervalSince1970) }
+            }
+            // DateFormatter fallback for shapes ISO8601DateFormatter rejects
+            // (no zone, "+00" without minutes, etc.). Logs once when used so
+            // we can spot a fresh failure mode.
+            let df = DateFormatter()
+            df.locale = Locale(identifier: "en_US_POSIX")
+            df.timeZone = TimeZone(secondsFromGMT: 0)
+            for pattern in [
+                "yyyy-MM-dd'T'HH:mm:ss.SSSSSSXXXXX",
+                "yyyy-MM-dd'T'HH:mm:ss.SSSSSSX",
+                "yyyy-MM-dd'T'HH:mm:ssXXXXX",
+                "yyyy-MM-dd'T'HH:mm:ssX",
+                "yyyy-MM-dd HH:mm:ss.SSSSSSX",
+                "yyyy-MM-dd HH:mm:ssX",
+            ] {
+                df.dateFormat = pattern
+                if let d = df.date(from: s) { return Int(d.timeIntervalSince1970) }
+            }
+            print("[conv-list] timestamp parse failed:", s)
             return nil
         }
 
@@ -499,10 +525,12 @@ private struct ConversationListRow: View {
                         badge
                     }
                     Spacer(minLength: 8)
-                    Text(Date(timeIntervalSince1970: TimeInterval(conv.last_activity_at)),
-                         format: .relative(presentation: .numeric))
-                        .font(Theme.Fonts.caption)
-                        .foregroundStyle(Theme.Palette.inkMuted)
+                    if conv.last_activity_at > 0 {
+                        Text(Date(timeIntervalSince1970: TimeInterval(conv.last_activity_at)),
+                             format: .relative(presentation: .numeric))
+                            .font(Theme.Fonts.caption)
+                            .foregroundStyle(Theme.Palette.inkMuted)
+                    }
                 }
 
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
