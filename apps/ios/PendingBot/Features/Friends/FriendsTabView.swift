@@ -51,6 +51,7 @@ struct FriendsTabView: View {
                         SelfRow(
                             avatarSeed: AccountStore.shared.avatarSeed
                                 ?? AccountStore.shared.current?.id ?? "?",
+                            attachmentId: AccountStore.shared.avatarAttachmentId,
                             name: AccountStore.shared.profileDisplayName
                                 ?? AccountStore.shared.current?.displayName ?? "你",
                             onTap: { Task { await tapSelf() } },
@@ -272,13 +273,14 @@ struct FriendsTabView: View {
 /// sheet. Visually mirrors FriendRow so the list reads consistently.
 private struct SelfRow: View {
     let avatarSeed: String
+    let attachmentId: String?
     let name: String
     let onTap: () -> Void
     let onQR: () -> Void
 
     var body: some View {
         HStack(spacing: 10) {
-            BotAvatar(seed: avatarSeed, size: 36)
+            UserAvatar(seed: avatarSeed, attachmentId: attachmentId, size: 36)
             HStack(spacing: 6) {
                 Text(name)
                     .font(Theme.Fonts.serif(size: 16, weight: .semibold))
@@ -555,7 +557,9 @@ private struct MyQRSheet: View {
         let displayName = store.profileDisplayName ?? store.current?.displayName ?? "你"
         VStack(spacing: 16) {
             HStack(spacing: 14) {
-                BotAvatar(seed: avatarSeed, size: 56)
+                UserAvatar(seed: avatarSeed,
+                           attachmentId: store.avatarAttachmentId,
+                           size: 56)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(displayName)
                         .font(Theme.Fonts.serif(size: 20, weight: .semibold))

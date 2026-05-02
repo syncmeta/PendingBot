@@ -67,7 +67,25 @@ struct ProfileBootstrapView: View {
             .padding(.horizontal, 28)
         }
         .onAppear {
-            if name.isEmpty { name = NameCorpus.shared.random() }
+            if allowsBack {
+                // Re-entry from profile sub-page: pre-fill the current
+                // profile so the user can keep / tweak it instead of
+                // landing on a fresh random pair.
+                if name.isEmpty {
+                    name = store.profileDisplayName
+                        ?? store.current?.displayName ?? NameCorpus.shared.random()
+                }
+                if let seed = store.avatarSeed, !seed.isEmpty {
+                    avatarSeed = seed
+                }
+                if let aid = store.avatarAttachmentId, !aid.isEmpty {
+                    customAttachmentId = aid
+                    // customImageData stays nil — UserAvatar will lazy-
+                    // load the existing upload via /v1/uploads/<id>.
+                }
+            } else {
+                if name.isEmpty { name = NameCorpus.shared.random() }
+            }
             if nextName.isEmpty { nextName = NameCorpus.shared.random() }
         }
         .sheet(isPresented: $editing) {
@@ -140,7 +158,7 @@ struct ProfileBootstrapView: View {
                 // a generated avatar — the custom image only sticks to
                 // the current card.
                 nameCardView(seed: nextAvatarSeed, name: nextName,
-                             customImage: nil)
+                             customImage: nil, attachmentId: nil)
                     .frame(width: cardWidth)
                     .scaleEffect(0.95)
                     .opacity(0.6)
@@ -148,7 +166,8 @@ struct ProfileBootstrapView: View {
 
                 // Current card.
                 nameCardView(seed: avatarSeed, name: name,
-                             customImage: customImageData)
+                             customImage: customImageData,
+                             attachmentId: customAttachmentId)
                     .frame(width: cardWidth)
                     .offset(x: dragOffset)
                     .gesture(swipeGesture(cardWidth: cardWidth))
@@ -221,10 +240,12 @@ struct ProfileBootstrapView: View {
     }
 
     /// One name card — avatar on the left, name on the right with extra
-    /// breathing room between them. `customImage`, when set, replaces
-    /// the deterministic BotAvatar with a circle-cropped photo.
+    /// breathing room between them. Avatar source priority:
+    /// `customImage` (locally just-picked bytes) → `attachmentId`
+    /// (server-side existing upload) → BotAvatar(seed).
     private func nameCardView(seed: String, name: String,
-                              customImage: Data?) -> some View {
+                              customImage: Data?,
+                              attachmentId: String?) -> some View {
         HStack(spacing: 28) {
             if let data = customImage, let img = UIImage(data: data) {
                 Image(uiImage: img)
@@ -233,6 +254,8 @@ struct ProfileBootstrapView: View {
                     .frame(width: 76, height: 76)
                     .clipShape(Circle())
                     .overlay(Circle().strokeBorder(Theme.Palette.hairline, lineWidth: 0.5))
+            } else if let aid = attachmentId, !aid.isEmpty {
+                UserAvatar(seed: seed, attachmentId: aid, size: 76)
             } else {
                 BotAvatar(seed: seed, size: 76)
             }
@@ -357,7 +380,9 @@ struct ProfileBootstrapView: View {
                 .update(Patch(display_name: trimmed, custom_fields: fields))
                 .eq("id", value: userId)
                 .execute()
-            store.markBootstrapped(displayName: trimmed, avatarSeed: avatarSeed)
+            store.markBootstrapped(displayName: trimmed,
+                                   avatarSeed: avatarSeed,
+                                   attachmentId: customAttachmentId)
             Haptics.success()
             onDone?()
             dismiss()
@@ -451,6 +476,8 @@ private struct CustomizeSheet: View {
                     .frame(width: 120, height: 120)
                     .clipShape(Circle())
                     .overlay(Circle().strokeBorder(Theme.Palette.hairline, lineWidth: 0.5))
+            } else if let aid = customAttachmentId, !aid.isEmpty {
+                UserAvatar(seed: avatarSeed, attachmentId: aid, size: 120)
             } else {
                 BotAvatar(seed: avatarSeed, size: 120)
             }

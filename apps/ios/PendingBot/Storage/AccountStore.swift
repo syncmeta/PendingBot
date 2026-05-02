@@ -20,6 +20,9 @@ final class AccountStore: ObservableObject {
     /// Avatar seed pulled from pendingbot.users.custom_fields.avatar_seed —
     /// drives BotAvatar everywhere we render the user's own face.
     @Published var avatarSeed: String?
+    /// Optional uploaded avatar — when set, UserAvatar fetches the image
+    /// from /v1/uploads/<id> and shows it instead of the BotAvatar glyph.
+    @Published var avatarAttachmentId: String?
     /// Display name from pendingbot.users.display_name (canonical, set by
     /// the bootstrap step). Falls back to the auth-metadata name when the
     /// row hasn't been refreshed yet.
@@ -72,6 +75,7 @@ final class AccountStore: ObservableObject {
                 let cf = json["custom_fields"] as? [String: Any] ?? [:]
                 self.hasBootstrapped = (cf["bootstrapped"] as? String) == "1"
                 self.avatarSeed = cf["avatar_seed"] as? String
+                self.avatarAttachmentId = cf["avatar_attachment_id"] as? String
                 if let dn = json["display_name"] as? String, !dn.isEmpty {
                     self.profileDisplayName = dn
                 }
@@ -87,10 +91,14 @@ final class AccountStore: ObservableObject {
 
     /// Called by ProfileBootstrapView after a successful UPDATE so the
     /// RootView can flip from onboarding → TabRoot without a refetch.
-    func markBootstrapped(displayName: String, avatarSeed: String) {
+    /// `attachmentId` is set when the user picked a custom photo —
+    /// nil means stay on the deterministic BotAvatar.
+    func markBootstrapped(displayName: String, avatarSeed: String,
+                          attachmentId: String? = nil) {
         self.hasBootstrapped = true
         self.avatarSeed = avatarSeed
         self.profileDisplayName = displayName
+        self.avatarAttachmentId = attachmentId?.isEmpty == false ? attachmentId : nil
     }
 
     /// Sign out everywhere. Clears the Supabase session (which fires the
@@ -105,6 +113,7 @@ final class AccountStore: ObservableObject {
             print("[account] signOut error:", error)
         }
         LocalDatabase.shared.clear()
+        AvatarCache.shared.clear()
     }
 
     private static func makeAccount(session: Session) -> Account {
