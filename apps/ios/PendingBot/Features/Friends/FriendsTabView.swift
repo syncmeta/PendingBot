@@ -324,7 +324,17 @@ private struct FilterChip: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
                 .background(
-                    Capsule().fill(on ? Theme.Palette.accent : Theme.Palette.surfaceMuted)
+                    // Off state: white pill with a hairline border, per
+                    // user spec ("白底灰边"). On state stays the accent
+                    // fill so the active selection still stands out.
+                    Capsule().fill(on ? Theme.Palette.accent : Color.white)
+                )
+                .overlay(
+                    Capsule()
+                        .strokeBorder(
+                            on ? Color.clear : Theme.Palette.hairline,
+                            lineWidth: 0.5
+                        )
                 )
         }
         .buttonStyle(.plain)
