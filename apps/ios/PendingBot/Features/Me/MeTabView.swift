@@ -12,6 +12,8 @@ struct MeTabView: View {
 
     @State private var showProfileEdit = false
     @State private var confirmingSignOut = false
+    @State private var confirmingDelete = false
+    @State private var deleting = false
     @State private var error: String?
 
     var body: some View {
@@ -24,6 +26,7 @@ struct MeTabView: View {
                             profileHeader
                             skillsCard
                             signOutCard
+                            deleteAccountCard
                         }
                         .padding(.horizontal, Theme.Metrics.gutter)
                         .padding(.top, 4)
@@ -54,6 +57,16 @@ struct MeTabView: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text("这台设备会注销「\(store.current?.displayName ?? "当前账户")」的登录。重新用 Apple ID 登录即可恢复。")
+        }
+        .confirmationDialog(
+            "永久注销账号？",
+            isPresented: $confirmingDelete,
+            titleVisibility: .visible
+        ) {
+            Button("永久删除", role: .destructive) { Task { await deleteAccount() } }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("这会从服务器删除所有跟你有关的数据 —— 对话、好友、号码、画像。无法恢复。如果只是想退出登录，请用上面的「退出登录」。")
         }
     }
 
@@ -161,6 +174,32 @@ struct MeTabView: View {
         }
     }
 
+    private var deleteAccountCard: some View {
+        card(title: nil, footer: "永久删除：所有对话、好友、号码、画像都会一并清除，且无法恢复。") {
+            Button(role: .destructive) {
+                confirmingDelete = true
+                Haptics.tap()
+            } label: {
+                HStack(spacing: 10) {
+                    if deleting {
+                        ProgressView().tint(Color(hex: 0xB14B3C))
+                    } else {
+                        Image(systemName: "trash")
+                            .font(.system(size: 14, weight: .medium))
+                    }
+                    Text(deleting ? "正在删除…" : "注销账号")
+                        .font(Theme.Fonts.rounded(size: 15, weight: .medium))
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(Color(hex: 0xB14B3C))
+                .padding(.vertical, 4)
+            }
+            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .disabled(deleting || store.current == nil)
+        }
+    }
+
     private var signOutCard: some View {
         card(title: nil, footer: nil) {
             Button(role: .destructive) {
@@ -229,6 +268,26 @@ struct MeTabView: View {
         Task {
             await store.signOut()
             Haptics.success()
+        }
+    }
+
+    private func deleteAccount() async {
+        guard !deleting else { return }
+        deleting = true; defer { deleting = false }
+        do {
+            // RPC wipes everything (messages, convs, participants, handles,
+            // contacts, picks, devices, …) and drops the auth.users row,
+            // which cascades the rest. After it returns the JWT is dead;
+            // local signOut clears the keychain + the SQLite cache so the
+            // next launch lands on WelcomeView.
+            try await SupabaseStack.shared.database
+                .rpc("delete_self_account")
+                .execute()
+            await store.signOut()
+            Haptics.success()
+        } catch {
+            self.error = "注销失败：\(error.localizedDescription)"
+            Haptics.error()
         }
     }
 }
