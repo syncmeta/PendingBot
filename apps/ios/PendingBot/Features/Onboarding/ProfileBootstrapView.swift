@@ -1,4 +1,5 @@
 import SwiftUI
+import PhotosUI
 
 /// Random-name + random-avatar onboarding step. Shown right after first
 /// sign-in (when the user hasn't set a profile yet) and re-openable from
@@ -18,6 +19,13 @@ struct ProfileBootstrapView: View {
 
     @State private var name: String = ""
     @State private var avatarSeed: String = UUID().uuidString
+    /// Once the user picks a custom photo we hold its bytes here. Set
+    /// trumps the BotAvatar — both for the front card preview and the
+    /// final commit (we upload then store the attachment id).
+    @State private var customImageData: Data?
+    /// Server-assigned attachment id once we've uploaded the custom
+    /// image. Persists across "再来一次" rolls inside this view.
+    @State private var customAttachmentId: String?
     @State private var nextName: String = ""
     @State private var nextAvatarSeed: String = UUID().uuidString
     @State private var dragOffset: CGFloat = 0
@@ -34,13 +42,16 @@ struct ProfileBootstrapView: View {
             Theme.Palette.canvas.ignoresSafeArea()
             VStack(alignment: .leading, spacing: 0) {
                 topBar
+                Spacer(minLength: 12)
+                headerCopy
+
+                // Two flex spacers around the card centre it vertically
+                // between the header copy above and the caption below.
+                Spacer(minLength: 0)
+                cardCarousel
                 Spacer(minLength: 0)
 
-                // Stack copy + card + caption tightly so they read as one
-                // unit centered around the swipe affordance.
-                VStack(alignment: .leading, spacing: 14) {
-                    headerCopy
-                    cardCarousel
+                VStack(alignment: .leading, spacing: 10) {
                     swipeCaption
                     if let error {
                         Text(error)
@@ -49,8 +60,7 @@ struct ProfileBootstrapView: View {
                     }
                     customizeRow
                 }
-
-                Spacer(minLength: 0)
+                Spacer(minLength: 18)
                 confirmRow
                 Spacer(minLength: 8)
             }
@@ -63,9 +73,11 @@ struct ProfileBootstrapView: View {
         .sheet(isPresented: $editing) {
             CustomizeSheet(
                 name: $name,
-                avatarSeed: $avatarSeed
+                avatarSeed: $avatarSeed,
+                customImageData: $customImageData,
+                customAttachmentId: $customAttachmentId
             )
-            .presentationDetents([.medium])
+            .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
         }
     }
@@ -83,14 +95,25 @@ struct ProfileBootstrapView: View {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(Theme.Palette.ink)
-                        .frame(width: 32, height: 32)
+                        .frame(width: 40, height: 40)
+                        // Native iOS "glass" — ultraThinMaterial circle
+                        // with a subtle inner stroke. Same idiom Apple
+                        // uses for nav-bar back chips on translucent
+                        // chrome (Maps, Photos, etc).
+                        .background(
+                            Circle().fill(.ultraThinMaterial)
+                        )
+                        .overlay(
+                            Circle().strokeBorder(Color.white.opacity(0.5), lineWidth: 0.5)
+                        )
+                        .shadow(color: .black.opacity(0.08), radius: 6, x: 0, y: 2)
                 }
                 .buttonStyle(.plain)
             }
             Spacer()
         }
-        .frame(height: 32)
-        .padding(.top, 4)
+        .frame(height: 40)
+        .padding(.top, 8)
     }
 
     private var headerCopy: some View {
@@ -113,15 +136,19 @@ struct ProfileBootstrapView: View {
         GeometryReader { geo in
             let cardWidth = geo.size.width * cardWidthFraction
             ZStack(alignment: .leading) {
-                // Next card (peek on the right of current).
-                nameCardView(seed: nextAvatarSeed, name: nextName)
+                // Next card (peek on the right of current). Always uses
+                // a generated avatar — the custom image only sticks to
+                // the current card.
+                nameCardView(seed: nextAvatarSeed, name: nextName,
+                             customImage: nil)
                     .frame(width: cardWidth)
                     .scaleEffect(0.95)
                     .opacity(0.6)
                     .offset(x: cardWidth + cardGap + dragOffset)
 
                 // Current card.
-                nameCardView(seed: avatarSeed, name: name)
+                nameCardView(seed: avatarSeed, name: name,
+                             customImage: customImageData)
                     .frame(width: cardWidth)
                     .offset(x: dragOffset)
                     .gesture(swipeGesture(cardWidth: cardWidth))
@@ -151,7 +178,7 @@ struct ProfileBootstrapView: View {
             HStack(spacing: 6) {
                 Image(systemName: "pencil")
                     .font(.system(size: 13, weight: .medium))
-                Text("自己填一个 / 换头像")
+                Text("我不懒 我就要自己填名字和头像")
                     .font(Theme.Fonts.rounded(size: 13, weight: .medium))
             }
             .foregroundStyle(Theme.Palette.accent)
@@ -194,11 +221,21 @@ struct ProfileBootstrapView: View {
     }
 
     /// One name card — avatar on the left, name on the right with extra
-    /// breathing room between them. Used for both the front (current)
-    /// and back (peek) cards.
-    private func nameCardView(seed: String, name: String) -> some View {
+    /// breathing room between them. `customImage`, when set, replaces
+    /// the deterministic BotAvatar with a circle-cropped photo.
+    private func nameCardView(seed: String, name: String,
+                              customImage: Data?) -> some View {
         HStack(spacing: 28) {
-            BotAvatar(seed: seed, size: 76)
+            if let data = customImage, let img = UIImage(data: data) {
+                Image(uiImage: img)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 76, height: 76)
+                    .clipShape(Circle())
+                    .overlay(Circle().strokeBorder(Theme.Palette.hairline, lineWidth: 0.5))
+            } else {
+                BotAvatar(seed: seed, size: 76)
+            }
             Text(name.isEmpty ? "—" : name)
                 .font(Theme.Fonts.serif(size: 22, weight: .semibold))
                 .foregroundStyle(Theme.Palette.ink)
@@ -284,6 +321,10 @@ struct ProfileBootstrapView: View {
                 name = nextName
                 nextAvatarSeed = UUID().uuidString
                 nextName = NameCorpus.shared.random()
+                // Swipe = "give me a fresh pair" — drop any custom
+                // image the user had set on the previous card.
+                customImageData = nil
+                customAttachmentId = nil
                 dragOffset = 0
             }
             animating = false
@@ -303,14 +344,17 @@ struct ProfileBootstrapView: View {
             let display_name: String
             let custom_fields: [String: String]
         }
+        var fields: [String: String] = [
+            "avatar_seed": avatarSeed,
+            "bootstrapped": "1",
+        ]
+        if let aid = customAttachmentId, !aid.isEmpty {
+            fields["avatar_attachment_id"] = aid
+        }
         do {
             try await SupabaseStack.shared.database
                 .from("users")
-                .update(Patch(display_name: trimmed,
-                              custom_fields: [
-                                "avatar_seed": avatarSeed,
-                                "bootstrapped": "1",
-                              ]))
+                .update(Patch(display_name: trimmed, custom_fields: fields))
                 .eq("id", value: userId)
                 .execute()
             store.markBootstrapped(displayName: trimmed, avatarSeed: avatarSeed)
@@ -326,56 +370,62 @@ struct ProfileBootstrapView: View {
 
 // MARK: - Customize sheet
 
-/// Manual edit: type a name + reroll the avatar seed if you want a
-/// different glyph/color than the random pair gave you.
+/// Manual edit: type a name + pick a photo (or reroll the avatar seed)
+/// for a fully custom profile. Photo upload goes through /v1/upload;
+/// the resulting attachment id is held by the parent until commit.
 private struct CustomizeSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Binding var name: String
     @Binding var avatarSeed: String
+    @Binding var customImageData: Data?
+    @Binding var customAttachmentId: String?
+
+    @State private var pickerItem: PhotosPickerItem?
+    @State private var uploading = false
+    @State private var uploadError: String?
 
     var body: some View {
         NavigationStack {
             ZStack {
                 Theme.Palette.canvas.ignoresSafeArea()
-                VStack(spacing: 22) {
-                    Spacer(minLength: 12)
+                ScrollView {
+                    VStack(spacing: 22) {
+                        Spacer(minLength: 12)
 
-                    Button {
-                        avatarSeed = UUID().uuidString
-                        Haptics.tap()
-                    } label: {
-                        VStack(spacing: 6) {
-                            BotAvatar(seed: avatarSeed, size: 96)
-                            Text("点头像换一个")
-                                .font(Theme.Fonts.caption)
+                        avatarPreview
+                        photoActions
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("昵称")
+                                .font(Theme.Fonts.rounded(size: 12, weight: .medium))
                                 .foregroundStyle(Theme.Palette.inkMuted)
+                            TextField("起一个吧", text: $name)
+                                .font(Theme.Fonts.serif(size: 20, weight: .semibold))
+                                .foregroundStyle(Theme.Palette.ink)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled(true)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 12)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                        .fill(Theme.Palette.surface)
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                        .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
+                                )
                         }
-                    }
-                    .buttonStyle(.plain)
+                        .padding(.horizontal, 22)
 
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("昵称")
-                            .font(Theme.Fonts.rounded(size: 12, weight: .medium))
-                            .foregroundStyle(Theme.Palette.inkMuted)
-                        TextField("起一个吧", text: $name)
-                            .font(Theme.Fonts.serif(size: 20, weight: .semibold))
-                            .foregroundStyle(Theme.Palette.ink)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled(true)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 12)
-                            .background(
-                                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .fill(Theme.Palette.surface)
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
-                            )
-                    }
-                    .padding(.horizontal, 22)
+                        if let uploadError {
+                            Text(uploadError)
+                                .font(Theme.Fonts.footnote)
+                                .foregroundStyle(.red)
+                                .padding(.horizontal, 22)
+                        }
 
-                    Spacer()
+                        Spacer(minLength: 12)
+                    }
                 }
             }
             .navigationTitle("自定义")
@@ -385,8 +435,117 @@ private struct CustomizeSheet: View {
                     Button("完成") { dismiss() }
                         .fontWeight(.semibold)
                         .foregroundStyle(Theme.Palette.accent)
+                        .disabled(uploading)
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var avatarPreview: some View {
+        Group {
+            if let data = customImageData, let img = UIImage(data: data) {
+                Image(uiImage: img)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 120, height: 120)
+                    .clipShape(Circle())
+                    .overlay(Circle().strokeBorder(Theme.Palette.hairline, lineWidth: 0.5))
+            } else {
+                BotAvatar(seed: avatarSeed, size: 120)
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if uploading {
+                ProgressView()
+                    .controlSize(.small)
+                    .padding(8)
+                    .background(Circle().fill(.ultraThinMaterial))
+            }
+        }
+    }
+
+    private var photoActions: some View {
+        HStack(spacing: 12) {
+            PhotosPicker(selection: $pickerItem, matching: .images) {
+                actionChip(systemImage: "photo", label: "上传图片")
+            }
+            .onChange(of: pickerItem) { _, item in
+                guard let item else { return }
+                Task { await loadPicked(item) }
+            }
+            Button {
+                customImageData = nil
+                customAttachmentId = nil
+                avatarSeed = UUID().uuidString
+                Haptics.tap()
+            } label: {
+                actionChip(systemImage: "shuffle", label: "随机生成")
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func actionChip(systemImage: String, label: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: systemImage)
+                .font(.system(size: 13, weight: .medium))
+            Text(label)
+                .font(Theme.Fonts.rounded(size: 13, weight: .medium))
+        }
+        .foregroundStyle(Theme.Palette.accent)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(Capsule().fill(Theme.Palette.accentBg))
+    }
+
+    /// Decode the picked photo into raw Data for instant local preview,
+    /// then upload to the Worker so we have an attachment id to persist.
+    private func loadPicked(_ item: PhotosPickerItem) async {
+        uploadError = nil
+        guard let data = try? await item.loadTransferable(type: Data.self) else {
+            uploadError = "读取图片失败"
+            return
+        }
+        customImageData = data
+        await uploadAvatar(data: data, mime: "image/jpeg")
+    }
+
+    /// POST /v1/upload (no conversationId — avatar isn't tied to a conv).
+    /// Stores the returned id in the binding so the parent's save() can
+    /// stamp it into pendingbot.users.custom_fields.
+    private func uploadAvatar(data: Data, mime: String) async {
+        uploading = true; defer { uploading = false }
+        do {
+            let workerURL = HostedConfig.environment.workerURL
+            var req = URLRequest(url: workerURL.appendingPathComponent("v1/upload"))
+            req.httpMethod = "POST"
+            let boundary = "----PendingBot\(UUID().uuidString)"
+            req.setValue("multipart/form-data; boundary=\(boundary)",
+                         forHTTPHeaderField: "Content-Type")
+            let token = try await SupabaseStack.shared.auth.session.accessToken
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+            var body = Data()
+            body.append("--\(boundary)\r\n".data(using: .utf8)!)
+            body.append("Content-Disposition: form-data; name=\"file\"; filename=\"avatar.jpg\"\r\n"
+                .data(using: .utf8)!)
+            body.append("Content-Type: \(mime)\r\n\r\n".data(using: .utf8)!)
+            body.append(data)
+            body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+            req.httpBody = body
+
+            let (respData, resp) = try await URLSession.shared.data(for: req)
+            guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                throw URLError(.badServerResponse)
+            }
+            struct R: Decodable { let id: String }
+            let r = try JSONDecoder().decode(R.self, from: respData)
+            customAttachmentId = r.id
+            Haptics.success()
+        } catch {
+            uploadError = "上传失败：\(error.localizedDescription)"
+            Haptics.error()
         }
     }
 }
