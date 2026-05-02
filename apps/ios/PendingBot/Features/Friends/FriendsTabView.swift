@@ -445,9 +445,15 @@ private struct MyQRSheet: View {
                             .resizable()
                             .scaledToFit()
                             .frame(width: 240, height: 240)
-                            .padding(20)
-                            .background(Theme.Palette.surface)
-                            .cornerRadius(16)
+                            .padding(24)
+                            .background(
+                                RoundedRectangle(cornerRadius: 36, style: .continuous)
+                                    .fill(Theme.Palette.surface)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 36, style: .continuous)
+                                    .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
+                            )
                         Text(value)
                             .font(Theme.Fonts.monoSmall)
                             .textSelection(.enabled)

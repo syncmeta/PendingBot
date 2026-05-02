@@ -10,7 +10,17 @@ struct MyHandlesSheet: View {
     @State private var handles: [HandleRow] = []
     @State private var loading = false
     @State private var newLabel: String = ""
+    @State private var newValue: String = ""
     @State private var error: String?
+
+    private let valueFormat = #"^[A-Za-z0-9_-]{4,20}$"#
+    private var activeCount: Int { handles.filter(\.is_active).count }
+    private var atLimit: Bool { activeCount >= 5 }
+    private var trimmedValue: String { newValue.trimmingCharacters(in: .whitespaces) }
+    private var valueIsValid: Bool {
+        trimmedValue.isEmpty
+            || trimmedValue.range(of: valueFormat, options: .regularExpression) != nil
+    }
 
     struct HandleRow: Identifiable, Hashable {
         let id: String
@@ -32,12 +42,36 @@ struct MyHandlesSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("生成新号码") {
+                Section {
+                    TextField("自定义号码（留空则随机生成）", text: $newValue)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled(true)
+                        .font(Theme.Fonts.monoSmall)
+                    TextField("备注（如 'blog'）", text: $newLabel)
                     HStack {
-                        TextField("备注（如 'blog'）", text: $newLabel)
-                        Button("生成") { Task { await mint() } }
-                            .disabled(newLabel.trimmingCharacters(in: .whitespaces).isEmpty)
+                        if !valueIsValid {
+                            Text("格式：4-20 位字母 / 数字 / _ / -")
+                                .font(.footnote)
+                                .foregroundStyle(.red)
+                        } else if atLimit {
+                            Text("已达到 5 个上限，先撤销一个")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text("已用 \(activeCount) / 5")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button(trimmedValue.isEmpty ? "随机生成" : "添加") {
+                            Task { await mint() }
+                        }
+                        .disabled(atLimit || !valueIsValid)
                     }
+                } header: {
+                    Text("新增号码")
+                } footer: {
+                    Text("号码全局唯一。别人加你时你能看到他用了哪个号码。")
                 }
                 Section("我的号码") {
                     if handles.isEmpty {
@@ -106,9 +140,18 @@ struct MyHandlesSheet: View {
 
     private func mint() async {
         guard let userId = AccountStore.shared.current?.id else { return }
-        let trimmed = newLabel.trimmingCharacters(in: .whitespaces)
-        let alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
-        let token = String((0..<10).compactMap { _ in alphabet.randomElement() })
+        let trimmedLabel = newLabel.trimmingCharacters(in: .whitespaces)
+        // Either the user-chosen value (already format-validated client-side
+        // and again by the DB CHECK) or a 10-char crockford-ish token from
+        // an unambiguous alphabet (no 0/O/1/L/I).
+        let custom = trimmedValue
+        let value: String
+        if custom.isEmpty {
+            let alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+            value = String((0..<10).compactMap { _ in alphabet.randomElement() })
+        } else {
+            value = custom
+        }
         struct Insert: Encodable {
             let user_id: String
             let value: String
@@ -118,15 +161,28 @@ struct MyHandlesSheet: View {
         do {
             try await SupabaseStack.shared.database
                 .from("user_handles")
-                .insert(Insert(user_id: userId, value: token,
-                               label: trimmed.isEmpty ? nil : trimmed,
+                .insert(Insert(user_id: userId, value: value,
+                               label: trimmedLabel.isEmpty ? nil : trimmedLabel,
                                kind: "number"))
                 .execute()
             newLabel = ""
+            newValue = ""
             Haptics.success()
             await load()
         } catch {
-            self.error = error.localizedDescription
+            // Friendly translation for the two common DB-side rejects:
+            // unique-violation (someone else has this number) and the
+            // format CHECK constraint.
+            let raw = error.localizedDescription
+            if raw.contains("duplicate") || raw.contains("unique") {
+                self.error = "号码已被占用，换一个"
+            } else if raw.contains("handles_value_format") {
+                self.error = "号码格式不符（4-20 位字母 / 数字 / _ / -）"
+            } else if raw.contains("handle limit") {
+                self.error = "最多 5 个号码，先撤销一个再来"
+            } else {
+                self.error = raw
+            }
         }
     }
 
