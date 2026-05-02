@@ -97,21 +97,11 @@ struct MeTabView: View {
     // something coherent instead of a generic placeholder.
     @ViewBuilder
     private var profileAvatar: some View {
-        let seed = profile?.user_id ?? store.current?.id ?? "?"
-        if let raw = profile?.image_url, let url = URL(string: raw) {
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case .success(let image):
-                    image.resizable().scaledToFill()
-                default:
-                    BotAvatar(seed: seed, size: 56)
-                }
-            }
-            .frame(width: 56, height: 56)
-            .clipShape(Circle())
-        } else {
-            BotAvatar(seed: seed, size: 56)
-        }
+        let seed = store.avatarSeed
+            ?? profile?.user_id
+            ?? store.current?.id
+            ?? "?"
+        BotAvatar(seed: seed, size: 64)
     }
 
     // The server's display_name is the canonical handle (PATCH /me/profile
@@ -119,6 +109,10 @@ struct MeTabView: View {
     // mirror columns Clerk gave us at last login before resorting to "未命名".
     private var displayLabel: String {
         let ws = CharacterSet.whitespacesAndNewlines
+        if let stored = store.profileDisplayName?.trimmingCharacters(in: ws),
+           !stored.isEmpty {
+            return stored
+        }
         let dn = profile?.display_name.trimmingCharacters(in: ws) ?? ""
         if !dn.isEmpty { return dn }
         let full = [profile?.first_name, profile?.last_name]
@@ -324,6 +318,7 @@ private struct ProfileEditView: View {
     @State private var bio = ""
     @State private var saving = false
     @State private var showHandles = false
+    @State private var showRandomize = false
 
     var body: some View {
         NavigationStack {
@@ -355,6 +350,33 @@ private struct ProfileEditView: View {
                                 }
                             }
                         }
+                        CardChrome(
+                            title: "随机一键换装",
+                            footer: "重新随机生成一个名字 + 头像。"
+                        ) {
+                            Button {
+                                showRandomize = true
+                                Haptics.tap()
+                            } label: {
+                                HStack(spacing: 12) {
+                                    Image(systemName: "shuffle")
+                                        .font(.system(size: 16, weight: .medium))
+                                        .foregroundStyle(Theme.Palette.accent)
+                                        .frame(width: 36, height: 36)
+                                        .background(Circle().fill(Theme.Palette.accentBg))
+                                    Text("再来一次随机生成")
+                                        .font(Theme.Fonts.rounded(size: 15, weight: .medium))
+                                        .foregroundStyle(Theme.Palette.ink)
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(Theme.Palette.inkMuted.opacity(0.6))
+                                }
+                            }
+                            .contentShape(Rectangle())
+                            .buttonStyle(.plain)
+                        }
+
                         CardChrome(
                             title: "号码 / 二维码",
                             footer: "号码可生成多个，分别备注，随时撤销。别人通过任意有效号码加你时你都能看到他用了哪个。"
@@ -392,6 +414,10 @@ private struct ProfileEditView: View {
                     .tint(Theme.Palette.accent)
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
+            }
+            .fullScreenCover(isPresented: $showRandomize) {
+                ProfileBootstrapView()
+                    .environmentObject(AccountStore.shared)
             }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

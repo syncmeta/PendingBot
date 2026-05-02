@@ -52,10 +52,15 @@ struct RootView: View {
     var body: some View {
         if store.current == nil {
             WelcomeView()
+        } else if store.hasBootstrapped == false {
+            // Right after sign-in we run the random-name + random-avatar
+            // onboarding. While `hasBootstrapped` is still nil (refresh
+            // in flight) we show TabRoot to avoid a flash of onboarding
+            // for users who already finished it on a previous launch.
+            ProfileBootstrapView()
+                .environmentObject(store)
         } else {
             TabRoot()
-                // Re-instantiate downstream views when the user switches
-                // identities — the .id() forces a full rebuild.
                 .id(store.current?.id)
         }
     }
