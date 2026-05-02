@@ -33,26 +33,33 @@ struct FriendsTabView: View {
                 // the lower ZStack) so the TabHeaderBar at the top sits
                 // on canvas instead of the default white safe-area fill.
                 TabHeaderBar(title: "好友") {
-                    HStack(spacing: 14) {
-                        Button {
-                            showingQR = true
-                            Haptics.tap()
-                        } label: {
-                            Image(systemName: "qrcode")
-                                .font(.system(size: 17, weight: .regular))
-                                .foregroundStyle(Theme.Palette.accent)
-                        }
-                        Button {
-                            addingFriend = true
-                            Haptics.tap()
-                        } label: {
-                            CirclePlusButton()
-                        }
+                    Button {
+                        addingFriend = true
+                        Haptics.tap()
+                    } label: {
+                        CirclePlusButton()
                     }
                 }
                 ZStack {
                     Theme.Palette.canvas.ignoresSafeArea()
                     List {
+                    // Self row — pinned at the top, always visible
+                    // regardless of filter. QR button on the right opens
+                    // the user's name card; tapping the rest of the row
+                    // pushes a chat with self.
+                    Section {
+                        SelfRow(
+                            avatarSeed: AccountStore.shared.avatarSeed
+                                ?? AccountStore.shared.current?.id ?? "?",
+                            name: AccountStore.shared.profileDisplayName
+                                ?? AccountStore.shared.current?.displayName ?? "你",
+                            onTap: { Task { await tapSelf() } },
+                            onQR: { showingQR = true; Haptics.tap() }
+                        )
+                        .listRowBackground(Theme.Palette.surface)
+                        .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+                    }
+
                     Section {
                         HStack {
                             Spacer()
@@ -219,6 +226,19 @@ struct FriendsTabView: View {
         Haptics.tap()
     }
 
+    /// Push a "chat with self" conv. Materialises server-side via the
+    /// dedicated open_self_conv RPC (see migration 0018) which seeds
+    /// the user's bio as the bot's persona.
+    private func tapSelf() async {
+        guard let userId = AccountStore.shared.current?.id else { return }
+        let displayName = AccountStore.shared.profileDisplayName
+            ?? AccountStore.shared.current?.displayName ?? "你"
+        path.append(PendingPeer(kind: "self",
+                                peerId: userId,
+                                displayName: displayName))
+        Haptics.tap()
+    }
+
     private func tapHuman(_ c: HumanPick) async {
         path.append(PendingPeer(kind: "user",
                                 peerId: c.id,
@@ -246,6 +266,46 @@ struct FriendsTabView: View {
 }
 
 // MARK: - Friend row
+
+/// Pinned-to-top row representing "yourself". Tap the row to open a
+/// chat-with-self conv; tap the QR icon to flip up the name-card
+/// sheet. Visually mirrors FriendRow so the list reads consistently.
+private struct SelfRow: View {
+    let avatarSeed: String
+    let name: String
+    let onTap: () -> Void
+    let onQR: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            BotAvatar(seed: avatarSeed, size: 36)
+            HStack(spacing: 6) {
+                Text(name)
+                    .font(Theme.Fonts.serif(size: 16, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.ink)
+                    .lineLimit(1)
+                Text("自己")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.accent)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Theme.Palette.accentBg))
+            }
+            Spacer(minLength: 8)
+            Button(action: onQR) {
+                Image(systemName: "qrcode")
+                    .font(.system(size: 18, weight: .regular))
+                    .foregroundStyle(Theme.Palette.accent)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onTap)
+    }
+}
 
 private struct FriendRow: View {
     enum Kind { case bot, human }
