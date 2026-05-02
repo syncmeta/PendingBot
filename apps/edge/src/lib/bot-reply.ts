@@ -25,6 +25,12 @@ export const BUBBLE_OVERFLOW_CHARS = 60;
 // final reply trims to exactly this — no DB row, no bubble event.
 const SILENT_TOKEN = '[SILENT]';
 
+// Marker the bot can emit anywhere in its reply (typically the end) to
+// flag the active lookback notes as no longer relevant. Stripped from the
+// user-visible content; route handler then UPDATEs bot_lookbacks.active=false
+// for whichever ids the runner reports.
+const DROP_LOOKBACK_TOKEN = '[DROP_LOOKBACK]';
+
 function couldStillBeSilent(s: string): boolean {
   if (s.length === 0) return true;
   if (s.length > SILENT_TOKEN.length) return false;
@@ -80,6 +86,9 @@ export interface RunChatTurnInput {
   };
   recentContext: BuildMessagesInput['recentContext'];
   newMessage: string;
+  /// Lookback notes the client cached. Each is fed into the prompt as a
+  /// private context block; the bot decides per turn whether to keep them.
+  activeLookbacks?: Array<{ id: string; body_md: string }>;
   signal: AbortSignal;
   emit: (event: string, data: unknown) => void;
 }
@@ -88,6 +97,9 @@ export interface RunChatTurnResult {
   finalStatus: 'done' | 'interrupted' | 'error';
   totalContent: string;
   bubblesInserted: number;
+  /// IDs of lookback notes the bot decided to retire this turn (because
+  /// it emitted [DROP_LOOKBACK]). Caller flips active=false for them.
+  droppedLookbackIds: string[];
 }
 
 export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnResult> {
@@ -95,6 +107,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     env, conversationId, userId, parentMessageId,
     bot, recentContext, newMessage, signal, emit,
   } = input;
+  const activeLookbacks = input.activeLookbacks ?? [];
   const supa = serviceClient(env);
   const startedAt = Date.now();
 
@@ -140,9 +153,12 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   const botNote = (botNoteRes.data?.body_md as string | undefined) ?? null;
 
   // 2. Build prompt. The builder marks the cache breakpoint per plan/02
-  // (every 4 rounds; see llm/builder.ts).
+  // (every 4 rounds; see llm/builder.ts). activeLookbacks become an
+  // additional system block so the bot sees its prior fact-check notes.
   const messages: ChatCompletionMessageParam[] = buildMessages({
-    bot, botMemory, reflections, skills, botNote, recentContext, newMessage,
+    bot, botMemory, reflections, skills, botNote,
+    lookbacks: activeLookbacks,
+    recentContext, newMessage,
   });
 
   // AbortSignal propagation: caller's signal aborts the upstream openai fetch.
@@ -301,9 +317,18 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       break;
     }
 
-    // Final disposition.
+    // Strip any [DROP_LOOKBACK] marker before emitting the tail bubble
+    // OR running the silent check — the marker is a control token, not
+    // user-visible content.
+    let droppedLookbackIds: string[] = [];
+    if (pending.includes(DROP_LOOKBACK_TOKEN) || totalContent.includes(DROP_LOOKBACK_TOKEN)) {
+      pending = pending.split(DROP_LOOKBACK_TOKEN).join('').trim();
+      totalContent = totalContent.split(DROP_LOOKBACK_TOKEN).join('').trim();
+      droppedLookbackIds = activeLookbacks.map((l) => l.id);
+    }
+
     const trimmed = totalContent.trim();
-    if (trimmed === SILENT_TOKEN) {
+    if (trimmed === SILENT_TOKEN || trimmed === '') {
       emit('silent', { bubble_group_id: bubbleGroupId });
       bubblesInserted = 0;
       pending = '';
@@ -335,7 +360,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       },
     });
 
-    return { finalStatus, totalContent, bubblesInserted };
+    return { finalStatus, totalContent, bubblesInserted, droppedLookbackIds };
   } catch (err) {
     const aborted = ac.signal.aborted;
     if (pending.trim()) {
@@ -343,7 +368,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     }
     const status: RunChatTurnResult['finalStatus'] = aborted ? 'interrupted' : 'error';
     emit(status, { message: aborted ? 'aborted' : String(err) });
-    return { finalStatus: status, totalContent, bubblesInserted };
+    return { finalStatus: status, totalContent, bubblesInserted, droppedLookbackIds: [] };
   } finally {
     signal.removeEventListener('abort', onCallerAbort);
   }

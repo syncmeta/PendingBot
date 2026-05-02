@@ -20,6 +20,10 @@ export interface BuildMessagesInput {
   // itself over time, never shown to the user. Null when the bot hasn't
   // written one yet (cold start).
   botNote: string | null;
+  // Active lookback notes from the lookback runner — fact-check / clarify
+  // jots the bot wrote about prior turns. Each is presented as a context
+  // block; the bot may emit [DROP_LOOKBACK] in its reply to retire them.
+  lookbacks?: Array<{ id: string; body_md: string }>;
   // Recent history from the client's local cache (POST body). Already
   // ordered ascending by created_at on the client side.
   recentContext: Array<{
@@ -131,6 +135,20 @@ function buildBotNoteSection(note: string | null): string {
   ].join('\n');
 }
 
+function buildLookbackSection(lookbacks: BuildMessagesInput['lookbacks']): string {
+  if (!lookbacks || lookbacks.length === 0) return '';
+  const items = lookbacks.map((l) => `- ${l.body_md.trim()}`).join('\n');
+  return [
+    '## 上一轮我自己的查证笔记（仅你可见，对方看不到）',
+    items,
+    '',
+    '处理规则：',
+    '- 笔记里的内容如果跟接下来的话题有关，自然地融入回复（比如更正自己之前的说法、提示对方一个事实）。',
+    '- 如果你回复完之后觉得这条笔记**已经用完了 / 不再需要带在身上了**，在你给对方的回复末尾另起一行写 `[DROP_LOOKBACK]`（这一行系统会替你抹掉，对方看不到）。',
+    '- 如果还想留着以备后续用，正常回复即可，不写 [DROP_LOOKBACK]。',
+  ].join('\n');
+}
+
 // Wraps a string content into the Anthropic content-block array form so we
 // can attach `cache_control` to it. OpenRouter passes this through to
 // Anthropic models; for non-Anthropic providers it's a no-op (they ignore
@@ -154,10 +172,11 @@ export function buildMessages(input: BuildMessagesInput): ChatCompletionMessageP
   const selfSection = buildSelfSection(botMemory, reflections);
   const skillsSection = buildSkillsSection(skills);
   const botNoteSection = buildBotNoteSection(input.botNote);
+  const lookbackSection = buildLookbackSection(input.lookbacks);
   const modeInstr = bot.output_mode === 'bubble' ? BUBBLE_INSTRUCTIONS : SINGLE_INSTRUCTIONS;
-  const systemContent = [platform, selfSection, skillsSection, botNoteSection, modeInstr]
-    .filter(Boolean)
-    .join('\n\n');
+  const systemContent = [
+    platform, selfSection, skillsSection, botNoteSection, lookbackSection, modeInstr,
+  ].filter(Boolean).join('\n\n');
 
   // System message: always cached. Stable across turns until prompts change.
   const messages: ChatCompletionMessageParam[] = [

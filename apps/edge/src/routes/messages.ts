@@ -4,7 +4,7 @@ import { requireSession } from '@pendingbot/identity';
 import { serviceClient, userClient } from '../lib/supabase';
 import { runChatTurn } from '../lib/bot-reply';
 import { maybeRefreshMemory } from '../lib/memory';
-import { runReview } from '../lib/review-runner';
+import { runLookback } from '../lib/lookback-runner';
 import type { AppBindings } from '../types';
 
 export const messageRoutes = new Hono<AppBindings>();
@@ -13,7 +13,9 @@ messageRoutes.use('*', requireSession());
 const PostBody = z.object({
   conversationId: z.string().uuid(),
   clientMessageId: z.string().uuid(),         // UUID v7 from client (idempotency key)
-  newMessage: z.string().min(1).max(64_000),
+  // newMessage is optional ONLY when autoLookback is true (the client is
+  // auto-firing because a lookback note arrived and 30s of silence passed).
+  newMessage: z.string().min(1).max(64_000).optional(),
   attachmentIds: z.array(z.string().uuid()).optional(),
   // Recent history from the client's local cache (typically last 20 msgs).
   recentContext: z
@@ -26,10 +28,23 @@ const PostBody = z.object({
     )
     .max(50)
     .optional(),
-  // Oldest message id in the client's local context window. Used to
-  // trigger lazy Honcho refresh when client window has moved past the
-  // current memory's coverage. See plan/02 "刷新机制 (lazy)".
   oldestContextMessageId: z.string().uuid().optional(),
+  // Lookback notes the client has cached (received via Realtime). Each
+  // active note is fed into the bot's prompt as a private context block.
+  // The bot may emit [DROP_LOOKBACK] in its reply to flag them as no
+  // longer needed; the runner strips the marker before bubbling and
+  // updates active=false on the rows below.
+  activeLookbacks: z
+    .array(z.object({ id: z.string().uuid(), body_md: z.string() }))
+    .max(10)
+    .optional(),
+  // Set when this POST is the client's auto-fire after a lookback note
+  // arrived and 30s of user silence passed. Worker will:
+  //   - skip the user message INSERT (no real user input)
+  //   - reuse the recentContext as-is to drive the bot turn
+  // Result: the bot replies "as if" the user just sent something, with
+  // the lookback note in scope.
+  autoLookback: z.boolean().optional(),
 });
 
 // POST /v1/messages
@@ -66,35 +81,54 @@ messageRoutes.post('/', async (c) => {
   if (convErr) return c.json({ error: 'database', detail: convErr.message }, 500);
   if (!conv) return c.json({ error: 'conversation not found or no access' }, 404);
 
-  // Insert the user's message synchronously (idempotent). We do this BEFORE
-  // opening the SSE stream so failures here come back as a normal JSON 500
-  // rather than an event-stream error frame.
-  const supaService = serviceClient(c.env);
-  const { error: insertErr } = await supaService
-    .from('messages')
-    .upsert(
-      {
-        client_message_id: parsed.clientMessageId,
-        conversation_id: parsed.conversationId,
-        user_id: userId,
-        role: 'user',
-        content: parsed.newMessage,
-        status: 'done',
-        attachments: parsed.attachmentIds ? { ids: parsed.attachmentIds } : null,
-      },
-      { onConflict: 'client_message_id', ignoreDuplicates: true },
-    );
-  if (insertErr) return c.json({ error: 'database', detail: insertErr.message }, 500);
-
-  const { data: userRow, error: selectErr } = await supaService
-    .from('messages')
-    .select('id')
-    .eq('client_message_id', parsed.clientMessageId)
-    .single();
-  if (selectErr || !userRow) {
-    return c.json({ error: 'database', detail: selectErr?.message ?? 'row missing' }, 500);
+  // Body shape varies by mode:
+  //   normal     newMessage required, INSERT user row, parent = that row
+  //   autoLookback newMessage absent, no user row written, parent = last
+  //                user row in conv (best effort) or null
+  if (!parsed.autoLookback && !parsed.newMessage) {
+    return c.json({ error: 'newMessage required' }, 400);
   }
-  const parentMessageId = userRow.id as string;
+
+  const supaService = serviceClient(c.env);
+  let parentMessageId: string | null = null;
+  if (!parsed.autoLookback) {
+    const { error: insertErr } = await supaService
+      .from('messages')
+      .upsert(
+        {
+          client_message_id: parsed.clientMessageId,
+          conversation_id: parsed.conversationId,
+          user_id: userId,
+          role: 'user',
+          content: parsed.newMessage,
+          status: 'done',
+          attachments: parsed.attachmentIds ? { ids: parsed.attachmentIds } : null,
+        },
+        { onConflict: 'client_message_id', ignoreDuplicates: true },
+      );
+    if (insertErr) return c.json({ error: 'database', detail: insertErr.message }, 500);
+    const { data: userRow, error: selectErr } = await supaService
+      .from('messages')
+      .select('id')
+      .eq('client_message_id', parsed.clientMessageId)
+      .single();
+    if (selectErr || !userRow) {
+      return c.json({ error: 'database', detail: selectErr?.message ?? 'row missing' }, 500);
+    }
+    parentMessageId = userRow.id as string;
+  } else {
+    // autoLookback: anchor parent to the last user row in this conv so the
+    // bot reply still has something sensible to point at if anyone queries.
+    const { data: lastUser } = await supaService
+      .from('messages')
+      .select('id')
+      .eq('conversation_id', parsed.conversationId)
+      .eq('role', 'user')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    parentMessageId = (lastUser?.id as string | undefined) ?? null;
+  }
 
   // No bot pinned (e.g. user_user, group with no default bot) → just ack
   // the user write. Group/discuss have their own routes for the bot turn.
@@ -151,17 +185,15 @@ messageRoutes.post('/', async (c) => {
           env: c.env,
           conversationId: parsed.conversationId,
           userId,
-          parentMessageId,
+          parentMessageId: parentMessageId ?? '',
           bot: { id: bot.id, model_id: bot.model_id, output_mode: bot.output_mode },
           recentContext: parsed.recentContext ?? [],
-          newMessage: parsed.newMessage,
+          newMessage: parsed.newMessage ?? '（系统注入：根据上一轮的查证笔记，自然继续上面的对话。不要提到这是自动触发的。）',
+          activeLookbacks: parsed.activeLookbacks ?? [],
           signal: c.req.raw.signal,
           emit,
         });
 
-        // Post-turn bookkeeping. Round counter is the source of truth for
-        // auto-review cadence; we bump it only when the bot actually said
-        // something (silent/interrupted/error don't count as a round).
         if (result.finalStatus === 'done' && result.bubblesInserted > 0) {
           const { data: updatedConv } = await supaService
             .from('conversations')
@@ -173,13 +205,24 @@ messageRoutes.post('/', async (c) => {
             .eq('id', parsed.conversationId)
             .select('round_count')
             .single();
-          maybeAutoReview({
+
+          // If the bot opted to drop the lookbacks (emitted [DROP_LOOKBACK]),
+          // mark them inactive. runChatTurn returned the ids it dropped.
+          if (result.droppedLookbackIds.length > 0) {
+            await supaService
+              .from('bot_lookbacks')
+              .update({ active: false, updated_at: new Date().toISOString() })
+              .in('id', result.droppedLookbackIds);
+          }
+
+          // Per-bot opt-in lookback cadence; defaults below mirror the old
+          // auto-review knobs (every 10 rounds).
+          maybeAutoLookback({
             env: c.env,
             ctx: c.executionCtx,
             conversationId: parsed.conversationId,
-            userId,
             botId: bot.id,
-            botConfig: bot.config as ReviewConfigEnvelope | null,
+            botConfig: bot.config as LookbackConfigEnvelope | null,
             roundCount: updatedConv?.round_count ?? 0,
           });
         }
@@ -203,58 +246,31 @@ messageRoutes.post('/', async (c) => {
   });
 });
 
-// Per-bot review config. Lives in `bots.config` jsonb so it's editable
-// per bot without schema churn. Sensible defaults: enabled, every 10 rounds.
-interface ReviewConfigEnvelope {
-  review?: { enabled?: boolean; roundInterval?: number };
+// Per-bot lookback config. Lives in `bots.config` jsonb. Defaults:
+// enabled, every 10 rounds.
+interface LookbackConfigEnvelope {
+  lookback?: { enabled?: boolean; roundInterval?: number };
 }
 
-function maybeAutoReview(input: {
+function maybeAutoLookback(input: {
   env: AppBindings['Bindings'];
   ctx: ExecutionContext;
   conversationId: string;
-  userId: string;
   botId: string;
-  botConfig: ReviewConfigEnvelope | null;
+  botConfig: LookbackConfigEnvelope | null;
   roundCount: number;
 }) {
-  const cfg = input.botConfig?.review ?? {};
+  const cfg = input.botConfig?.lookback ?? {};
   if (cfg.enabled === false) return;
   const interval = Math.max(1, cfg.roundInterval ?? 10);
   if (input.roundCount === 0) return;
   if (input.roundCount % interval !== 0) return;
 
-  // Insert the run row inline so the runner can run on a stable id and so
-  // a concurrent next turn doesn't double-fire.
-  const supa = serviceClient(input.env);
   input.ctx.waitUntil(
-    (async () => {
-      try {
-        const { data: run, error } = await supa
-          .from('review_runs')
-          .insert({
-            conversation_id: input.conversationId,
-            user_id: input.userId,
-            bot_id: input.botId,
-            status: 'running',
-            trigger: 'auto',
-          })
-          .select('id')
-          .single();
-        if (error || !run) {
-          console.warn('[auto-review] insert failed', error);
-          return;
-        }
-        await runReview({
-          env: input.env,
-          reviewRunId: run.id as string,
-          conversationId: input.conversationId,
-          userId: input.userId,
-          botId: input.botId,
-        });
-      } catch (err) {
-        console.warn('[auto-review] failed', err);
-      }
-    })(),
+    runLookback({
+      env: input.env,
+      conversationId: input.conversationId,
+      botId: input.botId,
+    }),
   );
 }
