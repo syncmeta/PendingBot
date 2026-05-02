@@ -28,12 +28,15 @@ enum PendingGoogleSignIn {
         case missingIdToken
         case userCancelled
         case missingClientID
+        case malformedClientID(String)
         case underlying(Swift.Error)
         var errorDescription: String? {
             switch self {
             case .missingIdToken: return "Google 没返回 idToken"
             case .userCancelled: return "已取消"
-            case .missingClientID: return "Info.plist 缺 GIDClientID 或 GoogleSignIn 未配置"
+            case .missingClientID: return "Info.plist 缺 GIDClientID"
+            case .malformedClientID(let s):
+                return "GIDClientID 格式不对：\(s)\n应填正向 (xxx.apps.googleusercontent.com)，不是反转 (com.googleusercontent.apps.xxx)"
             case .underlying(let e): return e.localizedDescription
             }
         }
@@ -42,7 +45,7 @@ enum PendingGoogleSignIn {
     /// Run the native Google sign-in sheet and exchange the resulting
     /// ID token for a Supabase session.
     static func run() async throws -> Session {
-        configureIfNeeded()
+        try configureIfNeeded()
         guard let presenter = topViewController() else {
             throw Error.underlying(URLError(.badServerResponse))
         }
@@ -70,15 +73,27 @@ enum PendingGoogleSignIn {
         }
     }
 
-    /// Read GIDClientID from Info.plist on first call. Idempotent —
-    /// the SDK caches the configuration internally.
-    private static func configureIfNeeded() {
+    /// Read GIDClientID from Info.plist, validate the shape, and hand
+    /// it to GIDSignIn. Idempotent — the SDK caches the configuration
+    /// internally so we only need to do this once.
+    ///
+    /// Validation: the value must be the *forward* client id ending in
+    /// `.apps.googleusercontent.com`. The reversed form (used only as
+    /// a URL scheme in CFBundleURLTypes) starts with
+    /// `com.googleusercontent.apps.` and would silently fail to start
+    /// the auth sheet — surface that mistake here with a typed error.
+    private static func configureIfNeeded() throws {
         if GIDSignIn.sharedInstance.configuration != nil { return }
-        guard let clientID = Bundle.main.object(forInfoDictionaryKey: "GIDClientID") as? String,
-              !clientID.isEmpty else {
-            return
+        let raw = Bundle.main.object(forInfoDictionaryKey: "GIDClientID") as? String ?? ""
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed.hasPrefix("YOUR_") {
+            throw Error.missingClientID
         }
-        GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: clientID)
+        guard trimmed.hasSuffix(".apps.googleusercontent.com"),
+              !trimmed.hasPrefix("com.googleusercontent.apps.") else {
+            throw Error.malformedClientID(trimmed)
+        }
+        GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: trimmed)
     }
 
     private static func topViewController() -> UIViewController? {
