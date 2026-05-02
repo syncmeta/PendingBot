@@ -1,65 +1,55 @@
 import SwiftUI
 import Supabase
 
-/// 好友 tab — contacts (bots + humans) and group-chat list.
+/// 好友 tab — unified contact list (bots + humans), no section headers.
+/// Each row shows the friend's name with an AI / 人类 tag; the row's
+/// font matches the message-list row in MessageTabView so the two tabs
+/// feel consistent.
 ///
-/// Sections:
-///   机器人朋友 — every active bot (preset roster + bots the user adds later)
-///   真人朋友   — pendingbot.user_contacts where contact_type='user'
-///   群聊       — conversations of type 'group' the user participates in
+/// Sort: most recent interaction desc, then name a-z. Filter chips at the
+/// top let the user narrow to only humans or only bots; both off = full
+/// list.
 ///
-/// Top-right + opens the add-friend sheet (handle code or email).
-/// Tap a contact → open the user_bot or user_user conversation
-/// (creating one if it doesn't exist yet).
+/// Tap behavior (per user spec):
+///   - bot:   create a fresh user_bot conversation and push into it
+///            (each tap is a new conv on purpose; existing convs stay
+///            in 消息 list)
+///   - human: find-or-create the singleton user_user conv with that
+///            person and push into it
+///
+/// Group chats are NOT here — they live in the message list. Group
+/// creation is the + button on the message tab.
 struct FriendsTabView: View {
     @EnvironmentObject private var store: AccountStore
 
-    @State private var bots: [BotRow] = []
-    @State private var humanContacts: [HumanRow] = []
-    @State private var groupConvs: [Conversation] = []
+    @State private var friends: [Friend] = []
     @State private var loading = false
     @State private var error: String?
     @State private var addingFriend = false
     @State private var managingHandles = false
+    @State private var humansOnly = false
+    @State private var botsOnly = false
+    @State private var path: [Conversation] = []
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ZStack {
                 Theme.Palette.canvas.ignoresSafeArea()
-                List {
-                    Section("机器人朋友") {
-                        if bots.isEmpty {
-                            Text("还没有机器人朋友").foregroundStyle(.secondary)
-                        }
-                        ForEach(bots) { bot in
-                            BotContactRow(bot: bot)
+                VStack(spacing: 0) {
+                    filterBar
+                    List {
+                        ForEach(visibleFriends) { f in
+                            FriendRow(friend: f)
                                 .listRowBackground(Theme.Palette.surface)
+                                .contentShape(Rectangle())
+                                .onTapGesture { Task { await openChat(f) } }
                         }
                     }
-                    Section("真人朋友") {
-                        if humanContacts.isEmpty {
-                            Text("还没有真人朋友 — 上方 + 加一个")
-                                .foregroundStyle(.secondary)
-                        }
-                        ForEach(humanContacts) { c in
-                            HumanContactRow(contact: c)
-                                .listRowBackground(Theme.Palette.surface)
-                        }
-                    }
-                    Section("群聊") {
-                        if groupConvs.isEmpty {
-                            Text("还没有群聊").foregroundStyle(.secondary)
-                        }
-                        ForEach(groupConvs) { conv in
-                            Text(conv.title ?? "未命名群")
-                                .listRowBackground(Theme.Palette.surface)
-                        }
-                    }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                    .refreshable { await load() }
                 }
-                .scrollContentBackground(.hidden)
-                .refreshable { await load() }
             }
-            .navigationTitle("好友")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
@@ -72,10 +62,14 @@ struct FriendsTabView: View {
                     Button {
                         addingFriend = true
                         Haptics.tap()
-                    } label: { Image(systemName: "plus") }
-                    .foregroundStyle(Theme.Palette.accent)
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(Theme.Palette.accent)
+                    }
                 }
             }
+            .toolbar(.hidden, for: .navigationBar) // no "好友" title strip
             .sheet(isPresented: $addingFriend) {
                 AddFriendSheet { Task { await load() } }
                     .presentationDetents([.medium])
@@ -86,6 +80,9 @@ struct FriendsTabView: View {
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
             }
+            .navigationDestination(for: Conversation.self) { conv in
+                ConversationView(conversation: conv, bot: nil)
+            }
         }
         .task { await load() }
         .alert("出错", isPresented: .constant(error != nil)) {
@@ -93,31 +90,60 @@ struct FriendsTabView: View {
         } message: { Text(error ?? "") }
     }
 
+    // MARK: - Filter chips
+
+    private var filterBar: some View {
+        HStack(spacing: 8) {
+            FilterChip(text: "仅人类", on: humansOnly) {
+                humansOnly.toggle()
+                if humansOnly { botsOnly = false }
+            }
+            FilterChip(text: "仅机器人", on: botsOnly) {
+                botsOnly.toggle()
+                if botsOnly { humansOnly = false }
+            }
+            Spacer()
+        }
+        .padding(.horizontal, Theme.Metrics.gutter)
+        .padding(.vertical, 10)
+        .background(Theme.Palette.canvas)
+    }
+
+    private var visibleFriends: [Friend] {
+        friends.filter { f in
+            if humansOnly { return f.kind == .human }
+            if botsOnly { return f.kind == .bot }
+            return true
+        }
+    }
+
     // MARK: - Data
 
-    struct BotRow: Identifiable, Hashable {
-        let id: String
-        let display_name: String
-        let model_id: String?
+    enum FriendKind: Equatable { case bot, human }
+
+    struct Friend: Identifiable, Hashable {
+        let id: String                  // bot id or contact user id
+        let kind: FriendKind
+        let name: String
+        let subtitle: String?           // model tag for bots, email/handle note for humans
+        let lastInteractedAt: Int       // epoch seconds (0 if never)
+        let modelId: String?            // bots only
+        static func == (a: Friend, b: Friend) -> Bool { a.id == b.id }
+        func hash(into hasher: inout Hasher) { hasher.combine(id) }
     }
-    struct HumanRow: Identifiable, Hashable {
-        let id: String
-        let alias: String?
-        let email: String?
-    }
-    private struct ContactDecodable: Decodable {
-        let contact_user_id: String
-        let alias: String?
-    }
+
     private struct BotDecodable: Decodable {
         let id: String
         let display_name: String
         let model_id: String?
     }
     private struct ConvDecodable: Decodable {
-        let id: String
-        let title: String?
+        let bot_id: String?
         let updated_at: String?
+    }
+    private struct ContactDecodable: Decodable {
+        let contact_user_id: String
+        let alias: String?
     }
 
     private func load() async {
@@ -129,60 +155,185 @@ struct FriendsTabView: View {
                 .eq("is_active", value: true)
                 .execute()
                 .value
+            // For "most recent interaction" — pull the user's user_bot
+            // convs and pluck max(updated_at) per bot_id locally.
+            async let convRowsResp: [ConvDecodable] = SupabaseStack.shared.database
+                .from("conversations")
+                .select("bot_id, updated_at")
+                .eq("conversation_type", value: "user_bot")
+                .execute()
+                .value
             async let contactRowsResp: [ContactDecodable] = SupabaseStack.shared.database
                 .from("user_contacts")
                 .select("contact_user_id, alias")
                 .execute()
                 .value
-            async let groupRowsResp: [ConvDecodable] = SupabaseStack.shared.database
-                .from("conversations")
-                .select("id, title, updated_at")
-                .eq("conversation_type", value: "group")
-                .order("updated_at", ascending: false)
-                .execute()
-                .value
 
             let botRows = try await botRowsResp
+            let convRows = try await convRowsResp
             let contactRows = try await contactRowsResp
-            let groupRows = try await groupRowsResp
 
-            self.bots = botRows.map { BotRow(id: $0.id, display_name: $0.display_name, model_id: $0.model_id) }
-            self.humanContacts = contactRows.map {
-                HumanRow(id: $0.contact_user_id, alias: $0.alias, email: nil)
+            let fmt = ISO8601DateFormatter()
+            var lastByBot: [String: Int] = [:]
+            for c in convRows {
+                guard let bid = c.bot_id, let s = c.updated_at,
+                      let d = fmt.date(from: s) else { continue }
+                let secs = Int(d.timeIntervalSince1970)
+                if secs > (lastByBot[bid] ?? 0) { lastByBot[bid] = secs }
             }
-            self.groupConvs = groupRows.map { row in
-                let secs: Int = ISO8601DateFormatter().date(from: row.updated_at ?? "")
-                    .map { Int($0.timeIntervalSince1970) } ?? 0
-                return Conversation(
-                    id: row.id, bot_id: "", user_id: store.current?.id ?? "",
-                    title: row.title, feature_type: "group",
-                    last_activity_at: secs, round_count: nil,
-                    bot_name: nil, last_message_content: nil,
-                    last_message_sender_type: nil, model_override: nil
+
+            let botFriends: [Friend] = botRows.map { b in
+                Friend(
+                    id: b.id, kind: .bot,
+                    name: b.display_name,
+                    subtitle: b.model_id.map(shortSlug),
+                    lastInteractedAt: lastByBot[b.id] ?? 0,
+                    modelId: b.model_id
                 )
+            }
+            // No per-human "last interaction" yet — would need to look up
+            // the user_user conv's updated_at. For MVP, sort humans by
+            // alias only (lastInteractedAt = 0 → falls into name tiebreak).
+            let humanFriends: [Friend] = contactRows.map { c in
+                Friend(
+                    id: c.contact_user_id, kind: .human,
+                    name: c.alias ?? String(c.contact_user_id.prefix(8)),
+                    subtitle: nil,
+                    lastInteractedAt: 0,
+                    modelId: nil
+                )
+            }
+
+            self.friends = (botFriends + humanFriends).sorted { lhs, rhs in
+                if lhs.lastInteractedAt != rhs.lastInteractedAt {
+                    return lhs.lastInteractedAt > rhs.lastInteractedAt
+                }
+                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
             }
         } catch {
             self.error = error.localizedDescription
         }
     }
+
+    // MARK: - Open chat
+
+    private func openChat(_ f: Friend) async {
+        guard let userId = AccountStore.shared.current?.id else { return }
+        do {
+            switch f.kind {
+            case .bot:
+                let conv = try await createUserBotConv(botId: f.id, botName: f.name, userId: userId)
+                path.append(conv)
+            case .human:
+                let convId = try await openOrCreateUserUserConv(contactUserId: f.id)
+                let conv = Conversation(
+                    id: convId, bot_id: "", user_id: userId,
+                    title: f.name, feature_type: "message",
+                    conversation_type: "user_user",
+                    last_activity_at: Int(Date().timeIntervalSince1970),
+                    round_count: nil, bot_name: nil,
+                    last_message_content: nil, last_message_sender_type: nil,
+                    model_override: nil
+                )
+                path.append(conv)
+            }
+            Haptics.tap()
+        } catch {
+            self.error = error.localizedDescription
+            Haptics.error()
+        }
+    }
+
+    private func createUserBotConv(botId: String, botName: String, userId: String) async throws -> Conversation {
+        struct ConvInsert: Encodable {
+            let conversation_type = "user_bot"
+            let feature = "message"
+            let user_id: String
+            let bot_id: String
+            let title: String
+        }
+        struct Inserted: Decodable { let id: String }
+        let inserted: Inserted = try await SupabaseStack.shared.database
+            .from("conversations")
+            .insert(ConvInsert(user_id: userId, bot_id: botId, title: botName))
+            .select("id")
+            .single()
+            .execute()
+            .value
+        struct Participant: Encodable {
+            let conversation_id: String
+            let participant_type: String
+            let participant_id: String
+            let role: String
+        }
+        try await SupabaseStack.shared.database
+            .from("conversation_participants")
+            .insert([
+                Participant(conversation_id: inserted.id, participant_type: "user",
+                            participant_id: userId, role: "owner"),
+                Participant(conversation_id: inserted.id, participant_type: "bot",
+                            participant_id: botId, role: "member"),
+            ])
+            .execute()
+        return Conversation(
+            id: inserted.id, bot_id: botId, user_id: userId,
+            title: botName, feature_type: "message",
+            conversation_type: "user_bot",
+            last_activity_at: Int(Date().timeIntervalSince1970),
+            round_count: 0, bot_name: botName,
+            last_message_content: nil, last_message_sender_type: nil,
+            model_override: nil
+        )
+    }
+
+    /// Hits the Worker's find-or-create for the singleton user_user conv.
+    /// Worker writes both participant rows under service_role.
+    private func openOrCreateUserUserConv(contactUserId: String) async throws -> String {
+        var req = URLRequest(url: HostedConfig.environment.workerURL
+            .appendingPathComponent("v1/contacts/open-chat"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let token = try await SupabaseStack.shared.auth.session.accessToken
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["contactUserId": contactUserId])
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+        struct R: Decodable { let conversationId: String }
+        return try JSONDecoder().decode(R.self, from: data).conversationId
+    }
 }
 
-// MARK: - Rows
+// MARK: - Friend row (matches MessageTabView's row font)
 
-private struct BotContactRow: View {
-    let bot: FriendsTabView.BotRow
+private struct FriendRow: View {
+    let friend: FriendsTabView.Friend
     var body: some View {
         HStack(spacing: 12) {
-            BotAvatar(seed: bot.id, size: 36)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(bot.display_name)
-                    .font(Theme.Fonts.rounded(size: 15, weight: .medium))
-                    .foregroundStyle(Theme.Palette.ink)
-                if let m = bot.model_id {
-                    Text(shortSlug(m))
+            switch friend.kind {
+            case .bot:
+                BotAvatar(seed: friend.id, size: 44)
+            case .human:
+                Image(systemName: "person.crop.circle.fill")
+                    .font(.system(size: 36))
+                    .foregroundStyle(Theme.Palette.accent.opacity(0.85))
+                    .frame(width: 44, height: 44)
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(friend.name)
+                        .font(Theme.Fonts.rounded(size: 16, weight: .medium))
+                        .foregroundStyle(Theme.Palette.ink)
+                        .lineLimit(1)
+                    KindTag(kind: friend.kind)
+                }
+                if let sub = friend.subtitle {
+                    Text(sub)
                         .font(Theme.Fonts.monoSmall)
                         .foregroundStyle(Theme.Palette.inkMuted)
                         .lineLimit(1)
+                        .truncationMode(.middle)
                 }
             }
             Spacer()
@@ -191,21 +342,37 @@ private struct BotContactRow: View {
     }
 }
 
-private struct HumanContactRow: View {
-    let contact: FriendsTabView.HumanRow
+private struct KindTag: View {
+    let kind: FriendsTabView.FriendKind
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "person.crop.circle.fill")
-                .font(.system(size: 28))
-                .foregroundStyle(Theme.Palette.accent)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(contact.alias ?? contact.id.prefix(8).description)
-                    .font(Theme.Fonts.rounded(size: 15, weight: .medium))
-                    .foregroundStyle(Theme.Palette.ink)
-            }
-            Spacer()
+        let (text, fg, bg): (String, Color, Color) = kind == .bot
+            ? ("AI", Color(hex: 0x1F4F8A), Color(hex: 0xE6EEF8))
+            : ("人类", Color(hex: 0x6F4A1A), Color(hex: 0xF7ECDA))
+        return Text(text)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(fg)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(bg))
+    }
+}
+
+private struct FilterChip: View {
+    let text: String
+    let on: Bool
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            Text(text)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(on ? .white : Theme.Palette.ink)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule().fill(on ? Theme.Palette.accent : Theme.Palette.surfaceMuted)
+                )
         }
-        .padding(.vertical, 4)
+        .buttonStyle(.plain)
     }
 }
 
@@ -268,10 +435,8 @@ private struct AddFriendSheet: View {
                     Button("取消") { dismiss() }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("加") {
-                        Task { await submit() }
-                    }
-                    .disabled(submitting || (mode == .handle ? handleValue.isEmpty : email.isEmpty))
+                    Button("加") { Task { await submit() } }
+                        .disabled(submitting || (mode == .handle ? handleValue.isEmpty : email.isEmpty))
                 }
             }
         }
@@ -415,7 +580,6 @@ private struct MyHandlesSheet: View {
     private func mint() async {
         guard let userId = AccountStore.shared.current?.id else { return }
         let trimmed = newLabel.trimmingCharacters(in: .whitespaces)
-        // 10-char base32 token. Easy to read aloud, avoids 0/O 1/L confusion.
         let alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
         let token = String((0..<10).compactMap { _ in alphabet.randomElement() })
         struct Insert: Encodable {

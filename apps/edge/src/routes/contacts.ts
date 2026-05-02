@@ -100,3 +100,63 @@ contactRoutes.post('/add', async (c) => {
 
   return c.json({ ok: true, contactUserId: targetUserId });
 });
+
+// POST /v1/contacts/open-chat — find-or-create the singleton user_user
+// conversation between the caller and another user. iOS calls this when
+// the user taps a human friend from the friends list; subsequent taps
+// resolve to the same conv (per the "人和人之间的会话只能有一个" rule).
+const OpenChatBody = z.object({ contactUserId: z.string().uuid() });
+contactRoutes.post('/open-chat', async (c) => {
+  const userId = c.var.userId!;
+  let parsed: z.infer<typeof OpenChatBody>;
+  try {
+    parsed = OpenChatBody.parse(await c.req.json());
+  } catch (err) {
+    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+  }
+  const otherId = parsed.contactUserId;
+  if (otherId === userId) return c.json({ error: 'cannot open chat with yourself' }, 400);
+
+  const supa = serviceClient(c.env);
+
+  // Find an existing user_user conv where both users participate. We can
+  // do this with two participant-row reads + intersection, but the most
+  // efficient single query is: pull all my user_user conv ids, then
+  // check which one has the other user as a participant.
+  const { data: mine } = await supa
+    .from('conversation_participants')
+    .select('conversation_id, conversations!inner(conversation_type)')
+    .eq('participant_type', 'user')
+    .eq('participant_id', userId)
+    .eq('conversations.conversation_type', 'user_user');
+  const myConvIds = (mine ?? []).map((r) => r.conversation_id as string);
+  if (myConvIds.length > 0) {
+    const { data: theirs } = await supa
+      .from('conversation_participants')
+      .select('conversation_id')
+      .eq('participant_type', 'user')
+      .eq('participant_id', otherId)
+      .in('conversation_id', myConvIds);
+    const shared = (theirs ?? []).map((r) => r.conversation_id as string)[0];
+    if (shared) return c.json({ conversationId: shared, created: false });
+  }
+
+  // Not found — create.
+  const { data: conv, error: convErr } = await supa
+    .from('conversations')
+    .insert({
+      conversation_type: 'user_user',
+      feature: 'message',
+      user_id: userId,
+      title: null,
+    })
+    .select('id')
+    .single();
+  if (convErr || !conv) return c.json({ error: 'database', detail: convErr?.message }, 500);
+  const convId = conv.id as string;
+  await supa.from('conversation_participants').insert([
+    { conversation_id: convId, participant_type: 'user', participant_id: userId, role: 'owner' },
+    { conversation_id: convId, participant_type: 'user', participant_id: otherId, role: 'member' },
+  ]);
+  return c.json({ conversationId: convId, created: true });
+});

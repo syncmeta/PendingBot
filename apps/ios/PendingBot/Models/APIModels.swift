@@ -42,6 +42,9 @@ struct Conversation: Codable, Identifiable, Hashable {
     let user_id: String
     let title: String?
     let feature_type: String?
+    /// Schema's `conversation_type` enum: user_bot / user_user / group /
+    /// discuss / surf / portrait. Drives the list-row badge.
+    let conversation_type: String?
     let last_activity_at: Int
     let round_count: Int?
     /// Joined from `bots.display_name` server-side; nil if older row.

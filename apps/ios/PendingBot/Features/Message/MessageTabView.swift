@@ -22,6 +22,7 @@ struct MessageTabView: View {
     @State private var loading = false
     @State private var error: String?
     @State private var creatingForBot: Bot?
+    @State private var creatingGroup = false
     // Path-based nav for compact: keyed to .toolbar(.hidden, for: .tabBar)
     // so the bottom tab bar slides out alongside the push transition (rather
     // than snapping back in *after* the back transition finishes, which is
@@ -54,6 +55,11 @@ struct MessageTabView: View {
         .alert("出错了", isPresented: .constant(error != nil), actions: {
             Button("好") { error = nil }
         }, message: { Text(error ?? "") })
+        .sheet(isPresented: $creatingGroup) {
+            CreateGroupSheet { _ in Task { await load() } }
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
     }
 
     // ── Compact (iPhone) ────────────────────────────────────────────────────
@@ -102,19 +108,14 @@ struct MessageTabView: View {
     private var sidebarBody: some View {
         VStack(spacing: 0) {
             TabHeaderBar(title: "消息") {
-                Menu {
-                    Section("选择一个机器人") {
-                        ForEach(bots) { bot in
-                            Button(bot.nameWithModel) {
-                                Task { await createConversation(with: bot) }
-                            }
-                        }
-                    }
+                Button {
+                    creatingGroup = true
+                    Haptics.tap()
                 } label: {
                     Image(systemName: "plus")
-                        .font(.system(size: 17, weight: .medium))
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(Theme.Palette.accent)
                 }
-                .disabled(bots.isEmpty)
             }
             Group {
                 if loading && conversations.isEmpty {
@@ -194,6 +195,7 @@ struct MessageTabView: View {
                     user_id: row.user_id ?? "",
                     title: row.title,
                     feature_type: row.feature,
+                    conversation_type: row.conversation_type,
                     last_activity_at: row.last_activity_at,
                     round_count: row.round_count,
                     bot_name: nil,
@@ -215,7 +217,7 @@ struct MessageTabView: View {
                 .value
             async let convRows: [ConvRow] = SupabaseStack.shared.database
                 .from("conversations")
-                .select("id, bot_id, user_id, title, feature, round_count, updated_at")
+                .select("id, bot_id, user_id, title, conversation_type, feature, round_count, updated_at")
                 .order("updated_at", ascending: false)
                 .execute()
                 .value
@@ -223,15 +225,13 @@ struct MessageTabView: View {
             self.bots = try await botRows.map(\.asBot)
             let fresh = try await convRows.map(\.asConversation)
             self.conversations = fresh
-            // Persist to local cache so the next launch shows the same
-            // list before the network roundtrip.
             LocalDatabase.shared.upsertConversations(fresh.map { c in
                 LocalDatabase.ConversationRow(
                     id: c.id,
                     bot_id: c.bot_id.isEmpty ? nil : c.bot_id,
                     user_id: c.user_id.isEmpty ? nil : c.user_id,
                     title: c.title,
-                    conversation_type: nil,
+                    conversation_type: c.conversation_type,
                     feature: c.feature_type,
                     round_count: c.round_count,
                     last_activity_at: c.last_activity_at
@@ -266,6 +266,7 @@ struct MessageTabView: View {
         let bot_id: String?
         let user_id: String?
         let title: String?
+        let conversation_type: String?
         let feature: String?
         let round_count: Int?
         let updated_at: String? // ISO 8601
@@ -281,6 +282,7 @@ struct MessageTabView: View {
                 user_id: user_id ?? "",
                 title: title,
                 feature_type: feature,
+                conversation_type: conversation_type,
                 last_activity_at: secs,
                 round_count: round_count,
                 bot_name: nil,
@@ -341,6 +343,7 @@ struct MessageTabView: View {
                 user_id: userId,
                 title: nil,
                 feature_type: "message",
+                conversation_type: "user_bot",
                 last_activity_at: Int(Date().timeIntervalSince1970),
                 round_count: 0,
                 bot_name: bot.display_name,
@@ -408,6 +411,9 @@ private struct ConversationListRow: View {
                             : Theme.Palette.inkMuted
                         )
                         .lineLimit(1)
+                    if let badge = ConvTypeBadge(forType: conv.conversation_type) {
+                        badge
+                    }
                     Spacer(minLength: 8)
                     Text(Date(timeIntervalSince1970: TimeInterval(conv.last_activity_at)),
                          format: .relative(presentation: .numeric))
@@ -459,5 +465,225 @@ private struct ConversationListRow: View {
                 )
         )
         .contentShape(RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous))
+    }
+}
+
+// MARK: - Conv-type badge
+
+/// Compact pill rendered next to a list-row title to call out non-1:1
+/// conversation types. Returns nil for `user_bot` since that's the
+/// default and doesn't need a label.
+private struct ConvTypeBadge: View {
+    let text: String
+    let fg: Color
+    let bg: Color
+    init?(forType type: String?) {
+        switch type {
+        case "discuss":
+            self.text = "议论"
+            self.fg = Color(hex: 0x6F4A1A)
+            self.bg = Color(hex: 0xF7ECDA)
+        case "group":
+            self.text = "群"
+            self.fg = Color(hex: 0x1F4F8A)
+            self.bg = Color(hex: 0xE6EEF8)
+        case "user_user":
+            self.text = "私聊"
+            self.fg = Color(hex: 0x2E5C3D)
+            self.bg = Color(hex: 0xE3EEEA)
+        default:
+            return nil
+        }
+    }
+    var body: some View {
+        Text(text)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(fg)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(bg))
+    }
+}
+
+// MARK: - Create group sheet
+
+/// Group chat creation. Caller picks 0..N bots + 0..N human friends and a
+/// title, plus is automatically added as owner. Mixed bot+human groups
+/// are allowed.
+private struct CreateGroupSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    var onCreated: (String) -> Void
+
+    struct BotPick: Identifiable, Hashable {
+        let id: String
+        let name: String
+        let model_id: String?
+    }
+    struct HumanPick: Identifiable, Hashable {
+        let id: String
+        let name: String
+    }
+    private struct BotDecodable: Decodable { let id: String; let display_name: String; let model_id: String? }
+    private struct ContactDecodable: Decodable { let contact_user_id: String; let alias: String? }
+
+    @State private var title = ""
+    @State private var bots: [BotPick] = []
+    @State private var humans: [HumanPick] = []
+    @State private var selectedBots = Set<String>()
+    @State private var selectedHumans = Set<String>()
+    @State private var loading = true
+    @State private var creating = false
+    @State private var error: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("群名") {
+                    TextField("起个名字", text: $title)
+                }
+                Section("机器人成员") {
+                    if bots.isEmpty {
+                        Text("没有可选机器人").foregroundStyle(.secondary)
+                    }
+                    ForEach(bots) { b in
+                        memberRow(name: b.name,
+                                  subtitle: b.model_id,
+                                  selected: selectedBots.contains(b.id)) {
+                            toggle(set: &selectedBots, id: b.id)
+                        }
+                    }
+                }
+                Section("真人成员") {
+                    if humans.isEmpty {
+                        Text("还没有真人朋友").foregroundStyle(.secondary)
+                    }
+                    ForEach(humans) { h in
+                        memberRow(name: h.name,
+                                  subtitle: nil,
+                                  selected: selectedHumans.contains(h.id)) {
+                            toggle(set: &selectedHumans, id: h.id)
+                        }
+                    }
+                }
+                if let error {
+                    Text(error).foregroundStyle(.red).font(.footnote)
+                }
+            }
+            .navigationTitle("发起群聊")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("创建") { Task { await create() } }
+                        .disabled(creating || title.trimmingCharacters(in: .whitespaces).isEmpty
+                                  || (selectedBots.isEmpty && selectedHumans.isEmpty))
+                }
+            }
+        }
+        .task { await load() }
+    }
+
+    @ViewBuilder
+    private func memberRow(name: String, subtitle: String?, selected: Bool, onTap: @escaping () -> Void) -> some View {
+        Button(action: onTap) {
+            HStack(spacing: 10) {
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(selected ? Theme.Palette.accent : Theme.Palette.inkMuted)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(name).foregroundStyle(Theme.Palette.ink)
+                    if let s = subtitle {
+                        Text(s).font(Theme.Fonts.monoSmall).foregroundStyle(Theme.Palette.inkMuted)
+                    }
+                }
+                Spacer()
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func toggle(set: inout Set<String>, id: String) {
+        if set.contains(id) { set.remove(id) } else { set.insert(id) }
+        Haptics.tap()
+    }
+
+    private func load() async {
+        loading = true; defer { loading = false }
+        do {
+            async let botRowsResp: [BotDecodable] = SupabaseStack.shared.database
+                .from("bots")
+                .select("id, display_name, model_id")
+                .eq("is_active", value: true)
+                .execute()
+                .value
+            async let contactRowsResp: [ContactDecodable] = SupabaseStack.shared.database
+                .from("user_contacts")
+                .select("contact_user_id, alias")
+                .execute()
+                .value
+            let botRows = try await botRowsResp
+            let humanRows = try await contactRowsResp
+            self.bots = botRows.map { BotPick(id: $0.id, name: $0.display_name, model_id: $0.model_id) }
+            self.humans = humanRows.map { HumanPick(id: $0.contact_user_id, name: $0.alias ?? String($0.contact_user_id.prefix(8))) }
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func create() async {
+        guard let userId = AccountStore.shared.current?.id else { return }
+        creating = true; defer { creating = false }
+        let trimmedTitle = title.trimmingCharacters(in: .whitespaces)
+        do {
+            struct ConvInsert: Encodable {
+                let conversation_type = "group"
+                let feature = "message"
+                let user_id: String
+                let title: String
+            }
+            struct Inserted: Decodable { let id: String }
+            let inserted: Inserted = try await SupabaseStack.shared.database
+                .from("conversations")
+                .insert(ConvInsert(user_id: userId, title: trimmedTitle))
+                .select("id")
+                .single()
+                .execute()
+                .value
+
+            struct Participant: Encodable {
+                let conversation_id: String
+                let participant_type: String
+                let participant_id: String
+                let role: String
+            }
+            var rows: [Participant] = [
+                Participant(conversation_id: inserted.id,
+                            participant_type: "user",
+                            participant_id: userId,
+                            role: "owner"),
+            ]
+            for bid in selectedBots {
+                rows.append(Participant(conversation_id: inserted.id,
+                                        participant_type: "bot",
+                                        participant_id: bid,
+                                        role: "member"))
+            }
+            for uid in selectedHumans {
+                rows.append(Participant(conversation_id: inserted.id,
+                                        participant_type: "user",
+                                        participant_id: uid,
+                                        role: "member"))
+            }
+            try await SupabaseStack.shared.database
+                .from("conversation_participants")
+                .insert(rows)
+                .execute()
+            Haptics.success()
+            onCreated(inserted.id)
+            dismiss()
+        } catch {
+            self.error = error.localizedDescription
+        }
     }
 }
