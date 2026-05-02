@@ -33,16 +33,12 @@
 			<string>google-signin-reversed</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<!-- TODO: replace with your iOS OAuth client's Reversed
-				     Client ID, e.g. com.googleusercontent.apps.123-abc -->
-				<string>REVERSED_GOOGLE_CLIENT_ID</string>
+				<string>com.googleusercontent.apps.842392349572-bh7pmohnadkkb8nd3aq3v9p9pbh3pubs</string>
 			</array>
 		</dict>
 	</array>
-	<!-- TODO: paste the iOS OAuth Client ID from Google Cloud Console.
-	     Format: <digits>-<token>.apps.googleusercontent.com -->
 	<key>GIDClientID</key>
-	<string>YOUR_IOS_CLIENT_ID.apps.googleusercontent.com</string>
+	<string>842392349572-bh7pmohnadkkb8nd3aq3v9p9pbh3pubs.apps.googleusercontent.com</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
