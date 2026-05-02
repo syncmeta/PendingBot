@@ -69,9 +69,7 @@ struct MessageTabView: View {
                 .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $scanning) {
-            ScanComingSoonSheet()
-                .presentationDetents([.medium])
-                .presentationDragIndicator(.visible)
+            ScanQRSheet { Task { await load() } }
         }
         .sheet(isPresented: $startingDiscuss) {
             StartDiscussSheet { _ in Task { await load() } }
@@ -533,33 +531,99 @@ private struct ConvTypeBadge: View {
     }
 }
 
-// MARK: - 扫码 placeholder
+// MARK: - 扫码 sheet (real camera scanner)
 
-private struct ScanComingSoonSheet: View {
+/// Camera-backed QR scanner. First valid QR detection fires
+/// /v1/contacts/add with handleValue=<scanned> and dismisses.
+private struct ScanQRSheet: View {
     @Environment(\.dismiss) private var dismiss
+    var onAdded: () -> Void = {}
+
+    @State private var scannedValue: String?
+    @State private var submitting = false
+    @State private var error: String?
+
     var body: some View {
         NavigationStack {
-            VStack(spacing: 16) {
-                Image(systemName: "qrcode.viewfinder")
-                    .font(.system(size: 56, weight: .light))
-                    .foregroundStyle(Theme.Palette.inkMuted)
-                Text("扫码功能正在开发中")
-                    .font(Theme.Fonts.rounded(size: 16, weight: .medium))
-                Text("暂时请用「加好友」里粘贴号码字符串。")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 40)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Theme.Palette.canvas)
-            .navigationTitle("扫码")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("完成") { dismiss() }
+            ZStack {
+                Color.black.ignoresSafeArea()
+                if scannedValue == nil {
+                    QRScannerView { value in
+                        scannedValue = value
+                        Haptics.tap()
+                        Task { await submit(value: value) }
+                    } onError: { err in
+                        error = err.localizedDescription
+                    }
+                    .ignoresSafeArea()
+                    VStack {
+                        Spacer()
+                        Text("把对方的二维码对准相机")
+                            .font(.footnote)
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(Capsule().fill(Color.black.opacity(0.5)))
+                            .padding(.bottom, 40)
+                    }
+                } else if submitting {
+                    VStack(spacing: 12) {
+                        ProgressView().tint(.white).controlSize(.large)
+                        Text("加好友中...")
+                            .foregroundStyle(.white)
+                    }
+                } else if let error {
+                    VStack(spacing: 12) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 40))
+                            .foregroundStyle(.yellow)
+                        Text(error)
+                            .foregroundStyle(.white)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 32)
+                        Button("重新扫码") {
+                            self.error = nil
+                            self.scannedValue = nil
+                        }
+                        .foregroundStyle(.white)
+                    }
                 }
             }
+            .navigationTitle("扫码")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("取消") { dismiss() }
+                        .foregroundStyle(.white)
+                }
+            }
+        }
+    }
+
+    private func submit(value: String) async {
+        submitting = true
+        defer { submitting = false }
+        do {
+            let url = HostedConfig.environment.workerURL.appendingPathComponent("v1/contacts/add")
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            let token = try await SupabaseStack.shared.auth.session.accessToken
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            req.httpBody = try JSONSerialization.data(withJSONObject: ["handleValue": value])
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard let http = resp as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+            if !(200..<300).contains(http.statusCode) {
+                let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                error = (payload?["error"] as? String) ?? "HTTP \(http.statusCode)"
+                return
+            }
+            Haptics.success()
+            onAdded()
+            dismiss()
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 }

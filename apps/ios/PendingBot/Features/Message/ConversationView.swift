@@ -326,6 +326,27 @@ struct ConversationView: View {
                 }
             }
             Spacer(minLength: 0)
+            // Discuss-only controls: re-trigger another round / cancel.
+            // Both hit the existing /v1/discuss endpoints; UI stays out
+            // of the way for normal user_bot convs.
+            if conversation.conversation_type == "discuss" {
+                Button { Task { await discussRetrigger() } } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 16, weight: .regular))
+                        .foregroundStyle(Theme.Palette.ink)
+                        .frame(width: 32, height: 32)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("再来一轮")
+                Button { Task { await discussCancel() } } label: {
+                    Image(systemName: "stop.circle")
+                        .font(.system(size: 16, weight: .regular))
+                        .foregroundStyle(Color(hex: 0xB14B3C))
+                        .frame(width: 32, height: 32)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("停")
+            }
             Button {
                 Haptics.tap()
                 showingSettings = true
@@ -342,6 +363,58 @@ struct ConversationView: View {
         .padding(.horizontal, Theme.Metrics.gutter)
         .padding(.top, 6)
         .padding(.bottom, 8)
+    }
+
+    // MARK: - Discuss controls
+
+    private func discussRetrigger() async {
+        // Re-trigger reuses /v1/discuss/start with the same conv id; the
+        // Worker treats the existing conv as a continuation. We need the
+        // bot ids — pull from conversation_participants.
+        do {
+            struct PRow: Decodable { let participant_id: String }
+            let rows: [PRow] = try await SupabaseStack.shared.database
+                .from("conversation_participants")
+                .select("participant_id")
+                .eq("conversation_id", value: conversation.id)
+                .eq("participant_type", value: "bot")
+                .execute()
+                .value
+            let botIds = rows.map(\.participant_id)
+            guard !botIds.isEmpty else { return }
+            // Topic seed — use the conv title or first user/log message text.
+            let topic = conversation.title ?? "继续议论"
+
+            var req = URLRequest(url: HostedConfig.environment.workerURL
+                .appendingPathComponent("v1/discuss/start"))
+            req.httpMethod = "POST"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            let token = try await SupabaseStack.shared.auth.session.accessToken
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            req.httpBody = try JSONSerialization.data(withJSONObject: [
+                "conversationId": conversation.id,
+                "topic": topic,
+                "botIds": botIds,
+            ])
+            _ = try await URLSession.shared.data(for: req)
+            Haptics.tap()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func discussCancel() async {
+        do {
+            var req = URLRequest(url: HostedConfig.environment.workerURL
+                .appendingPathComponent("v1/discuss/\(conversation.id)/cancel"))
+            req.httpMethod = "POST"
+            let token = try await SupabaseStack.shared.auth.session.accessToken
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            _ = try await URLSession.shared.data(for: req)
+            Haptics.tap()
+        } catch {
+            self.error = error.localizedDescription
+        }
     }
 
     // Inline list of recent surf_status events while the server is doing a
@@ -401,30 +474,96 @@ struct ConversationView: View {
     // ── Send ────────────────────────────────────────────────────────────────
 
     private func send() async {
-        guard let api, canSend else { return }
+        guard canSend else { return }
         let text = input.trimmingCharacters(in: .whitespaces)
         let attachIds = pendingAttachments.map(\.id)
-        // Optimistic local echo — server will deliver canonical row via WS.
-        messages.append(ChatMessage(
-            id: "local-\(UUID().uuidString)",
-            conversation_id: conversation.id,
-            sender_type: "user", sender_id: "",
-            content: text,
-            created_at: Int(Date().timeIntervalSince1970),
-            attachments: pendingAttachments.map {
-                Attachment(id: $0.id, kind: "image", mime: $0.mime, size: $0.size,
-                           width: nil, height: nil, url: "/uploads/\($0.id)")
-            }
-        ))
         input = ""
         pendingAttachments = []
         photoPickerItems = []
         Haptics.send()
 
-        // Old WS path replaced — this turn flows through Worker SSE now.
-        // sendViaSSE owns the Task lifetime so the stop button can cancel it.
-        sendViaSSE(text: text, attachmentIds: attachIds)
-        _ = api
+        switch conversation.conversation_type {
+        case "discuss":
+            // 议论 mode: user is anonymous lurker. Their text is INSERTed
+            // as role='log', log_kind='discuss:anon' — bots see it on
+            // their next round as `[匿名插话] ...`. Doesn't trigger any
+            // bot reply directly (the runner is or isn't already running).
+            await sendDiscussAnon(text)
+        case "user_user":
+            // Plain human-to-human chat — no bot reply, just persist.
+            await sendPlainUserMessage(text)
+        case "group":
+            // Group MVP: persist user message, no auto bot reply yet.
+            // Bot speaks only when explicitly @-mentioned; that lands in
+            // a follow-up.
+            await sendPlainUserMessage(text)
+        default:
+            // user_bot: SSE turn against the pinned bot.
+            messages.append(ChatMessage(
+                id: "local-\(UUID().uuidString)",
+                conversation_id: conversation.id,
+                sender_type: "user", sender_id: "",
+                content: text,
+                created_at: Int(Date().timeIntervalSince1970),
+                attachments: pendingAttachments.map {
+                    Attachment(id: $0.id, kind: "image", mime: $0.mime, size: $0.size,
+                               width: nil, height: nil, url: "/uploads/\($0.id)")
+                }
+            ))
+            sendViaSSE(text: text, attachmentIds: attachIds)
+        }
+    }
+
+    /// Insert the message as role='log' / log_kind='discuss:anon' so bots
+    /// pick it up in their next round but UI tags it as an anonymous note.
+    private func sendDiscussAnon(_ text: String) async {
+        struct Insert: Encodable {
+            let client_message_id: String
+            let conversation_id: String
+            let role = "log"
+            let log_kind = "discuss:anon"
+            let status = "done"
+            let content: String
+        }
+        do {
+            try await SupabaseStack.shared.database
+                .from("messages")
+                .insert(Insert(
+                    client_message_id: UUID().uuidString.lowercased(),
+                    conversation_id: conversation.id,
+                    content: text
+                ))
+                .execute()
+        } catch {
+            self.error = "插话失败: \(error.localizedDescription)"
+            Haptics.error()
+        }
+    }
+
+    private func sendPlainUserMessage(_ text: String) async {
+        guard let userId = AccountStore.shared.current?.id else { return }
+        struct Insert: Encodable {
+            let client_message_id: String
+            let conversation_id: String
+            let user_id: String
+            let role = "user"
+            let status = "done"
+            let content: String
+        }
+        do {
+            try await SupabaseStack.shared.database
+                .from("messages")
+                .insert(Insert(
+                    client_message_id: UUID().uuidString.lowercased(),
+                    conversation_id: conversation.id,
+                    user_id: userId,
+                    content: text
+                ))
+                .execute()
+        } catch {
+            self.error = "发送失败: \(error.localizedDescription)"
+            Haptics.error()
+        }
     }
 
     /// Start the bot reply over SSE. Bubble emissions land in `messages`
@@ -596,12 +735,17 @@ struct ConversationView: View {
         guard let id = r["id"]?.stringValue,
               r["conversation_id"]?.stringValue == conversation.id else { return }
         let role = r["role"]?.stringValue ?? "user"
-        if role == "log" { return }
+        let logKind = r["log_kind"]?.stringValue
+        // Logs are mostly server-only (review/surf step entries). Only the
+        // anonymous-interject log appears in the conv UI.
+        if role == "log" && logKind != "discuss:anon" { return }
         let content = r["content"]?.stringValue ?? ""
         let createdRaw = r["created_at"]?.stringValue ?? ""
         let secs = ISO8601DateFormatter().date(from: createdRaw)
             .map { Int($0.timeIntervalSince1970) } ?? Int(Date().timeIntervalSince1970)
-        let senderType = role == "bot" ? "bot" : "user"
+        let senderType = role == "bot" ? "bot"
+            : (role == "log" && logKind == "discuss:anon") ? "anon"
+            : "user"
         let senderId = role == "bot"
             ? (r["sender_bot_id"]?.stringValue ?? "")
             : (r["user_id"]?.stringValue ?? "")
@@ -721,28 +865,36 @@ struct ConversationView: View {
                 let user_id: String?
                 let sender_bot_id: String?
                 let role: String
+                let log_kind: String?
                 let content: String?
                 let status: String?
                 let created_at: String
             }
+            // Discuss convs need the user's anonymous interjections (role='log',
+            // log_kind='discuss:anon') in the visible feed. Other convs filter
+            // logs out client-side; review/surf step logs aren't rendered here.
             let rows: [Row] = try await SupabaseStack.shared.database
                 .from("messages")
-                .select("id, client_message_id, conversation_id, user_id, sender_bot_id, role, content, status, created_at")
+                .select("id, client_message_id, conversation_id, user_id, sender_bot_id, role, log_kind, content, status, created_at")
                 .eq("conversation_id", value: conversation.id)
-                .neq("role", value: "log")
                 .order("created_at", ascending: true)
                 .limit(200)
                 .execute()
                 .value
             let fmt = ISO8601DateFormatter()
-            // Translate to view model + cache rows in one pass.
             var viewMessages: [ChatMessage] = []
             var cacheRows: [LocalDatabase.MessageRow] = []
             viewMessages.reserveCapacity(rows.count)
             cacheRows.reserveCapacity(rows.count)
             for r in rows {
+                if r.role == "log" {
+                    // Only the anonymous-interject log_kind is visible UI;
+                    // review:* / surf:* / etc. don't render here.
+                    if r.log_kind != "discuss:anon" { continue }
+                }
                 let senderType: String = r.role == "bot" ? "bot"
-                    : r.role == "log" ? "system" : "user"
+                    : r.role == "log" && r.log_kind == "discuss:anon" ? "anon"
+                    : "user"
                 let senderId = r.role == "bot" ? (r.sender_bot_id ?? "") : (r.user_id ?? "")
                 let secs = fmt.date(from: r.created_at).map { Int($0.timeIntervalSince1970) } ?? 0
                 viewMessages.append(ChatMessage(

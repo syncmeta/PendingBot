@@ -55,6 +55,7 @@
 		E87CB19A1E7FC45E46B1AFE5 /* LocalDatabase.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63A469E3B01337CC6F4BFE10 /* LocalDatabase.swift */; };
 		57E6CC3F0B55732FB741EE90 /* FriendsTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74D7DD2759E6D068EC96D7F0 /* FriendsTabView.swift */; };
 		A4B02E86171CFF6EEC159127 /* MyHandlesSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7520CAFAC095D5BD8D93A1E4 /* MyHandlesSheet.swift */; };
+		50BEA914F4905093BFD2C1E2 /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEC217EED7301F32EFCB8103 /* QRScannerView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -105,6 +106,7 @@
 		63A469E3B01337CC6F4BFE10 /* LocalDatabase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalDatabase.swift; sourceTree = "<group>"; };
 		74D7DD2759E6D068EC96D7F0 /* FriendsTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FriendsTabView.swift; sourceTree = "<group>"; };
 		7520CAFAC095D5BD8D93A1E4 /* MyHandlesSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyHandlesSheet.swift; sourceTree = "<group>"; };
+		CEC217EED7301F32EFCB8103 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -281,6 +283,7 @@
 				A15111FAA33922E228085D64 /* TabTitle.swift */,
 				0424B09389C21A9BB73F1069 /* Theme.swift */,
 				6FEEDBCFBE31FB849F1F40E0 /* TypingDots.swift */,
+				CEC217EED7301F32EFCB8103 /* QRScannerView.swift */,
 			);
 			path = Components;
 			sourceTree = "<group>";
@@ -419,6 +422,7 @@
 				E87CB19A1E7FC45E46B1AFE5 /* LocalDatabase.swift in Sources */,
 				57E6CC3F0B55732FB741EE90 /* FriendsTabView.swift in Sources */,
 				A4B02E86171CFF6EEC159127 /* MyHandlesSheet.swift in Sources */,
+				50BEA914F4905093BFD2C1E2 /* QRScannerView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
