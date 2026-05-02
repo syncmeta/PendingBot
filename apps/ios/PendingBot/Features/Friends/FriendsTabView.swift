@@ -58,11 +58,11 @@ struct FriendsTabView: View {
                     Section {
                         HStack {
                             Spacer()
-                            FilterChip(text: "仅人类", on: humansOnly) {
+                            FilterChip(text: "人类", on: humansOnly) {
                                 humansOnly.toggle()
                                 if humansOnly { botsOnly = false }
                             }
-                            FilterChip(text: "仅机器人", on: botsOnly) {
+                            FilterChip(text: "机器人", on: botsOnly) {
                                 botsOnly.toggle()
                                 if botsOnly { humansOnly = false }
                             }
@@ -323,10 +323,10 @@ private struct FilterChip: View {
     var body: some View {
         Button(action: action) {
             Text(text)
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(on ? .white : Theme.Palette.ink)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
                 .background(
                     // Off state: white pill with a hairline border, per
                     // user spec ("白底灰边"). On state stays the accent
