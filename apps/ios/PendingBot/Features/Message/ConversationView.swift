@@ -1,13 +1,10 @@
 import SwiftUI
 import PhotosUI
 import UIKit
-import Combine
 
-/// One conversation. Loads history via REST, opens a WebSocket for live
-/// streaming, sends user input. Bot replies arrive as `start` → `chunk*`
-/// → `done`; we accumulate chunks into a single transient message bubble
-/// keyed by `messageId` (or by conversationId until the server tells us a
-/// concrete id).
+/// One conversation. Loads history from Supabase, runs the user-direct
+/// chat turn over Worker SSE (ChatStream), and listens for cross-device /
+/// background-task messages via Supabase Realtime on the conv channel.
 struct ConversationView: View {
     let conversation: Conversation
     let bot: Bot?
@@ -17,7 +14,6 @@ struct ConversationView: View {
     @Environment(\.account) private var account
     @Environment(\.dismiss) private var dismiss
     @Environment(\.useSidebarLayout) private var sidebarLayout
-    @StateObject private var ws: ConversationWS
     @State private var messages: [ChatMessage] = []
     @State private var input = ""
     @State private var pendingAttachments: [PendingAttachment] = []
@@ -78,9 +74,6 @@ struct ConversationView: View {
         self.conversation = conversation
         self.bot = bot
         self.onChange = onChange
-        // Build the WS holder eagerly with whatever account is current; if
-        // the env account is missing we'll catch it in onAppear.
-        _ws = StateObject(wrappedValue: ConversationWS(account: AccountStore.shared.current))
     }
 
     var body: some View {
@@ -228,12 +221,6 @@ struct ConversationView: View {
             .tint(Theme.Palette.accent)
             .presentationDragIndicator(.visible)
         }
-        .onDisappear {
-            ws.disconnect()
-        }
-        .onReceive(ws.events) { event in
-            handle(event)
-        }
         .onChange(of: photoPickerItems) { _, items in
             Task { await ingestPhotos(items) }
         }
@@ -250,8 +237,6 @@ struct ConversationView: View {
         !input.trimmingCharacters(in: .whitespaces).isEmpty || !pendingAttachments.isEmpty
     }
 
-    // ── Inbound from WebSocket ──────────────────────────────────────────────
-
     private func scrollToBottom(proxy: ScrollViewProxy) {
         // Defer one runloop so LazyVStack has measured any just-appended row;
         // scrolling synchronously inside the same state-change tick lands on a
@@ -264,138 +249,6 @@ struct ConversationView: View {
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
             }
-        }
-    }
-
-    private func handle(_ event: InboundMessage) {
-        guard event.conversationId == conversation.id else { return }
-        switch event.type {
-        case "bot_typing":
-            // Server toggles the typing indicator with active=true/false.
-            pending = event.active ?? false
-        case "surf_status":
-            // 联网 search progress — accumulate into the inline log so the
-            // user sees "搜索中…" / "搜索完成" while the LLM warms up. Cleared
-            // when the actual bot reply arrives.
-            if let content = event.content, !content.isEmpty {
-                searchLog.append(content)
-            }
-        case "stream_start":
-            // Streaming reply opened — drop a placeholder bubble we'll grow
-            // as deltas arrive. Only used when the user has 流式输出 on; the
-            // server otherwise sends `message` once the segment is complete.
-            pending = false
-            searchLog.removeAll()
-            guard let id = event.messageId else { return }
-            if !messages.contains(where: { $0.id == id }) {
-                withAnimation(.easeOut(duration: 0.18)) {
-                    messages.append(ChatMessage(
-                        id: id, conversation_id: conversation.id,
-                        sender_type: "bot", sender_id: event.senderId ?? "",
-                        content: "",
-                        created_at: Int(Date().timeIntervalSince1970),
-                        attachments: nil
-                    ))
-                }
-            }
-        case "stream_delta":
-            guard let id = event.messageId, let delta = event.delta, !delta.isEmpty,
-                  let idx = messages.firstIndex(where: { $0.id == id }) else { return }
-            let prev = messages[idx]
-            messages[idx] = ChatMessage(
-                id: prev.id, conversation_id: prev.conversation_id,
-                sender_type: prev.sender_type, sender_id: prev.sender_id,
-                content: prev.content + delta,
-                created_at: prev.created_at,
-                attachments: prev.attachments
-            )
-        case "stream_end":
-            // Final content is authoritative — replaces whatever we
-            // accumulated from deltas. Covers the case where deltas were
-            // dropped on a bad connection. An explicit empty string means
-            // the server gave up on this reply (e.g. the [SILENT] marker
-            // tripped after we'd already opened the bubble) — collapse it
-            // rather than leave a blank row sitting there.
-            guard let id = event.messageId,
-                  let idx = messages.firstIndex(where: { $0.id == id }) else { return }
-            if let content = event.content {
-                if content.isEmpty {
-                    withAnimation(.easeOut(duration: 0.18)) {
-                        _ = messages.remove(at: idx)
-                    }
-                } else {
-                    let prev = messages[idx]
-                    messages[idx] = ChatMessage(
-                        id: prev.id, conversation_id: prev.conversation_id,
-                        sender_type: prev.sender_type, sender_id: prev.sender_id,
-                        content: content,
-                        created_at: prev.created_at,
-                        attachments: prev.attachments
-                    )
-                    Haptics.receive()
-                }
-            }
-            onChange()
-        case "message":
-            // Full bot reply — server-side bots aren't token-streamed when
-            // streaming is off, the whole message lands in one frame.
-            // Append (or replace if we already have a row with this id from
-            // a previous load or a just-finished stream).
-            pending = false
-            guard let content = event.content, !content.isEmpty else { return }
-            let id = event.messageId ?? "remote-\(UUID().uuidString)"
-            // Pin the in-flight search trace to this bot message id so the
-            // chip survives `searchLog.removeAll()` below — the user can
-            // expand it later instead of having it vanish on completion.
-            if !searchLog.isEmpty {
-                pinnedToolLogs[id] = searchLog
-            }
-            searchLog.removeAll()
-            if let idx = messages.firstIndex(where: { $0.id == id }) {
-                messages[idx] = ChatMessage(
-                    id: id, conversation_id: conversation.id,
-                    sender_type: "bot", sender_id: event.senderId ?? "",
-                    content: content,
-                    created_at: messages[idx].created_at,
-                    attachments: messages[idx].attachments
-                )
-            } else {
-                withAnimation(.easeOut(duration: 0.22)) {
-                    messages.append(ChatMessage(
-                        id: id, conversation_id: conversation.id,
-                        sender_type: "bot", sender_id: event.senderId ?? "",
-                        content: content,
-                        created_at: Int(Date().timeIntervalSince1970),
-                        attachments: nil
-                    ))
-                }
-                Haptics.receive()
-            }
-            onChange()
-        case "user_message_ack":
-            // Server finalized the user row (attachment ids resolved). The
-            // optimistic local row carries a `local-…` id, so reconcile by
-            // swapping the most recent local user row for the canonical id.
-            guard let canonicalId = event.messageId else { return }
-            if let idx = messages.lastIndex(where: { $0.isUser && $0.id.hasPrefix("local-") }) {
-                let prev = messages[idx]
-                messages[idx] = ChatMessage(
-                    id: canonicalId, conversation_id: prev.conversation_id,
-                    sender_type: prev.sender_type, sender_id: prev.sender_id,
-                    content: prev.content, created_at: prev.created_at,
-                    attachments: prev.attachments
-                )
-            }
-        case "title_update":
-            // Title changes don't affect the message list, but trigger a
-            // parent reload so the conversations row picks up the new title.
-            onChange()
-        case "error":
-            pending = false
-            error = event.content ?? "服务器返回错误"
-            Haptics.error()
-        default:
-            break
         }
     }
 
@@ -948,36 +801,3 @@ private struct SkillDraft: Identifiable {
     var id: String { String(body.hashValue) }
 }
 
-// ── WebSocket holder ────────────────────────────────────────────────────────
-//
-// One-shot holder so the StateObject sticks around for the view's lifetime
-// even though the underlying client switches when the user changes account.
-
-@MainActor
-final class ConversationWS: ObservableObject {
-    @Published private var client: WebSocketClient?
-    private var account: Account?
-
-    init(account: Account?) {
-        self.account = account
-        if let account { self.client = WebSocketClient(account: account) }
-    }
-
-    var events: AnyPublisher<InboundMessage, Never> {
-        client?.inbound.eraseToAnyPublisher() ?? Empty().eraseToAnyPublisher()
-    }
-
-    func bind(account: Account?) {
-        guard account?.id != self.account?.id else { return }
-        client?.disconnect()
-        self.account = account
-        if let account { client = WebSocketClient(account: account) }
-    }
-
-    func connect() { client?.connect() }
-    func disconnect() { client?.disconnect() }
-    func send(_ message: OutboundMessage) async throws {
-        guard let client else { throw WSError.notConnected }
-        try await client.send(message)
-    }
-}

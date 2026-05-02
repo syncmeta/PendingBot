@@ -55,16 +55,16 @@ struct APIClient {
         _ = try await sendRaw(req)
     }
 
-    // MARK: - SSE shim (legacy)
+    // MARK: - SSE compile shim (callers ungutted)
     //
-    // Old Discuss/Portrait/Surf views opened a streaming POST and parsed SSE
-    // chunks. The new architecture pushes those events via Supabase Realtime
-    // (postgres_changes on log messages / surf_runs / review_runs). Keep this
-    // shim so callers compile during the cutover; replacing the call sites
-    // is part of B9.3 (Realtime subscription manager).
+    // Discuss / Surf / Portrait views still hold legacy SSE call sites that
+    // we can't reach at runtime (their parent tabs short-circuit to empty
+    // state) but they need this method to typecheck. The real path is
+    // Supabase Realtime via RealtimeManager — those views move to it when
+    // their tab list is rebuilt.
     func streamPost<Body: Encodable>(_ path: String, body: Body) async throws -> URLSession.AsyncBytes {
         _ = path; _ = body
-        throw APIError.http(status: 501, body: "streamPost replaced by Realtime channels (B9.3)")
+        throw APIError.http(status: 501, body: "SSE replaced by Realtime channels")
     }
 
     // MARK: - Multipart upload (POST /v1/upload)

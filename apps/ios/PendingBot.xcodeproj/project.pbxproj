@@ -8,7 +8,6 @@
 
 /* Begin PBXBuildFile section */
 		0805B09651FBC60ED2B1F2CD /* SurfRunView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0CFF84848C477B2B3264A64 /* SurfRunView.swift */; };
-		08962059E80F11B979C4C31C /* WebSocketClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 520E0AE34E01CC3ECEF49928 /* WebSocketClient.swift */; };
 		091D2F4E1050EAF98F72B1B1 /* ConversationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9E90A433CF0CAC8986218C6 /* ConversationView.swift */; };
 		0AC7612397D7D0B4E07DD2AC /* EmptyHint.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CADBAC8F028F13BC61D5286 /* EmptyHint.swift */; };
 		11DFAF56423D11C5DDBE2C34 /* ServerImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24E4E56DDBD71AB05278A385 /* ServerImage.swift */; };
@@ -27,7 +26,6 @@
 		61B9F7BF2AE1D63124CD6B5E /* ModelPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CA54E69A2AB50E902FF3E4E /* ModelPicker.swift */; };
 		624542244CE3957C2DAD747E /* MeTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F5A6C6876FF131B3D8AA437 /* MeTabView.swift */; };
 		642FBF31ECF09038C94D6065 /* TabTitle.swift in Sources */ = {isa = PBXBuildFile; fileRef = A15111FAA33922E228085D64 /* TabTitle.swift */; };
-		68CC7CE5D41AC8BE5940E886 /* Clerk in Frameworks */ = {isa = PBXBuildFile; productRef = AFDB3E0118BAB00C005053FA /* Clerk */; };
 		700ACB092004D07FC5D83EE8 /* SurfTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4CD99E3CADF2990A5EF1A40 /* SurfTabView.swift */; };
 		717787F9954D7ACBBF05CE62 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA3C55E2C308AF92E34C9383 /* APIClient.swift */; };
 		725DDD43D66F38A339B6EE39 /* TabRoot.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB16E5402FB9F31D68B74165 /* TabRoot.swift */; };
@@ -77,7 +75,6 @@
 		42A11830F64F80977210B443 /* PendingBot.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = PendingBot.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		47CBECD15BE9204330CB00AD /* SkillsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkillsView.swift; sourceTree = "<group>"; };
 		4CC956D0BC262560F70E112A /* AccountStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountStore.swift; sourceTree = "<group>"; };
-		520E0AE34E01CC3ECEF49928 /* WebSocketClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebSocketClient.swift; sourceTree = "<group>"; };
 		54274B6144493F79AB8DC3D1 /* Haptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Haptics.swift; sourceTree = "<group>"; };
 		5CADBAC8F028F13BC61D5286 /* EmptyHint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmptyHint.swift; sourceTree = "<group>"; };
 		6A573816C9B62D5FDB2747B1 /* CodeRunnerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeRunnerSheet.swift; sourceTree = "<group>"; };
@@ -118,7 +115,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				93195F559ABAEBD132E64F17 /* MarkdownUI in Frameworks */,
-				68CC7CE5D41AC8BE5940E886 /* Clerk in Frameworks */,
 				A2E9CBC1BBEC585F2594DFAC /* Supabase in Frameworks */,
 				AE2E39CEFC00A4D6517ABAE9 /* GRDB in Frameworks */,
 			);
@@ -238,7 +234,6 @@
 				CA3C55E2C308AF92E34C9383 /* APIClient.swift */,
 				C608CB73D14B114D2399FE59 /* HostedConfig.swift */,
 				9034AEB82955054D718A96FC /* SSEClient.swift */,
-				520E0AE34E01CC3ECEF49928 /* WebSocketClient.swift */,
 				755CCF76F1304BBF184B069F /* SupabaseStack.swift */,
 				36C5C1F1F3A2139174BC4C4B /* AppleSignIn.swift */,
 				9843FFF26D200B2BF5276758 /* RealtimeManager.swift */,
@@ -328,7 +323,6 @@
 			name = PendingBot;
 			packageProductDependencies = (
 				23AC5D1A6CD4C748003E6936 /* MarkdownUI */,
-				AFDB3E0118BAB00C005053FA /* Clerk */,
 				42AEEDC8DF7B9FD796EE879D /* Supabase */,
 				11A77E911EA1D815E90E7BFD /* GRDB */,
 			);
@@ -430,7 +424,6 @@
 				24896FE870AF890607D5C008 /* Theme.swift in Sources */,
 				4652FC81866F99C1C6AE6A11 /* TypingDots.swift in Sources */,
 				DE00C4B1C0C0AAB4F6B05B01 /* UnreadStore.swift in Sources */,
-				08962059E80F11B979C4C31C /* WebSocketClient.swift in Sources */,
 				EAE5D86E4ECF3FDA0C9C43D3 /* WelcomeView.swift in Sources */,
 				3644B8742BA13D3463F89E73 /* SupabaseStack.swift in Sources */,
 				9AD8B0014D4118CB17C6D7F2 /* AppleSignIn.swift in Sources */,
@@ -657,14 +650,6 @@
 				minimumVersion = 6.0.0;
 			};
 		};
-		5FBE73A66C7BD9E03B2ACD1D /* XCRemoteSwiftPackageReference "clerk-ios" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/clerk/clerk-ios";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 0.50.0;
-			};
-		};
 		96B306B367BFCB52C99F8552 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/gonzalezreal/swift-markdown-ui";
@@ -698,11 +683,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = E22BFBEF3FFC995818D5FAF3 /* XCRemoteSwiftPackageReference "supabase-swift" */;
 			productName = Supabase;
-		};
-		AFDB3E0118BAB00C005053FA /* Clerk */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 5FBE73A66C7BD9E03B2ACD1D /* XCRemoteSwiftPackageReference "clerk-ios" */;
-			productName = Clerk;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
