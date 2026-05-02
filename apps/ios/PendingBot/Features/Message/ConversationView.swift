@@ -5,9 +5,21 @@ import UIKit
 /// One conversation. Loads history from Supabase, runs the user-direct
 /// chat turn over Worker SSE (ChatStream), and listens for cross-device /
 /// background-task messages via Supabase Realtime on the conv channel.
+/// Identifies the peer for a conversation that hasn't been materialised in
+/// the DB yet — set when the user taps a friend (bot or human) in the
+/// friends tab. We defer creating the `conversations` row until they
+/// actually send a first message, so empty/abandoned chats don't pile up
+/// in the message list.
+struct PendingPeer: Hashable {
+    let kind: String       // "bot" | "user"
+    let peerId: String
+    let displayName: String
+}
+
 struct ConversationView: View {
-    let conversation: Conversation
+    @State var conversation: Conversation
     let bot: Bot?
+    let pendingPeer: PendingPeer?
     var onChange: () -> Void = {}
 
     @Environment(\.api) private var api
@@ -78,9 +90,11 @@ struct ConversationView: View {
         slug.split(separator: "/").last.map(String.init) ?? slug
     }
 
-    init(conversation: Conversation, bot: Bot?, onChange: @escaping () -> Void = {}) {
-        self.conversation = conversation
+    init(conversation: Conversation, bot: Bot?, pendingPeer: PendingPeer? = nil,
+         onChange: @escaping () -> Void = {}) {
+        self._conversation = State(initialValue: conversation)
         self.bot = bot
+        self.pendingPeer = pendingPeer
         self.onChange = onChange
     }
 
@@ -174,27 +188,13 @@ struct ConversationView: View {
         }
         .task {
             modelOverride = conversation.model_override ?? ""
+            // Pending convs (lazy-created on first send) have no row yet —
+            // skip history / skills / realtime until they materialise.
+            guard !conversation.id.isEmpty else { return }
             await loadHistory()
             await loadSkills()
-            // Subscribe to the conv channel for cross-device sync and bot
-            // rows that land via background paths (cron / surf / review).
-            // The current device's own SSE-streamed bubbles also arrive here
-            // — we dedupe by id below, so they merge in cleanly.
-            let convId = conversation.id
             await loadActiveLookbacks()
-            realtimeToken = await RealtimeManager.shared.startConvChannel(
-                conversationId: convId,
-                onMessage: { event in
-                    Task { @MainActor in
-                        applyRealtimeEvent(event)
-                    }
-                },
-                onLookback: { event in
-                    Task { @MainActor in
-                        applyLookbackEvent(event)
-                    }
-                }
-            )
+            await subscribeRealtime()
         }
         .onDisappear {
             if let token = realtimeToken {
@@ -473,6 +473,119 @@ struct ConversationView: View {
 
     // ── Send ────────────────────────────────────────────────────────────────
 
+    private func subscribeRealtime() async {
+        let convId = conversation.id
+        guard !convId.isEmpty else { return }
+        realtimeToken = await RealtimeManager.shared.startConvChannel(
+            conversationId: convId,
+            onMessage: { event in
+                Task { @MainActor in
+                    applyRealtimeEvent(event)
+                }
+            },
+            onLookback: { event in
+                Task { @MainActor in
+                    applyLookbackEvent(event)
+                }
+            }
+        )
+    }
+
+    /// Create the conv row (and participant rows) for a pending conv whose
+    /// peer was set in friends-tab tap. Returns true if the conv is now
+    /// real (either we created it or it was already real).
+    private func materializeIfPending() async -> Bool {
+        if !conversation.id.isEmpty { return true }
+        guard let peer = pendingPeer,
+              let userId = AccountStore.shared.current?.id else {
+            self.error = "无法创建会话"
+            return false
+        }
+        do {
+            let convId: String
+            switch peer.kind {
+            case "bot":
+                struct ConvInsert: Encodable {
+                    let conversation_type = "user_bot"
+                    let feature = "message"
+                    let user_id: String
+                    let bot_id: String
+                    let title: String
+                }
+                struct Inserted: Decodable { let id: String }
+                let inserted: Inserted = try await SupabaseStack.shared.database
+                    .from("conversations")
+                    .insert(ConvInsert(user_id: userId, bot_id: peer.peerId,
+                                       title: peer.displayName))
+                    .select("id")
+                    .single()
+                    .execute()
+                    .value
+                struct Participant: Encodable {
+                    let conversation_id: String
+                    let participant_type: String
+                    let participant_id: String
+                    let role: String
+                }
+                try await SupabaseStack.shared.database
+                    .from("conversation_participants")
+                    .insert([
+                        Participant(conversation_id: inserted.id,
+                                    participant_type: "user",
+                                    participant_id: userId, role: "owner"),
+                        Participant(conversation_id: inserted.id,
+                                    participant_type: "bot",
+                                    participant_id: peer.peerId, role: "member"),
+                    ])
+                    .execute()
+                convId = inserted.id
+                conversation = Conversation(
+                    id: convId, bot_id: peer.peerId, user_id: userId,
+                    title: peer.displayName, feature_type: "message",
+                    conversation_type: "user_bot",
+                    last_activity_at: Int(Date().timeIntervalSince1970),
+                    round_count: 0, bot_name: peer.displayName,
+                    last_message_content: nil, last_message_sender_type: nil,
+                    model_override: nil
+                )
+            case "user":
+                // Hand off to Worker — its open-chat endpoint inserts both
+                // sides of the participant rows in a single trip.
+                var req = URLRequest(url: HostedConfig.environment.workerURL
+                    .appendingPathComponent("v1/contacts/open-chat"))
+                req.httpMethod = "POST"
+                req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                let token = try await SupabaseStack.shared.auth.session.accessToken
+                req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                req.httpBody = try JSONSerialization.data(
+                    withJSONObject: ["contactUserId": peer.peerId])
+                let (data, _) = try await URLSession.shared.data(for: req)
+                struct OpenChat: Decodable { let conversationId: String }
+                let payload = try JSONDecoder().decode(OpenChat.self, from: data)
+                convId = payload.conversationId
+                conversation = Conversation(
+                    id: convId, bot_id: "", user_id: userId,
+                    title: peer.displayName, feature_type: "message",
+                    conversation_type: "user_user",
+                    last_activity_at: Int(Date().timeIntervalSince1970),
+                    round_count: nil, bot_name: nil,
+                    last_message_content: nil, last_message_sender_type: nil,
+                    model_override: nil
+                )
+            default:
+                self.error = "未知会话类型"
+                return false
+            }
+            await subscribeRealtime()
+            onChange()
+            return true
+        } catch {
+            self.error = "创建会话失败: \(error.localizedDescription)"
+            Haptics.error()
+            return false
+        }
+    }
+
     private func send() async {
         guard canSend else { return }
         let text = input.trimmingCharacters(in: .whitespaces)
@@ -481,6 +594,14 @@ struct ConversationView: View {
         pendingAttachments = []
         photoPickerItems = []
         Haptics.send()
+
+        if conversation.id.isEmpty {
+            let ok = await materializeIfPending()
+            guard ok else {
+                input = text
+                return
+            }
+        }
 
         switch conversation.conversation_type {
         case "discuss":

@@ -24,15 +24,35 @@ struct FriendsTabView: View {
     @State private var showingQR = false
     @State private var humansOnly = false
     @State private var botsOnly = false
-    @State private var path: [Conversation] = []
+    @State private var path: [PendingPeer] = []
 
     var body: some View {
         NavigationStack(path: $path) {
-            ZStack {
-                Theme.Palette.canvas.ignoresSafeArea()
-                List {
-                    Section {
-                        HStack {
+            VStack(spacing: 0) {
+                TabHeaderBar(title: "好友") {
+                    HStack(spacing: 14) {
+                        Button {
+                            showingQR = true
+                            Haptics.tap()
+                        } label: {
+                            Image(systemName: "qrcode")
+                                .font(.system(size: 17, weight: .regular))
+                                .foregroundStyle(Theme.Palette.accent)
+                        }
+                        Button {
+                            addingFriend = true
+                            Haptics.tap()
+                        } label: {
+                            Image(systemName: "plus")
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundStyle(Theme.Palette.accent)
+                        }
+                    }
+                }
+                ZStack {
+                    Theme.Palette.canvas.ignoresSafeArea()
+                    VStack(spacing: 0) {
+                        HStack(spacing: 8) {
                             Spacer()
                             FilterChip(text: "仅人类", on: humansOnly) {
                                 humansOnly.toggle()
@@ -43,87 +63,30 @@ struct FriendsTabView: View {
                                 if botsOnly { humansOnly = false }
                             }
                         }
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
-                        .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
-                    }
+                        .padding(.horizontal, Theme.Metrics.gutter)
+                        .padding(.top, 6)
+                        .padding(.bottom, 8)
 
-                    if !botsOnly {
-                        // Humans
-                        if !humansOnly {
-                            Section("机器人朋友") {
-                                if bots.isEmpty {
-                                    Text("还没有机器人朋友").foregroundStyle(.secondary)
-                                }
-                                ForEach(bots) { bot in
-                                    FriendRow(kind: .bot,
-                                              avatarSeed: bot.id,
-                                              name: bot.display_name,
-                                              modelTag: bot.modelTag)
-                                        .listRowBackground(Theme.Palette.surface)
-                                        .contentShape(Rectangle())
-                                        .onTapGesture { Task { await tapBot(bot) } }
-                                }
+                        List {
+                            ForEach(unifiedFriends) { f in
+                                f.row
+                                    .listRowBackground(Theme.Palette.surface)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { Task { await f.tap() } }
                             }
-                        } else {
-                            EmptyView()
-                        }
-                    }
-                    if !botsOnly {
-                        Section("真人朋友") {
-                            if humans.isEmpty {
-                                Text("还没有真人朋友 — 上方 + 加一个")
+                            if unifiedFriends.isEmpty {
+                                Text("还没有好友 — 右上 + 加一个")
                                     .foregroundStyle(.secondary)
-                            }
-                            ForEach(humans) { c in
-                                FriendRow(kind: .human,
-                                          avatarSeed: c.id,
-                                          name: c.alias ?? String(c.id.prefix(8)),
-                                          modelTag: nil)
-                                    .listRowBackground(Theme.Palette.surface)
-                                    .contentShape(Rectangle())
-                                    .onTapGesture { Task { await tapHuman(c) } }
+                                    .listRowBackground(Color.clear)
                             }
                         }
-                    } else {
-                        // botsOnly: only show bots section without title
-                        Section {
-                            ForEach(bots) { bot in
-                                FriendRow(kind: .bot,
-                                          avatarSeed: bot.id,
-                                          name: bot.display_name,
-                                          modelTag: bot.modelTag)
-                                    .listRowBackground(Theme.Palette.surface)
-                                    .contentShape(Rectangle())
-                                    .onTapGesture { Task { await tapBot(bot) } }
-                            }
-                        }
-                    }
-                }
-                .listStyle(.insetGrouped)
-                .scrollContentBackground(.hidden)
-                .refreshable { await load() }
-            }
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        showingQR = true
-                        Haptics.tap()
-                    } label: { Image(systemName: "qrcode") }
-                    .foregroundStyle(Theme.Palette.accent)
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        addingFriend = true
-                        Haptics.tap()
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(Theme.Palette.accent)
+                        .listStyle(.plain)
+                        .scrollContentBackground(.hidden)
+                        .refreshable { await load() }
                     }
                 }
             }
-            .navigationBarTitleDisplayMode(.inline)
+            .navigationBarHidden(true)
             .sheet(isPresented: $addingFriend) {
                 AddFriendSheet { Task { await load() } }
                     .presentationDetents([.medium])
@@ -134,14 +97,57 @@ struct FriendsTabView: View {
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
             }
-            .navigationDestination(for: Conversation.self) { conv in
-                ConversationView(conversation: conv, bot: nil)
+            .navigationDestination(for: PendingPeer.self) { peer in
+                ConversationView(
+                    conversation: pendingConversation(for: peer),
+                    bot: nil,
+                    pendingPeer: peer
+                )
             }
         }
         .task { await load() }
         .alert("出错", isPresented: .constant(error != nil)) {
             Button("好") { error = nil }
         } message: { Text(error ?? "") }
+    }
+
+    /// Mixed list of bots + humans, filter applied. Each entry carries its
+    /// own row view + tap handler so the body doesn't have to branch.
+    private struct UnifiedFriend: Identifiable {
+        let id: String
+        let kind: FriendRow.Kind
+        let row: AnyView
+        let tap: @Sendable () async -> Void
+    }
+    private var unifiedFriends: [UnifiedFriend] {
+        var out: [UnifiedFriend] = []
+        if !humansOnly {
+            for b in bots {
+                out.append(UnifiedFriend(
+                    id: "bot-\(b.id)",
+                    kind: .bot,
+                    row: AnyView(FriendRow(kind: .bot,
+                                           avatarSeed: b.id,
+                                           name: b.display_name,
+                                           modelTag: b.modelTag)),
+                    tap: { @Sendable in await tapBot(b) }
+                ))
+            }
+        }
+        if !botsOnly {
+            for c in humans {
+                out.append(UnifiedFriend(
+                    id: "user-\(c.id)",
+                    kind: .human,
+                    row: AnyView(FriendRow(kind: .human,
+                                           avatarSeed: c.id,
+                                           name: c.alias ?? String(c.id.prefix(8)),
+                                           modelTag: nil)),
+                    tap: { @Sendable in await tapHuman(c) }
+                ))
+            }
+        }
+        return out
     }
 
     // MARK: - Data
@@ -198,99 +204,42 @@ struct FriendsTabView: View {
     }
 
     // MARK: - Tap handlers
+    //
+    // Both tap handlers are now lazy: we navigate to a ConversationView
+    // with a synthetic empty conv (id="") and a PendingPeer. The conv row
+    // is INSERTed only when the user actually sends a first message.
+    // Empty/abandoned chats never appear in the message list.
 
     private func tapBot(_ bot: BotPick) async {
-        guard let userId = AccountStore.shared.current?.id else { return }
-        do {
-            let conv = try await createUserBotConv(botId: bot.id,
-                                                   botName: bot.display_name,
-                                                   userId: userId)
-            path.append(conv)
-            Haptics.tap()
-        } catch {
-            self.error = error.localizedDescription
-            Haptics.error()
-        }
+        path.append(PendingPeer(kind: "bot",
+                                peerId: bot.id,
+                                displayName: bot.display_name))
+        Haptics.tap()
     }
 
     private func tapHuman(_ c: HumanPick) async {
-        guard let userId = AccountStore.shared.current?.id else { return }
-        do {
-            let convId = try await openOrCreateUserUserConv(contactUserId: c.id)
-            let conv = Conversation(
-                id: convId, bot_id: "", user_id: userId,
-                title: c.alias ?? String(c.id.prefix(8)),
-                feature_type: "message",
-                conversation_type: "user_user",
-                last_activity_at: Int(Date().timeIntervalSince1970),
-                round_count: nil, bot_name: nil,
-                last_message_content: nil, last_message_sender_type: nil,
-                model_override: nil
-            )
-            path.append(conv)
-            Haptics.tap()
-        } catch {
-            self.error = error.localizedDescription
-            Haptics.error()
-        }
+        path.append(PendingPeer(kind: "user",
+                                peerId: c.id,
+                                displayName: c.alias ?? String(c.id.prefix(8))))
+        Haptics.tap()
     }
 
-    private func createUserBotConv(botId: String, botName: String, userId: String) async throws -> Conversation {
-        struct ConvInsert: Encodable {
-            let conversation_type = "user_bot"
-            let feature = "message"
-            let user_id: String
-            let bot_id: String
-            let title: String
-        }
-        struct Inserted: Decodable { let id: String }
-        let inserted: Inserted = try await SupabaseStack.shared.database
-            .from("conversations")
-            .insert(ConvInsert(user_id: userId, bot_id: botId, title: botName))
-            .select("id")
-            .single()
-            .execute()
-            .value
-        struct Participant: Encodable {
-            let conversation_id: String
-            let participant_type: String
-            let participant_id: String
-            let role: String
-        }
-        try await SupabaseStack.shared.database
-            .from("conversation_participants")
-            .insert([
-                Participant(conversation_id: inserted.id, participant_type: "user",
-                            participant_id: userId, role: "owner"),
-                Participant(conversation_id: inserted.id, participant_type: "bot",
-                            participant_id: botId, role: "member"),
-            ])
-            .execute()
+    private func pendingConversation(for peer: PendingPeer) -> Conversation {
+        let userId = AccountStore.shared.current?.id ?? ""
         return Conversation(
-            id: inserted.id, bot_id: botId, user_id: userId,
-            title: botName, feature_type: "message",
-            conversation_type: "user_bot",
+            id: "",
+            bot_id: peer.kind == "bot" ? peer.peerId : "",
+            user_id: userId,
+            title: peer.displayName,
+            feature_type: "message",
+            conversation_type: peer.kind == "bot" ? "user_bot" : "user_user",
             last_activity_at: Int(Date().timeIntervalSince1970),
-            round_count: 0, bot_name: botName,
-            last_message_content: nil, last_message_sender_type: nil,
+            round_count: 0,
+            bot_name: peer.kind == "bot" ? peer.displayName : nil,
+            last_message_content: nil,
+            last_message_sender_type: nil,
             model_override: nil
         )
-    }
-
-    private func openOrCreateUserUserConv(contactUserId: String) async throws -> String {
-        var req = URLRequest(url: HostedConfig.environment.workerURL
-            .appendingPathComponent("v1/contacts/open-chat"))
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let token = try await SupabaseStack.shared.auth.session.accessToken
-        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        req.httpBody = try JSONSerialization.data(withJSONObject: ["contactUserId": contactUserId])
-        let (data, resp) = try await URLSession.shared.data(for: req)
-        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
-        struct R: Decodable { let conversationId: String }
-        return try JSONDecoder().decode(R.self, from: data).conversationId
     }
 }
 
@@ -315,27 +264,27 @@ private struct FriendRow: View {
                     .frame(width: 36, height: 36)
             }
 
-            // Name + (bot) inline model tag — same pill style as the
-            // message list's model badge.
             HStack(spacing: 6) {
                 Text(name)
                     .font(Theme.Fonts.serif(size: 16, weight: .semibold))
                     .foregroundStyle(Theme.Palette.ink)
                     .lineLimit(1)
                 if kind == .bot, let tag = modelTag {
+                    // Model badge — matches MessageTabView's model tag
+                    // (muted ink / muted surface).
                     Text(tag)
-                        .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
-                        .foregroundStyle(Theme.Palette.accent)
+                        .font(Theme.Fonts.rounded(size: 10, weight: .medium))
+                        .foregroundStyle(Theme.Palette.inkMuted)
                         .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(Theme.Palette.accentBg))
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Theme.Palette.surfaceMuted))
                         .lineLimit(1)
+                        .truncationMode(.middle)
                 }
             }
 
             Spacer(minLength: 8)
 
-            // AI / 人类 tag at the far right.
             KindTag(kind: kind)
         }
         .padding(.vertical, 4)
@@ -346,8 +295,8 @@ private struct KindTag: View {
     let kind: FriendRow.Kind
     var body: some View {
         let (text, fg, bg): (String, Color, Color) = kind == .bot
-            ? ("AI", Color(hex: 0x1F4F8A), Color(hex: 0xE6EEF8))
-            : ("人类", Color(hex: 0x6F4A1A), Color(hex: 0xF7ECDA))
+            ? ("AI", Theme.Palette.accent, Theme.Palette.accentBg)
+            : ("人类", Color(hex: 0x5B3D8A), Color(hex: 0xECE3F7))
         return Text(text)
             .font(.system(size: 10, weight: .semibold))
             .foregroundStyle(fg)
