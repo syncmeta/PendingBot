@@ -230,6 +230,12 @@ struct MessageTabView: View {
                     model_override: nil
                 )
             }
+            .sorted { l, r in
+                if l.last_activity_at != r.last_activity_at {
+                    return l.last_activity_at > r.last_activity_at
+                }
+                return l.id < r.id
+            }
         }
         loading = true; defer { loading = false }
         do {
@@ -250,11 +256,23 @@ struct MessageTabView: View {
                     unread:user_unread_counts!inner(last_message_at, last_message_preview, unread_count)
                 """)
                 .order("updated_at", ascending: false)
+                // Tie-break: ascending id so the order is deterministic when
+                // multiple convs share an updated_at timestamp (e.g. all
+                // bootstrapped at the same instant for a fresh user).
+                .order("id", ascending: true)
                 .execute()
                 .value
 
             self.bots = try await botRows.map(\.asBot)
-            let fresh = try await convRows.map(\.asConversation)
+            // Sort client-side too — the local cache hydrate above and any
+            // future Realtime patch can interleave; keep the visible order
+            // (newest first, then ascending id on ties) consistent.
+            let fresh = try await convRows.map(\.asConversation).sorted { l, r in
+                if l.last_activity_at != r.last_activity_at {
+                    return l.last_activity_at > r.last_activity_at
+                }
+                return l.id < r.id
+            }
             self.conversations = fresh
             LocalDatabase.shared.upsertConversations(fresh.map { c in
                 LocalDatabase.ConversationRow(
