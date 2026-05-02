@@ -505,40 +505,15 @@ struct ConversationView: View {
             let convId: String
             switch peer.kind {
             case "bot":
-                struct ConvInsert: Encodable {
-                    let conversation_type = "user_bot"
-                    let feature = "message"
-                    let user_id: String
-                    let bot_id: String
-                    let title: String
-                }
-                struct Inserted: Decodable { let id: String }
-                let inserted: Inserted = try await SupabaseStack.shared.database
-                    .from("conversations")
-                    .insert(ConvInsert(user_id: userId, bot_id: peer.peerId,
-                                       title: peer.displayName))
-                    .select("id")
-                    .single()
+                // Atomic conv + participants insert via security-definer RPC
+                // (migration 0011). Avoids the iOS-side RLS class entirely.
+                struct RpcArgs: Encodable { let p_bot_id: String }
+                let newId: UUID = try await SupabaseStack.shared.database
+                    .rpc("open_user_bot_conv",
+                         params: RpcArgs(p_bot_id: peer.peerId))
                     .execute()
                     .value
-                struct Participant: Encodable {
-                    let conversation_id: String
-                    let participant_type: String
-                    let participant_id: String
-                    let role: String
-                }
-                try await SupabaseStack.shared.database
-                    .from("conversation_participants")
-                    .insert([
-                        Participant(conversation_id: inserted.id,
-                                    participant_type: "user",
-                                    participant_id: userId, role: "owner"),
-                        Participant(conversation_id: inserted.id,
-                                    participant_type: "bot",
-                                    participant_id: peer.peerId, role: "member"),
-                    ])
-                    .execute()
-                convId = inserted.id
+                convId = newId.uuidString.lowercased()
                 conversation = Conversation(
                     id: convId, bot_id: peer.peerId, user_id: userId,
                     title: peer.displayName, feature_type: "message",
