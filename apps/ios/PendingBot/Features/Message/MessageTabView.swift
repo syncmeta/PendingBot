@@ -253,7 +253,7 @@ struct MessageTabView: View {
                 .select("""
                     id, bot_id, user_id, title, conversation_type, feature, round_count, updated_at,
                     bot:bots(display_name, model_id),
-                    unread:user_unread_counts!inner(last_message_at, last_message_preview, unread_count)
+                    unread:user_unread_counts(last_message_at, last_message_preview, unread_count)
                 """)
                 .order("updated_at", ascending: false)
                 // Tie-break: ascending id so the order is deterministic when
@@ -311,6 +311,21 @@ struct MessageTabView: View {
         }
     }
     private struct ConvRow: Decodable {
+        /// Parse Postgres timestamptz strings. The default
+        /// ISO8601DateFormatter fails on fractional seconds (which
+        /// Postgres always emits, e.g. "2026-05-02T14:30:00.123456+00:00")
+        /// — silent failure was the source of "all convs show 56 years
+        /// ago" since the asConversation fallback resolved to 0.
+        static func parseTimestamp(_ s: String) -> Int? {
+            let withFrac = ISO8601DateFormatter()
+            withFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let d = withFrac.date(from: s) { return Int(d.timeIntervalSince1970) }
+            let plain = ISO8601DateFormatter()
+            plain.formatOptions = [.withInternetDateTime]
+            if let d = plain.date(from: s) { return Int(d.timeIntervalSince1970) }
+            return nil
+        }
+
         let id: String
         let bot_id: String?
         let user_id: String?
@@ -337,12 +352,11 @@ struct MessageTabView: View {
             let unreadRow = unread?.first
             let secs: Int = {
                 if let s = unreadRow?.last_message_at,
-                   let d = ISO8601DateFormatter().date(from: s) {
-                    return Int(d.timeIntervalSince1970)
+                   let ts = ConvRow.parseTimestamp(s) {
+                    return ts
                 }
-                if let updated_at,
-                   let d = ISO8601DateFormatter().date(from: updated_at) {
-                    return Int(d.timeIntervalSince1970)
+                if let updated_at, let ts = ConvRow.parseTimestamp(updated_at) {
+                    return ts
                 }
                 return 0
             }()
