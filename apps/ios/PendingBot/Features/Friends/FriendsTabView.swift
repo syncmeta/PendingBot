@@ -28,31 +28,11 @@ struct FriendsTabView: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            VStack(spacing: 0) {
-                TabHeaderBar(title: "好友") {
-                    HStack(spacing: 14) {
-                        Button {
-                            showingQR = true
-                            Haptics.tap()
-                        } label: {
-                            Image(systemName: "qrcode")
-                                .font(.system(size: 17, weight: .regular))
-                                .foregroundStyle(Theme.Palette.accent)
-                        }
-                        Button {
-                            addingFriend = true
-                            Haptics.tap()
-                        } label: {
-                            Image(systemName: "plus")
-                                .font(.system(size: 17, weight: .semibold))
-                                .foregroundStyle(Theme.Palette.accent)
-                        }
-                    }
-                }
-                ZStack {
-                    Theme.Palette.canvas.ignoresSafeArea()
-                    VStack(spacing: 0) {
-                        HStack(spacing: 8) {
+            ZStack {
+                Theme.Palette.canvas.ignoresSafeArea()
+                List {
+                    Section {
+                        HStack {
                             Spacer()
                             FilterChip(text: "仅人类", on: humansOnly) {
                                 humansOnly.toggle()
@@ -63,30 +43,87 @@ struct FriendsTabView: View {
                                 if botsOnly { humansOnly = false }
                             }
                         }
-                        .padding(.horizontal, Theme.Metrics.gutter)
-                        .padding(.top, 6)
-                        .padding(.bottom, 8)
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                        .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+                    }
 
-                        List {
-                            ForEach(unifiedFriends) { f in
-                                f.row
+                    if !botsOnly {
+                        // Humans
+                        if !humansOnly {
+                            Section("机器人朋友") {
+                                if bots.isEmpty {
+                                    Text("还没有机器人朋友").foregroundStyle(.secondary)
+                                }
+                                ForEach(bots) { bot in
+                                    FriendRow(kind: .bot,
+                                              avatarSeed: bot.id,
+                                              name: bot.display_name,
+                                              modelTag: bot.modelTag)
+                                        .listRowBackground(Theme.Palette.surface)
+                                        .contentShape(Rectangle())
+                                        .onTapGesture { Task { await tapBot(bot) } }
+                                }
+                            }
+                        } else {
+                            EmptyView()
+                        }
+                    }
+                    if !botsOnly {
+                        Section("真人朋友") {
+                            if humans.isEmpty {
+                                Text("还没有真人朋友 — 上方 + 加一个")
+                                    .foregroundStyle(.secondary)
+                            }
+                            ForEach(humans) { c in
+                                FriendRow(kind: .human,
+                                          avatarSeed: c.id,
+                                          name: c.alias ?? String(c.id.prefix(8)),
+                                          modelTag: nil)
                                     .listRowBackground(Theme.Palette.surface)
                                     .contentShape(Rectangle())
-                                    .onTapGesture { Task { await f.tap() } }
-                            }
-                            if unifiedFriends.isEmpty {
-                                Text("还没有好友 — 右上 + 加一个")
-                                    .foregroundStyle(.secondary)
-                                    .listRowBackground(Color.clear)
+                                    .onTapGesture { Task { await tapHuman(c) } }
                             }
                         }
-                        .listStyle(.plain)
-                        .scrollContentBackground(.hidden)
-                        .refreshable { await load() }
+                    } else {
+                        // botsOnly: only show bots section without title
+                        Section {
+                            ForEach(bots) { bot in
+                                FriendRow(kind: .bot,
+                                          avatarSeed: bot.id,
+                                          name: bot.display_name,
+                                          modelTag: bot.modelTag)
+                                    .listRowBackground(Theme.Palette.surface)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { Task { await tapBot(bot) } }
+                            }
+                        }
+                    }
+                }
+                .listStyle(.insetGrouped)
+                .scrollContentBackground(.hidden)
+                .refreshable { await load() }
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        showingQR = true
+                        Haptics.tap()
+                    } label: { Image(systemName: "qrcode") }
+                    .foregroundStyle(Theme.Palette.accent)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        addingFriend = true
+                        Haptics.tap()
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(Theme.Palette.accent)
                     }
                 }
             }
-            .navigationBarHidden(true)
+            .navigationBarTitleDisplayMode(.inline)
             .sheet(isPresented: $addingFriend) {
                 AddFriendSheet { Task { await load() } }
                     .presentationDetents([.medium])
@@ -109,45 +146,6 @@ struct FriendsTabView: View {
         .alert("出错", isPresented: .constant(error != nil)) {
             Button("好") { error = nil }
         } message: { Text(error ?? "") }
-    }
-
-    /// Mixed list of bots + humans, filter applied. Each entry carries its
-    /// own row view + tap handler so the body doesn't have to branch.
-    private struct UnifiedFriend: Identifiable {
-        let id: String
-        let kind: FriendRow.Kind
-        let row: AnyView
-        let tap: @Sendable () async -> Void
-    }
-    private var unifiedFriends: [UnifiedFriend] {
-        var out: [UnifiedFriend] = []
-        if !humansOnly {
-            for b in bots {
-                out.append(UnifiedFriend(
-                    id: "bot-\(b.id)",
-                    kind: .bot,
-                    row: AnyView(FriendRow(kind: .bot,
-                                           avatarSeed: b.id,
-                                           name: b.display_name,
-                                           modelTag: b.modelTag)),
-                    tap: { @Sendable in await tapBot(b) }
-                ))
-            }
-        }
-        if !botsOnly {
-            for c in humans {
-                out.append(UnifiedFriend(
-                    id: "user-\(c.id)",
-                    kind: .human,
-                    row: AnyView(FriendRow(kind: .human,
-                                           avatarSeed: c.id,
-                                           name: c.alias ?? String(c.id.prefix(8)),
-                                           modelTag: nil)),
-                    tap: { @Sendable in await tapHuman(c) }
-                ))
-            }
-        }
-        return out
     }
 
     // MARK: - Data
@@ -205,10 +203,9 @@ struct FriendsTabView: View {
 
     // MARK: - Tap handlers
     //
-    // Both tap handlers are now lazy: we navigate to a ConversationView
-    // with a synthetic empty conv (id="") and a PendingPeer. The conv row
-    // is INSERTed only when the user actually sends a first message.
-    // Empty/abandoned chats never appear in the message list.
+    // Lazy: navigate with a synthetic empty Conversation + a PendingPeer.
+    // ConversationView materialises the conv row on first send, so tapping
+    // a friend and backing out without sending leaves no DB trace.
 
     private func tapBot(_ bot: BotPick) async {
         path.append(PendingPeer(kind: "bot",
@@ -264,27 +261,27 @@ private struct FriendRow: View {
                     .frame(width: 36, height: 36)
             }
 
+            // Name + (bot) inline model tag — same pill style as the
+            // message list's model badge.
             HStack(spacing: 6) {
                 Text(name)
                     .font(Theme.Fonts.serif(size: 16, weight: .semibold))
                     .foregroundStyle(Theme.Palette.ink)
                     .lineLimit(1)
                 if kind == .bot, let tag = modelTag {
-                    // Model badge — matches MessageTabView's model tag
-                    // (muted ink / muted surface).
                     Text(tag)
-                        .font(Theme.Fonts.rounded(size: 10, weight: .medium))
-                        .foregroundStyle(Theme.Palette.inkMuted)
+                        .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.Palette.accent)
                         .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(Capsule().fill(Theme.Palette.surfaceMuted))
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Theme.Palette.accentBg))
                         .lineLimit(1)
-                        .truncationMode(.middle)
                 }
             }
 
             Spacer(minLength: 8)
 
+            // AI / 人类 tag at the far right.
             KindTag(kind: kind)
         }
         .padding(.vertical, 4)
@@ -295,8 +292,8 @@ private struct KindTag: View {
     let kind: FriendRow.Kind
     var body: some View {
         let (text, fg, bg): (String, Color, Color) = kind == .bot
-            ? ("AI", Theme.Palette.accent, Theme.Palette.accentBg)
-            : ("人类", Color(hex: 0x5B3D8A), Color(hex: 0xECE3F7))
+            ? ("AI", Color(hex: 0x1F4F8A), Color(hex: 0xE6EEF8))
+            : ("人类", Color(hex: 0x6F4A1A), Color(hex: 0xF7ECDA))
         return Text(text)
             .font(.system(size: 10, weight: .semibold))
             .foregroundStyle(fg)
