@@ -29,6 +29,9 @@ struct FriendsTabView: View {
     var body: some View {
         NavigationStack(path: $path) {
             VStack(spacing: 0) {
+                // Background applied at the VStack level (not just inside
+                // the lower ZStack) so the TabHeaderBar at the top sits
+                // on canvas instead of the default white safe-area fill.
                 TabHeaderBar(title: "好友") {
                     HStack(spacing: 14) {
                         Button {
@@ -122,6 +125,7 @@ struct FriendsTabView: View {
                 .refreshable { await load() }
                 }
             }
+            .background(Theme.Palette.canvas.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $addingFriend) {
                 AddFriendSheet { Task { await load() } }
