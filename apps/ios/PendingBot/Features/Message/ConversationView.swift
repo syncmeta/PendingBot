@@ -920,7 +920,15 @@ struct ConversationView: View {
             case .end, .turnDone, .turnInterrupted:
                 break
             case .error(let m):
-                self.error = m
+                // Worker sometimes emits an error event with an empty
+                // `message` field (e.g. when the underlying error stringifies
+                // to ""). Surface a placeholder so the user sees something
+                // and we can grep the console log for the SSE event.
+                let trimmed = m.trimmingCharacters(in: .whitespacesAndNewlines)
+                self.error = trimmed.isEmpty
+                    ? "服务端错误（空）— 请重试或检查网络"
+                    : trimmed
+                print("[chat] worker error event:", m)
             }
         }
     }

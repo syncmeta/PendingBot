@@ -226,6 +226,20 @@ messageRoutes.post('/', async (c) => {
             roundCount: updatedConv?.round_count ?? 0,
           });
         }
+      } catch (err) {
+        // runChatTurn handles its own errors and emits `event: error`,
+        // but anything outside it (db update, lookback scheduling, ...)
+        // would otherwise close the stream silently. Emit a visible error
+        // so the iOS alert says what went wrong instead of an empty body.
+        const message =
+          err instanceof Error
+            ? err.message || err.name || 'Error'
+            : (() => {
+                try { return JSON.stringify(err).slice(0, 500); }
+                catch { return String(err) || 'unknown error'; }
+              })();
+        console.error('[messages] stream error after runChatTurn:', err);
+        emit('error', { message });
       } finally {
         closed = true;
         try { controller.close(); } catch {}

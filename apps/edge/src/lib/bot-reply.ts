@@ -367,7 +367,26 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       try { await emitBubble(pending.trim()); } catch {}
     }
     const status: RunChatTurnResult['finalStatus'] = aborted ? 'interrupted' : 'error';
-    emit(status, { message: aborted ? 'aborted' : String(err) });
+    // String(err) drops to "" / "[object Object]" for thrown plain objects;
+    // dig into common error shapes so the iOS alert shows something useful.
+    const message = aborted
+      ? 'aborted'
+      : (() => {
+          if (err instanceof Error) {
+            const head = err.message || err.name || 'Error';
+            return err.stack ? `${head}\n${err.stack.split('\n').slice(0, 4).join('\n')}` : head;
+          }
+          if (err && typeof err === 'object') {
+            try {
+              return JSON.stringify(err).slice(0, 500);
+            } catch {
+              return Object.prototype.toString.call(err);
+            }
+          }
+          return String(err) || 'unknown error';
+        })();
+    console.error('[bot-reply] runChatTurn failed:', err);
+    emit(status, { message });
     return { finalStatus: status, totalContent, bubblesInserted, droppedLookbackIds: [] };
   } finally {
     signal.removeEventListener('abort', onCallerAbort);
