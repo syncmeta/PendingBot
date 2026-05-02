@@ -17,6 +17,11 @@ struct BubbleView: View {
     /// tint still varies per conv). nil falls back to conversationID
     /// for non-bot contexts.
     var botID: String? = nil
+    /// Self-chat override: when set, the bot bubble uses the user's
+    /// uploaded photo / BotAvatar(seed) instead of the standard
+    /// per-bot glyph — the conversation reads as the user talking to
+    /// a mirror of themselves.
+    var selfAvatar: (seed: String, attachmentId: String?)? = nil
     let serverURL: URL?
     /// Optional trace of the tool calls (currently 联网检索 progress lines)
     /// that produced this bot message. Renders as a collapsed chip above
@@ -65,11 +70,17 @@ struct BubbleView: View {
 
     private var botLayout: some View {
         HStack(alignment: .top, spacing: 8) {
-            BotAvatar(
-                emojiSeed: (botID?.isEmpty == false ? botID! : conversationID),
-                colorSeed: conversationID,
-                size: 30
-            )
+            Group {
+                if let s = selfAvatar {
+                    UserAvatar(seed: s.seed, attachmentId: s.attachmentId, size: 30)
+                } else {
+                    BotAvatar(
+                        emojiSeed: (botID?.isEmpty == false ? botID! : conversationID),
+                        colorSeed: conversationID,
+                        size: 30
+                    )
+                }
+            }
             .padding(.top, 2)
 
             VStack(alignment: .leading, spacing: 6) {

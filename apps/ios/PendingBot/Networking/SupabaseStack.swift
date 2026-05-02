@@ -17,7 +17,16 @@ enum SupabaseStack {
             supabaseURL: env.supabaseURL,
             supabaseKey: env.supabaseAnonKey,
             options: SupabaseClientOptions(
-                db: SupabaseClientOptions.DatabaseOptions(schema: "pendingbot")
+                db: SupabaseClientOptions.DatabaseOptions(schema: "pendingbot"),
+                // Opt into the v3 behaviour described in
+                // https://github.com/supabase/supabase-swift/pull/822 so
+                // we no longer get the "Initial session emitted after
+                // attempting to refresh the local stored session" warning
+                // on every launch. AccountStore explicitly checks
+                // session.expires_at before flipping `current`.
+                auth: SupabaseClientOptions.AuthOptions(
+                    emitLocalSessionAsInitialSession: true
+                )
             )
         )
     }()

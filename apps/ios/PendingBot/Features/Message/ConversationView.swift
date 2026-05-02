@@ -95,6 +95,32 @@ struct ConversationView: View {
         return bid.isEmpty ? conversation.id : bid
     }
 
+    /// Avatar shown in the chat header / empty-state. For self-chat the
+    /// "other side" IS the user — render their UserAvatar (uploaded
+    /// photo when present) instead of the bot's BotAvatar glyph.
+    @ViewBuilder
+    private func headerAvatar(size: CGFloat) -> some View {
+        if let s = bubbleSelfAvatar {
+            UserAvatar(seed: s.seed, attachmentId: s.attachmentId, size: size)
+        } else {
+            BotAvatar(
+                emojiSeed: avatarEmojiSeed,
+                colorSeed: conversation.id,
+                size: size
+            )
+        }
+    }
+
+    /// Self-chat → the user's avatar replaces the bot avatar. Returns
+    /// nil for any other conv type so callers fall back to BotAvatar.
+    private var bubbleSelfAvatar: (seed: String, attachmentId: String?)? {
+        guard conversation.conversation_type == "self" else { return nil }
+        let store = AccountStore.shared
+        let seed = store.avatarSeed
+            ?? store.current?.id ?? avatarEmojiSeed
+        return (seed: seed, attachmentId: store.avatarAttachmentId)
+    }
+
     private func shortSlug(_ slug: String) -> String {
         slug.split(separator: "/").last.map(String.init) ?? slug
     }
@@ -125,6 +151,7 @@ struct ConversationView: View {
                                        botName: botName,
                                        conversationID: conversation.id,
                                        botID: avatarEmojiSeed,
+                                       selfAvatar: bubbleSelfAvatar,
                                        serverURL: account?.workerURL,
                                        toolLog: pinnedToolLogs[msg.id])
                                 .id(msg.id)
@@ -281,11 +308,7 @@ struct ConversationView: View {
 
     private var emptyConversation: some View {
         VStack(spacing: 14) {
-            BotAvatar(
-                emojiSeed: avatarEmojiSeed,
-                colorSeed: conversation.id,
-                size: 64
-            )
+            headerAvatar(size: 64)
             Text(botName)
                 .font(Theme.Fonts.serif(size: 22, weight: .semibold))
                 .foregroundStyle(Theme.Palette.ink)
@@ -318,11 +341,7 @@ struct ConversationView: View {
                 .buttonStyle(.plain)
             }
 
-            BotAvatar(
-                emojiSeed: avatarEmojiSeed,
-                colorSeed: conversation.id,
-                size: 30
-            )
+            headerAvatar(size: 30)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(conversation.displayTitle)

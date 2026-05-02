@@ -114,7 +114,9 @@ struct MeTabView: View {
             ?? profile?.user_id
             ?? store.current?.id
             ?? "?"
-        BotAvatar(seed: seed, size: 64)
+        UserAvatar(seed: seed,
+                   attachmentId: store.avatarAttachmentId,
+                   size: 64)
     }
 
     // The server's display_name is the canonical handle (PATCH /me/profile
@@ -475,7 +477,7 @@ private struct ProfileEditView: View {
                     .presentationDragIndicator(.visible)
             }
             .fullScreenCover(isPresented: $showRandomize) {
-                ProfileBootstrapView()
+                ProfileBootstrapView(allowsBack: true)
                     .environmentObject(AccountStore.shared)
             }
             .navigationBarTitleDisplayMode(.inline)

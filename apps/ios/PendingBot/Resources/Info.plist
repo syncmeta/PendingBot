@@ -28,7 +28,21 @@
 				<string>pendingbot</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>google-signin-reversed</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<!-- TODO: replace with your iOS OAuth client's Reversed
+				     Client ID, e.g. com.googleusercontent.apps.123-abc -->
+				<string>REVERSED_GOOGLE_CLIENT_ID</string>
+			</array>
+		</dict>
 	</array>
+	<!-- TODO: paste the iOS OAuth Client ID from Google Cloud Console.
+	     Format: <digits>-<token>.apps.googleusercontent.com -->
+	<key>GIDClientID</key>
+	<string>YOUR_IOS_CLIENT_ID.apps.googleusercontent.com</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>

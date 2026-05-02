@@ -20,6 +20,9 @@ final class AccountStore: ObservableObject {
     /// Avatar seed pulled from pendingbot.users.custom_fields.avatar_seed —
     /// drives BotAvatar everywhere we render the user's own face.
     @Published var avatarSeed: String?
+    /// Optional uploaded avatar — when set, UserAvatar fetches the image
+    /// from /v1/uploads/<id> and shows it instead of the BotAvatar glyph.
+    @Published var avatarAttachmentId: String?
     /// Display name from pendingbot.users.display_name (canonical, set by
     /// the bootstrap step). Falls back to the auth-metadata name when the
     /// row hasn't been refreshed yet.
@@ -28,7 +31,8 @@ final class AccountStore: ObservableObject {
     private var stateTask: Task<Void, Never>?
 
     private init() {
-        if let session = SupabaseStack.shared.auth.currentSession {
+        if let session = SupabaseStack.shared.auth.currentSession,
+           !Self.isExpired(session) {
             current = Self.makeAccount(session: session)
             Task { await self.refreshProfileFlags() }
         }
@@ -37,9 +41,13 @@ final class AccountStore: ObservableObject {
 
     private func observeAuth() {
         stateTask = Task { [weak self] in
-            for await (_, session) in SupabaseStack.shared.auth.authStateChanges {
+            for await (event, session) in SupabaseStack.shared.auth.authStateChanges {
                 await MainActor.run {
-                    if let session {
+                    // The "initial session" event in supabase-swift's
+                    // current major can fire with a stale session that
+                    // failed to refresh — guard explicitly so we don't
+                    // hand RootView a dead JWT.
+                    if let session, !Self.isExpired(session) {
                         self?.current = Self.makeAccount(session: session)
                         Task { await self?.refreshProfileFlags() }
                     } else {
@@ -47,9 +55,18 @@ final class AccountStore: ObservableObject {
                         self?.hasBootstrapped = nil
                         self?.avatarSeed = nil
                     }
+                    _ = event // reserved for finer-grained handling later
                 }
             }
         }
+    }
+
+    /// True if the session's expires_at is in the past (with 30s slack
+    /// for clock skew). supabase-swift exposes `isExpired` only on
+    /// newer versions; compute it ourselves so it works either way.
+    private static func isExpired(_ session: Session) -> Bool {
+        let expiresAt = session.expiresAt
+        return Date(timeIntervalSince1970: expiresAt) < Date().addingTimeInterval(-30)
     }
 
     /// Pull the current user's `pendingbot.users` row to figure out whether
@@ -72,6 +89,7 @@ final class AccountStore: ObservableObject {
                 let cf = json["custom_fields"] as? [String: Any] ?? [:]
                 self.hasBootstrapped = (cf["bootstrapped"] as? String) == "1"
                 self.avatarSeed = cf["avatar_seed"] as? String
+                self.avatarAttachmentId = cf["avatar_attachment_id"] as? String
                 if let dn = json["display_name"] as? String, !dn.isEmpty {
                     self.profileDisplayName = dn
                 }
@@ -87,10 +105,14 @@ final class AccountStore: ObservableObject {
 
     /// Called by ProfileBootstrapView after a successful UPDATE so the
     /// RootView can flip from onboarding → TabRoot without a refetch.
-    func markBootstrapped(displayName: String, avatarSeed: String) {
+    /// `attachmentId` is set when the user picked a custom photo —
+    /// nil means stay on the deterministic BotAvatar.
+    func markBootstrapped(displayName: String, avatarSeed: String,
+                          attachmentId: String? = nil) {
         self.hasBootstrapped = true
         self.avatarSeed = avatarSeed
         self.profileDisplayName = displayName
+        self.avatarAttachmentId = attachmentId?.isEmpty == false ? attachmentId : nil
     }
 
     /// Sign out everywhere. Clears the Supabase session (which fires the
@@ -105,6 +127,7 @@ final class AccountStore: ObservableObject {
             print("[account] signOut error:", error)
         }
         LocalDatabase.shared.clear()
+        AvatarCache.shared.clear()
     }
 
     private static func makeAccount(session: Session) -> Account {

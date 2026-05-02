@@ -51,13 +51,13 @@ struct FriendsTabView: View {
                         SelfRow(
                             avatarSeed: AccountStore.shared.avatarSeed
                                 ?? AccountStore.shared.current?.id ?? "?",
+                            attachmentId: AccountStore.shared.avatarAttachmentId,
                             name: AccountStore.shared.profileDisplayName
                                 ?? AccountStore.shared.current?.displayName ?? "你",
                             onTap: { Task { await tapSelf() } },
                             onQR: { showingQR = true; Haptics.tap() }
                         )
                         .listRowBackground(Theme.Palette.surface)
-                        .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
                     }
 
                     Section {
@@ -272,25 +272,18 @@ struct FriendsTabView: View {
 /// sheet. Visually mirrors FriendRow so the list reads consistently.
 private struct SelfRow: View {
     let avatarSeed: String
+    let attachmentId: String?
     let name: String
     let onTap: () -> Void
     let onQR: () -> Void
 
     var body: some View {
         HStack(spacing: 10) {
-            BotAvatar(seed: avatarSeed, size: 36)
-            HStack(spacing: 6) {
-                Text(name)
-                    .font(Theme.Fonts.serif(size: 16, weight: .semibold))
-                    .foregroundStyle(Theme.Palette.ink)
-                    .lineLimit(1)
-                Text("自己")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Theme.Palette.accent)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(Theme.Palette.accentBg))
-            }
+            UserAvatar(seed: avatarSeed, attachmentId: attachmentId, size: 36)
+            Text(name)
+                .font(Theme.Fonts.serif(size: 16, weight: .semibold))
+                .foregroundStyle(Theme.Palette.ink)
+                .lineLimit(1)
             Spacer(minLength: 8)
             Button(action: onQR) {
                 Image(systemName: "qrcode")
@@ -555,7 +548,9 @@ private struct MyQRSheet: View {
         let displayName = store.profileDisplayName ?? store.current?.displayName ?? "你"
         VStack(spacing: 16) {
             HStack(spacing: 14) {
-                BotAvatar(seed: avatarSeed, size: 56)
+                UserAvatar(seed: avatarSeed,
+                           attachmentId: store.avatarAttachmentId,
+                           size: 56)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(displayName)
                         .font(Theme.Fonts.serif(size: 20, weight: .semibold))
