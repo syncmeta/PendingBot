@@ -36,17 +36,18 @@ struct TabHeaderBar<Trailing: View>: View {
     }
 }
 
-/// "+" icon centred inside a soft circular background — the native-iOS
-/// look for a compact compose / add action. Used as the trailing item
-/// in the message + friends tab headers.
+/// "+" icon inside a native-iOS "white glass" capsule — same idiom Apple
+/// uses for nav-bar action chips on translucent chrome (Maps, Photos).
+/// Used as the trailing item in the message + friends tab headers.
 struct CirclePlusButton: View {
-    var size: CGFloat = 30
+    var size: CGFloat = 32
     var body: some View {
         Image(systemName: "plus")
-            .font(.system(size: 15, weight: .semibold))
+            .font(.system(size: 16, weight: .semibold))
             .foregroundStyle(Theme.Palette.accent)
             .frame(width: size, height: size)
-            .background(Circle().fill(Theme.Palette.surfaceMuted))
-            .overlay(Circle().strokeBorder(Theme.Palette.hairline, lineWidth: 0.5))
+            .background(Circle().fill(.ultraThinMaterial))
+            .overlay(Circle().strokeBorder(Color.white.opacity(0.5), lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.08), radius: 6, x: 0, y: 2)
     }
 }
