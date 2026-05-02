@@ -68,6 +68,17 @@ final class LocalDatabase {
                 t.column("created_at", .integer).indexed().defaults(to: 0)
             }
         }
+        // Cache the conv-row preview text + bot display name so the
+        // first-paint hydrate doesn't fall through to the bare bot uuid
+        // (was showing as a long green ID badge before the network
+        // fetch resolved).
+        m.registerMigration("v2_conv_preview_columns") { db in
+            try db.alter(table: "conversations") { t in
+                t.add(column: "bot_name", .text)
+                t.add(column: "last_message_content", .text)
+                t.add(column: "last_message_sender_type", .text)
+            }
+        }
         return m
     }
 
@@ -90,6 +101,9 @@ final class LocalDatabase {
         var feature: String?
         var round_count: Int?
         var last_activity_at: Int
+        var bot_name: String?
+        var last_message_content: String?
+        var last_message_sender_type: String?
 
         static let databaseTableName = "conversations"
     }

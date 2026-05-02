@@ -229,9 +229,9 @@ struct MessageTabView: View {
                     conversation_type: row.conversation_type,
                     last_activity_at: row.last_activity_at,
                     round_count: row.round_count,
-                    bot_name: nil,
-                    last_message_content: nil,
-                    last_message_sender_type: nil,
+                    bot_name: row.bot_name,
+                    last_message_content: row.last_message_content,
+                    last_message_sender_type: row.last_message_sender_type,
                     model_override: nil
                 )
             }
@@ -288,7 +288,10 @@ struct MessageTabView: View {
                     conversation_type: c.conversation_type,
                     feature: c.feature_type,
                     round_count: c.round_count,
-                    last_activity_at: c.last_activity_at
+                    last_activity_at: c.last_activity_at,
+                    bot_name: c.bot_name,
+                    last_message_content: c.last_message_content,
+                    last_message_sender_type: c.last_message_sender_type
                 )
             })
         } catch is CancellationError {
@@ -505,7 +508,14 @@ private struct ConversationListRow: View {
     // joined `bot_name` from the conversation row if we haven't loaded the
     // live bot record yet.
     private var primaryName: String {
-        bot?.display_name ?? conv.bot_name ?? conv.bot_id
+        // Never fall through to the raw uuid. Until the bot list lands or
+        // the cache hydrate carries a name, just show the conv title (or
+        // an em-dash placeholder) — the long green ID badge was an
+        // eyesore on first paint.
+        if let n = bot?.display_name, !n.isEmpty { return n }
+        if let n = conv.bot_name, !n.isEmpty { return n }
+        if let t = conv.title, !t.isEmpty { return t }
+        return "—"
     }
     private var modelTag: String? { bot?.modelTag }
 
