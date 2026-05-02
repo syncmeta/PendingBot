@@ -92,10 +92,6 @@ struct FriendsTabView: View {
                     }
                     if !botsOnly {
                         Section {
-                            if humans.isEmpty {
-                                Text("还没有真人朋友 — 上方 + 加一个")
-                                    .foregroundStyle(.secondary)
-                            }
                             ForEach(humans) { c in
                                 FriendRow(kind: .human,
                                           avatarSeed: c.id,
