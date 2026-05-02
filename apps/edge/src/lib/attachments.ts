@@ -1,5 +1,3 @@
-// Attachment constraints — mirrors apps/api/src/core/attachments.ts.
-
 export const IMAGE_MIME_TO_EXT: Record<string, string> = {
   'image/jpeg': 'jpg',
   'image/jpg': 'jpg',

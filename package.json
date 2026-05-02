@@ -9,7 +9,7 @@
   ],
   "scripts": {
     "dev": "bun --filter '*' dev",
-    "dev:api": "bun --filter @pendingbot/api dev",
+    "dev:edge": "bun --filter @pendingbot/edge dev",
     "dev:web": "bun --filter @pendingbot/web dev",
     "build": "bun --filter '*' build",
     "typecheck": "bun --filter '*' typecheck",
