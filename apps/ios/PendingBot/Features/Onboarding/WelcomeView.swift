@@ -1,163 +1,144 @@
 import SwiftUI
+import UIKit
 import AuthenticationServices
 
-/// First-launch / signed-out screen. Brand mark on top half, three
-/// login methods (Apple / Google / Email) on the bottom half. Each
-/// hands off to its own helper in Networking/*.
+/// First-launch / signed-out screen. Brand mark on top; below it two
+/// circular logo buttons (Apple / Google) side by side, then an email
+/// capsule. Email path is a two-stage OTP: type address → tap arrow
+/// to send → row swaps to a 6-digit code input → tap arrow to verify.
+///
+/// All auth runs through supabase-swift via the `AppleSignIn` /
+/// `PendingGoogleSignIn` / `EmailSignIn` helpers. AccountStore picks up
+/// the resulting Session via authStateChanges; RootView swaps to
+/// TabRoot automatically.
 struct WelcomeView: View {
+    enum Stage { case enteringEmail, codeSent }
+    enum Field { case email, code }
+
     @EnvironmentObject private var store: AccountStore
-    @State private var isSigningIn = false
+    @State private var stage: Stage = .enteringEmail
+    @State private var email: String = ""
+    @State private var code: String = ""
+    @State private var busy: Bool = false
     @State private var errorText: String?
-    @State private var showingEmail = false
+    @FocusState private var focusedField: Field?
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Top half: brand mark, vertically centered.
-            Image("BrandMark")
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 96, height: 96)
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                .shadow(color: .black.opacity(0.05), radius: 16, y: 5)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        ScrollView {
+            VStack(spacing: 0) {
+                Spacer(minLength: 24)
 
-            // Bottom half: heading + three sign-in methods.
-            VStack(alignment: .leading, spacing: 12) {
-                Text("登录 / 注册：")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Theme.Palette.ink)
-                    .padding(.leading, 4)
-                    .padding(.bottom, 10)
+                Image("BrandMark")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 88, height: 88)
+                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .shadow(color: .black.opacity(0.05), radius: 14, y: 4)
+                    .padding(.bottom, 14)
 
-                appleButton.disabled(isSigningIn)
-                googleButton.disabled(isSigningIn)
-                emailButton.disabled(isSigningIn)
+                Text("登录 / 注册")
+                    .font(Theme.Fonts.caption)
+                    .foregroundStyle(Theme.Palette.inkMuted)
+                    .padding(.bottom, 20)
+
+                methods.padding(.bottom, 12)
 
                 if let errorText {
                     errorBlock(text: errorText)
                         .padding(.top, 4)
                 }
 
-                if isSigningIn {
-                    HStack {
-                        Spacer()
-                        ProgressView().padding(.top, 12)
-                        Spacer()
-                    }
-                }
-
-                Spacer(minLength: 0)
+                Spacer(minLength: 24)
             }
-            .frame(maxWidth: 320)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .padding(.top, 8)
+            .frame(maxWidth: 360)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 28)
         }
-        .padding(.horizontal, 28)
+        .scrollDismissesKeyboard(.interactively)
         .background(Theme.Palette.canvas.ignoresSafeArea())
-        .sheet(isPresented: $showingEmail) {
-            EmailSignInSheet()
-                .presentationDetents([.medium])
-                .presentationDragIndicator(.visible)
+    }
+
+    // MARK: - Sections
+
+    @ViewBuilder
+    private var methods: some View {
+        VStack(spacing: 18) {
+            if stage == .enteringEmail {
+                HStack(spacing: 28) {
+                    appleCircleButton
+                    googleCircleButton
+                }
+                .frame(maxWidth: .infinity)
+                .disabled(busy)
+                .padding(.bottom, 4)
+
+                emailRow
+            } else {
+                emailEchoRow
+                codeRow
+            }
         }
     }
 
-    // MARK: - Buttons
-
-    private var appleButton: some View {
-        Button { Task { await beginAppleSignIn() } } label: {
-            HStack(spacing: 10) {
-                appleLogoImage.frame(width: 18, height: 18)
-                Text("继续使用 Apple")
-                    .font(.system(size: 17, weight: .medium))
-                    .foregroundStyle(.white)
+    private var appleCircleButton: some View {
+        Button { Task { await beginApple() } } label: {
+            ZStack {
+                Circle().fill(Color.black)
+                appleLogoImage
             }
-            .frame(maxWidth: .infinity)
-            .frame(height: 52)
-            .background(Capsule().fill(.black))
-            .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
+            .frame(width: 64, height: 64)
+            .shadow(color: .black.opacity(0.18), radius: 12, y: 6)
+            .shadow(color: .black.opacity(0.06), radius: 2, y: 1)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Sign in with Apple")
     }
 
-    private var googleButton: some View {
-        Button { Task { await beginGoogleSignIn() } } label: {
-            HStack(spacing: 10) {
-                googleLogo.frame(width: 18, height: 18)
-                Text("继续使用 Google")
-                    .font(.system(size: 17, weight: .medium))
-                    .foregroundStyle(Theme.Palette.ink)
+    @ViewBuilder
+    private var appleLogoImage: some View {
+        if UIImage(named: "AppleSignInLogo") != nil {
+            Image("AppleSignInLogo")
+                .resizable()
+                .renderingMode(.template)
+                .foregroundStyle(.white)
+                .scaledToFit()
+                .frame(width: 28, height: 28)
+        } else {
+            Image(systemName: "applelogo")
+                .font(.system(size: 26, weight: .medium))
+                .foregroundStyle(.white)
+                .offset(y: -1)
+        }
+    }
+
+    private var googleCircleButton: some View {
+        Button { Task { await beginGoogle() } } label: {
+            ZStack {
+                Circle().fill(.regularMaterial)
+                Circle().strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
+                googleGlyph
             }
-            .frame(maxWidth: .infinity)
-            .frame(height: 52)
-            .background(Capsule().fill(Color.white))
-            .overlay(
-                Capsule().strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
-            )
-            .shadow(color: .black.opacity(0.06), radius: 8, y: 3)
+            .frame(width: 64, height: 64)
+            .shadow(color: .black.opacity(0.10), radius: 12, y: 6)
+            .shadow(color: .black.opacity(0.04), radius: 2, y: 1)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Sign in with Google")
     }
 
-    private var emailButton: some View {
-        Button {
-            showingEmail = true
-            Haptics.tap()
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "envelope.fill")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(Theme.Palette.accent)
-                Text("用邮箱登录")
-                    .font(.system(size: 17, weight: .medium))
-                    .foregroundStyle(Theme.Palette.ink)
-            }
-            .frame(maxWidth: .infinity)
-            .frame(height: 52)
-            .background(Capsule().fill(Theme.Palette.surface))
-            .overlay(
-                Capsule().strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
-            )
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Sign in with email")
-    }
-
-    // MARK: - Logos
-
-    private var appleLogoImage: AnyView {
-        if UIImage(named: "AppleSignInLogo") != nil {
-            return AnyView(
-                Image("AppleSignInLogo")
-                    .resizable()
-                    .renderingMode(.template)
-                    .foregroundStyle(.white)
-                    .scaledToFit()
-            )
-        }
-        return AnyView(
-            Image(systemName: "applelogo")
+    @ViewBuilder
+    private var googleGlyph: some View {
+        if UIImage(named: "GoogleG") != nil {
+            Image("GoogleG")
                 .resizable()
                 .scaledToFit()
-                .foregroundStyle(.white)
-        )
-    }
-
-    /// Multi-color "G" rendered with concentric arcs so we don't ship
-    /// a Google brand asset (PNG would land us in their attribution
-    /// rules). Approximation is good enough at button glyph size.
-    private var googleLogo: AnyView {
-        if UIImage(named: "GoogleSignInLogo") != nil {
-            return AnyView(
-                Image("GoogleSignInLogo")
-                    .resizable()
-                    .scaledToFit()
-            )
-        }
-        return AnyView(
+                .frame(width: 28, height: 28)
+        } else {
+            // Fallback when GoogleG.imageset hasn't been added to the
+            // asset catalogue yet — gradient "G" approximates the brand
+            // marks well enough at glyph size.
             Text("G")
-                .font(.system(size: 17, weight: .bold, design: .rounded))
+                .font(.system(size: 28, weight: .bold, design: .rounded))
                 .foregroundStyle(LinearGradient(
                     colors: [Color(hex: 0x4285F4),
                              Color(hex: 0xEA4335),
@@ -165,11 +146,92 @@ struct WelcomeView: View {
                              Color(hex: 0x34A853)],
                     startPoint: .topLeading, endPoint: .bottomTrailing
                 ))
-                .frame(width: 18, height: 18)
-        )
+        }
     }
 
-    // MARK: - Error block
+    private var emailRow: some View {
+        inputRow {
+            TextField("邮箱", text: $email)
+                .textInputAutocapitalization(.never)
+                .keyboardType(.emailAddress)
+                .textContentType(.emailAddress)
+                .autocorrectionDisabled()
+                .focused($focusedField, equals: .email)
+                .submitLabel(.continue)
+                .onSubmit { Task { await primaryAction() } }
+        }
+    }
+
+    private var codeRow: some View {
+        inputRow {
+            TextField("6 位验证码", text: $code)
+                .keyboardType(.numberPad)
+                .textContentType(.oneTimeCode)
+                .focused($focusedField, equals: .code)
+                .submitLabel(.go)
+                .onSubmit { Task { await primaryAction() } }
+        }
+    }
+
+    @ViewBuilder
+    private func inputRow<Content: View>(
+        @ViewBuilder field: () -> Content
+    ) -> some View {
+        HStack(spacing: 0) {
+            field()
+                .font(.system(size: 17))
+                .padding(.leading, 14)
+                .padding(.vertical, 14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button { Task { await primaryAction() } } label: {
+                Group {
+                    if busy {
+                        ProgressView().tint(Theme.Palette.accent)
+                    } else {
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(
+                                canSubmit ? Theme.Palette.accent
+                                : Theme.Palette.inkMuted.opacity(0.4)
+                            )
+                    }
+                }
+                .frame(width: 44, height: 44)
+                .padding(.trailing, 4)
+            }
+            .buttonStyle(.plain)
+            .disabled(!canSubmit || busy)
+        }
+        .frame(height: 52)
+        .background(Capsule().fill(.regularMaterial))
+        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.04), radius: 6, y: 2)
+    }
+
+    private var emailEchoRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "envelope")
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.Palette.inkMuted)
+            Text(email)
+                .font(Theme.Fonts.footnote)
+                .foregroundStyle(Theme.Palette.inkMuted)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer()
+            Button("换个") {
+                stage = .enteringEmail
+                code = ""
+                errorText = nil
+                focusedField = .email
+            }
+            .buttonStyle(.plain)
+            .font(Theme.Fonts.caption)
+            .foregroundStyle(Theme.Palette.accent.opacity(0.85))
+        }
+        .padding(.horizontal, 4)
+    }
 
     private func errorBlock(text: String) -> some View {
         Text(text)
@@ -184,12 +246,34 @@ struct WelcomeView: View {
             )
     }
 
+    // MARK: - State
+
+    private var canSubmit: Bool {
+        switch stage {
+        case .enteringEmail:
+            let s = email.trimmingCharacters(in: .whitespacesAndNewlines)
+            return s.contains("@") && s.contains(".")
+        case .codeSent:
+            return code.trimmingCharacters(in: .whitespaces).count >= 4
+        }
+    }
+
     // MARK: - Actions
 
-    private func beginAppleSignIn() async {
-        guard !isSigningIn else { return }
-        isSigningIn = true; errorText = nil
-        defer { isSigningIn = false }
+    /// The arrow button drives both stages — sends the code on the
+    /// email stage, verifies it on the code stage.
+    private func primaryAction() async {
+        guard canSubmit, !busy else { return }
+        switch stage {
+        case .enteringEmail: await sendCode()
+        case .codeSent: await verify()
+        }
+    }
+
+    private func beginApple() async {
+        guard !busy else { return }
+        busy = true; errorText = nil
+        defer { busy = false }
         do {
             _ = try await AppleSignIn.run()
         } catch AppleSignIn.Error.userCancelled {
@@ -199,10 +283,10 @@ struct WelcomeView: View {
         }
     }
 
-    private func beginGoogleSignIn() async {
-        guard !isSigningIn else { return }
-        isSigningIn = true; errorText = nil
-        defer { isSigningIn = false }
+    private func beginGoogle() async {
+        guard !busy else { return }
+        busy = true; errorText = nil
+        defer { busy = false }
         do {
             _ = try await PendingGoogleSignIn.run()
         } catch PendingGoogleSignIn.Error.userCancelled {
@@ -211,181 +295,34 @@ struct WelcomeView: View {
             errorText = error.localizedDescription
         }
     }
-}
-
-// MARK: - Email sheet
-
-/// Two-step email OTP: request code → enter code → session.
-private struct EmailSignInSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @State private var email = ""
-    @State private var code = ""
-    @State private var stage: Stage = .email
-    @State private var sending = false
-    @State private var verifying = false
-    @State private var error: String?
-
-    enum Stage { case email, code }
-
-    var body: some View {
-        NavigationStack {
-            ZStack {
-                Theme.Palette.canvas.ignoresSafeArea()
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
-                        switch stage {
-                        case .email: emailStage
-                        case .code: codeStage
-                        }
-                        if let error {
-                            Text(error)
-                                .font(Theme.Fonts.footnote)
-                                .foregroundStyle(.red)
-                        }
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, 22)
-                    .padding(.top, 18)
-                }
-            }
-            .navigationTitle("用邮箱登录")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { dismiss() }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var emailStage: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("我们会发一封验证码邮件给你。")
-                .font(Theme.Fonts.footnote)
-                .foregroundStyle(Theme.Palette.inkMuted)
-            TextField("you@example.com", text: $email)
-                .textInputAutocapitalization(.never)
-                .keyboardType(.emailAddress)
-                .autocorrectionDisabled(true)
-                .font(.system(size: 17, weight: .regular))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
-                .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Theme.Palette.surface)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
-                )
-        }
-        Button {
-            Task { await sendCode() }
-        } label: {
-            HStack {
-                if sending { ProgressView().tint(.white) }
-                Text(sending ? "发送中" : "发送验证码")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(.white)
-            }
-            .frame(maxWidth: .infinity).frame(height: 50)
-            .background(Capsule().fill(canSend ? Theme.Palette.accent
-                : Theme.Palette.accent.opacity(0.5)))
-        }
-        .buttonStyle(.plain)
-        .disabled(!canSend)
-    }
-
-    @ViewBuilder
-    private var codeStage: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("验证码已发到 \(email)")
-                .font(Theme.Fonts.footnote)
-                .foregroundStyle(Theme.Palette.inkMuted)
-            TextField("6 位验证码", text: $code)
-                .textInputAutocapitalization(.never)
-                .keyboardType(.numberPad)
-                .autocorrectionDisabled(true)
-                .font(.system(size: 22, weight: .semibold, design: .monospaced))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 14)
-                .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Theme.Palette.surface)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
-                )
-        }
-        HStack(spacing: 10) {
-            Button {
-                stage = .email; code = ""; error = nil
-            } label: {
-                Text("改个邮箱")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(Theme.Palette.accent)
-                    .frame(maxWidth: .infinity).frame(height: 44)
-                    .background(Capsule().fill(Theme.Palette.accentBg))
-            }
-            .buttonStyle(.plain)
-            Button {
-                Task { await verify() }
-            } label: {
-                HStack {
-                    if verifying { ProgressView().tint(.white) }
-                    Text(verifying ? "验证中" : "登录")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.white)
-                }
-                .frame(maxWidth: .infinity).frame(height: 44)
-                .background(Capsule().fill(canVerify ? Theme.Palette.accent
-                    : Theme.Palette.accent.opacity(0.5)))
-            }
-            .buttonStyle(.plain)
-            .disabled(!canVerify)
-        }
-    }
-
-    private var canSend: Bool {
-        !sending && email.contains("@") && email.contains(".")
-    }
-    private var canVerify: Bool {
-        !verifying && code.trimmingCharacters(in: .whitespaces).count >= 4
-    }
 
     private func sendCode() async {
-        guard canSend else { return }
-        sending = true; error = nil
-        defer { sending = false }
+        busy = true; errorText = nil
+        defer { busy = false }
         do {
             try await EmailSignIn.requestCode(
                 email: email.trimmingCharacters(in: .whitespacesAndNewlines)
             )
-            stage = .code
+            stage = .codeSent
+            focusedField = .code
             Haptics.success()
         } catch {
-            self.error = error.localizedDescription
+            errorText = error.localizedDescription
             Haptics.error()
         }
     }
 
     private func verify() async {
-        guard canVerify else { return }
-        verifying = true; error = nil
-        defer { verifying = false }
+        busy = true; errorText = nil
+        defer { busy = false }
         do {
             _ = try await EmailSignIn.verify(
                 email: email.trimmingCharacters(in: .whitespacesAndNewlines),
-                code: code.trimmingCharacters(in: .whitespacesAndNewlines)
+                code: code.trimmingCharacters(in: .whitespaces)
             )
-            // AccountStore picks up the session via authStateChanges and
-            // RootView swaps; closing the sheet is purely cosmetic.
             Haptics.success()
-            dismiss()
         } catch {
-            self.error = error.localizedDescription
+            errorText = error.localizedDescription
             Haptics.error()
         }
     }
