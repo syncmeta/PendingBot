@@ -475,7 +475,7 @@ private struct ProfileEditView: View {
                     .presentationDragIndicator(.visible)
             }
             .fullScreenCover(isPresented: $showRandomize) {
-                ProfileBootstrapView()
+                ProfileBootstrapView(allowsBack: true)
                     .environmentObject(AccountStore.shared)
             }
             .navigationBarTitleDisplayMode(.inline)
