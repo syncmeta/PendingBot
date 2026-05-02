@@ -233,17 +233,22 @@ struct MessageTabView: View {
         }
         loading = true; defer { loading = false }
         do {
-            // Supabase direct reads — bots is open to authenticated users,
-            // conversations is RLS-gated on participant membership.
             async let botRows: [BotRow] = SupabaseStack.shared.database
                 .from("bots")
                 .select("id, display_name, model_id")
                 .eq("is_active", value: true)
                 .execute()
                 .value
+            // user_unread_counts has a row per (user, conv) only after the
+            // conv received its first message. Joining it INNER is the
+            // empty-conv filter (item: 如果会话内消息是空的就不要出现).
             async let convRows: [ConvRow] = SupabaseStack.shared.database
                 .from("conversations")
-                .select("id, bot_id, user_id, title, conversation_type, feature, round_count, updated_at")
+                .select("""
+                    id, bot_id, user_id, title, conversation_type, feature, round_count, updated_at,
+                    bot:bots(display_name, model_id),
+                    unread:user_unread_counts!inner(last_message_at, last_message_preview, unread_count)
+                """)
                 .order("updated_at", ascending: false)
                 .execute()
                 .value
@@ -296,11 +301,32 @@ struct MessageTabView: View {
         let feature: String?
         let round_count: Int?
         let updated_at: String? // ISO 8601
+        let bot: BotJoin?
+        // PostgREST returns the embedded user_unread_counts as an array
+        // (the FK has no unique constraint on conversation_id alone — one
+        // row per (user, conv)). With !inner + RLS, callers see at most one.
+        let unread: [UnreadJoin]?
+        struct BotJoin: Decodable {
+            let display_name: String?
+            let model_id: String?
+        }
+        struct UnreadJoin: Decodable {
+            let last_message_at: String?
+            let last_message_preview: String?
+            let unread_count: Int?
+        }
         var asConversation: Conversation {
+            let unreadRow = unread?.first
             let secs: Int = {
-                guard let updated_at,
-                      let d = ISO8601DateFormatter().date(from: updated_at) else { return 0 }
-                return Int(d.timeIntervalSince1970)
+                if let s = unreadRow?.last_message_at,
+                   let d = ISO8601DateFormatter().date(from: s) {
+                    return Int(d.timeIntervalSince1970)
+                }
+                if let updated_at,
+                   let d = ISO8601DateFormatter().date(from: updated_at) {
+                    return Int(d.timeIntervalSince1970)
+                }
+                return 0
             }()
             return Conversation(
                 id: id,
@@ -311,8 +337,8 @@ struct MessageTabView: View {
                 conversation_type: conversation_type,
                 last_activity_at: secs,
                 round_count: round_count,
-                bot_name: nil,
-                last_message_content: nil,
+                bot_name: bot?.display_name,
+                last_message_content: unreadRow?.last_message_preview,
                 last_message_sender_type: nil,
                 model_override: nil
             )
@@ -455,12 +481,15 @@ private struct ConversationListRow: View {
                         .truncationMode(.tail)
                     Spacer(minLength: 8)
                     HStack(spacing: 4) {
+                        let isHumanConv = conv.conversation_type == "user_user"
                         Text(primaryName)
                             .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
-                            .foregroundStyle(Theme.Palette.accent)
+                            .foregroundStyle(isHumanConv
+                                ? Color(hex: 0x5B3D8A) : Theme.Palette.accent)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
-                            .background(Capsule().fill(Theme.Palette.accentBg))
+                            .background(Capsule().fill(isHumanConv
+                                ? Color(hex: 0xECE3F7) : Theme.Palette.accentBg))
                             .lineLimit(1)
                         if let tag = modelTag {
                             Text(tag)
