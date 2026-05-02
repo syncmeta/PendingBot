@@ -123,7 +123,7 @@ struct FriendsTabView: View {
                     }
                 }
             }
-            .toolbar(.hidden, for: .navigationBar)
+            .navigationBarTitleDisplayMode(.inline)
             .sheet(isPresented: $addingFriend) {
                 AddFriendSheet { Task { await load() } }
                     .presentationDetents([.medium])
