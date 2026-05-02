@@ -1,5 +1,4 @@
 import SwiftUI
-import Clerk
 
 /// 我 — profile, 当前服务器, 画像, AI 收藏. Visual language mirrors the
 /// PendingBot settings sheet: canvas background, vertical stack of
@@ -10,33 +9,24 @@ struct MeTabView: View {
     @EnvironmentObject private var store: AccountStore
 
     @State private var profile: MeProfile?
-    @State private var picks: [AiPick] = []
-    @State private var portraitConvs: [PortraitConversation] = []
-    @State private var portraitSources: [Conversation] = []
 
     @State private var showProfileEdit = false
-    @State private var showAddPick = false
-    @State private var showAccounts = false
-    @State private var creatingPortrait = false
     @State private var confirmingSignOut = false
+    @State private var confirmingDelete = false
+    @State private var deleting = false
     @State private var error: String?
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                TabHeaderBar(title: "我")
                 ZStack {
                     Theme.Palette.canvas.ignoresSafeArea()
                     ScrollView {
                         VStack(spacing: 22) {
-                            profileCard
-                            serverCard
+                            profileHeader
                             skillsCard
-                            botsCard
-                            portraitCard
-                            picksCard
                             signOutCard
-                            noteCard
+                            deleteAccountCard
                         }
                         .padding(.horizontal, Theme.Metrics.gutter)
                         .padding(.top, 4)
@@ -55,24 +45,6 @@ struct MeTabView: View {
                 .tint(Theme.Palette.accent)
                 .presentationDragIndicator(.visible)
         }
-        .sheet(isPresented: $showAddPick) {
-            AddPickSheet { Task { await load() } }
-                .tint(Theme.Palette.accent)
-                .presentationDragIndicator(.visible)
-        }
-        .sheet(isPresented: $showAccounts) {
-            AccountsView()
-                .tint(Theme.Palette.accent)
-                .presentationDragIndicator(.visible)
-        }
-        .sheet(isPresented: $creatingPortrait) {
-            NewPortraitFromMeSheet(sources: portraitSources) { didCreate in
-                creatingPortrait = false
-                if didCreate { Task { await load() } }
-            }
-            .tint(Theme.Palette.accent)
-            .presentationDragIndicator(.visible)
-        }
         .alert("出错", isPresented: .constant(error != nil)) {
             Button("好") { error = nil }
         } message: { Text(error ?? "") }
@@ -84,40 +56,53 @@ struct MeTabView: View {
             Button("退出登录", role: .destructive) { signOut() }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("这台设备会忘掉「\(store.current?.name ?? "当前服务器")」的钥匙。服务端那边的会话和数据不受影响 — 之后用同一把钥匙还能再加回来。")
+            Text("这台设备会注销「\(store.current?.displayName ?? "当前账户")」的登录。重新用 Apple ID 登录即可恢复。")
+        }
+        .confirmationDialog(
+            "永久注销账号？",
+            isPresented: $confirmingDelete,
+            titleVisibility: .visible
+        ) {
+            Button("永久删除", role: .destructive) { Task { await deleteAccount() } }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("这会从服务器删除所有跟你有关的数据 —— 对话、好友、号码、画像。无法恢复。如果只是想退出登录，请用上面的「退出登录」。")
         }
     }
 
     // ── Cards ───────────────────────────────────────────────────────────────
 
-    private var profileCard: some View {
-        card(title: nil, footer: nil) {
-            Button {
-                showProfileEdit = true
-                Haptics.tap()
-            } label: {
-                HStack(spacing: 14) {
-                    profileAvatar
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(displayLabel)
-                            .font(Theme.Fonts.serif(size: 18, weight: .semibold))
-                            .foregroundStyle(Theme.Palette.ink)
-                            .lineLimit(1)
-                        Text(profile?.bio?.isEmpty == false ? profile!.bio! : "点这里完善个人资料")
-                            .font(Theme.Fonts.footnote)
-                            .foregroundStyle(Theme.Palette.inkMuted)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.leading)
-                    }
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Theme.Palette.inkMuted.opacity(0.6))
+    /// Card-less header. Tap the avatar (or the name) to open the profile
+    /// sub-page where 号码 / 二维码 also live.
+    private var profileHeader: some View {
+        Button {
+            showProfileEdit = true
+            Haptics.tap()
+        } label: {
+            VStack(spacing: 10) {
+                profileAvatar
+                Text(displayLabel)
+                    .font(Theme.Fonts.serif(size: 20, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.ink)
+                    .lineLimit(1)
+                if let bio = profile?.bio, !bio.isEmpty {
+                    Text(bio)
+                        .font(Theme.Fonts.footnote)
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.center)
+                } else {
+                    Text("点这里完善资料 / 管理号码")
+                        .font(Theme.Fonts.caption)
+                        .foregroundStyle(Theme.Palette.inkMuted.opacity(0.7))
                 }
             }
-            .contentShape(Rectangle())
-            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity)
+            .padding(.top, 18)
+            .padding(.bottom, 4)
         }
+        .contentShape(Rectangle())
+        .buttonStyle(.plain)
     }
 
     // Prefer Clerk's hosted avatar; fall back to the deterministic BotAvatar
@@ -125,21 +110,11 @@ struct MeTabView: View {
     // something coherent instead of a generic placeholder.
     @ViewBuilder
     private var profileAvatar: some View {
-        let seed = profile?.user_id ?? store.current?.id ?? "?"
-        if let raw = profile?.image_url, let url = URL(string: raw) {
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case .success(let image):
-                    image.resizable().scaledToFill()
-                default:
-                    BotAvatar(seed: seed, size: 56)
-                }
-            }
-            .frame(width: 56, height: 56)
-            .clipShape(Circle())
-        } else {
-            BotAvatar(seed: seed, size: 56)
-        }
+        let seed = store.avatarSeed
+            ?? profile?.user_id
+            ?? store.current?.id
+            ?? "?"
+        BotAvatar(seed: seed, size: 64)
     }
 
     // The server's display_name is the canonical handle (PATCH /me/profile
@@ -147,6 +122,10 @@ struct MeTabView: View {
     // mirror columns Clerk gave us at last login before resorting to "未命名".
     private var displayLabel: String {
         let ws = CharacterSet.whitespacesAndNewlines
+        if let stored = store.profileDisplayName?.trimmingCharacters(in: ws),
+           !stored.isEmpty {
+            return stored
+        }
         let dn = profile?.display_name.trimmingCharacters(in: ws) ?? ""
         if !dn.isEmpty { return dn }
         let full = [profile?.first_name, profile?.last_name]
@@ -160,47 +139,6 @@ struct MeTabView: View {
             return String(local)
         }
         return "未命名"
-    }
-
-    private var serverCard: some View {
-        card(title: "当前服务器",
-             footer: "切换不会带走任何对话或资料 — 数据按钥匙隔离。")
-        {
-            if let current = store.current {
-                Button {
-                    showAccounts = true
-                    Haptics.tap()
-                } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: "globe")
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundStyle(Theme.Palette.accent)
-                            .frame(width: 36, height: 36)
-                            .background(Circle().fill(Theme.Palette.accentBg))
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(current.name)
-                                .font(Theme.Fonts.rounded(size: 15, weight: .medium))
-                                .foregroundStyle(Theme.Palette.ink)
-                                .lineLimit(1)
-                            Text(current.serverURL.absoluteString)
-                                .font(Theme.Fonts.monoSmall)
-                                .foregroundStyle(Theme.Palette.inkMuted)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                        }
-                        Spacer(minLength: 0)
-                        Image(systemName: "rectangle.2.swap")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(Theme.Palette.inkMuted)
-                    }
-                }
-                .contentShape(Rectangle())
-                .buttonStyle(.plain)
-            } else {
-                Text("尚未添加服务器").font(Theme.Fonts.footnote)
-                    .foregroundStyle(Theme.Palette.inkMuted)
-            }
-        }
     }
 
     private var skillsCard: some View {
@@ -236,187 +174,29 @@ struct MeTabView: View {
         }
     }
 
-    private var botsCard: some View {
-        card(title: "机器人",
-             footer: "为每个机器人单独挑模型，只对你这台号生效，不会改动配置文件，也不影响别的用户。")
-        {
-            NavigationLink {
-                BotManagementView()
-                    .toolbar(.hidden, for: .tabBar)
+    private var deleteAccountCard: some View {
+        card(title: nil, footer: "永久删除：所有对话、好友、号码、画像都会一并清除，且无法恢复。") {
+            Button(role: .destructive) {
+                confirmingDelete = true
+                Haptics.tap()
             } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: "person.crop.square.stack")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(Theme.Palette.accent)
-                        .frame(width: 36, height: 36)
-                        .background(Circle().fill(Theme.Palette.accentBg))
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("机器人管理")
-                            .font(Theme.Fonts.rounded(size: 15, weight: .medium))
-                            .foregroundStyle(Theme.Palette.ink)
-                        Text("为每个机器人指定模型")
-                            .font(Theme.Fonts.caption)
-                            .foregroundStyle(Theme.Palette.inkMuted)
+                HStack(spacing: 10) {
+                    if deleting {
+                        ProgressView().tint(Color(hex: 0xB14B3C))
+                    } else {
+                        Image(systemName: "trash")
+                            .font(.system(size: 14, weight: .medium))
                     }
+                    Text(deleting ? "正在删除…" : "注销账号")
+                        .font(Theme.Fonts.rounded(size: 15, weight: .medium))
                     Spacer(minLength: 0)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Theme.Palette.inkMuted.opacity(0.6))
                 }
+                .foregroundStyle(Color(hex: 0xB14B3C))
+                .padding(.vertical, 4)
             }
             .contentShape(Rectangle())
             .buttonStyle(.plain)
-        }
-    }
-
-    private var portraitCard: some View {
-        card(title: "画像",
-             footer: portraitSources.isEmpty
-             ? "先在「消息」里发起一段对话，才能基于它生成画像。"
-             : "基于一段消息会话，生成便签 / 日程 / 提醒 / 账单 / 瞬间。")
-        {
-            VStack(spacing: 0) {
-                if portraitConvs.isEmpty {
-                    Text("还没有画像")
-                        .font(Theme.Fonts.footnote)
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 6)
-                } else {
-                    ForEach(portraitConvs) { conv in
-                        NavigationLink {
-                            PortraitDetailView(conversation: conv)
-                                .toolbar(.hidden, for: .tabBar)
-                        } label: {
-                            HStack(spacing: 12) {
-                                Image(systemName: "photo.on.rectangle.angled")
-                                    .font(.system(size: 14, weight: .medium))
-                                    .foregroundStyle(Theme.Palette.accent)
-                                    .frame(width: 32, height: 32)
-                                    .background(Circle().fill(Theme.Palette.accentBg))
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(conv.title ?? "画像")
-                                        .font(Theme.Fonts.rounded(size: 15, weight: .medium))
-                                        .foregroundStyle(Theme.Palette.ink)
-                                        .lineLimit(1)
-                                    if let kinds = conv.kinds, !kinds.isEmpty {
-                                        Text(kinds.joined(separator: " · "))
-                                            .font(Theme.Fonts.caption)
-                                            .foregroundStyle(Theme.Palette.inkMuted)
-                                            .lineLimit(1)
-                                    }
-                                }
-                                Spacer(minLength: 0)
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundStyle(Theme.Palette.inkMuted.opacity(0.6))
-                            }
-                            .padding(.vertical, 10)
-                        }
-                        .contentShape(Rectangle())
-                        .buttonStyle(.plain)
-                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                            Button(role: .destructive) {
-                                Task { await deletePortrait(conv) }
-                            } label: { Label("删除", systemImage: "trash") }
-                        }
-
-                        if conv.id != portraitConvs.last?.id {
-                            Divider().background(Theme.Palette.hairline)
-                        }
-                    }
-
-                    Divider().background(Theme.Palette.hairline).padding(.vertical, 4)
-                }
-
-                Button {
-                    creatingPortrait = true
-                    Haptics.tap()
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "plus.circle")
-                            .font(.system(size: 14, weight: .medium))
-                        Text("生成新画像")
-                            .font(Theme.Fonts.rounded(size: 14, weight: .medium))
-                    }
-                    .foregroundStyle(portraitSources.isEmpty
-                                     ? Theme.Palette.inkMuted.opacity(0.5)
-                                     : Theme.Palette.accent)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 8)
-                }
-                .contentShape(Rectangle())
-                .buttonStyle(.plain)
-                .disabled(portraitSources.isEmpty)
-            }
-        }
-    }
-
-    private var picksCard: some View {
-        card(title: "AI 收藏",
-             footer: "AI 觉得你值得读的东西，也可以手动添加。")
-        {
-            VStack(spacing: 0) {
-                if picks.isEmpty {
-                    Text("还没有收藏")
-                        .font(Theme.Fonts.footnote)
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 6)
-                } else {
-                    ForEach(picks) { pick in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(pick.title)
-                                .font(Theme.Fonts.rounded(size: 15, weight: .medium))
-                                .foregroundStyle(Theme.Palette.ink)
-                                .lineLimit(2)
-                            if let url = pick.url, !url.isEmpty {
-                                Text(url)
-                                    .font(Theme.Fonts.monoSmall)
-                                    .foregroundStyle(Theme.Palette.inkMuted)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                            }
-                            if let summary = pick.summary, !summary.isEmpty {
-                                Text(summary)
-                                    .font(Theme.Fonts.caption)
-                                    .foregroundStyle(Theme.Palette.inkMuted)
-                                    .lineLimit(3)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 10)
-                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                            Button(role: .destructive) {
-                                Task { await deletePick(pick) }
-                            } label: { Label("删除", systemImage: "trash") }
-                        }
-
-                        if pick.id != picks.last?.id {
-                            Divider().background(Theme.Palette.hairline)
-                        }
-                    }
-
-                    Divider().background(Theme.Palette.hairline).padding(.vertical, 4)
-                }
-
-                Button {
-                    showAddPick = true
-                    Haptics.tap()
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "plus.circle")
-                            .font(.system(size: 14, weight: .medium))
-                        Text("手动添加一条")
-                            .font(Theme.Fonts.rounded(size: 14, weight: .medium))
-                    }
-                    .foregroundStyle(Theme.Palette.accent)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 8)
-                }
-                .contentShape(Rectangle())
-                .buttonStyle(.plain)
-            }
+            .disabled(deleting || store.current == nil)
         }
     }
 
@@ -439,25 +219,6 @@ struct MeTabView: View {
             .contentShape(Rectangle())
             .buttonStyle(.plain)
             .disabled(store.current == nil)
-        }
-    }
-
-    private var noteCard: some View {
-        card(title: nil, footer: nil) {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "lightbulb")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.Palette.accent)
-                    .padding(.top, 2)
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("钥匙保存在 iOS 钥匙串里，卸载 app 会一并清除。")
-                        .font(Theme.Fonts.footnote)
-                        .foregroundStyle(Theme.Palette.ink)
-                    Text("画像、收藏、个人资料都按当前服务器隔离 — 切换服务器后看到的是另一个空间。")
-                        .font(Theme.Fonts.caption)
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                }
-            }
         }
     }
 
@@ -497,45 +258,37 @@ struct MeTabView: View {
     // ── Data ────────────────────────────────────────────────────────────────
 
     private func load() async {
-        guard let api else { return }
-        do {
-            async let p: MeProfile = api.get("api/me/profile")
-            async let pk: [AiPick] = api.get("api/me/picks")
-            async let portraits: [PortraitConversation] = api.get("api/portrait/conversations")
-            async let sources: [Conversation] = api.get("api/portrait/sources")
-            self.profile = try await p
-            self.picks = try await pk
-            self.portraitConvs = (try await portraits).sorted { $0.last_activity_at > $1.last_activity_at }
-            self.portraitSources = try await sources
-        } catch { self.error = error.localizedDescription }
-    }
-
-    private func deletePortrait(_ conv: PortraitConversation) async {
-        guard let api else { return }
-        do {
-            try await api.deleteVoid("api/portrait/conversations/\(conv.id)")
-            portraitConvs.removeAll { $0.id == conv.id }
-            Haptics.success()
-        } catch { self.error = error.localizedDescription }
+        // Legacy api/me/* endpoints don't exist on the new Worker. Until
+        // /v1/me/profile lands this view falls back to AccountStore for
+        // display name + email.
+        self.profile = nil
     }
 
     private func signOut() {
-        guard let current = store.current else { return }
-        store.remove(current)
-        // Also clear the Clerk SDK's local session — otherwise the next
-        // tap on "登录 / 注册" would auto-exchange that lingering session
-        // and put the user right back where they started.
-        Task { try? await Clerk.shared.signOut() }
-        Haptics.success()
+        Task {
+            await store.signOut()
+            Haptics.success()
+        }
     }
 
-    private func deletePick(_ pick: AiPick) async {
-        guard let api else { return }
+    private func deleteAccount() async {
+        guard !deleting else { return }
+        deleting = true; defer { deleting = false }
         do {
-            try await api.deleteVoid("api/me/picks/\(pick.id)?hard=1")
-            picks.removeAll { $0.id == pick.id }
+            // RPC wipes everything (messages, convs, participants, handles,
+            // contacts, picks, devices, …) and drops the auth.users row,
+            // which cascades the rest. After it returns the JWT is dead;
+            // local signOut clears the keychain + the SQLite cache so the
+            // next launch lands on WelcomeView.
+            try await SupabaseStack.shared.database
+                .rpc("delete_self_account")
+                .execute()
+            await store.signOut()
             Haptics.success()
-        } catch { self.error = error.localizedDescription }
+        } catch {
+            self.error = "注销失败：\(error.localizedDescription)"
+            Haptics.error()
+        }
     }
 }
 
@@ -623,6 +376,8 @@ private struct ProfileEditView: View {
     @State private var name = ""
     @State private var bio = ""
     @State private var saving = false
+    @State private var showHandles = false
+    @State private var showRandomize = false
 
     var body: some View {
         NavigationStack {
@@ -654,11 +409,74 @@ private struct ProfileEditView: View {
                                 }
                             }
                         }
+                        CardChrome(
+                            title: "随机一键换装",
+                            footer: "重新随机生成一个名字 + 头像。"
+                        ) {
+                            Button {
+                                showRandomize = true
+                                Haptics.tap()
+                            } label: {
+                                HStack(spacing: 12) {
+                                    Image(systemName: "shuffle")
+                                        .font(.system(size: 16, weight: .medium))
+                                        .foregroundStyle(Theme.Palette.accent)
+                                        .frame(width: 36, height: 36)
+                                        .background(Circle().fill(Theme.Palette.accentBg))
+                                    Text("再来一次随机生成")
+                                        .font(Theme.Fonts.rounded(size: 15, weight: .medium))
+                                        .foregroundStyle(Theme.Palette.ink)
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(Theme.Palette.inkMuted.opacity(0.6))
+                                }
+                            }
+                            .contentShape(Rectangle())
+                            .buttonStyle(.plain)
+                        }
+
+                        CardChrome(
+                            title: "号码 / 二维码",
+                            footer: "号码可生成多个，分别备注，随时撤销。别人通过任意有效号码加你时你都能看到他用了哪个。"
+                        ) {
+                            Button {
+                                showHandles = true
+                                Haptics.tap()
+                            } label: {
+                                HStack(spacing: 12) {
+                                    Image(systemName: "number")
+                                        .font(.system(size: 16, weight: .medium))
+                                        .foregroundStyle(Theme.Palette.accent)
+                                        .frame(width: 36, height: 36)
+                                        .background(Circle().fill(Theme.Palette.accentBg))
+                                    Text("管理我的号码")
+                                        .font(Theme.Fonts.rounded(size: 15, weight: .medium))
+                                        .foregroundStyle(Theme.Palette.ink)
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(Theme.Palette.inkMuted.opacity(0.6))
+                                }
+                            }
+                            .contentShape(Rectangle())
+                            .buttonStyle(.plain)
+                        }
                     }
                     .padding(.horizontal, Theme.Metrics.gutter)
                     .padding(.top, 12)
                     .padding(.bottom, 32)
                 }
+            }
+            .sheet(isPresented: $showHandles) {
+                MyHandlesSheet()
+                    .tint(Theme.Palette.accent)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+            }
+            .fullScreenCover(isPresented: $showRandomize) {
+                ProfileBootstrapView()
+                    .environmentObject(AccountStore.shared)
             }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -689,362 +507,11 @@ private struct ProfileEditView: View {
     }
 
     private func save() async {
-        guard let api else { return }
+        // Profile edit endpoint not yet on the new Worker; saving is a
+        // no-op placeholder. Lands when /v1/me/profile arrives.
         saving = true; defer { saving = false }
-        struct Body: Encodable { let displayName: String; let bio: String }
-        do {
-            _ = try await api.patch("api/me/profile",
-                                    body: Body(displayName: name, bio: bio)) as EmptyResponse
-            Haptics.success()
-            onSaved()
-            dismiss()
-        } catch {}
-    }
-}
-
-// ── Add pick sheet ─────────────────────────────────────────────────────────
-
-private struct AddPickSheet: View {
-    @Environment(\.api) private var api
-    @Environment(\.dismiss) private var dismiss
-    var onAdded: () -> Void
-
-    @State private var title = ""
-    @State private var url = ""
-    @State private var summary = ""
-    @State private var saving = false
-
-    var body: some View {
-        NavigationStack {
-            ZStack {
-                Theme.Palette.canvas.ignoresSafeArea()
-                ScrollView {
-                    VStack(spacing: 22) {
-                        CardChrome(title: "新增收藏", footer: "URL 和简介可空 — AI 之后会自动补。") {
-                            VStack(alignment: .leading, spacing: 14) {
-                                LabeledField(title: "标题") {
-                                    styledField(placeholder: "想收藏什么", text: $title)
-                                }
-                                LabeledField(title: "URL") {
-                                    styledField(placeholder: "https://…", text: $url, keyboard: .URL, monospaced: true)
-                                }
-                                LabeledField(title: "简介") {
-                                    TextEditor(text: $summary)
-                                        .textInputAutocapitalization(.sentences)
-                                        .font(Theme.Fonts.rounded(size: 14, weight: .regular))
-                                        .foregroundStyle(Theme.Palette.ink)
-                                        .scrollContentBackground(.hidden)
-                                        .padding(10)
-                                        .frame(minHeight: 80)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 10).fill(Theme.Palette.canvas)
-                                        )
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 10)
-                                                .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
-                                        )
-                                }
-                            }
-                        }
-                    }
-                    .padding(.horizontal, Theme.Metrics.gutter)
-                    .padding(.top, 12)
-                    .padding(.bottom, 32)
-                }
-            }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    Text("新增收藏")
-                        .font(Theme.Fonts.serif(size: 17, weight: .semibold))
-                        .foregroundStyle(Theme.Palette.ink)
-                }
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { dismiss() }
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    if saving {
-                        ProgressView().tint(Theme.Palette.accent)
-                    } else {
-                        Button("添加") { Task { await save() } }
-                            .foregroundStyle(canSave ? Theme.Palette.accent
-                                                     : Theme.Palette.inkMuted.opacity(0.5))
-                            .fontWeight(.semibold)
-                            .disabled(!canSave)
-                    }
-                }
-            }
-        }
-    }
-
-    private var canSave: Bool {
-        !title.trimmingCharacters(in: .whitespaces).isEmpty
-    }
-
-    private func save() async {
-        guard let api else { return }
-        saving = true; defer { saving = false }
-        struct Body: Encodable {
-            let title: String
-            let url: String?
-            let summary: String?
-        }
-        do {
-            struct R: Decodable { let id: String }
-            _ = try await api.post("api/me/picks", body: Body(
-                title: title, url: url.isEmpty ? nil : url,
-                summary: summary.isEmpty ? nil : summary
-            )) as R
-            Haptics.success()
-            onAdded()
-            dismiss()
-        } catch {}
-    }
-}
-
-// ── New portrait sheet (used from inside 我 → 画像) ─────────────────────────
-
-private struct NewPortraitFromMeSheet: View {
-    @Environment(\.api) private var api
-    @Environment(\.dismiss) private var dismiss
-    let sources: [Conversation]
-    var onClose: (Bool) -> Void
-
-    @State private var selected: Conversation?
-    @State private var creating = false
-    @State private var error: String?
-
-    var body: some View {
-        NavigationStack {
-            ZStack {
-                Theme.Palette.canvas.ignoresSafeArea()
-                ScrollView {
-                    VStack(spacing: 22) {
-                        CardChrome(title: "源会话", footer: "画像基于这段消息会话的内容生成。") {
-                            VStack(spacing: 0) {
-                                ForEach(sources) { conv in
-                                    Button {
-                                        selected = conv
-                                        Haptics.tap()
-                                    } label: {
-                                        HStack(spacing: 12) {
-                                            Image(systemName: selected?.id == conv.id
-                                                  ? "largecircle.fill.circle"
-                                                  : "circle")
-                                                .font(.system(size: 16, weight: .regular))
-                                                .foregroundStyle(selected?.id == conv.id
-                                                                 ? Theme.Palette.accent
-                                                                 : Theme.Palette.inkMuted.opacity(0.6))
-                                            Text(conv.displayTitle)
-                                                .font(Theme.Fonts.rounded(size: 15, weight: .regular))
-                                                .foregroundStyle(Theme.Palette.ink)
-                                                .lineLimit(1)
-                                            Spacer(minLength: 0)
-                                        }
-                                        .padding(.vertical, 10)
-                                    }
-                                    .contentShape(Rectangle())
-                                    .buttonStyle(.plain)
-                                    if conv.id != sources.last?.id {
-                                        Divider().background(Theme.Palette.hairline)
-                                    }
-                                }
-                            }
-                        }
-                        if let error {
-                            CardChrome(title: nil, footer: nil) {
-                                Text(error).font(Theme.Fonts.footnote)
-                                    .foregroundStyle(Color(hex: 0xB14B3C))
-                            }
-                        }
-                    }
-                    .padding(.horizontal, Theme.Metrics.gutter)
-                    .padding(.top, 12)
-                    .padding(.bottom, 32)
-                }
-            }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    Text("新画像")
-                        .font(Theme.Fonts.serif(size: 17, weight: .semibold))
-                        .foregroundStyle(Theme.Palette.ink)
-                }
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { dismiss(); onClose(false) }
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    if creating {
-                        ProgressView().tint(Theme.Palette.accent)
-                    } else {
-                        Button("创建") { Task { await create() } }
-                            .foregroundStyle(selected == nil
-                                             ? Theme.Palette.inkMuted.opacity(0.5)
-                                             : Theme.Palette.accent)
-                            .fontWeight(.semibold)
-                            .disabled(selected == nil)
-                    }
-                }
-            }
-            .onAppear { if selected == nil { selected = sources.first } }
-        }
-    }
-
-    private func create() async {
-        guard let api, let src = selected else { return }
-        creating = true; defer { creating = false }
-        struct Body: Encodable { let sourceConversationId: String }
-        do {
-            _ = try await api.post("api/portrait/conversations",
-                                   body: Body(sourceConversationId: src.id)) as PortraitConversation
-            Haptics.success()
-            dismiss(); onClose(true)
-        } catch {
-            self.error = error.localizedDescription
-        }
-    }
-}
-
-// ── Bot management ─────────────────────────────────────────────────────────
-
-/// 我 → 机器人管理. Lists every bot the server exposes and lets the user pin
-/// a per-bot model that overrides the bot's config default for *this* user
-/// only. Pinning here is independent from the per-conversation model picker
-/// in the chat composer — that one wins when set.
-struct BotManagementView: View {
-    @Environment(\.api) private var api
-    @State private var bots: [Bot] = []
-    @State private var loading = true
-    @State private var error: String?
-    @State private var pickingBot: Bot?
-
-    var body: some View {
-        ZStack {
-            Theme.Palette.canvas.ignoresSafeArea()
-            ScrollView {
-                VStack(spacing: 12) {
-                    if loading && bots.isEmpty {
-                        ProgressView().padding(.top, 40)
-                    }
-                    ForEach(bots) { bot in
-                        botRow(bot)
-                    }
-                    if !loading && bots.isEmpty {
-                        Text("没有可用的机器人。")
-                            .font(Theme.Fonts.footnote)
-                            .foregroundStyle(Theme.Palette.inkMuted)
-                            .padding(.top, 40)
-                    }
-                }
-                .padding(.horizontal, Theme.Metrics.gutter)
-                .padding(.top, 12)
-                .padding(.bottom, 32)
-            }
-            .refreshable { await load() }
-        }
-        .navigationTitle("机器人管理")
-        .navigationBarTitleDisplayMode(.inline)
-        .task { await load() }
-        .sheet(item: $pickingBot) { bot in
-            ModelPickerSheet(
-                initial: bot.user_model ?? "",
-                allowsClear: true,
-                onPick: { picked in
-                    Task { await persist(bot: bot, slug: picked) }
-                    pickingBot = nil
-                }
-            )
-            .presentationDragIndicator(.visible)
-            .tint(Theme.Palette.accent)
-        }
-        .alert("出错", isPresented: .constant(error != nil)) {
-            Button("好") { error = nil }
-        } message: { Text(error ?? "") }
-    }
-
-    @ViewBuilder
-    private func botRow(_ bot: Bot) -> some View {
-        Button {
-            pickingBot = bot
-            Haptics.tap()
-        } label: {
-            HStack(spacing: 12) {
-                BotAvatar(seed: bot.id, size: 40)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(bot.display_name)
-                        .font(Theme.Fonts.rounded(size: 15, weight: .medium))
-                        .foregroundStyle(Theme.Palette.ink)
-                        .lineLimit(1)
-                    HStack(spacing: 6) {
-                        if let pinned = bot.user_model, !pinned.isEmpty {
-                            Text(shortSlug(pinned))
-                                .font(Theme.Fonts.monoSmall)
-                                .foregroundStyle(Theme.Palette.accent)
-                            Text("· 已指定")
-                                .font(Theme.Fonts.caption)
-                                .foregroundStyle(Theme.Palette.inkMuted)
-                        } else {
-                            Text("跟随机器人默认")
-                                .font(Theme.Fonts.caption)
-                                .foregroundStyle(Theme.Palette.inkMuted)
-                            if let def = bot.default_model, !def.isEmpty {
-                                Text("· \(shortSlug(def))")
-                                    .font(Theme.Fonts.monoSmall)
-                                    .foregroundStyle(Theme.Palette.inkMuted.opacity(0.8))
-                            }
-                        }
-                    }
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                }
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Theme.Palette.inkMuted.opacity(0.6))
-            }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
-                    .fill(Theme.Palette.surface)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
-                    .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
-            )
-        }
-        .contentShape(Rectangle())
-        .buttonStyle(.plain)
-    }
-
-    private func shortSlug(_ slug: String) -> String {
-        if let slash = slug.lastIndex(of: "/") {
-            return String(slug[slug.index(after: slash)...])
-        }
-        return slug
-    }
-
-    private func load() async {
-        guard let api else { return }
-        loading = true
-        defer { loading = false }
-        do {
-            self.bots = try await api.get("api/mobile/bots") as [Bot]
-        } catch { self.error = error.localizedDescription }
-    }
-
-    private func persist(bot: Bot, slug: String?) async {
-        guard let api else { return }
-        struct Body: Encodable { let model: String? }
-        struct Reply: Decodable { let ok: Bool; let user_model: String? }
-        let normalized = (slug?.isEmpty ?? true) ? nil : slug
-        do {
-            _ = try await api.patch("api/mobile/bots/\(bot.id)",
-                                    body: Body(model: normalized)) as Reply
-            Haptics.success()
-            await load()
-        } catch { self.error = error.localizedDescription }
+        Haptics.success()
+        onSaved()
+        dismiss()
     }
 }

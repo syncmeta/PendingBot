@@ -26,6 +26,14 @@
     "enabled": true
   },
 
+  // Cron triggers (B8). Each pattern is matched in src/cron/index.ts.
+  "triggers": {
+    "crons": [
+      "0 3 * * 1",
+      "0 4 * * *"
+    ]
+  },
+
   // Default env (used by `wrangler dev`). Real bindings live under env.staging
   // and env.production; the dev harness fills in stubs for R2/KV/etc.
   "vars": {
@@ -58,7 +66,7 @@
     "production": {
       "vars": {
         "ENVIRONMENT": "production",
-        "SUPABASE_URL": "https://REPLACE-ME-prod.supabase.co",
+        "SUPABASE_URL": "https://sslzhblojwkxfdyisity.supabase.co",
         "ALLOWED_ORIGIN": "https://bot.pendingname.com"
       },
       "routes": [
@@ -73,7 +81,7 @@
       "kv_namespaces": [
         {
           "binding": "MEMORY",
-          "id": "REPLACE-ME-prod-kv-id"
+          "id": "54b50e85e1884503b0d2c2884d531163"
         }
       ]
     }
@@ -82,8 +90,14 @@
   // Secrets (set per-env via `wrangler secret put --env <env>`):
   //   SUPABASE_ANON_KEY
   //   SUPABASE_SERVICE_ROLE_KEY
-  //   SUPABASE_JWT_SECRET
   //   OPENROUTER_API_KEY
+  //   JINA_API_KEY
+  //   APNS_TEAM_ID
+  //   APNS_TOPIC
+  //   APNS_KEY_ID_DEV
+  //   APNS_KEY_ID_PROD
+  //   APNS_KEY_DEV   (.p8 PEM content, multi-line)
+  //   APNS_KEY_PROD  (.p8 PEM content, multi-line)
   //   DAYTONA_API_KEY
   //   DAYTONA_API_URL
   //   HONCHO_API_KEY

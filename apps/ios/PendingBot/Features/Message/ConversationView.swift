@@ -1,23 +1,31 @@
 import SwiftUI
 import PhotosUI
 import UIKit
-import Combine
 
-/// One conversation. Loads history via REST, opens a WebSocket for live
-/// streaming, sends user input. Bot replies arrive as `start` → `chunk*`
-/// → `done`; we accumulate chunks into a single transient message bubble
-/// keyed by `messageId` (or by conversationId until the server tells us a
-/// concrete id).
+/// One conversation. Loads history from Supabase, runs the user-direct
+/// chat turn over Worker SSE (ChatStream), and listens for cross-device /
+/// background-task messages via Supabase Realtime on the conv channel.
+/// Identifies the peer for a conversation that hasn't been materialised in
+/// the DB yet — set when the user taps a friend (bot or human) in the
+/// friends tab. We defer creating the `conversations` row until they
+/// actually send a first message, so empty/abandoned chats don't pile up
+/// in the message list.
+struct PendingPeer: Hashable {
+    let kind: String       // "bot" | "user"
+    let peerId: String
+    let displayName: String
+}
+
 struct ConversationView: View {
-    let conversation: Conversation
+    @State var conversation: Conversation
     let bot: Bot?
+    let pendingPeer: PendingPeer?
     var onChange: () -> Void = {}
 
     @Environment(\.api) private var api
     @Environment(\.account) private var account
     @Environment(\.dismiss) private var dismiss
     @Environment(\.useSidebarLayout) private var sidebarLayout
-    @StateObject private var ws: ConversationWS
     @State private var messages: [ChatMessage] = []
     @State private var input = ""
     @State private var pendingAttachments: [PendingAttachment] = []
@@ -26,6 +34,22 @@ struct ConversationView: View {
     @State private var modelOverride: String = ""    // "" = use bot default
     @State private var error: String?
     @State private var pending = false              // server is generating (bot_typing active)
+    /// Active SSE turn task; canceling it closes the stream which Worker
+    /// reads as request.signal.aborted (= interrupt). Set by sendViaSSE,
+    /// cleared on completion. Non-nil while a turn is in flight.
+    @State private var chatTurnTask: Task<Void, Never>?
+    /// Realtime subscription token for this conv's `messages` channel —
+    /// dropped when the view disappears. Picks up cross-device messages
+    /// and bot rows that land via background paths (cron, surf, review).
+    @State private var realtimeToken: ConvSubscriptionToken?
+    /// Lookback notes the bot wrote about prior turns (Realtime push from
+    /// pendingbot.bot_lookbacks). Invisible to the user; passed in
+    /// `activeLookbacks` on the next POST so the bot sees them as context.
+    @State private var activeLookbacks: [LookbackNote] = []
+    /// 30s grace timer started when a new lookback arrives. If user hasn't
+    /// sent anything before it fires, we auto-trigger a continuation turn
+    /// so the bot's fact-check actually surfaces.
+    @State private var lookbackAutoFireTask: Task<Void, Never>?
     // Transient surf_status events from the in-flight 联网 search. Cleared
     // when the bot reply arrives. Displayed as an inline log above the
     // pending-typing row, mirroring the web's `.surf-log` panel.
@@ -62,17 +86,25 @@ struct ConversationView: View {
         return "\(base) · \(tag)"
     }
 
+    /// Seed for the avatar's emoji glyph. Always tied to bot identity so
+    /// the same bot keeps its face across every conv you have with it.
+    /// Falls back to the conv id (used for user_user / discuss / group
+    /// chats where there is no single bot).
+    private var avatarEmojiSeed: String {
+        let bid = conversation.bot_id ?? ""
+        return bid.isEmpty ? conversation.id : bid
+    }
+
     private func shortSlug(_ slug: String) -> String {
         slug.split(separator: "/").last.map(String.init) ?? slug
     }
 
-    init(conversation: Conversation, bot: Bot?, onChange: @escaping () -> Void = {}) {
-        self.conversation = conversation
+    init(conversation: Conversation, bot: Bot?, pendingPeer: PendingPeer? = nil,
+         onChange: @escaping () -> Void = {}) {
+        self._conversation = State(initialValue: conversation)
         self.bot = bot
+        self.pendingPeer = pendingPeer
         self.onChange = onChange
-        // Build the WS holder eagerly with whatever account is current; if
-        // the env account is missing we'll catch it in onAppear.
-        _ws = StateObject(wrappedValue: ConversationWS(account: AccountStore.shared.current))
     }
 
     var body: some View {
@@ -92,7 +124,8 @@ struct ConversationView: View {
                             BubbleView(message: msg,
                                        botName: botName,
                                        conversationID: conversation.id,
-                                       serverURL: account?.serverURL,
+                                       botID: avatarEmojiSeed,
+                                       serverURL: account?.workerURL,
                                        toolLog: pinnedToolLogs[msg.id])
                                 .id(msg.id)
                                 .contextMenu {
@@ -156,17 +189,30 @@ struct ConversationView: View {
                     photoItems: $photoPickerItems,
                     cameraImage: $cameraImage,
                     canSend: canSend,
-                    onSend: { Task { await send() } }
+                    onSend: { Task { await send() } },
+                    isStreaming: chatTurnTask != nil,
+                    onStop: { chatTurnTask?.cancel() }
                 )
                 .readableColumnWidth()
             }
         }
         .task {
-            ws.bind(account: account)
             modelOverride = conversation.model_override ?? ""
+            // Pending convs (lazy-created on first send) have no row yet —
+            // skip history / skills / realtime until they materialise.
+            guard !conversation.id.isEmpty else { return }
             await loadHistory()
             await loadSkills()
-            ws.connect()
+            await loadActiveLookbacks()
+            await subscribeRealtime()
+        }
+        .onDisappear {
+            if let token = realtimeToken {
+                Task { await RealtimeManager.shared.stopConvChannel(token) }
+                realtimeToken = nil
+            }
+            lookbackAutoFireTask?.cancel()
+            lookbackAutoFireTask = nil
         }
         .sheet(isPresented: $showingSkills) {
             NavigationStack {
@@ -202,12 +248,6 @@ struct ConversationView: View {
             .tint(Theme.Palette.accent)
             .presentationDragIndicator(.visible)
         }
-        .onDisappear {
-            ws.disconnect()
-        }
-        .onReceive(ws.events) { event in
-            handle(event)
-        }
         .onChange(of: photoPickerItems) { _, items in
             Task { await ingestPhotos(items) }
         }
@@ -224,8 +264,6 @@ struct ConversationView: View {
         !input.trimmingCharacters(in: .whitespaces).isEmpty || !pendingAttachments.isEmpty
     }
 
-    // ── Inbound from WebSocket ──────────────────────────────────────────────
-
     private func scrollToBottom(proxy: ScrollViewProxy) {
         // Defer one runloop so LazyVStack has measured any just-appended row;
         // scrolling synchronously inside the same state-change tick lands on a
@@ -241,141 +279,13 @@ struct ConversationView: View {
         }
     }
 
-    private func handle(_ event: InboundMessage) {
-        guard event.conversationId == conversation.id else { return }
-        switch event.type {
-        case "bot_typing":
-            // Server toggles the typing indicator with active=true/false.
-            pending = event.active ?? false
-        case "surf_status":
-            // 联网 search progress — accumulate into the inline log so the
-            // user sees "搜索中…" / "搜索完成" while the LLM warms up. Cleared
-            // when the actual bot reply arrives.
-            if let content = event.content, !content.isEmpty {
-                searchLog.append(content)
-            }
-        case "stream_start":
-            // Streaming reply opened — drop a placeholder bubble we'll grow
-            // as deltas arrive. Only used when the user has 流式输出 on; the
-            // server otherwise sends `message` once the segment is complete.
-            pending = false
-            searchLog.removeAll()
-            guard let id = event.messageId else { return }
-            if !messages.contains(where: { $0.id == id }) {
-                withAnimation(.easeOut(duration: 0.18)) {
-                    messages.append(ChatMessage(
-                        id: id, conversation_id: conversation.id,
-                        sender_type: "bot", sender_id: event.senderId ?? "",
-                        content: "",
-                        created_at: Int(Date().timeIntervalSince1970),
-                        attachments: nil
-                    ))
-                }
-            }
-        case "stream_delta":
-            guard let id = event.messageId, let delta = event.delta, !delta.isEmpty,
-                  let idx = messages.firstIndex(where: { $0.id == id }) else { return }
-            let prev = messages[idx]
-            messages[idx] = ChatMessage(
-                id: prev.id, conversation_id: prev.conversation_id,
-                sender_type: prev.sender_type, sender_id: prev.sender_id,
-                content: prev.content + delta,
-                created_at: prev.created_at,
-                attachments: prev.attachments
-            )
-        case "stream_end":
-            // Final content is authoritative — replaces whatever we
-            // accumulated from deltas. Covers the case where deltas were
-            // dropped on a bad connection. An explicit empty string means
-            // the server gave up on this reply (e.g. the [SILENT] marker
-            // tripped after we'd already opened the bubble) — collapse it
-            // rather than leave a blank row sitting there.
-            guard let id = event.messageId,
-                  let idx = messages.firstIndex(where: { $0.id == id }) else { return }
-            if let content = event.content {
-                if content.isEmpty {
-                    withAnimation(.easeOut(duration: 0.18)) {
-                        _ = messages.remove(at: idx)
-                    }
-                } else {
-                    let prev = messages[idx]
-                    messages[idx] = ChatMessage(
-                        id: prev.id, conversation_id: prev.conversation_id,
-                        sender_type: prev.sender_type, sender_id: prev.sender_id,
-                        content: content,
-                        created_at: prev.created_at,
-                        attachments: prev.attachments
-                    )
-                    Haptics.receive()
-                }
-            }
-            onChange()
-        case "message":
-            // Full bot reply — server-side bots aren't token-streamed when
-            // streaming is off, the whole message lands in one frame.
-            // Append (or replace if we already have a row with this id from
-            // a previous load or a just-finished stream).
-            pending = false
-            guard let content = event.content, !content.isEmpty else { return }
-            let id = event.messageId ?? "remote-\(UUID().uuidString)"
-            // Pin the in-flight search trace to this bot message id so the
-            // chip survives `searchLog.removeAll()` below — the user can
-            // expand it later instead of having it vanish on completion.
-            if !searchLog.isEmpty {
-                pinnedToolLogs[id] = searchLog
-            }
-            searchLog.removeAll()
-            if let idx = messages.firstIndex(where: { $0.id == id }) {
-                messages[idx] = ChatMessage(
-                    id: id, conversation_id: conversation.id,
-                    sender_type: "bot", sender_id: event.senderId ?? "",
-                    content: content,
-                    created_at: messages[idx].created_at,
-                    attachments: messages[idx].attachments
-                )
-            } else {
-                withAnimation(.easeOut(duration: 0.22)) {
-                    messages.append(ChatMessage(
-                        id: id, conversation_id: conversation.id,
-                        sender_type: "bot", sender_id: event.senderId ?? "",
-                        content: content,
-                        created_at: Int(Date().timeIntervalSince1970),
-                        attachments: nil
-                    ))
-                }
-                Haptics.receive()
-            }
-            onChange()
-        case "user_message_ack":
-            // Server finalized the user row (attachment ids resolved). The
-            // optimistic local row carries a `local-…` id, so reconcile by
-            // swapping the most recent local user row for the canonical id.
-            guard let canonicalId = event.messageId else { return }
-            if let idx = messages.lastIndex(where: { $0.isUser && $0.id.hasPrefix("local-") }) {
-                let prev = messages[idx]
-                messages[idx] = ChatMessage(
-                    id: canonicalId, conversation_id: prev.conversation_id,
-                    sender_type: prev.sender_type, sender_id: prev.sender_id,
-                    content: prev.content, created_at: prev.created_at,
-                    attachments: prev.attachments
-                )
-            }
-        case "title_update":
-            // Title changes don't affect the message list, but trigger a
-            // parent reload so the conversations row picks up the new title.
-            onChange()
-        case "error":
-            pending = false
-            error = event.content ?? "服务器返回错误"
-            Haptics.error()
-        default:
-            break
-        }
-    }
-
     private var emptyConversation: some View {
         VStack(spacing: 14) {
-            BotAvatar(seed: conversation.id, size: 64)
+            BotAvatar(
+                emojiSeed: avatarEmojiSeed,
+                colorSeed: conversation.id,
+                size: 64
+            )
             Text(botName)
                 .font(Theme.Fonts.serif(size: 22, weight: .semibold))
                 .foregroundStyle(Theme.Palette.ink)
@@ -408,7 +318,11 @@ struct ConversationView: View {
                 .buttonStyle(.plain)
             }
 
-            BotAvatar(seed: conversation.id, size: 30)
+            BotAvatar(
+                emojiSeed: avatarEmojiSeed,
+                colorSeed: conversation.id,
+                size: 30
+            )
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(conversation.displayTitle)
@@ -430,6 +344,27 @@ struct ConversationView: View {
                 }
             }
             Spacer(minLength: 0)
+            // Discuss-only controls: re-trigger another round / cancel.
+            // Both hit the existing /v1/discuss endpoints; UI stays out
+            // of the way for normal user_bot convs.
+            if conversation.conversation_type == "discuss" {
+                Button { Task { await discussRetrigger() } } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 16, weight: .regular))
+                        .foregroundStyle(Theme.Palette.ink)
+                        .frame(width: 32, height: 32)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("再来一轮")
+                Button { Task { await discussCancel() } } label: {
+                    Image(systemName: "stop.circle")
+                        .font(.system(size: 16, weight: .regular))
+                        .foregroundStyle(Color(hex: 0xB14B3C))
+                        .frame(width: 32, height: 32)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("停")
+            }
             Button {
                 Haptics.tap()
                 showingSettings = true
@@ -446,6 +381,58 @@ struct ConversationView: View {
         .padding(.horizontal, Theme.Metrics.gutter)
         .padding(.top, 6)
         .padding(.bottom, 8)
+    }
+
+    // MARK: - Discuss controls
+
+    private func discussRetrigger() async {
+        // Re-trigger reuses /v1/discuss/start with the same conv id; the
+        // Worker treats the existing conv as a continuation. We need the
+        // bot ids — pull from conversation_participants.
+        do {
+            struct PRow: Decodable { let participant_id: String }
+            let rows: [PRow] = try await SupabaseStack.shared.database
+                .from("conversation_participants")
+                .select("participant_id")
+                .eq("conversation_id", value: conversation.id)
+                .eq("participant_type", value: "bot")
+                .execute()
+                .value
+            let botIds = rows.map(\.participant_id)
+            guard !botIds.isEmpty else { return }
+            // Topic seed — use the conv title or first user/log message text.
+            let topic = conversation.title ?? "继续议论"
+
+            var req = URLRequest(url: HostedConfig.environment.workerURL
+                .appendingPathComponent("v1/discuss/start"))
+            req.httpMethod = "POST"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            let token = try await SupabaseStack.shared.auth.session.accessToken
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            req.httpBody = try JSONSerialization.data(withJSONObject: [
+                "conversationId": conversation.id,
+                "topic": topic,
+                "botIds": botIds,
+            ])
+            _ = try await URLSession.shared.data(for: req)
+            Haptics.tap()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func discussCancel() async {
+        do {
+            var req = URLRequest(url: HostedConfig.environment.workerURL
+                .appendingPathComponent("v1/discuss/\(conversation.id)/cancel"))
+            req.httpMethod = "POST"
+            let token = try await SupabaseStack.shared.auth.session.accessToken
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            _ = try await URLSession.shared.data(for: req)
+            Haptics.tap()
+        } catch {
+            self.error = error.localizedDescription
+        }
     }
 
     // Inline list of recent surf_status events while the server is doing a
@@ -504,65 +491,600 @@ struct ConversationView: View {
 
     // ── Send ────────────────────────────────────────────────────────────────
 
+    private func subscribeRealtime() async {
+        let convId = conversation.id
+        guard !convId.isEmpty else { return }
+        realtimeToken = await RealtimeManager.shared.startConvChannel(
+            conversationId: convId,
+            onMessage: { event in
+                Task { @MainActor in
+                    applyRealtimeEvent(event)
+                }
+            },
+            onLookback: { event in
+                Task { @MainActor in
+                    applyLookbackEvent(event)
+                }
+            }
+        )
+    }
+
+    /// Create the conv row (and participant rows) for a pending conv whose
+    /// peer was set in friends-tab tap. Returns true if the conv is now
+    /// real (either we created it or it was already real).
+    private func materializeIfPending() async -> Bool {
+        if !conversation.id.isEmpty { return true }
+        guard let peer = pendingPeer,
+              let userId = AccountStore.shared.current?.id else {
+            self.error = "无法创建会话"
+            return false
+        }
+        do {
+            let convId: String
+            switch peer.kind {
+            case "bot":
+                // Atomic conv + participants insert via security-definer RPC
+                // (migration 0011). Avoids the iOS-side RLS class entirely.
+                struct RpcArgs: Encodable { let p_bot_id: String }
+                let newId: UUID = try await SupabaseStack.shared.database
+                    .rpc("open_user_bot_conv",
+                         params: RpcArgs(p_bot_id: peer.peerId))
+                    .execute()
+                    .value
+                convId = newId.uuidString.lowercased()
+                conversation = Conversation(
+                    id: convId, bot_id: peer.peerId, user_id: userId,
+                    title: peer.displayName, feature_type: "message",
+                    conversation_type: "user_bot",
+                    last_activity_at: Int(Date().timeIntervalSince1970),
+                    round_count: 0, bot_name: peer.displayName,
+                    last_message_content: nil, last_message_sender_type: nil,
+                    model_override: nil
+                )
+            case "user":
+                // Hand off to Worker — its open-chat endpoint inserts both
+                // sides of the participant rows in a single trip.
+                var req = URLRequest(url: HostedConfig.environment.workerURL
+                    .appendingPathComponent("v1/contacts/open-chat"))
+                req.httpMethod = "POST"
+                req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                let token = try await SupabaseStack.shared.auth.session.accessToken
+                req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                req.httpBody = try JSONSerialization.data(
+                    withJSONObject: ["contactUserId": peer.peerId])
+                let (data, _) = try await URLSession.shared.data(for: req)
+                struct OpenChat: Decodable { let conversationId: String }
+                let payload = try JSONDecoder().decode(OpenChat.self, from: data)
+                convId = payload.conversationId
+                conversation = Conversation(
+                    id: convId, bot_id: "", user_id: userId,
+                    title: peer.displayName, feature_type: "message",
+                    conversation_type: "user_user",
+                    last_activity_at: Int(Date().timeIntervalSince1970),
+                    round_count: nil, bot_name: nil,
+                    last_message_content: nil, last_message_sender_type: nil,
+                    model_override: nil
+                )
+            case "self":
+                // Singleton self-chat conv. RPC is find-or-create so
+                // re-tapping the friends-tab self row reuses the same
+                // conv (and its history) instead of stacking.
+                let newId: UUID = try await SupabaseStack.shared.database
+                    .rpc("open_self_conv")
+                    .execute()
+                    .value
+                convId = newId.uuidString.lowercased()
+                conversation = Conversation(
+                    id: convId, bot_id: "", user_id: userId,
+                    title: peer.displayName, feature_type: "message",
+                    conversation_type: "self",
+                    last_activity_at: Int(Date().timeIntervalSince1970),
+                    round_count: 0, bot_name: peer.displayName,
+                    last_message_content: nil, last_message_sender_type: nil,
+                    model_override: nil
+                )
+            default:
+                self.error = "未知会话类型"
+                return false
+            }
+            await subscribeRealtime()
+            onChange()
+            return true
+        } catch {
+            self.error = "创建会话失败: \(error.localizedDescription)"
+            Haptics.error()
+            return false
+        }
+    }
+
     private func send() async {
-        guard let api, canSend else { return }
+        guard canSend else { return }
         let text = input.trimmingCharacters(in: .whitespaces)
         let attachIds = pendingAttachments.map(\.id)
-        // Optimistic local echo — server will deliver canonical row via WS.
-        messages.append(ChatMessage(
-            id: "local-\(UUID().uuidString)",
-            conversation_id: conversation.id,
-            sender_type: "user", sender_id: "",
-            content: text,
-            created_at: Int(Date().timeIntervalSince1970),
-            attachments: pendingAttachments.map {
-                Attachment(id: $0.id, kind: "image", mime: $0.mime, size: $0.size,
-                           width: nil, height: nil, url: "/uploads/\($0.id)")
-            }
-        ))
         input = ""
         pendingAttachments = []
         photoPickerItems = []
         Haptics.send()
 
-        do {
-            try await ws.send(.chat(
-                botId: conversation.bot_id,
-                conversationId: conversation.id,
+        if conversation.id.isEmpty {
+            let ok = await materializeIfPending()
+            guard ok else {
+                input = text
+                return
+            }
+        }
+
+        switch conversation.conversation_type {
+        case "discuss":
+            // 议论 mode: user is anonymous lurker. Their text is INSERTed
+            // as role='log', log_kind='discuss:anon' — bots see it on
+            // their next round as `[匿名插话] ...`. Doesn't trigger any
+            // bot reply directly (the runner is or isn't already running).
+            await sendDiscussAnon(text)
+        case "user_user":
+            // Plain human-to-human chat — no bot reply, just persist.
+            await sendPlainUserMessage(text)
+        case "group":
+            // Group MVP: persist user message, no auto bot reply yet.
+            // Bot speaks only when explicitly @-mentioned; that lands in
+            // a follow-up.
+            await sendPlainUserMessage(text)
+        default:
+            // user_bot: SSE turn against the pinned bot.
+            messages.append(ChatMessage(
+                id: "local-\(UUID().uuidString)",
+                conversation_id: conversation.id,
+                sender_type: "user", sender_id: "",
                 content: text,
-                attachmentIds: attachIds,
-                tone: chatTone,
-                streaming: streaming
+                created_at: Int(Date().timeIntervalSince1970),
+                attachments: pendingAttachments.map {
+                    Attachment(id: $0.id, kind: "image", mime: $0.mime, size: $0.size,
+                               width: nil, height: nil, url: "/uploads/\($0.id)")
+                }
             ))
+            sendViaSSE(text: text, attachmentIds: attachIds)
+        }
+    }
+
+    /// Insert the message as role='log' / log_kind='discuss:anon' so bots
+    /// pick it up in their next round but UI tags it as an anonymous note.
+    private func sendDiscussAnon(_ text: String) async {
+        struct Insert: Encodable {
+            let client_message_id: String
+            let conversation_id: String
+            let role = "log"
+            let log_kind = "discuss:anon"
+            let status = "done"
+            let content: String
+        }
+        do {
+            try await SupabaseStack.shared.database
+                .from("messages")
+                .insert(Insert(
+                    client_message_id: UUID().uuidString.lowercased(),
+                    conversation_id: conversation.id,
+                    content: text
+                ))
+                .execute()
+        } catch {
+            self.error = "插话失败: \(error.localizedDescription)"
+            Haptics.error()
+        }
+    }
+
+    private func sendPlainUserMessage(_ text: String) async {
+        guard let userId = AccountStore.shared.current?.id else { return }
+        struct Insert: Encodable {
+            let client_message_id: String
+            let conversation_id: String
+            let user_id: String
+            let role = "user"
+            let status = "done"
+            let content: String
+        }
+        do {
+            try await SupabaseStack.shared.database
+                .from("messages")
+                .insert(Insert(
+                    client_message_id: UUID().uuidString.lowercased(),
+                    conversation_id: conversation.id,
+                    user_id: userId,
+                    content: text
+                ))
+                .execute()
         } catch {
             self.error = "发送失败: \(error.localizedDescription)"
             Haptics.error()
         }
-        _ = api
+    }
+
+    /// Start the bot reply over SSE. Bubble emissions land in `messages`
+    /// via incremental insert/update. Cancel the returned Task (via the
+    /// stop button) to close the SSE — Worker observes request.signal.aborted
+    /// and stops the LLM stream.
+    private func sendViaSSE(text: String, attachmentIds: [String], autoLookback: Bool = false) {
+        chatTurnTask?.cancel()
+        // User taking action (or auto-fire firing) cancels the pending
+        // 30s lookback grace timer either way.
+        lookbackAutoFireTask?.cancel()
+        lookbackAutoFireTask = nil
+        pending = true
+
+        let body: [String: Any] = {
+            let clientMsgId = UUID().uuidString.lowercased()
+            let recent = messages.suffix(20).map { m -> [String: Any] in
+                [
+                    "role": m.sender_type,
+                    "content": m.content,
+                    "created_at": ISO8601DateFormatter().string(
+                        from: Date(timeIntervalSince1970: TimeInterval(m.created_at))
+                    ),
+                ]
+            }
+            let oldestId = messages.first { $0.id.range(of: "^[0-9a-f-]{36}$",
+                                                        options: .regularExpression) != nil }?.id
+            var b: [String: Any] = [
+                "conversationId": conversation.id,
+                "clientMessageId": clientMsgId,
+                "recentContext": recent,
+            ]
+            if !text.isEmpty { b["newMessage"] = text }
+            if autoLookback { b["autoLookback"] = true }
+            if !activeLookbacks.isEmpty {
+                b["activeLookbacks"] = activeLookbacks.map { ["id": $0.id, "body_md": $0.body_md] }
+            }
+            if !attachmentIds.isEmpty { b["attachmentIds"] = attachmentIds }
+            if let oldestId { b["oldestContextMessageId"] = oldestId }
+            return b
+        }()
+
+        chatTurnTask = Task { @MainActor in
+            let splitter = BubbleSplitter()
+            let stream = ChatStream().send(body: body)
+            do {
+                for try await event in stream {
+                    if Task.isCancelled { break }
+                    switch event {
+                    case .typing:
+                        break // pending state already true
+                    case .token(let delta):
+                        splitter.accept(token: delta)
+                    case .bubble:
+                        // Server-side canonical bubble id arrived; we
+                        // already split client-side, no action needed —
+                        // local id is the source of truth for UI; the
+                        // server id is for cross-device sync via Realtime.
+                        break
+                    case .done(_, let total):
+                        splitter.flushTail()
+                        splitter.turnDone(totalContent: total)
+                    case .interrupted(_, let total):
+                        splitter.flushTail()
+                        splitter.turnInterrupted(totalContent: total)
+                    case .silent:
+                        // Bot chose to say nothing — drop any buffered
+                        // tokens (held back by the Worker until SILENT
+                        // ambiguity broke), don't render any bubble.
+                        // No bubble events have been emitted by the
+                        // splitter yet, so just clear its buffer.
+                        _ = splitter.drain()
+                    case .error(let msg):
+                        splitter.reportError(msg)
+                    case .unknown:
+                        break
+                    }
+                    applyBubbleEmissions(splitter.drain())
+                }
+                // Stream ended without an explicit done event (rare).
+                splitter.flushTail()
+                applyBubbleEmissions(splitter.drain())
+            } catch {
+                // Cancellation = user-initiated interrupt; not an error UI.
+                if !(error is CancellationError) {
+                    self.error = "发送失败: \(error.localizedDescription)"
+                    Haptics.error()
+                }
+                splitter.flushTail()
+                applyBubbleEmissions(splitter.drain())
+            }
+            pending = false
+            chatTurnTask = nil
+        }
+    }
+
+    // MARK: - Lookback notes (invisible context-edit notes from the bot)
+
+    private struct LookbackNote: Identifiable, Equatable {
+        let id: String
+        let body_md: String
+        let active: Bool
+    }
+
+    private func loadActiveLookbacks() async {
+        struct Row: Decodable {
+            let id: String
+            let body_md: String
+            let active: Bool
+        }
+        do {
+            let rows: [Row] = try await SupabaseStack.shared.database
+                .from("bot_lookbacks")
+                .select("id, body_md, active")
+                .eq("conversation_id", value: conversation.id)
+                .eq("active", value: true)
+                .order("created_at", ascending: true)
+                .execute()
+                .value
+            self.activeLookbacks = rows.map { LookbackNote(id: $0.id, body_md: $0.body_md, active: true) }
+        } catch {
+            // Lookbacks are an enhancement — silent fail.
+            print("[lookback] load failed:", error.localizedDescription)
+        }
+    }
+
+    private func applyLookbackEvent(_ event: LookbackEvent) {
+        let r = event.record
+        guard let id = r["id"]?.stringValue else { return }
+        let body = r["body_md"]?.stringValue ?? ""
+        let active = (r["active"]?.boolValue) ?? true
+        if active {
+            // INSERT (new note) or UPDATE that brought it back. Replace by id.
+            if let idx = activeLookbacks.firstIndex(where: { $0.id == id }) {
+                activeLookbacks[idx] = LookbackNote(id: id, body_md: body, active: true)
+            } else {
+                activeLookbacks.append(LookbackNote(id: id, body_md: body, active: true))
+                // New note arrived — schedule auto-fire after 30s of user silence
+                // (skip if a turn is already in flight: the next user reply or
+                // the in-flight reply will pick the lookback up via prompt).
+                if chatTurnTask == nil {
+                    scheduleLookbackAutoFire()
+                }
+            }
+        } else {
+            // active=false → bot retired this note (via [DROP_LOOKBACK]).
+            activeLookbacks.removeAll { $0.id == id }
+        }
+    }
+
+    private func scheduleLookbackAutoFire() {
+        lookbackAutoFireTask?.cancel()
+        lookbackAutoFireTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
+            if Task.isCancelled { return }
+            // Re-check: still no in-flight turn, still some active lookbacks?
+            guard chatTurnTask == nil, !activeLookbacks.isEmpty else { return }
+            sendViaSSE(text: "", attachmentIds: [], autoLookback: true)
+        }
+    }
+
+    /// Realtime postgres_changes payload → ChatMessage in the local list.
+    /// Dedupe by canonical row id so this device's own SSE-emitted bubbles
+    /// (which carry "live-<uuid>" ids until reconciled) get either skipped
+    /// or replaced cleanly. role='log' rows are filtered out (rendered via
+    /// a different surface).
+    private func applyRealtimeEvent(_ event: MessageEvent) {
+        let r = event.record
+        guard let id = r["id"]?.stringValue,
+              r["conversation_id"]?.stringValue == conversation.id else { return }
+        let role = r["role"]?.stringValue ?? "user"
+        let logKind = r["log_kind"]?.stringValue
+        // Logs are mostly server-only (review/surf step entries). Only the
+        // anonymous-interject log appears in the conv UI.
+        if role == "log" && logKind != "discuss:anon" { return }
+        let content = r["content"]?.stringValue ?? ""
+        let createdRaw = r["created_at"]?.stringValue ?? ""
+        // Postgres emits timestamps with fractional seconds; the default
+        // ISO8601DateFormatter doesn't parse them. Fall through both
+        // variants before defaulting to "now" so live messages don't
+        // collapse to 1970.
+        let secs: Int = {
+            let withFrac = ISO8601DateFormatter()
+            withFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let d = withFrac.date(from: createdRaw) { return Int(d.timeIntervalSince1970) }
+            let plain = ISO8601DateFormatter()
+            if let d = plain.date(from: createdRaw) { return Int(d.timeIntervalSince1970) }
+            return Int(Date().timeIntervalSince1970)
+        }()
+        let senderType = role == "bot" ? "bot"
+            : (role == "log" && logKind == "discuss:anon") ? "anon"
+            : "user"
+        let senderId = role == "bot"
+            ? (r["sender_bot_id"]?.stringValue ?? "")
+            : (r["user_id"]?.stringValue ?? "")
+        let msg = ChatMessage(
+            id: id,
+            conversation_id: conversation.id,
+            sender_type: senderType,
+            sender_id: senderId,
+            content: content,
+            created_at: secs,
+            attachments: nil
+        )
+        if let existing = messages.firstIndex(where: { $0.id == id }) {
+            messages[existing] = msg
+        } else {
+            // Drop our own optimistic local row if we can match it by content +
+            // role + recency (within 5s) — this avoids duplicate user bubbles
+            // when the canonical row arrives after our local-<uuid> echo.
+            let now = Int(Date().timeIntervalSince1970)
+            if let stale = messages.firstIndex(where: { m in
+                m.id.hasPrefix("local-") || m.id.hasPrefix("live-")
+                    && m.sender_type == senderType
+                    && m.content == content
+                    && abs(m.created_at - now) < 5
+            }) {
+                messages[stale] = msg
+            } else {
+                messages.append(msg)
+            }
+        }
+        // Mirror to local cache.
+        LocalDatabase.shared.upsertMessages([
+            LocalDatabase.MessageRow(
+                id: id,
+                client_message_id: r["client_message_id"]?.stringValue,
+                conversation_id: conversation.id,
+                user_id: r["user_id"]?.stringValue,
+                sender_bot_id: r["sender_bot_id"]?.stringValue,
+                role: role,
+                content: content,
+                status: r["status"]?.stringValue,
+                created_at: secs
+            ),
+        ])
+    }
+
+    /// Translate splitter emissions into mutations on the local `messages`
+    /// array. Begin = append a new bot message; append = mutate the last
+    /// one's content; end / turnDone / turnInterrupted are status signals
+    /// (no-op for now since ChatMessage doesn't carry a streaming flag).
+    private func applyBubbleEmissions(_ events: [BubbleEmission]) {
+        for evt in events {
+            switch evt {
+            case .begin(let id, _, let content):
+                messages.append(ChatMessage(
+                    id: "live-\(id.uuidString)",
+                    conversation_id: conversation.id,
+                    sender_type: "bot",
+                    sender_id: conversation.bot_id ?? "",
+                    content: content,
+                    created_at: Int(Date().timeIntervalSince1970),
+                    attachments: nil
+                ))
+            case .append(let id, let delta):
+                let key = "live-\(id.uuidString)"
+                if let idx = messages.lastIndex(where: { $0.id == key }) {
+                    let prev = messages[idx]
+                    messages[idx] = ChatMessage(
+                        id: prev.id, conversation_id: prev.conversation_id,
+                        sender_type: prev.sender_type, sender_id: prev.sender_id,
+                        content: prev.content + delta,
+                        created_at: prev.created_at,
+                        attachments: prev.attachments
+                    )
+                }
+            case .end, .turnDone, .turnInterrupted:
+                break
+            case .error(let m):
+                // Worker sometimes emits an error event with an empty
+                // `message` field (e.g. when the underlying error stringifies
+                // to ""). Surface a placeholder so the user sees something
+                // and we can grep the console log for the SSE event.
+                let trimmed = m.trimmingCharacters(in: .whitespacesAndNewlines)
+                self.error = trimmed.isEmpty
+                    ? "服务端错误（空）— 请重试或检查网络"
+                    : trimmed
+                print("[chat] worker error event:", m)
+            }
+        }
     }
 
     // ── REST: history + delete ─────────────────────────────────────────────
 
     private func loadSkills() async {
-        guard let api else { return }
-        do {
-            self.skills = try await api.get("api/skills")
-        } catch {
-            // Non-fatal — chip just stays empty if the request fails.
-            print("[skills] load failed: \(error)")
-        }
+        // Skills load left disabled until /v1/skills lands. The chip stays
+        // empty; chat is unaffected.
+        self.skills = []
     }
 
     private func loadHistory() async {
-        guard let api else { return }
+        // Hydrate from local cache instantly so the conv opens with last-known
+        // content even if the user is offline / on a flaky network.
+        let cached = LocalDatabase.shared.loadMessages(conversationId: conversation.id)
+        if !cached.isEmpty {
+            self.messages = cached.map { r in
+                ChatMessage(
+                    id: r.id,
+                    conversation_id: r.conversation_id,
+                    sender_type: r.role == "bot" ? "bot" : "user",
+                    sender_id: r.role == "bot" ? (r.sender_bot_id ?? "") : (r.user_id ?? ""),
+                    content: r.content ?? "",
+                    created_at: r.created_at,
+                    attachments: nil
+                )
+            }
+        }
+
         do {
-            let raw: [ChatMessage] = try await api.get(
-                "api/mobile/conversations/\(conversation.id)/messages",
-                query: [URLQueryItem(name: "limit", value: "100")]
-            )
-            self.messages = raw.sorted { $0.created_at < $1.created_at }
+            // Direct Supabase read — RLS gates participation. Excludes role='log'
+            // (review/surf step entries) which are rendered separately.
+            struct Row: Decodable {
+                let id: String
+                let client_message_id: String?
+                let conversation_id: String
+                let user_id: String?
+                let sender_bot_id: String?
+                let role: String
+                let log_kind: String?
+                let content: String?
+                let status: String?
+                let created_at: String
+            }
+            // Discuss convs need the user's anonymous interjections (role='log',
+            // log_kind='discuss:anon') in the visible feed. Other convs filter
+            // logs out client-side; review/surf step logs aren't rendered here.
+            let rows: [Row] = try await SupabaseStack.shared.database
+                .from("messages")
+                .select("id, client_message_id, conversation_id, user_id, sender_bot_id, role, log_kind, content, status, created_at")
+                .eq("conversation_id", value: conversation.id)
+                .order("created_at", ascending: true)
+                .limit(200)
+                .execute()
+                .value
+            // Two formatters to handle Postgres's microsecond-precision
+            // timestamps; the default formatter alone can't parse those
+            // and silently returns nil → 1970-era messages.
+            let fmtFrac = ISO8601DateFormatter()
+            fmtFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            let fmt = ISO8601DateFormatter()
+            var viewMessages: [ChatMessage] = []
+            var cacheRows: [LocalDatabase.MessageRow] = []
+            viewMessages.reserveCapacity(rows.count)
+            cacheRows.reserveCapacity(rows.count)
+            for r in rows {
+                if r.role == "log" {
+                    // Only the anonymous-interject log_kind is visible UI;
+                    // review:* / surf:* / etc. don't render here.
+                    if r.log_kind != "discuss:anon" { continue }
+                }
+                let senderType: String = r.role == "bot" ? "bot"
+                    : r.role == "log" && r.log_kind == "discuss:anon" ? "anon"
+                    : "user"
+                let senderId = r.role == "bot" ? (r.sender_bot_id ?? "") : (r.user_id ?? "")
+                let secs: Int = {
+                    if let d = fmtFrac.date(from: r.created_at) { return Int(d.timeIntervalSince1970) }
+                    if let d = fmt.date(from: r.created_at) { return Int(d.timeIntervalSince1970) }
+                    return 0
+                }()
+                viewMessages.append(ChatMessage(
+                    id: r.id,
+                    conversation_id: r.conversation_id,
+                    sender_type: senderType,
+                    sender_id: senderId,
+                    content: r.content ?? "",
+                    created_at: secs,
+                    attachments: nil
+                ))
+                cacheRows.append(LocalDatabase.MessageRow(
+                    id: r.id,
+                    client_message_id: r.client_message_id,
+                    conversation_id: r.conversation_id,
+                    user_id: r.user_id,
+                    sender_bot_id: r.sender_bot_id,
+                    role: r.role,
+                    content: r.content,
+                    status: r.status,
+                    created_at: secs
+                ))
+            }
+            self.messages = viewMessages
+            LocalDatabase.shared.upsertMessages(cacheRows)
         } catch {
-            self.error = error.localizedDescription
+            // Network down + we have a cache: stay quiet (cached msgs still
+            // visible). Show the error only if we have nothing to display.
+            if messages.isEmpty {
+                self.error = error.localizedDescription
+            }
         }
     }
 
@@ -587,19 +1109,11 @@ struct ConversationView: View {
     }
 
     private func patchConversationModel(slug: String?) async {
-        guard let api else { return }
-        struct Body: Encodable { let modelOverride: String? }
-        do {
-            _ = try await api.patch(
-                "api/mobile/conversations/\(conversation.id)",
-                body: Body(modelOverride: slug)
-            ) as EmptyResponse
-            Haptics.success()
-            onChange()
-        } catch {
-            self.error = "更换模型失败: \(error.localizedDescription)"
-            Haptics.error()
-        }
+        // Per-conv model override endpoint not yet on the new Worker; the
+        // conversation_settings sheet still calls this. UI affordance is
+        // present but the change doesn't persist until the route lands.
+        _ = slug
+        Haptics.tap()
     }
 
     private func patchBotUserModel(slug: String?) async {
@@ -725,36 +1239,3 @@ private struct SkillDraft: Identifiable {
     var id: String { String(body.hashValue) }
 }
 
-// ── WebSocket holder ────────────────────────────────────────────────────────
-//
-// One-shot holder so the StateObject sticks around for the view's lifetime
-// even though the underlying client switches when the user changes account.
-
-@MainActor
-final class ConversationWS: ObservableObject {
-    @Published private var client: WebSocketClient?
-    private var account: Account?
-
-    init(account: Account?) {
-        self.account = account
-        if let account { self.client = WebSocketClient(account: account) }
-    }
-
-    var events: AnyPublisher<InboundMessage, Never> {
-        client?.inbound.eraseToAnyPublisher() ?? Empty().eraseToAnyPublisher()
-    }
-
-    func bind(account: Account?) {
-        guard account?.id != self.account?.id else { return }
-        client?.disconnect()
-        self.account = account
-        if let account { client = WebSocketClient(account: account) }
-    }
-
-    func connect() { client?.connect() }
-    func disconnect() { client?.disconnect() }
-    func send(_ message: OutboundMessage) async throws {
-        guard let client else { throw WSError.notConnected }
-        try await client.send(message)
-    }
-}

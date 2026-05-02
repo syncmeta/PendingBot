@@ -1,11 +1,10 @@
 import SwiftUI
-import Clerk
 
 @main
 struct PendingBotApp: App {
     @StateObject private var accountStore = AccountStore.shared
     @StateObject private var unreadStore = UnreadStore.shared
-    @State private var clerk = Clerk.shared
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     init() {
         Haptics.warmUp()
@@ -14,7 +13,6 @@ struct PendingBotApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
-                .environment(clerk)
                 .environmentObject(accountStore)
                 .environmentObject(unreadStore)
                 // Two-color brand (#044735 + #fdfcfa) — light theme only.
@@ -23,45 +21,47 @@ struct PendingBotApp: App {
                 .preferredColorScheme(.light)
                 .tint(Theme.Palette.accent)
                 .background(Theme.Palette.canvas.ignoresSafeArea())
-                .onChange(of: accountStore.current) { _, new in
+                .onChange(of: accountStore.current) { old, new in
                     unreadStore.bind(account: new)
+                    // Sign-in transition (nil → account) is the moment to
+                    // hand APNS over to PushService — the user has just
+                    // authorized us to call /v1/devices/register.
+                    if old == nil, new != nil {
+                        Task { await PushService.shared.onSignedIn() }
+                    }
                 }
                 .task {
                     unreadStore.bind(account: accountStore.current)
-                    // Clerk's load() fetches the JWKs + active session if any.
-                    // We do this even before the user taps "登录" so the
-                    // sign-in view is responsive on first interaction.
-                    clerk.configure(publishableKey: ClerkConfig.publishableKey)
-                    try? await clerk.load()
+                    // Touch the Supabase client so its singleton initializes
+                    // and the keychain-persisted session loads on first frame.
+                    _ = SupabaseStack.shared
+                    // If the user is already signed in from a previous
+                    // launch, kick off the push registration flow now.
+                    if accountStore.current != nil {
+                        await PushService.shared.onSignedIn()
+                    }
                 }
         }
     }
 }
 
-/// Decides whether to show onboarding or the main TabView based on whether
-/// the user has any account yet.
+/// Decides whether to show onboarding or the main TabView based on auth state.
 struct RootView: View {
     @EnvironmentObject var store: AccountStore
 
     var body: some View {
         if store.current == nil {
             WelcomeView()
+        } else if store.hasBootstrapped == false {
+            // Right after sign-in we run the random-name + random-avatar
+            // onboarding. While `hasBootstrapped` is still nil (refresh
+            // in flight) we show TabRoot to avoid a flash of onboarding
+            // for users who already finished it on a previous launch.
+            ProfileBootstrapView()
+                .environmentObject(store)
         } else {
             TabRoot()
-                // Re-instantiate downstream views (and their WS clients) when
-                // the user switches servers — the .id() forces a full rebuild.
                 .id(store.current?.id)
         }
     }
-}
-
-/// Hosted-build Clerk publishable key. This is the production key for the
-/// `clerk.pendingname.com` tenant — public by design (Clerk publishable
-/// keys carry no write authority, only identify the tenant).
-///
-/// Self-host iOS builds will swap this constant to `nil` and gate Clerk
-/// on a runtime probe of `/api/config` instead. Until then, this single
-/// constant is the only thing the hosted build embeds about Clerk.
-enum ClerkConfig {
-    static let publishableKey = "pk_live_Y2xlcmsucGVuZGluZ25hbWUuY29tJA"
 }

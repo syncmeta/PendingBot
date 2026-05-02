@@ -10,10 +10,13 @@ import SwiftUI
 struct BubbleView: View {
     let message: ChatMessage
     let botName: String
-    /// Conversation id — feeds into BotAvatar so every bubble in a given
-    /// conversation shows the same avatar, but each conversation gets a
-    /// fresh random emoji + pastel.
+    /// Conversation id — drives the per-conv pastel tint on BotAvatar.
     let conversationID: String
+    /// Bot identity, passed in so the avatar emoji stays consistent for
+    /// the same bot across all your conversations with it (background
+    /// tint still varies per conv). nil falls back to conversationID
+    /// for non-bot contexts.
+    var botID: String? = nil
     let serverURL: URL?
     /// Optional trace of the tool calls (currently 联网检索 progress lines)
     /// that produced this bot message. Renders as a collapsed chip above
@@ -23,15 +26,51 @@ struct BubbleView: View {
     private var hasText: Bool { !message.content.isEmpty }
 
     var body: some View {
-        if message.isUser { userLayout } else { botLayout }
+        if message.sender_type == "anon" {
+            anonLayout
+        } else if message.isUser {
+            userLayout
+        } else {
+            botLayout
+        }
+    }
+
+    // ── Anonymous interjection (议论 mode user notes) ──────────────────────────
+    //
+    // Centered, italic, faint — visually different from both user/bot
+    // bubbles so it reads as "directorial aside" rather than chat.
+
+    private var anonLayout: some View {
+        VStack(spacing: 4) {
+            Text("匿名插话")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Theme.Palette.inkMuted)
+                .tracking(0.5)
+            Text(message.content)
+                .font(.system(size: 14, weight: .regular).italic())
+                .foregroundStyle(Theme.Palette.inkMuted)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(Theme.Palette.surfaceMuted.opacity(0.8))
+                )
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 4)
     }
 
     // ── Bot ─────────────────────────────────────────────────────────────────
 
     private var botLayout: some View {
         HStack(alignment: .top, spacing: 8) {
-            BotAvatar(seed: conversationID, size: 30)
-                .padding(.top, 2)
+            BotAvatar(
+                emojiSeed: (botID?.isEmpty == false ? botID! : conversationID),
+                colorSeed: conversationID,
+                size: 30
+            )
+            .padding(.top, 2)
 
             VStack(alignment: .leading, spacing: 6) {
                 if let log = toolLog, !log.isEmpty {

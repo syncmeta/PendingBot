@@ -1,10 +1,17 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
-import type { AppBindings } from './types';
+import type { AppBindings, Env } from './types';
 import { healthRoutes } from './routes/health';
 import { messageRoutes } from './routes/messages';
 import { uploadRoutes } from './routes/upload';
+import { surfRoutes } from './routes/surf';
+import { reviewRoutes } from './routes/review';
+import { meRoutes } from './routes/me';
+import { discussRoutes } from './routes/discuss';
+import { contactRoutes } from './routes/contacts';
+import { deviceRoutes } from './routes/devices';
+import { handleScheduled } from './cron';
 
 // Top-level Hono app. Routes mount under /v1/ to leave room for a future v2
 // (URL path = major-era versioning). Within v1, schema-driven compatibility
@@ -45,6 +52,12 @@ v1.route('/health', healthRoutes);
 v1.route('/messages', messageRoutes);
 v1.route('/upload', uploadRoutes);
 v1.route('/uploads', uploadRoutes);   // GET /v1/uploads/:id
+v1.route('/surf', surfRoutes);
+v1.route('/review', reviewRoutes);
+v1.route('/me', meRoutes);
+v1.route('/discuss', discussRoutes);
+v1.route('/contacts', contactRoutes);
+v1.route('/devices', deviceRoutes);
 
 app.route('/v1', v1);
 
@@ -52,4 +65,13 @@ app.route('/v1', v1);
 // that won't follow path conventions).
 app.route('/health', healthRoutes);
 
-export default app;
+// Workers entry point: HTTP via Hono, scheduled (cron) via handleScheduled.
+// Hono's default export is `{ fetch }`, so we wrap it to add the scheduled
+// hook. wrangler.jsonc declares triggers.crons; controller.cron tells us
+// which schedule fired.
+export default {
+  fetch: app.fetch,
+  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+    await handleScheduled(controller, env, ctx);
+  },
+};

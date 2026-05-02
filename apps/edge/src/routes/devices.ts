@@ -1,0 +1,62 @@
+import { Hono } from 'hono';
+import { z } from 'zod';
+import { requireSession } from '@pendingbot/identity';
+import { serviceClient } from '../lib/supabase';
+import type { AppBindings } from '../types';
+
+export const deviceRoutes = new Hono<AppBindings>();
+deviceRoutes.use('*', requireSession());
+
+const RegisterBody = z.object({
+  platform: z.enum(['ios', 'web', 'android']),
+  token: z.string().min(8).max(512),
+  // iOS only: which APNS environment (TestFlight/Debug=dev, App Store=prod).
+  // The client reports this from build flags so we route correctly.
+  apnsEnv: z.enum(['dev', 'prod']).optional(),
+  endpoint: z.string().url().optional(), // web push endpoint
+});
+
+// POST /v1/devices/register — idempotent on (user_id, token).
+deviceRoutes.post('/register', async (c) => {
+  const userId = c.var.userId!;
+  let parsed: z.infer<typeof RegisterBody>;
+  try {
+    parsed = RegisterBody.parse(await c.req.json());
+  } catch (err) {
+    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+  }
+
+  const supa = serviceClient(c.env);
+  const metadata: Record<string, unknown> = {};
+  if (parsed.apnsEnv) metadata.apns_env = parsed.apnsEnv;
+
+  const { error } = await supa.from('device_tokens').upsert(
+    {
+      user_id: userId,
+      platform: parsed.platform,
+      token: parsed.token,
+      endpoint: parsed.endpoint,
+      metadata,
+      is_active: true,
+      last_used_at: new Date().toISOString(),
+    },
+    { onConflict: 'user_id,token' },
+  );
+  if (error) return c.json({ error: 'database', detail: error.message }, 500);
+  return c.json({ ok: true });
+});
+
+// POST /v1/devices/unregister — flip is_active=false.
+deviceRoutes.post('/unregister', async (c) => {
+  const userId = c.var.userId!;
+  const body: { token?: string } = await c.req.json().catch(() => ({}));
+  if (!body.token) return c.json({ error: 'token required' }, 400);
+  const supa = serviceClient(c.env);
+  const { error } = await supa
+    .from('device_tokens')
+    .update({ is_active: false })
+    .eq('user_id', userId)
+    .eq('token', body.token);
+  if (error) return c.json({ error: 'database', detail: error.message }, 500);
+  return c.json({ ok: true });
+});

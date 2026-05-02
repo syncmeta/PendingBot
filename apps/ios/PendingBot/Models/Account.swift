@@ -1,42 +1,22 @@
 import Foundation
 
-/// One server connection: a base URL + the api key the user entered for it.
-/// Multiple Accounts can coexist (e.g. friend's home server + your own); the
-/// app remembers the last-used as `current` and lets the user switch from
-/// the 你-tab settings.
-struct Account: Codable, Identifiable, Hashable {
-    /// Stable id so SwiftUI lists / Keychain entries can reference this
-    /// account even if the user renames it.
-    var id: String
-    /// Friendly display name — what the share-link sender called it
-    /// ("朋友的 iPhone") or whatever the user typed in manual entry.
-    var name: String
-    /// Server origin including scheme + host + port, e.g.
-    /// `http://192.168.1.42:3456`. No trailing slash.
-    var serverURL: URL
-    /// Long-lived bearer key (`pbk_live_…`). Stored in Keychain via
-    /// AccountStore, not in the JSON-encoded form on disk.
-    var key: String
-    /// When this account was first added — used to sort the list.
-    var createdAt: Date
-
-    /// HTTP base for REST calls. Joins serverURL + /api.
-    var apiBase: URL { serverURL.appendingPathComponent("api") }
-
-    /// WebSocket base for /ws/mobile. http→ws / https→wss conversion.
-    var wsBase: URL {
-        var components = URLComponents(url: serverURL, resolvingAgainstBaseURL: false)!
-        components.scheme = (components.scheme == "https") ? "wss" : "ws"
-        components.path = "/ws/mobile"
-        return components.url!
-    }
-}
-
-/// Codable subset persisted to UserDefaults. The bearer key itself lives in
-/// Keychain so a backup of UserDefaults alone never leaks credentials.
-struct AccountMetadata: Codable, Identifiable, Hashable {
-    var id: String
-    var name: String
-    var serverURL: URL
-    var createdAt: Date
+/// One signed-in user. Derived from a Supabase Session — `id` is the
+/// auth.users uuid, `jwt` is the current access token (rotates on refresh).
+///
+/// Multi-account is not a thing in the new architecture (one Apple ID per
+/// device per app); the type stays a struct rather than a singleton so views
+/// can take it as a value without coupling to the store.
+struct Account: Identifiable, Hashable, Sendable {
+    /// Supabase auth.users.id (uuid string).
+    let id: String
+    /// Display name from auth metadata, falling back to the email local-part
+    /// or a literal "你" if neither is available.
+    let displayName: String
+    let email: String?
+    /// Current access token (Supabase JWT). Re-read from the store on use —
+    /// supabase-swift refreshes it in the background and we don't want to
+    /// hold a stale copy.
+    let jwt: String
+    /// HTTP base for Worker writes (e.g. POST /v1/messages).
+    let workerURL: URL
 }

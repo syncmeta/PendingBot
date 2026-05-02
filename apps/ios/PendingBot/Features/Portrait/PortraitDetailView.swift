@@ -84,10 +84,9 @@ struct PortraitDetailView: View {
     }
 
     private func load() async {
-        guard let api else { return }
-        do {
-            self.portraits = try await api.get("api/portrait/conversations/\(conversation.id)/portraits")
-        } catch { self.error = error.localizedDescription }
+        // /v1/portrait/* lands later; empty state until the portrait runner
+        // is wired on the Worker.
+        self.portraits = []
     }
 
     private func generate(kind: String) async {

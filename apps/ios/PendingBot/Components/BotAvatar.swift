@@ -1,24 +1,37 @@
 import SwiftUI
 
-/// Conversation avatar — soft pastel circle with an emoji glyph.
+/// Soft pastel circle with an emoji glyph.
 ///
-/// `seed` decides both the pastel hue and the emoji. Pass a stable id that
-/// is unique to whatever you want a unique avatar for: typically the
-/// conversation id (so each new conversation gets its own emoji + tint),
-/// occasionally a user/bot id for places without a conversation context.
+/// `seed` is the single-source case (default): same string drives both
+/// hue and emoji. Used for places without a conversation context (the
+/// user's own profile avatar, friend rows, etc.).
 ///
-/// Same seed → same avatar across launches; different conversations of the
-/// same bot get different avatars (which is the intent — the user asked
-/// for "每次新增会话都随机").
+/// `emojiSeed` + `colorSeed` is the split case: emoji stays fixed per
+/// bot identity while the background tint varies per conversation, so
+/// each chat with the same bot gets its own colour but the face stays
+/// recognisable. Pass `emojiSeed: bot.id`, `colorSeed: conv.id`.
 struct BotAvatar: View {
-    let seed: String
+    let emojiSeed: String
+    let colorSeed: String
     var size: CGFloat = 36
+
+    init(seed: String, size: CGFloat = 36) {
+        self.emojiSeed = seed
+        self.colorSeed = seed
+        self.size = size
+    }
+
+    init(emojiSeed: String, colorSeed: String, size: CGFloat = 36) {
+        self.emojiSeed = emojiSeed
+        self.colorSeed = colorSeed
+        self.size = size
+    }
 
     var body: some View {
         ZStack {
             Circle()
-                .fill(ColorHash.softBackground(for: seed))
-            Text(ColorHash.emoji(for: seed))
+                .fill(ColorHash.softBackground(for: colorSeed))
+            Text(ColorHash.emoji(for: emojiSeed))
                 .font(.system(size: size * 0.55))
         }
         .frame(width: size, height: size)

@@ -6,7 +6,7 @@ import { verifySupabaseJwt } from './jwt';
 // the fields they actually use.
 
 export interface RequireSessionEnv {
-  SUPABASE_JWT_SECRET: string;
+  SUPABASE_URL: string;
 }
 
 export interface RequireSessionVars {
@@ -15,7 +15,7 @@ export interface RequireSessionVars {
 }
 
 // `requireSession`: pulls Bearer JWT from Authorization header, verifies
-// signature against SUPABASE_JWT_SECRET, sets c.var.userId / c.var.userJwt.
+// signature against the project's JWKS, sets c.var.userId / c.var.userJwt.
 // Reject with 401 if missing/invalid.
 export function requireSession(): MiddlewareHandler<{
   Bindings: RequireSessionEnv;
@@ -28,7 +28,7 @@ export function requireSession(): MiddlewareHandler<{
     }
     const token = auth.slice(7).trim();
     try {
-      const payload = await verifySupabaseJwt(token, c.env.SUPABASE_JWT_SECRET);
+      const payload = await verifySupabaseJwt(token, c.env.SUPABASE_URL);
       c.set('userId', payload.sub);
       c.set('userJwt', token);
     } catch (err) {
