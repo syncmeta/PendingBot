@@ -14,14 +14,22 @@ struct ProfileBootstrapView: View {
 
     @State private var name: String = ""
     @State private var avatarSeed: String = UUID().uuidString
+    @State private var nextName: String = ""
+    @State private var nextAvatarSeed: String = UUID().uuidString
+    @State private var dragOffset: CGFloat = 0
     @State private var saving = false
     @State private var error: String?
+
+    /// Card width as a fraction of total horizontal space — leaves a
+    /// vertical sliver of the next card visible on the right.
+    private let cardWidthFraction: CGFloat = 0.78
+    private let cardGap: CGFloat = 14
 
     var body: some View {
         ZStack {
             Theme.Palette.canvas.ignoresSafeArea()
             VStack(alignment: .leading, spacing: 24) {
-                Spacer(minLength: 20)
+                Spacer(minLength: 28)
 
                 VStack(alignment: .leading, spacing: 8) {
                     Text("许多人懒得取名字、选头像，\n所以给你随机生成了")
@@ -33,63 +41,57 @@ struct ProfileBootstrapView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                Spacer(minLength: 0)
+                Spacer(minLength: 8)
 
-                // Name card — avatar + name on a raised surface so it
-                // visually reads as the artefact you'll keep.
-                VStack(spacing: 14) {
-                    Button {
-                        // .transition + withAnimation drives the cross-fade
-                        // when the seed (and therefore the BotAvatar) flips.
-                        withAnimation(.easeInOut(duration: 0.25)) {
-                            avatarSeed = UUID().uuidString
-                        }
-                        Haptics.tap()
-                    } label: {
-                        BotAvatar(seed: avatarSeed, size: 120)
-                            .id(avatarSeed)
-                            .transition(.opacity)
-                    }
-                    .buttonStyle(.plain)
+                // Card carousel: current card centered with a peek of the
+                // pre-rolled "next" card on the right. Swiping left
+                // commits — current slides off, next becomes current,
+                // and we pre-roll a fresh next behind it.
+                GeometryReader { geo in
+                    let cardWidth = geo.size.width * cardWidthFraction
+                    ZStack(alignment: .leading) {
+                        // Next card (peeking on the right of current).
+                        nameCardView(seed: nextAvatarSeed, name: nextName)
+                            .frame(width: cardWidth)
+                            .scaleEffect(0.95)
+                            .opacity(0.6)
+                            .offset(x: cardWidth + cardGap + dragOffset)
 
-                    HStack(spacing: 8) {
-                        Text(name.isEmpty ? "—" : name)
-                            .font(Theme.Fonts.serif(size: 22, weight: .semibold))
-                            .foregroundStyle(Theme.Palette.ink)
-                            .lineLimit(1)
-                            .id(name)
-                            .transition(.opacity)
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.25)) {
-                                name = NameCorpus.shared.random()
-                            }
-                            Haptics.tap()
-                        } label: {
-                            Image(systemName: "shuffle")
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundStyle(Theme.Palette.accent)
-                                .padding(8)
-                                .background(Circle().fill(Theme.Palette.accentBg))
-                        }
-                        .buttonStyle(.plain)
+                        // Current card.
+                        nameCardView(seed: avatarSeed, name: name)
+                            .frame(width: cardWidth)
+                            .offset(x: dragOffset)
+                            .gesture(
+                                DragGesture()
+                                    .onChanged { v in
+                                        dragOffset = min(0, v.translation.width)
+                                    }
+                                    .onEnded { v in
+                                        let threshold = cardWidth * 0.25
+                                        if v.translation.width < -threshold {
+                                            advance(cardWidth: cardWidth)
+                                        } else {
+                                            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                                                dragOffset = 0
+                                            }
+                                        }
+                                    }
+                            )
                     }
+                    .frame(width: geo.size.width, alignment: .leading)
                 }
-                .padding(.vertical, 24)
-                .frame(maxWidth: .infinity)
-                .background(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .fill(Theme.Palette.surface)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
-                )
-                .shadow(color: .black.opacity(0.10), radius: 14, x: 0, y: 6)
+                .frame(height: 220)
 
-                Text("点头像或 ↻ 换一组（地名来自全国城市 / 街区 / 地点）")
-                    .font(Theme.Fonts.caption)
-                    .foregroundStyle(Theme.Palette.inkMuted)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("向左滑换一组。")
+                        .font(Theme.Fonts.caption)
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                    Text("名字是随机从中国地名里选的。")
+                        .font(Theme.Fonts.caption)
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                }
+                .padding(.top, 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 if let error {
                     Text(error)
@@ -135,6 +137,51 @@ struct ProfileBootstrapView: View {
         }
         .onAppear {
             if name.isEmpty { name = NameCorpus.shared.random() }
+            if nextName.isEmpty { nextName = NameCorpus.shared.random() }
+        }
+    }
+
+    /// One name card — avatar on the left, name on the right. Used for
+    /// both the front (current) and back (peek) cards in the carousel.
+    private func nameCardView(seed: String, name: String) -> some View {
+        HStack(spacing: 14) {
+            BotAvatar(seed: seed, size: 80)
+            Text(name.isEmpty ? "—" : name)
+                .font(Theme.Fonts.serif(size: 22, weight: .semibold))
+                .foregroundStyle(Theme.Palette.ink)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 22)
+        .padding(.vertical, 22)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(Theme.Palette.surface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
+        )
+        .shadow(color: .black.opacity(0.10), radius: 14, x: 0, y: 6)
+    }
+
+    /// Commit the swipe: animate current card off-screen left, then
+    /// promote the pre-rolled next card to current and pre-roll a new
+    /// "next" behind it. The reset of dragOffset must happen WITHOUT
+    /// animation so the (now-current) card jumps back to centre.
+    private func advance(cardWidth: CGFloat) {
+        Haptics.tap()
+        withAnimation(.easeOut(duration: 0.25)) {
+            dragOffset = -(cardWidth + cardGap + 40)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.26) {
+            avatarSeed = nextAvatarSeed
+            name = nextName
+            nextAvatarSeed = UUID().uuidString
+            nextName = NameCorpus.shared.random()
+            dragOffset = 0
         }
     }
 
