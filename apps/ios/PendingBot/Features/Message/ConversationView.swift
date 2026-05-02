@@ -30,6 +30,14 @@ struct ConversationView: View {
     /// dropped when the view disappears. Picks up cross-device messages
     /// and bot rows that land via background paths (cron, surf, review).
     @State private var realtimeToken: ConvSubscriptionToken?
+    /// Lookback notes the bot wrote about prior turns (Realtime push from
+    /// pendingbot.bot_lookbacks). Invisible to the user; passed in
+    /// `activeLookbacks` on the next POST so the bot sees them as context.
+    @State private var activeLookbacks: [LookbackNote] = []
+    /// 30s grace timer started when a new lookback arrives. If user hasn't
+    /// sent anything before it fires, we auto-trigger a continuation turn
+    /// so the bot's fact-check actually surfaces.
+    @State private var lookbackAutoFireTask: Task<Void, Never>?
     // Transient surf_status events from the in-flight 联网 search. Cleared
     // when the bot reply arrives. Displayed as an inline log above the
     // pending-typing row, mirroring the web's `.surf-log` panel.
@@ -173,19 +181,28 @@ struct ConversationView: View {
             // The current device's own SSE-streamed bubbles also arrive here
             // — we dedupe by id below, so they merge in cleanly.
             let convId = conversation.id
+            await loadActiveLookbacks()
             realtimeToken = await RealtimeManager.shared.startConvChannel(
-                conversationId: convId
-            ) { event in
-                Task { @MainActor in
-                    applyRealtimeEvent(event)
+                conversationId: convId,
+                onMessage: { event in
+                    Task { @MainActor in
+                        applyRealtimeEvent(event)
+                    }
+                },
+                onLookback: { event in
+                    Task { @MainActor in
+                        applyLookbackEvent(event)
+                    }
                 }
-            }
+            )
         }
         .onDisappear {
             if let token = realtimeToken {
                 Task { await RealtimeManager.shared.stopConvChannel(token) }
                 realtimeToken = nil
             }
+            lookbackAutoFireTask?.cancel()
+            lookbackAutoFireTask = nil
         }
         .sheet(isPresented: $showingSkills) {
             NavigationStack {
@@ -414,34 +431,37 @@ struct ConversationView: View {
     /// via incremental insert/update. Cancel the returned Task (via the
     /// stop button) to close the SSE — Worker observes request.signal.aborted
     /// and stops the LLM stream.
-    private func sendViaSSE(text: String, attachmentIds: [String]) {
+    private func sendViaSSE(text: String, attachmentIds: [String], autoLookback: Bool = false) {
         chatTurnTask?.cancel()
+        // User taking action (or auto-fire firing) cancels the pending
+        // 30s lookback grace timer either way.
+        lookbackAutoFireTask?.cancel()
+        lookbackAutoFireTask = nil
         pending = true
 
         let body: [String: Any] = {
             let clientMsgId = UUID().uuidString.lowercased()
-            // Last 20 messages from local view as recentContext. Worker uses
-            // this in lieu of round-tripping Supabase to assemble history.
             let recent = messages.suffix(20).map { m -> [String: Any] in
                 [
                     "role": m.sender_type,
                     "content": m.content,
-                    // Worker expects ISO 8601; ChatMessage stores epoch seconds.
                     "created_at": ISO8601DateFormatter().string(
                         from: Date(timeIntervalSince1970: TimeInterval(m.created_at))
                     ),
                 ]
             }
-            // Oldest msg id in local window — drives Honcho lazy refresh
-            // (memory.maybeRefresh on the Worker side).
             let oldestId = messages.first { $0.id.range(of: "^[0-9a-f-]{36}$",
                                                         options: .regularExpression) != nil }?.id
             var b: [String: Any] = [
                 "conversationId": conversation.id,
                 "clientMessageId": clientMsgId,
-                "newMessage": text,
                 "recentContext": recent,
             ]
+            if !text.isEmpty { b["newMessage"] = text }
+            if autoLookback { b["autoLookback"] = true }
+            if !activeLookbacks.isEmpty {
+                b["activeLookbacks"] = activeLookbacks.map { ["id": $0.id, "body_md": $0.body_md] }
+            }
             if !attachmentIds.isEmpty { b["attachmentIds"] = attachmentIds }
             if let oldestId { b["oldestContextMessageId"] = oldestId }
             return b
@@ -498,6 +518,71 @@ struct ConversationView: View {
             }
             pending = false
             chatTurnTask = nil
+        }
+    }
+
+    // MARK: - Lookback notes (invisible context-edit notes from the bot)
+
+    private struct LookbackNote: Identifiable, Equatable {
+        let id: String
+        let body_md: String
+        let active: Bool
+    }
+
+    private func loadActiveLookbacks() async {
+        struct Row: Decodable {
+            let id: String
+            let body_md: String
+            let active: Bool
+        }
+        do {
+            let rows: [Row] = try await SupabaseStack.shared.database
+                .from("bot_lookbacks")
+                .select("id, body_md, active")
+                .eq("conversation_id", value: conversation.id)
+                .eq("active", value: true)
+                .order("created_at", ascending: true)
+                .execute()
+                .value
+            self.activeLookbacks = rows.map { LookbackNote(id: $0.id, body_md: $0.body_md, active: true) }
+        } catch {
+            // Lookbacks are an enhancement — silent fail.
+            print("[lookback] load failed:", error.localizedDescription)
+        }
+    }
+
+    private func applyLookbackEvent(_ event: LookbackEvent) {
+        let r = event.record
+        guard let id = r["id"]?.stringValue else { return }
+        let body = r["body_md"]?.stringValue ?? ""
+        let active = (r["active"]?.boolValue) ?? true
+        if active {
+            // INSERT (new note) or UPDATE that brought it back. Replace by id.
+            if let idx = activeLookbacks.firstIndex(where: { $0.id == id }) {
+                activeLookbacks[idx] = LookbackNote(id: id, body_md: body, active: true)
+            } else {
+                activeLookbacks.append(LookbackNote(id: id, body_md: body, active: true))
+                // New note arrived — schedule auto-fire after 30s of user silence
+                // (skip if a turn is already in flight: the next user reply or
+                // the in-flight reply will pick the lookback up via prompt).
+                if chatTurnTask == nil {
+                    scheduleLookbackAutoFire()
+                }
+            }
+        } else {
+            // active=false → bot retired this note (via [DROP_LOOKBACK]).
+            activeLookbacks.removeAll { $0.id == id }
+        }
+    }
+
+    private func scheduleLookbackAutoFire() {
+        lookbackAutoFireTask?.cancel()
+        lookbackAutoFireTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
+            if Task.isCancelled { return }
+            // Re-check: still no in-flight turn, still some active lookbacks?
+            guard chatTurnTask == nil, !activeLookbacks.isEmpty else { return }
+            sendViaSSE(text: "", attachmentIds: [], autoLookback: true)
         }
     }
 

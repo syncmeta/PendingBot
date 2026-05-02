@@ -78,4 +78,8 @@ extension AnyJSON {
         if case let .string(s) = self { return s }
         return nil
     }
+    var boolValue: Bool? {
+        if case let .bool(b) = self { return b }
+        return nil
+    }
 }

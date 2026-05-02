@@ -65,22 +65,28 @@ final class RealtimeManager {
 
     /// Open or reuse a conv-level channel. Multiple observers share one
     /// underlying socket subscription — each gets a token to drop later.
-    func startConvChannel(conversationId: String,
-                          onMessage: @escaping @Sendable (MessageEvent) -> Void) async -> ConvSubscriptionToken {
+    /// One channel covers both `messages` (visible turns + log entries)
+    /// and `bot_lookbacks` (invisible context-edit notes); callers
+    /// register one closure per category.
+    func startConvChannel(
+        conversationId: String,
+        onMessage: @escaping @Sendable (MessageEvent) -> Void,
+        onLookback: @escaping @Sendable (LookbackEvent) -> Void = { _ in }
+    ) async -> ConvSubscriptionToken {
         let token = ConvSubscriptionToken(id: UUID(), conversationId: conversationId)
 
         if let handle = convChannels[conversationId] {
-            handle.observers[token.id] = onMessage
+            handle.observers[token.id] = (onMessage, onLookback)
             return token
         }
 
         let ch = SupabaseStack.shared.realtimeV2.channel("conv:\(conversationId)")
         let handle = ConvChannelHandle(channel: ch)
-        handle.observers[token.id] = onMessage
+        handle.observers[token.id] = (onMessage, onLookback)
 
         // Capture the handle weakly inside the callbacks so the channel can
         // be torn down without dangling observer references.
-        let observersRef: () -> [UUID: @Sendable (MessageEvent) -> Void] = { [weak handle] in
+        let observersRef: () -> [UUID: ConvChannelHandle.Observers] = { [weak handle] in
             handle?.observers ?? [:]
         }
 
@@ -91,7 +97,7 @@ final class RealtimeManager {
             filter: "conversation_id=eq.\(conversationId)"
         ) { action in
             let evt = MessageEvent(kind: .insert, record: action.record)
-            for (_, fn) in observersRef() { fn(evt) }
+            for (_, obs) in observersRef() { obs.message(evt) }
         })
         handle.subs.append(ch.onPostgresChange(
             UpdateAction.self,
@@ -100,7 +106,25 @@ final class RealtimeManager {
             filter: "conversation_id=eq.\(conversationId)"
         ) { action in
             let evt = MessageEvent(kind: .update, record: action.record)
-            for (_, fn) in observersRef() { fn(evt) }
+            for (_, obs) in observersRef() { obs.message(evt) }
+        })
+        handle.subs.append(ch.onPostgresChange(
+            InsertAction.self,
+            schema: "pendingbot",
+            table: "bot_lookbacks",
+            filter: "conversation_id=eq.\(conversationId)"
+        ) { action in
+            let evt = LookbackEvent(kind: .insert, record: action.record)
+            for (_, obs) in observersRef() { obs.lookback(evt) }
+        })
+        handle.subs.append(ch.onPostgresChange(
+            UpdateAction.self,
+            schema: "pendingbot",
+            table: "bot_lookbacks",
+            filter: "conversation_id=eq.\(conversationId)"
+        ) { action in
+            let evt = LookbackEvent(kind: .update, record: action.record)
+            for (_, obs) in observersRef() { obs.lookback(evt) }
         })
         await ch.subscribe()
         convChannels[conversationId] = handle
@@ -142,6 +166,12 @@ struct MessageEvent: Sendable {
     let record: [String: AnyJSON]
 }
 
+struct LookbackEvent: Sendable {
+    enum Kind: Sendable { case insert, update }
+    let kind: Kind
+    let record: [String: AnyJSON]
+}
+
 struct ConvSubscriptionToken: Hashable, Sendable {
     let id: UUID
     let conversationId: String
@@ -151,8 +181,11 @@ struct ConvSubscriptionToken: Hashable, Sendable {
 
 @MainActor
 private final class ConvChannelHandle {
+    typealias MessageHandler = @Sendable (MessageEvent) -> Void
+    typealias LookbackHandler = @Sendable (LookbackEvent) -> Void
+    typealias Observers = (message: MessageHandler, lookback: LookbackHandler)
     let channel: RealtimeChannelV2
-    var observers: [UUID: @Sendable (MessageEvent) -> Void] = [:]
+    var observers: [UUID: Observers] = [:]
     var subs: [RealtimeSubscription] = []
     init(channel: RealtimeChannelV2) { self.channel = channel }
 }
