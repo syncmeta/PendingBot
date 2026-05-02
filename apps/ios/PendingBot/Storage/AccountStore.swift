@@ -41,7 +41,8 @@ final class AccountStore: ObservableObject {
     }
 
     /// Sign out everywhere. Clears the Supabase session (which fires the
-    /// authStateChanges listener and nils `current`).
+    /// authStateChanges listener and nils `current`) AND wipes the local
+    /// SQLite cache so the next user doesn't see leftover conversations.
     func signOut() async {
         do {
             try await SupabaseStack.shared.auth.signOut()
@@ -50,6 +51,7 @@ final class AccountStore: ObservableObject {
             // the network half fails the local session is gone.
             print("[account] signOut error:", error)
         }
+        LocalDatabase.shared.clear()
     }
 
     private static func makeAccount(session: Session) -> Account {

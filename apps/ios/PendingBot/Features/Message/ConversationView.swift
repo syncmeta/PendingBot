@@ -547,6 +547,20 @@ struct ConversationView: View {
                 messages.append(msg)
             }
         }
+        // Mirror to local cache.
+        LocalDatabase.shared.upsertMessages([
+            LocalDatabase.MessageRow(
+                id: id,
+                client_message_id: r["client_message_id"]?.stringValue,
+                conversation_id: conversation.id,
+                user_id: r["user_id"]?.stringValue,
+                sender_bot_id: r["sender_bot_id"]?.stringValue,
+                role: role,
+                content: content,
+                status: r["status"]?.stringValue,
+                created_at: secs
+            ),
+        ])
     }
 
     /// Translate splitter emissions into mutations on the local `messages`
@@ -595,21 +609,40 @@ struct ConversationView: View {
     }
 
     private func loadHistory() async {
+        // Hydrate from local cache instantly so the conv opens with last-known
+        // content even if the user is offline / on a flaky network.
+        let cached = LocalDatabase.shared.loadMessages(conversationId: conversation.id)
+        if !cached.isEmpty {
+            self.messages = cached.map { r in
+                ChatMessage(
+                    id: r.id,
+                    conversation_id: r.conversation_id,
+                    sender_type: r.role == "bot" ? "bot" : "user",
+                    sender_id: r.role == "bot" ? (r.sender_bot_id ?? "") : (r.user_id ?? ""),
+                    content: r.content ?? "",
+                    created_at: r.created_at,
+                    attachments: nil
+                )
+            }
+        }
+
         do {
             // Direct Supabase read — RLS gates participation. Excludes role='log'
             // (review/surf step entries) which are rendered separately.
             struct Row: Decodable {
                 let id: String
+                let client_message_id: String?
                 let conversation_id: String
                 let user_id: String?
                 let sender_bot_id: String?
                 let role: String
                 let content: String?
+                let status: String?
                 let created_at: String
             }
             let rows: [Row] = try await SupabaseStack.shared.database
                 .from("messages")
-                .select("id, conversation_id, user_id, sender_bot_id, role, content, created_at")
+                .select("id, client_message_id, conversation_id, user_id, sender_bot_id, role, content, status, created_at")
                 .eq("conversation_id", value: conversation.id)
                 .neq("role", value: "log")
                 .order("created_at", ascending: true)
@@ -617,17 +650,17 @@ struct ConversationView: View {
                 .execute()
                 .value
             let fmt = ISO8601DateFormatter()
-            self.messages = rows.map { r in
-                let senderType: String = {
-                    switch r.role {
-                    case "bot": return "bot"
-                    case "log": return "system"
-                    default:    return "user"  // user / human → user
-                    }
-                }()
+            // Translate to view model + cache rows in one pass.
+            var viewMessages: [ChatMessage] = []
+            var cacheRows: [LocalDatabase.MessageRow] = []
+            viewMessages.reserveCapacity(rows.count)
+            cacheRows.reserveCapacity(rows.count)
+            for r in rows {
+                let senderType: String = r.role == "bot" ? "bot"
+                    : r.role == "log" ? "system" : "user"
                 let senderId = r.role == "bot" ? (r.sender_bot_id ?? "") : (r.user_id ?? "")
                 let secs = fmt.date(from: r.created_at).map { Int($0.timeIntervalSince1970) } ?? 0
-                return ChatMessage(
+                viewMessages.append(ChatMessage(
                     id: r.id,
                     conversation_id: r.conversation_id,
                     sender_type: senderType,
@@ -635,10 +668,27 @@ struct ConversationView: View {
                     content: r.content ?? "",
                     created_at: secs,
                     attachments: nil
-                )
+                ))
+                cacheRows.append(LocalDatabase.MessageRow(
+                    id: r.id,
+                    client_message_id: r.client_message_id,
+                    conversation_id: r.conversation_id,
+                    user_id: r.user_id,
+                    sender_bot_id: r.sender_bot_id,
+                    role: r.role,
+                    content: r.content,
+                    status: r.status,
+                    created_at: secs
+                ))
             }
+            self.messages = viewMessages
+            LocalDatabase.shared.upsertMessages(cacheRows)
         } catch {
-            self.error = error.localizedDescription
+            // Network down + we have a cache: stay quiet (cached msgs still
+            // visible). Show the error only if we have nothing to display.
+            if messages.isEmpty {
+                self.error = error.localizedDescription
+            }
         }
     }
 

@@ -183,6 +183,26 @@ struct MessageTabView: View {
     private func reload() { Task { await load() } }
 
     private func load() async {
+        // Hydrate from local cache instantly — UI shows last-known state
+        // before we await the network. The Supabase fetch below replaces it.
+        let cached = LocalDatabase.shared.loadConversations()
+        if !cached.isEmpty {
+            self.conversations = cached.map { row in
+                Conversation(
+                    id: row.id,
+                    bot_id: row.bot_id ?? "",
+                    user_id: row.user_id ?? "",
+                    title: row.title,
+                    feature_type: row.feature,
+                    last_activity_at: row.last_activity_at,
+                    round_count: row.round_count,
+                    bot_name: nil,
+                    last_message_content: nil,
+                    last_message_sender_type: nil,
+                    model_override: nil
+                )
+            }
+        }
         loading = true; defer { loading = false }
         do {
             // Supabase direct reads — bots is open to authenticated users,
@@ -201,7 +221,22 @@ struct MessageTabView: View {
                 .value
 
             self.bots = try await botRows.map(\.asBot)
-            self.conversations = try await convRows.map(\.asConversation)
+            let fresh = try await convRows.map(\.asConversation)
+            self.conversations = fresh
+            // Persist to local cache so the next launch shows the same
+            // list before the network roundtrip.
+            LocalDatabase.shared.upsertConversations(fresh.map { c in
+                LocalDatabase.ConversationRow(
+                    id: c.id,
+                    bot_id: c.bot_id.isEmpty ? nil : c.bot_id,
+                    user_id: c.user_id.isEmpty ? nil : c.user_id,
+                    title: c.title,
+                    conversation_type: nil,
+                    feature: c.feature_type,
+                    round_count: c.round_count,
+                    last_activity_at: c.last_activity_at
+                )
+            })
         } catch is CancellationError {
             // navigation / refreshable cancellation — silent
         } catch let error as NSError where error.domain == NSURLErrorDomain
@@ -328,6 +363,7 @@ struct MessageTabView: View {
                 .eq("id", value: conv.id)
                 .execute()
             conversations.removeAll { $0.id == conv.id }
+            LocalDatabase.shared.deleteConversation(id: conv.id)
             unread.markRead(conv.id)
             Haptics.success()
         } catch {
