@@ -65,11 +65,7 @@
 
 ## 🚀 上手
 
-应用已经上线，目前有几条路。
-
-### iOS（最方便，但还没做完）
-
-原生 SwiftUI，6 个 tab：消息 / 议论 / 冲浪 / 回顾 / 画像 / 我。**目前还没上架 App Store，仍在持续迭代**。想用的话需要拉源码自己生成 Xcode 工程跑：
+整仓正在从旧 Bun + Fly 后端切到 Cloudflare Worker + Supabase；目前**没有公开的自部署路径**。能用的只有 iOS app（仍未上架）：
 
 ```bash
 brew install xcodegen
@@ -77,77 +73,39 @@ cd apps/ios && xcodegen generate
 open PendingBot.xcodeproj
 ```
 
-首次打开 Xcode 选 Signing Team。运行后首次启动会让你**三选一导入服务**：扫码 / 粘贴登录码 / 手动输入。详见 [apps/ios/README.md](apps/ios/README.md)。
-
-### Web — bot.pendingname.com
-
-托管实例已经上线在 [`bot.pendingname.com`](https://bot.pendingname.com)。**目前还很简陋**，基本是 Claude 搭的一个架子，先能用着，会逐步迭代。
-
-### 自部署
-
-零外部账号，本地就能跑：
-
-```bash
-git clone https://github.com/syncmeta/PendingBot.git
-cd PendingBot
-bun install                                  # 整仓一次性装好
-cp apps/api/.env.example apps/api/.env       # 只需填 OPENROUTER_API_KEY
-bun run dev:api                              # 启动后端
-```
-
-打开控制台打印的 `http://localhost:3456/i/...` 链接 → 创建 admin 账号 → 开始聊。完整选项见 [docs/self-hosting.md](docs/self-hosting.md)。
-
-### 托管部署（hosted）
-
-把同一份代码部署到 Fly.io + Cloudflare + Turso/R2 + Clerk + Honcho 的全套方案见 [docs/deploy.md](docs/deploy.md)。机器月成本 ~$3，`bot.pendingname.com` 是这套方案的实例。
-
-适配器层让两种模式共用一份代码：env 没设 → 用本地 SQLite + 本地盘 + 邀请码；env 设了 → 切到 Turso / R2 / Clerk / Honcho。改 env 就能切，不改代码。
-
-### 配置 Bot
-
-`apps/api/config.yaml` 里加 / 改 bot；性格文件放 `apps/api/prompts/bots/` 下，写什么都可以，没固定格式。完整 schema：[apps/api/src/config/schema.ts](apps/api/src/config/schema.ts)。
+首次打开 Xcode 选 Signing Team。详见 [apps/ios/README.md](apps/ios/README.md)。
 
 ## 📍 进度
 
-毛坯房。
+毛坯房 · 重写进行中。
 
-- **后端 (apps/api)** — 主体在跑，上面说的功能基本都能用，但还在频繁迭代。
-- **iOS (apps/ios)** — 6 个 tab 都通了，登录走 Apple / Google / 邀请码；尚未上架 App Store。
-- **Web (apps/web)** — Claude 搭的骨架，重写中；目前 `bot.pendingname.com` 实际跑的还是后端内置的旧版 UI。
-- **托管实例** — `bot.pendingname.com`（Fly.io + Cloudflare + Clerk + Honcho）。
+- **后端 (apps/edge)** — Cloudflare Worker + Hono + Supabase + R2，刚搭骨架。
+- **iOS (apps/ios)** — 几个核心 tab 跑通，登录走 Apple / Google；尚未上架 App Store。
+- **Web (apps/web)** — 占位，未启动。
 
 ## 🙏 致谢与参考
 
-- **画像与记忆** 接的是 [Honcho](https://honcho.dev) ([plastic-labs/honcho](https://github.com/plastic-labs/honcho), Apache-2.0)。
-- **Agent Skills 预设** 来自 [anthropic/skills](https://github.com/anthropics/skills)（Apache-2.0），原文 vendored 在 [apps/api/prompts/skills/anthropic/](apps/api/prompts/skills/anthropic/)，详见 [NOTICE](apps/api/prompts/skills/anthropic/NOTICE.md)。
-- **运行时**：[Bun](https://bun.sh) (MIT) · [Hono](https://hono.dev) (MIT) · [OpenAI Node SDK](https://github.com/openai/openai-node) (Apache-2.0) · [Honcho SDK](https://github.com/plastic-labs/honcho) (Apache-2.0) · [MCP SDK](https://github.com/modelcontextprotocol/typescript-sdk) (MIT) · [Zod](https://github.com/colinhacks/zod) (MIT) · [yaml](https://github.com/eemeli/yaml) (ISC) · [node-qrcode](https://github.com/soldair/node-qrcode) (MIT)。
-- **外部服务**：[OpenRouter](https://openrouter.ai)（模型路由）· [Honcho](https://honcho.dev)（画像 / 记忆）· [Jina AI](https://jina.ai)（搜索 / 抓取，可选）· [Clerk](https://clerk.com)（账户体系，可选）· Apple Push Notification service（可选）。
-
-## 🧱 技术栈
-
-- **后端**：Bun + Hono + SQLite + OpenRouter + Honcho + WebSocket
-- **Web**：React + Vite + Tailwind + shadcn/ui + TanStack Query
-- **iOS**：Swift + SwiftUI + XcodeGen
-- **托管**：Fly.io（API） + Cloudflare（DNS/WAF/Pages/R2） + Clerk（Auth） + Honcho（画像 / 记忆）
+- **画像与记忆**：[Honcho](https://honcho.dev) ([plastic-labs/honcho](https://github.com/plastic-labs/honcho), Apache-2.0)。
+- **Agent Skills 预设** 来自 [anthropic/skills](https://github.com/anthropics/skills)（Apache-2.0），vendored 在 [apps/edge/prompts/skills/anthropic/](apps/edge/prompts/skills/anthropic/)，详见 [NOTICE](apps/edge/prompts/skills/anthropic/NOTICE.md)。
+- **运行时**：[Cloudflare Workers](https://workers.cloudflare.com) · [Hono](https://hono.dev) (MIT) · [Supabase](https://supabase.com) · [Bun](https://bun.sh) (MIT, 工具链) · [OpenAI SDK](https://github.com/openai/openai-node) (Apache-2.0) · [Zod](https://github.com/colinhacks/zod) (MIT)。
+- **外部服务**：[OpenRouter](https://openrouter.ai)（模型路由）· [Honcho](https://honcho.dev)（画像）· [Daytona](https://daytona.io)（沙箱）· APNS。
 
 ## 📂 仓库结构
 
 ```
 PendingBot/                  bun workspaces 单仓
 ├── apps/
-│   ├── api/                 Bun + Hono 后端（核心代码）
-│   ├── web/                 React + Vite 前端（重写中）
+│   ├── edge/                CF Worker + Hono 后端
+│   ├── web/                 (占位)
 │   └── ios/                 SwiftUI 原生 iOS app
 ├── packages/
-│   └── shared-types/        前后端共用类型 / zod schema
-└── docs/
-    ├── self-hosting.md      自部署指引
-    └── deploy.md            托管部署指引
+│   ├── core/                跨 Worker 复用的核心逻辑
+│   ├── identity/            Supabase JWT + 鉴权 middleware
+│   └── shared-types/        共用类型
+└── supabase/                migrations / config
 ```
 
-`apps/api/prompts/` 下：`system*.md` 总规则 · `bots/` 各 Bot 性格 · `review*.md` 复盘 · `surfing-*.md` 冲浪管线 · `debate.md` 议论 · `portrait/` 画像 · `title.md` 标题 · `skills/` 技能。
-
-> 品牌站 `pendingname.com` 在另一个仓库 `syncmeta/PendingName-web`，不在这里。
+> 品牌站 `pendingname.com` 在另一个仓库 `syncmeta/PendingName-web`。
 
 ## 🤝 贡献
 

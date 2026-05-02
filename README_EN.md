@@ -61,11 +61,7 @@ A few concrete moments:
 
 ## 🚀 Get started
 
-The app is live. A few ways in right now.
-
-### iOS (most convenient — but unfinished)
-
-Native SwiftUI, six tabs: Messages / Debate / Surf / Review / Portrait / Me. **Not yet on the App Store, still actively iterating.** For now, build from source and run it via Xcode:
+The repo is mid-rewrite, moving from the old Bun + Fly backend to a Cloudflare Worker + Supabase one. **There is no public self-host path right now.** Only the iOS app is usable (still unreleased):
 
 ```bash
 brew install xcodegen
@@ -73,77 +69,39 @@ cd apps/ios && xcodegen generate
 open PendingBot.xcodeproj
 ```
 
-Pick a Signing Team on first open. On first launch you **pick one of three import flows**: QR scan / paste login code / manual entry. See [apps/ios/README.md](apps/ios/README.md).
-
-### Web — bot.pendingname.com
-
-The hosted instance is live at [`bot.pendingname.com`](https://bot.pendingname.com). **It's rough right now** — basically a scaffold Claude put together — usable, but a long way from finished. Iterating.
-
-### Self-host
-
-Zero external accounts, runs locally:
-
-```bash
-git clone https://github.com/syncmeta/PendingBot.git
-cd PendingBot
-bun install                                  # installs the whole monorepo in one go
-cp apps/api/.env.example apps/api/.env       # only OPENROUTER_API_KEY is required
-bun run dev:api                              # start the backend
-```
-
-Open the `http://localhost:3456/i/...` link printed in the console → create the admin account → start chatting. Full options in [docs/self-hosting.md](docs/self-hosting.md).
-
-### Hosted deployment
-
-Full Fly.io + Cloudflare + Turso/R2 + Clerk + Honcho recipe in [docs/deploy.md](docs/deploy.md). Machine cost ~$3/month. `bot.pendingname.com` runs this stack.
-
-An adapter layer lets both modes share one codebase: env unset → local SQLite + local disk + invite codes; env set → Turso / R2 / Clerk / Honcho. Switch by changing env, not code.
-
-### Configure bots
-
-Add or tweak bots in `apps/api/config.yaml`; personality files go under `apps/api/prompts/bots/`, no fixed format. Full schema: [apps/api/src/config/schema.ts](apps/api/src/config/schema.ts).
+Pick a Signing Team on first open. See [apps/ios/README.md](apps/ios/README.md).
 
 ## 📍 Progress
 
-Concrete shell — walls up, finish work pending.
+Concrete shell · rewrite in progress.
 
-- **Backend (apps/api)** — running, most of the features above work, still iterating heavily.
-- **iOS (apps/ios)** — all six tabs working; sign-in via Apple / Google / invite code; not yet on the App Store.
-- **Web (apps/web)** — Claude-scaffolded, mid-rewrite. `bot.pendingname.com` currently still serves the backend's bundled legacy UI.
-- **Hosted instance** — `bot.pendingname.com` (Fly.io + Cloudflare + Clerk + Honcho).
+- **Backend (apps/edge)** — Cloudflare Worker + Hono + Supabase + R2; skeleton up.
+- **iOS (apps/ios)** — core tabs working; sign-in via Apple / Google; not yet on the App Store.
+- **Web (apps/web)** — placeholder, not started.
 
 ## 🙏 Credits & references
 
-- **Portrait & memory** are powered by [Honcho](https://honcho.dev) ([plastic-labs/honcho](https://github.com/plastic-labs/honcho), Apache-2.0).
-- **Agent Skills presets** come from [anthropic/skills](https://github.com/anthropics/skills) (Apache-2.0), vendored verbatim under [apps/api/prompts/skills/anthropic/](apps/api/prompts/skills/anthropic/) — see [NOTICE](apps/api/prompts/skills/anthropic/NOTICE.md).
-- **Runtime**: [Bun](https://bun.sh) (MIT) · [Hono](https://hono.dev) (MIT) · [OpenAI Node SDK](https://github.com/openai/openai-node) (Apache-2.0) · [Honcho SDK](https://github.com/plastic-labs/honcho) (Apache-2.0) · [MCP SDK](https://github.com/modelcontextprotocol/typescript-sdk) (MIT) · [Zod](https://github.com/colinhacks/zod) (MIT) · [yaml](https://github.com/eemeli/yaml) (ISC) · [node-qrcode](https://github.com/soldair/node-qrcode) (MIT).
-- **External services**: [OpenRouter](https://openrouter.ai) (model routing) · [Honcho](https://honcho.dev) (portrait / memory) · [Jina AI](https://jina.ai) (search / fetch, optional) · [Clerk](https://clerk.com) (auth, optional) · Apple Push Notification service (optional).
-
-## 🧱 Stack
-
-- **Backend**: Bun + Hono + SQLite + OpenRouter + Honcho + WebSocket
-- **Web**: React + Vite + Tailwind + shadcn/ui + TanStack Query
-- **iOS**: Swift + SwiftUI + XcodeGen
-- **Hosted**: Fly.io (API) + Cloudflare (DNS/WAF/Pages/R2) + Clerk (Auth) + Honcho (portrait / memory)
+- **Portrait & memory**: [Honcho](https://honcho.dev) ([plastic-labs/honcho](https://github.com/plastic-labs/honcho), Apache-2.0).
+- **Agent Skills presets** from [anthropic/skills](https://github.com/anthropics/skills) (Apache-2.0), vendored under [apps/edge/prompts/skills/anthropic/](apps/edge/prompts/skills/anthropic/) — see [NOTICE](apps/edge/prompts/skills/anthropic/NOTICE.md).
+- **Runtime**: [Cloudflare Workers](https://workers.cloudflare.com) · [Hono](https://hono.dev) (MIT) · [Supabase](https://supabase.com) · [Bun](https://bun.sh) (MIT, toolchain) · [OpenAI SDK](https://github.com/openai/openai-node) (Apache-2.0) · [Zod](https://github.com/colinhacks/zod) (MIT).
+- **External services**: [OpenRouter](https://openrouter.ai) (model routing) · [Honcho](https://honcho.dev) (portrait) · [Daytona](https://daytona.io) (sandbox) · APNS.
 
 ## 📂 Repo layout
 
 ```
 PendingBot/                  bun workspaces monorepo
 ├── apps/
-│   ├── api/                 Bun + Hono backend (the core)
-│   ├── web/                 React + Vite frontend (rewrite in progress)
+│   ├── edge/                CF Worker + Hono backend
+│   ├── web/                 (placeholder)
 │   └── ios/                 Native SwiftUI iOS app
 ├── packages/
-│   └── shared-types/        Types / zod schemas shared between front and back
-└── docs/
-    ├── self-hosting.md      Self-hosting guide
-    └── deploy.md            Hosted deployment guide
+│   ├── core/                Shared core logic
+│   ├── identity/            Supabase JWT + auth middleware
+│   └── shared-types/        Shared types
+└── supabase/                migrations / config
 ```
 
-Inside `apps/api/prompts/`: `system*.md` core rules · `bots/` per-bot personalities · `review*.md` self-review · `surfing-*.md` surfing pipeline · `debate.md` multi-bot debate · `portrait/` user portrait · `title.md` conversation titles · `skills/` skill catalog.
-
-> The brand site `pendingname.com` lives in another repo, `syncmeta/PendingName-web` — not here.
+> The brand site `pendingname.com` lives in another repo, `syncmeta/PendingName-web`.
 
 ## 🤝 Contributing
 
