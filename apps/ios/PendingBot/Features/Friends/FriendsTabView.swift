@@ -145,6 +145,10 @@ struct FriendsTabView: View {
                 )
             }
         }
+        // Once a friend tap pushes us into a conversation, drop the tab
+        // bar so the chat fills the full height — same behaviour the
+        // message tab uses on its own conv push.
+        .toolbar(path.isEmpty ? .visible : .hidden, for: .tabBar)
         .task { await load() }
         .alert("出错", isPresented: .constant(error != nil)) {
             Button("好") { error = nil }
