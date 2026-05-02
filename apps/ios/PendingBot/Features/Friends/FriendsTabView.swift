@@ -46,9 +46,7 @@ struct FriendsTabView: View {
                             addingFriend = true
                             Haptics.tap()
                         } label: {
-                            Image(systemName: "plus")
-                                .font(.system(size: 17, weight: .semibold))
-                                .foregroundStyle(Theme.Palette.accent)
+                            CirclePlusButton()
                         }
                     }
                 }

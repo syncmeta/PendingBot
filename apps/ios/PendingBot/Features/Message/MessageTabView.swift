@@ -138,9 +138,7 @@ struct MessageTabView: View {
                         Label("议论", systemImage: "person.2.wave.2")
                     }
                 } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(Theme.Palette.accent)
+                    CirclePlusButton()
                 }
             }
             Group {
