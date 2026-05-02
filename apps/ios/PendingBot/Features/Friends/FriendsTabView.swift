@@ -58,7 +58,6 @@ struct FriendsTabView: View {
                             onQR: { showingQR = true; Haptics.tap() }
                         )
                         .listRowBackground(Theme.Palette.surface)
-                        .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
                     }
 
                     Section {
@@ -281,18 +280,10 @@ private struct SelfRow: View {
     var body: some View {
         HStack(spacing: 10) {
             UserAvatar(seed: avatarSeed, attachmentId: attachmentId, size: 36)
-            HStack(spacing: 6) {
-                Text(name)
-                    .font(Theme.Fonts.serif(size: 16, weight: .semibold))
-                    .foregroundStyle(Theme.Palette.ink)
-                    .lineLimit(1)
-                Text("自己")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Theme.Palette.accent)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(Theme.Palette.accentBg))
-            }
+            Text(name)
+                .font(Theme.Fonts.serif(size: 16, weight: .semibold))
+                .foregroundStyle(Theme.Palette.ink)
+                .lineLimit(1)
             Spacer(minLength: 8)
             Button(action: onQR) {
                 Image(systemName: "qrcode")
