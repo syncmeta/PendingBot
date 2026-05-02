@@ -204,8 +204,8 @@ struct WelcomeView: View {
         isSigningIn = true; errorText = nil
         defer { isSigningIn = false }
         do {
-            _ = try await GoogleSignIn.run()
-        } catch GoogleSignIn.Error.userCancelled {
+            _ = try await PendingGoogleSignIn.run()
+        } catch PendingGoogleSignIn.Error.userCancelled {
             // Silent.
         } catch {
             errorText = error.localizedDescription
