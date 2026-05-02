@@ -212,8 +212,13 @@ struct MessageTabView: View {
     private func load() async {
         // Hydrate from local cache instantly — UI shows last-known state
         // before we await the network. The Supabase fetch below replaces it.
+        // Cache hydrate is a first-paint fallback only — its rows lack
+        // last_message_content, so re-hydrating during a pull-to-refresh
+        // would visibly wipe the preview text back to "还没有消息" while
+        // the network call is in flight (and leave it that way if the
+        // network response is delayed / cancelled).
         let cached = LocalDatabase.shared.loadConversations()
-        if !cached.isEmpty {
+        if conversations.isEmpty && !cached.isEmpty {
             self.conversations = cached.map { row in
                 Conversation(
                     id: row.id,
