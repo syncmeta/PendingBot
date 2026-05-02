@@ -20,93 +20,114 @@ struct ProfileBootstrapView: View {
     var body: some View {
         ZStack {
             Theme.Palette.canvas.ignoresSafeArea()
-            VStack(spacing: 28) {
+            VStack(alignment: .leading, spacing: 24) {
                 Spacer(minLength: 20)
 
-                Text("许多人懒得取名字、选头像，\n所以给你随机生成了")
-                    .font(Theme.Fonts.serif(size: 18, weight: .semibold))
-                    .foregroundStyle(Theme.Palette.ink)
-                    .multilineTextAlignment(.center)
-                Text("不满意可以现在改，以后随时也能改。")
-                    .font(Theme.Fonts.footnote)
-                    .foregroundStyle(Theme.Palette.inkMuted)
-                    .multilineTextAlignment(.center)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("许多人懒得取名字、选头像，\n所以给你随机生成了")
+                        .font(Theme.Fonts.serif(size: 20, weight: .semibold))
+                        .foregroundStyle(Theme.Palette.ink)
+                    Text("不满意可以现在改，以后随时也能改。")
+                        .font(Theme.Fonts.serif(size: 14, weight: .regular))
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 Spacer(minLength: 0)
 
-                VStack(spacing: 18) {
+                // Name card — avatar + name on a raised surface so it
+                // visually reads as the artefact you'll keep.
+                VStack(spacing: 14) {
                     Button {
-                        avatarSeed = UUID().uuidString
+                        // .transition + withAnimation drives the cross-fade
+                        // when the seed (and therefore the BotAvatar) flips.
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            avatarSeed = UUID().uuidString
+                        }
                         Haptics.tap()
                     } label: {
                         BotAvatar(seed: avatarSeed, size: 120)
+                            .id(avatarSeed)
+                            .transition(.opacity)
                     }
                     .buttonStyle(.plain)
-                    Text("点头像换一个")
-                        .font(Theme.Fonts.caption)
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                }
 
-                VStack(spacing: 10) {
-                    HStack(spacing: 10) {
-                        TextField("名字", text: $name)
-                            .font(Theme.Fonts.serif(size: 20, weight: .semibold))
+                    HStack(spacing: 8) {
+                        Text(name.isEmpty ? "—" : name)
+                            .font(Theme.Fonts.serif(size: 22, weight: .semibold))
                             .foregroundStyle(Theme.Palette.ink)
-                            .multilineTextAlignment(.center)
-                            .submitLabel(.done)
+                            .lineLimit(1)
+                            .id(name)
+                            .transition(.opacity)
                         Button {
-                            name = NameCorpus.shared.random()
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                name = NameCorpus.shared.random()
+                            }
                             Haptics.tap()
                         } label: {
                             Image(systemName: "shuffle")
-                                .font(.system(size: 16, weight: .medium))
+                                .font(.system(size: 14, weight: .medium))
                                 .foregroundStyle(Theme.Palette.accent)
-                                .padding(10)
+                                .padding(8)
                                 .background(Circle().fill(Theme.Palette.accentBg))
                         }
                         .buttonStyle(.plain)
                     }
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 14)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .fill(Theme.Palette.surface)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
-                    )
-                    Text("点 ↻ 换一个名字（来自城市 / 街区 / 地点列表）")
-                        .font(Theme.Fonts.caption)
-                        .foregroundStyle(Theme.Palette.inkMuted)
                 }
+                .padding(.vertical, 24)
+                .frame(maxWidth: .infinity)
+                .background(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .fill(Theme.Palette.surface)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
+                )
+                .shadow(color: .black.opacity(0.10), radius: 14, x: 0, y: 6)
+
+                Text("点头像或 ↻ 换一组（地名来自全国城市 / 街区 / 地点）")
+                    .font(Theme.Fonts.caption)
+                    .foregroundStyle(Theme.Palette.inkMuted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                 if let error {
                     Text(error)
                         .font(Theme.Fonts.footnote)
                         .foregroundStyle(.red)
-                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
                 Spacer(minLength: 0)
 
-                Button {
-                    Task { await save() }
-                } label: {
-                    HStack {
-                        if saving { ProgressView().tint(.white) }
-                        Text(saving ? "保存中" : "确定")
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(.white)
+                // Confirm button: small circular "next" arrow, accentBg
+                // (same palette as the bot-name capsule on the message
+                // list). Right-aligned because the action is forward.
+                HStack {
+                    Spacer()
+                    Button {
+                        Task { await save() }
+                    } label: {
+                        ZStack {
+                            Circle()
+                                .fill(canSave
+                                    ? Theme.Palette.accentBg
+                                    : Theme.Palette.accentBg.opacity(0.5))
+                                .frame(width: 56, height: 56)
+                            if saving {
+                                ProgressView().tint(Theme.Palette.accent)
+                            } else {
+                                Image(systemName: "arrow.right")
+                                    .font(.system(size: 22, weight: .semibold))
+                                    .foregroundStyle(canSave
+                                        ? Theme.Palette.accent
+                                        : Theme.Palette.accent.opacity(0.5))
+                            }
+                        }
                     }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 52)
-                    .background(Capsule().fill(canSave
-                        ? Theme.Palette.accent
-                        : Theme.Palette.accent.opacity(0.4)))
+                    .buttonStyle(.plain)
+                    .disabled(!canSave)
                 }
-                .buttonStyle(.plain)
-                .disabled(!canSave)
 
                 Spacer(minLength: 8)
             }
