@@ -16,6 +16,7 @@ struct MeTabView: View {
     @State private var showProfileEdit = false
     @State private var showAddPick = false
     @State private var showAccounts = false
+    @State private var showHandles = false
     @State private var creatingPortrait = false
     @State private var confirmingSignOut = false
     @State private var error: String?
@@ -23,12 +24,12 @@ struct MeTabView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                TabHeaderBar(title: "我")
                 ZStack {
                     Theme.Palette.canvas.ignoresSafeArea()
                     ScrollView {
                         VStack(spacing: 22) {
                             profileCard
+                            handlesCard
                             serverCard
                             skillsCard
                             botsCard
@@ -62,6 +63,12 @@ struct MeTabView: View {
         .sheet(isPresented: $showAccounts) {
             AccountsView()
                 .tint(Theme.Palette.accent)
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showHandles) {
+            MyHandlesSheet()
+                .tint(Theme.Palette.accent)
+                .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $creatingPortrait) {
@@ -159,6 +166,31 @@ struct MeTabView: View {
             return String(local)
         }
         return "未命名"
+    }
+
+    private var handlesCard: some View {
+        card(title: "号码 / 二维码",
+             footer: "号码可生成多个，分别备注，随时撤销。别人通过任意有效号码加你时你都能看到他用了哪个。")
+        {
+            Button {
+                showHandles = true
+                Haptics.tap()
+            } label: {
+                HStack {
+                    Image(systemName: "number")
+                        .foregroundStyle(Theme.Palette.accent)
+                    Text("管理我的号码")
+                        .font(Theme.Fonts.rounded(size: 15, weight: .medium))
+                        .foregroundStyle(Theme.Palette.ink)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+            }
+            .buttonStyle(.plain)
+        }
     }
 
     private var serverCard: some View {

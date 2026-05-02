@@ -1,32 +1,27 @@
 import SwiftUI
 import Supabase
+import CoreImage.CIFilterBuiltins
 
-/// 好友 tab — unified contact list (bots + humans), no section headers.
-/// Each row shows the friend's name with an AI / 人类 tag; the row's
-/// font matches the message-list row in MessageTabView so the two tabs
-/// feel consistent.
+/// 好友 tab — sectioned contact list (机器人朋友 / 真人朋友), no nav title.
+/// Filter chips above the list narrow to one section; each row carries
+/// an AI / 人类 tag on the far right.
 ///
-/// Sort: most recent interaction desc, then name a-z. Filter chips at the
-/// top let the user narrow to only humans or only bots; both off = full
-/// list.
+/// Toolbar:
+///   left  qrcode → live QR sheet (mint + refresh)
+///   right +      → add-friend sheet (handle code or email)
 ///
-/// Tap behavior (per user spec):
-///   - bot:   create a fresh user_bot conversation and push into it
-///            (each tap is a new conv on purpose; existing convs stay
-///            in 消息 list)
-///   - human: find-or-create the singleton user_user conv with that
-///            person and push into it
-///
-/// Group chats are NOT here — they live in the message list. Group
-/// creation is the + button on the message tab.
+/// Tap behavior:
+///   bot   → INSERT a fresh user_bot conv and push into it
+///   human → POST /v1/contacts/open-chat (find-or-create singleton) and push
 struct FriendsTabView: View {
     @EnvironmentObject private var store: AccountStore
 
-    @State private var friends: [Friend] = []
+    @State private var bots: [BotPick] = []
+    @State private var humans: [HumanPick] = []
     @State private var loading = false
     @State private var error: String?
     @State private var addingFriend = false
-    @State private var managingHandles = false
+    @State private var showingQR = false
     @State private var humansOnly = false
     @State private var botsOnly = false
     @State private var path: [Conversation] = []
@@ -35,25 +30,84 @@ struct FriendsTabView: View {
         NavigationStack(path: $path) {
             ZStack {
                 Theme.Palette.canvas.ignoresSafeArea()
-                VStack(spacing: 0) {
-                    filterBar
-                    List {
-                        ForEach(visibleFriends) { f in
-                            FriendRow(friend: f)
-                                .listRowBackground(Theme.Palette.surface)
-                                .contentShape(Rectangle())
-                                .onTapGesture { Task { await openChat(f) } }
+                List {
+                    Section {
+                        HStack {
+                            Spacer()
+                            FilterChip(text: "仅人类", on: humansOnly) {
+                                humansOnly.toggle()
+                                if humansOnly { botsOnly = false }
+                            }
+                            FilterChip(text: "仅机器人", on: botsOnly) {
+                                botsOnly.toggle()
+                                if botsOnly { humansOnly = false }
+                            }
+                        }
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                        .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+                    }
+
+                    if !botsOnly {
+                        // Humans
+                        if !humansOnly {
+                            Section("机器人朋友") {
+                                if bots.isEmpty {
+                                    Text("还没有机器人朋友").foregroundStyle(.secondary)
+                                }
+                                ForEach(bots) { bot in
+                                    FriendRow(kind: .bot,
+                                              avatarSeed: bot.id,
+                                              name: bot.display_name,
+                                              modelTag: bot.modelTag)
+                                        .listRowBackground(Theme.Palette.surface)
+                                        .contentShape(Rectangle())
+                                        .onTapGesture { Task { await tapBot(bot) } }
+                                }
+                            }
+                        } else {
+                            EmptyView()
                         }
                     }
-                    .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
-                    .refreshable { await load() }
+                    if !botsOnly {
+                        Section("真人朋友") {
+                            if humans.isEmpty {
+                                Text("还没有真人朋友 — 上方 + 加一个")
+                                    .foregroundStyle(.secondary)
+                            }
+                            ForEach(humans) { c in
+                                FriendRow(kind: .human,
+                                          avatarSeed: c.id,
+                                          name: c.alias ?? String(c.id.prefix(8)),
+                                          modelTag: nil)
+                                    .listRowBackground(Theme.Palette.surface)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { Task { await tapHuman(c) } }
+                            }
+                        }
+                    } else {
+                        // botsOnly: only show bots section without title
+                        Section {
+                            ForEach(bots) { bot in
+                                FriendRow(kind: .bot,
+                                          avatarSeed: bot.id,
+                                          name: bot.display_name,
+                                          modelTag: bot.modelTag)
+                                    .listRowBackground(Theme.Palette.surface)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { Task { await tapBot(bot) } }
+                            }
+                        }
+                    }
                 }
+                .listStyle(.insetGrouped)
+                .scrollContentBackground(.hidden)
+                .refreshable { await load() }
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
-                        managingHandles = true
+                        showingQR = true
                         Haptics.tap()
                     } label: { Image(systemName: "qrcode") }
                     .foregroundStyle(Theme.Palette.accent)
@@ -69,14 +123,14 @@ struct FriendsTabView: View {
                     }
                 }
             }
-            .toolbar(.hidden, for: .navigationBar) // no "好友" title strip
+            .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $addingFriend) {
                 AddFriendSheet { Task { await load() } }
                     .presentationDetents([.medium])
                     .presentationDragIndicator(.visible)
             }
-            .sheet(isPresented: $managingHandles) {
-                MyHandlesSheet()
+            .sheet(isPresented: $showingQR) {
+                MyQRSheet()
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
             }
@@ -90,56 +144,26 @@ struct FriendsTabView: View {
         } message: { Text(error ?? "") }
     }
 
-    // MARK: - Filter chips
-
-    private var filterBar: some View {
-        HStack(spacing: 8) {
-            FilterChip(text: "仅人类", on: humansOnly) {
-                humansOnly.toggle()
-                if humansOnly { botsOnly = false }
-            }
-            FilterChip(text: "仅机器人", on: botsOnly) {
-                botsOnly.toggle()
-                if botsOnly { humansOnly = false }
-            }
-            Spacer()
-        }
-        .padding(.horizontal, Theme.Metrics.gutter)
-        .padding(.vertical, 10)
-        .background(Theme.Palette.canvas)
-    }
-
-    private var visibleFriends: [Friend] {
-        friends.filter { f in
-            if humansOnly { return f.kind == .human }
-            if botsOnly { return f.kind == .bot }
-            return true
-        }
-    }
-
     // MARK: - Data
 
-    enum FriendKind: Equatable { case bot, human }
-
-    struct Friend: Identifiable, Hashable {
-        let id: String                  // bot id or contact user id
-        let kind: FriendKind
-        let name: String
-        let subtitle: String?           // model tag for bots, email/handle note for humans
-        let lastInteractedAt: Int       // epoch seconds (0 if never)
-        let modelId: String?            // bots only
-        static func == (a: Friend, b: Friend) -> Bool { a.id == b.id }
-        func hash(into hasher: inout Hasher) { hasher.combine(id) }
+    struct BotPick: Identifiable, Hashable {
+        let id: String
+        let display_name: String
+        let model_id: String?
+        var modelTag: String? {
+            guard let m = model_id, let i = m.lastIndex(of: "/") else { return model_id }
+            return String(m[m.index(after: i)...])
+        }
+    }
+    struct HumanPick: Identifiable, Hashable {
+        let id: String
+        let alias: String?
     }
 
     private struct BotDecodable: Decodable {
         let id: String
         let display_name: String
         let model_id: String?
-    }
-    private struct ConvDecodable: Decodable {
-        let bot_id: String?
-        let updated_at: String?
     }
     private struct ContactDecodable: Decodable {
         let contact_user_id: String
@@ -153,90 +177,57 @@ struct FriendsTabView: View {
                 .from("bots")
                 .select("id, display_name, model_id")
                 .eq("is_active", value: true)
-                .execute()
-                .value
-            // For "most recent interaction" — pull the user's user_bot
-            // convs and pluck max(updated_at) per bot_id locally.
-            async let convRowsResp: [ConvDecodable] = SupabaseStack.shared.database
-                .from("conversations")
-                .select("bot_id, updated_at")
-                .eq("conversation_type", value: "user_bot")
+                .order("created_at", ascending: true)
                 .execute()
                 .value
             async let contactRowsResp: [ContactDecodable] = SupabaseStack.shared.database
                 .from("user_contacts")
                 .select("contact_user_id, alias")
+                .order("created_at", ascending: true)
                 .execute()
                 .value
 
             let botRows = try await botRowsResp
-            let convRows = try await convRowsResp
             let contactRows = try await contactRowsResp
 
-            let fmt = ISO8601DateFormatter()
-            var lastByBot: [String: Int] = [:]
-            for c in convRows {
-                guard let bid = c.bot_id, let s = c.updated_at,
-                      let d = fmt.date(from: s) else { continue }
-                let secs = Int(d.timeIntervalSince1970)
-                if secs > (lastByBot[bid] ?? 0) { lastByBot[bid] = secs }
-            }
-
-            let botFriends: [Friend] = botRows.map { b in
-                Friend(
-                    id: b.id, kind: .bot,
-                    name: b.display_name,
-                    subtitle: b.model_id.map(shortSlug),
-                    lastInteractedAt: lastByBot[b.id] ?? 0,
-                    modelId: b.model_id
-                )
-            }
-            // No per-human "last interaction" yet — would need to look up
-            // the user_user conv's updated_at. For MVP, sort humans by
-            // alias only (lastInteractedAt = 0 → falls into name tiebreak).
-            let humanFriends: [Friend] = contactRows.map { c in
-                Friend(
-                    id: c.contact_user_id, kind: .human,
-                    name: c.alias ?? String(c.contact_user_id.prefix(8)),
-                    subtitle: nil,
-                    lastInteractedAt: 0,
-                    modelId: nil
-                )
-            }
-
-            self.friends = (botFriends + humanFriends).sorted { lhs, rhs in
-                if lhs.lastInteractedAt != rhs.lastInteractedAt {
-                    return lhs.lastInteractedAt > rhs.lastInteractedAt
-                }
-                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
-            }
+            self.bots = botRows.map { BotPick(id: $0.id, display_name: $0.display_name, model_id: $0.model_id) }
+            self.humans = contactRows.map { HumanPick(id: $0.contact_user_id, alias: $0.alias) }
         } catch {
             self.error = error.localizedDescription
         }
     }
 
-    // MARK: - Open chat
+    // MARK: - Tap handlers
 
-    private func openChat(_ f: Friend) async {
+    private func tapBot(_ bot: BotPick) async {
         guard let userId = AccountStore.shared.current?.id else { return }
         do {
-            switch f.kind {
-            case .bot:
-                let conv = try await createUserBotConv(botId: f.id, botName: f.name, userId: userId)
-                path.append(conv)
-            case .human:
-                let convId = try await openOrCreateUserUserConv(contactUserId: f.id)
-                let conv = Conversation(
-                    id: convId, bot_id: "", user_id: userId,
-                    title: f.name, feature_type: "message",
-                    conversation_type: "user_user",
-                    last_activity_at: Int(Date().timeIntervalSince1970),
-                    round_count: nil, bot_name: nil,
-                    last_message_content: nil, last_message_sender_type: nil,
-                    model_override: nil
-                )
-                path.append(conv)
-            }
+            let conv = try await createUserBotConv(botId: bot.id,
+                                                   botName: bot.display_name,
+                                                   userId: userId)
+            path.append(conv)
+            Haptics.tap()
+        } catch {
+            self.error = error.localizedDescription
+            Haptics.error()
+        }
+    }
+
+    private func tapHuman(_ c: HumanPick) async {
+        guard let userId = AccountStore.shared.current?.id else { return }
+        do {
+            let convId = try await openOrCreateUserUserConv(contactUserId: c.id)
+            let conv = Conversation(
+                id: convId, bot_id: "", user_id: userId,
+                title: c.alias ?? String(c.id.prefix(8)),
+                feature_type: "message",
+                conversation_type: "user_user",
+                last_activity_at: Int(Date().timeIntervalSince1970),
+                round_count: nil, bot_name: nil,
+                last_message_content: nil, last_message_sender_type: nil,
+                model_override: nil
+            )
+            path.append(conv)
             Haptics.tap()
         } catch {
             self.error = error.localizedDescription
@@ -286,8 +277,6 @@ struct FriendsTabView: View {
         )
     }
 
-    /// Hits the Worker's find-or-create for the singleton user_user conv.
-    /// Worker writes both participant rows under service_role.
     private func openOrCreateUserUserConv(contactUserId: String) async throws -> String {
         var req = URLRequest(url: HostedConfig.environment.workerURL
             .appendingPathComponent("v1/contacts/open-chat"))
@@ -305,45 +294,56 @@ struct FriendsTabView: View {
     }
 }
 
-// MARK: - Friend row (matches MessageTabView's row font)
+// MARK: - Friend row
 
 private struct FriendRow: View {
-    let friend: FriendsTabView.Friend
+    enum Kind { case bot, human }
+    let kind: Kind
+    let avatarSeed: String
+    let name: String
+    let modelTag: String?
+
     var body: some View {
-        HStack(spacing: 12) {
-            switch friend.kind {
+        HStack(spacing: 10) {
+            switch kind {
             case .bot:
-                BotAvatar(seed: friend.id, size: 44)
+                BotAvatar(seed: avatarSeed, size: 36)
             case .human:
                 Image(systemName: "person.crop.circle.fill")
-                    .font(.system(size: 36))
+                    .font(.system(size: 30))
                     .foregroundStyle(Theme.Palette.accent.opacity(0.85))
-                    .frame(width: 44, height: 44)
+                    .frame(width: 36, height: 36)
             }
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(friend.name)
-                        .font(Theme.Fonts.rounded(size: 16, weight: .medium))
-                        .foregroundStyle(Theme.Palette.ink)
+
+            // Name + (bot) inline model tag — same pill style as the
+            // message list's model badge.
+            HStack(spacing: 6) {
+                Text(name)
+                    .font(Theme.Fonts.serif(size: 16, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.ink)
+                    .lineLimit(1)
+                if kind == .bot, let tag = modelTag {
+                    Text(tag)
+                        .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.Palette.accent)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Theme.Palette.accentBg))
                         .lineLimit(1)
-                    KindTag(kind: friend.kind)
-                }
-                if let sub = friend.subtitle {
-                    Text(sub)
-                        .font(Theme.Fonts.monoSmall)
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
                 }
             }
-            Spacer()
+
+            Spacer(minLength: 8)
+
+            // AI / 人类 tag at the far right.
+            KindTag(kind: kind)
         }
         .padding(.vertical, 4)
     }
 }
 
 private struct KindTag: View {
-    let kind: FriendsTabView.FriendKind
+    let kind: FriendRow.Kind
     var body: some View {
         let (text, fg, bg): (String, Color, Color) = kind == .bot
             ? ("AI", Color(hex: 0x1F4F8A), Color(hex: 0xE6EEF8))
@@ -364,10 +364,10 @@ private struct FilterChip: View {
     var body: some View {
         Button(action: action) {
             Text(text)
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(on ? .white : Theme.Palette.ink)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
                 .background(
                     Capsule().fill(on ? Theme.Palette.accent : Theme.Palette.surfaceMuted)
                 )
@@ -376,16 +376,9 @@ private struct FilterChip: View {
     }
 }
 
-private func shortSlug(_ slug: String) -> String {
-    if let i = slug.lastIndex(of: "/") {
-        return String(slug[slug.index(after: i)...])
-    }
-    return slug
-}
+// MARK: - Add friend (handle / email)
 
-// MARK: - Add friend
-
-private struct AddFriendSheet: View {
+struct AddFriendSheet: View {
     @Environment(\.dismiss) private var dismiss
     var onAdded: () -> Void = {}
 
@@ -477,141 +470,141 @@ private struct AddFriendSheet: View {
     }
 }
 
-// MARK: - My handles
+// MARK: - QR display sheet
 
-private struct MyHandlesSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @State private var handles: [HandleRow] = []
+/// Shows a single live QR encoding the user's currently-active QR-kind
+/// handle. Refresh button: revoke the displayed handle and mint a new
+/// one. Each refresh invalidates whatever is currently floating around
+/// — perfect when you've shared your QR somewhere semi-public.
+private struct MyQRSheet: View {
+    @State private var currentValue: String?
     @State private var loading = false
-    @State private var newLabel: String = ""
     @State private var error: String?
 
-    struct HandleRow: Identifiable, Hashable {
-        let id: String
-        let value: String
-        let label: String?
-        let kind: String
-        let is_active: Bool
-        let created_at: String?
-    }
-    private struct Decoded: Decodable {
-        let id: String
-        let value: String
-        let label: String?
-        let kind: String
-        let is_active: Bool
-        let created_at: String?
-    }
+    private let context = CIContext()
 
     var body: some View {
         NavigationStack {
-            List {
-                Section("生成新号码") {
-                    HStack {
-                        TextField("备注（如 'blog'）", text: $newLabel)
-                        Button("生成") { Task { await mint() } }
-                            .disabled(newLabel.trimmingCharacters(in: .whitespaces).isEmpty)
+            ZStack {
+                Theme.Palette.canvas.ignoresSafeArea()
+                VStack(spacing: 18) {
+                    if loading {
+                        ProgressView().controlSize(.large)
+                    } else if let value = currentValue, let img = qrImage(for: value) {
+                        Image(uiImage: img)
+                            .interpolation(.none)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 240, height: 240)
+                            .padding(20)
+                            .background(Theme.Palette.surface)
+                            .cornerRadius(16)
+                        Text(value)
+                            .font(Theme.Fonts.monoSmall)
+                            .textSelection(.enabled)
+                            .foregroundStyle(Theme.Palette.inkMuted)
+                        Text("用对方手机扫码、或让对方在「加好友 → 号码」里输入这串字。")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 24)
+                    } else {
+                        Text("生成二维码失败")
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Button {
+                        Task { await refresh() }
+                    } label: {
+                        Label("刷新（旧码作废）", systemImage: "arrow.clockwise")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 18)
+                            .padding(.vertical, 10)
+                            .background(Capsule().fill(Theme.Palette.accent))
+                    }
+                    .buttonStyle(.plain)
+
+                    if let error {
+                        Text(error).foregroundStyle(.red).font(.footnote)
                     }
                 }
-                Section("我的号码") {
-                    if handles.isEmpty {
-                        Text("还没生成过号码").foregroundStyle(.secondary)
-                    }
-                    ForEach(handles) { h in
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack {
-                                Text(h.value)
-                                    .font(Theme.Fonts.monoSmall)
-                                    .textSelection(.enabled)
-                                Spacer()
-                                if h.is_active {
-                                    Button("撤销") { Task { await revoke(h.id) } }
-                                        .foregroundStyle(.red)
-                                        .font(.footnote)
-                                } else {
-                                    Text("已撤销")
-                                        .font(.footnote)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            if let label = h.label {
-                                Text(label)
-                                    .font(.footnote)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .padding(.vertical, 2)
-                    }
-                }
-                if let error {
-                    Section { Text(error).foregroundStyle(.red).font(.footnote) }
-                }
+                .padding(.top, 24)
             }
-            .navigationTitle("我的号码")
+            .navigationTitle("我的二维码")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("完成") { dismiss() }
-                }
-            }
         }
-        .task { await load() }
+        .task {
+            // Open with whatever active QR-kind handle exists; if none, mint one.
+            await ensureActive()
+        }
     }
 
-    private func load() async {
+    private func ensureActive() async {
         loading = true; defer { loading = false }
+        struct Row: Decodable { let id: String; let value: String }
         do {
-            let rows: [Decoded] = try await SupabaseStack.shared.database
+            let rows: [Row] = try await SupabaseStack.shared.database
                 .from("user_handles")
-                .select("id, value, label, kind, is_active, created_at")
+                .select("id, value")
+                .eq("kind", value: "qr")
+                .eq("is_active", value: true)
                 .order("created_at", ascending: false)
+                .limit(1)
                 .execute()
                 .value
-            self.handles = rows.map {
-                HandleRow(id: $0.id, value: $0.value, label: $0.label,
-                          kind: $0.kind, is_active: $0.is_active,
-                          created_at: $0.created_at)
+            if let row = rows.first {
+                self.currentValue = row.value
+            } else {
+                try await mintNew()
             }
         } catch {
             self.error = error.localizedDescription
         }
     }
 
-    private func mint() async {
+    private func refresh() async {
+        loading = true; defer { loading = false }
+        do {
+            // Revoke ALL active QR-kind handles so only the freshly-minted
+            // one stays valid afterwards.
+            try await SupabaseStack.shared.database
+                .from("user_handles")
+                .update(["is_active": false])
+                .eq("kind", value: "qr")
+                .eq("is_active", value: true)
+                .execute()
+            try await mintNew()
+            Haptics.tap()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func mintNew() async throws {
         guard let userId = AccountStore.shared.current?.id else { return }
-        let trimmed = newLabel.trimmingCharacters(in: .whitespaces)
         let alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
         let token = String((0..<10).compactMap { _ in alphabet.randomElement() })
         struct Insert: Encodable {
             let user_id: String
             let value: String
-            let label: String?
             let kind: String
+            let label: String?
         }
-        do {
-            try await SupabaseStack.shared.database
-                .from("user_handles")
-                .insert(Insert(user_id: userId, value: token, label: trimmed.isEmpty ? nil : trimmed, kind: "number"))
-                .execute()
-            newLabel = ""
-            Haptics.success()
-            await load()
-        } catch {
-            self.error = error.localizedDescription
-        }
+        try await SupabaseStack.shared.database
+            .from("user_handles")
+            .insert(Insert(user_id: userId, value: token, kind: "qr", label: "QR"))
+            .execute()
+        self.currentValue = token
     }
 
-    private func revoke(_ id: String) async {
-        do {
-            try await SupabaseStack.shared.database
-                .from("user_handles")
-                .update(["is_active": false])
-                .eq("id", value: id)
-                .execute()
-            Haptics.tap()
-            await load()
-        } catch {
-            self.error = error.localizedDescription
-        }
+    private func qrImage(for s: String) -> UIImage? {
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(s.utf8)
+        filter.correctionLevel = "M"
+        guard let out = filter.outputImage else { return nil }
+        let scaled = out.transformed(by: CGAffineTransform(scaleX: 8, y: 8))
+        guard let cg = context.createCGImage(scaled, from: scaled.extent) else { return nil }
+        return UIImage(cgImage: cg)
     }
 }
