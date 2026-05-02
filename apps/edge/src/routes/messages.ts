@@ -4,6 +4,7 @@ import { requireSession } from '@pendingbot/identity';
 import { serviceClient, userClient } from '../lib/supabase';
 import { runChatTurn } from '../lib/bot-reply';
 import { maybeRefreshMemory } from '../lib/memory';
+import { runReview } from '../lib/review-runner';
 import type { AppBindings } from '../types';
 
 export const messageRoutes = new Hono<AppBindings>();
@@ -59,7 +60,7 @@ messageRoutes.post('/', async (c) => {
   const supaUser = userClient(c.env, userJwt);
   const { data: conv, error: convErr } = await supaUser
     .from('conversations')
-    .select('id, conversation_type, bot_id')
+    .select('id, conversation_type, bot_id, round_count')
     .eq('id', parsed.conversationId)
     .maybeSingle();
   if (convErr) return c.json({ error: 'database', detail: convErr.message }, 500);
@@ -103,7 +104,7 @@ messageRoutes.post('/', async (c) => {
 
   const { data: bot, error: botErr } = await supaService
     .from('bots')
-    .select('id, model_id, output_mode, is_active')
+    .select('id, model_id, output_mode, is_active, config')
     .eq('id', conv.bot_id)
     .single();
   if (botErr || !bot) {
@@ -146,7 +147,7 @@ messageRoutes.post('/', async (c) => {
       };
 
       try {
-        await runChatTurn({
+        const result = await runChatTurn({
           env: c.env,
           conversationId: parsed.conversationId,
           userId,
@@ -157,6 +158,31 @@ messageRoutes.post('/', async (c) => {
           signal: c.req.raw.signal,
           emit,
         });
+
+        // Post-turn bookkeeping. Round counter is the source of truth for
+        // auto-review cadence; we bump it only when the bot actually said
+        // something (silent/interrupted/error don't count as a round).
+        if (result.finalStatus === 'done' && result.bubblesInserted > 0) {
+          const { data: updatedConv } = await supaService
+            .from('conversations')
+            .update({
+              round_count: (conv.round_count ?? 0) + 1,
+              last_turn_status: 'done',
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', parsed.conversationId)
+            .select('round_count')
+            .single();
+          maybeAutoReview({
+            env: c.env,
+            ctx: c.executionCtx,
+            conversationId: parsed.conversationId,
+            userId,
+            botId: bot.id,
+            botConfig: bot.config as ReviewConfigEnvelope | null,
+            roundCount: updatedConv?.round_count ?? 0,
+          });
+        }
       } finally {
         closed = true;
         try { controller.close(); } catch {}
@@ -176,3 +202,59 @@ messageRoutes.post('/', async (c) => {
     },
   });
 });
+
+// Per-bot review config. Lives in `bots.config` jsonb so it's editable
+// per bot without schema churn. Sensible defaults: enabled, every 10 rounds.
+interface ReviewConfigEnvelope {
+  review?: { enabled?: boolean; roundInterval?: number };
+}
+
+function maybeAutoReview(input: {
+  env: AppBindings['Bindings'];
+  ctx: ExecutionContext;
+  conversationId: string;
+  userId: string;
+  botId: string;
+  botConfig: ReviewConfigEnvelope | null;
+  roundCount: number;
+}) {
+  const cfg = input.botConfig?.review ?? {};
+  if (cfg.enabled === false) return;
+  const interval = Math.max(1, cfg.roundInterval ?? 10);
+  if (input.roundCount === 0) return;
+  if (input.roundCount % interval !== 0) return;
+
+  // Insert the run row inline so the runner can run on a stable id and so
+  // a concurrent next turn doesn't double-fire.
+  const supa = serviceClient(input.env);
+  input.ctx.waitUntil(
+    (async () => {
+      try {
+        const { data: run, error } = await supa
+          .from('review_runs')
+          .insert({
+            conversation_id: input.conversationId,
+            user_id: input.userId,
+            bot_id: input.botId,
+            status: 'running',
+            trigger: 'auto',
+          })
+          .select('id')
+          .single();
+        if (error || !run) {
+          console.warn('[auto-review] insert failed', error);
+          return;
+        }
+        await runReview({
+          env: input.env,
+          reviewRunId: run.id as string,
+          conversationId: input.conversationId,
+          userId: input.userId,
+          botId: input.botId,
+        });
+      } catch (err) {
+        console.warn('[auto-review] failed', err);
+      }
+    })(),
+  );
+}
