@@ -89,6 +89,10 @@ export interface RunChatTurnInput {
   /// Lookback notes the client cached. Each is fed into the prompt as a
   /// private context block; the bot decides per turn whether to keep them.
   activeLookbacks?: Array<{ id: string; body_md: string }>;
+  /// Set when conv.conversation_type === 'self'. The bot adopts the
+  /// user's display_name + bio as its persona — the conversation reads
+  /// as the user talking to a mirror of themselves.
+  selfPersona?: { displayName: string; bio: string } | null;
   signal: AbortSignal;
   emit: (event: string, data: unknown) => void;
 }
@@ -159,6 +163,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     bot, botMemory, reflections, skills, botNote,
     lookbacks: activeLookbacks,
     recentContext, newMessage,
+    selfPersona: input.selfPersona ?? null,
   });
 
   // AbortSignal propagation: caller's signal aborts the upstream openai fetch.

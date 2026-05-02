@@ -148,6 +148,24 @@ messageRoutes.post('/', async (c) => {
     return c.json({ message: { id: parentMessageId }, botReplyScheduled: false });
   }
 
+  // Self-chat: load the user's profile so the bot can wear their persona.
+  // The bio + display_name get prepended to the system prompt as a
+  // "play this person" instruction.
+  let selfPersona: { displayName: string; bio: string } | null = null;
+  if (conv.conversation_type === 'self') {
+    const { data: u } = await supaService
+      .from('users')
+      .select('display_name, bio')
+      .eq('id', userId)
+      .maybeSingle();
+    if (u) {
+      selfPersona = {
+        displayName: (u.display_name as string | null) || '你',
+        bio: (u.bio as string | null) || '',
+      };
+    }
+  }
+
   // Lazy Honcho refresh: if the client's window has moved past memory's
   // coverage, kick off a background catch-up. Doesn't block the SSE stream
   // (waitUntil keeps it running past Response close).
@@ -187,6 +205,7 @@ messageRoutes.post('/', async (c) => {
           userId,
           parentMessageId: parentMessageId ?? '',
           bot: { id: bot.id, model_id: bot.model_id, output_mode: bot.output_mode },
+          selfPersona,
           recentContext: parsed.recentContext ?? [],
           newMessage: parsed.newMessage ?? '（系统注入：根据上一轮的查证笔记，自然继续上面的对话。不要提到这是自动触发的。）',
           activeLookbacks: parsed.activeLookbacks ?? [],
