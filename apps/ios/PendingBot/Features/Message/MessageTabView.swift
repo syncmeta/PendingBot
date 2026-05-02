@@ -38,7 +38,19 @@ struct MessageTabView: View {
                 compactBody
             }
         }
-        .task { await load() }
+        .task {
+            await load()
+            // Subscribe to user-level Realtime — every unread-counts row
+            // change (new bot/cron message anywhere) triggers a reload so
+            // last_activity_at + preview + ordering refresh without a pull.
+            // Cheap enough for a single-user list; add debounce when conv
+            // counts grow past O(100).
+            if let userId = AccountStore.shared.current?.id {
+                await RealtimeManager.shared.startUserChannel(userId: userId) { _ in
+                    Task { @MainActor in await self.load() }
+                }
+            }
+        }
         .alert("出错了", isPresented: .constant(error != nil), actions: {
             Button("好") { error = nil }
         }, message: { Text(error ?? "") })
@@ -245,11 +257,62 @@ struct MessageTabView: View {
     }
 
     private func createConversation(with bot: Bot) async {
-        guard let api else { return }
+        guard let userId = AccountStore.shared.current?.id else { return }
         do {
-            struct Body: Encodable { let botId: String }
-            let conv: Conversation = try await api.post("api/mobile/conversations", body: Body(botId: bot.id))
-            conversations.insert(conv, at: 0)
+            // Schema requires user as participant for RLS to grant subsequent
+            // reads of the conversation row, so we INSERT both the conv and
+            // the participant set in sequence with the service-side default
+            // schema (pendingbot).
+            struct ConvInsert: Encodable {
+                let conversation_type = "user_bot"
+                let feature = "message"
+                let user_id: String
+                let bot_id: String
+                let title: String?
+            }
+            struct ConvOut: Decodable { let id: String }
+            let inserted: ConvOut = try await SupabaseStack.shared.database
+                .from("conversations")
+                .insert(ConvInsert(user_id: userId, bot_id: bot.id, title: nil))
+                .select("id")
+                .single()
+                .execute()
+                .value
+
+            struct Participant: Encodable {
+                let conversation_id: String
+                let participant_type: String
+                let participant_id: String
+                let role: String
+            }
+            try await SupabaseStack.shared.database
+                .from("conversation_participants")
+                .insert([
+                    Participant(conversation_id: inserted.id,
+                                participant_type: "user",
+                                participant_id: userId,
+                                role: "owner"),
+                    Participant(conversation_id: inserted.id,
+                                participant_type: "bot",
+                                participant_id: bot.id,
+                                role: "member"),
+                ])
+                .execute()
+
+            // Optimistic local insert; next pull-to-refresh re-reads canonically.
+            conversations.insert(Conversation(
+                id: inserted.id,
+                bot_id: bot.id,
+                user_id: userId,
+                title: nil,
+                feature_type: "message",
+                last_activity_at: Int(Date().timeIntervalSince1970),
+                round_count: 0,
+                bot_name: bot.display_name,
+                last_message_content: nil,
+                last_message_sender_type: nil,
+                model_override: nil
+            ), at: 0)
             Haptics.tap()
         } catch {
             self.error = error.localizedDescription
@@ -258,9 +321,12 @@ struct MessageTabView: View {
     }
 
     private func delete(_ conv: Conversation) async {
-        guard let api else { return }
         do {
-            try await api.deleteVoid("api/mobile/conversations/\(conv.id)")
+            try await SupabaseStack.shared.database
+                .from("conversations")
+                .delete()
+                .eq("id", value: conv.id)
+                .execute()
             conversations.removeAll { $0.id == conv.id }
             unread.markRead(conv.id)
             Haptics.success()

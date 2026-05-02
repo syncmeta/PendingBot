@@ -68,7 +68,10 @@ final class AccountStore: ObservableObject {
     }
 }
 
-private extension AnyJSON {
+extension AnyJSON {
+    /// Convenience peek at a string-typed AnyJSON value. Used by the few
+    /// places we touch raw Realtime payload columns (ConversationView,
+    /// AccountStore session metadata).
     var stringValue: String? {
         if case let .string(s) = self { return s }
         return nil

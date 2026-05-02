@@ -127,13 +127,11 @@ struct DiscussTabView: View {
     }
 
     private func load() async {
-        guard let api else { return }
-        do {
-            async let convs: [DiscussConversation] = api.get("api/discuss/conversations")
-            async let botList: [Bot] = api.get("api/mobile/bots")
-            self.conversations = (try await convs).sorted { $0.last_activity_at > $1.last_activity_at }
-            self.bots = try await botList
-        } catch { self.error = error.localizedDescription }
+        // Legacy /api/discuss/* endpoints are gone; new /v1/discuss/* exists
+        // for `start` + `cancel` but no list/index route yet. Show empty
+        // state until the data path lands.
+        self.conversations = []
+        self.bots = []
     }
 
     private func delete(_ conv: DiscussConversation) async {

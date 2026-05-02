@@ -157,13 +157,10 @@ struct SkillsView: View {
     // ── Data ────────────────────────────────────────────────────────────────
 
     private func load() async {
-        guard let api else { return }
-        loading = true; defer { loading = false }
-        do {
-            self.skills = try await api.get("api/skills")
-        } catch {
-            self.error = error.localizedDescription
-        }
+        // /v1/skills doesn't exist on the new Worker yet; empty state until
+        // the skills CRUD route lands. Subscriptions will read direct from
+        // pendingbot.skill_subscriptions then.
+        self.skills = []
     }
 
     private func toggle(_ skill: SkillSummary, enabled: Bool) async {

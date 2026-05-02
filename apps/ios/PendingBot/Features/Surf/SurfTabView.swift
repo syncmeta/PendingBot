@@ -116,13 +116,10 @@ struct SurfTabView: View {
     private func reload() { Task { await load() } }
 
     private func load() async {
-        guard let api else { return }
-        do {
-            async let convs: [SurfConversation] = api.get("api/surf/conversations")
-            async let botList: [Bot] = api.get("api/mobile/bots")
-            self.conversations = (try await convs).sorted { $0.last_activity_at > $1.last_activity_at }
-            self.bots = try await botList
-        } catch { self.error = error.localizedDescription }
+        // Legacy /api/surf/* endpoints are gone; B7.4 lands /v1/surf/start +
+        // /:id/cancel but no list route yet. Empty state until then.
+        self.conversations = []
+        self.bots = []
     }
 
     private func delete(_ conv: SurfConversation) async {

@@ -30,6 +30,10 @@ struct ConversationView: View {
     /// reads as request.signal.aborted (= interrupt). Set by sendViaSSE,
     /// cleared on completion. Non-nil while a turn is in flight.
     @State private var chatTurnTask: Task<Void, Never>?
+    /// Realtime subscription token for this conv's `messages` channel —
+    /// dropped when the view disappears. Picks up cross-device messages
+    /// and bot rows that land via background paths (cron, surf, review).
+    @State private var realtimeToken: ConvSubscriptionToken?
     // Transient surf_status events from the in-flight 联网 search. Cleared
     // when the bot reply arrives. Displayed as an inline log above the
     // pending-typing row, mirroring the web's `.surf-log` panel.
@@ -168,11 +172,27 @@ struct ConversationView: View {
             }
         }
         .task {
-            ws.bind(account: account)
             modelOverride = conversation.model_override ?? ""
             await loadHistory()
             await loadSkills()
-            ws.connect()
+            // Subscribe to the conv channel for cross-device sync and bot
+            // rows that land via background paths (cron / surf / review).
+            // The current device's own SSE-streamed bubbles also arrive here
+            // — we dedupe by id below, so they merge in cleanly.
+            let convId = conversation.id
+            realtimeToken = await RealtimeManager.shared.startConvChannel(
+                conversationId: convId
+            ) { event in
+                Task { @MainActor in
+                    applyRealtimeEvent(event)
+                }
+            }
+        }
+        .onDisappear {
+            if let token = realtimeToken {
+                Task { await RealtimeManager.shared.stopConvChannel(token) }
+                realtimeToken = nil
+            }
         }
         .sheet(isPresented: $showingSkills) {
             NavigationStack {
@@ -625,6 +645,54 @@ struct ConversationView: View {
             }
             pending = false
             chatTurnTask = nil
+        }
+    }
+
+    /// Realtime postgres_changes payload → ChatMessage in the local list.
+    /// Dedupe by canonical row id so this device's own SSE-emitted bubbles
+    /// (which carry "live-<uuid>" ids until reconciled) get either skipped
+    /// or replaced cleanly. role='log' rows are filtered out (rendered via
+    /// a different surface).
+    private func applyRealtimeEvent(_ event: MessageEvent) {
+        let r = event.record
+        guard let id = r["id"]?.stringValue,
+              r["conversation_id"]?.stringValue == conversation.id else { return }
+        let role = r["role"]?.stringValue ?? "user"
+        if role == "log" { return }
+        let content = r["content"]?.stringValue ?? ""
+        let createdRaw = r["created_at"]?.stringValue ?? ""
+        let secs = ISO8601DateFormatter().date(from: createdRaw)
+            .map { Int($0.timeIntervalSince1970) } ?? Int(Date().timeIntervalSince1970)
+        let senderType = role == "bot" ? "bot" : "user"
+        let senderId = role == "bot"
+            ? (r["sender_bot_id"]?.stringValue ?? "")
+            : (r["user_id"]?.stringValue ?? "")
+        let msg = ChatMessage(
+            id: id,
+            conversation_id: conversation.id,
+            sender_type: senderType,
+            sender_id: senderId,
+            content: content,
+            created_at: secs,
+            attachments: nil
+        )
+        if let existing = messages.firstIndex(where: { $0.id == id }) {
+            messages[existing] = msg
+        } else {
+            // Drop our own optimistic local row if we can match it by content +
+            // role + recency (within 5s) — this avoids duplicate user bubbles
+            // when the canonical row arrives after our local-<uuid> echo.
+            let now = Int(Date().timeIntervalSince1970)
+            if let stale = messages.firstIndex(where: { m in
+                m.id.hasPrefix("local-") || m.id.hasPrefix("live-")
+                    && m.sender_type == senderType
+                    && m.content == content
+                    && abs(m.created_at - now) < 5
+            }) {
+                messages[stale] = msg
+            } else {
+                messages.append(msg)
+            }
         }
     }
 
