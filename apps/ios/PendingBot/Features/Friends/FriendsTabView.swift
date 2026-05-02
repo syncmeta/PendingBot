@@ -452,63 +452,99 @@ private struct MyQRSheet: View {
         NavigationStack {
             ZStack {
                 Theme.Palette.canvas.ignoresSafeArea()
-                VStack(spacing: 18) {
-                    if loading {
-                        ProgressView().controlSize(.large)
-                    } else if let value = currentValue, let img = qrImage(for: value) {
-                        Image(uiImage: img)
-                            .interpolation(.none)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 240, height: 240)
-                            .padding(24)
-                            .background(
-                                RoundedRectangle(cornerRadius: 36, style: .continuous)
-                                    .fill(Theme.Palette.surface)
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 36, style: .continuous)
-                                    .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
-                            )
-                        Text(value)
-                            .font(Theme.Fonts.monoSmall)
-                            .textSelection(.enabled)
-                            .foregroundStyle(Theme.Palette.inkMuted)
-                        Text("用对方手机扫码、或让对方在「加好友 → 号码」里输入这串字。")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 24)
-                    } else {
-                        Text("生成二维码失败")
-                            .foregroundStyle(.secondary)
+                ScrollView {
+                    VStack(spacing: 18) {
+                        nameCard
+                        if let error {
+                            Text(error).foregroundStyle(.red).font(.footnote)
+                        }
+                        Button {
+                            Task { await refresh() }
+                        } label: {
+                            Label("刷新（旧码作废）", systemImage: "arrow.clockwise")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 18)
+                                .padding(.vertical, 10)
+                                .background(Capsule().fill(Theme.Palette.accent))
+                        }
+                        .buttonStyle(.plain)
                     }
-
-                    Button {
-                        Task { await refresh() }
-                    } label: {
-                        Label("刷新（旧码作废）", systemImage: "arrow.clockwise")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 18)
-                            .padding(.vertical, 10)
-                            .background(Capsule().fill(Theme.Palette.accent))
-                    }
-                    .buttonStyle(.plain)
-
-                    if let error {
-                        Text(error).foregroundStyle(.red).font(.footnote)
-                    }
+                    .padding(.horizontal, 22)
+                    .padding(.top, 24)
+                    .padding(.bottom, 24)
                 }
-                .padding(.top, 24)
             }
-            .navigationTitle("我的二维码")
+            .navigationTitle("我的名片")
             .navigationBarTitleDisplayMode(.inline)
         }
         .task {
-            // Open with whatever active QR-kind handle exists; if none, mint one.
             await ensureActive()
         }
+    }
+
+    /// Vertical "business card": avatar + name on top, QR centred, handle
+    /// + footer hint at the bottom. The whole thing sits inside a single
+    /// rounded panel so it visually reads as a card you can hand over.
+    @ViewBuilder
+    private var nameCard: some View {
+        let store = AccountStore.shared
+        let avatarSeed = store.avatarSeed ?? store.current?.id ?? "?"
+        let displayName = store.profileDisplayName ?? store.current?.displayName ?? "你"
+        VStack(spacing: 16) {
+            HStack(spacing: 14) {
+                BotAvatar(seed: avatarSeed, size: 56)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(displayName)
+                        .font(Theme.Fonts.serif(size: 20, weight: .semibold))
+                        .foregroundStyle(Theme.Palette.ink)
+                        .lineLimit(1)
+                    Text("PendingBot 名片")
+                        .font(Theme.Fonts.caption)
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                }
+                Spacer(minLength: 0)
+            }
+
+            Divider().background(Theme.Palette.hairline)
+
+            if loading {
+                ProgressView()
+                    .controlSize(.large)
+                    .frame(width: 220, height: 220)
+            } else if let value = currentValue, let img = qrImage(for: value) {
+                VStack(spacing: 12) {
+                    Image(uiImage: img)
+                        .interpolation(.none)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 220, height: 220)
+                    Text(value)
+                        .font(Theme.Fonts.monoSmall)
+                        .textSelection(.enabled)
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                }
+            } else {
+                Text("生成二维码失败")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 220, height: 220)
+            }
+
+            Text("扫一扫，把我加为好友。")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding(22)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .fill(Theme.Palette.surface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
+        )
     }
 
     private func ensureActive() async {
