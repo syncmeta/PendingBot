@@ -565,6 +565,24 @@ struct ConversationView: View {
                     last_message_content: nil, last_message_sender_type: nil,
                     model_override: nil
                 )
+            case "self":
+                // Singleton self-chat conv. RPC is find-or-create so
+                // re-tapping the friends-tab self row reuses the same
+                // conv (and its history) instead of stacking.
+                let newId: UUID = try await SupabaseStack.shared.database
+                    .rpc("open_self_conv")
+                    .execute()
+                    .value
+                convId = newId.uuidString.lowercased()
+                conversation = Conversation(
+                    id: convId, bot_id: "", user_id: userId,
+                    title: peer.displayName, feature_type: "message",
+                    conversation_type: "self",
+                    last_activity_at: Int(Date().timeIntervalSince1970),
+                    round_count: 0, bot_name: peer.displayName,
+                    last_message_content: nil, last_message_sender_type: nil,
+                    model_override: nil
+                )
             default:
                 self.error = "未知会话类型"
                 return false
