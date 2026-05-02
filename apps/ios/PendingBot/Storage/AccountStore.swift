@@ -31,7 +31,8 @@ final class AccountStore: ObservableObject {
     private var stateTask: Task<Void, Never>?
 
     private init() {
-        if let session = SupabaseStack.shared.auth.currentSession {
+        if let session = SupabaseStack.shared.auth.currentSession,
+           !Self.isExpired(session) {
             current = Self.makeAccount(session: session)
             Task { await self.refreshProfileFlags() }
         }
@@ -40,9 +41,13 @@ final class AccountStore: ObservableObject {
 
     private func observeAuth() {
         stateTask = Task { [weak self] in
-            for await (_, session) in SupabaseStack.shared.auth.authStateChanges {
+            for await (event, session) in SupabaseStack.shared.auth.authStateChanges {
                 await MainActor.run {
-                    if let session {
+                    // The "initial session" event in supabase-swift's
+                    // current major can fire with a stale session that
+                    // failed to refresh — guard explicitly so we don't
+                    // hand RootView a dead JWT.
+                    if let session, !Self.isExpired(session) {
                         self?.current = Self.makeAccount(session: session)
                         Task { await self?.refreshProfileFlags() }
                     } else {
@@ -50,9 +55,18 @@ final class AccountStore: ObservableObject {
                         self?.hasBootstrapped = nil
                         self?.avatarSeed = nil
                     }
+                    _ = event // reserved for finer-grained handling later
                 }
             }
         }
+    }
+
+    /// True if the session's expires_at is in the past (with 30s slack
+    /// for clock skew). supabase-swift exposes `isExpired` only on
+    /// newer versions; compute it ourselves so it works either way.
+    private static func isExpired(_ session: Session) -> Bool {
+        let expiresAt = session.expiresAt
+        return Date(timeIntervalSince1970: expiresAt) < Date().addingTimeInterval(-30)
     }
 
     /// Pull the current user's `pendingbot.users` row to figure out whether
