@@ -521,7 +521,13 @@ private struct ConversationListRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            BotAvatar(seed: conv.id, size: 36)
+            // Emoji stays per-bot so the same bot looks recognisable
+            // across all your chats with it; tint varies per conv.
+            BotAvatar(
+                emojiSeed: conv.bot_id.isEmpty ? conv.id : conv.bot_id,
+                colorSeed: conv.id,
+                size: 36
+            )
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {

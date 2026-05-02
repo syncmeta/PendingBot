@@ -86,6 +86,15 @@ struct ConversationView: View {
         return "\(base) · \(tag)"
     }
 
+    /// Seed for the avatar's emoji glyph. Always tied to bot identity so
+    /// the same bot keeps its face across every conv you have with it.
+    /// Falls back to the conv id (used for user_user / discuss / group
+    /// chats where there is no single bot).
+    private var avatarEmojiSeed: String {
+        let bid = conversation.bot_id ?? ""
+        return bid.isEmpty ? conversation.id : bid
+    }
+
     private func shortSlug(_ slug: String) -> String {
         slug.split(separator: "/").last.map(String.init) ?? slug
     }
@@ -115,6 +124,7 @@ struct ConversationView: View {
                             BubbleView(message: msg,
                                        botName: botName,
                                        conversationID: conversation.id,
+                                       botID: avatarEmojiSeed,
                                        serverURL: account?.workerURL,
                                        toolLog: pinnedToolLogs[msg.id])
                                 .id(msg.id)
@@ -271,7 +281,11 @@ struct ConversationView: View {
 
     private var emptyConversation: some View {
         VStack(spacing: 14) {
-            BotAvatar(seed: conversation.id, size: 64)
+            BotAvatar(
+                emojiSeed: avatarEmojiSeed,
+                colorSeed: conversation.id,
+                size: 64
+            )
             Text(botName)
                 .font(Theme.Fonts.serif(size: 22, weight: .semibold))
                 .foregroundStyle(Theme.Palette.ink)
@@ -304,7 +318,11 @@ struct ConversationView: View {
                 .buttonStyle(.plain)
             }
 
-            BotAvatar(seed: conversation.id, size: 30)
+            BotAvatar(
+                emojiSeed: avatarEmojiSeed,
+                colorSeed: conversation.id,
+                size: 30
+            )
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(conversation.displayTitle)

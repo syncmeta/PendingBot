@@ -10,10 +10,13 @@ import SwiftUI
 struct BubbleView: View {
     let message: ChatMessage
     let botName: String
-    /// Conversation id — feeds into BotAvatar so every bubble in a given
-    /// conversation shows the same avatar, but each conversation gets a
-    /// fresh random emoji + pastel.
+    /// Conversation id — drives the per-conv pastel tint on BotAvatar.
     let conversationID: String
+    /// Bot identity, passed in so the avatar emoji stays consistent for
+    /// the same bot across all your conversations with it (background
+    /// tint still varies per conv). nil falls back to conversationID
+    /// for non-bot contexts.
+    var botID: String? = nil
     let serverURL: URL?
     /// Optional trace of the tool calls (currently 联网检索 progress lines)
     /// that produced this bot message. Renders as a collapsed chip above
@@ -62,8 +65,12 @@ struct BubbleView: View {
 
     private var botLayout: some View {
         HStack(alignment: .top, spacing: 8) {
-            BotAvatar(seed: conversationID, size: 30)
-                .padding(.top, 2)
+            BotAvatar(
+                emojiSeed: (botID?.isEmpty == false ? botID! : conversationID),
+                colorSeed: conversationID,
+                size: 30
+            )
+            .padding(.top, 2)
 
             VStack(alignment: .leading, spacing: 6) {
                 if let log = toolLog, !log.isEmpty {
