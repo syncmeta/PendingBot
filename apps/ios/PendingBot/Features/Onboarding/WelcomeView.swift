@@ -105,7 +105,12 @@ struct WelcomeView: View {
     private var googleButton: some View {
         Button { Task { await beginGoogle() } } label: {
             brandPillContent(
-                logo: googleLogoImage,
+                logo: AnyView(
+                    Image("GoogleG")
+                        .resizable()
+                        .renderingMode(.original)
+                        .scaledToFit()
+                ),
                 text: "Google",
                 textColor: Color(red: 0.18, green: 0.18, blue: 0.20)
             )
@@ -133,26 +138,6 @@ struct WelcomeView: View {
                 .resizable()
                 .scaledToFit()
                 .foregroundStyle(.white)
-        )
-    }
-
-    /// Multi-color "G" rendered as a Text fallback when the official
-    /// Google brand asset hasn't been dropped into the catalogue yet
-    /// (drop a 60×60 PNG at Assets.xcassets/GoogleG.imageset/ to swap).
-    private var googleLogoImage: AnyView {
-        if UIImage(named: "GoogleG") != nil {
-            return AnyView(Image("GoogleG").resizable().scaledToFit())
-        }
-        return AnyView(
-            Text("G")
-                .font(.system(size: 17, weight: .bold, design: .rounded))
-                .foregroundStyle(LinearGradient(
-                    colors: [Color(hex: 0x4285F4),
-                             Color(hex: 0xEA4335),
-                             Color(hex: 0xFBBC05),
-                             Color(hex: 0x34A853)],
-                    startPoint: .topLeading, endPoint: .bottomTrailing
-                ))
         )
     }
 
