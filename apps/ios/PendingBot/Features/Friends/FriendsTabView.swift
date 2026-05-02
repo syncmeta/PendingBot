@@ -51,7 +51,7 @@ struct FriendsTabView: View {
                     if !botsOnly {
                         // Humans
                         if !humansOnly {
-                            Section("机器人朋友") {
+                            Section {
                                 if bots.isEmpty {
                                     Text("还没有机器人朋友").foregroundStyle(.secondary)
                                 }
@@ -70,7 +70,7 @@ struct FriendsTabView: View {
                         }
                     }
                     if !botsOnly {
-                        Section("真人朋友") {
+                        Section {
                             if humans.isEmpty {
                                 Text("还没有真人朋友 — 上方 + 加一个")
                                     .foregroundStyle(.secondary)
