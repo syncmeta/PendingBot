@@ -98,8 +98,6 @@
   //   APNS_KEY_ID_PROD
   //   APNS_KEY_DEV   (.p8 PEM content, multi-line)
   //   APNS_KEY_PROD  (.p8 PEM content, multi-line)
-  //   DAYTONA_API_KEY
-  //   DAYTONA_API_URL
   //   HONCHO_API_KEY
   //   HONCHO_WORKSPACE_ID
 }

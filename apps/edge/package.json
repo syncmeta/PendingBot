@@ -16,7 +16,6 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@daytonaio/sdk": "^0",
     "@honcho-ai/sdk": "^2",
     "@pendingbot/core": "workspace:*",
     "@pendingbot/identity": "workspace:*",

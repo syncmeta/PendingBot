@@ -16,8 +16,6 @@ export interface Env {
   SUPABASE_ANON_KEY: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
   OPENROUTER_API_KEY: string;
-  DAYTONA_API_KEY: string;
-  DAYTONA_API_URL: string;
   HONCHO_API_KEY: string;
   HONCHO_WORKSPACE_ID: string;
   // Jina powers surf's web search + URL reader. Free tier requires no key
