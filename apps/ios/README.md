@@ -59,7 +59,7 @@ PendingBot/
     Root/TabRoot.swift         # 6 个 TabItem
     Message/                   # 主聊天 (WS streaming + 图片上传)
     Debate/                    # 多模型辩论 (SSE)
-    Surf/                      # 深挖搜索 (SSE)
+    Scroll/                    # 奏折 — bot 进谏 (agent loop)
     Review/                    # 自审回顾 (SSE)
     Portrait/                  # 画像生成 (SSE)
     Me/                        # 资料 / 收藏 / 服务器切换

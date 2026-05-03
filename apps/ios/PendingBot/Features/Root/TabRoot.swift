@@ -1,10 +1,11 @@
 import SwiftUI
 
-/// Three-tab root: 消息 / 好友 / 我.
+/// Four-tab root: 消息 / 好友 / 奏折 / 我.
 ///
-/// Discuss / Surf / Review tabs are gone — discuss conversations land in
-/// the message list with a 「议论」 badge; surf is accessed from a bot
-/// friend's view; review surfaces inline as log cards.
+/// Discuss tab is gone — discuss conversations land in the message list
+/// with a 「议论」 badge; review surfaces inline as log cards. Surf was
+/// renamed to 奏折 (it lives in its own tab now, displaying a feed of
+/// articles each bot has written for the user).
 struct TabRoot: View {
     @EnvironmentObject var store: AccountStore
 
@@ -16,6 +17,9 @@ struct TabRoot: View {
 
                 FriendsTabView()
                     .tabItem { Label("好友", systemImage: "person.2") }
+
+                ScrollTabView()
+                    .tabItem { Label("奏折", systemImage: "scroll") }
 
                 MeTabView()
                     .tabItem { Label("我", systemImage: "person.crop.circle") }

@@ -729,6 +729,78 @@ export type Database = {
           },
         ]
       }
+      scroll_runs: {
+        Row: {
+          body_md: string | null
+          bot_id: string
+          conversation_id: string
+          cost_budget_usd: number | null
+          cost_used_usd: number
+          created_at: string
+          finished_at: string | null
+          id: string
+          progress: Json
+          started_at: string | null
+          status: string
+          summary: string | null
+          title: string | null
+          trigger: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          body_md?: string | null
+          bot_id: string
+          conversation_id: string
+          cost_budget_usd?: number | null
+          cost_used_usd?: number
+          created_at?: string
+          finished_at?: string | null
+          id?: string
+          progress?: Json
+          started_at?: string | null
+          status?: string
+          summary?: string | null
+          title?: string | null
+          trigger?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          body_md?: string | null
+          bot_id?: string
+          conversation_id?: string
+          cost_budget_usd?: number | null
+          cost_used_usd?: number
+          created_at?: string
+          finished_at?: string | null
+          id?: string
+          progress?: Json
+          started_at?: string | null
+          status?: string
+          summary?: string | null
+          title?: string | null
+          trigger?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "scroll_runs_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "bots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "scroll_runs_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       skill_subscriptions: {
         Row: {
           conversation_id: string
@@ -815,56 +887,6 @@ export type Database = {
             columns: ["forked_from"]
             isOneToOne: false
             referencedRelation: "skills"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      surf_runs: {
-        Row: {
-          conversation_id: string
-          cost_budget_usd: number | null
-          cost_used_usd: number
-          created_at: string
-          finished_at: string | null
-          id: string
-          progress: Json
-          started_at: string | null
-          status: string
-          trigger: string | null
-          user_id: string
-        }
-        Insert: {
-          conversation_id: string
-          cost_budget_usd?: number | null
-          cost_used_usd?: number
-          created_at?: string
-          finished_at?: string | null
-          id?: string
-          progress?: Json
-          started_at?: string | null
-          status?: string
-          trigger?: string | null
-          user_id: string
-        }
-        Update: {
-          conversation_id?: string
-          cost_budget_usd?: number | null
-          cost_used_usd?: number
-          created_at?: string
-          finished_at?: string | null
-          id?: string
-          progress?: Json
-          started_at?: string | null
-          status?: string
-          trigger?: string | null
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "surf_runs_conversation_id_fkey"
-            columns: ["conversation_id"]
-            isOneToOne: false
-            referencedRelation: "conversations"
             referencedColumns: ["id"]
           },
         ]

@@ -5,7 +5,7 @@ import type { AppBindings, Env } from './types';
 import { healthRoutes } from './routes/health';
 import { messageRoutes } from './routes/messages';
 import { uploadRoutes } from './routes/upload';
-import { surfRoutes } from './routes/surf';
+import { scrollRoutes } from './routes/scroll';
 import { reviewRoutes } from './routes/review';
 import { meRoutes } from './routes/me';
 import { discussRoutes } from './routes/discuss';
@@ -52,7 +52,7 @@ v1.route('/health', healthRoutes);
 v1.route('/messages', messageRoutes);
 v1.route('/upload', uploadRoutes);
 v1.route('/uploads', uploadRoutes);   // GET /v1/uploads/:id
-v1.route('/surf', surfRoutes);
+v1.route('/scroll', scrollRoutes);
 v1.route('/review', reviewRoutes);
 v1.route('/me', meRoutes);
 v1.route('/discuss', discussRoutes);
