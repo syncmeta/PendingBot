@@ -47,6 +47,12 @@ packages:
     # upsert. Schema migration framework included.
     url: https://github.com/groue/GRDB.swift
     from: 6.0.0
+  GoogleSignIn:
+    # Native Google Sign-In SDK — runs Google's sign-in sheet in-process,
+    # returns an ID token we hand to supabase-swift's signInWithIdToken.
+    # No Safari handoff (cleaner UX than ASWebAuthenticationSession).
+    url: https://github.com/google/GoogleSignIn-iOS
+    from: 8.0.0
 
 targets:
   PendingBot:
@@ -97,6 +103,8 @@ targets:
         product: Supabase
       - package: GRDB
         product: GRDB
+      - package: GoogleSignIn
+        product: GoogleSignIn
     info:
       path: PendingBot/Resources/Info.plist
       properties:
