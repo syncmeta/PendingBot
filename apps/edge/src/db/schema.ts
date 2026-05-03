@@ -437,35 +437,6 @@ export type Database = {
         }
         Relationships: []
       }
-      discuss_settings: {
-        Row: {
-          bot_id: string
-          config: Json
-          enabled: boolean
-          updated_at: string
-        }
-        Insert: {
-          bot_id: string
-          config?: Json
-          enabled?: boolean
-          updated_at?: string
-        }
-        Update: {
-          bot_id?: string
-          config?: Json
-          enabled?: boolean
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "discuss_settings_bot_id_fkey"
-            columns: ["bot_id"]
-            isOneToOne: true
-            referencedRelation: "bots"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       invites: {
         Row: {
           code: string
@@ -639,44 +610,6 @@ export type Database = {
           name?: string
         }
         Relationships: []
-      }
-      portraits: {
-        Row: {
-          content: Json
-          conversation_id: string | null
-          created_at: string
-          id: string
-          kind: string
-          source_summary: string | null
-          user_id: string
-        }
-        Insert: {
-          content: Json
-          conversation_id?: string | null
-          created_at?: string
-          id?: string
-          kind: string
-          source_summary?: string | null
-          user_id: string
-        }
-        Update: {
-          content?: Json
-          conversation_id?: string | null
-          created_at?: string
-          id?: string
-          kind?: string
-          source_summary?: string | null
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "portraits_conversation_id_fkey"
-            columns: ["conversation_id"]
-            isOneToOne: false
-            referencedRelation: "conversations"
-            referencedColumns: ["id"]
-          },
-        ]
       }
       review_runs: {
         Row: {
