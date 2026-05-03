@@ -14,6 +14,7 @@ struct ScrollTabView: View {
     @Environment(\.api) private var api
 
     @State private var runs: [ScrollRun] = []
+    @State private var botNames: [String: String] = [:]
     @State private var loading = false
     @State private var error: String?
     @State private var composing = false
@@ -37,23 +38,22 @@ struct ScrollTabView: View {
                     if runs.isEmpty && !loading {
                         EmptyState()
                     } else {
-                        List {
-                            ForEach(runs) { run in
-                                ScrollFeedRow(run: run)
-                                    .listRowBackground(Theme.Palette.surface)
-                                    .listRowInsets(
-                                        EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12)
-                                    )
-                                    .contentShape(Rectangle())
-                                    .onTapGesture {
-                                        guard run.isDone || run.isRunning else { return }
-                                        path.append(.article(run.id))
-                                        Haptics.tap()
-                                    }
+                        ScrollView {
+                            LazyVStack(spacing: 12) {
+                                ForEach(runs) { run in
+                                    ScrollFeedRow(run: run, botName: botNames[run.bot_id])
+                                        .contentShape(Rectangle())
+                                        .onTapGesture {
+                                            guard run.isDone || run.isRunning else { return }
+                                            path.append(.article(run.id))
+                                            Haptics.tap()
+                                        }
+                                }
                             }
+                            .padding(.horizontal, Theme.Metrics.gutter)
+                            .padding(.vertical, 12)
+                            .readableColumnWidth()
                         }
-                        .listStyle(.insetGrouped)
-                        .scrollContentBackground(.hidden)
                         .refreshable { await load() }
                     }
                 }
@@ -115,8 +115,31 @@ struct ScrollTabView: View {
             // any stuck "pending" rows (initial INSERT before the runner
             // updates to running). The feed is meant to read as articles.
             runs = rows.filter { $0.status != "cancelled" }
+            await refreshBotNames(for: runs)
         } catch {
             self.error = error.localizedDescription
+        }
+    }
+
+    /// Resolve any bot_ids referenced by `feed` into display names so the
+    /// row's byline reads "<bot> · 2 分钟前" instead of an anonymous
+    /// avatar. Cached in `botNames`; only the missing ids hit the table.
+    private func refreshBotNames(for feed: [ScrollRun]) async {
+        let missing = Array(Set(feed.map { $0.bot_id }).subtracting(botNames.keys))
+        guard !missing.isEmpty else { return }
+        struct Row: Decodable { let id: String; let display_name: String }
+        do {
+            let rows: [Row] = try await SupabaseStack.shared
+                .from("bots")
+                .select("id, display_name")
+                .in("id", values: missing)
+                .execute()
+                .value
+            await MainActor.run {
+                for r in rows { botNames[r.id] = r.display_name }
+            }
+        } catch {
+            // Non-fatal — rows just render without a name.
         }
     }
 
@@ -149,6 +172,9 @@ struct ScrollTabView: View {
             runs[idx] = run
         } else {
             runs.insert(run, at: 0)
+        }
+        if botNames[run.bot_id] == nil {
+            Task { await refreshBotNames(for: [run]) }
         }
     }
 
