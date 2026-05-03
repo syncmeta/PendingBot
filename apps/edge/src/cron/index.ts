@@ -5,12 +5,9 @@ import { cleanupOrphanUploads } from './uploads-cleanup';
 // Workers cron entrypoint. wrangler.jsonc declares `triggers.crons` with
 // each schedule pattern; the same handler routes by `controller.cron`.
 //
-// Cron design (plan/10 B8):
+// Wired schedules (must agree with wrangler.jsonc):
 //   "0 4 * * *"   daily 04:00 UTC — orphan upload sweep
 //   "0 3 * * 1"   weekly Monday 03:00 UTC — model_pricing sync from OpenRouter
-//   "*/30 * * * *" every 30m — proactive bot review cron (placeholder; real
-//                   scheduling is plan/03 "bot 主动 push 后台回顾", needs
-//                   per-user schedule lookup. Wired here as a hook.)
 //
 // Each task swallows its own errors so one failure doesn't poison sibling
 // jobs. Cron tasks log to CF Observability — check there if a job goes dark.

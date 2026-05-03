@@ -100,8 +100,11 @@ uploadRoutes.post('/', async (c) => {
     .single();
 
   if (insertErr) {
-    // Best effort to roll back the R2 put
-    await c.env.UPLOADS.delete(key).catch(() => {});
+    // Best-effort R2 rollback. If the delete fails the orphan upload
+    // sweep (cron 04:00 UTC) will reap the key on its next run.
+    await c.env.UPLOADS.delete(key).catch((err) => {
+      console.warn('[upload] R2 rollback failed', { key, err });
+    });
     return c.json({ error: 'database', detail: insertErr.message }, 500);
   }
 
