@@ -16,7 +16,6 @@
 		24896FE870AF890607D5C008 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0424B09389C21A9BB73F1069 /* Theme.swift */; };
 		252E72745FF2F6B5758D2523 /* SupabaseStack.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A461F1DD0D7D01B3BE81A18 /* SupabaseStack.swift */; };
 		2A629BF058F4834777600BE4 /* Haptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54274B6144493F79AB8DC3D1 /* Haptics.swift */; };
-		320BE7FC705A8E6089901005 /* PortraitDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C0AE97BB2BD9387C69ACC8D /* PortraitDetailView.swift */; };
 		359C376EAADF988A6CE84F76 /* LocalDatabase.swift in Sources */ = {isa = PBXBuildFile; fileRef = 807F5D6DCD9D7DAF34512DBC /* LocalDatabase.swift */; };
 		38FCC07405D2C9B619FFC027 /* BubbleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F932206D62405FD4C1F0143B /* BubbleView.swift */; };
 		3902FC3FB0090CAB65A0CE0B /* MyHandlesSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = C33554764893F4E4696590B7 /* MyHandlesSheet.swift */; };
@@ -40,7 +39,6 @@
 		756AB114C3C20E0E06623B83 /* MessageTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E68B229EDD3BD50361009601 /* MessageTabView.swift */; };
 		7EC924CCEF279940B5934910 /* ConversationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C99F8DD8956403453040B34E /* ConversationSettingsView.swift */; };
 		83035210F6619E0993F92CEE /* CodeRunnerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A573816C9B62D5FDB2747B1 /* CodeRunnerSheet.swift */; };
-		836B075E7D4B70630FCA593D /* SSEClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9034AEB82955054D718A96FC /* SSEClient.swift */; };
 		88978249B3DE9BBB9F495363 /* SwipeRevealRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = E08EA5C0C04D043A83FDCB72 /* SwipeRevealRow.swift */; };
 		88D44D5A01A220D83A913D39 /* EmailSignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC72DD613E133EB252CB3F5D /* EmailSignIn.swift */; };
 		88D54B9282C1CF40B1EC79E5 /* PushService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC94DFE7E01003DB9976ADA0 /* PushService.swift */; };
@@ -66,7 +64,6 @@
 /* Begin PBXFileReference section */
 		0424B09389C21A9BB73F1069 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		07DE2357BDB2124C1A2ED08F /* RealtimeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeManager.swift; sourceTree = "<group>"; };
-		0C0AE97BB2BD9387C69ACC8D /* PortraitDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortraitDetailView.swift; sourceTree = "<group>"; };
 		14244B4958F792B2FE2FDE5A /* AccountsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountsView.swift; sourceTree = "<group>"; };
 		24E4E56DDBD71AB05278A385 /* ServerImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerImage.swift; sourceTree = "<group>"; };
 		279FB8EA2B3130084E4F8C44 /* BotAvatar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotAvatar.swift; sourceTree = "<group>"; };
@@ -96,7 +93,6 @@
 		81C2890EA2926BA046697ED2 /* names.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = names.txt; sourceTree = "<group>"; };
 		855E9460774778B78AA51DE3 /* SplitNav.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplitNav.swift; sourceTree = "<group>"; };
 		8BDBE35089EC0A16CBE8D181 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
-		9034AEB82955054D718A96FC /* SSEClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSEClient.swift; sourceTree = "<group>"; };
 		942CC4F48E3DD6424C534120 /* UnreadStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnreadStore.swift; sourceTree = "<group>"; };
 		A15111FAA33922E228085D64 /* TabTitle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabTitle.swift; sourceTree = "<group>"; };
 		A556C3B2E5456D4E589468E3 /* ColorHash.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorHash.swift; sourceTree = "<group>"; };
@@ -251,7 +247,6 @@
 				C608CB73D14B114D2399FE59 /* HostedConfig.swift */,
 				BC94DFE7E01003DB9976ADA0 /* PushService.swift */,
 				07DE2357BDB2124C1A2ED08F /* RealtimeManager.swift */,
-				9034AEB82955054D718A96FC /* SSEClient.swift */,
 				2A461F1DD0D7D01B3BE81A18 /* SupabaseStack.swift */,
 			);
 			path = Networking;
@@ -264,19 +259,10 @@
 				958326C719A4CEB4774C6166 /* Me */,
 				3D8FF77E58261CCFB943BE90 /* Message */,
 				A64EF4A1A55D8F31CC3F2244 /* Onboarding */,
-				E9BC4DAABED54FA43935603C /* Portrait */,
 				80A588C8CF0E783AF781513B /* Root */,
 				5345D52902A52221FE922D90 /* Skills */,
 			);
 			path = Features;
-			sourceTree = "<group>";
-		};
-		E9BC4DAABED54FA43935603C /* Portrait */ = {
-			isa = PBXGroup;
-			children = (
-				0C0AE97BB2BD9387C69ACC8D /* PortraitDetailView.swift */,
-			);
-			path = Portrait;
 			sourceTree = "<group>";
 		};
 		F8DE6727FE3A6A431BBFF963 /* Components */ = {
@@ -423,12 +409,10 @@
 				61B9F7BF2AE1D63124CD6B5E /* ModelPicker.swift in Sources */,
 				3902FC3FB0090CAB65A0CE0B /* MyHandlesSheet.swift in Sources */,
 				73218F689FB323F50181FA6F /* PendingBotApp.swift in Sources */,
-				320BE7FC705A8E6089901005 /* PortraitDetailView.swift in Sources */,
 				AD60747D6DE88AC5C4FFBCE9 /* ProfileBootstrapView.swift in Sources */,
 				88D54B9282C1CF40B1EC79E5 /* PushService.swift in Sources */,
 				0E293F1B0321CB4CB0FDBB51 /* QRScannerView.swift in Sources */,
 				D0314CD060D5368E739CFDEF /* RealtimeManager.swift in Sources */,
-				836B075E7D4B70630FCA593D /* SSEClient.swift in Sources */,
 				11DFAF56423D11C5DDBE2C34 /* ServerImage.swift in Sources */,
 				94657E0860679B913AE1A78D /* SkillsView.swift in Sources */,
 				B3417CC338433628B03B7B1D /* SplitNav.swift in Sources */,

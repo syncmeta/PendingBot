@@ -55,17 +55,6 @@ struct APIClient {
         _ = try await sendRaw(req)
     }
 
-    // MARK: - SSE compile shim
-    //
-    // PortraitDetailView still holds a legacy SSE call site that throws
-    // 501 at runtime. The real path is Supabase Realtime via
-    // RealtimeManager — Portrait moves to it when the generation runner
-    // is rebuilt.
-    func streamPost<Body: Encodable>(_ path: String, body: Body) async throws -> URLSession.AsyncBytes {
-        _ = path; _ = body
-        throw APIError.http(status: 501, body: "SSE replaced by Realtime channels")
-    }
-
     // MARK: - Multipart upload (POST /v1/upload)
 
     func upload<T: Decodable>(_ path: String, fileData: Data, fileName: String, mime: String,

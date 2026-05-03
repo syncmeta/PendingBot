@@ -130,25 +130,6 @@ struct AiPick: Codable, Identifiable, Hashable {
     let removed_at: Int?
 }
 
-struct PortraitConversation: Codable, Identifiable, Hashable {
-    let id: String
-    let bot_id: String
-    let user_id: String
-    let title: String?
-    let last_activity_at: Int
-    let portrait_count: Int?
-    let kinds: [String]?
-}
-
-struct Portrait: Codable, Identifiable, Hashable {
-    let id: String
-    let conversation_id: String
-    let kind: String
-    let status: String
-    let content_json: String?
-    let created_at: Int
-}
-
 // ── Skills ──────────────────────────────────────────────────────────────────
 
 /// Index-row shape returned by `GET /api/skills` — body is omitted for size.
