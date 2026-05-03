@@ -94,18 +94,7 @@ struct ScrollArticleView: View {
         if let body = run.body_md, !body.isEmpty {
             MarkdownText(text: body)
         } else if run.isRunning {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 6) {
-                    TypingDots()
-                    Text("机器人正在为你拟稿…")
-                        .font(Theme.Fonts.footnote)
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                }
-                Text("拟好之后会出现在这里。可以离开这页，等会儿回来看。")
-                    .font(Theme.Fonts.footnote)
-                    .foregroundStyle(Theme.Palette.inkMuted)
-            }
-            .padding(.top, 8)
+            runningSection(progress: ScrollProgress.from(run.progress))
         } else if run.status == "error" {
             Text("这卷拟稿出错了。可以从奏折列表删掉重来。")
                 .font(Theme.Fonts.body)
@@ -115,6 +104,79 @@ struct ScrollArticleView: View {
                 .font(Theme.Fonts.body)
                 .foregroundStyle(Theme.Palette.inkMuted)
         }
+    }
+
+    // MARK: - Running progress
+
+    /// Live "process" panel shown while body_md is empty. Surfaces the
+    /// runner's phase, the notes it has taken, and the URLs it has
+    /// fetched — all of which the runner persists into `progress` after
+    /// every turn so this view fills in over Realtime as the agent works.
+    @ViewBuilder
+    private func runningSection(progress: ScrollProgress) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 6) {
+                TypingDots()
+                Text(ScrollPhaseLabel.text(progress.phase))
+                    .font(Theme.Fonts.footnote)
+                    .foregroundStyle(Theme.Palette.inkMuted)
+            }
+
+            if !progress.notes.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("已记下的线索（\(progress.notes.count)）")
+                        .font(Theme.Fonts.caption)
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(Array(progress.notes.enumerated()), id: \.offset) { _, note in
+                            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                Text("·")
+                                    .foregroundStyle(Theme.Palette.inkMuted)
+                                Text(note.text)
+                                    .font(Theme.Fonts.footnote)
+                                    .foregroundStyle(Theme.Palette.ink)
+                                    .multilineTextAlignment(.leading)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !progress.visitedURLs.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("翻过的网页（\(progress.visitedURLs.count)）")
+                        .font(Theme.Fonts.caption)
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(progress.visitedURLs, id: \.self) { url in
+                            Text(displayHost(url))
+                                .font(Theme.Fonts.caption)
+                                .foregroundStyle(Theme.Palette.inkMuted)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                    }
+                }
+            }
+
+            Text("拟好之后会出现在这里。可以离开这页，等会儿回来看。")
+                .font(Theme.Fonts.footnote)
+                .foregroundStyle(Theme.Palette.inkMuted)
+        }
+        .padding(.top, 8)
+        .animation(.default, value: progress.notes.count)
+        .animation(.default, value: progress.visitedURLs.count)
+        .animation(.default, value: progress.phase)
+    }
+
+    /// Strip scheme + path so the URL list reads as a quiet list of
+    /// sources rather than a wall of links.
+    private func displayHost(_ raw: String) -> String {
+        if let host = URL(string: raw)?.host, !host.isEmpty {
+            return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+        }
+        return raw
     }
 
     // MARK: - Data
