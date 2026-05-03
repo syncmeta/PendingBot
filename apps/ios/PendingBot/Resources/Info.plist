@@ -37,10 +37,10 @@
 			</array>
 		</dict>
 	</array>
-	<key>GIDClientID</key>
-	<string>842392349572-bh7pmohnadkkb8nd3aq3v9p9pbh3pubs.apps.googleusercontent.com</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>GIDClientID</key>
+	<string>842392349572-bh7pmohnadkkb8nd3aq3v9p9pbh3pubs.apps.googleusercontent.com</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSAppTransportSecurity</key>

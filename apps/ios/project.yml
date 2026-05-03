@@ -138,7 +138,13 @@ targets:
         # Custom URL scheme — pendingbot:// reserved for future deep-link
         # handlers (e.g. notification taps). Currently unused on the
         # hosted build but kept registered so it won't conflict later.
+        # The google-signin-reversed scheme is the reverse-DNS form of the
+        # iOS OAuth client ID, required by Google Sign-In's callback flow.
         CFBundleURLTypes:
           - CFBundleURLName: com.pendingname.pendingbot
             CFBundleURLSchemes:
               - pendingbot
+          - CFBundleURLName: google-signin-reversed
+            CFBundleURLSchemes:
+              - com.googleusercontent.apps.842392349572-bh7pmohnadkkb8nd3aq3v9p9pbh3pubs
+        GIDClientID: 842392349572-bh7pmohnadkkb8nd3aq3v9p9pbh3pubs.apps.googleusercontent.com
