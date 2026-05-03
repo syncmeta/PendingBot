@@ -16,6 +16,7 @@
 		24896FE870AF890607D5C008 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0424B09389C21A9BB73F1069 /* Theme.swift */; };
 		252E72745FF2F6B5758D2523 /* SupabaseStack.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A461F1DD0D7D01B3BE81A18 /* SupabaseStack.swift */; };
 		2A629BF058F4834777600BE4 /* Haptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54274B6144493F79AB8DC3D1 /* Haptics.swift */; };
+		2C4C6BB79FF77588C3D8D502 /* BotManagement.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FB18020603674A7F6885245 /* BotManagement.swift */; };
 		359C376EAADF988A6CE84F76 /* LocalDatabase.swift in Sources */ = {isa = PBXBuildFile; fileRef = 807F5D6DCD9D7DAF34512DBC /* LocalDatabase.swift */; };
 		38FCC07405D2C9B619FFC027 /* BubbleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F932206D62405FD4C1F0143B /* BubbleView.swift */; };
 		3902FC3FB0090CAB65A0CE0B /* MyHandlesSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = C33554764893F4E4696590B7 /* MyHandlesSheet.swift */; };
@@ -27,6 +28,7 @@
 		4B188C25211FC2C93428265C /* MarkdownText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 296C608D9B4B9E5870149CD4 /* MarkdownText.swift */; };
 		4B8F775758566FA94BB05F1B /* ColorHash.swift in Sources */ = {isa = PBXBuildFile; fileRef = A556C3B2E5456D4E589468E3 /* ColorHash.swift */; };
 		52F96822550D55A2446083BE /* ServerTimestamp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75FB644111BD8AF1F7D62533 /* ServerTimestamp.swift */; };
+		536B9BEF9D1541ADE1759645 /* BotVisibilityTag.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B55AE8CBABF2C99EE083746 /* BotVisibilityTag.swift */; };
 		58EDA71C7AEE2D168E2D4949 /* BubbleSplitter.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDE5ADA3C16B8D916CDF48CB /* BubbleSplitter.swift */; };
 		5FF13D682608B0E290B56345 /* UserAvatar.swift in Sources */ = {isa = PBXBuildFile; fileRef = F008290DF52AAFA1B6AB1DE5 /* UserAvatar.swift */; };
 		61B9F7BF2AE1D63124CD6B5E /* ModelPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CA54E69A2AB50E902FF3E4E /* ModelPicker.swift */; };
@@ -89,10 +91,12 @@
 		56769B2A67F8F6BAE3037BC2 /* FriendsTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FriendsTabView.swift; sourceTree = "<group>"; };
 		5CADBAC8F028F13BC61D5286 /* EmptyHint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmptyHint.swift; sourceTree = "<group>"; };
 		6A573816C9B62D5FDB2747B1 /* CodeRunnerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeRunnerSheet.swift; sourceTree = "<group>"; };
+		6FB18020603674A7F6885245 /* BotManagement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotManagement.swift; sourceTree = "<group>"; };
 		6FEEDBCFBE31FB849F1F40E0 /* TypingDots.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypingDots.swift; sourceTree = "<group>"; };
 		749E1E89D81BCBC4FF10E935 /* Account.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Account.swift; sourceTree = "<group>"; };
 		75FB644111BD8AF1F7D62533 /* ServerTimestamp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerTimestamp.swift; sourceTree = "<group>"; };
 		79007915941D4BE087C69822 /* AppleSignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSignIn.swift; sourceTree = "<group>"; };
+		7B55AE8CBABF2C99EE083746 /* BotVisibilityTag.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotVisibilityTag.swift; sourceTree = "<group>"; };
 		7CA54E69A2AB50E902FF3E4E /* ModelPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelPicker.swift; sourceTree = "<group>"; };
 		807F5D6DCD9D7DAF34512DBC /* LocalDatabase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalDatabase.swift; sourceTree = "<group>"; };
 		81C2890EA2926BA046697ED2 /* names.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = names.txt; sourceTree = "<group>"; };
@@ -188,6 +192,7 @@
 		76824A9D530FFA016676E1FC /* Friends */ = {
 			isa = PBXGroup;
 			children = (
+				6FB18020603674A7F6885245 /* BotManagement.swift */,
 				56769B2A67F8F6BAE3037BC2 /* FriendsTabView.swift */,
 			);
 			path = Friends;
@@ -277,6 +282,7 @@
 			isa = PBXGroup;
 			children = (
 				279FB8EA2B3130084E4F8C44 /* BotAvatar.swift */,
+				7B55AE8CBABF2C99EE083746 /* BotVisibilityTag.swift */,
 				6A573816C9B62D5FDB2747B1 /* CodeRunnerSheet.swift */,
 				A556C3B2E5456D4E589468E3 /* ColorHash.swift */,
 				5CADBAC8F028F13BC61D5286 /* EmptyHint.swift */,
@@ -396,6 +402,8 @@
 				3C3ED2E76A920B9A0F6E99FB /* AccountsView.swift in Sources */,
 				E385EAC47D1577B3E600229D /* AppleSignIn.swift in Sources */,
 				48F89A47F914E0463C91D6BB /* BotAvatar.swift in Sources */,
+				2C4C6BB79FF77588C3D8D502 /* BotManagement.swift in Sources */,
+				536B9BEF9D1541ADE1759645 /* BotVisibilityTag.swift in Sources */,
 				58EDA71C7AEE2D168E2D4949 /* BubbleSplitter.swift in Sources */,
 				38FCC07405D2C9B619FFC027 /* BubbleView.swift in Sources */,
 				7441BBB82513354F86E2D12E /* ChatActionSheet.swift in Sources */,

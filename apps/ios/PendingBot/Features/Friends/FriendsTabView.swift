@@ -21,6 +21,8 @@ struct FriendsTabView: View {
     @State private var loading = false
     @State private var error: String?
     @State private var addingFriend = false
+    @State private var creatingBot = false
+    @State private var managingBot: BotPick?
     @State private var showingQR = false
     @State private var humansOnly = false
     @State private var botsOnly = false
@@ -33,9 +35,19 @@ struct FriendsTabView: View {
                 // the lower ZStack) so the TabHeaderBar at the top sits
                 // on canvas instead of the default white safe-area fill.
                 TabHeaderBar(title: "好友") {
-                    Button {
-                        addingFriend = true
-                        Haptics.tap()
+                    Menu {
+                        Button {
+                            addingFriend = true
+                            Haptics.tap()
+                        } label: {
+                            Label("加好友", systemImage: "person.badge.plus")
+                        }
+                        Button {
+                            creatingBot = true
+                            Haptics.tap()
+                        } label: {
+                            Label("新建机器人", systemImage: "sparkles")
+                        }
                     } label: {
                         CirclePlusButton()
                     }
@@ -88,10 +100,16 @@ struct FriendsTabView: View {
                                     FriendRow(kind: .bot,
                                               avatarSeed: bot.id,
                                               name: bot.display_name,
-                                              modelTag: bot.modelTag)
+                                              modelTag: bot.modelTag,
+                                              botVisibility: bot.visibility)
                                         .listRowBackground(Theme.Palette.surface)
                                         .contentShape(Rectangle())
                                         .onTapGesture { Task { await tapBot(bot) } }
+                                        .modifier(BotRowOwnerActions(
+                                            bot: bot,
+                                            isMine: ownsBot(bot),
+                                            onManage: { managingBot = bot }
+                                        ))
                                 }
                             }
                         } else {
@@ -104,7 +122,8 @@ struct FriendsTabView: View {
                                 FriendRow(kind: .human,
                                           avatarSeed: c.id,
                                           name: c.alias ?? String(c.id.prefix(8)),
-                                          modelTag: nil)
+                                          modelTag: nil,
+                                          botVisibility: nil)
                                     .listRowBackground(Theme.Palette.surface)
                                     .contentShape(Rectangle())
                                     .onTapGesture { Task { await tapHuman(c) } }
@@ -117,10 +136,16 @@ struct FriendsTabView: View {
                                 FriendRow(kind: .bot,
                                           avatarSeed: bot.id,
                                           name: bot.display_name,
-                                          modelTag: bot.modelTag)
+                                          modelTag: bot.modelTag,
+                                          botVisibility: bot.visibility)
                                     .listRowBackground(Theme.Palette.surface)
                                     .contentShape(Rectangle())
                                     .onTapGesture { Task { await tapBot(bot) } }
+                                    .modifier(BotRowOwnerActions(
+                                        bot: bot,
+                                        isMine: ownsBot(bot),
+                                        onManage: { managingBot = bot }
+                                    ))
                             }
                         }
                     }
@@ -136,6 +161,26 @@ struct FriendsTabView: View {
                 AddFriendSheet { Task { await load() } }
                     .presentationDetents([.medium])
                     .presentationDragIndicator(.visible)
+            }
+            .sheet(isPresented: $creatingBot) {
+                CreateBotSheet { newBot in
+                    // Prepend so the user sees the new bot immediately,
+                    // then refresh from server to get any RLS-derived
+                    // ordering right.
+                    self.bots.insert(newBot, at: 0)
+                    Task { await load() }
+                }
+                .presentationDragIndicator(.visible)
+            }
+            .sheet(item: $managingBot) { pick in
+                ManageBotSheet(
+                    onChanged: { Task { await load() } },
+                    onDeleted: { id in
+                        self.bots.removeAll { $0.id == id }
+                    },
+                    initial: pick
+                )
+                .presentationDragIndicator(.visible)
             }
             .sheet(isPresented: $showingQR) {
                 MyQRSheet()
@@ -166,6 +211,8 @@ struct FriendsTabView: View {
         let id: String
         let display_name: String
         let model_id: String?
+        let visibility: String?
+        let creator_id: String?
         var modelTag: String? {
             guard let m = model_id, let i = m.lastIndex(of: "/") else { return model_id }
             return String(m[m.index(after: i)...])
@@ -180,6 +227,8 @@ struct FriendsTabView: View {
         let id: String
         let display_name: String
         let model_id: String?
+        let visibility: String?
+        let creator_id: String?
     }
     private struct ContactDecodable: Decodable {
         let contact_user_id: String
@@ -191,7 +240,7 @@ struct FriendsTabView: View {
         do {
             async let botRowsResp: [BotDecodable] = SupabaseStack.shared
                 .from("bots")
-                .select("id, display_name, model_id")
+                .select("id, display_name, model_id, visibility, creator_id")
                 .eq("is_active", value: true)
                 .order("created_at", ascending: true)
                 .execute()
@@ -206,11 +255,23 @@ struct FriendsTabView: View {
             let botRows = try await botRowsResp
             let contactRows = try await contactRowsResp
 
-            self.bots = botRows.map { BotPick(id: $0.id, display_name: $0.display_name, model_id: $0.model_id) }
+            self.bots = botRows.map {
+                BotPick(id: $0.id, display_name: $0.display_name,
+                        model_id: $0.model_id, visibility: $0.visibility,
+                        creator_id: $0.creator_id)
+            }
             self.humans = contactRows.map { HumanPick(id: $0.contact_user_id, alias: $0.alias) }
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    /// True when the current user is the bot's creator (preset bots have a
+    /// nil creator). Drives whether the long-press "管理" entry shows up.
+    private func ownsBot(_ bot: BotPick) -> Bool {
+        guard let me = AccountStore.shared.current?.id, let owner = bot.creator_id
+        else { return false }
+        return owner == me
     }
 
     // MARK: - Tap handlers
@@ -306,6 +367,9 @@ private struct FriendRow: View {
     let avatarSeed: String
     let name: String
     let modelTag: String?
+    /// Drives the right-side tag pill for bots. `nil` for humans
+    /// (which render a `人类` pill instead).
+    let botVisibility: String?
 
     var body: some View {
         HStack(spacing: 10) {
@@ -342,28 +406,27 @@ private struct FriendRow: View {
 
             Spacer(minLength: 8)
 
-            // AI / 人类 tag at the far right.
-            KindTag(kind: kind)
+            // Right-side type tag. For bots the visibility decides the
+            // copy + color (公有机器人 vs 私有机器人); humans always read 人类.
+            switch kind {
+            case .bot:
+                BotVisibilityTag(visibility: botVisibility)
+            case .human:
+                HumanKindTag()
+            }
         }
         .padding(.vertical, 4)
     }
 }
 
-private struct KindTag: View {
-    let kind: FriendRow.Kind
+private struct HumanKindTag: View {
     var body: some View {
-        // Mirror the message-list "primary name" capsule colors:
-        //   AI    → accent green fg + accentBg
-        //   人类   → dark purple fg + light purple bg
-        let (text, fg, bg): (String, Color, Color) = kind == .bot
-            ? ("AI", Theme.Palette.accent, Theme.Palette.accentBg)
-            : ("人类", Color(hex: 0x5B3D8A), Color(hex: 0xECE3F7))
-        return Text(text)
+        Text("人类")
             .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(fg)
+            .foregroundStyle(Color(hex: 0x5B3D8A))
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(Capsule().fill(bg))
+            .background(Capsule().fill(Color(hex: 0xECE3F7)))
     }
 }
 
@@ -670,5 +733,31 @@ private struct MyQRSheet: View {
         let scaled = out.transformed(by: CGAffineTransform(scaleX: 8, y: 8))
         guard let cg = context.createCGImage(scaled, from: scaled.extent) else { return nil }
         return UIImage(cgImage: cg)
+    }
+}
+
+// MARK: - Bot row owner actions
+
+/// Adds a long-press "管理" entry to bot rows the current user created.
+/// Preset bots and others' bots get no extra actions — the modifier
+/// returns the row unchanged.
+private struct BotRowOwnerActions: ViewModifier {
+    let bot: FriendsTabView.BotPick
+    let isMine: Bool
+    let onManage: () -> Void
+
+    func body(content: Content) -> some View {
+        if isMine {
+            content.contextMenu {
+                Button {
+                    onManage()
+                    Haptics.tap()
+                } label: {
+                    Label("管理", systemImage: "slider.horizontal.3")
+                }
+            }
+        } else {
+            content
+        }
     }
 }

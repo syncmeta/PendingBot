@@ -165,6 +165,32 @@ export type Database = {
           },
         ]
       }
+      bot_invites: {
+        Row: {
+          bot_id: string
+          invited_at: string
+          user_id: string
+        }
+        Insert: {
+          bot_id: string
+          invited_at?: string
+          user_id: string
+        }
+        Update: {
+          bot_id?: string
+          invited_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bot_invites_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "bots"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       bot_lookbacks: {
         Row: {
           active: boolean
@@ -252,6 +278,7 @@ export type Database = {
         Row: {
           config: Json
           created_at: string
+          creator_id: string | null
           display_name: string
           id: string
           is_active: boolean
@@ -259,10 +286,12 @@ export type Database = {
           output_mode: string
           slug: string
           updated_at: string
+          visibility: string
         }
         Insert: {
           config?: Json
           created_at?: string
+          creator_id?: string | null
           display_name: string
           id?: string
           is_active?: boolean
@@ -270,10 +299,12 @@ export type Database = {
           output_mode?: string
           slug: string
           updated_at?: string
+          visibility?: string
         }
         Update: {
           config?: Json
           created_at?: string
+          creator_id?: string | null
           display_name?: string
           id?: string
           is_active?: boolean
@@ -281,6 +312,7 @@ export type Database = {
           output_mode?: string
           slug?: string
           updated_at?: string
+          visibility?: string
         }
         Relationships: []
       }
@@ -1079,8 +1111,20 @@ export type Database = {
         Args: { p_email: string; p_meta: Json; p_uid: string }
         Returns: undefined
       }
+      bot_invites_add: {
+        Args: { p_bot_id: string; p_handle: string }
+        Returns: string
+      }
       delete_self_account: { Args: never; Returns: undefined }
       is_participant: { Args: { conv_id: string }; Returns: boolean }
+      list_bot_invitees: {
+        Args: { p_bot_id: string }
+        Returns: {
+          display_name: string
+          invited_at: string
+          user_id: string
+        }[]
+      }
       open_self_conv: { Args: never; Returns: string }
       open_user_bot_conv: { Args: { p_bot_id: string }; Returns: string }
       random_place_name: { Args: never; Returns: string }

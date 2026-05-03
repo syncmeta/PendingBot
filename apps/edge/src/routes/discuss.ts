@@ -34,6 +34,27 @@ discussRoutes.post('/start', async (c) => {
     return c.json({ error: 'invalid body', detail: String(err) }, 400);
   }
 
+  // Visibility gate: discuss takes raw bot_ids from the request, so we
+  // must verify each bot is actually visible to the caller — otherwise
+  // someone could discuss with a private bot of another user, or with a
+  // public_invite bot they were never invited to. SELECT through the
+  // user JWT so RLS does the filtering for us.
+  {
+    const supaUserCheck = userClient(c.env, userJwt);
+    const { data: visibleBots, error: visibleErr } = await supaUserCheck
+      .from('bots')
+      .select('id')
+      .in('id', parsed.botIds);
+    if (visibleErr) {
+      return c.json({ error: 'database', detail: visibleErr.message }, 500);
+    }
+    const visibleSet = new Set((visibleBots ?? []).map((r) => r.id as string));
+    const missing = parsed.botIds.filter((id) => !visibleSet.has(id));
+    if (missing.length > 0) {
+      return c.json({ error: '没有权限使用其中部分机器人', missing }, 403);
+    }
+  }
+
   const supa = serviceClient(c.env);
   let conversationId = parsed.conversationId;
 

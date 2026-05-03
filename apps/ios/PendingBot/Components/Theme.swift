@@ -19,6 +19,12 @@ enum Theme {
         /// Tinted from #044735, washed toward the cream surface.
         static let accentBg    = Color(hex: 0xE3EEEA)
 
+        /// Warm amber — public-bot tag fg. Sits in the same brightness
+        /// register as the deep accent green so the two pills feel paired.
+        static let amber       = Color(hex: 0x6F5A0B)
+        /// Pale buttery yellow — public-bot tag bg, washed from `amber`.
+        static let amberBg     = Color(hex: 0xFAEDC2)
+
         /// Page canvas — #fdfcfa (warm off-white).
         static let canvas        = Color(hex: 0xFDFCFA)
         /// Cards / sheets — pure white sits a hair above canvas.

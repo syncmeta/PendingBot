@@ -18,6 +18,13 @@ struct Bot: Codable, Identifiable, Hashable {
     /// The user's per-bot override (nil = follow default). Set/cleared via
     /// PATCH /api/mobile/bots/:id with { model: <slug> | null }.
     let user_model: String?
+    /// Visibility — drives the 私有/公有机器人 tag in friend + message lists.
+    /// `private` | `public_invite` | `public_open`. Optional so older
+    /// payloads that pre-date 0002_bot_visibility decode without breaking.
+    let visibility: String?
+    /// User who created this bot. NULL for system preset bots. Used to tell
+    /// the creator they may edit/delete (private) or toggle visibility (public).
+    let creator_id: String?
 
     /// Short tag derived from the OpenRouter slug — drops the provider prefix
     /// so "z-ai/glm-5.1" renders as "glm-5.1". Returns nil when no model is set.
