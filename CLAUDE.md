@@ -12,6 +12,8 @@ This file is auto-loaded by every Claude Code session in this repo. Use it toget
 
 Names are short, kebab-case, English (the repo's commit prefixes are English: `edge:`, `ios:`, `db:` — match that).
 
+**Renaming detail:** `git branch -m` only renames the branch. The worktree directory stays at the original `.claude/worktrees/<random>/` path — that's fine, it's an internal location and `git worktree remove <path>` still works after the branch rename. Don't bother running `git worktree move` unless the user explicitly asks; the cosmetic mismatch isn't worth the extra step.
+
 ## Worktree layout
 
 One worktree per branch, under `.claude/worktrees/<branch-tail>/`. The tail is everything after the prefix slash (`feat/scroll-share` → `.claude/worktrees/scroll-share/`). `.claude/` is gitignored, so worktrees don't pollute the tree.
@@ -77,9 +79,36 @@ Harness blocks Claude from pushing `main`. After merging, tell the user to run `
 
 Don't auto-deploy on merge — deploys are deliberate and user-initiated.
 
+## First action on every session that's about to change code
+
+Before touching files, check where you are:
+
+```
+git branch --show-current
+pwd                            # main worktree or .claude/worktrees/<x>?
+```
+
+Three cases:
+
+1. **You're in a `claude/<auto>` branch in a worktree** → user just opened a fresh session via the UI. Read their first concrete instruction, derive a branch name (`feat/<name>` / `fix/<name>` / `chore/<name>`), and run `git branch -m <new-name>` before the first commit. If the instruction is too vague to name yet (e.g. "看看 X 是怎么实现的"), leave the rename until scope is clear or until the first edit.
+
+2. **You're already on a `feat/*` / `fix/*` / `chore/*` branch in a worktree** → continue on it unless the user clearly switches topic. If they switch topic, suggest finishing/parking the current branch first rather than mixing scopes.
+
+3. **You're in the main worktree on `main`** → for any code change, do NOT commit to `main`. Either:
+   - **(preferred)** look up existing branches with `git branch -a | grep -E '(feat|fix|chore)/'` and `git for-each-ref --sort=-committerdate refs/heads/`, scan for one matching the topic; if a match exists, tell the user the path and ask them to open a session there.
+   - **(fallback)** create a new worktree+branch with `git worktree add .claude/worktrees/<tail> -b <prefix>/<tail> main`, then tell the user "open a new session in `.claude/worktrees/<tail>` to continue" — current session can't move into it.
+   - The main-worktree session itself stays in read-only / planning / status-check mode.
+
+Inferring `feat/` vs `fix/` vs `chore/` from the user's phrasing:
+- "加 / 实现 / 新功能 / add / implement / new" → `feat/`
+- "修 / fix / bug / 不对 / 报错" → `fix/`
+- "重构 / 清理 / 改名 / refactor / cleanup / rename / 整理" → `chore/`
+- Ambiguous → ask once, in one short question.
+
 ## When user says...
 
-- "开个 feat/foo" / "start a feature" → create worktree + branch off `main`, suggest opening a new session in it
+- "开个 feat/foo" / "start a feature" → if not already in a worktree, create worktree + branch off `main`, tell the user the path to open a new session in
+- "改 X 功能 / 修 Y bug" without naming a branch → run the "First action" decision tree above
 - "把分支合回 main" / "merge this back" → fetch, judge size, run the right merge variant, typecheck, clean up worktree+branch, remind about `git push origin main`
 - "清一下 stale worktree" / "clean stale worktrees" → list with `git worktree list`, check each with `git rev-list --count main..<branch>`. Zero-commit ones can be force-removed; non-zero ones get listed for the user to decide.
 - "把当前分支改名" → `git branch -m <new-name>` from inside the worktree
