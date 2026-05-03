@@ -130,42 +130,6 @@ struct AiPick: Codable, Identifiable, Hashable {
     let removed_at: Int?
 }
 
-struct SurfConversation: Codable, Identifiable, Hashable {
-    let id: String
-    let bot_id: String
-    let user_id: String
-    let title: String?
-    let last_activity_at: Int
-    let model_slug: String?
-    let source_message_conv_id: String?
-    let status: String?
-    let budget: Int?
-    let active: Bool?
-}
-
-struct ReviewConversation: Codable, Identifiable, Hashable {
-    let id: String
-    let bot_id: String
-    let user_id: String
-    let title: String?
-    let last_activity_at: Int
-    let source_message_conv_id: String?
-    let status: String?
-}
-
-struct DiscussConversation: Codable, Identifiable, Hashable {
-    let id: String
-    let bot_id: String
-    let user_id: String
-    let title: String?
-    let last_activity_at: Int
-    let topic: String?
-    let bot_ids: [String]?
-    /// Per-session cap on messages per round. nil = orchestrator default.
-    let max_messages: Int?
-    let round_count_discuss: Int?
-}
-
 struct PortraitConversation: Codable, Identifiable, Hashable {
     let id: String
     let bot_id: String

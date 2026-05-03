@@ -55,13 +55,12 @@ struct APIClient {
         _ = try await sendRaw(req)
     }
 
-    // MARK: - SSE compile shim (callers ungutted)
+    // MARK: - SSE compile shim
     //
-    // Discuss / Surf / Portrait views still hold legacy SSE call sites that
-    // we can't reach at runtime (their parent tabs short-circuit to empty
-    // state) but they need this method to typecheck. The real path is
-    // Supabase Realtime via RealtimeManager — those views move to it when
-    // their tab list is rebuilt.
+    // PortraitDetailView still holds a legacy SSE call site that throws
+    // 501 at runtime. The real path is Supabase Realtime via
+    // RealtimeManager — Portrait moves to it when the generation runner
+    // is rebuilt.
     func streamPost<Body: Encodable>(_ path: String, body: Body) async throws -> URLSession.AsyncBytes {
         _ = path; _ = body
         throw APIError.http(status: 501, body: "SSE replaced by Realtime channels")

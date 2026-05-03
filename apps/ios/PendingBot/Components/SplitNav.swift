@@ -43,8 +43,8 @@ struct EmptyDetailHint: View {
     }
 }
 
-/// Default column-width preferences for a sidebar list. Pulled out so the
-/// four list-tabs (Message / Discuss / Surf / Review) feel like one app.
+/// Default column-width preferences for a sidebar list. Pulled out so every
+/// list-tab feels like one app on iPad / Catalyst.
 extension View {
     func sidebarColumnWidth() -> some View {
         navigationSplitViewColumnWidth(min: 280, ideal: 340, max: 420)
