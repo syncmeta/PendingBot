@@ -138,7 +138,7 @@ messageRoutes.post('/', async (c) => {
 
   const { data: bot, error: botErr } = await supaService
     .from('bots')
-    .select('id, model_id, output_mode, is_active, config')
+    .select('id, model_id, output_mode, is_active, config, visibility, creator_id')
     .eq('id', conv.bot_id)
     .single();
   if (botErr || !bot) {
@@ -146,6 +146,25 @@ messageRoutes.post('/', async (c) => {
   }
   if (!bot.is_active) {
     return c.json({ message: { id: parentMessageId }, botReplyScheduled: false });
+  }
+
+  // Visibility gate: is_participant() lets the user keep reading the conv
+  // even after the creator un-invites them, and the worker uses the
+  // service role to fetch the bot — both of which would otherwise let a
+  // dropped invitee keep chatting on the creator's tab. Re-check here.
+  if (bot.visibility === 'private' && bot.creator_id !== userId) {
+    return c.json({ error: '私有机器人只允许创建者使用' }, 403);
+  }
+  if (bot.visibility === 'public_invite' && bot.creator_id !== userId) {
+    const { data: invite } = await supaService
+      .from('bot_invites')
+      .select('user_id')
+      .eq('bot_id', bot.id)
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (!invite) {
+      return c.json({ error: '没有权限和这个机器人聊天,可能已被取消邀请' }, 403);
+    }
   }
 
   // Self-chat: load the user's profile so the bot can wear their persona.
