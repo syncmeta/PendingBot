@@ -1117,6 +1117,14 @@ export type Database = {
       }
       delete_self_account: { Args: never; Returns: undefined }
       is_participant: { Args: { conv_id: string }; Returns: boolean }
+      list_bot_invitees: {
+        Args: { p_bot_id: string }
+        Returns: {
+          display_name: string
+          invited_at: string
+          user_id: string
+        }[]
+      }
       open_self_conv: { Args: never; Returns: string }
       open_user_bot_conv: { Args: { p_bot_id: string }; Returns: string }
       random_place_name: { Args: never; Returns: string }

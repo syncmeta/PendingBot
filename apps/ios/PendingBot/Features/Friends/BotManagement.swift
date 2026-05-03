@@ -413,28 +413,39 @@ struct InviteListEditor: View {
     @State private var loading = false
     @State private var addingHandle: String = ""
     @State private var adding = false
+    @State private var pickingContact = false
     @State private var error: String?
 
     struct InviteRow: Identifiable, Hashable {
         let user_id: String
+        let display_name: String
         let invited_at: String?
         var id: String { user_id }
+        var label: String {
+            display_name.isEmpty ? String(user_id.prefix(8)) : display_name
+        }
     }
 
     var body: some View {
         Form {
             Section {
                 HStack(spacing: 8) {
-                    TextField("被邀请人的号码 (handle)", text: $addingHandle)
+                    TextField("对方的号码", text: $addingHandle)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled(true)
                     Button(adding ? "加…" : "邀请") {
-                        Task { await addInvite() }
+                        Task { await addInviteByHandle() }
                     }
                     .disabled(adding || addingHandle.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
+                Button {
+                    pickingContact = true
+                    Haptics.tap()
+                } label: {
+                    Label("从联系人选", systemImage: "person.crop.circle.badge.plus")
+                }
             } footer: {
-                Text("把对方个人页里的号码贴进来。号码可以撤销。")
+                Text("可以贴对方个人页里的号码,或者直接从你的联系人里选。")
                     .font(Theme.Fonts.caption)
             }
 
@@ -448,8 +459,9 @@ struct InviteListEditor: View {
                         HStack {
                             Image(systemName: "person.crop.circle")
                                 .foregroundStyle(Theme.Palette.accent.opacity(0.7))
-                            Text(String(row.user_id.prefix(8)))
-                                .font(Theme.Fonts.monoSmall)
+                            Text(row.label)
+                                .font(Theme.Fonts.rounded(size: 14, weight: .medium))
+                                .foregroundStyle(Theme.Palette.ink)
                             Spacer()
                             Button(role: .destructive) {
                                 Task { await remove(row) }
@@ -472,29 +484,41 @@ struct InviteListEditor: View {
         .navigationTitle("被邀请人")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
+        .sheet(isPresented: $pickingContact) {
+            InviteContactPickerSheet(
+                botId: botId,
+                alreadyInvited: Set(invites.map(\.user_id)),
+                onPicked: { Task { await load() } }
+            )
+            .presentationDragIndicator(.visible)
+        }
     }
 
     private func load() async {
         loading = true; defer { loading = false }
         do {
+            struct Args: Encodable { let p_bot_id: String }
             struct Decoded: Decodable {
                 let user_id: String
+                let display_name: String
                 let invited_at: String?
             }
+            // Goes through list_bot_invitees RPC (SECURITY DEFINER) so the
+            // caller, as the bot's creator, can see invitees' display_name
+            // without us widening users RLS.
             let rows: [Decoded] = try await SupabaseStack.shared
-                .from("bot_invites")
-                .select("user_id, invited_at")
-                .eq("bot_id", value: botId)
-                .order("invited_at", ascending: false)
+                .rpc("list_bot_invitees", params: Args(p_bot_id: botId))
                 .execute()
                 .value
-            invites = rows.map { InviteRow(user_id: $0.user_id, invited_at: $0.invited_at) }
+            invites = rows.map {
+                InviteRow(user_id: $0.user_id, display_name: $0.display_name, invited_at: $0.invited_at)
+            }
         } catch {
             self.error = error.localizedDescription
         }
     }
 
-    private func addInvite() async {
+    private func addInviteByHandle() async {
         let handle = addingHandle.trimmingCharacters(in: .whitespaces)
         guard !handle.isEmpty else { return }
         adding = true; defer { adding = false }
@@ -527,6 +551,144 @@ struct InviteListEditor: View {
                 .execute()
             invites.removeAll { $0.user_id == row.user_id }
             Haptics.tap()
+        } catch {
+            self.error = error.localizedDescription
+            Haptics.error()
+        }
+    }
+}
+
+// MARK: - Contact picker (forward existing contacts to a public_invite bot)
+
+/// Sheet listing the user's existing contacts. Tapping one inserts a
+/// bot_invites row for that contact (no handle resolution needed — we
+/// already have their user_id). Already-invited contacts render disabled.
+struct InviteContactPickerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let botId: String
+    let alreadyInvited: Set<String>
+    var onPicked: () -> Void
+
+    @State private var contacts: [Row] = []
+    @State private var loading = false
+    @State private var inviting = false
+    @State private var error: String?
+    @State private var query: String = ""
+
+    struct Row: Identifiable, Hashable {
+        let user_id: String
+        let alias: String?
+        var id: String { user_id }
+        var displayLabel: String {
+            (alias?.isEmpty == false ? alias! : String(user_id.prefix(8)))
+        }
+    }
+
+    private var filtered: [Row] {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return contacts }
+        return contacts.filter {
+            $0.displayLabel.lowercased().contains(q)
+            || $0.user_id.lowercased().contains(q)
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if loading && contacts.isEmpty {
+                    ProgressView()
+                } else if contacts.isEmpty {
+                    Text("还没有联系人")
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                } else {
+                    List {
+                        Section {
+                            ForEach(filtered) { row in
+                                Button {
+                                    Task { await invite(row) }
+                                } label: {
+                                    HStack {
+                                        Image(systemName: "person.crop.circle.fill")
+                                            .foregroundStyle(Theme.Palette.accent.opacity(0.85))
+                                        Text(row.displayLabel)
+                                            .foregroundStyle(Theme.Palette.ink)
+                                        Spacer()
+                                        if alreadyInvited.contains(row.user_id) {
+                                            Text("已邀请")
+                                                .font(Theme.Fonts.caption)
+                                                .foregroundStyle(Theme.Palette.inkMuted)
+                                        } else {
+                                            Image(systemName: "plus.circle")
+                                                .foregroundStyle(Theme.Palette.accent)
+                                        }
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(alreadyInvited.contains(row.user_id) || inviting)
+                            }
+                        } header: {
+                            if !contacts.isEmpty {
+                                Text("联系人")
+                            }
+                        }
+                        if let error {
+                            Section { Text(error).foregroundStyle(.red) }
+                        }
+                    }
+                    .searchable(text: $query, prompt: "搜索联系人")
+                }
+            }
+            .navigationTitle("从联系人选")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+            }
+        }
+        .task { await load() }
+    }
+
+    private func load() async {
+        loading = true; defer { loading = false }
+        do {
+            struct Decoded: Decodable {
+                let contact_user_id: String
+                let alias: String?
+            }
+            let rows: [Decoded] = try await SupabaseStack.shared
+                .from("user_contacts")
+                .select("contact_user_id, alias")
+                .order("created_at", ascending: true)
+                .execute()
+                .value
+            contacts = rows.map { Row(user_id: $0.contact_user_id, alias: $0.alias) }
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func invite(_ row: Row) async {
+        guard !alreadyInvited.contains(row.user_id) else { return }
+        inviting = true; defer { inviting = false }
+        do {
+            struct InviteInsert: Encodable {
+                let bot_id: String
+                let user_id: String
+            }
+            // Direct INSERT — RLS allows the bot's creator to write
+            // bot_invites rows. ON CONFLICT DO NOTHING is implicit
+            // because the PK is (bot_id, user_id) and we filter
+            // already-invited above; if it raced, postgres just errors.
+            try await SupabaseStack.shared
+                .from("bot_invites")
+                .insert(InviteInsert(bot_id: botId, user_id: row.user_id))
+                .execute()
+            Haptics.success()
+            onPicked()
+            dismiss()
         } catch {
             self.error = error.localizedDescription
             Haptics.error()
