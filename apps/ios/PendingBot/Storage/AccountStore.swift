@@ -1,6 +1,9 @@
 import Foundation
 import Combine
 import Supabase
+import OSLog
+
+private let log = Logger.category("account")
 
 /// Mirrors the Supabase auth state into a published `current: Account?`.
 ///
@@ -124,7 +127,7 @@ final class AccountStore: ObservableObject {
         } catch {
             // signOut hits a best-effort token revoke + local clear; even if
             // the network half fails the local session is gone.
-            print("[account] signOut error:", error)
+            log.error("signOut error: \(String(describing: error), privacy: .public)")
         }
         LocalDatabase.shared.clear()
         AvatarCache.shared.clear()

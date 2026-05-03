@@ -1,5 +1,8 @@
 import SwiftUI
 import Supabase
+import OSLog
+
+private let log = Logger.category("conv-list")
 
 /// 消息 tab — primary chat.
 ///
@@ -321,7 +324,7 @@ struct MessageTabView: View {
             if let secs = ServerTimestamp.parse(s).map({ Int($0.timeIntervalSince1970) }) {
                 return secs
             }
-            print("[conv-list] timestamp parse failed:", s)
+            log.warning("timestamp parse failed: \(s, privacy: .public)")
             return nil
         }
 

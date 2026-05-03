@@ -1,6 +1,9 @@
 import Foundation
 import UIKit
 import UserNotifications
+import OSLog
+
+private let log = Logger.category("push")
 
 /// APNS device-token lifecycle. The flow:
 ///   1. User signs in (AccountStore.current becomes non-nil)
@@ -43,7 +46,7 @@ final class PushService {
     /// most failures are entitlement/provisioning issues that won't resolve
     /// without a rebuild. Logged for diagnostics.
     func handleRegistrationFailure(_ error: Error) {
-        print("[push] APNS registration failed:", error.localizedDescription)
+        log.error("APNS registration failed: \(error.localizedDescription, privacy: .public)")
     }
 
     // MARK: - Private
@@ -79,10 +82,10 @@ final class PushService {
             req.httpBody = try JSONSerialization.data(withJSONObject: body)
             let (_, response) = try await URLSession.shared.data(for: req)
             if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-                print("[push] register HTTP \(http.statusCode)")
+                log.error("register HTTP \(http.statusCode, privacy: .public)")
             }
         } catch {
-            print("[push] register failed:", error.localizedDescription)
+            log.error("register failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 

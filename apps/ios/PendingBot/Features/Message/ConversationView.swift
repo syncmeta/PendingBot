@@ -1,6 +1,9 @@
 import SwiftUI
 import PhotosUI
 import UIKit
+import OSLog
+
+private let log = Logger.category("conversation")
 
 /// One conversation. Loads history from Supabase, runs the user-direct
 /// chat turn over Worker SSE (ChatStream), and listens for cross-device /
@@ -837,7 +840,7 @@ struct ConversationView: View {
             self.activeLookbacks = rows.map { LookbackNote(id: $0.id, body_md: $0.body_md, active: true) }
         } catch {
             // Lookbacks are an enhancement — silent fail.
-            print("[lookback] load failed:", error.localizedDescription)
+            log.warning("lookback load failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -984,7 +987,7 @@ struct ConversationView: View {
                 self.error = trimmed.isEmpty
                     ? "服务端错误（空）— 请重试或检查网络"
                     : trimmed
-                print("[chat] worker error event:", m)
+                log.error("worker error event: \(m, privacy: .public)")
             }
         }
     }

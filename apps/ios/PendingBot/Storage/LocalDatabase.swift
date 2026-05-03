@@ -1,5 +1,8 @@
 import Foundation
 import GRDB
+import OSLog
+
+private let log = Logger.category("LocalDatabase")
 
 /// On-device SQLite cache for the current user's conversations + messages.
 ///
@@ -39,7 +42,7 @@ final class LocalDatabase {
             // Fall back to an in-memory DB so the app still launches —
             // user loses offline cache + history persistence between
             // launches but everything else works.
-            print("[LocalDatabase] disk init failed twice — falling back to in-memory: \(error)")
+            log.error("disk init failed twice — falling back to in-memory: \(error.localizedDescription, privacy: .public)")
         }
         // In-memory init has no I/O so the only error path here would be
         // an internal GRDB precondition; treat as unrecoverable.
