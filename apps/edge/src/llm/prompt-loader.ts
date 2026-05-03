@@ -15,6 +15,7 @@ import discuss from '../../prompts/discuss.md';
 import review from '../../prompts/review.md';
 import scroll from '../../prompts/scroll.md';
 import scrollInjected from '../../prompts/scroll-injected.md';
+import title from '../../prompts/title.md';
 
 const PROMPTS = {
   'system': system,
@@ -23,6 +24,7 @@ const PROMPTS = {
   'review': review,
   'scroll': scroll,
   'scroll-injected': scrollInjected,
+  'title': title,
 } as const;
 
 export type PromptName = keyof typeof PROMPTS;

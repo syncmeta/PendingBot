@@ -5,6 +5,7 @@ import { serviceClient, userClient } from '../lib/supabase';
 import { runChatTurn } from '../lib/bot-reply';
 import { maybeRefreshMemory } from '../lib/memory';
 import { runLookback } from '../lib/lookback-runner';
+import { runTitle } from '../lib/title-runner';
 import type { AppBindings } from '../types';
 
 export const messageRoutes = new Hono<AppBindings>();
@@ -268,6 +269,22 @@ messageRoutes.post('/', async (c) => {
             botConfig: bot.config as LookbackConfigEnvelope | null,
             roundCount: updatedConv?.round_count ?? 0,
           });
+
+          // First-round auto-rename: replace the random place-name fallback
+          // set at conv creation with an LLM-summarized topic. Self convs
+          // keep their `caller_name | 我自己` title.
+          if (
+            (updatedConv?.round_count ?? 0) === 1 &&
+            conv.conversation_type !== 'self'
+          ) {
+            c.executionCtx.waitUntil(
+              runTitle({
+                env: c.env,
+                conversationId: parsed.conversationId,
+                botModelId: bot.model_id as string,
+              }),
+            );
+          }
         }
       } catch (err) {
         // runChatTurn handles its own errors and emits `event: error`,
