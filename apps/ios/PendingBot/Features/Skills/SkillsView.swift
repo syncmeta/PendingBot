@@ -188,7 +188,6 @@ struct SkillsView: View {
                 .value
 
             let subscribed = Set(try await subRows.map(\.skill_id))
-            let fmt = ISO8601DateFormatter()
             self.skills = try await skillRows.map { row in
                 SkillSummary(
                     id: row.id,
@@ -200,8 +199,7 @@ struct SkillsView: View {
                     license: nil,
                     is_preset: row.owner_id == nil,
                     body_length: row.body_md.count,
-                    updated_at: row.updated_at.flatMap(fmt.date(from:))
-                        .map { Int($0.timeIntervalSince1970) } ?? 0
+                    updated_at: row.updated_at.map { ServerTimestamp.epochSeconds($0, default: 0) } ?? 0
                 )
             }
         } catch {
@@ -268,9 +266,7 @@ struct SkillsView: View {
                 .single()
                 .execute()
                 .value
-            let fmt = ISO8601DateFormatter()
-            let updatedSecs = row.updated_at.flatMap(fmt.date(from:))
-                .map { Int($0.timeIntervalSince1970) } ?? 0
+            let updatedSecs = row.updated_at.map { ServerTimestamp.epochSeconds($0, default: 0) } ?? 0
             self.editingSkill = SkillDetail(
                 id: row.id,
                 name: row.frontmatter.name ?? "未命名",

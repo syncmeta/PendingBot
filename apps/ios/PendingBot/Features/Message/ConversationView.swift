@@ -892,18 +892,9 @@ struct ConversationView: View {
         if role == "log" && logKind != "discuss:anon" { return }
         let content = r["content"]?.stringValue ?? ""
         let createdRaw = r["created_at"]?.stringValue ?? ""
-        // Postgres emits timestamps with fractional seconds; the default
-        // ISO8601DateFormatter doesn't parse them. Fall through both
-        // variants before defaulting to "now" so live messages don't
-        // collapse to 1970.
-        let secs: Int = {
-            let withFrac = ISO8601DateFormatter()
-            withFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            if let d = withFrac.date(from: createdRaw) { return Int(d.timeIntervalSince1970) }
-            let plain = ISO8601DateFormatter()
-            if let d = plain.date(from: createdRaw) { return Int(d.timeIntervalSince1970) }
-            return Int(Date().timeIntervalSince1970)
-        }()
+        // Default to "now" so live messages don't collapse to 1970 if the
+        // timestamp format ever drifts.
+        let secs = ServerTimestamp.epochSeconds(createdRaw, default: Int(Date().timeIntervalSince1970))
         let senderType = role == "bot" ? "bot"
             : (role == "log" && logKind == "discuss:anon") ? "anon"
             : "user"
@@ -1050,12 +1041,6 @@ struct ConversationView: View {
                 .limit(200)
                 .execute()
                 .value
-            // Two formatters to handle Postgres's microsecond-precision
-            // timestamps; the default formatter alone can't parse those
-            // and silently returns nil → 1970-era messages.
-            let fmtFrac = ISO8601DateFormatter()
-            fmtFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            let fmt = ISO8601DateFormatter()
             var viewMessages: [ChatMessage] = []
             var cacheRows: [LocalDatabase.MessageRow] = []
             viewMessages.reserveCapacity(rows.count)
@@ -1070,11 +1055,7 @@ struct ConversationView: View {
                     : r.role == "log" && r.log_kind == "discuss:anon" ? "anon"
                     : "user"
                 let senderId = r.role == "bot" ? (r.sender_bot_id ?? "") : (r.user_id ?? "")
-                let secs: Int = {
-                    if let d = fmtFrac.date(from: r.created_at) { return Int(d.timeIntervalSince1970) }
-                    if let d = fmt.date(from: r.created_at) { return Int(d.timeIntervalSince1970) }
-                    return 0
-                }()
+                let secs = ServerTimestamp.epochSeconds(r.created_at, default: 0)
                 viewMessages.append(ChatMessage(
                     id: r.id,
                     conversation_id: r.conversation_id,
