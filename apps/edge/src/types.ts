@@ -18,9 +18,10 @@ export interface Env {
   OPENROUTER_API_KEY: string;
   HONCHO_API_KEY: string;
   HONCHO_WORKSPACE_ID: string;
-  // Jina powers the bot's web search + URL reader tool. Free tier requires
-  // no key but rate-limits aggressively; the key lifts those limits.
-  JINA_API_KEY: string;
+  // Web tools: Brave for search, Firecrawl for scrape — used by both the
+  // in-chat search/read tools and the 奏折 runner.
+  BRAVE_API_KEY: string;
+  FIRECRAWL_API_KEY: string;
   // APNS: token-based auth, two .p8 keys (Apple recommends per-environment).
   // Topic = the iOS app bundle id (key is restricted to it).
   APNS_TEAM_ID: string;

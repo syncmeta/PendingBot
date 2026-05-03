@@ -9,7 +9,7 @@ import { serviceClient } from './supabase';
 import { openrouterClient } from '../llm/client';
 import { getPrompt } from '../llm/prompt-loader';
 import { getBotMemory } from './memory';
-import { jinaSearch, jinaRead } from './jina';
+import { braveSearch, firecrawlScrape } from './web';
 
 // Scroll/奏折 runner — direct port of the agent loop in
 // PendingBot/surf-test (the user's design sandbox), adapted to run
@@ -428,7 +428,7 @@ async function execTool(
     if (name === 'web_search') {
       const query = String(args.query ?? '').trim();
       if (!query) return JSON.stringify({ error: 'empty query' });
-      const hits = await jinaSearch(env, query);
+      const hits = await braveSearch(env, query);
       return JSON.stringify({
         query,
         total: hits.length,
@@ -449,7 +449,7 @@ async function execTool(
         return '(此 URL 之前已抓取过)';
       }
       progress.visited_urls.push(url);
-      const page = await jinaRead(env, url);
+      const page = await firecrawlScrape(env, url);
       const trimmed = (page.content ?? '').slice(0, READ_TRUNCATE_CHARS);
       return trimmed || '(空)';
     }

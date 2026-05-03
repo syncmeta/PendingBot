@@ -9,7 +9,7 @@ import { serviceClient } from './supabase';
 import { openrouterClient } from '../llm/client';
 import { buildMessages, type BuildMessagesInput } from '../llm/builder';
 import { getBotMemory } from './memory';
-import { jinaSearch, jinaRead } from './jina';
+import { braveSearch, firecrawlScrape } from './web';
 
 // How many bot_reflections rows to read for the self section. The schema's
 // idx_reflections_bot_user_time covers this exact (bot_id, user_id, created_at)
@@ -424,7 +424,7 @@ async function runTool(
       const query = String(args.query ?? '').trim();
       if (!query) return JSON.stringify({ error: 'empty query' });
       ctx.emit('tool_call', { name: 'search_web', query });
-      const hits = await jinaSearch(env, query, ctx.signal);
+      const hits = await braveSearch(env, query, ctx.signal);
       ctx.emit('tool_result', { name: 'search_web', count: hits.length });
       return JSON.stringify(
         hits.slice(0, 8).map((h) => ({
@@ -438,7 +438,7 @@ async function runTool(
       const url = String(args.url ?? '').trim();
       if (!url) return JSON.stringify({ error: 'empty url' });
       ctx.emit('tool_call', { name: 'read_url', url });
-      const page = await jinaRead(env, url, ctx.signal);
+      const page = await firecrawlScrape(env, url, ctx.signal);
       ctx.emit('tool_result', { name: 'read_url', title: page.title });
       return JSON.stringify({
         url: page.url,
