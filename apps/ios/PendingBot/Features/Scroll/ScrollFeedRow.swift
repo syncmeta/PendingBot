@@ -60,17 +60,7 @@ struct ScrollFeedRow: View {
     /// Phase tag from `progress.phase`. Falls back to a generic label
     /// when the runner hasn't written one yet.
     private var progressLabel: String {
-        let phase = run.progress?.phase ?? "拟稿中"
-        switch phase {
-        case "queued":   return "排队中"
-        case "gather":   return "翻最近的对话"
-        case "plan":     return "整理思路"
-        case "research": return "上网查证"
-        case "compose":  return "落笔"
-        case "done":     return "收尾"
-        case "error":    return "拟稿失败"
-        default:         return phase
-        }
+        ScrollPhaseLabel.text(ScrollProgress.from(run.progress).phase)
     }
 
     private var relativeTime: String? {
@@ -82,16 +72,3 @@ struct ScrollFeedRow: View {
     }
 }
 
-// MARK: - AnyJSON helpers
-
-private extension AnyJSON {
-    /// Read `progress.phase` out of the JSONB blob without spinning up a
-    /// full Decoder. AnyJSON exposes both `string(...)` and `object(...)`
-    /// cases that we walk by hand. Returns nil if `self` isn't an object
-    /// or the field isn't a string.
-    var phase: String? {
-        guard case let .object(dict) = self else { return nil }
-        guard case let .string(s)? = dict["phase"] else { return nil }
-        return s
-    }
-}

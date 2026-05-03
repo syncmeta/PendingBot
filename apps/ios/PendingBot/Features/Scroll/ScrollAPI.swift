@@ -149,6 +149,72 @@ final class ScrollFeedChannel {
     }
 }
 
+// ── Progress ─────────────────────────────────────────────────────────────
+
+/// Typed view of the JSONB `progress` blob the runner writes (see
+/// `apps/edge/src/lib/scroll-runner.ts` — `ProgressState`). Every field
+/// is optional so older rows / drift in shape still render something.
+struct ScrollProgress {
+    let phase: String?
+    let notes: [Note]
+    let visitedURLs: [String]
+
+    struct Note: Hashable {
+        let text: String
+        let source: String?
+    }
+
+    static let empty = ScrollProgress(phase: nil, notes: [], visitedURLs: [])
+
+    static func from(_ json: AnyJSON?) -> ScrollProgress {
+        guard let json, case let .object(dict) = json else { return .empty }
+
+        var phase: String?
+        if case let .string(s)? = dict["phase"] { phase = s }
+
+        var notes: [Note] = []
+        if case let .array(arr)? = dict["notes"] {
+            for item in arr {
+                guard case let .object(n) = item,
+                      case let .string(text)? = n["text"],
+                      !text.isEmpty
+                else { continue }
+                var source: String?
+                if case let .string(s)? = n["source"], !s.isEmpty { source = s }
+                notes.append(Note(text: text, source: source))
+            }
+        }
+
+        var urls: [String] = []
+        if case let .array(arr)? = dict["visited_urls"] {
+            for item in arr {
+                if case let .string(s) = item, !s.isEmpty { urls.append(s) }
+            }
+        }
+
+        return ScrollProgress(phase: phase, notes: notes, visitedURLs: urls)
+    }
+}
+
+/// Human label for a runner phase (`"research"` → `"上网查证"`). Falls
+/// back to the raw value when the phase is unknown, and to a generic
+/// "拟稿中" when nothing has been written yet.
+enum ScrollPhaseLabel {
+    static func text(_ phase: String?) -> String {
+        switch phase {
+        case "queued":   return "排队中"
+        case "gather":   return "翻最近的对话"
+        case "plan":     return "整理思路"
+        case "research": return "上网查证"
+        case "compose":  return "落笔"
+        case "done":     return "收尾"
+        case "error":    return "拟稿失败"
+        case .some(let p) where !p.isEmpty: return p
+        default:         return "拟稿中"
+        }
+    }
+}
+
 // ── Decoding helpers ─────────────────────────────────────────────────────
 
 enum ScrollRunDecoder {
