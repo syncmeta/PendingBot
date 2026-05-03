@@ -86,15 +86,16 @@ struct ScrollComposerSheet: View {
         do {
             // Pull this user's bot conversations + last message preview.
             // Same shape MessageTab uses, scoped to user_bot type.
+            // Preview lives on user_unread_counts, not conversations.
             let rows: [ConvRow] = try await SupabaseStack.shared
                 .from("conversations")
                 .select("""
-                    id, bot_id, conversation_type, last_activity_at,
-                    last_message_preview,
-                    bot:bots(display_name)
+                    id, bot_id, conversation_type, updated_at,
+                    bot:bots(display_name),
+                    unread:user_unread_counts(last_message_preview)
                 """)
                 .eq("conversation_type", value: "user_bot")
-                .order("last_activity_at", ascending: false)
+                .order("updated_at", ascending: false)
                 .limit(50)
                 .execute()
                 .value
@@ -104,7 +105,7 @@ struct ScrollComposerSheet: View {
                     id: row.id,
                     bot_id: botId,
                     display_name: row.bot?.display_name ?? "机器人",
-                    preview: row.last_message_preview
+                    preview: row.unread?.first?.last_message_preview
                 )
             }
         } catch {
@@ -130,10 +131,13 @@ struct ScrollComposerSheet: View {
     private struct ConvRow: Decodable {
         let id: String
         let bot_id: String?
-        let last_message_preview: String?
         let bot: BotInline?
+        let unread: [UnreadJoin]?
         struct BotInline: Decodable {
             let display_name: String
+        }
+        struct UnreadJoin: Decodable {
+            let last_message_preview: String?
         }
     }
 
