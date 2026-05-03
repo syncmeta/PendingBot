@@ -49,8 +49,8 @@ struct Conversation: Codable, Identifiable, Hashable {
     let user_id: String
     let title: String?
     let feature_type: String?
-    /// Schema's `conversation_type`: user_bot / self / user_user / group /
-    /// discuss. Drives the list-row badge.
+    /// Schema's `conversation_type`: user_bot / self / user_user / group.
+    /// Drives the list-row badge.
     let conversation_type: String?
     let last_activity_at: Int
     let round_count: Int?

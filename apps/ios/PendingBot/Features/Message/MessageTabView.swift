@@ -28,7 +28,6 @@ struct MessageTabView: View {
     @State private var creatingGroup = false
     @State private var addingFriend = false
     @State private var scanning = false
-    @State private var startingDiscuss = false
     // Path-based nav for compact: keyed to .toolbar(.hidden, for: .tabBar)
     // so the bottom tab bar slides out alongside the push transition (rather
     // than snapping back in *after* the back transition finishes, which is
@@ -73,11 +72,6 @@ struct MessageTabView: View {
         }
         .sheet(isPresented: $scanning) {
             ScanQRSheet { Task { await load() } }
-        }
-        .sheet(isPresented: $startingDiscuss) {
-            StartDiscussSheet { _ in Task { await load() } }
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
         }
     }
 
@@ -136,9 +130,6 @@ struct MessageTabView: View {
                     }
                     Button { scanning = true; Haptics.tap() } label: {
                         Label("扫码", systemImage: "qrcode.viewfinder")
-                    }
-                    Button { startingDiscuss = true; Haptics.tap() } label: {
-                        Label("议论", systemImage: "person.2.wave.2")
                     }
                 } label: {
                     CirclePlusButton()
@@ -591,10 +582,6 @@ private struct ConvTypeBadge: View {
     let bg: Color
     init?(forType type: String?) {
         switch type {
-        case "discuss":
-            self.text = "议论"
-            self.fg = Color(hex: 0x6F4A1A)
-            self.bg = Color(hex: 0xF7ECDA)
         case "group":
             self.text = "群"
             self.fg = Color(hex: 0x1F4F8A)
@@ -712,138 +699,6 @@ private struct ScanQRSheet: View {
             self.error = error.localizedDescription
         }
     }
-}
-
-// MARK: - Start discuss sheet
-
-/// 议论 launcher: pick bots, type a topic, fire /v1/discuss/start.
-/// The runner runs in the background; the new conv shows in the message
-/// list with the 「议论」 badge.
-private struct StartDiscussSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    var onStarted: (String) -> Void
-
-    private struct BotDecodable: Decodable { let id: String; let display_name: String; let model_id: String? }
-    struct BotPick: Identifiable, Hashable {
-        let id: String
-        let name: String
-        let model_id: String?
-    }
-
-    @State private var bots: [BotPick] = []
-    @State private var selected = Set<String>()
-    @State private var topic: String = ""
-    @State private var loading = true
-    @State private var submitting = false
-    @State private var error: String?
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section("议题") {
-                    TextField("让机器人议论什么", text: $topic, axis: .vertical)
-                        .lineLimit(3...6)
-                }
-                Section("参议机器人（≥ 2）") {
-                    if bots.isEmpty {
-                        Text("加载机器人...").foregroundStyle(.secondary)
-                    }
-                    ForEach(bots) { b in
-                        Button {
-                            if selected.contains(b.id) { selected.remove(b.id) }
-                            else { selected.insert(b.id) }
-                            Haptics.tap()
-                        } label: {
-                            HStack(spacing: 10) {
-                                Image(systemName: selected.contains(b.id) ? "checkmark.circle.fill" : "circle")
-                                    .foregroundStyle(selected.contains(b.id) ? Theme.Palette.accent : Theme.Palette.inkMuted)
-                                Text(b.name).foregroundStyle(Theme.Palette.ink)
-                                Spacer()
-                                if let m = b.model_id {
-                                    Text(Self.shortSlug(m))
-                                        .font(Theme.Fonts.monoSmall)
-                                        .foregroundStyle(Theme.Palette.inkMuted)
-                                }
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                if let error {
-                    Text(error).foregroundStyle(.red).font(.footnote)
-                }
-            }
-            .navigationTitle("议论")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) { Button("取消") { dismiss() } }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("发起") { Task { await start() } }
-                        .disabled(submitting
-                                  || topic.trimmingCharacters(in: .whitespaces).isEmpty
-                                  || selected.count < 2)
-                }
-            }
-        }
-        .task { await load() }
-    }
-
-    private static func shortSlug(_ s: String) -> String {
-        if let i = s.lastIndex(of: "/") { return String(s[s.index(after: i)...]) }
-        return s
-    }
-
-    private func load() async {
-        loading = true; defer { loading = false }
-        do {
-            let rows: [BotDecodable] = try await SupabaseStack.shared
-                .from("bots")
-                .select("id, display_name, model_id")
-                .eq("is_active", value: true)
-                .order("created_at", ascending: true)
-                .execute()
-                .value
-            self.bots = rows.map { BotPick(id: $0.id, name: $0.display_name, model_id: $0.model_id) }
-        } catch {
-            self.error = error.localizedDescription
-        }
-    }
-
-    private func start() async {
-        submitting = true; defer { submitting = false }
-        do {
-            let url = HostedConfig.environment.workerURL.appendingPathComponent("v1/discuss/start")
-            var req = URLRequest(url: url)
-            req.httpMethod = "POST"
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            let token = try await SupabaseStack.shared.auth.session.accessToken
-            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            let body: [String: Any] = [
-                "topic": topic.trimmingCharacters(in: .whitespaces),
-                "botIds": Array(selected),
-                "title": "议论：\(topic.prefix(20))",
-            ]
-            req.httpBody = try JSONSerialization.data(withJSONObject: body)
-            let (data, resp) = try await URLSession.shared.data(for: req)
-            guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-                let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-                error = (payload?["error"] as? String) ?? "HTTP \((resp as? HTTPURLResponse)?.statusCode ?? -1)"
-                return
-            }
-            struct R: Decodable { let conversationId: String }
-            let r = try JSONDecoder().decode(R.self, from: data)
-            Haptics.success()
-            onStarted(r.conversationId)
-            dismiss()
-        } catch {
-            self.error = error.localizedDescription
-        }
-    }
-}
-
-private func shortSlug(_ s: String) -> String {
-    if let i = s.lastIndex(of: "/") { return String(s[s.index(after: i)...]) }
-    return s
 }
 
 // MARK: - Create group sheet
