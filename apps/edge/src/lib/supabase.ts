@@ -1,10 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Env } from '../types';
+import type { Database } from '../db/schema';
 
-// Returned client is typed against the 'pendingbot' schema. We don't generate
-// db types yet, so the row shapes stay `any` — that's a temporary hole we'll
-// close once `supabase gen types typescript` is wired up.
-export type SupabaseClient = ReturnType<typeof createClient<any, 'pendingbot'>>;
+export type SupabaseClient = ReturnType<typeof createClient<Database, 'pendingbot'>>;
 
 // Two flavors of supabase-js client:
 //
@@ -23,7 +21,7 @@ export type SupabaseClient = ReturnType<typeof createClient<any, 'pendingbot'>>;
 const DEFAULT_DB = { schema: 'pendingbot' } as const;
 
 export function userClient(env: Env, userJwt: string): SupabaseClient {
-  return createClient<any, 'pendingbot'>(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+  return createClient<Database, 'pendingbot'>(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
     global: {
       headers: { Authorization: `Bearer ${userJwt}` },
     },
@@ -36,7 +34,7 @@ export function userClient(env: Env, userJwt: string): SupabaseClient {
 }
 
 export function serviceClient(env: Env): SupabaseClient {
-  return createClient<any, 'pendingbot'>(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
+  return createClient<Database, 'pendingbot'>(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,

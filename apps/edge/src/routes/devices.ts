@@ -27,8 +27,7 @@ deviceRoutes.post('/register', async (c) => {
   }
 
   const supa = serviceClient(c.env);
-  const metadata: Record<string, unknown> = {};
-  if (parsed.apnsEnv) metadata.apns_env = parsed.apnsEnv;
+  const metadata = parsed.apnsEnv ? { apns_env: parsed.apnsEnv } : {};
 
   const { error } = await supa.from('device_tokens').upsert(
     {

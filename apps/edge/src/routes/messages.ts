@@ -204,7 +204,12 @@ messageRoutes.post('/', async (c) => {
           conversationId: parsed.conversationId,
           userId,
           parentMessageId: parentMessageId ?? '',
-          bot: { id: bot.id, model_id: bot.model_id, output_mode: bot.output_mode },
+          bot: {
+            id: bot.id,
+            model_id: bot.model_id,
+            // CHECK constraint guarantees one of these two; types can't see it.
+            output_mode: bot.output_mode === 'bubble' ? 'bubble' : 'single',
+          },
           selfPersona,
           recentContext: parsed.recentContext ?? [],
           newMessage: parsed.newMessage ?? '（系统注入：根据上一轮的查证笔记，自然继续上面的对话。不要提到这是自动触发的。）',

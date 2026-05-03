@@ -39,10 +39,11 @@ export async function notifyUser(input: NotifyUserInput): Promise<{ sent: number
   await Promise.all(
     (tokens ?? []).map(async (row) => {
       if (row.platform !== 'ios') return; // web/android out of scope here
-      const apnsEnv = (row.metadata?.apns_env === 'prod' ? 'prod' : 'dev') as 'dev' | 'prod';
+      const meta = (row.metadata ?? {}) as Record<string, unknown>;
+      const apnsEnv: 'dev' | 'prod' = meta.apns_env === 'prod' ? 'prod' : 'dev';
       const result = await sendApns({
         env,
-        deviceToken: row.token as string,
+        deviceToken: row.token,
         apnsEnv,
         payload,
         collapseId,
