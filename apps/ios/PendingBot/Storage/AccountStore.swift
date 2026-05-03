@@ -32,8 +32,19 @@ final class AccountStore: ObservableObject {
     @Published var profileDisplayName: String?
 
     private var stateTask: Task<Void, Never>?
+    private var didBootstrap = false
 
-    private init() {
+    private init() {}
+
+    /// Touch SupabaseStack and hydrate from any persisted session. Deferred
+    /// out of `init` because the lazy SupabaseClient construction (auth +
+    /// realtimeV2 + storage) is non-trivial on real-device debug builds and
+    /// blocks SwiftUI's first frame if it runs at App.init time — leaving
+    /// the launch screen visible while LLDB resolves symbols.
+    /// Idempotent; PendingBotApp calls this from `.task`.
+    func bootstrap() {
+        guard !didBootstrap else { return }
+        didBootstrap = true
         if let session = SupabaseStack.shared.auth.currentSession,
            !Self.isExpired(session) {
             current = Self.makeAccount(session: session)

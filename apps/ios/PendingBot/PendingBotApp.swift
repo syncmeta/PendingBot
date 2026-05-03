@@ -31,10 +31,11 @@ struct PendingBotApp: App {
                     }
                 }
                 .task {
+                    // Hydrate auth + start observing AFTER the first frame
+                    // paints — keeps the launch screen short on real-device
+                    // debug builds where SupabaseClient lazy init is heavy.
+                    accountStore.bootstrap()
                     unreadStore.bind(account: accountStore.current)
-                    // Touch the Supabase client so its singleton initializes
-                    // and the keychain-persisted session loads on first frame.
-                    _ = SupabaseStack.shared
                     // If the user is already signed in from a previous
                     // launch, kick off the push registration flow now.
                     if accountStore.current != nil {
