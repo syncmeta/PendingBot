@@ -15,13 +15,17 @@ struct WelcomeView: View {
     enum Stage {
         case enteringEmail
         case codeSent
-        case verifying
     }
 
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: AccountStore
 
     @State private var stage: Stage = .enteringEmail
+    /// Orthogonal to `stage`: true during any in-flight auth round-trip
+    /// (email-code verify, Apple SIWA token exchange, Google sign-in).
+    /// Kept separate from `stage` so Apple/Google verification doesn't
+    /// flip the UI into the email-code step.
+    @State private var isVerifying: Bool = false
     @State private var email: String = ""
     @State private var code: String = ""
     /// Random nonce mixed into the SIWA request. Apple bakes its SHA-256
@@ -81,7 +85,7 @@ struct WelcomeView: View {
     // MARK: - Sections
 
     private var inEmailCodeStep: Bool {
-        stage == .codeSent || stage == .verifying
+        stage == .codeSent
     }
 
     @ViewBuilder
@@ -280,13 +284,13 @@ struct WelcomeView: View {
 
     // MARK: - Derived state
 
-    private var isBusy: Bool { stage == .verifying }
+    private var isBusy: Bool { isVerifying }
 
     private var canSubmit: Bool {
+        if isVerifying { return false }
         switch stage {
         case .enteringEmail: return email.contains("@") && email.contains(".")
         case .codeSent:      return code.count >= 4
-        case .verifying:     return false
         }
     }
 
@@ -294,11 +298,11 @@ struct WelcomeView: View {
 
     @MainActor
     private func primaryAction() async {
+        if isVerifying { return }
         errorText = nil
         switch stage {
         case .enteringEmail: await sendCode()
-        case .codeSent: await verifyCode()
-        case .verifying: break
+        case .codeSent:      await verifyCode()
         }
     }
 
@@ -318,7 +322,8 @@ struct WelcomeView: View {
 
     @MainActor
     private func verifyCode() async {
-        stage = .verifying
+        isVerifying = true
+        defer { isVerifying = false }
         do {
             _ = try await EmailSignIn.verify(
                 email: email.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -327,7 +332,6 @@ struct WelcomeView: View {
             Haptics.success()
         } catch {
             errorText = error.localizedDescription
-            stage = .codeSent
             Haptics.error()
         }
     }
@@ -381,7 +385,8 @@ struct WelcomeView: View {
                 errorText = "Apple 没返回 identity token"
                 return
             }
-            stage = .verifying
+            isVerifying = true
+            defer { isVerifying = false }
             do {
                 _ = try await SupabaseStack.shared.auth.signInWithIdToken(
                     credentials: .init(provider: .apple,
@@ -391,7 +396,6 @@ struct WelcomeView: View {
                 Haptics.success()
             } catch {
                 errorText = error.localizedDescription
-                stage = .enteringEmail
                 Haptics.error()
             }
         }
@@ -402,15 +406,15 @@ struct WelcomeView: View {
     @MainActor
     private func beginGoogle() async {
         errorText = nil
-        stage = .verifying
+        isVerifying = true
+        defer { isVerifying = false }
         do {
             _ = try await PendingGoogleSignIn.run()
             Haptics.success()
         } catch PendingGoogleSignIn.Error.userCancelled {
-            stage = .enteringEmail
+            // user backed out of the Google sheet — silent, stay put
         } catch {
             errorText = error.localizedDescription
-            stage = .enteringEmail
             Haptics.error()
         }
     }
