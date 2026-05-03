@@ -519,10 +519,22 @@ private struct ConversationListRow: View {
                     }
                     Spacer(minLength: 8)
                     if conv.last_activity_at > 0 {
-                        Text(Date(timeIntervalSince1970: TimeInterval(conv.last_activity_at)),
-                             format: .relative(presentation: .numeric))
-                            .font(Theme.Fonts.caption)
-                            .foregroundStyle(Theme.Palette.inkMuted)
+                        // Preset preseeded conversations are stamped with a
+                        // slug-keyed offset on 1970-01-01 (see migration
+                        // 0024). Render those as a literal "1970年" instead
+                        // of the "55 年前" relative form so the badge reads
+                        // as a deliberate marker, not a stale timestamp.
+                        let date = Date(timeIntervalSince1970: TimeInterval(conv.last_activity_at))
+                        let isEpochYear = Calendar.current.component(.year, from: date) == 1970
+                        Group {
+                            if isEpochYear {
+                                Text("1970年")
+                            } else {
+                                Text(date, format: .relative(presentation: .numeric))
+                            }
+                        }
+                        .font(Theme.Fonts.caption)
+                        .foregroundStyle(Theme.Palette.inkMuted)
                     }
                 }
 
