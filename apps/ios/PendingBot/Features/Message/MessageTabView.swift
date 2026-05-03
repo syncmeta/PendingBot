@@ -468,9 +468,8 @@ private struct ConversationListRow: View {
     /// (compact mode pushes a new screen, so it never needs this).
     var isSelected: Bool = false
 
-    // Bot name + a separate, quieter tag for the model. Falls back to the
-    // joined `bot_name` from the conversation row if we haven't loaded the
-    // live bot record yet.
+    // Bot name pill. Falls back to the joined `bot_name` from the
+    // conversation row if we haven't loaded the live bot record yet.
     private var primaryName: String {
         // Never fall through to the raw uuid. Until the bot list lands or
         // the cache hydrate carries a name, just show the conv title (or
@@ -481,8 +480,16 @@ private struct ConversationListRow: View {
         if let t = conv.title, !t.isEmpty { return t }
         return "—"
     }
-    private var modelTag: String? { bot?.modelTag }
     private var isHumanConv: Bool { conv.conversation_type == "user_user" }
+
+    /// Pill colors for the name tag carry the bot type now that the
+    /// dedicated 公/私 tag is gone: green = human, plum = private bot,
+    /// amber = public bot.
+    private var nameTagColors: (fg: Color, bg: Color) {
+        if isHumanConv { return (Theme.Palette.accent, Theme.Palette.accentBg) }
+        if bot?.visibility == "private" { return (Theme.Palette.plum, Theme.Palette.plumBg) }
+        return (Theme.Palette.amber, Theme.Palette.amberBg)
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -511,12 +518,6 @@ private struct ConversationListRow: View {
                         badge
                     }
                     Spacer(minLength: 8)
-                    if !isHumanConv, !conv.bot_id.isEmpty {
-                        let isPrivate = bot?.visibility == "private"
-                        Text(isPrivate ? "私" : "公")
-                            .font(Theme.Fonts.caption)
-                            .foregroundStyle(isPrivate ? Theme.Palette.accent : Theme.Palette.amber)
-                    }
                     if conv.last_activity_at > 0 {
                         Text(Date(timeIntervalSince1970: TimeInterval(conv.last_activity_at)),
                              format: .relative(presentation: .numeric))
@@ -532,28 +533,14 @@ private struct ConversationListRow: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
                     Spacer(minLength: 8)
-                    HStack(spacing: 4) {
-                        Text(primaryName)
-                            .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
-                            .foregroundStyle(isHumanConv
-                                ? Color(hex: 0x5B3D8A) : Theme.Palette.accent)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Capsule().fill(isHumanConv
-                                ? Color(hex: 0xECE3F7) : Theme.Palette.accentBg))
-                            .lineLimit(1)
-                        if let tag = modelTag {
-                            Text(tag)
-                                .font(Theme.Fonts.rounded(size: 10, weight: .medium))
-                                .foregroundStyle(Theme.Palette.inkMuted)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 3)
-                                .background(Capsule().fill(Theme.Palette.surfaceMuted))
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                        }
-                    }
-                    .layoutPriority(1)
+                    Text(primaryName)
+                        .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
+                        .foregroundStyle(nameTagColors.fg)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(nameTagColors.bg))
+                        .lineLimit(1)
+                        .layoutPriority(1)
                 }
             }
         }

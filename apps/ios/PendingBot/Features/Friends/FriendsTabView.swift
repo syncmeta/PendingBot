@@ -423,10 +423,10 @@ private struct HumanKindTag: View {
     var body: some View {
         Text("人类")
             .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(Color(hex: 0x5B3D8A))
+            .foregroundStyle(Theme.Palette.accent)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(Capsule().fill(Color(hex: 0xECE3F7)))
+            .background(Capsule().fill(Theme.Palette.accentBg))
     }
 }
 
