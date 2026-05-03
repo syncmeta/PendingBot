@@ -165,6 +165,32 @@ export type Database = {
           },
         ]
       }
+      bot_invites: {
+        Row: {
+          bot_id: string
+          invited_at: string
+          user_id: string
+        }
+        Insert: {
+          bot_id: string
+          invited_at?: string
+          user_id: string
+        }
+        Update: {
+          bot_id?: string
+          invited_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bot_invites_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "bots"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       bot_lookbacks: {
         Row: {
           active: boolean
@@ -252,6 +278,7 @@ export type Database = {
         Row: {
           config: Json
           created_at: string
+          creator_id: string | null
           display_name: string
           id: string
           is_active: boolean
@@ -259,10 +286,12 @@ export type Database = {
           output_mode: string
           slug: string
           updated_at: string
+          visibility: string
         }
         Insert: {
           config?: Json
           created_at?: string
+          creator_id?: string | null
           display_name: string
           id?: string
           is_active?: boolean
@@ -270,10 +299,12 @@ export type Database = {
           output_mode?: string
           slug: string
           updated_at?: string
+          visibility?: string
         }
         Update: {
           config?: Json
           created_at?: string
+          creator_id?: string | null
           display_name?: string
           id?: string
           is_active?: boolean
@@ -281,6 +312,7 @@ export type Database = {
           output_mode?: string
           slug?: string
           updated_at?: string
+          visibility?: string
         }
         Relationships: []
       }
