@@ -11,7 +11,6 @@
 
 import system from '../../prompts/system.md';
 import identityQuest from '../../prompts/identity-quest.md';
-import discuss from '../../prompts/discuss.md';
 import review from '../../prompts/review.md';
 import scroll from '../../prompts/scroll.md';
 import scrollInjected from '../../prompts/scroll-injected.md';
@@ -20,7 +19,6 @@ import title from '../../prompts/title.md';
 const PROMPTS = {
   'system': system,
   'identity-quest': identityQuest,
-  'discuss': discuss,
   'review': review,
   'scroll': scroll,
   'scroll-injected': scrollInjected,

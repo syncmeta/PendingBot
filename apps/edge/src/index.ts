@@ -8,7 +8,6 @@ import { uploadRoutes } from './routes/upload';
 import { scrollRoutes } from './routes/scroll';
 import { reviewRoutes } from './routes/review';
 import { meRoutes } from './routes/me';
-import { discussRoutes } from './routes/discuss';
 import { contactRoutes } from './routes/contacts';
 import { deviceRoutes } from './routes/devices';
 import { handleScheduled } from './cron';
@@ -55,7 +54,6 @@ v1.route('/uploads', uploadRoutes);   // GET /v1/uploads/:id
 v1.route('/scroll', scrollRoutes);
 v1.route('/review', reviewRoutes);
 v1.route('/me', meRoutes);
-v1.route('/discuss', discussRoutes);
 v1.route('/contacts', contactRoutes);
 v1.route('/devices', deviceRoutes);
 

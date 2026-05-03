@@ -132,7 +132,7 @@ messageRoutes.post('/', async (c) => {
   }
 
   // No bot pinned (e.g. user_user, group with no default bot) → just ack
-  // the user write. Group/discuss have their own routes for the bot turn.
+  // the user write.
   if (!conv.bot_id) {
     return c.json({ message: { id: parentMessageId }, botReplyScheduled: false });
   }
