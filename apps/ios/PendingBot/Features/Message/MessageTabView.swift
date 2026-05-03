@@ -247,7 +247,7 @@ struct MessageTabView: View {
         do {
             async let botRows: [BotRow] = SupabaseStack.shared
                 .from("bots")
-                .select("id, display_name, model_id")
+                .select("id, display_name, model_id, visibility, creator_id")
                 .eq("is_active", value: true)
                 .execute()
                 .value
@@ -258,7 +258,7 @@ struct MessageTabView: View {
                 .from("conversations")
                 .select("""
                     id, bot_id, user_id, title, conversation_type, feature, round_count, updated_at,
-                    bot:bots(display_name, model_id),
+                    bot:bots(display_name, model_id, visibility, creator_id),
                     unread:user_unread_counts(last_message_at, last_message_preview, unread_count)
                 """)
                 .order("updated_at", ascending: false)
@@ -311,11 +311,14 @@ struct MessageTabView: View {
         let id: String
         let display_name: String
         let model_id: String?
+        let visibility: String?
+        let creator_id: String?
         var asBot: Bot {
             Bot(
                 id: id, display_name: display_name,
                 access_mode: nil, model: model_id,
-                default_model: model_id, user_model: nil
+                default_model: model_id, user_model: nil,
+                visibility: visibility, creator_id: creator_id
             )
         }
     }
@@ -344,6 +347,8 @@ struct MessageTabView: View {
         struct BotJoin: Decodable {
             let display_name: String?
             let model_id: String?
+            let visibility: String?
+            let creator_id: String?
         }
         struct UnreadJoin: Decodable {
             let last_message_at: String?
@@ -540,6 +545,9 @@ private struct ConversationListRow: View {
                             .background(Capsule().fill(isHumanConv
                                 ? Color(hex: 0xECE3F7) : Theme.Palette.accentBg))
                             .lineLimit(1)
+                        if !isHumanConv, !conv.bot_id.isEmpty {
+                            BotVisibilityTag(visibility: bot?.visibility)
+                        }
                         if let tag = modelTag {
                             Text(tag)
                                 .font(Theme.Fonts.rounded(size: 10, weight: .medium))

@@ -88,7 +88,8 @@ struct FriendsTabView: View {
                                     FriendRow(kind: .bot,
                                               avatarSeed: bot.id,
                                               name: bot.display_name,
-                                              modelTag: bot.modelTag)
+                                              modelTag: bot.modelTag,
+                                              botVisibility: bot.visibility)
                                         .listRowBackground(Theme.Palette.surface)
                                         .contentShape(Rectangle())
                                         .onTapGesture { Task { await tapBot(bot) } }
@@ -104,7 +105,8 @@ struct FriendsTabView: View {
                                 FriendRow(kind: .human,
                                           avatarSeed: c.id,
                                           name: c.alias ?? String(c.id.prefix(8)),
-                                          modelTag: nil)
+                                          modelTag: nil,
+                                          botVisibility: nil)
                                     .listRowBackground(Theme.Palette.surface)
                                     .contentShape(Rectangle())
                                     .onTapGesture { Task { await tapHuman(c) } }
@@ -117,7 +119,8 @@ struct FriendsTabView: View {
                                 FriendRow(kind: .bot,
                                           avatarSeed: bot.id,
                                           name: bot.display_name,
-                                          modelTag: bot.modelTag)
+                                          modelTag: bot.modelTag,
+                                          botVisibility: bot.visibility)
                                     .listRowBackground(Theme.Palette.surface)
                                     .contentShape(Rectangle())
                                     .onTapGesture { Task { await tapBot(bot) } }
@@ -166,6 +169,7 @@ struct FriendsTabView: View {
         let id: String
         let display_name: String
         let model_id: String?
+        let visibility: String?
         var modelTag: String? {
             guard let m = model_id, let i = m.lastIndex(of: "/") else { return model_id }
             return String(m[m.index(after: i)...])
@@ -180,6 +184,7 @@ struct FriendsTabView: View {
         let id: String
         let display_name: String
         let model_id: String?
+        let visibility: String?
     }
     private struct ContactDecodable: Decodable {
         let contact_user_id: String
@@ -191,7 +196,7 @@ struct FriendsTabView: View {
         do {
             async let botRowsResp: [BotDecodable] = SupabaseStack.shared
                 .from("bots")
-                .select("id, display_name, model_id")
+                .select("id, display_name, model_id, visibility")
                 .eq("is_active", value: true)
                 .order("created_at", ascending: true)
                 .execute()
@@ -206,7 +211,10 @@ struct FriendsTabView: View {
             let botRows = try await botRowsResp
             let contactRows = try await contactRowsResp
 
-            self.bots = botRows.map { BotPick(id: $0.id, display_name: $0.display_name, model_id: $0.model_id) }
+            self.bots = botRows.map {
+                BotPick(id: $0.id, display_name: $0.display_name,
+                        model_id: $0.model_id, visibility: $0.visibility)
+            }
             self.humans = contactRows.map { HumanPick(id: $0.contact_user_id, alias: $0.alias) }
         } catch {
             self.error = error.localizedDescription
@@ -306,6 +314,9 @@ private struct FriendRow: View {
     let avatarSeed: String
     let name: String
     let modelTag: String?
+    /// Drives the right-side tag pill for bots. `nil` for humans
+    /// (which render a `人类` pill instead).
+    let botVisibility: String?
 
     var body: some View {
         HStack(spacing: 10) {
@@ -342,28 +353,27 @@ private struct FriendRow: View {
 
             Spacer(minLength: 8)
 
-            // AI / 人类 tag at the far right.
-            KindTag(kind: kind)
+            // Right-side type tag. For bots the visibility decides the
+            // copy + color (公有机器人 vs 私有机器人); humans always read 人类.
+            switch kind {
+            case .bot:
+                BotVisibilityTag(visibility: botVisibility)
+            case .human:
+                HumanKindTag()
+            }
         }
         .padding(.vertical, 4)
     }
 }
 
-private struct KindTag: View {
-    let kind: FriendRow.Kind
+private struct HumanKindTag: View {
     var body: some View {
-        // Mirror the message-list "primary name" capsule colors:
-        //   AI    → accent green fg + accentBg
-        //   人类   → dark purple fg + light purple bg
-        let (text, fg, bg): (String, Color, Color) = kind == .bot
-            ? ("AI", Theme.Palette.accent, Theme.Palette.accentBg)
-            : ("人类", Color(hex: 0x5B3D8A), Color(hex: 0xECE3F7))
-        return Text(text)
+        Text("人类")
             .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(fg)
+            .foregroundStyle(Color(hex: 0x5B3D8A))
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(Capsule().fill(bg))
+            .background(Capsule().fill(Color(hex: 0xECE3F7)))
     }
 }
 
