@@ -197,16 +197,9 @@ enum ScrollNav: Hashable {
 
 private struct EmptyState: View {
     var body: some View {
-        VStack(spacing: 8) {
-            Text("还没有奏折")
-                .font(Theme.Fonts.serif(size: 18, weight: .semibold))
-                .foregroundStyle(Theme.Palette.ink)
-            Text("点右上角的「+」让某只机器人为你拟一卷。")
-                .font(Theme.Fonts.footnote)
-                .foregroundStyle(Theme.Palette.inkMuted)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 32)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        Text("这个功能还没做好")
+            .font(Theme.Fonts.serif(size: 18, weight: .semibold))
+            .foregroundStyle(Theme.Palette.ink)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

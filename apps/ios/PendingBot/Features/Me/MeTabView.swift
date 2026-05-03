@@ -23,6 +23,11 @@ struct MeTabView: View {
                 ScrollView {
                     VStack(spacing: 14) {
                         profileHeader
+                        Text("这个页面还没开始做 暂时先这样")
+                            .font(Theme.Fonts.footnote)
+                            .foregroundStyle(Theme.Palette.inkMuted)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.vertical, 4)
                         rowCard(icon: "number", label: "号码") { showHandles = true }
                         rowCard(icon: "qrcode", label: "二维码") { showQR = true }
                         NavigationLink {
