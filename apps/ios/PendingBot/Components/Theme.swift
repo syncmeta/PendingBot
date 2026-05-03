@@ -25,6 +25,12 @@ enum Theme {
         /// Pale buttery yellow — public-bot tag bg, washed from `amber`.
         static let amberBg     = Color(hex: 0xFAEDC2)
 
+        /// Plum — private-bot tag fg. Same brightness register as the
+        /// accent green and amber so all three tag pills feel paired.
+        static let plum        = Color(hex: 0x5B3D8A)
+        /// Pale lavender — private-bot tag bg, washed from `plum`.
+        static let plumBg      = Color(hex: 0xECE3F7)
+
         /// Page canvas — #fdfcfa (warm off-white).
         static let canvas        = Color(hex: 0xFDFCFA)
         /// Cards / sheets — pure white sits a hair above canvas.
