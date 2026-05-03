@@ -559,7 +559,7 @@ struct AddFriendSheet: View {
 /// handle. Refresh button: revoke the displayed handle and mint a new
 /// one. Each refresh invalidates whatever is currently floating around
 /// — perfect when you've shared your QR somewhere semi-public.
-private struct MyQRSheet: View {
+struct MyQRSheet: View {
     @State private var currentValue: String?
     @State private var loading = false
     @State private var error: String?
