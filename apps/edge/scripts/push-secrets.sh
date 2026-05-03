@@ -17,15 +17,27 @@ esac
 cd "$(dirname "$0")/.."   # apps/edge
 
 # --- inputs ------------------------------------------------------------------
+# Sensitive infrastructure identifiers (Apple Team ID, APNs Key IDs, .p8 file
+# paths) live in .secrets.local — git-ignored, sourced here. Copy
+# .secrets.local.example, fill in, and re-run.
 DEV_VARS=".dev.vars"
-APNS_KEY_DEV_FILE="${APNS_KEY_DEV_FILE:-/Users/hey/Documents/AuthKey_534U267MGS.p8}"
-APNS_KEY_PROD_FILE="${APNS_KEY_PROD_FILE:-/Users/hey/Documents/AuthKey_92G9Z8CP7N.p8}"
-APNS_TEAM_ID="${APNS_TEAM_ID:-M42BKJN82S}"
-APNS_TOPIC="${APNS_TOPIC:-com.pendingname.pendingbot}"
-APNS_KEY_ID_DEV="${APNS_KEY_ID_DEV:-534U267MGS}"
-APNS_KEY_ID_PROD="${APNS_KEY_ID_PROD:-92G9Z8CP7N}"
+SECRETS_LOCAL="scripts/.secrets.local"
 
 [ -f "$DEV_VARS" ] || { echo ".dev.vars not found at $DEV_VARS" >&2; exit 1; }
+[ -f "$SECRETS_LOCAL" ] || {
+  echo "missing $SECRETS_LOCAL — copy scripts/.secrets.local.example and fill it in" >&2
+  exit 1
+}
+# shellcheck disable=SC1090
+. "$SECRETS_LOCAL"
+
+: "${APNS_TEAM_ID:?APNS_TEAM_ID not set in $SECRETS_LOCAL}"
+: "${APNS_TOPIC:?APNS_TOPIC not set in $SECRETS_LOCAL}"
+: "${APNS_KEY_ID_DEV:?APNS_KEY_ID_DEV not set in $SECRETS_LOCAL}"
+: "${APNS_KEY_ID_PROD:?APNS_KEY_ID_PROD not set in $SECRETS_LOCAL}"
+: "${APNS_KEY_DEV_FILE:?APNS_KEY_DEV_FILE not set in $SECRETS_LOCAL}"
+: "${APNS_KEY_PROD_FILE:?APNS_KEY_PROD_FILE not set in $SECRETS_LOCAL}"
+
 [ -f "$APNS_KEY_DEV_FILE" ] || { echo "missing $APNS_KEY_DEV_FILE" >&2; exit 1; }
 [ -f "$APNS_KEY_PROD_FILE" ] || { echo "missing $APNS_KEY_PROD_FILE" >&2; exit 1; }
 
