@@ -20,19 +20,34 @@ final class LocalDatabase {
 
     private init() {
         let url = Self.databaseURL()
-        var queue: DatabaseQueue
         do {
-            queue = try DatabaseQueue(path: url.path)
+            let queue = try DatabaseQueue(path: url.path)
             try Self.migrator.migrate(queue)
+            self.dbQueue = queue
+            return
         } catch {
-            // First-resort recovery: nuke a corrupt file and try once. If
-            // that also fails we crash — better to surface the bug than
-            // silently lose persistence.
+            // First-resort recovery: nuke a possibly-corrupt file and retry.
             try? FileManager.default.removeItem(at: url)
-            queue = try! DatabaseQueue(path: url.path)
-            try! Self.migrator.migrate(queue)
         }
-        self.dbQueue = queue
+        do {
+            let queue = try DatabaseQueue(path: url.path)
+            try Self.migrator.migrate(queue)
+            self.dbQueue = queue
+            return
+        } catch {
+            // Disk is genuinely broken (full disk, sandbox issue, etc.).
+            // Fall back to an in-memory DB so the app still launches —
+            // user loses offline cache + history persistence between
+            // launches but everything else works.
+            print("[LocalDatabase] disk init failed twice — falling back to in-memory: \(error)")
+        }
+        // In-memory init has no I/O so the only error path here would be
+        // an internal GRDB precondition; treat as unrecoverable.
+        let memQueue = (try? DatabaseQueue()) ?? {
+            fatalError("LocalDatabase: in-memory DatabaseQueue() failed — unrecoverable")
+        }()
+        try? Self.migrator.migrate(memQueue)
+        self.dbQueue = memQueue
     }
 
     private static func databaseURL() -> URL {

@@ -78,17 +78,19 @@ struct APIClient {
         let token = try await currentJwt()
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
+        // String.utf8 → Data is non-failable (unlike .data(using:) which
+        // returns Optional from a legacy lossy-conversion API).
         var body = Data()
         for (name, value) in extraFields {
-            body.append("--\(boundary)\r\n".data(using: .utf8)!)
-            body.append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".data(using: .utf8)!)
-            body.append("\(value)\r\n".data(using: .utf8)!)
+            body.append(Data("--\(boundary)\r\n".utf8))
+            body.append(Data("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".utf8))
+            body.append(Data("\(value)\r\n".utf8))
         }
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(fileName)\"\r\n".data(using: .utf8)!)
-        body.append("Content-Type: \(mime)\r\n\r\n".data(using: .utf8)!)
+        body.append(Data("--\(boundary)\r\n".utf8))
+        body.append(Data("Content-Disposition: form-data; name=\"file\"; filename=\"\(fileName)\"\r\n".utf8))
+        body.append(Data("Content-Type: \(mime)\r\n\r\n".utf8))
         body.append(fileData)
-        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+        body.append(Data("\r\n--\(boundary)--\r\n".utf8))
         req.httpBody = body
         return try await send(req)
     }
