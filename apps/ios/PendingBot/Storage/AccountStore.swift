@@ -81,7 +81,7 @@ final class AccountStore: ObservableObject {
             // Pull as raw JSON so we don't fight Codable over the variant
             // shape of the custom_fields jsonb (we write it as a string map
             // but other code paths could put nested values in there).
-            let data = try await SupabaseStack.shared.database
+            let data = try await SupabaseStack.shared
                 .from("users")
                 .select("display_name, custom_fields")
                 .eq("id", value: userId)

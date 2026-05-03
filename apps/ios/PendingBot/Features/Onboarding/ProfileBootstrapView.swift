@@ -375,7 +375,7 @@ struct ProfileBootstrapView: View {
             fields["avatar_attachment_id"] = aid
         }
         do {
-            try await SupabaseStack.shared.database
+            try await SupabaseStack.shared
                 .from("users")
                 .update(Patch(display_name: trimmed, custom_fields: fields))
                 .eq("id", value: userId)

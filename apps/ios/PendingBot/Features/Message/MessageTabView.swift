@@ -245,7 +245,7 @@ struct MessageTabView: View {
         }
         loading = true; defer { loading = false }
         do {
-            async let botRows: [BotRow] = SupabaseStack.shared.database
+            async let botRows: [BotRow] = SupabaseStack.shared
                 .from("bots")
                 .select("id, display_name, model_id")
                 .eq("is_active", value: true)
@@ -254,7 +254,7 @@ struct MessageTabView: View {
             // user_unread_counts has a row per (user, conv) only after the
             // conv received its first message. Joining it INNER is the
             // empty-conv filter (item: 如果会话内消息是空的就不要出现).
-            async let convRows: [ConvRow] = SupabaseStack.shared.database
+            async let convRows: [ConvRow] = SupabaseStack.shared
                 .from("conversations")
                 .select("""
                     id, bot_id, user_id, title, conversation_type, feature, round_count, updated_at,
@@ -394,7 +394,7 @@ struct MessageTabView: View {
                 let title: String?
             }
             struct ConvOut: Decodable { let id: String }
-            let inserted: ConvOut = try await SupabaseStack.shared.database
+            let inserted: ConvOut = try await SupabaseStack.shared
                 .from("conversations")
                 .insert(ConvInsert(user_id: userId, bot_id: bot.id, title: nil))
                 .select("id")
@@ -408,7 +408,7 @@ struct MessageTabView: View {
                 let participant_id: String
                 let role: String
             }
-            try await SupabaseStack.shared.database
+            try await SupabaseStack.shared
                 .from("conversation_participants")
                 .insert([
                     Participant(conversation_id: inserted.id,
@@ -446,7 +446,7 @@ struct MessageTabView: View {
 
     private func delete(_ conv: Conversation) async {
         do {
-            try await SupabaseStack.shared.database
+            try await SupabaseStack.shared
                 .from("conversations")
                 .delete()
                 .eq("id", value: conv.id)
@@ -788,7 +788,7 @@ private struct StartDiscussSheet: View {
     private func load() async {
         loading = true; defer { loading = false }
         do {
-            let rows: [BotDecodable] = try await SupabaseStack.shared.database
+            let rows: [BotDecodable] = try await SupabaseStack.shared
                 .from("bots")
                 .select("id, display_name, model_id")
                 .eq("is_active", value: true)
@@ -944,13 +944,13 @@ private struct CreateGroupSheet: View {
     private func load() async {
         loading = true; defer { loading = false }
         do {
-            async let botRowsResp: [BotDecodable] = SupabaseStack.shared.database
+            async let botRowsResp: [BotDecodable] = SupabaseStack.shared
                 .from("bots")
                 .select("id, display_name, model_id")
                 .eq("is_active", value: true)
                 .execute()
                 .value
-            async let contactRowsResp: [ContactDecodable] = SupabaseStack.shared.database
+            async let contactRowsResp: [ContactDecodable] = SupabaseStack.shared
                 .from("user_contacts")
                 .select("contact_user_id, alias")
                 .execute()
@@ -976,7 +976,7 @@ private struct CreateGroupSheet: View {
                 let title: String
             }
             struct Inserted: Decodable { let id: String }
-            let inserted: Inserted = try await SupabaseStack.shared.database
+            let inserted: Inserted = try await SupabaseStack.shared
                 .from("conversations")
                 .insert(ConvInsert(user_id: userId, title: trimmedTitle))
                 .select("id")
@@ -1008,7 +1008,7 @@ private struct CreateGroupSheet: View {
                                         participant_id: uid,
                                         role: "member"))
             }
-            try await SupabaseStack.shared.database
+            try await SupabaseStack.shared
                 .from("conversation_participants")
                 .insert(rows)
                 .execute()

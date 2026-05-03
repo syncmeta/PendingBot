@@ -189,14 +189,14 @@ struct FriendsTabView: View {
     private func load() async {
         loading = true; defer { loading = false }
         do {
-            async let botRowsResp: [BotDecodable] = SupabaseStack.shared.database
+            async let botRowsResp: [BotDecodable] = SupabaseStack.shared
                 .from("bots")
                 .select("id, display_name, model_id")
                 .eq("is_active", value: true)
                 .order("created_at", ascending: true)
                 .execute()
                 .value
-            async let contactRowsResp: [ContactDecodable] = SupabaseStack.shared.database
+            async let contactRowsResp: [ContactDecodable] = SupabaseStack.shared
                 .from("user_contacts")
                 .select("contact_user_id, alias")
                 .order("created_at", ascending: true)
@@ -608,7 +608,7 @@ private struct MyQRSheet: View {
         loading = true; defer { loading = false }
         struct Row: Decodable { let id: String; let value: String }
         do {
-            let rows: [Row] = try await SupabaseStack.shared.database
+            let rows: [Row] = try await SupabaseStack.shared
                 .from("user_handles")
                 .select("id, value")
                 .eq("kind", value: "qr")
@@ -632,7 +632,7 @@ private struct MyQRSheet: View {
         do {
             // Revoke ALL active QR-kind handles so only the freshly-minted
             // one stays valid afterwards.
-            try await SupabaseStack.shared.database
+            try await SupabaseStack.shared
                 .from("user_handles")
                 .update(["is_active": false])
                 .eq("kind", value: "qr")
@@ -655,7 +655,7 @@ private struct MyQRSheet: View {
             let kind: String
             let label: String?
         }
-        try await SupabaseStack.shared.database
+        try await SupabaseStack.shared
             .from("user_handles")
             .insert(Insert(user_id: userId, value: token, kind: "qr", label: "QR"))
             .execute()

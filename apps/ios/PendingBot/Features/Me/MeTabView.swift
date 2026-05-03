@@ -274,7 +274,7 @@ struct MeTabView: View {
             // which cascades the rest. After it returns the JWT is dead;
             // local signOut clears the keychain + the SQLite cache so the
             // next launch lands on WelcomeView.
-            try await SupabaseStack.shared.database
+            try await SupabaseStack.shared
                 .rpc("delete_self_account")
                 .execute()
             await store.signOut()

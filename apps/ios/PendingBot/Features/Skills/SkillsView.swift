@@ -174,13 +174,13 @@ struct SkillsView: View {
             }
             struct SubRow: Decodable { let skill_id: String }
 
-            async let skillRows: [SkillRow] = SupabaseStack.shared.database
+            async let skillRows: [SkillRow] = SupabaseStack.shared
                 .from("skills")
                 .select("id, owner_id, frontmatter, body_md, updated_at")
                 .order("updated_at", ascending: false)
                 .execute()
                 .value
-            async let subRows: [SubRow] = SupabaseStack.shared.database
+            async let subRows: [SubRow] = SupabaseStack.shared
                 .from("skill_subscriptions")
                 .select("skill_id")
                 .is("conversation_id", value: nil)
@@ -221,12 +221,12 @@ struct SkillsView: View {
                     let skill_id: String
                     let conversation_id: String? = nil
                 }
-                try await SupabaseStack.shared.database
+                try await SupabaseStack.shared
                     .from("skill_subscriptions")
                     .insert(SubInsert(user_id: userId, skill_id: skill.id))
                     .execute()
             } else {
-                try await SupabaseStack.shared.database
+                try await SupabaseStack.shared
                     .from("skill_subscriptions")
                     .delete()
                     .eq("user_id", value: userId)
@@ -259,7 +259,7 @@ struct SkillsView: View {
                 let updated_at: String?
                 struct FM: Decodable { let name: String?; let description: String? }
             }
-            let row: Row = try await SupabaseStack.shared.database
+            let row: Row = try await SupabaseStack.shared
                 .from("skills")
                 .select("id, frontmatter, body_md, owner_id, updated_at")
                 .eq("id", value: skill.id)
@@ -285,7 +285,7 @@ struct SkillsView: View {
 
     private func delete(_ skill: SkillSummary) async {
         do {
-            try await SupabaseStack.shared.database
+            try await SupabaseStack.shared
                 .from("skills")
                 .delete()
                 .eq("id", value: skill.id)
@@ -509,7 +509,7 @@ struct SkillEditorSheet: View {
                     let visibility = "private"
                 }
                 struct InsertedId: Decodable { let id: String }
-                let inserted: InsertedId = try await SupabaseStack.shared.database
+                let inserted: InsertedId = try await SupabaseStack.shared
                     .from("skills")
                     .insert(Insert(owner_id: userId, frontmatter: fm, body_md: skillBody))
                     .select("id")
@@ -522,7 +522,7 @@ struct SkillEditorSheet: View {
                         let skill_id: String
                         let conversation_id: String? = nil
                     }
-                    try await SupabaseStack.shared.database
+                    try await SupabaseStack.shared
                         .from("skill_subscriptions")
                         .insert(SubInsert(user_id: userId, skill_id: inserted.id))
                         .execute()
@@ -532,7 +532,7 @@ struct SkillEditorSheet: View {
                     let frontmatter: Frontmatter
                     let body_md: String
                 }
-                try await SupabaseStack.shared.database
+                try await SupabaseStack.shared
                     .from("skills")
                     .update(Patch(frontmatter: fm, body_md: skillBody))
                     .eq("id", value: detail.id)
@@ -544,12 +544,12 @@ struct SkillEditorSheet: View {
                         let skill_id: String
                         let conversation_id: String? = nil
                     }
-                    try? await SupabaseStack.shared.database
+                    try? await SupabaseStack.shared
                         .from("skill_subscriptions")
                         .insert(SubInsert(user_id: userId, skill_id: detail.id))
                         .execute()
                 } else if !enabled && detail.enabled {
-                    try? await SupabaseStack.shared.database
+                    try? await SupabaseStack.shared
                         .from("skill_subscriptions")
                         .delete()
                         .eq("user_id", value: userId)

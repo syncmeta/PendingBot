@@ -121,7 +121,7 @@ struct MyHandlesSheet: View {
     private func load() async {
         loading = true; defer { loading = false }
         do {
-            let rows: [Decoded] = try await SupabaseStack.shared.database
+            let rows: [Decoded] = try await SupabaseStack.shared
                 .from("user_handles")
                 .select("id, value, label, kind, is_active, created_at")
                 .eq("kind", value: "number")
@@ -159,7 +159,7 @@ struct MyHandlesSheet: View {
             let kind: String
         }
         do {
-            try await SupabaseStack.shared.database
+            try await SupabaseStack.shared
                 .from("user_handles")
                 .insert(Insert(user_id: userId, value: value,
                                label: trimmedLabel.isEmpty ? nil : trimmedLabel,
@@ -188,7 +188,7 @@ struct MyHandlesSheet: View {
 
     private func revoke(_ id: String) async {
         do {
-            try await SupabaseStack.shared.database
+            try await SupabaseStack.shared
                 .from("user_handles")
                 .update(["is_active": false])
                 .eq("id", value: id)

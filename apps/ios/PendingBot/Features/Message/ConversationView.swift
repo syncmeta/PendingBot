@@ -413,7 +413,7 @@ struct ConversationView: View {
         // bot ids — pull from conversation_participants.
         do {
             struct PRow: Decodable { let participant_id: String }
-            let rows: [PRow] = try await SupabaseStack.shared.database
+            let rows: [PRow] = try await SupabaseStack.shared
                 .from("conversation_participants")
                 .select("participant_id")
                 .eq("conversation_id", value: conversation.id)
@@ -548,7 +548,7 @@ struct ConversationView: View {
                 // Atomic conv + participants insert via security-definer RPC
                 // (migration 0011). Avoids the iOS-side RLS class entirely.
                 struct RpcArgs: Encodable { let p_bot_id: String }
-                let newId: UUID = try await SupabaseStack.shared.database
+                let newId: UUID = try await SupabaseStack.shared
                     .rpc("open_user_bot_conv",
                          params: RpcArgs(p_bot_id: peer.peerId))
                     .execute()
@@ -591,7 +591,7 @@ struct ConversationView: View {
                 // Singleton self-chat conv. RPC is find-or-create so
                 // re-tapping the friends-tab self row reuses the same
                 // conv (and its history) instead of stacking.
-                let newId: UUID = try await SupabaseStack.shared.database
+                let newId: UUID = try await SupabaseStack.shared
                     .rpc("open_self_conv")
                     .execute()
                     .value
@@ -680,7 +680,7 @@ struct ConversationView: View {
             let content: String
         }
         do {
-            try await SupabaseStack.shared.database
+            try await SupabaseStack.shared
                 .from("messages")
                 .insert(Insert(
                     client_message_id: UUID().uuidString.lowercased(),
@@ -705,7 +705,7 @@ struct ConversationView: View {
             let content: String
         }
         do {
-            try await SupabaseStack.shared.database
+            try await SupabaseStack.shared
                 .from("messages")
                 .insert(Insert(
                     client_message_id: UUID().uuidString.lowercased(),
@@ -829,7 +829,7 @@ struct ConversationView: View {
             let active: Bool
         }
         do {
-            let rows: [Row] = try await SupabaseStack.shared.database
+            let rows: [Row] = try await SupabaseStack.shared
                 .from("bot_lookbacks")
                 .select("id, body_md, active")
                 .eq("conversation_id", value: conversation.id)
@@ -1036,7 +1036,7 @@ struct ConversationView: View {
             // Discuss convs need the user's anonymous interjections (role='log',
             // log_kind='discuss:anon') in the visible feed. Other convs filter
             // logs out client-side; review/surf step logs aren't rendered here.
-            let rows: [Row] = try await SupabaseStack.shared.database
+            let rows: [Row] = try await SupabaseStack.shared
                 .from("messages")
                 .select("id, client_message_id, conversation_id, user_id, sender_bot_id, role, log_kind, content, status, created_at")
                 .eq("conversation_id", value: conversation.id)
