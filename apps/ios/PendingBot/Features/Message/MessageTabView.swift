@@ -482,6 +482,7 @@ private struct ConversationListRow: View {
         return "—"
     }
     private var modelTag: String? { bot?.modelTag }
+    private var isHumanConv: Bool { conv.conversation_type == "user_user" }
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -510,6 +511,12 @@ private struct ConversationListRow: View {
                         badge
                     }
                     Spacer(minLength: 8)
+                    if !isHumanConv, !conv.bot_id.isEmpty {
+                        let isPrivate = bot?.visibility == "private"
+                        Text(isPrivate ? "私" : "公")
+                            .font(Theme.Fonts.caption)
+                            .foregroundStyle(isPrivate ? Theme.Palette.accent : Theme.Palette.amber)
+                    }
                     if conv.last_activity_at > 0 {
                         Text(Date(timeIntervalSince1970: TimeInterval(conv.last_activity_at)),
                              format: .relative(presentation: .numeric))
@@ -526,7 +533,6 @@ private struct ConversationListRow: View {
                         .truncationMode(.tail)
                     Spacer(minLength: 8)
                     HStack(spacing: 4) {
-                        let isHumanConv = conv.conversation_type == "user_user"
                         Text(primaryName)
                             .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
                             .foregroundStyle(isHumanConv
@@ -536,9 +542,6 @@ private struct ConversationListRow: View {
                             .background(Capsule().fill(isHumanConv
                                 ? Color(hex: 0xECE3F7) : Theme.Palette.accentBg))
                             .lineLimit(1)
-                        if !isHumanConv, !conv.bot_id.isEmpty {
-                            BotVisibilityTag(visibility: bot?.visibility)
-                        }
                         if let tag = modelTag {
                             Text(tag)
                                 .font(Theme.Fonts.rounded(size: 10, weight: .medium))
