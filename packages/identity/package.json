@@ -12,7 +12,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@pendingbot/shared-types": "workspace:*",
     "hono": "^4",
     "jose": "^5",
     "zod": "^3"

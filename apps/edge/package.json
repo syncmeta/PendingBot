@@ -17,9 +17,7 @@
   },
   "dependencies": {
     "@honcho-ai/sdk": "^2",
-    "@pendingbot/core": "workspace:*",
     "@pendingbot/identity": "workspace:*",
-    "@pendingbot/shared-types": "workspace:*",
     "@supabase/supabase-js": "^2",
     "hono": "^4",
     "jose": "^5",
