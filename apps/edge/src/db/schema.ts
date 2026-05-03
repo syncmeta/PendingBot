@@ -1111,6 +1111,10 @@ export type Database = {
         Args: { p_email: string; p_meta: Json; p_uid: string }
         Returns: undefined
       }
+      bot_invites_add: {
+        Args: { p_bot_id: string; p_handle: string }
+        Returns: string
+      }
       delete_self_account: { Args: never; Returns: undefined }
       is_participant: { Args: { conv_id: string }; Returns: boolean }
       open_self_conv: { Args: never; Returns: string }
