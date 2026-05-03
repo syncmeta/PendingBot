@@ -129,57 +129,6 @@ function formatGroupHistory(
     .join('\n');
 }
 
-async function runOneBotSpeech(
-  env: Env,
-  bot: BotRow,
-  topic: string,
-  group: GroupTurn[],
-  byId: Map<string, BotRow>,
-  signal: AbortSignal,
-): Promise<{
-  text: string;
-  inputTokens: number;
-  outputTokens: number;
-  generationId?: string;
-}> {
-  const supa = serviceClient(env);
-  const personal = await fetchPersonalHistory(supa, /* placeholder */ '', bot.id);
-  // Note: we don't have user_id here — drop personal context if absent. The
-  // outer caller passes userId via runDiscuss → fetchPersonalHistory expects
-  // it; refactor to accept it.
-  const personalBlock = personal.length > 0
-    ? `## 你和对方最近的对话\n${personal.map((m) => `${m.role === 'bot' ? '我' : '对方'}：${m.content}`).join('\n')}`
-    : '## 你和对方最近的对话\n（暂无历史）';
-
-  const groupBlock = `## 群聊到目前为止\n${formatGroupHistory(group, byId, bot.id)}`;
-  const sysTemplate = getPrompt('discuss');
-  const systemPrompt = sysTemplate.replace(/\{\{bot_display_name\}\}/g, bot.display_name);
-
-  const userMsg = [
-    `## 议题\n${topic}`,
-    personalBlock,
-    groupBlock,
-  ].join('\n\n');
-
-  const openai = openrouterClient(env);
-  const completion = await openai.chat.completions.create(
-    {
-      model: bot.model_id,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userMsg },
-      ],
-    },
-    { signal },
-  );
-  return {
-    text: (completion.choices[0]?.message?.content ?? '').trim(),
-    inputTokens: completion.usage?.prompt_tokens ?? 0,
-    outputTokens: completion.usage?.completion_tokens ?? 0,
-    generationId: completion.id,
-  };
-}
-
 export async function runDiscuss(input: RunDiscussInput): Promise<void> {
   const { env, conversationId, userId, topic, botIds } = input;
   const supa = serviceClient(env);
