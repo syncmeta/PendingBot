@@ -1,6 +1,7 @@
 import type { Env } from '../types';
 
-// Jina is the surf agent's eyes:
+// Jina powers the bot's optional web-lookup tool — used by bot-reply for
+// in-chat search and by scroll-runner for 奏折 article research:
 //   s.jina.ai/?q=<query>  → web search; returns ranked URL+title+snippet entries
 //   r.jina.ai/<url>       → "Reader" — fetches the page and yields clean LLM-friendly markdown
 //

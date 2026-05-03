@@ -43,7 +43,7 @@ struct ConversationView: View {
     @State private var chatTurnTask: Task<Void, Never>?
     /// Realtime subscription token for this conv's `messages` channel —
     /// dropped when the view disappears. Picks up cross-device messages
-    /// and bot rows that land via background paths (cron, surf, review).
+    /// and bot rows that land via background paths (cron, review).
     @State private var realtimeToken: ConvSubscriptionToken?
     /// Lookback notes the bot wrote about prior turns (Realtime push from
     /// pendingbot.bot_lookbacks). Invisible to the user; passed in
@@ -53,15 +53,6 @@ struct ConversationView: View {
     /// sent anything before it fires, we auto-trigger a continuation turn
     /// so the bot's fact-check actually surfaces.
     @State private var lookbackAutoFireTask: Task<Void, Never>?
-    // Transient surf_status events from the in-flight 联网 search. Cleared
-    // when the bot reply arrives. Displayed as an inline log above the
-    // pending-typing row, mirroring the web's `.surf-log` panel.
-    @State private var searchLog: [String] = []
-    // When a bot reply lands, the in-flight searchLog is pinned to that
-    // message's id and rendered as a collapsed chip above its bubble — so
-    // the search trace doesn't disappear, it just folds away. Session-only;
-    // not persisted across reloads (server doesn't store it yet).
-    @State private var pinnedToolLogs: [String: [String]] = [:]
     // Skill summaries — counted in the settings sheet so the user sees
     // how many are active without leaving the conversation.
     @State private var skills: [SkillSummary] = []
@@ -155,8 +146,7 @@ struct ConversationView: View {
                                        conversationID: conversation.id,
                                        botID: avatarEmojiSeed,
                                        selfAvatar: bubbleSelfAvatar,
-                                       serverURL: account?.workerURL,
-                                       toolLog: pinnedToolLogs[msg.id])
+                                       serverURL: account?.workerURL)
                                 .id(msg.id)
                                 .contextMenu {
                                     Button {
@@ -181,13 +171,6 @@ struct ConversationView: View {
                                 .transition(.blurReplace)
                         }
 
-                        if !searchLog.isEmpty {
-                            searchLogPanel
-                                .id("searchlog")
-                                .padding(.horizontal, Theme.Metrics.gutter)
-                                .padding(.top, 4)
-                        }
-
                         Color.clear.frame(height: 8).id("bottom")
                     }
                     .padding(.top, 4)
@@ -195,9 +178,6 @@ struct ConversationView: View {
                 }
                 .scrollDismissesKeyboard(.interactively)
                 .onChange(of: messages.count) { _, _ in
-                    scrollToBottom(proxy: proxy)
-                }
-                .onChange(of: searchLog.count) { _, _ in
                     scrollToBottom(proxy: proxy)
                 }
             }
@@ -382,60 +362,6 @@ struct ConversationView: View {
         .padding(.horizontal, Theme.Metrics.gutter)
         .padding(.top, 6)
         .padding(.bottom, 8)
-    }
-
-    // Inline list of recent surf_status events while the server is doing a
-    // web lookup. Disappears when the bot reply arrives (handle() clears
-    // `searchLog`). Editorial timeline style — accent dots, per-line fade-in,
-    // older lines softened so the latest status reads as the focal point.
-    private var searchLogPanel: some View {
-        let entries = Array(searchLog.enumerated())
-        let latestIndex = entries.last?.offset ?? 0
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                PulsingGlobe()
-                Text("联网检索")
-                    .font(Theme.Fonts.rounded(size: 12, weight: .semibold))
-                    .foregroundStyle(Theme.Palette.accent)
-                Spacer(minLength: 0)
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(entries, id: \.offset) { idx, line in
-                    HStack(alignment: .top, spacing: 10) {
-                        Circle()
-                            .fill(idx == latestIndex
-                                  ? Theme.Palette.accent.opacity(0.8)
-                                  : Theme.Palette.inkMuted.opacity(0.35))
-                            .frame(width: 5, height: 5)
-                            .padding(.top, 7)
-                        Text(line)
-                            .font(Theme.Fonts.rounded(size: 13, weight: .regular))
-                            .foregroundStyle(idx == latestIndex
-                                             ? Theme.Palette.ink.opacity(0.85)
-                                             : Theme.Palette.inkMuted.opacity(0.7))
-                            .lineLimit(3)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .transition(.asymmetric(
-                        insertion: .opacity.combined(with: .move(edge: .top)),
-                        removal: .opacity
-                    ))
-                }
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Theme.Palette.surfaceMuted.opacity(0.55))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(Theme.Palette.accent.opacity(0.12), lineWidth: 0.6)
-        )
-        .animation(.easeOut(duration: 0.28), value: searchLog.count)
     }
 
     // ── Send ────────────────────────────────────────────────────────────────
@@ -911,7 +837,7 @@ struct ConversationView: View {
 
         do {
             // Direct Supabase read — RLS gates participation. Excludes role='log'
-            // (review/surf step entries) which are rendered separately.
+            // (review step entries) which are rendered separately.
             struct Row: Decodable {
                 let id: String
                 let client_message_id: String?
@@ -1085,30 +1011,6 @@ struct ConversationView: View {
         } catch {
             self.error = "上传失败: \(error.localizedDescription)"
             Haptics.error()
-        }
-    }
-}
-
-/// Soft pulsing globe — telegraphs that a web lookup is in flight without
-/// the harshness of a spinner. Two stacked breathing strokes around a
-/// muted-accent globe glyph.
-private struct PulsingGlobe: View {
-    @State private var pulse = false
-    var body: some View {
-        ZStack {
-            Circle()
-                .stroke(Theme.Palette.accent.opacity(pulse ? 0.0 : 0.35), lineWidth: 1)
-                .frame(width: 22, height: 22)
-                .scaleEffect(pulse ? 1.4 : 0.9)
-            Image(systemName: "globe")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Theme.Palette.accent.opacity(0.9))
-        }
-        .frame(width: 22, height: 22)
-        .onAppear {
-            withAnimation(.easeOut(duration: 1.4).repeatForever(autoreverses: false)) {
-                pulse = true
-            }
         }
     }
 }

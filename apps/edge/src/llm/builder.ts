@@ -75,7 +75,7 @@ const SINGLE_INSTRUCTIONS =
 function toLlmRole(role: 'user' | 'bot' | 'human' | 'log'): 'user' | 'assistant' | null {
   if (role === 'bot') return 'assistant';
   if (role === 'user' || role === 'human') return 'user';
-  return null; // logs (review/surf step entries) are not part of dialogue
+  return null; // logs (review step entries) are not part of dialogue
 }
 
 // Two-source dialectic per plan/02: passive Honcho representation +

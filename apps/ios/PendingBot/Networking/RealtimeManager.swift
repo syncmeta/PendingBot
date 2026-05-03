@@ -11,7 +11,7 @@ import Realtime
 ///   conv-level (lazy)     — subscribes to `pendingbot.messages` filtered
 ///       by conversation_id; opened when a conv view appears, closed when
 ///       it disappears. INSERT + UPDATE both bubble up so streaming bot
-///       replies (UPDATE on content_partial) and review/surf log entries
+///       replies (UPDATE on content_partial) and review log entries
 ///       (INSERT role='log') flow through the same handler.
 @MainActor
 final class RealtimeManager {

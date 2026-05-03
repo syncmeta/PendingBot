@@ -10,13 +10,13 @@ fileprivate typealias MDTheme = MarkdownUI.Theme
 
 /// Renders chat / log content as full Markdown — headings, lists, tables,
 /// blockquotes, fenced code (with a copy + ▶ 运行 toolbar). Bot messages
-/// and surf logs both use this, so the styling tracks `Theme.Palette` /
-/// `Theme.Fonts` rather than MarkdownUI's stock palette.
+/// and 奏折 articles both use this, so the styling tracks `Theme.Palette`
+/// / `Theme.Fonts` rather than MarkdownUI's stock palette.
 struct MarkdownText: View {
     let text: String
     /// True for the chat surface — turns on the heavyweight code-block
-    /// toolbar. False keeps it lightweight (used in surf-log entries where
-    /// every byte counts and "run" doesn't make sense).
+    /// toolbar. False keeps it lightweight (used in 奏折 articles where
+    /// "run" doesn't make sense).
     var allowCodeRun: Bool = false
 
     var body: some View {
