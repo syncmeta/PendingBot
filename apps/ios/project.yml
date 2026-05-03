@@ -35,17 +35,10 @@ packages:
   MarkdownUI:
     url: https://github.com/gonzalezreal/swift-markdown-ui
     from: 2.4.0
-  Clerk:
-    # LEGACY: Used to be the auth provider; will be removed in B9 when
-    # supabase-swift takes over Sign in with Apple + email magic-link flows.
-    # Kept on the dep list now so the existing Networking layer compiles
-    # untouched until that swap lands.
-    url: https://github.com/clerk/clerk-ios
-    from: 0.50.0
   Supabase:
     # supabase-swift — official iOS SDK covering Auth, PostgREST (RLS-gated
     # direct DB reads), Realtime (postgres_changes / broadcast / presence),
-    # and Storage. Will gradually take over from Clerk + custom REST in B9.
+    # and Storage.
     url: https://github.com/supabase/supabase-swift
     from: 2.0.0
   GRDB:
@@ -100,8 +93,6 @@ targets:
     dependencies:
       - package: MarkdownUI
         product: MarkdownUI
-      - package: Clerk
-        product: Clerk
       - package: Supabase
         product: Supabase
       - package: GRDB

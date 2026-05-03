@@ -105,9 +105,8 @@ struct MeTabView: View {
         .buttonStyle(.plain)
     }
 
-    // Prefer Clerk's hosted avatar; fall back to the deterministic BotAvatar
-    // (svg pattern keyed off user_id) so an unset image_url still renders
-    // something coherent instead of a generic placeholder.
+    // Deterministic BotAvatar (svg pattern keyed off user_id) so an unset
+    // avatar still renders something coherent instead of a generic placeholder.
     @ViewBuilder
     private var profileAvatar: some View {
         let seed = store.avatarSeed
@@ -120,8 +119,8 @@ struct MeTabView: View {
     }
 
     // The server's display_name is the canonical handle (PATCH /me/profile
-    // edits it directly). When that's empty, fall back through the Clerk
-    // mirror columns Clerk gave us at last login before resorting to "未命名".
+    // edits it directly). When that's empty, fall back to the local-part of
+    // the verified email, then "未命名".
     private var displayLabel: String {
         let ws = CharacterSet.whitespacesAndNewlines
         if let stored = store.profileDisplayName?.trimmingCharacters(in: ws),
@@ -130,13 +129,6 @@ struct MeTabView: View {
         }
         let dn = profile?.display_name.trimmingCharacters(in: ws) ?? ""
         if !dn.isEmpty { return dn }
-        let full = [profile?.first_name, profile?.last_name]
-            .compactMap { $0?.trimmingCharacters(in: ws) }
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
-        if !full.isEmpty { return full }
-        let un = profile?.username?.trimmingCharacters(in: ws) ?? ""
-        if !un.isEmpty { return un }
         if let local = profile?.email?.split(separator: "@").first, !local.isEmpty {
             return String(local)
         }

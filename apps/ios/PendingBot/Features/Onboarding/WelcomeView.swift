@@ -9,9 +9,8 @@ import CryptoKit
 /// after which the same row is replaced by the code-entry input.
 ///
 /// The visual layout is the byte-for-byte port of commit c0e7980 (the
-/// build that shipped to TestFlight). Only the auth wiring changed:
-/// every Clerk call has been replaced with the equivalent supabase-swift
-/// path through AppleSignIn / PendingGoogleSignIn / EmailSignIn helpers.
+/// build that shipped to TestFlight). Auth wiring goes through the
+/// supabase-swift helpers AppleSignIn / PendingGoogleSignIn / EmailSignIn.
 struct WelcomeView: View {
     enum Stage {
         case enteringEmail
