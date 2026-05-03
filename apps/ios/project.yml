@@ -88,14 +88,13 @@ targets:
         # keychain-access-groups entitlement (iOS doesn't enforce this).
         # Without it SecItemAdd fails with errSecMissingEntitlement (-34018)
         # and the "未能完成操作 KeychainError 错误1" alert pops on Mac login.
-        CODE_SIGN_ENTITLEMENTS: PendingBot/PendingBot.entitlements
+        CODE_SIGN_ENTITLEMENTS: PendingBot/Resources/PendingBot.entitlements
         CURRENT_PROJECT_VERSION: 2
         MARKETING_VERSION: "0.1.0"
         # Make Color.accentColor resolve to our asset-catalog AccentColor
         # (the deep forest green). Without this Xcode-generated setting,
         # XcodeGen-built projects fall back to the system blue tint.
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
-        CODE_SIGN_ENTITLEMENTS: PendingBot/Resources/PendingBot.entitlements
     dependencies:
       - package: MarkdownUI
         product: MarkdownUI
