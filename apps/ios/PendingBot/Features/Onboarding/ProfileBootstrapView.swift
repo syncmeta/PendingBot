@@ -5,9 +5,10 @@ import PhotosUI
 /// sign-in (when the user hasn't set a profile yet) and re-openable from
 /// the profile sub-page.
 ///
-/// Both name and avatar are picked client-side from a bundled corpus,
-/// so the user can roll repeatedly without making API calls. We only
-/// hit Supabase when they tap 确定.
+/// Swiping is a real horizontal-paging ScrollView (iOS-home-screen feel)
+/// — each card is one entry in `pages`, and reaching the last card lazily
+/// rolls a fresh one behind it. The user commits the *currently visible*
+/// card by tapping the forward arrow.
 struct ProfileBootstrapView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: AccountStore
@@ -17,19 +18,19 @@ struct ProfileBootstrapView: View {
     /// false for first-launch flow where committing is required.
     var allowsBack: Bool = false
 
-    @State private var name: String = ""
-    @State private var avatarSeed: String = UUID().uuidString
-    /// Once the user picks a custom photo we hold its bytes here. Set
-    /// trumps the BotAvatar — both for the front card preview and the
-    /// final commit (we upload then store the attachment id).
-    @State private var customImageData: Data?
-    /// Server-assigned attachment id once we've uploaded the custom
-    /// image. Persists across "再来一次" rolls inside this view.
-    @State private var customAttachmentId: String?
-    @State private var nextName: String = ""
-    @State private var nextAvatarSeed: String = UUID().uuidString
-    @State private var dragOffset: CGFloat = 0
-    @State private var animating = false
+    /// One swipeable card. Custom image bytes / attachment id live on the
+    /// page itself so a customised card sticks around even after the user
+    /// swipes past it and back.
+    private struct Page: Identifiable, Equatable {
+        let id = UUID()
+        var seed: String
+        var name: String
+        var customImageData: Data? = nil
+        var customAttachmentId: String? = nil
+    }
+
+    @State private var pages: [Page] = []
+    @State private var visibleId: UUID?
     @State private var saving = false
     @State private var editing = false
     @State private var error: String?
@@ -45,8 +46,6 @@ struct ProfileBootstrapView: View {
                 Spacer(minLength: 12)
                 headerCopy
 
-                // Two flex spacers around the card centre it vertically
-                // between the header copy above and the caption below.
                 Spacer(minLength: 0)
                 cardCarousel
                 Spacer(minLength: 0)
@@ -60,43 +59,39 @@ struct ProfileBootstrapView: View {
                     }
                     customizeRow
                 }
+                .padding(.horizontal, 28)
                 Spacer(minLength: 18)
                 confirmRow
+                    .padding(.horizontal, 28)
                 Spacer(minLength: 8)
             }
-            .padding(.horizontal, 28)
         }
         .onAppear {
-            if allowsBack {
-                // Re-entry from profile sub-page: pre-fill the current
-                // profile so the user can keep / tweak it instead of
-                // landing on a fresh random pair.
-                if name.isEmpty {
-                    name = store.profileDisplayName
-                        ?? store.current?.displayName ?? NameCorpus.shared.random()
-                }
-                if let seed = store.avatarSeed, !seed.isEmpty {
-                    avatarSeed = seed
-                }
-                if let aid = store.avatarAttachmentId, !aid.isEmpty {
-                    customAttachmentId = aid
-                    // customImageData stays nil — UserAvatar will lazy-
-                    // load the existing upload via /v1/uploads/<id>.
-                }
-            } else {
-                if name.isEmpty { name = NameCorpus.shared.random() }
-            }
-            if nextName.isEmpty { nextName = NameCorpus.shared.random() }
+            seedPagesIfNeeded()
         }
         .sheet(isPresented: $editing) {
-            CustomizeSheet(
-                name: $name,
-                avatarSeed: $avatarSeed,
-                customImageData: $customImageData,
-                customAttachmentId: $customAttachmentId
-            )
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
+            if let idx = currentIndex {
+                CustomizeSheet(
+                    name: Binding(
+                        get: { pages[idx].name },
+                        set: { pages[idx].name = $0 }
+                    ),
+                    avatarSeed: Binding(
+                        get: { pages[idx].seed },
+                        set: { pages[idx].seed = $0 }
+                    ),
+                    customImageData: Binding(
+                        get: { pages[idx].customImageData },
+                        set: { pages[idx].customImageData = $0 }
+                    ),
+                    customAttachmentId: Binding(
+                        get: { pages[idx].customAttachmentId },
+                        set: { pages[idx].customAttachmentId = $0 }
+                    )
+                )
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+            }
         }
     }
 
@@ -131,6 +126,7 @@ struct ProfileBootstrapView: View {
             Spacer()
         }
         .frame(height: 40)
+        .padding(.horizontal, 28)
         .padding(.top, 8)
     }
 
@@ -144,35 +140,36 @@ struct ProfileBootstrapView: View {
                 .foregroundStyle(Theme.Palette.inkMuted)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 28)
     }
 
+    /// Horizontal paging ScrollView. `.scrollTargetBehavior(.viewAligned)`
+    /// snaps to the nearest card after each flick — same momentum + snap
+    /// curve UIKit gives the iOS home-screen pager. `contentMargins`
+    /// centres the focused card while leaving a peek of the next one.
     private var cardCarousel: some View {
-        // Card carousel: current card centered with a peek of the
-        // pre-rolled "next" card on the right. Swiping left commits —
-        // current slides off, next becomes current, and we pre-roll a
-        // fresh next behind it.
         GeometryReader { geo in
             let cardWidth = geo.size.width * cardWidthFraction
-            ZStack(alignment: .leading) {
-                // Next card (peek on the right of current). Always uses
-                // a generated avatar — the custom image only sticks to
-                // the current card.
-                nameCardView(seed: nextAvatarSeed, name: nextName,
-                             customImage: nil, attachmentId: nil)
-                    .frame(width: cardWidth)
-                    .scaleEffect(0.95)
-                    .opacity(0.6)
-                    .offset(x: cardWidth + cardGap + dragOffset)
-
-                // Current card.
-                nameCardView(seed: avatarSeed, name: name,
-                             customImage: customImageData,
-                             attachmentId: customAttachmentId)
-                    .frame(width: cardWidth)
-                    .offset(x: dragOffset)
-                    .gesture(swipeGesture(cardWidth: cardWidth))
+            let sideMargin = max(0, (geo.size.width - cardWidth) / 2)
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: cardGap) {
+                    ForEach(pages) { page in
+                        nameCardView(seed: page.seed, name: page.name,
+                                     customImage: page.customImageData,
+                                     attachmentId: page.customAttachmentId)
+                            .frame(width: cardWidth)
+                            .id(page.id)
+                    }
+                }
+                .scrollTargetLayout()
             }
-            .frame(width: geo.size.width, alignment: .leading)
+            .contentMargins(.horizontal, sideMargin, for: .scrollContent)
+            .scrollTargetBehavior(.viewAligned)
+            .scrollPosition(id: $visibleId)
+            .onChange(of: visibleId) { _, newId in
+                ensureLookahead(after: newId)
+                Haptics.tap()
+            }
         }
         .frame(height: 200)
     }
@@ -206,6 +203,7 @@ struct ProfileBootstrapView: View {
             .background(Capsule().fill(Theme.Palette.accentBg))
         }
         .buttonStyle(.plain)
+        .disabled(currentIndex == nil)
     }
 
     private var confirmRow: some View {
@@ -280,87 +278,64 @@ struct ProfileBootstrapView: View {
         .shadow(color: .black.opacity(0.10), radius: 14, x: 0, y: 6)
     }
 
-    // ── Drag mechanics ──────────────────────────────────────────────────
+    // ── Page bookkeeping ───────────────────────────────────────────────
 
-    /// Returns the mid-drag offset given a raw translation. Mimics
-    /// iOS-native scroll feel: the first ~30% feels 1:1; past the card
-    /// width it gets progressively heavier (rubber-band) so flicking
-    /// without enough distance still snaps back.
-    private func rubberBand(_ translation: CGFloat, cardWidth: CGFloat) -> CGFloat {
-        let raw = min(0, translation)
-        let absT = -raw
-        if absT <= cardWidth * 0.6 { return raw }
-        let extra = absT - cardWidth * 0.6
-        let damped = cardWidth * 0.6 + (cardWidth * 0.4) * (1 - exp(-extra / (cardWidth * 0.6)))
-        return -damped
+    private var currentIndex: Int? {
+        guard let visibleId else { return pages.indices.first }
+        return pages.firstIndex { $0.id == visibleId }
     }
 
-    private func swipeGesture(cardWidth: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: 4, coordinateSpace: .local)
-            .onChanged { v in
-                guard !animating else { return }
-                dragOffset = rubberBand(v.translation.width, cardWidth: cardWidth)
-            }
-            .onEnded { v in
-                guard !animating else { return }
-                let threshold = cardWidth * 0.30
-                let velocity = v.predictedEndTranslation.width - v.translation.width
-                let shouldCommit =
-                    v.translation.width < -threshold ||
-                    (v.translation.width < -16 && velocity < -200)
-                if shouldCommit {
-                    advance(cardWidth: cardWidth)
-                } else {
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
-                        dragOffset = 0
-                    }
-                }
-            }
-    }
-
-    /// Commit the swipe: slide the current card all the way off, then in
-    /// the same animation step swap state and slide it back to centre.
-    /// Doing the swap inside `withAnimation(.linear(duration: 0))` would
-    /// snap visibly — instead we wait for the slide to finish, swap, and
-    /// reset the offset inside a Transaction with animations disabled so
-    /// the (now current) card simply IS at zero, no jump frame.
-    private func advance(cardWidth: CGFloat) {
-        guard !animating else { return }
-        animating = true
-        Haptics.tap()
-        let target = -(cardWidth + cardGap + 80)
-        withAnimation(.easeOut(duration: 0.28)) {
-            dragOffset = target
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.30) {
-            // Disable implicit animation while we re-centre the card —
-            // otherwise SwiftUI tweens dragOffset from `target` back to 0
-            // and the user sees the (already-swapped) card flying in
-            // from the left.
-            var tx = Transaction()
-            tx.disablesAnimations = true
-            withTransaction(tx) {
-                avatarSeed = nextAvatarSeed
-                name = nextName
-                nextAvatarSeed = UUID().uuidString
-                nextName = NameCorpus.shared.random()
-                // Swipe = "give me a fresh pair" — drop any custom
-                // image the user had set on the previous card.
-                customImageData = nil
-                customAttachmentId = nil
-                dragOffset = 0
-            }
-            animating = false
-        }
+    private var current: Page? {
+        guard let idx = currentIndex else { return nil }
+        return pages[idx]
     }
 
     private var canSave: Bool {
-        !name.trimmingCharacters(in: .whitespaces).isEmpty && !saving
+        guard let c = current else { return false }
+        return !c.name.trimmingCharacters(in: .whitespaces).isEmpty && !saving
+    }
+
+    private func seedPagesIfNeeded() {
+        guard pages.isEmpty else { return }
+        if allowsBack {
+            // Re-entry from profile sub-page: pre-fill the current
+            // profile so the user can keep / tweak it instead of
+            // landing on a fresh random pair.
+            let storedName = (store.profileDisplayName
+                ?? store.current?.displayName ?? "").trimmingCharacters(in: .whitespaces)
+            let firstName = storedName.isEmpty ? NameCorpus.shared.random() : storedName
+            let firstSeed = (store.avatarSeed?.isEmpty == false
+                ? store.avatarSeed! : UUID().uuidString)
+            let firstAid = (store.avatarAttachmentId?.isEmpty == false
+                ? store.avatarAttachmentId : nil)
+            let first = Page(seed: firstSeed, name: firstName,
+                             customImageData: nil, customAttachmentId: firstAid)
+            pages = [first, freshPage()]
+            visibleId = first.id
+        } else {
+            let first = freshPage()
+            pages = [first, freshPage()]
+            visibleId = first.id
+        }
+    }
+
+    private func freshPage() -> Page {
+        Page(seed: UUID().uuidString, name: NameCorpus.shared.random())
+    }
+
+    /// When the focused card is the last one we've generated, append a
+    /// fresh one so there's always a peek-of-next on the right edge —
+    /// mirrors the infinite-forward feel of paging through cards.
+    private func ensureLookahead(after id: UUID?) {
+        guard let id, let idx = pages.firstIndex(where: { $0.id == id }) else { return }
+        if idx >= pages.count - 1 {
+            pages.append(freshPage())
+        }
     }
 
     private func save() async {
-        guard let userId = store.current?.id else { return }
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let c = current, let userId = store.current?.id else { return }
+        let trimmed = c.name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         saving = true; defer { saving = false }
         struct Patch: Encodable {
@@ -368,10 +343,10 @@ struct ProfileBootstrapView: View {
             let custom_fields: [String: String]
         }
         var fields: [String: String] = [
-            "avatar_seed": avatarSeed,
+            "avatar_seed": c.seed,
             "bootstrapped": "1",
         ]
-        if let aid = customAttachmentId, !aid.isEmpty {
+        if let aid = c.customAttachmentId, !aid.isEmpty {
             fields["avatar_attachment_id"] = aid
         }
         do {
@@ -381,8 +356,8 @@ struct ProfileBootstrapView: View {
                 .eq("id", value: userId)
                 .execute()
             store.markBootstrapped(displayName: trimmed,
-                                   avatarSeed: avatarSeed,
-                                   attachmentId: customAttachmentId)
+                                   avatarSeed: c.seed,
+                                   attachmentId: c.customAttachmentId)
             Haptics.success()
             onDone?()
             dismiss()
