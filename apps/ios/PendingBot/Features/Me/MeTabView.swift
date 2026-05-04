@@ -1,9 +1,9 @@
 import SwiftUI
 
-/// 我 — borderless header (avatar / name / email) plus a friend-list-style
-/// row stack. Tapping the header pushes into `ProfileBootstrapView` (the
-/// random-roll 头像 / 用户名生成 page) so avatar + nickname share one
-/// editing surface.
+/// 我 — left-aligned header column (avatar / name / email, no card
+/// background) plus a friend-list-style row stack. Tapping the header
+/// pushes into `ProfileBootstrapView` (the random-roll 头像 / 用户名
+/// 生成 page) so avatar + nickname share one editing surface.
 struct MeTabView: View {
     @EnvironmentObject private var store: AccountStore
 
@@ -22,7 +22,9 @@ struct MeTabView: View {
                 List {
                     Section {
                         profileHeader
-                            .listRowBackground(Theme.Palette.surface)
+                            .listRowBackground(Color.clear)
+                            .listRowInsets(EdgeInsets(top: 12, leading: 20, bottom: 16, trailing: 20))
+                            .listRowSeparator(.hidden)
                             .contentShape(Rectangle())
                             .onTapGesture {
                                 showRandomize = true
@@ -83,6 +85,12 @@ struct MeTabView: View {
                         .buttonStyle(.plain)
                         .listRowBackground(Theme.Palette.surface)
                         .disabled(deleting || store.current == nil)
+                    } footer: {
+                        Text("很多功能还没做好 不可用")
+                            .font(Theme.Fonts.monoSmall)
+                            .foregroundStyle(Theme.Palette.inkMuted)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, 8)
                     }
                 }
                 .listStyle(.insetGrouped)
@@ -129,33 +137,30 @@ struct MeTabView: View {
 
     // ── Header ─────────────────────────────────────────────────────────────
 
-    /// Avatar (left) + name / email column (right). The whole row is one
-    /// tap target → ProfileBootstrapView. No border, no chevron — the
-    /// row sits in the same surface as the option rows below it.
+    /// Avatar / nickname / email stacked vertically, leading-aligned, on
+    /// the canvas (no surface card). The whole column is one tap target
+    /// → ProfileBootstrapView.
     private var profileHeader: some View {
-        HStack(spacing: 14) {
+        VStack(alignment: .leading, spacing: 10) {
             let seed = store.avatarSeed ?? store.current?.id ?? "?"
             UserAvatar(
                 seed: seed,
                 attachmentId: store.avatarAttachmentId,
-                size: 56
+                size: 64
             )
-            VStack(alignment: .leading, spacing: 3) {
-                Text(displayLabel)
-                    .font(Theme.Fonts.serif(size: 20, weight: .semibold))
-                    .foregroundStyle(Theme.Palette.ink)
+            Text(displayLabel)
+                .font(Theme.Fonts.serif(size: 22, weight: .semibold))
+                .foregroundStyle(Theme.Palette.ink)
+                .lineLimit(1)
+            if let email = store.current?.email, !email.isEmpty {
+                Text(email)
+                    .font(Theme.Fonts.monoSmall)
+                    .foregroundStyle(Theme.Palette.inkMuted)
                     .lineLimit(1)
-                if let email = store.current?.email, !email.isEmpty {
-                    Text(email)
-                        .font(Theme.Fonts.monoSmall)
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
+                    .truncationMode(.middle)
             }
-            Spacer(minLength: 0)
         }
-        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var displayLabel: String {
