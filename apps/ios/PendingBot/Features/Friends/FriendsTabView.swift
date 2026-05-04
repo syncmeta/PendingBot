@@ -24,8 +24,7 @@ struct FriendsTabView: View {
     @State private var creatingBot = false
     @State private var managingBot: BotPick?
     @State private var showingQR = false
-    @State private var humansOnly = false
-    @State private var botsOnly = false
+    @State private var filter: FriendFilter = .all
     @State private var path: [PendingPeer] = []
 
     var body: some View {
@@ -73,66 +72,15 @@ struct FriendsTabView: View {
                     }
 
                     Section {
-                        HStack {
-                            Spacer()
-                            FilterChip(text: "人类", on: humansOnly) {
-                                humansOnly.toggle()
-                                if humansOnly { botsOnly = false }
-                            }
-                            FilterChip(text: "机器人", on: botsOnly) {
-                                botsOnly.toggle()
-                                if botsOnly { humansOnly = false }
-                            }
-                        }
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
-                        .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+                        FilterPillBar(filter: $filter)
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                            .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
                     }
 
-                    if !botsOnly {
-                        // Humans
-                        if !humansOnly {
-                            Section {
-                                if bots.isEmpty {
-                                    Text("还没有机器人朋友").foregroundStyle(.secondary)
-                                }
-                                ForEach(bots) { bot in
-                                    FriendRow(kind: .bot,
-                                              avatarSeed: bot.id,
-                                              name: bot.display_name,
-                                              modelTag: bot.modelTag,
-                                              botVisibility: bot.visibility)
-                                        .listRowBackground(Theme.Palette.surface)
-                                        .contentShape(Rectangle())
-                                        .onTapGesture { Task { await tapBot(bot) } }
-                                        .modifier(BotRowOwnerActions(
-                                            bot: bot,
-                                            isMine: ownsBot(bot),
-                                            onManage: { managingBot = bot }
-                                        ))
-                                }
-                            }
-                        } else {
-                            EmptyView()
-                        }
-                    }
-                    if !botsOnly {
+                    if !botsForFilter.isEmpty {
                         Section {
-                            ForEach(humans) { c in
-                                FriendRow(kind: .human,
-                                          avatarSeed: c.id,
-                                          name: c.alias ?? String(c.id.prefix(8)),
-                                          modelTag: nil,
-                                          botVisibility: nil)
-                                    .listRowBackground(Theme.Palette.surface)
-                                    .contentShape(Rectangle())
-                                    .onTapGesture { Task { await tapHuman(c) } }
-                            }
-                        }
-                    } else {
-                        // botsOnly: only show bots section without title
-                        Section {
-                            ForEach(bots) { bot in
+                            ForEach(botsForFilter) { bot in
                                 FriendRow(kind: .bot,
                                           avatarSeed: bot.id,
                                           name: bot.display_name,
@@ -147,6 +95,27 @@ struct FriendsTabView: View {
                                         onManage: { managingBot = bot }
                                     ))
                             }
+                        }
+                    }
+                    if !humansForFilter.isEmpty {
+                        Section {
+                            ForEach(humansForFilter) { c in
+                                FriendRow(kind: .human,
+                                          avatarSeed: c.id,
+                                          name: c.alias ?? String(c.id.prefix(8)),
+                                          modelTag: nil,
+                                          botVisibility: nil)
+                                    .listRowBackground(Theme.Palette.surface)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { Task { await tapHuman(c) } }
+                            }
+                        }
+                    }
+                    if let emptyText = emptyTextForFilter {
+                        Section {
+                            Text(emptyText)
+                                .foregroundStyle(.secondary)
+                                .listRowBackground(Theme.Palette.surface)
                         }
                     }
                 }
@@ -263,6 +232,42 @@ struct FriendsTabView: View {
             self.humans = contactRows.map { HumanPick(id: $0.contact_user_id, alias: $0.alias) }
         } catch {
             self.error = error.localizedDescription
+        }
+    }
+
+    // MARK: - Filtering
+
+    private var botsForFilter: [BotPick] {
+        switch filter {
+        case .all:         return bots
+        case .privateBots: return bots.filter { $0.visibility == "private" }
+        case .publicBots:  return bots.filter { $0.visibility != "private" }
+        case .humans, .groups: return []
+        }
+    }
+
+    private var humansForFilter: [HumanPick] {
+        switch filter {
+        case .all, .humans: return humans
+        case .privateBots, .publicBots, .groups: return []
+        }
+    }
+
+    /// Optional placeholder shown when a filter selection has no rows.
+    /// `.all` never shows one — even an empty account still has the
+    /// pinned self row above.
+    private var emptyTextForFilter: String? {
+        switch filter {
+        case .all:
+            return nil
+        case .humans:
+            return humans.isEmpty ? "还没有人类朋友" : nil
+        case .privateBots:
+            return botsForFilter.isEmpty ? "还没有私有机器人" : nil
+        case .publicBots:
+            return botsForFilter.isEmpty ? "还没有公有机器人" : nil
+        case .groups:
+            return "还没有群聊"
         }
     }
 
@@ -430,32 +435,113 @@ private struct HumanKindTag: View {
     }
 }
 
-private struct FilterChip: View {
-    let text: String
-    let on: Bool
+// MARK: - Filter pills
+
+/// Five-way filter sitting between the self row and the friend list.
+/// Each pill carries the colour of the tag it scopes to (人类 → accent
+/// green, 私有机器人 → plum, 公有机器人 → amber, 群聊 → tri-tone gradient).
+/// 全部 stays neutral white. All pills share the same frosted-glass
+/// capsule + drop-shadow treatment as the login screen's brand pills.
+enum FriendFilter: Hashable, CaseIterable {
+    case all, humans, privateBots, publicBots, groups
+
+    var label: String {
+        switch self {
+        case .all:         return "全部"
+        case .humans:      return "人类"
+        case .privateBots: return "私有机器人"
+        case .publicBots:  return "公有机器人"
+        case .groups:      return "群聊"
+        }
+    }
+
+    /// Foreground colour when the pill is selected (and used for the
+    /// selected-state stroke). 全部 stays in plain ink.
+    var fg: Color {
+        switch self {
+        case .all:         return Theme.Palette.ink
+        case .humans:      return Theme.Palette.accent
+        case .privateBots: return Theme.Palette.plum
+        case .publicBots:  return Theme.Palette.amber
+        case .groups:      return Theme.Palette.ink
+        }
+    }
+}
+
+private struct FilterPillBar: View {
+    @Binding var filter: FriendFilter
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(FriendFilter.allCases, id: \.self) { f in
+                    FilterPill(filter: f, selected: filter == f) {
+                        filter = f
+                        Haptics.tap()
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 6) // breathing room for the drop shadow
+        }
+    }
+}
+
+private struct FilterPill: View {
+    let filter: FriendFilter
+    let selected: Bool
     let action: () -> Void
+
     var body: some View {
         Button(action: action) {
-            Text(text)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(on ? .white : Theme.Palette.ink)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(
-                    // Off state: white pill with a hairline border, per
-                    // user spec ("白底灰边"). On state stays the accent
-                    // fill so the active selection still stands out.
-                    Capsule().fill(on ? Theme.Palette.accent : Color.white)
-                )
+            Text(filter.label)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(selected ? filter.fg : Theme.Palette.ink.opacity(0.78))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(tintFill)
+                .glassCapsule()
                 .overlay(
-                    Capsule()
-                        .strokeBorder(
-                            on ? Color.clear : Theme.Palette.hairline,
-                            lineWidth: 0.5
-                        )
+                    Capsule().strokeBorder(
+                        selected ? filter.fg.opacity(0.35) : Color.black.opacity(0.05),
+                        lineWidth: 0.6
+                    )
                 )
+                .shadow(color: .black.opacity(0.08), radius: 6, y: 3)
         }
         .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var tintFill: some View {
+        switch filter {
+        case .all:
+            // White stays neutral — slightly more opaque when picked
+            // so the selection still reads against the canvas.
+            Capsule().fill(Color.white.opacity(selected ? 0.85 : 0.4))
+        case .humans:
+            Capsule().fill(Theme.Palette.accentBg.opacity(selected ? 0.9 : 0.45))
+        case .privateBots:
+            Capsule().fill(Theme.Palette.plumBg.opacity(selected ? 0.9 : 0.45))
+        case .publicBots:
+            Capsule().fill(Theme.Palette.amberBg.opacity(selected ? 0.9 : 0.45))
+        case .groups:
+            // Tri-tone wash: the three tag-bg colours blended L→R, kept
+            // intentionally pale so it reads as "all categories" without
+            // shouting over the others.
+            let base = selected ? 0.55 : 0.28
+            Capsule().fill(
+                LinearGradient(
+                    colors: [
+                        Theme.Palette.accentBg.opacity(base),
+                        Theme.Palette.amberBg.opacity(base),
+                        Theme.Palette.plumBg.opacity(base),
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
+        }
     }
 }
 
@@ -758,6 +844,24 @@ private struct BotRowOwnerActions: ViewModifier {
             }
         } else {
             content
+        }
+    }
+}
+
+// MARK: - Glass capsule
+
+/// Same Liquid-Glass treatment used by the login pills — kept fileprivate
+/// here (and duplicated in WelcomeView) until we have more callers worth
+/// promoting to a shared component file.
+private extension View {
+    @ViewBuilder
+    func glassCapsule() -> some View {
+        if #available(iOS 26.0, *) {
+            self.glassEffect(.regular, in: Capsule())
+        } else {
+            self
+                .background(Capsule().fill(.regularMaterial))
+                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
         }
     }
 }
