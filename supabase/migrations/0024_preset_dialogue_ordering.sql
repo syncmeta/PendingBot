@@ -143,9 +143,9 @@ begin
         from pendingbot.conversations c
        where c.bot_id = rec.bot_id
          and exists (
-           select 1 from pendingbot.messages m
-            where m.conversation_id = c.id
-              and m.created_at < '1970-01-02 00:00:00+00'::timestamptz
+           select 1 from pendingbot.messages msg
+            where msg.conversation_id = c.id
+              and msg.created_at < '1970-01-02 00:00:00+00'::timestamptz
          )
     loop
       i := 0;
