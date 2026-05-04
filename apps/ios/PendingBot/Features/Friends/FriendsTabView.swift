@@ -441,7 +441,7 @@ private struct HumanKindTag: View {
 /// Each pill carries the colour of the tag it scopes to (人类 → accent
 /// green, 私有机器人 → plum, 公有机器人 → amber, 群聊 → tri-tone gradient).
 /// 全部 stays neutral white. All pills share the same frosted-glass
-/// capsule + drop-shadow treatment as the login screen's brand pills.
+/// capsule treatment as the login screen's brand pills.
 enum FriendFilter: Hashable, CaseIterable {
     case all, humans, privateBots, publicBots, groups
 
@@ -482,7 +482,7 @@ private struct FilterPillBar: View {
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 6) // breathing room for the drop shadow
+            .padding(.vertical, 6)
         }
     }
 }
@@ -507,7 +507,6 @@ private struct FilterPill: View {
                         lineWidth: 0.6
                     )
                 )
-                .shadow(color: .black.opacity(0.08), radius: 6, y: 3)
         }
         .buttonStyle(.plain)
     }
