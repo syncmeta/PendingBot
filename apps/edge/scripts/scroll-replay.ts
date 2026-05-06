@@ -1,26 +1,33 @@
 #!/usr/bin/env bun
 // Offline replay harness for the 奏折 (scroll) agent loop.
 //
-// 用法:
+// 用法（A：从真实对话拉取）:
 //   bun run apps/edge/scripts/scroll-replay.ts <conversation-id> [flags]
 //
+// 用法（B：用合成对话 fixture，纯本地、不连 conversations 表）:
+//   bun run apps/edge/scripts/scroll-replay.ts --fixture path/to/fixture.json --model <id>
+//
 // Flags:
+//   --fixture <file>   Synthetic-conv JSON ({ history, model?, memory? } or just an array)
 //   --bot <id>         Override the bot — default reads conversations.bot_id
-//   --model <id>       Override the model — default reads bots.model_id
+//   --model <id>       Override the model — required in fixture mode unless fixture sets it
 //   --turns <n>        Cap turns (default 30, lower = faster iteration)
 //   --memory <file>    Paste in a bot-memory representation (skipped if absent)
 //   --prompt-system <file>      Override system prompt path
 //   --prompt-injected <file>    Override injected directive prompt path
 //   --no-fetch         Stub fetch_url (returns "(harness 跳过抓取)")
 //   --no-search        Stub web_search (returns empty results)
+//   --no-color         Disable ANSI color
 //
 // Reads apps/edge/.dev.vars for keys, pulls history from the configured
-// Supabase, runs runScrollLoop with stdout logging — every assistant
-// turn / tool call / tool result is printed. No DB writes.
+// Supabase (or from --fixture), runs runScrollLoop with stdout logging —
+// every assistant turn / tool call / tool result is printed. No DB writes.
+//
+// Find a conversation id with: bun run scripts/scroll-list-convs.ts
 //
 // Iteration loop:
 //   1. tweak prompts/scroll.md or prompts/scroll-injected.md (or src/lib/scroll-loop.ts)
-//   2. bun run apps/edge/scripts/scroll-replay.ts <conv-id>
+//   2. bun run apps/edge/scripts/scroll-replay.ts <conv-id>   (or --fixture ...)
 //   3. read the trace, repeat.
 
 import fs from 'node:fs';
@@ -40,27 +47,59 @@ import { braveSearch, firecrawlScrape } from '../src/lib/web';
 
 // ── Args ─────────────────────────────────────────────────────────────
 const argv = process.argv.slice(2);
-if (argv.length === 0 || argv[0].startsWith('-')) {
-  console.error('usage: bun run scroll-replay.ts <conversation-id> [--bot id] [--model id] [--turns n] [--memory file] [--no-fetch] [--no-search]');
+
+const VALUE_FLAGS = new Set([
+  '--bot',
+  '--model',
+  '--turns',
+  '--memory',
+  '--prompt-system',
+  '--prompt-injected',
+  '--fixture',
+]);
+const BOOL_FLAGS = new Set(['--no-fetch', '--no-search', '--no-color']);
+
+const positional: string[] = [];
+const opts: Record<string, string | boolean> = {};
+for (let i = 0; i < argv.length; i++) {
+  const a = argv[i];
+  if (VALUE_FLAGS.has(a)) {
+    const v = argv[++i];
+    if (v === undefined) {
+      console.error(`flag ${a} expects a value`);
+      process.exit(2);
+    }
+    opts[a] = v;
+  } else if (BOOL_FLAGS.has(a)) {
+    opts[a] = true;
+  } else if (a.startsWith('-')) {
+    console.error(`unknown flag: ${a}`);
+    process.exit(2);
+  } else {
+    positional.push(a);
+  }
+}
+
+const conversationId: string | undefined = positional[0];
+const overrideBotId = opts['--bot'] as string | undefined;
+const overrideModelId = opts['--model'] as string | undefined;
+const turnCap = opts['--turns'] ? Number(opts['--turns']) : undefined;
+const memoryFile = opts['--memory'] as string | undefined;
+const systemPromptFile = opts['--prompt-system'] as string | undefined;
+const injectedPromptFile = opts['--prompt-injected'] as string | undefined;
+const fixtureFile = opts['--fixture'] as string | undefined;
+const stubFetch = opts['--no-fetch'] === true;
+const stubSearch = opts['--no-search'] === true;
+
+if (!conversationId && !fixtureFile) {
+  console.error('usage: bun run scroll-replay.ts <conversation-id> [flags]');
+  console.error('       bun run scroll-replay.ts --fixture <file.json> --model <id> [flags]');
   process.exit(2);
 }
-const conversationId = argv[0];
-
-function flag(name: string): string | undefined {
-  const i = argv.indexOf(name);
-  return i >= 0 ? argv[i + 1] : undefined;
+if (conversationId && fixtureFile) {
+  console.error('pass either <conversation-id> OR --fixture, not both');
+  process.exit(2);
 }
-function bool(name: string): boolean {
-  return argv.includes(name);
-}
-const overrideBotId = flag('--bot');
-const overrideModelId = flag('--model');
-const turnCap = flag('--turns') ? Number(flag('--turns')) : undefined;
-const memoryFile = flag('--memory');
-const systemPromptFile = flag('--prompt-system');
-const injectedPromptFile = flag('--prompt-injected');
-const stubFetch = bool('--no-fetch');
-const stubSearch = bool('--no-search');
 
 // ── Paths ────────────────────────────────────────────────────────────
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -93,14 +132,17 @@ function need(k: string): string {
   }
   return v;
 }
-const SUPABASE_URL = need('SUPABASE_URL');
-const SUPABASE_SERVICE_ROLE_KEY = need('SUPABASE_SERVICE_ROLE_KEY');
+// Fixture mode skips Supabase entirely — convs/messages/bots not touched.
+const SUPABASE_URL = fixtureFile ? env.SUPABASE_URL ?? '' : need('SUPABASE_URL');
+const SUPABASE_SERVICE_ROLE_KEY = fixtureFile
+  ? env.SUPABASE_SERVICE_ROLE_KEY ?? ''
+  : need('SUPABASE_SERVICE_ROLE_KEY');
 const OPENROUTER_API_KEY = need('OPENROUTER_API_KEY');
 const BRAVE_API_KEY = stubSearch ? '' : need('BRAVE_API_KEY');
 const FIRECRAWL_API_KEY = stubFetch ? '' : need('FIRECRAWL_API_KEY');
 
 // ── Logging helpers ──────────────────────────────────────────────────
-const isTTY = process.stdout.isTTY && !argv.includes('--no-color');
+const isTTY = process.stdout.isTTY && !opts['--no-color'];
 const C = {
   dim: (s: string) => (isTTY ? `\x1b[2m${s}\x1b[0m` : s),
   bold: (s: string) => (isTTY ? `\x1b[1m${s}\x1b[0m` : s),
@@ -118,12 +160,6 @@ function truncate(s: string, n = 1200): string {
   return s.length <= n ? s : s.slice(0, n) + C.dim(` …(+${s.length - n} chars)`);
 }
 
-// ── Supabase ─────────────────────────────────────────────────────────
-const supa = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-  auth: { autoRefreshToken: false, persistSession: false },
-  db: { schema: 'pendingbot' },
-});
-
 // ── Prompts (load from disk, not via wrangler text-import) ───────────
 function loadPrompt(rel: string, override?: string): string {
   const p = override ?? path.join(EDGE_ROOT, 'prompts', rel);
@@ -132,46 +168,83 @@ function loadPrompt(rel: string, override?: string): string {
 const systemPrompt = loadPrompt('scroll.md', systemPromptFile);
 const injectedPrompt = loadPrompt('scroll-injected.md', injectedPromptFile);
 
+// ── Fixture loader ───────────────────────────────────────────────────
+type HistoryMsg = { role: 'user' | 'bot' | 'human'; content: string | null };
+interface FixtureFile {
+  history?: HistoryMsg[];
+  messages?: HistoryMsg[];     // alias — same thing
+  model?: string;
+  memory?: string;
+}
+function loadFixture(file: string): { history: HistoryMsg[]; model?: string; memory?: string } {
+  const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as FixtureFile | HistoryMsg[];
+  if (Array.isArray(raw)) return { history: raw };
+  const history = raw.history ?? raw.messages ?? [];
+  return { history, model: raw.model, memory: raw.memory };
+}
+
 // ── Main ─────────────────────────────────────────────────────────────
 async function main(): Promise<void> {
-  divider('conv');
-  console.log(`conversation_id: ${C.cyan(conversationId)}`);
-
-  // Resolve bot id via the conversation row, unless overridden.
+  let history: HistoryMsg[];
+  let modelId: string;
+  let botDisplayName = '';
   let botId = overrideBotId;
-  if (!botId) {
-    const { data: conv, error } = await supa
-      .from('conversations')
-      .select('bot_id')
-      .eq('id', conversationId)
-      .maybeSingle();
-    if (error) throw new Error(`conversations lookup: ${error.message}`);
-    if (!conv?.bot_id) throw new Error('conversation has no bot_id (use --bot to override)');
-    botId = conv.bot_id as string;
+  let memoryFromFixture: string | undefined;
+
+  if (fixtureFile) {
+    divider('fixture');
+    console.log(`fixture: ${C.cyan(fixtureFile)}`);
+    const fx = loadFixture(fixtureFile);
+    history = fx.history;
+    memoryFromFixture = fx.memory;
+    modelId = overrideModelId ?? fx.model ?? '';
+    if (!modelId) {
+      console.error(C.red('fixture mode requires --model <id> (or "model" field in the fixture)'));
+      process.exit(2);
+    }
+    if (botId) console.log(`bot_id (override): ${C.cyan(botId)}`);
+  } else {
+    // Real-conv mode: pull from Supabase.
+    const supa = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+      db: { schema: 'pendingbot' },
+    });
+    divider('conv');
+    console.log(`conversation_id: ${C.cyan(conversationId!)}`);
+
+    if (!botId) {
+      const { data: conv, error } = await supa
+        .from('conversations')
+        .select('bot_id')
+        .eq('id', conversationId!)
+        .maybeSingle();
+      if (error) throw new Error(`conversations lookup: ${error.message}`);
+      if (!conv?.bot_id) throw new Error('conversation has no bot_id (use --bot to override)');
+      botId = conv.bot_id as string;
+    }
+    console.log(`bot_id:          ${C.cyan(botId)}`);
+
+    const [historyRes, botRes] = await Promise.all([
+      supa
+        .from('messages')
+        .select('role, content, created_at')
+        .eq('conversation_id', conversationId!)
+        .neq('role', 'log')
+        .order('created_at', { ascending: false })
+        .limit(HISTORY_LIMIT),
+      supa.from('bots').select('id, model_id, display_name').eq('id', botId).single(),
+    ]);
+    if (historyRes.error) throw new Error(`messages: ${historyRes.error.message}`);
+    if (botRes.error || !botRes.data) throw new Error(`bot: ${botRes.error?.message ?? 'no row'}`);
+
+    modelId = overrideModelId ?? (botRes.data.model_id as string);
+    botDisplayName = (botRes.data.display_name as string) ?? '';
+    history = (historyRes.data ?? []).reverse() as HistoryMsg[];
   }
-  console.log(`bot_id:          ${C.cyan(botId)}`);
 
-  const [historyRes, botRes] = await Promise.all([
-    supa
-      .from('messages')
-      .select('role, content, created_at')
-      .eq('conversation_id', conversationId)
-      .neq('role', 'log')
-      .order('created_at', { ascending: false })
-      .limit(HISTORY_LIMIT),
-    supa.from('bots').select('id, model_id, display_name').eq('id', botId).single(),
-  ]);
-  if (historyRes.error) throw new Error(`messages: ${historyRes.error.message}`);
-  if (botRes.error || !botRes.data) throw new Error(`bot: ${botRes.error?.message ?? 'no row'}`);
-
-  const modelId = overrideModelId ?? (botRes.data.model_id as string);
-  const history = (historyRes.data ?? []).reverse() as Array<{
-    role: 'user' | 'bot' | 'human';
-    content: string | null;
-  }>;
   const hLen = history.filter((m) => m.content && m.content.trim()).length;
 
-  console.log(`bot.display_name: ${botRes.data.display_name ?? '(unset)'}`);
+  if (botDisplayName) console.log(`bot.display_name: ${botDisplayName}`);
   console.log(`model_id:         ${C.cyan(modelId)}`);
   console.log(`history messages: ${hLen}`);
   if (hLen < 2) {
@@ -179,11 +252,14 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Optional memory file — paste in the bot's "long-term observation" snippet.
+  // Optional memory: --memory file > fixture's "memory" field > none.
   let memoryRepresentation: string | null = null;
   if (memoryFile) {
     memoryRepresentation = fs.readFileSync(memoryFile, 'utf8');
     console.log(`memory file:      ${memoryFile} (${memoryRepresentation.length} chars)`);
+  } else if (memoryFromFixture) {
+    memoryRepresentation = memoryFromFixture;
+    console.log(`memory:           (from fixture, ${memoryRepresentation.length} chars)`);
   } else {
     console.log(C.dim('memory:           (none — pass --memory <file> to inject)'));
   }
