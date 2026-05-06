@@ -67,18 +67,42 @@ function loadDevVars(): Record<string, string> {
 }
 const ENV = loadDevVars();
 
-// ── Models — kept here (not in DB) so the panel is self-contained ────
-// Edit this list to add / remove model presets.
-const MODELS: Array<{ name: string; model: string; tag?: string }> = [
-  { name: 'Claude Haiku 4.5',   model: 'anthropic/claude-haiku-4-5',   tag: 'cheap·fast' },
-  { name: 'Claude Sonnet 4.6',  model: 'anthropic/claude-sonnet-4-6',  tag: 'balanced' },
-  { name: 'Claude Opus 4.7',    model: 'anthropic/claude-opus-4-7',    tag: 'best·pricey' },
-  { name: 'GPT-5.4',            model: 'openai/gpt-5.4' },
-  { name: 'GPT-5.4 mini',       model: 'openai/gpt-5.4-mini',          tag: 'cheap' },
-  { name: 'Gemini 2.5 Flash',   model: 'google/gemini-2.5-flash',      tag: 'cheap·fast' },
-  { name: 'Gemini 2.5 Pro',     model: 'google/gemini-2.5-pro' },
-  { name: 'DeepSeek v4 Pro',    model: 'deepseek/deepseek-v4-pro' },
-  { name: 'Grok 4.3',           model: 'x-ai/grok-4.3' },
+// ── Models — mirrors surf-test/config.ts list. OpenRouter for the
+// `*-latest` aliases; the two `DeepSeek (官方)` presets bypass
+// OpenRouter and hit api.deepseek.com directly. Add / remove here.
+interface ModelPreset {
+  name: string;
+  model: string;
+  baseUrl?: string;
+  envKey?: string;        // ENV var to look up apiKey when baseUrl is set
+}
+const MODELS: ModelPreset[] = [
+  { name: 'Grok 4.3',          model: 'x-ai/grok-4.3' },
+  { name: 'Claude Sonnet ~',   model: 'anthropic/claude-sonnet-latest' },
+  { name: 'Gemini Flash ~',    model: 'google/gemini-flash-latest' },
+  { name: 'DeepSeek v4 Pro',   model: 'deepseek/deepseek-v4-pro' },
+  {
+    name: 'DeepSeek (官方)',
+    model: 'deepseek-chat',
+    baseUrl: 'https://api.deepseek.com',
+    envKey: 'DEEPSEEK_API_KEY',
+  },
+  {
+    name: 'DeepSeek v4 Flash (官方)',
+    model: 'deepseek-v4-flash',
+    baseUrl: 'https://api.deepseek.com',
+    envKey: 'DEEPSEEK_API_KEY',
+  },
+  {
+    name: 'DeepSeek R1 (官方)',
+    model: 'deepseek-reasoner',
+    baseUrl: 'https://api.deepseek.com',
+    envKey: 'DEEPSEEK_API_KEY',
+  },
+  { name: 'Kimi ~',            model: 'moonshotai/kimi-latest' },
+  { name: 'GLM 5.1',           model: 'z-ai/glm-5.1' },
+  { name: 'GPT-5.4',           model: 'openai/gpt-5.4' },
+  { name: 'Claude Opus ~',     model: 'anthropic/claude-opus-latest' },
 ];
 
 const app = new Hono();
@@ -87,8 +111,17 @@ app.use('*', cors());
 // ── Config endpoint ──────────────────────────────────────────────────
 app.get('/api/config', (c) => {
   return c.json({
-    models: MODELS,
-    defaultModel: 'anthropic/claude-haiku-4-5',
+    // Strip baseUrl/envKey; surface a `direct` flag (skips OpenRouter)
+    // and a `keyMissing` flag so the UI can disable un-runnable models.
+    models: MODELS.map((m) => ({
+      name: m.name,
+      model: m.model,
+      direct: !!m.baseUrl,
+      keyMissing: m.baseUrl ? !ENV[m.envKey ?? ''] : !ENV.OPENROUTER_API_KEY,
+    })),
+    defaultModel:
+      MODELS.find((m) => !m.baseUrl && ENV.OPENROUTER_API_KEY)?.model ??
+      MODELS[0]?.model ?? '',
     searchProviders: ['brave', 'tavily', 'exa', 'serper'] as SearchProvider[],
     scrapeProviders: ['firecrawl', 'tavily', 'exa'] as ScrapeProvider[],
     keysPresent: {
@@ -98,6 +131,7 @@ app.get('/api/config', (c) => {
       exa:        !!ENV.EXA_API_KEY,
       serper:     !!ENV.SERPER_API_KEY,
       firecrawl:  !!ENV.FIRECRAWL_API_KEY,
+      deepseek:   !!ENV.DEEPSEEK_API_KEY,
     },
   });
 });
@@ -148,9 +182,6 @@ interface RunBody {
 }
 
 app.post('/api/run', async (c) => {
-  if (!ENV.OPENROUTER_API_KEY) {
-    return c.json({ error: 'OPENROUTER_API_KEY missing in .dev.vars' }, 500);
-  }
   let body: RunBody;
   try {
     body = await c.req.json<RunBody>();
@@ -161,6 +192,22 @@ app.post('/api/run', async (c) => {
     return c.json({ error: 'history must have at least 2 messages' }, 400);
   }
 
+  // Pick base URL + API key per the model preset (DeepSeek 官方 hits
+  // api.deepseek.com directly; everything else goes through OpenRouter).
+  const preset = MODELS.find((m) => m.model === body.model);
+  const baseUrl = preset?.baseUrl ?? 'https://openrouter.ai/api/v1';
+  const apiKey = preset?.envKey ? ENV[preset.envKey] : ENV.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    return c.json(
+      {
+        error: preset?.baseUrl
+          ? `${preset.envKey} missing in .dev.vars (required for ${body.model})`
+          : 'OPENROUTER_API_KEY missing in .dev.vars',
+      },
+      500,
+    );
+  }
+
   const initialUser = buildScrollInitialUserContent({
     history: body.history,
     memoryRepresentation: body.memory,
@@ -168,8 +215,8 @@ app.post('/api/run', async (c) => {
   });
 
   const openai = new OpenAI({
-    apiKey: ENV.OPENROUTER_API_KEY,
-    baseURL: 'https://openrouter.ai/api/v1',
+    apiKey,
+    baseURL: baseUrl,
     defaultHeaders: {
       'HTTP-Referer': 'http://localhost:5174',
       'X-Title': 'PendingBot/scroll-lab',

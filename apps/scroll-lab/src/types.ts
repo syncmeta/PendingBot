@@ -3,8 +3,15 @@
 export type SearchProvider = 'brave' | 'tavily' | 'exa' | 'serper';
 export type ScrapeProvider = 'firecrawl' | 'tavily' | 'exa';
 
+export interface ModelEntry {
+  name: string;
+  model: string;
+  direct?: boolean;       // bypasses OpenRouter (e.g. DeepSeek 官方)
+  keyMissing?: boolean;   // no API key configured → un-runnable
+}
+
 export interface ConfigResponse {
-  models: Array<{ name: string; model: string; tag?: string }>;
+  models: ModelEntry[];
   defaultModel: string;
   searchProviders: SearchProvider[];
   scrapeProviders: ScrapeProvider[];
@@ -15,6 +22,7 @@ export interface ConfigResponse {
     exa: boolean;
     serper: boolean;
     firecrawl: boolean;
+    deepseek?: boolean;
   };
 }
 

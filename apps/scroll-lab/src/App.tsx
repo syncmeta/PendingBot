@@ -237,11 +237,13 @@ function Settings(p: {
       <label>模型</label>
       <select value={p.model} onChange={(e) => p.setModel(e.target.value)}>
         {p.cfg.models.map((m) => (
-          <option key={m.model} value={m.model}>
-            {m.name} {m.tag ? `· ${m.tag}` : ''}
+          <option key={m.model} value={m.model} disabled={m.keyMissing}>
+            {m.name}
+            {m.direct ? ' · direct' : ''}
+            {m.keyMissing ? ' (no key)' : ''}
           </option>
         ))}
-        <option value="">— custom —</option>
+        <option value="">— custom (OpenRouter) —</option>
       </select>
       {!p.cfg.models.find((m) => m.model === p.model) && (
         <input
