@@ -13,6 +13,7 @@ export interface ModelEntry {
 export interface ConfigResponse {
   models: ModelEntry[];
   defaultModel: string;
+  defaultCollaboratorModel: string;
   searchProviders: SearchProvider[];
   scrapeProviders: ScrapeProvider[];
   keysPresent: {

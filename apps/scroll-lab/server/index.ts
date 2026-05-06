@@ -156,6 +156,7 @@ app.get('/api/config', (c) => {
     defaultModel:
       MODELS.find((m) => !m.baseUrl && ENV.OPENROUTER_API_KEY)?.model ??
       MODELS[0]?.model ?? '',
+    defaultCollaboratorModel: '~google/gemini-flash-latest',
     searchProviders: ['brave', 'tavily', 'exa', 'serper'] as SearchProvider[],
     scrapeProviders: ['firecrawl', 'tavily', 'exa'] as ScrapeProvider[],
     keysPresent: {

@@ -89,6 +89,7 @@ export function App() {
         setFixtures(f);
         setRuns(r);
         if (!model) setModel(c.defaultModel);
+        if (!collaboratorModel) setCollaboratorModel(c.defaultCollaboratorModel);
         if (systemPrompt === null) setSystemPrompt(p.system);
         if (injectedPrompt === null) setInjectedPrompt(p.injected);
         if (writePrompt === null) setWritePrompt(p.write);
