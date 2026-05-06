@@ -23,16 +23,11 @@ export const TOOLS: ChatCompletionTool[] = [
     function: {
       name: 'propose_plan',
       description:
-        '在执行任何搜索/抓取之前，先用这个工具说明你的思考、想先问朋友的问题、想搜的关键词、想直接抓取的网页。用户会确认或给反馈。',
+        '在执行任何搜索/抓取之前，先用这个工具说明你的思考、想搜的关键词、想直接抓取的网页。用户会确认或给反馈。',
       parameters: {
         type: 'object',
         properties: {
           thoughts: { type: 'string', description: '你围绕朋友的需要、盲区、转向方向等的自由思考' },
-          questions_for_user: {
-            type: 'array',
-            items: { type: 'string' },
-            description: '想先问朋友的问题；没有就空数组',
-          },
           queries: {
             type: 'array',
             items: {
@@ -50,7 +45,7 @@ export const TOOLS: ChatCompletionTool[] = [
             },
           },
         },
-        required: ['thoughts', 'questions_for_user', 'queries', 'urls'],
+        required: ['thoughts', 'queries', 'urls'],
       },
     },
   },
@@ -129,6 +124,11 @@ export interface ScrollLoopDeps {
   isCancelled?: () => Promise<boolean>;
   hardCapTurns?: number;
   maxWallMs?: number;
+  // Optional: produce the friend-style reply to a propose_plan call.
+  // Receives the raw JSON arguments string the model passed; returns
+  // the message text fed back as the tool result. When absent, the
+  // tool replies with the static "用户：继续，按你的计划执行。"
+  simulateUserReply?: (planArgs: string) => Promise<string>;
 }
 
 export interface ScrollTurnInfo {
@@ -299,13 +299,22 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
     const toolCalls = (msg.tool_calls ?? []) as ChatCompletionMessageToolCall[];
     const assistantContent = msg.content ?? '';
 
-    const newMessages: ChatCompletionMessageParam[] = [
-      {
-        role: 'assistant',
-        content: assistantContent,
-        ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
-      },
-    ];
+    // DeepSeek thinking models (deepseek-reasoner / deepseek-v4-flash) put
+    // their chain-of-thought on `reasoning_content` and require it to be
+    // echoed back on subsequent turns or the API errors with
+    // "The reasoning_content in the thinking mode must be passed back".
+    // Other providers don't return this field, so the conditional copy is
+    // a no-op for them.
+    const reasoningContent = (msg as { reasoning_content?: string }).reasoning_content;
+
+    const assistantMsg: ChatCompletionMessageParam & { reasoning_content?: string } = {
+      role: 'assistant',
+      content: assistantContent,
+      ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
+    };
+    if (reasoningContent) assistantMsg.reasoning_content = reasoningContent;
+
+    const newMessages: ChatCompletionMessageParam[] = [assistantMsg];
 
     if (toolCalls.length === 0) {
       messages.push(...newMessages);
@@ -325,7 +334,14 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
     }
 
     const toolReplies = await Promise.all(
-      toolCalls.map((tc) => execTool({ webSearch: deps.webSearch, fetchUrl: deps.fetchUrl }, tc, progress)),
+      toolCalls.map((tc) =>
+        execTool(
+          { webSearch: deps.webSearch, fetchUrl: deps.fetchUrl },
+          tc,
+          progress,
+          deps.simulateUserReply,
+        ),
+      ),
     );
     for (let i = 0; i < toolCalls.length; i++) {
       newMessages.push({
@@ -367,14 +383,24 @@ async function execTool(
   tools: ScrollToolDeps,
   tc: ChatCompletionMessageToolCall,
   progress: ProgressState,
+  simulateUserReply?: (planArgs: string) => Promise<string>,
 ): Promise<string> {
   const name = tc.function.name;
   const args = safeParse(tc.function.arguments);
   try {
     if (name === 'propose_plan') {
       progress.plan_rounds++;
-      // No human in the loop on the server. Auto-confirm so the agent
-      // proceeds to research with whatever it just proposed.
+      if (simulateUserReply) {
+        try {
+          const reply = await simulateUserReply(tc.function.arguments);
+          return reply.trim() || '用户：继续，按你的计划执行。';
+        } catch (err) {
+          // Simulator failed; fall through to the static reply so the
+          // outer loop still progresses instead of dying mid-run.
+          console.warn('[scroll-loop] simulateUserReply failed:', err);
+        }
+      }
+      // Default (production worker, or sim disabled): auto-confirm.
       return '用户：继续，按你的计划执行。';
     }
 
