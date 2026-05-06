@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import OpenAI from 'openai';
-import { Agent, ProxyAgent, setGlobalDispatcher } from 'undici';
+import { Agent, fetch as undiciFetch, ProxyAgent, setGlobalDispatcher } from 'undici';
 import {
   buildScrollInitialUserContent,
   extractSummary,
@@ -372,6 +372,11 @@ app.post('/api/run', async (c) => {
     return new OpenAI({
       apiKey,
       baseURL: baseUrl,
+      // OpenAI SDK 4.x defaults to `node-fetch` v2 in Node, which goes
+      // through node:http(s) and ignores undici's setGlobalDispatcher
+      // — so the proxy we set above wouldn't apply. Force it onto
+      // undici's fetch so the ProxyAgent is honored.
+      fetch: undiciFetch as unknown as typeof globalThis.fetch,
       defaultHeaders: {
         'HTTP-Referer': 'http://localhost:5174',
         'X-Title': 'PendingBot/scroll-lab',
