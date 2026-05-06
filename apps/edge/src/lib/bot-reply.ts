@@ -10,6 +10,7 @@ import { openrouterClient } from '../llm/client';
 import { buildMessages, type BuildMessagesInput } from '../llm/builder';
 import { getBotMemory } from './memory';
 import { braveSearch, firecrawlScrape } from './web';
+import { bootstrapPython, createSandbox, runPython } from './sandbox';
 
 // How many bot_reflections rows to read for the self section. The schema's
 // idx_reflections_bot_user_time covers this exact (bot_id, user_id, created_at)
@@ -106,6 +107,28 @@ const SKILL_NAME_MAX = 80;
 const SKILL_DESC_MAX = 2000;
 const SKILL_BODY_MAX = 65536;
 
+// Sensitive tools — appended to the per-turn tools list only when the
+// active skill set's frontmatter.allowed_tools opts the user in. The same
+// gating model Anthropic Skills uses to keep code-exec out of every chat.
+const EXECUTE_CODE_TOOL: ChatCompletionTool = {
+  type: 'function',
+  function: {
+    name: 'execute_code',
+    description:
+      'Run Python 3 code in a sandboxed VM dedicated to this conversation. Stdout+stderr (combined) and the exit code come back. Useful for math, data wrangling with numpy/pandas, quick scrapes, file/text manipulation. Avoid pop-ups, GUIs, or long-running interactive scripts. The sandbox keeps state across calls in the same conversation, so vars/imports persist for short stretches.',
+    parameters: {
+      type: 'object',
+      properties: {
+        code: {
+          type: 'string',
+          description: 'Python source. Will be executed via Daytona\'s code-run; uses the system python with numpy/pandas/matplotlib/pillow/requests/httpx/python-dateutil pre-installed.',
+        },
+      },
+      required: ['code'],
+    },
+  },
+};
+
 export interface RunChatTurnInput {
   env: Env;
   conversationId: string;
@@ -173,8 +196,19 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     kind: 'limit' | 'grow' | 'keep';
     content: string;
   }>;
-  type SkillRow = { frontmatter: { name?: string; description?: string }; body_md: string };
+  type SkillRow = {
+    frontmatter: {
+      name?: string;
+      description?: string;
+      allowed_tools?: unknown;
+    };
+    body_md: string;
+  };
   const skills: Array<{ name: string; description: string; body: string }> = [];
+  // Aggregate allowed_tools across the active skill set. Sensitive tools
+  // (currently: execute_code) are only exposed when at least one
+  // subscribed skill explicitly opts the user in via this list.
+  const allowedTools = new Set<string>();
   for (const row of skillsRes.data ?? []) {
     const joined = (row as { skills: SkillRow | SkillRow[] | null }).skills;
     const arr = Array.isArray(joined) ? joined : joined ? [joined] : [];
@@ -184,6 +218,10 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
         description: s.frontmatter?.description ?? '',
         body: s.body_md,
       });
+      const tools = s.frontmatter?.allowed_tools;
+      if (Array.isArray(tools)) {
+        for (const t of tools) if (typeof t === 'string') allowedTools.add(t);
+      }
     }
   }
   const botNote = (botNoteRes.data?.body_md as string | undefined) ?? null;
@@ -241,6 +279,11 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   const openai = openrouterClient(env);
   emit('typing', { state: 'thinking' });
 
+  // Compose this turn's tool list. Always-on tools come from CHAT_TOOLS;
+  // sensitive ones gate behind the subscribed skills' allowed_tools.
+  const turnTools: ChatCompletionTool[] = [...CHAT_TOOLS];
+  if (allowedTools.has('execute_code')) turnTools.push(EXECUTE_CODE_TOOL);
+
   try {
     // Outer agent loop. Each iteration is one LLM call. If the model emits
     // tool_calls, we execute them and re-iterate; otherwise we exit.
@@ -251,7 +294,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
         {
           model: bot.model_id,
           messages,
-          tools: CHAT_TOOLS,
+          tools: turnTools,
           tool_choice: 'auto',
           stream: true,
           stream_options: { include_usage: true },
@@ -487,6 +530,9 @@ async function runTool(
     if (name === 'create_skill') {
       return await createSkillTool(env, args, ctx);
     }
+    if (name === 'execute_code') {
+      return await executeCodeTool(env, args, ctx);
+    }
     return JSON.stringify({ error: `unknown tool: ${name}` });
   } catch (err) {
     ctx.emit('tool_result', { name, error: String(err) });
@@ -556,4 +602,108 @@ async function createSkillTool(
 
   ctx.emit('tool_result', { name: 'create_skill', skill_id: data.id, skill_name: rawName });
   return JSON.stringify({ skill_id: data.id, name: rawName, subscribed: true });
+}
+
+// Run Python in this conversation's dedicated Daytona sandbox. First call
+// for a conv lazily provisions a sandbox + pip-installs the common
+// data-stack; subsequent calls reuse it. The cron sweep retires idle
+// sandboxes; on retirement we'd lose interpreter state, but bootstrap is
+// idempotent so the next call just re-provisions.
+//
+// `bot_sandbox_sessions` lives in migration 0027 and isn't in schema.ts
+// yet — the table accessor goes through `untyped` so this commit
+// typechecks before the post-migration regen. After regen, replace
+// `untyped(supa)` with `supa` and the typing tightens automatically.
+async function executeCodeTool(
+  env: Env,
+  args: Record<string, unknown>,
+  ctx: ToolCtx,
+): Promise<string> {
+  const code = String(args.code ?? '');
+  if (!code.trim()) return JSON.stringify({ error: 'code is required' });
+
+  ctx.emit('tool_call', { name: 'execute_code', chars: code.length });
+
+  const supa = serviceClient(env);
+  const sandboxes = untyped(supa).from('bot_sandbox_sessions');
+
+  // Look up an existing sandbox for this conversation, or create one.
+  // bot_sandbox_sessions has a UNIQUE on conversation_id so the
+  // get-or-create race resolves to a single row.
+  const existing = await sandboxes
+    .select('daytona_sandbox_id, bootstrapped')
+    .eq('conversation_id', ctx.conversationId)
+    .maybeSingle();
+
+  let sandboxId: string;
+  let bootstrapped: boolean;
+  if (existing.data) {
+    sandboxId = existing.data.daytona_sandbox_id as string;
+    bootstrapped = (existing.data.bootstrapped as boolean) ?? false;
+  } else {
+    sandboxId = await createSandbox(env);
+    await sandboxes.insert({
+      conversation_id: ctx.conversationId,
+      daytona_sandbox_id: sandboxId,
+      bootstrapped: false,
+    });
+    bootstrapped = false;
+  }
+
+  if (!bootstrapped) {
+    const boot = await bootstrapPython(env, sandboxId);
+    if (boot.exitCode === 0) {
+      await untyped(supa)
+        .from('bot_sandbox_sessions')
+        .update({ bootstrapped: true, last_used_at: new Date().toISOString() })
+        .eq('conversation_id', ctx.conversationId);
+    } else {
+      // Bootstrap failed — keep the sandbox row so we don't churn through
+      // creates on every retry, but report the failure to the model so it
+      // can pick a different approach.
+      ctx.emit('tool_result', {
+        name: 'execute_code',
+        error: 'sandbox bootstrap failed',
+        exit_code: boot.exitCode,
+      });
+      return JSON.stringify({
+        error: 'sandbox bootstrap failed',
+        stderr: boot.stdout.slice(-1000),
+      });
+    }
+  }
+
+  const result = await runPython(env, sandboxId, code);
+  await untyped(supa)
+    .from('bot_sandbox_sessions')
+    .update({ last_used_at: new Date().toISOString() })
+    .eq('conversation_id', ctx.conversationId);
+
+  ctx.emit('tool_result', {
+    name: 'execute_code',
+    exit_code: result.exitCode,
+    truncated: result.truncated,
+  });
+  return JSON.stringify({
+    stdout: result.stdout,
+    exit_code: result.exitCode,
+    truncated: result.truncated,
+  });
+}
+
+// Localized escape hatch for tables not yet in the auto-generated
+// schema.ts — drops back to a dynamically-typed builder. Once the
+// post-migration regen lands, every caller can swap back to plain `supa`.
+function untyped(supa: ReturnType<typeof serviceClient>): {
+  from(table: string): {
+    select: (...a: unknown[]) => {
+      eq: (...a: unknown[]) => { maybeSingle: () => Promise<{ data: Record<string, unknown> | null }> };
+    };
+    insert: (row: Record<string, unknown>) => Promise<unknown>;
+    update: (row: Record<string, unknown>) => {
+      eq: (...a: unknown[]) => Promise<unknown>;
+    };
+  };
+} {
+  return supa as unknown as ReturnType<typeof untyped>;
 }
