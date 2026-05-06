@@ -26,9 +26,9 @@ const limit = Math.max(1, Math.min(100, Number(flag('--limit') ?? 20)));
 const userFilter = flag('--user');
 const botFilter = flag('--bot');
 
-function loadDevVars(): Record<string, string> {
-  const text = fs.readFileSync(path.join(EDGE_ROOT, '.dev.vars'), 'utf8');
-  const env: Record<string, string> = {};
+// Merge ~/.config/pendingbot/.dev.vars (user-global) then apps/edge/.dev.vars
+// (project, wins on conflict). Either may be missing.
+function parseDotenv(text: string, into: Record<string, string>): void {
   for (const line of text.split('\n')) {
     const t = line.trim();
     if (!t || t.startsWith('#')) continue;
@@ -36,7 +36,21 @@ function loadDevVars(): Record<string, string> {
     if (m) {
       let v = m[2];
       if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
-      env[m[1]] = v;
+      into[m[1]] = v;
+    }
+  }
+}
+function loadDevVars(): Record<string, string> {
+  const env: Record<string, string> = {};
+  const home = process.env.HOME ?? '';
+  for (const file of [
+    home ? path.join(home, '.config/pendingbot/.dev.vars') : '',
+    path.join(EDGE_ROOT, '.dev.vars'),
+  ].filter(Boolean)) {
+    try {
+      parseDotenv(fs.readFileSync(file, 'utf8'), env);
+    } catch {
+      // optional
     }
   }
   return env;

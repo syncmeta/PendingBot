@@ -106,9 +106,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const EDGE_ROOT = path.resolve(__dirname, '..');
 
 // ── .dev.vars loader ─────────────────────────────────────────────────
-function loadDevVars(): Record<string, string> {
-  const text = fs.readFileSync(path.join(EDGE_ROOT, '.dev.vars'), 'utf8');
-  const env: Record<string, string> = {};
+// Two sources, merged in this order (later overrides earlier):
+//   1. ~/.config/pendingbot/.dev.vars   — user-global stash (good for
+//      OPENROUTER_API_KEY etc. you don't want to recopy per worktree)
+//   2. apps/edge/.dev.vars              — project-local, wins on conflict
+function parseDotenv(text: string, into: Record<string, string>): void {
   for (const line of text.split('\n')) {
     const t = line.trim();
     if (!t || t.startsWith('#')) continue;
@@ -118,7 +120,23 @@ function loadDevVars(): Record<string, string> {
       if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
         v = v.slice(1, -1);
       }
-      env[m[1]] = v;
+      into[m[1]] = v;
+    }
+  }
+}
+function loadDevVars(): Record<string, string> {
+  const env: Record<string, string> = {};
+  const home = process.env.HOME ?? '';
+  const candidates = [
+    home ? path.join(home, '.config/pendingbot/.dev.vars') : '',
+    path.join(EDGE_ROOT, '.dev.vars'),
+  ].filter(Boolean);
+  for (const file of candidates) {
+    try {
+      const text = fs.readFileSync(file, 'utf8');
+      parseDotenv(text, env);
+    } catch {
+      // fine — file optional
     }
   }
   return env;
