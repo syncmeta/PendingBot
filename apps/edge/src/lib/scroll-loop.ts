@@ -91,18 +91,22 @@ export const TOOLS: ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
-      name: 'decline_to_write',
+      name: 'decide_write_article',
       description:
-        '如果你判断这次没什么真正值得给朋友写的（材料太薄、没有信息盲区可补、平庸常识、或者写了反而不如不写），就调用这个工具说明你不写的理由。不写比写一篇平庸的更好。一旦调用，本轮结束，不再写文章。',
+        '当你研究够了、要做最终决定时调用此工具：本次到底写不写文章——这是一个二选一。write=true 表示决定写（继续后续流程，由你/写文章模型产出正文）；write=false 表示决定不写（本次结束，不再产出文章）。不写比写一篇平庸的更好。',
       parameters: {
         type: 'object',
         properties: {
+          write: {
+            type: 'boolean',
+            description: 'true = 决定写一篇文章；false = 决定本次不写。',
+          },
           reason: {
             type: 'string',
-            description: '为什么这次决定不写。请具体说，不是"暂时没想好"这种空话。',
+            description: '为什么这么决定。具体说，不要"暂时没想好"这种空话。',
           },
         },
-        required: ['reason'],
+        required: ['write', 'reason'],
       },
     },
   },
@@ -290,9 +294,13 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
   let reason: ScrollLoopExitReason = 'turn_cap';
   let turn = 0;
   let lastAssistantText = '';
-  // Mutated by execTool when the model calls decline_to_write. We
-  // break the loop and return the reason on the result.
-  const decline: { reason?: string } = {};
+  // Mutated by execTool when the model calls decide_write_article.
+  //   write === false  → break with reason='declined' (no article)
+  //   write === true   → record the decision but keep looping; the
+  //     model will then produce its no-tool turn (article in single-
+  //     phase, or thinking summary in two-phase) and the loop exits
+  //     naturally with reason='final'.
+  const decision: { write?: boolean; reason?: string } = {};
 
   for (turn = 0; turn < hardCap; turn++) {
     if (Date.now() - startedAt > wallCap) {
@@ -372,7 +380,7 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
           tc,
           progress,
           deps.simulateUserReply,
-          decline,
+          decision,
         ),
       ),
     );
@@ -397,8 +405,10 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
       });
     }
 
-    // The model called decline_to_write — exit cleanly with the reason.
-    if (decline.reason !== undefined) {
+    // Model declined to write — exit cleanly. write=true is recorded
+    // but doesn't break: the model still has to produce its final
+    // assistant turn (article or thinking) on the next no-tool call.
+    if (decision.write === false) {
       reason = 'declined';
       break;
     }
@@ -410,7 +420,11 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
     usage,
     lastGenerationId,
     reason,
-    declineReason: decline.reason,
+    // Set whenever decide_write_article was called — `declineReason`
+    // continues to carry the model's stated reason regardless of which
+    // branch it chose, so the panel can show "decided to write because
+    // …" too. The reason='declined' exit only fires on write=false.
+    declineReason: decision.reason,
     lastAssistantText: lastAssistantText || undefined,
     messages,
     turns: turn + (reason === 'turn_cap' ? 0 : 1),
@@ -425,7 +439,7 @@ async function execTool(
   tc: ChatCompletionMessageToolCall,
   progress: ProgressState,
   simulateUserReply?: (planArgs: string) => Promise<string>,
-  decline?: { reason?: string },
+  decision?: { write?: boolean; reason?: string },
 ): Promise<string> {
   const name = tc.function.name;
   const args = safeParse(tc.function.arguments);
@@ -451,10 +465,16 @@ async function execTool(
       return '用户：继续，按你的计划执行。';
     }
 
-    if (name === 'decline_to_write') {
-      const reasonText = String(args.reason ?? '').trim();
-      if (decline) decline.reason = reasonText || '(no reason given)';
-      return '已记录你的决定：本轮不写文章。';
+    if (name === 'decide_write_article') {
+      const writeFlag = args.write === true;
+      const reasonText = String(args.reason ?? '').trim() || '(no reason given)';
+      if (decision) {
+        decision.write = writeFlag;
+        decision.reason = reasonText;
+      }
+      return writeFlag
+        ? `好的，本次值得写。请按 system prompt 的要求把文章写出来。理由记录在案：${reasonText}`
+        : `好的，本次不写——理由：${reasonText}`;
     }
 
     if (name === 'web_search') {
