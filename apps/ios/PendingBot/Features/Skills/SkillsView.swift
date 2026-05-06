@@ -2,9 +2,10 @@ import SwiftUI
 import Supabase
 
 /// Full skills management screen — opens from 「我」 → 技能.
-/// Lists every skill the user owns, lets them toggle / edit / delete /
-/// create. The same `/api/skills/*` endpoints back the web UI, the chat-
-/// header chip's popover, and this screen, so changes round-trip cleanly.
+/// Lists every skill visible to this account (own + system presets),
+/// and lets the user toggle / edit / delete (own only) / fork (preset →
+/// own copy) / create. Goes straight through Supabase PostgREST + RLS;
+/// no edge route in front.
 struct SkillsView: View {
     @Environment(\.api) private var api
     @Environment(\.dismiss) private var dismiss
@@ -13,6 +14,7 @@ struct SkillsView: View {
     @State private var loading = true
     @State private var error: String?
     @State private var editingSkill: SkillDetail?
+    @State private var forkingFrom: SkillDetail?
     @State private var creatingNew = false
     @State private var pendingToggle: Set<String> = []
 
@@ -60,6 +62,11 @@ struct SkillsView: View {
         .task { await load() }
         .sheet(item: $editingSkill) { detail in
             SkillEditorSheet(mode: .edit(detail)) { Task { await load() } }
+                .tint(Theme.Palette.accent)
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $forkingFrom) { source in
+            SkillEditorSheet(mode: .fork(source)) { Task { await load() } }
                 .tint(Theme.Palette.accent)
                 .presentationDragIndicator(.visible)
         }
@@ -127,18 +134,29 @@ struct SkillsView: View {
                     .font(Theme.Fonts.caption)
                     .foregroundStyle(Theme.Palette.inkMuted)
                 Spacer(minLength: 0)
-                Button("编辑") {
-                    Task { await openEditor(skill) }
+                if skill.is_preset {
+                    // Preset rows are read-only — fork to make a private copy
+                    // (carries forked_from for lineage), then edit freely.
+                    Button("Fork") {
+                        Task { await openFork(skill) }
+                    }
+                    .font(Theme.Fonts.rounded(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.Palette.accent)
+                    .buttonStyle(.plain)
+                } else {
+                    Button("编辑") {
+                        Task { await openEditor(skill) }
+                    }
+                    .font(Theme.Fonts.rounded(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.Palette.accent)
+                    .buttonStyle(.plain)
+                    Button("删除") {
+                        Task { await delete(skill) }
+                    }
+                    .font(Theme.Fonts.rounded(size: 12, weight: .medium))
+                    .foregroundStyle(Color(hex: 0xB14B3C))
+                    .buttonStyle(.plain)
                 }
-                .font(Theme.Fonts.rounded(size: 12, weight: .medium))
-                .foregroundStyle(Theme.Palette.accent)
-                .buttonStyle(.plain)
-                Button("删除") {
-                    Task { await delete(skill) }
-                }
-                .font(Theme.Fonts.rounded(size: 12, weight: .medium))
-                .foregroundStyle(Color(hex: 0xB14B3C))
-                .buttonStyle(.plain)
             }
         }
         .padding(14)
@@ -250,6 +268,21 @@ struct SkillsView: View {
     }
 
     private func openEditor(_ skill: SkillSummary) async {
+        if let detail = await fetchDetail(skill) {
+            self.editingSkill = detail
+        }
+    }
+
+    /// Fetch the source preset's body, then drop the user into the editor in
+    /// fork mode. The save path INSERTs a fresh row with `forked_from`
+    /// pointing at the original — preserving the lineage trail.
+    private func openFork(_ skill: SkillSummary) async {
+        if let detail = await fetchDetail(skill) {
+            self.forkingFrom = detail
+        }
+    }
+
+    private func fetchDetail(_ skill: SkillSummary) async -> SkillDetail? {
         do {
             struct Row: Decodable {
                 let id: String
@@ -267,7 +300,7 @@ struct SkillsView: View {
                 .execute()
                 .value
             let updatedSecs = row.updated_at.map { ServerTimestamp.epochSeconds($0, default: 0) } ?? 0
-            self.editingSkill = SkillDetail(
+            return SkillDetail(
                 id: row.id,
                 name: row.frontmatter.name ?? "未命名",
                 description: row.frontmatter.description ?? "",
@@ -280,6 +313,7 @@ struct SkillsView: View {
             )
         } catch {
             self.error = error.localizedDescription
+            return nil
         }
     }
 
@@ -293,13 +327,7 @@ struct SkillsView: View {
             skills.removeAll { $0.id == skill.id }
             Haptics.success()
         } catch {
-            // RLS denies deletes on system-public skills (owner_id IS NULL)
-            // — surface that as a friendlier message than the raw PG error.
-            if skill.is_preset {
-                self.error = "预设技能不能删除"
-            } else {
-                self.error = error.localizedDescription
-            }
+            self.error = error.localizedDescription
         }
     }
 }
@@ -314,6 +342,9 @@ struct SkillEditorSheet: View {
         case create
         case createPrefilled(body: String)
         case edit(SkillDetail)
+        /// Fork a preset: pre-fills name/description/body from the source and
+        /// stamps `forked_from = source.id` on the inserted row.
+        case fork(SkillDetail)
     }
 
     @Environment(\.api) private var api
@@ -331,6 +362,27 @@ struct SkillEditorSheet: View {
     private var isEdit: Bool {
         if case .edit = mode { return true }
         return false
+    }
+
+    private var titleText: String {
+        switch mode {
+        case .edit: return "编辑技能"
+        case .fork: return "Fork 技能"
+        case .create, .createPrefilled: return "新建技能"
+        }
+    }
+
+    private var saveActionLabel: String {
+        switch mode {
+        case .edit: return "保存"
+        case .fork: return "Fork"
+        case .create, .createPrefilled: return "创建"
+        }
+    }
+
+    private var forkSourceId: String? {
+        if case .fork(let s) = mode { return s.id }
+        return nil
     }
 
     var body: some View {
@@ -352,7 +404,7 @@ struct SkillEditorSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    Text(isEdit ? "编辑技能" : "新建技能")
+                    Text(titleText)
                         .font(Theme.Fonts.serif(size: 17, weight: .semibold))
                         .foregroundStyle(Theme.Palette.ink)
                 }
@@ -364,7 +416,7 @@ struct SkillEditorSheet: View {
                     if saving {
                         ProgressView().tint(Theme.Palette.accent)
                     } else {
-                        Button(isEdit ? "保存" : "创建") {
+                        Button(saveActionLabel) {
                             Task { await save() }
                         }
                         .foregroundStyle(canSave ? Theme.Palette.accent
@@ -485,6 +537,13 @@ struct SkillEditorSheet: View {
             description = detail.description
             skillBody = detail.body
             enabled = detail.enabled
+        case .fork(let source):
+            // Suffix the source's name so the fork doesn't collide visually
+            // with the preset in the list. User is free to rename before save.
+            name = "\(source.name)-fork"
+            description = source.description
+            skillBody = source.body
+            enabled = true
         }
     }
 
@@ -501,17 +560,23 @@ struct SkillEditorSheet: View {
 
         do {
             switch mode {
-            case .create, .createPrefilled:
+            case .create, .createPrefilled, .fork:
                 struct Insert: Encodable {
                     let owner_id: String
                     let frontmatter: Frontmatter
                     let body_md: String
                     let visibility = "private"
+                    let forked_from: String?
                 }
                 struct InsertedId: Decodable { let id: String }
                 let inserted: InsertedId = try await SupabaseStack.shared
                     .from("skills")
-                    .insert(Insert(owner_id: userId, frontmatter: fm, body_md: skillBody))
+                    .insert(Insert(
+                        owner_id: userId,
+                        frontmatter: fm,
+                        body_md: skillBody,
+                        forked_from: forkSourceId
+                    ))
                     .select("id")
                     .single()
                     .execute()

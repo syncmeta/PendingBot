@@ -30,7 +30,8 @@
   "triggers": {
     "crons": [
       "0 3 * * 1",
-      "0 4 * * *"
+      "0 4 * * *",
+      "5 * * * *"
     ]
   },
 
@@ -101,4 +102,7 @@
   //   APNS_KEY_PROD  (.p8 PEM content, multi-line)
   //   HONCHO_API_KEY
   //   HONCHO_WORKSPACE_ID
+  //   DAYTONA_API_KEY        (code-exec sandbox; free tier)
+  //   DAYTONA_API_URL        (optional — defaults to https://app.daytona.io/api)
+  //   DAYTONA_TOOLBOX_URL    (optional — defaults to https://proxy.app.daytona.io/toolbox)
 }

@@ -10,6 +10,7 @@ import { openrouterClient } from '../llm/client';
 import { buildMessages, type BuildMessagesInput } from '../llm/builder';
 import { getBotMemory } from './memory';
 import { braveSearch, firecrawlScrape } from './web';
+import { bootstrapPython, createSandbox, runPython } from './sandbox';
 
 // How many bot_reflections rows to read for the self section. The schema's
 // idx_reflections_bot_user_time covers this exact (bot_id, user_id, created_at)
@@ -45,7 +46,7 @@ const MAX_TOOL_ROUNDS = 6;
 const READ_TRUNCATE_CHARS = 6000;
 
 // Tools exposed to the chat bot. Bot may call any of them mid-reply; the
-// runner executes via Jina, pushes the tool result back into history, and
+// runner executes the call, pushes the tool result back into history, and
 // re-invokes the model so it can incorporate findings into the visible reply.
 const CHAT_TOOLS: ChatCompletionTool[] = [
   {
@@ -72,7 +73,61 @@ const CHAT_TOOLS: ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'create_skill',
+      description:
+        '把一段可复用的做事方法保存成对方账号下的「技能」。一旦保存并订阅，下次系统提示词会带上正文。仅在用户明确想要沉淀复用一个流程/角色/写作模板时调用——平时聊天不要用。返回新技能 id。',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: {
+            type: 'string',
+            description: '小写连字符标识，1–80 字符，例如 write-haiku 或 weekly-review-coach。',
+          },
+          description: {
+            type: 'string',
+            description: '一句话告诉机器人「什么时候用这个技能」，便于以后判断是否触发。≤ 2000 字符。',
+          },
+          body: {
+            type: 'string',
+            description: '技能正文 markdown，订阅后会拼进系统提示词。≤ 64 KiB。',
+          },
+        },
+        required: ['name', 'description', 'body'],
+      },
+    },
+  },
 ];
+
+// Frontmatter name regex — must match the DB CHECK in 0026.
+const SKILL_NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+const SKILL_NAME_MAX = 80;
+const SKILL_DESC_MAX = 2000;
+const SKILL_BODY_MAX = 65536;
+
+// Sensitive tools — appended to the per-turn tools list only when the
+// active skill set's frontmatter.allowed_tools opts the user in. The same
+// gating model Anthropic Skills uses to keep code-exec out of every chat.
+const EXECUTE_CODE_TOOL: ChatCompletionTool = {
+  type: 'function',
+  function: {
+    name: 'execute_code',
+    description:
+      'Run Python 3 code in a sandboxed VM dedicated to this conversation. Stdout+stderr (combined) and the exit code come back. Useful for math, data wrangling with numpy/pandas, quick scrapes, file/text manipulation. Avoid pop-ups, GUIs, or long-running interactive scripts. The sandbox keeps state across calls in the same conversation, so vars/imports persist for short stretches.',
+    parameters: {
+      type: 'object',
+      properties: {
+        code: {
+          type: 'string',
+          description: 'Python source. Will be executed via Daytona\'s code-run; uses the system python with numpy/pandas/matplotlib/pillow/requests/httpx/python-dateutil pre-installed.',
+        },
+      },
+      required: ['code'],
+    },
+  },
+};
 
 export interface RunChatTurnInput {
   env: Env;
@@ -141,8 +196,19 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     kind: 'limit' | 'grow' | 'keep';
     content: string;
   }>;
-  type SkillRow = { frontmatter: { name?: string; description?: string }; body_md: string };
+  type SkillRow = {
+    frontmatter: {
+      name?: string;
+      description?: string;
+      allowed_tools?: unknown;
+    };
+    body_md: string;
+  };
   const skills: Array<{ name: string; description: string; body: string }> = [];
+  // Aggregate allowed_tools across the active skill set. Sensitive tools
+  // (currently: execute_code) are only exposed when at least one
+  // subscribed skill explicitly opts the user in via this list.
+  const allowedTools = new Set<string>();
   for (const row of skillsRes.data ?? []) {
     const joined = (row as { skills: SkillRow | SkillRow[] | null }).skills;
     const arr = Array.isArray(joined) ? joined : joined ? [joined] : [];
@@ -152,6 +218,10 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
         description: s.frontmatter?.description ?? '',
         body: s.body_md,
       });
+      const tools = s.frontmatter?.allowed_tools;
+      if (Array.isArray(tools)) {
+        for (const t of tools) if (typeof t === 'string') allowedTools.add(t);
+      }
     }
   }
   const botNote = (botNoteRes.data?.body_md as string | undefined) ?? null;
@@ -209,6 +279,11 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   const openai = openrouterClient(env);
   emit('typing', { state: 'thinking' });
 
+  // Compose this turn's tool list. Always-on tools come from CHAT_TOOLS;
+  // sensitive ones gate behind the subscribed skills' allowed_tools.
+  const turnTools: ChatCompletionTool[] = [...CHAT_TOOLS];
+  if (allowedTools.has('execute_code')) turnTools.push(EXECUTE_CODE_TOOL);
+
   try {
     // Outer agent loop. Each iteration is one LLM call. If the model emits
     // tool_calls, we execute them and re-iterate; otherwise we exit.
@@ -219,7 +294,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
         {
           model: bot.model_id,
           messages,
-          tools: CHAT_TOOLS,
+          tools: turnTools,
           tool_choice: 'auto',
           stream: true,
           stream_options: { include_usage: true },
@@ -306,6 +381,9 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
           const result = await runTool(env, tc.function.name, args, {
             signal: ac.signal,
             emit,
+            userId,
+            botId: bot.id,
+            conversationId,
           });
           messages.push({ role: 'tool', tool_call_id: tc.id, content: result });
         }
@@ -411,6 +489,9 @@ function safeParseArgs(s: string): Record<string, unknown> {
 interface ToolCtx {
   signal: AbortSignal;
   emit: (event: string, data: unknown) => void;
+  userId: string;
+  botId: string;
+  conversationId: string;
 }
 
 async function runTool(
@@ -446,9 +527,161 @@ async function runTool(
         content: page.content.slice(0, READ_TRUNCATE_CHARS),
       });
     }
+    if (name === 'create_skill') {
+      return await createSkillTool(env, args, ctx);
+    }
+    if (name === 'execute_code') {
+      return await executeCodeTool(env, args, ctx);
+    }
     return JSON.stringify({ error: `unknown tool: ${name}` });
   } catch (err) {
     ctx.emit('tool_result', { name, error: String(err) });
     return JSON.stringify({ error: String(err) });
   }
+}
+
+// Inserts a user-owned skill row + auto-subscribes it for the current
+// conversation, so the skill takes effect on the very next turn. The skill
+// shows up in 我→技能 and the user can promote to global there if they like.
+// Bot-private knowledge has its own path (memory.ts/refreshBotNote); this
+// tool is exclusively for surfacing a reusable skill into the user's library.
+async function createSkillTool(
+  env: Env,
+  args: Record<string, unknown>,
+  ctx: ToolCtx,
+): Promise<string> {
+  const rawName = String(args.name ?? '').trim();
+  const description = String(args.description ?? '').trim();
+  const body = String(args.body ?? '');
+
+  if (!rawName) return JSON.stringify({ error: 'name is required' });
+  if (rawName.length > SKILL_NAME_MAX) {
+    return JSON.stringify({ error: `name exceeds ${SKILL_NAME_MAX} chars` });
+  }
+  if (!SKILL_NAME_RE.test(rawName)) {
+    return JSON.stringify({
+      error: 'name must be lowercase kebab-case (a-z, 0-9, single hyphens)',
+    });
+  }
+  if (description.length > SKILL_DESC_MAX) {
+    return JSON.stringify({ error: `description exceeds ${SKILL_DESC_MAX} chars` });
+  }
+  if (!body.trim()) return JSON.stringify({ error: 'body is required' });
+  if (body.length > SKILL_BODY_MAX) {
+    return JSON.stringify({ error: `body exceeds ${SKILL_BODY_MAX} chars` });
+  }
+
+  ctx.emit('tool_call', { name: 'create_skill', skill_name: rawName });
+
+  const supa = serviceClient(env);
+  const frontmatter: Record<string, string> = { name: rawName, description };
+  const { data, error } = await supa
+    .from('skills')
+    .insert({
+      owner_id: ctx.userId,
+      bot_id: null,
+      user_id: null,
+      visibility: 'private',
+      frontmatter,
+      body_md: body,
+    })
+    .select('id')
+    .single();
+  if (error || !data) {
+    ctx.emit('tool_result', { name: 'create_skill', error: error?.message ?? 'insert failed' });
+    return JSON.stringify({ error: error?.message ?? 'insert failed' });
+  }
+
+  // Auto-subscribe for the current conversation so the skill takes effect
+  // on the very next turn here. The user can promote it to global from
+  // 我→技能 if they like it. Ignore sub errors — the skill row is what
+  // matters; the user can toggle on later if the auto-sub didn't land.
+  await supa
+    .from('skill_subscriptions')
+    .insert({ user_id: ctx.userId, skill_id: data.id, conversation_id: ctx.conversationId });
+
+  ctx.emit('tool_result', { name: 'create_skill', skill_id: data.id, skill_name: rawName });
+  return JSON.stringify({ skill_id: data.id, name: rawName, subscribed: true });
+}
+
+// Run Python in this conversation's dedicated Daytona sandbox. First call
+// for a conv lazily provisions a sandbox + pip-installs the common
+// data-stack; subsequent calls reuse it. The cron sweep retires idle
+// sandboxes; on retirement we'd lose interpreter state, but bootstrap is
+// idempotent so the next call just re-provisions.
+async function executeCodeTool(
+  env: Env,
+  args: Record<string, unknown>,
+  ctx: ToolCtx,
+): Promise<string> {
+  const code = String(args.code ?? '');
+  if (!code.trim()) return JSON.stringify({ error: 'code is required' });
+
+  ctx.emit('tool_call', { name: 'execute_code', chars: code.length });
+
+  const supa = serviceClient(env);
+
+  // Look up an existing sandbox for this conversation, or create one.
+  // bot_sandbox_sessions has a UNIQUE on conversation_id so the
+  // get-or-create race resolves to a single row.
+  const existing = await supa
+    .from('bot_sandbox_sessions')
+    .select('daytona_sandbox_id, bootstrapped')
+    .eq('conversation_id', ctx.conversationId)
+    .maybeSingle();
+
+  let sandboxId: string;
+  let bootstrapped: boolean;
+  if (existing.data) {
+    sandboxId = existing.data.daytona_sandbox_id;
+    bootstrapped = existing.data.bootstrapped;
+  } else {
+    sandboxId = await createSandbox(env);
+    await supa.from('bot_sandbox_sessions').insert({
+      conversation_id: ctx.conversationId,
+      daytona_sandbox_id: sandboxId,
+      bootstrapped: false,
+    });
+    bootstrapped = false;
+  }
+
+  if (!bootstrapped) {
+    const boot = await bootstrapPython(env, sandboxId);
+    if (boot.exitCode === 0) {
+      await supa
+        .from('bot_sandbox_sessions')
+        .update({ bootstrapped: true, last_used_at: new Date().toISOString() })
+        .eq('conversation_id', ctx.conversationId);
+    } else {
+      // Bootstrap failed — keep the sandbox row so we don't churn through
+      // creates on every retry, but report the failure to the model so it
+      // can pick a different approach.
+      ctx.emit('tool_result', {
+        name: 'execute_code',
+        error: 'sandbox bootstrap failed',
+        exit_code: boot.exitCode,
+      });
+      return JSON.stringify({
+        error: 'sandbox bootstrap failed',
+        stderr: boot.stdout.slice(-1000),
+      });
+    }
+  }
+
+  const result = await runPython(env, sandboxId, code);
+  await supa
+    .from('bot_sandbox_sessions')
+    .update({ last_used_at: new Date().toISOString() })
+    .eq('conversation_id', ctx.conversationId);
+
+  ctx.emit('tool_result', {
+    name: 'execute_code',
+    exit_code: result.exitCode,
+    truncated: result.truncated,
+  });
+  return JSON.stringify({
+    stdout: result.stdout,
+    exit_code: result.exitCode,
+    truncated: result.truncated,
+  });
 }

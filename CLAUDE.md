@@ -55,11 +55,26 @@ Never squash-merge — it destroys the small-unit commit history we deliberately
 
 Before merging into `main`, run typecheck on whatever was touched:
 
-- Edge changes: `bun --filter @pendingbot/edge run typecheck`
+- Edge changes: `bun --filter='@pendingbot/edge' run typecheck`
 - iOS changes: `cd apps/ios && xcodebuild -project PendingBot.xcodeproj -scheme PendingBot -configuration Debug -sdk iphonesimulator build` (or whatever scheme the user has wired)
 - Migrations: ensure file numbering is contiguous and the latest migration number matches `supabase/migrations/`
 
 If typecheck fails, fix on the branch and re-commit; don't merge red.
+
+## After applying a migration
+
+Anything that lands a new file under `supabase/migrations/` is only half done — once the user has applied it (Supabase Studio / `supabase db push` / however they sync), the TypeScript schema needs to be regenerated so edge code that references new tables/columns typechecks:
+
+```
+supabase gen types typescript --local --schema pendingbot \
+  > apps/edge/src/db/schema.ts
+```
+
+(Or `--linked` instead of `--local` if pulling from the linked project; the `apps/edge/src/db/schema.ts` header documents the exact command.)
+
+If you (the agent) are the one running it: run that command, then re-run `bun --filter='@pendingbot/edge' run typecheck` and commit the regen as a separate `chore(db): regen schema.ts after 00NN` commit.
+
+If the user is running it: tell them in the wrap-up which migration they need to apply and that schema.ts regen + edge typecheck go together. Don't claim a feature is done if it depends on a not-yet-applied migration.
 
 ## Cleanup after merge
 
@@ -74,7 +89,7 @@ Harness blocks Claude from pushing `main`. After merging, tell the user to run `
 
 ## Deploys
 
-- Edge: `bun --filter @pendingbot/edge run deploy` (or `deploy:staging` / `deploy:production` per `apps/edge/package.json`)
+- Edge: `bun --filter='@pendingbot/edge' run deploy` (or `deploy:staging` / `deploy:production` per `apps/edge/package.json`). The `--filter='...'` form (with `=`) matters — bun ≥ 1.3 silently mis-parses `--filter @pendingbot/edge` (space-separated) as no-match.
 - iOS: TestFlight via the configured ASC API key (see user memory)
 
 Don't auto-deploy on merge — deploys are deliberate and user-initiated.
