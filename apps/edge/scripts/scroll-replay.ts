@@ -120,7 +120,9 @@ function parseDotenv(text: string, into: Record<string, string>): void {
       if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
         v = v.slice(1, -1);
       }
-      into[m[1]] = v;
+      // Skip empty values so a half-filled project-local .dev.vars doesn't
+      // clobber a real value from the global stash.
+      if (v) into[m[1]] = v;
     }
   }
 }
