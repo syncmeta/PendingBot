@@ -30,7 +30,14 @@ export interface PromptsResponse {
   system: string;
   injected: string;
   write: string;
-  friend: string;
+  collaborator: string;
+}
+
+export interface UsageStats {
+  input: number;
+  output: number;
+  total: number;
+  cached: number;
 }
 
 export interface FixtureMeta {
@@ -88,8 +95,10 @@ export interface TurnEvent {
   turn: number;
   progress: ProgressState;
   newMessages: LoopMessage[];
-  turnUsage: { input: number; output: number; total: number };
-  cumulativeUsage: { input: number; output: number; total: number };
+  turnUsage: UsageStats;
+  cumulativeUsage: UsageStats;
+  collaboratorTurnUsage?: UsageStats;
+  cumulativeCollaboratorUsage?: UsageStats;
   generationId?: string;
 }
 
@@ -97,7 +106,8 @@ export interface ResultEvent {
   reason: 'final' | 'declined' | 'turn_cap' | 'wall_cap' | 'cancelled' | 'no_choice';
   turns: number;
   elapsedMs: number;
-  usage: { input: number; output: number; total: number };
+  usage: UsageStats;
+  collaboratorUsage?: UsageStats;
   generationId?: string;
   progress: ProgressState;
   finalArticle: string;
@@ -107,8 +117,11 @@ export interface ResultEvent {
   lastAssistantText?: string;
   // Two-phase write step (panel-only) outputs.
   phase1Summary?: string;
-  writeUsage?: { input: number; output: number; total: number };
+  writeUsage?: UsageStats;
   writeGenerationId?: string;
+  // Echoed back so the panel can offer "继续 N 轮" against the same id.
+  runId?: string;
+  resumed?: boolean;
 }
 
 export interface StartEvent {

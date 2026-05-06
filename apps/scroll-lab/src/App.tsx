@@ -34,8 +34,9 @@ export function App() {
   // ── Run inputs (editable in UI; persisted to localStorage) ────────
   // Anything you'd hate to retype after a refresh lives in storage.ts.
   const [model, setModel] = useLocalStorage<string>('model', '');
-  const [userSimulatorModel, setUserSimulatorModel] = useLocalStorage<string>('userSimulatorModel', '');
+  const [collaboratorModel, setCollaboratorModel] = useLocalStorage<string>('collaboratorModel', '');
   const [writeModel, setWriteModel] = useLocalStorage<string>('writeModel', '');
+  const [showTurnsRemaining, setShowTurnsRemaining] = useLocalStorage<boolean>('showTurnsRemaining', false);
   const [searchProvider, setSearchProvider] = useLocalStorage<SearchProvider>('searchProvider', 'brave');
   const [scrapeProvider, setScrapeProvider] = useLocalStorage<ScrapeProvider>('scrapeProvider', 'firecrawl');
   const [turnCap, setTurnCap] = useLocalStorage<number>('turnCap', 8);
@@ -48,11 +49,11 @@ export function App() {
   const [systemPrompt, setSystemPrompt] = useLocalStorage<string | null>('systemPrompt', null);
   const [injectedPrompt, setInjectedPrompt] = useLocalStorage<string | null>('injectedPrompt', null);
   const [writePrompt, setWritePrompt] = useLocalStorage<string | null>('writePrompt', null);
-  const [friendPrompt, setFriendPrompt] = useLocalStorage<string | null>('friendPrompt', null);
+  const [collaboratorPrompt, setCollaboratorPrompt] = useLocalStorage<string | null>('collaboratorPrompt', null);
   const [systemPromptOriginal, setSystemPromptOriginal] = useState<string>('');
   const [injectedPromptOriginal, setInjectedPromptOriginal] = useState<string>('');
   const [writePromptOriginal, setWritePromptOriginal] = useState<string>('');
-  const [friendPromptOriginal, setFriendPromptOriginal] = useState<string>('');
+  const [collaboratorPromptOriginal, setCollaboratorPromptOriginal] = useState<string>('');
 
   const [memory, setMemory] = useLocalStorage<string>('memory', '');
   const [history, setHistory] = useLocalStorage<HistoryMsg[]>('history', [
@@ -84,14 +85,14 @@ export function App() {
         setSystemPromptOriginal(p.system);
         setInjectedPromptOriginal(p.injected);
         setWritePromptOriginal(p.write);
-        setFriendPromptOriginal(p.friend);
+        setCollaboratorPromptOriginal(p.collaborator);
         setFixtures(f);
         setRuns(r);
         if (!model) setModel(c.defaultModel);
         if (systemPrompt === null) setSystemPrompt(p.system);
         if (injectedPrompt === null) setInjectedPrompt(p.injected);
         if (writePrompt === null) setWritePrompt(p.write);
-        if (friendPrompt === null) setFriendPrompt(p.friend);
+        if (collaboratorPrompt === null) setCollaboratorPrompt(p.collaborator);
       })
       .catch((e: Error) => setBootError(e.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -108,15 +109,22 @@ export function App() {
   }
 
   // ── Run / Stop ────────────────────────────────────────────────────
-  async function run(): Promise<void> {
+  // resumeFromRunId set ⇒ "继续 N 轮" against an existing run; the
+  // server appends turns to that run's saved file. additionalTurns
+  // overrides turnCap when resuming.
+  async function run(opts?: { resumeFromRunId?: string; additionalTurns?: number }): Promise<void> {
     if (systemPrompt === null || injectedPrompt === null) {
       setErrorMsg('prompts still loading — try again in a moment');
       return;
     }
     setStatus('running');
-    setStart(null);
-    setTurns([]);
-    setResult(null);
+    if (!opts?.resumeFromRunId) {
+      // Fresh run resets the output area; resume keeps prior turns
+      // visible while new ones stream in.
+      setStart(null);
+      setTurns([]);
+      setResult(null);
+    }
     setErrorMsg(null);
     setCostUSD(null);
     const controller = new AbortController();
@@ -133,11 +141,11 @@ export function App() {
           scrapeProvider,
           stubSearch,
           stubFetch,
-          turns: turnCap,
-          userSimulatorModel: userSimulatorModel || undefined,
-          friendPrompt:
-            userSimulatorModel && friendPrompt && friendPrompt.trim()
-              ? friendPrompt
+          turns: opts?.additionalTurns ?? turnCap,
+          collaboratorModel: collaboratorModel || undefined,
+          collaboratorPrompt:
+            collaboratorModel && collaboratorPrompt && collaboratorPrompt.trim()
+              ? collaboratorPrompt
               : undefined,
           // Phase 2 only kicks in when both the toggle is on AND a
           // prompt is present. writeModel falls back to main `model`
@@ -148,6 +156,8 @@ export function App() {
             writePhaseEnabled && writePrompt && writePrompt.trim()
               ? writePrompt
               : undefined,
+          showTurnsRemaining,
+          resumeFromRunId: opts?.resumeFromRunId,
         },
         {
           signal: controller.signal,
@@ -204,10 +214,10 @@ export function App() {
     await savePrompts({ write: writePrompt });
     setWritePromptOriginal(writePrompt);
   }
-  async function saveFriendPromptToDisk(): Promise<void> {
-    if (friendPrompt === null) return;
-    await savePrompts({ friend: friendPrompt });
-    setFriendPromptOriginal(friendPrompt);
+  async function saveCollaboratorPromptToDisk(): Promise<void> {
+    if (collaboratorPrompt === null) return;
+    await savePrompts({ collaborator: collaboratorPrompt });
+    setCollaboratorPromptOriginal(collaboratorPrompt);
   }
 
   // ── Run history ───────────────────────────────────────────────────
@@ -223,9 +233,11 @@ export function App() {
     type SavedRun = {
       input: {
         model: string;
-        userSimulatorModel?: string;
+        collaboratorModel?: string;
+        collaboratorPrompt?: string;
         writeModel?: string;
         writePhasePrompt?: string;
+        showTurnsRemaining?: boolean;
         searchProvider: SearchProvider;
         scrapeProvider: ScrapeProvider;
         stubSearch: boolean;
@@ -243,10 +255,12 @@ export function App() {
     };
     const data = (await fetchRun(id)) as SavedRun;
     setModel(data.input.model);
-    setUserSimulatorModel(data.input.userSimulatorModel ?? '');
+    setCollaboratorModel(data.input.collaboratorModel ?? '');
+    if (data.input.collaboratorPrompt) setCollaboratorPrompt(data.input.collaboratorPrompt);
     setWriteModel(data.input.writeModel ?? '');
     setWritePhaseEnabled(!!data.input.writePhasePrompt);
     if (data.input.writePhasePrompt) setWritePrompt(data.input.writePhasePrompt);
+    setShowTurnsRemaining(!!data.input.showTurnsRemaining);
     setSearchProvider(data.input.searchProvider);
     setScrapeProvider(data.input.scrapeProvider);
     setStubSearch(data.input.stubSearch);
@@ -294,12 +308,14 @@ export function App() {
             cfg={cfg}
             model={model}
             setModel={setModel}
-            userSimulatorModel={userSimulatorModel}
-            setUserSimulatorModel={setUserSimulatorModel}
+            collaboratorModel={collaboratorModel}
+            setCollaboratorModel={setCollaboratorModel}
             writeModel={writeModel}
             setWriteModel={setWriteModel}
             writePhaseEnabled={writePhaseEnabled}
             setWritePhaseEnabled={setWritePhaseEnabled}
+            showTurnsRemaining={showTurnsRemaining}
+            setShowTurnsRemaining={setShowTurnsRemaining}
             searchProvider={searchProvider}
             setSearchProvider={setSearchProvider}
             scrapeProvider={scrapeProvider}
@@ -330,11 +346,11 @@ export function App() {
             onSaveToDisk={saveInjectedPromptToDisk}
           />
           <PromptsBlock
-            label={`Friend (prompts/scroll-friend.md)${userSimulatorModel ? '' : ' · 朋友模型未选'}`}
-            value={friendPrompt}
-            setValue={setFriendPrompt}
-            original={friendPromptOriginal}
-            onSaveToDisk={saveFriendPromptToDisk}
+            label={`Collaborator (prompts/scroll-collaborator.md)${collaboratorModel ? '' : ' · 协作者模型未选'}`}
+            value={collaboratorPrompt}
+            setValue={setCollaboratorPrompt}
+            original={collaboratorPromptOriginal}
+            onSaveToDisk={saveCollaboratorPromptToDisk}
           />
           <PromptsBlock
             label={`Write phase (prompts/scroll-write.md)${writePhaseEnabled ? '' : ' · 当前未启用'}`}
@@ -347,7 +363,14 @@ export function App() {
           <HistoryEditor history={history} setHistory={setHistory} />
         </section>
         <section className="output">
-          <Output start={start} turns={turns} result={result} errorMsg={errorMsg} />
+          <Output
+            start={start}
+            turns={turns}
+            result={result}
+            errorMsg={errorMsg}
+            status={status}
+            onContinue={(n) => run({ resumeFromRunId: result?.runId, additionalTurns: n })}
+          />
         </section>
       </main>
     </div>
@@ -405,12 +428,14 @@ function Settings(p: {
   cfg: ConfigResponse;
   model: string;
   setModel: (m: string) => void;
-  userSimulatorModel: string;
-  setUserSimulatorModel: (m: string) => void;
+  collaboratorModel: string;
+  setCollaboratorModel: (m: string) => void;
   writeModel: string;
   setWriteModel: (m: string) => void;
   writePhaseEnabled: boolean;
   setWritePhaseEnabled: (b: boolean) => void;
+  showTurnsRemaining: boolean;
+  setShowTurnsRemaining: (b: boolean) => void;
   searchProvider: SearchProvider;
   setSearchProvider: (p: SearchProvider) => void;
   scrapeProvider: ScrapeProvider;
@@ -449,12 +474,12 @@ function Settings(p: {
         />
       )}
 
-      <label>朋友模型 <span className="dim">(扮演朋友回复 propose_plan)</span></label>
+      <label>协作者模型 <span className="dim">(每轮介入 / 给主探索者反馈)</span></label>
       <select
-        value={p.userSimulatorModel}
-        onChange={(e) => p.setUserSimulatorModel(e.target.value)}
+        value={p.collaboratorModel}
+        onChange={(e) => p.setCollaboratorModel(e.target.value)}
       >
-        <option value="">— 不用，回固定的"继续，按你的计划执行" —</option>
+        <option value="">— 不用，propose_plan 回固定的"继续" —</option>
         {p.cfg.models.map((m) => (
           <option key={m.model} value={m.model} disabled={m.keyMissing}>
             {m.name}
@@ -463,6 +488,15 @@ function Settings(p: {
           </option>
         ))}
       </select>
+
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={p.showTurnsRemaining}
+          onChange={(e) => p.setShowTurnsRemaining(e.target.checked)}
+        />
+        让模型知道剩余 turn 数
+      </label>
 
       <label className="check">
         <input
@@ -685,7 +719,14 @@ function Output(p: {
   turns: TurnEvent[];
   result: ResultEvent | null;
   errorMsg: string | null;
+  status: RunStatus;
+  onContinue: (additionalTurns: number) => Promise<void> | void;
 }): JSX.Element {
+  const canContinue =
+    p.status === 'done' &&
+    p.result &&
+    !!p.result.runId &&
+    (p.result.reason === 'turn_cap' || p.result.reason === 'wall_cap');
   return (
     <div className="card">
       <h3>运行</h3>
@@ -699,10 +740,19 @@ function Output(p: {
       {p.turns.length > 0 && <TokenTable turns={p.turns} />}
 
       <div className="turns">
-        {p.turns.map((t) => (
-          <Turn key={t.turn} t={t} />
+        {p.turns.map((t, i) => (
+          <Turn key={`${t.turn}-${i}`} t={t} />
         ))}
       </div>
+
+      {canContinue && (
+        <div className="continue-bar">
+          <span className="dim">达到上限 — 手动继续：</span>
+          <button onClick={() => p.onContinue(1)}>+1 turn</button>
+          <button onClick={() => p.onContinue(3)}>+3</button>
+          <button onClick={() => p.onContinue(5)}>+5</button>
+        </div>
+      )}
 
       {p.result && <ResultBlock r={p.result} />}
     </div>
@@ -710,7 +760,9 @@ function Output(p: {
 }
 
 function TokenTable({ turns }: { turns: TurnEvent[] }): JSX.Element {
-  const cum = turns.length ? turns[turns.length - 1].cumulativeUsage : null;
+  const last = turns.length ? turns[turns.length - 1] : null;
+  const mainCum = last?.cumulativeUsage;
+  const collabCum = last?.cumulativeCollaboratorUsage;
   return (
     <table className="tokens">
       <thead>
@@ -719,27 +771,44 @@ function TokenTable({ turns }: { turns: TurnEvent[] }): JSX.Element {
           <th>phase</th>
           <th>Δ in</th>
           <th>Δ out</th>
+          <th>Δ cached</th>
+          <th>collab Δ</th>
           <th>cum in</th>
           <th>cum out</th>
         </tr>
       </thead>
       <tbody>
-        {turns.map((t) => (
-          <tr key={t.turn}>
-            <td>{t.turn}</td>
-            <td>{t.progress.phase}</td>
-            <td className="num">{t.turnUsage.input.toLocaleString()}</td>
-            <td className="num">{t.turnUsage.output.toLocaleString()}</td>
-            <td className="num dim">{t.cumulativeUsage.input.toLocaleString()}</td>
-            <td className="num dim">{t.cumulativeUsage.output.toLocaleString()}</td>
-          </tr>
-        ))}
-        {cum && (
+        {turns.map((t) => {
+          const c = t.collaboratorTurnUsage;
+          return (
+            <tr key={t.turn}>
+              <td>{t.turn}</td>
+              <td>{t.progress.phase}</td>
+              <td className="num">{t.turnUsage.input.toLocaleString()}</td>
+              <td className="num">{t.turnUsage.output.toLocaleString()}</td>
+              <td className="num dim">{(t.turnUsage.cached ?? 0).toLocaleString()}</td>
+              <td className="num dim">{c ? `${c.input}/${c.output}` : '—'}</td>
+              <td className="num dim">{t.cumulativeUsage.input.toLocaleString()}</td>
+              <td className="num dim">{t.cumulativeUsage.output.toLocaleString()}</td>
+            </tr>
+          );
+        })}
+        {mainCum && (
           <tr className="total">
-            <td colSpan={2}>total</td>
-            <td colSpan={2} />
-            <td className="num">{cum.input.toLocaleString()}</td>
-            <td className="num">{cum.output.toLocaleString()}</td>
+            <td colSpan={2}>主模型 total</td>
+            <td className="num">{mainCum.input.toLocaleString()}</td>
+            <td className="num">{mainCum.output.toLocaleString()}</td>
+            <td className="num dim">{(mainCum.cached ?? 0).toLocaleString()}</td>
+            <td colSpan={3} />
+          </tr>
+        )}
+        {collabCum && collabCum.total > 0 && (
+          <tr className="total">
+            <td colSpan={2}>协作者 total</td>
+            <td className="num">{collabCum.input.toLocaleString()}</td>
+            <td className="num">{collabCum.output.toLocaleString()}</td>
+            <td className="num dim">{(collabCum.cached ?? 0).toLocaleString()}</td>
+            <td colSpan={3} />
           </tr>
         )}
       </tbody>

@@ -11,14 +11,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import OpenAI from 'openai';
+import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { Agent, fetch as undiciFetch, ProxyAgent, setGlobalDispatcher } from 'undici';
 import {
   buildScrollInitialUserContent,
   extractSummary,
   extractTitle,
   runScrollLoop,
+  type ProgressState,
+  type ResumeState,
   type ScrollLoopResult,
   type ScrollTurnInfo,
+  type UsageStats,
 } from '../../edge/src/lib/scroll-loop.js';
 import {
   makeScrape,
@@ -171,16 +175,21 @@ app.get('/api/prompts', (c) => {
   const system = fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll.md'), 'utf8');
   const injected = fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll-injected.md'), 'utf8');
   const write = fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll-write.md'), 'utf8');
-  const friend = fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll-friend.md'), 'utf8');
-  return c.json({ system, injected, write, friend });
+  const collaborator = fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll-collaborator.md'), 'utf8');
+  return c.json({ system, injected, write, collaborator });
 });
 
-// PUT /api/prompts — write back to apps/edge/prompts/{scroll,scroll-injected,scroll-write,scroll-friend}.md.
-// Body: { system?, injected?, write?, friend? } — only present fields are written.
+// PUT /api/prompts — write back to apps/edge/prompts/{scroll,scroll-injected,scroll-write,scroll-collaborator}.md.
+// Body: { system?, injected?, write?, collaborator? } — only present fields are written.
 app.put('/api/prompts', async (c) => {
-  let body: { system?: string; injected?: string; write?: string; friend?: string };
+  let body: { system?: string; injected?: string; write?: string; collaborator?: string };
   try {
-    body = await c.req.json<{ system?: string; injected?: string; write?: string; friend?: string }>();
+    body = await c.req.json<{
+      system?: string;
+      injected?: string;
+      write?: string;
+      collaborator?: string;
+    }>();
   } catch {
     return c.json({ error: 'invalid json' }, 400);
   }
@@ -193,8 +202,8 @@ app.put('/api/prompts', async (c) => {
   if (typeof body.write === 'string') {
     fs.writeFileSync(path.join(EDGE_PROMPTS, 'scroll-write.md'), body.write);
   }
-  if (typeof body.friend === 'string') {
-    fs.writeFileSync(path.join(EDGE_PROMPTS, 'scroll-friend.md'), body.friend);
+  if (typeof body.collaborator === 'string') {
+    fs.writeFileSync(path.join(EDGE_PROMPTS, 'scroll-collaborator.md'), body.collaborator);
   }
   return c.json({ ok: true });
 });
@@ -239,7 +248,7 @@ app.get('/api/runs', (c) => {
     try {
       const j = JSON.parse(fs.readFileSync(path.join(RUNS_DIR, f), 'utf8')) as {
         ts?: string;
-        input?: { model?: string; userSimulatorModel?: string };
+        input?: { model?: string; collaboratorModel?: string };
         result?: {
           reason?: string;
           turns?: number;
@@ -253,7 +262,7 @@ app.get('/api/runs', (c) => {
         id: f.replace(/\.json$/, ''),
         ts: j.ts ?? '',
         model: j.input?.model ?? '',
-        userSimulatorModel: j.input?.userSimulatorModel ?? '',
+        collaboratorModel: j.input?.collaboratorModel ?? '',
         reason: j.result?.reason ?? '',
         turns: j.result?.turns ?? 0,
         elapsedMs: j.result?.elapsedMs ?? 0,
@@ -286,12 +295,22 @@ interface RunBody {
   stubSearch?: boolean;
   stubFetch?: boolean;
   turns?: number;
-  // Optional second model that plays the friend's reply to propose_plan.
-  // Empty / absent → fall back to the static "用户：继续..." string.
-  userSimulatorModel?: string;
-  // System prompt for the friend simulator. Empty / absent → server
-  // reads scroll-friend.md from disk.
-  friendPrompt?: string;
+  // Optional second model that plays a co-explorer chiming in after
+  // each non-final turn. Empty / absent → no collaborator injection;
+  // propose_plan still gets the static "用户：继续..." reply.
+  collaboratorModel?: string;
+  // System prompt for the collaborator. Empty / absent → server reads
+  // scroll-collaborator.md from disk.
+  collaboratorPrompt?: string;
+  // When true, the panel injects a `（系统提示：还剩 N 轮可用）`
+  // user message at the start of each turn so the model can reason
+  // about budget. Off by default — on the worker we never expose this.
+  showTurnsRemaining?: boolean;
+  // For POST /api/run-continue: ID of a previous run to resume from.
+  // When present, server loads runs/<id>.json, reconstructs the deps
+  // and the saved messages array, runs `turns` more iterations, and
+  // appends to the same file.
+  resumeFromRunId?: string;
   // Two-phase write step: when writePhasePrompt is non-empty, after
   // phase 1 (research loop) ends with reason='final', run a second
   // model call with writePhasePrompt as system + phase-1 output as
@@ -301,41 +320,67 @@ interface RunBody {
   writePhasePrompt?: string;
 }
 
-// Build a callback that asks a second model to play the "friend"
-// responding to the assistant's proposed research plan. Receives the
-// raw JSON args from the propose_plan tool call. The friend system
-// prompt is editable in the panel — defaults to the contents of
-// apps/edge/prompts/scroll-friend.md.
-function makeUserSimulator(
+// Build a callback that asks a separate model to play a co-explorer
+// chiming in after each non-final turn. Sees the friend's transcript
+// + memory + a summary of what the main agent JUST did (assistant
+// content + tool calls + truncated tool results). Returns a string
+// that the loop pushes as a `role: 'user'` message before the next
+// iteration. System prompt is editable via prompts/scroll-collaborator.md.
+type CollaboratorInput = { turn: number; newMessages: ChatCompletionMessageParam[] };
+type CollaboratorOutput = {
+  text: string;
+  usage?: { input: number; output: number; total: number; cached: number };
+};
+type CollaboratorReply = (i: CollaboratorInput) => Promise<CollaboratorOutput>;
+
+function formatTurnForCollaborator(newMessages: ChatCompletionMessageParam[]): string {
+  const lines: string[] = [];
+  for (const m of newMessages) {
+    if (m.role === 'assistant') {
+      const content = (m.content as string | null) ?? '';
+      if (content.trim()) lines.push(`主探索者：${content}`);
+      const tcs = (m as { tool_calls?: Array<{ function: { name: string; arguments: string } }> }).tool_calls;
+      if (tcs?.length) {
+        for (const tc of tcs) {
+          let preview = tc.function.arguments;
+          try {
+            const o = JSON.parse(tc.function.arguments) as Record<string, unknown>;
+            const v =
+              (o.thoughts as string | undefined) ??
+              (o.query as string | undefined) ??
+              (o.url as string | undefined) ??
+              (o.text as string | undefined) ??
+              JSON.stringify(o);
+            preview = typeof v === 'string' ? v : JSON.stringify(o);
+          } catch {
+            /* keep raw */
+          }
+          lines.push(`  调用工具 ${tc.function.name}: ${preview.slice(0, 400)}`);
+        }
+      }
+    } else if (m.role === 'tool') {
+      const content = (m.content as string | null) ?? '';
+      lines.push(`  工具返回: ${content.slice(0, 400)}`);
+    }
+  }
+  return lines.join('\n');
+}
+
+function makeCollaborator(
   client: OpenAI,
   modelId: string,
   history: HistoryMsg[],
   memory: string | undefined,
   systemPrompt: string,
-): (planArgs: string) => Promise<string> {
+): CollaboratorReply {
   const transcript = history
     .filter((m) => m.content.trim())
-    .map((m) => `${m.role === 'bot' ? '研究助手' : '朋友'}：${m.content}`)
+    .map((m) => `${m.role === 'bot' ? '主探索者' : '朋友'}：${m.content}`)
     .join('\n');
   const memoryBlock = memory && memory.trim() ? `## 朋友的背景\n${memory.trim()}\n\n` : '';
 
-  return async (planArgs: string) => {
-    let summary = planArgs;
-    try {
-      const obj = JSON.parse(planArgs) as {
-        thoughts?: string;
-        queries?: Array<{ q: string; reason?: string }>;
-        urls?: Array<{ url: string; reason?: string }>;
-      };
-      summary = [
-        obj.thoughts && `思考：${obj.thoughts}`,
-        obj.queries?.length && `想搜：\n${obj.queries.map((q) => `  - ${q.q}` + (q.reason ? ` (${q.reason})` : '')).join('\n')}`,
-        obj.urls?.length && `想抓：\n${obj.urls.map((u) => `  - ${u.url}` + (u.reason ? ` (${u.reason})` : '')).join('\n')}`,
-      ].filter(Boolean).join('\n\n');
-    } catch {
-      /* fall through with raw args */
-    }
-
+  return async ({ turn, newMessages }) => {
+    const turnSummary = formatTurnForCollaborator(newMessages);
     const r = await client.chat.completions.create({
       model: modelId,
       messages: [
@@ -343,11 +388,22 @@ function makeUserSimulator(
         {
           role: 'user',
           content:
-            `${memoryBlock}## 我们之前的聊天\n${transcript}\n\n## 研究助手刚刚说\n${summary}\n\n请用"朋友"的身份回应（直接说话，不要写"朋友："开头）：`,
+            `${memoryBlock}## 朋友的聊天记录\n${transcript}\n\n` +
+            `## 主探索者第 ${turn} 轮做了什么\n${turnSummary}\n\n` +
+            `请用"协作者"的身份给主探索者一个简短的回应（直接说话，不要写"协作者："开头）：`,
         },
       ],
     });
-    return r.choices[0]?.message?.content?.trim() ?? '';
+    const text = r.choices[0]?.message?.content?.trim() ?? '';
+    const promptDetails = (r.usage as { prompt_tokens_details?: { cached_tokens?: number } } | undefined)
+      ?.prompt_tokens_details;
+    const usage = {
+      input: r.usage?.prompt_tokens ?? 0,
+      output: r.usage?.completion_tokens ?? 0,
+      total: r.usage?.total_tokens ?? 0,
+      cached: promptDetails?.cached_tokens ?? 0,
+    };
+    return { text, usage };
   };
 }
 
@@ -393,25 +449,26 @@ app.post('/api/run', async (c) => {
   const mainClient = clientFor(body.model);
   if ('error' in mainClient) return c.json({ error: mainClient.error }, 500);
 
-  // Optional friend-simulator: a second LLM impersonates the friend
-  // responding to propose_plan. If model not chosen / key missing, the
-  // loop falls back to its built-in "用户：继续，按你的计划执行。" string.
-  let simulator: ((args: string) => Promise<string>) | undefined;
-  if (body.userSimulatorModel) {
-    const simClient = clientFor(body.userSimulatorModel);
-    if ('error' in simClient) {
-      return c.json({ error: `simulator: ${simClient.error}` }, 500);
+  // Optional collaborator: a separate LLM that chimes in after each
+  // non-final turn. If model not chosen / key missing, the loop runs
+  // without collaborator injection (propose_plan tool still returns
+  // the static "用户：继续..." reply).
+  let collaborator: CollaboratorReply | undefined;
+  if (body.collaboratorModel) {
+    const collabClient = clientFor(body.collaboratorModel);
+    if ('error' in collabClient) {
+      return c.json({ error: `collaborator: ${collabClient.error}` }, 500);
     }
-    const friendPrompt =
-      body.friendPrompt && body.friendPrompt.trim()
-        ? body.friendPrompt
-        : fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll-friend.md'), 'utf8');
-    simulator = makeUserSimulator(
-      simClient,
-      body.userSimulatorModel,
+    const collabPrompt =
+      body.collaboratorPrompt && body.collaboratorPrompt.trim()
+        ? body.collaboratorPrompt
+        : fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll-collaborator.md'), 'utf8');
+    collaborator = makeCollaborator(
+      collabClient,
+      body.collaboratorModel,
       body.history,
       body.memory,
-      friendPrompt,
+      collabPrompt,
     );
   }
 
@@ -433,8 +490,54 @@ app.post('/api/run', async (c) => {
   // and returns reason='cancelled' cleanly.
   const reqSignal = c.req.raw.signal;
   const collectedTurns: ScrollTurnInfo[] = [];
-  const ts = new Date().toISOString();
-  const runId = ts.replace(/[:.]/g, '-') + '__' + Math.random().toString(36).slice(2, 8);
+
+  // Resume support — when body.resumeFromRunId is set, we hydrate the
+  // loop state from a previously saved run JSON and append new turns
+  // back to that same file (instead of generating a fresh run id).
+  let resumeState: ResumeState | undefined;
+  let priorTurns: ScrollTurnInfo[] = [];
+  let runId: string;
+  let ts: string;
+  if (body.resumeFromRunId) {
+    const p = path.join(RUNS_DIR, `${body.resumeFromRunId}.json`);
+    if (!fs.existsSync(p)) {
+      return c.json({ error: `resume: run ${body.resumeFromRunId} not found` }, 404);
+    }
+    const saved = JSON.parse(fs.readFileSync(p, 'utf8')) as {
+      id: string;
+      ts: string;
+      turns?: ScrollTurnInfo[];
+      messages?: ChatCompletionMessageParam[];
+      result?: {
+        progress?: ProgressState;
+        usage?: UsageStats;
+        collaboratorUsage?: UsageStats;
+      };
+    };
+    if (!saved.messages?.length) {
+      return c.json(
+        { error: `resume: run ${body.resumeFromRunId} has no saved messages array` },
+        400,
+      );
+    }
+    resumeState = {
+      messages: saved.messages,
+      progress: saved.result?.progress ?? {
+        phase: 'plan',
+        notes: [],
+        visited_urls: [],
+        plan_rounds: 0,
+      },
+      usage: saved.result?.usage ?? { input: 0, output: 0, total: 0, cached: 0 },
+      collaboratorUsage: saved.result?.collaboratorUsage,
+    };
+    priorTurns = saved.turns ?? [];
+    runId = saved.id;
+    ts = saved.ts;
+  } else {
+    ts = new Date().toISOString();
+    runId = ts.replace(/[:.]/g, '-') + '__' + Math.random().toString(36).slice(2, 8);
+  }
 
   return streamSSE(c, async (stream) => {
     await stream.writeSSE({
@@ -459,11 +562,17 @@ app.post('/api/run', async (c) => {
         webSearch,
         fetchUrl,
         hardCapTurns: body.turns,
-        simulateUserReply: simulator,
+        showTurnsRemaining: !!body.showTurnsRemaining,
+        simulateCollaboratorReply: collaborator,
         isCancelled: () => Promise.resolve(reqSignal.aborted),
+        resume: resumeState,
         onTurn: async (info: ScrollTurnInfo) => {
-          collectedTurns.push(info);
-          await stream.writeSSE({ event: 'turn', data: JSON.stringify(info) });
+          // Keep turn numbering continuous across resumes — the loop's
+          // internal counter restarts at 0 each invocation, so we
+          // offset by the prior tail length before persisting/streaming.
+          const adjusted: ScrollTurnInfo = { ...info, turn: priorTurns.length + info.turn };
+          collectedTurns.push(adjusted);
+          await stream.writeSSE({ event: 'turn', data: JSON.stringify(adjusted) });
         },
       });
     } catch (err) {
@@ -476,7 +585,7 @@ app.post('/api/run', async (c) => {
     // supplied a writePhasePrompt. Single-phase mode (empty prompt)
     // skips this entirely and behaves exactly as before.
     let phase1Summary: string | undefined;
-    let writeUsage: { input: number; output: number; total: number } | undefined;
+    let writeUsage: UsageStats | undefined;
     let writeGenerationId: string | undefined;
     if (
       result &&
@@ -524,18 +633,22 @@ app.post('/api/run', async (c) => {
             ],
           });
           const phase2Text = (phase2.choices[0]?.message?.content ?? '').trim();
+          const phase2PromptDetails = (phase2.usage as { prompt_tokens_details?: { cached_tokens?: number } } | undefined)
+            ?.prompt_tokens_details;
           writeUsage = {
             input: phase2.usage?.prompt_tokens ?? 0,
             output: phase2.usage?.completion_tokens ?? 0,
             total: phase2.usage?.total_tokens ?? 0,
+            cached: phase2PromptDetails?.cached_tokens ?? 0,
           };
           writeGenerationId = phase2.id;
 
           // Stream phase 2 as an extra "turn" so the UI sees it inline.
-          const cum = {
+          const cum: UsageStats = {
             input: result.usage.input + writeUsage.input,
             output: result.usage.output + writeUsage.output,
             total: result.usage.total + writeUsage.total,
+            cached: result.usage.cached + writeUsage.cached,
           };
           await stream.writeSSE({
             event: 'turn',
@@ -566,9 +679,13 @@ app.post('/api/run', async (c) => {
       const finalText = result.finalArticle.trim();
       resultPayload = {
         reason: result.reason,
-        turns: result.turns,
+        // Total turns visible to the panel = prior persisted + freshly
+        // executed this invocation. priorTurns.length is 0 for fresh
+        // (non-resume) runs.
+        turns: priorTurns.length + result.turns,
         elapsedMs: Date.now() - startedAt,
         usage: result.usage,
+        collaboratorUsage: result.collaboratorUsage,
         generationId: result.lastGenerationId,
         progress: result.progress,
         finalArticle: finalText,
@@ -579,6 +696,10 @@ app.post('/api/run', async (c) => {
         phase1Summary,
         writeUsage,
         writeGenerationId,
+        // Echo so the panel knows whether we appended to an existing
+        // run vs created a new one (drives the "继续" button labels).
+        runId,
+        resumed: !!body.resumeFromRunId,
       };
       await stream.writeSSE({ event: 'result', data: JSON.stringify(resultPayload) });
     }
@@ -597,9 +718,11 @@ app.post('/api/run', async (c) => {
               ts,
               input: {
                 model: body.model,
-                userSimulatorModel: body.userSimulatorModel ?? '',
+                collaboratorModel: body.collaboratorModel ?? '',
+                collaboratorPrompt: body.collaboratorPrompt ?? '',
                 writeModel: body.writeModel ?? '',
                 writePhasePrompt: body.writePhasePrompt ?? '',
+                showTurnsRemaining: !!body.showTurnsRemaining,
                 searchProvider: body.searchProvider,
                 scrapeProvider: body.scrapeProvider,
                 stubSearch: !!body.stubSearch,
@@ -614,7 +737,14 @@ app.post('/api/run', async (c) => {
                 systemChars: body.systemPrompt.length,
                 initialUserChars: initialUser.length,
               },
-              turns: collectedTurns,
+              // Resume mode: prepend the prior turns so the file
+              // accumulates across "继续一轮" presses. Fresh mode:
+              // priorTurns is [] and this is just collectedTurns.
+              turns: [...priorTurns, ...collectedTurns],
+              // Persist the full messages array so the next resume
+              // can pick up exactly where we left off — without this
+              // we'd have to reconstruct from turns, which is brittle.
+              messages: result?.messages ?? resumeState?.messages ?? [],
               result: resultPayload ?? null,
               error: errorMessage ?? null,
             },

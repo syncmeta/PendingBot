@@ -133,6 +133,20 @@ export type ScrollLoopExitReason =
   | 'cancelled'     // isCancelled() returned true
   | 'no_choice';    // openai returned an empty choices array
 
+export interface UsageStats {
+  input: number;
+  output: number;
+  total: number;
+  cached: number;
+}
+
+export interface ResumeState {
+  messages: ChatCompletionMessageParam[];
+  progress: ProgressState;
+  usage: UsageStats;
+  collaboratorUsage?: UsageStats;
+}
+
 export interface ScrollLoopDeps {
   openai: OpenAI;
   modelId: string;
@@ -147,30 +161,50 @@ export interface ScrollLoopDeps {
   isCancelled?: () => Promise<boolean>;
   hardCapTurns?: number;
   maxWallMs?: number;
-  // Optional: produce the friend-style reply to a propose_plan call.
-  // Receives the raw JSON arguments string the model passed; returns
-  // the message text fed back as the tool result. When absent, the
-  // tool replies with the static "用户：继续，按你的计划执行。"
-  simulateUserReply?: (planArgs: string) => Promise<string>;
+  // Optional: a separate model that plays a co-explorer chiming in
+  // after each non-final turn. Receives the new messages produced this
+  // turn (assistant + tool results); returns a string + (optional)
+  // usage stats for that secondary call. Returned text is pushed as a
+  // `role: 'user'` message before the next iteration. Skipped on
+  // decide_write_article turns so the decision executes cleanly, and
+  // not invoked when the model produced no tool calls (loop exiting).
+  simulateCollaboratorReply?: (input: {
+    turn: number;
+    newMessages: ChatCompletionMessageParam[];
+  }) => Promise<{ text: string; usage?: UsageStats }>;
+  // When true, append a small system-style user message at the end of
+  // each turn telling the model how many turns it has left. Only useful
+  // for dev-side iteration — the worker leaves this off.
+  showTurnsRemaining?: boolean;
+  // For "继续一轮" — load saved messages / progress / usage and pick
+  // up where a previous run left off. hardCapTurns then means "this
+  // many additional turns from now", not from zero.
+  resume?: ResumeState;
 }
 
 export interface ScrollTurnInfo {
   turn: number;
   progress: ProgressState;
   // Newly appended to the running messages array on this turn — typically
-  // the assistant turn plus any role:'tool' replies.
+  // the assistant turn plus any role:'tool' replies (and, when wired,
+  // an injected `role: 'user'` collaborator message).
   newMessages: ChatCompletionMessageParam[];
   // Per-turn usage delta + running totals. Lets the dev panel show where
   // tokens accumulate (e.g. fetch_url results inflating next-turn input).
-  turnUsage: { input: number; output: number; total: number };
-  cumulativeUsage: { input: number; output: number; total: number };
+  turnUsage: UsageStats;
+  cumulativeUsage: UsageStats;
+  // Per-turn / cumulative collaborator (co-explorer) usage; absent on
+  // turns where no collaborator call was made.
+  collaboratorTurnUsage?: UsageStats;
+  cumulativeCollaboratorUsage?: UsageStats;
   generationId?: string;
 }
 
 export interface ScrollLoopResult {
   finalArticle: string;
   progress: ProgressState;
-  usage: { input: number; output: number; total: number };
+  usage: UsageStats;
+  collaboratorUsage?: UsageStats;
   lastGenerationId?: string;
   reason: ScrollLoopExitReason;
   // Set when reason === 'declined' — the string the model passed to
@@ -276,19 +310,30 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
   const wallCap = deps.maxWallMs ?? MAX_WALL_MS;
   const startedAt = Date.now();
 
-  const progress: ProgressState = {
-    phase: 'plan',
-    notes: [],
-    visited_urls: [],
-    plan_rounds: 0,
-  };
-  const usage = { input: 0, output: 0, total: 0 };
+  // Initial state — fresh, or hydrated from a previous run when the
+  // panel is "resuming" past a turn_cap exit.
+  const progress: ProgressState = deps.resume
+    ? {
+        ...deps.resume.progress,
+        // Pass-by-value so caller's struct can't be mutated mid-loop.
+        notes: [...deps.resume.progress.notes],
+        visited_urls: [...deps.resume.progress.visited_urls],
+      }
+    : { phase: 'plan', notes: [], visited_urls: [], plan_rounds: 0 };
+  const usage: UsageStats = deps.resume
+    ? { ...deps.resume.usage }
+    : { input: 0, output: 0, total: 0, cached: 0 };
+  const collaboratorUsage: UsageStats = deps.resume?.collaboratorUsage
+    ? { ...deps.resume.collaboratorUsage }
+    : { input: 0, output: 0, total: 0, cached: 0 };
   let lastGenerationId: string | undefined;
 
-  const messages: ChatCompletionMessageParam[] = [
-    { role: 'system', content: systemPrompt },
-    { role: 'user', content: initialUserContent },
-  ];
+  const messages: ChatCompletionMessageParam[] = deps.resume
+    ? [...deps.resume.messages]
+    : [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: initialUserContent },
+      ];
 
   let finalArticle = '';
   let reason: ScrollLoopExitReason = 'turn_cap';
@@ -320,14 +365,22 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
       parallel_tool_calls: true,
     });
     lastGenerationId = completion.id;
-    const turnUsage = {
+    // OpenAI / OpenRouter expose prompt-cache hits via
+    // `prompt_tokens_details.cached_tokens`. Anthropic via OpenRouter
+    // also fills it. Cast through `unknown` because it's not in the
+    // strict type for older SDK versions.
+    const promptDetails = (completion.usage as { prompt_tokens_details?: { cached_tokens?: number } } | undefined)
+      ?.prompt_tokens_details;
+    const turnUsage: UsageStats = {
       input: completion.usage?.prompt_tokens ?? 0,
       output: completion.usage?.completion_tokens ?? 0,
       total: completion.usage?.total_tokens ?? 0,
+      cached: promptDetails?.cached_tokens ?? 0,
     };
     usage.input += turnUsage.input;
     usage.output += turnUsage.output;
     usage.total += turnUsage.total;
+    usage.cached += turnUsage.cached;
 
     const msg = completion.choices[0]?.message;
     if (!msg) {
@@ -367,6 +420,7 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
           newMessages,
           turnUsage,
           cumulativeUsage: { ...usage },
+          cumulativeCollaboratorUsage: { ...collaboratorUsage },
           generationId: completion.id,
         });
       }
@@ -379,7 +433,6 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
           { webSearch: deps.webSearch, fetchUrl: deps.fetchUrl },
           tc,
           progress,
-          deps.simulateUserReply,
           decision,
         ),
       ),
@@ -394,6 +447,63 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
 
     messages.push(...newMessages);
     progress.phase = progress.notes.length > 0 ? 'compose' : 'research';
+
+    // Collaborator chimes in. Skipped on decide_write_article turns so
+    // the model's go/no-go executes cleanly; also skipped silently
+    // when the simulator throws or returns empty so the loop still
+    // progresses. The injected user message lands in newMessages so
+    // the panel sees it under the same turn.
+    let collaboratorTurnUsage: UsageStats | undefined;
+    const decideTurn = toolCalls.some((tc) => tc.function.name === 'decide_write_article');
+    if (deps.simulateCollaboratorReply && !decideTurn) {
+      try {
+        const out = await deps.simulateCollaboratorReply({
+          turn,
+          newMessages: [...newMessages],
+        });
+        if (out.usage) {
+          collaboratorTurnUsage = out.usage;
+          collaboratorUsage.input += out.usage.input;
+          collaboratorUsage.output += out.usage.output;
+          collaboratorUsage.total += out.usage.total;
+          collaboratorUsage.cached += out.usage.cached;
+        }
+        const trimmed = out.text.trim();
+        if (trimmed) {
+          const collaboratorMessage: ChatCompletionMessageParam = {
+            role: 'user',
+            content: trimmed,
+          };
+          messages.push(collaboratorMessage);
+          newMessages.push(collaboratorMessage);
+        }
+      } catch (err) {
+        const msg = String((err as Error)?.message ?? err);
+        console.warn('[scroll-loop] collaborator failed:', msg);
+        // Surface as an inline note so the panel trace shows the failure.
+        const note: ChatCompletionMessageParam = {
+          role: 'user',
+          content: `（协作者出错，跳过本轮介入：${msg}）`,
+        };
+        messages.push(note);
+        newMessages.push(note);
+      }
+    }
+
+    // Optional budget hint — when enabled, append a `role:'user'`
+    // system-style note telling the model how many turns it has left.
+    // Only added on non-decide turns and not on what we know is the
+    // last possible turn (model couldn't act on the info anyway).
+    if (deps.showTurnsRemaining && !decideTurn && turn < hardCap - 1) {
+      const remaining = hardCap - turn - 1;
+      const hint: ChatCompletionMessageParam = {
+        role: 'user',
+        content: `（系统提示：还剩 ${remaining} 轮研究/工具调用机会。如果想做最终决定，记得调 decide_write_article。）`,
+      };
+      messages.push(hint);
+      newMessages.push(hint);
+    }
+
     if (onTurn) {
       await onTurn({
         turn,
@@ -401,6 +511,8 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
         newMessages,
         turnUsage,
         cumulativeUsage: { ...usage },
+        collaboratorTurnUsage,
+        cumulativeCollaboratorUsage: { ...collaboratorUsage },
         generationId: completion.id,
       });
     }
@@ -418,6 +530,10 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
     finalArticle,
     progress,
     usage,
+    collaboratorUsage:
+      collaboratorUsage.total > 0 || collaboratorUsage.input > 0
+        ? collaboratorUsage
+        : undefined,
     lastGenerationId,
     reason,
     // Set whenever decide_write_article was called — `declineReason`
@@ -438,7 +554,6 @@ async function execTool(
   tools: ScrollToolDeps,
   tc: ChatCompletionMessageToolCall,
   progress: ProgressState,
-  simulateUserReply?: (planArgs: string) => Promise<string>,
   decision?: { write?: boolean; reason?: string },
 ): Promise<string> {
   const name = tc.function.name;
@@ -446,22 +561,9 @@ async function execTool(
   try {
     if (name === 'propose_plan') {
       progress.plan_rounds++;
-      if (simulateUserReply) {
-        try {
-          const reply = await simulateUserReply(tc.function.arguments);
-          const trimmed = reply.trim();
-          if (trimmed) return trimmed;
-          // Simulator was configured but produced nothing — surface
-          // that explicitly so the operator doesn't think the static
-          // fallback is intended behavior.
-          return '用户：（朋友模型返回空内容，已退回静态回复）继续，按你的计划执行。';
-        } catch (err) {
-          const msg = String((err as Error)?.message ?? err);
-          console.warn('[scroll-loop] simulateUserReply failed:', msg);
-          return `用户：（朋友模型出错：${msg}）继续，按你的计划执行。`;
-        }
-      }
-      // No simulator wired (production worker, or panel left blank).
+      // Auto-confirm. The collaborator (if configured) chimes in at
+      // the loop level after every non-final turn, not from inside
+      // this tool result anymore.
       return '用户：继续，按你的计划执行。';
     }
 
