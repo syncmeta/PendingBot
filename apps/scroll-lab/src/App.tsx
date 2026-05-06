@@ -604,13 +604,13 @@ function Settings(p: {
         ))}
       </select>
 
-      <label>Turn cap</label>
+      <label>Turn cap <span className="dim">(墙时已放宽到 1 小时)</span></label>
       <input
         type="number"
         min={1}
-        max={30}
+        max={500}
         value={p.turnCap}
-        onChange={(e) => p.setTurnCap(Number(e.target.value))}
+        onChange={(e) => p.setTurnCap(Math.max(1, Number(e.target.value) || 1))}
       />
 
       <label className="check">
@@ -808,16 +808,34 @@ function Output(p: {
         ))}
       </div>
 
-      {canContinue && (
-        <div className="continue-bar">
-          <span className="dim">达到上限 — 手动继续：</span>
-          <button onClick={() => p.onContinue(1)}>+1 turn</button>
-          <button onClick={() => p.onContinue(3)}>+3</button>
-          <button onClick={() => p.onContinue(5)}>+5</button>
-        </div>
-      )}
+      {canContinue && <ContinueBar reason={p.result?.reason ?? ''} onContinue={p.onContinue} />}
 
       {p.result && <ResultBlock r={p.result} />}
+    </div>
+  );
+}
+
+function ContinueBar(p: {
+  reason: string;
+  onContinue: (n: number) => Promise<void> | void;
+}): JSX.Element {
+  const [custom, setCustom] = useState<number>(5);
+  return (
+    <div className="continue-bar">
+      <span className="dim">达到上限 ({p.reason}) — 手动继续：</span>
+      <button onClick={() => p.onContinue(1)}>+1</button>
+      <button onClick={() => p.onContinue(3)}>+3</button>
+      <button onClick={() => p.onContinue(5)}>+5</button>
+      <span className="dim"> · 自定义</span>
+      <input
+        type="number"
+        min={1}
+        max={200}
+        value={custom}
+        onChange={(e) => setCustom(Math.max(1, Number(e.target.value) || 1))}
+        className="custom-turns"
+      />
+      <button onClick={() => p.onContinue(custom)}>+{custom}</button>
     </div>
   );
 }

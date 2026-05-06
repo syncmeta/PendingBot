@@ -282,6 +282,12 @@ body { margin: 0; }
   font-size: 12px; font-weight: 600;
 }
 .continue-bar button:hover { opacity: 0.85; }
+.continue-bar .custom-turns {
+  width: 4rem; padding: 0.2rem 0.4rem;
+  border: 1px solid var(--border); border-radius: 4px;
+  background: var(--bg); color: var(--fg); font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
 
 .phase1-block {
   margin: 0.6rem 0; padding: 0.4rem 0.6rem;

@@ -620,6 +620,11 @@ app.post('/api/run', async (c) => {
         webSearch,
         fetchUrl,
         hardCapTurns: body.turns,
+        // The default 4-minute wall cap exists for the Cloudflare
+        // Worker (5-min hard limit). The panel runs in Node with no
+        // such constraint, so let it run for an hour before the wall
+        // even matters — user can Stop manually.
+        maxWallMs: 60 * 60 * 1000,
         showTurnsRemaining: !!body.showTurnsRemaining,
         simulateCollaboratorReply: collaborator,
         isCancelled: () => Promise.resolve(reqSignal.aborted),
