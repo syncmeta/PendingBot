@@ -52,25 +52,31 @@ enum Theme {
     // ── Typography ──────────────────────────────────────────────────────────
 
     enum Fonts {
+        /// Per-platform multiplier (1.0 on iOS, ~0.88 on Mac Catalyst).
+        /// Applied to every size below so the desktop UI doesn't read as
+        /// the iOS layout zoomed in.
+        private static let scale: CGFloat = Platform.isMac ? Platform.macFontScale : 1.0
+        private static func sized(_ pt: CGFloat) -> CGFloat { pt * scale }
+
         /// Serif display (system New York). Used for titles, header marks,
         /// avatar initials. Feels editorial vs the regular SF Pro UI.
         static func serif(size: CGFloat, weight: Font.Weight = .semibold) -> Font {
-            .system(size: size, weight: weight, design: .serif)
+            .system(size: sized(size), weight: weight, design: .serif)
         }
 
         /// Rounded sans — softer than SF Pro, used for buttons, chip labels,
         /// nav, counters. Matches the warm palette.
         static func rounded(size: CGFloat, weight: Font.Weight = .regular) -> Font {
-            .system(size: size, weight: weight, design: .rounded)
+            .system(size: sized(size), weight: weight, design: .rounded)
         }
 
-        static let body            = Font.system(size: 16, weight: .regular)
-        static let bodyEmphasized  = Font.system(size: 16, weight: .medium)
-        static let footnote        = Font.system(size: 13, weight: .regular)
-        static let caption         = Font.system(size: 12, weight: .regular)
-        static let title           = serif(size: 28, weight: .semibold)
-        static let sectionTitle    = serif(size: 20, weight: .semibold)
-        static let monoSmall       = Font.system(size: 12, design: .monospaced)
+        static let body            = Font.system(size: sized(16), weight: .regular)
+        static let bodyEmphasized  = Font.system(size: sized(16), weight: .medium)
+        static let footnote        = Font.system(size: sized(13), weight: .regular)
+        static let caption         = Font.system(size: sized(12), weight: .regular)
+        static let title           = Font.system(size: sized(28), weight: .semibold, design: .serif)
+        static let sectionTitle    = Font.system(size: sized(20), weight: .semibold, design: .serif)
+        static let monoSmall       = Font.system(size: sized(12), design: .monospaced)
     }
 
     // ── Spacing / radii ─────────────────────────────────────────────────────
@@ -95,13 +101,25 @@ enum Theme {
 extension View {
     /// Center the view inside a column capped at `Theme.Metrics.readableColumn`.
     /// On iPhone portrait this is a no-op (the screen is narrower than the cap);
-    /// on iPad landscape and Mac Catalyst windows it keeps content from
-    /// spreading across the full window width.
+    /// on iPad landscape it keeps content from spreading across the window.
+    ///
+    /// **Mac:** the cap is dropped and the inner frame becomes leading-aligned.
+    /// Catalyst windows are usually narrower than iPad landscape, and the
+    /// vertical tab rail + NavigationSplitView already chop the content
+    /// area into reasonable columns — leaving a centered 760pt island
+    /// inside that produces big empty gutters on both sides which read as
+    /// "this app doesn't know it's on Mac."
     func readableColumnWidth(
         _ maxWidth: CGFloat = Theme.Metrics.readableColumn
     ) -> some View {
-        frame(maxWidth: maxWidth)
-            .frame(maxWidth: .infinity, alignment: .center)
+        Group {
+            if Platform.isMac {
+                self.frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                self.frame(maxWidth: maxWidth)
+                    .frame(maxWidth: .infinity, alignment: .center)
+            }
+        }
     }
 }
 
