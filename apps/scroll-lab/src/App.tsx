@@ -35,18 +35,22 @@ export function App() {
   // Anything you'd hate to retype after a refresh lives in storage.ts.
   const [model, setModel] = useLocalStorage<string>('model', '');
   const [userSimulatorModel, setUserSimulatorModel] = useLocalStorage<string>('userSimulatorModel', '');
+  const [writeModel, setWriteModel] = useLocalStorage<string>('writeModel', '');
   const [searchProvider, setSearchProvider] = useLocalStorage<SearchProvider>('searchProvider', 'brave');
   const [scrapeProvider, setScrapeProvider] = useLocalStorage<ScrapeProvider>('scrapeProvider', 'firecrawl');
   const [turnCap, setTurnCap] = useLocalStorage<number>('turnCap', 8);
   const [stubSearch, setStubSearch] = useLocalStorage<boolean>('stubSearch', false);
   const [stubFetch, setStubFetch] = useLocalStorage<boolean>('stubFetch', false);
+  const [writePhaseEnabled, setWritePhaseEnabled] = useLocalStorage<boolean>('writePhaseEnabled', false);
 
   // Prompts use null as the "not yet hydrated" sentinel so we can tell
   // first-launch (use disk) from edited-then-cleared (keep empty).
   const [systemPrompt, setSystemPrompt] = useLocalStorage<string | null>('systemPrompt', null);
   const [injectedPrompt, setInjectedPrompt] = useLocalStorage<string | null>('injectedPrompt', null);
+  const [writePrompt, setWritePrompt] = useLocalStorage<string | null>('writePrompt', null);
   const [systemPromptOriginal, setSystemPromptOriginal] = useState<string>('');
   const [injectedPromptOriginal, setInjectedPromptOriginal] = useState<string>('');
+  const [writePromptOriginal, setWritePromptOriginal] = useState<string>('');
 
   const [memory, setMemory] = useLocalStorage<string>('memory', '');
   const [history, setHistory] = useLocalStorage<HistoryMsg[]>('history', [
@@ -77,11 +81,13 @@ export function App() {
         setCfg(c);
         setSystemPromptOriginal(p.system);
         setInjectedPromptOriginal(p.injected);
+        setWritePromptOriginal(p.write);
         setFixtures(f);
         setRuns(r);
         if (!model) setModel(c.defaultModel);
         if (systemPrompt === null) setSystemPrompt(p.system);
         if (injectedPrompt === null) setInjectedPrompt(p.injected);
+        if (writePrompt === null) setWritePrompt(p.write);
       })
       .catch((e: Error) => setBootError(e.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -125,6 +131,15 @@ export function App() {
           stubFetch,
           turns: turnCap,
           userSimulatorModel: userSimulatorModel || undefined,
+          // Phase 2 only kicks in when both the toggle is on AND a
+          // prompt is present. writeModel falls back to main `model`
+          // server-side when empty.
+          writeModel:
+            writePhaseEnabled && writeModel ? writeModel : undefined,
+          writePhasePrompt:
+            writePhaseEnabled && writePrompt && writePrompt.trim()
+              ? writePrompt
+              : undefined,
         },
         {
           signal: controller.signal,
@@ -176,6 +191,11 @@ export function App() {
     await savePrompts({ injected: injectedPrompt });
     setInjectedPromptOriginal(injectedPrompt);
   }
+  async function saveWritePromptToDisk(): Promise<void> {
+    if (writePrompt === null) return;
+    await savePrompts({ write: writePrompt });
+    setWritePromptOriginal(writePrompt);
+  }
 
   // ── Run history ───────────────────────────────────────────────────
   async function refreshRuns(): Promise<void> {
@@ -191,6 +211,8 @@ export function App() {
       input: {
         model: string;
         userSimulatorModel?: string;
+        writeModel?: string;
+        writePhasePrompt?: string;
         searchProvider: SearchProvider;
         scrapeProvider: ScrapeProvider;
         stubSearch: boolean;
@@ -209,6 +231,9 @@ export function App() {
     const data = (await fetchRun(id)) as SavedRun;
     setModel(data.input.model);
     setUserSimulatorModel(data.input.userSimulatorModel ?? '');
+    setWriteModel(data.input.writeModel ?? '');
+    setWritePhaseEnabled(!!data.input.writePhasePrompt);
+    if (data.input.writePhasePrompt) setWritePrompt(data.input.writePhasePrompt);
     setSearchProvider(data.input.searchProvider);
     setScrapeProvider(data.input.scrapeProvider);
     setStubSearch(data.input.stubSearch);
@@ -258,6 +283,10 @@ export function App() {
             setModel={setModel}
             userSimulatorModel={userSimulatorModel}
             setUserSimulatorModel={setUserSimulatorModel}
+            writeModel={writeModel}
+            setWriteModel={setWriteModel}
+            writePhaseEnabled={writePhaseEnabled}
+            setWritePhaseEnabled={setWritePhaseEnabled}
             searchProvider={searchProvider}
             setSearchProvider={setSearchProvider}
             scrapeProvider={scrapeProvider}
@@ -286,6 +315,13 @@ export function App() {
             setValue={setInjectedPrompt}
             original={injectedPromptOriginal}
             onSaveToDisk={saveInjectedPromptToDisk}
+          />
+          <PromptsBlock
+            label={`Write phase (prompts/scroll-write.md)${writePhaseEnabled ? '' : ' · 当前未启用'}`}
+            value={writePrompt}
+            setValue={setWritePrompt}
+            original={writePromptOriginal}
+            onSaveToDisk={saveWritePromptToDisk}
           />
           <MemoryBlock value={memory} setValue={setMemory} />
           <HistoryEditor history={history} setHistory={setHistory} />
@@ -351,6 +387,10 @@ function Settings(p: {
   setModel: (m: string) => void;
   userSimulatorModel: string;
   setUserSimulatorModel: (m: string) => void;
+  writeModel: string;
+  setWriteModel: (m: string) => void;
+  writePhaseEnabled: boolean;
+  setWritePhaseEnabled: (b: boolean) => void;
   searchProvider: SearchProvider;
   setSearchProvider: (p: SearchProvider) => void;
   scrapeProvider: ScrapeProvider;
@@ -395,6 +435,31 @@ function Settings(p: {
         onChange={(e) => p.setUserSimulatorModel(e.target.value)}
       >
         <option value="">— 不用，回固定的"继续，按你的计划执行" —</option>
+        {p.cfg.models.map((m) => (
+          <option key={m.model} value={m.model} disabled={m.keyMissing}>
+            {m.name}
+            {m.direct ? ' · direct' : ''}
+            {m.keyMissing ? ' (no key)' : ''}
+          </option>
+        ))}
+      </select>
+
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={p.writePhaseEnabled}
+          onChange={(e) => p.setWritePhaseEnabled(e.target.checked)}
+        />
+        启用写文章阶段（两段式）
+      </label>
+
+      <label>写文章模型 <span className="dim">(phase 2; 留空 = 跟主模型一致)</span></label>
+      <select
+        value={p.writeModel}
+        onChange={(e) => p.setWriteModel(e.target.value)}
+        disabled={!p.writePhaseEnabled}
+      >
+        <option value="">— 跟主模型一致 —</option>
         {p.cfg.models.map((m) => (
           <option key={m.model} value={m.model} disabled={m.keyMissing}>
             {m.name}
@@ -731,6 +796,10 @@ function firstArgPreview(args: string): string {
 function ResultBlock({ r }: { r: ResultEvent }): JSX.Element {
   const declined = r.reason === 'declined';
   const empty = !r.finalArticle.trim();
+  const writeIn = r.writeUsage?.input ?? 0;
+  const writeOut = r.writeUsage?.output ?? 0;
+  const phase1In = r.usage.input - writeIn;
+  const phase1Out = r.usage.output - writeOut;
   return (
     <div className="result">
       <h3>结果</h3>
@@ -739,6 +808,18 @@ function ResultBlock({ r }: { r: ResultEvent }): JSX.Element {
         elapsed: {(r.elapsedMs / 1000).toFixed(1)}s ·
         notes: {r.progress.notes.length} · urls: {r.progress.visited_urls.length} · plan rounds: {r.progress.plan_rounds}
       </div>
+      {r.writeUsage && (
+        <div className="result-meta dim">
+          phase 1: in={phase1In.toLocaleString()} out={phase1Out.toLocaleString()} ·
+          {' '}phase 2 (write): in={writeIn.toLocaleString()} out={writeOut.toLocaleString()}
+        </div>
+      )}
+      {r.phase1Summary && (
+        <details className="phase1-block">
+          <summary>phase 1 思考与研究输出 <span className="dim">(被 phase 2 替换)</span></summary>
+          <pre>{r.phase1Summary}</pre>
+        </details>
+      )}
 
       {declined && (
         <div className="decline-box">

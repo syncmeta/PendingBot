@@ -29,6 +29,7 @@ export interface ConfigResponse {
 export interface PromptsResponse {
   system: string;
   injected: string;
+  write: string;
 }
 
 export interface FixtureMeta {
@@ -100,6 +101,10 @@ export interface ResultEvent {
   summary: string | null;
   declineReason?: string;
   lastAssistantText?: string;
+  // Two-phase write step (panel-only) outputs.
+  phase1Summary?: string;
+  writeUsage?: { input: number; output: number; total: number };
+  writeGenerationId?: string;
 }
 
 export interface StartEvent {

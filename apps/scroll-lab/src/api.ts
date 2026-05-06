@@ -26,7 +26,11 @@ export async function fetchPrompts(): Promise<PromptsResponse> {
   return r.json() as Promise<PromptsResponse>;
 }
 
-export async function savePrompts(body: { system?: string; injected?: string }): Promise<void> {
+export async function savePrompts(body: {
+  system?: string;
+  injected?: string;
+  write?: string;
+}): Promise<void> {
   const r = await fetch('/api/prompts', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -98,6 +102,8 @@ export interface RunRequest {
   stubFetch?: boolean;
   turns?: number;
   userSimulatorModel?: string;
+  writeModel?: string;
+  writePhasePrompt?: string;
 }
 
 export interface RunHandlers {

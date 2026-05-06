@@ -108,8 +108,8 @@ interface ModelPreset {
 }
 const MODELS: ModelPreset[] = [
   { name: 'Grok 4.3',          model: 'x-ai/grok-4.3' },
-  { name: 'Claude Sonnet ~',   model: 'anthropic/claude-sonnet-latest' },
-  { name: 'Gemini Flash ~',    model: 'google/gemini-flash-latest' },
+  { name: 'Claude Sonnet ~',   model: '~anthropic/claude-sonnet-latest' },
+  { name: 'Gemini Flash ~',    model: '~google/gemini-flash-latest' },
   { name: 'DeepSeek v4 Pro',   model: 'deepseek/deepseek-v4-pro' },
   {
     name: 'DeepSeek (官方)',
@@ -129,10 +129,10 @@ const MODELS: ModelPreset[] = [
     baseUrl: 'https://api.deepseek.com',
     envKey: 'DEEPSEEK_API_KEY',
   },
-  { name: 'Kimi ~',            model: 'moonshotai/kimi-latest' },
+  { name: 'Kimi ~',            model: '~moonshotai/kimi-latest' },
   { name: 'GLM 5.1',           model: 'z-ai/glm-5.1' },
   { name: 'GPT-5.4',           model: 'openai/gpt-5.4' },
-  { name: 'Claude Opus ~',     model: 'anthropic/claude-opus-latest' },
+  { name: 'Claude Opus ~',     model: '~anthropic/claude-opus-latest' },
 ];
 
 const app = new Hono();
@@ -170,15 +170,16 @@ app.get('/api/config', (c) => {
 app.get('/api/prompts', (c) => {
   const system = fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll.md'), 'utf8');
   const injected = fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll-injected.md'), 'utf8');
-  return c.json({ system, injected });
+  const write = fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll-write.md'), 'utf8');
+  return c.json({ system, injected, write });
 });
 
-// PUT /api/prompts — write back to apps/edge/prompts/{scroll,scroll-injected}.md.
-// Body: { system?: string, injected?: string } — only present fields are written.
+// PUT /api/prompts — write back to apps/edge/prompts/{scroll,scroll-injected,scroll-write}.md.
+// Body: { system?, injected?, write? } — only present fields are written.
 app.put('/api/prompts', async (c) => {
-  let body: { system?: string; injected?: string };
+  let body: { system?: string; injected?: string; write?: string };
   try {
-    body = await c.req.json<{ system?: string; injected?: string }>();
+    body = await c.req.json<{ system?: string; injected?: string; write?: string }>();
   } catch {
     return c.json({ error: 'invalid json' }, 400);
   }
@@ -187,6 +188,9 @@ app.put('/api/prompts', async (c) => {
   }
   if (typeof body.injected === 'string') {
     fs.writeFileSync(path.join(EDGE_PROMPTS, 'scroll-injected.md'), body.injected);
+  }
+  if (typeof body.write === 'string') {
+    fs.writeFileSync(path.join(EDGE_PROMPTS, 'scroll-write.md'), body.write);
   }
   return c.json({ ok: true });
 });
@@ -281,6 +285,13 @@ interface RunBody {
   // Optional second model that plays the friend's reply to propose_plan.
   // Empty / absent → fall back to the static "用户：继续..." string.
   userSimulatorModel?: string;
+  // Two-phase write step: when writePhasePrompt is non-empty, after
+  // phase 1 (research loop) ends with reason='final', run a second
+  // model call with writePhasePrompt as system + phase-1 output as
+  // research context → its content replaces finalArticle. Empty
+  // writePhasePrompt = single-phase mode (legacy / current behavior).
+  writeModel?: string;
+  writePhasePrompt?: string;
 }
 
 // Build a callback that asks a second model to play the "friend"
@@ -439,6 +450,96 @@ app.post('/api/run', async (c) => {
       await stream.writeSSE({ event: 'error', data: errorMessage });
     }
 
+    // ── Optional phase 2: write the article from phase-1's research ──
+    // Only when phase 1 ended cleanly with content AND the panel
+    // supplied a writePhasePrompt. Single-phase mode (empty prompt)
+    // skips this entirely and behaves exactly as before.
+    let phase1Summary: string | undefined;
+    let writeUsage: { input: number; output: number; total: number } | undefined;
+    let writeGenerationId: string | undefined;
+    if (
+      result &&
+      result.reason === 'final' &&
+      result.finalArticle.trim() &&
+      body.writePhasePrompt &&
+      body.writePhasePrompt.trim()
+    ) {
+      const phase1Output = result.finalArticle.trim();
+      const phase2ModelId = body.writeModel || body.model;
+      const phase2Client = clientFor(phase2ModelId);
+      if ('error' in phase2Client) {
+        await stream.writeSSE({
+          event: 'error',
+          data: `phase-2 (write) client: ${phase2Client.error}`,
+        });
+      } else {
+        const notes = result.progress.notes ?? [];
+        const urls = result.progress.visited_urls ?? [];
+        const notesBlock =
+          notes.length > 0
+            ? '\n\n## 你记录的关键笔记\n' +
+              notes
+                .map((n, i) => `${i + 1}. ${n.text}${n.source ? ` — ${n.source}` : ''}`)
+                .join('\n')
+            : '';
+        const urlsBlock =
+          urls.length > 0 ? '\n\n## 你访问过的链接\n' + urls.map((u) => `- ${u}`).join('\n') : '';
+        const phase2User = [
+          initialUser,
+          '---',
+          '## 你刚才做的研究和思考\n\n' + phase1Output,
+          (notesBlock + urlsBlock).trim() || '',
+          '## 任务\n基于上面的研究和聊天记录，按 system prompt 的要求给朋友写一篇文章。',
+        ]
+          .filter((s) => s.trim())
+          .join('\n\n');
+
+        try {
+          const phase2 = await phase2Client.chat.completions.create({
+            model: phase2ModelId,
+            messages: [
+              { role: 'system', content: body.writePhasePrompt },
+              { role: 'user', content: phase2User },
+            ],
+          });
+          const phase2Text = (phase2.choices[0]?.message?.content ?? '').trim();
+          writeUsage = {
+            input: phase2.usage?.prompt_tokens ?? 0,
+            output: phase2.usage?.completion_tokens ?? 0,
+            total: phase2.usage?.total_tokens ?? 0,
+          };
+          writeGenerationId = phase2.id;
+
+          // Stream phase 2 as an extra "turn" so the UI sees it inline.
+          const cum = {
+            input: result.usage.input + writeUsage.input,
+            output: result.usage.output + writeUsage.output,
+            total: result.usage.total + writeUsage.total,
+          };
+          await stream.writeSSE({
+            event: 'turn',
+            data: JSON.stringify({
+              turn: collectedTurns.length,
+              progress: { ...result.progress, phase: 'compose' },
+              newMessages: [{ role: 'assistant', content: phase2Text }],
+              turnUsage: writeUsage,
+              cumulativeUsage: cum,
+              generationId: phase2.id,
+            }),
+          });
+
+          phase1Summary = phase1Output;
+          result.finalArticle = phase2Text;
+          result.usage = cum;
+        } catch (err) {
+          await stream.writeSSE({
+            event: 'error',
+            data: `phase-2 (write) failed: ${String((err as Error)?.message ?? err)}`,
+          });
+        }
+      }
+    }
+
     let resultPayload: Record<string, unknown> | undefined;
     if (result) {
       const finalText = result.finalArticle.trim();
@@ -454,6 +555,9 @@ app.post('/api/run', async (c) => {
         summary: extractSummary(finalText),
         declineReason: result.declineReason,
         lastAssistantText: result.lastAssistantText,
+        phase1Summary,
+        writeUsage,
+        writeGenerationId,
       };
       await stream.writeSSE({ event: 'result', data: JSON.stringify(resultPayload) });
     }
@@ -473,6 +577,8 @@ app.post('/api/run', async (c) => {
               input: {
                 model: body.model,
                 userSimulatorModel: body.userSimulatorModel ?? '',
+                writeModel: body.writeModel ?? '',
+                writePhasePrompt: body.writePhasePrompt ?? '',
                 searchProvider: body.searchProvider,
                 scrapeProvider: body.scrapeProvider,
                 stubSearch: !!body.stubSearch,
