@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import OpenAI from 'openai';
+import { Agent, ProxyAgent, setGlobalDispatcher } from 'undici';
 import {
   buildScrollInitialUserContent,
   extractSummary,
@@ -66,6 +67,33 @@ function loadDevVars(): Record<string, string> {
   return env;
 }
 const ENV = loadDevVars();
+
+// ── Proxy dispatcher ─────────────────────────────────────────────────
+// Picks PROXY_URL from .dev.vars (or HTTPS_PROXY / HTTP_PROXY / ALL_PROXY
+// env vars) and routes ALL outbound fetch through it — Brave / Firecrawl /
+// Tavily / Exa / Serper / OpenRouter / DeepSeek 官方 are all affected the
+// same way. Keep-alive caps mirror surf-test: idle conns get dropped fast
+// so middleboxes (中国大陆常见) can't silently hold a stale TCP open.
+const KEEP_ALIVE = {
+  keepAliveTimeout: 4_000,
+  keepAliveMaxTimeout: 10_000,
+  connect: { timeout: 15_000 },
+};
+const proxyUrl =
+  ENV.PROXY_URL ||
+  process.env.HTTPS_PROXY ||
+  process.env.https_proxy ||
+  process.env.HTTP_PROXY ||
+  process.env.http_proxy ||
+  process.env.ALL_PROXY ||
+  process.env.all_proxy;
+if (proxyUrl) {
+  setGlobalDispatcher(new ProxyAgent({ uri: proxyUrl, ...KEEP_ALIVE }));
+  console.log(`[scroll-lab/api] proxy: ${proxyUrl}`);
+} else {
+  setGlobalDispatcher(new Agent(KEEP_ALIVE));
+  console.log('[scroll-lab/api] no proxy (set PROXY_URL or HTTPS_PROXY)');
+}
 
 // ── Models — mirrors surf-test/config.ts list. OpenRouter for the
 // `*-latest` aliases; the two `DeepSeek (官方)` presets bypass
@@ -179,6 +207,60 @@ interface RunBody {
   stubSearch?: boolean;
   stubFetch?: boolean;
   turns?: number;
+  // Optional second model that plays the friend's reply to propose_plan.
+  // Empty / absent → fall back to the static "用户：继续..." string.
+  userSimulatorModel?: string;
+}
+
+// Build a callback that asks a second model to play the "friend"
+// responding to the assistant's proposed research plan. Receives the
+// raw JSON args from the propose_plan tool call.
+function makeUserSimulator(
+  client: OpenAI,
+  modelId: string,
+  history: HistoryMsg[],
+  memory: string | undefined,
+): (planArgs: string) => Promise<string> {
+  const transcript = history
+    .filter((m) => m.content.trim())
+    .map((m) => `${m.role === 'bot' ? '研究助手' : '朋友'}：${m.content}`)
+    .join('\n');
+  const memoryBlock = memory && memory.trim() ? `## 朋友的背景\n${memory.trim()}\n\n` : '';
+
+  return async (planArgs: string) => {
+    let summary = planArgs;
+    try {
+      const obj = JSON.parse(planArgs) as {
+        thoughts?: string;
+        queries?: Array<{ q: string; reason?: string }>;
+        urls?: Array<{ url: string; reason?: string }>;
+      };
+      summary = [
+        obj.thoughts && `思考：${obj.thoughts}`,
+        obj.queries?.length && `想搜：\n${obj.queries.map((q) => `  - ${q.q}` + (q.reason ? ` (${q.reason})` : '')).join('\n')}`,
+        obj.urls?.length && `想抓：\n${obj.urls.map((u) => `  - ${u.url}` + (u.reason ? ` (${u.reason})` : '')).join('\n')}`,
+      ].filter(Boolean).join('\n\n');
+    } catch {
+      /* fall through with raw args */
+    }
+
+    const r = await client.chat.completions.create({
+      model: modelId,
+      messages: [
+        {
+          role: 'system',
+          content:
+            '你扮演下面"朋友"的角色。一位研究助手刚刚分享了它打算如何帮你研究你的处境。你看完后用自然口语回应——可以同意、补充信息、改变方向、表达不耐烦或质疑、提一个问题。保持你前面聊天记录里的语气。不奉承，不做"完美用户"。回复控制在 2-4 句之内。',
+        },
+        {
+          role: 'user',
+          content:
+            `${memoryBlock}## 我们之前的聊天\n${transcript}\n\n## 研究助手刚刚说\n${summary}\n\n请用"朋友"的身份回应（直接说话，不要写"朋友："开头）：`,
+        },
+      ],
+    });
+    return r.choices[0]?.message?.content?.trim() ?? '';
+  };
 }
 
 app.post('/api/run', async (c) => {
@@ -194,18 +276,40 @@ app.post('/api/run', async (c) => {
 
   // Pick base URL + API key per the model preset (DeepSeek 官方 hits
   // api.deepseek.com directly; everything else goes through OpenRouter).
-  const preset = MODELS.find((m) => m.model === body.model);
-  const baseUrl = preset?.baseUrl ?? 'https://openrouter.ai/api/v1';
-  const apiKey = preset?.envKey ? ENV[preset.envKey] : ENV.OPENROUTER_API_KEY;
-  if (!apiKey) {
-    return c.json(
-      {
+  function clientFor(modelId: string): OpenAI | { error: string } {
+    const preset = MODELS.find((m) => m.model === modelId);
+    const baseUrl = preset?.baseUrl ?? 'https://openrouter.ai/api/v1';
+    const apiKey = preset?.envKey ? ENV[preset.envKey] : ENV.OPENROUTER_API_KEY;
+    if (!apiKey) {
+      return {
         error: preset?.baseUrl
-          ? `${preset.envKey} missing in .dev.vars (required for ${body.model})`
+          ? `${preset.envKey} missing in .dev.vars (required for ${modelId})`
           : 'OPENROUTER_API_KEY missing in .dev.vars',
+      };
+    }
+    return new OpenAI({
+      apiKey,
+      baseURL: baseUrl,
+      defaultHeaders: {
+        'HTTP-Referer': 'http://localhost:5174',
+        'X-Title': 'PendingBot/scroll-lab',
       },
-      500,
-    );
+    });
+  }
+
+  const mainClient = clientFor(body.model);
+  if ('error' in mainClient) return c.json({ error: mainClient.error }, 500);
+
+  // Optional friend-simulator: a second LLM impersonates the friend
+  // responding to propose_plan. If model not chosen / key missing, the
+  // loop falls back to its built-in "用户：继续，按你的计划执行。" string.
+  let simulator: ((args: string) => Promise<string>) | undefined;
+  if (body.userSimulatorModel) {
+    const simClient = clientFor(body.userSimulatorModel);
+    if ('error' in simClient) {
+      return c.json({ error: `simulator: ${simClient.error}` }, 500);
+    }
+    simulator = makeUserSimulator(simClient, body.userSimulatorModel, body.history, body.memory);
   }
 
   const initialUser = buildScrollInitialUserContent({
@@ -214,14 +318,7 @@ app.post('/api/run', async (c) => {
     injectedPrompt: body.injectedPrompt,
   });
 
-  const openai = new OpenAI({
-    apiKey,
-    baseURL: baseUrl,
-    defaultHeaders: {
-      'HTTP-Referer': 'http://localhost:5174',
-      'X-Title': 'PendingBot/scroll-lab',
-    },
-  });
+  const openai = mainClient;
 
   const webSearch = body.stubSearch ? async () => [] : makeSearch(body.searchProvider, ENV);
   const fetchUrl = body.stubFetch
@@ -249,6 +346,7 @@ app.post('/api/run', async (c) => {
         webSearch,
         fetchUrl,
         hardCapTurns: body.turns,
+        simulateUserReply: simulator,
         onTurn: async (info: ScrollTurnInfo) => {
           await stream.writeSSE({
             event: 'turn',

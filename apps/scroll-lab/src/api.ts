@@ -63,6 +63,7 @@ export interface RunRequest {
   stubSearch?: boolean;
   stubFetch?: boolean;
   turns?: number;
+  userSimulatorModel?: string;
 }
 
 export interface RunHandlers {

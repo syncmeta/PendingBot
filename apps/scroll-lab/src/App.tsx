@@ -30,6 +30,7 @@ export function App() {
   // ── Run inputs (editable in UI; persisted to localStorage) ────────
   // Anything you'd hate to retype after a refresh lives in storage.ts.
   const [model, setModel] = useLocalStorage<string>('model', '');
+  const [userSimulatorModel, setUserSimulatorModel] = useLocalStorage<string>('userSimulatorModel', '');
   const [searchProvider, setSearchProvider] = useLocalStorage<SearchProvider>('searchProvider', 'brave');
   const [scrapeProvider, setScrapeProvider] = useLocalStorage<ScrapeProvider>('scrapeProvider', 'firecrawl');
   const [turnCap, setTurnCap] = useLocalStorage<number>('turnCap', 8);
@@ -111,6 +112,7 @@ export function App() {
           stubSearch,
           stubFetch,
           turns: turnCap,
+          userSimulatorModel: userSimulatorModel || undefined,
         },
         {
           onStart: (e) => setStart(e),
@@ -155,6 +157,8 @@ export function App() {
             cfg={cfg}
             model={model}
             setModel={setModel}
+            userSimulatorModel={userSimulatorModel}
+            setUserSimulatorModel={setUserSimulatorModel}
             searchProvider={searchProvider}
             setSearchProvider={setSearchProvider}
             scrapeProvider={scrapeProvider}
@@ -236,6 +240,8 @@ function Settings(p: {
   cfg: ConfigResponse;
   model: string;
   setModel: (m: string) => void;
+  userSimulatorModel: string;
+  setUserSimulatorModel: (m: string) => void;
   searchProvider: SearchProvider;
   setSearchProvider: (p: SearchProvider) => void;
   scrapeProvider: ScrapeProvider;
@@ -254,7 +260,7 @@ function Settings(p: {
     <div className="card">
       <h3>设置</h3>
 
-      <label>模型</label>
+      <label>主模型 <span className="dim">(写奏折的)</span></label>
       <select value={p.model} onChange={(e) => p.setModel(e.target.value)}>
         {p.cfg.models.map((m) => (
           <option key={m.model} value={m.model} disabled={m.keyMissing}>
@@ -273,6 +279,21 @@ function Settings(p: {
           onChange={(e) => p.setModel(e.target.value)}
         />
       )}
+
+      <label>朋友模型 <span className="dim">(扮演朋友回复 propose_plan)</span></label>
+      <select
+        value={p.userSimulatorModel}
+        onChange={(e) => p.setUserSimulatorModel(e.target.value)}
+      >
+        <option value="">— 不用，回固定的"继续，按你的计划执行" —</option>
+        {p.cfg.models.map((m) => (
+          <option key={m.model} value={m.model} disabled={m.keyMissing}>
+            {m.name}
+            {m.direct ? ' · direct' : ''}
+            {m.keyMissing ? ' (no key)' : ''}
+          </option>
+        ))}
+      </select>
 
       <label>搜索提供商</label>
       <select value={p.searchProvider} onChange={(e) => p.setSearchProvider(e.target.value as SearchProvider)}>

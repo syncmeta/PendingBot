@@ -16,7 +16,8 @@
     "hono": "^4",
     "openai": "^4",
     "react": "^18",
-    "react-dom": "^18"
+    "react-dom": "^18",
+    "undici": "^8"
   },
   "devDependencies": {
     "@types/node": "^22",
