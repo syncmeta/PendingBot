@@ -1,13 +1,18 @@
 import SwiftUI
 import UIKit
 
-/// Mac Catalyst detection. Project ships with
-/// `SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO`, so on macOS the binary
-/// runs as native Catalyst and reports `userInterfaceIdiom == .mac`. On
-/// iPhone / iPad it stays `.phone` / `.pad`. Cached because the value
-/// can't change at runtime.
+/// Mac Catalyst detection. Compile-time `targetEnvironment(macCatalyst)`
+/// is the only reliable signal — `UIDevice.current.userInterfaceIdiom`
+/// returns `.pad` on Catalyst when the binary ships without "Optimize
+/// Interface for Mac", which silently dropped MacTabRoot back into the
+/// iOS `TabView` branch and the bottom-bar-rendered-at-the-top
+/// regression that follows.
 enum Platform {
-    static let isMac: Bool = UIDevice.current.userInterfaceIdiom == .mac
+    #if targetEnvironment(macCatalyst)
+    static let isMac: Bool = true
+    #else
+    static let isMac: Bool = false
+    #endif
 
     /// Multiplier applied to all `Theme.Fonts.*` sizes on Mac so the UI
     /// reads at desktop density (Mac users sit further from the screen
