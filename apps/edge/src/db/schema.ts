@@ -1,11 +1,3 @@
-// Database type generated from supabase/migrations + seeds.
-// To regenerate (after a migration change):
-//   supabase start
-//   supabase db reset --local
-//   supabase gen types typescript --local --schema pendingbot \
-//     > apps/edge/src/db/schema.ts
-//
-// Do not hand-edit — anything below this header is overwritten.
 export type Json =
   | string
   | number
@@ -15,6 +7,11 @@ export type Json =
   | Json[]
 
 export type Database = {
+  // Allows to automatically instantiate createClient with right options
+  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
+  __InternalSupabase: {
+    PostgrestVersion: "14.5"
+  }
   pendingbot: {
     Tables: {
       ai_picks: {
@@ -270,6 +267,41 @@ export type Database = {
             columns: ["bot_id"]
             isOneToOne: false
             referencedRelation: "bots"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bot_sandbox_sessions: {
+        Row: {
+          bootstrapped: boolean
+          conversation_id: string
+          created_at: string
+          daytona_sandbox_id: string
+          id: string
+          last_used_at: string
+        }
+        Insert: {
+          bootstrapped?: boolean
+          conversation_id: string
+          created_at?: string
+          daytona_sandbox_id: string
+          id?: string
+          last_used_at?: string
+        }
+        Update: {
+          bootstrapped?: boolean
+          conversation_id?: string
+          created_at?: string
+          daytona_sandbox_id?: string
+          id?: string
+          last_used_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bot_sandbox_sessions_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: true
+            referencedRelation: "conversations"
             referencedColumns: ["id"]
           },
         ]
@@ -770,6 +802,41 @@ export type Database = {
           },
         ]
       }
+      skill_versions: {
+        Row: {
+          body_md: string
+          created_at: string
+          edited_by: string | null
+          frontmatter: Json
+          id: string
+          skill_id: string
+        }
+        Insert: {
+          body_md: string
+          created_at?: string
+          edited_by?: string | null
+          frontmatter: Json
+          id?: string
+          skill_id: string
+        }
+        Update: {
+          body_md?: string
+          created_at?: string
+          edited_by?: string | null
+          frontmatter?: Json
+          id?: string
+          skill_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "skill_versions_skill_id_fkey"
+            columns: ["skill_id"]
+            isOneToOne: false
+            referencedRelation: "skills"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       skills: {
         Row: {
           body_md: string
@@ -1071,6 +1138,10 @@ export type Database = {
         Returns: string
       }
       delete_self_account: { Args: never; Returns: undefined }
+      is_bot_invitee: {
+        Args: { p_bot_id: string; p_user_id: string }
+        Returns: boolean
+      }
       is_participant: { Args: { conv_id: string }; Returns: boolean }
       list_bot_invitees: {
         Args: { p_bot_id: string }
@@ -1091,6 +1162,10 @@ export type Database = {
           p_user_id: string
         }
         Returns: undefined
+      }
+      user_has_conv_with_bot: {
+        Args: { p_bot_id: string; p_user_id: string }
+        Returns: boolean
       }
       uuidv7: { Args: never; Returns: string }
     }
@@ -1225,4 +1300,3 @@ export const Constants = {
     Enums: {},
   },
 } as const
-

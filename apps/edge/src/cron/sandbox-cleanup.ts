@@ -25,20 +25,8 @@ export async function cleanupIdleSandboxes(env: Env): Promise<void> {
   const supa = serviceClient(env);
   const cutoff = new Date(Date.now() - IDLE_TTL_MS).toISOString();
 
-  // Localized escape hatch — bot_sandbox_sessions is added in 0027 and
-  // isn't in schema.ts until the post-migration regen runs.
-  const sandboxes = (supa as unknown as {
-    from(table: string): {
-      select: (cols: string) => {
-        lt: (col: string, val: string) => Promise<{
-          data: Array<{ id: string; daytona_sandbox_id: string }> | null;
-        }>;
-      };
-      delete: () => { eq: (col: string, val: string) => Promise<unknown> };
-    };
-  }).from('bot_sandbox_sessions');
-
-  const stale = await sandboxes
+  const stale = await supa
+    .from('bot_sandbox_sessions')
     .select('id, daytona_sandbox_id')
     .lt('last_used_at', cutoff);
   const rows = stale.data ?? [];
@@ -48,7 +36,7 @@ export async function cleanupIdleSandboxes(env: Env): Promise<void> {
   for (const row of rows) {
     try {
       await deleteSandbox(env, row.daytona_sandbox_id);
-      await sandboxes.delete().eq('id', row.id);
+      await supa.from('bot_sandbox_sessions').delete().eq('id', row.id);
       deleted++;
     } catch (err) {
       console.warn('[sandbox-cleanup] row failed', row.id, err);

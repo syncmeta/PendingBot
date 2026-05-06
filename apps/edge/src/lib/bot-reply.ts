@@ -609,11 +609,6 @@ async function createSkillTool(
 // data-stack; subsequent calls reuse it. The cron sweep retires idle
 // sandboxes; on retirement we'd lose interpreter state, but bootstrap is
 // idempotent so the next call just re-provisions.
-//
-// `bot_sandbox_sessions` lives in migration 0027 and isn't in schema.ts
-// yet — the table accessor goes through `untyped` so this commit
-// typechecks before the post-migration regen. After regen, replace
-// `untyped(supa)` with `supa` and the typing tightens automatically.
 async function executeCodeTool(
   env: Env,
   args: Record<string, unknown>,
@@ -625,12 +620,12 @@ async function executeCodeTool(
   ctx.emit('tool_call', { name: 'execute_code', chars: code.length });
 
   const supa = serviceClient(env);
-  const sandboxes = untyped(supa).from('bot_sandbox_sessions');
 
   // Look up an existing sandbox for this conversation, or create one.
   // bot_sandbox_sessions has a UNIQUE on conversation_id so the
   // get-or-create race resolves to a single row.
-  const existing = await sandboxes
+  const existing = await supa
+    .from('bot_sandbox_sessions')
     .select('daytona_sandbox_id, bootstrapped')
     .eq('conversation_id', ctx.conversationId)
     .maybeSingle();
@@ -638,11 +633,11 @@ async function executeCodeTool(
   let sandboxId: string;
   let bootstrapped: boolean;
   if (existing.data) {
-    sandboxId = existing.data.daytona_sandbox_id as string;
-    bootstrapped = (existing.data.bootstrapped as boolean) ?? false;
+    sandboxId = existing.data.daytona_sandbox_id;
+    bootstrapped = existing.data.bootstrapped;
   } else {
     sandboxId = await createSandbox(env);
-    await sandboxes.insert({
+    await supa.from('bot_sandbox_sessions').insert({
       conversation_id: ctx.conversationId,
       daytona_sandbox_id: sandboxId,
       bootstrapped: false,
@@ -653,7 +648,7 @@ async function executeCodeTool(
   if (!bootstrapped) {
     const boot = await bootstrapPython(env, sandboxId);
     if (boot.exitCode === 0) {
-      await untyped(supa)
+      await supa
         .from('bot_sandbox_sessions')
         .update({ bootstrapped: true, last_used_at: new Date().toISOString() })
         .eq('conversation_id', ctx.conversationId);
@@ -674,7 +669,7 @@ async function executeCodeTool(
   }
 
   const result = await runPython(env, sandboxId, code);
-  await untyped(supa)
+  await supa
     .from('bot_sandbox_sessions')
     .update({ last_used_at: new Date().toISOString() })
     .eq('conversation_id', ctx.conversationId);
@@ -689,21 +684,4 @@ async function executeCodeTool(
     exit_code: result.exitCode,
     truncated: result.truncated,
   });
-}
-
-// Localized escape hatch for tables not yet in the auto-generated
-// schema.ts — drops back to a dynamically-typed builder. Once the
-// post-migration regen lands, every caller can swap back to plain `supa`.
-function untyped(supa: ReturnType<typeof serviceClient>): {
-  from(table: string): {
-    select: (...a: unknown[]) => {
-      eq: (...a: unknown[]) => { maybeSingle: () => Promise<{ data: Record<string, unknown> | null }> };
-    };
-    insert: (row: Record<string, unknown>) => Promise<unknown>;
-    update: (row: Record<string, unknown>) => {
-      eq: (...a: unknown[]) => Promise<unknown>;
-    };
-  };
-} {
-  return supa as unknown as ReturnType<typeof untyped>;
 }
