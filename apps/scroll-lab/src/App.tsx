@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   fetchConfig,
   fetchFixture,
@@ -7,6 +7,7 @@ import {
   fetchPrompts,
   runStream,
 } from './api';
+import { clearAll, useLocalStorage } from './storage';
 import type {
   ConfigResponse,
   FixtureMeta,
@@ -26,21 +27,24 @@ export function App() {
   const [fixtures, setFixtures] = useState<FixtureMeta[]>([]);
   const [bootError, setBootError] = useState<string | null>(null);
 
-  // ── Run inputs (editable in UI) ───────────────────────────────────
-  const [model, setModel] = useState<string>('');
-  const [searchProvider, setSearchProvider] = useState<SearchProvider>('brave');
-  const [scrapeProvider, setScrapeProvider] = useState<ScrapeProvider>('firecrawl');
-  const [turnCap, setTurnCap] = useState<number>(8);
-  const [stubSearch, setStubSearch] = useState<boolean>(false);
-  const [stubFetch, setStubFetch] = useState<boolean>(false);
+  // ── Run inputs (editable in UI; persisted to localStorage) ────────
+  // Anything you'd hate to retype after a refresh lives in storage.ts.
+  const [model, setModel] = useLocalStorage<string>('model', '');
+  const [searchProvider, setSearchProvider] = useLocalStorage<SearchProvider>('searchProvider', 'brave');
+  const [scrapeProvider, setScrapeProvider] = useLocalStorage<ScrapeProvider>('scrapeProvider', 'firecrawl');
+  const [turnCap, setTurnCap] = useLocalStorage<number>('turnCap', 8);
+  const [stubSearch, setStubSearch] = useLocalStorage<boolean>('stubSearch', false);
+  const [stubFetch, setStubFetch] = useLocalStorage<boolean>('stubFetch', false);
 
-  const [systemPrompt, setSystemPrompt] = useState<string>('');
-  const [injectedPrompt, setInjectedPrompt] = useState<string>('');
+  // Prompts use null as the "not yet hydrated" sentinel so we can tell
+  // first-launch (use disk) from edited-then-cleared (keep empty).
+  const [systemPrompt, setSystemPrompt] = useLocalStorage<string | null>('systemPrompt', null);
+  const [injectedPrompt, setInjectedPrompt] = useLocalStorage<string | null>('injectedPrompt', null);
   const [systemPromptOriginal, setSystemPromptOriginal] = useState<string>('');
   const [injectedPromptOriginal, setInjectedPromptOriginal] = useState<string>('');
 
-  const [memory, setMemory] = useState<string>('');
-  const [history, setHistory] = useState<HistoryMsg[]>([
+  const [memory, setMemory] = useLocalStorage<string>('memory', '');
+  const [history, setHistory] = useLocalStorage<HistoryMsg[]>('history', [
     { role: 'user', content: '' },
     { role: 'bot', content: '' },
   ]);
@@ -54,18 +58,22 @@ export function App() {
   const [costUSD, setCostUSD] = useState<number | null>(null);
 
   // ── Boot: load /api/config, /api/prompts, /api/fixtures ───────────
+  // Defaults from server *only* fill blanks — saved values from
+  // localStorage (model, prompt edits, etc.) take precedence so a
+  // refresh doesn't blow away whatever you were just tweaking.
   useEffect(() => {
     Promise.all([fetchConfig(), fetchPrompts(), fetchFixtures()])
       .then(([c, p, f]) => {
         setCfg(c);
-        setModel(c.defaultModel);
-        setSystemPrompt(p.system);
         setSystemPromptOriginal(p.system);
-        setInjectedPrompt(p.injected);
         setInjectedPromptOriginal(p.injected);
         setFixtures(f);
+        if (!model) setModel(c.defaultModel);
+        if (systemPrompt === null) setSystemPrompt(p.system);
+        if (injectedPrompt === null) setInjectedPrompt(p.injected);
       })
       .catch((e: Error) => setBootError(e.message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Fixture loading ───────────────────────────────────────────────
@@ -80,6 +88,10 @@ export function App() {
 
   // ── Run ───────────────────────────────────────────────────────────
   async function run(): Promise<void> {
+    if (systemPrompt === null || injectedPrompt === null) {
+      setErrorMsg('prompts still loading — try again in a moment');
+      return;
+    }
     setStatus('running');
     setStart(null);
     setTurns([]);
@@ -189,6 +201,11 @@ function Header(props: {
   costUSD: number | null;
   onRun: () => void;
 }): JSX.Element {
+  function onReset(): void {
+    if (!confirm('清空本地保存的所有面板状态（model / prompts / memory / history / 设置）然后刷新?')) return;
+    clearAll();
+    location.reload();
+  }
   return (
     <header className="hdr">
       <div className="title">scroll-lab <span className="dim">— 奏折打磨台</span></div>
@@ -205,6 +222,9 @@ function Header(props: {
         )}
         {props.status === 'error' && <span className="err">error</span>}
       </div>
+      <button onClick={onReset} className="wipe" title="清空 localStorage 中的面板状态">
+        wipe
+      </button>
       <button onClick={props.onRun} disabled={props.status === 'running'} className="run">
         {props.status === 'running' ? '运行中…' : '▶ Run'}
       </button>
@@ -304,11 +324,12 @@ function Settings(p: {
 
 function PromptsBlock(p: {
   label: string;
-  value: string;
+  value: string | null;
   setValue: (v: string) => void;
   original: string;
 }): JSX.Element {
-  const dirty = p.value !== p.original;
+  const current = p.value ?? '';
+  const dirty = p.value !== null && p.value !== p.original && p.original !== '';
   return (
     <details className="block" open={false}>
       <summary>
@@ -325,7 +346,7 @@ function PromptsBlock(p: {
           </button>
         )}
       </summary>
-      <textarea value={p.value} onChange={(e) => p.setValue(e.target.value)} rows={12} />
+      <textarea value={current} onChange={(e) => p.setValue(e.target.value)} rows={12} />
     </details>
   );
 }

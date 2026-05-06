@@ -57,6 +57,12 @@ body { margin: 0; }
   padding: 0.5rem 1.25rem; font-weight: 600; cursor: pointer;
 }
 .run:disabled { opacity: 0.5; cursor: not-allowed; }
+.wipe {
+  background: transparent; color: var(--dim);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 0.4rem 0.7rem; font-size: 11px; cursor: pointer;
+}
+.wipe:hover { color: var(--err); border-color: var(--err); }
 
 .layout {
   display: grid;
