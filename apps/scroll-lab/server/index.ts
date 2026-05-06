@@ -171,15 +171,16 @@ app.get('/api/prompts', (c) => {
   const system = fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll.md'), 'utf8');
   const injected = fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll-injected.md'), 'utf8');
   const write = fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll-write.md'), 'utf8');
-  return c.json({ system, injected, write });
+  const friend = fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll-friend.md'), 'utf8');
+  return c.json({ system, injected, write, friend });
 });
 
-// PUT /api/prompts — write back to apps/edge/prompts/{scroll,scroll-injected,scroll-write}.md.
-// Body: { system?, injected?, write? } — only present fields are written.
+// PUT /api/prompts — write back to apps/edge/prompts/{scroll,scroll-injected,scroll-write,scroll-friend}.md.
+// Body: { system?, injected?, write?, friend? } — only present fields are written.
 app.put('/api/prompts', async (c) => {
-  let body: { system?: string; injected?: string; write?: string };
+  let body: { system?: string; injected?: string; write?: string; friend?: string };
   try {
-    body = await c.req.json<{ system?: string; injected?: string; write?: string }>();
+    body = await c.req.json<{ system?: string; injected?: string; write?: string; friend?: string }>();
   } catch {
     return c.json({ error: 'invalid json' }, 400);
   }
@@ -191,6 +192,9 @@ app.put('/api/prompts', async (c) => {
   }
   if (typeof body.write === 'string') {
     fs.writeFileSync(path.join(EDGE_PROMPTS, 'scroll-write.md'), body.write);
+  }
+  if (typeof body.friend === 'string') {
+    fs.writeFileSync(path.join(EDGE_PROMPTS, 'scroll-friend.md'), body.friend);
   }
   return c.json({ ok: true });
 });
@@ -285,6 +289,9 @@ interface RunBody {
   // Optional second model that plays the friend's reply to propose_plan.
   // Empty / absent → fall back to the static "用户：继续..." string.
   userSimulatorModel?: string;
+  // System prompt for the friend simulator. Empty / absent → server
+  // reads scroll-friend.md from disk.
+  friendPrompt?: string;
   // Two-phase write step: when writePhasePrompt is non-empty, after
   // phase 1 (research loop) ends with reason='final', run a second
   // model call with writePhasePrompt as system + phase-1 output as
@@ -296,12 +303,15 @@ interface RunBody {
 
 // Build a callback that asks a second model to play the "friend"
 // responding to the assistant's proposed research plan. Receives the
-// raw JSON args from the propose_plan tool call.
+// raw JSON args from the propose_plan tool call. The friend system
+// prompt is editable in the panel — defaults to the contents of
+// apps/edge/prompts/scroll-friend.md.
 function makeUserSimulator(
   client: OpenAI,
   modelId: string,
   history: HistoryMsg[],
   memory: string | undefined,
+  systemPrompt: string,
 ): (planArgs: string) => Promise<string> {
   const transcript = history
     .filter((m) => m.content.trim())
@@ -329,11 +339,7 @@ function makeUserSimulator(
     const r = await client.chat.completions.create({
       model: modelId,
       messages: [
-        {
-          role: 'system',
-          content:
-            '你扮演下面"朋友"的角色。一位研究助手刚刚分享了它打算如何帮你研究你的处境。你看完后用自然口语回应——可以同意、补充信息、改变方向、表达不耐烦或质疑、提一个问题。保持你前面聊天记录里的语气。不奉承，不做"完美用户"。回复控制在 2-4 句之内。',
-        },
+        { role: 'system', content: systemPrompt },
         {
           role: 'user',
           content:
@@ -396,7 +402,17 @@ app.post('/api/run', async (c) => {
     if ('error' in simClient) {
       return c.json({ error: `simulator: ${simClient.error}` }, 500);
     }
-    simulator = makeUserSimulator(simClient, body.userSimulatorModel, body.history, body.memory);
+    const friendPrompt =
+      body.friendPrompt && body.friendPrompt.trim()
+        ? body.friendPrompt
+        : fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll-friend.md'), 'utf8');
+    simulator = makeUserSimulator(
+      simClient,
+      body.userSimulatorModel,
+      body.history,
+      body.memory,
+      friendPrompt,
+    );
   }
 
   const initialUser = buildScrollInitialUserContent({

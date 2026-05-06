@@ -48,9 +48,11 @@ export function App() {
   const [systemPrompt, setSystemPrompt] = useLocalStorage<string | null>('systemPrompt', null);
   const [injectedPrompt, setInjectedPrompt] = useLocalStorage<string | null>('injectedPrompt', null);
   const [writePrompt, setWritePrompt] = useLocalStorage<string | null>('writePrompt', null);
+  const [friendPrompt, setFriendPrompt] = useLocalStorage<string | null>('friendPrompt', null);
   const [systemPromptOriginal, setSystemPromptOriginal] = useState<string>('');
   const [injectedPromptOriginal, setInjectedPromptOriginal] = useState<string>('');
   const [writePromptOriginal, setWritePromptOriginal] = useState<string>('');
+  const [friendPromptOriginal, setFriendPromptOriginal] = useState<string>('');
 
   const [memory, setMemory] = useLocalStorage<string>('memory', '');
   const [history, setHistory] = useLocalStorage<HistoryMsg[]>('history', [
@@ -82,12 +84,14 @@ export function App() {
         setSystemPromptOriginal(p.system);
         setInjectedPromptOriginal(p.injected);
         setWritePromptOriginal(p.write);
+        setFriendPromptOriginal(p.friend);
         setFixtures(f);
         setRuns(r);
         if (!model) setModel(c.defaultModel);
         if (systemPrompt === null) setSystemPrompt(p.system);
         if (injectedPrompt === null) setInjectedPrompt(p.injected);
         if (writePrompt === null) setWritePrompt(p.write);
+        if (friendPrompt === null) setFriendPrompt(p.friend);
       })
       .catch((e: Error) => setBootError(e.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -131,6 +135,10 @@ export function App() {
           stubFetch,
           turns: turnCap,
           userSimulatorModel: userSimulatorModel || undefined,
+          friendPrompt:
+            userSimulatorModel && friendPrompt && friendPrompt.trim()
+              ? friendPrompt
+              : undefined,
           // Phase 2 only kicks in when both the toggle is on AND a
           // prompt is present. writeModel falls back to main `model`
           // server-side when empty.
@@ -195,6 +203,11 @@ export function App() {
     if (writePrompt === null) return;
     await savePrompts({ write: writePrompt });
     setWritePromptOriginal(writePrompt);
+  }
+  async function saveFriendPromptToDisk(): Promise<void> {
+    if (friendPrompt === null) return;
+    await savePrompts({ friend: friendPrompt });
+    setFriendPromptOriginal(friendPrompt);
   }
 
   // ── Run history ───────────────────────────────────────────────────
@@ -315,6 +328,13 @@ export function App() {
             setValue={setInjectedPrompt}
             original={injectedPromptOriginal}
             onSaveToDisk={saveInjectedPromptToDisk}
+          />
+          <PromptsBlock
+            label={`Friend (prompts/scroll-friend.md)${userSimulatorModel ? '' : ' · 朋友模型未选'}`}
+            value={friendPrompt}
+            setValue={setFriendPrompt}
+            original={friendPromptOriginal}
+            onSaveToDisk={saveFriendPromptToDisk}
           />
           <PromptsBlock
             label={`Write phase (prompts/scroll-write.md)${writePhaseEnabled ? '' : ' · 当前未启用'}`}

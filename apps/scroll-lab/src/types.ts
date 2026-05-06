@@ -30,6 +30,7 @@ export interface PromptsResponse {
   system: string;
   injected: string;
   write: string;
+  friend: string;
 }
 
 export interface FixtureMeta {

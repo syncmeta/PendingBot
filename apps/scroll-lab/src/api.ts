@@ -30,6 +30,7 @@ export async function savePrompts(body: {
   system?: string;
   injected?: string;
   write?: string;
+  friend?: string;
 }): Promise<void> {
   const r = await fetch('/api/prompts', {
     method: 'PUT',
@@ -102,6 +103,7 @@ export interface RunRequest {
   stubFetch?: boolean;
   turns?: number;
   userSimulatorModel?: string;
+  friendPrompt?: string;
   writeModel?: string;
   writePhasePrompt?: string;
 }
