@@ -1,12 +1,8 @@
 import SwiftUI
 
 /// Per-conversation settings sheet — opened from the gear icon in the chat
-/// header. Houses the controls that used to live as chips/+-panel tiles:
-/// tone, streaming, skills, model. Tone↔streaming are paired: switching
-/// tone snaps the streaming default (normal=on, wechat=off), but the user
-/// can override after.
+/// header. Houses streaming, skills, and model controls.
 struct ConversationSettingsView: View {
-    @Binding var chatTone: String
     @Binding var streaming: Bool
     @Binding var modelOverride: String
 
@@ -27,18 +23,7 @@ struct ConversationSettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("语气") {
-                    Picker("语气", selection: $chatTone) {
-                        Text("微信").tag("wechat")
-                        Text("普通AI").tag("normal")
-                    }
-                    .pickerStyle(.segmented)
-                    .onChange(of: chatTone) { _, newTone in
-                        // Tone flips the streaming default — normal AI feels
-                        // wrong without token streaming, wechat feels wrong
-                        // with it (each segment is meant to land as a chunk).
-                        streaming = (newTone == "normal")
-                    }
+                Section("流式输出") {
                     Toggle("流式输出", isOn: $streaming)
                 }
 
