@@ -101,6 +101,7 @@ export interface ResultEvent {
 }
 
 export interface StartEvent {
+  runId: string;
   model: string;
   systemChars: number;
   initialUserChars: number;

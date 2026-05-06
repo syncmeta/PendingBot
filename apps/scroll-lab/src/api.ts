@@ -26,6 +26,40 @@ export async function fetchPrompts(): Promise<PromptsResponse> {
   return r.json() as Promise<PromptsResponse>;
 }
 
+export async function savePrompts(body: { system?: string; injected?: string }): Promise<void> {
+  const r = await fetch('/api/prompts', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(await r.text());
+}
+
+export interface RunSummary {
+  id: string;
+  ts: string;
+  model: string;
+  userSimulatorModel?: string;
+  reason: string;
+  turns: number;
+  elapsedMs: number;
+  totalTokens: number;
+  title: string | null;
+}
+
+export async function fetchRunsList(): Promise<RunSummary[]> {
+  const r = await fetch('/api/runs');
+  if (!r.ok) throw new Error(await r.text());
+  const j = (await r.json()) as { runs: RunSummary[] };
+  return j.runs;
+}
+
+export async function fetchRun(id: string): Promise<unknown> {
+  const r = await fetch(`/api/runs/${encodeURIComponent(id)}`);
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
 export async function fetchFixtures(): Promise<FixtureMeta[]> {
   const r = await fetch('/api/fixtures');
   if (!r.ok) throw new Error(await r.text());

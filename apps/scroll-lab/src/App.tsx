@@ -1,11 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type MouseEvent } from 'react';
 import {
   fetchConfig,
   fetchFixture,
   fetchFixtures,
   fetchOpenrouterCost,
   fetchPrompts,
+  fetchRun,
+  fetchRunsList,
   runStream,
+  savePrompts,
+  type RunSummary,
 } from './api';
 import { clearAll, useLocalStorage } from './storage';
 import type {
@@ -57,18 +61,24 @@ export function App() {
   const [result, setResult] = useState<ResultEvent | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [costUSD, setCostUSD] = useState<number | null>(null);
+  const [runs, setRuns] = useState<RunSummary[]>([]);
+  // Abort controller for the active /api/run stream — Stop button calls
+  // abort() which closes the SSE connection; the server's request signal
+  // fires and runScrollLoop's isCancelled returns true on next iteration.
+  const abortRef = useRef<AbortController | null>(null);
 
   // ── Boot: load /api/config, /api/prompts, /api/fixtures ───────────
   // Defaults from server *only* fill blanks — saved values from
   // localStorage (model, prompt edits, etc.) take precedence so a
   // refresh doesn't blow away whatever you were just tweaking.
   useEffect(() => {
-    Promise.all([fetchConfig(), fetchPrompts(), fetchFixtures()])
-      .then(([c, p, f]) => {
+    Promise.all([fetchConfig(), fetchPrompts(), fetchFixtures(), fetchRunsList()])
+      .then(([c, p, f, r]) => {
         setCfg(c);
         setSystemPromptOriginal(p.system);
         setInjectedPromptOriginal(p.injected);
         setFixtures(f);
+        setRuns(r);
         if (!model) setModel(c.defaultModel);
         if (systemPrompt === null) setSystemPrompt(p.system);
         if (injectedPrompt === null) setInjectedPrompt(p.injected);
@@ -87,7 +97,7 @@ export function App() {
     if (fx.model) setModel(fx.model);
   }
 
-  // ── Run ───────────────────────────────────────────────────────────
+  // ── Run / Stop ────────────────────────────────────────────────────
   async function run(): Promise<void> {
     if (systemPrompt === null || injectedPrompt === null) {
       setErrorMsg('prompts still loading — try again in a moment');
@@ -99,6 +109,8 @@ export function App() {
     setResult(null);
     setErrorMsg(null);
     setCostUSD(null);
+    const controller = new AbortController();
+    abortRef.current = controller;
     try {
       await runStream(
         {
@@ -115,12 +127,12 @@ export function App() {
           userSimulatorModel: userSimulatorModel || undefined,
         },
         {
+          signal: controller.signal,
           onStart: (e) => setStart(e),
           onTurn: (e) => setTurns((prev) => [...prev, e]),
           onResult: (e) => {
             setResult(e);
             setStatus('done');
-            // OpenRouter authoritative USD cost (best-effort).
             if (e.generationId) {
               fetchOpenrouterCost(e.generationId).then((j) => {
                 if (j?.data?.total_cost != null) setCostUSD(j.data.total_cost);
@@ -134,9 +146,89 @@ export function App() {
         },
       );
     } catch (e) {
-      setErrorMsg((e as Error).message);
-      setStatus('error');
+      const msg = (e as Error).message ?? String(e);
+      // AbortError = user pressed Stop — that's not a failure.
+      if ((e as Error).name === 'AbortError' || msg.includes('aborted')) {
+        setStatus('done');
+      } else {
+        setErrorMsg(msg);
+        setStatus('error');
+      }
+    } finally {
+      abortRef.current = null;
+      // Server persisted the run; refresh the sidebar so it shows up.
+      refreshRuns();
     }
+  }
+
+  function stop(): void {
+    abortRef.current?.abort();
+  }
+
+  // ── Prompt save-to-disk ───────────────────────────────────────────
+  async function saveSystemPromptToDisk(): Promise<void> {
+    if (systemPrompt === null) return;
+    await savePrompts({ system: systemPrompt });
+    setSystemPromptOriginal(systemPrompt);
+  }
+  async function saveInjectedPromptToDisk(): Promise<void> {
+    if (injectedPrompt === null) return;
+    await savePrompts({ injected: injectedPrompt });
+    setInjectedPromptOriginal(injectedPrompt);
+  }
+
+  // ── Run history ───────────────────────────────────────────────────
+  async function refreshRuns(): Promise<void> {
+    try {
+      const list = await fetchRunsList();
+      setRuns(list);
+    } catch {
+      /* fine */
+    }
+  }
+  async function loadRun(id: string): Promise<void> {
+    type SavedRun = {
+      input: {
+        model: string;
+        userSimulatorModel?: string;
+        searchProvider: SearchProvider;
+        scrapeProvider: ScrapeProvider;
+        stubSearch: boolean;
+        stubFetch: boolean;
+        turns: number | null;
+        memory: string;
+        history: HistoryMsg[];
+        systemPrompt: string;
+        injectedPrompt: string;
+      };
+      start?: { systemChars: number; initialUserChars: number };
+      turns: TurnEvent[];
+      result: ResultEvent | null;
+      error: string | null;
+    };
+    const data = (await fetchRun(id)) as SavedRun;
+    setModel(data.input.model);
+    setUserSimulatorModel(data.input.userSimulatorModel ?? '');
+    setSearchProvider(data.input.searchProvider);
+    setScrapeProvider(data.input.scrapeProvider);
+    setStubSearch(data.input.stubSearch);
+    setStubFetch(data.input.stubFetch);
+    if (data.input.turns) setTurnCap(data.input.turns);
+    setMemory(data.input.memory);
+    setHistory(data.input.history);
+    setSystemPrompt(data.input.systemPrompt);
+    setInjectedPrompt(data.input.injectedPrompt);
+    setStart({
+      runId: id,
+      model: data.input.model,
+      systemChars: data.start?.systemChars ?? data.input.systemPrompt.length,
+      initialUserChars: data.start?.initialUserChars ?? 0,
+    });
+    setTurns(data.turns);
+    setResult(data.result);
+    setErrorMsg(data.error);
+    setStatus(data.error ? 'error' : data.result ? 'done' : 'idle');
+    setCostUSD(null);
   }
 
   if (bootError) {
@@ -150,9 +242,16 @@ export function App() {
 
   return (
     <div className="app">
-      <Header status={status} result={result} costUSD={costUSD} onRun={run} />
+      <Header
+        status={status}
+        result={result}
+        costUSD={costUSD}
+        onRun={run}
+        onStop={stop}
+      />
       <main className="layout">
         <section className="settings">
+          <RunsList runs={runs} onLoad={loadRun} onRefresh={refreshRuns} />
           <Settings
             cfg={cfg}
             model={model}
@@ -179,12 +278,14 @@ export function App() {
             value={systemPrompt}
             setValue={setSystemPrompt}
             original={systemPromptOriginal}
+            onSaveToDisk={saveSystemPromptToDisk}
           />
           <PromptsBlock
             label="Injected (prompts/scroll-injected.md)"
             value={injectedPrompt}
             setValue={setInjectedPrompt}
             original={injectedPromptOriginal}
+            onSaveToDisk={saveInjectedPromptToDisk}
           />
           <MemoryBlock value={memory} setValue={setMemory} />
           <HistoryEditor history={history} setHistory={setHistory} />
@@ -204,19 +305,21 @@ function Header(props: {
   result: ResultEvent | null;
   costUSD: number | null;
   onRun: () => void;
+  onStop: () => void;
 }): JSX.Element {
   function onReset(): void {
     if (!confirm('清空本地保存的所有面板状态（model / prompts / memory / history / 设置）然后刷新?')) return;
     clearAll();
     location.reload();
   }
+  const running = props.status === 'running';
   return (
     <header className="hdr">
       <div className="title">scroll-lab <span className="dim">— 奏折打磨台</span></div>
       <div className="grow" />
       <div className="status">
         {props.status === 'idle' && <span className="dim">idle</span>}
-        {props.status === 'running' && <span className="running">running…</span>}
+        {running && <span className="running">running…</span>}
         {props.status === 'done' && props.result && (
           <span className="done">
             ✓ {props.result.reason}  ·  {props.result.turns}t  ·  {(props.result.elapsedMs / 1000).toFixed(1)}s
@@ -229,9 +332,15 @@ function Header(props: {
       <button onClick={onReset} className="wipe" title="清空 localStorage 中的面板状态">
         wipe
       </button>
-      <button onClick={props.onRun} disabled={props.status === 'running'} className="run">
-        {props.status === 'running' ? '运行中…' : '▶ Run'}
-      </button>
+      {running ? (
+        <button onClick={props.onStop} className="stop" title="中止当前 run">
+          ■ Stop
+        </button>
+      ) : (
+        <button onClick={props.onRun} className="run">
+          ▶ Run
+        </button>
+      )}
     </header>
   );
 }
@@ -348,9 +457,24 @@ function PromptsBlock(p: {
   value: string | null;
   setValue: (v: string) => void;
   original: string;
+  onSaveToDisk: () => Promise<void>;
 }): JSX.Element {
   const current = p.value ?? '';
   const dirty = p.value !== null && p.value !== p.original && p.original !== '';
+  const [saving, setSaving] = useState(false);
+  const [saveErr, setSaveErr] = useState<string | null>(null);
+  async function handleSave(e: MouseEvent): Promise<void> {
+    e.preventDefault();
+    setSaving(true);
+    setSaveErr(null);
+    try {
+      await p.onSaveToDisk();
+    } catch (err) {
+      setSaveErr((err as Error).message ?? String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
   return (
     <details className="block" open={false}>
       <summary>
@@ -366,9 +490,56 @@ function PromptsBlock(p: {
             reset
           </button>
         )}
+        {dirty && (
+          <button className="save" onClick={handleSave} disabled={saving}>
+            {saving ? '保存中…' : '💾 save to file'}
+          </button>
+        )}
       </summary>
+      {saveErr && <div className="err-box">{saveErr}</div>}
       <textarea value={current} onChange={(e) => p.setValue(e.target.value)} rows={12} />
     </details>
+  );
+}
+
+function RunsList(p: {
+  runs: RunSummary[];
+  onLoad: (id: string) => Promise<void>;
+  onRefresh: () => Promise<void>;
+}): JSX.Element {
+  return (
+    <div className="card">
+      <h3>
+        历史 <span className="dim">({p.runs.length})</span>
+        <button
+          className="reset"
+          style={{ marginLeft: 'auto', float: 'right' }}
+          onClick={() => p.onRefresh()}
+        >
+          refresh
+        </button>
+      </h3>
+      {p.runs.length === 0 && <div className="dim">还没有历史 run</div>}
+      <div className="runs-list">
+        {p.runs.map((r) => (
+          <button key={r.id} className="run-item" onClick={() => p.onLoad(r.id)} title={r.id}>
+            <div className="run-item-line1">
+              <span className="run-item-title">{r.title || <span className="dim">(no title)</span>}</span>
+              <span className={`run-item-reason reason-${r.reason}`}>{r.reason}</span>
+            </div>
+            <div className="run-item-line2">
+              <span className="dim">{r.ts.replace('T', ' ').slice(0, 19)}</span>
+              <span className="dim">·</span>
+              <span className="dim">{r.model.split('/').pop()}</span>
+              <span className="dim">·</span>
+              <span className="dim">{r.turns}t</span>
+              <span className="dim">·</span>
+              <span className="dim">{r.totalTokens.toLocaleString()} tok</span>
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 

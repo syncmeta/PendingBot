@@ -35,6 +35,8 @@ const FIXTURE_DIRS = [
   path.join(LAB_ROOT, 'fixtures'),
   path.join(REPO_ROOT, 'apps/edge/scripts/fixtures'),
 ];
+const RUNS_DIR = path.join(LAB_ROOT, 'runs');
+fs.mkdirSync(RUNS_DIR, { recursive: true });
 
 // ── .dev.vars loader (mirrors apps/edge/scripts/scroll-replay.ts) ────
 function parseDotenv(text: string, into: Record<string, string>): void {
@@ -171,6 +173,24 @@ app.get('/api/prompts', (c) => {
   return c.json({ system, injected });
 });
 
+// PUT /api/prompts — write back to apps/edge/prompts/{scroll,scroll-injected}.md.
+// Body: { system?: string, injected?: string } — only present fields are written.
+app.put('/api/prompts', async (c) => {
+  let body: { system?: string; injected?: string };
+  try {
+    body = await c.req.json<{ system?: string; injected?: string }>();
+  } catch {
+    return c.json({ error: 'invalid json' }, 400);
+  }
+  if (typeof body.system === 'string') {
+    fs.writeFileSync(path.join(EDGE_PROMPTS, 'scroll.md'), body.system);
+  }
+  if (typeof body.injected === 'string') {
+    fs.writeFileSync(path.join(EDGE_PROMPTS, 'scroll-injected.md'), body.injected);
+  }
+  return c.json({ ok: true });
+});
+
 // ── Fixtures ─────────────────────────────────────────────────────────
 app.get('/api/fixtures', (c) => {
   const out: Array<{ id: string; path: string }> = [];
@@ -192,6 +212,57 @@ app.get('/api/fixtures/:id', (c) => {
     }
   }
   return c.json({ error: 'not found' }, 404);
+});
+
+// ── Runs (persisted after each /api/run completes) ───────────────────
+// Each file: <ts>__<short>.json  containing { input, turns, result, ts }.
+// Lives in apps/scroll-lab/runs/ — gitignored via repo-level *.json? no,
+// .gitignore covers *.log only, so runs/ is committed-eligible. Add a
+// .gitignore inside runs/ (next commit) so contents don't pollute git.
+app.get('/api/runs', (c) => {
+  const files = fs.existsSync(RUNS_DIR)
+    ? fs
+        .readdirSync(RUNS_DIR)
+        .filter((f) => f.endsWith('.json'))
+        .sort()
+        .reverse()
+    : [];
+  const items = files.slice(0, 200).map((f) => {
+    try {
+      const j = JSON.parse(fs.readFileSync(path.join(RUNS_DIR, f), 'utf8')) as {
+        ts?: string;
+        input?: { model?: string; userSimulatorModel?: string };
+        result?: {
+          reason?: string;
+          turns?: number;
+          elapsedMs?: number;
+          usage?: { total?: number };
+          title?: string | null;
+          summary?: string | null;
+        };
+      };
+      return {
+        id: f.replace(/\.json$/, ''),
+        ts: j.ts ?? '',
+        model: j.input?.model ?? '',
+        userSimulatorModel: j.input?.userSimulatorModel ?? '',
+        reason: j.result?.reason ?? '',
+        turns: j.result?.turns ?? 0,
+        elapsedMs: j.result?.elapsedMs ?? 0,
+        totalTokens: j.result?.usage?.total ?? 0,
+        title: j.result?.title ?? null,
+      };
+    } catch {
+      return { id: f.replace(/\.json$/, ''), ts: '', model: '', reason: 'parse-error', turns: 0, elapsedMs: 0, totalTokens: 0, title: null };
+    }
+  });
+  return c.json({ runs: items });
+});
+app.get('/api/runs/:id', (c) => {
+  const id = c.req.param('id');
+  const p = path.join(RUNS_DIR, `${id}.json`);
+  if (!fs.existsSync(p)) return c.json({ error: 'not found' }, 404);
+  return c.json(JSON.parse(fs.readFileSync(p, 'utf8')));
 });
 
 // ── Run (SSE-streamed loop) ──────────────────────────────────────────
@@ -325,10 +396,19 @@ app.post('/api/run', async (c) => {
     ? async (url: string) => ({ url, title: '', content: '(stub: scroll-lab 跳过抓取)' })
     : makeScrape(body.scrapeProvider, ENV);
 
+  // Cancel hook: client closes the SSE stream → the request's
+  // AbortSignal fires → next iteration of the loop sees aborted=true
+  // and returns reason='cancelled' cleanly.
+  const reqSignal = c.req.raw.signal;
+  const collectedTurns: ScrollTurnInfo[] = [];
+  const ts = new Date().toISOString();
+  const runId = ts.replace(/[:.]/g, '-') + '__' + Math.random().toString(36).slice(2, 8);
+
   return streamSSE(c, async (stream) => {
     await stream.writeSSE({
       event: 'start',
       data: JSON.stringify({
+        runId,
         model: body.model,
         systemChars: body.systemPrompt.length,
         initialUserChars: initialUser.length,
@@ -336,6 +416,7 @@ app.post('/api/run', async (c) => {
     });
 
     let result: ScrollLoopResult | undefined;
+    let errorMessage: string | undefined;
     const startedAt = Date.now();
     try {
       result = await runScrollLoop({
@@ -347,22 +428,21 @@ app.post('/api/run', async (c) => {
         fetchUrl,
         hardCapTurns: body.turns,
         simulateUserReply: simulator,
+        isCancelled: () => Promise.resolve(reqSignal.aborted),
         onTurn: async (info: ScrollTurnInfo) => {
-          await stream.writeSSE({
-            event: 'turn',
-            data: JSON.stringify(info),
-          });
+          collectedTurns.push(info);
+          await stream.writeSSE({ event: 'turn', data: JSON.stringify(info) });
         },
       });
     } catch (err) {
-      await stream.writeSSE({ event: 'error', data: String((err as Error)?.message ?? err) });
-      return;
+      errorMessage = String((err as Error)?.message ?? err);
+      await stream.writeSSE({ event: 'error', data: errorMessage });
     }
 
-    const finalText = result.finalArticle.trim();
-    await stream.writeSSE({
-      event: 'result',
-      data: JSON.stringify({
+    let resultPayload: Record<string, unknown> | undefined;
+    if (result) {
+      const finalText = result.finalArticle.trim();
+      resultPayload = {
         reason: result.reason,
         turns: result.turns,
         elapsedMs: Date.now() - startedAt,
@@ -372,8 +452,51 @@ app.post('/api/run', async (c) => {
         finalArticle: finalText,
         title: extractTitle(finalText),
         summary: extractSummary(finalText),
-      }),
-    });
+      };
+      await stream.writeSSE({ event: 'result', data: JSON.stringify(resultPayload) });
+    }
+
+    // Persist the full run to disk regardless of how it ended (final /
+    // turn_cap / cancelled / error). Skip only for empty/aborted
+    // before-first-turn so we don't pile up zero-content junk.
+    if (collectedTurns.length > 0 || result || errorMessage) {
+      try {
+        const file = path.join(RUNS_DIR, `${runId}.json`);
+        fs.writeFileSync(
+          file,
+          JSON.stringify(
+            {
+              id: runId,
+              ts,
+              input: {
+                model: body.model,
+                userSimulatorModel: body.userSimulatorModel ?? '',
+                searchProvider: body.searchProvider,
+                scrapeProvider: body.scrapeProvider,
+                stubSearch: !!body.stubSearch,
+                stubFetch: !!body.stubFetch,
+                turns: body.turns ?? null,
+                memory: body.memory ?? '',
+                history: body.history,
+                systemPrompt: body.systemPrompt,
+                injectedPrompt: body.injectedPrompt,
+              },
+              start: {
+                systemChars: body.systemPrompt.length,
+                initialUserChars: initialUser.length,
+              },
+              turns: collectedTurns,
+              result: resultPayload ?? null,
+              error: errorMessage ?? null,
+            },
+            null,
+            2,
+          ),
+        );
+      } catch (err) {
+        console.warn('[scroll-lab/api] failed to persist run:', err);
+      }
+    }
   });
 });
 
