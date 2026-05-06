@@ -139,6 +139,10 @@ struct ScrollTabView: View {
             // updates to running). The feed is meant to read as articles.
             runs = rows.filter { $0.status != "cancelled" }
             await refreshBotNames(for: runs)
+        } catch is CancellationError {
+            // Tab switch / refreshable cancellation — silent.
+        } catch let error as NSError where error.domain == NSURLErrorDomain
+            && error.code == NSURLErrorCancelled {
         } catch {
             self.error = error.localizedDescription
         }
@@ -208,6 +212,9 @@ struct ScrollTabView: View {
         do {
             _ = try await api.scrollTrigger(conversationId: conversationId)
             // Realtime INSERT will surface the new run; nothing else to do.
+        } catch is CancellationError {
+        } catch let error as NSError where error.domain == NSURLErrorDomain
+            && error.code == NSURLErrorCancelled {
         } catch {
             self.error = error.localizedDescription
         }

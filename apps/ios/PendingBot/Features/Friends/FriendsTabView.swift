@@ -250,6 +250,12 @@ struct FriendsTabView: View {
                         creator_id: $0.creator_id)
             }
             self.humans = contactRows.map { HumanPick(id: $0.contact_user_id, alias: $0.alias) }
+        } catch is CancellationError {
+            // Tab switch / refreshable cancellation — silent. The Mac
+            // shell rebuilds the active tab on every selection change, so
+            // any in-flight load() trips this when the user moves on.
+        } catch let error as NSError where error.domain == NSURLErrorDomain
+            && error.code == NSURLErrorCancelled {
         } catch {
             self.error = error.localizedDescription
         }
