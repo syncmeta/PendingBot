@@ -211,6 +211,20 @@ body { margin: 0; }
   border-left: 2px solid var(--accent); margin-bottom: 0.4rem;
   white-space: pre-wrap; font-size: 12.5px;
 }
+.asst-thinking {
+  margin: 0.3rem 0 0.4rem; padding: 0.3rem 0.5rem;
+  background: var(--bg-alt); border-radius: 4px;
+  border-left: 2px dashed var(--dim);
+}
+.asst-thinking summary {
+  cursor: pointer; font-size: 11px; color: var(--dim); font-weight: 600;
+}
+.asst-thinking pre {
+  margin-top: 0.4rem; padding: 0.5rem;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+  font-size: 12px; max-height: 360px; overflow-y: auto;
+  white-space: pre-wrap; color: var(--dim);
+}
 .tool-call, .m-tool { margin: 0.3rem 0; }
 .tool-call summary, .m-tool summary {
   cursor: pointer; list-style: none;

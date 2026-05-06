@@ -749,6 +749,14 @@ function Turn({ t }: { t: TurnEvent }): JSX.Element {
         if (m.role === 'assistant') {
           return (
             <div key={i} className="m-asst">
+              {m.reasoning_content && (
+                <details className="asst-thinking">
+                  <summary>
+                    🧠 thinking <span className="dim">({m.reasoning_content.length.toLocaleString()} chars)</span>
+                  </summary>
+                  <pre>{m.reasoning_content}</pre>
+                </details>
+              )}
               {m.content && <div className="asst-text">{m.content}</div>}
               {m.tool_calls?.map((tc) => {
                 const noisy = NOISY.has(tc.function.name);

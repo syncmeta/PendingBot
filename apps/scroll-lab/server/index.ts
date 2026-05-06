@@ -113,7 +113,7 @@ const MODELS: ModelPreset[] = [
   { name: 'DeepSeek v4 Pro',   model: 'deepseek/deepseek-v4-pro' },
   {
     name: 'DeepSeek (官方)',
-    model: 'deepseek-chat',
+    model: 'deepseek-v4-pro',
     baseUrl: 'https://api.deepseek.com',
     envKey: 'DEEPSEEK_API_KEY',
   },

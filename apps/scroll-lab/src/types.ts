@@ -60,6 +60,9 @@ export interface AssistantMessage {
   role: 'assistant';
   content: string | null;
   tool_calls?: ToolCall[];
+  // DeepSeek thinking models return their chain-of-thought here.
+  // Only present when the upstream emits it.
+  reasoning_content?: string;
 }
 export interface ToolMessage {
   role: 'tool';
