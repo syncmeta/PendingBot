@@ -4,7 +4,7 @@ import type {
   ChatCompletionMessageToolCall,
   ChatCompletionTool,
 } from 'openai/resources/chat/completions';
-import type { WebReadResult, WebSearchResult } from './web';
+import type { WebReadResult, WebSearchResult } from './web-types';
 
 // Pure agent-loop core for the 奏折 (scroll) feature. Lives here, not in
 // scroll-runner.ts, so the offline replay harness can import it from
@@ -137,6 +137,11 @@ export interface ScrollTurnInfo {
   // Newly appended to the running messages array on this turn — typically
   // the assistant turn plus any role:'tool' replies.
   newMessages: ChatCompletionMessageParam[];
+  // Per-turn usage delta + running totals. Lets the dev panel show where
+  // tokens accumulate (e.g. fetch_url results inflating next-turn input).
+  turnUsage: { input: number; output: number; total: number };
+  cumulativeUsage: { input: number; output: number; total: number };
+  generationId?: string;
 }
 
 export interface ScrollLoopResult {
@@ -276,11 +281,14 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
       parallel_tool_calls: true,
     });
     lastGenerationId = completion.id;
-    if (completion.usage) {
-      usage.input += completion.usage.prompt_tokens ?? 0;
-      usage.output += completion.usage.completion_tokens ?? 0;
-      usage.total += completion.usage.total_tokens ?? 0;
-    }
+    const turnUsage = {
+      input: completion.usage?.prompt_tokens ?? 0,
+      output: completion.usage?.completion_tokens ?? 0,
+      total: completion.usage?.total_tokens ?? 0,
+    };
+    usage.input += turnUsage.input;
+    usage.output += turnUsage.output;
+    usage.total += turnUsage.total;
 
     const msg = completion.choices[0]?.message;
     if (!msg) {
@@ -303,7 +311,16 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
       messages.push(...newMessages);
       finalArticle = assistantContent.trim();
       reason = 'final';
-      if (onTurn) await onTurn({ turn, progress, newMessages });
+      if (onTurn) {
+        await onTurn({
+          turn,
+          progress,
+          newMessages,
+          turnUsage,
+          cumulativeUsage: { ...usage },
+          generationId: completion.id,
+        });
+      }
       break;
     }
 
@@ -320,7 +337,16 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
 
     messages.push(...newMessages);
     progress.phase = progress.notes.length > 0 ? 'compose' : 'research';
-    if (onTurn) await onTurn({ turn, progress, newMessages });
+    if (onTurn) {
+      await onTurn({
+        turn,
+        progress,
+        newMessages,
+        turnUsage,
+        cumulativeUsage: { ...usage },
+        generationId: completion.id,
+      });
+    }
   }
 
   return {
