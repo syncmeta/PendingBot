@@ -137,6 +137,7 @@ const MODELS: ModelPreset[] = [
   { name: 'GLM 5.1',           model: 'z-ai/glm-5.1' },
   { name: 'GPT-5.4',           model: 'openai/gpt-5.4' },
   { name: 'Claude Opus ~',     model: '~anthropic/claude-opus-latest' },
+  { name: 'OpenRouter Free',   model: 'openrouter/free' },
 ];
 
 const app = new Hono();
