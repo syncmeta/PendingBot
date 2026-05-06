@@ -16,6 +16,7 @@ import scroll from '../../prompts/scroll.md';
 import scrollInjected from '../../prompts/scroll-injected.md';
 import scrollWrite from '../../prompts/scroll-write.md';
 import scrollCollaborator from '../../prompts/scroll-collaborator.md';
+import scrollConfirmPlan from '../../prompts/scroll-confirm-plan.md';
 import title from '../../prompts/title.md';
 
 const PROMPTS = {
@@ -26,6 +27,7 @@ const PROMPTS = {
   'scroll-injected': scrollInjected,
   'scroll-write': scrollWrite,
   'scroll-collaborator': scrollCollaborator,
+  'scroll-confirm-plan': scrollConfirmPlan,
   'title': title,
 } as const;
 

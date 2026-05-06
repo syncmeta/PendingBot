@@ -177,20 +177,21 @@ app.get('/api/prompts', (c) => {
   const injected = fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll-injected.md'), 'utf8');
   const write = fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll-write.md'), 'utf8');
   const collaborator = fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll-collaborator.md'), 'utf8');
-  return c.json({ system, injected, write, collaborator });
+  const confirmPlan = fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll-confirm-plan.md'), 'utf8');
+  return c.json({ system, injected, write, collaborator, confirmPlan });
 });
 
-// PUT /api/prompts — write back to apps/edge/prompts/{scroll,scroll-injected,scroll-write,scroll-collaborator}.md.
-// Body: { system?, injected?, write?, collaborator? } — only present fields are written.
+// PUT /api/prompts — write back to apps/edge/prompts/*.md.
 app.put('/api/prompts', async (c) => {
-  let body: { system?: string; injected?: string; write?: string; collaborator?: string };
+  let body: {
+    system?: string;
+    injected?: string;
+    write?: string;
+    collaborator?: string;
+    confirmPlan?: string;
+  };
   try {
-    body = await c.req.json<{
-      system?: string;
-      injected?: string;
-      write?: string;
-      collaborator?: string;
-    }>();
+    body = await c.req.json<typeof body>();
   } catch {
     return c.json({ error: 'invalid json' }, 400);
   }
@@ -205,6 +206,9 @@ app.put('/api/prompts', async (c) => {
   }
   if (typeof body.collaborator === 'string') {
     fs.writeFileSync(path.join(EDGE_PROMPTS, 'scroll-collaborator.md'), body.collaborator);
+  }
+  if (typeof body.confirmPlan === 'string') {
+    fs.writeFileSync(path.join(EDGE_PROMPTS, 'scroll-confirm-plan.md'), body.confirmPlan);
   }
   return c.json({ ok: true });
 });
@@ -314,6 +318,10 @@ interface RunBody {
   // and the saved messages array, runs `turns` more iterations, and
   // appends to the same file.
   resumeFromRunId?: string;
+  // Override the confirm_plan tool description (otherwise server reads
+  // scroll-confirm-plan.md from disk). Same string is used for both
+  // the main model's and the collaborator's confirm_plan tool.
+  confirmPlanText?: string;
   // Two-phase write step: when writePhasePrompt is non-empty, after
   // phase 1 (research loop) ends with reason='final', run a second
   // model call with writePhasePrompt as system + phase-1 output as
@@ -381,6 +389,7 @@ function makeCollaborator(
   memory: string | undefined,
   systemPrompt: string,
   showTurnsRemaining: boolean,
+  confirmPlanDescription: string,
 ): CollaboratorReply {
   const transcript = history
     .filter((m) => m.content.trim())
@@ -424,8 +433,7 @@ function makeCollaborator(
           type: 'function',
           function: {
             name: 'confirm_plan',
-            description:
-              '当你真心同意主探索者刚提出的研究方案、可以开始搜索/抓取时调用。这是解锁 web_search/fetch_url 的必要确认；否则就只用文字回复继续讨论。',
+            description: confirmPlanDescription,
             parameters: {
               type: 'object',
               properties: {
@@ -500,6 +508,14 @@ app.post('/api/run', async (c) => {
   const mainClient = clientFor(body.model);
   if ('error' in mainClient) return c.json({ error: mainClient.error }, 500);
 
+  // Resolve confirm_plan description once — falls back to the file
+  // when the panel doesn't override per run. Reused for the
+  // collaborator's tool definition further down.
+  const confirmPlanDescription =
+    body.confirmPlanText && body.confirmPlanText.trim()
+      ? body.confirmPlanText
+      : fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll-confirm-plan.md'), 'utf8');
+
   // Optional collaborator: a separate LLM that chimes in after each
   // non-final turn. If model not chosen / key missing, the loop runs
   // without collaborator injection (propose_plan tool still returns
@@ -521,6 +537,7 @@ app.post('/api/run', async (c) => {
       body.memory,
       collabPrompt,
       !!body.collaboratorShowTurnsRemaining,
+      confirmPlanDescription,
     );
   }
 
@@ -615,6 +632,7 @@ app.post('/api/run', async (c) => {
         fetchUrl,
         hardCapTurns: body.turns,
         showTurnsRemaining: !!body.showTurnsRemaining,
+        confirmPlanDescription,
         simulateCollaboratorReply: collaborator,
         isCancelled: () => Promise.resolve(reqSignal.aborted),
         resume: resumeState,
@@ -774,6 +792,7 @@ app.post('/api/run', async (c) => {
                 collaboratorPrompt: body.collaboratorPrompt ?? '',
                 writeModel: body.writeModel ?? '',
                 writePhasePrompt: body.writePhasePrompt ?? '',
+                confirmPlanText: body.confirmPlanText ?? '',
                 showTurnsRemaining: !!body.showTurnsRemaining,
                 collaboratorShowTurnsRemaining: !!body.collaboratorShowTurnsRemaining,
                 searchProvider: body.searchProvider,

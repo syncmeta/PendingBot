@@ -31,6 +31,7 @@ export async function savePrompts(body: {
   injected?: string;
   write?: string;
   collaborator?: string;
+  confirmPlan?: string;
 }): Promise<void> {
   const r = await fetch('/api/prompts', {
     method: 'PUT',
@@ -109,6 +110,7 @@ export interface RunRequest {
   showTurnsRemaining?: boolean;
   collaboratorShowTurnsRemaining?: boolean;
   resumeFromRunId?: string;
+  confirmPlanText?: string;
 }
 
 export interface RunHandlers {

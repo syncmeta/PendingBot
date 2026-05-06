@@ -54,10 +54,12 @@ export function App() {
   const [injectedPrompt, setInjectedPrompt] = useLocalStorage<string | null>('injectedPrompt', null);
   const [writePrompt, setWritePrompt] = useLocalStorage<string | null>('writePrompt', null);
   const [collaboratorPrompt, setCollaboratorPrompt] = useLocalStorage<string | null>('collaboratorPrompt', null);
+  const [confirmPlanPrompt, setConfirmPlanPrompt] = useLocalStorage<string | null>('confirmPlanPrompt', null);
   const [systemPromptOriginal, setSystemPromptOriginal] = useState<string>('');
   const [injectedPromptOriginal, setInjectedPromptOriginal] = useState<string>('');
   const [writePromptOriginal, setWritePromptOriginal] = useState<string>('');
   const [collaboratorPromptOriginal, setCollaboratorPromptOriginal] = useState<string>('');
+  const [confirmPlanPromptOriginal, setConfirmPlanPromptOriginal] = useState<string>('');
 
   const [memory, setMemory] = useLocalStorage<string>('memory', '');
   const [history, setHistory] = useLocalStorage<HistoryMsg[]>('history', [
@@ -90,6 +92,7 @@ export function App() {
         setInjectedPromptOriginal(p.injected);
         setWritePromptOriginal(p.write);
         setCollaboratorPromptOriginal(p.collaborator);
+        setConfirmPlanPromptOriginal(p.confirmPlan);
         setFixtures(f);
         setRuns(r);
         if (!model) setModel(c.defaultModel);
@@ -98,6 +101,7 @@ export function App() {
         if (injectedPrompt === null) setInjectedPrompt(p.injected);
         if (writePrompt === null) setWritePrompt(p.write);
         if (collaboratorPrompt === null) setCollaboratorPrompt(p.collaborator);
+        if (confirmPlanPrompt === null) setConfirmPlanPrompt(p.confirmPlan);
       })
       .catch((e: Error) => setBootError(e.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -164,6 +168,8 @@ export function App() {
           showTurnsRemaining,
           collaboratorShowTurnsRemaining,
           resumeFromRunId: opts?.resumeFromRunId,
+          confirmPlanText:
+            confirmPlanPrompt && confirmPlanPrompt.trim() ? confirmPlanPrompt : undefined,
         },
         {
           signal: controller.signal,
@@ -225,6 +231,11 @@ export function App() {
     await savePrompts({ collaborator: collaboratorPrompt });
     setCollaboratorPromptOriginal(collaboratorPrompt);
   }
+  async function saveConfirmPlanPromptToDisk(): Promise<void> {
+    if (confirmPlanPrompt === null) return;
+    await savePrompts({ confirmPlan: confirmPlanPrompt });
+    setConfirmPlanPromptOriginal(confirmPlanPrompt);
+  }
 
   // ── Run history ───────────────────────────────────────────────────
   async function refreshRuns(): Promise<void> {
@@ -245,6 +256,7 @@ export function App() {
         writePhasePrompt?: string;
         showTurnsRemaining?: boolean;
         collaboratorShowTurnsRemaining?: boolean;
+        confirmPlanText?: string;
         searchProvider: SearchProvider;
         scrapeProvider: ScrapeProvider;
         stubSearch: boolean;
@@ -269,6 +281,7 @@ export function App() {
     if (data.input.writePhasePrompt) setWritePrompt(data.input.writePhasePrompt);
     setShowTurnsRemaining(!!data.input.showTurnsRemaining);
     setCollaboratorShowTurnsRemaining(!!data.input.collaboratorShowTurnsRemaining);
+    if (data.input.confirmPlanText) setConfirmPlanPrompt(data.input.confirmPlanText);
     setSearchProvider(data.input.searchProvider);
     setScrapeProvider(data.input.scrapeProvider);
     setStubSearch(data.input.stubSearch);
@@ -361,6 +374,13 @@ export function App() {
             setValue={setCollaboratorPrompt}
             original={collaboratorPromptOriginal}
             onSaveToDisk={saveCollaboratorPromptToDisk}
+          />
+          <PromptsBlock
+            label="Confirm-plan tool description (prompts/scroll-confirm-plan.md)"
+            value={confirmPlanPrompt}
+            setValue={setConfirmPlanPrompt}
+            original={confirmPlanPromptOriginal}
+            onSaveToDisk={saveConfirmPlanPromptToDisk}
           />
           <PromptsBlock
             label={`Write phase (prompts/scroll-write.md)${writePhaseEnabled ? '' : ' · 当前未启用'}`}

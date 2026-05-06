@@ -17,6 +17,28 @@ export const MAX_WALL_MS = 4 * 60 * 1000;    // Worker hard cap is ~5min, leave 
 export const READ_TRUNCATE_CHARS = 8000;     // keep tool replies bounded
 export const SILENT_TOKEN = '[SILENT]';
 
+// Default confirm_plan description, used when no override is supplied
+// (i.e. production worker). The panel passes the editable
+// scroll-confirm-plan.md content through deps so the user can tune
+// the semantics without redeploying.
+export const DEFAULT_CONFIRM_PLAN_DESCRIPTION =
+  '当你认为方案已经讨论清楚、可以开始研究时调用。这只是你这一方的确认，对方也必须用它自己的 confirm_plan 工具确认才能解锁 web_search / fetch_url。如果对方继续给反馈而不确认，请用 propose_plan 接着讨论。';
+
+export function buildTools(confirmPlanDescription?: string): ChatCompletionTool[] {
+  return TOOLS.map((t) => {
+    if (t.type === 'function' && t.function.name === 'confirm_plan') {
+      return {
+        ...t,
+        function: {
+          ...t.function,
+          description: confirmPlanDescription ?? DEFAULT_CONFIRM_PLAN_DESCRIPTION,
+        },
+      };
+    }
+    return t;
+  });
+}
+
 export const TOOLS: ChatCompletionTool[] = [
   {
     type: 'function',
@@ -209,6 +231,11 @@ export interface ScrollLoopDeps {
   // up where a previous run left off. hardCapTurns then means "this
   // many additional turns from now", not from zero.
   resume?: ResumeState;
+  // Editable confirm_plan tool description. The panel reads
+  // scroll-confirm-plan.md and passes its contents here so the user
+  // can tune confirm semantics without redeploying. When absent
+  // (worker-side), DEFAULT_CONFIRM_PLAN_DESCRIPTION is used.
+  confirmPlanDescription?: string;
 }
 
 export interface ScrollTurnInfo {
@@ -414,7 +441,7 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
     const completion = await openai.chat.completions.create({
       model: modelId,
       messages,
-      tools: TOOLS,
+      tools: buildTools(deps.confirmPlanDescription),
       tool_choice: 'auto',
       parallel_tool_calls: true,
     });
