@@ -561,10 +561,13 @@ async function execTool(
   try {
     if (name === 'propose_plan') {
       progress.plan_rounds++;
-      // Auto-confirm. The collaborator (if configured) chimes in at
-      // the loop level after every non-final turn, not from inside
-      // this tool result anymore.
-      return '用户：继续，按你的计划执行。';
+      // No reply text. The collaborator (if configured) speaks for
+      // itself in a separate `role: 'user'` message that the loop
+      // injects after the tool results. When no collaborator is
+      // wired, the model just sees an empty acknowledgement and
+      // proceeds with its own plan. Empty string is safer than
+      // `null` — some providers reject null content on tool roles.
+      return '';
     }
 
     if (name === 'decide_write_article') {

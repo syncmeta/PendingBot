@@ -864,13 +864,17 @@ function Turn({ t }: { t: TurnEvent }): JSX.Element {
         }
         const name = toolName.get(m.tool_call_id) ?? '';
         const noisy = NOISY.has(name);
+        const content = m.content ?? '';
+        // propose_plan now returns empty content (the collaborator
+        // speaks separately). Don't clutter the UI with empty boxes.
+        if (!content.trim()) return null;
         return (
           <details key={i} className="m-tool" open={!noisy}>
             <summary>
               <span className="tc-name">tool_result {name && <span className="dim">· {name}</span>}</span>
-              {noisy && <span className="dim"> · {(m.content ?? '').length.toLocaleString()} chars</span>}
+              {noisy && <span className="dim"> · {content.length.toLocaleString()} chars</span>}
             </summary>
-            <pre>{m.content}</pre>
+            <pre>{content}</pre>
           </details>
         );
       })}
