@@ -17,35 +17,13 @@ export const MAX_WALL_MS = 4 * 60 * 1000;    // Worker hard cap is ~5min, leave 
 export const READ_TRUNCATE_CHARS = 8000;     // keep tool replies bounded
 export const SILENT_TOKEN = '[SILENT]';
 
-// Default confirm_plan description, used when no override is supplied
-// (i.e. production worker). The panel passes the editable
-// scroll-confirm-plan.md content through deps so the user can tune
-// the semantics without redeploying.
-export const DEFAULT_CONFIRM_PLAN_DESCRIPTION =
-  '当你认为方案已经讨论清楚、可以开始研究时调用。这只是你这一方的确认，对方也必须用它自己的 confirm_plan 工具确认才能解锁 web_search / fetch_url。如果对方继续给反馈而不确认，请用 propose_plan 接着讨论。';
-
-export function buildTools(confirmPlanDescription?: string): ChatCompletionTool[] {
-  return TOOLS.map((t) => {
-    if (t.type === 'function' && t.function.name === 'confirm_plan') {
-      return {
-        ...t,
-        function: {
-          ...t.function,
-          description: confirmPlanDescription ?? DEFAULT_CONFIRM_PLAN_DESCRIPTION,
-        },
-      };
-    }
-    return t;
-  });
-}
-
 export const TOOLS: ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
       name: 'propose_plan',
       description:
-        '在你和协作者**充分讨论**研究方向时使用。说明你的思考、想搜的关键词、想直接抓取的网页。每次调用后协作者会回应——这是来回讨论的工具。**搜索/抓取在 confirm_plan 调用前一直被禁用**，所以先用 propose_plan 反复打磨方案，等双方意见统一了再用 confirm_plan 锁定。',
+        '说明你的思考、想搜的关键词、想直接抓取的网页。协作者会回应——这是和协作者来回讨论方案的工具。如果 web_search / fetch_url 此刻被锁着（系统会暂停它们），就先用 propose_plan 把方向打磨清楚。',
       parameters: {
         type: 'object',
         properties: {
@@ -68,24 +46,6 @@ export const TOOLS: ChatCompletionTool[] = [
           },
         },
         required: ['thoughts', 'queries', 'urls'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'confirm_plan',
-      description:
-        '当你认为方案已经讨论清楚、可以开始研究时调用。注意：这只是你这一方的确认，协作者也必须用它自己的 confirm_plan 工具确认才能解锁 web_search / fetch_url。如果协作者继续给反馈而不确认，请用 propose_plan 接着讨论。',
-      parameters: {
-        type: 'object',
-        properties: {
-          summary: {
-            type: 'string',
-            description: '一两句话总结你和协作者最终敲定的研究方案。',
-          },
-        },
-        required: ['summary'],
       },
     },
   },
@@ -201,6 +161,12 @@ export interface ScrollLoopDeps {
   isCancelled?: () => Promise<boolean>;
   hardCapTurns?: number;
   maxWallMs?: number;
+  // Polled before every web_search / fetch_url call. When provided
+  // and returns falsy, the tool returns a "暂停" message instead of
+  // executing. The panel uses this to gate research manually — flips
+  // the flag in real time via /api/runs/:id/state. Worker-side
+  // (no callback) leaves search/fetch always-on.
+  isResearchUnlocked?: () => boolean | Promise<boolean>;
   // Optional: a separate model that plays a co-explorer chiming in
   // after each non-final turn. Receives the new messages produced this
   // turn (assistant + tool results); returns a string + (optional)
@@ -218,10 +184,6 @@ export interface ScrollLoopDeps {
   }) => Promise<{
     text: string;
     usage?: UsageStats;
-    // True when the collaborator chose to call its own confirm_plan
-    // tool — required (in addition to the main model's confirm_plan)
-    // before the loop opens the research gate.
-    confirmed?: boolean;
   }>;
   // When true, append a small system-style user message at the end of
   // each turn telling the model how many turns it has left. Only useful
@@ -231,11 +193,6 @@ export interface ScrollLoopDeps {
   // up where a previous run left off. hardCapTurns then means "this
   // many additional turns from now", not from zero.
   resume?: ResumeState;
-  // Editable confirm_plan tool description. The panel reads
-  // scroll-confirm-plan.md and passes its contents here so the user
-  // can tune confirm semantics without redeploying. When absent
-  // (worker-side), DEFAULT_CONFIRM_PLAN_DESCRIPTION is used.
-  confirmPlanDescription?: string;
 }
 
 export interface ScrollTurnInfo {
@@ -395,31 +352,9 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
   let reason: ScrollLoopExitReason = 'turn_cap';
   let turn = 0;
   let lastAssistantText = '';
-  // Research gate. Both sides have to confirm before web_search /
-  // fetch_url unblock — the main model via its own confirm_plan tool
-  // call, and the collaborator via the confirm_plan tool we hand to
-  // it server-side. Until both flips are true, every research call
-  // returns a "暂停" message and the discussion continues.
-  // Resumed runs detect prior confirmations from saved messages:
-  //   - main:   any saved assistant turn with a confirm_plan tool_call
-  //   - collab: any saved user message containing the agreement marker
-  const COLLAB_CONFIRMED_MARKER = '[协作者同意锁定方案]';
-  let mainConfirmed =
-    deps.resume?.messages?.some(
-      (m) =>
-        m.role === 'assistant' &&
-        Array.isArray((m as { tool_calls?: Array<{ function: { name: string } }> }).tool_calls) &&
-        (m as { tool_calls: Array<{ function: { name: string } }> }).tool_calls.some(
-          (tc) => tc.function.name === 'confirm_plan',
-        ),
-    ) ?? false;
-  let collaboratorConfirmed =
-    deps.resume?.messages?.some(
-      (m) =>
-        m.role === 'user' &&
-        typeof m.content === 'string' &&
-        m.content.includes(COLLAB_CONFIRMED_MARKER),
-    ) ?? false;
+  // Research gate is now externally controlled via deps.isResearchUnlocked
+  // (the panel flips it manually). No internal flag tracking needed —
+  // the callback is polled per web_search / fetch_url invocation.
   // Mutated by execTool when the model calls decide_write_article.
   //   write === false  → break with reason='declined' (no article)
   //   write === true   → record the decision but keep looping; the
@@ -441,7 +376,7 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
     const completion = await openai.chat.completions.create({
       model: modelId,
       messages,
-      tools: buildTools(deps.confirmPlanDescription),
+      tools: TOOLS,
       tool_choice: 'auto',
       parallel_tool_calls: true,
     });
@@ -508,18 +443,12 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
       break;
     }
 
-    // Gate research tools — when a collaborator is configured, block
-    // web_search / fetch_url until BOTH the main model and the
-    // collaborator have called confirm_plan. Same-turn parallel
-    // confirm_plan + web_search by the main model alone won't open
-    // the gate this turn (the collaborator hasn't seen the plan yet);
-    // it'll open once the collab also confirms in its response. After
-    // both flips, the gate stays open. Worker-side (no collaborator)
-    // skips gating entirely.
-    const collabConfigured = !!deps.simulateCollaboratorReply;
-    const planConfirmThisTurn = toolCalls.some((tc) => tc.function.name === 'confirm_plan');
-    if (planConfirmThisTurn) mainConfirmed = true;
-    const blockResearch = collabConfigured && !(mainConfirmed && collaboratorConfirmed);
+    // Research gate — poll the manual switch from deps if provided.
+    // No callback (worker) → research always allowed.
+    const researchUnlocked = deps.isResearchUnlocked
+      ? await deps.isResearchUnlocked()
+      : true;
+    const blockResearch = !researchUnlocked;
 
     const toolReplies = await Promise.all(
       toolCalls.map((tc) =>
@@ -564,19 +493,11 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
           collaboratorUsage.total += out.usage.total;
           collaboratorUsage.cached += out.usage.cached;
         }
-        if (out.confirmed) collaboratorConfirmed = true;
-        let bodyText = out.text.trim();
-        // Marker is appended to the user message so the trace, the
-        // model, and resume detection all see the confirmation.
-        if (out.confirmed) {
-          bodyText = bodyText
-            ? `${bodyText}\n\n${COLLAB_CONFIRMED_MARKER}`
-            : COLLAB_CONFIRMED_MARKER;
-        }
-        if (bodyText) {
+        const trimmed = out.text.trim();
+        if (trimmed) {
           const collaboratorMessage: ChatCompletionMessageParam = {
             role: 'user',
-            content: bodyText,
+            content: trimmed,
           };
           messages.push(collaboratorMessage);
           newMessages.push(collaboratorMessage);
@@ -678,16 +599,6 @@ async function execTool(
       return '';
     }
 
-    if (name === 'confirm_plan') {
-      const summary = String(args.summary ?? '').trim();
-      // The actual flag flip lives in the loop body (above) so
-      // parallel confirm_plan + web_search in the same turn doesn't
-      // miss the gate. Here we just acknowledge.
-      return summary
-        ? `计划已锁定：${summary} —— web_search / fetch_url 已解锁。`
-        : '计划已锁定 —— web_search / fetch_url 已解锁。';
-    }
-
     if (name === 'decide_write_article') {
       const writeFlag = args.write === true;
       const reasonText = String(args.reason ?? '').trim() || '(no reason given)';
@@ -702,7 +613,7 @@ async function execTool(
 
     if (name === 'web_search') {
       if (blockResearch) {
-        return '（已暂停搜索 — 你和协作者必须都用 confirm_plan 工具确认方案后才能开始搜索。继续用 propose_plan 讨论，争取双方都按下确认。）';
+        return '（搜索已被操作员暂停。继续用 propose_plan 讨论方案，等操作员开了搜索权限再调用。）';
       }
       const query = String(args.query ?? '').trim();
       if (!query) return JSON.stringify({ error: 'empty query' });
@@ -722,7 +633,7 @@ async function execTool(
 
     if (name === 'fetch_url') {
       if (blockResearch) {
-        return '（已暂停抓取 — 你和协作者必须都用 confirm_plan 工具确认方案后才能开始抓取。继续用 propose_plan 讨论，争取双方都按下确认。）';
+        return '（抓取已被操作员暂停。继续用 propose_plan 讨论方案，等操作员开了抓取权限再调用。）';
       }
       const url = String(args.url ?? '').trim();
       if (!url) return JSON.stringify({ error: 'empty url' });

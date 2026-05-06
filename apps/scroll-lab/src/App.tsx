@@ -9,6 +9,7 @@ import {
   fetchRunsList,
   runStream,
   savePrompts,
+  setResearchUnlocked,
   type RunSummary,
 } from './api';
 import { clearAll, useLocalStorage } from './storage';
@@ -54,12 +55,17 @@ export function App() {
   const [injectedPrompt, setInjectedPrompt] = useLocalStorage<string | null>('injectedPrompt', null);
   const [writePrompt, setWritePrompt] = useLocalStorage<string | null>('writePrompt', null);
   const [collaboratorPrompt, setCollaboratorPrompt] = useLocalStorage<string | null>('collaboratorPrompt', null);
-  const [confirmPlanPrompt, setConfirmPlanPrompt] = useLocalStorage<string | null>('confirmPlanPrompt', null);
   const [systemPromptOriginal, setSystemPromptOriginal] = useState<string>('');
   const [injectedPromptOriginal, setInjectedPromptOriginal] = useState<string>('');
   const [writePromptOriginal, setWritePromptOriginal] = useState<string>('');
   const [collaboratorPromptOriginal, setCollaboratorPromptOriginal] = useState<string>('');
-  const [confirmPlanPromptOriginal, setConfirmPlanPromptOriginal] = useState<string>('');
+
+  // Manual research gate. Default false (locked). Flipping while a
+  // run is in flight POSTs to /api/runs/:id/state for live effect.
+  const [researchUnlocked, setResearchUnlockedState] = useLocalStorage<boolean>(
+    'researchUnlocked',
+    false,
+  );
 
   const [memory, setMemory] = useLocalStorage<string>('memory', '');
   const [history, setHistory] = useLocalStorage<HistoryMsg[]>('history', [
@@ -92,7 +98,6 @@ export function App() {
         setInjectedPromptOriginal(p.injected);
         setWritePromptOriginal(p.write);
         setCollaboratorPromptOriginal(p.collaborator);
-        setConfirmPlanPromptOriginal(p.confirmPlan);
         setFixtures(f);
         setRuns(r);
         if (!model) setModel(c.defaultModel);
@@ -101,7 +106,6 @@ export function App() {
         if (injectedPrompt === null) setInjectedPrompt(p.injected);
         if (writePrompt === null) setWritePrompt(p.write);
         if (collaboratorPrompt === null) setCollaboratorPrompt(p.collaborator);
-        if (confirmPlanPrompt === null) setConfirmPlanPrompt(p.confirmPlan);
       })
       .catch((e: Error) => setBootError(e.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -168,8 +172,7 @@ export function App() {
           showTurnsRemaining,
           collaboratorShowTurnsRemaining,
           resumeFromRunId: opts?.resumeFromRunId,
-          confirmPlanText:
-            confirmPlanPrompt && confirmPlanPrompt.trim() ? confirmPlanPrompt : undefined,
+          initialResearchUnlocked: researchUnlocked,
         },
         {
           signal: controller.signal,
@@ -210,6 +213,22 @@ export function App() {
     abortRef.current?.abort();
   }
 
+  // Wraps the localStorage setter so flipping the toggle DURING a
+  // run also informs the server in real time. Outside a run it just
+  // persists locally and gets sent as initialResearchUnlocked next
+  // time Run is pressed.
+  async function setResearchUnlockedLive(value: boolean): Promise<void> {
+    setResearchUnlockedState(value);
+    const id = result?.runId ?? start?.runId;
+    if (status === 'running' && id) {
+      try {
+        await setResearchUnlocked(id, value);
+      } catch (err) {
+        setErrorMsg(`set state: ${(err as Error).message ?? err}`);
+      }
+    }
+  }
+
   // ── Prompt save-to-disk ───────────────────────────────────────────
   async function saveSystemPromptToDisk(): Promise<void> {
     if (systemPrompt === null) return;
@@ -231,11 +250,6 @@ export function App() {
     await savePrompts({ collaborator: collaboratorPrompt });
     setCollaboratorPromptOriginal(collaboratorPrompt);
   }
-  async function saveConfirmPlanPromptToDisk(): Promise<void> {
-    if (confirmPlanPrompt === null) return;
-    await savePrompts({ confirmPlan: confirmPlanPrompt });
-    setConfirmPlanPromptOriginal(confirmPlanPrompt);
-  }
 
   // ── Run history ───────────────────────────────────────────────────
   async function refreshRuns(): Promise<void> {
@@ -256,7 +270,7 @@ export function App() {
         writePhasePrompt?: string;
         showTurnsRemaining?: boolean;
         collaboratorShowTurnsRemaining?: boolean;
-        confirmPlanText?: string;
+        initialResearchUnlocked?: boolean;
         searchProvider: SearchProvider;
         scrapeProvider: ScrapeProvider;
         stubSearch: boolean;
@@ -281,7 +295,7 @@ export function App() {
     if (data.input.writePhasePrompt) setWritePrompt(data.input.writePhasePrompt);
     setShowTurnsRemaining(!!data.input.showTurnsRemaining);
     setCollaboratorShowTurnsRemaining(!!data.input.collaboratorShowTurnsRemaining);
-    if (data.input.confirmPlanText) setConfirmPlanPrompt(data.input.confirmPlanText);
+    setResearchUnlockedState(!!data.input.initialResearchUnlocked);
     setSearchProvider(data.input.searchProvider);
     setScrapeProvider(data.input.scrapeProvider);
     setStubSearch(data.input.stubSearch);
@@ -339,6 +353,9 @@ export function App() {
             setShowTurnsRemaining={setShowTurnsRemaining}
             collaboratorShowTurnsRemaining={collaboratorShowTurnsRemaining}
             setCollaboratorShowTurnsRemaining={setCollaboratorShowTurnsRemaining}
+            researchUnlocked={researchUnlocked}
+            setResearchUnlocked={setResearchUnlockedLive}
+            running={status === 'running'}
             searchProvider={searchProvider}
             setSearchProvider={setSearchProvider}
             scrapeProvider={scrapeProvider}
@@ -374,13 +391,6 @@ export function App() {
             setValue={setCollaboratorPrompt}
             original={collaboratorPromptOriginal}
             onSaveToDisk={saveCollaboratorPromptToDisk}
-          />
-          <PromptsBlock
-            label="Confirm-plan tool description (prompts/scroll-confirm-plan.md)"
-            value={confirmPlanPrompt}
-            setValue={setConfirmPlanPrompt}
-            original={confirmPlanPromptOriginal}
-            onSaveToDisk={saveConfirmPlanPromptToDisk}
           />
           <PromptsBlock
             label={`Write phase (prompts/scroll-write.md)${writePhaseEnabled ? '' : ' · 当前未启用'}`}
@@ -468,6 +478,9 @@ function Settings(p: {
   setShowTurnsRemaining: (b: boolean) => void;
   collaboratorShowTurnsRemaining: boolean;
   setCollaboratorShowTurnsRemaining: (b: boolean) => void;
+  researchUnlocked: boolean;
+  setResearchUnlocked: (b: boolean) => Promise<void> | void;
+  running: boolean;
   searchProvider: SearchProvider;
   setSearchProvider: (p: SearchProvider) => void;
   scrapeProvider: ScrapeProvider;
@@ -536,6 +549,16 @@ function Settings(p: {
           onChange={(e) => p.setCollaboratorShowTurnsRemaining(e.target.checked)}
         />
         让协作者知道剩余 turn 数
+      </label>
+
+      <label className={`check ${p.researchUnlocked ? 'gate-unlocked' : 'gate-locked'}`}>
+        <input
+          type="checkbox"
+          checked={p.researchUnlocked}
+          onChange={(e) => p.setResearchUnlocked(e.target.checked)}
+        />
+        {p.researchUnlocked ? '🔓' : '🔒'} 允许搜索/抓取
+        {p.running && <span className="dim"> · 实时生效</span>}
       </label>
 
       <label className="check">

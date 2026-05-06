@@ -32,7 +32,6 @@ export interface PromptsResponse {
   injected: string;
   write: string;
   collaborator: string;
-  confirmPlan: string;
 }
 
 export interface UsageStats {

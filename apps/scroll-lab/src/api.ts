@@ -31,7 +31,6 @@ export async function savePrompts(body: {
   injected?: string;
   write?: string;
   collaborator?: string;
-  confirmPlan?: string;
 }): Promise<void> {
   const r = await fetch('/api/prompts', {
     method: 'PUT',
@@ -110,7 +109,16 @@ export interface RunRequest {
   showTurnsRemaining?: boolean;
   collaboratorShowTurnsRemaining?: boolean;
   resumeFromRunId?: string;
-  confirmPlanText?: string;
+  initialResearchUnlocked?: boolean;
+}
+
+export async function setResearchUnlocked(runId: string, value: boolean): Promise<void> {
+  const r = await fetch(`/api/runs/${encodeURIComponent(runId)}/state`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ researchUnlocked: value }),
+  });
+  if (!r.ok) throw new Error(await r.text());
 }
 
 export interface RunHandlers {

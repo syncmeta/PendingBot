@@ -177,8 +177,7 @@ app.get('/api/prompts', (c) => {
   const injected = fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll-injected.md'), 'utf8');
   const write = fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll-write.md'), 'utf8');
   const collaborator = fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll-collaborator.md'), 'utf8');
-  const confirmPlan = fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll-confirm-plan.md'), 'utf8');
-  return c.json({ system, injected, write, collaborator, confirmPlan });
+  return c.json({ system, injected, write, collaborator });
 });
 
 // PUT /api/prompts — write back to apps/edge/prompts/*.md.
@@ -188,7 +187,6 @@ app.put('/api/prompts', async (c) => {
     injected?: string;
     write?: string;
     collaborator?: string;
-    confirmPlan?: string;
   };
   try {
     body = await c.req.json<typeof body>();
@@ -207,10 +205,32 @@ app.put('/api/prompts', async (c) => {
   if (typeof body.collaborator === 'string') {
     fs.writeFileSync(path.join(EDGE_PROMPTS, 'scroll-collaborator.md'), body.collaborator);
   }
-  if (typeof body.confirmPlan === 'string') {
-    fs.writeFileSync(path.join(EDGE_PROMPTS, 'scroll-confirm-plan.md'), body.confirmPlan);
-  }
   return c.json({ ok: true });
+});
+
+// ── Per-run state — research gate flipped manually from the panel ──
+// Map<runId, { researchUnlocked }>. Loop polls per turn so flips
+// take effect on the next web_search / fetch_url call. State is
+// kept until the run ends; resume re-creates it from the body.
+const runStates = new Map<string, { researchUnlocked: boolean }>();
+
+app.post('/api/runs/:id/state', async (c) => {
+  const id = c.req.param('id');
+  const body = (await c.req.json().catch(() => null)) as
+    | { researchUnlocked?: boolean }
+    | null;
+  if (!body || typeof body.researchUnlocked !== 'boolean') {
+    return c.json({ error: 'expected { researchUnlocked: boolean }' }, 400);
+  }
+  const cur = runStates.get(id) ?? { researchUnlocked: false };
+  cur.researchUnlocked = body.researchUnlocked;
+  runStates.set(id, cur);
+  return c.json({ ok: true, researchUnlocked: cur.researchUnlocked });
+});
+app.get('/api/runs/:id/state', (c) => {
+  const id = c.req.param('id');
+  const s = runStates.get(id);
+  return c.json({ researchUnlocked: s?.researchUnlocked ?? false });
 });
 
 // ── Fixtures ─────────────────────────────────────────────────────────
@@ -318,10 +338,10 @@ interface RunBody {
   // and the saved messages array, runs `turns` more iterations, and
   // appends to the same file.
   resumeFromRunId?: string;
-  // Override the confirm_plan tool description (otherwise server reads
-  // scroll-confirm-plan.md from disk). Same string is used for both
-  // the main model's and the collaborator's confirm_plan tool.
-  confirmPlanText?: string;
+  // Manual research gate — start the run with web_search / fetch_url
+  // allowed (true) or blocked (false). The panel can flip the gate
+  // mid-run via POST /api/runs/:id/state. Defaults to false (locked).
+  initialResearchUnlocked?: boolean;
   // Two-phase write step: when writePhasePrompt is non-empty, after
   // phase 1 (research loop) ends with reason='final', run a second
   // model call with writePhasePrompt as system + phase-1 output as
@@ -345,7 +365,6 @@ type CollaboratorInput = {
 type CollaboratorOutput = {
   text: string;
   usage?: { input: number; output: number; total: number; cached: number };
-  confirmed?: boolean;
 };
 type CollaboratorReply = (i: CollaboratorInput) => Promise<CollaboratorOutput>;
 
@@ -389,7 +408,6 @@ function makeCollaborator(
   memory: string | undefined,
   systemPrompt: string,
   showTurnsRemaining: boolean,
-  confirmPlanDescription: string,
 ): CollaboratorReply {
   const transcript = history
     .filter((m) => m.content.trim())
@@ -425,35 +443,11 @@ function makeCollaborator(
             `${memoryBlock}## 朋友的聊天记录\n${transcript}\n\n` +
             `## 主探索者第 ${turn} 轮做了什么\n${turnSummary}` +
             budgetBlock +
-            `\n\n请用"协作者"的身份回应。如果你真心觉得方案已经讨论清楚、可以开始研究，**调用 confirm_plan 工具**——这是解锁搜索/抓取的必要动作。否则就用文字直接回复继续讨论（不要写"协作者："开头）。`,
+            `\n\n请用"协作者"的身份给主探索者一个简短的回应（直接说话，不要写"协作者："开头）：`,
         },
       ],
-      tools: [
-        {
-          type: 'function',
-          function: {
-            name: 'confirm_plan',
-            description: confirmPlanDescription,
-            parameters: {
-              type: 'object',
-              properties: {
-                reason: {
-                  type: 'string',
-                  description: '一两句话说为什么觉得方案 OK 了',
-                },
-              },
-              required: [],
-            },
-          },
-        },
-      ],
-      tool_choice: 'auto',
-      parallel_tool_calls: false,
     });
-    const choice = r.choices[0]?.message;
-    const text = choice?.content?.trim() ?? '';
-    const tcs = choice?.tool_calls ?? [];
-    const confirmed = tcs.some((tc) => tc.function?.name === 'confirm_plan');
+    const text = r.choices[0]?.message?.content?.trim() ?? '';
     const promptDetails = (r.usage as { prompt_tokens_details?: { cached_tokens?: number } } | undefined)
       ?.prompt_tokens_details;
     const usage = {
@@ -462,7 +456,7 @@ function makeCollaborator(
       total: r.usage?.total_tokens ?? 0,
       cached: promptDetails?.cached_tokens ?? 0,
     };
-    return { text, usage, confirmed };
+    return { text, usage };
   };
 }
 
@@ -508,18 +502,9 @@ app.post('/api/run', async (c) => {
   const mainClient = clientFor(body.model);
   if ('error' in mainClient) return c.json({ error: mainClient.error }, 500);
 
-  // Resolve confirm_plan description once — falls back to the file
-  // when the panel doesn't override per run. Reused for the
-  // collaborator's tool definition further down.
-  const confirmPlanDescription =
-    body.confirmPlanText && body.confirmPlanText.trim()
-      ? body.confirmPlanText
-      : fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll-confirm-plan.md'), 'utf8');
-
   // Optional collaborator: a separate LLM that chimes in after each
   // non-final turn. If model not chosen / key missing, the loop runs
-  // without collaborator injection (propose_plan tool still returns
-  // the static "用户：继续..." reply).
+  // without collaborator injection.
   let collaborator: CollaboratorReply | undefined;
   if (body.collaboratorModel) {
     const collabClient = clientFor(body.collaboratorModel);
@@ -537,7 +522,6 @@ app.post('/api/run', async (c) => {
       body.memory,
       collabPrompt,
       !!body.collaboratorShowTurnsRemaining,
-      confirmPlanDescription,
     );
   }
 
@@ -608,6 +592,10 @@ app.post('/api/run', async (c) => {
     runId = ts.replace(/[:.]/g, '-') + '__' + Math.random().toString(36).slice(2, 8);
   }
 
+  // Register the run's research-gate state so the panel can flip it
+  // mid-run via POST /api/runs/:id/state. Cleaned up at the end.
+  runStates.set(runId, { researchUnlocked: !!body.initialResearchUnlocked });
+
   return streamSSE(c, async (stream) => {
     await stream.writeSSE({
       event: 'start',
@@ -632,9 +620,9 @@ app.post('/api/run', async (c) => {
         fetchUrl,
         hardCapTurns: body.turns,
         showTurnsRemaining: !!body.showTurnsRemaining,
-        confirmPlanDescription,
         simulateCollaboratorReply: collaborator,
         isCancelled: () => Promise.resolve(reqSignal.aborted),
+        isResearchUnlocked: () => runStates.get(runId)?.researchUnlocked ?? false,
         resume: resumeState,
         onTurn: async (info: ScrollTurnInfo) => {
           // Keep turn numbering continuous across resumes — the loop's
@@ -792,7 +780,7 @@ app.post('/api/run', async (c) => {
                 collaboratorPrompt: body.collaboratorPrompt ?? '',
                 writeModel: body.writeModel ?? '',
                 writePhasePrompt: body.writePhasePrompt ?? '',
-                confirmPlanText: body.confirmPlanText ?? '',
+                initialResearchUnlocked: !!body.initialResearchUnlocked,
                 showTurnsRemaining: !!body.showTurnsRemaining,
                 collaboratorShowTurnsRemaining: !!body.collaboratorShowTurnsRemaining,
                 searchProvider: body.searchProvider,
@@ -828,6 +816,10 @@ app.post('/api/run', async (c) => {
         console.warn('[scroll-lab/api] failed to persist run:', err);
       }
     }
+    // Run finished — let the runStates entry linger briefly so a
+    // late panel poll doesn't get confused, then drop it. Resume
+    // re-creates the entry from the body.initialResearchUnlocked.
+    setTimeout(() => runStates.delete(runId), 30_000);
   });
 });
 
