@@ -452,6 +452,8 @@ app.post('/api/run', async (c) => {
         finalArticle: finalText,
         title: extractTitle(finalText),
         summary: extractSummary(finalText),
+        declineReason: result.declineReason,
+        lastAssistantText: result.lastAssistantText,
       };
       await stream.writeSSE({ event: 'result', data: JSON.stringify(resultPayload) });
     }

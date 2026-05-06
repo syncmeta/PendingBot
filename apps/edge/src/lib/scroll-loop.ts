@@ -88,6 +88,24 @@ export const TOOLS: ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'decline_to_write',
+      description:
+        '如果你判断这次没什么真正值得给朋友写的（材料太薄、没有信息盲区可补、平庸常识、或者写了反而不如不写），就调用这个工具说明你不写的理由。不写比写一篇平庸的更好。一旦调用，本轮结束，不再写文章。',
+      parameters: {
+        type: 'object',
+        properties: {
+          reason: {
+            type: 'string',
+            description: '为什么这次决定不写。请具体说，不是"暂时没想好"这种空话。',
+          },
+        },
+        required: ['reason'],
+      },
+    },
+  },
 ];
 
 export interface NoteEntry {
@@ -105,6 +123,7 @@ export interface ProgressState {
 
 export type ScrollLoopExitReason =
   | 'final'         // model returned an assistant turn with no tool calls
+  | 'declined'      // model called decline_to_write — finalArticle empty; reason on result
   | 'turn_cap'      // hit hardCapTurns without a final
   | 'wall_cap'      // hit maxWallMs without a final
   | 'cancelled'     // isCancelled() returned true
@@ -150,6 +169,14 @@ export interface ScrollLoopResult {
   usage: { input: number; output: number; total: number };
   lastGenerationId?: string;
   reason: ScrollLoopExitReason;
+  // Set when reason === 'declined' — the string the model passed to
+  // decline_to_write({ reason }). Surface it to the operator so "空
+  // 奏折" isn't ambiguous between error / silent / deliberate decline.
+  declineReason?: string;
+  // The text from the LAST assistant turn, even when `finalArticle`
+  // was rejected as too short / empty. Lets the panel show whatever
+  // the model said before it stopped, instead of a blank "(空)".
+  lastAssistantText?: string;
   // Full conversation as fed to / produced by the model. Useful for
   // fixtures, debugging, and the replay script.
   messages: ChatCompletionMessageParam[];
@@ -262,6 +289,10 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
   let finalArticle = '';
   let reason: ScrollLoopExitReason = 'turn_cap';
   let turn = 0;
+  let lastAssistantText = '';
+  // Mutated by execTool when the model calls decline_to_write. We
+  // break the loop and return the reason on the result.
+  const decline: { reason?: string } = {};
 
   for (turn = 0; turn < hardCap; turn++) {
     if (Date.now() - startedAt > wallCap) {
@@ -298,6 +329,7 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
 
     const toolCalls = (msg.tool_calls ?? []) as ChatCompletionMessageToolCall[];
     const assistantContent = msg.content ?? '';
+    if (assistantContent.trim()) lastAssistantText = assistantContent;
 
     // DeepSeek thinking models (deepseek-reasoner / deepseek-v4-flash) put
     // their chain-of-thought on `reasoning_content` and require it to be
@@ -340,6 +372,7 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
           tc,
           progress,
           deps.simulateUserReply,
+          decline,
         ),
       ),
     );
@@ -363,6 +396,12 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
         generationId: completion.id,
       });
     }
+
+    // The model called decline_to_write — exit cleanly with the reason.
+    if (decline.reason !== undefined) {
+      reason = 'declined';
+      break;
+    }
   }
 
   return {
@@ -371,6 +410,8 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
     usage,
     lastGenerationId,
     reason,
+    declineReason: decline.reason,
+    lastAssistantText: lastAssistantText || undefined,
     messages,
     turns: turn + (reason === 'turn_cap' ? 0 : 1),
   };
@@ -384,6 +425,7 @@ async function execTool(
   tc: ChatCompletionMessageToolCall,
   progress: ProgressState,
   simulateUserReply?: (planArgs: string) => Promise<string>,
+  decline?: { reason?: string },
 ): Promise<string> {
   const name = tc.function.name;
   const args = safeParse(tc.function.arguments);
@@ -393,15 +435,26 @@ async function execTool(
       if (simulateUserReply) {
         try {
           const reply = await simulateUserReply(tc.function.arguments);
-          return reply.trim() || '用户：继续，按你的计划执行。';
+          const trimmed = reply.trim();
+          if (trimmed) return trimmed;
+          // Simulator was configured but produced nothing — surface
+          // that explicitly so the operator doesn't think the static
+          // fallback is intended behavior.
+          return '用户：（朋友模型返回空内容，已退回静态回复）继续，按你的计划执行。';
         } catch (err) {
-          // Simulator failed; fall through to the static reply so the
-          // outer loop still progresses instead of dying mid-run.
-          console.warn('[scroll-loop] simulateUserReply failed:', err);
+          const msg = String((err as Error)?.message ?? err);
+          console.warn('[scroll-loop] simulateUserReply failed:', msg);
+          return `用户：（朋友模型出错：${msg}）继续，按你的计划执行。`;
         }
       }
-      // Default (production worker, or sim disabled): auto-confirm.
+      // No simulator wired (production worker, or panel left blank).
       return '用户：继续，按你的计划执行。';
+    }
+
+    if (name === 'decline_to_write') {
+      const reasonText = String(args.reason ?? '').trim();
+      if (decline) decline.reason = reasonText || '(no reason given)';
+      return '已记录你的决定：本轮不写文章。';
     }
 
     if (name === 'web_search') {

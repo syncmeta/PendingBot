@@ -663,6 +663,18 @@ function TokenTable({ turns }: { turns: TurnEvent[] }): JSX.Element {
 }
 
 function Turn({ t }: { t: TurnEvent }): JSX.Element {
+  // Build id → tool name map so we can decide whether to collapse the
+  // matching tool_result by default (web_search and fetch_url are
+  // typically huge / noisy; propose_plan / take_note / decline are
+  // small and worth seeing inline).
+  const toolName = new Map<string, string>();
+  for (const m of t.newMessages) {
+    if (m.role === 'assistant' && m.tool_calls) {
+      for (const tc of m.tool_calls) toolName.set(tc.id, tc.function.name);
+    }
+  }
+  const NOISY = new Set(['web_search', 'fetch_url']);
+
   return (
     <details className="turn" open>
       <summary>
@@ -673,41 +685,88 @@ function Turn({ t }: { t: TurnEvent }): JSX.Element {
           return (
             <div key={i} className="m-asst">
               {m.content && <div className="asst-text">{m.content}</div>}
-              {m.tool_calls?.map((tc) => (
-                <div key={tc.id} className="tool-call">
-                  <div className="tc-name">tool_call {tc.function.name}</div>
-                  <pre>{tc.function.arguments}</pre>
-                </div>
-              ))}
+              {m.tool_calls?.map((tc) => {
+                const noisy = NOISY.has(tc.function.name);
+                return (
+                  <details key={tc.id} className="tool-call" open={!noisy}>
+                    <summary>
+                      <span className="tc-name">tool_call {tc.function.name}</span>
+                      {noisy && <span className="dim"> · (折叠) {firstArgPreview(tc.function.arguments)}</span>}
+                    </summary>
+                    <pre>{tc.function.arguments}</pre>
+                  </details>
+                );
+              })}
             </div>
           );
         }
+        const name = toolName.get(m.tool_call_id) ?? '';
+        const noisy = NOISY.has(name);
         return (
-          <div key={i} className="m-tool">
-            <div className="tc-name">tool_result <span className="dim">id={m.tool_call_id}</span></div>
+          <details key={i} className="m-tool" open={!noisy}>
+            <summary>
+              <span className="tc-name">tool_result {name && <span className="dim">· {name}</span>}</span>
+              {noisy && <span className="dim"> · {(m.content ?? '').length.toLocaleString()} chars</span>}
+            </summary>
             <pre>{m.content}</pre>
-          </div>
+          </details>
         );
       })}
     </details>
   );
 }
 
+// Pull the first short value out of the tool-call JSON args for an
+// inline preview when it's collapsed.
+function firstArgPreview(args: string): string {
+  try {
+    const o = JSON.parse(args) as Record<string, unknown>;
+    const v = o.query ?? o.url ?? Object.values(o)[0] ?? '';
+    return typeof v === 'string' ? v.slice(0, 60) : '';
+  } catch {
+    return args.slice(0, 60);
+  }
+}
+
 function ResultBlock({ r }: { r: ResultEvent }): JSX.Element {
+  const declined = r.reason === 'declined';
+  const empty = !r.finalArticle.trim();
   return (
     <div className="result">
       <h3>结果</h3>
       <div className="result-meta">
-        reason: <code>{r.reason}</code> · turns: {r.turns} · elapsed: {(r.elapsedMs / 1000).toFixed(1)}s ·
+        reason: <code className={`reason-${r.reason}`}>{r.reason}</code> · turns: {r.turns} ·
+        elapsed: {(r.elapsedMs / 1000).toFixed(1)}s ·
         notes: {r.progress.notes.length} · urls: {r.progress.visited_urls.length} · plan rounds: {r.progress.plan_rounds}
       </div>
-      {r.title && <div>标题: <strong>{r.title}</strong></div>}
-      {r.summary && <div>摘要: <em>{r.summary}</em></div>}
-      {r.finalArticle ? (
-        <pre className="article">{r.finalArticle}</pre>
-      ) : (
-        <div className="dim">(空奏折 — 生产环境下会被删除)</div>
+
+      {declined && (
+        <div className="decline-box">
+          <strong>机器人选择不写。理由：</strong>
+          <div>{r.declineReason || '(没填理由)'}</div>
+        </div>
       )}
+
+      {!declined && empty && (
+        <div className="silent-box">
+          <strong>空奏折。</strong>{' '}
+          <span className="dim">
+            {r.reason === 'final'
+              ? '模型停止调用工具但没产出文章正文 (生产环境下会被删除)。'
+              : `模型在 reason=${r.reason} 时退出，未产出正文。`}
+          </span>
+          {r.lastAssistantText && (
+            <details open>
+              <summary>模型最后说的话</summary>
+              <pre>{r.lastAssistantText}</pre>
+            </details>
+          )}
+        </div>
+      )}
+
+      {!empty && r.title && <div>标题: <strong>{r.title}</strong></div>}
+      {!empty && r.summary && <div>摘要: <em>{r.summary}</em></div>}
+      {!empty && <pre className="article">{r.finalArticle}</pre>}
       {r.progress.notes.length > 0 && (
         <details>
           <summary>notes ({r.progress.notes.length})</summary>

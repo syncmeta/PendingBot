@@ -89,7 +89,7 @@ export interface TurnEvent {
 }
 
 export interface ResultEvent {
-  reason: 'final' | 'turn_cap' | 'wall_cap' | 'cancelled' | 'no_choice';
+  reason: 'final' | 'declined' | 'turn_cap' | 'wall_cap' | 'cancelled' | 'no_choice';
   turns: number;
   elapsedMs: number;
   usage: { input: number; output: number; total: number };
@@ -98,6 +98,8 @@ export interface ResultEvent {
   finalArticle: string;
   title: string | null;
   summary: string | null;
+  declineReason?: string;
+  lastAssistantText?: string;
 }
 
 export interface StartEvent {
