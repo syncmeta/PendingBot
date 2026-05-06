@@ -337,6 +337,7 @@ type CollaboratorInput = {
 type CollaboratorOutput = {
   text: string;
   usage?: { input: number; output: number; total: number; cached: number };
+  confirmed?: boolean;
 };
 type CollaboratorReply = (i: CollaboratorInput) => Promise<CollaboratorOutput>;
 
@@ -415,11 +416,36 @@ function makeCollaborator(
             `${memoryBlock}## 朋友的聊天记录\n${transcript}\n\n` +
             `## 主探索者第 ${turn} 轮做了什么\n${turnSummary}` +
             budgetBlock +
-            `\n\n请用"协作者"的身份给主探索者一个简短的回应（直接说话，不要写"协作者："开头）：`,
+            `\n\n请用"协作者"的身份回应。如果你真心觉得方案已经讨论清楚、可以开始研究，**调用 confirm_plan 工具**——这是解锁搜索/抓取的必要动作。否则就用文字直接回复继续讨论（不要写"协作者："开头）。`,
         },
       ],
+      tools: [
+        {
+          type: 'function',
+          function: {
+            name: 'confirm_plan',
+            description:
+              '当你真心同意主探索者刚提出的研究方案、可以开始搜索/抓取时调用。这是解锁 web_search/fetch_url 的必要确认；否则就只用文字回复继续讨论。',
+            parameters: {
+              type: 'object',
+              properties: {
+                reason: {
+                  type: 'string',
+                  description: '一两句话说为什么觉得方案 OK 了',
+                },
+              },
+              required: [],
+            },
+          },
+        },
+      ],
+      tool_choice: 'auto',
+      parallel_tool_calls: false,
     });
-    const text = r.choices[0]?.message?.content?.trim() ?? '';
+    const choice = r.choices[0]?.message;
+    const text = choice?.content?.trim() ?? '';
+    const tcs = choice?.tool_calls ?? [];
+    const confirmed = tcs.some((tc) => tc.function?.name === 'confirm_plan');
     const promptDetails = (r.usage as { prompt_tokens_details?: { cached_tokens?: number } } | undefined)
       ?.prompt_tokens_details;
     const usage = {
@@ -428,7 +454,7 @@ function makeCollaborator(
       total: r.usage?.total_tokens ?? 0,
       cached: promptDetails?.cached_tokens ?? 0,
     };
-    return { text, usage };
+    return { text, usage, confirmed };
   };
 }
 

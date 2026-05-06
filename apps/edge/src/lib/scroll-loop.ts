@@ -54,7 +54,7 @@ export const TOOLS: ChatCompletionTool[] = [
     function: {
       name: 'confirm_plan',
       description:
-        '当你和协作者意见统一、研究方向落定时调用——锁定方案、解锁 web_search 和 fetch_url。此后即可开始研究。如果协作者后面又提出反对，可以再用 propose_plan 重启讨论；但一旦 confirm_plan 调用过，搜索权限就持续打开。',
+        '当你认为方案已经讨论清楚、可以开始研究时调用。注意：这只是你这一方的确认，协作者也必须用它自己的 confirm_plan 工具确认才能解锁 web_search / fetch_url。如果协作者继续给反馈而不确认，请用 propose_plan 接着讨论。',
       parameters: {
         type: 'object',
         properties: {
@@ -193,7 +193,14 @@ export interface ScrollLoopDeps {
     // collaborator (separate from the main model's hint).
     hardCapTurns: number;
     newMessages: ChatCompletionMessageParam[];
-  }) => Promise<{ text: string; usage?: UsageStats }>;
+  }) => Promise<{
+    text: string;
+    usage?: UsageStats;
+    // True when the collaborator chose to call its own confirm_plan
+    // tool — required (in addition to the main model's confirm_plan)
+    // before the loop opens the research gate.
+    confirmed?: boolean;
+  }>;
   // When true, append a small system-style user message at the end of
   // each turn telling the model how many turns it has left. Only useful
   // for dev-side iteration — the worker leaves this off.
@@ -361,11 +368,16 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
   let reason: ScrollLoopExitReason = 'turn_cap';
   let turn = 0;
   let lastAssistantText = '';
-  // Research gate. While confirm_plan has not been called, the loop
-  // pauses every web_search / fetch_url call so the model and
-  // collaborator can discuss the plan freely without burning quota.
-  // Resumed runs detect prior confirmation by scanning saved messages.
-  let planConfirmed =
+  // Research gate. Both sides have to confirm before web_search /
+  // fetch_url unblock — the main model via its own confirm_plan tool
+  // call, and the collaborator via the confirm_plan tool we hand to
+  // it server-side. Until both flips are true, every research call
+  // returns a "暂停" message and the discussion continues.
+  // Resumed runs detect prior confirmations from saved messages:
+  //   - main:   any saved assistant turn with a confirm_plan tool_call
+  //   - collab: any saved user message containing the agreement marker
+  const COLLAB_CONFIRMED_MARKER = '[协作者同意锁定方案]';
+  let mainConfirmed =
     deps.resume?.messages?.some(
       (m) =>
         m.role === 'assistant' &&
@@ -373,6 +385,13 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
         (m as { tool_calls: Array<{ function: { name: string } }> }).tool_calls.some(
           (tc) => tc.function.name === 'confirm_plan',
         ),
+    ) ?? false;
+  let collaboratorConfirmed =
+    deps.resume?.messages?.some(
+      (m) =>
+        m.role === 'user' &&
+        typeof m.content === 'string' &&
+        m.content.includes(COLLAB_CONFIRMED_MARKER),
     ) ?? false;
   // Mutated by execTool when the model calls decide_write_article.
   //   write === false  → break with reason='declined' (no article)
@@ -463,19 +482,17 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
     }
 
     // Gate research tools — when a collaborator is configured, block
-    // web_search / fetch_url until confirm_plan has fired at least
-    // once. Until then the model + collaborator can discuss freely
-    // via propose_plan without burning search quota. After
-    // confirm_plan the gate stays open (model can still revisit via
-    // propose_plan if collab pushes back, but search remains allowed).
-    // Worker-side (no collaborator) skips gating entirely.
+    // web_search / fetch_url until BOTH the main model and the
+    // collaborator have called confirm_plan. Same-turn parallel
+    // confirm_plan + web_search by the main model alone won't open
+    // the gate this turn (the collaborator hasn't seen the plan yet);
+    // it'll open once the collab also confirms in its response. After
+    // both flips, the gate stays open. Worker-side (no collaborator)
+    // skips gating entirely.
     const collabConfigured = !!deps.simulateCollaboratorReply;
     const planConfirmThisTurn = toolCalls.some((tc) => tc.function.name === 'confirm_plan');
-    // Confirm flips BEFORE we evaluate the gate, so a turn that calls
-    // confirm_plan + web_search in parallel still gets to search this
-    // turn. Otherwise the model would have to wait an extra round.
-    if (planConfirmThisTurn) planConfirmed = true;
-    const blockResearch = collabConfigured && !planConfirmed;
+    if (planConfirmThisTurn) mainConfirmed = true;
+    const blockResearch = collabConfigured && !(mainConfirmed && collaboratorConfirmed);
 
     const toolReplies = await Promise.all(
       toolCalls.map((tc) =>
@@ -520,11 +537,19 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
           collaboratorUsage.total += out.usage.total;
           collaboratorUsage.cached += out.usage.cached;
         }
-        const trimmed = out.text.trim();
-        if (trimmed) {
+        if (out.confirmed) collaboratorConfirmed = true;
+        let bodyText = out.text.trim();
+        // Marker is appended to the user message so the trace, the
+        // model, and resume detection all see the confirmation.
+        if (out.confirmed) {
+          bodyText = bodyText
+            ? `${bodyText}\n\n${COLLAB_CONFIRMED_MARKER}`
+            : COLLAB_CONFIRMED_MARKER;
+        }
+        if (bodyText) {
           const collaboratorMessage: ChatCompletionMessageParam = {
             role: 'user',
-            content: trimmed,
+            content: bodyText,
           };
           messages.push(collaboratorMessage);
           newMessages.push(collaboratorMessage);
@@ -650,7 +675,7 @@ async function execTool(
 
     if (name === 'web_search') {
       if (blockResearch) {
-        return '（已暂停搜索 — 你和协作者还没敲定研究方向。继续用 propose_plan 讨论，等双方意见统一后用 confirm_plan 锁定方案，再来搜。）';
+        return '（已暂停搜索 — 你和协作者必须都用 confirm_plan 工具确认方案后才能开始搜索。继续用 propose_plan 讨论，争取双方都按下确认。）';
       }
       const query = String(args.query ?? '').trim();
       if (!query) return JSON.stringify({ error: 'empty query' });
@@ -670,7 +695,7 @@ async function execTool(
 
     if (name === 'fetch_url') {
       if (blockResearch) {
-        return '（已暂停抓取 — 你和协作者还没敲定研究方向。继续用 propose_plan 讨论，等双方意见统一后用 confirm_plan 锁定方案，再来抓。）';
+        return '（已暂停抓取 — 你和协作者必须都用 confirm_plan 工具确认方案后才能开始抓取。继续用 propose_plan 讨论，争取双方都按下确认。）';
       }
       const url = String(args.url ?? '').trim();
       if (!url) return JSON.stringify({ error: 'empty url' });
