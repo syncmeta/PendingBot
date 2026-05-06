@@ -107,6 +107,7 @@ export interface RunRequest {
   writeModel?: string;
   writePhasePrompt?: string;
   showTurnsRemaining?: boolean;
+  collaboratorShowTurnsRemaining?: boolean;
   resumeFromRunId?: string;
 }
 

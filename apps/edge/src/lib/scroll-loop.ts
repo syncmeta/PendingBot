@@ -170,6 +170,10 @@ export interface ScrollLoopDeps {
   // not invoked when the model produced no tool calls (loop exiting).
   simulateCollaboratorReply?: (input: {
     turn: number;
+    // Loop's max budget — the server uses this with `turn` to decide
+    // whether to surface a "you're on the last round" hint to the
+    // collaborator (separate from the main model's hint).
+    hardCapTurns: number;
     newMessages: ChatCompletionMessageParam[];
   }) => Promise<{ text: string; usage?: UsageStats }>;
   // When true, append a small system-style user message at the end of
@@ -459,6 +463,7 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
       try {
         const out = await deps.simulateCollaboratorReply({
           turn,
+          hardCapTurns: hardCap,
           newMessages: [...newMessages],
         });
         if (out.usage) {
@@ -492,14 +497,17 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
 
     // Optional budget hint — when enabled, append a `role:'user'`
     // system-style note telling the model how many turns it has left.
-    // Only added on non-decide turns and not on what we know is the
-    // last possible turn (model couldn't act on the info anyway).
+    // Wording escalates on the last upcoming turn: "this is the last
+    // round, you must decide now". Skipped on decide turns (decision
+    // already made) and after the very last turn (no next iteration).
     if (deps.showTurnsRemaining && !decideTurn && turn < hardCap - 1) {
-      const remaining = hardCap - turn - 1;
-      const hint: ChatCompletionMessageParam = {
-        role: 'user',
-        content: `（系统提示：还剩 ${remaining} 轮研究/工具调用机会。如果想做最终决定，记得调 decide_write_article。）`,
-      };
+      const remaining = hardCap - turn - 1; // turns including the upcoming one
+      const total = hardCap;
+      const hintText =
+        remaining === 1
+          ? `（系统提示：这是最后一轮（${total}/${total}）。本轮必须用 decide_write_article 做最终决定，否则会被 turn_cap 截断。）`
+          : `（系统提示：还剩 ${remaining}/${total} 轮研究/工具调用机会。）`;
+      const hint: ChatCompletionMessageParam = { role: 'user', content: hintText };
       messages.push(hint);
       newMessages.push(hint);
     }

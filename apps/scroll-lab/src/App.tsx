@@ -37,6 +37,10 @@ export function App() {
   const [collaboratorModel, setCollaboratorModel] = useLocalStorage<string>('collaboratorModel', '');
   const [writeModel, setWriteModel] = useLocalStorage<string>('writeModel', '');
   const [showTurnsRemaining, setShowTurnsRemaining] = useLocalStorage<boolean>('showTurnsRemaining', false);
+  const [collaboratorShowTurnsRemaining, setCollaboratorShowTurnsRemaining] = useLocalStorage<boolean>(
+    'collaboratorShowTurnsRemaining',
+    false,
+  );
   const [searchProvider, setSearchProvider] = useLocalStorage<SearchProvider>('searchProvider', 'brave');
   const [scrapeProvider, setScrapeProvider] = useLocalStorage<ScrapeProvider>('scrapeProvider', 'firecrawl');
   const [turnCap, setTurnCap] = useLocalStorage<number>('turnCap', 8);
@@ -158,6 +162,7 @@ export function App() {
               ? writePrompt
               : undefined,
           showTurnsRemaining,
+          collaboratorShowTurnsRemaining,
           resumeFromRunId: opts?.resumeFromRunId,
         },
         {
@@ -239,6 +244,7 @@ export function App() {
         writeModel?: string;
         writePhasePrompt?: string;
         showTurnsRemaining?: boolean;
+        collaboratorShowTurnsRemaining?: boolean;
         searchProvider: SearchProvider;
         scrapeProvider: ScrapeProvider;
         stubSearch: boolean;
@@ -262,6 +268,7 @@ export function App() {
     setWritePhaseEnabled(!!data.input.writePhasePrompt);
     if (data.input.writePhasePrompt) setWritePrompt(data.input.writePhasePrompt);
     setShowTurnsRemaining(!!data.input.showTurnsRemaining);
+    setCollaboratorShowTurnsRemaining(!!data.input.collaboratorShowTurnsRemaining);
     setSearchProvider(data.input.searchProvider);
     setScrapeProvider(data.input.scrapeProvider);
     setStubSearch(data.input.stubSearch);
@@ -317,6 +324,8 @@ export function App() {
             setWritePhaseEnabled={setWritePhaseEnabled}
             showTurnsRemaining={showTurnsRemaining}
             setShowTurnsRemaining={setShowTurnsRemaining}
+            collaboratorShowTurnsRemaining={collaboratorShowTurnsRemaining}
+            setCollaboratorShowTurnsRemaining={setCollaboratorShowTurnsRemaining}
             searchProvider={searchProvider}
             setSearchProvider={setSearchProvider}
             scrapeProvider={scrapeProvider}
@@ -437,6 +446,8 @@ function Settings(p: {
   setWritePhaseEnabled: (b: boolean) => void;
   showTurnsRemaining: boolean;
   setShowTurnsRemaining: (b: boolean) => void;
+  collaboratorShowTurnsRemaining: boolean;
+  setCollaboratorShowTurnsRemaining: (b: boolean) => void;
   searchProvider: SearchProvider;
   setSearchProvider: (p: SearchProvider) => void;
   scrapeProvider: ScrapeProvider;
@@ -496,7 +507,15 @@ function Settings(p: {
           checked={p.showTurnsRemaining}
           onChange={(e) => p.setShowTurnsRemaining(e.target.checked)}
         />
-        让模型知道剩余 turn 数
+        让主探索者知道剩余 turn 数
+      </label>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={p.collaboratorShowTurnsRemaining}
+          onChange={(e) => p.setCollaboratorShowTurnsRemaining(e.target.checked)}
+        />
+        让协作者知道剩余 turn 数
       </label>
 
       <label className="check">

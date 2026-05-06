@@ -307,6 +307,8 @@ interface RunBody {
   // user message at the start of each turn so the model can reason
   // about budget. Off by default — on the worker we never expose this.
   showTurnsRemaining?: boolean;
+  // Same idea, but for the collaborator's prompt (independent toggle).
+  collaboratorShowTurnsRemaining?: boolean;
   // For POST /api/run-continue: ID of a previous run to resume from.
   // When present, server loads runs/<id>.json, reconstructs the deps
   // and the saved messages array, runs `turns` more iterations, and
@@ -327,7 +329,11 @@ interface RunBody {
 // content + tool calls + truncated tool results). Returns a string
 // that the loop pushes as a `role: 'user'` message before the next
 // iteration. System prompt is editable via prompts/scroll-collaborator.md.
-type CollaboratorInput = { turn: number; newMessages: ChatCompletionMessageParam[] };
+type CollaboratorInput = {
+  turn: number;
+  hardCapTurns: number;
+  newMessages: ChatCompletionMessageParam[];
+};
 type CollaboratorOutput = {
   text: string;
   usage?: { input: number; output: number; total: number; cached: number };
@@ -373,6 +379,7 @@ function makeCollaborator(
   history: HistoryMsg[],
   memory: string | undefined,
   systemPrompt: string,
+  showTurnsRemaining: boolean,
 ): CollaboratorReply {
   const transcript = history
     .filter((m) => m.content.trim())
@@ -380,8 +387,24 @@ function makeCollaborator(
     .join('\n');
   const memoryBlock = memory && memory.trim() ? `## 朋友的背景\n${memory.trim()}\n\n` : '';
 
-  return async ({ turn, newMessages }) => {
+  return async ({ turn, hardCapTurns, newMessages }) => {
     const turnSummary = formatTurnForCollaborator(newMessages);
+    // Same shape as the main-model hint: include both remaining and
+    // total, and escalate on the last round.
+    let budgetBlock = '';
+    if (showTurnsRemaining) {
+      // `turn` is 0-indexed, hardCapTurns is total; remaining =
+      // turns still available (excluding the one already finished).
+      const remaining = Math.max(0, hardCapTurns - turn - 1);
+      const total = hardCapTurns;
+      const line =
+        remaining === 0
+          ? `（提示：主探索者刚走完最后一轮（${total}/${total}），下一步必须由它用 decide_write_article 做最终决定。）`
+          : remaining === 1
+            ? `（提示：下一轮是主探索者的最后一轮（${total}/${total}），它本轮（或最迟下一轮）必须做决定。）`
+            : `（提示：主探索者还剩 ${remaining}/${total} 轮研究/工具调用机会。）`;
+      budgetBlock = `\n\n${line}`;
+    }
     const r = await client.chat.completions.create({
       model: modelId,
       messages: [
@@ -390,8 +413,9 @@ function makeCollaborator(
           role: 'user',
           content:
             `${memoryBlock}## 朋友的聊天记录\n${transcript}\n\n` +
-            `## 主探索者第 ${turn} 轮做了什么\n${turnSummary}\n\n` +
-            `请用"协作者"的身份给主探索者一个简短的回应（直接说话，不要写"协作者："开头）：`,
+            `## 主探索者第 ${turn} 轮做了什么\n${turnSummary}` +
+            budgetBlock +
+            `\n\n请用"协作者"的身份给主探索者一个简短的回应（直接说话，不要写"协作者："开头）：`,
         },
       ],
     });
@@ -470,6 +494,7 @@ app.post('/api/run', async (c) => {
       body.history,
       body.memory,
       collabPrompt,
+      !!body.collaboratorShowTurnsRemaining,
     );
   }
 
@@ -724,6 +749,7 @@ app.post('/api/run', async (c) => {
                 writeModel: body.writeModel ?? '',
                 writePhasePrompt: body.writePhasePrompt ?? '',
                 showTurnsRemaining: !!body.showTurnsRemaining,
+                collaboratorShowTurnsRemaining: !!body.collaboratorShowTurnsRemaining,
                 searchProvider: body.searchProvider,
                 scrapeProvider: body.scrapeProvider,
                 stubSearch: !!body.stubSearch,
