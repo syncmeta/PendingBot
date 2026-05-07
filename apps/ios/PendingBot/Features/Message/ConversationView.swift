@@ -2,6 +2,7 @@ import SwiftUI
 import PhotosUI
 import UIKit
 import OSLog
+import Supabase
 
 private let log = Logger.category("conversation")
 
@@ -62,6 +63,16 @@ struct ConversationView: View {
     /// sendViaSSE before the stream starts, cleared when the turn ends.
     /// Multiple traces can land for the same user msg if the agent loops.
     @State private var liveTraceUserMsgId: String?
+    /// Web-search citations attached to a bot bubble, keyed by message id.
+    /// Sources: history `select citations`, Realtime UPDATE on the row, and
+    /// the per-turn `citations` SSE event copied to each in-flight bubble.
+    /// `MarkdownText` reads the entry to resolve inline `[N]` markers.
+    @State private var citationsByMsgId: [String: [MessageCitation]] = [:]
+    /// Cumulative citations for the in-flight turn — last value pushed by the
+    /// `citations` SSE event. Snapshotted onto each bubble created during
+    /// the turn so the live preview can resolve `[N]` taps before the
+    /// canonical row arrives via Realtime.
+    @State private var liveCitations: [MessageCitation] = []
     // Skill summaries — counted in the settings sheet so the user sees
     // how many are active without leaving the conversation.
     @State private var skills: [SkillSummary] = []
@@ -161,7 +172,8 @@ struct ConversationView: View {
                                        conversationID: conversation.id,
                                        botID: avatarEmojiSeed,
                                        selfAvatar: bubbleSelfAvatar,
-                                       serverURL: account?.workerURL)
+                                       serverURL: account?.workerURL,
+                                       citations: citationsByMsgId[msg.id] ?? [])
                                 .id(msg.id)
                                 .contextMenu {
                                     Button {
@@ -670,6 +682,9 @@ struct ConversationView: View {
         if let key = userMsgId {
             tracesByUserMsgId[key] = []
         }
+        // Fresh citation slate for the new turn — last turn's snapshot
+        // shouldn't leak into [N] resolutions for this turn's first bubble.
+        liveCitations = []
 
         let body: [String: Any] = {
             let clientMsgId = UUID().uuidString.lowercased()
@@ -737,6 +752,15 @@ struct ConversationView: View {
                         appendToolCall(name: name, input: input)
                     case .toolResult(let name, let summary, let error):
                         completeToolCall(name: name, summary: summary, error: error)
+                    case .citations(let items):
+                        // Update the per-turn snapshot AND backfill every
+                        // bubble already created in this turn so an early
+                        // bubble whose `[N]` resolves to a result returned
+                        // by a later search becomes tappable retroactively.
+                        liveCitations = items
+                        for msg in messages where msg.id.hasPrefix("live-") {
+                            citationsByMsgId[msg.id] = items
+                        }
                     case .error(let msg):
                         splitter.reportError(msg)
                     case .unknown:
@@ -861,6 +885,24 @@ struct ConversationView: View {
         }
     }
 
+    /// Decode a Realtime row's `citations` value into the typed model. Returns
+    /// nil when absent / null / malformed — callers fall back to whatever was
+    /// already in `citationsByMsgId` for the row (e.g. the live-bubble snapshot).
+    private func parseCitations(from any: AnyJSON?) -> [MessageCitation]? {
+        guard let any else { return nil }
+        do {
+            let data = try JSONEncoder().encode(any)
+            // AnyJSON.null encodes as the literal "null" — short-circuit
+            // before the array decoder throws on the wrong shape.
+            if data.count == 4, String(data: data, encoding: .utf8) == "null" {
+                return nil
+            }
+            return try JSONDecoder().decode([MessageCitation].self, from: data)
+        } catch {
+            return nil
+        }
+    }
+
     /// Realtime postgres_changes payload → ChatMessage in the local list.
     /// Dedupe by canonical row id so this device's own SSE-emitted bubbles
     /// (which carry "live-<uuid>" ids until reconciled) get either skipped
@@ -891,8 +933,10 @@ struct ConversationView: View {
             created_at: secs,
             attachments: nil
         )
+        let citations = parseCitations(from: r["citations"])
         if let existing = messages.firstIndex(where: { $0.id == id }) {
             messages[existing] = msg
+            if let citations { citationsByMsgId[id] = citations }
         } else {
             // Drop our own optimistic local row if we can match it by content +
             // role + recency (within 5s) — this avoids duplicate user bubbles
@@ -914,8 +958,14 @@ struct ConversationView: View {
                         liveTraceUserMsgId = id
                     }
                 }
+                // Same rekey for citations — the live-id snapshot was set
+                // from the SSE event; the canonical row may carry the same
+                // (or fresher) list, so prefer the canonical when present.
+                let priorCitations = citationsByMsgId.removeValue(forKey: oldId)
+                citationsByMsgId[id] = citations ?? priorCitations
             } else {
                 messages.append(msg)
+                if let citations { citationsByMsgId[id] = citations }
             }
         }
         // Mirror to local cache.
@@ -976,6 +1026,13 @@ struct ConversationView: View {
                 created_at: Int(Date().timeIntervalSince1970),
                 attachments: nil
             ))
+            // Inherit the turn's accumulated citations so any [N] in the
+            // bubble's content lands tappable from the first frame. The
+            // canonical row's Realtime UPDATE later refreshes the same key
+            // (after rekeying live-id → canonical id below).
+            if !liveCitations.isEmpty {
+                citationsByMsgId[key] = liveCitations
+            }
             if mode == .streaming {
                 revealTargetId = key
                 revealBuffer = content
@@ -1135,12 +1192,13 @@ struct ConversationView: View {
                 let content: String?
                 let status: String?
                 let created_at: String
+                let citations: [MessageCitation]?
             }
             // role='log' rows (review step entries) are server-only and
             // filtered out client-side — they don't render here.
             let rows: [Row] = try await SupabaseStack.shared
                 .from("messages")
-                .select("id, client_message_id, conversation_id, user_id, sender_bot_id, role, log_kind, content, status, created_at")
+                .select("id, client_message_id, conversation_id, user_id, sender_bot_id, role, log_kind, content, status, created_at, citations")
                 .eq("conversation_id", value: conversation.id)
                 .order("created_at", ascending: true)
                 .limit(200)
@@ -1150,6 +1208,7 @@ struct ConversationView: View {
             var cacheRows: [LocalDatabase.MessageRow] = []
             viewMessages.reserveCapacity(rows.count)
             cacheRows.reserveCapacity(rows.count)
+            var citationsLoaded: [String: [MessageCitation]] = [:]
             for r in rows {
                 if r.role == "log" { continue }
                 let senderType: String = r.role == "bot" ? "bot" : "user"
@@ -1164,6 +1223,9 @@ struct ConversationView: View {
                     created_at: secs,
                     attachments: nil
                 ))
+                if let cites = r.citations, !cites.isEmpty {
+                    citationsLoaded[r.id] = cites
+                }
                 cacheRows.append(LocalDatabase.MessageRow(
                     id: r.id,
                     client_message_id: r.client_message_id,
@@ -1177,6 +1239,9 @@ struct ConversationView: View {
                 ))
             }
             self.messages = viewMessages
+            // Merge — keep any in-flight live snapshots that the SSE turn
+            // already populated; history's persisted values win on key collision.
+            self.citationsByMsgId.merge(citationsLoaded) { _, new in new }
             LocalDatabase.shared.upsertMessages(cacheRows)
         } catch {
             // Network down + we have a cache: stay quiet (cached msgs still

@@ -60,7 +60,12 @@ const CHAT_TOOLS: ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'search_web',
-      description: '搜索互联网。返回最多 8 条 url+标题+摘要。需要事实查证或者了解最新信息时使用。',
+      // The result envelope is `{ results: [{ n, url, title, snippet }], hint }`.
+      // `n` is a 1-based index, stable across this turn (subsequent calls reuse
+      // the same n for already-seen urls). The bot is told to cite a result by
+      // dropping `[N]` inline next to whatever fact came from it; iOS reads the
+      // citations array stored alongside the message and renders tappable chips.
+      description: '搜索互联网。返回最多 8 条结果，每条带 url+标题+摘要+一个 1 基的 `n`。需要事实查证或了解最新信息时使用。在回复里引用某条结果时，请紧跟相关说法加 `[N]` 行内标记（N 对应结果的 n，可以连续如 `[1][3]`），客户端会把它渲染成可点击的小角标。不引用的话不要写 `[N]`。',
       parameters: {
         type: 'object',
         properties: { query: { type: 'string' } },
@@ -258,11 +263,19 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   let generationId: string | undefined;
 
+  // Per-turn web-search citations. Every search_web call appends new urls
+  // (deduped by url, so `[N]` stays stable across rounds in the same turn).
+  // Each emitted bubble row stores the snapshot at insert time — later bubbles
+  // may carry a longer list, but earlier ones never reference an [N] beyond
+  // their snapshot's bounds.
+  const citations: Citation[] = [];
+
   const emitBubble = async (text: string) => {
     if (!text) return;
     bubbleIndex++;
     const bubbleId = randomUUID();
     const clientMessageId = randomUUID();
+    const snapshot = citations.length > 0 ? citations.map((c) => ({ ...c })) : null;
     await supa.from('messages').insert({
       id: bubbleId,
       client_message_id: clientMessageId,
@@ -273,13 +286,17 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       content: text,
       parent_message_id: parentMessageId,
       bubble_group_id: bubbleGroupId,
-    });
+      // Cast: schema.ts is regenerated lazily after `supabase db push`; the
+      // citations column lands in 0035 but typed-client doesn't know yet.
+      citations: snapshot,
+    } as never);
     bubblesInserted++;
     emit('bubble', {
       id: bubbleId,
       index: bubbleIndex,
       bubble_group_id: bubbleGroupId,
       content: text,
+      citations: snapshot,
     });
   };
 
@@ -409,6 +426,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
             userId,
             botId: bot.id,
             conversationId,
+            citations,
           });
           messages.push({ role: 'tool', tool_call_id: tc.id, content: result });
         }
@@ -552,12 +570,23 @@ function safeParseArgs(s: string): Record<string, unknown> {
   }
 }
 
+/// Single web-search citation. Stored on each bubble row's `citations`
+/// jsonb so iOS can resolve inline `[N]` markers to a tappable link.
+export interface Citation {
+  url: string;
+  title: string;
+  snippet?: string;
+}
+
 interface ToolCtx {
   signal: AbortSignal;
   emit: (event: string, data: unknown) => void;
   userId: string;
   botId: string;
   conversationId: string;
+  /// Accumulator shared with runChatTurn — search_web pushes deduped hits
+  /// here so the per-turn `[N]` numbering stays stable across rounds.
+  citations: Citation[];
 }
 
 async function runTool(
@@ -572,14 +601,29 @@ async function runTool(
       if (!query) return JSON.stringify({ error: 'empty query' });
       ctx.emit('tool_call', { name: 'search_web', query });
       const hits = await braveSearch(env, query, ctx.signal);
-      ctx.emit('tool_result', { name: 'search_web', count: hits.length });
-      return JSON.stringify(
-        hits.slice(0, 8).map((h) => ({
-          url: h.url,
-          title: h.title,
-          snippet: h.snippet,
-        })),
-      );
+      // Dedupe by url against prior search calls in this same turn so the
+      // model sees stable `n`s — once it learned the New York Times piece is
+      // [3], that mapping survives a follow-up search that re-surfaces the
+      // same article.
+      const annotated = hits.slice(0, 8).map((h) => {
+        const existing = ctx.citations.findIndex((c) => c.url === h.url);
+        let n: number;
+        if (existing >= 0) {
+          n = existing + 1;
+        } else {
+          ctx.citations.push({ url: h.url, title: h.title, snippet: h.snippet });
+          n = ctx.citations.length;
+        }
+        return { n, url: h.url, title: h.title, snippet: h.snippet };
+      });
+      ctx.emit('tool_result', { name: 'search_web', count: annotated.length });
+      // Push the cumulative citations list so iOS can resolve `[N]` taps in
+      // the live preview before the bubble row hits Realtime.
+      ctx.emit('citations', { items: ctx.citations });
+      return JSON.stringify({
+        results: annotated,
+        hint: '若回复里要引用上面某条结果，请在相关说法后跟上 `[N]`（N 对应该条结果的 n）。多个引用可以连写如 `[1][3]`。无须引用就不要写。',
+      });
     }
     if (name === 'read_url') {
       const url = String(args.url ?? '').trim();

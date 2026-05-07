@@ -52,6 +52,8 @@
 	<string>用于扫描分享二维码导入服务器</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>用于连接你部署在局域网内的大绿豆服务器（公网部署不需要这个权限）。</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>用于将我的二维码名片保存到相册</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>用于在聊天中发送本地图片</string>
 	<key>UILaunchScreen</key>

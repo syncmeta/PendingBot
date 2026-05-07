@@ -99,6 +99,19 @@ struct Attachment: Codable, Identifiable, Hashable {
     let url: String      // relative path, e.g. /uploads/<id>
 }
 
+/// One web-search citation attached to a bot message. Stored as a JSON array
+/// in `messages.citations`; iOS resolves inline `[N]` markers in the bubble
+/// content against this list (1-based) to render tappable chips.
+struct MessageCitation: Codable, Hashable, Identifiable {
+    let url: String
+    let title: String
+    let snippet: String?
+
+    /// Identity is the URL — citations are deduped by URL on the server, and
+    /// SwiftUI's `.sheet(item:)` wants a stable Identifiable.
+    var id: String { url }
+}
+
 
 struct OpenRouterModel: Codable, Identifiable, Hashable {
     let slug: String

@@ -1,6 +1,5 @@
 import SwiftUI
 import Supabase
-import CoreImage.CIFilterBuiltins
 
 /// 好友 tab — sectioned contact list (机器人朋友 / 真人朋友), no nav title.
 /// Filter chips above the list narrow to one section; each row carries
@@ -725,184 +724,30 @@ struct AddFriendSheet: View {
 
 // MARK: - QR display sheet
 
-/// Shows a single live QR encoding the user's currently-active QR-kind
-/// handle. Refresh button: revoke the displayed handle and mint a new
-/// one. Each refresh invalidates whatever is currently floating around
-/// — perfect when you've shared your QR somewhere semi-public.
+/// Wraps `MyQRBusinessCard` in a sheet-friendly nav stack with an
+/// explicit close button. The button is the only way out on Mac
+/// Catalyst (no swipe-to-dismiss there); on iPhone it sits alongside
+/// the drag indicator, both work.
 struct MyQRSheet: View {
-    @State private var currentValue: String?
-    @State private var loading = false
-    @State private var error: String?
-
-    private let context = CIContext()
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             ZStack {
                 Theme.Palette.canvas.ignoresSafeArea()
                 ScrollView {
-                    VStack(spacing: 18) {
-                        nameCard
-                        if let error {
-                            Text(error).foregroundStyle(.red).font(.footnote)
-                        }
-                        Button {
-                            Task { await refresh() }
-                        } label: {
-                            Label("刷新（旧码作废）", systemImage: "arrow.clockwise")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 18)
-                                .padding(.vertical, 10)
-                                .background(Capsule().fill(Theme.Palette.accent))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .padding(.horizontal, 22)
-                    .padding(.top, 24)
-                    .padding(.bottom, 24)
+                    MyQRBusinessCard()
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 28)
                 }
             }
-            .navigationTitle("我的名片")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { dismiss() }
+                }
+            }
             .navigationBarTitleDisplayMode(.inline)
         }
-        .task {
-            await ensureActive()
-        }
-    }
-
-    /// Vertical "business card": avatar + name on top, QR centred, handle
-    /// + footer hint at the bottom. The whole thing sits inside a single
-    /// rounded panel so it visually reads as a card you can hand over.
-    @ViewBuilder
-    private var nameCard: some View {
-        let store = AccountStore.shared
-        let avatarSeed = store.avatarSeed ?? store.current?.id ?? "?"
-        let displayName = store.profileDisplayName ?? store.current?.displayName ?? "你"
-        VStack(spacing: 16) {
-            HStack(spacing: 14) {
-                UserAvatar(seed: avatarSeed,
-                           attachmentId: store.avatarAttachmentId,
-                           size: 56)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(displayName)
-                        .font(Theme.Fonts.serif(size: 20, weight: .semibold))
-                        .foregroundStyle(Theme.Palette.ink)
-                        .lineLimit(1)
-                    Text("PendingBot 名片")
-                        .font(Theme.Fonts.caption)
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                }
-                Spacer(minLength: 0)
-            }
-
-            Divider().background(Theme.Palette.hairline)
-
-            if loading {
-                ProgressView()
-                    .controlSize(.large)
-                    .frame(width: 220, height: 220)
-            } else if let value = currentValue, let img = qrImage(for: value) {
-                VStack(spacing: 12) {
-                    Image(uiImage: img)
-                        .interpolation(.none)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 220, height: 220)
-                    Text(value)
-                        .font(Theme.Fonts.monoSmall)
-                        .textSelection(.enabled)
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                }
-            } else {
-                Text("生成二维码失败")
-                    .foregroundStyle(.secondary)
-                    .frame(width: 220, height: 220)
-            }
-
-            Text("扫一扫，把我加为好友。")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-        }
-        .padding(22)
-        .frame(maxWidth: .infinity)
-        .background(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .fill(Theme.Palette.surface)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
-        )
-    }
-
-    private func ensureActive() async {
-        loading = true; defer { loading = false }
-        struct Row: Decodable { let id: String; let value: String }
-        do {
-            let rows: [Row] = try await SupabaseStack.shared
-                .from("user_handles")
-                .select("id, value")
-                .eq("kind", value: "qr")
-                .eq("is_active", value: true)
-                .order("created_at", ascending: false)
-                .limit(1)
-                .execute()
-                .value
-            if let row = rows.first {
-                self.currentValue = row.value
-            } else {
-                try await mintNew()
-            }
-        } catch {
-            self.error = error.localizedDescription
-        }
-    }
-
-    private func refresh() async {
-        loading = true; defer { loading = false }
-        do {
-            // Revoke ALL active QR-kind handles so only the freshly-minted
-            // one stays valid afterwards.
-            try await SupabaseStack.shared
-                .from("user_handles")
-                .update(["is_active": false])
-                .eq("kind", value: "qr")
-                .eq("is_active", value: true)
-                .execute()
-            try await mintNew()
-            Haptics.tap()
-        } catch {
-            self.error = error.localizedDescription
-        }
-    }
-
-    private func mintNew() async throws {
-        guard let userId = AccountStore.shared.current?.id else { return }
-        let alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
-        let token = String((0..<10).compactMap { _ in alphabet.randomElement() })
-        struct Insert: Encodable {
-            let user_id: String
-            let value: String
-            let kind: String
-            let label: String?
-        }
-        try await SupabaseStack.shared
-            .from("user_handles")
-            .insert(Insert(user_id: userId, value: token, kind: "qr", label: "QR"))
-            .execute()
-        self.currentValue = token
-    }
-
-    private func qrImage(for s: String) -> UIImage? {
-        let filter = CIFilter.qrCodeGenerator()
-        filter.message = Data(s.utf8)
-        filter.correctionLevel = "M"
-        guard let out = filter.outputImage else { return nil }
-        let scaled = out.transformed(by: CGAffineTransform(scaleX: 8, y: 8))
-        guard let cg = context.createCGImage(scaled, from: scaled.extent) else { return nil }
-        return UIImage(cgImage: cg)
     }
 }
 

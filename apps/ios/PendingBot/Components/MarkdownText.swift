@@ -18,9 +18,15 @@ struct MarkdownText: View {
     /// toolbar. False keeps it lightweight (used in 奏折 articles where
     /// "run" doesn't make sense).
     var allowCodeRun: Bool = false
+    /// Web-search references for inline `[N]` markers. Empty disables the
+    /// citation rewrite — the text renders verbatim, including any literal
+    /// `[1]`-style brackets the bot might have meant as plain text.
+    var citations: [MessageCitation] = []
+
+    @State private var presentedCitation: PresentedCitation?
 
     var body: some View {
-        Markdown(text)
+        Markdown(rewrittenText)
             .markdownTheme(MarkdownText.chatTheme)
             .markdownBlockStyle(\.codeBlock) { configuration in
                 ChatCodeBlock(
@@ -30,6 +36,27 @@ struct MarkdownText: View {
                 )
             }
             .textSelection(.enabled)
+            .environment(\.openURL, OpenURLAction { url in
+                // Citation taps go through a fake `pendingbot-cite://N`
+                // scheme so we can intercept them here and show the source
+                // sheet instead of letting Safari try to open them.
+                if url.scheme == CitationScheme.scheme,
+                   let n = Int(url.host ?? ""),
+                   n >= 1, n <= citations.count {
+                    presentedCitation = PresentedCitation(n: n, citation: citations[n - 1])
+                    Haptics.tap()
+                    return .handled
+                }
+                return .systemAction
+            })
+            .sheet(item: $presentedCitation) { p in
+                CitationSheet(index: p.n, citation: p.citation)
+            }
+    }
+
+    private var rewrittenText: String {
+        guard !citations.isEmpty else { return text }
+        return CitationScheme.rewrite(text, count: citations.count)
     }
 
     // ── Theme ──────────────────────────────────────────────────────────────
@@ -96,6 +123,115 @@ struct MarkdownText: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .markdownMargin(top: 0, bottom: 6)
         }
+}
+
+private struct PresentedCitation: Identifiable {
+    let n: Int
+    let citation: MessageCitation
+    var id: Int { n }
+}
+
+/// Stable mapping between inline `[N]` markers and the `pendingbot-cite://N`
+/// pseudo-URL the markdown renderer trades for tappable links.
+fileprivate enum CitationScheme {
+    static let scheme = "pendingbot-cite"
+
+    /// Replace every `[N]` (1-based) in `text` with a markdown link whose
+    /// label is the literal `[N]` and whose href is `pendingbot-cite://N`.
+    /// References outside `1...count` are left as plain text — better to
+    /// show a stray `[7]` than to dead-link it. The `\[` / `\]` escapes
+    /// keep CommonMark from re-parsing the inner brackets as link syntax.
+    static func rewrite(_ text: String, count: Int) -> String {
+        // Avoid re-parsing on every layout pass — short-circuit when the
+        // text has no candidate.
+        guard text.contains("[") else { return text }
+        let pattern = try? NSRegularExpression(pattern: #"\[(\d+)\]"#)
+        guard let pattern else { return text }
+        let ns = text as NSString
+        let matches = pattern.matches(in: text, range: NSRange(location: 0, length: ns.length))
+        guard !matches.isEmpty else { return text }
+        var result = ""
+        var cursor = 0
+        for match in matches {
+            let full = match.range
+            let nRange = match.range(at: 1)
+            let n = Int(ns.substring(with: nRange)) ?? 0
+            if full.location > cursor {
+                result += ns.substring(with: NSRange(location: cursor, length: full.location - cursor))
+            }
+            if n >= 1 && n <= count {
+                result += "[\\[\(n)\\]](\(scheme)://\(n))"
+            } else {
+                result += ns.substring(with: full)
+            }
+            cursor = full.location + full.length
+        }
+        if cursor < ns.length {
+            result += ns.substring(with: NSRange(location: cursor, length: ns.length - cursor))
+        }
+        return result
+    }
+}
+
+/// Bottom sheet shown when the user taps an inline citation chip. Lets the
+/// reader skim the title + snippet before deciding to open the source.
+private struct CitationSheet: View {
+    let index: Int
+    let citation: MessageCitation
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
+
+    private var hostLabel: String {
+        URL(string: citation.url)?.host?.replacingOccurrences(of: "www.", with: "") ?? citation.url
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Text("[\(index)]")
+                    .font(AppTheme.Fonts.rounded(size: 13, weight: .semibold))
+                    .foregroundStyle(AppTheme.Palette.accent)
+                Text(hostLabel)
+                    .font(AppTheme.Fonts.footnote)
+                    .foregroundStyle(AppTheme.Palette.inkMuted)
+                Spacer(minLength: 0)
+            }
+            Text(citation.title)
+                .font(AppTheme.Fonts.body)
+                .foregroundStyle(AppTheme.Palette.ink)
+                .fixedSize(horizontal: false, vertical: true)
+            if let snippet = citation.snippet, !snippet.isEmpty {
+                Text(snippet)
+                    .font(AppTheme.Fonts.footnote)
+                    .foregroundStyle(AppTheme.Palette.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Button {
+                if let u = URL(string: citation.url) {
+                    openURL(u)
+                    dismiss()
+                }
+            } label: {
+                HStack {
+                    Image(systemName: "safari")
+                    Text("打开链接")
+                }
+                .font(AppTheme.Fonts.body)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(AppTheme.Palette.accent.opacity(0.12))
+                )
+                .foregroundStyle(AppTheme.Palette.accent)
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 4)
+        }
+        .padding(20)
+        .presentationDetents([.medium])
+        .presentationDragIndicator(.visible)
+    }
 }
 
 // ── Code block ──────────────────────────────────────────────────────────────
