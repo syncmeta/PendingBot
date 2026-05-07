@@ -45,7 +45,6 @@ export default async function HomePage() {
           href="/aliases"
           title="Aliases"
           desc="(model × provider) 映射 + 价格 + 路由权重"
-          comingSoon
         />
         <Card href="/users" title="Users & Quota" desc="用户配额、月度预算、异常" comingSoon />
       </section>
