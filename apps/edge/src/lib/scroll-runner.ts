@@ -23,12 +23,13 @@ import {
 //
 //   - Reads the bot's own conversation with this user (transcript +
 //     Honcho representation) as the bot's memory of the friend.
-//   - Loops with 4 tools — propose_plan / web_search / fetch_url /
-//     take_note — until the model returns a final assistant turn with
-//     no tool calls. That final text is the article.
-//   - propose_plan in surf-test pauses for human confirmation; here we
-//     auto-reply "用户：继续，按你的计划执行。" so the loop carries on.
-//   - Empty/silent finishes are deleted, not stored. ("空奏折不落库.")
+//   - Loops with 5 tools — propose_plan / web_search / fetch_url /
+//     take_note / stop_exploring — until the model calls
+//     stop_exploring (or the loop is capped/cancelled).
+//   - On reason='stopped', a separate writer call (scroll-write.md +
+//     same model) takes the gathered notes/URLs and produces the
+//     final article. No more single-phase "no tool call → article".
+//   - Empty/silent writer outputs are deleted, not stored. ("空奏折不落库.")
 //   - Final article + extracted title/summary land on the row; iOS
 //     surfaces it via Realtime in the dedicated 奏折 tab.
 
@@ -146,11 +147,72 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
       return;
     }
 
+    // ── Writer phase ──────────────────────────────────────────────────
+    // The exploration loop never produces an article anymore. Only on
+    // reason==='stopped' do we have a clean signal to write; any other
+    // exit (turn_cap / wall_cap / no_tool_call / no_choice) means the
+    // model didn't reach a deliberate stop, so nothing to write.
+    let writeArticle = '';
+    let writeUsage: typeof result.usage | undefined;
+    let writeGenerationId: string | undefined;
+    if (result.reason === 'stopped') {
+      const notes = result.progress.notes ?? [];
+      const urls = result.progress.visited_urls ?? [];
+      const notesBlock =
+        notes.length > 0
+          ? '## 主探索者记录的关键笔记\n' +
+            notes
+              .map((n, i) => `${i + 1}. ${n.text}${n.source ? ` — ${n.source}` : ''}`)
+              .join('\n')
+          : '## 主探索者记录的关键笔记\n（没有记笔记）';
+      const urlsBlock =
+        urls.length > 0
+          ? '## 主探索者访问过的链接\n' + urls.map((u) => `- ${u}`).join('\n')
+          : '';
+      const stopBlock = result.stopReason
+        ? `## 主探索者停止探索的理由\n${result.stopReason}`
+        : '';
+      const writeUser = [
+        initialUser,
+        '---',
+        notesBlock,
+        urlsBlock,
+        stopBlock,
+        '## 任务\n基于上面的笔记和聊天记录，按 system prompt 的要求给朋友写一篇文章。',
+      ]
+        .filter((s) => s.trim())
+        .join('\n\n');
+
+      const writeResp = await openrouterClient(env).chat.completions.create({
+        model: modelId,
+        messages: [
+          { role: 'system', content: getPrompt('scroll-write') },
+          { role: 'user', content: writeUser },
+        ],
+      });
+      writeArticle = (writeResp.choices[0]?.message?.content ?? '').trim();
+      const writePromptDetails = (writeResp.usage as { prompt_tokens_details?: { cached_tokens?: number } } | undefined)
+        ?.prompt_tokens_details;
+      writeUsage = {
+        input: writeResp.usage?.prompt_tokens ?? 0,
+        output: writeResp.usage?.completion_tokens ?? 0,
+        total: writeResp.usage?.total_tokens ?? 0,
+        cached: writePromptDetails?.cached_tokens ?? 0,
+      };
+      writeGenerationId = writeResp.id;
+      // Fold writer-phase tokens into the run's totals so the audit
+      // row reflects actual cost, not just the exploration loop.
+      result.usage.input += writeUsage.input;
+      result.usage.output += writeUsage.output;
+      result.usage.total += writeUsage.total;
+      result.usage.cached += writeUsage.cached;
+    }
+
     // ── Finalize ───────────────────────────────────────────────────────
     const finalProgress: ProgressState = { ...result.progress, phase: 'done' };
 
     // Empty / silent → don't store. (空奏折不落库.)
-    const stripped = result.finalArticle.trim();
+    const stripped = writeArticle.trim();
     const isEmpty = !stripped || stripped === SILENT_TOKEN || stripped.length < 20;
     if (isEmpty) {
       await supa.from('scroll_runs').delete().eq('id', scrollRunId);
@@ -161,7 +223,7 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
         botId,
         modelId,
         usage: result.usage,
-        generationId: result.lastGenerationId,
+        generationId: writeGenerationId ?? result.lastGenerationId,
         startedAt,
         action: 'silent',
       });

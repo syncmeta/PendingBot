@@ -104,7 +104,7 @@ export interface TurnEvent {
 }
 
 export interface ResultEvent {
-  reason: 'final' | 'declined' | 'turn_cap' | 'wall_cap' | 'cancelled' | 'no_choice';
+  reason: 'stopped' | 'no_tool_call' | 'turn_cap' | 'wall_cap' | 'cancelled' | 'no_choice';
   turns: number;
   elapsedMs: number;
   usage: UsageStats;
@@ -114,10 +114,11 @@ export interface ResultEvent {
   finalArticle: string;
   title: string | null;
   summary: string | null;
-  declineReason?: string;
+  // Reason the model gave when it called stop_exploring. Absent on
+  // anomalous exits (turn_cap / no_tool_call / cancelled / etc).
+  stopReason?: string;
   lastAssistantText?: string;
-  // Two-phase write step (panel-only) outputs.
-  phase1Summary?: string;
+  // Writer-phase usage (always populated when reason==='stopped').
   writeUsage?: UsageStats;
   writeGenerationId?: string;
   // Echoed back so the panel can offer "继续 N 轮" against the same id.
