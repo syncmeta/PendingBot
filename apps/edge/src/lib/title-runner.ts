@@ -8,13 +8,15 @@ import {
 } from '../llm/router';
 import { getPrompt } from '../llm/prompt-loader';
 
-// Title runner — auto-generates a short conversation name from the first
-// round, replacing the random place-name fallback set at conv creation.
-// Fire-and-forget via waitUntil; failure leaves the random name in place.
+// Title runner — auto-generates a short conversation name by summarizing
+// the first few turns. Fire-and-forget via waitUntil; failure leaves the
+// existing title (random place-name on round 1, or the prior summary on
+// later refreshes) in place.
 //
-// Triggered once per conv when round_count just hit 1. Self convs keep
-// their `caller_name | 我自己` title — overwriting that with a topic
-// summary feels wrong.
+// Triggered on round 1 (initial naming) and every 3 rounds afterwards
+// (rc % 3 === 0) so convs whose topic drifted get a fresher title. Self
+// convs keep their `caller_name | 我自己` title — overwriting that with
+// a topic summary feels wrong.
 
 const MAX_TITLE_CHARS = 32;
 
@@ -29,15 +31,20 @@ export async function runTitle(input: RunTitleInput): Promise<void> {
   const supa = serviceClient(env);
   const startedAt = Date.now();
 
-  const { data: msgs } = await supa
+  // Pull the most recent turns (descending) and flip back to chronological
+  // order. Round 1 only has 1-2 messages anyway; on later refreshes (round
+  // 3, 6, 9...) sampling the tail makes the title reflect the current
+  // topic instead of being anchored to the opening exchange.
+  const { data: recent } = await supa
     .from('messages')
-    .select('role, content')
+    .select('role, content, created_at')
     .eq('conversation_id', conversationId)
     .in('role', ['user', 'bot'])
-    .order('created_at', { ascending: true })
-    .limit(6);
-  const transcript = (msgs ?? [])
+    .order('created_at', { ascending: false })
+    .limit(12);
+  const transcript = (recent ?? [])
     .filter((m) => (m.content as string | null)?.trim())
+    .reverse()
     .map((m) => `${m.role === 'bot' ? 'bot' : 'user'}：${m.content}`)
     .join('\n');
   if (!transcript) return;

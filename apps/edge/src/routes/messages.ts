@@ -299,12 +299,14 @@ messageRoutes.post('/', async (c) => {
             roundCount: updatedConv?.round_count ?? 0,
           });
 
-          // First-round auto-rename: replace the random place-name fallback
-          // set at conv creation with an LLM-summarized topic. Self convs
-          // keep their `caller_name | 我自己` title.
+          // Auto-rename: round 1 replaces the random place-name fallback
+          // set at conv creation; thereafter regenerate every 3 rounds so
+          // long-running convs whose topic drifted get a fresher title.
+          // Self convs keep their `caller_name | 我自己` title.
+          const rc = updatedConv?.round_count ?? 0;
           if (
-            (updatedConv?.round_count ?? 0) === 1 &&
-            conv.conversation_type !== 'self'
+            conv.conversation_type !== 'self' &&
+            (rc === 1 || (rc > 0 && rc % 3 === 0))
           ) {
             c.executionCtx.waitUntil(
               runTitle({
