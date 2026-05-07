@@ -35,7 +35,7 @@
 --
 -- Apply locally:
 --   docker exec -i supabase_db_pendingbot psql -U postgres -d postgres \
---     < apps/admin/scripts/seed-llm-dev.sql
+--     < apps/board/scripts/seed-llm-dev.sql
 --
 -- All inserts ON CONFLICT DO NOTHING so reruns are harmless and
 -- admin UI edits are never overwritten by re-applying. To force a
