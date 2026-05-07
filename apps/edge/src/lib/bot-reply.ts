@@ -683,7 +683,19 @@ async function executeCodeTool(
   const code = String(args.code ?? '');
   if (!code.trim()) return JSON.stringify({ error: 'code is required' });
 
-  ctx.emit('tool_call', { name: 'execute_code', chars: code.length });
+  // First non-empty line of code, capped at 80 chars — gives the chat
+  // trace something concrete to show ("import pandas as pd …") rather
+  // than a bare byte count.
+  const codePreview = code
+    .split('\n')
+    .map((l) => l.trim())
+    .find((l) => l.length > 0)
+    ?.slice(0, 80) ?? '';
+  ctx.emit('tool_call', {
+    name: 'execute_code',
+    chars: code.length,
+    code_preview: codePreview,
+  });
 
   const supa = serviceClient(env);
 
@@ -740,10 +752,18 @@ async function executeCodeTool(
     .update({ last_used_at: new Date().toISOString() })
     .eq('conversation_id', ctx.conversationId);
 
+  // Tail of stdout (last ~160 chars, single-lined) so the expanded trace
+  // shows what actually printed. Full stdout still goes back to the model
+  // via the JSON return — this is purely a UI summary.
+  const stdoutTail = result.stdout
+    .slice(-160)
+    .replace(/\s+/g, ' ')
+    .trim();
   ctx.emit('tool_result', {
     name: 'execute_code',
     exit_code: result.exitCode,
     truncated: result.truncated,
+    stdout_tail: stdoutTail,
   });
   return JSON.stringify({
     stdout: result.stdout,
