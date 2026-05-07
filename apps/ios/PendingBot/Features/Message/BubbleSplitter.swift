@@ -9,9 +9,12 @@ import Foundation
 ///      → keep appending tokens to that bubble until the next delimiter
 ///        (or stream end), at which point we close it
 ///
-/// Two-line threshold: at iPhone standard text size on a chat width,
-/// ~22-25 Chinese chars per line; 60 ≈ "two lines, plus a hair of buffer".
-let BUBBLE_OVERFLOW_CHARS = 60
+/// Threshold rationale: short replies (≤ this many chars before the first
+/// delimiter or end-of-turn) feel best when they pop in whole — streaming
+/// a 10-char "好的，明白了" looks fussy. Anything longer, the user has been
+/// staring at a typing indicator long enough that streaming is reassuring.
+/// 15 chars ≈ a short Chinese clause.
+let BUBBLE_OVERFLOW_CHARS = 15
 let BUBBLE_DELIMITER = "\n---\n"
 
 enum BubbleEmission: Sendable, Equatable {

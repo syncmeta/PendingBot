@@ -1,9 +1,8 @@
 import SwiftUI
 
 /// Per-conversation settings sheet — opened from the gear icon in the chat
-/// header. Houses streaming, skills, and model controls.
+/// header. Houses skills and model controls.
 struct ConversationSettingsView: View {
-    @Binding var streaming: Bool
     @Binding var modelOverride: String
 
     let enabledSkillCount: Int
@@ -23,10 +22,6 @@ struct ConversationSettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("流式输出") {
-                    Toggle("流式输出", isOn: $streaming)
-                }
-
                 Section("技能") {
                     Button {
                         dismiss()
