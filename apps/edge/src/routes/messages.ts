@@ -153,7 +153,13 @@ messageRoutes.post('/', async (c) => {
   // even after the creator un-invites them, and the worker uses the
   // service role to fetch the bot — both of which would otherwise let a
   // dropped invitee keep chatting on the creator's tab. Re-check here.
-  if (bot.visibility === 'private' && bot.creator_id !== userId) {
+  // Preset bots (creator_id === null) are system-owned and openable by
+  // anyone authed; only user-owned private bots gate on creator match.
+  if (
+    bot.visibility === 'private' &&
+    bot.creator_id !== null &&
+    bot.creator_id !== userId
+  ) {
     return c.json({ error: '私有机器人只允许创建者使用' }, 403);
   }
   if (bot.visibility === 'public_invite' && bot.creator_id !== userId) {
