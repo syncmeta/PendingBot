@@ -343,11 +343,9 @@ interface RunBody {
   // allowed (true) or blocked (false). The panel can flip the gate
   // mid-run via POST /api/runs/:id/state. Defaults to false (locked).
   initialResearchUnlocked?: boolean;
-  // Two-phase write step: when writePhasePrompt is non-empty, after
-  // phase 1 (research loop) ends with reason='final', run a second
-  // model call with writePhasePrompt as system + phase-1 output as
-  // research context → its content replaces finalArticle. Empty
-  // writePhasePrompt = single-phase mode (legacy / current behavior).
+  // Writer phase: always runs after the loop exits with
+  // reason='stopped'. writeModel falls back to body.model when empty;
+  // writePhasePrompt falls back to scroll-write.md from disk.
   writeModel?: string;
   writePhasePrompt?: string;
 }
@@ -428,9 +426,9 @@ function makeCollaborator(
       const total = hardCapTurns;
       const line =
         remaining === 0
-          ? `（提示：主探索者刚走完最后一轮（${total}/${total}），下一步必须由它用 decide_write_article 做最终决定。）`
+          ? `（提示：主探索者刚走完最后一轮（${total}/${total}），下一步必须由它用 stop_exploring 收笔。）`
           : remaining === 1
-            ? `（提示：下一轮是主探索者的最后一轮（${total}/${total}），它本轮（或最迟下一轮）必须做决定。）`
+            ? `（提示：下一轮是主探索者的最后一轮（${total}/${total}），它本轮（或最迟下一轮）必须 stop_exploring。）`
             : `（提示：主探索者还剩 ${remaining}/${total} 轮研究/工具调用机会。）`;
       budgetBlock = `\n\n${line}`;
     }
@@ -644,70 +642,68 @@ app.post('/api/run', async (c) => {
       await stream.writeSSE({ event: 'error', data: errorMessage });
     }
 
-    // ── Optional phase 2: write the article from phase-1's research ──
-    // Only when phase 1 ended cleanly with content AND the panel
-    // supplied a writePhasePrompt. Single-phase mode (empty prompt)
-    // skips this entirely and behaves exactly as before.
-    let phase1Summary: string | undefined;
+    // ── Writer phase: always runs after stop_exploring. ─────────────
+    // The exploration loop no longer produces an article; the writer
+    // model takes the explorer's notes + visited URLs + stop reason
+    // and writes the final article. Skipped only on non-stopped exits
+    // (turn_cap / cancelled / no_tool_call / etc) — those are
+    // anomalies and there's nothing to write.
     let writeUsage: UsageStats | undefined;
     let writeGenerationId: string | undefined;
-    if (
-      result &&
-      result.reason === 'final' &&
-      result.finalArticle.trim() &&
-      body.writePhasePrompt &&
-      body.writePhasePrompt.trim()
-    ) {
-      const phase1Output = result.finalArticle.trim();
-      const phase2ModelId = body.writeModel || body.model;
-      const phase2Client = clientFor(phase2ModelId);
-      if ('error' in phase2Client) {
+    if (result && result.reason === 'stopped') {
+      const writeModelId = body.writeModel || body.model;
+      const writeClient = clientFor(writeModelId);
+      const writePrompt =
+        body.writePhasePrompt && body.writePhasePrompt.trim()
+          ? body.writePhasePrompt
+          : fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll-write.md'), 'utf8');
+      if ('error' in writeClient) {
         await stream.writeSSE({
           event: 'error',
-          data: `phase-2 (write) client: ${phase2Client.error}`,
+          data: `writer phase client: ${writeClient.error}`,
         });
       } else {
         const notes = result.progress.notes ?? [];
         const urls = result.progress.visited_urls ?? [];
         const notesBlock =
           notes.length > 0
-            ? '\n\n## 你记录的关键笔记\n' +
+            ? '## 主探索者记录的关键笔记\n' +
               notes
                 .map((n, i) => `${i + 1}. ${n.text}${n.source ? ` — ${n.source}` : ''}`)
                 .join('\n')
-            : '';
+            : '## 主探索者记录的关键笔记\n（没有记笔记）';
         const urlsBlock =
-          urls.length > 0 ? '\n\n## 你访问过的链接\n' + urls.map((u) => `- ${u}`).join('\n') : '';
-        const phase2User = [
-          initialUser,
-          '---',
-          '## 你刚才做的研究和思考\n\n' + phase1Output,
-          (notesBlock + urlsBlock).trim() || '',
-          '## 任务\n基于上面的研究和聊天记录，按 system prompt 的要求给朋友写一篇文章。',
+          urls.length > 0
+            ? '## 主探索者访问过的链接\n' + urls.map((u) => `- ${u}`).join('\n')
+            : '';
+        const stopBlock = result.stopReason
+          ? `## 主探索者停止探索的理由\n${result.stopReason}`
+          : '';
+        const writeUser = [initialUser, '---', notesBlock, urlsBlock, stopBlock,
+          '## 任务\n基于上面的笔记和聊天记录，按 system prompt 的要求给朋友写一篇文章。',
         ]
           .filter((s) => s.trim())
           .join('\n\n');
 
         try {
-          const phase2 = await phase2Client.chat.completions.create({
-            model: phase2ModelId,
+          const writeResp = await writeClient.chat.completions.create({
+            model: writeModelId,
             messages: [
-              { role: 'system', content: body.writePhasePrompt },
-              { role: 'user', content: phase2User },
+              { role: 'system', content: writePrompt },
+              { role: 'user', content: writeUser },
             ],
           });
-          const phase2Text = (phase2.choices[0]?.message?.content ?? '').trim();
-          const phase2PromptDetails = (phase2.usage as { prompt_tokens_details?: { cached_tokens?: number } } | undefined)
+          const writeText = (writeResp.choices[0]?.message?.content ?? '').trim();
+          const writePromptDetails = (writeResp.usage as { prompt_tokens_details?: { cached_tokens?: number } } | undefined)
             ?.prompt_tokens_details;
           writeUsage = {
-            input: phase2.usage?.prompt_tokens ?? 0,
-            output: phase2.usage?.completion_tokens ?? 0,
-            total: phase2.usage?.total_tokens ?? 0,
-            cached: phase2PromptDetails?.cached_tokens ?? 0,
+            input: writeResp.usage?.prompt_tokens ?? 0,
+            output: writeResp.usage?.completion_tokens ?? 0,
+            total: writeResp.usage?.total_tokens ?? 0,
+            cached: writePromptDetails?.cached_tokens ?? 0,
           };
-          writeGenerationId = phase2.id;
+          writeGenerationId = writeResp.id;
 
-          // Stream phase 2 as an extra "turn" so the UI sees it inline.
           const cum: UsageStats = {
             input: result.usage.input + writeUsage.input,
             output: result.usage.output + writeUsage.output,
@@ -719,20 +715,19 @@ app.post('/api/run', async (c) => {
             data: JSON.stringify({
               turn: collectedTurns.length,
               progress: { ...result.progress, phase: 'compose' },
-              newMessages: [{ role: 'assistant', content: phase2Text }],
+              newMessages: [{ role: 'assistant', content: writeText }],
               turnUsage: writeUsage,
               cumulativeUsage: cum,
-              generationId: phase2.id,
+              generationId: writeResp.id,
             }),
           });
 
-          phase1Summary = phase1Output;
-          result.finalArticle = phase2Text;
+          result.finalArticle = writeText;
           result.usage = cum;
         } catch (err) {
           await stream.writeSSE({
             event: 'error',
-            data: `phase-2 (write) failed: ${String((err as Error)?.message ?? err)}`,
+            data: `writer phase failed: ${String((err as Error)?.message ?? err)}`,
           });
         }
       }
@@ -755,9 +750,8 @@ app.post('/api/run', async (c) => {
         finalArticle: finalText,
         title: extractTitle(finalText),
         summary: extractSummary(finalText),
-        declineReason: result.declineReason,
+        stopReason: result.stopReason,
         lastAssistantText: result.lastAssistantText,
-        phase1Summary,
         writeUsage,
         writeGenerationId,
         // Echo so the panel knows whether we appended to an existing

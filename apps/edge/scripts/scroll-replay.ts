@@ -357,15 +357,29 @@ async function main(): Promise<void> {
   console.log(`progress.urls:   ${result.progress.visited_urls.length}`);
   console.log(`progress.plan:   ${result.progress.plan_rounds} round(s)`);
 
-  divider('final article');
-  if (!result.finalArticle.trim()) {
-    console.log(C.dim('(empty — runScroll would delete the row as 空奏折)'));
+  divider('exploration outcome');
+  if (result.reason === 'stopped') {
+    console.log(C.green('reason=stopped — production runner would now run the writer phase.'));
+    if (result.stopReason) console.log(`stop reason: ${result.stopReason}`);
   } else {
-    console.log(`title:    ${extractTitle(result.finalArticle) ?? '(none)'}`);
-    console.log(`summary:  ${extractSummary(result.finalArticle) ?? '(none)'}`);
-    console.log();
-    console.log(result.finalArticle);
+    console.log(C.dim(`reason=${result.reason} — no writer phase; runScroll would delete the row as 空奏折.`));
   }
+  if (result.lastAssistantText) {
+    console.log();
+    console.log(C.dim('last assistant text:'));
+    console.log(result.lastAssistantText);
+  }
+  if (result.progress.notes.length > 0) {
+    console.log();
+    console.log(C.dim(`notes (${result.progress.notes.length}):`));
+    for (const n of result.progress.notes) {
+      console.log(`  - ${n.text}${n.source ? ` — ${n.source}` : ''}`);
+    }
+  }
+  // Title / summary helpers are still re-exported for callers that
+  // produce final markdown elsewhere; keep imports stable.
+  void extractTitle;
+  void extractSummary;
 }
 
 main().catch((err) => {

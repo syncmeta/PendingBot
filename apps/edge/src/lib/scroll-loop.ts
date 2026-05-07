@@ -91,22 +91,18 @@ export const TOOLS: ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
-      name: 'decide_write_article',
+      name: 'stop_exploring',
       description:
-        '当你研究够了、要做最终决定时调用此工具：本次到底写不写文章——这是一个二选一。write=true 表示决定写（继续后续流程，由你/写文章模型产出正文）；write=false 表示决定不写（本次结束，不再产出文章）。不写比写一篇平庸的更好。',
+        '当你判断已经探索得足够、可以收笔时调用——这是结束探索阶段、立刻进入写作的唯一方式。调用后这一轮就是探索的最后一轮，写作模型会基于你目前的笔记和访问过的链接直接出文。只决定"是否停止探索"，不决定"写不写"——觉得不值得写就别停。',
       parameters: {
         type: 'object',
         properties: {
-          write: {
-            type: 'boolean',
-            description: 'true = 决定写一篇文章；false = 决定本次不写。',
-          },
           reason: {
             type: 'string',
-            description: '为什么这么决定。具体说，不要"暂时没想好"这种空话。',
+            description: '为什么此刻可以停下了。具体说，不要"差不多了"这种空话。',
           },
         },
-        required: ['write', 'reason'],
+        required: ['reason'],
       },
     },
   },
@@ -126,10 +122,10 @@ export interface ProgressState {
 }
 
 export type ScrollLoopExitReason =
-  | 'final'         // model returned an assistant turn with no tool calls
-  | 'declined'      // model called decline_to_write — finalArticle empty; reason on result
-  | 'turn_cap'      // hit hardCapTurns without a final
-  | 'wall_cap'      // hit maxWallMs without a final
+  | 'stopped'       // model called stop_exploring — caller runs the writer phase next
+  | 'no_tool_call'  // model returned no tool calls (anomaly; only stop_exploring can end exploration)
+  | 'turn_cap'      // hit hardCapTurns without ever calling stop_exploring
+  | 'wall_cap'      // hit maxWallMs without ever calling stop_exploring
   | 'cancelled'     // isCancelled() returned true
   | 'no_choice';    // openai returned an empty choices array
 
@@ -171,9 +167,11 @@ export interface ScrollLoopDeps {
   // after each non-final turn. Receives the new messages produced this
   // turn (assistant + tool results); returns a string + (optional)
   // usage stats for that secondary call. Returned text is pushed as a
-  // `role: 'user'` message before the next iteration. Skipped on
-  // decide_write_article turns so the decision executes cleanly, and
-  // not invoked when the model produced no tool calls (loop exiting).
+  // `role: 'user'` message before the next iteration. Skipped on:
+  //   - stop_exploring turns (decision is final, no review needed)
+  //   - turns whose tool calls include web_search / fetch_url
+  //     (search/crawl results are deferred — explorer should take
+  //     notes next turn first, THEN collaborator reviews the notes).
   simulateCollaboratorReply?: (input: {
     turn: number;
     // Loop's max budget — the server uses this with `turn` to decide
@@ -214,19 +212,21 @@ export interface ScrollTurnInfo {
 }
 
 export interface ScrollLoopResult {
+  // The loop itself never produces an article — the writer phase
+  // (caller-side, after reason==='stopped') is what fills body_md.
+  // Kept for compatibility with telemetry; left empty by the loop.
   finalArticle: string;
   progress: ProgressState;
   usage: UsageStats;
   collaboratorUsage?: UsageStats;
   lastGenerationId?: string;
   reason: ScrollLoopExitReason;
-  // Set when reason === 'declined' — the string the model passed to
-  // decline_to_write({ reason }). Surface it to the operator so "空
-  // 奏折" isn't ambiguous between error / silent / deliberate decline.
-  declineReason?: string;
-  // The text from the LAST assistant turn, even when `finalArticle`
-  // was rejected as too short / empty. Lets the panel show whatever
-  // the model said before it stopped, instead of a blank "(空)".
+  // Set whenever the model called stop_exploring — the reason it
+  // gave. Useful for audit / panel display.
+  stopReason?: string;
+  // The text from the LAST assistant turn (typically the explorer's
+  // final musing alongside its stop_exploring call). Surfaced in the
+  // panel for inspection.
   lastAssistantText?: string;
   // Full conversation as fed to / produced by the model. Useful for
   // fixtures, debugging, and the replay script.
@@ -348,20 +348,17 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
         { role: 'user', content: initialUserContent },
       ];
 
-  let finalArticle = '';
   let reason: ScrollLoopExitReason = 'turn_cap';
   let turn = 0;
   let lastAssistantText = '';
   // Research gate is now externally controlled via deps.isResearchUnlocked
   // (the panel flips it manually). No internal flag tracking needed —
   // the callback is polled per web_search / fetch_url invocation.
-  // Mutated by execTool when the model calls decide_write_article.
-  //   write === false  → break with reason='declined' (no article)
-  //   write === true   → record the decision but keep looping; the
-  //     model will then produce its no-tool turn (article in single-
-  //     phase, or thinking summary in two-phase) and the loop exits
-  //     naturally with reason='final'.
-  const decision: { write?: boolean; reason?: string } = {};
+  // Mutated by execTool when the model calls stop_exploring.
+  // When set, the loop persists this turn's tool replies + onTurn
+  // hook, then breaks with reason='stopped' so the caller can run
+  // the writer phase immediately.
+  const decision: { stopped?: boolean; reason?: string } = {};
 
   for (turn = 0; turn < hardCap; turn++) {
     if (Date.now() - startedAt > wallCap) {
@@ -430,9 +427,12 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
     const newMessages: ChatCompletionMessageParam[] = [assistantForDisplay];
 
     if (toolCalls.length === 0) {
+      // Anomalous exit — the only valid way to end exploration is
+      // stop_exploring. Bail with no_tool_call so the caller can
+      // surface this as an error state rather than mistakenly
+      // treating the assistant text as a finished article.
       messages.push(assistantForApi);
-      finalArticle = assistantContent.trim();
-      reason = 'final';
+      reason = 'no_tool_call';
       if (onTurn) {
         await onTurn({
           turn,
@@ -505,14 +505,22 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
     }
     progress.phase = progress.notes.length > 0 ? 'compose' : 'research';
 
-    // Collaborator chimes in. Skipped on decide_write_article turns so
-    // the model's go/no-go executes cleanly; also skipped silently
-    // when the simulator throws or returns empty so the loop still
-    // progresses. The injected user message lands in newMessages so
-    // the panel sees it under the same turn.
+    // Collaborator chimes in. Skipped on:
+    //  - stop_exploring turns (decision is final)
+    //  - turns whose tool calls include web_search / fetch_url —
+    //    the explorer should take notes from those results next
+    //    turn first, and the collaborator reviews the notes (not
+    //    the raw search/crawl payload).
+    // Also skipped silently when the simulator throws or returns
+    // empty so the loop still progresses. The injected user message
+    // lands in newMessages so the panel sees it under the same turn.
     let collaboratorTurnUsage: UsageStats | undefined;
-    const decideTurn = toolCalls.some((tc) => tc.function.name === 'decide_write_article');
-    if (deps.simulateCollaboratorReply && !decideTurn) {
+    const stopTurn = toolCalls.some((tc) => tc.function.name === 'stop_exploring');
+    const researchTurn = toolCalls.some(
+      (tc) => tc.function.name === 'web_search' || tc.function.name === 'fetch_url',
+    );
+    const skipCollaborator = stopTurn || researchTurn;
+    if (deps.simulateCollaboratorReply && !skipCollaborator) {
       try {
         const out = await deps.simulateCollaboratorReply({
           turn,
@@ -551,14 +559,14 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
     // Optional budget hint — when enabled, append a `role:'user'`
     // system-style note telling the model how many turns it has left.
     // Wording escalates on the last upcoming turn: "this is the last
-    // round, you must decide now". Skipped on decide turns (decision
+    // round, you must decide now". Skipped on stop turns (decision
     // already made) and after the very last turn (no next iteration).
-    if (deps.showTurnsRemaining && !decideTurn && turn < hardCap - 1) {
+    if (deps.showTurnsRemaining && !stopTurn && turn < hardCap - 1) {
       const remaining = hardCap - turn - 1; // turns including the upcoming one
       const total = hardCap;
       const hintText =
         remaining === 1
-          ? `（系统提示：这是最后一轮（${total}/${total}）。本轮必须用 decide_write_article 做最终决定，否则会被 turn_cap 截断。）`
+          ? `（系统提示：这是最后一轮（${total}/${total}）。本轮必须用 stop_exploring 收笔，否则会被 turn_cap 截断。）`
           : `（系统提示：还剩 ${remaining}/${total} 轮研究/工具调用机会。）`;
       const hint: ChatCompletionMessageParam = { role: 'user', content: hintText };
       messages.push(hint);
@@ -578,17 +586,22 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
       });
     }
 
-    // Model declined to write — exit cleanly. write=true is recorded
-    // but doesn't break: the model still has to produce its final
-    // assistant turn (article or thinking) on the next no-tool call.
-    if (decision.write === false) {
-      reason = 'declined';
+    // Model called stop_exploring — exit immediately so the caller
+    // can run the writer phase. The tool replies and onTurn for this
+    // final exploration turn have already been emitted above; the
+    // writer phase is owned by the caller (production runner reads
+    // scroll-write.md; lab uses its own writePhasePrompt).
+    if (decision.stopped) {
+      reason = 'stopped';
       break;
     }
   }
 
   return {
-    finalArticle,
+    // Loop never produces an article on its own anymore; left empty
+    // for callers that still read the field. They fill it from the
+    // writer phase before persisting.
+    finalArticle: '',
     progress,
     usage,
     collaboratorUsage:
@@ -597,11 +610,7 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
         : undefined,
     lastGenerationId,
     reason,
-    // Set whenever decide_write_article was called — `declineReason`
-    // continues to carry the model's stated reason regardless of which
-    // branch it chose, so the panel can show "decided to write because
-    // …" too. The reason='declined' exit only fires on write=false.
-    declineReason: decision.reason,
+    stopReason: decision.reason,
     lastAssistantText: lastAssistantText || undefined,
     messages,
     turns: turn + (reason === 'turn_cap' ? 0 : 1),
@@ -615,7 +624,7 @@ async function execTool(
   tools: ScrollToolDeps,
   tc: ChatCompletionMessageToolCall,
   progress: ProgressState,
-  decision?: { write?: boolean; reason?: string },
+  decision?: { stopped?: boolean; reason?: string },
   blockResearch?: boolean,
 ): Promise<string> {
   const name = tc.function.name;
@@ -632,16 +641,13 @@ async function execTool(
       return '';
     }
 
-    if (name === 'decide_write_article') {
-      const writeFlag = args.write === true;
+    if (name === 'stop_exploring') {
       const reasonText = String(args.reason ?? '').trim() || '(no reason given)';
       if (decision) {
-        decision.write = writeFlag;
+        decision.stopped = true;
         decision.reason = reasonText;
       }
-      return writeFlag
-        ? `好的，本次值得写。请按 system prompt 的要求把文章写出来。理由记录在案：${reasonText}`
-        : `好的，本次不写——理由：${reasonText}`;
+      return `好的，停止探索。写作模型会基于你的笔记和访问过的链接出文。理由记录在案：${reasonText}`;
     }
 
     if (name === 'web_search') {

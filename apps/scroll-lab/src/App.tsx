@@ -47,7 +47,6 @@ export function App() {
   const [turnCap, setTurnCap] = useLocalStorage<number>('turnCap', 8);
   const [stubSearch, setStubSearch] = useLocalStorage<boolean>('stubSearch', false);
   const [stubFetch, setStubFetch] = useLocalStorage<boolean>('stubFetch', false);
-  const [writePhaseEnabled, setWritePhaseEnabled] = useLocalStorage<boolean>('writePhaseEnabled', false);
 
   // Prompts use null as the "not yet hydrated" sentinel so we can tell
   // first-launch (use disk) from edited-then-cleared (keep empty).
@@ -160,15 +159,13 @@ export function App() {
             collaboratorModel && collaboratorPrompt && collaboratorPrompt.trim()
               ? collaboratorPrompt
               : undefined,
-          // Phase 2 only kicks in when both the toggle is on AND a
-          // prompt is present. writeModel falls back to main `model`
-          // server-side when empty.
-          writeModel:
-            writePhaseEnabled && writeModel ? writeModel : undefined,
+          // Writer phase always runs after the loop exits with
+          // reason='stopped'. writeModel falls back to body.model
+          // server-side when empty; writePhasePrompt falls back to
+          // scroll-write.md from disk.
+          writeModel: writeModel || undefined,
           writePhasePrompt:
-            writePhaseEnabled && writePrompt && writePrompt.trim()
-              ? writePrompt
-              : undefined,
+            writePrompt && writePrompt.trim() ? writePrompt : undefined,
           showTurnsRemaining,
           collaboratorShowTurnsRemaining,
           resumeFromRunId: opts?.resumeFromRunId,
@@ -291,7 +288,6 @@ export function App() {
     setCollaboratorModel(data.input.collaboratorModel ?? '');
     if (data.input.collaboratorPrompt) setCollaboratorPrompt(data.input.collaboratorPrompt);
     setWriteModel(data.input.writeModel ?? '');
-    setWritePhaseEnabled(!!data.input.writePhasePrompt);
     if (data.input.writePhasePrompt) setWritePrompt(data.input.writePhasePrompt);
     setShowTurnsRemaining(!!data.input.showTurnsRemaining);
     setCollaboratorShowTurnsRemaining(!!data.input.collaboratorShowTurnsRemaining);
@@ -347,8 +343,6 @@ export function App() {
             setCollaboratorModel={setCollaboratorModel}
             writeModel={writeModel}
             setWriteModel={setWriteModel}
-            writePhaseEnabled={writePhaseEnabled}
-            setWritePhaseEnabled={setWritePhaseEnabled}
             showTurnsRemaining={showTurnsRemaining}
             setShowTurnsRemaining={setShowTurnsRemaining}
             collaboratorShowTurnsRemaining={collaboratorShowTurnsRemaining}
@@ -393,7 +387,7 @@ export function App() {
             onSaveToDisk={saveCollaboratorPromptToDisk}
           />
           <PromptsBlock
-            label={`Write phase (prompts/scroll-write.md)${writePhaseEnabled ? '' : ' · 当前未启用'}`}
+            label="Write phase (prompts/scroll-write.md)"
             value={writePrompt}
             setValue={setWritePrompt}
             original={writePromptOriginal}
@@ -472,8 +466,6 @@ function Settings(p: {
   setCollaboratorModel: (m: string) => void;
   writeModel: string;
   setWriteModel: (m: string) => void;
-  writePhaseEnabled: boolean;
-  setWritePhaseEnabled: (b: boolean) => void;
   showTurnsRemaining: boolean;
   setShowTurnsRemaining: (b: boolean) => void;
   collaboratorShowTurnsRemaining: boolean;
@@ -561,20 +553,10 @@ function Settings(p: {
         {p.running && <span className="dim"> · 实时生效</span>}
       </label>
 
-      <label className="check">
-        <input
-          type="checkbox"
-          checked={p.writePhaseEnabled}
-          onChange={(e) => p.setWritePhaseEnabled(e.target.checked)}
-        />
-        启用写文章阶段（两段式）
-      </label>
-
-      <label>写文章模型 <span className="dim">(phase 2; 留空 = 跟主模型一致)</span></label>
+      <label>写文章模型 <span className="dim">(stop_exploring 后接手；留空 = 跟主模型一致)</span></label>
       <select
         value={p.writeModel}
         onChange={(e) => p.setWriteModel(e.target.value)}
-        disabled={!p.writePhaseEnabled}
       >
         <option value="">— 跟主模型一致 —</option>
         {p.cfg.models.map((m) => (
@@ -976,12 +958,11 @@ function firstArgPreview(args: string): string {
 }
 
 function ResultBlock({ r }: { r: ResultEvent }): JSX.Element {
-  const declined = r.reason === 'declined';
   const empty = !r.finalArticle.trim();
   const writeIn = r.writeUsage?.input ?? 0;
   const writeOut = r.writeUsage?.output ?? 0;
-  const phase1In = r.usage.input - writeIn;
-  const phase1Out = r.usage.output - writeOut;
+  const exploreIn = r.usage.input - writeIn;
+  const exploreOut = r.usage.output - writeOut;
   return (
     <div className="result">
       <h3>结果</h3>
@@ -992,31 +973,26 @@ function ResultBlock({ r }: { r: ResultEvent }): JSX.Element {
       </div>
       {r.writeUsage && (
         <div className="result-meta dim">
-          phase 1: in={phase1In.toLocaleString()} out={phase1Out.toLocaleString()} ·
-          {' '}phase 2 (write): in={writeIn.toLocaleString()} out={writeOut.toLocaleString()}
+          explore: in={exploreIn.toLocaleString()} out={exploreOut.toLocaleString()} ·
+          {' '}write: in={writeIn.toLocaleString()} out={writeOut.toLocaleString()}
         </div>
       )}
-      {r.phase1Summary && (
-        <details className="phase1-block">
-          <summary>phase 1 思考与研究输出 <span className="dim">(被 phase 2 替换)</span></summary>
-          <pre>{r.phase1Summary}</pre>
-        </details>
-      )}
-
-      {declined && (
-        <div className="decline-box">
-          <strong>机器人选择不写。理由：</strong>
-          <div>{r.declineReason || '(没填理由)'}</div>
+      {r.stopReason && (
+        <div className="stop-box">
+          <strong>主探索者停止探索的理由：</strong>
+          <div>{r.stopReason}</div>
         </div>
       )}
 
-      {!declined && empty && (
+      {empty && (
         <div className="silent-box">
           <strong>空奏折。</strong>{' '}
           <span className="dim">
-            {r.reason === 'final'
-              ? '模型停止调用工具但没产出文章正文 (生产环境下会被删除)。'
-              : `模型在 reason=${r.reason} 时退出，未产出正文。`}
+            {r.reason === 'stopped'
+              ? '主探索者停止了探索，但写作模型没产出正文 (生产环境下会被删除)。'
+              : r.reason === 'no_tool_call'
+                ? '主探索者既没调工具也没用 stop_exploring，被判作异常退出，未进入写作。'
+                : `模型在 reason=${r.reason} 时退出，未进入写作。`}
           </span>
           {r.lastAssistantText && (
             <details open>
