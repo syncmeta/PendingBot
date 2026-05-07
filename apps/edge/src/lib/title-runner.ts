@@ -1,6 +1,6 @@
 import type { Env } from '../types';
 import { serviceClient } from './supabase';
-import { openrouterClient } from '../llm/client';
+import { recordAudit, resolveRoute, usageFromCompletion } from '../llm/router';
 import { getPrompt } from '../llm/prompt-loader';
 
 // Title runner — auto-generates a short conversation name from the first
@@ -38,9 +38,9 @@ export async function runTitle(input: RunTitleInput): Promise<void> {
       .join('\n');
     if (!transcript) return;
 
-    const openai = openrouterClient(env);
-    const completion = await openai.chat.completions.create({
-      model: botModelId,
+    const route = await resolveRoute(supa, env, { modelSlug: botModelId });
+    const completion = await route.client.chat.completions.create({
+      model: route.modelToCall,
       messages: [
         { role: 'system', content: getPrompt('title') },
         { role: 'user', content: transcript },
@@ -55,15 +55,13 @@ export async function runTitle(input: RunTitleInput): Promise<void> {
       .update({ title, updated_at: new Date().toISOString() })
       .eq('id', conversationId);
 
-    await supa.from('audit_log').insert({
-      conversation_id: conversationId,
-      task_type: 'title',
-      model_id: botModelId,
-      input_tokens: completion.usage?.prompt_tokens ?? 0,
-      output_tokens: completion.usage?.completion_tokens ?? 0,
-      total_tokens: completion.usage?.total_tokens ?? 0,
-      generation_id: completion.id,
-      latency_ms: Date.now() - startedAt,
+    await recordAudit(supa, route, {
+      conversationId,
+      taskType: 'title',
+      startedAt,
+      generationId: completion.id,
+      status: 'success',
+      ...usageFromCompletion(completion.usage),
     });
   } catch (err) {
     console.warn('[title]', err);
