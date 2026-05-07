@@ -342,6 +342,60 @@ export type Database = {
           },
         ]
       }
+      bot_code_exec_requests: {
+        Row: {
+          bot_id: string
+          code: string
+          conversation_id: string
+          created_at: string
+          estimated_seconds: number
+          id: string
+          reason: string
+          responded_at: string | null
+          status: string
+          user_id: string
+        }
+        Insert: {
+          bot_id: string
+          code: string
+          conversation_id: string
+          created_at?: string
+          estimated_seconds: number
+          id?: string
+          reason: string
+          responded_at?: string | null
+          status?: string
+          user_id: string
+        }
+        Update: {
+          bot_id?: string
+          code?: string
+          conversation_id?: string
+          created_at?: string
+          estimated_seconds?: number
+          id?: string
+          reason?: string
+          responded_at?: string | null
+          status?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bot_code_exec_requests_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "bots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bot_code_exec_requests_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       bot_lookbacks: {
         Row: {
           active: boolean
