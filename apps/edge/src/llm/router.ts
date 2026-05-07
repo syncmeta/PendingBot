@@ -325,10 +325,14 @@ export function computeCost(alias: RouteAlias, usage: AuditUsage): number | null
 
 export async function recordAudit(
   supa: SupabaseClient,
-  route: ResolvedRoute,
+  // null when no alias was ever successfully resolved (every fallback
+  // attempt errored out before getting an OK from any provider). The
+  // route_trace + status='error' still get persisted; provider_id /
+  // model_alias_id / cost_usd just stay null.
+  route: ResolvedRoute | null,
   opts: AuditCallOpts,
 ): Promise<void> {
-  const cost = route.alias ? computeCost(route.alias, opts) : null;
+  const cost = route?.alias ? computeCost(route.alias, opts) : null;
   const total =
     (opts.inputTokens ?? 0) +
     (opts.outputTokens ?? 0) +
@@ -339,7 +343,10 @@ export async function recordAudit(
     user_id: opts.userId ?? null,
     conversation_id: opts.conversationId ?? null,
     task_type: opts.taskType,
-    model_id: route.modelToCall,
+    // Use the last-attempted model id when a route was eventually
+    // found, otherwise the caller-supplied slug recorded in opts via
+    // recordAuditFailure (we expose modelSlug for that path below).
+    model_id: route?.modelToCall ?? opts.tag ?? '<unrouted>',
     input_tokens: opts.inputTokens ?? 0,
     output_tokens: opts.outputTokens ?? 0,
     cache_read_tokens: opts.cacheReadTokens ?? 0,
@@ -350,8 +357,8 @@ export async function recordAudit(
     latency_ms: Date.now() - opts.startedAt,
     status: opts.status,
     error_class: opts.errorClass ?? null,
-    provider_id: route.provider.id,
-    model_alias_id: route.alias?.aliasId ?? null,
+    provider_id: route?.provider.id ?? null,
+    model_alias_id: route?.alias?.aliasId ?? null,
     route_trace: (opts.routeTrace as never) ?? null,
     tag: opts.tag ?? null,
     ...(opts.metadata ? { metadata: opts.metadata as never } : {}),
@@ -393,4 +400,178 @@ export function usageFromCompletion(
     cacheReadTokens: cacheRead ?? 0,
     cacheWriteTokens: cacheWrite ?? 0,
   };
+}
+
+// ============================================================
+// Fallback orchestration
+// ============================================================
+//
+// withFallback wraps resolveRoute + a runner closure (the actual
+// completion call) in a retry loop. On a transient failure from one
+// provider it pushes that provider into excludeProviders and
+// re-resolves — picking the next-highest-weight enabled alias for the
+// same canonical model — and tries again. On a fatal failure (auth,
+// bad request, context length) it stops immediately because retrying
+// won't help.
+//
+// route_trace gets populated as we go so the audit row reflects the
+// full chain ("WR 503 → OR 200" or "WR 401 → OR 503 → exhausted").
+//
+// Streaming callers (bot-reply.ts) and multi-turn agent loops
+// (scroll-runner.ts) need different handling — once bytes have started
+// flowing to the client, fallback isn't safe. Those keep a single
+// resolveRoute() and don't call withFallback yet.
+
+export interface RouteTraceEntry {
+  attempt: number;
+  provider_slug: string;
+  alias_id: string | null;
+  status: 'ok' | 'transient_err' | 'fatal_err' | 'no_route';
+  error_class?: string;
+  error_message?: string;
+  latency_ms: number;
+}
+
+export interface FallbackOpts extends RouteResolveOpts {
+  // Hard cap on total attempts (resolveRoute + runner) before we give
+  // up and throw FallbackError. Default 3.
+  maxAttempts?: number;
+}
+
+export interface FallbackResult<T> {
+  result: T;
+  route: ResolvedRoute;
+  routeTrace: RouteTraceEntry[];
+}
+
+export class FallbackError extends Error {
+  routeTrace: RouteTraceEntry[];
+  lastError: unknown;
+  // The route at the moment of the last failed attempt (if any
+  // resolveRoute succeeded). null when no provider could even be
+  // resolved (NoRouteError on first attempt).
+  lastRoute: ResolvedRoute | null;
+  constructor(message: string, opts: {
+    routeTrace: RouteTraceEntry[];
+    lastError: unknown;
+    lastRoute: ResolvedRoute | null;
+  }) {
+    super(message);
+    this.name = 'FallbackError';
+    this.routeTrace = opts.routeTrace;
+    this.lastError = opts.lastError;
+    this.lastRoute = opts.lastRoute;
+  }
+}
+
+// Classify a thrown error into (transient, error_class). Transient =
+// "another provider might handle this same request fine" (rate limit,
+// timeout, 5xx, network). Fatal = "the request itself is broken,
+// retrying anywhere is wasted" (auth, bad input, context length, model
+// not found). Unknown shape defaults to transient — bounded by
+// maxAttempts so worst case is N retries on weird shapes.
+export function classifyError(err: unknown): {
+  errorClass: string;
+  transient: boolean;
+  message: string;
+} {
+  if (err && typeof err === 'object') {
+    const e = err as { status?: number; code?: string; message?: string; name?: string };
+    const message = e.message ?? String(err);
+    const lower = message.toLowerCase();
+    const status = typeof e.status === 'number' ? e.status : undefined;
+
+    if (status === 401 || status === 403) return { errorClass: 'auth', transient: false, message };
+    if (status === 404) return { errorClass: 'not_found', transient: false, message };
+    if (status === 400) {
+      // 400 is usually fatal except when it's the gateway saying "this
+      // model is overloaded right now" — but we can't reliably detect
+      // that from the message; treat as fatal.
+      if (lower.includes('context length') || lower.includes('context_length') || lower.includes('maximum context')) {
+        return { errorClass: 'context_length', transient: false, message };
+      }
+      return { errorClass: 'bad_request', transient: false, message };
+    }
+    if (status === 408 || status === 504) return { errorClass: 'timeout', transient: true, message };
+    if (status === 429) return { errorClass: 'rate_limit', transient: true, message };
+    if (status === 502 || status === 503) return { errorClass: 'provider_unavailable', transient: true, message };
+    if (typeof status === 'number' && status >= 500) return { errorClass: 'server_error', transient: true, message };
+
+    if (lower.includes('econnreset') || lower.includes('econnrefused') || lower.includes('etimedout') || lower.includes('fetch failed')) {
+      return { errorClass: 'network', transient: true, message };
+    }
+    if (e.name === 'NoRouteError') return { errorClass: 'no_route', transient: false, message };
+    if (lower.includes('safety') || lower.includes('refus')) {
+      return { errorClass: 'safety_refusal', transient: false, message };
+    }
+  }
+  // Unknown — assume transient. maxAttempts caps the blast radius.
+  return { errorClass: 'unknown', transient: true, message: String(err) };
+}
+
+export async function withFallback<T>(
+  supa: SupabaseClient,
+  env: Env,
+  opts: FallbackOpts,
+  runner: (route: ResolvedRoute) => Promise<T>,
+): Promise<FallbackResult<T>> {
+  const maxAttempts = opts.maxAttempts ?? 3;
+  const tried: string[] = [...(opts.excludeProviders ?? [])];
+  const routeTrace: RouteTraceEntry[] = [];
+  let lastError: unknown = null;
+  let lastRoute: ResolvedRoute | null = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const attemptStart = Date.now();
+    let route: ResolvedRoute;
+    try {
+      route = await resolveRoute(supa, env, { ...opts, excludeProviders: tried });
+    } catch (err) {
+      const cls = classifyError(err);
+      routeTrace.push({
+        attempt,
+        provider_slug: '(no-route)',
+        alias_id: null,
+        status: 'no_route',
+        error_class: cls.errorClass,
+        error_message: cls.message.slice(0, 200),
+        latency_ms: Date.now() - attemptStart,
+      });
+      lastError = err;
+      // No provider available means subsequent loops can't help either.
+      break;
+    }
+    lastRoute = route;
+
+    try {
+      const result = await runner(route);
+      routeTrace.push({
+        attempt,
+        provider_slug: route.provider.slug,
+        alias_id: route.alias?.aliasId ?? null,
+        status: 'ok',
+        latency_ms: Date.now() - attemptStart,
+      });
+      return { result, route, routeTrace };
+    } catch (err) {
+      const cls = classifyError(err);
+      routeTrace.push({
+        attempt,
+        provider_slug: route.provider.slug,
+        alias_id: route.alias?.aliasId ?? null,
+        status: cls.transient ? 'transient_err' : 'fatal_err',
+        error_class: cls.errorClass,
+        error_message: cls.message.slice(0, 200),
+        latency_ms: Date.now() - attemptStart,
+      });
+      lastError = err;
+      if (!cls.transient) break;
+      tried.push(route.provider.slug);
+    }
+  }
+
+  throw new FallbackError(
+    `withFallback exhausted (${routeTrace.length} attempt${routeTrace.length === 1 ? '' : 's'})`,
+    { routeTrace, lastError, lastRoute },
+  );
 }
