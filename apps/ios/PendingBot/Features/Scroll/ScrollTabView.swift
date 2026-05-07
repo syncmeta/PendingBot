@@ -12,6 +12,8 @@ import Supabase
 struct ScrollTabView: View {
     @EnvironmentObject private var store: AccountStore
     @Environment(\.api) private var api
+    @Environment(\.useSidebarLayout) private var sidebarLayout
+    @Environment(\.topTabSelection) private var topTabSelection
 
     @State private var runs: [ScrollRun] = []
     @State private var botNames: [String: String] = [:]
@@ -23,6 +25,33 @@ struct ScrollTabView: View {
     @State private var feedToken: ScrollFeedToken?
 
     var body: some View {
+        Group {
+            if sidebarLayout {
+                NavigationSplitView {
+                    VStack(spacing: 0) {
+                        coreContent
+                        if let topTabSelection {
+                            SidebarTabBar(selection: topTabSelection)
+                        }
+                    }
+                    .sidebarColumnWidth()
+                } detail: {
+                    EmptyDetailHint(text: "选一篇奏折开读", systemImage: "scroll")
+                }
+            } else {
+                coreContent
+                    .toolbar(path.isEmpty ? .visible : .hidden, for: .tabBar)
+            }
+        }
+        .task { await onAppearLifecycle() }
+        .onDisappear { Task { await onDisappearLifecycle() } }
+        .alert("出错", isPresented: .constant(error != nil)) {
+            Button("好") { error = nil }
+        } message: { Text(error ?? "") }
+    }
+
+    @ViewBuilder
+    private var coreContent: some View {
         NavigationStack(path: $path) {
             VStack(spacing: 0) {
                 TabHeaderBar(title: "奏折") {
@@ -75,12 +104,6 @@ struct ScrollTabView: View {
                 .presentationDragIndicator(.visible)
             }
         }
-        .toolbar(path.isEmpty ? .visible : .hidden, for: .tabBar)
-        .task { await onAppearLifecycle() }
-        .onDisappear { Task { await onDisappearLifecycle() } }
-        .alert("出错", isPresented: .constant(error != nil)) {
-            Button("好") { error = nil }
-        } message: { Text(error ?? "") }
     }
 
     // MARK: - Lifecycle
@@ -116,6 +139,10 @@ struct ScrollTabView: View {
             // updates to running). The feed is meant to read as articles.
             runs = rows.filter { $0.status != "cancelled" }
             await refreshBotNames(for: runs)
+        } catch is CancellationError {
+            // Tab switch / refreshable cancellation — silent.
+        } catch let error as NSError where error.domain == NSURLErrorDomain
+            && error.code == NSURLErrorCancelled {
         } catch {
             self.error = error.localizedDescription
         }
@@ -185,6 +212,9 @@ struct ScrollTabView: View {
         do {
             _ = try await api.scrollTrigger(conversationId: conversationId)
             // Realtime INSERT will surface the new run; nothing else to do.
+        } catch is CancellationError {
+        } catch let error as NSError where error.domain == NSURLErrorDomain
+            && error.code == NSURLErrorCancelled {
         } catch {
             self.error = error.localizedDescription
         }

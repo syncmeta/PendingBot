@@ -19,6 +19,7 @@ private let log = Logger.category("conv-list")
 struct MessageTabView: View {
     @Environment(\.api) private var api
     @Environment(\.useSidebarLayout) private var sidebarLayout
+    @Environment(\.topTabSelection) private var topTabSelection
     @EnvironmentObject private var unread: UnreadStore
     @State private var conversations: [Conversation] = []
     @State private var bots: [Bot] = []
@@ -96,10 +97,15 @@ struct MessageTabView: View {
 
     private var regularBody: some View {
         NavigationSplitView {
-            sidebarBody
-                .background(Theme.Palette.canvas.ignoresSafeArea())
-                .toolbar(.hidden, for: .navigationBar)
-                .sidebarColumnWidth()
+            VStack(spacing: 0) {
+                sidebarBody
+                if let topTabSelection {
+                    SidebarTabBar(selection: topTabSelection)
+                }
+            }
+            .background(Theme.Palette.canvas.ignoresSafeArea())
+            .toolbar(.hidden, for: .navigationBar)
+            .sidebarColumnWidth()
         } detail: {
             if let conv = selected {
                 ConversationView(conversation: conv, bot: bot(for: conv)) {
