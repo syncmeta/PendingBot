@@ -52,3 +52,15 @@
     font-feature-settings: 'rlig' 1, 'calt' 1;
   }
 }
+
+/* Top progress bar used by (admin)/loading.tsx — slides a primary-
+ * coloured chip from off-screen left to off-screen right and loops
+ * for as long as the route's server component is still rendering. */
+@keyframes loadingbar {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
