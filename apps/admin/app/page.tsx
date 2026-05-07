@@ -35,7 +35,6 @@ export default async function HomePage() {
           href="/providers"
           title="Providers"
           desc="OpenRouter / WorldRouter 等 gateway 启停、密钥引用、健康"
-          comingSoon
         />
         <Card
           href="/models"
