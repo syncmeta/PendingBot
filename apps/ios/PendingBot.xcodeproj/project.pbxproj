@@ -13,6 +13,7 @@
 		0E293F1B0321CB4CB0FDBB51 /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BDBE35089EC0A16CBE8D181 /* QRScannerView.swift */; };
 		11DFAF56423D11C5DDBE2C34 /* ServerImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24E4E56DDBD71AB05278A385 /* ServerImage.swift */; };
 		18BC93D327B246AC5A5AB9B4 /* TabHeaderBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 288EC6D8680B326A27B8A731 /* TabHeaderBar.swift */; };
+		9F1E5C7B8A4D3E2F61C9D0B5 /* SidebarTabBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E2F6D8C7B5E4F3061CAE1B6 /* SidebarTabBar.swift */; };
 		24896FE870AF890607D5C008 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0424B09389C21A9BB73F1069 /* Theme.swift */; };
 		252E72745FF2F6B5758D2523 /* SupabaseStack.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A461F1DD0D7D01B3BE81A18 /* SupabaseStack.swift */; };
 		2A629BF058F4834777600BE4 /* Haptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54274B6144493F79AB8DC3D1 /* Haptics.swift */; };
@@ -79,6 +80,7 @@
 		24E4E56DDBD71AB05278A385 /* ServerImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerImage.swift; sourceTree = "<group>"; };
 		279FB8EA2B3130084E4F8C44 /* BotAvatar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotAvatar.swift; sourceTree = "<group>"; };
 		288EC6D8680B326A27B8A731 /* TabHeaderBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabHeaderBar.swift; sourceTree = "<group>"; };
+		8E2F6D8C7B5E4F3061CAE1B6 /* SidebarTabBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarTabBar.swift; sourceTree = "<group>"; };
 		296C608D9B4B9E5870149CD4 /* MarkdownText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownText.swift; sourceTree = "<group>"; };
 		2A461F1DD0D7D01B3BE81A18 /* SupabaseStack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseStack.swift; sourceTree = "<group>"; };
 		2CE994684E5E6189CC090363 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -314,6 +316,7 @@
 				7CA54E69A2AB50E902FF3E4E /* ModelPicker.swift */,
 				8BDBE35089EC0A16CBE8D181 /* QRScannerView.swift */,
 				24E4E56DDBD71AB05278A385 /* ServerImage.swift */,
+				8E2F6D8C7B5E4F3061CAE1B6 /* SidebarTabBar.swift */,
 				855E9460774778B78AA51DE3 /* SplitNav.swift */,
 				E08EA5C0C04D043A83FDCB72 /* SwipeRevealRow.swift */,
 				288EC6D8680B326A27B8A731 /* TabHeaderBar.swift */,
@@ -463,6 +466,7 @@
 				11DFAF56423D11C5DDBE2C34 /* ServerImage.swift in Sources */,
 				52F96822550D55A2446083BE /* ServerTimestamp.swift in Sources */,
 				94657E0860679B913AE1A78D /* SkillsView.swift in Sources */,
+				9F1E5C7B8A4D3E2F61C9D0B5 /* SidebarTabBar.swift in Sources */,
 				B3417CC338433628B03B7B1D /* SplitNav.swift in Sources */,
 				252E72745FF2F6B5758D2523 /* SupabaseStack.swift in Sources */,
 				88978249B3DE9BBB9F495363 /* SwipeRevealRow.swift in Sources */,

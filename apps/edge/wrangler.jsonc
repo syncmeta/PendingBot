@@ -30,39 +30,20 @@
   "triggers": {
     "crons": [
       "0 3 * * 1",
-      "0 4 * * *"
+      "0 4 * * *",
+      "5 * * * *"
     ]
   },
 
-  // Default env (used by `wrangler dev`). Real bindings live under env.staging
-  // and env.production; the dev harness fills in stubs for R2/KV/etc.
+  // Default env (used by `wrangler dev` for local). Real bindings live under
+  // env.production; `wrangler dev` stubs R2/KV/etc and reads secrets from
+  // .dev.vars. We deliberately keep ONE deployed env (production) until there
+  // are real users to insulate from churn — see CLAUDE.md "Deploys".
   "vars": {
     "ENVIRONMENT": "dev"
   },
 
   "env": {
-    "staging": {
-      "vars": {
-        "ENVIRONMENT": "staging",
-        "SUPABASE_URL": "https://REPLACE-ME-staging.supabase.co",
-        "ALLOWED_ORIGIN": "https://bot-staging.pendingname.com"
-      },
-      "routes": [
-        { "pattern": "api-staging.pendingname.com", "custom_domain": true }
-      ],
-      "r2_buckets": [
-        {
-          "binding": "UPLOADS",
-          "bucket_name": "pendingbot-uploads-staging"
-        }
-      ],
-      "kv_namespaces": [
-        {
-          "binding": "MEMORY",
-          "id": "REPLACE-ME-staging-kv-id"
-        }
-      ]
-    },
     "production": {
       "vars": {
         "ENVIRONMENT": "production",
@@ -87,7 +68,8 @@
     }
   }
 
-  // Secrets (set per-env via `wrangler secret put --env <env>`):
+  // Secrets (set on the deployed env via `wrangler secret put --env production`,
+  // or in `.dev.vars` for local `wrangler dev`):
   //   SUPABASE_ANON_KEY
   //   SUPABASE_SERVICE_ROLE_KEY
   //   OPENROUTER_API_KEY
@@ -101,4 +83,7 @@
   //   APNS_KEY_PROD  (.p8 PEM content, multi-line)
   //   HONCHO_API_KEY
   //   HONCHO_WORKSPACE_ID
+  //   DAYTONA_API_KEY        (code-exec sandbox; free tier)
+  //   DAYTONA_API_URL        (optional — defaults to https://app.daytona.io/api)
+  //   DAYTONA_TOOLBOX_URL    (optional — defaults to https://proxy.app.daytona.io/toolbox)
 }

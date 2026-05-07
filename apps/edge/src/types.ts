@@ -8,7 +8,7 @@ export interface Env {
   MEMORY: KVNamespace;
 
   // ── Vars (per env in wrangler.jsonc) ───────────────────────────
-  ENVIRONMENT: 'dev' | 'staging' | 'production';
+  ENVIRONMENT: 'dev' | 'production';
   SUPABASE_URL: string;
   ALLOWED_ORIGIN: string;
 
@@ -30,6 +30,13 @@ export interface Env {
   APNS_KEY_ID_PROD: string;
   APNS_KEY_DEV: string;        // .p8 PEM content (secret)
   APNS_KEY_PROD: string;       // .p8 PEM content (secret)
+
+  // Daytona — code-execution sandbox provider. API_URL / TOOLBOX_URL fall
+  // back to the public hosts inside lib/sandbox.ts when unset; only the
+  // API_KEY is required.
+  DAYTONA_API_KEY: string;
+  DAYTONA_API_URL?: string;
+  DAYTONA_TOOLBOX_URL?: string;
 }
 
 // Hono's c.var slot — populated by middleware (auth, version, etc.)

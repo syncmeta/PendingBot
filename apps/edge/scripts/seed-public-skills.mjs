@@ -1,10 +1,16 @@
 #!/usr/bin/env node
-// Seed the bundled Anthropic Claude Skills as system-public skills rows.
-// Idempotent: looks up each skill by frontmatter.name and skips if it
-// exists; otherwise INSERTs with owner_id=null, visibility='public'.
+// Seed every bundled skill under prompts/skills/<vendor>/*.md as a
+// system-public skills row. Idempotent: looks up each skill by
+// frontmatter.name and skips if it exists; otherwise INSERTs with
+// owner_id=null, visibility='public'.
 //
-// Run once after migration 0004 lands. Reads .dev.vars for service-role
-// credentials so secrets don't pass through argv.
+// Vendors currently shipped:
+//   anthropic/   — Apache-2.0 vendored copies (see anthropic/NOTICE.md)
+//   pendingbot/  — first-party skills (e.g. code-runner gating execute_code)
+//
+// Run after each new migration that touches skills, or whenever bundled
+// skill content changes. Reads .dev.vars for service-role credentials so
+// secrets don't pass through argv.
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -12,7 +18,10 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
-const SKILLS_DIR = path.join(ROOT, 'prompts/skills/anthropic');
+const SKILLS_DIR = path.join(ROOT, 'prompts/skills');
+
+// Skip NOTICE / LICENSE / README at any depth.
+const SKIP_BASENAMES = new Set(['NOTICE.md', 'LICENSE.md', 'README.md']);
 
 function parseFrontmatter(raw) {
   if (!raw.startsWith('---')) return { frontmatter: {}, body: raw };
@@ -23,9 +32,34 @@ function parseFrontmatter(raw) {
   const frontmatter = {};
   for (const line of head.split('\n')) {
     const m = line.match(/^([a-zA-Z_][a-zA-Z0-9_-]*):\s*(.+)$/);
-    if (m) frontmatter[m[1]] = m[2].trim();
+    if (!m) continue;
+    let val = m[2].trim();
+    // Inline JSON arrays/objects — e.g. allowed_tools: ["execute_code"] —
+    // round-trip through JSON.parse so they land in jsonb as real arrays
+    // instead of strings (the 0026 frontmatter CHECK requires array typeof
+    // for allowed_tools).
+    if ((val.startsWith('[') && val.endsWith(']')) ||
+        (val.startsWith('{') && val.endsWith('}'))) {
+      try { val = JSON.parse(val); } catch { /* keep as string on parse fail */ }
+    }
+    frontmatter[m[1]] = val;
   }
   return { frontmatter, body };
+}
+
+async function* walkSkills(dir) {
+  for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      yield* walkSkills(full);
+    } else if (
+      entry.isFile() &&
+      entry.name.endsWith('.md') &&
+      !SKIP_BASENAMES.has(entry.name)
+    ) {
+      yield full;
+    }
+  }
 }
 
 async function loadDevVars() {
@@ -55,16 +89,13 @@ const headers = {
   Prefer: 'return=representation',
 };
 
-const files = (await fs.readdir(SKILLS_DIR))
-  .filter((f) => f.endsWith('.md') && f !== 'NOTICE.md');
-
 let inserted = 0;
 let skipped = 0;
-for (const file of files) {
-  const raw = await fs.readFile(path.join(SKILLS_DIR, file), 'utf8');
+for await (const file of walkSkills(SKILLS_DIR)) {
+  const raw = await fs.readFile(file, 'utf8');
   const { frontmatter, body } = parseFrontmatter(raw);
   if (!frontmatter.name) {
-    console.warn(`skip ${file} — no name in frontmatter`);
+    console.warn(`skip ${path.relative(SKILLS_DIR, file)} — no name in frontmatter`);
     continue;
   }
 

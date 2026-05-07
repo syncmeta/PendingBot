@@ -59,11 +59,6 @@ struct ConversationView: View {
     @State private var showingSkills = false
     @State private var showingSettings = false
     @State private var saveAsSkillBody: String?
-    // Per-user tone preference, persisted globally across conversations.
-    // 'wechat' = casual multi-bubble (default); 'normal' = single-message AI.
-    @AppStorage("bb_chatTone") private var chatTone = "wechat"
-    // Streaming preference. The settings sheet auto-flips this whenever
-    // tone changes (normal=on, wechat=off) — see ConversationSettingsView.
     @AppStorage("bb_chatStreaming") private var streaming = false
 
     /// "<bot_name> · <effective-model-tag>". Effective model = the per-conv
@@ -235,7 +230,6 @@ struct ConversationView: View {
         }
         .sheet(isPresented: $showingSettings) {
             ConversationSettingsView(
-                chatTone: $chatTone,
                 streaming: $streaming,
                 modelOverride: $modelOverride,
                 enabledSkillCount: skills.filter { $0.enabled }.count,
