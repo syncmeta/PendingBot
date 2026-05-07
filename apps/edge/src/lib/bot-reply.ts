@@ -48,8 +48,8 @@ function couldStillBeSilent(s: string): boolean {
 // Maximum agent-loop iterations (one LLM call + tool execution per iteration).
 // Bounds runaway tool spam if the model keeps calling tools indefinitely.
 const MAX_TOOL_ROUNDS = 6;
-// Truncate Jina reader results so tool replies don't blow past the model's
-// context. Plenty for a typical article.
+// Truncate Firecrawl scrape results so tool replies don't blow past the
+// model's context. Plenty for a typical article.
 const READ_TRUNCATE_CHARS = 6000;
 
 // Tools exposed to the chat bot. Bot may call any of them mid-reply; the
