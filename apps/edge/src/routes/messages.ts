@@ -6,6 +6,7 @@ import { runChatTurn } from '../lib/bot-reply';
 import { maybeRefreshMemory } from '../lib/memory';
 import { runLookback } from '../lib/lookback-runner';
 import { runTitle } from '../lib/title-runner';
+import { requireBalance, InsufficientBalanceError } from '../lib/billing';
 import type { AppBindings } from '../types';
 
 export const messageRoutes = new Hono<AppBindings>();
@@ -88,6 +89,28 @@ messageRoutes.post('/', async (c) => {
   //                user row in conv (best effort) or null
   if (!parsed.autoLookback && !parsed.newMessage) {
     return c.json({ error: 'newMessage required' }, 400);
+  }
+
+  // Billing gate. Skip when the conv has no bot pinned (no LLM call will
+  // happen anyway — the post below early-returns at !conv.bot_id). When
+  // a bot IS pinned, refuse before inserting the user row so a broke
+  // account can't fill the chat with replies that never get answered.
+  if (conv.bot_id) {
+    try {
+      await requireBalance(supaUser, userId);
+    } catch (err) {
+      if (err instanceof InsufficientBalanceError) {
+        return c.json(
+          {
+            error: 'insufficient_balance',
+            balance_credits: err.balance,
+            min_threshold: err.threshold,
+          },
+          402,
+        );
+      }
+      throw err;
+    }
   }
 
   const supaService = serviceClient(c.env);

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
 import { serviceClient, userClient } from '../lib/supabase';
 import { runScroll } from '../lib/scroll-runner';
+import { requireBalance, InsufficientBalanceError } from '../lib/billing';
 import type { AppBindings } from '../types';
 
 // 奏折/Scroll routes — feed-style article output, manual trigger only
@@ -44,6 +45,25 @@ scrollRoutes.post('/trigger', async (c) => {
   if (!conv) return c.json({ error: 'conversation not found or no access' }, 404);
   if (!conv.bot_id) {
     return c.json({ error: 'conversation has no bot to write the scroll' }, 400);
+  }
+
+  // Billing gate. A scroll is multi-step LLM work (probably the most
+  // expensive single trigger we have); reject up-front when balance is
+  // below threshold rather than burn credits half-way through.
+  try {
+    await requireBalance(supaUser, userId);
+  } catch (err) {
+    if (err instanceof InsufficientBalanceError) {
+      return c.json(
+        {
+          error: 'insufficient_balance',
+          balance_credits: err.balance,
+          min_threshold: err.threshold,
+        },
+        402,
+      );
+    }
+    throw err;
   }
 
   const supa = serviceClient(c.env);

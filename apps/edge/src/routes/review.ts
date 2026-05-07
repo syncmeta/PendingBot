@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
 import { serviceClient, userClient } from '../lib/supabase';
 import { runReview } from '../lib/review-runner';
+import { requireBalance, InsufficientBalanceError } from '../lib/billing';
 import type { AppBindings } from '../types';
 
 export const reviewRoutes = new Hono<AppBindings>();
@@ -37,6 +38,23 @@ reviewRoutes.post('/trigger', async (c) => {
   if (!conv) return c.json({ error: 'conversation not found or no access' }, 404);
   if (!conv.bot_id) {
     return c.json({ error: 'conversation has no pinned bot to review' }, 400);
+  }
+
+  // Billing gate.
+  try {
+    await requireBalance(supaUser, userId);
+  } catch (err) {
+    if (err instanceof InsufficientBalanceError) {
+      return c.json(
+        {
+          error: 'insufficient_balance',
+          balance_credits: err.balance,
+          min_threshold: err.threshold,
+        },
+        402,
+      );
+    }
+    throw err;
   }
 
   const supa = serviceClient(c.env);
