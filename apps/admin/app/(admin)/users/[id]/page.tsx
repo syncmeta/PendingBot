@@ -2,7 +2,7 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { fmtUsd } from '@/lib/format';
-import { updateQuota, type QuotaFormState } from '../actions';
+import { updateQuota } from '../actions';
 import { QuotaForm } from './_form';
 
 const DEFAULT_DAILY = 1.0;
@@ -36,9 +36,6 @@ export default async function UserDetailPage({
     .gte('created_at', since)
     .order('created_at', { ascending: false })
     .limit(20);
-
-  const action = async (prev: QuotaFormState, formData: FormData) =>
-    updateQuota(id, prev, formData);
 
   return (
     <main className="container max-w-3xl py-10 space-y-8">
@@ -75,7 +72,7 @@ export default async function UserDetailPage({
           </div>
         )}
         <QuotaForm
-          action={action}
+          action={updateQuota.bind(null, id)}
           initial={{
             daily_limit_usd: Number(quota?.daily_limit_usd ?? DEFAULT_DAILY),
             monthly_limit_usd: Number(quota?.monthly_limit_usd ?? DEFAULT_MONTHLY),

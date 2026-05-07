@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { ModelForm } from '../_form';
-import { updateModel, type ModelFormState } from '../actions';
+import { updateModel } from '../actions';
 
 export default async function EditModelPage({
   params,
@@ -26,14 +26,11 @@ export default async function EditModelPage({
     .select('id, provider_model_id, weight, enabled, llm_providers(slug, display_name)')
     .eq('model_id', id);
 
-  const action = async (prev: ModelFormState, formData: FormData) =>
-    updateModel(id, prev, formData);
-
   return (
     <main className="container max-w-2xl py-10 space-y-8">
       <h1 className="text-2xl font-bold tracking-tight">编辑 model</h1>
       <ModelForm
-        action={action}
+        action={updateModel.bind(null, id)}
         initial={{
           slug: row.slug,
           display_name: row.display_name,
