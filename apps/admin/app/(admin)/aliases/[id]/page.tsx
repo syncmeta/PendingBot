@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { AliasForm, type ModelOption, type ProviderOption } from '../_form';
-import { updateAlias, type AliasFormState } from '../actions';
+import { updateAlias } from '../actions';
 
 export default async function EditAliasPage({
   params,
@@ -31,14 +31,11 @@ export default async function EditAliasPage({
       .order('priority'),
   ]);
 
-  const action = async (prev: AliasFormState, formData: FormData) =>
-    updateAlias(id, prev, formData);
-
   return (
     <main className="container max-w-2xl py-10 space-y-6">
       <h1 className="text-2xl font-bold tracking-tight">编辑 alias</h1>
       <AliasForm
-        action={action}
+        action={updateAlias.bind(null, id)}
         models={(models ?? []) as ModelOption[]}
         providers={(providers ?? []) as ProviderOption[]}
         submitLabel="保存"

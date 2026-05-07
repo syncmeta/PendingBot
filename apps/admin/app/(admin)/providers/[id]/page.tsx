@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { ProviderForm } from '../_form';
-import { updateProvider, type ProviderFormState } from '../actions';
+import { updateProvider } from '../actions';
 
 export default async function EditProviderPage({
   params,
@@ -18,14 +18,11 @@ export default async function EditProviderPage({
     .maybeSingle();
   if (!row) notFound();
 
-  const action = async (prev: ProviderFormState, formData: FormData) =>
-    updateProvider(id, prev, formData);
-
   return (
     <main className="container max-w-2xl py-10 space-y-6">
       <h1 className="text-2xl font-bold tracking-tight">编辑 provider</h1>
       <ProviderForm
-        action={action}
+        action={updateProvider.bind(null, id)}
         initial={row}
         submitLabel="保存"
         // OpenRouter slug is the fallback path's anchor; allow editing

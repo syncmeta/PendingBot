@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { RuleForm, type ModelOption, type ProviderOption } from '../_form';
-import { updateRule, type RuleFormState } from '../actions';
+import { updateRule } from '../actions';
 
 export default async function EditRulePage({
   params,
@@ -24,14 +24,11 @@ export default async function EditRulePage({
   ]);
   if (!row) notFound();
 
-  const action = async (prev: RuleFormState, formData: FormData) =>
-    updateRule(id, prev, formData);
-
   return (
     <main className="container max-w-2xl py-10 space-y-6">
       <h1 className="text-2xl font-bold tracking-tight">编辑路由规则</h1>
       <RuleForm
-        action={action}
+        action={updateRule.bind(null, id)}
         models={(models ?? []) as ModelOption[]}
         providers={(providers ?? []) as ProviderOption[]}
         submitLabel="保存"
