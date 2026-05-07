@@ -609,12 +609,12 @@ struct SkillEditorSheet: View {
                         let skill_id: String
                         let conversation_id: String? = nil
                     }
-                    try? await SupabaseStack.shared
+                    _ = try? await SupabaseStack.shared
                         .from("skill_subscriptions")
                         .insert(SubInsert(user_id: userId, skill_id: detail.id))
                         .execute()
                 } else if !enabled && detail.enabled {
-                    try? await SupabaseStack.shared
+                    _ = try? await SupabaseStack.shared
                         .from("skill_subscriptions")
                         .delete()
                         .eq("user_id", value: userId)

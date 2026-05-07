@@ -46,7 +46,12 @@ final class RealtimeManager {
         ) { action in
             onUnreadEvent(.init(record: action.record))
         })
-        await ch.subscribe()
+        do {
+            try await ch.subscribeWithError()
+        } catch {
+            // Best-effort — observers fall back to polling if the socket is
+            // unhealthy, keeping the public surface non-throwing.
+        }
         userChannel = ch
     }
 
@@ -126,7 +131,12 @@ final class RealtimeManager {
             let evt = LookbackEvent(kind: .update, record: action.record)
             for (_, obs) in observersRef() { obs.lookback(evt) }
         })
-        await ch.subscribe()
+        do {
+            try await ch.subscribeWithError()
+        } catch {
+            // Best-effort subscribe — caller still gets a token; loss of
+            // realtime degrades to refresh-on-foreground until reconnect.
+        }
         convChannels[conversationId] = handle
         return token
     }

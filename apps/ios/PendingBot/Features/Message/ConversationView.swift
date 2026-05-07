@@ -111,8 +111,7 @@ struct ConversationView: View {
     /// Falls back to the conv id (used for user_user / group chats where
     /// there is no single bot).
     private var avatarEmojiSeed: String {
-        let bid = conversation.bot_id ?? ""
-        return bid.isEmpty ? conversation.id : bid
+        conversation.bot_id.isEmpty ? conversation.id : conversation.bot_id
     }
 
     /// Avatar shown in the chat header / empty-state. For self-chat the
@@ -1021,7 +1020,7 @@ struct ConversationView: View {
                 id: key,
                 conversation_id: conversation.id,
                 sender_type: "bot",
-                sender_id: conversation.bot_id ?? "",
+                sender_id: conversation.bot_id,
                 content: initial,
                 created_at: Int(Date().timeIntervalSince1970),
                 attachments: nil

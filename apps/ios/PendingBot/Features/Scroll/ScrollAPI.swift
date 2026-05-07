@@ -126,7 +126,13 @@ final class ScrollFeedChannel {
             // for the UI — the row id is what feed state keys off.
             for (_, obs) in observersRef() { obs.delete(action.oldRecord) }
         })
-        await ch.subscribe()
+        do {
+            try await ch.subscribeWithError()
+        } catch {
+            // If the websocket can't come up we still hand back the token —
+            // observers fall back to manual refresh; keeping start() non-
+            // throwing avoids a churn of `try await` at every UI call site.
+        }
         channel = ch
         return token
     }
