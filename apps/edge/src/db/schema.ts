@@ -141,9 +141,11 @@ export type Database = {
       }
       audit_log: {
         Row: {
+          billing_status: string
           cache_read_tokens: number
           cache_write_tokens: number
           conversation_id: string | null
+          cost_credits: number
           cost_usd: number | null
           created_at: string
           error_class: string | null
@@ -164,9 +166,11 @@ export type Database = {
           user_id: string | null
         }
         Insert: {
+          billing_status?: string
           cache_read_tokens?: number
           cache_write_tokens?: number
           conversation_id?: string | null
+          cost_credits?: number
           cost_usd?: number | null
           created_at?: string
           error_class?: string | null
@@ -187,9 +191,11 @@ export type Database = {
           user_id?: string | null
         }
         Update: {
+          billing_status?: string
           cache_read_tokens?: number
           cache_write_tokens?: number
           conversation_id?: string | null
+          cost_credits?: number
           cost_usd?: number | null
           created_at?: string
           error_class?: string | null
@@ -229,6 +235,78 @@ export type Database = {
             columns: ["provider_id"]
             isOneToOne: false
             referencedRelation: "llm_providers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      billing_config: {
+        Row: {
+          key: string
+          updated_at: string
+          value: Json
+        }
+        Insert: {
+          key: string
+          updated_at?: string
+          value: Json
+        }
+        Update: {
+          key?: string
+          updated_at?: string
+          value?: Json
+        }
+        Relationships: []
+      }
+      billing_ledger: {
+        Row: {
+          actor_user_id: string | null
+          created_at: string
+          delta_credits: number
+          entry_type: string
+          id: string
+          metadata: Json
+          reason: string | null
+          redemption_id: string | null
+          topup_id: string | null
+          user_id: string
+        }
+        Insert: {
+          actor_user_id?: string | null
+          created_at?: string
+          delta_credits: number
+          entry_type: string
+          id?: string
+          metadata?: Json
+          reason?: string | null
+          redemption_id?: string | null
+          topup_id?: string | null
+          user_id: string
+        }
+        Update: {
+          actor_user_id?: string | null
+          created_at?: string
+          delta_credits?: number
+          entry_type?: string
+          id?: string
+          metadata?: Json
+          reason?: string | null
+          redemption_id?: string | null
+          topup_id?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "billing_ledger_redemption_id_fkey"
+            columns: ["redemption_id"]
+            isOneToOne: false
+            referencedRelation: "redemption_codes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "billing_ledger_topup_id_fkey"
+            columns: ["topup_id"]
+            isOneToOne: false
+            referencedRelation: "topups"
             referencedColumns: ["id"]
           },
         ]
@@ -873,6 +951,45 @@ export type Database = {
         }
         Relationships: []
       }
+      redemption_codes: {
+        Row: {
+          batch_label: string | null
+          code: string
+          created_at: string
+          created_by: string | null
+          credits: number
+          id: string
+          notes: string | null
+          redeemed_at: string | null
+          redeemed_by: string | null
+          status: string
+        }
+        Insert: {
+          batch_label?: string | null
+          code: string
+          created_at?: string
+          created_by?: string | null
+          credits: number
+          id?: string
+          notes?: string | null
+          redeemed_at?: string | null
+          redeemed_by?: string | null
+          status?: string
+        }
+        Update: {
+          batch_label?: string | null
+          code?: string
+          created_at?: string
+          created_by?: string | null
+          credits?: number
+          id?: string
+          notes?: string | null
+          redeemed_at?: string | null
+          redeemed_by?: string | null
+          status?: string
+        }
+        Relationships: []
+      }
       review_runs: {
         Row: {
           bot_id: string
@@ -1208,6 +1325,54 @@ export type Database = {
         }
         Relationships: []
       }
+      topups: {
+        Row: {
+          channel: string
+          channel_txn_id: string | null
+          created_at: string
+          credits_granted: number
+          id: string
+          is_sandbox: boolean
+          notes: string | null
+          paid_amount_minor: number | null
+          paid_currency: string | null
+          raw_receipt: Json | null
+          status: string
+          user_id: string
+          verified_at: string | null
+        }
+        Insert: {
+          channel: string
+          channel_txn_id?: string | null
+          created_at?: string
+          credits_granted: number
+          id?: string
+          is_sandbox?: boolean
+          notes?: string | null
+          paid_amount_minor?: number | null
+          paid_currency?: string | null
+          raw_receipt?: Json | null
+          status?: string
+          user_id: string
+          verified_at?: string | null
+        }
+        Update: {
+          channel?: string
+          channel_txn_id?: string | null
+          created_at?: string
+          credits_granted?: number
+          id?: string
+          is_sandbox?: boolean
+          notes?: string | null
+          paid_amount_minor?: number | null
+          paid_currency?: string | null
+          raw_receipt?: Json | null
+          status?: string
+          user_id?: string
+          verified_at?: string | null
+        }
+        Relationships: []
+      }
       user_contacts: {
         Row: {
           added_via_handle_id: string | null
@@ -1371,6 +1536,8 @@ export type Database = {
       users: {
         Row: {
           avatar_path: string | null
+          balance_credits: number
+          balance_updated_at: string | null
           bio: string | null
           created_at: string
           custom_fields: Json
@@ -1378,10 +1545,14 @@ export type Database = {
           email: string | null
           id: string
           is_admin: boolean
+          lifetime_spent_credits: number
+          lifetime_topup_credits: number
           updated_at: string
         }
         Insert: {
           avatar_path?: string | null
+          balance_credits?: number
+          balance_updated_at?: string | null
           bio?: string | null
           created_at?: string
           custom_fields?: Json
@@ -1389,10 +1560,14 @@ export type Database = {
           email?: string | null
           id: string
           is_admin?: boolean
+          lifetime_spent_credits?: number
+          lifetime_topup_credits?: number
           updated_at?: string
         }
         Update: {
           avatar_path?: string | null
+          balance_credits?: number
+          balance_updated_at?: string | null
           bio?: string | null
           created_at?: string
           custom_fields?: Json
@@ -1400,6 +1575,8 @@ export type Database = {
           email?: string | null
           id?: string
           is_admin?: boolean
+          lifetime_spent_credits?: number
+          lifetime_topup_credits?: number
           updated_at?: string
         }
         Relationships: []
@@ -1470,6 +1647,34 @@ export type Database = {
     }
     Functions: {
       _delete_account_internal: { Args: { p_uid: string }; Returns: undefined }
+      billing_admin_grant: {
+        Args: { p_credits: number; p_reason?: string; p_user_id: string }
+        Returns: number
+      }
+      billing_config_int: { Args: { p_key: string }; Returns: number }
+      billing_credit: {
+        Args: {
+          p_actor_user_id?: string
+          p_credits: number
+          p_kind: string
+          p_metadata?: Json
+          p_reason?: string
+          p_redemption_id?: string
+          p_topup_id?: string
+          p_user_id: string
+        }
+        Returns: number
+      }
+      billing_debit: {
+        Args: { p_audit_log_id: string; p_credits: number; p_user_id: string }
+        Returns: number
+      }
+      billing_issue_codes: {
+        Args: { p_count: number; p_credits: number; p_label?: string }
+        Returns: string[]
+      }
+      billing_redeem: { Args: { p_code: string }; Returns: Json }
+      billing_signup_bonus: { Args: { p_user_id: string }; Returns: number }
       bootstrap_user_id: {
         Args: { p_email: string; p_meta: Json; p_uid: string }
         Returns: undefined
