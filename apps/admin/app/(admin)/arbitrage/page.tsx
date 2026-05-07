@@ -1,5 +1,3 @@
-import Link from 'next/link';
-import { requireAdmin } from '@/lib/auth';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { fmtDay, fmtMs, fmtNumber, fmtUsd } from '@/lib/format';
 import { SavingsChart, type DailySavings } from './savings-chart';
@@ -83,7 +81,6 @@ export default async function ArbitragePage({
 }: {
   searchParams: Promise<{ start?: string; end?: string }>;
 }) {
-  await requireAdmin();
   const params = await searchParams;
   const fb = defaultRange();
   const start = params.start ?? fb.start;
@@ -225,9 +222,6 @@ export default async function ArbitragePage({
           <h1 className="text-2xl font-bold tracking-tight">Arbitrage</h1>
           <p className="text-sm text-muted-foreground">
             实际花的钱 vs 若全走 OpenRouter 应该花的钱。
-            <Link href="/" className="underline ml-1">
-              ← 返回
-            </Link>
           </p>
         </div>
         <DateRangeForm start={start} end={end} />

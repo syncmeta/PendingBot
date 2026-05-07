@@ -1,11 +1,9 @@
 import Link from 'next/link';
-import { requireAdmin } from '@/lib/auth';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { fmtNumber, fmtTokens } from '@/lib/format';
 import { deleteModel } from './actions';
 
 export default async function ModelsPage() {
-  await requireAdmin();
   const supa = supabaseAdmin();
 
   const { data: models } = await supa
@@ -30,9 +28,6 @@ export default async function ModelsPage() {
           <h1 className="text-2xl font-bold tracking-tight">Models</h1>
           <p className="text-sm text-muted-foreground">
             Canonical 模型注册表。bots.model_id 用 slug 引用。
-            <Link href="/" className="underline ml-1">
-              ← 返回
-            </Link>
           </p>
         </div>
         <Link

@@ -1,6 +1,4 @@
-import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { requireAdmin } from '@/lib/auth';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { ProviderForm } from '../_form';
 import { updateProvider, type ProviderFormState } from '../actions';
@@ -10,7 +8,6 @@ export default async function EditProviderPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requireAdmin();
   const { id } = await params;
 
   const supa = supabaseAdmin();
@@ -26,14 +23,7 @@ export default async function EditProviderPage({
 
   return (
     <main className="container max-w-2xl py-10 space-y-6">
-      <header>
-        <h1 className="text-2xl font-bold tracking-tight">编辑 provider</h1>
-        <p className="text-sm text-muted-foreground">
-          <Link href="/providers" className="underline">
-            ← 返回列表
-          </Link>
-        </p>
-      </header>
+      <h1 className="text-2xl font-bold tracking-tight">编辑 provider</h1>
       <ProviderForm
         action={action}
         initial={row}

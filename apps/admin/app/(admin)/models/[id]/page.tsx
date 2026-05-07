@@ -1,6 +1,5 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { requireAdmin } from '@/lib/auth';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { ModelForm } from '../_form';
 import { updateModel, type ModelFormState } from '../actions';
@@ -10,7 +9,6 @@ export default async function EditModelPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requireAdmin();
   const { id } = await params;
   const supa = supabaseAdmin();
 
@@ -33,15 +31,7 @@ export default async function EditModelPage({
 
   return (
     <main className="container max-w-2xl py-10 space-y-8">
-      <header>
-        <h1 className="text-2xl font-bold tracking-tight">编辑 model</h1>
-        <p className="text-sm text-muted-foreground">
-          <Link href="/models" className="underline">
-            ← 返回列表
-          </Link>
-        </p>
-      </header>
-
+      <h1 className="text-2xl font-bold tracking-tight">编辑 model</h1>
       <ModelForm
         action={action}
         initial={{

@@ -1,11 +1,9 @@
 import Link from 'next/link';
-import { requireAdmin } from '@/lib/auth';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { fmtUsd } from '@/lib/format';
 import { toggleAliasEnabled, deleteAlias } from './actions';
 
 export default async function AliasesPage() {
-  await requireAdmin();
   const supa = supabaseAdmin();
 
   const { data: rows } = await supa
@@ -50,9 +48,6 @@ export default async function AliasesPage() {
           <h1 className="text-2xl font-bold tracking-tight">Model Aliases</h1>
           <p className="text-sm text-muted-foreground">
             (model × provider) 映射表 + 价格 + 路由权重。
-            <Link href="/" className="underline ml-1">
-              ← 返回
-            </Link>
           </p>
         </div>
         <Link

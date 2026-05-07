@@ -1,5 +1,3 @@
-import Link from 'next/link';
-import { requireAdmin } from '@/lib/auth';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 
 // Read view for pendingbot.admin_audit. Every provider/model/alias
@@ -30,7 +28,6 @@ export default async function AdminAuditPage({
 }: {
   searchParams: Promise<SearchParams>;
 }) {
-  await requireAdmin();
   const params = await searchParams;
   const limit = Math.min(MAX_LIMIT, Math.max(1, Number.parseInt(params.limit ?? '', 10) || DEFAULT_LIMIT));
 
@@ -55,9 +52,6 @@ export default async function AdminAuditPage({
           <h1 className="text-2xl font-bold tracking-tight">Admin Audit</h1>
           <p className="text-sm text-muted-foreground">
             管理后台所有写操作的留痕（创建 / 更新 / 启停 / 删除）。
-            <Link href="/" className="underline ml-1">
-              ← 返回
-            </Link>
           </p>
         </div>
         <p className="text-xs text-muted-foreground">显示最近 {limit} 条</p>

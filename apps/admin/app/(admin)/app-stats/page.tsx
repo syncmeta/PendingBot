@@ -1,5 +1,3 @@
-import Link from 'next/link';
-import { requireAdmin } from '@/lib/auth';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { fmtDay, fmtNumber } from '@/lib/format';
 import { DailyAreaChart, type DailyPoint } from './daily-chart';
@@ -30,7 +28,6 @@ function emptyDays(n: number): DailyPoint[] {
 }
 
 export default async function AppStatsPage() {
-  await requireAdmin();
   const supa = supabaseAdmin();
 
   const since30 = isoDayBound(WINDOW_DAYS);
@@ -188,9 +185,6 @@ export default async function AppStatsPage() {
         <h1 className="text-2xl font-bold tracking-tight">App stats</h1>
         <p className="text-sm text-muted-foreground">
           产品级指标，最近 {WINDOW_DAYS} 天。
-          <Link href="/" className="underline ml-1">
-            ← 返回
-          </Link>
         </p>
       </header>
 

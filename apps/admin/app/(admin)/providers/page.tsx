@@ -1,11 +1,9 @@
 import Link from 'next/link';
-import { requireAdmin } from '@/lib/auth';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { fmtNumber } from '@/lib/format';
 import { toggleProviderEnabled, deleteProvider } from './actions';
 
 export default async function ProvidersPage() {
-  await requireAdmin();
   const supa = supabaseAdmin();
 
   const { data: providers } = await supa
@@ -31,9 +29,7 @@ export default async function ProvidersPage() {
       <header className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Providers</h1>
-          <p className="text-sm text-muted-foreground">
-            LLM 网关 / 直连厂商。<Link href="/" className="underline">← 返回</Link>
-          </p>
+          <p className="text-sm text-muted-foreground">LLM 网关 / 直连厂商。</p>
         </div>
         <Link
           href="/providers/new"

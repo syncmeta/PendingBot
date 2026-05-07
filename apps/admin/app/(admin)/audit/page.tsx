@@ -1,5 +1,3 @@
-import Link from 'next/link';
-import { requireAdmin } from '@/lib/auth';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { fmtDay, fmtMs, fmtNumber, fmtTokens, fmtUsd } from '@/lib/format';
 import { CostChart, type DailyPoint } from './cost-chart';
@@ -21,7 +19,6 @@ export default async function AuditPage({
 }: {
   searchParams: Promise<SearchParams>;
 }) {
-  await requireAdmin();
   const params = await searchParams;
   const fallback = defaultRange();
   const start = params.start ?? fallback.start;
@@ -134,10 +131,7 @@ export default async function AuditPage({
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Audit Explorer</h1>
           <p className="text-sm text-muted-foreground">
-            按时间窗口看 token 用量、成本、错误率与 fallback。{' '}
-            <Link href="/" className="underline">
-              ← 返回
-            </Link>
+            按时间窗口看 token 用量、成本、错误率与 fallback。
           </p>
         </div>
         <DateRangeForm start={start} end={end} />

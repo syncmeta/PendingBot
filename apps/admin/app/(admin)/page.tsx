@@ -1,31 +1,14 @@
 import Link from 'next/link';
-import { requireAdmin } from '@/lib/auth';
-import { logoutAction } from './login/actions';
 
-export default async function HomePage() {
-  const admin = await requireAdmin();
-
+export default function HomePage() {
   return (
     <main className="container py-12">
-      <header className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">大绿豆 Admin</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            登录为 <span className="font-medium">{admin.display_name}</span>
-            {admin.email && <> ({admin.email})</>}
-          </p>
-        </div>
-        <form action={logoutAction}>
-          <button
-            type="submit"
-            className="rounded-md border border-input px-3 py-1.5 text-sm hover:bg-accent"
-          >
-            退出
-          </button>
-        </form>
-      </header>
+      <h1 className="text-3xl font-bold tracking-tight">大绿豆 Admin</h1>
+      <p className="mt-2 text-sm text-muted-foreground">
+        LLM 路由 / 审计 / 套利 + 产品侧指标。
+      </p>
 
-      <section className="mt-12 grid gap-4 sm:grid-cols-2">
+      <section className="mt-10 grid gap-4 sm:grid-cols-2">
         <Card
           href="/audit"
           title="Audit Explorer"
@@ -35,6 +18,11 @@ export default async function HomePage() {
           href="/arbitrage"
           title="Arbitrage"
           desc="实际花费 vs 若全走 OpenRouter — 看七折省了多少"
+        />
+        <Card
+          href="/app-stats"
+          title="App Stats"
+          desc="DAU / 留存 / Bot 排行 / 对话与消息分布（产品侧）"
         />
         <Card
           href="/providers"
@@ -51,12 +39,7 @@ export default async function HomePage() {
           title="Aliases"
           desc="(model × provider) 映射 + 价格 + 路由权重"
         />
-        <Card
-          href="/app-stats"
-          title="App Stats"
-          desc="DAU / 留存 / Bot 排行 / 对话与消息分布（产品侧）"
-        />
-        <Card href="/users" title="Users & Quota" desc="用户配额、月度预算、异常" comingSoon />
+        <Card href="/users" title="Users & Quota" desc="用户配额、月度预算、异常用量" />
         <Card href="/admin-audit" title="Admin Audit" desc="管理操作留痕（谁、什么、何时）" />
       </section>
     </main>

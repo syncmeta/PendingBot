@@ -1,5 +1,4 @@
 import Link from 'next/link';
-import { requireAdmin } from '@/lib/auth';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { AliasForm, type ModelOption, type ProviderOption } from '../_form';
 import { createAlias } from '../actions';
@@ -9,7 +8,6 @@ export default async function NewAliasPage({
 }: {
   searchParams: Promise<{ model_id?: string; provider_id?: string }>;
 }) {
-  await requireAdmin();
   const params = await searchParams;
   const supa = supabaseAdmin();
 
@@ -28,14 +26,7 @@ export default async function NewAliasPage({
 
   return (
     <main className="container max-w-2xl py-10 space-y-6">
-      <header>
-        <h1 className="text-2xl font-bold tracking-tight">新增 alias</h1>
-        <p className="text-sm text-muted-foreground">
-          <Link href="/aliases" className="underline">
-            ← 返回列表
-          </Link>
-        </p>
-      </header>
+      <h1 className="text-2xl font-bold tracking-tight">新增 alias</h1>
 
       {(models ?? []).length === 0 || (providers ?? []).length === 0 ? (
         <div className="rounded-lg border bg-card p-6 text-sm">
