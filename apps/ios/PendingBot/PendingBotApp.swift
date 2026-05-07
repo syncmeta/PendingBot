@@ -21,6 +21,17 @@ struct PendingBotApp: App {
                 .preferredColorScheme(.light)
                 .tint(Theme.Palette.accent)
                 .background(Theme.Palette.canvas.ignoresSafeArea())
+                #if targetEnvironment(macCatalyst)
+                // Catalyst inherits CFBundleDisplayName ("大绿豆") into the
+                // window titlebar by default — clear it so the chrome stays
+                // out of the way of the in-app TabHeaderBar.
+                .onAppear {
+                    for case let scene as UIWindowScene in UIApplication.shared.connectedScenes {
+                        scene.title = ""
+                        scene.titlebar?.titleVisibility = .hidden
+                    }
+                }
+                #endif
                 .onChange(of: accountStore.current) { old, new in
                     unreadStore.bind(account: new)
                     // Sign-in transition (nil → account) is the moment to
