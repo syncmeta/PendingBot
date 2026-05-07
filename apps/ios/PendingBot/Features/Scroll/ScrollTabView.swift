@@ -12,6 +12,8 @@ import Supabase
 struct ScrollTabView: View {
     @EnvironmentObject private var store: AccountStore
     @Environment(\.api) private var api
+    @Environment(\.useSidebarLayout) private var sidebarLayout
+    @Environment(\.topTabSelection) private var topTabSelection
 
     @State private var runs: [ScrollRun] = []
     @State private var botNames: [String: String] = [:]
@@ -23,6 +25,33 @@ struct ScrollTabView: View {
     @State private var feedToken: ScrollFeedToken?
 
     var body: some View {
+        Group {
+            if sidebarLayout {
+                NavigationSplitView {
+                    VStack(spacing: 0) {
+                        coreContent
+                        if let topTabSelection {
+                            SidebarTabBar(selection: topTabSelection)
+                        }
+                    }
+                    .sidebarColumnWidth()
+                } detail: {
+                    EmptyDetailHint(text: "选一篇奏折开读", systemImage: "scroll")
+                }
+            } else {
+                coreContent
+                    .toolbar(path.isEmpty ? .visible : .hidden, for: .tabBar)
+            }
+        }
+        .task { await onAppearLifecycle() }
+        .onDisappear { Task { await onDisappearLifecycle() } }
+        .alert("出错", isPresented: .constant(error != nil)) {
+            Button("好") { error = nil }
+        } message: { Text(error ?? "") }
+    }
+
+    @ViewBuilder
+    private var coreContent: some View {
         NavigationStack(path: $path) {
             VStack(spacing: 0) {
                 TabHeaderBar(title: "奏折") {
@@ -75,12 +104,6 @@ struct ScrollTabView: View {
                 .presentationDragIndicator(.visible)
             }
         }
-        .toolbar(path.isEmpty ? .visible : .hidden, for: .tabBar)
-        .task { await onAppearLifecycle() }
-        .onDisappear { Task { await onDisappearLifecycle() } }
-        .alert("出错", isPresented: .constant(error != nil)) {
-            Button("好") { error = nil }
-        } message: { Text(error ?? "") }
     }
 
     // MARK: - Lifecycle
