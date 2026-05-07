@@ -33,6 +33,7 @@
 		536B9BEF9D1541ADE1759645 /* BotVisibilityTag.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B55AE8CBABF2C99EE083746 /* BotVisibilityTag.swift */; };
 		58EDA71C7AEE2D168E2D4949 /* BubbleSplitter.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDE5ADA3C16B8D916CDF48CB /* BubbleSplitter.swift */; };
 		5FF13D682608B0E290B56345 /* UserAvatar.swift in Sources */ = {isa = PBXBuildFile; fileRef = F008290DF52AAFA1B6AB1DE5 /* UserAvatar.swift */; };
+		A1B2C3D4E5F60718ABCD2001 /* MyQRBusinessCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718ABCD2002 /* MyQRBusinessCard.swift */; };
 		61B9F7BF2AE1D63124CD6B5E /* ModelPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CA54E69A2AB50E902FF3E4E /* ModelPicker.swift */; };
 		624542244CE3957C2DAD747E /* MeTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F5A6C6876FF131B3D8AA437 /* MeTabView.swift */; };
 		642FBF31ECF09038C94D6065 /* TabTitle.swift in Sources */ = {isa = PBXBuildFile; fileRef = A15111FAA33922E228085D64 /* TabTitle.swift */; };
@@ -135,6 +136,7 @@
 		E688431D1768A5D1A6F573EA /* WelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeView.swift; sourceTree = "<group>"; };
 		E68B229EDD3BD50361009601 /* MessageTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageTabView.swift; sourceTree = "<group>"; };
 		F008290DF52AAFA1B6AB1DE5 /* UserAvatar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserAvatar.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60718ABCD2002 /* MyQRBusinessCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyQRBusinessCard.swift; sourceTree = "<group>"; };
 		F22DAAC2BF897900CBB54FCD /* APIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIModels.swift; sourceTree = "<group>"; };
 		F932206D62405FD4C1F0143B /* BubbleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BubbleView.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F60718ABCD1001 /* ToolTraceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolTraceView.swift; sourceTree = "<group>"; };
@@ -322,6 +324,7 @@
 				54274B6144493F79AB8DC3D1 /* Haptics.swift */,
 				296C608D9B4B9E5870149CD4 /* MarkdownText.swift */,
 				7CA54E69A2AB50E902FF3E4E /* ModelPicker.swift */,
+				A1B2C3D4E5F60718ABCD2002 /* MyQRBusinessCard.swift */,
 				DCBCA687802479661EFD55C2 /* Platform.swift */,
 				8BDBE35089EC0A16CBE8D181 /* QRScannerView.swift */,
 				24E4E56DDBD71AB05278A385 /* ServerImage.swift */,
@@ -489,6 +492,7 @@
 				4652FC81866F99C1C6AE6A11 /* TypingDots.swift in Sources */,
 				DE00C4B1C0C0AAB4F6B05B01 /* UnreadStore.swift in Sources */,
 				5FF13D682608B0E290B56345 /* UserAvatar.swift in Sources */,
+				A1B2C3D4E5F60718ABCD2001 /* MyQRBusinessCard.swift in Sources */,
 				EAE5D86E4ECF3FDA0C9C43D3 /* WelcomeView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
