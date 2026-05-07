@@ -6,7 +6,7 @@ import type {
 } from 'openai/resources/chat/completions';
 import type { Env } from '../types';
 import { serviceClient } from './supabase';
-import { openrouterClient } from '../llm/client';
+import { recordAudit, resolveRoute, usageFromCompletion } from '../llm/router';
 import { buildMessages, type BuildMessagesInput } from '../llm/builder';
 import { getBotMemory } from './memory';
 import { braveSearch, firecrawlScrape } from './web';
@@ -248,7 +248,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   let totalContent = '';
   let emittedLen = 0;
   let bubblesInserted = 0;
-  const usage: { input: number; output: number; total: number } = { input: 0, output: 0, total: 0 };
+  const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   let generationId: string | undefined;
 
   const emitBubble = async (text: string) => {
@@ -276,7 +276,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     });
   };
 
-  const openai = openrouterClient(env);
+  const route = await resolveRoute(supa, env, { modelSlug: bot.model_id });
   emit('typing', { state: 'thinking' });
 
   // Compose this turn's tool list. Always-on tools come from CHAT_TOOLS;
@@ -290,9 +290,9 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       if (ac.signal.aborted) break;
 
-      const stream = await openai.chat.completions.create(
+      const stream = await route.client.chat.completions.create(
         {
-          model: bot.model_id,
+          model: route.modelToCall,
           messages,
           tools: turnTools,
           tool_choice: 'auto',
@@ -361,9 +361,11 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
         }
 
         if (chunk.usage) {
-          usage.input += chunk.usage.prompt_tokens ?? 0;
-          usage.output += chunk.usage.completion_tokens ?? 0;
-          usage.total += chunk.usage.total_tokens ?? 0;
+          const u = usageFromCompletion(chunk.usage);
+          usage.input += u.inputTokens ?? 0;
+          usage.output += u.outputTokens ?? 0;
+          usage.cacheRead += u.cacheReadTokens ?? 0;
+          usage.cacheWrite += u.cacheWriteTokens ?? 0;
         }
       }
 
@@ -425,16 +427,17 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       emit(finalStatus, { bubble_group_id: bubbleGroupId, total_content: totalContent });
     }
 
-    await supa.from('audit_log').insert({
-      user_id: userId,
-      conversation_id: conversationId,
-      task_type: 'message_reply',
-      model_id: bot.model_id,
-      input_tokens: usage.input,
-      output_tokens: usage.output,
-      total_tokens: usage.total,
-      generation_id: generationId,
-      latency_ms: Date.now() - startedAt,
+    await recordAudit(supa, route, {
+      userId,
+      conversationId,
+      taskType: 'message_reply',
+      startedAt,
+      generationId,
+      status: 'success',
+      inputTokens: usage.input,
+      outputTokens: usage.output,
+      cacheReadTokens: usage.cacheRead,
+      cacheWriteTokens: usage.cacheWrite,
       metadata: {
         bot_id: bot.id,
         status: finalStatus,
@@ -470,6 +473,29 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
         })();
     console.error('[bot-reply] runChatTurn failed:', err);
     emit(status, { message });
+
+    // Audit the failed turn so error rate / fallback metrics in the
+    // panel see this. Whatever tokens the stream had time to surface
+    // before the throw are still useful for cost accounting.
+    try {
+      await recordAudit(supa, route, {
+        userId,
+        conversationId,
+        taskType: 'message_reply',
+        startedAt,
+        generationId,
+        status: aborted ? 'success' : 'error',
+        errorClass: aborted ? null : (err instanceof Error ? err.name : 'unknown'),
+        inputTokens: usage.input,
+        outputTokens: usage.output,
+        cacheReadTokens: usage.cacheRead,
+        cacheWriteTokens: usage.cacheWrite,
+        metadata: { bot_id: bot.id, status, message: message.slice(0, 200) },
+      });
+    } catch (auditErr) {
+      console.warn('[bot-reply] audit on error failed:', auditErr);
+    }
+
     return { finalStatus: status, totalContent, bubblesInserted, droppedLookbackIds: [] };
   } finally {
     signal.removeEventListener('abort', onCallerAbort);
