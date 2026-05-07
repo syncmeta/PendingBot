@@ -1121,6 +1121,57 @@ export type Database = {
           },
         ]
       }
+      task_routing_rules: {
+        Row: {
+          created_at: string
+          enabled: boolean
+          id: string
+          match_priority: number
+          notes: string | null
+          override_model_id: string | null
+          prefer_provider_id: string | null
+          task_type: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          match_priority?: number
+          notes?: string | null
+          override_model_id?: string | null
+          prefer_provider_id?: string | null
+          task_type: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          match_priority?: number
+          notes?: string | null
+          override_model_id?: string | null
+          prefer_provider_id?: string | null
+          task_type?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "task_routing_rules_override_model_fkey"
+            columns: ["override_model_id"]
+            isOneToOne: false
+            referencedRelation: "llm_models"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_routing_rules_prefer_provider_fkey"
+            columns: ["prefer_provider_id"]
+            isOneToOne: false
+            referencedRelation: "llm_providers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tools: {
         Row: {
           config_json: Json | null
