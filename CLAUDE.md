@@ -94,6 +94,8 @@ Harness blocks Claude from pushing `main`. After merging, tell the user to run `
 
 Don't auto-deploy on merge — deploys are deliberate and user-initiated.
 
+Full deploy recipe (Board, Edge secrets, DB push, seed apply, post-merge checklist, gotchas) lives in `docs/deploy.md` — read that file when the session is actually about deploying, not on every session.
+
 ## First action on every session that's about to change code
 
 Before touching files, check where you are:
