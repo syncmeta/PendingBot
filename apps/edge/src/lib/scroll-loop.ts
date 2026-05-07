@@ -53,7 +53,7 @@ export const TOOLS: ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'web_search',
-      description: '用配置好的搜索服务商搜索 query，返回若干结果（标题/URL/摘要）。',
+      description: '用配置好的搜索服务商搜索 query，返回若干结果（标题/URL/摘要）。**搜索结果只在本轮可见——下一轮会被精简成占位符，值得记的请立刻用 take_note 记下，否则就忘了。**',
       parameters: {
         type: 'object',
         properties: { query: { type: 'string' } },
@@ -65,7 +65,7 @@ export const TOOLS: ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'fetch_url',
-      description: '用配置好的爬虫服务商抓取一个网页的正文。',
+      description: '用配置好的爬虫服务商抓取一个网页的正文。**抓回的页面正文只在本轮可见——下一轮会被精简成占位符，值得记的请立刻用 take_note 记下，否则就忘了。**',
       parameters: {
         type: 'object',
         properties: { url: { type: 'string' } },
@@ -77,7 +77,7 @@ export const TOOLS: ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'take_note',
-      description: '记录一条对朋友真正有冲击力的笔记。平庸常识不要记。',
+      description: '记录一条对朋友真正有冲击力的笔记。平庸常识不要记。**这是把短期信息搬到长期记忆的唯一方式：本轮的搜索/抓取结果下一轮就被精简了，note 不会丢。**',
       parameters: {
         type: 'object',
         properties: {
@@ -408,25 +408,29 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
     const assistantContent = msg.content ?? '';
     if (assistantContent.trim()) lastAssistantText = assistantContent;
 
-    // DeepSeek thinking models (deepseek-reasoner / deepseek-v4-flash) put
-    // their chain-of-thought on `reasoning_content` and require it to be
-    // echoed back on subsequent turns or the API errors with
-    // "The reasoning_content in the thinking mode must be passed back".
-    // Other providers don't return this field, so the conditional copy is
-    // a no-op for them.
+    // DeepSeek thinking models (deepseek-reasoner / deepseek-v4-flash)
+    // put chain-of-thought on `reasoning_content`. We display it in
+    // the panel via newMessages but DO NOT echo it back to the API
+    // (saves tokens, especially over many turns). Trade-off: those
+    // models will reject subsequent turns with "must be passed back"
+    // — switch to a non-thinking model if you hit that.
     const reasoningContent = (msg as { reasoning_content?: string }).reasoning_content;
 
-    const assistantMsg: ChatCompletionMessageParam & { reasoning_content?: string } = {
+    const assistantForApi: ChatCompletionMessageParam = {
       role: 'assistant',
       content: assistantContent,
       ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
     };
-    if (reasoningContent) assistantMsg.reasoning_content = reasoningContent;
+    const assistantForDisplay: ChatCompletionMessageParam & { reasoning_content?: string } =
+      reasoningContent ? { ...assistantForApi, reasoning_content: reasoningContent } : assistantForApi;
 
-    const newMessages: ChatCompletionMessageParam[] = [assistantMsg];
+    // Two arrays diverge from here:
+    //  - newMessages → panel + collectedTurns (immutable record)
+    //  - messages    → next API call (mutated each turn for prune)
+    const newMessages: ChatCompletionMessageParam[] = [assistantForDisplay];
 
     if (toolCalls.length === 0) {
-      messages.push(...newMessages);
+      messages.push(assistantForApi);
       finalArticle = assistantContent.trim();
       reason = 'final';
       if (onTurn) {
@@ -469,7 +473,36 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
       });
     }
 
-    messages.push(...newMessages);
+    // Prune prior tool messages BEFORE pushing this turn's. We replace
+    // each tool slot with a small placeholder object so the API still
+    // sees a valid tool reply for every tool_call_id but past results
+    // (often huge fetch_url bodies) don't keep ballooning input
+    // tokens. Importantly we mutate the messages[] slot only; the
+    // previous-turn newMessages we already streamed to the panel is
+    // a separate array and untouched, so the trace + saved run JSON
+    // still preserve the original content for inspection.
+    const PRUNED_TOOL = '(已精简——本轮的搜索/抓取结果只在当时可见。如果当时没用 take_note 记下，就丢了。)';
+    for (let i = 0; i < messages.length; i++) {
+      const m = messages[i];
+      if (m.role === 'tool' && m.content !== PRUNED_TOOL) {
+        messages[i] = {
+          role: 'tool',
+          tool_call_id: (m as { tool_call_id: string }).tool_call_id,
+          content: PRUNED_TOOL,
+        };
+      }
+    }
+
+    // Push this turn's API-bound view: stripped assistant + fresh
+    // tool replies (these will get pruned next turn).
+    messages.push(assistantForApi);
+    for (let i = 0; i < toolCalls.length; i++) {
+      messages.push({
+        role: 'tool',
+        tool_call_id: toolCalls[i].id,
+        content: toolReplies[i],
+      });
+    }
     progress.phase = progress.notes.length > 0 ? 'compose' : 'research';
 
     // Collaborator chimes in. Skipped on decide_write_article turns so
