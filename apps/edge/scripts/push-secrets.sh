@@ -4,15 +4,12 @@
 # you point at. Nothing is logged to stdout — values pipe straight into
 # `wrangler secret put`.
 #
-# Usage:  ./scripts/push-secrets.sh production
-#         ./scripts/push-secrets.sh staging
+# Usage:  ./scripts/push-secrets.sh
+# Pre-launch we only have one deployed env (`production` in wrangler.jsonc);
+# add an env arg back here when a second env is introduced.
 set -euo pipefail
 
-ENV="${1:-production}"
-case "$ENV" in
-  production|staging) ;;
-  *) echo "usage: $0 production|staging" >&2; exit 1 ;;
-esac
+ENV="production"
 
 cd "$(dirname "$0")/.."   # apps/edge
 

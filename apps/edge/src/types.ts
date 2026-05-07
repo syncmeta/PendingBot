@@ -8,7 +8,7 @@ export interface Env {
   MEMORY: KVNamespace;
 
   // ── Vars (per env in wrangler.jsonc) ───────────────────────────
-  ENVIRONMENT: 'dev' | 'staging' | 'production';
+  ENVIRONMENT: 'dev' | 'production';
   SUPABASE_URL: string;
   ALLOWED_ORIGIN: string;
 

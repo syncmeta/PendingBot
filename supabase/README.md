@@ -1,6 +1,6 @@
 # Supabase
 
-Supabase project for PendingBot. Local dev mirrors what the staging / prod hosted projects look like. Schema lives in `migrations/0001_init.sql` (a single consolidated baseline); seed data in `seeds/`.
+Supabase project for PendingBot. Local dev mirrors the one deployed Supabase project (we'll split into staging/prod after launch — see CLAUDE.md). Schema lives in `migrations/0001_init.sql` (a single consolidated baseline); seed data in `seeds/`.
 
 ## Quick start
 
@@ -16,9 +16,8 @@ supabase db reset
 
 # 4. Studio: http://localhost:54323
 
-# 5. Link to remote (one of these per env)
-supabase link --project-ref <staging-id>     # for staging
-supabase link --project-ref <prod-id>        # for prod
+# 5. Link to the remote project (single deployed env pre-launch)
+supabase link --project-ref <project-id>
 supabase db push                              # push migrations to linked remote
 ```
 
