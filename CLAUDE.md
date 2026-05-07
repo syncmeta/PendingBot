@@ -89,72 +89,12 @@ Harness blocks Claude from pushing `main`. After merging, tell the user to run `
 
 ## Deploys
 
-Three deployable surfaces. Each one is operator-initiated — never auto-deploy on merge.
+- Edge: `bun --filter='@pendingbot/edge' run deploy` — single deployed env (`env.production` in `wrangler.jsonc`); local iteration uses `wrangler dev`. The `--filter='...'` form (with `=`) matters — bun ≥ 1.3 silently mis-parses `--filter @pendingbot/edge` (space-separated) as no-match.
+- iOS: TestFlight via the configured ASC API key (see user memory)
 
-### Edge worker (`apps/edge/`)
+Don't auto-deploy on merge — deploys are deliberate and user-initiated.
 
-Cloudflare Workers, lives at `api.pendingname.com` via custom domain. Single deployed env (`env.production` in `wrangler.jsonc`); local iteration uses `wrangler dev`.
-
-```sh
-bun --filter='@pendingbot/edge' run deploy
-```
-
-The `--filter='...'` form (with `=`) matters — bun ≥ 1.3 silently mis-parses `--filter @pendingbot/edge` (space-separated) as no-match.
-
-**Secrets** are bound per-env via `wrangler secret put`. **Always pass `--env production`** — without that flag the secret goes to a default/dev env the deployed prod worker can't see, and `resolveRoute()` throws `NoRouteError` because the env var lookup misses. Example:
-
-```sh
-cd apps/edge
-bunx wrangler secret put WORLDROUTER_API_KEY --env production
-```
-
-`bunx wrangler secret list --env production` shows what's currently bound on the deployed worker.
-
-### iOS (`apps/ios/`)
-
-TestFlight via the configured ASC API key (see user memory). Driven by Xcode's archive flow + `xcodebuild -exportOptionsPlist`. Out of scope for most agent sessions.
-
-### Board (`apps/board/`) — internal admin UI
-
-Next.js 15. **Currently NOT deployed** — runs locally only. Pre-launch single-user ops doesn't need a hosted instance; one `bun run dev:board` from the worktree is the entire UI surface.
-
-```sh
-bun run dev:board
-# → http://localhost:4000
-```
-
-To point at prod data instead of local Supabase, populate `apps/board/.env.local` with prod URL + keys (gitignored, never commits):
-
-```sh
-supabase projects api-keys --project-ref <prod-ref>
-# pipe anon + service_role into .env.local — see board/.env.example for shape
-```
-
-When eventually deploying, the natural target is **Cloudflare Pages with `@opennextjs/cloudflare`** (matches the existing CF stack). Domain not decided. Steps when picked: `bun add -d @opennextjs/cloudflare`, add `wrangler.jsonc` + `open-next.config.ts` under `apps/board/`, build script invokes `opennextjs-cloudflare build`, then `deploy`. CF Pages env vars need both Supabase keys + a real (non-localhost) `NEXT_PUBLIC_SUPABASE_URL`.
-
-### After-merge checklist (when feat changes the deployed surfaces)
-
-- Edge code changed (`apps/edge/src/**`, `apps/edge/wrangler.jsonc`, `apps/edge/src/types.ts`) → run edge deploy
-- DB schema changed (new `supabase/migrations/00NN_*.sql`) → `supabase db push --linked` against prod, then regen `apps/edge/src/db/schema.ts` and re-typecheck
-- Board source changed (`apps/board/**`) → if local dev server is running, hot-reload picks it up; if Board ever gets deployed, redeploy
-- Bot data only (changes via direct prod SQL like flipping `model_id` / `is_admin`) → no deploy; ephemeral state, won't survive a `supabase db reset` if anyone ever runs that on prod (we don't)
-
-### Supabase CLI gotcha across worktrees
-
-`supabase link` writes `supabase/.temp/project-ref` + `linked-project.json` in the cwd's worktree. **Other worktrees don't inherit the link.** When operating from a feat worktree, copy these files from the main worktree's `supabase/.temp/` if `supabase db query --linked` complains "Cannot find project ref":
-
-```sh
-cp /path/to/main/supabase/.temp/{project-ref,linked-project.json,pooler-url,*-version} \
-   ./supabase/.temp/
-```
-
-### LLM seed (`apps/board/scripts/seed-llm-dev.sql`)
-
-Not a migration — applies the canonical model + alias catalog separately (because pricing changes more often than schema). Apply to local with `docker exec -i supabase_db_pendingbot psql -U postgres -d postgres < apps/board/scripts/seed-llm-dev.sql`; apply to prod with `supabase db query --linked -f apps/board/scripts/seed-llm-dev.sql`. Idempotent (`ON CONFLICT DO NOTHING`); rerun freely.
-
-### Tearing down a Board worktree dev session
-
-If `bun run dev:board` left a process holding port 4000 (e.g. ssh died), `lsof -i :4000` finds it; `kill <pid>` frees the port. Symptom: next `bun run dev:board` errors `EADDRINUSE`.
+Full deploy recipe (Board, Edge secrets, DB push, seed apply, post-merge checklist, gotchas) lives in `docs/deploy.md` — read that file when the session is actually about deploying, not on every session.
 
 ## First action on every session that's about to change code
 
