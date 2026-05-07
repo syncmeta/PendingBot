@@ -8,7 +8,7 @@ export default function LoginPage() {
 
   return (
     <main className="container max-w-sm py-24">
-      <h1 className="text-2xl font-bold tracking-tight">大绿豆 Admin 登录</h1>
+      <h1 className="text-2xl font-bold tracking-tight">Board</h1>
       <p className="mt-1 text-sm text-muted-foreground">
         用 Supabase 账号登录。账号需要 <code>users.is_admin = true</code>。
       </p>
