@@ -7,13 +7,55 @@ export type Json =
   | Json[]
 
 export type Database = {
-  // Allows to automatically instantiate createClient with right options
-  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
-  __InternalSupabase: {
-    PostgrestVersion: "14.5"
-  }
   pendingbot: {
     Tables: {
+      admin_audit: {
+        Row: {
+          action: string
+          actor_id: string | null
+          after: Json | null
+          before: Json | null
+          created_at: string
+          id: string
+          ip: string | null
+          target_id: string | null
+          target_kind: string
+          user_agent: string | null
+        }
+        Insert: {
+          action: string
+          actor_id?: string | null
+          after?: Json | null
+          before?: Json | null
+          created_at?: string
+          id?: string
+          ip?: string | null
+          target_id?: string | null
+          target_kind: string
+          user_agent?: string | null
+        }
+        Update: {
+          action?: string
+          actor_id?: string | null
+          after?: Json | null
+          before?: Json | null
+          created_at?: string
+          id?: string
+          ip?: string | null
+          target_id?: string | null
+          target_kind?: string
+          user_agent?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "admin_audit_actor_id_fkey"
+            columns: ["actor_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ai_picks: {
         Row: {
           created_at: string
@@ -104,13 +146,18 @@ export type Database = {
           conversation_id: string | null
           cost_usd: number | null
           created_at: string
+          error_class: string | null
           generation_id: string | null
           id: string
           input_tokens: number
           latency_ms: number | null
           metadata: Json
+          model_alias_id: string | null
           model_id: string
           output_tokens: number
+          provider_id: string | null
+          route_trace: Json | null
+          status: string | null
           tag: string | null
           task_type: string
           total_tokens: number
@@ -122,13 +169,18 @@ export type Database = {
           conversation_id?: string | null
           cost_usd?: number | null
           created_at?: string
+          error_class?: string | null
           generation_id?: string | null
           id?: string
           input_tokens?: number
           latency_ms?: number | null
           metadata?: Json
+          model_alias_id?: string | null
           model_id: string
           output_tokens?: number
+          provider_id?: string | null
+          route_trace?: Json | null
+          status?: string | null
           tag?: string | null
           task_type: string
           total_tokens?: number
@@ -140,13 +192,18 @@ export type Database = {
           conversation_id?: string | null
           cost_usd?: number | null
           created_at?: string
+          error_class?: string | null
           generation_id?: string | null
           id?: string
           input_tokens?: number
           latency_ms?: number | null
           metadata?: Json
+          model_alias_id?: string | null
           model_id?: string
           output_tokens?: number
+          provider_id?: string | null
+          route_trace?: Json | null
+          status?: string | null
           tag?: string | null
           task_type?: string
           total_tokens?: number
@@ -158,6 +215,20 @@ export type Database = {
             columns: ["conversation_id"]
             isOneToOne: false
             referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "audit_log_model_alias_id_fkey"
+            columns: ["model_alias_id"]
+            isOneToOne: false
+            referencedRelation: "llm_model_aliases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "audit_log_provider_id_fkey"
+            columns: ["provider_id"]
+            isOneToOne: false
+            referencedRelation: "llm_providers"
             referencedColumns: ["id"]
           },
         ]
@@ -496,6 +567,165 @@ export type Database = {
           metadata?: Json
           used_at?: string | null
           used_by?: string | null
+        }
+        Relationships: []
+      }
+      llm_model_aliases: {
+        Row: {
+          cache_write_price: number | null
+          cached_input_price: number | null
+          config: Json
+          created_at: string
+          currency: string
+          enabled: boolean
+          id: string
+          input_price: number
+          model_id: string
+          notes: string | null
+          output_price: number
+          provider_id: string
+          provider_model_id: string
+          updated_at: string
+          weight: number
+        }
+        Insert: {
+          cache_write_price?: number | null
+          cached_input_price?: number | null
+          config?: Json
+          created_at?: string
+          currency?: string
+          enabled?: boolean
+          id?: string
+          input_price: number
+          model_id: string
+          notes?: string | null
+          output_price: number
+          provider_id: string
+          provider_model_id: string
+          updated_at?: string
+          weight?: number
+        }
+        Update: {
+          cache_write_price?: number | null
+          cached_input_price?: number | null
+          config?: Json
+          created_at?: string
+          currency?: string
+          enabled?: boolean
+          id?: string
+          input_price?: number
+          model_id?: string
+          notes?: string | null
+          output_price?: number
+          provider_id?: string
+          provider_model_id?: string
+          updated_at?: string
+          weight?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "llm_model_aliases_model_id_fkey"
+            columns: ["model_id"]
+            isOneToOne: false
+            referencedRelation: "llm_models"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "llm_model_aliases_provider_id_fkey"
+            columns: ["provider_id"]
+            isOneToOne: false
+            referencedRelation: "llm_providers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      llm_models: {
+        Row: {
+          capabilities: Json
+          context_window: number | null
+          created_at: string
+          deprecated_at: string | null
+          display_name: string
+          enabled: boolean
+          family: string | null
+          id: string
+          max_output_tokens: number | null
+          notes: string | null
+          slug: string
+          updated_at: string
+        }
+        Insert: {
+          capabilities?: Json
+          context_window?: number | null
+          created_at?: string
+          deprecated_at?: string | null
+          display_name: string
+          enabled?: boolean
+          family?: string | null
+          id?: string
+          max_output_tokens?: number | null
+          notes?: string | null
+          slug: string
+          updated_at?: string
+        }
+        Update: {
+          capabilities?: Json
+          context_window?: number | null
+          created_at?: string
+          deprecated_at?: string | null
+          display_name?: string
+          enabled?: boolean
+          family?: string | null
+          id?: string
+          max_output_tokens?: number | null
+          notes?: string | null
+          slug?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      llm_providers: {
+        Row: {
+          auth_type: string
+          base_url: string
+          config: Json
+          created_at: string
+          display_name: string
+          enabled: boolean
+          id: string
+          notes: string | null
+          priority: number
+          secret_ref: string
+          slug: string
+          updated_at: string
+        }
+        Insert: {
+          auth_type?: string
+          base_url: string
+          config?: Json
+          created_at?: string
+          display_name: string
+          enabled?: boolean
+          id?: string
+          notes?: string | null
+          priority?: number
+          secret_ref: string
+          slug: string
+          updated_at?: string
+        }
+        Update: {
+          auth_type?: string
+          base_url?: string
+          config?: Json
+          created_at?: string
+          display_name?: string
+          enabled?: boolean
+          id?: string
+          notes?: string | null
+          priority?: number
+          secret_ref?: string
+          slug?: string
+          updated_at?: string
         }
         Relationships: []
       }
@@ -1125,7 +1355,67 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      v_audit_daily: {
+        Row: {
+          avg_latency_ms: number | null
+          cache_read_tokens: number | null
+          cache_write_tokens: number | null
+          cost_usd: number | null
+          day: string | null
+          error_count: number | null
+          fallback_count: number | null
+          input_tokens: number | null
+          model_alias_id: string | null
+          model_id: string | null
+          output_tokens: number | null
+          provider_id: string | null
+          request_count: number | null
+          task_type: string | null
+          user_id: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "audit_log_model_alias_id_fkey"
+            columns: ["model_alias_id"]
+            isOneToOne: false
+            referencedRelation: "llm_model_aliases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "audit_log_provider_id_fkey"
+            columns: ["provider_id"]
+            isOneToOne: false
+            referencedRelation: "llm_providers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      v_audit_monthly: {
+        Row: {
+          avg_latency_ms: number | null
+          cache_read_tokens: number | null
+          cache_write_tokens: number | null
+          cost_usd: number | null
+          error_count: number | null
+          input_tokens: number | null
+          model_id: string | null
+          month: string | null
+          output_tokens: number | null
+          provider_id: string | null
+          request_count: number | null
+          task_type: string | null
+          user_id: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "audit_log_provider_id_fkey"
+            columns: ["provider_id"]
+            isOneToOne: false
+            referencedRelation: "llm_providers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Functions: {
       _delete_account_internal: { Args: { p_uid: string }; Returns: undefined }
@@ -1300,3 +1590,4 @@ export const Constants = {
     Enums: {},
   },
 } as const
+
