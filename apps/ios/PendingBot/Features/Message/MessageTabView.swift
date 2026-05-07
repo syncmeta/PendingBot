@@ -126,21 +126,45 @@ struct MessageTabView: View {
 
     private var sidebarBody: some View {
         VStack(spacing: 0) {
-            TabHeaderBar(title: "消息") {
-                Menu {
-                    Button { addingFriend = true; Haptics.tap() } label: {
-                        Label("加好友", systemImage: "person.badge.plus")
+            TabHeaderBar(
+                title: "消息",
+                leading: {
+                    Menu {
+                        if recentBots.isEmpty {
+                            Text("还没有最近聊过的机器人")
+                        } else {
+                            Section("最近聊过") {
+                                ForEach(recentBots) { bot in
+                                    Button {
+                                        Haptics.tap()
+                                        Task { await createAndNavigate(with: bot) }
+                                    } label: {
+                                        Label(bot.display_name, systemImage: "bubble.left")
+                                    }
+                                }
+                            }
+                        }
+                    } label: {
+                        CirclePlusButton()
                     }
-                    Button { creatingGroup = true; Haptics.tap() } label: {
-                        Label("拉群", systemImage: "person.3")
+                },
+                trailing: {
+                    Menu {
+                        Button { addingFriend = true; Haptics.tap() } label: {
+                            Label("加好友", systemImage: "person.badge.plus")
+                        }
+                        Button { creatingGroup = true; Haptics.tap() } label: {
+                            Label("拉群", systemImage: "person.3")
+                        }
+                        Button { scanning = true; Haptics.tap() } label: {
+                            Label("扫码", systemImage: "qrcode.viewfinder")
+                        }
+                    } label: {
+                        CircleEllipsisButton()
                     }
-                    Button { scanning = true; Haptics.tap() } label: {
-                        Label("扫码", systemImage: "qrcode.viewfinder")
-                    }
-                } label: {
-                    CirclePlusButton()
                 }
-            }
+            )
+            SwipeHintRow()
             Group {
                 if loading && conversations.isEmpty {
                     ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -150,20 +174,23 @@ struct MessageTabView: View {
                     ScrollView {
                         LazyVStack(spacing: 8) {
                             ForEach(conversations) { conv in
-                                SwipeRevealRow(actions: [
-                                    SwipeRevealAction(
-                                        systemImage: "envelope.badge",
-                                        tint: Color(red: 0.42, green: 0.62, blue: 0.92)
-                                    ) {
-                                        unread.markUnread(conv.id)
-                                    },
-                                    SwipeRevealAction(
-                                        systemImage: "trash",
-                                        tint: Color(red: 0.93, green: 0.50, blue: 0.50)
-                                    ) {
-                                        Task { await delete(conv) }
-                                    },
-                                ]) {
+                                SwipeRevealRow(
+                                    actions: [
+                                        SwipeRevealAction(
+                                            systemImage: "envelope.badge",
+                                            tint: Color(red: 0.42, green: 0.62, blue: 0.92)
+                                        ) {
+                                            unread.markUnread(conv.id)
+                                        },
+                                        SwipeRevealAction(
+                                            systemImage: "trash",
+                                            tint: Color(red: 0.93, green: 0.50, blue: 0.50)
+                                        ) {
+                                            Task { await delete(conv) }
+                                        },
+                                    ],
+                                    leadingTrigger: leadingTrigger(for: conv)
+                                ) {
                                     rowTap(conv)
                                 }
                             }
@@ -179,6 +206,41 @@ struct MessageTabView: View {
                 }
             }
         }
+    }
+
+    /// Right-swipe-to-create-new — only available on bot conversations
+    /// where we know the bot the user wanted to chat with again. Group
+    /// and human chats fall through (no useful "default" target).
+    private func leadingTrigger(for conv: Conversation) -> SwipeLeadingTrigger? {
+        guard conv.conversation_type == "user_bot",
+              let bot = bot(for: conv) else { return nil }
+        return SwipeLeadingTrigger(
+            systemImage: "plus",
+            label: "继续聊",
+            armedLabel: "松手新建",
+            tint: Theme.Palette.accent
+        ) {
+            Task { await createAndNavigate(with: bot) }
+        }
+    }
+
+    /// Last-N unique bots from the conversations list, newest first.
+    /// Drives the leading "+" menu in the header so the user can quickly
+    /// start a fresh chat with someone they were just talking to.
+    private var recentBots: [Bot] {
+        var seen = Set<String>()
+        var result: [Bot] = []
+        for conv in conversations {
+            guard conv.conversation_type == "user_bot",
+                  !conv.bot_id.isEmpty,
+                  !seen.contains(conv.bot_id) else { continue }
+            if let b = bot(for: conv) {
+                seen.insert(conv.bot_id)
+                result.append(b)
+                if result.count >= 5 { break }
+            }
+        }
+        return result
     }
 
     @ViewBuilder
@@ -381,8 +443,21 @@ struct MessageTabView: View {
         }
     }
 
-    private func createConversation(with bot: Bot) async {
-        guard let userId = AccountStore.shared.current?.id else { return }
+    /// Create a fresh conversation with `bot`, push the user into it, and
+    /// fire a confident haptic. Wraps `createConversation` so both the
+    /// header menu and the right-swipe gesture share identical behavior.
+    private func createAndNavigate(with bot: Bot) async {
+        guard let conv = await createConversation(with: bot) else { return }
+        if sidebarLayout {
+            selected = conv
+        } else {
+            path.append(conv)
+        }
+    }
+
+    @discardableResult
+    private func createConversation(with bot: Bot) async -> Conversation? {
+        guard let userId = AccountStore.shared.current?.id else { return nil }
         do {
             // Schema requires user as participant for RLS to grant subsequent
             // reads of the conversation row, so we INSERT both the conv and
@@ -425,7 +500,7 @@ struct MessageTabView: View {
                 .execute()
 
             // Optimistic local insert; next pull-to-refresh re-reads canonically.
-            conversations.insert(Conversation(
+            let conv = Conversation(
                 id: inserted.id,
                 bot_id: bot.id,
                 user_id: userId,
@@ -438,11 +513,14 @@ struct MessageTabView: View {
                 last_message_content: nil,
                 last_message_sender_type: nil,
                 model_override: nil
-            ), at: 0)
+            )
+            conversations.insert(conv, at: 0)
             Haptics.tap()
+            return conv
         } catch {
             self.error = error.localizedDescription
             Haptics.error()
+            return nil
         }
     }
 
@@ -576,6 +654,33 @@ private struct ConversationListRow: View {
                 )
         )
         .contentShape(RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous))
+    }
+}
+
+// MARK: - Swipe-gesture hint
+
+/// One-liner under the messages header that calls out the two new
+/// swipe gestures on every row — right-pull-to-create, left-pull
+/// for unread/delete. Uses muted ink so it sits below the header
+/// without competing with the title.
+private struct SwipeHintRow: View {
+    var body: some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.right").font(.system(size: 10, weight: .semibold))
+                Text("快速新建")
+            }
+            Text("·").foregroundStyle(Theme.Palette.hairline)
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.left").font(.system(size: 10, weight: .semibold))
+                Text("标未读 / 删除")
+            }
+        }
+        .font(Theme.Fonts.caption)
+        .foregroundStyle(Theme.Palette.inkMuted)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, Theme.Metrics.gutter)
+        .padding(.bottom, 6)
     }
 }
 
