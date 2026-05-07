@@ -89,7 +89,7 @@ Harness blocks Claude from pushing `main`. After merging, tell the user to run `
 
 ## Deploys
 
-- Edge: `bun --filter='@pendingbot/edge' run deploy` (or `deploy:staging` / `deploy:production` per `apps/edge/package.json`). The `--filter='...'` form (with `=`) matters — bun ≥ 1.3 silently mis-parses `--filter @pendingbot/edge` (space-separated) as no-match.
+- Edge: `bun --filter='@pendingbot/edge' run deploy` — single deployed env (`env.production` in `wrangler.jsonc`); local iteration uses `wrangler dev`. The `--filter='...'` form (with `=`) matters — bun ≥ 1.3 silently mis-parses `--filter @pendingbot/edge` (space-separated) as no-match.
 - iOS: TestFlight via the configured ASC API key (see user memory)
 
 Don't auto-deploy on merge — deploys are deliberate and user-initiated.
