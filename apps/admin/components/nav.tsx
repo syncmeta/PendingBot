@@ -11,6 +11,7 @@ const LINKS: { href: string; label: string }[] = [
   { href: '/providers', label: 'Providers' },
   { href: '/models', label: 'Models' },
   { href: '/aliases', label: 'Aliases' },
+  { href: '/routing-rules', label: 'Routing' },
   { href: '/users', label: 'Users' },
   { href: '/admin-audit', label: 'Admin audit' },
 ];

@@ -39,6 +39,11 @@ export default function HomePage() {
           title="Aliases"
           desc="(model × provider) 映射 + 价格 + 路由权重"
         />
+        <Card
+          href="/routing-rules"
+          title="Routing rules"
+          desc="按 task_type 覆盖 model / provider（让 'title' 走 cheap 等）"
+        />
         <Card href="/users" title="Users & Quota" desc="用户配额、月度预算、异常用量" />
         <Card href="/admin-audit" title="Admin Audit" desc="管理操作留痕（谁、什么、何时）" />
       </section>
