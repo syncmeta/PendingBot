@@ -1,0 +1,352 @@
+import Link from 'next/link';
+import { supabaseAdmin } from '@/lib/supabase/admin';
+import { fmtCredits, fmtNumber, fmtUsd } from '@/lib/format';
+
+// Internal accounting unit — must match apps/edge/src/lib/billing.ts.
+// Used here only to render USD-equivalent next to credits for the
+// "ops headlines" cards (Tax-rate hint, not strict reporting).
+const USD_TO_CREDITS = 1000;
+
+// Markup for cost-side (we paid X to providers, charged users credits) —
+// shown only as a hint in the "毛利" card. Tweak alongside billing.ts.
+const MARKUP = 2.5;
+
+export default async function BillingDashboardPage() {
+  const supa = supabaseAdmin();
+  const since7d = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
+  const since24h = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+
+  // ── Snapshot: balance/lifetime sums + low-balance count ────────────
+  const [usersAgg, threshold] = await Promise.all([
+    supa.from('users').select(
+      'balance_credits, lifetime_topup_credits, lifetime_spent_credits',
+    ),
+    supa
+      .from('billing_config')
+      .select('value')
+      .eq('key', 'min_balance_threshold')
+      .maybeSingle(),
+  ]);
+  const users = usersAgg.data ?? [];
+  const totalBalance = users.reduce((s, u) => s + Number(u.balance_credits ?? 0), 0);
+  const lifetimeTopup = users.reduce(
+    (s, u) => s + Number(u.lifetime_topup_credits ?? 0),
+    0,
+  );
+  const lifetimeSpent = users.reduce(
+    (s, u) => s + Number(u.lifetime_spent_credits ?? 0),
+    0,
+  );
+  const minThreshold = Number(threshold.data?.value ?? 0);
+  const lowBalanceCount = users.filter(
+    (u) => minThreshold > 0 && Number(u.balance_credits ?? 0) < minThreshold,
+  ).length;
+
+  // ── 24h / 7d activity from audit_log + ledger ──────────────────────
+  const [
+    consume24h,
+    consume7d,
+    ledger24h,
+    ledger7d,
+    redeemed7d,
+  ] = await Promise.all([
+    supa
+      .from('audit_log')
+      .select('cost_credits, cost_usd')
+      .gte('created_at', since24h)
+      .in('billing_status', ['billed', 'unbilled']),
+    supa
+      .from('audit_log')
+      .select('cost_credits')
+      .gte('created_at', since7d)
+      .in('billing_status', ['billed', 'unbilled']),
+    supa
+      .from('billing_ledger')
+      .select('entry_type, delta_credits')
+      .gte('created_at', since24h),
+    supa
+      .from('billing_ledger')
+      .select('entry_type, delta_credits')
+      .gte('created_at', since7d),
+    supa
+      .from('redemption_codes')
+      .select('credits, redeemed_at')
+      .gte('redeemed_at', since7d)
+      .eq('status', 'used'),
+  ]);
+
+  const consumeCredits24h = (consume24h.data ?? []).reduce(
+    (s, r) => s + Number(r.cost_credits ?? 0),
+    0,
+  );
+  const consumeUsd24h = (consume24h.data ?? []).reduce(
+    (s, r) => s + Number(r.cost_usd ?? 0),
+    0,
+  );
+  const consumeCredits7d = (consume7d.data ?? []).reduce(
+    (s, r) => s + Number(r.cost_credits ?? 0),
+    0,
+  );
+  const sumByKind = (rows: { entry_type: string; delta_credits: number }[]) =>
+    rows.reduce<Record<string, { count: number; credits: number }>>((acc, r) => {
+      const k = r.entry_type;
+      const cur = acc[k] ?? { count: 0, credits: 0 };
+      cur.count += 1;
+      cur.credits += Number(r.delta_credits ?? 0);
+      acc[k] = cur;
+      return acc;
+    }, {});
+  const ledger24hKinds = sumByKind(ledger24h.data ?? []);
+  const ledger7dKinds = sumByKind(ledger7d.data ?? []);
+
+  const grantsCredits24h = ledger24hKinds.grant?.credits ?? 0;
+  const redeemCount7d = (redeemed7d.data ?? []).length;
+  const redeemCredits7d = (redeemed7d.data ?? []).reduce(
+    (s, r) => s + Number(r.credits ?? 0),
+    0,
+  );
+
+  // ── Top spenders last 7d ───────────────────────────────────────────
+  // No view yet; fold in JS with a server-side per-row select. At launch
+  // scale this is fine (500 users × ~10 calls/day = 5k rows).
+  const { data: spendRows } = await supa
+    .from('audit_log')
+    .select('user_id, cost_credits')
+    .gte('created_at', since7d)
+    .in('billing_status', ['billed', 'unbilled'])
+    .not('user_id', 'is', null);
+  const spendByUser = new Map<string, number>();
+  for (const row of spendRows ?? []) {
+    if (!row.user_id) continue;
+    spendByUser.set(
+      row.user_id,
+      (spendByUser.get(row.user_id) ?? 0) + Number(row.cost_credits ?? 0),
+    );
+  }
+  const topSpenderIds = [...spendByUser.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10);
+  const { data: topUserRows } = topSpenderIds.length
+    ? await supa
+        .from('users')
+        .select('id, display_name, email, balance_credits')
+        .in(
+          'id',
+          topSpenderIds.map(([id]) => id),
+        )
+    : { data: [] as { id: string; display_name: string; email: string | null; balance_credits: number }[] };
+  const topUserMap = new Map((topUserRows ?? []).map((u) => [u.id, u]));
+
+  // ── Low-balance users list (pre-block stage) ───────────────────────
+  const lowBalanceUsers = minThreshold > 0
+    ? (await supa
+        .from('users')
+        .select('id, display_name, email, balance_credits')
+        .lt('balance_credits', minThreshold)
+        .order('balance_credits', { ascending: true })
+        .limit(15)).data ?? []
+    : [];
+
+  // Display helpers
+  const displayUsd = (credits: number) =>
+    fmtUsd(credits / USD_TO_CREDITS / MARKUP);
+
+  return (
+    <main className="container py-10 space-y-8">
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Billing</h1>
+          <p className="text-sm text-muted-foreground">
+            积分化的用户计费 · markup {MARKUP}× · 1 USD ≈ {USD_TO_CREDITS} credits
+          </p>
+        </div>
+        <div className="flex gap-2 text-sm">
+          <Link
+            href="/billing/codes"
+            className="rounded-md border border-input px-3 py-1.5 hover:bg-accent"
+          >
+            兑换码
+          </Link>
+          <Link
+            href="/users"
+            className="rounded-md border border-input px-3 py-1.5 hover:bg-accent"
+          >
+            用户/发放
+          </Link>
+        </div>
+      </header>
+
+      {/* Snapshot cards */}
+      <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Card label="用户" value={fmtNumber(users.length)} />
+        <Card
+          label="流通余额"
+          value={fmtCredits(totalBalance)}
+          hint={`≈ ${displayUsd(totalBalance)}`}
+        />
+        <Card
+          label="累计充值"
+          value={fmtCredits(lifetimeTopup)}
+          hint={`≈ ${displayUsd(lifetimeTopup)}`}
+        />
+        <Card
+          label="累计消费"
+          value={fmtCredits(lifetimeSpent)}
+          hint={`成本 ≈ ${fmtUsd(lifetimeSpent / USD_TO_CREDITS / MARKUP)}`}
+        />
+      </section>
+
+      {/* 24h / 7d activity */}
+      <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Card
+          label="24h 消费"
+          value={fmtCredits(consumeCredits24h)}
+          hint={`成本 ≈ ${fmtUsd(consumeUsd24h)} · ${(consume24h.data ?? []).length} 次调用`}
+        />
+        <Card
+          label="24h 发放"
+          value={fmtCredits(grantsCredits24h)}
+          hint={`${ledger24hKinds.grant?.count ?? 0} 笔 admin grant`}
+        />
+        <Card
+          label="7d 兑换码"
+          value={fmtCredits(redeemCredits7d)}
+          hint={`${redeemCount7d} 次兑换`}
+        />
+        <Card
+          label="7d 消费"
+          value={fmtCredits(consumeCredits7d)}
+          hint={`成本 ≈ ${displayUsd(consumeCredits7d)}`}
+        />
+      </section>
+
+      {/* Low-balance + Top spenders side by side */}
+      <section className="grid gap-6 md:grid-cols-2">
+        <div className="space-y-3">
+          <h2 className="text-sm font-medium">
+            低于阈值（{fmtCredits(minThreshold)} credits）
+            <span className="ml-2 text-xs text-muted-foreground">
+              {lowBalanceCount} 人 · 这些用户下次发消息会被 402 拦
+            </span>
+          </h2>
+          <div className="overflow-x-auto rounded-lg border bg-card">
+            <table className="w-full text-sm">
+              <thead className="border-b text-left text-xs uppercase text-muted-foreground">
+                <tr>
+                  <th className="px-4 py-2 font-medium">用户</th>
+                  <th className="px-4 py-2 font-medium text-right">余额</th>
+                  <th className="px-4 py-2" />
+                </tr>
+              </thead>
+              <tbody>
+                {lowBalanceUsers.map((u) => (
+                  <tr key={u.id} className="border-b last:border-0">
+                    <td className="px-4 py-2">
+                      <div>{u.display_name || '(无名)'}</div>
+                      <div className="text-xs text-muted-foreground">{u.email ?? '—'}</div>
+                    </td>
+                    <td className="px-4 py-2 text-right tabular-nums text-amber-700">
+                      {fmtCredits(u.balance_credits)}
+                    </td>
+                    <td className="px-4 py-2 text-right">
+                      <Link
+                        href={`/users/${u.id}`}
+                        className="rounded border border-input px-2 py-0.5 text-xs hover:bg-accent"
+                      >
+                        发放
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+                {lowBalanceUsers.length === 0 && (
+                  <tr>
+                    <td colSpan={3} className="px-4 py-6 text-center text-muted-foreground">
+                      没人低于阈值
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <h2 className="text-sm font-medium">
+            7d 消费榜
+            <span className="ml-2 text-xs text-muted-foreground">前 10 名</span>
+          </h2>
+          <div className="overflow-x-auto rounded-lg border bg-card">
+            <table className="w-full text-sm">
+              <thead className="border-b text-left text-xs uppercase text-muted-foreground">
+                <tr>
+                  <th className="px-4 py-2 font-medium">用户</th>
+                  <th className="px-4 py-2 font-medium text-right">7d 消费</th>
+                  <th className="px-4 py-2 font-medium text-right">当前余额</th>
+                </tr>
+              </thead>
+              <tbody>
+                {topSpenderIds.map(([id, credits]) => {
+                  const u = topUserMap.get(id);
+                  return (
+                    <tr key={id} className="border-b last:border-0">
+                      <td className="px-4 py-2">
+                        <Link
+                          href={`/users/${id}`}
+                          className="hover:underline"
+                        >
+                          {u?.display_name || '(无名)'}
+                        </Link>
+                        <div className="text-xs text-muted-foreground">
+                          {u?.email ?? '—'}
+                        </div>
+                      </td>
+                      <td className="px-4 py-2 text-right tabular-nums">
+                        {fmtCredits(credits)}
+                      </td>
+                      <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">
+                        {fmtCredits(u?.balance_credits ?? 0)}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {topSpenderIds.length === 0 && (
+                  <tr>
+                    <td colSpan={3} className="px-4 py-6 text-center text-muted-foreground">
+                      最近 7 天没有计费消费
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <p className="text-xs text-muted-foreground">
+        7d 兑换 + grant 笔数：兑换 {ledger7dKinds.redemption?.count ?? 0} ·
+        grant {ledger7dKinds.grant?.count ?? 0} ·
+        signup_bonus {ledger7dKinds.signup_bonus?.count ?? 0} ·
+        refund {ledger7dKinds.refund?.count ?? 0} ·
+        adjust {ledger7dKinds.adjust?.count ?? 0}
+      </p>
+    </main>
+  );
+}
+
+function Card({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+}) {
+  return (
+    <div className="rounded-lg border bg-card p-4">
+      <div className="text-xs uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="mt-1 text-2xl font-semibold tabular-nums">{value}</div>
+      {hint && <div className="mt-1 text-xs text-muted-foreground">{hint}</div>}
+    </div>
+  );
+}

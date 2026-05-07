@@ -104,6 +104,47 @@ export async function resetQuotaUsed(userId: string) {
   revalidatePath('/users');
 }
 
+export type GrantFormState = { error?: string; ok?: { credits: number; new_balance: number } };
+
+export async function grantCredits(
+  userId: string,
+  _prev: GrantFormState,
+  formData: FormData,
+): Promise<GrantFormState> {
+  const admin = await requireAdmin();
+  const creditsRaw = String(formData.get('credits') ?? '').trim();
+  const reason = String(formData.get('reason') ?? '').trim() || null;
+  const credits = Number.parseInt(creditsRaw, 10);
+  if (!Number.isFinite(credits) || credits === 0) {
+    return { error: 'credits 必须是非零整数（正数=发放，负数=扣回）' };
+  }
+
+  const supa = supabaseAdmin();
+  const { data: before } = await supa
+    .from('users')
+    .select('balance_credits')
+    .eq('id', userId)
+    .maybeSingle();
+
+  const { data: newBalance, error } = await supa.rpc('billing_admin_grant', {
+    p_user_id: userId,
+    p_credits: credits,
+    p_reason: reason ?? undefined,
+  });
+  if (error) return { error: error.message };
+
+  await audit({
+    action: credits > 0 ? 'billing.grant' : 'billing.adjust',
+    targetId: userId,
+    before: { balance_credits: before?.balance_credits ?? null },
+    after: { balance_credits: newBalance, delta: credits, reason },
+    actorId: admin.id,
+  });
+  revalidatePath(`/users/${userId}`);
+  revalidatePath('/billing');
+  return { ok: { credits, new_balance: Number(newBalance ?? 0) } };
+}
+
 export async function toggleAdmin(userId: string) {
   const admin = await requireAdmin();
   // Don't let an admin demote themselves through the UI — easy way to

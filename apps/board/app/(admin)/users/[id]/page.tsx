@@ -1,9 +1,10 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase/admin';
-import { fmtUsd } from '@/lib/format';
-import { updateQuota } from '../actions';
+import { fmtCredits, fmtUsd } from '@/lib/format';
+import { grantCredits, updateQuota } from '../actions';
 import { QuotaForm } from './_form';
+import { GrantForm } from './_grant-form';
 
 const DEFAULT_DAILY = 1.0;
 const DEFAULT_MONTHLY = 10.0;
@@ -16,13 +17,19 @@ export default async function UserDetailPage({
   const { id } = await params;
   const supa = supabaseAdmin();
 
-  const [{ data: user }, { data: quota }] = await Promise.all([
+  const [{ data: user }, { data: quota }, { data: ledger }] = await Promise.all([
     supa
       .from('users')
-      .select('id, display_name, email, is_admin, created_at, updated_at, bio')
+      .select('id, display_name, email, is_admin, created_at, updated_at, bio, balance_credits, lifetime_topup_credits, lifetime_spent_credits')
       .eq('id', id)
       .maybeSingle(),
     supa.from('user_quota').select('*').eq('user_id', id).maybeSingle(),
+    supa
+      .from('billing_ledger')
+      .select('id, entry_type, delta_credits, reason, created_at')
+      .eq('user_id', id)
+      .order('created_at', { ascending: false })
+      .limit(15),
   ]);
   if (!user) notFound();
 
@@ -54,7 +61,79 @@ export default async function UserDetailPage({
       </div>
 
       <section className="space-y-3">
-        <h2 className="text-sm font-medium">配额</h2>
+        <h2 className="text-sm font-medium">余额（credits）</h2>
+        <div className="rounded-lg border bg-card p-4 space-y-2">
+          <div className="grid grid-cols-3 gap-3 text-sm">
+            <div>
+              <div className="text-xs uppercase text-muted-foreground">当前余额</div>
+              <div className="mt-0.5 text-2xl font-semibold tabular-nums">
+                {fmtCredits(user.balance_credits)}
+              </div>
+            </div>
+            <div>
+              <div className="text-xs uppercase text-muted-foreground">累计充值</div>
+              <div className="mt-0.5 text-lg tabular-nums text-muted-foreground">
+                {fmtCredits(user.lifetime_topup_credits)}
+              </div>
+            </div>
+            <div>
+              <div className="text-xs uppercase text-muted-foreground">累计消费</div>
+              <div className="mt-0.5 text-lg tabular-nums text-muted-foreground">
+                {fmtCredits(user.lifetime_spent_credits)}
+              </div>
+            </div>
+          </div>
+          <div className="border-t pt-3">
+            <p className="mb-2 text-xs text-muted-foreground">
+              发放（正数）/ 扣回（负数）credits — 走 billing_admin_grant RPC,
+              写 billing_ledger + admin_audit。
+            </p>
+            <GrantForm action={grantCredits.bind(null, id)} />
+          </div>
+        </div>
+      </section>
+
+      {(ledger ?? []).length > 0 && (
+        <section className="space-y-3">
+          <h2 className="text-sm font-medium">最近账本（前 15 条）</h2>
+          <div className="overflow-x-auto rounded-lg border bg-card">
+            <table className="w-full text-sm">
+              <thead className="border-b text-left text-xs uppercase text-muted-foreground">
+                <tr>
+                  <th className="px-4 py-2 font-medium">时间</th>
+                  <th className="px-4 py-2 font-medium">类型</th>
+                  <th className="px-4 py-2 font-medium text-right">变化</th>
+                  <th className="px-4 py-2 font-medium">理由</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(ledger ?? []).map((r) => (
+                  <tr key={r.id} className="border-b last:border-0">
+                    <td className="px-4 py-2 font-mono text-xs">
+                      {new Date(r.created_at).toISOString().replace('T', ' ').slice(0, 19)}
+                    </td>
+                    <td className="px-4 py-2">{r.entry_type}</td>
+                    <td
+                      className={`px-4 py-2 text-right tabular-nums ${
+                        Number(r.delta_credits) > 0 ? 'text-emerald-700' : 'text-amber-700'
+                      }`}
+                    >
+                      {Number(r.delta_credits) > 0 ? '+' : ''}
+                      {fmtCredits(r.delta_credits)}
+                    </td>
+                    <td className="px-4 py-2 text-xs text-muted-foreground">
+                      {r.reason ?? '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      <section className="space-y-3">
+        <h2 className="text-sm font-medium">配额（旧的 USD 维度,观察用）</h2>
         {quota && (
           <div className="rounded-lg border bg-card p-4 text-sm">
             <div className="flex items-center justify-between">

@@ -22,6 +22,16 @@ export function fmtUsd(n: number | string | null | undefined): string {
   return `$${v.toFixed(4)}`;
 }
 
+export function fmtCredits(n: number | string | null | undefined): string {
+  if (n == null) return '—';
+  const v = typeof n === 'string' ? parseFloat(n) : n;
+  if (!Number.isFinite(v)) return '—';
+  // Thousands separator, no decimal — credits are integers.
+  const sign = v < 0 ? '-' : '';
+  const abs = Math.abs(Math.round(v));
+  return sign + new Intl.NumberFormat('en-US').format(abs);
+}
+
 export function fmtMs(n: number | null | undefined): string {
   if (n == null) return '—';
   if (n < 1000) return `${Math.round(n)}ms`;
