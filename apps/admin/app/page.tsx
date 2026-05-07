@@ -52,6 +52,7 @@ export default async function HomePage() {
           desc="(model × provider) 映射 + 价格 + 路由权重"
         />
         <Card href="/users" title="Users & Quota" desc="用户配额、月度预算、异常" comingSoon />
+        <Card href="/admin-audit" title="Admin Audit" desc="管理操作留痕（谁、什么、何时）" />
       </section>
     </main>
   );
