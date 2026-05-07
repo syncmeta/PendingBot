@@ -51,6 +51,11 @@ export default async function HomePage() {
           title="Aliases"
           desc="(model × provider) 映射 + 价格 + 路由权重"
         />
+        <Card
+          href="/app-stats"
+          title="App Stats"
+          desc="DAU / 留存 / Bot 排行 / 对话与消息分布（产品侧）"
+        />
         <Card href="/users" title="Users & Quota" desc="用户配额、月度预算、异常" comingSoon />
         <Card href="/admin-audit" title="Admin Audit" desc="管理操作留痕（谁、什么、何时）" />
       </section>
