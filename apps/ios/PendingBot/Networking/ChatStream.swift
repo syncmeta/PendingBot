@@ -11,7 +11,7 @@ enum ChatEvent: Sendable {
     /// Bot used the [SILENT] control token — nothing to show, the turn
     /// produced no message. UI should leave the conversation as-is.
     case silent(groupId: String)
-    /// Bot invoked a tool (search_web / read_url / execute_code / create_skill).
+    /// Bot invoked a tool (search_web / read_url / execute_code / create_skill / query_user_memory).
     /// Worker emits a paired `tool_result` once the tool returns; UI accumulates
     /// the pair into the per-turn trace shown inline above the bot reply.
     case toolCall(name: String, input: String?)
@@ -182,6 +182,9 @@ private func decode(eventName: String, dataJSON: String) -> ChatEvent {
                     .flatMap { $0.isEmpty ? nil : $0 }
                 if let tail { return "exit \(exit) · \(tail)" }
                 return "exit \(exit)"
+            }
+            if let n = json["chars"] as? Int {
+                return n > 0 ? "\(n) 字回答" : "暂无相关记忆"
             }
             return nil
         }()

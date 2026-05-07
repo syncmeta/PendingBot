@@ -24,11 +24,12 @@ struct ToolTraceEvent: Identifiable, Hashable {
     /// surfaces (chat trace + scroll progress) read consistently.
     var headline: String {
         switch name {
-        case "search_web":   return "搜索"
-        case "read_url":     return "翻网页"
-        case "execute_code": return "跑代码"
-        case "create_skill": return "新增技能"
-        default:             return name
+        case "search_web":        return "搜索"
+        case "read_url":          return "翻网页"
+        case "execute_code":      return "跑代码"
+        case "create_skill":      return "新增技能"
+        case "query_user_memory": return "查记忆"
+        default:                  return name
         }
     }
 
