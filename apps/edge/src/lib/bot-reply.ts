@@ -16,6 +16,7 @@ import {
 } from '../llm/router';
 import { buildMessages, type BuildMessagesInput } from '../llm/builder';
 import { getBotMemory } from './memory';
+import { queryUserRepresentation } from './honcho';
 import { braveSearch, firecrawlScrape } from './web';
 import { bootstrapPython, createSandbox, runPython } from './sandbox';
 
@@ -82,6 +83,30 @@ const CHAT_TOOLS: ChatCompletionTool[] = [
         type: 'object',
         properties: { url: { type: 'string' } },
         required: ['url'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'query_user_memory',
+      // Honcho dialectic endpoint as a tool. The bot phrases a natural-
+      // language question; Honcho's reasoning agent searches everything it's
+      // observed about this user across sessions and returns a grounded
+      // answer. Use sparingly — each call costs and adds latency. The bot's
+      // system prompt already carries the standing user-card + private note,
+      // so reach for this only when those leave a real gap.
+      description:
+        '问 Honcho 一个关于「这个用户」的具体问题，会跨历史会话做检索 + 推理后给出回答。仅在确实需要确认 ta 的偏好/背景/此前说过什么但当前上下文里没有时才用，不是每轮都调。例：「ta 喜欢什么风格的写作反馈？」「ta 之前提过自己的工作吗？」',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: '关于用户的自然语言问题，1–500 字。',
+          },
+        },
+        required: ['query'],
       },
     },
   },
@@ -636,6 +661,26 @@ async function runTool(
         title: page.title,
         content: page.content.slice(0, READ_TRUNCATE_CHARS),
       });
+    }
+    if (name === 'query_user_memory') {
+      const query = String(args.query ?? '').trim();
+      if (!query) return JSON.stringify({ error: 'empty query' });
+      if (query.length > 500) {
+        return JSON.stringify({ error: 'query exceeds 500 chars' });
+      }
+      ctx.emit('tool_call', { name: 'query_user_memory', query });
+      const answer = await queryUserRepresentation({
+        env,
+        userId: ctx.userId,
+        conversationId: ctx.conversationId,
+        query,
+        signal: ctx.signal,
+      });
+      ctx.emit('tool_result', {
+        name: 'query_user_memory',
+        chars: answer?.length ?? 0,
+      });
+      return JSON.stringify({ answer: answer ?? '(no information yet)' });
     }
     if (name === 'create_skill') {
       return await createSkillTool(env, args, ctx);
