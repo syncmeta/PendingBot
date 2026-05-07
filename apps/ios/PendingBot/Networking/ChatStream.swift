@@ -160,6 +160,7 @@ private func decode(eventName: String, dataJSON: String) -> ChatEvent {
             if let q = json["query"] as? String, !q.isEmpty { return q }
             if let u = json["url"] as? String, !u.isEmpty { return u }
             if let s = json["skill_name"] as? String, !s.isEmpty { return s }
+            if let p = json["code_preview"] as? String, !p.isEmpty { return p }
             if let c = json["chars"] as? Int { return "\(c) chars" }
             return nil
         }()
@@ -171,7 +172,12 @@ private func decode(eventName: String, dataJSON: String) -> ChatEvent {
             if let n = json["count"] as? Int { return "\(n) 条结果" }
             if let t = json["title"] as? String, !t.isEmpty { return t }
             if let s = json["skill_name"] as? String, !s.isEmpty { return s }
-            if let exit = json["exit_code"] as? Int { return "exit \(exit)" }
+            if let exit = json["exit_code"] as? Int {
+                let tail = (json["stdout_tail"] as? String)
+                    .flatMap { $0.isEmpty ? nil : $0 }
+                if let tail { return "exit \(exit) · \(tail)" }
+                return "exit \(exit)"
+            }
             return nil
         }()
         return .toolResult(name: name, summary: summary, error: err)
