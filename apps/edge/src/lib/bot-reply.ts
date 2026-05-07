@@ -6,7 +6,14 @@ import type {
 } from 'openai/resources/chat/completions';
 import type { Env } from '../types';
 import { serviceClient } from './supabase';
-import { recordAudit, resolveRoute, usageFromCompletion } from '../llm/router';
+import {
+  FallbackError,
+  recordAudit,
+  type ResolvedRoute,
+  type RouteTraceEntry,
+  usageFromCompletion,
+  withFallback,
+} from '../llm/router';
 import { buildMessages, type BuildMessagesInput } from '../llm/builder';
 import { getBotMemory } from './memory';
 import { braveSearch, firecrawlScrape } from './web';
@@ -276,10 +283,14 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     });
   };
 
-  const route = await resolveRoute(supa, env, {
-    modelSlug: bot.model_id,
-    taskType: 'message_reply',
-  });
+  // Each round inside the agent loop runs its own withFallback — when
+  // one provider fails before-first-chunk, the router can re-resolve
+  // and try the next-best alias for the same canonical model. Once a
+  // stream has started yielding chunks (i.e. bytes have flown to the
+  // iOS client), fallback is no longer safe; iteration errors below
+  // surface as 'interrupted'/'error' status instead.
+  let route: ResolvedRoute | null = null;
+  const routeTrace: RouteTraceEntry[] = [];
   emit('typing', { state: 'thinking' });
 
   // Compose this turn's tool list. Always-on tools come from CHAT_TOOLS;
@@ -293,17 +304,26 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       if (ac.signal.aborted) break;
 
-      const stream = await route.client.chat.completions.create(
-        {
-          model: route.modelToCall,
-          messages,
-          tools: turnTools,
-          tool_choice: 'auto',
-          stream: true,
-          stream_options: { include_usage: true },
-        },
-        { signal: ac.signal },
+      const roundOpen = await withFallback(
+        supa,
+        env,
+        { modelSlug: bot.model_id, taskType: 'message_reply' },
+        (r) =>
+          r.client.chat.completions.create(
+            {
+              model: r.modelToCall,
+              messages,
+              tools: turnTools,
+              tool_choice: 'auto',
+              stream: true,
+              stream_options: { include_usage: true },
+            },
+            { signal: ac.signal },
+          ),
       );
+      const stream = roundOpen.result;
+      route = roundOpen.route;
+      routeTrace.push(...roundOpen.routeTrace);
 
       // Per-call accumulators.
       let assistantContent = '';
@@ -437,6 +457,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       startedAt,
       generationId,
       status: 'success',
+      routeTrace,
       inputTokens: usage.input,
       outputTokens: usage.output,
       cacheReadTokens: usage.cacheRead,
@@ -478,17 +499,33 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     emit(status, { message });
 
     // Audit the failed turn so error rate / fallback metrics in the
-    // panel see this. Whatever tokens the stream had time to surface
-    // before the throw are still useful for cost accounting.
+    // panel see this. Two error paths:
+    //   - FallbackError: every alias re-resolution attempt failed
+    //     before any stream chunk arrived. lastRoute may be null.
+    //     routeTrace shows the chain.
+    //   - Anything else (mid-stream throw, tool error, etc.): we
+    //     stayed on whatever route last opened a stream. Use the
+    //     accumulated routeTrace from prior round successes.
     try {
-      await recordAudit(supa, route, {
+      const fbErr = err instanceof FallbackError ? err : null;
+      const auditRoute = fbErr ? fbErr.lastRoute : route;
+      const auditTrace = fbErr ? fbErr.routeTrace : routeTrace;
+      const errorClass = aborted
+        ? null
+        : fbErr
+          ? fbErr.routeTrace[fbErr.routeTrace.length - 1]?.error_class ?? 'unknown'
+          : err instanceof Error
+            ? err.name
+            : 'unknown';
+      await recordAudit(supa, auditRoute, {
         userId,
         conversationId,
         taskType: 'message_reply',
         startedAt,
         generationId,
         status: aborted ? 'success' : 'error',
-        errorClass: aborted ? null : (err instanceof Error ? err.name : 'unknown'),
+        errorClass,
+        routeTrace: auditTrace,
         inputTokens: usage.input,
         outputTokens: usage.output,
         cacheReadTokens: usage.cacheRead,
