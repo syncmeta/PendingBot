@@ -53,6 +53,15 @@ struct ConversationView: View {
     /// sent anything before it fires, we auto-trigger a continuation turn
     /// so the bot's fact-check actually surfaces.
     @State private var lookbackAutoFireTask: Task<Void, Never>?
+    /// Tool-call trace per user message. Rendered inline (non-bubble, auto-
+    /// collapsed) right after the user message that triggered it. Worker emits
+    /// `tool_call` / `tool_result` SSE events during a turn — we accumulate
+    /// them into the bucket for the in-flight `liveTraceUserMsgId`.
+    @State private var tracesByUserMsgId: [String: [ToolTraceEvent]] = [:]
+    /// Local id of the user message currently driving an SSE turn — set in
+    /// sendViaSSE before the stream starts, cleared when the turn ends.
+    /// Multiple traces can land for the same user msg if the agent loops.
+    @State private var liveTraceUserMsgId: String?
     // Skill summaries — counted in the settings sheet so the user sees
     // how many are active without leaving the conversation.
     @State private var skills: [SkillSummary] = []
@@ -164,6 +173,18 @@ struct ConversationView: View {
                                     } label: { Label("删除", systemImage: "trash") }
                                 }
                                 .transition(.blurReplace)
+                            // Tool-call trace sits between the user msg that
+                            // triggered the turn and the bot's reply. Hidden
+                            // when the bucket is empty so plain (non-search)
+                            // turns look identical to before.
+                            if msg.isUser, let trace = tracesByUserMsgId[msg.id], !trace.isEmpty {
+                                ToolTraceView(
+                                    events: trace,
+                                    isLive: liveTraceUserMsgId == msg.id
+                                )
+                                .id("trace:\(msg.id)")
+                                .transition(.opacity)
+                            }
                         }
 
                         Color.clear.frame(height: 8).id("bottom")
@@ -572,8 +593,9 @@ struct ConversationView: View {
             await sendPlainUserMessage(text)
         default:
             // user_bot: SSE turn against the pinned bot.
+            let localId = "local-\(UUID().uuidString)"
             messages.append(ChatMessage(
-                id: "local-\(UUID().uuidString)",
+                id: localId,
                 conversation_id: conversation.id,
                 sender_type: "user", sender_id: "",
                 content: text,
@@ -583,7 +605,7 @@ struct ConversationView: View {
                                width: nil, height: nil, url: "/uploads/\($0.id)")
                 }
             ))
-            sendViaSSE(text: text, attachmentIds: attachIds)
+            sendViaSSE(text: text, attachmentIds: attachIds, userMsgId: localId)
         }
     }
 
@@ -617,13 +639,20 @@ struct ConversationView: View {
     /// via incremental insert/update. Cancel the returned Task (via the
     /// stop button) to close the SSE — Worker observes request.signal.aborted
     /// and stops the LLM stream.
-    private func sendViaSSE(text: String, attachmentIds: [String], autoLookback: Bool = false) {
+    private func sendViaSSE(text: String, attachmentIds: [String], autoLookback: Bool = false, userMsgId: String? = nil) {
         chatTurnTask?.cancel()
         // User taking action (or auto-fire firing) cancels the pending
         // 30s lookback grace timer either way.
         lookbackAutoFireTask?.cancel()
         lookbackAutoFireTask = nil
         pending = true
+        // Bind the upcoming tool-trace bucket to the user message that
+        // triggered this turn. Auto-fire turns (no user msg) skip this —
+        // their tool calls have nowhere natural to attach in the list.
+        liveTraceUserMsgId = userMsgId
+        if let key = userMsgId {
+            tracesByUserMsgId[key] = []
+        }
 
         let body: [String: Any] = {
             let clientMsgId = UUID().uuidString.lowercased()
@@ -683,6 +712,10 @@ struct ConversationView: View {
                         // No bubble events have been emitted by the
                         // splitter yet, so just clear its buffer.
                         _ = splitter.drain()
+                    case .toolCall(let name, let input):
+                        appendToolCall(name: name, input: input)
+                    case .toolResult(let name, let summary, let error):
+                        completeToolCall(name: name, summary: summary, error: error)
                     case .error(let msg):
                         splitter.reportError(msg)
                     case .unknown:
@@ -704,7 +737,42 @@ struct ConversationView: View {
             }
             pending = false
             chatTurnTask = nil
+            // Trace bucket stays in tracesByUserMsgId so the user can keep
+            // expanding it after the turn completes; only the live binding
+            // is cleared here.
+            liveTraceUserMsgId = nil
         }
+    }
+
+    // MARK: - Tool-call trace
+
+    private func appendToolCall(name: String, input: String?) {
+        guard let key = liveTraceUserMsgId else { return }
+        var bucket = tracesByUserMsgId[key] ?? []
+        bucket.append(ToolTraceEvent(name: name, input: input))
+        tracesByUserMsgId[key] = bucket
+    }
+
+    private func completeToolCall(name: String, summary: String?, error: String?) {
+        guard let key = liveTraceUserMsgId else { return }
+        var bucket = tracesByUserMsgId[key] ?? []
+        // Match the most recent unfinished event with the same tool name.
+        // Bot can issue parallel tool calls; FIFO completion is wrong in
+        // theory but right in practice for our current 2-tool surface.
+        if let idx = bucket.lastIndex(where: { $0.name == name && !$0.done }) {
+            bucket[idx].resultSummary = summary
+            bucket[idx].resultError = error
+            bucket[idx].done = true
+        } else {
+            // Result without a matching call (shouldn't happen but stay
+            // defensive — the worker's emitter could miss a tool_call).
+            var ev = ToolTraceEvent(name: name, input: nil)
+            ev.resultSummary = summary
+            ev.resultError = error
+            ev.done = true
+            bucket.append(ev)
+        }
+        tracesByUserMsgId[key] = bucket
     }
 
     // MARK: - Lookback notes (invisible context-edit notes from the bot)
@@ -815,7 +883,16 @@ struct ConversationView: View {
                     && m.content == content
                     && abs(m.created_at - now) < 5
             }) {
+                let oldId = messages[stale].id
                 messages[stale] = msg
+                // Re-key any tool trace bound to the optimistic local id so
+                // it stays attached after the canonical row replaces it.
+                if let trace = tracesByUserMsgId.removeValue(forKey: oldId) {
+                    tracesByUserMsgId[id] = trace
+                    if liveTraceUserMsgId == oldId {
+                        liveTraceUserMsgId = id
+                    }
+                }
             } else {
                 messages.append(msg)
             }
