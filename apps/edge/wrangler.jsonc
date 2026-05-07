@@ -92,6 +92,7 @@
   //   SUPABASE_ANON_KEY
   //   SUPABASE_SERVICE_ROLE_KEY
   //   OPENROUTER_API_KEY
+  //   WORLDROUTER_API_KEY    (optional — alt LLM gateway, see admin /providers)
   //   BRAVE_API_KEY
   //   FIRECRAWL_API_KEY
   //   APNS_TEAM_ID

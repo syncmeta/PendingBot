@@ -16,6 +16,11 @@ export interface Env {
   SUPABASE_ANON_KEY: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
   OPENROUTER_API_KEY: string;
+  // Optional alternative LLM gateway. The router resolves a provider's
+  // env var name dynamically via llm_providers.secret_ref, so the key
+  // doesn't need to be present at typecheck time — declaring it here
+  // gives editor autocomplete and catches typos in admin UI input.
+  WORLDROUTER_API_KEY?: string;
   HONCHO_API_KEY: string;
   HONCHO_WORKSPACE_ID: string;
   // Web tools: Brave for search, Firecrawl for scrape — used by both the
