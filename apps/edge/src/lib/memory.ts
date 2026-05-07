@@ -210,7 +210,10 @@ async function refreshBotNote(input: RefreshBotNoteInput): Promise<void> {
       '直接输出 markdown 笔记正文，不要前言后语，不要"以下是更新版"这种元话语。',
     ].join('\n');
 
-    const route = await resolveRoute(supa, env, { modelSlug: bot.model_id as string });
+    const route = await resolveRoute(supa, env, {
+      modelSlug: bot.model_id as string,
+      taskType: 'bot_note',
+    });
     const completion = await route.client.chat.completions.create({
       model: route.modelToCall,
       messages: [{ role: 'user', content: prompt }],

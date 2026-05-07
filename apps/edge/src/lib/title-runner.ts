@@ -38,7 +38,10 @@ export async function runTitle(input: RunTitleInput): Promise<void> {
       .join('\n');
     if (!transcript) return;
 
-    const route = await resolveRoute(supa, env, { modelSlug: botModelId });
+    const route = await resolveRoute(supa, env, {
+      modelSlug: botModelId,
+      taskType: 'title',
+    });
     const completion = await route.client.chat.completions.create({
       model: route.modelToCall,
       messages: [

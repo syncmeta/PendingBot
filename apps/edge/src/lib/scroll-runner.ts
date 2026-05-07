@@ -266,7 +266,10 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
       { role: 'user', content: initialUser },
     ];
 
-    const route = await resolveRoute(supa, env, { modelSlug: modelId });
+    const route = await resolveRoute(supa, env, {
+      modelSlug: modelId,
+      taskType: 'scroll',
+    });
     let finalArticle = '';
 
     for (let turn = 0; turn < HARD_CAP_TURNS; turn++) {

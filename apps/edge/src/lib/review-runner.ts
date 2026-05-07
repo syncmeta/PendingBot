@@ -202,7 +202,10 @@ export async function runReview(input: RunReviewInput): Promise<void> {
         content: m.content as string,
       }));
 
-    const route = await resolveRoute(supa, env, { modelSlug: modelId });
+    const route = await resolveRoute(supa, env, {
+      modelSlug: modelId,
+      taskType: 'review',
+    });
     const completion = await route.client.chat.completions.create({
       model: route.modelToCall,
       messages: [

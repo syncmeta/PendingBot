@@ -95,6 +95,7 @@ export async function runLookback(input: RunLookbackInput): Promise<void> {
 
     const route = await resolveRoute(supa, env, {
       modelSlug: botRes.data.model_id as string,
+      taskType: 'lookback',
     });
     const completion = await route.client.chat.completions.create({
       model: route.modelToCall,

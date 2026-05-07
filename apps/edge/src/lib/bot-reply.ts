@@ -276,7 +276,10 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     });
   };
 
-  const route = await resolveRoute(supa, env, { modelSlug: bot.model_id });
+  const route = await resolveRoute(supa, env, {
+    modelSlug: bot.model_id,
+    taskType: 'message_reply',
+  });
   emit('typing', { state: 'thinking' });
 
   // Compose this turn's tool list. Always-on tools come from CHAT_TOOLS;

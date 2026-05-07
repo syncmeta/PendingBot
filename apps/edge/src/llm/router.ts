@@ -30,9 +30,14 @@ import type { SupabaseClient } from '../lib/supabase';
 
 export interface RouteResolveOpts {
   modelSlug: string;
+  // task_type that the caller will record in audit_log. When set, the
+  // router consults task_routing_rules for an enabled rule matching
+  // this task and may swap modelSlug / set preferProvider before doing
+  // the alias lookup. Without it, no rule lookup runs.
+  taskType?: string;
   // Bias selection toward this provider slug. Used by per-task routing
   // overrides ("ai_picks always uses openrouter") and by manual
-  // operator pin-to-provider overrides.
+  // operator pin-to-provider overrides. Caller-supplied wins over rule.
   preferProvider?: string;
   // Used by fallback retries: skip these provider slugs.
   excludeProviders?: string[];
@@ -92,7 +97,7 @@ type AliasJoinRow = {
 
 function pickAlias(
   rows: AliasJoinRow[],
-  opts: RouteResolveOpts,
+  opts: { preferProvider?: string; excludeProviders?: string[] },
 ): AliasJoinRow | null {
   const candidates = rows.filter((r) => {
     const p = r.llm_providers;
@@ -148,8 +153,33 @@ export async function resolveRoute(
   env: Env,
   opts: RouteResolveOpts,
 ): Promise<ResolvedRoute> {
-  const slug = opts.modelSlug.trim();
+  let slug = opts.modelSlug.trim();
   if (!slug) throw new NoRouteError('empty model slug');
+  let preferProvider = opts.preferProvider;
+
+  // Per-task override pass. We pull the lowest-priority enabled rule
+  // for this task_type — at most one applies. Caller-supplied
+  // preferProvider wins over the rule (admin/incident overrides).
+  if (opts.taskType) {
+    const { data: rule } = await supa
+      .from('task_routing_rules')
+      .select(
+        `match_priority, override_model_id, prefer_provider_id,
+         override_model:llm_models!task_routing_rules_override_model_fkey ( slug ),
+         prefer_provider:llm_providers!task_routing_rules_prefer_provider_fkey ( slug )`,
+      )
+      .eq('task_type', opts.taskType)
+      .eq('enabled', true)
+      .order('match_priority', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (rule) {
+      const overrideSlug = (rule.override_model as { slug?: string } | null)?.slug;
+      if (overrideSlug) slug = overrideSlug;
+      const ruleProvider = (rule.prefer_provider as { slug?: string } | null)?.slug;
+      if (!preferProvider && ruleProvider) preferProvider = ruleProvider;
+    }
+  }
 
   // Step 1 + 2: pull all aliases that match by canonical name OR by
   // provider_model_id. One round-trip; we partition in JS.
@@ -182,7 +212,10 @@ export async function resolveRoute(
   if (merged.length === 0) {
     merged.push(...((byPassthrough as AliasJoinRow[] | null) ?? []));
   }
-  const picked = pickAlias(merged, opts);
+  const picked = pickAlias(merged, {
+    preferProvider,
+    excludeProviders: opts.excludeProviders,
+  });
 
   if (picked && picked.llm_providers) {
     const provider = picked.llm_providers;
@@ -206,9 +239,9 @@ export async function resolveRoute(
   // Step 3 fallback: OpenRouter passthrough. We pick the row by slug
   // explicitly — relying on it being seeded in 0030 — so that even
   // unregistered models keep flowing while admin curates aliases.
-  if (opts.preferProvider && opts.preferProvider !== 'openrouter') {
+  if (preferProvider && preferProvider !== 'openrouter') {
     throw new NoRouteError(
-      `no enabled alias for ${slug} on provider ${opts.preferProvider}`,
+      `no enabled alias for ${slug} on provider ${preferProvider}`,
     );
   }
   if (opts.excludeProviders?.includes('openrouter')) {
