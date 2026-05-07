@@ -10,9 +10,15 @@ import CoreImage.CIFilterBuiltins
 ///   left  qrcode → live QR sheet (mint + refresh)
 ///   right +      → add-friend sheet (handle code or email)
 ///
-/// Tap behavior:
-///   bot   → INSERT a fresh user_bot conv and push into it
-///   human → POST /v1/contacts/open-chat (find-or-create singleton) and push
+/// Two layouts driven by horizontal size class (mirrors MessageTabView):
+///   • compact (iPhone): NavigationStack push from the row into ConversationView
+///   • regular (iPad landscape, Mac Catalyst): NavigationSplitView with the
+///     friends list as a sidebar; tapping a friend swaps the right detail
+///     pane to that ConversationView in place.
+///
+/// Tap behavior is lazy — we navigate with a synthetic empty Conversation
+/// + a PendingPeer; ConversationView materialises the conv row on first
+/// send, so opening a friend and walking away leaves no DB trace.
 struct FriendsTabView: View {
     @EnvironmentObject private var store: AccountStore
     @Environment(\.useSidebarLayout) private var sidebarLayout
@@ -28,65 +34,139 @@ struct FriendsTabView: View {
     @State private var showingQR = false
     @State private var filter: FriendFilter = .all
     @State private var path: [PendingPeer] = []
+    // Selection-driven detail for regular size class — mirrors
+    // MessageTabView so tapping a friend on Mac / iPad-landscape opens
+    // the chat in the right pane instead of pushing inside the sidebar.
+    @State private var selectedPeer: PendingPeer?
 
     var body: some View {
         Group {
             if sidebarLayout {
-                NavigationSplitView {
-                    VStack(spacing: 0) {
-                        coreContent
-                        if let topTabSelection {
-                            SidebarTabBar(selection: topTabSelection)
-                        }
-                    }
-                    .sidebarColumnWidth()
-                } detail: {
-                    EmptyDetailHint(text: "选一位朋友开始", systemImage: "person.2")
-                }
+                regularBody
             } else {
-                coreContent
-                    .toolbar(path.isEmpty ? .visible : .hidden, for: .tabBar)
+                compactBody
             }
         }
         .task { await load() }
         .alert("出错", isPresented: .constant(error != nil)) {
             Button("好") { error = nil }
         } message: { Text(error ?? "") }
+        .sheet(isPresented: $addingFriend) {
+            AddFriendSheet { Task { await load() } }
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $creatingBot) {
+            CreateBotSheet { newBot in
+                // Prepend so the user sees the new bot immediately,
+                // then refresh from server to get any RLS-derived
+                // ordering right.
+                self.bots.insert(newBot, at: 0)
+                Task { await load() }
+            }
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $managingBot) { pick in
+            ManageBotSheet(
+                onChanged: { Task { await load() } },
+                onDeleted: { id in
+                    self.bots.removeAll { $0.id == id }
+                },
+                initial: pick
+            )
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showingQR) {
+            MyQRSheet()
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
     }
 
-    @ViewBuilder
-    private var coreContent: some View {
+    // ── Compact (iPhone) ────────────────────────────────────────────────────
+
+    private var compactBody: some View {
         NavigationStack(path: $path) {
-            VStack(spacing: 0) {
-                // Background applied at the VStack level (not just inside
-                // the lower ZStack) so the TabHeaderBar at the top sits
-                // on canvas instead of the default white safe-area fill.
-                TabHeaderBar(title: "好友") {
-                    Menu {
-                        Button {
-                            addingFriend = true
-                            Haptics.tap()
-                        } label: {
-                            Label("加好友", systemImage: "person.badge.plus")
-                        }
-                        Button {
-                            creatingBot = true
-                            Haptics.tap()
-                        } label: {
-                            Label("新建机器人", systemImage: "sparkles")
-                        }
-                    } label: {
-                        CirclePlusButton()
-                    }
+            sidebarBody
+                .background(Theme.Palette.canvas.ignoresSafeArea())
+                .toolbar(.hidden, for: .navigationBar)
+                .navigationDestination(for: PendingPeer.self) { peer in
+                    ConversationView(
+                        conversation: pendingConversation(for: peer),
+                        bot: nil,
+                        pendingPeer: peer
+                    )
                 }
-                ZStack {
-                    Theme.Palette.canvas.ignoresSafeArea()
-                    List {
+        }
+        .toolbar(path.isEmpty ? .visible : .hidden, for: .tabBar)
+    }
+
+    // ── Regular (iPad landscape, Mac Catalyst) ──────────────────────────────
+
+    private var regularBody: some View {
+        NavigationSplitView {
+            VStack(spacing: 0) {
+                sidebarBody
+                if let topTabSelection {
+                    SidebarTabBar(selection: topTabSelection)
+                }
+            }
+            .background(Theme.Palette.canvas.ignoresSafeArea())
+            .toolbar(.hidden, for: .navigationBar)
+            .sidebarColumnWidth()
+        } detail: {
+            if let peer = selectedPeer {
+                ConversationView(
+                    conversation: pendingConversation(for: peer),
+                    bot: nil,
+                    pendingPeer: peer
+                )
+                // .id forces a fresh ConversationView (and a fresh WS)
+                // when the user picks a different friend — without it
+                // the existing view would just rebind, leaking the
+                // prior chat's pending-send / message-list state.
+                .id("\(peer.kind):\(peer.peerId)")
+            } else {
+                EmptyDetailHint(text: "选一位朋友开始", systemImage: "person.2")
+            }
+        }
+    }
+
+    // ── Sidebar (shared) ────────────────────────────────────────────────────
+
+    @ViewBuilder
+    private var sidebarBody: some View {
+        VStack(spacing: 0) {
+            // Background applied at the VStack level (not just inside
+            // the lower ZStack) so the TabHeaderBar at the top sits
+            // on canvas instead of the default white safe-area fill.
+            TabHeaderBar(title: "好友") {
+                Menu {
+                    Button {
+                        addingFriend = true
+                        Haptics.tap()
+                    } label: {
+                        Label("加好友", systemImage: "person.badge.plus")
+                    }
+                    Button {
+                        creatingBot = true
+                        Haptics.tap()
+                    } label: {
+                        Label("新建机器人", systemImage: "sparkles")
+                    }
+                } label: {
+                    CirclePlusButton()
+                }
+            }
+            ZStack {
+                Theme.Palette.canvas.ignoresSafeArea()
+                List {
                     // Self row — pinned at the top, always visible
                     // regardless of filter. QR button on the right opens
                     // the user's name card; tapping the rest of the row
                     // pushes a chat with self.
                     Section {
+                        let selfSelected = sidebarLayout && selectedPeer?.kind == "self"
                         SelfRow(
                             avatarSeed: AccountStore.shared.avatarSeed
                                 ?? AccountStore.shared.current?.id ?? "?",
@@ -96,7 +176,7 @@ struct FriendsTabView: View {
                             onTap: { Task { await tapSelf() } },
                             onQR: { showingQR = true; Haptics.tap() }
                         )
-                        .listRowBackground(Theme.Palette.surface)
+                        .listRowBackground(selfSelected ? Theme.Palette.accentBg : Theme.Palette.surface)
                     }
 
                     Section {
@@ -109,12 +189,13 @@ struct FriendsTabView: View {
                     if !botsForFilter.isEmpty {
                         Section {
                             ForEach(botsForFilter) { bot in
+                                let selected = sidebarLayout && isSelected(kind: "bot", id: bot.id)
                                 FriendRow(kind: .bot,
                                           avatarSeed: bot.id,
                                           name: bot.display_name,
                                           modelTag: bot.modelTag,
                                           botVisibility: bot.visibility)
-                                    .listRowBackground(Theme.Palette.surface)
+                                    .listRowBackground(selected ? Theme.Palette.accentBg : Theme.Palette.surface)
                                     .contentShape(Rectangle())
                                     .onTapGesture { Task { await tapBot(bot) } }
                                     .modifier(BotRowOwnerActions(
@@ -128,12 +209,13 @@ struct FriendsTabView: View {
                     if !humansForFilter.isEmpty {
                         Section {
                             ForEach(humansForFilter) { c in
+                                let selected = sidebarLayout && isSelected(kind: "user", id: c.id)
                                 FriendRow(kind: .human,
                                           avatarSeed: c.id,
                                           name: c.alias ?? String(c.id.prefix(8)),
                                           modelTag: nil,
                                           botVisibility: nil)
-                                    .listRowBackground(Theme.Palette.surface)
+                                    .listRowBackground(selected ? Theme.Palette.accentBg : Theme.Palette.surface)
                                     .contentShape(Rectangle())
                                     .onTapGesture { Task { await tapHuman(c) } }
                             }
@@ -150,48 +232,16 @@ struct FriendsTabView: View {
                 .listStyle(.insetGrouped)
                 .scrollContentBackground(.hidden)
                 .refreshable { await load() }
-                }
-            }
-            .background(Theme.Palette.canvas.ignoresSafeArea())
-            .toolbar(.hidden, for: .navigationBar)
-            .sheet(isPresented: $addingFriend) {
-                AddFriendSheet { Task { await load() } }
-                    .presentationDetents([.medium])
-                    .presentationDragIndicator(.visible)
-            }
-            .sheet(isPresented: $creatingBot) {
-                CreateBotSheet { newBot in
-                    // Prepend so the user sees the new bot immediately,
-                    // then refresh from server to get any RLS-derived
-                    // ordering right.
-                    self.bots.insert(newBot, at: 0)
-                    Task { await load() }
-                }
-                .presentationDragIndicator(.visible)
-            }
-            .sheet(item: $managingBot) { pick in
-                ManageBotSheet(
-                    onChanged: { Task { await load() } },
-                    onDeleted: { id in
-                        self.bots.removeAll { $0.id == id }
-                    },
-                    initial: pick
-                )
-                .presentationDragIndicator(.visible)
-            }
-            .sheet(isPresented: $showingQR) {
-                MyQRSheet()
-                    .presentationDetents([.medium, .large])
-                    .presentationDragIndicator(.visible)
-            }
-            .navigationDestination(for: PendingPeer.self) { peer in
-                ConversationView(
-                    conversation: pendingConversation(for: peer),
-                    bot: nil,
-                    pendingPeer: peer
-                )
             }
         }
+    }
+
+    /// True when the row's peer is the one currently shown in the
+    /// regular-size detail pane. Used to tint the row so the user can
+    /// see what's open on the right.
+    private func isSelected(kind: String, id: String) -> Bool {
+        guard let peer = selectedPeer else { return false }
+        return peer.kind == kind && peer.peerId == id
     }
 
     // MARK: - Data
@@ -312,10 +362,9 @@ struct FriendsTabView: View {
     // a friend and backing out without sending leaves no DB trace.
 
     private func tapBot(_ bot: BotPick) async {
-        path.append(PendingPeer(kind: "bot",
-                                peerId: bot.id,
-                                displayName: bot.display_name))
-        Haptics.tap()
+        open(PendingPeer(kind: "bot",
+                         peerId: bot.id,
+                         displayName: bot.display_name))
     }
 
     /// Push a "chat with self" conv. Materialises server-side via the
@@ -325,16 +374,26 @@ struct FriendsTabView: View {
         guard let userId = AccountStore.shared.current?.id else { return }
         let displayName = AccountStore.shared.profileDisplayName
             ?? AccountStore.shared.current?.displayName ?? "你"
-        path.append(PendingPeer(kind: "self",
-                                peerId: userId,
-                                displayName: displayName))
-        Haptics.tap()
+        open(PendingPeer(kind: "self",
+                         peerId: userId,
+                         displayName: displayName))
     }
 
     private func tapHuman(_ c: HumanPick) async {
-        path.append(PendingPeer(kind: "user",
-                                peerId: c.id,
-                                displayName: c.alias ?? String(c.id.prefix(8))))
+        open(PendingPeer(kind: "user",
+                         peerId: c.id,
+                         displayName: c.alias ?? String(c.id.prefix(8))))
+    }
+
+    /// Route to the right surface based on layout: regular (Mac /
+    /// iPad-landscape) shows the chat in the right detail pane via a
+    /// selection binding; compact (iPhone) pushes onto the nav stack.
+    private func open(_ peer: PendingPeer) {
+        if sidebarLayout {
+            selectedPeer = peer
+        } else {
+            path.append(peer)
+        }
         Haptics.tap()
     }
 
