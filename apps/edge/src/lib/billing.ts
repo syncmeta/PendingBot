@@ -1,12 +1,8 @@
 import type { SupabaseClient } from './supabase';
 
-// Billing layer (P0). All schema changes ship in 0033_billing.sql.
-//
-// This file is the ONLY place that knows about cost_credits / RPCs. Until
-// `supabase gen types` runs against 0033, the new tables and RPCs aren't in
-// schema.ts — we cast through `untyped()` in this one module so the rest of
-// the codebase keeps its strict types. After regen, drop the `untyped()`
-// helper and let supabase-js's generated types take over.
+// Billing layer (P0). All schema changes ship in 0033_billing.sql /
+// 0034_billing_admin_rpcs.sql. This module is the single point that knows
+// about cost_credits, balance fields, and the billing_* RPCs.
 
 // 1 USD ≈ 1000 credits internal accounting unit. Credits ↔ display dollars
 // is a per-channel ratio (Apple IAP / Stripe / redemption may differ); 1000
@@ -38,23 +34,6 @@ export function usdToCredits(costUsd: number | null | undefined): number {
 }
 
 // ---------------------------------------------------------------------------
-// untyped() — temporary escape hatch until schema.ts regen
-// ---------------------------------------------------------------------------
-// supabase-js's typed client checks .from(<tableName>) and .rpc(<funcName>)
-// against the generated Database type. The new billing tables and RPCs
-// aren't there yet. After running:
-//
-//   supabase gen types typescript --linked --schema pendingbot \
-//     > apps/edge/src/db/schema.ts
-//
-// remove this helper and let the strict types apply.
-//
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function untyped(supa: SupabaseClient): any {
-  return supa;
-}
-
-// ---------------------------------------------------------------------------
 // Balance lookup
 // ---------------------------------------------------------------------------
 
@@ -74,7 +53,7 @@ export async function getBalance(
   supa: SupabaseClient,
   userId: string,
 ): Promise<BalanceInfo | null> {
-  const { data, error } = await untyped(supa)
+  const { data, error } = await supa
     .from('users')
     .select('balance_credits, lifetime_topup_credits, lifetime_spent_credits')
     .eq('id', userId)
@@ -96,7 +75,7 @@ export async function getConfigInt(
   supa: SupabaseClient,
   key: string,
 ): Promise<number | null> {
-  const { data, error } = await untyped(supa)
+  const { data, error } = await supa
     .from('billing_config')
     .select('value')
     .eq('key', key)
@@ -165,7 +144,7 @@ export async function billingDebit(
   auditLogId: string,
   credits: number,
 ): Promise<number | null> {
-  const { data, error } = await untyped(supa).rpc('billing_debit', {
+  const { data, error } = await supa.rpc('billing_debit', {
     p_user_id: userId,
     p_audit_log_id: auditLogId,
     p_credits: credits,
@@ -204,9 +183,7 @@ export async function redeemCode(
   supa: SupabaseClient,
   code: string,
 ): Promise<RedeemResult> {
-  const { data, error } = await untyped(supa).rpc('billing_redeem', {
-    p_code: code,
-  });
+  const { data, error } = await supa.rpc('billing_redeem', { p_code: code });
   if (error) {
     const c = error.code;
     if (c === '42501') throw new RedemptionError('not_authenticated', error.message);
@@ -214,5 +191,5 @@ export async function redeemCode(
     if (c === 'P0001') throw new RedemptionError('already_used', error.message);
     throw new RedemptionError('unknown', error.message ?? String(error));
   }
-  return data as RedeemResult;
+  return data as unknown as RedeemResult;
 }

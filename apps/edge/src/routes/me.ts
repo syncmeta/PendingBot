@@ -95,13 +95,8 @@ meRoutes.get('/billing/history', async (c) => {
     : 50;
   const supa = userClient(c.env, userJwt);
 
-  // The new fields aren't typed yet — same untyped escape hatch as
-  // billing.ts. After schema.ts regen these can be plain typed selects.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const supaAny = supa as any;
-
   const [auditRes, ledgerRes] = await Promise.all([
-    supaAny
+    supa
       .from('audit_log')
       .select(
         'id, created_at, task_type, model_id, cost_credits, billing_status, conversation_id',
@@ -109,49 +104,31 @@ meRoutes.get('/billing/history', async (c) => {
       .in('billing_status', ['billed', 'unbilled'])
       .order('created_at', { ascending: false })
       .limit(limit),
-    supaAny
+    supa
       .from('billing_ledger')
       .select('id, created_at, entry_type, delta_credits, reason')
       .order('created_at', { ascending: false })
       .limit(limit),
   ]);
 
-  const consumes = (auditRes.data ?? []).map(
-    (r: {
-      id: string;
-      created_at: string;
-      task_type: string;
-      model_id: string;
-      cost_credits: number;
-      billing_status: string;
-      conversation_id: string | null;
-    }) => ({
-      kind: 'consume' as const,
-      id: r.id,
-      created_at: r.created_at,
-      delta_credits: -Number(r.cost_credits),
-      task_type: r.task_type,
-      model_id: r.model_id,
-      conversation_id: r.conversation_id,
-      billing_status: r.billing_status,
-    }),
-  );
-  const movements = (ledgerRes.data ?? []).map(
-    (r: {
-      id: string;
-      created_at: string;
-      entry_type: string;
-      delta_credits: number;
-      reason: string | null;
-    }) => ({
-      kind: 'movement' as const,
-      id: r.id,
-      created_at: r.created_at,
-      delta_credits: Number(r.delta_credits),
-      entry_type: r.entry_type,
-      reason: r.reason,
-    }),
-  );
+  const consumes = (auditRes.data ?? []).map((r) => ({
+    kind: 'consume' as const,
+    id: r.id,
+    created_at: r.created_at,
+    delta_credits: -Number(r.cost_credits),
+    task_type: r.task_type,
+    model_id: r.model_id,
+    conversation_id: r.conversation_id,
+    billing_status: r.billing_status,
+  }));
+  const movements = (ledgerRes.data ?? []).map((r) => ({
+    kind: 'movement' as const,
+    id: r.id,
+    created_at: r.created_at,
+    delta_credits: Number(r.delta_credits),
+    entry_type: r.entry_type,
+    reason: r.reason,
+  }));
   const merged = [...consumes, ...movements].sort((a, b) =>
     a.created_at < b.created_at ? 1 : -1,
   );

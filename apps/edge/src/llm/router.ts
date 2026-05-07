@@ -384,7 +384,7 @@ export async function recordAudit(
 
   const { data: inserted, error } = await supa
     .from('audit_log')
-    .insert(insertRow as never)
+    .insert(insertRow)
     .select('id')
     .single();
   if (error) {
