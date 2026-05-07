@@ -12,7 +12,14 @@ function defaultRange(): { start: string; end: string } {
   return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
 }
 
-type SearchParams = { start?: string; end?: string };
+type SearchParams = {
+  start?: string;
+  end?: string;
+  user_id?: string;
+  task_type?: string;
+  provider_id?: string;
+  model_id?: string;
+};
 
 export default async function AuditPage({
   searchParams,
@@ -23,6 +30,10 @@ export default async function AuditPage({
   const fallback = defaultRange();
   const start = params.start ?? fallback.start;
   const end = params.end ?? fallback.end;
+  const filterUserId = params.user_id?.trim() || null;
+  const filterTaskType = params.task_type?.trim() || null;
+  const filterProviderId = params.provider_id?.trim() || null;
+  const filterModelId = params.model_id?.trim() || null;
 
   // The view's `day` is timestamptz; comparing to a YYYY-MM-DD string
   // works because PG casts it to date-at-midnight-UTC.
@@ -34,25 +45,46 @@ export default async function AuditPage({
 
   const supa = supabaseAdmin();
 
+  // Pull dropdown option lists in parallel with the main query — small
+  // tables, cheap, lets the filter UI render without re-fetching.
+  const [optionsR] = await Promise.all([
+    Promise.all([
+      supa.from('llm_providers').select('id, slug, display_name').order('priority'),
+      supa.from('llm_models').select('id, slug, display_name').order('slug'),
+    ]),
+  ]);
+  const providerOptions = optionsR[0].data ?? [];
+  const modelOptions = optionsR[1].data ?? [];
+
   // Fetch the full v_audit_daily slice for this range. Aggregations
   // happen in JS — for pre-launch volume that's fine; swap to a SQL
   // function or materialized rollup once row count groans.
-  const { data: dailyRows, error } = await supa
+  let dailyQ = supa
     .from('v_audit_daily')
     .select(
       'day, user_id, provider_id, model_id, task_type, request_count, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, avg_latency_ms, error_count, fallback_count',
     )
     .gte('day', startBound)
     .lt('day', endBound);
+  if (filterUserId) dailyQ = dailyQ.eq('user_id', filterUserId);
+  if (filterTaskType) dailyQ = dailyQ.eq('task_type', filterTaskType);
+  if (filterProviderId) dailyQ = dailyQ.eq('provider_id', filterProviderId);
+  if (filterModelId) dailyQ = dailyQ.eq('model_id', filterModelId);
+  const { data: dailyRows, error } = await dailyQ;
 
   // Recent requests panel — independent slice, raw audit_log rows.
-  const { data: recent } = await supa
+  let recentQ = supa
     .from('audit_log')
     .select(
       'id, created_at, user_id, task_type, model_id, status, error_class, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, latency_ms',
     )
     .order('created_at', { ascending: false })
     .limit(50);
+  if (filterUserId) recentQ = recentQ.eq('user_id', filterUserId);
+  if (filterTaskType) recentQ = recentQ.eq('task_type', filterTaskType);
+  if (filterProviderId) recentQ = recentQ.eq('provider_id', filterProviderId);
+  if (filterModelId) recentQ = recentQ.eq('model_id', filterModelId);
+  const { data: recent } = await recentQ;
 
   const rows = dailyRows ?? [];
 
@@ -127,14 +159,23 @@ export default async function AuditPage({
 
   return (
     <main className="container py-10 space-y-10">
-      <header className="flex items-center justify-between">
+      <header className="space-y-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Audit Explorer</h1>
           <p className="text-sm text-muted-foreground">
-            按时间窗口看 token 用量、成本、错误率与 fallback。
+            按时间窗口和维度过滤看 token 用量、成本、错误率与 fallback。
           </p>
         </div>
-        <DateRangeForm start={start} end={end} />
+        <FilterForm
+          start={start}
+          end={end}
+          userId={filterUserId ?? ''}
+          taskType={filterTaskType ?? ''}
+          providerId={filterProviderId ?? ''}
+          modelId={filterModelId ?? ''}
+          providers={providerOptions}
+          models={modelOptions}
+        />
       </header>
 
       {error && (
@@ -321,28 +362,122 @@ function Td({ children, className }: { children: React.ReactNode; className?: st
   return <td className={`px-4 py-2 ${className ?? ''}`}>{children}</td>;
 }
 
-function DateRangeForm({ start, end }: { start: string; end: string }) {
+// Common task_type values emitted by the router callers — kept in
+// sync manually with apps/edge/src/lib/* so the dropdown reflects
+// reality without an extra DB roundtrip just for distinct task_types.
+const KNOWN_TASKS = ['message_reply', 'title', 'lookback', 'review', 'scroll', 'bot_note'];
+
+function FilterForm({
+  start,
+  end,
+  userId,
+  taskType,
+  providerId,
+  modelId,
+  providers,
+  models,
+}: {
+  start: string;
+  end: string;
+  userId: string;
+  taskType: string;
+  providerId: string;
+  modelId: string;
+  providers: { id: string; slug: string; display_name: string }[];
+  models: { id: string; slug: string; display_name: string }[];
+}) {
   return (
-    <form className="flex items-center gap-2 text-sm">
-      <input
-        type="date"
-        name="start"
-        defaultValue={start}
-        className="rounded-md border border-input bg-background px-2 py-1"
-      />
-      <span className="text-muted-foreground">→</span>
-      <input
-        type="date"
-        name="end"
-        defaultValue={end}
-        className="rounded-md border border-input bg-background px-2 py-1"
-      />
+    <form className="flex flex-wrap items-end gap-3 text-sm">
+      <FilterField label="开始">
+        <input
+          type="date"
+          name="start"
+          defaultValue={start}
+          className="rounded-md border border-input bg-background px-2 py-1"
+        />
+      </FilterField>
+      <FilterField label="结束">
+        <input
+          type="date"
+          name="end"
+          defaultValue={end}
+          className="rounded-md border border-input bg-background px-2 py-1"
+        />
+      </FilterField>
+      <FilterField label="user_id">
+        <input
+          type="text"
+          name="user_id"
+          defaultValue={userId}
+          placeholder="(全部)"
+          className="w-72 rounded-md border border-input bg-background px-2 py-1 font-mono text-xs"
+        />
+      </FilterField>
+      <FilterField label="task">
+        <select
+          name="task_type"
+          defaultValue={taskType}
+          className="rounded-md border border-input bg-background px-2 py-1"
+        >
+          <option value="">(全部)</option>
+          {[...new Set([...KNOWN_TASKS, ...(taskType && !KNOWN_TASKS.includes(taskType) ? [taskType] : [])])].map(
+            (t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ),
+          )}
+        </select>
+      </FilterField>
+      <FilterField label="provider">
+        <select
+          name="provider_id"
+          defaultValue={providerId}
+          className="rounded-md border border-input bg-background px-2 py-1"
+        >
+          <option value="">(全部)</option>
+          {providers.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.slug}
+            </option>
+          ))}
+        </select>
+      </FilterField>
+      <FilterField label="model">
+        <select
+          name="model_id"
+          defaultValue={modelId}
+          className="rounded-md border border-input bg-background px-2 py-1"
+        >
+          <option value="">(全部)</option>
+          {models.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.slug}
+            </option>
+          ))}
+        </select>
+      </FilterField>
       <button
         type="submit"
-        className="rounded-md border border-input bg-background px-3 py-1 hover:bg-accent"
+        className="rounded-md border border-input bg-background px-3 py-1.5 hover:bg-accent"
       >
         查询
       </button>
+      <a
+        href="/audit"
+        className="text-xs text-muted-foreground underline"
+      >
+        清除
+      </a>
     </form>
+  );
+}
+
+function FilterField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      {children}
+    </label>
   );
 }
