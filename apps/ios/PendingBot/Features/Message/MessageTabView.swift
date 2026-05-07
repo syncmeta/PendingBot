@@ -143,9 +143,7 @@ struct MessageTabView: View {
                                     }
                                 }
                             }
-                            Section("小贴士") {
-                                Text("右滑会话:快速新建")
-                                Text("左滑会话:标未读 / 删除")
+                            Section("右滑新建会话\n左滑标未读/删除") {
                             }
                         } label: {
                             CirclePlusButton()
