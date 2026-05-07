@@ -197,8 +197,16 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
         .filter((s) => s.trim())
         .join('\n\n');
 
-      const writeResp = await openrouterClient(env).chat.completions.create({
-        model: modelId,
+      // Reuse the route resolved for the agent loop. The writer phase is
+      // a single short call, so a separate withFallback would buy nothing —
+      // if the agent loop ran on this provider, the writer can too.
+      const writerClient = route?.client;
+      const writerModel = route?.modelToCall ?? modelId;
+      if (!writerClient) {
+        throw new Error('scroll writer phase reached without a resolved route');
+      }
+      const writeResp = await writerClient.chat.completions.create({
+        model: writerModel,
         messages: [
           { role: 'system', content: getPrompt('scroll-write') },
           { role: 'user', content: writeUser },
