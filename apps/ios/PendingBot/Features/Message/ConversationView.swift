@@ -69,6 +69,18 @@ struct ConversationView: View {
     @State private var showingSettings = false
     @State private var saveAsSkillBody: String?
 
+    // Streaming reveal smoother — see applyBubbleEmissions. Bubbles that the
+    // splitter promotes to .streaming (≥ BUBBLE_OVERFLOW_CHARS without a
+    // delimiter) appear empty and have their head buffer + subsequent live
+    // tokens trickled in by `revealTask` at a fixed rate, giving a fast
+    // typewriter catch-up effect instead of the old "pop in 15 chars then
+    // stutter".
+    @State private var revealTargetId: String?
+    @State private var revealBuffer: String = ""
+    @State private var revealEnded: Bool = false
+    @State private var pendingEmissions: [BubbleEmission] = []
+    @State private var revealTask: Task<Void, Never>?
+
     /// "<bot_name> · <effective-model-tag>". Effective model = the per-conv
     /// override if set, otherwise the bot's resolved model (which itself
     /// already accounts for the user's per-bot pin from 我 → 机器人管理).
@@ -216,7 +228,10 @@ struct ConversationView: View {
                     canSend: canSend,
                     onSend: { Task { await send() } },
                     isStreaming: chatTurnTask != nil,
-                    onStop: { chatTurnTask?.cancel() }
+                    onStop: {
+                        chatTurnTask?.cancel()
+                        flushRevealImmediately()
+                    }
                 )
                 .readableColumnWidth()
             }
@@ -238,6 +253,8 @@ struct ConversationView: View {
             }
             lookbackAutoFireTask?.cancel()
             lookbackAutoFireTask = nil
+            revealTask?.cancel()
+            revealTask = nil
         }
         .sheet(isPresented: $showingSkills) {
             NavigationStack {
@@ -436,6 +453,7 @@ struct ConversationView: View {
         }
         chatTurnTask?.cancel()
         chatTurnTask = nil
+        flushRevealImmediately()
         lookbackAutoFireTask?.cancel()
         lookbackAutoFireTask = nil
         if let token = realtimeToken {
@@ -639,6 +657,7 @@ struct ConversationView: View {
     /// and stops the LLM stream.
     private func sendViaSSE(text: String, attachmentIds: [String], autoLookback: Bool = false, userMsgId: String? = nil) {
         chatTurnTask?.cancel()
+        flushRevealImmediately()
         // User taking action (or auto-fire firing) cancels the pending
         // 30s lookback grace timer either way.
         lookbackAutoFireTask?.cancel()
@@ -917,45 +936,161 @@ struct ConversationView: View {
 
     /// Translate splitter emissions into mutations on the local `messages`
     /// array. Begin = append a new bot message; append = mutate the last
-    /// one's content; end / turnDone / turnInterrupted are status signals
-    /// (no-op for now since ChatMessage doesn't carry a streaming flag).
+    /// one's content; end / turnDone / turnInterrupted are status signals.
+    ///
+    /// Streaming bubbles get routed through the reveal smoother: `.begin`
+    /// appends an empty bubble and stashes the head buffer for paced
+    /// reveal; subsequent `.append` events feed that buffer; events that
+    /// belong to *other* bubbles get queued behind so the next bubble
+    /// doesn't appear before the typewriter is done.
     private func applyBubbleEmissions(_ events: [BubbleEmission]) {
         for evt in events {
+            if let target = revealTargetId {
+                switch evt {
+                case .append(let id, let delta) where "live-\(id.uuidString)" == target:
+                    revealBuffer += delta
+                    continue
+                case .end(let id) where "live-\(id.uuidString)" == target:
+                    revealEnded = true
+                    continue
+                default:
+                    pendingEmissions.append(evt)
+                    continue
+                }
+            }
+            applyDirect(evt)
+        }
+    }
+
+    private func applyDirect(_ evt: BubbleEmission) {
+        switch evt {
+        case .begin(let id, let mode, let content):
+            let key = "live-\(id.uuidString)"
+            let initial = mode == .streaming ? "" : content
+            messages.append(ChatMessage(
+                id: key,
+                conversation_id: conversation.id,
+                sender_type: "bot",
+                sender_id: conversation.bot_id ?? "",
+                content: initial,
+                created_at: Int(Date().timeIntervalSince1970),
+                attachments: nil
+            ))
+            if mode == .streaming {
+                revealTargetId = key
+                revealBuffer = content
+                revealEnded = false
+                startRevealTaskIfNeeded()
+            }
+        case .append(let id, let delta):
+            let key = "live-\(id.uuidString)"
+            if let idx = messages.lastIndex(where: { $0.id == key }) {
+                let prev = messages[idx]
+                messages[idx] = ChatMessage(
+                    id: prev.id, conversation_id: prev.conversation_id,
+                    sender_type: prev.sender_type, sender_id: prev.sender_id,
+                    content: prev.content + delta,
+                    created_at: prev.created_at,
+                    attachments: prev.attachments
+                )
+            }
+        case .end, .turnDone, .turnInterrupted:
+            break
+        case .error(let m):
+            // Worker sometimes emits an error event with an empty
+            // `message` field (e.g. when the underlying error stringifies
+            // to ""). Surface a placeholder so the user sees something
+            // and we can grep the console log for the SSE event.
+            let trimmed = m.trimmingCharacters(in: .whitespacesAndNewlines)
+            self.error = trimmed.isEmpty
+                ? "服务端错误（空）— 请重试或检查网络"
+                : trimmed
+            log.error("worker error event: \(m, privacy: .public)")
+        }
+    }
+
+    // MARK: - Streaming reveal smoother
+
+    /// Fixed reveal rate (chars/sec). Tuned to feel "fast typing" while
+    /// staying readable: a 15-char head drains in ~150ms; live tokens
+    /// from a normal LLM stream (≤ ~50 chars/sec) flow through without
+    /// queueing up.
+    private static let revealCharsPerSec: Double = 100
+
+    private func startRevealTaskIfNeeded() {
+        guard revealTask == nil else { return }
+        revealTask = Task { @MainActor in
+            let frameNs: UInt64 = 16_000_000   // ~60 fps
+            let perFrame = Self.revealCharsPerSec * Double(frameNs) / 1_000_000_000
+            var carry: Double = 0
+            while !Task.isCancelled, revealTargetId != nil {
+                try? await Task.sleep(nanoseconds: frameNs)
+                carry += perFrame
+                let advance = Int(carry)
+                if advance > 0, !revealBuffer.isEmpty, let target = revealTargetId {
+                    carry -= Double(advance)
+                    let take = min(advance, revealBuffer.count)
+                    let chunk = String(revealBuffer.prefix(take))
+                    revealBuffer.removeFirst(take)
+                    if let idx = messages.lastIndex(where: { $0.id == target }) {
+                        let prev = messages[idx]
+                        messages[idx] = ChatMessage(
+                            id: prev.id, conversation_id: prev.conversation_id,
+                            sender_type: prev.sender_type, sender_id: prev.sender_id,
+                            content: prev.content + chunk,
+                            created_at: prev.created_at,
+                            attachments: prev.attachments
+                        )
+                    }
+                }
+                if revealEnded && revealBuffer.isEmpty {
+                    let queued = pendingEmissions
+                    pendingEmissions.removeAll()
+                    revealTargetId = nil
+                    revealEnded = false
+                    revealTask = nil
+                    if !queued.isEmpty {
+                        applyBubbleEmissions(queued)
+                    }
+                    return
+                }
+            }
+            revealTask = nil
+        }
+    }
+
+    /// Skip the typewriter and apply everything pending immediately.
+    /// Called when the user interrupts (Stop button), navigates away,
+    /// or fires another send — they want the full content now, not the
+    /// rest of the animation.
+    private func flushRevealImmediately() {
+        revealTask?.cancel()
+        revealTask = nil
+        if let target = revealTargetId, !revealBuffer.isEmpty,
+           let idx = messages.lastIndex(where: { $0.id == target }) {
+            let prev = messages[idx]
+            messages[idx] = ChatMessage(
+                id: prev.id, conversation_id: prev.conversation_id,
+                sender_type: prev.sender_type, sender_id: prev.sender_id,
+                content: prev.content + revealBuffer,
+                created_at: prev.created_at,
+                attachments: prev.attachments
+            )
+        }
+        revealBuffer = ""
+        revealTargetId = nil
+        revealEnded = false
+        let queued = pendingEmissions
+        pendingEmissions.removeAll()
+        // User wants everything visible now — force-flatten any queued
+        // .begin(streaming) into complete bubbles so we don't kick off
+        // another typewriter for the next bubble in the chain.
+        for evt in queued {
             switch evt {
             case .begin(let id, _, let content):
-                messages.append(ChatMessage(
-                    id: "live-\(id.uuidString)",
-                    conversation_id: conversation.id,
-                    sender_type: "bot",
-                    sender_id: conversation.bot_id ?? "",
-                    content: content,
-                    created_at: Int(Date().timeIntervalSince1970),
-                    attachments: nil
-                ))
-            case .append(let id, let delta):
-                let key = "live-\(id.uuidString)"
-                if let idx = messages.lastIndex(where: { $0.id == key }) {
-                    let prev = messages[idx]
-                    messages[idx] = ChatMessage(
-                        id: prev.id, conversation_id: prev.conversation_id,
-                        sender_type: prev.sender_type, sender_id: prev.sender_id,
-                        content: prev.content + delta,
-                        created_at: prev.created_at,
-                        attachments: prev.attachments
-                    )
-                }
-            case .end, .turnDone, .turnInterrupted:
-                break
-            case .error(let m):
-                // Worker sometimes emits an error event with an empty
-                // `message` field (e.g. when the underlying error stringifies
-                // to ""). Surface a placeholder so the user sees something
-                // and we can grep the console log for the SSE event.
-                let trimmed = m.trimmingCharacters(in: .whitespacesAndNewlines)
-                self.error = trimmed.isEmpty
-                    ? "服务端错误（空）— 请重试或检查网络"
-                    : trimmed
-                log.error("worker error event: \(m, privacy: .public)")
+                applyDirect(.begin(id: id, mode: .complete, content: content))
+            default:
+                applyDirect(evt)
             }
         }
     }
