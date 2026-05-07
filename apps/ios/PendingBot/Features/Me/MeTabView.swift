@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// 我 — left-aligned header column (avatar / name / email, no card
-/// background) plus a friend-list-style row stack. Tapping the header
+/// background) plus a native-style settings list. Tapping the header
 /// pushes into `ProfileBootstrapView` (the random-roll 头像 / 用户名
 /// 生成 page) so avatar + nickname share one editing surface.
 struct MeTabView: View {
@@ -13,8 +13,6 @@ struct MeTabView: View {
     @State private var confirmingDelete = false
     @State private var deleting = false
     @State private var error: String?
-    @State private var showHandles = false
-    @State private var showQR = false
     @State private var showRandomize = false
 
     var body: some View {
@@ -34,17 +32,6 @@ struct MeTabView: View {
             } else {
                 coreContent
             }
-        }
-        .sheet(isPresented: $showHandles) {
-            MyHandlesSheet()
-                .tint(Theme.Palette.accent)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-        }
-        .sheet(isPresented: $showQR) {
-            MyQRSheet()
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
         }
         .fullScreenCover(isPresented: $showRandomize) {
             ProfileBootstrapView(allowsBack: true)
@@ -90,57 +77,35 @@ struct MeTabView: View {
                     }
 
                     Section {
-                        Button {
-                            showHandles = true
-                            Haptics.tap()
+                        NavigationLink {
+                            AddMeMethodsView().toolbar(.hidden, for: .tabBar)
                         } label: {
-                            optionRow(icon: "number", label: "号码")
+                            Text("加我为好友的方式")
                         }
-                        .buttonStyle(.plain)
-                        .listRowBackground(Theme.Palette.surface)
-
-                        Button {
-                            showQR = true
-                            Haptics.tap()
-                        } label: {
-                            optionRow(icon: "qrcode", label: "二维码")
-                        }
-                        .buttonStyle(.plain)
-                        .listRowBackground(Theme.Palette.surface)
-
                         NavigationLink {
                             SkillsView().toolbar(.hidden, for: .tabBar)
                         } label: {
-                            optionRow(icon: "puzzlepiece.extension", label: "技能")
+                            Text("技能管理")
                         }
-                        .listRowBackground(Theme.Palette.surface)
                     }
 
                     Section {
-                        Button {
+                        Button(role: .destructive) {
                             confirmingSignOut = true
                             Haptics.tap()
                         } label: {
-                            destructiveRow(
-                                icon: "rectangle.portrait.and.arrow.right",
-                                label: "退出登录"
-                            )
+                            Text("退出登录")
                         }
-                        .buttonStyle(.plain)
-                        .listRowBackground(Theme.Palette.surface)
                         .disabled(store.current == nil)
+                    }
 
-                        Button {
+                    Section {
+                        Button(role: .destructive) {
                             confirmingDelete = true
                             Haptics.tap()
                         } label: {
-                            destructiveRow(
-                                icon: "trash",
-                                label: deleting ? "正在删除…" : "注销账号"
-                            )
+                            Text(deleting ? "正在删除…" : "注销账号")
                         }
-                        .buttonStyle(.plain)
-                        .listRowBackground(Theme.Palette.surface)
                         .disabled(deleting || store.current == nil)
                     } footer: {
                         Text("很多功能还没做好 不可用")
@@ -197,49 +162,6 @@ struct MeTabView: View {
             return dn
         }
         return "未命名"
-    }
-
-    // ── Option rows (friend-list style) ────────────────────────────────────
-
-    /// Friend-list-style row: 36px tinted icon, serif 16-semibold label,
-    /// trailing space (the List section already provides the chevron via
-    /// NavigationLink, and tap-only rows skip it for a flatter look).
-    private func optionRow(icon: String, label: String) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(Theme.Palette.accent)
-                .frame(width: 36, height: 36)
-                .background(Circle().fill(Theme.Palette.accentBg))
-            Text(label)
-                .font(Theme.Fonts.serif(size: 16, weight: .semibold))
-                .foregroundStyle(Theme.Palette.ink)
-            Spacer(minLength: 0)
-        }
-        .padding(.vertical, 4)
-    }
-
-    private func destructiveRow(icon: String, label: String) -> some View {
-        let color = Color(hex: 0xB14B3C)
-        return HStack(spacing: 12) {
-            if deleting && icon == "trash" {
-                ProgressView()
-                    .tint(color)
-                    .frame(width: 36, height: 36)
-                    .background(Circle().fill(color.opacity(0.12)))
-            } else {
-                Image(systemName: icon)
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(color)
-                    .frame(width: 36, height: 36)
-                    .background(Circle().fill(color.opacity(0.12)))
-            }
-            Text(label)
-                .font(Theme.Fonts.serif(size: 16, weight: .semibold))
-                .foregroundStyle(color)
-            Spacer(minLength: 0)
-        }
-        .padding(.vertical, 4)
     }
 
     // ── Actions ────────────────────────────────────────────────────────────

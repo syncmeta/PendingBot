@@ -20,6 +20,7 @@
 		359C376EAADF988A6CE84F76 /* LocalDatabase.swift in Sources */ = {isa = PBXBuildFile; fileRef = 807F5D6DCD9D7DAF34512DBC /* LocalDatabase.swift */; };
 		38FCC07405D2C9B619FFC027 /* BubbleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F932206D62405FD4C1F0143B /* BubbleView.swift */; };
 		3902FC3FB0090CAB65A0CE0B /* MyHandlesSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = C33554764893F4E4696590B7 /* MyHandlesSheet.swift */; };
+		A1B2C3D4E5F60718293A4B5C /* AddMeMethodsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0B1C2D3E4F50617283948A1 /* AddMeMethodsView.swift */; };
 		395FA3FAA3835D1C25EB65BF /* Log.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24809B6D2A44FDE3FF39D6F7 /* Log.swift */; };
 		3C3ED2E76A920B9A0F6E99FB /* AccountsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14244B4958F792B2FE2FDE5A /* AccountsView.swift */; };
 		45E11B6891D22968CE984C46 /* ChatStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = B14FCE8ADC9DE6D22FBC7387 /* ChatStream.swift */; };
@@ -123,6 +124,7 @@
 		BC94DFE7E01003DB9976ADA0 /* PushService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushService.swift; sourceTree = "<group>"; };
 		BDE5ADA3C16B8D916CDF48CB /* BubbleSplitter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BubbleSplitter.swift; sourceTree = "<group>"; };
 		C33554764893F4E4696590B7 /* MyHandlesSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyHandlesSheet.swift; sourceTree = "<group>"; };
+		A0B1C2D3E4F50617283948A1 /* AddMeMethodsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddMeMethodsView.swift; sourceTree = "<group>"; };
 		C608CB73D14B114D2399FE59 /* HostedConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostedConfig.swift; sourceTree = "<group>"; };
 		C99F8DD8956403453040B34E /* ConversationSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationSettingsView.swift; sourceTree = "<group>"; };
 		CA3C55E2C308AF92E34C9383 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
@@ -242,6 +244,7 @@
 			isa = PBXGroup;
 			children = (
 				14244B4958F792B2FE2FDE5A /* AccountsView.swift */,
+				A0B1C2D3E4F50617283948A1 /* AddMeMethodsView.swift */,
 				2F5A6C6876FF131B3D8AA437 /* MeTabView.swift */,
 				C33554764893F4E4696590B7 /* MyHandlesSheet.swift */,
 			);
@@ -459,6 +462,7 @@
 				756AB114C3C20E0E06623B83 /* MessageTabView.swift in Sources */,
 				61B9F7BF2AE1D63124CD6B5E /* ModelPicker.swift in Sources */,
 				3902FC3FB0090CAB65A0CE0B /* MyHandlesSheet.swift in Sources */,
+				A1B2C3D4E5F60718293A4B5C /* AddMeMethodsView.swift in Sources */,
 				73218F689FB323F50181FA6F /* PendingBotApp.swift in Sources */,
 				A655F8BCACB035673B5ADFF4 /* Platform.swift in Sources */,
 				AD60747D6DE88AC5C4FFBCE9 /* ProfileBootstrapView.swift in Sources */,
