@@ -63,60 +63,66 @@ struct MeTabView: View {
         NavigationStack {
             ZStack {
                 Theme.Palette.canvas.ignoresSafeArea()
-                List {
-                    Section {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
                         profileHeader
-                            .listRowBackground(Color.clear)
-                            .listRowInsets(EdgeInsets(top: 12, leading: 20, bottom: 16, trailing: 20))
-                            .listRowSeparator(.hidden)
                             .contentShape(Rectangle())
                             .onTapGesture {
                                 showRandomize = true
                                 Haptics.tap()
                             }
-                    }
 
-                    Section {
-                        NavigationLink {
-                            AddMeMethodsView().toolbar(.hidden, for: .tabBar)
-                        } label: {
-                            Text("加我为好友的方式")
-                        }
-                        NavigationLink {
-                            SkillsView().toolbar(.hidden, for: .tabBar)
-                        } label: {
-                            Text("技能管理")
-                        }
-                    }
+                        VStack(spacing: 10) {
+                            NavigationLink {
+                                AddMeMethodsView().toolbar(.hidden, for: .tabBar)
+                            } label: {
+                                CapsuleRowLabel(title: "加我为好友的方式")
+                            }
+                            .buttonStyle(.plain)
 
-                    Section {
-                        Button(role: .destructive) {
-                            confirmingSignOut = true
-                            Haptics.tap()
-                        } label: {
-                            Text("退出登录")
+                            NavigationLink {
+                                SkillsView().toolbar(.hidden, for: .tabBar)
+                            } label: {
+                                CapsuleRowLabel(title: "技能管理")
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .disabled(store.current == nil)
-                    }
 
-                    Section {
-                        Button(role: .destructive) {
-                            confirmingDelete = true
-                            Haptics.tap()
-                        } label: {
-                            Text(deleting ? "正在删除…" : "注销账号")
+                        VStack(spacing: 10) {
+                            Button {
+                                confirmingSignOut = true
+                                Haptics.tap()
+                            } label: {
+                                CapsuleRowLabel(title: "退出登录", role: .destructive, showsChevron: false)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(store.current == nil)
+
+                            Button {
+                                confirmingDelete = true
+                                Haptics.tap()
+                            } label: {
+                                CapsuleRowLabel(
+                                    title: deleting ? "正在删除…" : "注销账号",
+                                    role: .destructive,
+                                    showsChevron: false
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(deleting || store.current == nil)
                         }
-                        .disabled(deleting || store.current == nil)
-                    } footer: {
+
                         Text("很多功能还没做好 不可用")
                             .font(Theme.Fonts.monoSmall)
                             .foregroundStyle(Theme.Palette.inkMuted)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.top, 8)
+                            .padding(.horizontal, 8)
+                            .padding(.top, 4)
                     }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 12)
+                    .padding(.bottom, 32)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .listStyle(.insetGrouped)
-                .scrollContentBackground(.hidden)
             }
             .background(Theme.Palette.canvas.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
@@ -129,26 +135,29 @@ struct MeTabView: View {
     /// the canvas (no surface card). The whole column is one tap target
     /// → ProfileBootstrapView.
     private var profileHeader: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 24) {
             let seed = store.avatarSeed ?? store.current?.id ?? "?"
             UserAvatar(
                 seed: seed,
                 attachmentId: store.avatarAttachmentId,
                 size: 64
             )
-            Text(displayLabel)
-                .font(Theme.Fonts.serif(size: 22, weight: .semibold))
-                .foregroundStyle(Theme.Palette.ink)
-                .lineLimit(1)
-            if let email = store.current?.email, !email.isEmpty {
-                Text(email)
-                    .font(Theme.Fonts.monoSmall)
-                    .foregroundStyle(Theme.Palette.inkMuted)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(displayLabel)
+                    .font(Theme.Fonts.serif(size: 22, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.ink)
                     .lineLimit(1)
-                    .truncationMode(.middle)
+                if let email = store.current?.email, !email.isEmpty {
+                    Text(email)
+                        .font(Theme.Fonts.monoSmall)
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.bottom, 4)
     }
 
     private var displayLabel: String {
@@ -186,5 +195,43 @@ struct MeTabView: View {
             self.error = "注销失败：\(error.localizedDescription)"
             Haptics.error()
         }
+    }
+}
+
+/// One pill-shaped row used by the 我 tab. Full-width capsule on the
+/// surface color, label leading, optional chevron trailing.
+private struct CapsuleRowLabel: View {
+    enum Role { case normal, destructive }
+
+    let title: String
+    var role: Role = .normal
+    var showsChevron: Bool = true
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(Theme.Fonts.body)
+                .foregroundStyle(role == .destructive
+                                 ? Color(hex: 0xB14B3C)
+                                 : Theme.Palette.ink)
+            Spacer(minLength: 0)
+            if showsChevron {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.inkMuted.opacity(0.7))
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Capsule(style: .continuous)
+                .fill(Theme.Palette.surface)
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
+        )
+        .contentShape(Capsule(style: .continuous))
     }
 }
