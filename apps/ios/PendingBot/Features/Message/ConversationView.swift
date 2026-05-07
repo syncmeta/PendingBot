@@ -340,6 +340,19 @@ struct ConversationView: View {
                 }
             }
             Spacer(minLength: 0)
+            if canStartNewBotConv {
+                Button {
+                    Haptics.tap()
+                    Task { await startNewBotConv() }
+                } label: {
+                    Image(systemName: "square.and.pencil")
+                        .font(.system(size: 17, weight: .regular))
+                        .foregroundStyle(Theme.Palette.ink)
+                        .frame(width: 32, height: 32)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("新建对话")
+            }
             Button {
                 Haptics.tap()
                 showingSettings = true
@@ -376,6 +389,71 @@ struct ConversationView: View {
                 }
             }
         )
+    }
+
+    /// Show the "+ new conv" header button only for materialized chats with
+    /// an identifiable bot — pending convs and user_user/self chats can't
+    /// fork-new-with-same-bot.
+    private var canStartNewBotConv: Bool {
+        guard !conversation.id.isEmpty else { return false }
+        if conversation.conversation_type != "user_bot" { return false }
+        if let bid = bot?.id, !bid.isEmpty { return true }
+        return !conversation.bot_id.isEmpty
+    }
+
+    /// Spin a fresh user_bot conversation with the same bot as the current
+    /// one and swap this view onto it in place. Mirrors the bot branch of
+    /// materializeIfPending for the RPC call, then drops in-flight turn /
+    /// realtime / lookback state so the new conv starts clean.
+    private func startNewBotConv() async {
+        let botId: String = {
+            if let bid = bot?.id, !bid.isEmpty { return bid }
+            return conversation.bot_id
+        }()
+        guard !botId.isEmpty,
+              let userId = AccountStore.shared.current?.id else {
+            self.error = "无法新建对话"
+            return
+        }
+        chatTurnTask?.cancel()
+        chatTurnTask = nil
+        lookbackAutoFireTask?.cancel()
+        lookbackAutoFireTask = nil
+        if let token = realtimeToken {
+            await RealtimeManager.shared.stopConvChannel(token)
+            realtimeToken = nil
+        }
+        do {
+            struct RpcArgs: Encodable { let p_bot_id: String }
+            let newId: UUID = try await SupabaseStack.shared
+                .rpc("open_user_bot_conv",
+                     params: RpcArgs(p_bot_id: botId))
+                .execute()
+                .value
+            let convId = newId.uuidString.lowercased()
+            let displayName = bot?.display_name ?? conversation.bot_name ?? botId
+            conversation = Conversation(
+                id: convId, bot_id: botId, user_id: userId,
+                title: displayName, feature_type: "message",
+                conversation_type: "user_bot",
+                last_activity_at: Int(Date().timeIntervalSince1970),
+                round_count: 0, bot_name: displayName,
+                last_message_content: nil, last_message_sender_type: nil,
+                model_override: nil
+            )
+            messages = []
+            input = ""
+            pendingAttachments = []
+            photoPickerItems = []
+            activeLookbacks = []
+            modelOverride = ""
+            await subscribeRealtime()
+            await loadSkills()
+            onChange()
+        } catch {
+            self.error = "新建对话失败: \(error.localizedDescription)"
+            Haptics.error()
+        }
     }
 
     /// Create the conv row (and participant rows) for a pending conv whose
