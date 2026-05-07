@@ -656,15 +656,19 @@ struct ConversationView: View {
 
         let body: [String: Any] = {
             let clientMsgId = UUID().uuidString.lowercased()
-            let recent = messages.suffix(20).map { m -> [String: Any] in
-                [
-                    "role": m.sender_type,
-                    "content": m.content,
-                    "created_at": ISO8601DateFormatter().string(
-                        from: Date(timeIntervalSince1970: TimeInterval(m.created_at))
-                    ),
-                ]
-            }
+            // Exclude the just-appended optimistic user row — it gets sent
+            // as `newMessage` and would otherwise show up to the LLM twice.
+            let recent = messages.suffix(20)
+                .filter { $0.id != userMsgId }
+                .map { m -> [String: Any] in
+                    [
+                        "role": m.sender_type,
+                        "content": m.content,
+                        "created_at": ISO8601DateFormatter().string(
+                            from: Date(timeIntervalSince1970: TimeInterval(m.created_at))
+                        ),
+                    ]
+                }
             let oldestId = messages.first { $0.id.range(of: "^[0-9a-f-]{36}$",
                                                         options: .regularExpression) != nil }?.id
             var b: [String: Any] = [
