@@ -368,7 +368,15 @@ struct WelcomeView: View {
         // Hold a strong ref — ASAuthorizationController doesn't retain
         // its delegate, and the coordinator must outlive performRequests().
         self.appleCoordinator = coordinator
-        controller.performRequests()
+        // performRequests() internally waits on a Default-QoS thread, which
+        // Xcode flags as a hang risk when invoked from the userInteractive
+        // main actor. Hop to a userInitiated queue to avoid the priority
+        // inversion; the controller dispatches presentation back to main via
+        // its presentationContextProvider.
+        nonisolated(unsafe) let unsafeController = controller
+        DispatchQueue.global(qos: .userInitiated).async {
+            unsafeController.performRequests()
+        }
     }
 
     @MainActor
