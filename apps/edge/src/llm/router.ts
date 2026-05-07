@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import type { Env } from '../types';
 import type { SupabaseClient } from '../lib/supabase';
+import { billingDebit, usdToCredits } from '../lib/billing';
 
 // LLM router — resolves a caller-supplied model slug to a concrete
 // (provider, alias) pair, hands back an OpenAI-compatible client
@@ -333,13 +334,28 @@ export async function recordAudit(
   opts: AuditCallOpts,
 ): Promise<void> {
   const cost = route?.alias ? computeCost(route.alias, opts) : null;
+  const credits = usdToCredits(cost);
   const total =
     (opts.inputTokens ?? 0) +
     (opts.outputTokens ?? 0) +
     (opts.cacheReadTokens ?? 0) +
     (opts.cacheWriteTokens ?? 0);
 
-  const { error } = await supa.from('audit_log').insert({
+  // Billing status preview. The actual billed/unbilled flip happens in
+  // billing_debit (when called below); we plant a sensible initial value
+  // so audit rows that never debit (no userId, zero credits, error
+  // status) settle into a final state on insert.
+  //   - 'free'    : no userId at all (system-triggered call w/o owner)
+  //   - 'skipped' : has userId but credits == 0 (error / no usage / no
+  //                 alias pricing)
+  //   - 'pending' : will be flipped to billed/unbilled by billing_debit
+  const initialBilling: 'free' | 'skipped' | 'pending' = !opts.userId
+    ? 'free'
+    : credits <= 0
+      ? 'skipped'
+      : 'pending';
+
+  const insertRow = {
     user_id: opts.userId ?? null,
     conversation_id: opts.conversationId ?? null,
     task_type: opts.taskType,
@@ -353,6 +369,8 @@ export async function recordAudit(
     cache_write_tokens: opts.cacheWriteTokens ?? 0,
     total_tokens: total,
     cost_usd: cost,
+    cost_credits: credits,
+    billing_status: initialBilling,
     generation_id: opts.generationId ?? null,
     latency_ms: Date.now() - opts.startedAt,
     status: opts.status,
@@ -362,9 +380,24 @@ export async function recordAudit(
     route_trace: (opts.routeTrace as never) ?? null,
     tag: opts.tag ?? null,
     ...(opts.metadata ? { metadata: opts.metadata as never } : {}),
-  });
+  };
+
+  const { data: inserted, error } = await supa
+    .from('audit_log')
+    .insert(insertRow as never)
+    .select('id')
+    .single();
   if (error) {
     console.warn('[audit_log insert]', error.message);
+    return;
+  }
+
+  // Post-insert debit. Errors are swallowed inside billingDebit — never
+  // propagate billing-side failures back to the LLM caller. The next
+  // pre-call gate handles consequences (insufficient balance blocks
+  // further requests).
+  if (initialBilling === 'pending' && opts.userId && inserted?.id) {
+    await billingDebit(supa, opts.userId, inserted.id as string, credits);
   }
 }
 
