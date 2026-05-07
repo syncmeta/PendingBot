@@ -1,4 +1,5 @@
 import type { Env } from '../types';
+import type { WebSearchResult, WebReadResult } from './web-types';
 
 // Web tools used by bot-reply (in-chat search / read) and scroll-runner
 // (奏折 article research). Two providers, picked to mirror what the user's
@@ -9,13 +10,10 @@ import type { Env } from '../types';
 //
 // Both expect API keys via secrets — see types.ts (BRAVE_API_KEY /
 // FIRECRAWL_API_KEY). The shapes here are deliberately small so the agent
-// loop's prompt format stays stable across provider swaps.
+// loop's prompt format stays stable across provider swaps. Result types
+// re-exported below for back-compat with existing callers.
 
-export interface WebSearchResult {
-  url: string;
-  title: string;
-  snippet: string;
-}
+export type { WebSearchResult, WebReadResult } from './web-types';
 
 export async function braveSearch(
   env: Env,
@@ -44,12 +42,6 @@ export async function braveSearch(
     title: r.title ?? '',
     snippet: r.description ?? '',
   }));
-}
-
-export interface WebReadResult {
-  url: string;
-  title: string;
-  content: string; // clean markdown
 }
 
 export async function firecrawlScrape(
