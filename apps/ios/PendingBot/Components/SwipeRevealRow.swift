@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Trailing swipe-to-reveal action buttons for a row.
 ///
@@ -7,6 +8,13 @@ import SwiftUI
 /// therefore need their own implementation. The card itself never fades —
 /// the round action buttons emerge from behind the trailing edge with a
 /// staggered spring as the user drags.
+///
+/// Optionally accepts a `leadingTrigger` — a right-swipe gesture that fires
+/// a single callback the moment the user releases past a threshold. The
+/// drag plays a ratcheting haptic (light → heavy) and a "click" the instant
+/// it crosses the trigger line, mimicking pulling a hanging-light cord to
+/// the stop. There is no static reveal state for the leading edge: it's
+/// drag-and-go.
 struct SwipeRevealAction: Identifiable {
     let id = UUID()
     let systemImage: String
@@ -14,21 +22,45 @@ struct SwipeRevealAction: Identifiable {
     let action: () -> Void
 }
 
+/// Right-swipe-to-fire gesture. Shown behind the leading edge of the card
+/// during the drag; fires `action` when the user releases past the trigger
+/// line. `tint` colors the icon + label; `label` is the chip text shown
+/// under the icon.
+struct SwipeLeadingTrigger {
+    let systemImage: String
+    let label: String
+    let armedLabel: String
+    let tint: Color
+    let action: () -> Void
+}
+
 struct SwipeRevealRow<Content: View>: View {
     let actions: [SwipeRevealAction]
+    let leadingTrigger: SwipeLeadingTrigger?
     let content: () -> Content
 
     init(
         actions: [SwipeRevealAction],
+        leadingTrigger: SwipeLeadingTrigger? = nil,
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.actions = actions
+        self.leadingTrigger = leadingTrigger
         self.content = content
     }
 
     private let buttonSize: CGFloat = 38
     private let buttonGap: CGFloat = 10
     private let edgePadding: CGFloat = 14
+    /// Drag distance past which a release commits the leading-trigger
+    /// action. Sized so the user has to make a deliberate pull — short
+    /// enough to feel light, long enough that an accidental horizontal
+    /// scroll won't fire it.
+    private let leadingTriggerWidth: CGFloat = 96
+    /// Spacing between successive ratcheting haptic ticks during the
+    /// leading drag — every `tickStride` pt advanced fires one click.
+    private let tickStride: CGFloat = 9
+
     private var actionsWidth: CGFloat {
         let n = CGFloat(actions.count)
         return n * buttonSize + max(0, n - 1) * buttonGap + edgePadding * 2
@@ -37,18 +69,44 @@ struct SwipeRevealRow<Content: View>: View {
     @State private var settled: CGFloat = 0
     @State private var dragDX: CGFloat = 0
     @State private var lockedToHorizontal = false
+    @State private var lastTickDX: CGFloat = 0
+    @State private var didArm: Bool = false
 
     private var rawOffset: CGFloat { settled + dragDX }
-    private var clampedOffset: CGFloat { max(-actionsWidth, min(0, rawOffset)) }
+    /// Card offset including the leading-trigger rubber band. Past the
+    /// trigger line the card resists further travel — sqrt-easing the
+    /// excess gives the same "rope under tension" feel UIScrollView uses
+    /// for its bounce.
+    private var clampedOffset: CGFloat {
+        let raw = rawOffset
+        if raw <= 0 {
+            return max(-actionsWidth, raw)
+        }
+        // Leading lane is only available when the row isn't already in a
+        // trailing-revealed state — otherwise a right-drag after an open
+        // would visually overshoot AND threaten to fire the trigger.
+        guard leadingTrigger != nil, settled == 0 else { return 0 }
+        if raw <= leadingTriggerWidth { return raw }
+        let excess = raw - leadingTriggerWidth
+        return leadingTriggerWidth + (sqrt(excess + 1) - 1) * 6
+    }
     private var revealProgress: CGFloat {
         guard actionsWidth > 0 else { return 0 }
         return min(1, max(0, -clampedOffset / actionsWidth))
+    }
+    private var leadingProgress: CGFloat {
+        guard leadingTrigger != nil else { return 0 }
+        return min(1, max(0, clampedOffset / leadingTriggerWidth))
     }
     private var isOpen: Bool { settled <= -actionsWidth + 0.5 }
 
     var body: some View {
         ZStack(alignment: .trailing) {
             actionStack
+            if leadingTrigger != nil {
+                leadingTriggerLane
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
             content()
                 .offset(x: clampedOffset)
                 .overlay {
@@ -76,17 +134,41 @@ struct SwipeRevealRow<Content: View>: View {
                     if !lockedToHorizontal {
                         guard abs(dx) > abs(dy) else { return }
                         lockedToHorizontal = true
+                        lastTickDX = 0
+                        didArm = false
                     }
                     dragDX = dx
+                    if leadingTrigger != nil && settled == 0 && rawOffset > 0 {
+                        emitLeadingHapticsIfNeeded()
+                    }
                 }
                 .onEnded { value in
-                    defer { lockedToHorizontal = false }
+                    defer {
+                        lockedToHorizontal = false
+                        lastTickDX = 0
+                        didArm = false
+                    }
                     guard lockedToHorizontal else {
                         dragDX = 0
                         return
                     }
                     let dx = value.translation.width
                     let velocity = value.predictedEndTranslation.width - dx
+                    // Right-swipe: commit the leading trigger if the user
+                    // released past the trigger line OR flicked past a
+                    // velocity threshold (so a fast snappy pull also fires).
+                    if let trigger = leadingTrigger,
+                       settled == 0,
+                       rawOffset > 0,
+                       (rawOffset >= leadingTriggerWidth || velocity > 600) {
+                        UINotificationFeedbackGenerator().notificationOccurred(.success)
+                        withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
+                            dragDX = 0
+                            settled = 0
+                        }
+                        trigger.action()
+                        return
+                    }
                     let shouldOpen: Bool = isOpen
                         ? !(dx > buttonSize * 0.5 || velocity > 200)
                         : (-dx > buttonSize * 0.5 || velocity < -200)
@@ -96,6 +178,62 @@ struct SwipeRevealRow<Content: View>: View {
                     }
                 }
         )
+    }
+
+    // ── Leading-trigger UI + haptics ────────────────────────────────────────
+
+    @ViewBuilder
+    private var leadingTriggerLane: some View {
+        if let trigger = leadingTrigger {
+            let armed = leadingProgress >= 0.999
+            HStack(spacing: 8) {
+                Image(systemName: trigger.systemImage)
+                    .font(.system(size: armed ? 18 : 15, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 32, height: 32)
+                    .background(Circle().fill(trigger.tint))
+                    .scaleEffect(0.6 + leadingProgress * 0.5)
+                    .shadow(color: trigger.tint.opacity(0.25 * leadingProgress),
+                            radius: 6, y: 2)
+                Text(armed ? trigger.armedLabel : trigger.label)
+                    .font(Theme.Fonts.rounded(size: 12, weight: .semibold))
+                    .foregroundStyle(trigger.tint)
+                    .opacity(min(1, leadingProgress * 2))
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            .padding(.leading, 14)
+            .animation(.spring(response: 0.22, dampingFraction: 0.6), value: armed)
+        }
+    }
+
+    /// Two-stage haptic: ratcheting clicks every `tickStride` pt during the
+    /// drag (intensity ramps with progress, like dragging a stiffening
+    /// spring), then a single rigid "stop" the moment the trigger arms —
+    /// the lamp-cord click that tells the user "let go now."
+    private func emitLeadingHapticsIfNeeded() {
+        let dx = max(0, dragDX)
+        // Ratcheting ticks while approaching the trigger.
+        if dx < leadingTriggerWidth, dx - lastTickDX >= tickStride {
+            let intensity = 0.25 + leadingProgress * 0.55
+            let style: UIImpactFeedbackGenerator.FeedbackStyle =
+                leadingProgress < 0.5 ? .light : .soft
+            UIImpactFeedbackGenerator(style: style)
+                .impactOccurred(intensity: intensity)
+            lastTickDX = dx
+        }
+        // Hard click the instant we cross the trigger line.
+        if !didArm, dx >= leadingTriggerWidth {
+            didArm = true
+            UIImpactFeedbackGenerator(style: .rigid)
+                .impactOccurred(intensity: 1.0)
+        }
+        // If the user pulls back before releasing, re-arm so they can
+        // hear the click again the next time they cross the line.
+        if didArm, dx < leadingTriggerWidth - tickStride {
+            didArm = false
+            lastTickDX = dx
+        }
     }
 
     private var actionStack: some View {
