@@ -9,11 +9,15 @@ struct MeTabView: View {
     @Environment(\.useSidebarLayout) private var sidebarLayout
     @Environment(\.topTabSelection) private var topTabSelection
 
-    @State private var confirmingSignOut = false
-    @State private var confirmingDelete = false
+    @State private var pendingConfirm: ConfirmAction?
     @State private var deleting = false
     @State private var error: String?
     @State private var showRandomize = false
+
+    private enum ConfirmAction: Identifiable {
+        case signOut, delete
+        var id: Self { self }
+    }
 
     var body: some View {
         Group {
@@ -37,24 +41,38 @@ struct MeTabView: View {
             ProfileBootstrapView(allowsBack: true)
                 .environmentObject(AccountStore.shared)
         }
-        .alert("出错", isPresented: .constant(error != nil)) {
+        .alert("出错", isPresented: Binding(
+            get: { error != nil },
+            set: { if !$0 { error = nil } }
+        )) {
             Button("好") { error = nil }
         } message: { Text(error ?? "") }
         .confirmationDialog(
-            "确定？",
-            isPresented: $confirmingSignOut,
+            confirmTitle,
+            isPresented: Binding(
+                get: { pendingConfirm != nil },
+                set: { if !$0 { pendingConfirm = nil } }
+            ),
             titleVisibility: .visible
         ) {
-            Button("退出登录", role: .destructive) { signOut() }
-            Button("取消", role: .cancel) {}
+            switch pendingConfirm {
+            case .signOut:
+                Button("退出登录", role: .destructive) { signOut() }
+                Button("取消", role: .cancel) {}
+            case .delete:
+                Button("永久删除", role: .destructive) { Task { await deleteAccount() } }
+                Button("取消", role: .cancel) {}
+            case .none:
+                EmptyView()
+            }
         }
-        .confirmationDialog(
-            "删除你在服务器上的所有数据 就像你没来过一样 不可撤销 无法恢复 数据无价 谨慎操作",
-            isPresented: $confirmingDelete,
-            titleVisibility: .visible
-        ) {
-            Button("永久删除", role: .destructive) { Task { await deleteAccount() } }
-            Button("取消", role: .cancel) {}
+    }
+
+    private var confirmTitle: String {
+        switch pendingConfirm {
+        case .signOut: return "确定？"
+        case .delete:  return "删除你在服务器上的所有数据 就像你没来过一样 不可撤销 无法恢复 数据无价 谨慎操作"
+        case .none:    return ""
         }
     }
 
@@ -91,7 +109,7 @@ struct MeTabView: View {
 
                     Section {
                         Button(role: .destructive) {
-                            confirmingSignOut = true
+                            pendingConfirm = .signOut
                             Haptics.tap()
                         } label: {
                             Text("退出登录")
@@ -101,7 +119,7 @@ struct MeTabView: View {
 
                     Section {
                         Button(role: .destructive) {
-                            confirmingDelete = true
+                            pendingConfirm = .delete
                             Haptics.tap()
                         } label: {
                             Text(deleting ? "正在删除…" : "注销账号")
