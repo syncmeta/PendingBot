@@ -65,7 +65,13 @@ INSERT INTO pendingbot.llm_models (slug, family, display_name, context_window, m
   ('minimax-m2.7', 'minimax-m2', 'MiniMax M2.7', NULL, NULL,
    '{"tool_use":true,"prompt_cache":true}'::jsonb, true, NULL),
   ('glm-5.1', 'glm-5', 'GLM 5.1', NULL, NULL,
-   '{"vision":true,"tool_use":true,"prompt_cache":true}'::jsonb, true, NULL)
+   '{"vision":true,"tool_use":true,"prompt_cache":true}'::jsonb, true, NULL),
+  ('qwen3.6-plus', 'qwen3', 'Qwen 3.6 Plus', NULL, NULL,
+   '{"tool_use":true,"prompt_cache":true}'::jsonb, true,
+   'Alibaba mid-tier on WR. WR ~40% cheaper than OR.'),
+  ('gemma-4-31b-it', 'gemma-4', 'Gemma 4 31B IT', NULL, NULL,
+   '{"tool_use":false}'::jsonb, true,
+   'Google open-weights. WR/OR price tied; WR exposes cache_write tier.')
 ON CONFLICT (slug) DO NOTHING;
 
 -- ── aliases ─────────────────────────────────────────────────────
@@ -114,6 +120,16 @@ BEGIN
     ('deepseek-v4-pro',   'deepseek/deepseek-v4-pro',    0.435::numeric,  0.003625::numeric, 0.87::numeric, NULL::numeric,    100::int,
                           'deepseek-v4-pro',             1.218::numeric,  0.1015::numeric, 2.436::numeric,  1.218::numeric,   0::int,
                           'WR is 2.80× OR — never primary. weight=0 so router only falls back here when OR is unavailable.'),
+    -- WR ~40% cheaper, WR primary
+    ('qwen3.6-plus',      'qwen/qwen3.6-plus',           0.325::numeric,  NULL::numeric,   1.95::numeric,   0.40625::numeric, 0::int,
+                          'qwen3.6-plus',                0.1932::numeric, 0.01932::numeric, 1.1557::numeric, 0.2415::numeric, 100::int,
+                          'WR ~40% cheaper than OR across the board, plus exposes a cache_read tier.'),
+
+    -- WR/OR price tied on input/output, WR exposes cache_write
+    ('gemma-4-31b-it',    'google/gemma-4-31b-it',       0.13::numeric,   NULL::numeric,   0.38::numeric,   NULL::numeric,    0::int,
+                          'gemma-4-31b-it',              0.13::numeric,   NULL::numeric,   0.38::numeric,   0.13::numeric,    100::int,
+                          'WR price = OR price (no discount on this open-weights model). WR primary because it exposes a cache_write tier.'),
+
     ('glm-5.1',           'z-ai/glm-5.1',                1.05::numeric,   0.525::numeric,  3.5::numeric,    NULL::numeric,    100::int,
                           'glm-5.1',                     1.12::numeric,   0.182::numeric,  3.52::numeric,   0.98::numeric,    0::int,
                           'WR is 1.067× OR — slightly pricier. weight=0; OR primary.')
