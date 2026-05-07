@@ -16,6 +16,11 @@ enum ChatEvent: Sendable {
     /// the pair into the per-turn trace shown inline above the bot reply.
     case toolCall(name: String, input: String?)
     case toolResult(name: String, summary: String?, error: String?)
+    /// Cumulative web-search citations for this turn. Server emits after each
+    /// `search_web` returns; the list grows monotonically (deduped by url).
+    /// UI resolves inline `[N]` markers in the bot's reply against `items`
+    /// (1-based) so taps open the source page.
+    case citations(items: [MessageCitation])
     case error(message: String)
     case unknown(name: String, raw: String)
 }
@@ -181,6 +186,16 @@ private func decode(eventName: String, dataJSON: String) -> ChatEvent {
             return nil
         }()
         return .toolResult(name: name, summary: summary, error: err)
+    case "citations":
+        // `items` is a JSON array of {url, title, snippet?}. Re-encode the
+        // sub-tree and decode through Codable so the model layer owns the
+        // shape — keeps this switch from sprawling.
+        if let items = json["items"] as? [Any],
+           let data = try? JSONSerialization.data(withJSONObject: items),
+           let decoded = try? JSONDecoder().decode([MessageCitation].self, from: data) {
+            return .citations(items: decoded)
+        }
+        return .citations(items: [])
     case "error":
         return .error(message: (json["message"] as? String) ?? "")
     default:
