@@ -8,6 +8,7 @@ const LINKS: { href: string; label: string }[] = [
   { href: '/audit', label: 'Audit' },
   { href: '/arbitrage', label: 'Arbitrage' },
   { href: '/app-stats', label: 'App stats' },
+  { href: '/billing', label: 'Billing' },
   { href: '/providers', label: 'Providers' },
   { href: '/models', label: 'Models' },
   { href: '/aliases', label: 'Aliases' },
