@@ -811,6 +811,7 @@ export type Database = {
         Row: {
           attachments: Json | null
           bubble_group_id: string | null
+          citations: Json | null
           client_message_id: string
           content: string | null
           content_partial: string | null
@@ -833,6 +834,7 @@ export type Database = {
         Insert: {
           attachments?: Json | null
           bubble_group_id?: string | null
+          citations?: Json | null
           client_message_id: string
           content?: string | null
           content_partial?: string | null
@@ -855,6 +857,7 @@ export type Database = {
         Update: {
           attachments?: Json | null
           bubble_group_id?: string | null
+          citations?: Json | null
           client_message_id?: string
           content?: string | null
           content_partial?: string | null
