@@ -68,7 +68,6 @@ struct ConversationView: View {
     @State private var showingSkills = false
     @State private var showingSettings = false
     @State private var saveAsSkillBody: String?
-    @AppStorage("bb_chatStreaming") private var streaming = false
 
     /// "<bot_name> · <effective-model-tag>". Effective model = the per-conv
     /// override if set, otherwise the bot's resolved model (which itself
@@ -251,7 +250,6 @@ struct ConversationView: View {
         }
         .sheet(isPresented: $showingSettings) {
             ConversationSettingsView(
-                streaming: $streaming,
                 modelOverride: $modelOverride,
                 enabledSkillCount: skills.filter { $0.enabled }.count,
                 totalSkillCount: skills.count,
