@@ -56,7 +56,7 @@ struct MarkdownText: View {
 
     private var rewrittenText: String {
         guard !citations.isEmpty else { return text }
-        return CitationScheme.rewrite(text, count: citations.count)
+        return CitationScheme.rewrite(text, citations: citations)
     }
 
     // ── Theme ──────────────────────────────────────────────────────────────
@@ -70,8 +70,14 @@ struct MarkdownText: View {
             FontSize(16)
         }
         .link {
+            // Citations land here too — see CitationScheme.rewrite, which
+            // turns inline `[N]` markers into markdown links whose label is
+            // the source's domain. The accent fill + medium weight make
+            // them read as small tags rather than underlined text.
             ForegroundColor(AppTheme.Palette.accent)
-            UnderlineStyle(.single)
+            BackgroundColor(AppTheme.Palette.accent.opacity(0.12))
+            FontSize(.em(0.88))
+            FontWeight(.medium)
         }
         .strong { FontWeight(.semibold) }
         .emphasis { FontStyle(.italic) }
@@ -137,11 +143,13 @@ fileprivate enum CitationScheme {
     static let scheme = "pendingbot-cite"
 
     /// Replace every `[N]` (1-based) in `text` with a markdown link whose
-    /// label is the literal `[N]` and whose href is `pendingbot-cite://N`.
-    /// References outside `1...count` are left as plain text — better to
-    /// show a stray `[7]` than to dead-link it. The `\[` / `\]` escapes
-    /// keep CommonMark from re-parsing the inner brackets as link syntax.
-    static func rewrite(_ text: String, count: Int) -> String {
+    /// label is the citation's domain (e.g. `wikipedia.org`) wrapped in
+    /// brackets, and whose href is `pendingbot-cite://N`. References
+    /// outside `1...count` are left as plain text — better to show a stray
+    /// `[7]` than to dead-link it. The `\[` / `\]` escapes keep CommonMark
+    /// from re-parsing the inner brackets as link syntax; the brackets
+    /// themselves visually separate adjacent citations like `[1][3]`.
+    static func rewrite(_ text: String, citations: [MessageCitation]) -> String {
         // Avoid re-parsing on every layout pass — short-circuit when the
         // text has no candidate.
         guard text.contains("[") else { return text }
@@ -150,6 +158,7 @@ fileprivate enum CitationScheme {
         let ns = text as NSString
         let matches = pattern.matches(in: text, range: NSRange(location: 0, length: ns.length))
         guard !matches.isEmpty else { return text }
+        let count = citations.count
         var result = ""
         var cursor = 0
         for match in matches {
@@ -160,7 +169,8 @@ fileprivate enum CitationScheme {
                 result += ns.substring(with: NSRange(location: cursor, length: full.location - cursor))
             }
             if n >= 1 && n <= count {
-                result += "[\\[\(n)\\]](\(scheme)://\(n))"
+                let host = host(for: citations[n - 1].url)
+                result += "[\\[\(host)\\]](\(scheme)://\(n))"
             } else {
                 result += ns.substring(with: full)
             }
@@ -170,6 +180,14 @@ fileprivate enum CitationScheme {
             result += ns.substring(with: NSRange(location: cursor, length: ns.length - cursor))
         }
         return result
+    }
+
+    /// Display host: prefer the bare domain (`example.com`) over the full
+    /// hostname (`www.example.com`). Falls back to `?` for malformed urls
+    /// so the rewritten markdown stays valid even if the citation slipped
+    /// through with a junk url.
+    private static func host(for url: String) -> String {
+        URL(string: url)?.host?.replacingOccurrences(of: "www.", with: "") ?? "?"
     }
 }
 

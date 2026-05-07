@@ -73,6 +73,12 @@ struct ConversationView: View {
     /// the turn so the live preview can resolve `[N]` taps before the
     /// canonical row arrives via Realtime.
     @State private var liveCitations: [MessageCitation] = []
+    /// Per-trace citations bucket so the inline `搜索` trace can list the
+    /// hits it surfaced even after the turn ends + `liveCitations` resets.
+    /// Keyed by user-message id like `tracesByUserMsgId`; rekeyed on the
+    /// optimistic-id → canonical-id swap so re-expanding an old trace still
+    /// shows its results.
+    @State private var traceCitationsByUserMsgId: [String: [MessageCitation]] = [:]
     // Skill summaries — counted in the settings sheet so the user sees
     // how many are active without leaving the conversation.
     @State private var skills: [SkillSummary] = []
@@ -203,7 +209,8 @@ struct ConversationView: View {
                             if msg.isUser, let trace = tracesByUserMsgId[msg.id], !trace.isEmpty {
                                 ToolTraceView(
                                     events: trace,
-                                    isLive: liveTraceUserMsgId == msg.id
+                                    isLive: liveTraceUserMsgId == msg.id,
+                                    citations: traceCitationsByUserMsgId[msg.id] ?? []
                                 )
                                 .id("trace:\(msg.id)")
                                 .transition(.opacity)
@@ -761,6 +768,13 @@ struct ConversationView: View {
                         for msg in messages where msg.id.hasPrefix("live-") {
                             citationsByMsgId[msg.id] = items
                         }
+                        // Also stash a copy under the trace's user-msg key
+                        // so the inline search trace keeps its results
+                        // visible after the turn ends (`liveCitations` is
+                        // reset at the next send, but the trace persists).
+                        if let key = liveTraceUserMsgId {
+                            traceCitationsByUserMsgId[key] = items
+                        }
                     case .error(let msg):
                         splitter.reportError(msg)
                     case .unknown:
@@ -957,6 +971,9 @@ struct ConversationView: View {
                     if liveTraceUserMsgId == oldId {
                         liveTraceUserMsgId = id
                     }
+                }
+                if let traceCites = traceCitationsByUserMsgId.removeValue(forKey: oldId) {
+                    traceCitationsByUserMsgId[id] = traceCites
                 }
                 // Same rekey for citations — the live-id snapshot was set
                 // from the SSE event; the canonical row may carry the same

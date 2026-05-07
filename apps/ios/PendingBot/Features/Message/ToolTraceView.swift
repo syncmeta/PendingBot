@@ -46,8 +46,11 @@ struct ToolTraceEvent: Identifiable, Hashable {
 /// Inline, non-bubble trace of the bot's tool calls for one turn. Reads as
 /// a quiet sidebar in the conversation flow:
 ///
-///   - Collapsed (default): one row — spinner + "搜索 · 3" + chevron
-///   - Expanded: each event listed with its input + result
+///   - While searching: auto-expanded — one row per tool call + a list of
+///     hits as they arrive (domain · title), so the user sees the search
+///     unfold in real time.
+///   - After all tools complete: auto-collapses to a single header row
+///     ("搜索 · 3 条结果"), tappable to re-expand for review.
 ///
 /// Colors are intentionally muted (no surface fill, no border) so the trace
 /// recedes — the bot's actual reply remains the visual anchor.
@@ -57,8 +60,17 @@ struct ToolTraceView: View {
     /// more tool calls will arrive). Drives the live spinner + "搜索中…"
     /// wording on the header.
     let isLive: Bool
+    /// Cumulative web-search hits surfaced during the turn — same list the
+    /// bot's `[N]` markers resolve against. Rendered as tappable rows in
+    /// the expanded body so the user sees real results, not just a count.
+    var citations: [MessageCitation] = []
 
     @State private var expanded: Bool = false
+    @Environment(\.openURL) private var openURL
+
+    /// Any tool still in flight → trace is "live activity". Drives the
+    /// auto-expand-while-searching, auto-collapse-when-done behavior.
+    private var anyPending: Bool { !events.allSatisfy(\.done) }
 
     var body: some View {
         if !events.isEmpty {
@@ -71,6 +83,19 @@ struct ToolTraceView: View {
             .padding(.leading, Theme.Metrics.gutter + 30 + 8) // align under bot avatar gutter
             .padding(.trailing, Theme.Metrics.gutter)
             .padding(.vertical, 2)
+            .onAppear {
+                // Mid-stream mount → reflect live state immediately so the
+                // user sees the search unfolding without having to tap.
+                expanded = anyPending
+            }
+            .onChange(of: anyPending) { _, nowPending in
+                // Searches just started → expand. Last result landed → collapse.
+                // User taps still override either direction; the next pending
+                // transition re-syncs.
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    expanded = nowPending
+                }
+            }
         }
     }
 
@@ -122,6 +147,12 @@ struct ToolTraceView: View {
         if isLive && !events.allSatisfy(\.done) {
             return joined + "中…"
         }
+        // Once finished, append the citation count if any — gives the
+        // collapsed row a useful "搜索 · 5 条结果" tail instead of a bare
+        // verb the user can't act on.
+        if !citations.isEmpty {
+            return joined + " · \(citations.count) 条结果"
+        }
         return joined
     }
 
@@ -152,7 +183,48 @@ struct ToolTraceView: View {
                     }
                 }
             }
+            if !citations.isEmpty {
+                ForEach(Array(citations.enumerated()), id: \.element.id) { idx, c in
+                    citationRow(index: idx + 1, citation: c)
+                }
+            }
         }
         .padding(.leading, 2)
+    }
+
+    /// One hit row in the live-results list. Tap opens the source page.
+    /// Compact two-line layout (title · domain) so the trace reads quickly
+    /// even with 5–8 results.
+    private func citationRow(index: Int, citation: MessageCitation) -> some View {
+        Button {
+            if let u = URL(string: citation.url) {
+                openURL(u)
+                Haptics.tap()
+            }
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("[\(index)]")
+                    .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.accent)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(citation.title)
+                        .font(Theme.Fonts.footnote)
+                        .foregroundStyle(Theme.Palette.ink)
+                        .lineLimit(1)
+                        .multilineTextAlignment(.leading)
+                    Text(host(citation.url))
+                        .font(Theme.Fonts.caption)
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func host(_ url: String) -> String {
+        URL(string: url)?.host?.replacingOccurrences(of: "www.", with: "") ?? url
     }
 }
