@@ -1,7 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import type { Env } from '../types';
 import { serviceClient } from './supabase';
-import { recordAudit, resolveRoute, usageFromCompletion } from '../llm/router';
+import {
+  FallbackError,
+  recordAudit,
+  usageFromCompletion,
+  withFallback,
+} from '../llm/router';
 import { getPrompt } from '../llm/prompt-loader';
 import { getBotMemory } from './memory';
 
@@ -202,22 +207,24 @@ export async function runReview(input: RunReviewInput): Promise<void> {
         content: m.content as string,
       }));
 
-    const route = await resolveRoute(supa, env, {
-      modelSlug: modelId,
-      taskType: 'review',
-    });
-    const completion = await route.client.chat.completions.create({
-      model: route.modelToCall,
-      messages: [
-        { role: 'system', content: getPrompt('review') },
-        { role: 'user', content: leadIn },
-        ...llmHistory,
-        {
-          role: 'user',
-          content: '请按系统指令对你和对方两边都做一遍回顾，按要求的分段输出。',
-        },
-      ],
-    });
+    const { result: completion, route, routeTrace } = await withFallback(
+      supa,
+      env,
+      { modelSlug: modelId, taskType: 'review' },
+      (r) =>
+        r.client.chat.completions.create({
+          model: r.modelToCall,
+          messages: [
+            { role: 'system', content: getPrompt('review') },
+            { role: 'user', content: leadIn },
+            ...llmHistory,
+            {
+              role: 'user',
+              content: '请按系统指令对你和对方两边都做一遍回顾，按要求的分段输出。',
+            },
+          ],
+        }),
+    );
     const rawText = completion.choices[0]?.message?.content?.trim() ?? '';
     const usage = completion.usage;
 
@@ -292,6 +299,7 @@ export async function runReview(input: RunReviewInput): Promise<void> {
       startedAt,
       generationId: completion.id,
       status: 'success',
+      routeTrace,
       metadata: { review_run_id: reviewRunId, bot_id: botId },
       ...usageFromCompletion(usage),
     });
@@ -301,6 +309,19 @@ export async function runReview(input: RunReviewInput): Promise<void> {
       .eq('id', reviewRunId);
   } catch (err) {
     console.error('[review-runner]', err);
+    if (err instanceof FallbackError) {
+      await recordAudit(supa, err.lastRoute, {
+        userId,
+        conversationId,
+        taskType: 'review',
+        startedAt,
+        status: 'error',
+        errorClass:
+          err.routeTrace[err.routeTrace.length - 1]?.error_class ?? 'unknown',
+        routeTrace: err.routeTrace,
+        metadata: { review_run_id: reviewRunId, bot_id: botId },
+      });
+    }
     await supa
       .from('review_runs')
       .update({ status: 'error', finished_at: new Date().toISOString() })

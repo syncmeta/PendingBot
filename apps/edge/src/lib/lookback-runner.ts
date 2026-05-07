@@ -1,6 +1,11 @@
 import type { Env } from '../types';
 import { serviceClient } from './supabase';
-import { recordAudit, resolveRoute, usageFromCompletion } from '../llm/router';
+import {
+  FallbackError,
+  recordAudit,
+  usageFromCompletion,
+  withFallback,
+} from '../llm/router';
 import { getPrompt } from '../llm/prompt-loader';
 
 // Lookback runner — invisible to the user, written by the bot for its
@@ -93,17 +98,20 @@ export async function runLookback(input: RunLookbackInput): Promise<void> {
       LOOKBACK_INSTRUCTION,
     ].filter(Boolean).join('\n');
 
-    const route = await resolveRoute(supa, env, {
-      modelSlug: botRes.data.model_id as string,
-      taskType: 'lookback',
-    });
-    const completion = await route.client.chat.completions.create({
-      model: route.modelToCall,
-      messages: [
-        { role: 'system', content: platform },
-        { role: 'user', content: userMsg },
-      ],
-    });
+    const { result: completion, route, routeTrace } = await withFallback(
+      supa,
+      env,
+      { modelSlug: botRes.data.model_id as string, taskType: 'lookback' },
+      (rt) =>
+        rt.client.chat.completions.create({
+          model: rt.modelToCall,
+          messages: [
+            { role: 'system', content: platform },
+            { role: 'user', content: userMsg },
+          ],
+        }),
+    );
+
     const text = (completion.choices[0]?.message?.content ?? '').trim();
     const usage = usageFromCompletion(completion.usage);
     if (!text || text === SILENT_TOKEN) {
@@ -113,6 +121,7 @@ export async function runLookback(input: RunLookbackInput): Promise<void> {
         startedAt,
         generationId: completion.id,
         status: 'success',
+        routeTrace,
         metadata: { bot_id: botId, action: 'silent' },
         ...usage,
       });
@@ -132,10 +141,23 @@ export async function runLookback(input: RunLookbackInput): Promise<void> {
       startedAt,
       generationId: completion.id,
       status: 'success',
+      routeTrace,
       metadata: { bot_id: botId, action: 'note' },
       ...usage,
     });
   } catch (err) {
     console.warn('[lookback]', err);
+    if (err instanceof FallbackError) {
+      await recordAudit(supa, err.lastRoute, {
+        conversationId,
+        taskType: 'lookback',
+        startedAt,
+        status: 'error',
+        errorClass:
+          err.routeTrace[err.routeTrace.length - 1]?.error_class ?? 'unknown',
+        routeTrace: err.routeTrace,
+        metadata: { bot_id: botId },
+      });
+    }
   }
 }
