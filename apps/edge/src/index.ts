@@ -10,6 +10,7 @@ import { reviewRoutes } from './routes/review';
 import { meRoutes } from './routes/me';
 import { contactRoutes } from './routes/contacts';
 import { deviceRoutes } from './routes/devices';
+import { codeExecRoutes } from './routes/code-exec';
 import { handleScheduled } from './cron';
 
 // Top-level Hono app. Routes mount under /v1/ to leave room for a future v2
@@ -56,6 +57,7 @@ v1.route('/review', reviewRoutes);
 v1.route('/me', meRoutes);
 v1.route('/contacts', contactRoutes);
 v1.route('/devices', deviceRoutes);
+v1.route('/code-exec-requests', codeExecRoutes);
 
 app.route('/v1', v1);
 

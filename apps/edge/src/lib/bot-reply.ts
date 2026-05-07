@@ -119,9 +119,44 @@ const SKILL_NAME_MAX = 80;
 const SKILL_DESC_MAX = 2000;
 const SKILL_BODY_MAX = 65536;
 
+// User-approval-gated code execution. Always-on. The bot calls this when
+// it wants to run Python; the edge worker pauses the SSE turn, asks iOS
+// to render a confirmation card (code preview + reason + ETA), and only
+// runs the code once the user taps 跑吧. 算了 / timeout returns the
+// decision to the model so it can pick a different approach.
+const REQUEST_EXECUTE_CODE_TOOL: ChatCompletionTool = {
+  type: 'function',
+  function: {
+    name: 'request_execute_code',
+    description:
+      '请求在沙箱里执行 Python 3 代码。**会先弹一张确认卡给用户**（带代码预览、原因、预估耗时），用户点「跑吧」才会真的跑；点「算了」或 120s 超时就不跑。回包里告诉你 approved/denied/timeout，approved 时再附带 stdout+exit_code。需要算数、数据处理、文件/文本变换、抓数据等场景都用它。沙箱按会话绑定，跨调用保留变量/import。除非已从专门技能里拿到了无人值守的 execute_code，跑代码统一走这条路。',
+    parameters: {
+      type: 'object',
+      properties: {
+        code: {
+          type: 'string',
+          description: 'Python 3 源码。沙箱预装 numpy/pandas/matplotlib/pillow/requests/httpx/python-dateutil。',
+        },
+        reason: {
+          type: 'string',
+          description: '一句话告诉用户「为什么需要跑这段代码」，会显示在确认卡上，让用户能快速判断要不要批准。中文。',
+        },
+        estimated_seconds: {
+          type: 'integer',
+          description: '预估执行耗时（秒）。给用户一个等待预期，普通脚本 1–10 秒就够；最大 600。',
+        },
+      },
+      required: ['code', 'reason', 'estimated_seconds'],
+    },
+  },
+};
+
 // Sensitive tools — appended to the per-turn tools list only when the
 // active skill set's frontmatter.allowed_tools opts the user in. The same
 // gating model Anthropic Skills uses to keep code-exec out of every chat.
+// This is the unsupervised path: kept around for power users who explicitly
+// subscribe a skill that grants `allowed_tools: [execute_code]`. Default
+// users only see request_execute_code (which gates on a per-call user tap).
 const EXECUTE_CODE_TOOL: ChatCompletionTool = {
   type: 'function',
   function: {
@@ -140,6 +175,12 @@ const EXECUTE_CODE_TOOL: ChatCompletionTool = {
     },
   },
 };
+
+// How often the request_execute_code tool re-checks the DB for an iOS
+// decision, and how long we wait before giving up. 500ms keeps perceived
+// latency tight; 120s is plenty for a human to read a card and decide.
+const CODE_EXEC_POLL_INTERVAL_MS = 500;
+const CODE_EXEC_DECISION_TIMEOUT_MS = 120_000;
 
 export interface RunChatTurnInput {
   env: Env;
@@ -310,9 +351,12 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   const routeTrace: RouteTraceEntry[] = [];
   emit('typing', { state: 'thinking' });
 
-  // Compose this turn's tool list. Always-on tools come from CHAT_TOOLS;
-  // sensitive ones gate behind the subscribed skills' allowed_tools.
-  const turnTools: ChatCompletionTool[] = [...CHAT_TOOLS];
+  // Compose this turn's tool list. Always-on tools come from CHAT_TOOLS,
+  // plus request_execute_code (user-approval-gated, safe by construction).
+  // Skill-gated tools (currently: unsupervised execute_code) only appear
+  // when at least one subscribed skill opts the user in via its
+  // frontmatter.allowed_tools.
+  const turnTools: ChatCompletionTool[] = [...CHAT_TOOLS, REQUEST_EXECUTE_CODE_TOOL];
   if (allowedTools.has('execute_code')) turnTools.push(EXECUTE_CODE_TOOL);
 
   try {
@@ -643,6 +687,9 @@ async function runTool(
     if (name === 'execute_code') {
       return await executeCodeTool(env, args, ctx);
     }
+    if (name === 'request_execute_code') {
+      return await requestExecuteCodeTool(env, args, ctx);
+    }
     return JSON.stringify({ error: `unknown tool: ${name}` });
   } catch (err) {
     ctx.emit('tool_result', { name, error: String(err) });
@@ -714,11 +761,70 @@ async function createSkillTool(
   return JSON.stringify({ skill_id: data.id, name: rawName, subscribed: true });
 }
 
-// Run Python in this conversation's dedicated Daytona sandbox. First call
-// for a conv lazily provisions a sandbox + pip-installs the common
-// data-stack; subsequent calls reuse it. The cron sweep retires idle
-// sandboxes; on retirement we'd lose interpreter state, but bootstrap is
-// idempotent so the next call just re-provisions.
+// Get-or-create a bootstrapped Daytona sandbox for this conversation.
+// First call lazily provisions + pip-installs the common data-stack;
+// subsequent calls reuse the same VM. The cron sweep retires idle
+// sandboxes — on retirement we'd lose interpreter state, but bootstrap
+// is idempotent so the next call just re-provisions.
+//
+// Returns either { sandboxId } once the sandbox is ready, or
+// { error, stderr } if bootstrap blew up (caller turns that into a tool
+// error envelope so the model can recover).
+async function getOrBootstrapSandbox(
+  env: Env,
+  conversationId: string,
+): Promise<
+  | { sandboxId: string }
+  | { error: 'bootstrap_failed'; exitCode: number; stderr: string }
+> {
+  const supa = serviceClient(env);
+
+  // bot_sandbox_sessions has a UNIQUE on conversation_id so the
+  // get-or-create race resolves to a single row.
+  const existing = await supa
+    .from('bot_sandbox_sessions')
+    .select('daytona_sandbox_id, bootstrapped')
+    .eq('conversation_id', conversationId)
+    .maybeSingle();
+
+  let sandboxId: string;
+  let bootstrapped: boolean;
+  if (existing.data) {
+    sandboxId = existing.data.daytona_sandbox_id;
+    bootstrapped = existing.data.bootstrapped;
+  } else {
+    sandboxId = await createSandbox(env);
+    await supa.from('bot_sandbox_sessions').insert({
+      conversation_id: conversationId,
+      daytona_sandbox_id: sandboxId,
+      bootstrapped: false,
+    });
+    bootstrapped = false;
+  }
+
+  if (!bootstrapped) {
+    const boot = await bootstrapPython(env, sandboxId);
+    if (boot.exitCode === 0) {
+      await supa
+        .from('bot_sandbox_sessions')
+        .update({ bootstrapped: true, last_used_at: new Date().toISOString() })
+        .eq('conversation_id', conversationId);
+    } else {
+      // Keep the sandbox row so we don't churn through creates on every
+      // retry; let the caller surface the failure to the model.
+      return {
+        error: 'bootstrap_failed',
+        exitCode: boot.exitCode,
+        stderr: boot.stdout.slice(-1000),
+      };
+    }
+  }
+
+  return { sandboxId };
+}
+
+// Run Python in this conversation's sandbox without user approval. Only
+// reachable when a subscribed skill has opted in via allowed_tools.
 async function executeCodeTool(
   env: Env,
   args: Record<string, unknown>,
@@ -741,56 +847,21 @@ async function executeCodeTool(
     code_preview: codePreview,
   });
 
-  const supa = serviceClient(env);
-
-  // Look up an existing sandbox for this conversation, or create one.
-  // bot_sandbox_sessions has a UNIQUE on conversation_id so the
-  // get-or-create race resolves to a single row.
-  const existing = await supa
-    .from('bot_sandbox_sessions')
-    .select('daytona_sandbox_id, bootstrapped')
-    .eq('conversation_id', ctx.conversationId)
-    .maybeSingle();
-
-  let sandboxId: string;
-  let bootstrapped: boolean;
-  if (existing.data) {
-    sandboxId = existing.data.daytona_sandbox_id;
-    bootstrapped = existing.data.bootstrapped;
-  } else {
-    sandboxId = await createSandbox(env);
-    await supa.from('bot_sandbox_sessions').insert({
-      conversation_id: ctx.conversationId,
-      daytona_sandbox_id: sandboxId,
-      bootstrapped: false,
+  const sandbox = await getOrBootstrapSandbox(env, ctx.conversationId);
+  if ('error' in sandbox) {
+    ctx.emit('tool_result', {
+      name: 'execute_code',
+      error: 'sandbox bootstrap failed',
+      exit_code: sandbox.exitCode,
     });
-    bootstrapped = false;
+    return JSON.stringify({
+      error: 'sandbox bootstrap failed',
+      stderr: sandbox.stderr,
+    });
   }
 
-  if (!bootstrapped) {
-    const boot = await bootstrapPython(env, sandboxId);
-    if (boot.exitCode === 0) {
-      await supa
-        .from('bot_sandbox_sessions')
-        .update({ bootstrapped: true, last_used_at: new Date().toISOString() })
-        .eq('conversation_id', ctx.conversationId);
-    } else {
-      // Bootstrap failed — keep the sandbox row so we don't churn through
-      // creates on every retry, but report the failure to the model so it
-      // can pick a different approach.
-      ctx.emit('tool_result', {
-        name: 'execute_code',
-        error: 'sandbox bootstrap failed',
-        exit_code: boot.exitCode,
-      });
-      return JSON.stringify({
-        error: 'sandbox bootstrap failed',
-        stderr: boot.stdout.slice(-1000),
-      });
-    }
-  }
-
-  const result = await runPython(env, sandboxId, code);
+  const supa = serviceClient(env);
+  const result = await runPython(env, sandbox.sandboxId, code);
   await supa
     .from('bot_sandbox_sessions')
     .update({ last_used_at: new Date().toISOString() })
@@ -814,4 +885,199 @@ async function executeCodeTool(
     exit_code: result.exitCode,
     truncated: result.truncated,
   });
+}
+
+// User-approval-gated counterpart to execute_code. Inserts a pending row
+// into bot_code_exec_requests, emits a `code_exec_request` SSE event so
+// iOS can render the confirmation card, then short-polls the row until
+// the user taps a button (POST /v1/code-exec-requests/:id/respond
+// flips status) or the 120s budget runs out. On `approved` it runs the
+// code in this conversation's sandbox and returns combined results to
+// the model; on `denied`/`timeout` it returns just the decision so the
+// bot can pivot.
+async function requestExecuteCodeTool(
+  env: Env,
+  args: Record<string, unknown>,
+  ctx: ToolCtx,
+): Promise<string> {
+  const code = String(args.code ?? '');
+  const reason = String(args.reason ?? '').trim();
+  // estimated_seconds may arrive as number or stringified-number (some
+  // models stringify ints in tool args). Coerce defensively.
+  const rawEst = args.estimated_seconds;
+  const estimated = typeof rawEst === 'number'
+    ? Math.round(rawEst)
+    : Math.round(Number(rawEst ?? 0));
+
+  if (!code.trim()) return JSON.stringify({ error: 'code is required' });
+  if (!reason) return JSON.stringify({ error: 'reason is required' });
+  if (!Number.isFinite(estimated) || estimated < 0 || estimated > 600) {
+    return JSON.stringify({ error: 'estimated_seconds must be 0..600' });
+  }
+
+  const supa = serviceClient(env);
+
+  // Create the pending row first. iOS uses this row's id both as the
+  // approval card's identifier and as the path param it POSTs back to.
+  const insert = await supa
+    .from('bot_code_exec_requests')
+    .insert({
+      conversation_id: ctx.conversationId,
+      user_id: ctx.userId,
+      bot_id: ctx.botId,
+      code,
+      reason,
+      estimated_seconds: estimated,
+    } as never)
+    .select('id')
+    .single();
+  if (insert.error || !insert.data) {
+    const msg = insert.error?.message ?? 'failed to create approval request';
+    ctx.emit('tool_result', { name: 'request_execute_code', error: msg });
+    return JSON.stringify({ error: msg });
+  }
+  const requestId = (insert.data as { id: string }).id;
+
+  // Tell iOS to render the confirmation card. Includes the full code
+  // (so user can preview), reason, ETA, and the request id (used both
+  // for visual identity and to address the POST decision endpoint).
+  ctx.emit('tool_call', {
+    name: 'request_execute_code',
+    request_id: requestId,
+    code,
+    reason,
+    estimated_seconds: estimated,
+  });
+
+  // Poll for decision. The Worker happily holds the SSE response open
+  // while we wait — no DOs needed. Caller's signal aborting (user
+  // closed the chat tab) cuts us out of the wait promptly.
+  const decision = await pollCodeExecDecision(env, requestId, ctx.signal);
+
+  if (decision === 'denied') {
+    ctx.emit('tool_result', {
+      name: 'request_execute_code',
+      request_id: requestId,
+      decision: 'denied',
+    });
+    return JSON.stringify({
+      approved: false,
+      decision: 'denied',
+      hint: '用户拒绝了这次代码执行。换个不需要跑代码的思路，或者在确认能解决问题后再问一次。',
+    });
+  }
+  if (decision === 'timeout') {
+    ctx.emit('tool_result', {
+      name: 'request_execute_code',
+      request_id: requestId,
+      decision: 'timeout',
+    });
+    return JSON.stringify({
+      approved: false,
+      decision: 'timeout',
+      hint: '120 秒内用户没有回应。可以先回复一句话提醒，或者换条不依赖执行代码的路径。',
+    });
+  }
+  if (decision === 'aborted') {
+    // Caller's AbortSignal fired (user closed the chat). Don't run code,
+    // just bail. The audit/error path upstream already reflects abort.
+    return JSON.stringify({ approved: false, decision: 'aborted' });
+  }
+
+  // approved → run the code.
+  const sandbox = await getOrBootstrapSandbox(env, ctx.conversationId);
+  if ('error' in sandbox) {
+    ctx.emit('tool_result', {
+      name: 'request_execute_code',
+      request_id: requestId,
+      decision: 'approved',
+      error: 'sandbox bootstrap failed',
+      exit_code: sandbox.exitCode,
+    });
+    return JSON.stringify({
+      approved: true,
+      decision: 'approved',
+      error: 'sandbox bootstrap failed',
+      stderr: sandbox.stderr,
+    });
+  }
+
+  const result = await runPython(env, sandbox.sandboxId, code);
+  await supa
+    .from('bot_sandbox_sessions')
+    .update({ last_used_at: new Date().toISOString() })
+    .eq('conversation_id', ctx.conversationId);
+
+  const stdoutTail = result.stdout
+    .slice(-160)
+    .replace(/\s+/g, ' ')
+    .trim();
+  ctx.emit('tool_result', {
+    name: 'request_execute_code',
+    request_id: requestId,
+    decision: 'approved',
+    exit_code: result.exitCode,
+    truncated: result.truncated,
+    stdout_tail: stdoutTail,
+  });
+  return JSON.stringify({
+    approved: true,
+    decision: 'approved',
+    stdout: result.stdout,
+    exit_code: result.exitCode,
+    truncated: result.truncated,
+  });
+}
+
+// Poll the bot_code_exec_requests row until status leaves 'pending', the
+// caller's signal aborts, or our budget runs out. Returns a discriminator
+// the caller maps to the model-facing response. On timeout we also flip
+// the row to 'timeout' so a stale POST from iOS later finds it already
+// resolved (no zombie cards).
+async function pollCodeExecDecision(
+  env: Env,
+  requestId: string,
+  signal: AbortSignal,
+): Promise<'approved' | 'denied' | 'timeout' | 'aborted'> {
+  const supa = serviceClient(env);
+  const deadline = Date.now() + CODE_EXEC_DECISION_TIMEOUT_MS;
+
+  while (true) {
+    if (signal.aborted) return 'aborted';
+
+    const { data } = await supa
+      .from('bot_code_exec_requests')
+      .select('status')
+      .eq('id', requestId)
+      .maybeSingle();
+    const status = (data as { status?: string } | null)?.status;
+    if (status === 'approved') return 'approved';
+    if (status === 'denied') return 'denied';
+
+    if (Date.now() >= deadline) {
+      // Best-effort: stamp the row so a late POST from iOS sees a
+      // resolved request and the card can dismiss itself. Race-safe via
+      // status='pending' guard so we don't clobber a decision that
+      // landed in the same tick.
+      await supa
+        .from('bot_code_exec_requests')
+        .update({ status: 'timeout', responded_at: new Date().toISOString() } as never)
+        .eq('id', requestId)
+        .eq('status', 'pending');
+      return 'timeout';
+    }
+
+    // Wait, but bail early if the caller aborts mid-sleep.
+    await new Promise<void>((resolve) => {
+      const t = setTimeout(() => {
+        signal.removeEventListener('abort', onAbort);
+        resolve();
+      }, CODE_EXEC_POLL_INTERVAL_MS);
+      const onAbort = () => {
+        clearTimeout(t);
+        resolve();
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
+  }
 }
