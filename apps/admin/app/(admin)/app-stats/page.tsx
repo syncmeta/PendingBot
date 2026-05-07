@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase/admin';
-import { fmtDay, fmtNumber } from '@/lib/format';
+import { fmtDay, fmtNumber, fmtUsd } from '@/lib/format';
 import { DailyAreaChart, type DailyPoint } from './daily-chart';
 
 // Product-side health page — non-LLM stuff. Pulls from the existing
@@ -46,6 +46,10 @@ export default async function AppStatsPage() {
     botSplitR,
     statusBreakR,
     regenerateR,
+    surfRunsR,
+    skillsR,
+    skillSubsR,
+    sandboxR,
   ] = await Promise.all([
     supa.from('users').select('*', { count: 'exact', head: true }),
     supa.from('bots').select('*', { count: 'exact', head: true }),
@@ -82,6 +86,26 @@ export default async function AppStatsPage() {
       .eq('role', 'bot')
       .gte('created_at', since30)
       .not('replaces_message_id', 'is', null),
+    // Scroll/奏折: status + budget signals over the window.
+    supa
+      .from('scroll_runs')
+      .select('status, cost_used_usd, cost_budget_usd, started_at, finished_at')
+      .gte('created_at', since30)
+      .returns<
+        {
+          status: string;
+          cost_used_usd: number | string | null;
+          cost_budget_usd: number | string | null;
+          started_at: string | null;
+          finished_at: string | null;
+        }[]
+      >(),
+    // Skills: visibility split + total.
+    supa.from('skills').select('id, visibility, frontmatter, forked_from'),
+    // Skill subscriptions — counts per skill across all (user, conv) pairs.
+    supa.from('skill_subscriptions').select('skill_id'),
+    // Sandbox sessions: bootstrapped + idle status.
+    supa.from('bot_sandbox_sessions').select('bootstrapped, last_used_at, created_at'),
   ]);
 
   const totalUsers = totalUsersR.count ?? 0;
@@ -178,6 +202,66 @@ export default async function AppStatsPage() {
   const regenerateCount = regenerateR.count ?? 0;
   const totalBotMsgs = msgs30.filter((m) => m.role === 'bot').length;
   const regenRate = totalBotMsgs > 0 ? regenerateCount / totalBotMsgs : null;
+
+  // ── Scroll/奏折 runs ──────────────────────────────────────────
+  const surf = surfRunsR.data ?? [];
+  const surfStatusCounts = new Map<string, number>();
+  let surfCostSum = 0;
+  let surfBudgetHit = 0; // cost_used / cost_budget >= 0.9
+  let surfDurSum = 0;
+  let surfDurN = 0;
+  for (const r of surf) {
+    surfStatusCounts.set(r.status, (surfStatusCounts.get(r.status) ?? 0) + 1);
+    const used = Number(r.cost_used_usd ?? 0);
+    surfCostSum += used;
+    if (r.cost_budget_usd && Number(r.cost_budget_usd) > 0) {
+      const ratio = used / Number(r.cost_budget_usd);
+      if (ratio >= 0.9) surfBudgetHit++;
+    }
+    if (r.started_at && r.finished_at) {
+      surfDurSum += new Date(r.finished_at).getTime() - new Date(r.started_at).getTime();
+      surfDurN++;
+    }
+  }
+  const surfTotal = surf.length;
+  const surfDoneCount = surfStatusCounts.get('done') ?? 0;
+  const surfErrorCount = surfStatusCounts.get('error') ?? 0;
+  const surfAvgDurMin = surfDurN > 0 ? surfDurSum / surfDurN / 60_000 : null;
+
+  // ── Skills ─────────────────────────────────────────────────────
+  const skills = skillsR.data ?? [];
+  const skillSubs = skillSubsR.data ?? [];
+  const skillSubCount = new Map<string, number>();
+  for (const s of skillSubs) {
+    skillSubCount.set(s.skill_id, (skillSubCount.get(s.skill_id) ?? 0) + 1);
+  }
+  const skillsByVisibility = new Map<string, number>();
+  let forkedCount = 0;
+  for (const s of skills) {
+    skillsByVisibility.set(s.visibility, (skillsByVisibility.get(s.visibility) ?? 0) + 1);
+    if (s.forked_from) forkedCount++;
+  }
+  const topSkills = skills
+    .map((s) => ({
+      id: s.id,
+      name:
+        ((s.frontmatter as Record<string, unknown> | null)?.name as string | undefined) ??
+        s.id.slice(0, 8),
+      visibility: s.visibility as string,
+      subs: skillSubCount.get(s.id) ?? 0,
+    }))
+    .sort((a, b) => b.subs - a.subs)
+    .slice(0, 10);
+
+  // ── Sandbox sessions ───────────────────────────────────────────
+  const sandbox = sandboxR.data ?? [];
+  const sandboxTotal = sandbox.length;
+  const sandboxBootstrapped = sandbox.filter((s) => s.bootstrapped).length;
+  const idleThreshold = Date.now() - 60 * 60 * 1000; // 1h matches cron sweep
+  const sandboxActive = sandbox.filter(
+    (s) => new Date(s.last_used_at).getTime() >= idleThreshold,
+  ).length;
+  const sandboxIdle = sandboxTotal - sandboxActive;
 
   return (
     <main className="container py-10 space-y-10">
@@ -291,7 +375,109 @@ export default async function AppStatsPage() {
           </div>
         </Card>
       </section>
+
+      <section className="grid gap-6 lg:grid-cols-3">
+        <Card title={`奏折 runs（30d 创建）`}>
+          <div className="px-4 py-3 space-y-2 text-sm">
+            <Row label="总数" value={fmtNumber(surfTotal)} />
+            <Row label="完成" value={fmtNumber(surfDoneCount)} />
+            <Row
+              label="出错"
+              value={fmtNumber(surfErrorCount)}
+              tone={surfErrorCount > 0 ? 'text-destructive' : undefined}
+            />
+            <Row label="累计花费" value={fmtUsd(surfCostSum)} />
+            <Row
+              label="预算用满 (≥90%)"
+              value={fmtNumber(surfBudgetHit)}
+              tone={surfBudgetHit > 0 ? 'text-amber-700' : undefined}
+            />
+            <Row
+              label="平均运行时长"
+              value={surfAvgDurMin == null ? '—' : `${surfAvgDurMin.toFixed(1)} 分钟`}
+            />
+          </div>
+          {surfStatusCounts.size > 0 && (
+            <div className="border-t">
+              <BarList
+                entries={[...surfStatusCounts.entries()].sort((a, b) => b[1] - a[1])}
+                total={surfTotal}
+                highlight={(k) => (k === 'error' ? 'text-destructive' : undefined)}
+              />
+            </div>
+          )}
+        </Card>
+
+        <Card title="Skills">
+          <div className="px-4 py-3 space-y-2 text-sm">
+            <Row label="总 skill 数" value={fmtNumber(skills.length)} />
+            <Row label="public" value={fmtNumber(skillsByVisibility.get('public') ?? 0)} />
+            <Row label="private" value={fmtNumber(skillsByVisibility.get('private') ?? 0)} />
+            <Row label="fork 自他人" value={fmtNumber(forkedCount)} />
+            <Row label="总订阅数" value={fmtNumber(skillSubs.length)} />
+          </div>
+          {topSkills.length > 0 && (
+            <div className="border-t">
+              <h4 className="px-4 py-2 text-xs uppercase text-muted-foreground">
+                Top by subscriptions
+              </h4>
+              <ul className="divide-y">
+                {topSkills.map((s) => (
+                  <li key={s.id} className="flex items-center justify-between px-4 py-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-xs">{s.name}</span>
+                      {s.visibility === 'public' && (
+                        <span className="rounded bg-blue-100 px-1.5 py-0 text-xs text-blue-700">
+                          public
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-sm tabular-nums">{fmtNumber(s.subs)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </Card>
+
+        <Card title="Sandbox sessions">
+          <div className="px-4 py-3 space-y-2 text-sm">
+            <Row label="活动 session" value={fmtNumber(sandboxTotal)} />
+            <Row label="已 bootstrap" value={fmtNumber(sandboxBootstrapped)} />
+            <Row
+              label="近 1h 活跃"
+              value={fmtNumber(sandboxActive)}
+              tone={sandboxActive > 0 ? 'text-emerald-700' : undefined}
+            />
+            <Row
+              label="空闲（>1h）"
+              value={fmtNumber(sandboxIdle)}
+              tone={sandboxIdle > 0 ? 'text-muted-foreground' : undefined}
+            />
+          </div>
+          <p className="border-t px-4 py-2 text-xs text-muted-foreground">
+            空闲超过 1 小时的会被 cron sweep 在 Daytona 上销毁；本表只反映此刻 DB 行。
+          </p>
+        </Card>
+      </section>
     </main>
+  );
+}
+
+function Row({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: string;
+}) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-muted-foreground">{label}</span>
+      <span className={`tabular-nums ${tone ?? ''}`}>{value}</span>
+    </div>
   );
 }
 
