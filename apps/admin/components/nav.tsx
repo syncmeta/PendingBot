@@ -29,7 +29,7 @@ export function Nav({
     <header className="sticky top-0 z-10 border-b bg-background/90 backdrop-blur">
       <div className="container flex flex-wrap items-center gap-x-6 gap-y-2 py-3">
         <Link href="/" className="text-sm font-semibold tracking-tight">
-          大绿豆 Admin
+          Board
         </Link>
         <nav className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
           {LINKS.map((l) => {

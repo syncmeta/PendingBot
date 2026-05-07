@@ -3,10 +3,7 @@ import Link from 'next/link';
 export default function HomePage() {
   return (
     <main className="container py-12">
-      <h1 className="text-3xl font-bold tracking-tight">大绿豆 Admin</h1>
-      <p className="mt-2 text-sm text-muted-foreground">
-        LLM 路由 / 审计 / 套利 + 产品侧指标。
-      </p>
+      <h1 className="text-3xl font-bold tracking-tight">Board</h1>
 
       <section className="mt-10 grid gap-4 sm:grid-cols-2">
         <Card
