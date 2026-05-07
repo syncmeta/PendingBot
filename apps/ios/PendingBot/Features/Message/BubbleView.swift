@@ -23,6 +23,9 @@ struct BubbleView: View {
     /// a mirror of themselves.
     var selfAvatar: (seed: String, attachmentId: String?)? = nil
     let serverURL: URL?
+    /// Web-search citations referenced by inline `[N]` markers in
+    /// `message.content`. Empty for bubbles that didn't trigger search.
+    var citations: [MessageCitation] = []
 
     private var hasText: Bool { !message.content.isEmpty }
 
@@ -58,7 +61,9 @@ struct BubbleView: View {
                 }
 
                 if hasText {
-                    MarkdownText(text: message.content, allowCodeRun: true)
+                    MarkdownText(text: message.content,
+                                 allowCodeRun: true,
+                                 citations: citations)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 10)
