@@ -38,8 +38,13 @@ export default async function HomePage() {
         />
         <Card
           href="/models"
-          title="Models & Aliases"
-          desc="canonical 模型、各 provider 上的 id 和价格"
+          title="Models"
+          desc="canonical 模型注册（slug, capabilities, EOL）"
+        />
+        <Card
+          href="/aliases"
+          title="Aliases"
+          desc="(model × provider) 映射 + 价格 + 路由权重"
           comingSoon
         />
         <Card href="/users" title="Users & Quota" desc="用户配额、月度预算、异常" comingSoon />
