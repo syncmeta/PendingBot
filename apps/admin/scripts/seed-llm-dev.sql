@@ -55,6 +55,9 @@ INSERT INTO pendingbot.llm_models (slug, family, display_name, context_window, m
    '{"vision":true,"tool_use":true,"prompt_cache":true,"reasoning":true}'::jsonb, true, NULL),
   ('gpt-5.4', 'gpt-5', 'GPT-5.4', 256000, 16384,
    '{"vision":true,"tool_use":true,"prompt_cache":true,"reasoning":true,"json_mode":true}'::jsonb, true, NULL),
+  ('gpt-5.5', 'gpt-5', 'GPT-5.5', 256000, 16384,
+   '{"vision":true,"tool_use":true,"prompt_cache":true,"reasoning":true,"json_mode":true}'::jsonb, true,
+   'WR exposes cache_write tier where OR has no cached_write rate.'),
   ('deepseek-v4-pro', 'deepseek-v4', 'DeepSeek V4 Pro', NULL, NULL,
    '{"tool_use":true,"prompt_cache":true}'::jsonb, true, NULL),
   ('kimi-k2.6', 'kimi-k2', 'Kimi K2.6', NULL, NULL,
@@ -62,7 +65,13 @@ INSERT INTO pendingbot.llm_models (slug, family, display_name, context_window, m
   ('minimax-m2.7', 'minimax-m2', 'MiniMax M2.7', NULL, NULL,
    '{"tool_use":true,"prompt_cache":true}'::jsonb, true, NULL),
   ('glm-5.1', 'glm-5', 'GLM 5.1', NULL, NULL,
-   '{"vision":true,"tool_use":true,"prompt_cache":true}'::jsonb, true, NULL)
+   '{"vision":true,"tool_use":true,"prompt_cache":true}'::jsonb, true, NULL),
+  ('qwen3.6-plus', 'qwen3', 'Qwen 3.6 Plus', NULL, NULL,
+   '{"tool_use":true,"prompt_cache":true}'::jsonb, true,
+   'Alibaba mid-tier on WR. WR ~40% cheaper than OR.'),
+  ('gemma-4-31b-it', 'gemma-4', 'Gemma 4 31B IT', NULL, NULL,
+   '{"tool_use":false}'::jsonb, true,
+   'Google open-weights. WR/OR price tied; WR exposes cache_write tier.')
 ON CONFLICT (slug) DO NOTHING;
 
 -- ── aliases ─────────────────────────────────────────────────────
@@ -95,6 +104,9 @@ BEGIN
     ('gpt-5.4',           'openai/gpt-5.4',              2.5::numeric,    0.25::numeric,   15.0::numeric,   NULL::numeric,    0::int,
                           'gpt-5.4',                     1.75::numeric,   0.175::numeric,  10.5::numeric,   NULL::numeric,    100::int,
                           'WR price = exact 0.7× OR. Neither side prices cache_write — null on both.'),
+    ('gpt-5.5',           'openai/gpt-5.5',              5.0::numeric,    0.5::numeric,    30.0::numeric,   NULL::numeric,    0::int,
+                          'gpt-5.5',                     3.5::numeric,    0.35::numeric,   21.0::numeric,   3.5::numeric,     100::int,
+                          'WR price = exact 0.7× OR. WR additionally exposes cache_write tier (OR doesn''t).'),
     ('minimax-m2.7',      'minimax/minimax-m2.7',        0.3::numeric,    0.059::numeric,  1.2::numeric,    NULL::numeric,    0::int,
                           'MiniMax-M2.7',                0.21::numeric,   0.0413::numeric, 0.84::numeric,   0.2625::numeric,  100::int,
                           'WR price = exact 0.7× OR. WR additionally exposes cache_write tier (OR doesn''t).'),
@@ -108,6 +120,16 @@ BEGIN
     ('deepseek-v4-pro',   'deepseek/deepseek-v4-pro',    0.435::numeric,  0.003625::numeric, 0.87::numeric, NULL::numeric,    100::int,
                           'deepseek-v4-pro',             1.218::numeric,  0.1015::numeric, 2.436::numeric,  1.218::numeric,   0::int,
                           'WR is 2.80× OR — never primary. weight=0 so router only falls back here when OR is unavailable.'),
+    -- WR ~40% cheaper, WR primary
+    ('qwen3.6-plus',      'qwen/qwen3.6-plus',           0.325::numeric,  NULL::numeric,   1.95::numeric,   0.40625::numeric, 0::int,
+                          'qwen3.6-plus',                0.1932::numeric, 0.01932::numeric, 1.1557::numeric, 0.2415::numeric, 100::int,
+                          'WR ~40% cheaper than OR across the board, plus exposes a cache_read tier.'),
+
+    -- WR/OR price tied on input/output, WR exposes cache_write
+    ('gemma-4-31b-it',    'google/gemma-4-31b-it',       0.13::numeric,   NULL::numeric,   0.38::numeric,   NULL::numeric,    0::int,
+                          'gemma-4-31b-it',              0.13::numeric,   NULL::numeric,   0.38::numeric,   0.13::numeric,    100::int,
+                          'WR price = OR price (no discount on this open-weights model). WR primary because it exposes a cache_write tier.'),
+
     ('glm-5.1',           'z-ai/glm-5.1',                1.05::numeric,   0.525::numeric,  3.5::numeric,    NULL::numeric,    100::int,
                           'glm-5.1',                     1.12::numeric,   0.182::numeric,  3.52::numeric,   0.98::numeric,    0::int,
                           'WR is 1.067× OR — slightly pricier. weight=0; OR primary.')
