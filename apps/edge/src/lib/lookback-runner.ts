@@ -1,6 +1,6 @@
 import type { Env } from '../types';
 import { serviceClient } from './supabase';
-import { openrouterClient } from '../llm/client';
+import { recordAudit, resolveRoute, usageFromCompletion } from '../llm/router';
 import { getPrompt } from '../llm/prompt-loader';
 
 // Lookback runner — invisible to the user, written by the bot for its
@@ -93,27 +93,27 @@ export async function runLookback(input: RunLookbackInput): Promise<void> {
       LOOKBACK_INSTRUCTION,
     ].filter(Boolean).join('\n');
 
-    const openai = openrouterClient(env);
-    const completion = await openai.chat.completions.create({
-      model: botRes.data.model_id as string,
+    const route = await resolveRoute(supa, env, {
+      modelSlug: botRes.data.model_id as string,
+    });
+    const completion = await route.client.chat.completions.create({
+      model: route.modelToCall,
       messages: [
         { role: 'system', content: platform },
         { role: 'user', content: userMsg },
       ],
     });
     const text = (completion.choices[0]?.message?.content ?? '').trim();
+    const usage = usageFromCompletion(completion.usage);
     if (!text || text === SILENT_TOKEN) {
-      // Audit the empty pass so cost is captured.
-      await supa.from('audit_log').insert({
-        conversation_id: conversationId,
-        task_type: 'lookback',
-        model_id: botRes.data.model_id,
-        input_tokens: completion.usage?.prompt_tokens ?? 0,
-        output_tokens: completion.usage?.completion_tokens ?? 0,
-        total_tokens: completion.usage?.total_tokens ?? 0,
-        generation_id: completion.id,
-        latency_ms: Date.now() - startedAt,
+      await recordAudit(supa, route, {
+        conversationId,
+        taskType: 'lookback',
+        startedAt,
+        generationId: completion.id,
+        status: 'success',
         metadata: { bot_id: botId, action: 'silent' },
+        ...usage,
       });
       return;
     }
@@ -125,16 +125,14 @@ export async function runLookback(input: RunLookbackInput): Promise<void> {
       active: true,
     });
 
-    await supa.from('audit_log').insert({
-      conversation_id: conversationId,
-      task_type: 'lookback',
-      model_id: botRes.data.model_id,
-      input_tokens: completion.usage?.prompt_tokens ?? 0,
-      output_tokens: completion.usage?.completion_tokens ?? 0,
-      total_tokens: completion.usage?.total_tokens ?? 0,
-      generation_id: completion.id,
-      latency_ms: Date.now() - startedAt,
+    await recordAudit(supa, route, {
+      conversationId,
+      taskType: 'lookback',
+      startedAt,
+      generationId: completion.id,
+      status: 'success',
       metadata: { bot_id: botId, action: 'note' },
+      ...usage,
     });
   } catch (err) {
     console.warn('[lookback]', err);

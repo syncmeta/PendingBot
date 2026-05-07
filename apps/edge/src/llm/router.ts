@@ -256,6 +256,10 @@ export interface AuditCallOpts extends AuditUsage {
   errorClass?: string | null;
   routeTrace?: unknown;
   tag?: string | null;
+  // Per-task free-form metadata (bot_id, scroll_run_id, action, …).
+  // Surfaced in audit_log.metadata jsonb so downstream queries can
+  // group by these without bloating the column list.
+  metadata?: Record<string, unknown> | null;
 }
 
 const PER_MILLION = 1_000_000;
@@ -317,6 +321,7 @@ export async function recordAudit(
     model_alias_id: route.alias?.aliasId ?? null,
     route_trace: (opts.routeTrace as never) ?? null,
     tag: opts.tag ?? null,
+    ...(opts.metadata ? { metadata: opts.metadata as never } : {}),
   });
   if (error) {
     console.warn('[audit_log insert]', error.message);

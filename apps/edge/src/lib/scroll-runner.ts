@@ -6,7 +6,12 @@ import type {
 import type { Env } from '../types';
 import type { Json } from '../db/schema';
 import { serviceClient } from './supabase';
-import { openrouterClient } from '../llm/client';
+import {
+  recordAudit,
+  resolveRoute,
+  usageFromCompletion,
+  type ResolvedRoute,
+} from '../llm/router';
 import { getPrompt } from '../llm/prompt-loader';
 import { getBotMemory } from './memory';
 import { braveSearch, firecrawlScrape } from './web';
@@ -186,7 +191,10 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
   const supa = serviceClient(env);
   const startedAt = Date.now();
 
-  let usage = { input: 0, output: 0, total: 0 };
+  // Cumulative usage across the agent loop. Cache fields are tracked
+  // separately so per-turn cached_input vs fresh-input pricing is
+  // honoured by recordAudit at the end.
+  const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   let lastGenerationId: string | undefined;
 
   const progress: ProgressState = {
@@ -258,7 +266,7 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
       { role: 'user', content: initialUser },
     ];
 
-    const openai = openrouterClient(env);
+    const route = await resolveRoute(supa, env, { modelSlug: modelId });
     let finalArticle = '';
 
     for (let turn = 0; turn < HARD_CAP_TURNS; turn++) {
@@ -276,19 +284,19 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
         return;
       }
 
-      const completion = await openai.chat.completions.create({
-        model: modelId,
+      const completion = await route.client.chat.completions.create({
+        model: route.modelToCall,
         messages,
         tools: TOOLS,
         tool_choice: 'auto',
         parallel_tool_calls: true,
       });
       lastGenerationId = completion.id;
-      if (completion.usage) {
-        usage.input += completion.usage.prompt_tokens ?? 0;
-        usage.output += completion.usage.completion_tokens ?? 0;
-        usage.total += completion.usage.total_tokens ?? 0;
-      }
+      const turnUsage = usageFromCompletion(completion.usage);
+      usage.input += turnUsage.inputTokens ?? 0;
+      usage.output += turnUsage.outputTokens ?? 0;
+      usage.cacheRead += turnUsage.cacheReadTokens ?? 0;
+      usage.cacheWrite += turnUsage.cacheWriteTokens ?? 0;
 
       const choice = completion.choices[0];
       const msg = choice?.message;
@@ -339,12 +347,11 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
       stripped.length < 20;
     if (isEmpty) {
       await supa.from('scroll_runs').delete().eq('id', scrollRunId);
-      await auditRun(supa, {
+      await auditRun(supa, route, {
         userId,
         conversationId,
         scrollRunId,
         botId,
-        modelId,
         usage,
         generationId: lastGenerationId,
         startedAt,
@@ -369,12 +376,11 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
       })
       .eq('id', scrollRunId);
 
-    await auditRun(supa, {
+    await auditRun(supa, route, {
       userId,
       conversationId,
       scrollRunId,
       botId,
-      modelId,
       usage,
       generationId: lastGenerationId,
       startedAt,
@@ -475,8 +481,7 @@ interface AuditInput {
   conversationId: string;
   scrollRunId: string;
   botId: string;
-  modelId: string;
-  usage: { input: number; output: number; total: number };
+  usage: { input: number; output: number; cacheRead: number; cacheWrite: number };
   generationId?: string;
   startedAt: number;
   action: 'memorial' | 'silent';
@@ -484,18 +489,20 @@ interface AuditInput {
 
 async function auditRun(
   supa: ReturnType<typeof serviceClient>,
+  route: ResolvedRoute,
   i: AuditInput,
 ): Promise<void> {
-  await supa.from('audit_log').insert({
-    user_id: i.userId,
-    conversation_id: i.conversationId,
-    task_type: 'scroll',
-    model_id: i.modelId,
-    input_tokens: i.usage.input,
-    output_tokens: i.usage.output,
-    total_tokens: i.usage.total,
-    generation_id: i.generationId,
-    latency_ms: Date.now() - i.startedAt,
+  await recordAudit(supa, route, {
+    userId: i.userId,
+    conversationId: i.conversationId,
+    taskType: 'scroll',
+    startedAt: i.startedAt,
+    generationId: i.generationId,
+    status: 'success',
+    inputTokens: i.usage.input,
+    outputTokens: i.usage.output,
+    cacheReadTokens: i.usage.cacheRead,
+    cacheWriteTokens: i.usage.cacheWrite,
     metadata: { scroll_run_id: i.scrollRunId, bot_id: i.botId, action: i.action },
   });
 }
