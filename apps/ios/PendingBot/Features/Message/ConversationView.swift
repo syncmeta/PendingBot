@@ -23,7 +23,9 @@ struct PendingPeer: Hashable {
 struct ConversationView: View {
     @State var conversation: Conversation
     let bot: Bot?
-    let pendingPeer: PendingPeer?
+    /// Mutable so the "+ new conv" header button can flip a materialized
+    /// chat back to pending without reconstructing the view.
+    @State var pendingPeer: PendingPeer?
     var onChange: () -> Void = {}
 
     @Environment(\.api) private var api
@@ -149,7 +151,7 @@ struct ConversationView: View {
          onChange: @escaping () -> Void = {}) {
         self._conversation = State(initialValue: conversation)
         self.bot = bot
-        self.pendingPeer = pendingPeer
+        self._pendingPeer = State(initialValue: pendingPeer)
         self.onChange = onChange
     }
 
@@ -449,10 +451,10 @@ struct ConversationView: View {
         return !conversation.bot_id.isEmpty
     }
 
-    /// Spin a fresh user_bot conversation with the same bot as the current
-    /// one and swap this view onto it in place. Mirrors the bot branch of
-    /// materializeIfPending for the RPC call, then drops in-flight turn /
-    /// realtime / lookback state so the new conv starts clean.
+    /// Flip this view onto a fresh pending user_bot conv with the same bot.
+    /// No DB row is created here — the conv materialises on first send via
+    /// `materializeIfPending`, so backing out without sending leaves no
+    /// trace. Mirrors the friends-tab tap path.
     private func startNewBotConv() async {
         let botId: String = {
             if let bid = bot?.id, !bid.isEmpty { return bid }
@@ -472,37 +474,23 @@ struct ConversationView: View {
             await RealtimeManager.shared.stopConvChannel(token)
             realtimeToken = nil
         }
-        do {
-            struct RpcArgs: Encodable { let p_bot_id: String }
-            let newId: UUID = try await SupabaseStack.shared
-                .rpc("open_user_bot_conv",
-                     params: RpcArgs(p_bot_id: botId))
-                .execute()
-                .value
-            let convId = newId.uuidString.lowercased()
-            let displayName = bot?.display_name ?? conversation.bot_name ?? botId
-            conversation = Conversation(
-                id: convId, bot_id: botId, user_id: userId,
-                title: displayName, feature_type: "message",
-                conversation_type: "user_bot",
-                last_activity_at: Int(Date().timeIntervalSince1970),
-                round_count: 0, bot_name: displayName,
-                last_message_content: nil, last_message_sender_type: nil,
-                model_override: nil
-            )
-            messages = []
-            input = ""
-            pendingAttachments = []
-            photoPickerItems = []
-            activeLookbacks = []
-            modelOverride = ""
-            await subscribeRealtime()
-            await loadSkills()
-            onChange()
-        } catch {
-            self.error = "新建对话失败: \(error.localizedDescription)"
-            Haptics.error()
-        }
+        let displayName = bot?.display_name ?? conversation.bot_name ?? botId
+        conversation = Conversation(
+            id: "", bot_id: botId, user_id: userId,
+            title: displayName, feature_type: "message",
+            conversation_type: "user_bot",
+            last_activity_at: Int(Date().timeIntervalSince1970),
+            round_count: 0, bot_name: displayName,
+            last_message_content: nil, last_message_sender_type: nil,
+            model_override: nil
+        )
+        pendingPeer = PendingPeer(kind: "bot", peerId: botId, displayName: displayName)
+        messages = []
+        input = ""
+        pendingAttachments = []
+        photoPickerItems = []
+        activeLookbacks = []
+        modelOverride = ""
     }
 
     /// Create the conv row (and participant rows) for a pending conv whose

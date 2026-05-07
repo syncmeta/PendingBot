@@ -4,6 +4,16 @@ import OSLog
 
 private let log = Logger.category("conv-list")
 
+/// Navigation target for the message tab. `.existing` is a row already in
+/// the conversations list (DB-backed); `.pending` is a freshly opened
+/// chat that hasn't been materialised yet — ConversationView creates the
+/// `conversations` row on first send. Keeping both behind one Hashable
+/// type lets a single NavigationStack path carry either.
+enum ChatDest: Hashable {
+    case existing(Conversation)
+    case pending(PendingPeer)
+}
+
 /// 消息 tab — primary chat.
 ///
 /// Two layouts driven by horizontal size class:
@@ -25,7 +35,6 @@ struct MessageTabView: View {
     @State private var bots: [Bot] = []
     @State private var loading = false
     @State private var error: String?
-    @State private var creatingForBot: Bot?
     @State private var creatingGroup = false
     @State private var addingFriend = false
     @State private var scanning = false
@@ -33,9 +42,9 @@ struct MessageTabView: View {
     // so the bottom tab bar slides out alongside the push transition (rather
     // than snapping back in *after* the back transition finishes, which is
     // what we'd get if the modifier lived on the destination view).
-    @State private var path: [Conversation] = []
+    @State private var path: [ChatDest] = []
     // Selection-driven detail for regular size class.
-    @State private var selected: Conversation?
+    @State private var selected: ChatDest?
 
     var body: some View {
         Group {
@@ -83,11 +92,8 @@ struct MessageTabView: View {
             sidebarBody
                 .background(Theme.Palette.canvas.ignoresSafeArea())
                 .toolbar(.hidden, for: .navigationBar)
-                .navigationDestination(for: Conversation.self) { conv in
-                    ConversationView(conversation: conv, bot: bot(for: conv)) {
-                        reload()
-                    }
-                    .onAppear { unread.markRead(conv.id) }
+                .navigationDestination(for: ChatDest.self) { dest in
+                    destinationView(for: dest)
                 }
         }
         .toolbar(path.isEmpty ? .visible : .hidden, for: .tabBar)
@@ -107,19 +113,62 @@ struct MessageTabView: View {
             .toolbar(.hidden, for: .navigationBar)
             .sidebarColumnWidth()
         } detail: {
-            if let conv = selected {
-                ConversationView(conversation: conv, bot: bot(for: conv)) {
-                    reload()
-                }
-                // .id forces a fresh ConversationView (and a fresh WS) when
-                // the user picks a different row — without it the existing
-                // view would just rebind, leaking the prior chat's state.
-                .id(conv.id)
-                .onAppear { unread.markRead(conv.id) }
+            if let dest = selected {
+                destinationView(for: dest)
+                    // .id forces a fresh ConversationView (and a fresh WS)
+                    // when the user picks a different row — without it the
+                    // existing view would just rebind, leaking the prior
+                    // chat's state. For pending bot convs key on the bot
+                    // id so re-tapping the same bot reuses the pending view.
+                    .id(destinationKey(dest))
             } else {
                 EmptyDetailHint(text: "选一条对话开始", systemImage: "bubble.left.and.bubble.right")
             }
         }
+    }
+
+    @ViewBuilder
+    private func destinationView(for dest: ChatDest) -> some View {
+        switch dest {
+        case .existing(let conv):
+            ConversationView(conversation: conv, bot: bot(for: conv)) {
+                reload()
+            }
+            .onAppear { unread.markRead(conv.id) }
+        case .pending(let peer):
+            ConversationView(
+                conversation: pendingConversation(for: peer),
+                bot: bots.first { $0.id == peer.peerId },
+                pendingPeer: peer
+            ) {
+                reload()
+            }
+        }
+    }
+
+    private func destinationKey(_ dest: ChatDest) -> String {
+        switch dest {
+        case .existing(let c): return "conv:\(c.id)"
+        case .pending(let p):  return "pending:\(p.kind):\(p.peerId)"
+        }
+    }
+
+    private func pendingConversation(for peer: PendingPeer) -> Conversation {
+        let userId = AccountStore.shared.current?.id ?? ""
+        return Conversation(
+            id: "",
+            bot_id: peer.kind == "bot" ? peer.peerId : "",
+            user_id: userId,
+            title: peer.displayName,
+            feature_type: "message",
+            conversation_type: peer.kind == "bot" ? "user_bot" : "user_user",
+            last_activity_at: Int(Date().timeIntervalSince1970),
+            round_count: 0,
+            bot_name: peer.kind == "bot" ? peer.displayName : nil,
+            last_message_content: nil,
+            last_message_sender_type: nil,
+            model_override: nil
+        )
     }
 
     // ── Sidebar (shared) ────────────────────────────────────────────────────
@@ -244,20 +293,24 @@ struct MessageTabView: View {
 
     @ViewBuilder
     private func rowTap(_ conv: Conversation) -> some View {
+        let isSelected: Bool = {
+            guard sidebarLayout, case .existing(let s) = selected else { return false }
+            return s.id == conv.id
+        }()
         let row = ConversationListRow(
             conv: conv,
             bot: bot(for: conv),
             isUnread: unread.isUnread(conv.id),
-            isSelected: sidebarLayout && selected?.id == conv.id
+            isSelected: isSelected
         )
         if sidebarLayout {
             Button {
-                selected = conv
+                selected = .existing(conv)
                 Haptics.tap()
             } label: { row }
             .buttonStyle(StaticButtonStyle())
         } else {
-            NavigationLink(value: conv) { row }
+            NavigationLink(value: ChatDest.existing(conv)) { row }
                 .buttonStyle(StaticButtonStyle())
         }
     }
@@ -442,85 +495,20 @@ struct MessageTabView: View {
         }
     }
 
-    /// Create a fresh conversation with `bot`, push the user into it, and
-    /// fire a confident haptic. Wraps `createConversation` so both the
-    /// header menu and the right-swipe gesture share identical behavior.
+    /// Open a fresh chat with `bot` lazily — no DB row is inserted here.
+    /// ConversationView materialises the conv on first send, so the user
+    /// can hit "+" → bot, change their mind, back out, and leave no empty
+    /// row littering the list. Mirrors FriendsTabView's tap-to-chat path.
     private func createAndNavigate(with bot: Bot) async {
-        guard let conv = await createConversation(with: bot) else { return }
+        let peer = PendingPeer(kind: "bot",
+                               peerId: bot.id,
+                               displayName: bot.display_name)
         if sidebarLayout {
-            selected = conv
+            selected = .pending(peer)
         } else {
-            path.append(conv)
+            path.append(.pending(peer))
         }
-    }
-
-    @discardableResult
-    private func createConversation(with bot: Bot) async -> Conversation? {
-        guard let userId = AccountStore.shared.current?.id else { return nil }
-        do {
-            // Schema requires user as participant for RLS to grant subsequent
-            // reads of the conversation row, so we INSERT both the conv and
-            // the participant set in sequence with the service-side default
-            // schema (pendingbot).
-            struct ConvInsert: Encodable {
-                let conversation_type = "user_bot"
-                let feature = "message"
-                let user_id: String
-                let bot_id: String
-                let title: String?
-            }
-            struct ConvOut: Decodable { let id: String }
-            let inserted: ConvOut = try await SupabaseStack.shared
-                .from("conversations")
-                .insert(ConvInsert(user_id: userId, bot_id: bot.id, title: nil))
-                .select("id")
-                .single()
-                .execute()
-                .value
-
-            struct Participant: Encodable {
-                let conversation_id: String
-                let participant_type: String
-                let participant_id: String
-                let role: String
-            }
-            try await SupabaseStack.shared
-                .from("conversation_participants")
-                .insert([
-                    Participant(conversation_id: inserted.id,
-                                participant_type: "user",
-                                participant_id: userId,
-                                role: "owner"),
-                    Participant(conversation_id: inserted.id,
-                                participant_type: "bot",
-                                participant_id: bot.id,
-                                role: "member"),
-                ])
-                .execute()
-
-            // Optimistic local insert; next pull-to-refresh re-reads canonically.
-            let conv = Conversation(
-                id: inserted.id,
-                bot_id: bot.id,
-                user_id: userId,
-                title: nil,
-                feature_type: "message",
-                conversation_type: "user_bot",
-                last_activity_at: Int(Date().timeIntervalSince1970),
-                round_count: 0,
-                bot_name: bot.display_name,
-                last_message_content: nil,
-                last_message_sender_type: nil,
-                model_override: nil
-            )
-            conversations.insert(conv, at: 0)
-            Haptics.tap()
-            return conv
-        } catch {
-            self.error = error.localizedDescription
-            Haptics.error()
-            return nil
-        }
+        Haptics.tap()
     }
 
     private func delete(_ conv: Conversation) async {
