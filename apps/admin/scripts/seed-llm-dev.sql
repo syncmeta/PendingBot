@@ -4,12 +4,11 @@
 -- Why not a migration:
 --   - OR prices are exact (lifted from openrouter.ai/api/v1/models on
 --     2026-05; per-1M units after × 1e6 conversion).
---   - WR prices are 0.7× OR estimates because WR doesn't expose a
---     pricing API and the user described it loosely as "七折". These
---     need to be verified against the WR dashboard and corrected per
---     model in admin /aliases. Pushing 0.7× into a migration would
---     bake that estimate into prod — instead, prod admin enters real
---     prices through the UI.
+--   - WR prices are 0.7× OR — confirmed by the operator 2026-05 as
+--     a flat-rate WR-wide discount (it's not advertised, just how
+--     they list). Encoded here so re-runs reproduce. Prices will need
+--     re-verification if WR ever publishes per-model rates that
+--     deviate from the flat ratio.
 --
 -- Apply locally:
 --   docker exec -i supabase_db_pendingbot psql -U postgres -d postgres \
@@ -82,7 +81,7 @@ BEGIN
        'OR list price 2026-05. weight=0 = fallback only.'),
       (m_id, wr_id, pair.wr_pmid, true, 100,
        pair.wr_in, pair.wr_cacheR, pair.wr_out, pair.wr_cacheW,
-       'WR price = 0.7× OR (ESTIMATE, verify in WR dashboard).')
+       'WR price = 0.7× OR (verified — WR pricing is flat 30% off OR list).')
     ON CONFLICT (model_id, provider_id) DO NOTHING;
   END LOOP;
 END$$;
