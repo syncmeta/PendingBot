@@ -1,7 +1,11 @@
 import type { Env } from '../types';
 import type { Json } from '../db/schema';
 import { serviceClient } from './supabase';
-import { openrouterClient } from '../llm/client';
+import {
+  recordAudit,
+  resolveRoute,
+  type ResolvedRoute,
+} from '../llm/router';
 import { getPrompt } from '../llm/prompt-loader';
 import { getBotMemory } from './memory';
 import { braveSearch, firecrawlScrape } from './web';
@@ -14,6 +18,7 @@ import {
   SILENT_TOKEN,
   type ProgressState,
   type ScrollLoopResult,
+  type UsageStats,
 } from './scroll-loop';
 
 // Worker-side orchestration shell around the pure agent loop in
@@ -74,6 +79,7 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
     .eq('id', scrollRunId);
 
   let modelId = '';
+  let route: ResolvedRoute | null = null;
   let result: ScrollLoopResult | null = null;
 
   try {
@@ -123,9 +129,17 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
       .eq('id', scrollRunId);
 
     // ── Agent loop ─────────────────────────────────────────────────────
+    // resolveRoute gives us the OpenAI-compatible client pointed at the
+    // chosen provider (WR primary, OR fallback) plus the alias-specific
+    // model id. scroll-loop then drives the multi-turn agent loop with
+    // those, fully unaware of our routing concerns.
+    route = await resolveRoute(supa, env, {
+      modelSlug: modelId,
+      taskType: 'scroll',
+    });
     result = await runScrollLoop({
-      openai: openrouterClient(env),
-      modelId,
+      openai: route.client,
+      modelId: route.modelToCall,
       systemPrompt: getPrompt('scroll'),
       initialUserContent: initialUser,
       webSearch: (q) => braveSearch(env, q),
@@ -216,12 +230,11 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
     const isEmpty = !stripped || stripped === SILENT_TOKEN || stripped.length < 20;
     if (isEmpty) {
       await supa.from('scroll_runs').delete().eq('id', scrollRunId);
-      await auditRun(supa, {
+      await auditRun(supa, route, {
         userId,
         conversationId,
         scrollRunId,
         botId,
-        modelId,
         usage: result.usage,
         generationId: writeGenerationId ?? result.lastGenerationId,
         startedAt,
@@ -246,12 +259,11 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
       })
       .eq('id', scrollRunId);
 
-    await auditRun(supa, {
+    await auditRun(supa, route, {
       userId,
       conversationId,
       scrollRunId,
       botId,
-      modelId,
       usage: result.usage,
       generationId: result.lastGenerationId,
       startedAt,
@@ -297,8 +309,11 @@ interface AuditInput {
   conversationId: string;
   scrollRunId: string;
   botId: string;
-  modelId: string;
-  usage: { input: number; output: number; total: number };
+  // scroll-loop's UsageStats: input includes cached, total = input+output,
+  // cached is the cache-hit subset of input. We split for recordAudit so
+  // accounting is non-overlapping (input - cached). cache_creation isn't
+  // surfaced by scroll-loop yet — passes 0 for cacheWrite.
+  usage: UsageStats;
   generationId?: string;
   startedAt: number;
   action: 'memorial' | 'silent';
@@ -306,18 +321,22 @@ interface AuditInput {
 
 async function auditRun(
   supa: ReturnType<typeof serviceClient>,
+  route: ResolvedRoute,
   i: AuditInput,
 ): Promise<void> {
-  await supa.from('audit_log').insert({
-    user_id: i.userId,
-    conversation_id: i.conversationId,
-    task_type: 'scroll',
-    model_id: i.modelId,
-    input_tokens: i.usage.input,
-    output_tokens: i.usage.output,
-    total_tokens: i.usage.total,
-    generation_id: i.generationId,
-    latency_ms: Date.now() - i.startedAt,
+  const cacheRead = i.usage.cached;
+  const freshInput = Math.max(0, i.usage.input - cacheRead);
+  await recordAudit(supa, route, {
+    userId: i.userId,
+    conversationId: i.conversationId,
+    taskType: 'scroll',
+    startedAt: i.startedAt,
+    generationId: i.generationId,
+    status: 'success',
+    inputTokens: freshInput,
+    outputTokens: i.usage.output,
+    cacheReadTokens: cacheRead,
+    cacheWriteTokens: 0,
     metadata: { scroll_run_id: i.scrollRunId, bot_id: i.botId, action: i.action },
   });
 }

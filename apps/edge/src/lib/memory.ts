@@ -1,7 +1,12 @@
 import type { Env } from '../types';
 import { honchoClient, userPeerId, botPeerId, conversationSessionId } from './honcho';
 import { serviceClient } from './supabase';
-import { openrouterClient } from '../llm/client';
+import {
+  FallbackError,
+  recordAudit,
+  usageFromCompletion,
+  withFallback,
+} from '../llm/router';
 
 // Long-term memory cache backed by CF Workers KV. Two key namespaces:
 //   user:${userId}  — derived "what bots see in this user" (transparency UI only)
@@ -154,6 +159,7 @@ interface RefreshBotNoteInput {
 /// as bot-authored skills generally.
 async function refreshBotNote(input: RefreshBotNoteInput): Promise<void> {
   const { env, botId, userId, conversationId } = input;
+  const startedAt = Date.now();
   try {
     const supa = serviceClient(env);
     const { data: existing } = await supa
@@ -209,12 +215,28 @@ async function refreshBotNote(input: RefreshBotNoteInput): Promise<void> {
       '直接输出 markdown 笔记正文，不要前言后语，不要"以下是更新版"这种元话语。',
     ].join('\n');
 
-    const openai = openrouterClient(env);
-    const completion = await openai.chat.completions.create({
-      model: bot.model_id as string,
-      messages: [{ role: 'user', content: prompt }],
-    });
+    const { result: completion, route, routeTrace } = await withFallback(
+      supa,
+      env,
+      { modelSlug: bot.model_id as string, taskType: 'bot_note' },
+      (r) =>
+        r.client.chat.completions.create({
+          model: r.modelToCall,
+          messages: [{ role: 'user', content: prompt }],
+        }),
+    );
     const newBody = completion.choices[0]?.message?.content?.trim();
+    await recordAudit(supa, route, {
+      userId,
+      conversationId,
+      taskType: 'bot_note',
+      startedAt,
+      generationId: completion.id,
+      status: 'success',
+      routeTrace,
+      metadata: { bot_id: botId, action: newBody ? 'update' : 'silent' },
+      ...usageFromCompletion(completion.usage),
+    });
     if (!newBody) return;
 
     if (existing?.id) {
@@ -237,6 +259,20 @@ async function refreshBotNote(input: RefreshBotNoteInput): Promise<void> {
     }
   } catch (err) {
     console.warn('[memory] refreshBotNote failed', err);
+    if (err instanceof FallbackError) {
+      const supa = serviceClient(env);
+      await recordAudit(supa, err.lastRoute, {
+        userId,
+        conversationId,
+        taskType: 'bot_note',
+        startedAt,
+        status: 'error',
+        errorClass:
+          err.routeTrace[err.routeTrace.length - 1]?.error_class ?? 'unknown',
+        routeTrace: err.routeTrace,
+        metadata: { bot_id: botId, action: 'error' },
+      });
+    }
   }
 }
 

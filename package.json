@@ -11,6 +11,7 @@
     "dev": "bun --filter '*' dev",
     "dev:edge": "bun --filter='@pendingbot/edge' dev",
     "dev:web": "bun --filter='@pendingbot/web' dev",
+    "dev:admin": "bun --filter='@pendingbot/admin' dev",
     "build": "bun --filter '*' build",
     "typecheck": "bun --filter '*' typecheck",
     "test": "bun --filter '*' test"

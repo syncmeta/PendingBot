@@ -1,7 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import type { Env } from '../types';
 import { serviceClient } from './supabase';
-import { openrouterClient } from '../llm/client';
+import {
+  FallbackError,
+  recordAudit,
+  usageFromCompletion,
+  withFallback,
+} from '../llm/router';
 import { getPrompt } from '../llm/prompt-loader';
 import { getBotMemory } from './memory';
 
@@ -202,19 +207,24 @@ export async function runReview(input: RunReviewInput): Promise<void> {
         content: m.content as string,
       }));
 
-    const openai = openrouterClient(env);
-    const completion = await openai.chat.completions.create({
-      model: modelId,
-      messages: [
-        { role: 'system', content: getPrompt('review') },
-        { role: 'user', content: leadIn },
-        ...llmHistory,
-        {
-          role: 'user',
-          content: '请按系统指令对你和对方两边都做一遍回顾，按要求的分段输出。',
-        },
-      ],
-    });
+    const { result: completion, route, routeTrace } = await withFallback(
+      supa,
+      env,
+      { modelSlug: modelId, taskType: 'review' },
+      (r) =>
+        r.client.chat.completions.create({
+          model: r.modelToCall,
+          messages: [
+            { role: 'system', content: getPrompt('review') },
+            { role: 'user', content: leadIn },
+            ...llmHistory,
+            {
+              role: 'user',
+              content: '请按系统指令对你和对方两边都做一遍回顾，按要求的分段输出。',
+            },
+          ],
+        }),
+    );
     const rawText = completion.choices[0]?.message?.content?.trim() ?? '';
     const usage = completion.usage;
 
@@ -282,17 +292,16 @@ export async function runReview(input: RunReviewInput): Promise<void> {
     });
 
     // Audit + finalize.
-    await supa.from('audit_log').insert({
-      user_id: userId,
-      conversation_id: conversationId,
-      task_type: 'review',
-      model_id: modelId,
-      input_tokens: usage?.prompt_tokens ?? 0,
-      output_tokens: usage?.completion_tokens ?? 0,
-      total_tokens: usage?.total_tokens ?? 0,
-      generation_id: completion.id,
-      latency_ms: Date.now() - startedAt,
+    await recordAudit(supa, route, {
+      userId,
+      conversationId,
+      taskType: 'review',
+      startedAt,
+      generationId: completion.id,
+      status: 'success',
+      routeTrace,
       metadata: { review_run_id: reviewRunId, bot_id: botId },
+      ...usageFromCompletion(usage),
     });
     await supa
       .from('review_runs')
@@ -300,6 +309,19 @@ export async function runReview(input: RunReviewInput): Promise<void> {
       .eq('id', reviewRunId);
   } catch (err) {
     console.error('[review-runner]', err);
+    if (err instanceof FallbackError) {
+      await recordAudit(supa, err.lastRoute, {
+        userId,
+        conversationId,
+        taskType: 'review',
+        startedAt,
+        status: 'error',
+        errorClass:
+          err.routeTrace[err.routeTrace.length - 1]?.error_class ?? 'unknown',
+        routeTrace: err.routeTrace,
+        metadata: { review_run_id: reviewRunId, bot_id: botId },
+      });
+    }
     await supa
       .from('review_runs')
       .update({ status: 'error', finished_at: new Date().toISOString() })

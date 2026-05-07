@@ -1,6 +1,11 @@
 import type { Env } from '../types';
 import { serviceClient } from './supabase';
-import { openrouterClient } from '../llm/client';
+import {
+  FallbackError,
+  recordAudit,
+  usageFromCompletion,
+  withFallback,
+} from '../llm/router';
 import { getPrompt } from '../llm/prompt-loader';
 
 // Title runner — auto-generates a short conversation name from the first
@@ -24,48 +29,67 @@ export async function runTitle(input: RunTitleInput): Promise<void> {
   const supa = serviceClient(env);
   const startedAt = Date.now();
 
-  try {
-    const { data: msgs } = await supa
-      .from('messages')
-      .select('role, content')
-      .eq('conversation_id', conversationId)
-      .in('role', ['user', 'bot'])
-      .order('created_at', { ascending: true })
-      .limit(6);
-    const transcript = (msgs ?? [])
-      .filter((m) => (m.content as string | null)?.trim())
-      .map((m) => `${m.role === 'bot' ? 'bot' : 'user'}：${m.content}`)
-      .join('\n');
-    if (!transcript) return;
+  const { data: msgs } = await supa
+    .from('messages')
+    .select('role, content')
+    .eq('conversation_id', conversationId)
+    .in('role', ['user', 'bot'])
+    .order('created_at', { ascending: true })
+    .limit(6);
+  const transcript = (msgs ?? [])
+    .filter((m) => (m.content as string | null)?.trim())
+    .map((m) => `${m.role === 'bot' ? 'bot' : 'user'}：${m.content}`)
+    .join('\n');
+  if (!transcript) return;
 
-    const openai = openrouterClient(env);
-    const completion = await openai.chat.completions.create({
-      model: botModelId,
-      messages: [
-        { role: 'system', content: getPrompt('title') },
-        { role: 'user', content: transcript },
-      ],
-    });
+  try {
+    const { result: completion, route, routeTrace } = await withFallback(
+      supa,
+      env,
+      { modelSlug: botModelId, taskType: 'title' },
+      (r) =>
+        r.client.chat.completions.create({
+          model: r.modelToCall,
+          messages: [
+            { role: 'system', content: getPrompt('title') },
+            { role: 'user', content: transcript },
+          ],
+        }),
+    );
+
     const raw = (completion.choices[0]?.message?.content ?? '').trim();
     const title = raw.replace(/^["'「『]+|["'」』。.！!？?]+$/g, '').slice(0, MAX_TITLE_CHARS);
-    if (!title) return;
+    if (title) {
+      await supa
+        .from('conversations')
+        .update({ title, updated_at: new Date().toISOString() })
+        .eq('id', conversationId);
+    }
 
-    await supa
-      .from('conversations')
-      .update({ title, updated_at: new Date().toISOString() })
-      .eq('id', conversationId);
-
-    await supa.from('audit_log').insert({
-      conversation_id: conversationId,
-      task_type: 'title',
-      model_id: botModelId,
-      input_tokens: completion.usage?.prompt_tokens ?? 0,
-      output_tokens: completion.usage?.completion_tokens ?? 0,
-      total_tokens: completion.usage?.total_tokens ?? 0,
-      generation_id: completion.id,
-      latency_ms: Date.now() - startedAt,
+    await recordAudit(supa, route, {
+      conversationId,
+      taskType: 'title',
+      startedAt,
+      generationId: completion.id,
+      status: 'success',
+      routeTrace,
+      ...usageFromCompletion(completion.usage),
     });
   } catch (err) {
     console.warn('[title]', err);
+    if (err instanceof FallbackError) {
+      // Every attempt failed — record the trace so /audit knows what
+      // we tried. lastRoute may be null if even the first resolveRoute
+      // couldn't pick a provider.
+      await recordAudit(supa, err.lastRoute, {
+        conversationId,
+        taskType: 'title',
+        startedAt,
+        status: 'error',
+        errorClass:
+          err.routeTrace[err.routeTrace.length - 1]?.error_class ?? 'unknown',
+        routeTrace: err.routeTrace,
+      });
+    }
   }
 }

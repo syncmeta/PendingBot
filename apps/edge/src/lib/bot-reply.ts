@@ -6,7 +6,14 @@ import type {
 } from 'openai/resources/chat/completions';
 import type { Env } from '../types';
 import { serviceClient } from './supabase';
-import { openrouterClient } from '../llm/client';
+import {
+  FallbackError,
+  recordAudit,
+  type ResolvedRoute,
+  type RouteTraceEntry,
+  usageFromCompletion,
+  withFallback,
+} from '../llm/router';
 import { buildMessages, type BuildMessagesInput } from '../llm/builder';
 import { getBotMemory } from './memory';
 import { braveSearch, firecrawlScrape } from './web';
@@ -248,7 +255,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   let totalContent = '';
   let emittedLen = 0;
   let bubblesInserted = 0;
-  const usage: { input: number; output: number; total: number } = { input: 0, output: 0, total: 0 };
+  const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   let generationId: string | undefined;
 
   const emitBubble = async (text: string) => {
@@ -276,7 +283,14 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     });
   };
 
-  const openai = openrouterClient(env);
+  // Each round inside the agent loop runs its own withFallback — when
+  // one provider fails before-first-chunk, the router can re-resolve
+  // and try the next-best alias for the same canonical model. Once a
+  // stream has started yielding chunks (i.e. bytes have flown to the
+  // iOS client), fallback is no longer safe; iteration errors below
+  // surface as 'interrupted'/'error' status instead.
+  let route: ResolvedRoute | null = null;
+  const routeTrace: RouteTraceEntry[] = [];
   emit('typing', { state: 'thinking' });
 
   // Compose this turn's tool list. Always-on tools come from CHAT_TOOLS;
@@ -290,17 +304,26 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       if (ac.signal.aborted) break;
 
-      const stream = await openai.chat.completions.create(
-        {
-          model: bot.model_id,
-          messages,
-          tools: turnTools,
-          tool_choice: 'auto',
-          stream: true,
-          stream_options: { include_usage: true },
-        },
-        { signal: ac.signal },
+      const roundOpen = await withFallback(
+        supa,
+        env,
+        { modelSlug: bot.model_id, taskType: 'message_reply' },
+        (r) =>
+          r.client.chat.completions.create(
+            {
+              model: r.modelToCall,
+              messages,
+              tools: turnTools,
+              tool_choice: 'auto',
+              stream: true,
+              stream_options: { include_usage: true },
+            },
+            { signal: ac.signal },
+          ),
       );
+      const stream = roundOpen.result;
+      route = roundOpen.route;
+      routeTrace.push(...roundOpen.routeTrace);
 
       // Per-call accumulators.
       let assistantContent = '';
@@ -361,9 +384,11 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
         }
 
         if (chunk.usage) {
-          usage.input += chunk.usage.prompt_tokens ?? 0;
-          usage.output += chunk.usage.completion_tokens ?? 0;
-          usage.total += chunk.usage.total_tokens ?? 0;
+          const u = usageFromCompletion(chunk.usage);
+          usage.input += u.inputTokens ?? 0;
+          usage.output += u.outputTokens ?? 0;
+          usage.cacheRead += u.cacheReadTokens ?? 0;
+          usage.cacheWrite += u.cacheWriteTokens ?? 0;
         }
       }
 
@@ -425,16 +450,18 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       emit(finalStatus, { bubble_group_id: bubbleGroupId, total_content: totalContent });
     }
 
-    await supa.from('audit_log').insert({
-      user_id: userId,
-      conversation_id: conversationId,
-      task_type: 'message_reply',
-      model_id: bot.model_id,
-      input_tokens: usage.input,
-      output_tokens: usage.output,
-      total_tokens: usage.total,
-      generation_id: generationId,
-      latency_ms: Date.now() - startedAt,
+    await recordAudit(supa, route, {
+      userId,
+      conversationId,
+      taskType: 'message_reply',
+      startedAt,
+      generationId,
+      status: 'success',
+      routeTrace,
+      inputTokens: usage.input,
+      outputTokens: usage.output,
+      cacheReadTokens: usage.cacheRead,
+      cacheWriteTokens: usage.cacheWrite,
       metadata: {
         bot_id: bot.id,
         status: finalStatus,
@@ -470,6 +497,45 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
         })();
     console.error('[bot-reply] runChatTurn failed:', err);
     emit(status, { message });
+
+    // Audit the failed turn so error rate / fallback metrics in the
+    // panel see this. Two error paths:
+    //   - FallbackError: every alias re-resolution attempt failed
+    //     before any stream chunk arrived. lastRoute may be null.
+    //     routeTrace shows the chain.
+    //   - Anything else (mid-stream throw, tool error, etc.): we
+    //     stayed on whatever route last opened a stream. Use the
+    //     accumulated routeTrace from prior round successes.
+    try {
+      const fbErr = err instanceof FallbackError ? err : null;
+      const auditRoute = fbErr ? fbErr.lastRoute : route;
+      const auditTrace = fbErr ? fbErr.routeTrace : routeTrace;
+      const errorClass = aborted
+        ? null
+        : fbErr
+          ? fbErr.routeTrace[fbErr.routeTrace.length - 1]?.error_class ?? 'unknown'
+          : err instanceof Error
+            ? err.name
+            : 'unknown';
+      await recordAudit(supa, auditRoute, {
+        userId,
+        conversationId,
+        taskType: 'message_reply',
+        startedAt,
+        generationId,
+        status: aborted ? 'success' : 'error',
+        errorClass,
+        routeTrace: auditTrace,
+        inputTokens: usage.input,
+        outputTokens: usage.output,
+        cacheReadTokens: usage.cacheRead,
+        cacheWriteTokens: usage.cacheWrite,
+        metadata: { bot_id: bot.id, status, message: message.slice(0, 200) },
+      });
+    } catch (auditErr) {
+      console.warn('[bot-reply] audit on error failed:', auditErr);
+    }
+
     return { finalStatus: status, totalContent, bubblesInserted, droppedLookbackIds: [] };
   } finally {
     signal.removeEventListener('abort', onCallerAbort);
