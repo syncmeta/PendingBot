@@ -11,6 +11,11 @@ enum ChatEvent: Sendable {
     /// Bot used the [SILENT] control token — nothing to show, the turn
     /// produced no message. UI should leave the conversation as-is.
     case silent(groupId: String)
+    /// Bot invoked a tool (search_web / read_url / execute_code / create_skill).
+    /// Worker emits a paired `tool_result` once the tool returns; UI accumulates
+    /// the pair into the per-turn trace shown inline above the bot reply.
+    case toolCall(name: String, input: String?)
+    case toolResult(name: String, summary: String?, error: String?)
     case error(message: String)
     case unknown(name: String, raw: String)
 }
@@ -147,6 +152,29 @@ private func decode(eventName: String, dataJSON: String) -> ChatEvent {
         )
     case "silent":
         return .silent(groupId: (json["bubble_group_id"] as? String) ?? "")
+    case "tool_call":
+        let name = (json["name"] as? String) ?? ""
+        // Each tool emits its own input shape — flatten the relevant
+        // field into a single string so the UI doesn't have to switch.
+        let input: String? = {
+            if let q = json["query"] as? String, !q.isEmpty { return q }
+            if let u = json["url"] as? String, !u.isEmpty { return u }
+            if let s = json["skill_name"] as? String, !s.isEmpty { return s }
+            if let c = json["chars"] as? Int { return "\(c) chars" }
+            return nil
+        }()
+        return .toolCall(name: name, input: input)
+    case "tool_result":
+        let name = (json["name"] as? String) ?? ""
+        let err = (json["error"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        let summary: String? = {
+            if let n = json["count"] as? Int { return "\(n) 条结果" }
+            if let t = json["title"] as? String, !t.isEmpty { return t }
+            if let s = json["skill_name"] as? String, !s.isEmpty { return s }
+            if let exit = json["exit_code"] as? Int { return "exit \(exit)" }
+            return nil
+        }()
+        return .toolResult(name: name, summary: summary, error: err)
     case "error":
         return .error(message: (json["message"] as? String) ?? "")
     default:
