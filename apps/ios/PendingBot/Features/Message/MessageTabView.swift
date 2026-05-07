@@ -128,43 +128,44 @@ struct MessageTabView: View {
         VStack(spacing: 0) {
             TabHeaderBar(
                 title: "消息",
-                leading: {
-                    Menu {
-                        if recentBots.isEmpty {
-                            Text("还没有最近聊过的机器人")
-                        } else {
-                            Section("最近聊过") {
-                                ForEach(recentBots) { bot in
-                                    Button {
-                                        Haptics.tap()
-                                        Task { await createAndNavigate(with: bot) }
-                                    } label: {
-                                        Label(bot.display_name, systemImage: "bubble.left")
+                trailing: {
+                    HStack(spacing: 8) {
+                        Menu {
+                            if !recentBots.isEmpty {
+                                Section("最近聊过") {
+                                    ForEach(recentBots) { bot in
+                                        Button {
+                                            Haptics.tap()
+                                            Task { await createAndNavigate(with: bot) }
+                                        } label: {
+                                            Label(bot.display_name, systemImage: "bubble.left")
+                                        }
                                     }
                                 }
                             }
+                            Section("小贴士") {
+                                Text("右滑会话:快速新建")
+                                Text("左滑会话:标未读 / 删除")
+                            }
+                        } label: {
+                            CirclePlusButton()
                         }
-                    } label: {
-                        CirclePlusButton()
-                    }
-                },
-                trailing: {
-                    Menu {
-                        Button { addingFriend = true; Haptics.tap() } label: {
-                            Label("加好友", systemImage: "person.badge.plus")
+                        Menu {
+                            Button { addingFriend = true; Haptics.tap() } label: {
+                                Label("加好友", systemImage: "person.badge.plus")
+                            }
+                            Button { creatingGroup = true; Haptics.tap() } label: {
+                                Label("拉群", systemImage: "person.3")
+                            }
+                            Button { scanning = true; Haptics.tap() } label: {
+                                Label("扫码", systemImage: "qrcode.viewfinder")
+                            }
+                        } label: {
+                            CircleEllipsisButton()
                         }
-                        Button { creatingGroup = true; Haptics.tap() } label: {
-                            Label("拉群", systemImage: "person.3")
-                        }
-                        Button { scanning = true; Haptics.tap() } label: {
-                            Label("扫码", systemImage: "qrcode.viewfinder")
-                        }
-                    } label: {
-                        CircleEllipsisButton()
                     }
                 }
             )
-            SwipeHintRow()
             Group {
                 if loading && conversations.isEmpty {
                     ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -654,33 +655,6 @@ private struct ConversationListRow: View {
                 )
         )
         .contentShape(RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous))
-    }
-}
-
-// MARK: - Swipe-gesture hint
-
-/// One-liner under the messages header that calls out the two new
-/// swipe gestures on every row — right-pull-to-create, left-pull
-/// for unread/delete. Uses muted ink so it sits below the header
-/// without competing with the title.
-private struct SwipeHintRow: View {
-    var body: some View {
-        HStack(spacing: 8) {
-            HStack(spacing: 4) {
-                Image(systemName: "arrow.right").font(.system(size: 10, weight: .semibold))
-                Text("快速新建")
-            }
-            Text("·").foregroundStyle(Theme.Palette.hairline)
-            HStack(spacing: 4) {
-                Image(systemName: "arrow.left").font(.system(size: 10, weight: .semibold))
-                Text("标未读 / 删除")
-            }
-        }
-        .font(Theme.Fonts.caption)
-        .foregroundStyle(Theme.Palette.inkMuted)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, Theme.Metrics.gutter)
-        .padding(.bottom, 6)
     }
 }
 
