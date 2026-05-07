@@ -32,6 +32,11 @@ export default async function HomePage() {
           desc="按 user / bot / task / provider / model 看 token 用量与花费"
         />
         <Card
+          href="/arbitrage"
+          title="Arbitrage"
+          desc="实际花费 vs 若全走 OpenRouter — 看七折省了多少"
+        />
+        <Card
           href="/providers"
           title="Providers"
           desc="OpenRouter / WorldRouter 等 gateway 启停、密钥引用、健康"
