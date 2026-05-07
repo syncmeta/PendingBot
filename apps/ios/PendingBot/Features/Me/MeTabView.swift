@@ -6,6 +6,8 @@ import SwiftUI
 /// 生成 page) so avatar + nickname share one editing surface.
 struct MeTabView: View {
     @EnvironmentObject private var store: AccountStore
+    @Environment(\.useSidebarLayout) private var sidebarLayout
+    @Environment(\.topTabSelection) private var topTabSelection
 
     @State private var confirmingSignOut = false
     @State private var confirmingDelete = false
@@ -16,6 +18,61 @@ struct MeTabView: View {
     @State private var showRandomize = false
 
     var body: some View {
+        Group {
+            if sidebarLayout {
+                NavigationSplitView {
+                    VStack(spacing: 0) {
+                        coreContent
+                        if let topTabSelection {
+                            SidebarTabBar(selection: topTabSelection)
+                        }
+                    }
+                    .sidebarColumnWidth()
+                } detail: {
+                    EmptyDetailHint(text: "在左侧选项里走走", systemImage: "person.crop.circle")
+                }
+            } else {
+                coreContent
+            }
+        }
+        .sheet(isPresented: $showHandles) {
+            MyHandlesSheet()
+                .tint(Theme.Palette.accent)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showQR) {
+            MyQRSheet()
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+        .fullScreenCover(isPresented: $showRandomize) {
+            ProfileBootstrapView(allowsBack: true)
+                .environmentObject(AccountStore.shared)
+        }
+        .alert("出错", isPresented: .constant(error != nil)) {
+            Button("好") { error = nil }
+        } message: { Text(error ?? "") }
+        .confirmationDialog(
+            "确定？",
+            isPresented: $confirmingSignOut,
+            titleVisibility: .visible
+        ) {
+            Button("退出登录", role: .destructive) { signOut() }
+            Button("取消", role: .cancel) {}
+        }
+        .confirmationDialog(
+            "删除你在服务器上的所有数据 就像你没来过一样 不可撤销 无法恢复 数据无价 谨慎操作",
+            isPresented: $confirmingDelete,
+            titleVisibility: .visible
+        ) {
+            Button("永久删除", role: .destructive) { Task { await deleteAccount() } }
+            Button("取消", role: .cancel) {}
+        }
+    }
+
+    @ViewBuilder
+    private var coreContent: some View {
         NavigationStack {
             ZStack {
                 Theme.Palette.canvas.ignoresSafeArea()
@@ -98,40 +155,6 @@ struct MeTabView: View {
             }
             .background(Theme.Palette.canvas.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
-        }
-        .sheet(isPresented: $showHandles) {
-            MyHandlesSheet()
-                .tint(Theme.Palette.accent)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-        }
-        .sheet(isPresented: $showQR) {
-            MyQRSheet()
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-        }
-        .fullScreenCover(isPresented: $showRandomize) {
-            ProfileBootstrapView(allowsBack: true)
-                .environmentObject(AccountStore.shared)
-        }
-        .alert("出错", isPresented: .constant(error != nil)) {
-            Button("好") { error = nil }
-        } message: { Text(error ?? "") }
-        .confirmationDialog(
-            "确定？",
-            isPresented: $confirmingSignOut,
-            titleVisibility: .visible
-        ) {
-            Button("退出登录", role: .destructive) { signOut() }
-            Button("取消", role: .cancel) {}
-        }
-        .confirmationDialog(
-            "删除你在服务器上的所有数据 就像你没来过一样 不可撤销 无法恢复 数据无价 谨慎操作",
-            isPresented: $confirmingDelete,
-            titleVisibility: .visible
-        ) {
-            Button("永久删除", role: .destructive) { Task { await deleteAccount() } }
-            Button("取消", role: .cancel) {}
         }
     }
 
