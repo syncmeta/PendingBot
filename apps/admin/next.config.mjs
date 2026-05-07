@@ -4,9 +4,6 @@ const nextConfig = {
   // without copying the file. transpilePackages keeps Next happy when
   // importing TypeScript from a sibling workspace package.
   transpilePackages: ['@pendingbot/edge'],
-  experimental: {
-    typedRoutes: true,
-  },
 };
 
 export default nextConfig;
