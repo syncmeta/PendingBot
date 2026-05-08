@@ -196,7 +196,7 @@ struct MessageTabView: View {
                             Section("右滑新建会话\n左滑标未读/删除") {
                             }
                         } label: {
-                            CirclePlusButton()
+                            CircleComposeButton()
                         }
                         Menu {
                             Button { addingFriend = true; Haptics.tap() } label: {
@@ -209,7 +209,7 @@ struct MessageTabView: View {
                                 Label("扫码", systemImage: "qrcode.viewfinder")
                             }
                         } label: {
-                            CircleEllipsisButton()
+                            CirclePlusButton()
                         }
                     }
                 }

@@ -79,6 +79,16 @@ struct CircleEllipsisButton: View {
     }
 }
 
+/// Sibling to CirclePlusButton — same glass capsule, compose glyph (the
+/// pencil-in-square Apple uses across Messages / Mail to mean "new").
+/// Used in the messages header to start a fresh conversation.
+struct CircleComposeButton: View {
+    var size: CGFloat = 32
+    var body: some View {
+        CircleGlassChip(systemImage: "square.and.pencil", size: size)
+    }
+}
+
 private struct CircleGlassChip: View {
     let systemImage: String
     let size: CGFloat
