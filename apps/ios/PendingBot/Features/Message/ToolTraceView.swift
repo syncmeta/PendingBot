@@ -47,12 +47,13 @@ struct ToolTraceEvent: Identifiable, Hashable {
 /// Inline, non-bubble trace of the bot's tool calls for one turn. Reads as
 /// a quiet sidebar in the conversation flow:
 ///
-///   - While the turn is live (bot still streaming): auto-expanded —
-///     each tool call + the search hits as they land. Stays open for the
-///     whole turn even after individual tools finish, so a 500ms search
-///     doesn't pop in and out before the user can read it.
-///   - After the turn ends: auto-collapses to a single header row
-///     ("搜索 · 3 条结果"), tappable to re-expand for review.
+///   - Header row + the citation list (the *search summary*) are always
+///     visible whenever the trace exists — they're the load-bearing payoff
+///     and shouldn't get hidden behind a tap.
+///   - The per-tool *process* detail (query strings, result snippets,
+///     spinners) is what expand/collapse toggles. Auto-expanded while the
+///     turn is live so a fast 500ms search doesn't pop in and out before
+///     the user can read it; auto-collapsed once the turn ends.
 ///
 /// Colors are intentionally muted (no surface fill, no border) so the trace
 /// recedes — the bot's actual reply remains the visual anchor.
@@ -78,10 +79,18 @@ struct ToolTraceView: View {
 
     var body: some View {
         if !events.isEmpty {
-            VStack(alignment: .leading, spacing: expanded ? 8 : 0) {
+            VStack(alignment: .leading, spacing: 6) {
                 header
+                // Process detail (per-tool query + status) — only this part
+                // toggles. The citation list below stays visible even when
+                // the user collapses the events.
                 if expanded {
-                    detail
+                    eventList
+                }
+                // Search summary — always visible whenever we have hits.
+                // The whole point of the trace from the user's POV.
+                if !citations.isEmpty {
+                    citationList
                 }
             }
             .padding(.leading, Theme.Metrics.gutter + 30 + 8) // align under bot avatar gutter
@@ -160,7 +169,9 @@ struct ToolTraceView: View {
         return joined
     }
 
-    private var detail: some View {
+    /// Per-tool process rows — query string, spinner, result snippet.
+    /// Toggled by the expand/collapse chevron; hidden once the turn ends.
+    private var eventList: some View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(events) { ev in
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -187,10 +198,17 @@ struct ToolTraceView: View {
                     }
                 }
             }
-            if !citations.isEmpty {
-                ForEach(Array(citations.enumerated()), id: \.element.id) { idx, c in
-                    citationRow(index: idx + 1, citation: c)
-                }
+        }
+        .padding(.leading, 2)
+    }
+
+    /// Search summary — the citations the bot's `[N]` markers resolve to.
+    /// Always rendered (when non-empty), regardless of expand state, so a
+    /// user who collapses the trace still sees what was found.
+    private var citationList: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(citations.enumerated()), id: \.element.id) { idx, c in
+                citationRow(index: idx + 1, citation: c)
             }
         }
         .padding(.leading, 2)
