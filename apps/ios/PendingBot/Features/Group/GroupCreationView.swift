@@ -153,9 +153,9 @@ struct GroupCreationView: View {
         if selectedHumanIds.contains(id) {
             selectedHumanIds.remove(id)
         } else {
-            // 100-member cap is enforced server-side too; clamp here for
-            // a kind UX (creator + selected ≤ 100).
-            if selectedHumanIds.count + selectedBotIds.count >= 99 { return }
+            // 30-member cap is enforced server-side too; clamp here for
+            // a kind UX (creator + selected ≤ 30).
+            if selectedHumanIds.count + selectedBotIds.count >= 29 { return }
             selectedHumanIds.insert(id)
         }
     }
@@ -164,7 +164,7 @@ struct GroupCreationView: View {
         if selectedBotIds.contains(id) {
             selectedBotIds.remove(id)
         } else {
-            if selectedHumanIds.count + selectedBotIds.count >= 99 { return }
+            if selectedHumanIds.count + selectedBotIds.count >= 29 { return }
             selectedBotIds.insert(id)
         }
     }

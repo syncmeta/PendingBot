@@ -41,8 +41,8 @@ function rpcError(err: unknown, fallback = 'database error') {
 
 const CreateBody = z.object({
   title: z.string().max(80).optional(),
-  memberUserIds: z.array(z.string().uuid()).max(99).default([]),
-  memberBotIds: z.array(z.string().uuid()).max(99).default([]),
+  memberUserIds: z.array(z.string().uuid()).max(29).default([]),
+  memberBotIds: z.array(z.string().uuid()).max(29).default([]),
 });
 
 groupRoutes.post('/', async (c) => {
