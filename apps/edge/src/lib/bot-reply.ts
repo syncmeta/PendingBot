@@ -231,6 +231,9 @@ export interface RunChatTurnInput {
   /// user's display_name + bio as its persona — the conversation reads
   /// as the user talking to a mirror of themselves.
   selfPersona?: { displayName: string; bio: string } | null;
+  /// Client's IANA timezone (e.g. "Asia/Shanghai"). Used to format the
+  /// "this message was sent at ..." hint we attach to each turn.
+  clientTz?: string;
   signal: AbortSignal;
   emit: (event: string, data: unknown) => void;
 }
@@ -317,6 +320,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     lookbacks: activeLookbacks,
     recentContext, newMessage,
     selfPersona: input.selfPersona ?? null,
+    clientTz: input.clientTz,
   });
 
   // AbortSignal propagation: caller's signal aborts the upstream openai fetch.

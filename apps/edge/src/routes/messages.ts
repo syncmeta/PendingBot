@@ -56,6 +56,10 @@ const PostBody = z.object({
   // turn. Fallback retries still work; if the chosen provider 503s, router
   // falls through to other providers (the pin biases, doesn't lock).
   providerOverride: z.string().nullable().optional(),
+  // IANA timezone of the client (e.g. "Asia/Shanghai" / "America/Los_Angeles").
+  // Used to render the per-turn time hint we append to the user's message in
+  // the LLM prompt, so the model sees the user's *local* clock — not UTC.
+  clientTz: z.string().max(64).optional(),
 });
 
 // POST /v1/messages
@@ -293,6 +297,7 @@ messageRoutes.post('/', async (c) => {
           newMessage: parsed.newMessage ?? '（系统注入：根据上一轮的查证笔记，自然继续上面的对话。不要提到这是自动触发的。）',
           activeLookbacks: parsed.activeLookbacks ?? [],
           providerOverride: effectiveProviderOverride,
+          clientTz: parsed.clientTz,
           signal: c.req.raw.signal,
           emit,
         });

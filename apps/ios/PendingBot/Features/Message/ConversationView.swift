@@ -799,6 +799,9 @@ struct ConversationView: View {
                 "conversationId": conversation.id,
                 "clientMessageId": clientMsgId,
                 "recentContext": recent,
+                // IANA tz so the server can format the per-turn time hint in
+                // the user's local clock (server only knows UTC otherwise).
+                "clientTz": TimeZone.current.identifier,
             ]
             if !text.isEmpty { b["newMessage"] = text }
             if autoLookback { b["autoLookback"] = true }

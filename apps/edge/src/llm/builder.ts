@@ -36,6 +36,12 @@ export interface BuildMessagesInput {
   /// display_name + bio for the duration of the conversation (the user
   /// is talking to a mirror of themselves).
   selfPersona?: { displayName: string; bio: string } | null;
+  // IANA timezone from the client (e.g. "Asia/Shanghai"). Used to format
+  // the *current* user turn's timestamp (server only knows UTC for "now").
+  // Historical messages carry their own offset in `created_at`, so we
+  // format those from the offset embedded in each ISO string and ignore
+  // clientTz for them — keeps display correct even if the user travelled.
+  clientTz?: string;
   nowIso?: string; // override for tests
   // Anthropic prompt caching: where to drop the cache_control breakpoint.
   // The plan/02 strategy is "every N=4 rounds move the breakpoint to the
@@ -174,6 +180,87 @@ function buildLookbackSection(lookbacks: BuildMessagesInput['lookbacks']): strin
   ].join('\n');
 }
 
+// Format a timestamp as a natural Chinese phrase the model is unlikely to
+// mimic verbatim. We wrap it as an explicit "system hint" so even if the
+// model does echo it back, the user-facing layer can strip it.
+//
+// `iso` carries its own offset (e.g. "2026-05-08T11:23:45+08:00"); we honor
+// that offset directly. For server-generated `now` (UTC `Z`), pass the
+// client's IANA tz via `tzFallback` so we can render in their local clock.
+function formatTimeHint(iso: string, tzFallback?: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+
+  // If the ISO string explicitly carries an offset (anything other than `Z`
+  // -- including the `Z` case, which we treat as "no client offset known"),
+  // extract minutes-offset from the suffix.
+  const offsetMatch = /([+-])(\d{2}):?(\d{2})$/.exec(iso);
+  let parts: { y: number; mo: number; d: number; h: number; mi: number; s: number };
+
+  if (offsetMatch) {
+    const sign = offsetMatch[1] === '-' ? -1 : 1;
+    const offMin = sign * (parseInt(offsetMatch[2], 10) * 60 + parseInt(offsetMatch[3], 10));
+    const shifted = new Date(d.getTime() + offMin * 60_000);
+    parts = {
+      y: shifted.getUTCFullYear(),
+      mo: shifted.getUTCMonth() + 1,
+      d: shifted.getUTCDate(),
+      h: shifted.getUTCHours(),
+      mi: shifted.getUTCMinutes(),
+      s: shifted.getUTCSeconds(),
+    };
+  } else if (tzFallback) {
+    // ISO is UTC `Z` but client gave us an IANA zone — render via Intl.
+    try {
+      const fmt = new Intl.DateTimeFormat('en-CA', {
+        timeZone: tzFallback,
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+        hour12: false,
+      });
+      const map: Record<string, string> = {};
+      for (const p of fmt.formatToParts(d)) {
+        if (p.type !== 'literal') map[p.type] = p.value;
+      }
+      parts = {
+        y: parseInt(map.year, 10),
+        mo: parseInt(map.month, 10),
+        d: parseInt(map.day, 10),
+        h: parseInt(map.hour === '24' ? '0' : map.hour, 10),
+        mi: parseInt(map.minute, 10),
+        s: parseInt(map.second, 10),
+      };
+    } catch {
+      parts = {
+        y: d.getUTCFullYear(),
+        mo: d.getUTCMonth() + 1,
+        d: d.getUTCDate(),
+        h: d.getUTCHours(),
+        mi: d.getUTCMinutes(),
+        s: d.getUTCSeconds(),
+      };
+    }
+  } else {
+    parts = {
+      y: d.getUTCFullYear(),
+      mo: d.getUTCMonth() + 1,
+      d: d.getUTCDate(),
+      h: d.getUTCHours(),
+      mi: d.getUTCMinutes(),
+      s: d.getUTCSeconds(),
+    };
+  }
+
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${parts.mo}月${parts.d}日 ${pad(parts.h)}:${pad(parts.mi)}:${pad(parts.s)}`;
+}
+
+function withTimeHint(text: string, iso: string, tzFallback?: string): string {
+  const t = formatTimeHint(iso, tzFallback);
+  if (!t) return text;
+  return `${text}\n（系统提示：此消息发送于 ${t}。此提示用户不可见，你也**不要**模仿此格式输出）`;
+}
+
 // Wraps a string content into the Anthropic content-block array form so we
 // can attach `cache_control` to it. OpenRouter passes this through to
 // Anthropic models; for non-Anthropic providers it's a no-op (they ignore
@@ -190,6 +277,7 @@ export function buildMessages(input: BuildMessagesInput): ChatCompletionMessageP
     skills,
     recentContext,
     newMessage,
+    clientTz,
     nowIso = new Date().toISOString(),
   } = input;
 
@@ -219,7 +307,7 @@ export function buildMessages(input: BuildMessagesInput): ChatCompletionMessageP
     if (!llmRole) continue;
     const text = m.content ?? '';
     if (!text) continue;
-    historyMsgs.push({ role: llmRole, content: `[${m.created_at}] ${text}` });
+    historyMsgs.push({ role: llmRole, content: withTimeHint(text, m.created_at, clientTz) });
   }
 
   // Cache breakpoint on the chosen history index. Strategy: every 4 rounds
@@ -236,7 +324,7 @@ export function buildMessages(input: BuildMessagesInput): ChatCompletionMessageP
   }
 
   // Current user turn — outside the cache (always fresh).
-  messages.push({ role: 'user', content: `[${nowIso}] ${newMessage}` });
+  messages.push({ role: 'user', content: withTimeHint(newMessage, nowIso, clientTz) });
 
   return messages;
 }
