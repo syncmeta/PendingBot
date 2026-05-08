@@ -14,6 +14,12 @@ final class AccountStore: ObservableObject {
     static let shared = AccountStore()
 
     @Published private(set) var current: Account?
+    /// Flips to true the moment `bootstrap()` has consulted the persisted
+    /// Supabase session. RootView gates on this to avoid a flash of
+    /// WelcomeView for users who are already signed in: bootstrap runs in
+    /// `.task` (after first frame), so without this gate the launch screen
+    /// hands off to WelcomeView for one tick before TabRoot appears.
+    @Published private(set) var sessionHydrated = false
     /// Multi-account view models still expect a list — surface a single-element
     /// array (or empty) until the views are updated to read `current` directly.
     var accounts: [Account] { current.map { [$0] } ?? [] }
@@ -50,6 +56,7 @@ final class AccountStore: ObservableObject {
             current = Self.makeAccount(session: session)
             Task { await self.refreshProfileFlags() }
         }
+        sessionHydrated = true
         observeAuth()
     }
 

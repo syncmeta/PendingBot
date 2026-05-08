@@ -62,7 +62,13 @@ struct RootView: View {
     @EnvironmentObject var store: AccountStore
 
     var body: some View {
-        if store.current == nil {
+        if !store.sessionHydrated {
+            // bootstrap() runs in `.task` (after first frame) so we can't
+            // know auth state synchronously — paint a launch-screen lookalike
+            // until it's resolved, otherwise already-signed-in users see a
+            // flash of WelcomeView before TabRoot.
+            SplashView()
+        } else if store.current == nil {
             WelcomeView()
         } else if store.hasBootstrapped == false {
             // Right after sign-in we run the random-name + random-avatar
@@ -74,6 +80,23 @@ struct RootView: View {
         } else {
             TabRoot()
                 .id(store.current?.id)
+        }
+    }
+}
+
+/// Mirrors the UILaunchScreen in Info.plist (Cream bg + LaunchLogo) so the
+/// transition from system launch screen to SwiftUI is seamless while
+/// AccountStore hydrates the persisted session.
+private struct SplashView: View {
+    var body: some View {
+        ZStack {
+            Theme.Palette.canvas.ignoresSafeArea()
+            // Asset is 384×384 @3x → 128pt natural size, matching the
+            // UIKit launch screen rendering so the handoff is invisible.
+            Image("LaunchLogo")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 128, height: 128)
         }
     }
 }
