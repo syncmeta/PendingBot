@@ -329,6 +329,19 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
           })
           .eq('id', scrollRunId);
       },
+      // Heartbeat between awaits within a turn — keeps the iOS detail
+      // page ticking so a slow model + slow scrape doesn't look frozen.
+      // Each heartbeat is a tiny progress-only UPDATE (no turns rewrite)
+      // so we can fire ~3 of these per turn without much overhead.
+      onActivity: async (snapshot) => {
+        await supa
+          .from('scroll_runs')
+          .update({
+            progress: snapshot as unknown as Json,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', scrollRunId);
+      },
       isCancelled: () => isRunCancelled(supa, scrollRunId),
     });
 
