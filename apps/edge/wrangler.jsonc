@@ -55,7 +55,16 @@
         "ALLOWED_ORIGIN": "https://bot.pendingname.com"
       },
       "routes": [
-        { "pattern": "api.pendingname.com", "custom_domain": true }
+        { "pattern": "api.pendingname.com", "custom_domain": true },
+        // Apple Universal Links — AASA served at
+        //   https://bot.pendingname.com/.well-known/apple-app-site-association
+        // Path-scoped route (not custom_domain) so the rest of bot.pendingname.com
+        // stays free for whatever ends up hosted there (Board, marketing, etc.).
+        // Handler: src/routes/well-known.ts.
+        {
+          "pattern": "bot.pendingname.com/.well-known/apple-app-site-association",
+          "zone_name": "pendingname.com"
+        }
       ],
       "r2_buckets": [
         {

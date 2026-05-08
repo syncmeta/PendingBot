@@ -13,6 +13,7 @@ import { groupRoutes } from './routes/groups';
 import { deviceRoutes } from './routes/devices';
 import { codeExecRoutes } from './routes/code-exec';
 import { openrouterRoutes } from './routes/openrouter';
+import { wellKnownRoutes } from './routes/well-known';
 import { handleScheduled } from './cron';
 
 // Re-export the Durable Object class so the runtime can find it via
@@ -73,6 +74,11 @@ app.route('/v1', v1);
 // Convenience: bare /health returns same payload (e.g. for uptime monitors
 // that won't follow path conventions).
 app.route('/health', healthRoutes);
+
+// Apple Universal Links — AASA at bot.pendingname.com/.well-known/...
+// Bound via a worker route in wrangler.jsonc; lives outside /v1/ since
+// Apple fetches the well-known path verbatim.
+app.route('/.well-known', wellKnownRoutes);
 
 // Workers entry point: HTTP via Hono, scheduled (cron) via handleScheduled.
 // Hono's default export is `{ fetch }`, so we wrap it to add the scheduled
