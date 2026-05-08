@@ -7,11 +7,6 @@ export type Json =
   | Json[]
 
 export type Database = {
-  // Allows to automatically instantiate createClient with right options
-  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
-  __InternalSupabase: {
-    PostgrestVersion: "14.5"
-  }
   pendingbot: {
     Tables: {
       account_deletion_log: {
@@ -751,6 +746,24 @@ export type Database = {
           platform?: string
           token?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      disposable_email_domains: {
+        Row: {
+          added_at: string
+          domain: string
+          note: string | null
+        }
+        Insert: {
+          added_at?: string
+          domain: string
+          note?: string | null
+        }
+        Update: {
+          added_at?: string
+          domain?: string
+          note?: string | null
         }
         Relationships: []
       }
@@ -2416,3 +2429,4 @@ export const Constants = {
     },
   },
 } as const
+
