@@ -50,6 +50,7 @@ export default async function AppStatsPage() {
     skillsR,
     skillSubsR,
     sandboxR,
+    deletionSentimentR,
   ] = await Promise.all([
     supa.from('users').select('*', { count: 'exact', head: true }),
     supa.from('bots').select('*', { count: 'exact', head: true }),
@@ -106,6 +107,13 @@ export default async function AppStatsPage() {
     supa.from('skill_subscriptions').select('skill_id'),
     // Sandbox sessions: bootstrapped + idle status.
     supa.from('bot_sandbox_sessions').select('bootstrapped, last_used_at, created_at'),
+    // Account-deletion sentiment — anonymous tally of which farewell
+    // button users picked. No user_id stored, so the row outlives the
+    // cascading account wipe by design.
+    supa
+      .from('account_deletion_log')
+      .select('sentiment, deleted_at')
+      .returns<{ sentiment: 'see_you_again' | 'farewell_forever'; deleted_at: string }[]>(),
   ]);
 
   const totalUsers = totalUsersR.count ?? 0;
@@ -262,6 +270,15 @@ export default async function AppStatsPage() {
     (s) => new Date(s.last_used_at).getTime() >= idleThreshold,
   ).length;
   const sandboxIdle = sandboxTotal - sandboxActive;
+
+  // ── Account-deletion sentiment ─────────────────────────────────
+  const deletionRows = deletionSentimentR.data ?? [];
+  const deletionTotal = deletionRows.length;
+  const deletion30 = deletionRows.filter((r) => r.deleted_at >= since30).length;
+  const seeYouAgain = deletionRows.filter((r) => r.sentiment === 'see_you_again').length;
+  const farewellForever = deletionRows.filter(
+    (r) => r.sentiment === 'farewell_forever',
+  ).length;
 
   return (
     <main className="container py-10 space-y-10">
@@ -438,6 +455,35 @@ export default async function AppStatsPage() {
               </ul>
             </div>
           )}
+        </Card>
+
+        <Card title="注销账号告别情绪">
+          <div className="px-4 py-3 space-y-2 text-sm">
+            <Row label="累计注销" value={fmtNumber(deletionTotal)} />
+            <Row label={`最近 ${WINDOW_DAYS} 天`} value={fmtNumber(deletion30)} />
+          </div>
+          {deletionTotal > 0 ? (
+            <div className="border-t">
+              <BarList
+                entries={[
+                  ['有缘再见 (see_you_again)', seeYouAgain],
+                  ['再也不见 (farewell_forever)', farewellForever],
+                ]}
+                total={deletionTotal}
+                highlight={(k) =>
+                  k.startsWith('再也不见') ? 'text-destructive' : undefined
+                }
+              />
+            </div>
+          ) : (
+            <p className="border-t px-4 py-6 text-sm text-muted-foreground">
+              还没有人离开 🎉
+            </p>
+          )}
+          <p className="border-t px-4 py-2 text-xs text-muted-foreground">
+            两个按钮功能完全相同（都把账号彻底删干净），只为捕捉用户离开时的情绪。
+            日志里没有 user_id / IP，行本身在级联删除中独立存活。
+          </p>
         </Card>
 
         <Card title="Sandbox sessions">
