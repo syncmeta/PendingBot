@@ -12,8 +12,8 @@ export default function HomePage() {
           desc="按 user / bot / task / provider / model 看 token 用量与花费"
         />
         <Card
-          href="/arbitrage"
-          title="Arbitrage"
+          href="/savings"
+          title="Savings"
           desc="实际花费 vs 若全走 OpenRouter — 看七折省了多少"
         />
         <Card

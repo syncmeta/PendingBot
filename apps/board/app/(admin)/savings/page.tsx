@@ -76,7 +76,7 @@ function priceTokens(alias: AliasRow, row: AuditRow): number | null {
   return known ? cost : null;
 }
 
-export default async function ArbitragePage({
+export default async function SavingsPage({
   searchParams,
 }: {
   searchParams: Promise<{ start?: string; end?: string }>;
@@ -117,7 +117,7 @@ export default async function ArbitragePage({
 
   // Audit slice over the chosen window. We pull rows that have a
   // model_alias_id — without it there's no canonical model to compare
-  // across, so they can't contribute to arbitrage math (but they still
+  // across, so they can't contribute to savings math (but they still
   // show up in /audit).
   const { data: auditRaw, error } = await supa
     .from('audit_log')
@@ -219,7 +219,7 @@ export default async function ArbitragePage({
     <main className="container py-10 space-y-10">
       <header className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Arbitrage</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Savings</h1>
           <p className="text-sm text-muted-foreground">
             实际花的钱 vs 若全走 OpenRouter 应该花的钱。
           </p>
