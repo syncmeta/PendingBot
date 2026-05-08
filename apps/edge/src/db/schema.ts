@@ -500,44 +500,6 @@ export type Database = {
           },
         ]
       }
-      bot_reflections: {
-        Row: {
-          bot_id: string
-          content: string
-          created_at: string
-          id: string
-          kind: string
-          review_run_id: string | null
-          user_id: string
-        }
-        Insert: {
-          bot_id: string
-          content: string
-          created_at?: string
-          id?: string
-          kind: string
-          review_run_id?: string | null
-          user_id: string
-        }
-        Update: {
-          bot_id?: string
-          content?: string
-          created_at?: string
-          id?: string
-          kind?: string
-          review_run_id?: string | null
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "bot_reflections_bot_id_fkey"
-            columns: ["bot_id"]
-            isOneToOne: false
-            referencedRelation: "bots"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       bot_sandbox_sessions: {
         Row: {
           bootstrapped: boolean
@@ -791,6 +753,53 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      friend_requests: {
+        Row: {
+          created_at: string
+          from_user_id: string
+          id: string
+          message: string | null
+          responded_at: string | null
+          status: string
+          to_user_id: string
+          updated_at: string
+          via_email: string | null
+          via_handle_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          from_user_id: string
+          id?: string
+          message?: string | null
+          responded_at?: string | null
+          status?: string
+          to_user_id: string
+          updated_at?: string
+          via_email?: string | null
+          via_handle_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          from_user_id?: string
+          id?: string
+          message?: string | null
+          responded_at?: string | null
+          status?: string
+          to_user_id?: string
+          updated_at?: string
+          via_email?: string | null
+          via_handle_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "friend_requests_via_handle_fk"
+            columns: ["via_handle_id"]
+            isOneToOne: false
+            referencedRelation: "user_handles"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       group_billing_config: {
         Row: {
@@ -1455,57 +1464,6 @@ export type Database = {
         }
         Relationships: []
       }
-      review_runs: {
-        Row: {
-          bot_id: string
-          conversation_id: string
-          created_at: string
-          finished_at: string | null
-          id: string
-          started_at: string | null
-          status: string
-          trigger: string | null
-          user_id: string
-        }
-        Insert: {
-          bot_id: string
-          conversation_id: string
-          created_at?: string
-          finished_at?: string | null
-          id?: string
-          started_at?: string | null
-          status?: string
-          trigger?: string | null
-          user_id: string
-        }
-        Update: {
-          bot_id?: string
-          conversation_id?: string
-          created_at?: string
-          finished_at?: string | null
-          id?: string
-          started_at?: string | null
-          status?: string
-          trigger?: string | null
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "review_runs_bot_id_fkey"
-            columns: ["bot_id"]
-            isOneToOne: false
-            referencedRelation: "bots"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "review_runs_conversation_id_fkey"
-            columns: ["conversation_id"]
-            isOneToOne: false
-            referencedRelation: "conversations"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       scroll_runs: {
         Row: {
           body_md: string | null
@@ -1844,53 +1802,6 @@ export type Database = {
         }
         Relationships: []
       }
-      friend_requests: {
-        Row: {
-          created_at: string
-          from_user_id: string
-          id: string
-          message: string | null
-          responded_at: string | null
-          status: string
-          to_user_id: string
-          updated_at: string
-          via_email: string | null
-          via_handle_id: string | null
-        }
-        Insert: {
-          created_at?: string
-          from_user_id: string
-          id?: string
-          message?: string | null
-          responded_at?: string | null
-          status?: string
-          to_user_id: string
-          updated_at?: string
-          via_email?: string | null
-          via_handle_id?: string | null
-        }
-        Update: {
-          created_at?: string
-          from_user_id?: string
-          id?: string
-          message?: string | null
-          responded_at?: string | null
-          status?: string
-          to_user_id?: string
-          updated_at?: string
-          via_email?: string | null
-          via_handle_id?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "friend_requests_via_handle_fk"
-            columns: ["via_handle_id"]
-            isOneToOne: false
-            referencedRelation: "user_handles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       user_contacts: {
         Row: {
           added_via_handle_id: string | null
@@ -2170,6 +2081,10 @@ export type Database = {
       }
       _delete_account_internal: { Args: { p_uid: string }; Returns: undefined }
       _group_member_count: { Args: { p_conv_id: string }; Returns: number }
+      accept_friend_request: {
+        Args: { p_request_id: string; p_user_id: string }
+        Returns: undefined
+      }
       apply_audit_split: {
         Args: { p_audit_log_id: string; p_splits: Json }
         Returns: undefined
@@ -2209,10 +2124,6 @@ export type Database = {
       bot_invites_add: {
         Args: { p_bot_id: string; p_handle: string }
         Returns: string
-      }
-      accept_friend_request: {
-        Args: { p_request_id: string; p_user_id: string }
-        Returns: undefined
       }
       delete_self_account: { Args: { p_sentiment: string }; Returns: undefined }
       group_continue_decide: {
