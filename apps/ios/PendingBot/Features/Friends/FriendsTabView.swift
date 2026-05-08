@@ -561,7 +561,13 @@ private struct FilterPillBar: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(FriendFilter.allCases, id: \.self) { f in
-                    FilterPill(filter: f, selected: filter == f) {
+                    FilterPill(
+                        filter: f,
+                        selected: filter == f,
+                        // 全部 选中时,其它 pill 也以满色亮起表示"都在显示",
+                        // 但只有被点中的那一颗带 selection 描边。
+                        active: filter == f || filter == .all
+                    ) {
                         filter = f
                         Haptics.tap()
                     }
@@ -575,18 +581,23 @@ private struct FilterPillBar: View {
 
 private struct FilterPill: View {
     let filter: FriendFilter
+    /// True only for the pill the user picked — drives the stroke ring.
     let selected: Bool
+    /// True when this pill should render in its full-saturation tag colour.
+    /// Always true for the selected pill; also true for siblings when 全部
+    /// is the active filter (so the colour bar visually says "all on").
+    let active: Bool
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Text(filter.label)
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(filter.fg.opacity(selected ? 1.0 : 0.55))
+                .foregroundStyle(filter.fg.opacity(active ? 1.0 : 0.55))
                 .padding(.horizontal, 12)
                 .padding(.vertical, 7)
                 .background(tintFill)
-                .glassCapsule()
+                .clipShape(Capsule())
                 .overlay(
                     Capsule().strokeBorder(
                         selected ? filter.fg.opacity(0.5) : Color.black.opacity(0.05),
@@ -605,20 +616,16 @@ private struct FilterPill: View {
             // so the selection still reads against the canvas.
             Capsule().fill(Color.white.opacity(selected ? 0.85 : 0.4))
         case .humans:
-            // Selected: full accentBg to match HumanKindTag exactly.
-            // Unselected: faded so the picked one stands out.
-            Capsule().fill(Theme.Palette.accentBg.opacity(selected ? 1.0 : 0.4))
+            Capsule().fill(Theme.Palette.accentBg.opacity(active ? 1.0 : 0.4))
         case .privateBots:
-            // Selected: full plumBg to match BotVisibilityTag(private).
-            Capsule().fill(Theme.Palette.plumBg.opacity(selected ? 1.0 : 0.4))
+            Capsule().fill(Theme.Palette.plumBg.opacity(active ? 1.0 : 0.4))
         case .publicBots:
-            // Selected: full amberBg to match BotVisibilityTag(public).
-            Capsule().fill(Theme.Palette.amberBg.opacity(selected ? 1.0 : 0.4))
+            Capsule().fill(Theme.Palette.amberBg.opacity(active ? 1.0 : 0.4))
         case .groups:
             // Tri-tone wash: the three tag-bg colours blended L→R, kept
             // intentionally pale so it reads as "all categories" without
             // shouting over the others.
-            let base = selected ? 0.55 : 0.28
+            let base = active ? 0.55 : 0.28
             Capsule().fill(
                 LinearGradient(
                     colors: [
@@ -783,20 +790,3 @@ private struct BotRowOwnerActions: ViewModifier {
     }
 }
 
-// MARK: - Glass capsule
-
-/// Same Liquid-Glass treatment used by the login pills — kept fileprivate
-/// here (and duplicated in WelcomeView) until we have more callers worth
-/// promoting to a shared component file.
-private extension View {
-    @ViewBuilder
-    func glassCapsule() -> some View {
-        if #available(iOS 26.0, *) {
-            self.glassEffect(.regular, in: Capsule())
-        } else {
-            self
-                .background(Capsule().fill(.regularMaterial))
-                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
-        }
-    }
-}
