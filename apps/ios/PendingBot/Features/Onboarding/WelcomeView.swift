@@ -3,13 +3,15 @@ import UIKit
 import AuthenticationServices
 import CryptoKit
 
-/// First-launch / signed-out screen. Logo on top, two sign-in methods
-/// below: Apple and Google. Both providers carry their own anti-abuse
-/// signals (real device + Apple ID, real Google account) so we don't
-/// need a captcha layer here.
+/// First-launch / signed-out screen. Logo on top, three sign-in methods
+/// below: Apple, Google, GitHub. Apple/Google carry their own anti-abuse
+/// signals (real device + Apple ID, real Google account); GitHub adds a
+/// developer-friendly path. None of these need a captcha layer.
 ///
-/// Auth wiring goes through the supabase-swift helpers AppleSignIn /
-/// PendingGoogleSignIn — both end in signInWithIdToken on Supabase Auth.
+/// Auth wiring: Apple/Google end in `signInWithIdToken` (native id_token,
+/// no Safari handoff). GitHub doesn't issue an OIDC id_token, so it goes
+/// through `signInWithOAuth` + ASWebAuthenticationSession via Supabase's
+/// hosted callback — see PendingGitHubSignIn for details.
 struct WelcomeView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: AccountStore
@@ -45,9 +47,12 @@ struct WelcomeView: View {
                     .padding(.leading, 4)
                     .padding(.bottom, 22)
 
-                HStack(spacing: 12) {
-                    appleButton
-                    googleButton
+                VStack(spacing: 12) {
+                    HStack(spacing: 12) {
+                        appleButton
+                        googleButton
+                    }
+                    githubButton
                 }
                 .disabled(isVerifying)
 
@@ -102,6 +107,45 @@ struct WelcomeView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Sign in with Google")
+    }
+
+    /// GitHub sign-in button. Full-width pill on its own row, GitHub-canvas
+    /// dark (#0D1117) with white mark + label so it sits visually between
+    /// Apple's pure black and Google's frosted-glass white.
+    private var githubButton: some View {
+        Button { Task { await beginGitHub() } } label: {
+            brandPillContent(logo: githubLogoImage, text: "GitHub", textColor: .white)
+                .frame(maxWidth: .infinity)
+                .frame(height: 52)
+                .background(
+                    Capsule().fill(Color(red: 0.05, green: 0.07, blue: 0.09))
+                )
+                .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Sign in with GitHub")
+    }
+
+    /// Use the bundled GitHubMark asset when present, otherwise fall back
+    /// to a developer-flavoured SF Symbol so the button is still legible
+    /// during dev (see Assets.xcassets/GitHubMark.imageset/README.md).
+    private var githubLogoImage: AnyView {
+        if UIImage(named: "GitHubMark") != nil {
+            AnyView(
+                Image("GitHubMark")
+                    .resizable()
+                    .renderingMode(.template)
+                    .foregroundStyle(.white)
+                    .scaledToFit()
+            )
+        } else {
+            AnyView(
+                Image(systemName: "chevron.left.forwardslash.chevron.right")
+                    .resizable()
+                    .scaledToFit()
+                    .foregroundStyle(.white)
+            )
+        }
     }
 
     /// Picks the official Apple-supplied logo-only artwork when present,
@@ -235,6 +279,24 @@ struct WelcomeView: View {
             Haptics.success()
         } catch PendingGoogleSignIn.Error.userCancelled {
             // user backed out of the Google sheet — silent, stay put
+        } catch {
+            errorText = error.localizedDescription
+            Haptics.error()
+        }
+    }
+
+    // MARK: - GitHub
+
+    @MainActor
+    private func beginGitHub() async {
+        errorText = nil
+        isVerifying = true
+        defer { isVerifying = false }
+        do {
+            _ = try await PendingGitHubSignIn.run()
+            Haptics.success()
+        } catch PendingGitHubSignIn.Error.userCancelled {
+            // user closed the auth sheet — silent, stay put
         } catch {
             errorText = error.localizedDescription
             Haptics.error()
