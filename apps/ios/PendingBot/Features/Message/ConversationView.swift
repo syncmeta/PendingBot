@@ -112,6 +112,15 @@ struct ConversationView: View {
     @State private var pendingEmissions: [BubbleEmission] = []
     @State private var revealTask: Task<Void, Never>?
 
+    /// Canonical bot-row ids announced by the SSE `bubble` event but not yet
+    /// reconciled with a Realtime INSERT. When the INSERT lands with one of
+    /// these ids, we know it's *our own* turn echoing back and should
+    /// replace the matching `live-*` optimistic bubble — regardless of how
+    /// long the round-trip took. Without this, slow streams (>5s) used to
+    /// blow past the recency-window dedup and the canonical row would
+    /// append as a duplicate bubble.
+    @State private var pendingCanonicalBotIds: Set<String> = []
+
     /// "<bot_name> · <effective-model-tag>". Effective model = the per-conv
     /// override if set, otherwise the bot's resolved model (which itself
     /// already accounts for the user's per-bot pin from 我 → 机器人管理).
@@ -833,12 +842,15 @@ struct ConversationView: View {
                         break // pending state already true
                     case .token(let delta):
                         splitter.accept(token: delta)
-                    case .bubble:
-                        // Server-side canonical bubble id arrived; we
-                        // already split client-side, no action needed —
-                        // local id is the source of truth for UI; the
-                        // server id is for cross-device sync via Realtime.
-                        break
+                    case .bubble(let id, _, _, _):
+                        // Server has persisted a bubble row with this id.
+                        // Record it so when the corresponding Realtime
+                        // INSERT lands we can FIFO-replace the matching
+                        // `live-*` optimistic bubble cleanly — instead of
+                        // relying on a recency window that fails for slow
+                        // streams. The local `live-*` id remains the
+                        // source of truth for the UI until then.
+                        if !id.isEmpty { pendingCanonicalBotIds.insert(id) }
                     case .done(_, let total):
                         splitter.flushTail()
                         splitter.turnDone(totalContent: total)
@@ -1056,22 +1068,42 @@ struct ConversationView: View {
             messages[existing] = msg
             if let citations { citationsByMsgId[id] = citations }
         } else {
-            // Drop our own optimistic local/live row if we can match it by
-            // role + recency (within 5s) — this avoids duplicate bubbles
-            // when the canonical row arrives after our optimistic echo.
+            // Drop our own optimistic local/live row if we can match it.
             //
-            // We deliberately don't compare content here: live-* bot bubbles
-            // are still being revealed by the typewriter when the canonical
-            // INSERT lands, so their displayed content is partial and will
-            // never equal the canonical row. Matching on (prefix +
-            // sender_type + recency) is enough since at most one optimistic
-            // row of each role is in flight per turn.
+            // For bot rows, the SSE `bubble` event told us this canonical
+            // id ahead of time → match by membership in
+            // `pendingCanonicalBotIds`, then FIFO-replace the first
+            // `live-*` bot bubble. This is timing-independent and handles
+            // slow streams where the optimistic bubble is older than any
+            // sensible recency window.
+            //
+            // For user rows we don't have a server-announced id (the user
+            // message is materialized server-side without acking back),
+            // so fall back to (prefix + role + recency) — same heuristic
+            // as before, just bounded to user rows where it's accurate.
+            //
+            // We deliberately don't compare content for live-* bot bubbles:
+            // they're still being revealed by the typewriter when the
+            // canonical INSERT lands, so their displayed content is partial.
+            let isOurBotEcho = role == "bot" && pendingCanonicalBotIds.contains(id)
             let now = Int(Date().timeIntervalSince1970)
-            if let stale = messages.firstIndex(where: { m in
-                (m.id.hasPrefix("local-") || m.id.hasPrefix("live-"))
-                    && m.sender_type == senderType
-                    && abs(m.created_at - now) < 5
-            }) {
+            let staleIndex: Int? = {
+                if isOurBotEcho {
+                    return messages.firstIndex { m in
+                        m.id.hasPrefix("live-") && m.sender_type == "bot"
+                    }
+                }
+                if role != "bot" {
+                    return messages.firstIndex { m in
+                        m.id.hasPrefix("local-")
+                            && m.sender_type == senderType
+                            && abs(m.created_at - now) < 5
+                    }
+                }
+                return nil
+            }()
+            if isOurBotEcho { pendingCanonicalBotIds.remove(id) }
+            if let stale = staleIndex {
                 let oldId = messages[stale].id
                 messages[stale] = msg
                 // Re-key any tool trace bound to the optimistic local id so
