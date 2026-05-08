@@ -14,6 +14,24 @@ export type Database = {
   }
   pendingbot: {
     Tables: {
+      account_deletion_log: {
+        Row: {
+          deleted_at: string
+          id: string
+          sentiment: string
+        }
+        Insert: {
+          deleted_at?: string
+          id?: string
+          sentiment: string
+        }
+        Update: {
+          deleted_at?: string
+          id?: string
+          sentiment?: string
+        }
+        Relationships: []
+      }
       admin_audit: {
         Row: {
           action: string
@@ -1763,7 +1781,7 @@ export type Database = {
         Args: { p_bot_id: string; p_handle: string }
         Returns: string
       }
-      delete_self_account: { Args: never; Returns: undefined }
+      delete_self_account: { Args: { p_sentiment: string }; Returns: undefined }
       is_bot_invitee: {
         Args: { p_bot_id: string; p_user_id: string }
         Returns: boolean
