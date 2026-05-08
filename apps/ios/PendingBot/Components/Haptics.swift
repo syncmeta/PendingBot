@@ -9,6 +9,12 @@ enum Haptics {
     private static let selection = UISelectionFeedbackGenerator()
     private static let notification = UINotificationFeedbackGenerator()
 
+    /// Throttle for `streamTick()` — token reveals happen on every frame
+    /// when the buffer is full, but a haptic on every frame would be a
+    /// vibrating buzz. ChatGPT-style: a faint pulse roughly twice a
+    /// second, regardless of how fast tokens arrive.
+    nonisolated(unsafe) private static var lastStreamTickAt: TimeInterval = 0
+
     /// Call from app launch so the first haptic isn't laggy.
     static func warmUp() {
         light.prepare(); soft.prepare(); rigid.prepare()
@@ -19,6 +25,16 @@ enum Haptics {
     @MainActor static func send()    { light.impactOccurred(intensity: 0.7) }
     /// First chunk of a streamed response — gentler.
     @MainActor static func receive() { soft.impactOccurred(intensity: 0.4) }
+    /// Per-token tick during a streaming reply — very faint, throttled.
+    /// Matches the ChatGPT iOS feel: you can sense the bot "typing" without
+    /// the phone buzzing constantly. Caller invokes on every reveal chunk;
+    /// the throttle keeps it pleasant.
+    @MainActor static func streamTick() {
+        let now = CACurrentMediaTime()
+        guard now - lastStreamTickAt >= 0.18 else { return }
+        lastStreamTickAt = now
+        soft.impactOccurred(intensity: 0.22)
+    }
     /// Tab switch / list selection.
     @MainActor static func tap()     { selection.selectionChanged() }
     /// Successful action (sent / saved / deleted).

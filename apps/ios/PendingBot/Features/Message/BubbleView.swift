@@ -41,6 +41,13 @@ struct BubbleView: View {
     /// Web-search citations referenced by inline `[N]` markers in
     /// `message.content`. Empty for bubbles that didn't trigger search.
     var citations: [MessageCitation] = []
+    /// Whether this bubble is the live streaming target — drives the
+    /// trailing cursor. Caller clears it the moment the reveal finishes
+    /// so the cursor's `.opacity` transition fades it out.
+    var isStreaming: Bool = false
+    /// True while we're streaming but the reveal buffer is empty (no new
+    /// token yet). Switches the cursor from solid to TTY-style blink.
+    var streamPaused: Bool = false
 
     private var hasText: Bool { !message.content.isEmpty }
 
@@ -93,7 +100,7 @@ struct BubbleView: View {
                     AttachmentGrid(attachments: attachments, serverURL: serverURL)
                 }
 
-                if hasText {
+                if hasText || isStreaming {
                     MarkdownText(text: message.content,
                                  allowCodeRun: true,
                                  citations: citations)
@@ -110,6 +117,20 @@ struct BubbleView: View {
                                              style: .continuous)
                                 .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
                         )
+                        // Trailing caret — sits at the bottom-trailing of
+                        // the rendered text. Inline-with-last-char would
+                        // be nicer but isn't reachable through MarkdownUI;
+                        // the bubble's trailing edge still reads as
+                        // "more on the way".
+                        .overlay(alignment: .bottomTrailing) {
+                            if isStreaming {
+                                BlinkingCursor(paused: streamPaused)
+                                    .padding(.trailing, 12)
+                                    .padding(.bottom, 12)
+                                    .transition(.opacity)
+                            }
+                        }
+                        .animation(.easeOut(duration: 0.28), value: isStreaming)
                 }
             }
             Spacer(minLength: 32)

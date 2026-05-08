@@ -111,6 +111,11 @@ struct ConversationView: View {
     @State private var revealEnded: Bool = false
     @State private var pendingEmissions: [BubbleEmission] = []
     @State private var revealTask: Task<Void, Never>?
+    /// True when the reveal task is mounted on a bubble but has nothing
+    /// to drain right now (upstream paused mid-turn). Drives the cursor's
+    /// blink mode in BubbleView — solid while tokens flow, blinking when
+    /// we're sitting between chunks.
+    @State private var streamPaused: Bool = false
 
     /// Canonical bot-row ids announced by the SSE `bubble` event but not yet
     /// reconciled with a Realtime INSERT. When the INSERT lands with one of
@@ -265,7 +270,9 @@ struct ConversationView: View {
                                        peerProfile: peerProfileForBubble,
                                        groupSender: groupSenderFor(msg),
                                        serverURL: account?.workerURL,
-                                       citations: citationsByMsgId[msg.id] ?? [])
+                                       citations: citationsByMsgId[msg.id] ?? [],
+                                       isStreaming: revealTargetId == msg.id,
+                                       streamPaused: revealTargetId == msg.id && streamPaused)
                                 .id(msg.id)
                                 .contextMenu {
                                     Button {
@@ -1386,6 +1393,9 @@ struct ConversationView: View {
                 revealTargetId = key
                 revealBuffer = content
                 revealEnded = false
+                // Soft bump on the first streaming bubble so the user
+                // feels the bot start "typing" — matches ChatGPT iOS.
+                Haptics.receive()
                 startRevealTaskIfNeeded()
             }
         case .append(let id, let delta):
@@ -1433,11 +1443,19 @@ struct ConversationView: View {
 
     private func startRevealTaskIfNeeded() {
         guard revealTask == nil else { return }
+        // Cursor goes solid the moment a stream takes over the bubble.
+        // The blink only kicks in if we then sit idle waiting for tokens.
+        streamPaused = false
         revealTask = Task { @MainActor in
             let frameNs: UInt64 = 16_000_000   // ~60 fps
             let perFrame = Self.revealCharsPerSec * Double(frameNs) / 1_000_000_000
             let maxBehindChars = Int(Self.revealCharsPerSec * Self.revealMaxBehindSec)
             var carry: Double = 0
+            // Empty-buffer dwell time before flipping the cursor into
+            // blink mode. Shorter than the blink period so the user sees
+            // at least one blink cycle before tokens land again.
+            let pauseDelay: TimeInterval = 0.35
+            var idleSince: Date? = nil
             while !Task.isCancelled, revealTargetId != nil {
                 try? await Task.sleep(nanoseconds: frameNs)
                 carry += perFrame
@@ -1461,12 +1479,31 @@ struct ConversationView: View {
                             attachments: prev.attachments
                         )
                     }
+                    // Throttled inside Haptics — we can call every frame
+                    // here without flooding the actuator.
+                    Haptics.streamTick()
+                    idleSince = nil
+                    if streamPaused { streamPaused = false }
+                } else if revealBuffer.isEmpty && !revealEnded {
+                    // No tokens to drain and the producer hasn't signaled
+                    // end-of-turn — we're between chunks. Flip to blink
+                    // after a short dwell so a one-frame lull doesn't
+                    // visibly toggle the cursor.
+                    let now = Date()
+                    if let since = idleSince {
+                        if !streamPaused, now.timeIntervalSince(since) >= pauseDelay {
+                            streamPaused = true
+                        }
+                    } else {
+                        idleSince = now
+                    }
                 }
                 if revealEnded && revealBuffer.isEmpty {
                     let queued = pendingEmissions
                     pendingEmissions.removeAll()
                     revealTargetId = nil
                     revealEnded = false
+                    streamPaused = false
                     revealTask = nil
                     if !queued.isEmpty {
                         applyBubbleEmissions(queued)
@@ -1474,6 +1511,7 @@ struct ConversationView: View {
                     return
                 }
             }
+            streamPaused = false
             revealTask = nil
         }
     }
@@ -1499,6 +1537,7 @@ struct ConversationView: View {
         revealBuffer = ""
         revealTargetId = nil
         revealEnded = false
+        streamPaused = false
         let queued = pendingEmissions
         pendingEmissions.removeAll()
         // User wants everything visible now — force-flatten any queued
