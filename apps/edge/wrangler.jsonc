@@ -65,6 +65,21 @@
           "binding": "MEMORY",
           "id": "54b50e85e1884503b0d2c2884d531163"
         }
+      ],
+      // Per-group debounce + small-model routing (M4 of group chat).
+      // One DO instance per conversation_id; state is recentMessages
+      // timestamps + a single pending alarmAt. See
+      // src/durable-objects/group-router.ts for the full state model.
+      "durable_objects": {
+        "bindings": [
+          { "name": "GROUP_ROUTER", "class_name": "GroupRouterDO" }
+        ]
+      },
+      "migrations": [
+        {
+          "tag": "v1",
+          "new_sqlite_classes": ["GroupRouterDO"]
+        }
       ]
     }
   }

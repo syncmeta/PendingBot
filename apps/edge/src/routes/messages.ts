@@ -174,16 +174,31 @@ messageRoutes.post('/', async (c) => {
     parentMessageId = (lastUser?.id as string | undefined) ?? null;
   }
 
-  // Group branch — bot wake decisions live in the DO router (M4) and
-  // the @mention parser (M5). For now the user write is acked and
-  // Realtime takes over; bots stay silent unless a downstream caller
-  // (router/mention) explicitly invokes dispatchGroupTurn.
-  //
-  // We *could* fire-and-forget a DO signal here once M4 lands; that
-  // wiring goes in then. M3's only job is to make sure groups don't
-  // accidentally fall into the user_bot SSE path below (they wouldn't,
-  // because conv.bot_id is NULL, but defending explicitly).
+  // Group branch — wake decisions go to the GroupRouterDO. The DO
+  // owns the 60s window + 8s debounce + per-group serialization, then
+  // calls dispatchGroupTurn from its alarm handler. @mention parsing
+  // (M5) will surface mentionedBotIds here for the bypass-debounce
+  // path; for M4 we always send the slow-classifier path.
   if (conv.conversation_type === 'group') {
+    if (!parsed.autoLookback) {
+      const doId = c.env.GROUP_ROUTER.idFromName(parsed.conversationId);
+      const stub = c.env.GROUP_ROUTER.get(doId);
+      // Fire-and-forget — don't block the HTTP response on the DO RTT.
+      c.executionCtx.waitUntil(
+        stub
+          .fetch('https://group-router.internal/signal', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ conversationId: parsed.conversationId }),
+          })
+          .then((res) => {
+            if (!res.ok) {
+              console.warn('[messages] DO signal returned', res.status);
+            }
+          })
+          .catch((err) => console.error('[messages] DO signal failed', err)),
+      );
+    }
     return c.json({
       message: { id: parentMessageId },
       botReplyScheduled: 'async' as const,

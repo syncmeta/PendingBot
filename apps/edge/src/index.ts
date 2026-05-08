@@ -15,6 +15,11 @@ import { codeExecRoutes } from './routes/code-exec';
 import { openrouterRoutes } from './routes/openrouter';
 import { handleScheduled } from './cron';
 
+// Re-export the Durable Object class so the runtime can find it via
+// the `class_name` field in wrangler.jsonc → durable_objects.bindings.
+// The export *name* must match `class_name` (case-sensitive).
+export { GroupRouterDO } from './durable-objects/group-router';
+
 // Top-level Hono app. Routes mount under /v1/ to leave room for a future v2
 // (URL path = major-era versioning). Within v1, schema-driven compatibility
 // via X-Client-Version header (see plans/.../07-deploy-test.md).
