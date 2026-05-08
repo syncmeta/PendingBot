@@ -51,7 +51,7 @@ friendRequestRoutes.post('/', async (c) => {
       .select('id, user_id, is_active')
       .eq('value', parsed.handleValue)
       .maybeSingle();
-    if (error) return c.json({ error: 'database', detail: error.message }, 500);
+    if (error) return c.json({ error: '号码查询失败,请稍后重试', detail: error.message }, 500);
     if (!handle || !handle.is_active) return c.json({ error: '号码无效或已撤销' }, 404);
     targetUserId = handle.user_id as string;
     viaHandleId = handle.id as string;
@@ -64,7 +64,7 @@ friendRequestRoutes.post('/', async (c) => {
         Authorization: `Bearer ${c.env.SUPABASE_SERVICE_ROLE_KEY}`,
       },
     });
-    if (!res.ok) return c.json({ error: 'lookup failed', status: res.status }, 500);
+    if (!res.ok) return c.json({ error: '邮箱查询失败,请稍后重试', detail: `status ${res.status}` }, 500);
     const body = (await res.json()) as { users?: Array<{ id: string; email?: string }> };
     const match = (body.users ?? []).find(
       (u) => (u.email ?? '').toLowerCase() === parsed.email!.toLowerCase(),
@@ -74,7 +74,7 @@ friendRequestRoutes.post('/', async (c) => {
     viaEmail = parsed.email;
   }
 
-  if (!targetUserId) return c.json({ error: 'lookup failed' }, 500);
+  if (!targetUserId) return c.json({ error: '没找到这个用户' }, 404);
   if (targetUserId === userId) return c.json({ error: '不能加自己' }, 400);
 
   // Already contacts → 200 with `alreadyContacts: true`. iOS surfaces this as
@@ -105,7 +105,7 @@ friendRequestRoutes.post('/', async (c) => {
       p_request_id: theirPending.id,
       p_user_id: userId,
     });
-    if (rpcErr) return c.json({ error: 'database', detail: rpcErr.message }, 500);
+    if (rpcErr) return c.json({ error: '处理对方申请失败,请稍后重试', detail: rpcErr.message }, 500);
     return c.json({ autoAccepted: true, requestId: theirPending.id });
   }
 
@@ -128,7 +128,7 @@ friendRequestRoutes.post('/', async (c) => {
     if ((insertErr as { code?: string }).code === '23505') {
       return c.json({ error: '已发送过申请,等对方回复' }, 409);
     }
-    return c.json({ error: 'database', detail: insertErr.message }, 500);
+    return c.json({ error: '发送申请失败,请稍后重试', detail: insertErr.message }, 500);
   }
   return c.json({ requestId: created!.id, status: 'pending' });
 });
@@ -158,7 +158,7 @@ friendRequestRoutes.get('/', async (c) => {
   }
 
   const { data: rows, error } = await query;
-  if (error) return c.json({ error: 'database', detail: error.message }, 500);
+  if (error) return c.json({ error: '加载申请列表失败,请稍后重试', detail: error.message }, 500);
 
   // Attach peer profile (the other side relative to the caller) so iOS
   // can render a name without a follow-up trip per row. Single batched
@@ -214,16 +214,16 @@ friendRequestRoutes.post('/:id/accept', async (c) => {
     .select('id, to_user_id, status')
     .eq('id', requestId)
     .maybeSingle();
-  if (readErr) return c.json({ error: 'database', detail: readErr.message }, 500);
-  if (!rq) return c.json({ error: 'not found' }, 404);
-  if (rq.to_user_id !== userId) return c.json({ error: 'forbidden' }, 403);
+  if (readErr) return c.json({ error: '读取申请失败,请稍后重试', detail: readErr.message }, 500);
+  if (!rq) return c.json({ error: '该申请不存在' }, 404);
+  if (rq.to_user_id !== userId) return c.json({ error: '不是你的申请' }, 403);
   if (rq.status !== 'pending') return c.json({ error: '该申请已处理' }, 409);
 
   const { error: rpcErr } = await supa.rpc('accept_friend_request', {
     p_request_id: requestId,
     p_user_id: userId,
   });
-  if (rpcErr) return c.json({ error: 'database', detail: rpcErr.message }, 500);
+  if (rpcErr) return c.json({ error: '接受申请失败,请稍后重试', detail: rpcErr.message }, 500);
   return c.json({ ok: true });
 });
 
@@ -241,7 +241,7 @@ friendRequestRoutes.post('/:id/decline', async (c) => {
     .eq('to_user_id', userId)
     .eq('status', 'pending')
     .select('id');
-  if (error) return c.json({ error: 'database', detail: error.message }, 500);
+  if (error) return c.json({ error: '拒绝申请失败,请稍后重试', detail: error.message }, 500);
   if (!updated || updated.length === 0) {
     return c.json({ error: '申请不存在或已处理' }, 409);
   }
@@ -260,7 +260,7 @@ friendRequestRoutes.post('/:id/cancel', async (c) => {
     .eq('from_user_id', userId)
     .eq('status', 'pending')
     .select('id');
-  if (error) return c.json({ error: 'database', detail: error.message }, 500);
+  if (error) return c.json({ error: '撤回申请失败,请稍后重试', detail: error.message }, 500);
   if (!updated || updated.length === 0) {
     return c.json({ error: '申请不存在或已处理' }, 409);
   }
