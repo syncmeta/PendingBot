@@ -621,7 +621,10 @@ struct ConversationView: View {
                 )
             case "user":
                 // Hand off to Worker — its open-chat endpoint inserts both
-                // sides of the participant rows in a single trip.
+                // sides of the participant rows in a single trip. Worker
+                // also gates the call on a mutual-contact relationship,
+                // so a stale friends-list row whose contact has since been
+                // removed lands here as a clean 403 we can surface.
                 var req = URLRequest(url: HostedConfig.environment.workerURL
                     .appendingPathComponent("v1/contacts/open-chat"))
                 req.httpMethod = "POST"
@@ -630,7 +633,13 @@ struct ConversationView: View {
                 req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
                 req.httpBody = try JSONSerialization.data(
                     withJSONObject: ["contactUserId": peer.peerId])
-                let (data, _) = try await URLSession.shared.data(for: req)
+                let (data, resp) = try await URLSession.shared.data(for: req)
+                if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                    let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                    let msg = (body?["error"] as? String) ?? "无法开启聊天 (HTTP \(http.statusCode))"
+                    self.error = msg
+                    return false
+                }
                 struct OpenChat: Decodable { let conversationId: String }
                 let payload = try JSONDecoder().decode(OpenChat.self, from: data)
                 convId = payload.conversationId
