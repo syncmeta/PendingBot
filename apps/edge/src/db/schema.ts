@@ -316,32 +316,6 @@ export type Database = {
           },
         ]
       }
-      bot_invites: {
-        Row: {
-          bot_id: string
-          invited_at: string
-          user_id: string
-        }
-        Insert: {
-          bot_id: string
-          invited_at?: string
-          user_id: string
-        }
-        Update: {
-          bot_id?: string
-          invited_at?: string
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "bot_invites_bot_id_fkey"
-            columns: ["bot_id"]
-            isOneToOne: false
-            referencedRelation: "bots"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       bot_code_exec_requests: {
         Row: {
           bot_id: string
@@ -392,6 +366,32 @@ export type Database = {
             columns: ["conversation_id"]
             isOneToOne: false
             referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bot_invites: {
+        Row: {
+          bot_id: string
+          invited_at: string
+          user_id: string
+        }
+        Insert: {
+          bot_id: string
+          invited_at?: string
+          user_id: string
+        }
+        Update: {
+          bot_id?: string
+          invited_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bot_invites_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "bots"
             referencedColumns: ["id"]
           },
         ]
