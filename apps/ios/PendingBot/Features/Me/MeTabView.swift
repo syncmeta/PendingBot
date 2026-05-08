@@ -9,11 +9,19 @@ struct MeTabView: View {
     @Environment(\.useSidebarLayout) private var sidebarLayout
     @Environment(\.topTabSelection) private var topTabSelection
 
-    @State private var confirmingSignOut = false
-    @State private var showDeleteSheet = false
+    @State private var pendingConfirm: ConfirmAction?
     @State private var deleting = false
     @State private var error: String?
     @State private var showRandomize = false
+
+    /// Two `.confirmationDialog`s attached to the same view collide on
+    /// SwiftUI — one gets shadowed and its `isPresented` flag flips
+    /// without the sheet ever appearing (most visible on Mac Catalyst).
+    /// Drive a single dialog off this enum instead.
+    private enum ConfirmAction: Identifiable {
+        case signOut, delete
+        var id: Self { self }
+    }
 
     /// Two-way sentiment captured when finalizing account deletion. The
     /// outcome is the same — full account wipe — but recording which
@@ -52,27 +60,40 @@ struct MeTabView: View {
             Button("好") { error = nil }
         } message: { Text(error ?? "") }
         .confirmationDialog(
-            "确定？",
-            isPresented: $confirmingSignOut,
+            confirmTitle,
+            isPresented: Binding(
+                get: { pendingConfirm != nil },
+                set: { if !$0 { pendingConfirm = nil } }
+            ),
             titleVisibility: .visible
         ) {
-            Button("退出登录", role: .destructive) { signOut() }
-            Button("取消", role: .cancel) {}
-        }
-        .confirmationDialog(
-            "不可撤销 想好再点",
-            isPresented: $showDeleteSheet,
-            titleVisibility: .visible
-        ) {
-            Button("去意已决，有缘再见", role: .destructive) {
-                Task { await deleteAccount(sentiment: .seeYouAgain) }
+            switch pendingConfirm {
+            case .signOut:
+                Button("退出登录", role: .destructive) { signOut() }
+                Button("取消", role: .cancel) {}
+            case .delete:
+                Button("去意已决，有缘再见", role: .destructive) {
+                    Task { await deleteAccount(sentiment: .seeYouAgain) }
+                }
+                Button("去意已决，再也不见", role: .destructive) {
+                    Task { await deleteAccount(sentiment: .farewellForever) }
+                }
+                Button("取消", role: .cancel) {}
+            case .none:
+                EmptyView()
             }
-            Button("去意已决，再也不见", role: .destructive) {
-                Task { await deleteAccount(sentiment: .farewellForever) }
-            }
-            Button("取消", role: .cancel) {}
         } message: {
-            Text("删所有数据，云端和本地都删。\n两个选项都能完全注销账号，我只是想知道你对我的态度。")
+            if pendingConfirm == .delete {
+                Text("删所有数据，云端和本地都删。\n两个选项都能完全注销账号，我只是想知道你对我的态度。")
+            }
+        }
+    }
+
+    private var confirmTitle: String {
+        switch pendingConfirm {
+        case .signOut: return "确定？"
+        case .delete:  return "不可撤销 想好再点"
+        case .none:    return ""
         }
     }
 
@@ -119,7 +140,7 @@ struct MeTabView: View {
 
                         GroupedRowsCard {
                             Button {
-                                confirmingSignOut = true
+                                pendingConfirm = .signOut
                                 Haptics.tap()
                             } label: {
                                 GroupedRow(title: "退出登录", role: .destructive, showsChevron: false)
@@ -130,7 +151,7 @@ struct MeTabView: View {
 
                         GroupedRowsCard {
                             Button {
-                                showDeleteSheet = true
+                                pendingConfirm = .delete
                                 Haptics.tap()
                             } label: {
                                 GroupedRow(
