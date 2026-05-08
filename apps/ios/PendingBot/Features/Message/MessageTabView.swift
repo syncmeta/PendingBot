@@ -907,55 +907,46 @@ private struct CreateGroupSheet: View {
     }
 
     private func create() async {
-        guard let userId = AccountStore.shared.current?.id else { return }
         creating = true; defer { creating = false }
         let trimmedTitle = title.trimmingCharacters(in: .whitespaces)
         do {
-            struct ConvInsert: Encodable {
-                let conversation_type = "group"
-                let feature = "message"
-                let user_id: String
-                let title: String
+            // Worker /v1/groups (open_group_conv RPC). Direct INSERTs would
+            // skip conversation_group_meta + group_billing_config +
+            // group_member_billing seeding, leave the 30-member cap
+            // unenforced, and let private bots through. The RPC is the
+            // single contract that keeps all those side-tables consistent.
+            struct Body: Encodable {
+                let title: String?
+                let memberUserIds: [String]
+                let memberBotIds: [String]
             }
-            struct Inserted: Decodable { let id: String }
-            let inserted: Inserted = try await SupabaseStack.shared
-                .from("conversations")
-                .insert(ConvInsert(user_id: userId, title: trimmedTitle))
-                .select("id")
-                .single()
-                .execute()
-                .value
+            struct Response: Decodable { let conversationId: String }
 
-            struct Participant: Encodable {
-                let conversation_id: String
-                let participant_type: String
-                let participant_id: String
-                let role: String
+            let url = HostedConfig.environment.workerURL
+                .appendingPathComponent("v1/groups")
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            let token = try await SupabaseStack.shared.auth.session.accessToken
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            req.httpBody = try JSONEncoder().encode(Body(
+                title: trimmedTitle.isEmpty ? nil : trimmedTitle,
+                memberUserIds: Array(selectedHumans),
+                memberBotIds: Array(selectedBots),
+            ))
+
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
+                let msg = String(data: data, encoding: .utf8) ?? "HTTP error"
+                throw NSError(
+                    domain: "CreateGroup",
+                    code: (resp as? HTTPURLResponse)?.statusCode ?? -1,
+                    userInfo: [NSLocalizedDescriptionKey: msg],
+                )
             }
-            var rows: [Participant] = [
-                Participant(conversation_id: inserted.id,
-                            participant_type: "user",
-                            participant_id: userId,
-                            role: "owner"),
-            ]
-            for bid in selectedBots {
-                rows.append(Participant(conversation_id: inserted.id,
-                                        participant_type: "bot",
-                                        participant_id: bid,
-                                        role: "member"))
-            }
-            for uid in selectedHumans {
-                rows.append(Participant(conversation_id: inserted.id,
-                                        participant_type: "user",
-                                        participant_id: uid,
-                                        role: "member"))
-            }
-            try await SupabaseStack.shared
-                .from("conversation_participants")
-                .insert(rows)
-                .execute()
+            let decoded = try JSONDecoder().decode(Response.self, from: data)
             Haptics.success()
-            onCreated(inserted.id)
+            onCreated(decoded.conversationId)
             dismiss()
         } catch {
             self.error = error.localizedDescription

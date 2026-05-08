@@ -361,26 +361,36 @@ struct ConversationView: View {
             .onDisappear { Task { await loadSkills() } }
         }
         .navigationDestination(isPresented: $showingSettings) {
-            ConversationSettingsView(
-                modelOverride: $modelOverride,
-                providerOverride: $providerOverride,
-                conversationId: conversation.id,
-                enabledSkillCount: skills.filter { $0.enabled }.count,
-                totalSkillCount: skills.count,
-                onOpenSkills: { showingSkills = true },
-                onApplyModel: { slug, scope in
-                    Task { await applyModelPick(slug: slug, scope: scope) }
-                },
-                onApplyProvider: { slug in
-                    // Local-only update; the value rides with the next chat
-                    // POST. We deliberately don't fire a separate PATCH —
-                    // /v1/messages persists provider_override server-side
-                    // when the body field differs from the row.
-                    providerOverride = slug
-                    providerOverrideTouched = true
-                    Haptics.tap()
-                }
-            )
+            // Group convs route to GroupSettingsView (members, nickname,
+            // mute, leave). Owner/admin-only knobs (billing, handle,
+            // policy, approval inbox) live as sub-screens of that view.
+            // Other conv types (user_bot / user_user / self) keep the
+            // existing ConversationSettingsView with model + provider
+            // overrides.
+            if conversation.conversation_type == "group" {
+                GroupSettingsView(conversationId: conversation.id)
+            } else {
+                ConversationSettingsView(
+                    modelOverride: $modelOverride,
+                    providerOverride: $providerOverride,
+                    conversationId: conversation.id,
+                    enabledSkillCount: skills.filter { $0.enabled }.count,
+                    totalSkillCount: skills.count,
+                    onOpenSkills: { showingSkills = true },
+                    onApplyModel: { slug, scope in
+                        Task { await applyModelPick(slug: slug, scope: scope) }
+                    },
+                    onApplyProvider: { slug in
+                        // Local-only update; the value rides with the next chat
+                        // POST. We deliberately don't fire a separate PATCH —
+                        // /v1/messages persists provider_override server-side
+                        // when the body field differs from the row.
+                        providerOverride = slug
+                        providerOverrideTouched = true
+                        Haptics.tap()
+                    }
+                )
+            }
         }
         .sheet(item: Binding(
             get: { saveAsSkillBody.map { SkillDraft(body: $0) } },
@@ -806,6 +816,18 @@ struct ConversationView: View {
     }
 
     private func sendPlainUserMessage(_ text: String) async {
+        // group convs MUST go through POST /v1/messages so the worker can
+        // (a) parse @-mentions, (b) signal GroupRouterDO to wake bots, and
+        // (c) book the cost split. A direct INSERT into `messages` would
+        // skip all three. user_user stays direct — no bots, no router.
+        if conversation.conversation_type == "group" {
+            await sendGroupUserMessage(text)
+        } else {
+            await sendUserUserMessage(text)
+        }
+    }
+
+    private func sendUserUserMessage(_ text: String) async {
         guard let userId = AccountStore.shared.current?.id else { return }
         struct Insert: Encodable {
             let client_message_id: String
@@ -825,6 +847,42 @@ struct ConversationView: View {
                     content: text
                 ))
                 .execute()
+        } catch {
+            self.error = "发送失败: \(error.localizedDescription)"
+            Haptics.error()
+        }
+    }
+
+    private func sendGroupUserMessage(_ text: String) async {
+        struct Body: Encodable {
+            let conversationId: String
+            let clientMessageId: String
+            let newMessage: String
+        }
+        do {
+            let url = HostedConfig.environment.workerURL
+                .appendingPathComponent("v1/messages")
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            let token = try await SupabaseStack.shared.auth.session.accessToken
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            req.httpBody = try JSONEncoder().encode(Body(
+                conversationId: conversation.id,
+                clientMessageId: UUID().uuidString.lowercased(),
+                newMessage: text,
+            ))
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
+                let msg = String(data: data, encoding: .utf8) ?? "HTTP error"
+                throw NSError(
+                    domain: "GroupSend",
+                    code: (resp as? HTTPURLResponse)?.statusCode ?? -1,
+                    userInfo: [NSLocalizedDescriptionKey: msg],
+                )
+            }
+            // Realtime delivers the canonical message row + any bot
+            // replies that the GroupRouterDO wakes — we just return.
         } catch {
             self.error = "发送失败: \(error.localizedDescription)"
             Haptics.error()
