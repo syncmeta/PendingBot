@@ -103,6 +103,7 @@ friendRequestRoutes.post('/', async (c) => {
   if (theirPending?.id) {
     const { error: rpcErr } = await supa.rpc('accept_friend_request', {
       p_request_id: theirPending.id,
+      p_user_id: userId,
     });
     if (rpcErr) return c.json({ error: 'database', detail: rpcErr.message }, 500);
     return c.json({ autoAccepted: true, requestId: theirPending.id });
@@ -218,7 +219,10 @@ friendRequestRoutes.post('/:id/accept', async (c) => {
   if (rq.to_user_id !== userId) return c.json({ error: 'forbidden' }, 403);
   if (rq.status !== 'pending') return c.json({ error: '该申请已处理' }, 409);
 
-  const { error: rpcErr } = await supa.rpc('accept_friend_request', { p_request_id: requestId });
+  const { error: rpcErr } = await supa.rpc('accept_friend_request', {
+    p_request_id: requestId,
+    p_user_id: userId,
+  });
   if (rpcErr) return c.json({ error: 'database', detail: rpcErr.message }, 500);
   return c.json({ ok: true });
 });

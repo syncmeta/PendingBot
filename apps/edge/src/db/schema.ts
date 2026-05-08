@@ -2210,7 +2210,10 @@ export type Database = {
         Args: { p_bot_id: string; p_handle: string }
         Returns: string
       }
-      accept_friend_request: { Args: { p_request_id: string }; Returns: undefined }
+      accept_friend_request: {
+        Args: { p_request_id: string; p_user_id: string }
+        Returns: undefined
+      }
       delete_self_account: { Args: { p_sentiment: string }; Returns: undefined }
       group_continue_decide: {
         Args: {
