@@ -6,7 +6,6 @@ import { healthRoutes } from './routes/health';
 import { messageRoutes } from './routes/messages';
 import { uploadRoutes } from './routes/upload';
 import { scrollRoutes } from './routes/scroll';
-import { reviewRoutes } from './routes/review';
 import { meRoutes } from './routes/me';
 import { contactRoutes } from './routes/contacts';
 import { friendRequestRoutes } from './routes/friend-requests';
@@ -55,7 +54,6 @@ v1.route('/messages', messageRoutes);
 v1.route('/upload', uploadRoutes);
 v1.route('/uploads', uploadRoutes);   // GET /v1/uploads/:id
 v1.route('/scroll', scrollRoutes);
-v1.route('/review', reviewRoutes);
 v1.route('/me', meRoutes);
 v1.route('/contacts', contactRoutes);
 v1.route('/friend-requests', friendRequestRoutes);

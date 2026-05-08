@@ -10,9 +10,6 @@ export interface BuildMessagesInput {
   // Bot's own representation (Honcho passive observation) cached in KV.
   // Null on cold start — we then fall back to the identity-quest meta-prompt.
   botMemory: Memory | null;
-  // Three-bucket reflections persisted from review runs (most recent first).
-  // Empty on cold start; combined with botMemory drives the self section.
-  reflections: Array<{ kind: 'limit' | 'grow' | 'keep'; content: string }>;
   // Skills the user has subscribed (globally and/or for this conv). Each
   // contributes a `## Skill: ...` block to system content.
   skills: Array<{ name: string; description: string; body: string }>;
@@ -81,48 +78,18 @@ const SINGLE_INSTRUCTIONS =
 function toLlmRole(role: 'user' | 'bot' | 'human' | 'log'): 'user' | 'assistant' | null {
   if (role === 'bot') return 'assistant';
   if (role === 'user' || role === 'human') return 'user';
-  return null; // logs (review step entries) are not part of dialogue
+  return null;
 }
 
-// Two-source dialectic per plan/02: passive Honcho representation +
-// reflective bot_reflections. On cold start (both empty) we hand the bot the
-// identity-quest meta-prompt — a motive, not a persona.
+// Self section comes from the bot's passive Honcho representation. On cold
+// start (no memory yet) we hand the bot the identity-quest meta-prompt — a
+// motive, not a persona.
 function buildSelfSection(
   botMemory: BuildMessagesInput['botMemory'],
-  reflections: BuildMessagesInput['reflections'],
 ): string {
   const hasMemory = !!botMemory && botMemory.representation.trim().length > 0;
-  const hasReflections = reflections.length > 0;
-
-  if (!hasMemory && !hasReflections) {
-    return getPrompt('identity-quest');
-  }
-
-  const parts: string[] = [];
-  if (hasMemory) {
-    parts.push(
-      `## How I observe myself (passive)\n${botMemory!.representation.trim()}`,
-    );
-  }
-  if (hasReflections) {
-    const grouped: Record<'limit' | 'grow' | 'keep', string[]> = {
-      limit: [],
-      grow: [],
-      keep: [],
-    };
-    for (const r of reflections) grouped[r.kind].push(r.content);
-    const lines: string[] = [];
-    if (grouped.limit.length) lines.push(`### Limitations\n- ${grouped.limit.join('\n- ')}`);
-    if (grouped.grow.length) lines.push(`### Traits to develop\n- ${grouped.grow.join('\n- ')}`);
-    if (grouped.keep.length) lines.push(`### Traits to preserve\n- ${grouped.keep.join('\n- ')}`);
-    parts.push(`## Things I've concluded about myself (from reflection)\n${lines.join('\n\n')}`);
-  }
-  if (hasMemory && hasReflections) {
-    parts.push(
-      '（这两份描述可能彼此矛盾——这是正常的。在矛盾中找到连贯的你。）',
-    );
-  }
-  return parts.join('\n\n');
+  if (!hasMemory) return getPrompt('identity-quest');
+  return `## How I observe myself (passive)\n${botMemory!.representation.trim()}`;
 }
 
 function buildSkillsSection(skills: BuildMessagesInput['skills']): string {
@@ -273,7 +240,6 @@ export function buildMessages(input: BuildMessagesInput): ChatCompletionMessageP
   const {
     bot,
     botMemory,
-    reflections,
     skills,
     recentContext,
     newMessage,
@@ -282,7 +248,7 @@ export function buildMessages(input: BuildMessagesInput): ChatCompletionMessageP
   } = input;
 
   const platform = getPrompt('system');
-  const selfSection = buildSelfSection(botMemory, reflections);
+  const selfSection = buildSelfSection(botMemory);
   const skillsSection = buildSkillsSection(skills);
   const botNoteSection = buildBotNoteSection(input.botNote);
   const lookbackSection = buildLookbackSection(input.lookbacks);
