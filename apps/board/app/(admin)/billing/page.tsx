@@ -1,13 +1,13 @@
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase/admin';
-import { fmtCredits, fmtNumber, fmtUsd } from '@/lib/format';
+import { fmtPnd, fmtNumber, fmtUsd } from '@/lib/format';
 
-// Internal accounting unit — must match apps/edge/src/lib/billing.ts.
-// Used here only to render USD-equivalent next to credits for the
-// "ops headlines" cards (Tax-rate hint, not strict reporting).
-const USD_TO_CREDITS = 1000;
+// Display ratio — must match USD_TO_PND in apps/edge/src/lib/billing.ts.
+// Used here only to render USD-equivalent next to PND for the "ops
+// headlines" cards (rate hint, not strict reporting).
+const USD_TO_PND = 2700;
 
-// Markup for cost-side (we paid X to providers, charged users credits) —
+// Markup for cost-side (we paid X to providers, charged users PND) —
 // shown only as a hint in the "毛利" card. Tweak alongside billing.ts.
 const MARKUP = 2.5;
 
@@ -148,8 +148,8 @@ export default async function BillingDashboardPage() {
     : [];
 
   // Display helpers
-  const displayUsd = (credits: number) =>
-    fmtUsd(credits / USD_TO_CREDITS / MARKUP);
+  const displayUsd = (pnd: number) =>
+    fmtUsd(pnd / USD_TO_PND / MARKUP);
 
   return (
     <main className="container py-10 space-y-8">
@@ -157,7 +157,7 @@ export default async function BillingDashboardPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Billing</h1>
           <p className="text-sm text-muted-foreground">
-            积分化的用户计费 · markup {MARKUP}× · 1 USD ≈ {USD_TO_CREDITS} credits
+            PND（∂）计费 · markup {MARKUP}× · $1 = {USD_TO_PND} ∂
           </p>
         </div>
         <div className="flex gap-2 text-sm">
@@ -181,18 +181,18 @@ export default async function BillingDashboardPage() {
         <Card label="用户" value={fmtNumber(users.length)} />
         <Card
           label="流通余额"
-          value={fmtCredits(totalBalance)}
+          value={fmtPnd(totalBalance)}
           hint={`≈ ${displayUsd(totalBalance)}`}
         />
         <Card
           label="累计充值"
-          value={fmtCredits(lifetimeTopup)}
+          value={fmtPnd(lifetimeTopup)}
           hint={`≈ ${displayUsd(lifetimeTopup)}`}
         />
         <Card
           label="累计消费"
-          value={fmtCredits(lifetimeSpent)}
-          hint={`成本 ≈ ${fmtUsd(lifetimeSpent / USD_TO_CREDITS / MARKUP)}`}
+          value={fmtPnd(lifetimeSpent)}
+          hint={`成本 ≈ ${fmtUsd(lifetimeSpent / USD_TO_PND / MARKUP)}`}
         />
       </section>
 
@@ -200,22 +200,22 @@ export default async function BillingDashboardPage() {
       <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Card
           label="24h 消费"
-          value={fmtCredits(consumeCredits24h)}
+          value={fmtPnd(consumeCredits24h)}
           hint={`成本 ≈ ${fmtUsd(consumeUsd24h)} · ${(consume24h.data ?? []).length} 次调用`}
         />
         <Card
           label="24h 发放"
-          value={fmtCredits(grantsCredits24h)}
+          value={fmtPnd(grantsCredits24h)}
           hint={`${ledger24hKinds.grant?.count ?? 0} 笔 admin grant`}
         />
         <Card
           label="7d 兑换码"
-          value={fmtCredits(redeemCredits7d)}
+          value={fmtPnd(redeemCredits7d)}
           hint={`${redeemCount7d} 次兑换`}
         />
         <Card
           label="7d 消费"
-          value={fmtCredits(consumeCredits7d)}
+          value={fmtPnd(consumeCredits7d)}
           hint={`成本 ≈ ${displayUsd(consumeCredits7d)}`}
         />
       </section>
@@ -224,7 +224,7 @@ export default async function BillingDashboardPage() {
       <section className="grid gap-6 md:grid-cols-2">
         <div className="space-y-3">
           <h2 className="text-sm font-medium">
-            低于阈值（{fmtCredits(minThreshold)} credits）
+            低于阈值（{fmtPnd(minThreshold)}）
             <span className="ml-2 text-xs text-muted-foreground">
               {lowBalanceCount} 人 · 这些用户下次发消息会被 402 拦
             </span>
@@ -246,7 +246,7 @@ export default async function BillingDashboardPage() {
                       <div className="text-xs text-muted-foreground">{u.email ?? '—'}</div>
                     </td>
                     <td className="px-4 py-2 text-right tabular-nums text-amber-700">
-                      {fmtCredits(u.balance_credits)}
+                      {fmtPnd(u.balance_credits)}
                     </td>
                     <td className="px-4 py-2 text-right">
                       <Link
@@ -301,10 +301,10 @@ export default async function BillingDashboardPage() {
                         </div>
                       </td>
                       <td className="px-4 py-2 text-right tabular-nums">
-                        {fmtCredits(credits)}
+                        {fmtPnd(credits)}
                       </td>
                       <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">
-                        {fmtCredits(u?.balance_credits ?? 0)}
+                        {fmtPnd(u?.balance_credits ?? 0)}
                       </td>
                     </tr>
                   );

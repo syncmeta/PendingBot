@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase/admin';
-import { fmtCredits } from '@/lib/format';
+import { fmtPnd } from '@/lib/format';
 import { disableCode, enableCode, issueCodes } from './actions';
 import { JustIssued } from './_just-issued';
 import { StatusFilter } from './_status-filter';
@@ -115,11 +115,11 @@ export default async function CodesPage({
               />
             </label>
             <label className="text-sm space-y-1">
-              <span className="text-muted-foreground">每码 credits</span>
+              <span className="text-muted-foreground">每码 PND (∂)</span>
               <input
                 type="number"
                 name="credits"
-                defaultValue="1000"
+                defaultValue="2700"
                 min="1"
                 required
                 className="w-full rounded-md border border-input bg-background px-2 py-1 text-sm"
@@ -166,7 +166,7 @@ export default async function CodesPage({
               {batches.map((b) => (
                 <tr key={b.label} className="border-b last:border-0">
                   <td className="px-4 py-2 font-mono text-xs">{b.label}</td>
-                  <td className="px-4 py-2 tabular-nums">{fmtCredits(b.creditsEach)}</td>
+                  <td className="px-4 py-2 tabular-nums">{fmtPnd(b.creditsEach)}</td>
                   <td className="px-4 py-2 text-right tabular-nums">{b.enabled}</td>
                   <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">
                     {b.used}
@@ -202,7 +202,7 @@ export default async function CodesPage({
             <thead className="border-b text-left text-xs uppercase text-muted-foreground">
               <tr>
                 <th className="px-4 py-2 font-medium">code</th>
-                <th className="px-4 py-2 font-medium text-right">credits</th>
+                <th className="px-4 py-2 font-medium text-right">PND</th>
                 <th className="px-4 py-2 font-medium">批次</th>
                 <th className="px-4 py-2 font-medium">状态</th>
                 <th className="px-4 py-2 font-medium">兑换时间</th>
@@ -213,7 +213,7 @@ export default async function CodesPage({
               {tableCodes.map((c) => (
                 <tr key={c.id} className="border-b last:border-0">
                   <td className="px-4 py-2 font-mono text-xs">{c.code}</td>
-                  <td className="px-4 py-2 text-right tabular-nums">{fmtCredits(c.credits)}</td>
+                  <td className="px-4 py-2 text-right tabular-nums">{fmtPnd(c.credits)}</td>
                   <td className="px-4 py-2 text-xs text-muted-foreground">
                     {c.batch_label ?? '—'}
                   </td>

@@ -22,14 +22,17 @@ export function fmtUsd(n: number | string | null | undefined): string {
   return `$${v.toFixed(4)}`;
 }
 
-export function fmtCredits(n: number | string | null | undefined): string {
+// PND (Pending Name Dollar, ∂) — user-facing accounting unit. $1 list
+// price = 2700 ∂. DB columns and SQL RPCs still say `*_credits`; that
+// stored value IS the PND amount (legacy naming, see usdToPnd() in
+// apps/edge/src/lib/billing.ts).
+export function fmtPnd(n: number | string | null | undefined): string {
   if (n == null) return '—';
   const v = typeof n === 'string' ? parseFloat(n) : n;
   if (!Number.isFinite(v)) return '—';
-  // Thousands separator, no decimal — credits are integers.
   const sign = v < 0 ? '-' : '';
   const abs = Math.abs(Math.round(v));
-  return sign + new Intl.NumberFormat('en-US').format(abs);
+  return sign + '∂' + new Intl.NumberFormat('en-US').format(abs);
 }
 
 export function fmtMs(n: number | null | undefined): string {

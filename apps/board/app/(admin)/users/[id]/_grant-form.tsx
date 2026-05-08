@@ -17,12 +17,12 @@ export function GrantForm({
     <form action={formAction} className="space-y-3">
       <div className="grid grid-cols-3 gap-3">
         <label className="text-sm space-y-1 col-span-1">
-          <span className="text-muted-foreground">credits (±)</span>
+          <span className="text-muted-foreground">PND ∂ (±)</span>
           <input
             name="credits"
             type="number"
             step="1"
-            placeholder="1000"
+            placeholder="2700"
             required
             className="w-full rounded-md border border-input bg-background px-2 py-1 tabular-nums"
           />
@@ -44,7 +44,7 @@ export function GrantForm({
           )}
           {state.ok && (
             <span className="text-emerald-700">
-              ✓ 发放 {state.ok.credits} credits · 新余额 {state.ok.new_balance}
+              ✓ 发放 ∂{state.ok.credits} · 新余额 ∂{state.ok.new_balance}
             </span>
           )}
         </div>
