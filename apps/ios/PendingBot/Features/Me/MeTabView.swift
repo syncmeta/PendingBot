@@ -82,7 +82,7 @@ struct MeTabView: View {
             ZStack {
                 Theme.Palette.canvas.ignoresSafeArea()
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
+                    VStack(spacing: 28) {
                         profileHeader
                             .contentShape(Rectangle())
                             .onTapGesture {
@@ -90,37 +90,41 @@ struct MeTabView: View {
                                 Haptics.tap()
                             }
 
-                        VStack(spacing: 10) {
+                        GroupedRowsCard {
                             NavigationLink {
                                 AddMeMethodsView().toolbar(.hidden, for: .tabBar)
                             } label: {
-                                CapsuleRowLabel(title: "加我为好友的方式")
+                                GroupedRow(title: "加我为好友的方式")
                             }
                             .buttonStyle(.plain)
+
+                            GroupedRowDivider()
 
                             NavigationLink {
                                 SkillsView().toolbar(.hidden, for: .tabBar)
                             } label: {
-                                CapsuleRowLabel(title: "技能管理")
+                                GroupedRow(title: "技能管理")
                             }
                             .buttonStyle(.plain)
                         }
 
-                        VStack(spacing: 10) {
+                        GroupedRowsCard {
                             Button {
                                 pendingConfirm = .signOut
                                 Haptics.tap()
                             } label: {
-                                CapsuleRowLabel(title: "退出登录", role: .destructive, showsChevron: false)
+                                GroupedRow(title: "退出登录", role: .destructive, showsChevron: false)
                             }
                             .buttonStyle(.plain)
                             .disabled(store.current == nil)
+
+                            GroupedRowDivider()
 
                             Button {
                                 pendingConfirm = .delete
                                 Haptics.tap()
                             } label: {
-                                CapsuleRowLabel(
+                                GroupedRow(
                                     title: deleting ? "正在删除…" : "注销账号",
                                     role: .destructive,
                                     showsChevron: false
@@ -133,13 +137,11 @@ struct MeTabView: View {
                         Text("很多功能还没做好 不可用")
                             .font(Theme.Fonts.monoSmall)
                             .foregroundStyle(Theme.Palette.inkMuted)
-                            .padding(.horizontal, 8)
-                            .padding(.top, 4)
+                            .frame(maxWidth: .infinity, alignment: .center)
                     }
                     .padding(.horizontal, 20)
-                    .padding(.top, 12)
+                    .padding(.top, 72)
                     .padding(.bottom, 32)
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
             .background(Theme.Palette.canvas.ignoresSafeArea())
@@ -149,20 +151,20 @@ struct MeTabView: View {
 
     // ── Header ─────────────────────────────────────────────────────────────
 
-    /// Avatar / nickname / email stacked vertically, leading-aligned, on
-    /// the canvas (no surface card). The whole column is one tap target
+    /// Avatar / nickname / email stacked vertically, centered on the
+    /// canvas (no surface card). The whole column is one tap target
     /// → ProfileBootstrapView.
     private var profileHeader: some View {
-        VStack(alignment: .leading, spacing: 24) {
+        VStack(spacing: 16) {
             let seed = store.avatarSeed ?? store.current?.id ?? "?"
             UserAvatar(
                 seed: seed,
                 attachmentId: store.avatarAttachmentId,
-                size: 64
+                size: 88
             )
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(spacing: 6) {
                 Text(displayLabel)
-                    .font(Theme.Fonts.serif(size: 22, weight: .semibold))
+                    .font(Theme.Fonts.serif(size: 24, weight: .semibold))
                     .foregroundStyle(Theme.Palette.ink)
                     .lineLimit(1)
                 if let email = store.current?.email, !email.isEmpty {
@@ -174,8 +176,8 @@ struct MeTabView: View {
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.bottom, 4)
+        .frame(maxWidth: .infinity)
+        .padding(.bottom, 8)
     }
 
     private var displayLabel: String {
@@ -216,9 +218,38 @@ struct MeTabView: View {
     }
 }
 
-/// One pill-shaped row used by the 我 tab. Full-width capsule on the
-/// surface color, label leading, optional chevron trailing.
-private struct CapsuleRowLabel: View {
+/// Native iOS grouped-list container — one rounded surface card holding
+/// connected rows separated by hairline dividers. Caller is responsible
+/// for placing `GroupedRowDivider()` between rows.
+private struct GroupedRowsCard<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(spacing: 0) { content }
+            .background(Theme.Palette.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
+            )
+    }
+}
+
+/// Inset hairline separator between rows in a `GroupedRowsCard`. Inset
+/// matches the row's leading text padding, like iOS Settings.
+private struct GroupedRowDivider: View {
+    var body: some View {
+        Rectangle()
+            .fill(Theme.Palette.hairline)
+            .frame(height: 0.5)
+            .padding(.leading, 18)
+    }
+}
+
+/// One row inside a `GroupedRowsCard`. No background of its own — the
+/// card supplies the surface; the row only paints text + optional
+/// chevron with consistent padding.
+private struct GroupedRow: View {
     enum Role { case normal, destructive }
 
     let title: String
@@ -239,17 +270,9 @@ private struct CapsuleRowLabel: View {
                     .foregroundStyle(Theme.Palette.inkMuted.opacity(0.7))
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 16)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            Capsule(style: .continuous)
-                .fill(Theme.Palette.surface)
-        )
-        .overlay(
-            Capsule(style: .continuous)
-                .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
-        )
-        .contentShape(Capsule(style: .continuous))
+        .contentShape(Rectangle())
     }
 }
