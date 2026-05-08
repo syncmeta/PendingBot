@@ -1471,6 +1471,53 @@ export type Database = {
         }
         Relationships: []
       }
+      friend_requests: {
+        Row: {
+          created_at: string
+          from_user_id: string
+          id: string
+          message: string | null
+          responded_at: string | null
+          status: string
+          to_user_id: string
+          updated_at: string
+          via_email: string | null
+          via_handle_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          from_user_id: string
+          id?: string
+          message?: string | null
+          responded_at?: string | null
+          status?: string
+          to_user_id: string
+          updated_at?: string
+          via_email?: string | null
+          via_handle_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          from_user_id?: string
+          id?: string
+          message?: string | null
+          responded_at?: string | null
+          status?: string
+          to_user_id?: string
+          updated_at?: string
+          via_email?: string | null
+          via_handle_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "friend_requests_via_handle_fk"
+            columns: ["via_handle_id"]
+            isOneToOne: false
+            referencedRelation: "user_handles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_contacts: {
         Row: {
           added_via_handle_id: string | null
@@ -1781,6 +1828,7 @@ export type Database = {
         Args: { p_bot_id: string; p_handle: string }
         Returns: string
       }
+      accept_friend_request: { Args: { p_request_id: string }; Returns: undefined }
       delete_self_account: { Args: { p_sentiment: string }; Returns: undefined }
       is_bot_invitee: {
         Args: { p_bot_id: string; p_user_id: string }
