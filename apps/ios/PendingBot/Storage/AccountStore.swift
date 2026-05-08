@@ -158,7 +158,13 @@ final class AccountStore: ObservableObject {
             ?? user.email?.split(separator: "@").first.map(String.init)
             ?? "你")
         return Account(
-            id: user.id.uuidString,
+            // Lowercase to match Postgres canonical form. Swift's
+            // `UUID.uuidString` is uppercase; DB-returned ids (Realtime
+            // payloads, REST selects) are lowercase. Stamping the local id
+            // uppercase made `sender_id == me` checks miss for our own
+            // canonical rows — the user_bot bubble flipped to the bot side
+            // the instant the Realtime row replaced the optimistic local-*.
+            id: user.id.uuidString.lowercased(),
             displayName: displayName,
             email: user.email,
             jwt: session.accessToken,
