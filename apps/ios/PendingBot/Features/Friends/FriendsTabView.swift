@@ -83,7 +83,7 @@ struct FriendsTabView: View {
         }
         .sheet(isPresented: $showingQR) {
             MyQRSheet()
-                .presentationDetents([.medium, .large])
+                .presentationDetents([.fraction(0.72), .large])
                 .presentationDragIndicator(.visible)
         }
     }
@@ -929,7 +929,7 @@ struct MyQRSheet: View {
                 ScrollView {
                     MyQRBusinessCard()
                         .padding(.horizontal, 24)
-                        .padding(.vertical, 28)
+                        .padding(.vertical, 12)
                 }
             }
             .toolbar {
