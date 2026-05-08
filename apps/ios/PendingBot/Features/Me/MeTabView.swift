@@ -59,16 +59,20 @@ struct MeTabView: View {
             Button("退出登录", role: .destructive) { signOut() }
             Button("取消", role: .cancel) {}
         }
-        .sheet(isPresented: $showDeleteSheet) {
-            DeleteAccountSheet(
-                deleting: deleting,
-                onChoose: { sentiment in
-                    Task { await deleteAccount(sentiment: sentiment) }
-                },
-                onCancel: { showDeleteSheet = false }
-            )
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
+        .confirmationDialog(
+            "不可撤销 想好再点",
+            isPresented: $showDeleteSheet,
+            titleVisibility: .visible
+        ) {
+            Button("去意已决，有缘再见", role: .destructive) {
+                Task { await deleteAccount(sentiment: .seeYouAgain) }
+            }
+            Button("去意已决，再也不见", role: .destructive) {
+                Task { await deleteAccount(sentiment: .farewellForever) }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("删所有数据，云端和本地都删。\n两个选项都能完全注销账号，我只是想知道你对我的态度。")
         }
     }
 
@@ -216,91 +220,12 @@ struct MeTabView: View {
                 .rpc("delete_self_account",
                      params: Args(p_sentiment: sentiment.rawValue))
                 .execute()
-            showDeleteSheet = false
             await store.signOut()
             Haptics.success()
         } catch {
             self.error = "注销失败：\(error.localizedDescription)"
             Haptics.error()
         }
-    }
-}
-
-/// Account-deletion confirmation sheet. The two destructive buttons are
-/// functionally identical — both wipe the account — but the choice is
-/// recorded as sentiment so the team can see the split between users
-/// who left thinking of coming back vs slamming the door.
-private struct DeleteAccountSheet: View {
-    let deleting: Bool
-    let onChoose: (MeTabView.DeletionSentiment) -> Void
-    let onCancel: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("删所有数据")
-                Text("云端和本地都删")
-                Text("真的非常遗憾")
-            }
-            .font(Theme.Fonts.footnote)
-            .foregroundStyle(Theme.Palette.inkMuted)
-
-            Text("不可撤销 想好再点")
-                .font(Font.system(size: 18, weight: .bold))
-                .foregroundStyle(Color(hex: 0xB14B3C))
-
-            VStack(spacing: 10) {
-                destructiveButton("去意已决，有缘再见") {
-                    onChoose(.seeYouAgain)
-                }
-                destructiveButton("去意已决，再也不见") {
-                    onChoose(.farewellForever)
-                }
-            }
-            .disabled(deleting)
-            .opacity(deleting ? 0.5 : 1)
-
-            Text("两个选项都能完全注销账号，我只是想知道你对我的态度")
-                .font(Theme.Fonts.caption)
-                .foregroundStyle(Theme.Palette.inkMuted)
-                .frame(maxWidth: .infinity, alignment: .center)
-                .multilineTextAlignment(.center)
-
-            Button("取消", action: onCancel)
-                .font(Theme.Fonts.bodyEmphasized)
-                .foregroundStyle(Theme.Palette.ink)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
-                .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Theme.Palette.surface)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
-                )
-                .disabled(deleting)
-        }
-        .padding(.horizontal, 24)
-        .padding(.top, 24)
-        .padding(.bottom, 28)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.Palette.canvas.ignoresSafeArea())
-    }
-
-    private func destructiveButton(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(Theme.Fonts.bodyEmphasized)
-                .foregroundStyle(.white)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 16)
-                .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color(hex: 0xB14B3C))
-                )
-        }
-        .buttonStyle(.plain)
     }
 }
 
