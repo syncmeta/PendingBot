@@ -103,9 +103,11 @@ struct MeTabView: View {
                             NavigationLink {
                                 WalletView().toolbar(.hidden, for: .tabBar)
                             } label: {
-                                CapsuleRowLabel(title: "钱包")
+                                GroupedRow(title: "钱包")
                             }
                             .buttonStyle(.plain)
+
+                            GroupedRowDivider()
 
                             NavigationLink {
                                 SkillsView().toolbar(.hidden, for: .tabBar)
