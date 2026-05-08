@@ -1,5 +1,7 @@
 import { resolveRoute } from '../llm/router';
 import { serviceClient } from './supabase';
+import { splitAndDebit } from './group-billing';
+import { usdToPnd } from './billing';
 import type { Env } from '../types';
 
 // First-version "call me when..." description, generated immediately
@@ -136,10 +138,11 @@ export async function generateInitialBotDescription(input: {
   if (description.length > 1000) description = description.slice(0, 1000);
 
   // Persist + audit. We write the audit row first so we have an id
-  // to plug into M6's split hook later.
+  // to feed splitAndDebit (M6 hook).
   const cost = route.alias
     ? computeCost(route.alias, inputTokens, outputTokens)
     : null;
+  const pnd = usdToPnd(cost);
 
   const { data: audit } = await supa
     .from('audit_log')
@@ -153,6 +156,7 @@ export async function generateInitialBotDescription(input: {
       output_tokens: outputTokens,
       total_tokens: inputTokens + outputTokens,
       cost_usd: cost,
+      cost_credits: pnd,
       latency_ms: Date.now() - startedAt,
       status: 'success',
       billing_status: 'pending',
@@ -172,6 +176,14 @@ export async function generateInitialBotDescription(input: {
       },
       { onConflict: 'conversation_id,bot_id', ignoreDuplicates: true },
     );
+
+  // Split the bot-intro cost across active group members. Errors
+  // are swallowed so a billing failure doesn't undo the description.
+  if (audit?.id) {
+    await splitAndDebit({ env, auditLogId: audit.id as string }).catch((err) =>
+      console.warn('[group-bot-intro] splitAndDebit failed', err),
+    );
+  }
 
   return {
     description,

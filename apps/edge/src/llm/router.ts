@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import type { Env } from '../types';
 import type { SupabaseClient } from '../lib/supabase';
 import { billingDebit, usdToPnd } from '../lib/billing';
+import { splitAndDebit } from '../lib/group-billing';
 
 // LLM router — resolves a caller-supplied model slug to a concrete
 // (provider, alias) pair, hands back an OpenAI-compatible client
@@ -300,6 +301,12 @@ export interface AuditCallOpts extends AuditUsage {
   // Surfaced in audit_log.metadata jsonb so downstream queries can
   // group by these without bloating the column list.
   metadata?: Record<string, unknown> | null;
+  /// Worker env, only needed when conversationId points at a group —
+  /// recordAudit then dispatches to splitAndDebit instead of single-
+  /// user billingDebit. 1v1 callers can omit. (We pass env rather
+  /// than a SupabaseClient so the group-billing module can run with
+  /// service-role rights regardless of the caller's client kind.)
+  env?: Env;
 }
 
 const PER_MILLION = 1_000_000;
@@ -400,13 +407,43 @@ export async function recordAudit(
     return;
   }
 
-  // Post-insert debit. Errors are swallowed inside billingDebit — never
-  // propagate billing-side failures back to the LLM caller. The next
-  // pre-call gate handles consequences (insufficient balance blocks
-  // further requests).
-  if (initialBilling === 'pending' && opts.userId && inserted?.id) {
-    await billingDebit(supa, opts.userId, inserted.id as string, pnd);
+  // Post-insert debit. Errors are swallowed inside billingDebit /
+  // splitAndDebit — never propagate billing-side failures back to the
+  // LLM caller. The next pre-call gate handles consequences
+  // (insufficient balance blocks further requests in 1v1; group
+  // members are flagged overdrawn for next-turn exclusion).
+  if (initialBilling === 'pending' && inserted?.id) {
+    const auditId = inserted.id as string;
+    // Branch on conv type: groups split across all participating
+    // members, 1v1 / system tasks debit a single user.
+    const isGroup = opts.conversationId
+      ? await isGroupConversation(supa, opts.conversationId)
+      : false;
+    if (isGroup && opts.env) {
+      await splitAndDebit({ env: opts.env, auditLogId: auditId }).catch((err) =>
+        console.warn('[recordAudit] splitAndDebit failed', err),
+      );
+    } else if (opts.userId) {
+      await billingDebit(supa, opts.userId, auditId, pnd);
+    }
   }
+}
+
+// Cheap conv-type check used by recordAudit. We could push this into
+// recordAudit's caller (let them pass `isGroup`) but the conv type
+// branch is genuinely the audit layer's concern: 1v1 means a single
+// debit, group means a multi-user split, and the right place to
+// decide is right where the audit row gets inserted.
+async function isGroupConversation(
+  supa: SupabaseClient,
+  conversationId: string,
+): Promise<boolean> {
+  const { data } = await supa
+    .from('conversations')
+    .select('conversation_type')
+    .eq('id', conversationId)
+    .maybeSingle();
+  return data?.conversation_type === 'group';
 }
 
 // Convenience: pull token usage from an OpenAI completion.usage object,

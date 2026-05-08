@@ -1,6 +1,8 @@
 import { resolveRoute, recordAudit } from './router';
 import { serviceClient } from '../lib/supabase';
 import { estimateTokens } from './token-estimate';
+import { splitAndDebit } from '../lib/group-billing';
+import { usdToPnd } from '../lib/billing';
 import type { Env } from '../types';
 
 // Small-model classifier that decides which bots to wake on a group
@@ -217,6 +219,11 @@ ${botCatalog}
       outputTokens,
       status: 'success',
     });
+    if (auditLogId) {
+      await splitAndDebit({ env, auditLogId }).catch((err) =>
+        console.warn('[group-router] splitAndDebit failed', err),
+      );
+    }
   } catch (err) {
     console.error('[group-router] LLM call failed', err);
     await recordAudit(supa, route, {
@@ -259,6 +266,10 @@ async function writeAuditAndGetId(
   },
 ): Promise<string | null> {
   const total = opts.inputTokens + opts.outputTokens;
+  const cost = route.alias
+    ? computeRouterCost(route.alias, opts.inputTokens, opts.outputTokens)
+    : null;
+  const pnd = usdToPnd(cost);
   const { data, error } = await supa
     .from('audit_log')
     .insert({
@@ -270,13 +281,14 @@ async function writeAuditAndGetId(
       input_tokens: opts.inputTokens,
       output_tokens: opts.outputTokens,
       total_tokens: total,
-      cost_usd: route.alias
-        ? computeRouterCost(route.alias, opts.inputTokens, opts.outputTokens)
-        : null,
+      cost_usd: cost,
+      // splitAndDebit reads cost_credits — must be filled at insert
+      // time, not after.
+      cost_credits: pnd,
       latency_ms: Date.now() - opts.startedAt,
       status: opts.status,
-      // Pre-billing: leave billing_status='pending'; M6's splitAndDebit
-      // turns it into 'billed' once split rows are written.
+      // Pre-billing: leave billing_status='pending'; splitAndDebit
+      // flips it to 'billed' / 'unbilled' / 'free' once split rows land.
       billing_status: 'pending',
     })
     .select('id')
