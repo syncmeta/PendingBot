@@ -24,11 +24,6 @@ import { queryUserRepresentation } from './honcho';
 import { braveSearch, firecrawlScrape } from './web';
 import { bootstrapPython, createSandbox, runPython } from './sandbox';
 
-// How many bot_reflections rows to read for the self section. The schema's
-// idx_reflections_bot_user_time covers this exact (bot_id, user_id, created_at)
-// access pattern. 12 follows plan/02 and keeps prompt size bounded.
-const REFLECTIONS_LIMIT = 12;
-
 // Multi-bubble splitter — bot's reply may be one continuous block, or several
 // short bubbles separated by `\n---\n`.
 const BUBBLE_DELIMITER = '\n---\n';
@@ -261,15 +256,8 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   const startedAt = Date.now();
 
   // 1. Look up self section + skills + bot-authored note in parallel.
-  const [botMemory, reflectionsRes, skillsRes, botNoteRes] = await Promise.all([
+  const [botMemory, skillsRes, botNoteRes] = await Promise.all([
     getBotMemory(env, bot.id),
-    supa
-      .from('bot_reflections')
-      .select('kind, content')
-      .eq('bot_id', bot.id)
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-      .limit(REFLECTIONS_LIMIT),
     supa
       .from('skill_subscriptions')
       .select('skills(frontmatter, body_md)')
@@ -282,10 +270,6 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       .eq('user_id', userId)
       .maybeSingle(),
   ]);
-  const reflections = (reflectionsRes.data ?? []) as Array<{
-    kind: 'limit' | 'grow' | 'keep';
-    content: string;
-  }>;
   type SkillRow = {
     frontmatter: {
       name?: string;
@@ -320,7 +304,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   // (every 4 rounds; see llm/builder.ts). activeLookbacks become an
   // additional system block so the bot sees its prior fact-check notes.
   const messages: ChatCompletionMessageParam[] = buildMessages({
-    bot, botMemory, reflections, skills, botNote,
+    bot, botMemory, skills, botNote,
     lookbacks: activeLookbacks,
     recentContext, newMessage,
     selfPersona: input.selfPersona ?? null,
