@@ -168,7 +168,6 @@ struct ProfileBootstrapView: View {
             .scrollPosition(id: $visibleId)
             .onChange(of: visibleId) { _, newId in
                 ensureLookahead(after: newId)
-                Haptics.tap()
             }
         }
         .frame(height: 200)
