@@ -372,7 +372,7 @@ struct MessageTabView: View {
                 .select("""
                     id, bot_id, user_id, title, conversation_type, feature, round_count, updated_at,
                     provider_override,
-                    bot:bots(display_name, model_id, visibility, creator_id),
+                    bot:bots!conversations_bot_id_fkey(display_name, model_id, visibility, creator_id),
                     unread:user_unread_counts(last_message_at, last_message_preview, unread_count)
                 """)
                 .order("updated_at", ascending: false)
