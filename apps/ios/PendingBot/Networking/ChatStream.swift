@@ -53,6 +53,13 @@ struct ChatStream {
                     req.httpMethod = "POST"
                     req.setValue("application/json", forHTTPHeaderField: "Content-Type")
                     req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+                    // Cloudflare auto-gzips SSE when the client sends the
+                    // default `Accept-Encoding: gzip, deflate, br`, which
+                    // makes URLSession only deliver bytes at deflate-block
+                    // boundaries — tokens arrive in big batches and the
+                    // typewriter feel disappears. Force identity so chunks
+                    // flow through as-is.
+                    req.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
                     let token = try await SupabaseStack.shared.auth.session.accessToken
                     req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
                     req.httpBody = try JSONSerialization.data(withJSONObject: body)

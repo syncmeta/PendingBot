@@ -1056,14 +1056,20 @@ struct ConversationView: View {
             messages[existing] = msg
             if let citations { citationsByMsgId[id] = citations }
         } else {
-            // Drop our own optimistic local row if we can match it by content +
-            // role + recency (within 5s) — this avoids duplicate user bubbles
-            // when the canonical row arrives after our local-<uuid> echo.
+            // Drop our own optimistic local/live row if we can match it by
+            // role + recency (within 5s) — this avoids duplicate bubbles
+            // when the canonical row arrives after our optimistic echo.
+            //
+            // We deliberately don't compare content here: live-* bot bubbles
+            // are still being revealed by the typewriter when the canonical
+            // INSERT lands, so their displayed content is partial and will
+            // never equal the canonical row. Matching on (prefix +
+            // sender_type + recency) is enough since at most one optimistic
+            // row of each role is in flight per turn.
             let now = Int(Date().timeIntervalSince1970)
             if let stale = messages.firstIndex(where: { m in
-                m.id.hasPrefix("local-") || m.id.hasPrefix("live-")
+                (m.id.hasPrefix("local-") || m.id.hasPrefix("live-"))
                     && m.sender_type == senderType
-                    && m.content == content
                     && abs(m.created_at - now) < 5
             }) {
                 let oldId = messages[stale].id
