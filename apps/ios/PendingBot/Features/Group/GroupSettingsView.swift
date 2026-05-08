@@ -25,6 +25,7 @@ struct GroupSettingsView: View {
     @State private var savingPolicy: Bool = false
     @State private var showingBilling = false
     @State private var showingApprovals = false
+    @State private var showingGroupQR = false
 
     @Environment(\.dismiss) private var dismiss
 
@@ -114,6 +115,19 @@ struct GroupSettingsView: View {
         .navigationDestination(isPresented: $showingApprovals) {
             JoinRequestsInboxView(conversationId: conversationId)
         }
+        .sheet(isPresented: $showingGroupQR) {
+            NavigationStack {
+                GroupQRCard(value: qrHandle, groupTitle: meta?.title ?? "")
+                    .navigationTitle("群二维码")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("关闭") { showingGroupQR = false }
+                        }
+                    }
+            }
+            .presentationDetents([.medium, .large])
+        }
     }
 
     // MARK: - Admin section
@@ -138,7 +152,15 @@ struct GroupSettingsView: View {
             }
 
             handleRow(label: "群号", type: "number", binding: $numberHandle)
-            handleRow(label: "群二维码", type: "qr", binding: $qrHandle)
+            handleRow(label: "群二维码值", type: "qr", binding: $qrHandle)
+
+            // Show-the-QR button — disabled when no QR handle is set.
+            Button {
+                showingGroupQR = true
+            } label: {
+                LabeledContent("展示群二维码", value: qrHandle.isEmpty ? "请先设置二维码值" : "扫此码加群")
+            }
+            .disabled(qrHandle.isEmpty)
 
             Button {
                 showingBilling = true
