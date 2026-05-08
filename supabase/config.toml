@@ -63,27 +63,9 @@ minimum_password_length = 8
 [auth.email]
 enable_signup = true
 double_confirm_changes = true
-# OTP flow already verifies the email (you can't sign in without
-# proving you control the inbox), so a separate confirmation pass is
-# redundant. Don't flip this on — it conflicts with the OTP path.
 enable_confirmations = false
 secure_password_change = false
 max_frequency = "1s"
-
-# Anti-abuse captcha on signup / OTP / sign-in endpoints. This block
-# only applies to LOCAL `supabase start` — the deployed project must be
-# configured separately via Dashboard → Authentication → Settings →
-# Enable Captcha protection (provider: Turnstile, paste the live secret).
-#
-# For local dev we use Cloudflare's documented test keys so `supabase
-# start` works offline:
-#   site key   `1x00000000000000000000AA` (visible, always passes)
-#   secret key `1x0000000000000000000000000000000AA`
-# The matching site key is mirrored in HostedConfig.swift for `.dev`.
-[auth.captcha]
-enabled = true
-provider = "turnstile"
-secret = "1x0000000000000000000000000000000AA"
 
 [edge_runtime]
 enabled = false
