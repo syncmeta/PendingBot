@@ -567,8 +567,43 @@ struct ConversationView: View {
                 Task { @MainActor in
                     applyLookbackEvent(event)
                 }
+            },
+            onContinueRequest: { event in
+                Task { @MainActor in
+                    applyContinueEvent(event)
+                }
+            },
+            onParticipants: { _ in
+                Task { @MainActor in
+                    // Senders map is small and the event fires only on
+                    // joins / role changes / leaves — re-running the
+                    // load-once function is fine. Cheap enough that
+                    // we don't bother diffing.
+                    await loadGroupSendersIfNeeded()
+                }
             }
         )
+    }
+
+    /// Apply a Realtime event from group_continue_requests to the
+    /// composer banner. New row pending → show banner with its bot ids;
+    /// existing row flipped to allowed/denied/expired → clear banner.
+    private func applyContinueEvent(_ event: ContinueRequestEvent) {
+        let r = event.record
+        guard let id = r["id"]?.stringValue else { return }
+        let status = r["status"]?.stringValue ?? "pending"
+        if status != "pending" {
+            // Decided / expired — clear our banner if it was for this row.
+            if pendingContinue?.id == id { pendingContinue = nil }
+            return
+        }
+        // pending_bot_ids comes through as a JSON array; AnyJSON →
+        // [String] requires a tiny manual decode.
+        var botIds: [String] = []
+        if let arr = r["pending_bot_ids"]?.arrayValue {
+            botIds = arr.compactMap { $0.stringValue }
+        }
+        pendingContinue = PendingContinue(id: id, pendingBotIds: botIds)
     }
 
     /// Show the "+ new conv" header button only for materialized chats with

@@ -76,18 +76,20 @@ final class RealtimeManager {
     func startConvChannel(
         conversationId: String,
         onMessage: @escaping @Sendable (MessageEvent) -> Void,
-        onLookback: @escaping @Sendable (LookbackEvent) -> Void = { _ in }
+        onLookback: @escaping @Sendable (LookbackEvent) -> Void = { _ in },
+        onContinueRequest: @escaping @Sendable (ContinueRequestEvent) -> Void = { _ in },
+        onParticipants: @escaping @Sendable (ParticipantsEvent) -> Void = { _ in }
     ) async -> ConvSubscriptionToken {
         let token = ConvSubscriptionToken(id: UUID(), conversationId: conversationId)
 
         if let handle = convChannels[conversationId] {
-            handle.observers[token.id] = (onMessage, onLookback)
+            handle.observers[token.id] = (onMessage, onLookback, onContinueRequest, onParticipants)
             return token
         }
 
         let ch = SupabaseStack.shared.realtimeV2.channel("conv:\(conversationId)")
         let handle = ConvChannelHandle(channel: ch)
-        handle.observers[token.id] = (onMessage, onLookback)
+        handle.observers[token.id] = (onMessage, onLookback, onContinueRequest, onParticipants)
 
         // Capture the handle weakly inside the callbacks so the channel can
         // be torn down without dangling observer references.
@@ -130,6 +132,52 @@ final class RealtimeManager {
         ) { action in
             let evt = LookbackEvent(kind: .update, record: action.record)
             for (_, obs) in observersRef() { obs.lookback(evt) }
+        })
+        // Group-only tables. Subscriptions fire on every conv channel
+        // regardless of conv type — that's fine; non-group convs simply
+        // never produce rows in these tables, so the closures are
+        // never invoked.
+        handle.subs.append(ch.onPostgresChange(
+            InsertAction.self,
+            schema: "pendingbot",
+            table: "group_continue_requests",
+            filter: "conversation_id=eq.\(conversationId)"
+        ) { action in
+            let evt = ContinueRequestEvent(kind: .insert, record: action.record)
+            for (_, obs) in observersRef() { obs.continueReq(evt) }
+        })
+        handle.subs.append(ch.onPostgresChange(
+            UpdateAction.self,
+            schema: "pendingbot",
+            table: "group_continue_requests",
+            filter: "conversation_id=eq.\(conversationId)"
+        ) { action in
+            let evt = ContinueRequestEvent(kind: .update, record: action.record)
+            for (_, obs) in observersRef() { obs.continueReq(evt) }
+        })
+        handle.subs.append(ch.onPostgresChange(
+            InsertAction.self,
+            schema: "pendingbot",
+            table: "conversation_participants",
+            filter: "conversation_id=eq.\(conversationId)"
+        ) { _ in
+            for (_, obs) in observersRef() { obs.participants(ParticipantsEvent(kind: .insert)) }
+        })
+        handle.subs.append(ch.onPostgresChange(
+            UpdateAction.self,
+            schema: "pendingbot",
+            table: "conversation_participants",
+            filter: "conversation_id=eq.\(conversationId)"
+        ) { _ in
+            for (_, obs) in observersRef() { obs.participants(ParticipantsEvent(kind: .update)) }
+        })
+        handle.subs.append(ch.onPostgresChange(
+            DeleteAction.self,
+            schema: "pendingbot",
+            table: "conversation_participants",
+            filter: "conversation_id=eq.\(conversationId)"
+        ) { _ in
+            for (_, obs) in observersRef() { obs.participants(ParticipantsEvent(kind: .delete)) }
         })
         do {
             try await ch.subscribeWithError()
@@ -182,6 +230,23 @@ struct LookbackEvent: Sendable {
     let record: [String: AnyJSON]
 }
 
+/// Group-only — fires on group_continue_requests INSERT/UPDATE for
+/// the subscribed conv. Used to surface / dismiss the continue-vote
+/// banner above the composer without the poll-on-open delay.
+struct ContinueRequestEvent: Sendable {
+    enum Kind: Sendable { case insert, update }
+    let kind: Kind
+    let record: [String: AnyJSON]
+}
+
+/// Group-only — fires on conversation_participants delta for the
+/// subscribed conv. Carries no body; observer reloads the senders
+/// map (small, infrequent).
+struct ParticipantsEvent: Sendable {
+    enum Kind: Sendable { case insert, update, delete }
+    let kind: Kind
+}
+
 struct ConvSubscriptionToken: Hashable, Sendable {
     let id: UUID
     let conversationId: String
@@ -193,7 +258,14 @@ struct ConvSubscriptionToken: Hashable, Sendable {
 private final class ConvChannelHandle {
     typealias MessageHandler = @Sendable (MessageEvent) -> Void
     typealias LookbackHandler = @Sendable (LookbackEvent) -> Void
-    typealias Observers = (message: MessageHandler, lookback: LookbackHandler)
+    typealias ContinueHandler = @Sendable (ContinueRequestEvent) -> Void
+    typealias ParticipantsHandler = @Sendable (ParticipantsEvent) -> Void
+    typealias Observers = (
+        message: MessageHandler,
+        lookback: LookbackHandler,
+        continueReq: ContinueHandler,
+        participants: ParticipantsHandler
+    )
     let channel: RealtimeChannelV2
     var observers: [UUID: Observers] = [:]
     var subs: [RealtimeSubscription] = []
