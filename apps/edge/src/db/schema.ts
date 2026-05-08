@@ -2164,7 +2164,16 @@ export type Database = {
       }
     }
     Functions: {
+      _assert_group_role: {
+        Args: { p_allowed_roles: string[]; p_conv_id: string }
+        Returns: undefined
+      }
       _delete_account_internal: { Args: { p_uid: string }; Returns: undefined }
+      _group_member_count: { Args: { p_conv_id: string }; Returns: number }
+      apply_audit_split: {
+        Args: { p_audit_log_id: string; p_splits: Json }
+        Returns: undefined
+      }
       billing_admin_grant: {
         Args: { p_credits: number; p_reason?: string; p_user_id: string }
         Returns: number
@@ -2203,6 +2212,107 @@ export type Database = {
       }
       accept_friend_request: { Args: { p_request_id: string }; Returns: undefined }
       delete_self_account: { Args: { p_sentiment: string }; Returns: undefined }
+      group_continue_decide: {
+        Args: {
+          p_decision: string
+          p_decision_message_id: string
+          p_request_id: string
+        }
+        Returns: {
+          conversation_id: string
+          decided_at: string | null
+          decided_by: string | null
+          decision_message_id: string | null
+          id: string
+          pending_bot_ids: string[]
+          prompt_message_id: string | null
+          requested_at: string
+          status: Database["pendingbot"]["Enums"]["continue_request_status"]
+        }
+        SetofOptions: {
+          from: "*"
+          to: "group_continue_requests"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      group_invite_bot: {
+        Args: { p_bot_id: string; p_conv_id: string }
+        Returns: undefined
+      }
+      group_invite_user: {
+        Args: { p_conv_id: string; p_target_user_id: string }
+        Returns: undefined
+      }
+      group_join_request_create: {
+        Args: { p_handle_value: string; p_message: string }
+        Returns: {
+          conversation_id: string
+          joined: boolean
+          request_id: string
+        }[]
+      }
+      group_join_request_decide: {
+        Args: { p_approve: boolean; p_request_id: string }
+        Returns: undefined
+      }
+      group_remove_bot: {
+        Args: { p_bot_id: string; p_conv_id: string }
+        Returns: undefined
+      }
+      group_remove_member: {
+        Args: { p_conv_id: string; p_target_user_id: string }
+        Returns: undefined
+      }
+      group_set_billing: {
+        Args: {
+          p_conv_id: string
+          p_custom_shares: Json
+          p_mode: string
+          p_window_seconds: number
+        }
+        Returns: undefined
+      }
+      group_set_bot_description: {
+        Args: { p_bot_id: string; p_conv_id: string; p_description: string }
+        Returns: undefined
+      }
+      group_set_bot_nickname: {
+        Args: { p_bot_id: string; p_conv_id: string; p_nickname: string }
+        Returns: undefined
+      }
+      group_set_handle: {
+        Args: { p_conv_id: string; p_handle_type: string; p_value: string }
+        Returns: undefined
+      }
+      group_set_join_policy: {
+        Args: { p_conv_id: string; p_policy: string }
+        Returns: undefined
+      }
+      group_set_member_cap: {
+        Args: { p_cap_credits: number; p_conv_id: string }
+        Returns: undefined
+      }
+      group_set_member_mute: {
+        Args: { p_conv_id: string; p_muted: boolean }
+        Returns: undefined
+      }
+      group_set_member_nickname: {
+        Args: { p_conv_id: string; p_nickname: string }
+        Returns: undefined
+      }
+      group_set_member_participates: {
+        Args: {
+          p_conv_id: string
+          p_participates: boolean
+          p_target_user_id: string
+        }
+        Returns: undefined
+      }
+      group_set_member_role: {
+        Args: { p_conv_id: string; p_role: string; p_target_user_id: string }
+        Returns: undefined
+      }
       is_bot_invitee: {
         Args: { p_bot_id: string; p_user_id: string }
         Returns: boolean
@@ -2215,6 +2325,14 @@ export type Database = {
           invited_at: string
           user_id: string
         }[]
+      }
+      open_group_conv: {
+        Args: {
+          p_initial_bot_ids: string[]
+          p_initial_user_ids: string[]
+          p_title: string
+        }
+        Returns: string
       }
       open_self_conv: { Args: never; Returns: string }
       open_user_bot_conv: { Args: { p_bot_id: string }; Returns: string }
