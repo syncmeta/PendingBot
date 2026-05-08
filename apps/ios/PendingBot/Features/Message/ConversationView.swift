@@ -134,6 +134,18 @@ struct ConversationView: View {
     /// and the existing peerProfile path serves it.
     @State private var groupSenders: [String: GroupBubbleSender] = [:]
 
+    /// Group conv only — when the GroupRouterDO held back a bot turn
+    /// because the last 30s of messages was bot-only, it filed a
+    /// pending continue request. The banner above the composer renders
+    /// allow / deny buttons; either decision posts a normal user
+    /// message *and* unblocks (or kills) the held bots.
+    struct PendingContinue: Equatable {
+        let id: String
+        let pendingBotIds: [String]
+    }
+    @State private var pendingContinue: PendingContinue?
+    @State private var continueDeciding: Bool = false
+
     /// "<bot_name> · <effective-model-tag>". Effective model = the per-conv
     /// override if set, otherwise the bot's resolved model (which itself
     /// already accounts for the user's per-bot pin from 我 → 机器人管理).
@@ -319,6 +331,10 @@ struct ConversationView: View {
         // ScrollView and composer animating against each other.
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
+                if let pc = pendingContinue {
+                    continueRequestBanner(pc)
+                        .readableColumnWidth()
+                }
                 Divider().opacity(0.5)
                 ComposerView(
                     input: $input,
@@ -348,6 +364,7 @@ struct ConversationView: View {
             await subscribeRealtime()
             await loadPeerProfileIfNeeded()
             await loadGroupSendersIfNeeded()
+            await loadPendingContinueIfNeeded()
         }
         .onDisappear {
             if let token = realtimeToken {
@@ -1593,6 +1610,108 @@ struct ConversationView: View {
         default: return nil
         }
         return groupSenders[key]
+    }
+
+    /// Group conv only — pull the most recent pending continue-request
+    /// row, if any. Realtime subscription would be nicer but lookback
+    /// notes also poll-on-open today, so we follow the same pattern;
+    /// continue prompts are infrequent enough that a refresh on open +
+    /// after-send is sufficient.
+    private func loadPendingContinueIfNeeded() async {
+        guard conversation.conversation_type == "group" else { return }
+        guard !conversation.id.isEmpty else { return }
+        do {
+            struct Row: Decodable {
+                let id: String
+                let pending_bot_ids: [String]
+            }
+            let rows: [Row] = try await SupabaseStack.shared
+                .from("group_continue_requests")
+                .select("id, pending_bot_ids")
+                .eq("conversation_id", value: conversation.id)
+                .eq("status", value: "pending")
+                .order("requested_at", ascending: false)
+                .limit(1)
+                .execute()
+                .value
+            self.pendingContinue = rows.first.map {
+                PendingContinue(id: $0.id, pendingBotIds: $0.pending_bot_ids)
+            }
+        } catch {
+            log.warning("pending continue load failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    @ViewBuilder
+    private func continueRequestBanner(_ pc: PendingContinue) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text("机器人还有话想说,让它继续吗?")
+                .font(Theme.Fonts.body)
+                .foregroundStyle(Theme.Palette.ink)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            if continueDeciding {
+                ProgressView()
+            } else {
+                Button {
+                    Task { await decideContinue(pc, allow: false) }
+                } label: {
+                    Text("✕ 闭嘴")
+                        .font(Theme.Fonts.body)
+                        .foregroundStyle(.red)
+                }
+                .buttonStyle(.bordered)
+                Button {
+                    Task { await decideContinue(pc, allow: true) }
+                } label: {
+                    Text("✓ 继续")
+                        .font(Theme.Fonts.body)
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(.horizontal, Theme.Metrics.gutter)
+        .padding(.vertical, 10)
+        .background(Theme.Palette.surface)
+    }
+
+    private func decideContinue(_ pc: PendingContinue, allow: Bool) async {
+        continueDeciding = true
+        defer { continueDeciding = false }
+        struct Body: Encodable {
+            let requestId: String
+            let decision: String
+        }
+        do {
+            let url = HostedConfig.environment.workerURL
+                .appendingPathComponent("v1/groups/\(conversation.id)/continue-decision")
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            let token = try await SupabaseStack.shared.auth.session.accessToken
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            req.httpBody = try JSONEncoder().encode(Body(
+                requestId: pc.id,
+                decision: allow ? "allowed" : "denied",
+            ))
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode)
+            else {
+                let msg = String(data: data, encoding: .utf8) ?? "HTTP error"
+                throw NSError(
+                    domain: "ContinueVote",
+                    code: (resp as? HTTPURLResponse)?.statusCode ?? -1,
+                    userInfo: [NSLocalizedDescriptionKey: msg],
+                )
+            }
+            // The decision message is inserted by the worker (Realtime
+            // delivers it); just clear the local banner.
+            self.pendingContinue = nil
+            Haptics.tap()
+        } catch {
+            self.error = "投票失败: \(error.localizedDescription)"
+            Haptics.error()
+        }
     }
 
     private func loadHistory() async {
