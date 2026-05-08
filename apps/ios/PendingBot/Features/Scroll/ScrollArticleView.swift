@@ -204,19 +204,23 @@ struct ScrollArticleView: View {
         loading = true
         defer { loading = false }
         do {
-            let row: ScrollRun? = try await SupabaseStack.shared
+            // Array fetch (not .single()) so a row that the runner has
+            // already silently deleted ("空奏折不落库") returns empty
+            // instead of throwing PostgREST's "cannot coerce" error.
+            let rows: [ScrollRun] = try await SupabaseStack.shared
                 .from("scroll_runs")
                 .select("id, bot_id, conversation_id, status, title, summary, body_md, progress, turns, created_at, started_at, finished_at")
                 .eq("id", value: scrollRunId)
                 .limit(1)
-                .single()
                 .execute()
                 .value
-            self.run = row
-            if let row {
-                await loadBot(id: row.bot_id)
-                if row.isRunning { await subscribe() }
+            guard let row = rows.first else {
+                dismiss()
+                return
             }
+            self.run = row
+            await loadBot(id: row.bot_id)
+            if row.isRunning { await subscribe() }
         } catch {
             self.error = error.localizedDescription
         }
