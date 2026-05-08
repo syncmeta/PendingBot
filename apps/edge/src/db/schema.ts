@@ -154,6 +154,8 @@ export type Database = {
           cost_usd: number | null
           created_at: string
           error_class: string | null
+          est_input_tokens: number | null
+          est_output_tokens: number | null
           generation_id: string | null
           id: string
           input_tokens: number
@@ -179,6 +181,8 @@ export type Database = {
           cost_usd?: number | null
           created_at?: string
           error_class?: string | null
+          est_input_tokens?: number | null
+          est_output_tokens?: number | null
           generation_id?: string | null
           id?: string
           input_tokens?: number
@@ -204,6 +208,8 @@ export type Database = {
           cost_usd?: number | null
           created_at?: string
           error_class?: string | null
+          est_input_tokens?: number | null
+          est_output_tokens?: number | null
           generation_id?: string | null
           id?: string
           input_tokens?: number
