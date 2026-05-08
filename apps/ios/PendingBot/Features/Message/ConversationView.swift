@@ -1196,18 +1196,18 @@ struct ConversationView: View {
 
     // MARK: - Streaming reveal smoother
 
-    /// Base reveal rate (chars/sec) — controls the "typing" feel for the
-    /// initial 15-char head and any small carry-over between LLM chunks.
-    /// The actual per-frame drain is adaptive (see startRevealTaskIfNeeded):
-    /// when the LLM is faster than this base rate the buffer would otherwise
-    /// queue up and the user would wait many seconds for a long bubble to
-    /// finish revealing — instead we accelerate so the visible reveal never
-    /// falls more than `revealMaxBehindSec` behind the live stream.
-    private static let revealCharsPerSec: Double = 100
+    /// Base reveal rate (chars/sec) — calibrated to ~60 tokens/sec, the
+    /// rate mainstream LLMs stream at (1 token ≈ 3 chars across mixed
+    /// Chinese/English content). Anything slower than the live stream
+    /// just means the typewriter falls behind and the visible reveal
+    /// jumps to the canonical row when Realtime lands. The adaptive drain
+    /// in startRevealTaskIfNeeded still catches up if a provider bursts
+    /// faster than this, so this is a "no slower than" floor.
+    private static let revealCharsPerSec: Double = 180
     /// Cap on how far the visible reveal is allowed to lag behind the live
     /// stream. Anything queued beyond this many seconds of base-rate output
     /// gets drained on the current frame.
-    private static let revealMaxBehindSec: Double = 0.15
+    private static let revealMaxBehindSec: Double = 0.1
 
     private func startRevealTaskIfNeeded() {
         guard revealTask == nil else { return }
