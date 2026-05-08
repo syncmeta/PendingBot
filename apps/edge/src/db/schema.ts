@@ -1989,6 +1989,8 @@ export type Database = {
           is_admin: boolean
           lifetime_spent_credits: number
           lifetime_topup_credits: number
+          pending_deletion_at: string | null
+          pending_deletion_sentiment: string | null
           updated_at: string
         }
         Insert: {
@@ -2004,6 +2006,8 @@ export type Database = {
           is_admin?: boolean
           lifetime_spent_credits?: number
           lifetime_topup_credits?: number
+          pending_deletion_at?: string | null
+          pending_deletion_sentiment?: string | null
           updated_at?: string
         }
         Update: {
@@ -2019,6 +2023,8 @@ export type Database = {
           is_admin?: boolean
           lifetime_spent_credits?: number
           lifetime_topup_credits?: number
+          pending_deletion_at?: string | null
+          pending_deletion_sentiment?: string | null
           updated_at?: string
         }
         Relationships: []
@@ -2138,7 +2144,18 @@ export type Database = {
         Args: { p_bot_id: string; p_handle: string }
         Returns: string
       }
-      delete_self_account: { Args: { p_sentiment: string }; Returns: undefined }
+      cancel_account_deletion: {
+        Args: Record<string, never>
+        Returns: boolean
+      }
+      finalize_account_deletion: {
+        Args: { p_force?: boolean; p_uid: string }
+        Returns: undefined
+      }
+      request_account_deletion: {
+        Args: { p_sentiment: string }
+        Returns: undefined
+      }
       group_continue_decide: {
         Args: {
           p_decision: string
