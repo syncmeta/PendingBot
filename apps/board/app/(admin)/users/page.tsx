@@ -21,7 +21,9 @@ export default async function UsersPage({
   // FK is to auth.users not pendingbot.users so the join doesn't auto-wire.
   let query = supa
     .from('users')
-    .select('id, display_name, email, is_admin, created_at, updated_at');
+    .select(
+      'id, display_name, email, is_admin, created_at, updated_at, pending_deletion_at',
+    );
   if (q) {
     // ilike across email and display_name for the search box. Cheap
     // pre-launch; add a tsv index later if it groans.
@@ -117,7 +119,17 @@ export default async function UsersPage({
               return (
                 <tr key={u.id} className="border-b last:border-0">
                   <td className="px-4 py-2">
-                    <div>{u.display_name || '(无名)'}</div>
+                    <div className="flex items-center gap-2">
+                      <span>{u.display_name || '(无名)'}</span>
+                      {u.pending_deletion_at && (
+                        <span
+                          className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-amber-800"
+                          title={`已申请注销 — ${new Date(u.pending_deletion_at).toISOString().slice(0, 10)} 起冷静期`}
+                        >
+                          注销中
+                        </span>
+                      )}
+                    </div>
                     <div className="text-xs text-muted-foreground">{u.email ?? '—'}</div>
                   </td>
                   <td className="px-4 py-2 text-xs text-muted-foreground">
