@@ -82,8 +82,23 @@ struct ChatStream {
                     // SSE wire format: blank line separates events. Each event
                     // is a sequence of `key: value` lines. We only care about
                     // `event:` and `data:`; everything else is ignored.
+                    //
+                    // We can't use `bytes.lines` here — on Mac Catalyst (and
+                    // possibly other platforms) `URLSession.AsyncBytes`'
+                    // line splitter swallows empty lines, which means the
+                    // blank-line separator that flushes one SSE event never
+                    // appears, every event gets accumulated into one giant
+                    // pending state, and we only see the *last* event at
+                    // stream-close time (with all prior events' data lines
+                    // concatenated as its data). Symptom: iOS appears to
+                    // miss every `token` / `bubble` event and only sees a
+                    // single garbled `done`.
+                    //
+                    // Parse bytes ourselves: split on LF, treat empty lines
+                    // as event terminators explicitly.
                     var pendingEventName = ""
                     var pendingDataLines: [String] = []
+                    var lineBytes: [UInt8] = []
 
                     func flush() {
                         guard !pendingEventName.isEmpty else { return }
@@ -94,24 +109,38 @@ struct ChatStream {
                         pendingDataLines.removeAll()
                     }
 
-                    for try await line in bytes.lines {
+                    func handleLine(_ line: String) {
                         if line.isEmpty {
                             flush()
-                            continue
+                            return
                         }
                         if line.hasPrefix("event:") {
                             pendingEventName = line.dropFirst("event:".count)
                                 .trimmingCharacters(in: .whitespaces)
                         } else if line.hasPrefix("data:") {
-                            // Spec: "data:" with optional space; we keep the
-                            // trailing whitespace-trimmed payload.
                             let payload = line.dropFirst("data:".count)
                                 .trimmingCharacters(in: .whitespaces)
                             pendingDataLines.append(String(payload))
                         }
                         // (id:/retry:/comment lines are ignored.)
                     }
-                    // Server may close without a trailing blank line.
+
+                    for try await byte in bytes {
+                        if byte == 0x0A { // LF
+                            // Strip optional trailing CR for CRLF servers.
+                            if lineBytes.last == 0x0D { lineBytes.removeLast() }
+                            let line = String(decoding: lineBytes, as: UTF8.self)
+                            lineBytes.removeAll(keepingCapacity: true)
+                            handleLine(line)
+                        } else {
+                            lineBytes.append(byte)
+                        }
+                    }
+                    // Server may close without a trailing newline + blank.
+                    if !lineBytes.isEmpty {
+                        let line = String(decoding: lineBytes, as: UTF8.self)
+                        handleLine(line)
+                    }
                     flush()
                     continuation.finish()
                 } catch is CancellationError {
