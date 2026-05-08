@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 钱包 — PND (∂) 余额、兑换码、最近账目。Pull-to-refresh 重拉余额 +
+/// 钱包 — PND 余额、兑换码、最近账目。Pull-to-refresh 重拉余额 +
 /// history 两个端点。Redeem 成功后乐观更新余额并把新条目并入列表头部。
 struct WalletView: View {
     @State private var balance: BillingService.Balance?
@@ -51,7 +51,7 @@ struct WalletView: View {
                 }
 
                 if let b = balance, b.minThreshold > 0, b.balanceCredits < b.minThreshold {
-                    Label("余额已低于阈值 ∂\(formatPnd(b.minThreshold))，下次发消息可能被拒。",
+                    Label("余额已低于阈值 \(formatPnd(b.minThreshold)) PND，下次发消息可能被拒。",
                           systemImage: "exclamationmark.triangle.fill")
                         .font(Theme.Fonts.monoSmall)
                         .foregroundStyle(Color(hex: 0xB14B3C))
@@ -84,7 +84,7 @@ struct WalletView: View {
             Text(label)
                 .font(Theme.Fonts.monoSmall)
                 .foregroundStyle(Theme.Palette.inkMuted)
-            Text("∂\(formatPnd(value))")
+            Text(formatPnd(value))
                 .font(Theme.Fonts.body)
                 .foregroundStyle(Theme.Palette.ink)
                 .monospacedDigit()
@@ -141,7 +141,7 @@ struct WalletView: View {
             redeemCode = ""
             redeemFlash = .init(
                 kind: .success,
-                message: "兑换成功 +∂\(formatPnd(res.credits))，新余额 ∂\(formatPnd(res.newBalance))"
+                message: "兑换成功 +\(formatPnd(res.credits)) PND，新余额 \(formatPnd(res.newBalance)) PND"
             )
             // Optimistic local update; the next reload() will reconcile.
             if let b = balance {
@@ -248,7 +248,7 @@ struct WalletView: View {
         private var amountText: String {
             let v = item.deltaCredits
             let sign = v > 0 ? "+" : (v < 0 ? "-" : "")
-            return "\(sign)∂\(formatPnd(abs(v)))"
+            return "\(sign)\(formatPnd(abs(v)))"
         }
 
         private func formatDate(_ d: Date) -> String {
