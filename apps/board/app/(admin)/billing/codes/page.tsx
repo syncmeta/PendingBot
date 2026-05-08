@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase/admin';
 import { fmtCredits } from '@/lib/format';
 import { disableCode, enableCode, issueCodes } from './actions';
 import { JustIssued } from './_just-issued';
+import { StatusFilter } from './_status-filter';
 
 type SearchParams = {
   just?: string;
@@ -194,19 +195,7 @@ export default async function CodesPage({
       <section className="space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-medium">单个码</h2>
-          <form className="text-xs">
-            <select
-              name="status"
-              defaultValue={statusFilter}
-              onChange={(e) => e.currentTarget.form?.requestSubmit()}
-              className="rounded-md border border-input bg-background px-2 py-1"
-            >
-              <option value="enabled">未使用</option>
-              <option value="used">已使用</option>
-              <option value="disabled">已停用</option>
-              <option value="all">全部</option>
-            </select>
-          </form>
+          <StatusFilter value={statusFilter} />
         </div>
         <div className="overflow-x-auto rounded-lg border bg-card">
           <table className="w-full text-sm">
