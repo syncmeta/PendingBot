@@ -6,6 +6,11 @@ export interface Env {
   // ── Bindings declared in wrangler.jsonc ────────────────────────
   UPLOADS: R2Bucket;
   MEMORY: KVNamespace;
+  /// Per-group debounce + small-model routing DO (M4 of group chat).
+  /// One instance per conversation_id; routes via env.GROUP_ROUTER.get(
+  /// env.GROUP_ROUTER.idFromName(conversationId)). See
+  /// src/durable-objects/group-router.ts.
+  GROUP_ROUTER: DurableObjectNamespace;
 
   // ── Vars (per env in wrangler.jsonc) ───────────────────────────
   ENVIRONMENT: 'dev' | 'production';

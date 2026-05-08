@@ -9,10 +9,16 @@ import { scrollRoutes } from './routes/scroll';
 import { meRoutes } from './routes/me';
 import { contactRoutes } from './routes/contacts';
 import { friendRequestRoutes } from './routes/friend-requests';
+import { groupRoutes } from './routes/groups';
 import { deviceRoutes } from './routes/devices';
 import { codeExecRoutes } from './routes/code-exec';
 import { openrouterRoutes } from './routes/openrouter';
 import { handleScheduled } from './cron';
+
+// Re-export the Durable Object class so the runtime can find it via
+// the `class_name` field in wrangler.jsonc → durable_objects.bindings.
+// The export *name* must match `class_name` (case-sensitive).
+export { GroupRouterDO } from './durable-objects/group-router';
 
 // Top-level Hono app. Routes mount under /v1/ to leave room for a future v2
 // (URL path = major-era versioning). Within v1, schema-driven compatibility
@@ -57,6 +63,7 @@ v1.route('/scroll', scrollRoutes);
 v1.route('/me', meRoutes);
 v1.route('/contacts', contactRoutes);
 v1.route('/friend-requests', friendRequestRoutes);
+v1.route('/groups', groupRoutes);
 v1.route('/devices', deviceRoutes);
 v1.route('/code-exec-requests', codeExecRoutes);
 v1.route('/openrouter', openrouterRoutes);

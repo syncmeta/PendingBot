@@ -7,6 +7,7 @@ import { maybeRefreshMemory } from '../lib/memory';
 import { runLookback } from '../lib/lookback-runner';
 import { runTitle } from '../lib/title-runner';
 import { requireBalance, InsufficientBalanceError } from '../lib/billing';
+import { resolveGroupMentions } from '../lib/group-mentions';
 import type { AppBindings } from '../types';
 
 export const messageRoutes = new Hono<AppBindings>();
@@ -110,7 +111,12 @@ messageRoutes.post('/', async (c) => {
   // happen anyway — the post below early-returns at !conv.bot_id). When
   // a bot IS pinned, refuse before inserting the user row so a broke
   // account can't fill the chat with replies that never get answered.
-  if (conv.bot_id) {
+  //
+  // Groups deliberately bypass this gate: per spec the user-experience
+  // must never block on balance — exhausted members are excluded from
+  // the next cost split (group_member_billing.overdrawn) instead of 402.
+  // group-billing.ts (M6) handles that exclusion.
+  if (conv.bot_id && conv.conversation_type !== 'group') {
     try {
       await requireBalance(supaUser, userId);
     } catch (err) {
@@ -169,7 +175,50 @@ messageRoutes.post('/', async (c) => {
     parentMessageId = (lastUser?.id as string | undefined) ?? null;
   }
 
-  // No bot pinned (e.g. user_user, group with no default bot) → just ack
+  // Group branch — wake decisions go to the GroupRouterDO. The DO
+  // owns the 60s window + 8s debounce + per-group serialization, then
+  // calls dispatchGroupTurn from its alarm handler.
+  //
+  // M5 layer: @-mention parsing. If the user message names a bot
+  // nickname / display_name, we resolve the bot id(s) and send them
+  // along with the signal — the DO bypasses debounce and dispatches
+  // the mentioned bots immediately. Mentions of humans don't go to
+  // the DO (they're just rendered in the bubble); only bot mentions
+  // wake.
+  if (conv.conversation_type === 'group') {
+    if (!parsed.autoLookback) {
+      const mentionedBotIds = parsed.newMessage
+        ? await resolveGroupMentions(supaService, parsed.conversationId, parsed.newMessage)
+        : [];
+
+      const doId = c.env.GROUP_ROUTER.idFromName(parsed.conversationId);
+      const stub = c.env.GROUP_ROUTER.get(doId);
+      // Fire-and-forget — don't block the HTTP response on the DO RTT.
+      c.executionCtx.waitUntil(
+        stub
+          .fetch('https://group-router.internal/signal', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              conversationId: parsed.conversationId,
+              mentionedBotIds: mentionedBotIds.length > 0 ? mentionedBotIds : undefined,
+            }),
+          })
+          .then((res) => {
+            if (!res.ok) {
+              console.warn('[messages] DO signal returned', res.status);
+            }
+          })
+          .catch((err) => console.error('[messages] DO signal failed', err)),
+      );
+    }
+    return c.json({
+      message: { id: parentMessageId },
+      botReplyScheduled: 'async' as const,
+    });
+  }
+
+  // No bot pinned (e.g. user_user, self with no bot) → just ack
   // the user write.
   if (!conv.bot_id) {
     return c.json({ message: { id: parentMessageId }, botReplyScheduled: false });

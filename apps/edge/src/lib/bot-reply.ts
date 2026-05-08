@@ -566,6 +566,10 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       cacheWriteTokens: usage.cacheWrite,
       estInputTokens: est.input,
       estOutputTokens: est.output,
+      // env passes through so recordAudit can route group convs into
+      // splitAndDebit (M6) instead of single-user billingDebit. 1v1
+      // and self-chat just ignore it.
+      env,
       metadata: {
         bot_id: bot.id,
         status: finalStatus,
@@ -636,6 +640,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
         cacheWriteTokens: usage.cacheWrite,
         estInputTokens: est.input,
         estOutputTokens: est.output,
+        env,
         metadata: { bot_id: bot.id, status, message: message.slice(0, 200) },
       });
     } catch (auditErr) {
