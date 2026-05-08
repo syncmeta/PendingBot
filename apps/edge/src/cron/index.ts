@@ -2,14 +2,17 @@ import type { Env } from '../types';
 import { syncModelPricing } from './model-pricing';
 import { cleanupOrphanUploads } from './uploads-cleanup';
 import { cleanupIdleSandboxes } from './sandbox-cleanup';
+import { reapStuckScrolls } from './scroll-reaper';
 
 // Workers cron entrypoint. wrangler.jsonc declares `triggers.crons` with
 // each schedule pattern; the same handler routes by `controller.cron`.
 //
 // Wired schedules (must agree with wrangler.jsonc):
-//   "0 4 * * *"   daily 04:00 UTC — orphan upload sweep
-//   "0 3 * * 1"   weekly Monday 03:00 UTC — model_pricing sync from OpenRouter
-//   "5 * * * *"   hourly at xx:05 — idle Daytona sandbox sweep (TTL 1h)
+//   "0 4 * * *"    daily 04:00 UTC — orphan upload sweep
+//   "0 3 * * 1"    weekly Monday 03:00 UTC — model_pricing sync from OpenRouter
+//   "5 * * * *"    hourly at xx:05 — idle Daytona sandbox sweep (TTL 1h)
+//   "*/5 * * * *"  every 5 min — scroll_runs watchdog (force-fail rows
+//                  stuck in 'running' past the loop's 4-min wall budget)
 //
 // Each task swallows its own errors so one failure doesn't poison sibling
 // jobs. Cron tasks log to CF Observability — check there if a job goes dark.
@@ -30,6 +33,8 @@ export async function handleScheduled(
     ctx.waitUntil(safe('uploads-cleanup', () => cleanupOrphanUploads(env)));
   } else if (cron === '5 * * * *') {
     ctx.waitUntil(safe('sandbox-cleanup', () => cleanupIdleSandboxes(env)));
+  } else if (cron === '*/5 * * * *') {
+    ctx.waitUntil(safe('scroll-reaper', () => reapStuckScrolls(env)));
   } else {
     console.warn('[cron] unmatched schedule', cron);
   }
