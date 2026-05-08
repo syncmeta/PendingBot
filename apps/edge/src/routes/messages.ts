@@ -7,6 +7,7 @@ import { maybeRefreshMemory } from '../lib/memory';
 import { runLookback } from '../lib/lookback-runner';
 import { runTitle } from '../lib/title-runner';
 import { requireBalance, InsufficientBalanceError } from '../lib/billing';
+import { resolveGroupMentions } from '../lib/group-mentions';
 import type { AppBindings } from '../types';
 
 export const messageRoutes = new Hono<AppBindings>();
@@ -176,11 +177,20 @@ messageRoutes.post('/', async (c) => {
 
   // Group branch — wake decisions go to the GroupRouterDO. The DO
   // owns the 60s window + 8s debounce + per-group serialization, then
-  // calls dispatchGroupTurn from its alarm handler. @mention parsing
-  // (M5) will surface mentionedBotIds here for the bypass-debounce
-  // path; for M4 we always send the slow-classifier path.
+  // calls dispatchGroupTurn from its alarm handler.
+  //
+  // M5 layer: @-mention parsing. If the user message names a bot
+  // nickname / display_name, we resolve the bot id(s) and send them
+  // along with the signal — the DO bypasses debounce and dispatches
+  // the mentioned bots immediately. Mentions of humans don't go to
+  // the DO (they're just rendered in the bubble); only bot mentions
+  // wake.
   if (conv.conversation_type === 'group') {
     if (!parsed.autoLookback) {
+      const mentionedBotIds = parsed.newMessage
+        ? await resolveGroupMentions(supaService, parsed.conversationId, parsed.newMessage)
+        : [];
+
       const doId = c.env.GROUP_ROUTER.idFromName(parsed.conversationId);
       const stub = c.env.GROUP_ROUTER.get(doId);
       // Fire-and-forget — don't block the HTTP response on the DO RTT.
@@ -189,7 +199,10 @@ messageRoutes.post('/', async (c) => {
           .fetch('https://group-router.internal/signal', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ conversationId: parsed.conversationId }),
+            body: JSON.stringify({
+              conversationId: parsed.conversationId,
+              mentionedBotIds: mentionedBotIds.length > 0 ? mentionedBotIds : undefined,
+            }),
           })
           .then((res) => {
             if (!res.ok) {

@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
 import { userClient, serviceClient } from '../lib/supabase';
+import { generateInitialBotDescription } from '../lib/group-bot-intro';
 import type { AppBindings } from '../types';
 
 // All group endpoints sit under /v1/groups. Schema + RPCs live in
@@ -111,9 +112,22 @@ groupRoutes.post('/:id/invite-bot', async (c) => {
     const e = rpcError(error);
     return c.json(e.body, e.status);
   }
-  // First-description generation lives in M5 (group-dispatch). For now
-  // the bot is in the conv but the small-model router won't have a
-  // useful description for it yet.
+  // Kick off the first-description LLM call in the background. The
+  // RPC has already added the bot to the group; the description is
+  // an enhancement for the router and shouldn't block the invite UI.
+  // The cost lands on the conv creator until M6 wires splitAndDebit.
+  c.executionCtx.waitUntil(
+    generateInitialBotDescription({
+      env: c.env,
+      conversationId: convId,
+      botId: parsed.botId,
+    })
+      .then((res) => {
+        console.log('[invite-bot] description generated',
+          { convId, botId: parsed.botId, len: res.description.length });
+      })
+      .catch((err) => console.error('[invite-bot] description gen failed', err)),
+  );
   return c.json({ ok: true, descriptionPending: true });
 });
 
