@@ -75,6 +75,7 @@
 		EABBC05F4DAA86B67E517662 /* HostedConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = C608CB73D14B114D2399FE59 /* HostedConfig.swift */; };
 		EAE5D86E4ECF3FDA0C9C43D3 /* WelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E688431D1768A5D1A6F573EA /* WelcomeView.swift */; };
 		EDDC0F0C64844A46536D2ED4 /* ScrollArticleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33B8F3751DF5EDACE6B8E705 /* ScrollArticleView.swift */; };
+		EE001E0E1E0E1E0E1E0E1E0E /* EnvelopeThinkingTrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE001E0E1E0E1E0E1E0E1E0F /* EnvelopeThinkingTrace.swift */; };
 		F21D3DA278967B87BA15A3EF /* ComposerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3085FEC82B399B97022B1078 /* ComposerView.swift */; };
 /* End PBXBuildFile section */
 
@@ -96,6 +97,7 @@
 		3085FEC82B399B97022B1078 /* ComposerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerView.swift; sourceTree = "<group>"; };
 		31232B257324691ACAD4B56A /* ProfileBootstrapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileBootstrapView.swift; sourceTree = "<group>"; };
 		33B8F3751DF5EDACE6B8E705 /* ScrollArticleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollArticleView.swift; sourceTree = "<group>"; };
+		EE001E0E1E0E1E0E1E0E1E0F /* EnvelopeThinkingTrace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvelopeThinkingTrace.swift; sourceTree = "<group>"; };
 		34F50A849643083228506129 /* ScrollTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollTabView.swift; sourceTree = "<group>"; };
 		37E2067C1C372EB858B6A6DC /* ChatActionSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatActionSheet.swift; sourceTree = "<group>"; };
 		3CEA9699F1801C4960BBE127 /* GoogleSignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleSignIn.swift; sourceTree = "<group>"; };
@@ -315,6 +317,7 @@
 				650E56C1D4A459FE4221457A /* ScrollComposerSheet.swift */,
 				A32CFD03CE72A90611766007 /* ScrollFeedRow.swift */,
 				34F50A849643083228506129 /* ScrollTabView.swift */,
+				EE001E0E1E0E1E0E1E0E1E0F /* EnvelopeThinkingTrace.swift */,
 			);
 			path = Scroll;
 			sourceTree = "<group>";
@@ -485,6 +488,7 @@
 				E15AF15A08EA6B12B00CEF80 /* ScrollComposerSheet.swift in Sources */,
 				9C2D6876ED3285CA4508D130 /* ScrollFeedRow.swift in Sources */,
 				DF50F5D82CD71AB450ADDB8B /* ScrollTabView.swift in Sources */,
+				EE001E0E1E0E1E0E1E0E1E0E /* EnvelopeThinkingTrace.swift in Sources */,
 				11DFAF56423D11C5DDBE2C34 /* ServerImage.swift in Sources */,
 				52F96822550D55A2446083BE /* ServerTimestamp.swift in Sources */,
 				A7EAB9A4D95F17682C7079BB /* SidebarTabBar.swift in Sources */,

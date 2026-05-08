@@ -93,16 +93,22 @@ struct ScrollArticleView: View {
     private func bodySection(run: ScrollRun) -> some View {
         if let body = run.body_md, !body.isEmpty {
             MarkdownText(text: body)
+            // Even after the article is done, keep the thinking trace
+            // available so the reader can audit the research path.
+            EnvelopeThinkingTrace(turns: EnvelopeTurn.parse(run.turns), collapsed: true)
         } else if run.isRunning {
             runningSection(progress: ScrollProgress.from(run.progress))
+            EnvelopeThinkingTrace(turns: EnvelopeTurn.parse(run.turns), collapsed: false)
         } else if run.status == "error" {
-            Text("这卷拟稿出错了。可以从奏折列表删掉重来。")
+            Text("这封来信写丢了。可以从来信列表删掉重来。")
                 .font(Theme.Fonts.body)
                 .foregroundStyle(Theme.Palette.inkMuted)
+            EnvelopeThinkingTrace(turns: EnvelopeTurn.parse(run.turns), collapsed: true)
         } else if run.status == "cancelled" {
-            Text("这卷拟稿被中止了。")
+            Text("这封来信被中止了。")
                 .font(Theme.Fonts.body)
                 .foregroundStyle(Theme.Palette.inkMuted)
+            EnvelopeThinkingTrace(turns: EnvelopeTurn.parse(run.turns), collapsed: true)
         }
     }
 
@@ -187,7 +193,7 @@ struct ScrollArticleView: View {
         do {
             let row: ScrollRun? = try await SupabaseStack.shared
                 .from("scroll_runs")
-                .select("id, bot_id, conversation_id, status, title, summary, body_md, progress, created_at, started_at, finished_at")
+                .select("id, bot_id, conversation_id, status, title, summary, body_md, progress, turns, created_at, started_at, finished_at")
                 .eq("id", value: scrollRunId)
                 .limit(1)
                 .single()

@@ -129,7 +129,7 @@ struct ScrollTabView: View {
         do {
             let rows: [ScrollRun] = try await SupabaseStack.shared
                 .from("scroll_runs")
-                .select("id, bot_id, conversation_id, status, title, summary, body_md, progress, created_at, started_at, finished_at")
+                .select("id, bot_id, conversation_id, status, title, summary, body_md, progress, turns, created_at, started_at, finished_at")
                 .order("created_at", ascending: false)
                 .limit(50)
                 .execute()

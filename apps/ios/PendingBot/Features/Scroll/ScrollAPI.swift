@@ -20,6 +20,11 @@ struct ScrollRun: Codable, Identifiable, Hashable {
     let summary: String?
     let body_md: String?
     let progress: AnyJSON?
+    /// Per-turn trace appended by the runner — assistant text, reasoning
+    /// content, tool calls/results, collaborator replies. Drives the
+    /// thinking-process panel on the Envelope detail page. Optional because
+    /// older rows pre-migration won't have it.
+    let turns: AnyJSON?
     let created_at: String
     let started_at: String?
     let finished_at: String?
@@ -307,6 +312,121 @@ enum ScrollPhaseLabel {
     }
 }
 
+// ── Envelope thinking trace ──────────────────────────────────────────────
+//
+// Mirrors the wire shape the runner appends to scroll_runs.turns
+// (apps/edge/src/lib/scroll-runner.ts: TurnTraceEntry). The detail page
+// renders these as the "thinking process" so users can see what the
+// model thought + searched + scraped on the way to the final article.
+
+struct EnvelopeToolCall: Hashable {
+    let name: String
+    let argsJSON: String
+}
+
+struct EnvelopeToolResult: Hashable {
+    let content: String
+}
+
+struct EnvelopeTurn: Hashable, Identifiable {
+    let i: Int
+    let assistant: String?
+    let reasoning: String?
+    let toolCalls: [EnvelopeToolCall]
+    let toolResults: [EnvelopeToolResult]
+    let collaborator: String?
+
+    var id: Int { i }
+
+    static func parse(_ json: AnyJSON?) -> [EnvelopeTurn] {
+        guard let json, case let .array(items) = json else { return [] }
+        var out: [EnvelopeTurn] = []
+        for item in items {
+            guard case let .object(d) = item else { continue }
+            let i: Int
+            if case let .integer(v)? = d["i"] {
+                i = v
+            } else if case let .double(v)? = d["i"] {
+                i = Int(v)
+            } else {
+                continue
+            }
+            var assistant: String?
+            if case let .string(s)? = d["assistant"], !s.isEmpty { assistant = s }
+            var reasoning: String?
+            if case let .string(s)? = d["reasoning"], !s.isEmpty { reasoning = s }
+            var collaborator: String?
+            if case let .string(s)? = d["collaborator"], !s.isEmpty { collaborator = s }
+
+            var toolCalls: [EnvelopeToolCall] = []
+            if case let .array(arr)? = d["tool_calls"] {
+                for tc in arr {
+                    guard case let .object(t) = tc else { continue }
+                    var name = ""
+                    if case let .string(s)? = t["name"] { name = s }
+                    var argsJSON = ""
+                    if let argsAny = t["args"] {
+                        argsJSON = anyJSONToCompactString(argsAny)
+                    }
+                    if !name.isEmpty {
+                        toolCalls.append(EnvelopeToolCall(name: name, argsJSON: argsJSON))
+                    }
+                }
+            }
+
+            var toolResults: [EnvelopeToolResult] = []
+            if case let .array(arr)? = d["tool_results"] {
+                for tr in arr {
+                    guard case let .object(t) = tr else { continue }
+                    var content = ""
+                    if case let .string(s)? = t["content"] { content = s }
+                    if !content.isEmpty {
+                        toolResults.append(EnvelopeToolResult(content: content))
+                    }
+                }
+            }
+
+            out.append(EnvelopeTurn(
+                i: i,
+                assistant: assistant,
+                reasoning: reasoning,
+                toolCalls: toolCalls,
+                toolResults: toolResults,
+                collaborator: collaborator
+            ))
+        }
+        return out
+    }
+}
+
+/// Best-effort one-line render of an AnyJSON tool-call args blob. Keeps
+/// the trace compact — the user wants a sense of what the agent did,
+/// not the full JSON dump.
+private func anyJSONToCompactString(_ json: AnyJSON) -> String {
+    switch json {
+    case .null:                     return "null"
+    case .bool(let b):              return b ? "true" : "false"
+    case .integer(let i):           return String(i)
+    case .double(let d):            return String(d)
+    case .string(let s):            return s
+    case .array(let arr):
+        let inner = arr.map(anyJSONToCompactString).joined(separator: ", ")
+        return "[\(inner)]"
+    case .object(let obj):
+        // Pull a few well-known top-level fields the loop tools use,
+        // else fall through to a small key=value summary.
+        if case let .string(s)? = obj["thoughts"] { return s }
+        if case let .string(s)? = obj["query"]    { return s }
+        if case let .string(s)? = obj["url"]      { return s }
+        if case let .string(s)? = obj["text"]     { return s }
+        if case let .string(s)? = obj["reason"]   { return s }
+        let pairs = obj
+            .map { (k: String, v: AnyJSON) in "\(k)=\(anyJSONToCompactString(v))" }
+            .joined(separator: ", ")
+        return pairs
+    }
+}
+
 // ── Decoding helpers ─────────────────────────────────────────────────────
 
 enum ScrollRunDecoder {
@@ -332,6 +452,7 @@ enum ScrollRunDecoder {
             summary: record["summary"]?.stringValue,
             body_md: record["body_md"]?.stringValue,
             progress: record["progress"],
+            turns: record["turns"],
             created_at: createdAt,
             started_at: record["started_at"]?.stringValue,
             finished_at: record["finished_at"]?.stringValue
