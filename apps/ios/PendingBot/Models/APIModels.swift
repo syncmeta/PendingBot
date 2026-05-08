@@ -98,7 +98,17 @@ struct ChatMessage: Codable, Identifiable, Hashable {
     /// arrived. Drives the red/dimmed treatment in BubbleView.
     let status: String?
 
-    var isUser: Bool { sender_type == "user" }
+    /// True only for messages I sent. For user_bot, every sender_type=="user"
+    /// row is mine by definition (the bot is the only other side). For
+    /// user_user / group, both parties have sender_type=="user", so we have
+    /// to compare sender_id against the local account — without this, the
+    /// other person's bubbles render right-aligned as if I had sent them.
+    func isMine(currentUserId: String?) -> Bool {
+        guard sender_type == "user" else { return false }
+        guard let me = currentUserId, !me.isEmpty else { return true }
+        if sender_id.isEmpty { return true }   // optimistic local bubble pre-id
+        return sender_id == me
+    }
     var isFailed: Bool { status == "failed" }
     var isSending: Bool { status == "sending" }
 

@@ -25,6 +25,12 @@ struct FriendsTabView: View {
 
     @State private var bots: [BotPick] = []
     @State private var humans: [HumanPick] = []
+    /// Pending incoming friend requests — rendered as a section above the
+    /// friend list with inline accept/decline buttons. Refreshed alongside
+    /// the contacts list on every `load()` (and explicitly after the
+    /// AddFriendSheet closes, since auto-accept paths can flip a request
+    /// into a fresh contact).
+    @State private var pendingFriendRequests: [PendingFriendRequest] = []
     @State private var loading = false
     @State private var error: String?
     @State private var addingFriend = false
@@ -185,6 +191,23 @@ struct FriendsTabView: View {
                             .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
                     }
 
+                    // Pending incoming friend requests — pinned above the
+                    // friend list so the user notices and acts on them
+                    // before scrolling. Each row carries 同意 / 拒绝 inline.
+                    // Hidden when there's nothing pending.
+                    if !pendingFriendRequests.isEmpty {
+                        Section("好友申请") {
+                            ForEach(pendingFriendRequests) { req in
+                                FriendRequestRow(
+                                    request: req,
+                                    onAccept: { Task { await respondToRequest(req, accept: true) } },
+                                    onDecline: { Task { await respondToRequest(req, accept: false) } }
+                                )
+                                .listRowBackground(Theme.Palette.surface)
+                            }
+                        }
+                    }
+
                     if !botsForFilter.isEmpty {
                         Section {
                             ForEach(botsForFilter) { bot in
@@ -261,6 +284,15 @@ struct FriendsTabView: View {
         let id: String
         let alias: String?
     }
+    /// Slim model for an inbox row. Only carries fields the inline accept /
+    /// decline UI cares about — `peerDisplayName` falls back to the first 8
+    /// chars of the user id when the peer hasn't filled out a profile yet.
+    struct PendingFriendRequest: Identifiable, Hashable {
+        let id: String
+        let peerUserId: String
+        let peerDisplayName: String
+        let message: String?
+    }
 
     private struct BotDecodable: Decodable {
         let id: String
@@ -290,6 +322,7 @@ struct FriendsTabView: View {
                 .order("created_at", ascending: true)
                 .execute()
                 .value
+            async let incomingFR: [PendingFriendRequest] = loadIncomingFriendRequests()
 
             let botRows = try await botRowsResp
             let contactRows = try await contactRowsResp
@@ -300,6 +333,7 @@ struct FriendsTabView: View {
                         creator_id: $0.creator_id)
             }
             self.humans = contactRows.map { HumanPick(id: $0.contact_user_id, alias: $0.alias) }
+            self.pendingFriendRequests = (try? await incomingFR) ?? []
         } catch is CancellationError {
             // Tab switch / refreshable cancellation — silent. The Mac
             // shell rebuilds the active tab on every selection change, so
@@ -309,6 +343,72 @@ struct FriendsTabView: View {
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    // MARK: - Friend requests
+
+    private func loadIncomingFriendRequests() async -> [PendingFriendRequest] {
+        do {
+            let url = HostedConfig.environment.workerURL
+                .appendingPathComponent("v1/friend-requests")
+                .appending(queryItems: [URLQueryItem(name: "direction", value: "incoming")])
+            var req = URLRequest(url: url)
+            req.httpMethod = "GET"
+            let token = try await SupabaseStack.shared.auth.session.accessToken
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode)
+            else { return [] }
+            struct Payload: Decodable {
+                struct Row: Decodable {
+                    let id: String
+                    let status: String
+                    let message: String?
+                    let peerUserId: String
+                    let peerDisplayName: String
+                }
+                let requests: [Row]
+            }
+            let payload = try JSONDecoder().decode(Payload.self, from: data)
+            return payload.requests
+                .filter { $0.status == "pending" }
+                .map { r in
+                    let name = r.peerDisplayName.isEmpty
+                        ? String(r.peerUserId.prefix(8)) : r.peerDisplayName
+                    return PendingFriendRequest(
+                        id: r.id, peerUserId: r.peerUserId,
+                        peerDisplayName: name, message: r.message
+                    )
+                }
+        } catch {
+            return []
+        }
+    }
+
+    /// Accept (or decline) by hitting the worker endpoint. Optimistically
+    /// drops the row from the inbox so the UI feels responsive; a follow-
+    /// up `load()` reconciles whatever the server actually committed.
+    private func respondToRequest(_ request: PendingFriendRequest, accept: Bool) async {
+        pendingFriendRequests.removeAll { $0.id == request.id }
+        do {
+            let action = accept ? "accept" : "decline"
+            let url = HostedConfig.environment.workerURL
+                .appendingPathComponent("v1/friend-requests/\(request.id)/\(action)")
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            let token = try await SupabaseStack.shared.auth.session.accessToken
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            let (_, resp) = try await URLSession.shared.data(for: req)
+            guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode)
+            else { throw URLError(.badServerResponse) }
+            Haptics.success()
+        } catch {
+            self.error = "处理好友申请失败: \(error.localizedDescription)"
+            Haptics.error()
+        }
+        // Always refresh — accept also adds a row to user_contacts which
+        // the friends list needs to pick up.
+        await load()
     }
 
     // MARK: - Filtering
@@ -510,6 +610,60 @@ private struct FriendRow: View {
     }
 }
 
+/// One pending incoming friend request, with inline 同意 / 拒绝.
+/// Avatar uses the peer's user id as the seed so the same person reads
+/// consistently across the inbox row, the chat header, and bubbles once
+/// the request is accepted.
+private struct FriendRequestRow: View {
+    let request: FriendsTabView.PendingFriendRequest
+    let onAccept: () -> Void
+    let onDecline: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            UserAvatar(seed: request.peerUserId, attachmentId: nil, size: 36)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(request.peerDisplayName)
+                    .font(Theme.Fonts.serif(size: 16, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.ink)
+                    .lineLimit(1)
+                if let msg = request.message, !msg.isEmpty {
+                    Text(msg)
+                        .font(Theme.Fonts.footnote)
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                        .lineLimit(2)
+                } else {
+                    Text("想加你为好友")
+                        .font(Theme.Fonts.footnote)
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                }
+            }
+            Spacer(minLength: 8)
+            HStack(spacing: 8) {
+                Button(action: onDecline) {
+                    Text("拒绝")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(Theme.Palette.surfaceMuted))
+                }
+                .buttonStyle(.plain)
+                Button(action: onAccept) {
+                    Text("同意")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(Theme.Palette.accent))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
 private struct HumanKindTag: View {
     var body: some View {
         Text("人类")
@@ -656,9 +810,14 @@ struct AddFriendSheet: View {
     @State private var mode: Mode = .handle
     @State private var handleValue: String = ""
     @State private var email: String = ""
-    @State private var alias: String = ""
+    @State private var introMessage: String = ""
     @State private var submitting = false
     @State private var error: String?
+    /// Shown after a successful submit. The flow has three branches —
+    /// vanilla "request sent", "you're already friends", and "auto
+    /// accepted because they had a pending request to you" — each
+    /// surfaced as a small accent-coloured note before the sheet closes.
+    @State private var successHint: String?
 
     var body: some View {
         NavigationStack {
@@ -679,9 +838,17 @@ struct AddFriendSheet: View {
                             .autocorrectionDisabled()
                             .keyboardType(.emailAddress)
                     }
-                    TextField("备注名（可选）", text: $alias)
+                    TextField("打个招呼（可选）", text: $introMessage, axis: .vertical)
+                        .lineLimit(1...3)
+                } footer: {
+                    Text("对方收到好友申请后,同意才能开始聊天。")
                 }
 
+                if let successHint {
+                    Section {
+                        Text(successHint).foregroundStyle(Theme.Palette.accent).font(.footnote)
+                    }
+                }
                 if let error {
                     Text(error).foregroundStyle(.red).font(.footnote)
                 }
@@ -693,7 +860,7 @@ struct AddFriendSheet: View {
                     Button("取消") { dismiss() }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("加") { Task { await submit() } }
+                    Button("发送申请") { Task { await submit() } }
                         .disabled(submitting || (mode == .handle ? handleValue.isEmpty : email.isEmpty))
                 }
             }
@@ -704,14 +871,15 @@ struct AddFriendSheet: View {
         submitting = true
         defer { submitting = false }
         error = nil
+        successHint = nil
         do {
             var body: [String: Any] = [:]
             if mode == .handle { body["handleValue"] = handleValue.trimmingCharacters(in: .whitespaces) }
             else { body["email"] = email.trimmingCharacters(in: .whitespaces) }
-            let trimmedAlias = alias.trimmingCharacters(in: .whitespaces)
-            if !trimmedAlias.isEmpty { body["alias"] = trimmedAlias }
+            let trimmedMsg = introMessage.trimmingCharacters(in: .whitespaces)
+            if !trimmedMsg.isEmpty { body["message"] = trimmedMsg }
 
-            let url = HostedConfig.environment.workerURL.appendingPathComponent("v1/contacts/add")
+            let url = HostedConfig.environment.workerURL.appendingPathComponent("v1/friend-requests")
             var req = URLRequest(url: url)
             req.httpMethod = "POST"
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -726,8 +894,18 @@ struct AddFriendSheet: View {
                 error = msg
                 return
             }
+            let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            if (payload?["alreadyContacts"] as? Bool) == true {
+                successHint = "你们已经是好友了"
+            } else if (payload?["autoAccepted"] as? Bool) == true {
+                successHint = "对方此前也加过你 — 已直接成为好友"
+            } else {
+                successHint = "好友申请已发送,等对方同意"
+            }
             Haptics.success()
             onAdded()
+            // Brief read-the-hint pause before auto-dismissing the sheet.
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
             dismiss()
         } catch {
             self.error = error.localizedDescription

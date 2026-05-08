@@ -685,7 +685,7 @@ private struct ConvTypeBadge: View {
 // MARK: - 扫码 sheet (real camera scanner)
 
 /// Camera-backed QR scanner. First valid QR detection fires
-/// /v1/contacts/add with handleValue=<scanned> and dismisses.
+/// /v1/friend-requests with handleValue=<scanned> and dismisses.
 private struct ScanQRSheet: View {
     @Environment(\.dismiss) private var dismiss
     var onAdded: () -> Void = {}
@@ -756,7 +756,7 @@ private struct ScanQRSheet: View {
         submitting = true
         defer { submitting = false }
         do {
-            let url = HostedConfig.environment.workerURL.appendingPathComponent("v1/contacts/add")
+            let url = HostedConfig.environment.workerURL.appendingPathComponent("v1/friend-requests")
             var req = URLRequest(url: url)
             req.httpMethod = "POST"
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")

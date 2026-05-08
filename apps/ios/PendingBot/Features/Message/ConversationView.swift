@@ -121,6 +121,13 @@ struct ConversationView: View {
     /// append as a duplicate bubble.
     @State private var pendingCanonicalBotIds: Set<String> = []
 
+    /// Other-side profile for a user_user conv, fetched once on appear
+    /// when we don't already have a `pendingPeer`. Drives the chat
+    /// header (title + avatar) and the left-side avatar on incoming
+    /// bubbles.
+    struct ResolvedPeer { let userId: String; let displayName: String; let avatarPath: String? }
+    @State private var resolvedPeer: ResolvedPeer?
+
     /// "<bot_name> · <effective-model-tag>". Effective model = the per-conv
     /// override if set, otherwise the bot's resolved model (which itself
     /// already accounts for the user's per-bot pin from 我 → 机器人管理).
@@ -150,6 +157,11 @@ struct ConversationView: View {
     private func headerAvatar(size: CGFloat) -> some View {
         if let s = bubbleSelfAvatar {
             UserAvatar(seed: s.seed, attachmentId: s.attachmentId, size: size)
+        } else if let peer = peerProfileForBubble {
+            // user_user — the other person's avatar is what reads as
+            // "this conversation". Match the bubble side's avatar so the
+            // header and the incoming bubbles look like one identity.
+            UserAvatar(seed: peer.userId, attachmentId: peer.avatarPath, size: size)
         } else {
             BotAvatar(
                 emojiSeed: avatarEmojiSeed,
@@ -167,6 +179,37 @@ struct ConversationView: View {
         let seed = store.avatarSeed
             ?? store.current?.id ?? avatarEmojiSeed
         return (seed: seed, attachmentId: store.avatarAttachmentId)
+    }
+
+    /// Peer profile for the *other* person in a user_user conv. Drives
+    /// the left-side avatar that BubbleView renders on incoming bubbles.
+    /// Sourced from `pendingPeer` when we navigated in from a friends-tab
+    /// tap; once a backend lookup endpoint is wired the receiver side
+    /// will fill `resolvedPeer` instead. Avatar attachment-id is nil for
+    /// now — the friends list itself uses a generic person glyph and we
+    /// don't yet expose other users' uploaded avatars.
+    private var peerProfileForBubble: (userId: String, displayName: String, avatarPath: String?)? {
+        guard conversation.conversation_type == "user_user" else { return nil }
+        if let p = resolvedPeer {
+            return (userId: p.userId, displayName: p.displayName, avatarPath: p.avatarPath)
+        }
+        if let p = pendingPeer, p.kind == "user" {
+            return (userId: p.peerId, displayName: p.displayName, avatarPath: nil)
+        }
+        return nil
+    }
+
+    /// Header title — for user_user, prefer the peer's display name (or
+    /// caller's local alias) so the header doesn't read "未命名" on convs
+    /// whose `title` column is null. Falls back to the conversation's
+    /// stored title for every other conv type.
+    private var headerTitle: String {
+        if conversation.conversation_type == "user_user",
+           let peer = peerProfileForBubble,
+           !peer.displayName.isEmpty {
+            return peer.displayName
+        }
+        return conversation.displayTitle
     }
 
     private func shortSlug(_ slug: String) -> String {
@@ -200,6 +243,8 @@ struct ConversationView: View {
                                        conversationID: conversation.id,
                                        botID: avatarEmojiSeed,
                                        selfAvatar: bubbleSelfAvatar,
+                                       currentUserId: AccountStore.shared.current?.id,
+                                       peerProfile: peerProfileForBubble,
                                        serverURL: account?.workerURL,
                                        citations: citationsByMsgId[msg.id] ?? [])
                                 .id(msg.id)
@@ -208,15 +253,19 @@ struct ConversationView: View {
                                         UIPasteboard.general.string = msg.content
                                         Haptics.tap()
                                     } label: { Label("复制", systemImage: "doc.on.doc") }
-                                    if !msg.isUser {
+                                    if !msg.isMine(currentUserId: AccountStore.shared.current?.id) {
                                         ShareLink(item: msg.content) {
                                             Label("分享", systemImage: "square.and.arrow.up")
                                         }
-                                        Button {
-                                            saveAsSkillBody = msg.content
-                                            Haptics.tap()
-                                        } label: {
-                                            Label("保存为技能", systemImage: "square.and.arrow.down.on.square")
+                                        if msg.sender_type == "bot" {
+                                            // 保存为技能 only makes sense for bot output;
+                                            // for human peers the menu just gets 复制 / 分享 / 删除.
+                                            Button {
+                                                saveAsSkillBody = msg.content
+                                                Haptics.tap()
+                                            } label: {
+                                                Label("保存为技能", systemImage: "square.and.arrow.down.on.square")
+                                            }
                                         }
                                     }
                                     Button(role: .destructive) {
@@ -227,8 +276,11 @@ struct ConversationView: View {
                             // Tool-call trace sits between the user msg that
                             // triggered the turn and the bot's reply. Hidden
                             // when the bucket is empty so plain (non-search)
-                            // turns look identical to before.
-                            if msg.isUser, let trace = tracesByUserMsgId[msg.id], !trace.isEmpty {
+                            // turns look identical to before. Only ever
+                            // attached to user_bot turns, so the simple
+                            // sender_type check is enough — no need to
+                            // disambiguate by sender_id here.
+                            if msg.sender_type == "user", let trace = tracesByUserMsgId[msg.id], !trace.isEmpty {
                                 ToolTraceView(
                                     events: trace,
                                     isLive: liveTraceUserMsgId == msg.id,
@@ -287,6 +339,7 @@ struct ConversationView: View {
             await loadSkills()
             await loadActiveLookbacks()
             await subscribeRealtime()
+            await loadPeerProfileIfNeeded()
         }
         .onDisappear {
             if let token = realtimeToken {
@@ -408,7 +461,7 @@ struct ConversationView: View {
             headerAvatar(size: 30)
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(conversation.displayTitle)
+                Text(headerTitle)
                     .font(Theme.Fonts.serif(size: 16, weight: .semibold))
                     .foregroundStyle(Theme.Palette.ink)
                     .lineLimit(1)
@@ -566,7 +619,10 @@ struct ConversationView: View {
                 )
             case "user":
                 // Hand off to Worker — its open-chat endpoint inserts both
-                // sides of the participant rows in a single trip.
+                // sides of the participant rows in a single trip. Worker
+                // also gates the call on a mutual-contact relationship,
+                // so a stale friends-list row whose contact has since been
+                // removed lands here as a clean 403 we can surface.
                 var req = URLRequest(url: HostedConfig.environment.workerURL
                     .appendingPathComponent("v1/contacts/open-chat"))
                 req.httpMethod = "POST"
@@ -575,7 +631,13 @@ struct ConversationView: View {
                 req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
                 req.httpBody = try JSONSerialization.data(
                     withJSONObject: ["contactUserId": peer.peerId])
-                let (data, _) = try await URLSession.shared.data(for: req)
+                let (data, resp) = try await URLSession.shared.data(for: req)
+                if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                    let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                    let msg = (body?["error"] as? String) ?? "无法开启聊天 (HTTP \(http.statusCode))"
+                    self.error = msg
+                    return false
+                }
                 struct OpenChat: Decodable { let conversationId: String }
                 let payload = try JSONDecoder().decode(OpenChat.self, from: data)
                 convId = payload.conversationId
@@ -642,10 +704,16 @@ struct ConversationView: View {
                      && conversation.conversation_type != "group"
         if isUserBot {
             let localId = "local-\(UUID().uuidString)"
+            // Stamp sender_id with the current user — without it the
+            // ChatMessage.isMine(currentUserId:) check that drives bubble
+            // side can't tell our own optimistic row from a peer's, and
+            // the bubble would render on the wrong side until the
+            // canonical Realtime row arrives.
+            let myId = AccountStore.shared.current?.id ?? ""
             messages.append(ChatMessage(
                 id: localId,
                 conversation_id: conversation.id,
-                sender_type: "user", sender_id: "",
+                sender_type: "user", sender_id: myId,
                 content: text,
                 created_at: Int(Date().timeIntervalSince1970),
                 attachments: attachmentSnapshot.map {
@@ -1329,6 +1397,52 @@ struct ConversationView: View {
         // Skills load left disabled until /v1/skills lands. The chip stays
         // empty; chat is unaffected.
         self.skills = []
+    }
+
+    /// Resolve the user_user peer's display name + avatar path so the
+    /// header and incoming bubbles read as that person, not "未命名" + a
+    /// generic glyph. Skips when we already have a `pendingPeer` (the
+    /// friends-tab tap path supplies it eagerly) or when the conv is not
+    /// user_user. RLS on `pendingbot.users` is self-only, so we go through
+    /// the worker which uses service-role to read the peer row.
+    private func loadPeerProfileIfNeeded() async {
+        guard conversation.conversation_type == "user_user" else { return }
+        guard !conversation.id.isEmpty else { return }
+        if pendingPeer?.kind == "user" { return }
+        if resolvedPeer != nil { return }
+        do {
+            let url = HostedConfig.environment.workerURL
+                .appendingPathComponent("v1/contacts/conv-peer/\(conversation.id)")
+            var req = URLRequest(url: url)
+            req.httpMethod = "GET"
+            let token = try await SupabaseStack.shared.auth.session.accessToken
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode)
+            else { return }
+            struct Payload: Decodable {
+                let userId: String
+                let displayName: String
+                let avatarPath: String?
+                let alias: String?
+            }
+            let p = try JSONDecoder().decode(Payload.self, from: data)
+            // Prefer the caller's local alias when set, otherwise the
+            // peer's own display name. The avatar always uses the peer's
+            // user id as the deterministic seed so it matches whatever
+            // the friends list is rendering for the same person.
+            let name = (p.alias?.isEmpty == false ? p.alias! : p.displayName)
+            self.resolvedPeer = ResolvedPeer(
+                userId: p.userId,
+                displayName: name.isEmpty ? String(p.userId.prefix(8)) : name,
+                avatarPath: p.avatarPath
+            )
+        } catch {
+            // Non-fatal: header just keeps showing the existing fallback
+            // until next reopen. Log via the conversation logger so it's
+            // not silent in dev.
+            log.warning("conv-peer load failed: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     private func loadHistory() async {
