@@ -15,6 +15,10 @@ import {
   withFallback,
 } from '../llm/router';
 import { buildMessages, type BuildMessagesInput } from '../llm/builder';
+import {
+  estimateAssistantOutputTokens,
+  estimateRequestInputTokens,
+} from '../llm/token-estimate';
 import { getBotMemory } from './memory';
 import { queryUserRepresentation } from './honcho';
 import { braveSearch, firecrawlScrape } from './web';
@@ -336,6 +340,9 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   let emittedLen = 0;
   let bubblesInserted = 0;
   const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  // Local heuristic estimates, summed across tool-rounds. Sanity-check
+  // signal alongside provider-reported usage; persisted to audit_log.
+  const est = { input: 0, output: 0 };
   let generationId: string | undefined;
 
   // Per-turn web-search citations. Every search_web call appends new urls
@@ -398,6 +405,12 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     // tool_calls, we execute them and re-iterate; otherwise we exit.
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       if (ac.signal.aborted) break;
+
+      // Estimate input tokens for this round before sending. messages
+      // grows across rounds (we push assistant + tool results onto it),
+      // so summing per round mirrors how providers bill cumulative
+      // usage across the agentic loop.
+      est.input += estimateRequestInputTokens({ messages, tools: turnTools });
 
       const roundOpen = await withFallback(
         supa,
@@ -491,6 +504,11 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
         }
       }
 
+      // Local estimate of what the model emitted this round — visible
+      // assistant text plus any tool_call name/arguments JSON it
+      // produced. Mirrors the provider-reported completion_tokens.
+      est.output += estimateAssistantOutputTokens(assistantContent, toolCalls);
+
       // Push the assistant turn (with any tool_calls) into running history
       // so the next iteration sees its own decision.
       if (toolCalls.length > 0) {
@@ -562,6 +580,8 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       outputTokens: usage.output,
       cacheReadTokens: usage.cacheRead,
       cacheWriteTokens: usage.cacheWrite,
+      estInputTokens: est.input,
+      estOutputTokens: est.output,
       metadata: {
         bot_id: bot.id,
         status: finalStatus,
@@ -630,6 +650,8 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
         outputTokens: usage.output,
         cacheReadTokens: usage.cacheRead,
         cacheWriteTokens: usage.cacheWrite,
+        estInputTokens: est.input,
+        estOutputTokens: est.output,
         metadata: { bot_id: bot.id, status, message: message.slice(0, 200) },
       });
     } catch (auditErr) {

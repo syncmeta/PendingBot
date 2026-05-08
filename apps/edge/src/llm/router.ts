@@ -278,6 +278,12 @@ export interface AuditUsage {
   outputTokens?: number;
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
+  // Local heuristic estimates (token-estimate.ts). Optional — callers
+  // that don't bother estimating leave them undefined and the audit row
+  // stores null. Written to audit_log.est_input_tokens / est_output_tokens
+  // so the panel can show a provider-vs-local ratio per row.
+  estInputTokens?: number;
+  estOutputTokens?: number;
 }
 
 export interface AuditCallOpts extends AuditUsage {
@@ -367,6 +373,8 @@ export async function recordAudit(
     output_tokens: opts.outputTokens ?? 0,
     cache_read_tokens: opts.cacheReadTokens ?? 0,
     cache_write_tokens: opts.cacheWriteTokens ?? 0,
+    est_input_tokens: opts.estInputTokens ?? null,
+    est_output_tokens: opts.estOutputTokens ?? null,
     total_tokens: total,
     cost_usd: cost,
     cost_credits: credits,
