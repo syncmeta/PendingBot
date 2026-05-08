@@ -590,6 +590,29 @@ groupRoutes.post('/:id/continue-decision', async (c) => {
     return c.json(e.body, e.status);
   }
 
-  // M4 will trigger the deferred dispatch from here when decision='allowed'.
+  // On 'allowed', kick the DO's /resume path so the previously-pending
+  // bots actually speak. The 30s anti-loop window is implicitly reset
+  // because we just inserted the human's decision message.
+  // The decided row carries pending_bot_ids.
+  if (parsed.decision === 'allowed') {
+    const decided = (Array.isArray(data) ? data[0] : data) as
+      | { pending_bot_ids?: string[]; conversation_id?: string }
+      | null;
+    const wakeBotIds = decided?.pending_bot_ids ?? [];
+    if (wakeBotIds.length > 0) {
+      const doId = c.env.GROUP_ROUTER.idFromName(convId);
+      const stub = c.env.GROUP_ROUTER.get(doId);
+      c.executionCtx.waitUntil(
+        stub
+          .fetch('https://group-router.internal/resume', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ conversationId: convId, wakeBotIds }),
+          })
+          .catch((err) => console.error('[continue-decision] DO resume failed', err)),
+      );
+    }
+  }
+
   return c.json({ ok: true, decisionMessageId: msg.id, request: data });
 });
