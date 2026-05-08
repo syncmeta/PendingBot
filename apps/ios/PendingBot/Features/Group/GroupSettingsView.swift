@@ -187,8 +187,36 @@ struct GroupSettingsView: View {
                 .autocorrectionDisabled(true)
                 .submitLabel(.done)
                 .onSubmit { Task { await saveHandle(type: type, value: binding.wrappedValue) } }
-            if savingHandle == type { ProgressView() }
+            if savingHandle == type {
+                ProgressView()
+            } else {
+                Button {
+                    Task { await refreshHandle(type: type, binding: binding) }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .foregroundStyle(Theme.Palette.accent)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("刷新\(label)(作废旧值)")
+            }
         }
+    }
+
+    /// Mint a new random handle value and save it. Old value becomes
+    /// invalid as soon as the row is updated — printed QR cards from
+    /// before the refresh stop working.
+    private func refreshHandle(type: String, binding: Binding<String>) async {
+        let fresh = randomHandleToken()
+        binding.wrappedValue = fresh
+        await saveHandle(type: type, value: fresh)
+    }
+
+    /// 8 chars from the lowercase + digit alphabet — well within the
+    /// server's 4-20 / [A-Za-z0-9_-] regex. lower + digits keeps it
+    /// shareable verbally without case ambiguity.
+    private func randomHandleToken() -> String {
+        let alphabet = Array("abcdefghijkmnpqrstuvwxyz23456789")  // skip 0/o/1/l
+        return String((0..<8).map { _ in alphabet.randomElement()! })
     }
 
     // MARK: - Loading
