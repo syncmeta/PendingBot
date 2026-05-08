@@ -200,6 +200,44 @@ const EXECUTE_CODE_TOOL: ChatCompletionTool = {
   },
 };
 
+// Group-only tools — exposed by dispatchGroupTurn via input.inGroup.
+// Both write to the same conversation_id + bot_id the runner is acting
+// for, so they take just the new value as an argument. Description
+// edits should be rare (the system prompt says so); the runner does
+// not rate-limit them — abuse would show up as audit_log spam.
+const GROUP_BOT_TOOLS: ChatCompletionTool[] = [
+  {
+    type: 'function',
+    function: {
+      name: 'set_my_group_nickname',
+      description:
+        '在当前群聊里改你自己的昵称（只在这个群里生效，不影响别的群和原始 display_name）。例如群主邀你以特定身份说话时使用。空字符串清空。最长 32 字符,且不能跟群里别人重名。',
+      parameters: {
+        type: 'object',
+        properties: {
+          nickname: { type: 'string' },
+        },
+        required: ['nickname'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'set_bot_group_description',
+      description:
+        '改你自己的「何时叫我」群聊说明 —— 群消息调度器据此决定要不要叫你说话。**不要频繁改**(每群最多一两次)，建议在你发现自己被叫多了/少了再调整。1-2 句话，写明你适合什么话题/场景出场。',
+      parameters: {
+        type: 'object',
+        properties: {
+          description: { type: 'string' },
+        },
+        required: ['description'],
+      },
+    },
+  },
+];
+
 // How often the request_execute_code tool re-checks the DB for an iOS
 // decision, and how long we wait before giving up. 500ms keeps perceived
 // latency tight; 120s is plenty for a human to read a card and decide.
@@ -235,6 +273,11 @@ export interface RunChatTurnInput {
   clientTz?: string;
   signal: AbortSignal;
   emit: (event: string, data: unknown) => void;
+  /// Set true by dispatchGroupTurn so the bot gets the
+  /// set_my_group_nickname / set_bot_group_description tools in this
+  /// turn's tool list. Default false keeps 1v1 / self / user_user
+  /// surfaces clean.
+  inGroup?: boolean;
 }
 
 export interface RunChatTurnResult {
@@ -383,6 +426,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   // frontmatter.allowed_tools.
   const turnTools: ChatCompletionTool[] = [...CHAT_TOOLS, REQUEST_EXECUTE_CODE_TOOL];
   if (allowedTools.has('execute_code')) turnTools.push(EXECUTE_CODE_TOOL);
+  if (input.inGroup) turnTools.push(...GROUP_BOT_TOOLS);
 
   try {
     // Outer agent loop. Each iteration is one LLM call. If the model emits
@@ -759,6 +803,12 @@ async function runTool(
     if (name === 'request_execute_code') {
       return await requestExecuteCodeTool(env, args, ctx);
     }
+    if (name === 'set_my_group_nickname') {
+      return await setMyGroupNicknameTool(env, args, ctx);
+    }
+    if (name === 'set_bot_group_description') {
+      return await setBotGroupDescriptionTool(env, args, ctx);
+    }
     return JSON.stringify({ error: `unknown tool: ${name}` });
   } catch (err) {
     ctx.emit('tool_result', { name, error: String(err) });
@@ -828,6 +878,59 @@ async function createSkillTool(
 
   ctx.emit('tool_result', { name: 'create_skill', skill_id: data.id, skill_name: rawName });
   return JSON.stringify({ skill_id: data.id, name: rawName, subscribed: true });
+}
+
+// Group-only — bot tells the system "call me <X> in this group". The
+// underlying RPC enforces nickname uniqueness within the conv via a
+// partial UNIQUE index, so the tool surfaces a clean error string the
+// model can fall back from. Empty string clears the per-group
+// nickname (revert to display_name).
+async function setMyGroupNicknameTool(
+  env: Env,
+  args: Record<string, unknown>,
+  ctx: ToolCtx,
+): Promise<string> {
+  const nickname = String(args.nickname ?? '');
+  ctx.emit('tool_call', { name: 'set_my_group_nickname', nickname });
+  const supa = serviceClient(env);
+  const { error } = await supa.rpc('group_set_bot_nickname', {
+    p_conv_id: ctx.conversationId,
+    p_bot_id: ctx.botId,
+    p_nickname: nickname,
+  });
+  if (error) {
+    ctx.emit('tool_result', { name: 'set_my_group_nickname', error: error.message });
+    return JSON.stringify({ ok: false, error: error.message });
+  }
+  ctx.emit('tool_result', { name: 'set_my_group_nickname', ok: true });
+  return JSON.stringify({ ok: true });
+}
+
+// Group-only — bot rewrites its own "when to call me" doc.
+// `revision_count` increments on the upsert so the next call sees a
+// higher number, which the system prompt warns the bot about.
+async function setBotGroupDescriptionTool(
+  env: Env,
+  args: Record<string, unknown>,
+  ctx: ToolCtx,
+): Promise<string> {
+  const description = String(args.description ?? '').trim();
+  if (!description) {
+    return JSON.stringify({ ok: false, error: 'description must not be empty' });
+  }
+  ctx.emit('tool_call', { name: 'set_bot_group_description', chars: description.length });
+  const supa = serviceClient(env);
+  const { error } = await supa.rpc('group_set_bot_description', {
+    p_conv_id: ctx.conversationId,
+    p_bot_id: ctx.botId,
+    p_description: description,
+  });
+  if (error) {
+    ctx.emit('tool_result', { name: 'set_bot_group_description', error: error.message });
+    return JSON.stringify({ ok: false, error: error.message });
+  }
+  ctx.emit('tool_result', { name: 'set_bot_group_description', ok: true });
+  return JSON.stringify({ ok: true });
 }
 
 // Get-or-create a bootstrapped Daytona sandbox for this conversation.

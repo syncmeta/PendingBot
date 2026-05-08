@@ -193,6 +193,10 @@ export async function dispatchGroupTurn(
         recentContext,
         newMessage: nudge,
         providerOverride: (convRow?.provider_override as string | null) ?? null,
+        // Exposes set_my_group_nickname + set_bot_group_description
+        // tools to this turn. The bot can call them mid-reply to
+        // refine its group identity / "when to call me" doc.
+        inGroup: true,
         signal: signal ?? new AbortController().signal,
         emit: () => {
           /* group dispatch doesn't surface SSE — Realtime carries bubbles */
