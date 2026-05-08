@@ -137,6 +137,7 @@ targets:
         # Camera access — for QR scanning during onboarding.
         NSCameraUsageDescription: 用于扫描分享二维码导入服务器
         NSPhotoLibraryUsageDescription: 用于在聊天中发送本地图片
+        NSPhotoLibraryAddUsageDescription: 用于将我的二维码名片保存到相册
         # Triggered the first time we hit a private-IP server (10.x / 172.16-31.x
         # / 192.168.x / 169.254.x / *.local). The system prompt blocks the call
         # until the user responds; we proactively warm it from ImportFlow so
