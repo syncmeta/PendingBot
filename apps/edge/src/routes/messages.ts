@@ -47,6 +47,15 @@ const PostBody = z.object({
   // Result: the bot replies "as if" the user just sent something, with
   // the lookback note in scope.
   autoLookback: z.boolean().optional(),
+  // Per-conv provider pin. Tri-state on the wire:
+  //   absent  → "no opinion this turn" — Worker uses conv.provider_override
+  //             from the row (cross-device persistence)
+  //   null    → "clear the pin" — Worker also persists null onto the row
+  //   string  → set/replace pin to this slug — Worker persists onto the row
+  // When non-null, passed through to LLMRouter as preferProvider for this
+  // turn. Fallback retries still work; if the chosen provider 503s, router
+  // falls through to other providers (the pin biases, doesn't lock).
+  providerOverride: z.string().nullable().optional(),
 });
 
 // POST /v1/messages
@@ -77,7 +86,9 @@ messageRoutes.post('/', async (c) => {
   const supaUser = userClient(c.env, userJwt);
   const { data: conv, error: convErr } = await supaUser
     .from('conversations')
-    .select('id, conversation_type, bot_id, round_count')
+    // provider_override lands in 0038; schema.ts is regenerated lazily,
+    // hence the cast below where it's read.
+    .select('id, conversation_type, bot_id, round_count, provider_override')
     .eq('id', parsed.conversationId)
     .maybeSingle();
   if (convErr) return c.json({ error: 'database', detail: convErr.message }, 500);
@@ -197,6 +208,24 @@ messageRoutes.post('/', async (c) => {
     }
   }
 
+  // Resolve effective provider pin for this turn. Tri-state body field
+  // (see PostBody comment): when the body carries an opinion (defined,
+  // even null), persist it onto the conv row so other devices see it on
+  // their next conv-list fetch. Whichever value lands here is what gets
+  // passed to LLMRouter as preferProvider.
+  const persistedOverride = conv.provider_override ?? null;
+  let effectiveProviderOverride: string | null = persistedOverride;
+  if (parsed.providerOverride !== undefined) {
+    const desired = parsed.providerOverride;
+    effectiveProviderOverride = desired;
+    if (desired !== persistedOverride) {
+      await supaService
+        .from('conversations')
+        .update({ provider_override: desired })
+        .eq('id', parsed.conversationId);
+    }
+  }
+
   // Self-chat: load the user's profile so the bot can wear their persona.
   // The bio + display_name get prepended to the system prompt as a
   // "play this person" instruction.
@@ -263,6 +292,7 @@ messageRoutes.post('/', async (c) => {
           recentContext: parsed.recentContext ?? [],
           newMessage: parsed.newMessage ?? '（系统注入：根据上一轮的查证笔记，自然继续上面的对话。不要提到这是自动触发的。）',
           activeLookbacks: parsed.activeLookbacks ?? [],
+          providerOverride: effectiveProviderOverride,
           signal: c.req.raw.signal,
           emit,
         });

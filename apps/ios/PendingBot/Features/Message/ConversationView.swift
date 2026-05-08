@@ -38,6 +38,18 @@ struct ConversationView: View {
     @State private var photoPickerItems: [PhotosPickerItem] = []
     @State private var cameraImage: UIImage?
     @State private var modelOverride: String = ""    // "" = use bot default
+    /// Per-conv LLM provider pin. nil = follow alias-weight routing
+    /// (默认). Set via the conversation settings sheet; sent on each
+    /// chat POST as `providerOverride` so the server persists it onto
+    /// conversations.provider_override.
+    @State private var providerOverride: String?
+    /// True iff the user has touched the provider picker in THIS view
+    /// instance. Distinguishes "no opinion, leave the row alone" from
+    /// "user explicitly picked 自动 → server should clear the row" — both
+    /// would otherwise look like providerOverride == nil. We don't ride on
+    /// (providerOverride != conversation.provider_override) because the
+    /// row's value may itself be nil and we still need to clear it idempotently.
+    @State private var providerOverrideTouched: Bool = false
     @State private var error: String?
     @State private var pending = false              // server is generating (bot_typing active)
     /// Active SSE turn task; canceling it closes the stream which Worker
@@ -258,6 +270,7 @@ struct ConversationView: View {
         }
         .task {
             modelOverride = conversation.model_override ?? ""
+            providerOverride = conversation.provider_override
             // Pending convs (lazy-created on first send) have no row yet —
             // skip history / skills / realtime until they materialise.
             guard !conversation.id.isEmpty else { return }
@@ -288,11 +301,21 @@ struct ConversationView: View {
         .sheet(isPresented: $showingSettings) {
             ConversationSettingsView(
                 modelOverride: $modelOverride,
+                providerOverride: $providerOverride,
                 enabledSkillCount: skills.filter { $0.enabled }.count,
                 totalSkillCount: skills.count,
                 onOpenSkills: { showingSkills = true },
                 onApplyModel: { slug, scope in
                     Task { await applyModelPick(slug: slug, scope: scope) }
+                },
+                onApplyProvider: { slug in
+                    // Local-only update; the value rides with the next chat
+                    // POST. We deliberately don't fire a separate PATCH —
+                    // /v1/messages persists provider_override server-side
+                    // when the body field differs from the row.
+                    providerOverride = slug
+                    providerOverrideTouched = true
+                    Haptics.tap()
                 }
             )
             .presentationDetents([.medium, .large])
@@ -488,7 +511,8 @@ struct ConversationView: View {
             last_activity_at: Int(Date().timeIntervalSince1970),
             round_count: 0, bot_name: displayName,
             last_message_content: nil, last_message_sender_type: nil,
-            model_override: nil
+            model_override: nil,
+            provider_override: nil
         )
         pendingPeer = PendingPeer(kind: "bot", peerId: botId, displayName: displayName)
         messages = []
@@ -529,7 +553,8 @@ struct ConversationView: View {
                     last_activity_at: Int(Date().timeIntervalSince1970),
                     round_count: 0, bot_name: peer.displayName,
                     last_message_content: nil, last_message_sender_type: nil,
-                    model_override: nil
+                    model_override: nil,
+                    provider_override: nil
                 )
             case "user":
                 // Hand off to Worker — its open-chat endpoint inserts both
@@ -553,7 +578,8 @@ struct ConversationView: View {
                     last_activity_at: Int(Date().timeIntervalSince1970),
                     round_count: nil, bot_name: nil,
                     last_message_content: nil, last_message_sender_type: nil,
-                    model_override: nil
+                    model_override: nil,
+                    provider_override: nil
                 )
             case "self":
                 // Singleton self-chat conv. RPC is find-or-create so
@@ -571,7 +597,8 @@ struct ConversationView: View {
                     last_activity_at: Int(Date().timeIntervalSince1970),
                     round_count: 0, bot_name: peer.displayName,
                     last_message_content: nil, last_message_sender_type: nil,
-                    model_override: nil
+                    model_override: nil,
+                    provider_override: nil
                 )
             default:
                 self.error = "未知会话类型"
@@ -780,6 +807,15 @@ struct ConversationView: View {
             }
             if !attachmentIds.isEmpty { b["attachmentIds"] = attachmentIds }
             if let oldestId { b["oldestContextMessageId"] = oldestId }
+            // Tri-state on the wire: only attach the field when the user
+            // has expressed an opinion via the settings sheet. Server
+            // treats absence as "leave the persisted row alone" — so a
+            // device that never opened the picker can't accidentally
+            // clobber another device's pin. NSNull = "user picked 自动,
+            // please clear".
+            if providerOverrideTouched {
+                b["providerOverride"] = providerOverride ?? NSNull()
+            }
             return b
         }()
 

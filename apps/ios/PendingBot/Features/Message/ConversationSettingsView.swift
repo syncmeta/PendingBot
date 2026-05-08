@@ -4,11 +4,17 @@ import SwiftUI
 /// header. Houses skills and model controls.
 struct ConversationSettingsView: View {
     @Binding var modelOverride: String
+    /// Per-conversation provider pin. nil = "自动" (follow bot/model
+    /// alias routing). Otherwise an llm_providers.slug — the chat POST
+    /// passes it as `providerOverride` and the worker writes it back to
+    /// conversations.provider_override.
+    @Binding var providerOverride: String?
 
     let enabledSkillCount: Int
     let totalSkillCount: Int
     var onOpenSkills: () -> Void
     var onApplyModel: (String?, ModelPickScope) -> Void
+    var onApplyProvider: (String?) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var showModelPicker = false
@@ -60,6 +66,33 @@ struct ConversationSettingsView: View {
                         }
                     }
                     .foregroundStyle(Theme.Palette.ink)
+                }
+
+                // 提供商：本地选择走 LLMRouter 的 preferProvider，挂了
+                // 仍会走 fallback 到其它家。"自动" = 不传 preferProvider，
+                // 由 alias 权重决定。WorldRouter 一般比 OpenRouter 便宜
+                // ~30%（它声明转发 Anthropic native usage），可对账验证。
+                Section {
+                    Picker(selection: Binding(
+                        get: { providerOverride ?? "" },
+                        set: { newValue in
+                            let normalized = newValue.isEmpty ? nil : newValue
+                            providerOverride = normalized
+                            onApplyProvider(normalized)
+                        }
+                    )) {
+                        Text("自动").tag("")
+                        Text("WorldRouter").tag("worldrouter")
+                        Text("OpenRouter").tag("openrouter")
+                    } label: {
+                        HStack {
+                            Image(systemName: "arrow.triangle.branch")
+                            Text("提供商")
+                        }
+                    }
+                    .foregroundStyle(Theme.Palette.ink)
+                } footer: {
+                    Text("选「自动」按系统默认路由。指定一家时仍保留 fallback：那家 5xx 时会自动落到另一家。")
                 }
             }
             .navigationTitle("会话设置")
