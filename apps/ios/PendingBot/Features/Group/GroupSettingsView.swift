@@ -17,6 +17,15 @@ struct GroupSettingsView: View {
     @State private var leaving = false
     @State private var leaveConfirm = false
 
+    // Admin-only state — populated once we know the caller's role.
+    @State private var isAdmin: Bool = false
+    @State private var numberHandle: String = ""
+    @State private var qrHandle: String = ""
+    @State private var savingHandle: String? = nil   // 'number' | 'qr' | nil
+    @State private var savingPolicy: Bool = false
+    @State private var showingBilling = false
+    @State private var showingApprovals = false
+
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -45,6 +54,10 @@ struct GroupSettingsView: View {
                     .onChange(of: myMuted) { _, newValue in
                         Task { await saveMute(newValue) }
                     }
+            }
+
+            if isAdmin {
+                adminSection
             }
 
             Section("成员(\(members.count))") {
@@ -94,6 +107,65 @@ struct GroupSettingsView: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text("退出后历史消息仍保留,但你不会再收到新消息。")
+        }
+        .sheet(isPresented: $showingBilling) {
+            GroupBillingSheet(conversationId: conversationId, isAdmin: isAdmin)
+        }
+        .navigationDestination(isPresented: $showingApprovals) {
+            JoinRequestsInboxView(conversationId: conversationId)
+        }
+    }
+
+    // MARK: - Admin section
+
+    @ViewBuilder
+    private var adminSection: some View {
+        Section(header: Text("管理员设置")) {
+            // Join policy picker — owner/admin can switch how new members
+            // get in. Saved on change, no separate "save" button.
+            if let m = meta {
+                Picker("加群方式", selection: Binding(
+                    get: { m.joinPolicy },
+                    set: { newValue in
+                        guard newValue != m.joinPolicy else { return }
+                        Task { await savePolicy(newValue) }
+                    }
+                )) {
+                    Text("扫码即进").tag("scan_open")
+                    Text("审批后进").tag("approval")
+                    Text("不允许新成员").tag("closed")
+                }
+            }
+
+            handleRow(label: "群号", type: "number", binding: $numberHandle)
+            handleRow(label: "群二维码", type: "qr", binding: $qrHandle)
+
+            Button {
+                showingBilling = true
+            } label: {
+                LabeledContent("分摊设置", value: "查看并修改")
+            }
+
+            Button {
+                showingApprovals = true
+            } label: {
+                LabeledContent("加群请求", value: "查看待审批")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func handleRow(label: String, type: String, binding: Binding<String>) -> some View {
+        HStack {
+            Text(label)
+            Spacer()
+            TextField("4-20 位字母数字", text: binding)
+                .multilineTextAlignment(.trailing)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled(true)
+                .submitLabel(.done)
+                .onSubmit { Task { await saveHandle(type: type, value: binding.wrappedValue) } }
+            if savingHandle == type { ProgressView() }
         }
     }
 
@@ -175,12 +247,57 @@ struct GroupSettingsView: View {
             }
             if let me = parts.first(where: { $0.participant_type == "user" && $0.participant_id == meId }) {
                 self.myNickname = me.nickname ?? ""
+                self.isAdmin = (me.role == "owner" || me.role == "admin")
+            } else {
+                self.isAdmin = false
             }
             self.myMuted = billings.first?.muted ?? false
+
+            // Admin-only: load existing handles so the form fields
+            // pre-fill. RLS lets every participant read these but we
+            // only show the row to admins.
+            if self.isAdmin {
+                struct HandleRow: Decodable {
+                    let handle_type: String
+                    let value: String
+                }
+                let handles: [HandleRow] = try await SupabaseStack.shared
+                    .from("group_join_handles")
+                    .select("handle_type, value")
+                    .eq("conversation_id", value: conversationId)
+                    .execute()
+                    .value
+                self.numberHandle = handles.first(where: { $0.handle_type == "number" })?.value ?? ""
+                self.qrHandle     = handles.first(where: { $0.handle_type == "qr" })?.value ?? ""
+            }
         } catch is CancellationError {
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    private func savePolicy(_ policy: String) async {
+        savingPolicy = true
+        defer { savingPolicy = false }
+        struct Body: Encodable { let policy: String }
+        await postVoid(path: "v1/groups/\(conversationId)/policy",
+                       body: Body(policy: policy))
+        if error == nil, let m = meta {
+            meta = GroupMeta(title: m.title, joinPolicy: policy, maxMembers: m.maxMembers)
+        }
+    }
+
+    private func saveHandle(type: String, value: String) async {
+        savingHandle = type
+        defer { savingHandle = nil }
+        struct Body: Encodable {
+            let handleType: String
+            let value: String
+        }
+        await postVoid(
+            path: "v1/groups/\(conversationId)/handle",
+            body: Body(handleType: type, value: value.trimmingCharacters(in: .whitespaces)),
+        )
     }
 
     // MARK: - Actions (POST helpers)
