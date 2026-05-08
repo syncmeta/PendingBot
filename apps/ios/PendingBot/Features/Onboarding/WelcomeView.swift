@@ -3,40 +3,27 @@ import UIKit
 import AuthenticationServices
 import CryptoKit
 
-/// First-launch / signed-out screen. Logo on top, three sign-in methods below
-/// (Apple, Google, email-code). Email path uses an inline TextField with a
-/// trailing arrow button — tapping the arrow sends the verification code,
-/// after which the same row is replaced by the code-entry input.
+/// First-launch / signed-out screen. Logo on top, two sign-in methods
+/// below: Apple and Google. Both providers carry their own anti-abuse
+/// signals (real device + Apple ID, real Google account) so we don't
+/// need a captcha layer here.
 ///
-/// The visual layout is the byte-for-byte port of commit c0e7980 (the
-/// build that shipped to TestFlight). Auth wiring goes through the
-/// supabase-swift helpers AppleSignIn / PendingGoogleSignIn / EmailSignIn.
+/// Auth wiring goes through the supabase-swift helpers AppleSignIn /
+/// PendingGoogleSignIn — both end in signInWithIdToken on Supabase Auth.
 struct WelcomeView: View {
-    enum Stage {
-        case enteringEmail
-        case codeSent
-    }
-
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: AccountStore
 
-    @State private var stage: Stage = .enteringEmail
-    /// Orthogonal to `stage`: true during any in-flight auth round-trip
-    /// (email-code verify, Apple SIWA token exchange, Google sign-in).
-    /// Kept separate from `stage` so Apple/Google verification doesn't
-    /// flip the UI into the email-code step.
+    /// True during any in-flight auth round-trip (Apple SIWA token
+    /// exchange, Google sign-in). Used to disable the buttons and
+    /// show a spinner where appropriate.
     @State private var isVerifying: Bool = false
-    @State private var email: String = ""
-    @State private var code: String = ""
     /// Random nonce mixed into the SIWA request. Apple bakes its SHA-256
     /// hash into the identity token; Supabase verifies replay-protection.
     /// Generated once per appearance — must not change mid-flow.
     @State private var siwaNonce: String = WelcomeView.randomNonce()
     @State private var errorText: String?
     @State private var appleCoordinator: AppleSignInCoordinator?
-    @FocusState private var focusedField: Field?
-
-    enum Field { case email, code }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -49,18 +36,20 @@ struct WelcomeView: View {
                 .shadow(color: .black.opacity(0.05), radius: 16, y: 5)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            // Bottom half: small "登录 / 注册：" heading + three equal-width
-            // capsule buttons (or the code-entry step when applicable).
+            // Bottom half: small "登录 / 注册：" heading + the two
+            // brand-pill buttons stacked horizontally.
             VStack(alignment: .leading, spacing: 0) {
-                if !inEmailCodeStep {
-                    Text("登录 / 注册：")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Theme.Palette.ink)
-                        .padding(.leading, 4)
-                        .padding(.bottom, 22)
-                }
+                Text("登录 / 注册：")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.ink)
+                    .padding(.leading, 4)
+                    .padding(.bottom, 22)
 
-                methods
+                HStack(spacing: 12) {
+                    appleButton
+                    googleButton
+                }
+                .disabled(isVerifying)
 
                 if let errorText {
                     errorBlock(text: errorText)
@@ -74,38 +63,9 @@ struct WelcomeView: View {
         }
         .padding(.horizontal, 28)
         .background(Theme.Palette.canvas.ignoresSafeArea())
-        .onAppear {
-            // Don't grab focus for the email field — let users tap it
-            // explicitly so the keyboard doesn't fly up on launch. The code
-            // step still autofocuses (set when sendCode succeeds).
-            if stage == .codeSent { focusedField = .code }
-        }
     }
 
-    // MARK: - Sections
-
-    private var inEmailCodeStep: Bool {
-        stage == .codeSent
-    }
-
-    @ViewBuilder
-    private var methods: some View {
-        if inEmailCodeStep {
-            VStack(spacing: 14) {
-                emailEchoRow
-                codeRow
-            }
-        } else {
-            VStack(spacing: 14) {
-                HStack(spacing: 12) {
-                    appleButton
-                    googleButton
-                }
-                emailRow
-            }
-            .disabled(isBusy)
-        }
-    }
+    // MARK: - Buttons
 
     /// Apple sign-in button. Custom-styled because SwiftUI's
     /// `SignInWithAppleButton` ships fixed Apple-localized labels only
@@ -183,157 +143,11 @@ struct WelcomeView: View {
         }
     }
 
-    private var emailRow: some View {
-        inputRow {
-            TextField("邮箱", text: $email)
-                .textInputAutocapitalization(.never)
-                .keyboardType(.emailAddress)
-                .textContentType(.emailAddress)
-                .autocorrectionDisabled()
-                .focused($focusedField, equals: .email)
-                .submitLabel(.continue)
-                .onSubmit { Task { await primaryAction() } }
-        }
-    }
-
-    private var codeRow: some View {
-        inputRow {
-            TextField("6 位验证码", text: $code)
-                .keyboardType(.numberPad)
-                .textContentType(.oneTimeCode)
-                .focused($focusedField, equals: .code)
-                .submitLabel(.go)
-                .onSubmit { Task { await primaryAction() } }
-        }
-    }
-
-    /// One row: a text input on the left, a green circular submit button
-    /// on the right. The button shows the arrow when idle, a spinner when
-    /// busy, and dims when the input is empty/invalid.
-    @ViewBuilder
-    private func inputRow<Content: View>(
-        @ViewBuilder field: () -> Content
-    ) -> some View {
-        HStack(spacing: 0) {
-            field()
-                .font(.system(size: 17))
-                .padding(.leading, 20)
-                .padding(.vertical, 14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            submitArrowButton
-                .padding(.trailing, 7)
-        }
-        .frame(height: 52)
-        .glassCapsule()
-        .shadow(color: .black.opacity(0.08), radius: 10, y: 4)
-    }
-
-    private var submitArrowButton: some View {
-        Button { Task { await primaryAction() } } label: {
-            Group {
-                if isBusy {
-                    ProgressView()
-                        .tint(.white)
-                } else {
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(.white)
-                }
-            }
-            .frame(width: 38, height: 38)
-            .background(
-                Circle().fill(canSubmit ? Theme.Palette.accent : Theme.Palette.accent.opacity(0.28))
-            )
-        }
-        .buttonStyle(.plain)
-        .disabled(!canSubmit || isBusy)
-        .animation(.easeInOut(duration: 0.15), value: canSubmit)
-    }
-
-    private var emailEchoRow: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "envelope")
-                .font(.system(size: 13))
-                .foregroundStyle(Theme.Palette.inkMuted)
-            Text(email)
-                .font(Theme.Fonts.footnote)
-                .foregroundStyle(Theme.Palette.inkMuted)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            Spacer()
-            Button("换个") {
-                stage = .enteringEmail
-                code = ""
-                errorText = nil
-                focusedField = .email
-            }
-            .buttonStyle(.plain)
-            .font(Theme.Fonts.caption)
-            .foregroundStyle(Theme.Palette.accent.opacity(0.85))
-        }
-        .padding(.horizontal, 4)
-    }
-
     private func errorBlock(text: String) -> some View {
         Text(text)
             .font(Theme.Fonts.caption)
             .foregroundStyle(.red)
             .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    // MARK: - Derived state
-
-    private var isBusy: Bool { isVerifying }
-
-    private var canSubmit: Bool {
-        if isVerifying { return false }
-        switch stage {
-        case .enteringEmail: return email.contains("@") && email.contains(".")
-        case .codeSent:      return code.count >= 4
-        }
-    }
-
-    // MARK: - Email-code flow
-
-    @MainActor
-    private func primaryAction() async {
-        if isVerifying { return }
-        errorText = nil
-        switch stage {
-        case .enteringEmail: await sendCode()
-        case .codeSent:      await verifyCode()
-        }
-    }
-
-    @MainActor
-    private func sendCode() async {
-        let trimmed = email.trimmingCharacters(in: .whitespaces)
-        do {
-            try await EmailSignIn.requestCode(email: trimmed)
-            stage = .codeSent
-            focusedField = .code
-            Haptics.tap()
-        } catch {
-            errorText = error.localizedDescription
-            Haptics.error()
-        }
-    }
-
-    @MainActor
-    private func verifyCode() async {
-        isVerifying = true
-        defer { isVerifying = false }
-        do {
-            _ = try await EmailSignIn.verify(
-                email: email.trimmingCharacters(in: .whitespacesAndNewlines),
-                code: code.trimmingCharacters(in: .whitespaces)
-            )
-            Haptics.success()
-        } catch {
-            errorText = error.localizedDescription
-            Haptics.error()
-        }
     }
 
     // MARK: - SIWA helpers
