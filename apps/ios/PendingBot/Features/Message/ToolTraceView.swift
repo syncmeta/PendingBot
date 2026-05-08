@@ -47,10 +47,11 @@ struct ToolTraceEvent: Identifiable, Hashable {
 /// Inline, non-bubble trace of the bot's tool calls for one turn. Reads as
 /// a quiet sidebar in the conversation flow:
 ///
-///   - While searching: auto-expanded — one row per tool call + a list of
-///     hits as they arrive (domain · title), so the user sees the search
-///     unfold in real time.
-///   - After all tools complete: auto-collapses to a single header row
+///   - While the turn is live (bot still streaming): auto-expanded —
+///     each tool call + the search hits as they land. Stays open for the
+///     whole turn even after individual tools finish, so a 500ms search
+///     doesn't pop in and out before the user can read it.
+///   - After the turn ends: auto-collapses to a single header row
 ///     ("搜索 · 3 条结果"), tappable to re-expand for review.
 ///
 /// Colors are intentionally muted (no surface fill, no border) so the trace
@@ -59,7 +60,8 @@ struct ToolTraceView: View {
     let events: [ToolTraceEvent]
     /// True while the turn is still streaming (we don't yet know whether
     /// more tool calls will arrive). Drives the live spinner + "搜索中…"
-    /// wording on the header.
+    /// wording on the header AND the auto-expand window — the trace stays
+    /// open for the full live span, not just per-tool pending.
     let isLive: Bool
     /// Cumulative web-search hits surfaced during the turn — same list the
     /// bot's `[N]` markers resolve against. Rendered as tappable rows in
@@ -69,8 +71,9 @@ struct ToolTraceView: View {
     @State private var expanded: Bool = false
     @Environment(\.openURL) private var openURL
 
-    /// Any tool still in flight → trace is "live activity". Drives the
-    /// auto-expand-while-searching, auto-collapse-when-done behavior.
+    /// Any tool still in flight → drives the typing-dots indicator on the
+    /// header. Decoupled from `expanded` (see `isLive`) so a fast search
+    /// finishing doesn't slam the panel shut mid-turn.
     private var anyPending: Bool { !events.allSatisfy(\.done) }
 
     var body: some View {
@@ -87,14 +90,14 @@ struct ToolTraceView: View {
             .onAppear {
                 // Mid-stream mount → reflect live state immediately so the
                 // user sees the search unfolding without having to tap.
-                expanded = anyPending
+                expanded = isLive
             }
-            .onChange(of: anyPending) { _, nowPending in
-                // Searches just started → expand. Last result landed → collapse.
-                // User taps still override either direction; the next pending
-                // transition re-syncs.
+            .onChange(of: isLive) { _, nowLive in
+                // Turn just kicked off → expand. Turn ended → collapse to
+                // a quiet summary row. User taps still override either
+                // direction; the next isLive transition re-syncs.
                 withAnimation(.easeInOut(duration: 0.2)) {
-                    expanded = nowPending
+                    expanded = nowLive
                 }
             }
         }

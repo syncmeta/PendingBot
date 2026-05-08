@@ -72,11 +72,12 @@ struct MarkdownText: View {
         .link {
             // Citations land here too — see CitationScheme.rewrite, which
             // turns inline `[N]` markers into markdown links whose label is
-            // the source's domain. The accent fill + medium weight make
-            // them read as small tags rather than underlined text.
+            // the source's domain wrapped in NBSPs. `accentBg` is the same
+            // pale-green wash used on user bubbles, so the inline citations
+            // read as light-green pills against the canvas.
             ForegroundColor(AppTheme.Palette.accent)
-            BackgroundColor(AppTheme.Palette.accent.opacity(0.12))
-            FontSize(.em(0.88))
+            BackgroundColor(AppTheme.Palette.accentBg)
+            FontSize(.em(0.85))
             FontWeight(.medium)
         }
         .strong { FontWeight(.semibold) }
@@ -143,12 +144,15 @@ fileprivate enum CitationScheme {
     static let scheme = "pendingbot-cite"
 
     /// Replace every `[N]` (1-based) in `text` with a markdown link whose
-    /// label is the citation's domain (e.g. `wikipedia.org`) wrapped in
-    /// brackets, and whose href is `pendingbot-cite://N`. References
-    /// outside `1...count` are left as plain text — better to show a stray
-    /// `[7]` than to dead-link it. The `\[` / `\]` escapes keep CommonMark
-    /// from re-parsing the inner brackets as link syntax; the brackets
-    /// themselves visually separate adjacent citations like `[1][3]`.
+    /// label is the citation's domain (e.g. `wikipedia.org`) padded with
+    /// NBSPs (`\u{00A0}`) so the inline background color renders with
+    /// breathing room — that's what gives the pill its visual padding,
+    /// since MarkdownUI's `.link` background is a flat rectangle, not a
+    /// shape we can corner-radius. References outside `1...count` are
+    /// left as plain text — better to show a stray `[7]` than to dead-link
+    /// it. Adjacent citations (`[1][3]` with no separator) get a hair-
+    /// space (`\u{2009}`) injected between them so two pills don't smear
+    /// into one continuous green bar.
     static func rewrite(_ text: String, citations: [MessageCitation]) -> String {
         // Avoid re-parsing on every layout pass — short-circuit when the
         // text has no candidate.
@@ -161,6 +165,7 @@ fileprivate enum CitationScheme {
         let count = citations.count
         var result = ""
         var cursor = 0
+        var lastEmittedCitationEnd = -1   // text-offset where the last pill we wrote ended
         for match in matches {
             let full = match.range
             let nRange = match.range(at: 1)
@@ -169,8 +174,14 @@ fileprivate enum CitationScheme {
                 result += ns.substring(with: NSRange(location: cursor, length: full.location - cursor))
             }
             if n >= 1 && n <= count {
+                if lastEmittedCitationEnd == full.location {
+                    // Adjacent pills — separate them visually so the
+                    // backgrounds don't merge.
+                    result += "\u{2009}"
+                }
                 let host = host(for: citations[n - 1].url)
-                result += "[\\[\(host)\\]](\(scheme)://\(n))"
+                result += "[\u{00A0}\(host)\u{00A0}](\(scheme)://\(n))"
+                lastEmittedCitationEnd = full.location + full.length
             } else {
                 result += ns.substring(with: full)
             }
