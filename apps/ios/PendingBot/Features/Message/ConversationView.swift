@@ -307,7 +307,7 @@ struct ConversationView: View {
             .presentationDragIndicator(.visible)
             .onDisappear { Task { await loadSkills() } }
         }
-        .sheet(isPresented: $showingSettings) {
+        .navigationDestination(isPresented: $showingSettings) {
             ConversationSettingsView(
                 modelOverride: $modelOverride,
                 providerOverride: $providerOverride,
@@ -328,8 +328,6 @@ struct ConversationView: View {
                     Haptics.tap()
                 }
             )
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
         }
         .sheet(item: Binding(
             get: { saveAsSkillBody.map { SkillDraft(body: $0) } },

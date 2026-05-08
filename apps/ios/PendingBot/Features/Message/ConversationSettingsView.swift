@@ -1,9 +1,9 @@
 import SwiftUI
 import Supabase
 
-/// Per-conversation settings sheet — opened from the gear icon in the chat
-/// header. Houses skills, model, provider, and the 来信 (Envelopes) trigger
-/// + per-conversation envelope config.
+/// Per-conversation settings page — pushed from the gear icon in the chat
+/// header. Houses skills, model, provider, the 来信 (Envelopes) trigger
+/// + per-conversation envelope config, and the lookback notes log.
 struct ConversationSettingsView: View {
     @Binding var modelOverride: String
     /// Per-conversation provider pin. nil = "自动" (follow bot/model
@@ -31,6 +31,17 @@ struct ConversationSettingsView: View {
     @State private var triggering: Bool = false
     @State private var triggerError: String?
 
+    // ── Lookback 笔记 ─────────────────────────────────────────────────────
+    @State private var lookbacks: [LookbackRow] = []
+    @State private var lookbacksLoaded: Bool = false
+
+    private struct LookbackRow: Identifiable, Decodable {
+        let id: String
+        let body_md: String
+        let active: Bool
+        let created_at: String
+    }
+
     private enum EnvelopeModelPickerTarget: Identifiable {
         case explorer, collaborator
         var id: Int { self == .explorer ? 0 : 1 }
@@ -42,8 +53,7 @@ struct ConversationSettingsView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Form {
+        Form {
                 Section("技能") {
                     Button {
                         dismiss()
@@ -111,78 +121,76 @@ struct ConversationSettingsView: View {
                     Text("选「自动」按系统默认路由。指定一家时仍保留 fallback：那家 5xx 时会自动落到另一家。")
                 }
 
-                envelopeSection
-            }
-            .navigationTitle("会话设置")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") { dismiss() }
+            envelopeSection
+            lookbackSection
+        }
+        .navigationTitle("会话设置")
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            await loadEnvelopeSettings()
+            await loadLookbacks()
+        }
+        .alert("出错", isPresented: .constant(triggerError != nil)) {
+            Button("好") { triggerError = nil }
+        } message: { Text(triggerError ?? "") }
+        .sheet(isPresented: $showModelPicker) {
+            ModelPickerSheet(
+                initial: modelOverride,
+                allowsClear: true,
+                onPick: { picked in
+                    showModelPicker = false
+                    pendingPick = PickPayload(slug: picked)
                 }
-            }
-            .task { await loadEnvelopeSettings() }
-            .alert("出错", isPresented: .constant(triggerError != nil)) {
-                Button("好") { triggerError = nil }
-            } message: { Text(triggerError ?? "") }
-            .sheet(isPresented: $showModelPicker) {
-                ModelPickerSheet(
-                    initial: modelOverride,
-                    allowsClear: true,
-                    onPick: { picked in
-                        showModelPicker = false
-                        pendingPick = PickPayload(slug: picked)
-                    }
-                )
-                .presentationDragIndicator(.visible)
-                .tint(Theme.Palette.accent)
-            }
-            .sheet(item: $pickerTarget) { target in
-                let initialSlug: String = {
+            )
+            .presentationDragIndicator(.visible)
+            .tint(Theme.Palette.accent)
+        }
+        .sheet(item: $pickerTarget) { target in
+            let initialSlug: String = {
+                switch target {
+                case .explorer:     return envelope.explorerModel
+                case .collaborator: return envelope.collaboratorModel ?? ""
+                }
+            }()
+            ModelPickerSheet(
+                initial: initialSlug,
+                allowsClear: target == .collaborator,
+                onPick: { picked in
                     switch target {
-                    case .explorer:     return envelope.explorerModel
-                    case .collaborator: return envelope.collaboratorModel ?? ""
+                    case .explorer:
+                        // No clear for explorer — fall back to default if
+                        // somehow the picker hands us nil.
+                        envelope.explorerModel = picked ?? EnvelopeSettings.defaults.explorerModel
+                    case .collaborator:
+                        envelope.collaboratorModel = picked
                     }
-                }()
-                ModelPickerSheet(
-                    initial: initialSlug,
-                    allowsClear: target == .collaborator,
-                    onPick: { picked in
-                        switch target {
-                        case .explorer:
-                            // No clear for explorer — fall back to default if
-                            // somehow the picker hands us nil.
-                            envelope.explorerModel = picked ?? EnvelopeSettings.defaults.explorerModel
-                        case .collaborator:
-                            envelope.collaboratorModel = picked
-                        }
-                        pickerTarget = nil
-                    }
-                )
-                .presentationDragIndicator(.visible)
-                .tint(Theme.Palette.accent)
-            }
-            .confirmationDialog(
-                pendingPick?.slug.map { "应用「\(shortSlug($0))」到…" } ?? "清除模型选择…",
-                isPresented: Binding(
-                    get: { pendingPick != nil },
-                    set: { if !$0 { pendingPick = nil } }
-                ),
-                titleVisibility: .visible
-            ) {
-                Button("仅本次会话") {
-                    if let p = pendingPick { onApplyModel(p.slug, .conversation) }
-                    pendingPick = nil
+                    pickerTarget = nil
                 }
-                Button("这个机器人（仅自己）") {
-                    if let p = pendingPick { onApplyModel(p.slug, .bot) }
-                    pendingPick = nil
-                }
-                Button("取消", role: .cancel) { pendingPick = nil }
-            } message: {
-                Text(pendingPick?.slug == nil
-                     ? "选择「仅本次会话」会清掉本会话的临时指定；选择「这个机器人」会把你为这个机器人指定的模型也一并清掉，回到机器人默认。"
-                     : "选择「仅本次会话」只影响当前对话；选择「这个机器人」会改你这台号上这个机器人的默认模型，对所有未单独指定的会话生效。")
+            )
+            .presentationDragIndicator(.visible)
+            .tint(Theme.Palette.accent)
+        }
+        .confirmationDialog(
+            pendingPick?.slug.map { "应用「\(shortSlug($0))」到…" } ?? "清除模型选择…",
+            isPresented: Binding(
+                get: { pendingPick != nil },
+                set: { if !$0 { pendingPick = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("仅本次会话") {
+                if let p = pendingPick { onApplyModel(p.slug, .conversation) }
+                pendingPick = nil
             }
+            Button("这个机器人（仅自己）") {
+                if let p = pendingPick { onApplyModel(p.slug, .bot) }
+                pendingPick = nil
+            }
+            Button("取消", role: .cancel) { pendingPick = nil }
+        } message: {
+            Text(pendingPick?.slug == nil
+                 ? "选择「仅本次会话」会清掉本会话的临时指定；选择「这个机器人」会把你为这个机器人指定的模型也一并清掉，回到机器人默认。"
+                 : "选择「仅本次会话」只影响当前对话；选择「这个机器人」会改你这台号上这个机器人的默认模型，对所有未单独指定的会话生效。")
         }
         .tint(Theme.Palette.accent)
     }
@@ -310,6 +318,80 @@ struct ConversationSettingsView: View {
             // No row yet, or no access — fall through to defaults.
         }
         envelopeLoaded = true
+    }
+
+    // MARK: - Lookback section
+
+    @ViewBuilder
+    private var lookbackSection: some View {
+        Section {
+            if !lookbacksLoaded {
+                HStack { ProgressView(); Text("加载中…").foregroundStyle(.secondary) }
+            } else if lookbacks.isEmpty {
+                Text("暂无回看笔记。每隔 10 轮，机器人会自动回看一次最近的对话，发现需要更正/补充的地方就在这里记一笔。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(lookbacks) { row in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 6) {
+                            Text(row.active ? "活跃" : "已撤")
+                                .font(.caption2.weight(.semibold))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(
+                                    (row.active ? Theme.Palette.accent : Color.secondary)
+                                        .opacity(0.15),
+                                    in: Capsule()
+                                )
+                                .foregroundStyle(row.active ? Theme.Palette.accent : .secondary)
+                            Text(formattedTime(row.created_at))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Text(row.body_md)
+                            .font(.callout)
+                            .foregroundStyle(row.active ? Theme.Palette.ink : .secondary)
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+        } header: {
+            Text("回看笔记 / Lookback")
+        } footer: {
+            Text("机器人每隔 10 轮自我复盘一次：检查你或它说过的内容是否需要更正、补充。活跃笔记会注入到下一次回复的上下文里；机器人觉得没问题就会撤掉。")
+        }
+    }
+
+    private func loadLookbacks() async {
+        guard !conversationId.isEmpty else {
+            lookbacksLoaded = true
+            return
+        }
+        do {
+            let rows: [LookbackRow] = try await SupabaseStack.shared
+                .from("bot_lookbacks")
+                .select("id, body_md, active, created_at")
+                .eq("conversation_id", value: conversationId)
+                .order("created_at", ascending: false)
+                .limit(50)
+                .execute()
+                .value
+            lookbacks = rows
+        } catch {
+            // Silent — section just shows the empty hint.
+        }
+        lookbacksLoaded = true
+    }
+
+    private func formattedTime(_ iso: String) -> String {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let date = f.date(from: iso) ?? ISO8601DateFormatter().date(from: iso)
+        guard let date else { return iso }
+        let df = DateFormatter()
+        df.dateFormat = "MM-dd HH:mm"
+        return df.string(from: date)
     }
 
     /// Fire the trigger with the current local settings. The worker
