@@ -7,6 +7,11 @@ export type Json =
   | Json[]
 
 export type Database = {
+  // Allows to automatically instantiate createClient with right options
+  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
+  __InternalSupabase: {
+    PostgrestVersion: "14.5"
+  }
   pendingbot: {
     Tables: {
       account_deletion_log: {
@@ -2144,16 +2149,9 @@ export type Database = {
         Args: { p_bot_id: string; p_handle: string }
         Returns: string
       }
-      cancel_account_deletion: {
-        Args: Record<string, never>
-        Returns: boolean
-      }
+      cancel_account_deletion: { Args: never; Returns: boolean }
       finalize_account_deletion: {
         Args: { p_force?: boolean; p_uid: string }
-        Returns: undefined
-      }
-      request_account_deletion: {
-        Args: { p_sentiment: string }
         Returns: undefined
       }
       group_continue_decide: {
@@ -2281,6 +2279,10 @@ export type Database = {
       open_self_conv: { Args: never; Returns: string }
       open_user_bot_conv: { Args: { p_bot_id: string }; Returns: string }
       random_place_name: { Args: never; Returns: string }
+      request_account_deletion: {
+        Args: { p_sentiment: string }
+        Returns: undefined
+      }
       seed_sample_dialogue: {
         Args: {
           p_bot_id: string
@@ -2446,4 +2448,3 @@ export const Constants = {
     },
   },
 } as const
-
