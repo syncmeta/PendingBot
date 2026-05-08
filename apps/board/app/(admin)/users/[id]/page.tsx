@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase/admin';
-import { fmtCredits, fmtUsd } from '@/lib/format';
+import { fmtPnd, fmtUsd } from '@/lib/format';
 import { grantCredits, updateQuota } from '../actions';
 import { QuotaForm } from './_form';
 import { GrantForm } from './_grant-form';
@@ -61,31 +61,31 @@ export default async function UserDetailPage({
       </div>
 
       <section className="space-y-3">
-        <h2 className="text-sm font-medium">余额（credits）</h2>
+        <h2 className="text-sm font-medium">余额（PND ∂）</h2>
         <div className="rounded-lg border bg-card p-4 space-y-2">
           <div className="grid grid-cols-3 gap-3 text-sm">
             <div>
               <div className="text-xs uppercase text-muted-foreground">当前余额</div>
               <div className="mt-0.5 text-2xl font-semibold tabular-nums">
-                {fmtCredits(user.balance_credits)}
+                {fmtPnd(user.balance_credits)}
               </div>
             </div>
             <div>
               <div className="text-xs uppercase text-muted-foreground">累计充值</div>
               <div className="mt-0.5 text-lg tabular-nums text-muted-foreground">
-                {fmtCredits(user.lifetime_topup_credits)}
+                {fmtPnd(user.lifetime_topup_credits)}
               </div>
             </div>
             <div>
               <div className="text-xs uppercase text-muted-foreground">累计消费</div>
               <div className="mt-0.5 text-lg tabular-nums text-muted-foreground">
-                {fmtCredits(user.lifetime_spent_credits)}
+                {fmtPnd(user.lifetime_spent_credits)}
               </div>
             </div>
           </div>
           <div className="border-t pt-3">
             <p className="mb-2 text-xs text-muted-foreground">
-              发放（正数）/ 扣回（负数）credits — 走 billing_admin_grant RPC,
+              发放（正数）/ 扣回（负数）PND — 走 billing_admin_grant RPC,
               写 billing_ledger + admin_audit。
             </p>
             <GrantForm action={grantCredits.bind(null, id)} />
@@ -119,7 +119,7 @@ export default async function UserDetailPage({
                       }`}
                     >
                       {Number(r.delta_credits) > 0 ? '+' : ''}
-                      {fmtCredits(r.delta_credits)}
+                      {fmtPnd(r.delta_credits)}
                     </td>
                     <td className="px-4 py-2 text-xs text-muted-foreground">
                       {r.reason ?? '—'}

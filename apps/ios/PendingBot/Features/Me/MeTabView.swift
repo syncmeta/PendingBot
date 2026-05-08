@@ -99,6 +99,13 @@ struct MeTabView: View {
                             .buttonStyle(.plain)
 
                             NavigationLink {
+                                WalletView().toolbar(.hidden, for: .tabBar)
+                            } label: {
+                                CapsuleRowLabel(title: "钱包")
+                            }
+                            .buttonStyle(.plain)
+
+                            NavigationLink {
                                 SkillsView().toolbar(.hidden, for: .tabBar)
                             } label: {
                                 CapsuleRowLabel(title: "技能管理")

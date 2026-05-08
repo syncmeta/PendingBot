@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 import type { Env } from '../types';
 import type { SupabaseClient } from '../lib/supabase';
-import { billingDebit, usdToCredits } from '../lib/billing';
+import { billingDebit, usdToPnd } from '../lib/billing';
 
 // LLM router — resolves a caller-supplied model slug to a concrete
 // (provider, alias) pair, hands back an OpenAI-compatible client
@@ -340,7 +340,7 @@ export async function recordAudit(
   opts: AuditCallOpts,
 ): Promise<void> {
   const cost = route?.alias ? computeCost(route.alias, opts) : null;
-  const credits = usdToCredits(cost);
+  const pnd = usdToPnd(cost);
   const total =
     (opts.inputTokens ?? 0) +
     (opts.outputTokens ?? 0) +
@@ -349,15 +349,15 @@ export async function recordAudit(
 
   // Billing status preview. The actual billed/unbilled flip happens in
   // billing_debit (when called below); we plant a sensible initial value
-  // so audit rows that never debit (no userId, zero credits, error
-  // status) settle into a final state on insert.
+  // so audit rows that never debit (no userId, zero PND, error status)
+  // settle into a final state on insert.
   //   - 'free'    : no userId at all (system-triggered call w/o owner)
-  //   - 'skipped' : has userId but credits == 0 (error / no usage / no
+  //   - 'skipped' : has userId but pnd == 0 (error / no usage / no
   //                 alias pricing)
   //   - 'pending' : will be flipped to billed/unbilled by billing_debit
   const initialBilling: 'free' | 'skipped' | 'pending' = !opts.userId
     ? 'free'
-    : credits <= 0
+    : pnd <= 0
       ? 'skipped'
       : 'pending';
 
@@ -377,7 +377,7 @@ export async function recordAudit(
     est_output_tokens: opts.estOutputTokens ?? null,
     total_tokens: total,
     cost_usd: cost,
-    cost_credits: credits,
+    cost_credits: pnd,
     billing_status: initialBilling,
     generation_id: opts.generationId ?? null,
     latency_ms: Date.now() - opts.startedAt,
@@ -405,7 +405,7 @@ export async function recordAudit(
   // pre-call gate handles consequences (insufficient balance blocks
   // further requests).
   if (initialBilling === 'pending' && opts.userId && inserted?.id) {
-    await billingDebit(supa, opts.userId, inserted.id as string, credits);
+    await billingDebit(supa, opts.userId, inserted.id as string, pnd);
   }
 }
 

@@ -4,16 +4,18 @@ import type { SupabaseClient } from './supabase';
 // 0034_billing_admin_rpcs.sql. This module is the single point that knows
 // about cost_credits, balance fields, and the billing_* RPCs.
 
-// 1 USD ≈ 1000 credits internal accounting unit. Credits ↔ display dollars
-// is a per-channel ratio (Apple IAP / Stripe / redemption may differ); 1000
-// just makes ceil() arithmetic land on whole credits for typical per-call
-// LLM costs (a $0.0002 call → 1 credit at 2.5× markup).
-const USD_TO_CREDITS = 1000;
+// $1 USD list price = 2700 PND (Pending Name Dollar, symbol ∂). This is
+// the user-facing display ratio — IAP / Stripe / redemption all sell at
+// the same headline rate. 2700 (vs a round 1000) gives larger nominal
+// numbers in-app (signup bonus, per-call drain) without changing real
+// markup; granularity also lands closer to per-token costs on cheap
+// models so ceil() rounding bites less.
+const USD_TO_PND = 2700;
 
 // Markup over our wholesale provider cost. WorldRouter is ~70% of OpenRouter
 // list; Apple IAP takes 30%; we still want margin for ops + free tier
 // signup grant. 2.5× is the conservative starting point; tune in P1 once
-// real consumption shows up.
+// real consumption shows up. Independent of the USD↔PND ratio above.
 const MARKUP = 2.5;
 
 // Pre-call gate threshold default — read from billing_config at runtime.
@@ -22,15 +24,19 @@ const MARKUP = 2.5;
 const DEFAULT_MIN_THRESHOLD = 0;
 
 /**
- * Convert a USD cost to integer credits, applying markup.
+ * Convert a USD provider cost to integer PND debit, applying markup.
  *
  * Returns 0 for null / 0 / negative inputs (e.g. fallback flows where the
  * provider responded but we don't have alias pricing — we don't know the
  * cost so we don't bill).
+ *
+ * Note: DB columns and SQL RPCs still use the legacy `_credits` suffix
+ * (balance_credits, cost_credits, p_credits, …). They store PND values;
+ * the column name is just historical and invisible to users.
  */
-export function usdToCredits(costUsd: number | null | undefined): number {
+export function usdToPnd(costUsd: number | null | undefined): number {
   if (!costUsd || costUsd <= 0) return 0;
-  return Math.ceil(costUsd * USD_TO_CREDITS * MARKUP);
+  return Math.ceil(costUsd * USD_TO_PND * MARKUP);
 }
 
 // ---------------------------------------------------------------------------
