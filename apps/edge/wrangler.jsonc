@@ -27,9 +27,12 @@
   },
 
   // Cron triggers (B8). Each pattern is matched in src/cron/index.ts.
+  // Dropped "0 3 * * 1" (weekly model-pricing) to stay under the
+  // account cron-trigger cap (5). model_pricing now syncs manually
+  // from the board admin or via a one-shot wrangler invocation —
+  // pricing changes are rare enough to not need a recurring trigger.
   "triggers": {
     "crons": [
-      "0 3 * * 1",
       "0 4 * * *",
       "5 * * * *",
       "*/5 * * * *"

@@ -9,10 +9,13 @@ import { reapStuckScrolls } from './scroll-reaper';
 //
 // Wired schedules (must agree with wrangler.jsonc):
 //   "0 4 * * *"    daily 04:00 UTC — orphan upload sweep
-//   "0 3 * * 1"    weekly Monday 03:00 UTC — model_pricing sync from OpenRouter
 //   "5 * * * *"    hourly at xx:05 — idle Daytona sandbox sweep (TTL 1h)
 //   "*/5 * * * *"  every 5 min — scroll_runs watchdog (force-fail rows
 //                  stuck in 'running' past the loop's 4-min wall budget)
+//
+// model_pricing sync ("0 3 * * 1") was dropped to stay under the account
+// cron-trigger cap (5). syncModelPricing() stays exported as a callable
+// so admin can fire it manually via the board / wrangler if needed.
 //
 // Each task swallows its own errors so one failure doesn't poison sibling
 // jobs. Cron tasks log to CF Observability — check there if a job goes dark.
@@ -27,9 +30,7 @@ export async function handleScheduled(
 
   // Route by cron expression. Order matters only insofar as we waitUntil
   // each task — they run concurrently from the runtime's perspective.
-  if (cron === '0 3 * * 1') {
-    ctx.waitUntil(safe('model-pricing', () => syncModelPricing(env)));
-  } else if (cron === '0 4 * * *') {
+  if (cron === '0 4 * * *') {
     ctx.waitUntil(safe('uploads-cleanup', () => cleanupOrphanUploads(env)));
   } else if (cron === '5 * * * *') {
     ctx.waitUntil(safe('sandbox-cleanup', () => cleanupIdleSandboxes(env)));
