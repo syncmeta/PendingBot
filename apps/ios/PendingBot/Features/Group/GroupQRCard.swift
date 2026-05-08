@@ -9,7 +9,7 @@ import UIKit
 /// field; the QR follows whatever the row currently holds).
 ///
 /// Scanned payload format matches the user QRs:
-///   https://pendingname.com/c/<handle>
+///   https://bot.pendingname.com/c/<handle>
 /// `PendingBotQR.token(fromScanned:)` strips the prefix; the in-app
 /// scanner then tries /v1/groups/join first, falling back to
 /// /v1/friend-requests — so both kinds of handles work through the
