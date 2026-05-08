@@ -40,19 +40,13 @@ struct WalletView: View {
     private var balanceSection: some View {
         Section {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text("∂")
-                        .font(Theme.Fonts.serif(size: 28, weight: .semibold))
-                        .foregroundStyle(Theme.Palette.inkMuted)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(formatPnd(balance?.balanceCredits ?? 0))
                         .font(Theme.Fonts.serif(size: 40, weight: .bold))
                         .foregroundStyle(Theme.Palette.ink)
                         .monospacedDigit()
-                }
-
-                if let usd = displayUsd(balance?.balanceCredits ?? 0) {
-                    Text("≈ \(usd) 可消费")
-                        .font(Theme.Fonts.monoSmall)
+                    Text("PND")
+                        .font(Theme.Fonts.serif(size: 20, weight: .semibold))
                         .foregroundStyle(Theme.Palette.inkMuted)
                 }
 
@@ -65,7 +59,7 @@ struct WalletView: View {
                 }
 
                 HStack(spacing: 16) {
-                    miniStat(label: "累计获得", value: balance?.lifetimeTopupCredits ?? 0)
+                    miniStat(label: "累计入账", value: balance?.lifetimeTopupCredits ?? 0)
                     miniStat(label: "累计消费", value: balance?.lifetimeSpentCredits ?? 0)
                 }
                 .padding(.top, 4)
@@ -78,7 +72,7 @@ struct WalletView: View {
                     .font(Theme.Fonts.monoSmall)
                     .foregroundStyle(Color(hex: 0xB14B3C))
             } else {
-                Text("PND（Pending Name Dollar，符号 ∂）是大绿豆里的消费单位。$1 ≈ ∂2700。")
+                Text("PND: Pending Name Dollar")
                     .font(Theme.Fonts.monoSmall)
                     .foregroundStyle(Theme.Palette.inkMuted)
             }
@@ -283,17 +277,6 @@ struct WalletView: View {
         }
     }
 
-    // MARK: - Formatting
-
-    /// User-facing dollar value at the list rate (purchase ratio, not
-    /// post-markup provider cost). $1 == ∂2700 — must match USD_TO_PND
-    /// in apps/edge/src/lib/billing.ts.
-    private func displayUsd(_ pnd: Int) -> String? {
-        guard pnd > 0 else { return nil }
-        let usd = Double(pnd) / 2700.0
-        if usd >= 1 { return String(format: "$%.2f", usd) }
-        return String(format: "$%.3f", usd)
-    }
 }
 
 /// File-scope helper so both `WalletView` and its nested `HistoryRow`
