@@ -9,14 +9,18 @@ struct MeTabView: View {
     @Environment(\.useSidebarLayout) private var sidebarLayout
     @Environment(\.topTabSelection) private var topTabSelection
 
-    @State private var pendingConfirm: ConfirmAction?
+    @State private var confirmingSignOut = false
+    @State private var showDeleteSheet = false
     @State private var deleting = false
     @State private var error: String?
     @State private var showRandomize = false
 
-    private enum ConfirmAction: Identifiable {
-        case signOut, delete
-        var id: Self { self }
+    /// Two-way sentiment captured when finalizing account deletion. The
+    /// outcome is the same — full account wipe — but recording which
+    /// button the user picked tells us how people feel when they leave.
+    enum DeletionSentiment: String {
+        case seeYouAgain     = "see_you_again"     // "有缘再见"
+        case farewellForever = "farewell_forever"  // "再也不见"
     }
 
     var body: some View {
@@ -48,31 +52,23 @@ struct MeTabView: View {
             Button("好") { error = nil }
         } message: { Text(error ?? "") }
         .confirmationDialog(
-            confirmTitle,
-            isPresented: Binding(
-                get: { pendingConfirm != nil },
-                set: { if !$0 { pendingConfirm = nil } }
-            ),
+            "确定？",
+            isPresented: $confirmingSignOut,
             titleVisibility: .visible
         ) {
-            switch pendingConfirm {
-            case .signOut:
-                Button("退出登录", role: .destructive) { signOut() }
-                Button("取消", role: .cancel) {}
-            case .delete:
-                Button("永久删除", role: .destructive) { Task { await deleteAccount() } }
-                Button("取消", role: .cancel) {}
-            case .none:
-                EmptyView()
-            }
+            Button("退出登录", role: .destructive) { signOut() }
+            Button("取消", role: .cancel) {}
         }
-    }
-
-    private var confirmTitle: String {
-        switch pendingConfirm {
-        case .signOut: return "确定？"
-        case .delete:  return "删除你在服务器上的所有数据 就像你没来过一样 不可撤销 无法恢复 数据无价 谨慎操作"
-        case .none:    return ""
+        .sheet(isPresented: $showDeleteSheet) {
+            DeleteAccountSheet(
+                deleting: deleting,
+                onChoose: { sentiment in
+                    Task { await deleteAccount(sentiment: sentiment) }
+                },
+                onCancel: { showDeleteSheet = false }
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
     }
 
@@ -119,18 +115,18 @@ struct MeTabView: View {
 
                         GroupedRowsCard {
                             Button {
-                                pendingConfirm = .signOut
+                                confirmingSignOut = true
                                 Haptics.tap()
                             } label: {
                                 GroupedRow(title: "退出登录", role: .destructive, showsChevron: false)
                             }
                             .buttonStyle(.plain)
                             .disabled(store.current == nil)
+                        }
 
-                            GroupedRowDivider()
-
+                        GroupedRowsCard {
                             Button {
-                                pendingConfirm = .delete
+                                showDeleteSheet = true
                                 Haptics.tap()
                             } label: {
                                 GroupedRow(
@@ -211,19 +207,100 @@ struct MeTabView: View {
         }
     }
 
-    private func deleteAccount() async {
+    private func deleteAccount(sentiment: DeletionSentiment) async {
         guard !deleting else { return }
         deleting = true; defer { deleting = false }
         do {
+            struct Args: Encodable { let p_sentiment: String }
             try await SupabaseStack.shared
-                .rpc("delete_self_account")
+                .rpc("delete_self_account",
+                     params: Args(p_sentiment: sentiment.rawValue))
                 .execute()
+            showDeleteSheet = false
             await store.signOut()
             Haptics.success()
         } catch {
             self.error = "注销失败：\(error.localizedDescription)"
             Haptics.error()
         }
+    }
+}
+
+/// Account-deletion confirmation sheet. The two destructive buttons are
+/// functionally identical — both wipe the account — but the choice is
+/// recorded as sentiment so the team can see the split between users
+/// who left thinking of coming back vs slamming the door.
+private struct DeleteAccountSheet: View {
+    let deleting: Bool
+    let onChoose: (MeTabView.DeletionSentiment) -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("删所有数据")
+                Text("云端和本地都删")
+                Text("真的非常遗憾")
+            }
+            .font(Theme.Fonts.footnote)
+            .foregroundStyle(Theme.Palette.inkMuted)
+
+            Text("不可撤销 想好再点")
+                .font(Font.system(size: 18, weight: .bold))
+                .foregroundStyle(Color(hex: 0xB14B3C))
+
+            VStack(spacing: 10) {
+                destructiveButton("去意已决，有缘再见") {
+                    onChoose(.seeYouAgain)
+                }
+                destructiveButton("去意已决，再也不见") {
+                    onChoose(.farewellForever)
+                }
+            }
+            .disabled(deleting)
+            .opacity(deleting ? 0.5 : 1)
+
+            Text("两个选项都能完全注销账号，我只是想知道你对我的态度")
+                .font(Theme.Fonts.caption)
+                .foregroundStyle(Theme.Palette.inkMuted)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .multilineTextAlignment(.center)
+
+            Button("取消", action: onCancel)
+                .font(Theme.Fonts.bodyEmphasized)
+                .foregroundStyle(Theme.Palette.ink)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Theme.Palette.surface)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
+                )
+                .disabled(deleting)
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 24)
+        .padding(.bottom, 28)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.Palette.canvas.ignoresSafeArea())
+    }
+
+    private func destructiveButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(Theme.Fonts.bodyEmphasized)
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 16)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color(hex: 0xB14B3C))
+                )
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -251,7 +328,7 @@ private struct GroupedRowDivider: View {
         Rectangle()
             .fill(Theme.Palette.hairline)
             .frame(height: 0.5)
-            .padding(.leading, 18)
+            .padding(.leading, 20)
     }
 }
 
@@ -268,7 +345,7 @@ private struct GroupedRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Text(title)
-                .font(Theme.Fonts.body)
+                .font(Theme.Fonts.bodyEmphasized)
                 .foregroundStyle(role == .destructive
                                  ? Color(hex: 0xB14B3C)
                                  : Theme.Palette.ink)
@@ -279,8 +356,8 @@ private struct GroupedRow: View {
                     .foregroundStyle(Theme.Palette.inkMuted.opacity(0.7))
             }
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 14)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 20)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
     }
