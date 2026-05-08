@@ -23,10 +23,15 @@ export interface Env {
   WORLDROUTER_API_KEY?: string;
   HONCHO_API_KEY: string;
   HONCHO_WORKSPACE_ID: string;
-  // Web tools: Brave for search, Firecrawl for scrape — used by both the
-  // in-chat search/read tools and the 奏折 runner.
+  // Web tools — Brave/Firecrawl are the always-available pair (used by
+  // in-chat search/read). The optional providers below let the Envelope
+  // (来信) runner pick a different combo per-conversation; the runner
+  // surfaces a clean error if a chosen provider's key is missing.
   BRAVE_API_KEY: string;
   FIRECRAWL_API_KEY: string;
+  TAVILY_API_KEY?: string;
+  EXA_API_KEY?: string;
+  SERPER_API_KEY?: string;
   // APNS: token-based auth, two .p8 keys (Apple recommends per-environment).
   // Topic = the iOS app bundle id (key is restricted to it).
   APNS_TEAM_ID: string;

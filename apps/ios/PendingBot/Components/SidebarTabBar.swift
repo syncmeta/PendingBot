@@ -14,7 +14,7 @@ enum TopTab: String, Hashable, CaseIterable {
         switch self {
         case .message: return "消息"
         case .friends: return "好友"
-        case .scroll:  return "奏折"
+        case .scroll:  return "来信"
         case .me:      return "我"
         }
     }
@@ -23,7 +23,7 @@ enum TopTab: String, Hashable, CaseIterable {
         switch self {
         case .message: return "bubble.left"
         case .friends: return "person.2"
-        case .scroll:  return "scroll"
+        case .scroll:  return "envelope.open"
         case .me:      return "person.crop.circle"
         }
     }

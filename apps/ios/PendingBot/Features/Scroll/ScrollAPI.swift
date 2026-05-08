@@ -20,6 +20,11 @@ struct ScrollRun: Codable, Identifiable, Hashable {
     let summary: String?
     let body_md: String?
     let progress: AnyJSON?
+    /// Per-turn trace appended by the runner — assistant text, reasoning
+    /// content, tool calls/results, collaborator replies. Drives the
+    /// thinking-process panel on the Envelope detail page. Optional because
+    /// older rows pre-migration won't have it.
+    let turns: AnyJSON?
     let created_at: String
     let started_at: String?
     let finished_at: String?
@@ -29,23 +34,109 @@ struct ScrollRun: Codable, Identifiable, Hashable {
 }
 
 extension APIClient {
-    /// Kicks off a new scroll run for the given bot conversation. Returns
-    /// the scroll_runs id immediately; the runner streams progress via
+    /// Kicks off a new envelope (scroll_runs) for the given conversation.
+    /// `settings` lets the caller override the conversation's saved
+    /// envelope_settings — the worker persists whatever the caller sent
+    /// back onto the conversation row so the next trigger inherits.
+    /// Returns the run id immediately; the runner streams progress via
     /// Realtime. Caller subscribes to the feed channel to watch it.
-    func scrollTrigger(conversationId: String) async throws -> String {
-        struct Body: Encodable { let conversationId: String }
+    func scrollTrigger(conversationId: String, settings: EnvelopeSettings? = nil) async throws -> String {
+        struct Body: Encodable {
+            let conversationId: String
+            let settings: EnvelopeSettings?
+        }
         struct Resp: Decodable { let scrollRunId: String }
         let resp: Resp = try await post(
             "v1/scroll/trigger",
-            body: Body(conversationId: conversationId)
+            body: Body(conversationId: conversationId, settings: settings)
         )
         return resp.scrollRunId
     }
 
-    /// Marks a running scroll as cancelled. The runner notices on its
+    /// Marks a running envelope as cancelled. The runner notices on its
     /// next turn and exits cleanly.
     func scrollCancel(id: String) async throws {
         try await postVoid("v1/scroll/\(id)/cancel")
+    }
+}
+
+// ── Envelope settings (per-conversation) ─────────────────────────────────
+//
+// Mirrors the shape of EnvelopeSettings on the edge runner — explorer
+// model, optional collaborator model, search/scrape provider, turn cap.
+// Stored on `conversations.envelope_settings` (JSONB); the worker reads
+// it as the trigger's defaults. Sent in the trigger body so a one-off
+// override doesn't have to round-trip through a separate save call.
+
+/// Search providers the runner knows. `brave` is the default.
+enum EnvelopeSearchProvider: String, Codable, CaseIterable, Hashable {
+    case brave, tavily, exa, serper
+    var label: String {
+        switch self {
+        case .brave:  return "Brave"
+        case .tavily: return "Tavily"
+        case .exa:    return "Exa"
+        case .serper: return "Serper"
+        }
+    }
+}
+
+/// Scrape providers the runner knows. `firecrawl` is the default.
+enum EnvelopeScrapeProvider: String, Codable, CaseIterable, Hashable {
+    case firecrawl, tavily, exa
+    var label: String {
+        switch self {
+        case .firecrawl: return "Firecrawl"
+        case .tavily:    return "Tavily"
+        case .exa:       return "Exa"
+        }
+    }
+}
+
+struct EnvelopeSettings: Codable, Hashable {
+    var explorerModel: String
+    /// nil = no collaborator (single-explorer mode); empty string is
+    /// treated the same on the wire to keep JSON shape stable.
+    var collaboratorModel: String?
+    var searchProvider: EnvelopeSearchProvider
+    var scrapeProvider: EnvelopeScrapeProvider
+    var turnCap: Int
+
+    static let defaults = EnvelopeSettings(
+        explorerModel: "~google/gemini-flash-latest",
+        collaboratorModel: "~google/gemini-flash-latest",
+        searchProvider: .brave,
+        scrapeProvider: .firecrawl,
+        turnCap: 15
+    )
+
+    /// Decode from a Supabase JSONB blob (`AnyJSON`). Tolerant: missing
+    /// fields fall back to defaults so older rows still render.
+    static func from(_ json: AnyJSON?) -> EnvelopeSettings {
+        var s = EnvelopeSettings.defaults
+        guard let json, case let .object(dict) = json else { return s }
+        if case let .string(v)? = dict["explorerModel"], !v.isEmpty {
+            s.explorerModel = v
+        }
+        if case let .string(v)? = dict["collaboratorModel"] {
+            s.collaboratorModel = v.isEmpty ? nil : v
+        } else if case .null = dict["collaboratorModel"] {
+            s.collaboratorModel = nil
+        }
+        if case let .string(v)? = dict["searchProvider"],
+           let p = EnvelopeSearchProvider(rawValue: v) {
+            s.searchProvider = p
+        }
+        if case let .string(v)? = dict["scrapeProvider"],
+           let p = EnvelopeScrapeProvider(rawValue: v) {
+            s.scrapeProvider = p
+        }
+        if case let .integer(v)? = dict["turnCap"], v > 0 {
+            s.turnCap = v
+        } else if case let .double(v)? = dict["turnCap"], v > 0 {
+            s.turnCap = Int(v)
+        }
+        return s
     }
 }
 
@@ -214,10 +305,125 @@ enum ScrollPhaseLabel {
         case "research": return "上网查证"
         case "compose":  return "落笔"
         case "done":     return "收尾"
-        case "error":    return "拟稿失败"
+        case "error":    return "写信失败"
         case .some(let p) where !p.isEmpty: return p
-        default:         return "拟稿中"
+        default:         return "写信中"
         }
+    }
+}
+
+// ── Envelope thinking trace ──────────────────────────────────────────────
+//
+// Mirrors the wire shape the runner appends to scroll_runs.turns
+// (apps/edge/src/lib/scroll-runner.ts: TurnTraceEntry). The detail page
+// renders these as the "thinking process" so users can see what the
+// model thought + searched + scraped on the way to the final article.
+
+struct EnvelopeToolCall: Hashable {
+    let name: String
+    let argsJSON: String
+}
+
+struct EnvelopeToolResult: Hashable {
+    let content: String
+}
+
+struct EnvelopeTurn: Hashable, Identifiable {
+    let i: Int
+    let assistant: String?
+    let reasoning: String?
+    let toolCalls: [EnvelopeToolCall]
+    let toolResults: [EnvelopeToolResult]
+    let collaborator: String?
+
+    var id: Int { i }
+
+    static func parse(_ json: AnyJSON?) -> [EnvelopeTurn] {
+        guard let json, case let .array(items) = json else { return [] }
+        var out: [EnvelopeTurn] = []
+        for item in items {
+            guard case let .object(d) = item else { continue }
+            let i: Int
+            if case let .integer(v)? = d["i"] {
+                i = v
+            } else if case let .double(v)? = d["i"] {
+                i = Int(v)
+            } else {
+                continue
+            }
+            var assistant: String?
+            if case let .string(s)? = d["assistant"], !s.isEmpty { assistant = s }
+            var reasoning: String?
+            if case let .string(s)? = d["reasoning"], !s.isEmpty { reasoning = s }
+            var collaborator: String?
+            if case let .string(s)? = d["collaborator"], !s.isEmpty { collaborator = s }
+
+            var toolCalls: [EnvelopeToolCall] = []
+            if case let .array(arr)? = d["tool_calls"] {
+                for tc in arr {
+                    guard case let .object(t) = tc else { continue }
+                    var name = ""
+                    if case let .string(s)? = t["name"] { name = s }
+                    var argsJSON = ""
+                    if let argsAny = t["args"] {
+                        argsJSON = anyJSONToCompactString(argsAny)
+                    }
+                    if !name.isEmpty {
+                        toolCalls.append(EnvelopeToolCall(name: name, argsJSON: argsJSON))
+                    }
+                }
+            }
+
+            var toolResults: [EnvelopeToolResult] = []
+            if case let .array(arr)? = d["tool_results"] {
+                for tr in arr {
+                    guard case let .object(t) = tr else { continue }
+                    var content = ""
+                    if case let .string(s)? = t["content"] { content = s }
+                    if !content.isEmpty {
+                        toolResults.append(EnvelopeToolResult(content: content))
+                    }
+                }
+            }
+
+            out.append(EnvelopeTurn(
+                i: i,
+                assistant: assistant,
+                reasoning: reasoning,
+                toolCalls: toolCalls,
+                toolResults: toolResults,
+                collaborator: collaborator
+            ))
+        }
+        return out
+    }
+}
+
+/// Best-effort one-line render of an AnyJSON tool-call args blob. Keeps
+/// the trace compact — the user wants a sense of what the agent did,
+/// not the full JSON dump.
+private func anyJSONToCompactString(_ json: AnyJSON) -> String {
+    switch json {
+    case .null:                     return "null"
+    case .bool(let b):              return b ? "true" : "false"
+    case .integer(let i):           return String(i)
+    case .double(let d):            return String(d)
+    case .string(let s):            return s
+    case .array(let arr):
+        let inner = arr.map(anyJSONToCompactString).joined(separator: ", ")
+        return "[\(inner)]"
+    case .object(let obj):
+        // Pull a few well-known top-level fields the loop tools use,
+        // else fall through to a small key=value summary.
+        if case let .string(s)? = obj["thoughts"] { return s }
+        if case let .string(s)? = obj["query"]    { return s }
+        if case let .string(s)? = obj["url"]      { return s }
+        if case let .string(s)? = obj["text"]     { return s }
+        if case let .string(s)? = obj["reason"]   { return s }
+        let pairs = obj
+            .map { (k: String, v: AnyJSON) in "\(k)=\(anyJSONToCompactString(v))" }
+            .joined(separator: ", ")
+        return pairs
     }
 }
 
@@ -246,6 +452,7 @@ enum ScrollRunDecoder {
             summary: record["summary"]?.stringValue,
             body_md: record["body_md"]?.stringValue,
             progress: record["progress"],
+            turns: record["turns"],
             created_at: createdAt,
             started_at: record["started_at"]?.stringValue,
             finished_at: record["finished_at"]?.stringValue

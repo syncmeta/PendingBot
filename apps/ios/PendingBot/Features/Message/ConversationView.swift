@@ -311,6 +311,7 @@ struct ConversationView: View {
             ConversationSettingsView(
                 modelOverride: $modelOverride,
                 providerOverride: $providerOverride,
+                conversationId: conversation.id,
                 enabledSkillCount: skills.filter { $0.enabled }.count,
                 totalSkillCount: skills.count,
                 onOpenSkills: { showingSkills = true },

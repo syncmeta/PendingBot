@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// Four-tab root: 消息 / 好友 / 奏折 / 我.
+/// Four-tab root: 消息 / 好友 / 来信 / 我.
 ///
-/// 奏折 hosts a feed of articles each bot has written for the user;
-/// review surfaces inline in conversations as log cards.
+/// 来信 (Envelopes) hosts a feed of articles each bot has written for
+/// the user; new envelopes are triggered from each conversation's
+/// settings sheet.
 ///
 /// Two layouts driven by horizontal size class:
 ///   • compact (iPhone): system `TabView` with the bottom tab bar

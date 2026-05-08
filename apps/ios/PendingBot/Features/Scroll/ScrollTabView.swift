@@ -19,7 +19,6 @@ struct ScrollTabView: View {
     @State private var botNames: [String: String] = [:]
     @State private var loading = false
     @State private var error: String?
-    @State private var composing = false
     @State private var path: [ScrollNav] = []
 
     @State private var feedToken: ScrollFeedToken?
@@ -36,7 +35,7 @@ struct ScrollTabView: View {
                     }
                     .sidebarColumnWidth()
                 } detail: {
-                    EmptyDetailHint(text: "选一篇奏折开读", systemImage: "scroll")
+                    EmptyDetailHint(text: "选一封来信开读", systemImage: "envelope.open")
                 }
             } else {
                 coreContent
@@ -54,14 +53,9 @@ struct ScrollTabView: View {
     private var coreContent: some View {
         NavigationStack(path: $path) {
             VStack(spacing: 0) {
-                TabHeaderBar(title: "奏折") {
-                    Button {
-                        composing = true
-                        Haptics.tap()
-                    } label: {
-                        CirclePlusButton()
-                    }
-                }
+                // No "+" trigger — new envelopes are kicked off from each
+                // conversation's settings sheet. This tab is read-only.
+                TabHeaderBar(title: "来信")
                 ZStack {
                     Theme.Palette.canvas.ignoresSafeArea()
                     if runs.isEmpty && !loading {
@@ -95,14 +89,6 @@ struct ScrollTabView: View {
                     ScrollArticleView(scrollRunId: id)
                 }
             }
-            .sheet(isPresented: $composing) {
-                ScrollComposerSheet { conversationId in
-                    composing = false
-                    await trigger(conversationId: conversationId)
-                }
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-            }
         }
     }
 
@@ -129,7 +115,7 @@ struct ScrollTabView: View {
         do {
             let rows: [ScrollRun] = try await SupabaseStack.shared
                 .from("scroll_runs")
-                .select("id, bot_id, conversation_id, status, title, summary, body_md, progress, created_at, started_at, finished_at")
+                .select("id, bot_id, conversation_id, status, title, summary, body_md, progress, turns, created_at, started_at, finished_at")
                 .order("created_at", ascending: false)
                 .limit(50)
                 .execute()
@@ -205,20 +191,6 @@ struct ScrollTabView: View {
         }
     }
 
-    // MARK: - Trigger
-
-    private func trigger(conversationId: String) async {
-        guard let api else { return }
-        do {
-            _ = try await api.scrollTrigger(conversationId: conversationId)
-            // Realtime INSERT will surface the new run; nothing else to do.
-        } catch is CancellationError {
-        } catch let error as NSError where error.domain == NSURLErrorDomain
-            && error.code == NSURLErrorCancelled {
-        } catch {
-            self.error = error.localizedDescription
-        }
-    }
 }
 
 enum ScrollNav: Hashable {
@@ -227,9 +199,16 @@ enum ScrollNav: Hashable {
 
 private struct EmptyState: View {
     var body: some View {
-        Text("这个功能还没做好")
-            .font(Theme.Fonts.serif(size: 18, weight: .semibold))
-            .foregroundStyle(Theme.Palette.ink)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        VStack(spacing: 8) {
+            Text("还没有来信")
+                .font(Theme.Fonts.serif(size: 18, weight: .semibold))
+                .foregroundStyle(Theme.Palette.ink)
+            Text("打开任意一个机器人对话，进入会话设置，请它写一封来信。")
+                .font(Theme.Fonts.footnote)
+                .foregroundStyle(Theme.Palette.inkMuted)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
