@@ -219,6 +219,11 @@ export interface RunChatTurnInput {
   };
   recentContext: BuildMessagesInput['recentContext'];
   newMessage: string;
+  /// Per-conversation provider pin (slug from llm_providers.slug, e.g.
+  /// 'worldrouter' / 'openrouter'). When set, passed to LLMRouter as
+  /// preferProvider; the existing fallback chain still kicks in if the
+  /// chosen provider 5xxs. NULL = follow the default routing.
+  providerOverride?: string | null;
   /// Lookback notes the client cached. Each is fed into the prompt as a
   /// private context block; the bot decides per turn whether to keep them.
   activeLookbacks?: Array<{ id: string; body_md: string }>;
@@ -393,7 +398,11 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       const roundOpen = await withFallback(
         supa,
         env,
-        { modelSlug: bot.model_id, taskType: 'message_reply' },
+        {
+          modelSlug: bot.model_id,
+          taskType: 'message_reply',
+          preferProvider: input.providerOverride ?? undefined,
+        },
         (r) =>
           r.client.chat.completions.create(
             {
