@@ -52,10 +52,8 @@
 		7EC924CCEF279940B5934910 /* ConversationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C99F8DD8956403453040B34E /* ConversationSettingsView.swift */; };
 		83035210F6619E0993F92CEE /* CodeRunnerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A573816C9B62D5FDB2747B1 /* CodeRunnerSheet.swift */; };
 		88978249B3DE9BBB9F495363 /* SwipeRevealRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = E08EA5C0C04D043A83FDCB72 /* SwipeRevealRow.swift */; };
-		88D44D5A01A220D83A913D39 /* EmailSignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC72DD613E133EB252CB3F5D /* EmailSignIn.swift */; };
 		88D54B9282C1CF40B1EC79E5 /* PushService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC94DFE7E01003DB9976ADA0 /* PushService.swift */; };
 		8976BCF1EBE9386E8E2C6C9C /* GroupJoinView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3B6EA75EA86539059BB4D37 /* GroupJoinView.swift */; };
-		8B80AC700CD7C1A02596F202 /* TurnstileChallenge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18612B9B224C6DCBEA7D67F1 /* TurnstileChallenge.swift */; };
 		93195F559ABAEBD132E64F17 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = 23AC5D1A6CD4C748003E6936 /* MarkdownUI */; };
 		94657E0860679B913AE1A78D /* SkillsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47CBECD15BE9204330CB00AD /* SkillsView.swift */; };
 		96C09BE5D54583A8016A5E8B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2CE994684E5E6189CC090363 /* Assets.xcassets */; };
@@ -89,7 +87,6 @@
 		07DE2357BDB2124C1A2ED08F /* RealtimeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeManager.swift; sourceTree = "<group>"; };
 		0CBFA801BAAC04285872D2ED /* AddMeMethodsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddMeMethodsView.swift; sourceTree = "<group>"; };
 		14244B4958F792B2FE2FDE5A /* AccountsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountsView.swift; sourceTree = "<group>"; };
-		18612B9B224C6DCBEA7D67F1 /* TurnstileChallenge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TurnstileChallenge.swift; sourceTree = "<group>"; };
 		24809B6D2A44FDE3FF39D6F7 /* Log.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Log.swift; sourceTree = "<group>"; };
 		24E4E56DDBD71AB05278A385 /* ServerImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerImage.swift; sourceTree = "<group>"; };
 		279FB8EA2B3130084E4F8C44 /* BotAvatar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotAvatar.swift; sourceTree = "<group>"; };
@@ -146,7 +143,6 @@
 		C608CB73D14B114D2399FE59 /* HostedConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostedConfig.swift; sourceTree = "<group>"; };
 		C99F8DD8956403453040B34E /* ConversationSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationSettingsView.swift; sourceTree = "<group>"; };
 		CA3C55E2C308AF92E34C9383 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
-		CC72DD613E133EB252CB3F5D /* EmailSignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmailSignIn.swift; sourceTree = "<group>"; };
 		DCBCA687802479661EFD55C2 /* Platform.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Platform.swift; sourceTree = "<group>"; };
 		E08EA5C0C04D043A83FDCB72 /* SwipeRevealRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwipeRevealRow.swift; sourceTree = "<group>"; };
 		E645F05DF9FDA2B208F6C8BE /* PendingBot.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PendingBot.entitlements; sourceTree = "<group>"; };
@@ -294,7 +290,6 @@
 			isa = PBXGroup;
 			children = (
 				31232B257324691ACAD4B56A /* ProfileBootstrapView.swift */,
-				18612B9B224C6DCBEA7D67F1 /* TurnstileChallenge.swift */,
 				E688431D1768A5D1A6F573EA /* WelcomeView.swift */,
 			);
 			path = Onboarding;
@@ -307,7 +302,6 @@
 				79007915941D4BE087C69822 /* AppleSignIn.swift */,
 				54E1D0F65173FEE03FB14635 /* BillingService.swift */,
 				B14FCE8ADC9DE6D22FBC7387 /* ChatStream.swift */,
-				CC72DD613E133EB252CB3F5D /* EmailSignIn.swift */,
 				3CEA9699F1801C4960BBE127 /* GoogleSignIn.swift */,
 				C608CB73D14B114D2399FE59 /* HostedConfig.swift */,
 				BC94DFE7E01003DB9976ADA0 /* PushService.swift */,
@@ -485,7 +479,6 @@
 				F21D3DA278967B87BA15A3EF /* ComposerView.swift in Sources */,
 				7EC924CCEF279940B5934910 /* ConversationSettingsView.swift in Sources */,
 				091D2F4E1050EAF98F72B1B1 /* ConversationView.swift in Sources */,
-				88D44D5A01A220D83A913D39 /* EmailSignIn.swift in Sources */,
 				0AC7612397D7D0B4E07DD2AC /* EmptyHint.swift in Sources */,
 				19870C7F165F857406EF4BCC /* EnvelopeThinkingTrace.swift in Sources */,
 				C278A18DEB535FF24FB5C514 /* FriendsTabView.swift in Sources */,
@@ -528,7 +521,6 @@
 				642FBF31ECF09038C94D6065 /* TabTitle.swift in Sources */,
 				24896FE870AF890607D5C008 /* Theme.swift in Sources */,
 				71C3DA407ECD06012C91BBC2 /* ToolTraceView.swift in Sources */,
-				8B80AC700CD7C1A02596F202 /* TurnstileChallenge.swift in Sources */,
 				4652FC81866F99C1C6AE6A11 /* TypingDots.swift in Sources */,
 				DE00C4B1C0C0AAB4F6B05B01 /* UnreadStore.swift in Sources */,
 				5FF13D682608B0E290B56345 /* UserAvatar.swift in Sources */,
