@@ -230,6 +230,7 @@ struct FriendsTabView: View {
                 }
                 .listStyle(.insetGrouped)
                 .scrollContentBackground(.hidden)
+                .contentMargins(.top, 0, for: .scrollContent)
                 .refreshable { await load() }
             }
         }
@@ -581,15 +582,15 @@ private struct FilterPill: View {
         Button(action: action) {
             Text(filter.label)
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(selected ? filter.fg : Theme.Palette.ink.opacity(0.78))
+                .foregroundStyle(filter.fg.opacity(selected ? 1.0 : 0.55))
                 .padding(.horizontal, 12)
                 .padding(.vertical, 7)
                 .background(tintFill)
                 .glassCapsule()
                 .overlay(
                     Capsule().strokeBorder(
-                        selected ? filter.fg.opacity(0.35) : Color.black.opacity(0.05),
-                        lineWidth: 0.6
+                        selected ? filter.fg.opacity(0.5) : Color.black.opacity(0.05),
+                        lineWidth: selected ? 1.0 : 0.6
                     )
                 )
         }
@@ -604,11 +605,15 @@ private struct FilterPill: View {
             // so the selection still reads against the canvas.
             Capsule().fill(Color.white.opacity(selected ? 0.85 : 0.4))
         case .humans:
-            Capsule().fill(Theme.Palette.accentBg.opacity(selected ? 0.9 : 0.45))
+            // Selected: full accentBg to match HumanKindTag exactly.
+            // Unselected: faded so the picked one stands out.
+            Capsule().fill(Theme.Palette.accentBg.opacity(selected ? 1.0 : 0.4))
         case .privateBots:
-            Capsule().fill(Theme.Palette.plumBg.opacity(selected ? 0.9 : 0.45))
+            // Selected: full plumBg to match BotVisibilityTag(private).
+            Capsule().fill(Theme.Palette.plumBg.opacity(selected ? 1.0 : 0.4))
         case .publicBots:
-            Capsule().fill(Theme.Palette.amberBg.opacity(selected ? 0.9 : 0.45))
+            // Selected: full amberBg to match BotVisibilityTag(public).
+            Capsule().fill(Theme.Palette.amberBg.opacity(selected ? 1.0 : 0.4))
         case .groups:
             // Tri-tone wash: the three tag-bg colours blended L→R, kept
             // intentionally pale so it reads as "all categories" without
