@@ -50,6 +50,38 @@ enum HostedConfig {
                 return "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNzbHpoYmxvandreGZkeWlzaXR5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc2MTUwNzAsImV4cCI6MjA5MzE5MTA3MH0.GqN92fAn67SpeaaLNyrW5gFjlS0hhb41d5ziIwnfeHk"
             }
         }
+
+        /// Cloudflare Turnstile public site key for the email-OTP signup
+        /// gate. Public by design — the matching secret lives only on
+        /// Supabase Auth (local: `supabase/config.toml`, remote:
+        /// Dashboard → Authentication → Captcha protection).
+        ///
+        /// `.dev` uses Cloudflare's documented "always-passes" invisible
+        /// test key so the local stack works offline. `.remote` must be
+        /// the live site key registered for the host below.
+        var turnstileSiteKey: String {
+            switch self {
+            case .dev:    return "1x00000000000000000000AA"
+            // TODO(captcha): swap in the live Turnstile site key after
+            // registering pendingname.com in the Cloudflare dashboard.
+            // Until then `.remote` shares the dev test key — Supabase
+            // backend captcha is also off in `.remote` until the matching
+            // secret is set in Dashboard → Auth → Captcha protection.
+            case .remote: return "1x00000000000000000000AA"
+            }
+        }
+
+        /// Origin that hosts the inline Turnstile challenge page inside
+        /// the in-app WKWebView. Must match a hostname registered for
+        /// the Turnstile site key — Cloudflare validates the embedding
+        /// origin server-side. We piggyback on the canonical site URL
+        /// rather than registering a separate domain just for this.
+        var turnstileHost: URL {
+            switch self {
+            case .dev:    return URL(string: "https://localhost")!
+            case .remote: return URL(string: "https://pendingname.com")!
+            }
+        }
     }
 
     /// Active environment. Default = remote; flip to `.dev` when running
