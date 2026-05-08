@@ -63,6 +63,12 @@ struct Conversation: Codable, Identifiable, Hashable {
     /// Per-conversation model override (OpenRouter slug). nil = use the
     /// bot's configured default.
     let model_override: String?
+    /// Per-conversation LLM provider pin (slug from llm_providers, e.g.
+    /// "worldrouter" / "openrouter"). nil = follow the bot's default
+    /// routing. Sent on every chat POST so this device's choice
+    /// propagates server-side; persisted on the row so other devices
+    /// see it on their next conversation-list fetch.
+    let provider_override: String?
 
     var displayTitle: String { title?.isEmpty == false ? title! : "未命名" }
 

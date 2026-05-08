@@ -167,7 +167,8 @@ struct MessageTabView: View {
             bot_name: peer.kind == "bot" ? peer.displayName : nil,
             last_message_content: nil,
             last_message_sender_type: nil,
-            model_override: nil
+            model_override: nil,
+            provider_override: nil
         )
     }
 
@@ -344,7 +345,8 @@ struct MessageTabView: View {
                     bot_name: row.bot_name,
                     last_message_content: row.last_message_content,
                     last_message_sender_type: row.last_message_sender_type,
-                    model_override: nil
+                    model_override: nil,
+                    provider_override: nil
                 )
             }
             .sorted { l, r in
@@ -369,6 +371,7 @@ struct MessageTabView: View {
                 .from("conversations")
                 .select("""
                     id, bot_id, user_id, title, conversation_type, feature, round_count, updated_at,
+                    provider_override,
                     bot:bots(display_name, model_id, visibility, creator_id),
                     unread:user_unread_counts(last_message_at, last_message_preview, unread_count)
                 """)
@@ -450,6 +453,7 @@ struct MessageTabView: View {
         let feature: String?
         let round_count: Int?
         let updated_at: String? // ISO 8601
+        let provider_override: String?
         let bot: BotJoin?
         // PostgREST returns the embedded user_unread_counts as an array
         // (the FK has no unique constraint on conversation_id alone — one
@@ -490,7 +494,8 @@ struct MessageTabView: View {
                 bot_name: bot?.display_name,
                 last_message_content: unreadRow?.last_message_preview,
                 last_message_sender_type: nil,
-                model_override: nil
+                model_override: nil,
+                provider_override: provider_override
             )
         }
     }
