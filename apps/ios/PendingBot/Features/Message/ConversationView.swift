@@ -1197,24 +1197,36 @@ struct ConversationView: View {
 
     // MARK: - Streaming reveal smoother
 
-    /// Fixed reveal rate (chars/sec). Tuned to feel "fast typing" while
-    /// staying readable: a 15-char head drains in ~150ms; live tokens
-    /// from a normal LLM stream (≤ ~50 chars/sec) flow through without
-    /// queueing up.
-    private static let revealCharsPerSec: Double = 100
+    /// Base reveal rate (chars/sec) — calibrated to ~60 tokens/sec, the
+    /// rate mainstream LLMs stream at (1 token ≈ 3 chars across mixed
+    /// Chinese/English content). Anything slower than the live stream
+    /// just means the typewriter falls behind and the visible reveal
+    /// jumps to the canonical row when Realtime lands. The adaptive drain
+    /// in startRevealTaskIfNeeded still catches up if a provider bursts
+    /// faster than this, so this is a "no slower than" floor.
+    private static let revealCharsPerSec: Double = 180
+    /// Cap on how far the visible reveal is allowed to lag behind the live
+    /// stream. Anything queued beyond this many seconds of base-rate output
+    /// gets drained on the current frame.
+    private static let revealMaxBehindSec: Double = 0.1
 
     private func startRevealTaskIfNeeded() {
         guard revealTask == nil else { return }
         revealTask = Task { @MainActor in
             let frameNs: UInt64 = 16_000_000   // ~60 fps
             let perFrame = Self.revealCharsPerSec * Double(frameNs) / 1_000_000_000
+            let maxBehindChars = Int(Self.revealCharsPerSec * Self.revealMaxBehindSec)
             var carry: Double = 0
             while !Task.isCancelled, revealTargetId != nil {
                 try? await Task.sleep(nanoseconds: frameNs)
                 carry += perFrame
-                let advance = Int(carry)
+                // Catch-up: if buffer holds more than maxBehindChars, drain
+                // the overflow this frame so we don't lag behind a fast LLM.
+                let baseAdvance = Int(carry)
+                let overflow = max(0, revealBuffer.count - maxBehindChars)
+                let advance = baseAdvance + overflow
                 if advance > 0, !revealBuffer.isEmpty, let target = revealTargetId {
-                    carry -= Double(advance)
+                    carry -= Double(baseAdvance)
                     let take = min(advance, revealBuffer.count)
                     let chunk = String(revealBuffer.prefix(take))
                     revealBuffer.removeFirst(take)
