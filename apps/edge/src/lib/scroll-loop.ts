@@ -17,6 +17,32 @@ export const MAX_WALL_MS = 4 * 60 * 1000;    // Worker hard cap is ~5min, leave 
 export const READ_TRUNCATE_CHARS = 8000;     // keep tool replies bounded
 export const SILENT_TOKEN = '[SILENT]';
 
+// Per-tool-call hard timeout. Without these, a hung Firecrawl scrape
+// or a stalled Brave query would block the loop indefinitely — the
+// for-loop's MAX_WALL_MS check only fires between turns, so a tool
+// await would never cede back. Tripping these surfaces an error string
+// to the model on the same turn so it can move on.
+export const WEB_SEARCH_TIMEOUT_MS = 30 * 1000;
+export const FETCH_URL_TIMEOUT_MS = 60 * 1000;
+
+// Promise.race against a setTimeout — rejects with a labeled Error so
+// the per-tool catch in execTool can stringify it cleanly. The original
+// promise keeps running (we don't have an abort signal threaded through
+// the provider HTTP calls yet); when it eventually resolves the result
+// is dropped. That's fine for one-shot calls; revisit if it ever causes
+// resource leaks.
+async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let to: ReturnType<typeof setTimeout> | undefined;
+  const timer = new Promise<never>((_, reject) => {
+    to = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  try {
+    return await Promise.race([p, timer]);
+  } finally {
+    if (to) clearTimeout(to);
+  }
+}
+
 export const TOOLS: ChatCompletionTool[] = [
   {
     type: 'function',
@@ -721,7 +747,11 @@ async function execTool(
       }
       const query = String(args.query ?? '').trim();
       if (!query) return JSON.stringify({ error: 'empty query' });
-      const hits = await tools.webSearch(query);
+      const hits = await withTimeout(
+        tools.webSearch(query),
+        WEB_SEARCH_TIMEOUT_MS,
+        `web_search "${query.slice(0, 40)}"`,
+      );
       return JSON.stringify({
         query,
         total: hits.length,
@@ -745,7 +775,11 @@ async function execTool(
         return '(此 URL 之前已抓取过)';
       }
       progress.visited_urls.push(url);
-      const page = await tools.fetchUrl(url);
+      const page = await withTimeout(
+        tools.fetchUrl(url),
+        FETCH_URL_TIMEOUT_MS,
+        `fetch_url ${url.slice(0, 80)}`,
+      );
       const trimmed = (page.content ?? '').slice(0, READ_TRUNCATE_CHARS);
       return trimmed || '(空)';
     }
