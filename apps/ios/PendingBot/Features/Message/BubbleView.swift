@@ -22,6 +22,14 @@ struct BubbleView: View {
     /// per-bot glyph — the conversation reads as the user talking to
     /// a mirror of themselves.
     var selfAvatar: (seed: String, attachmentId: String?)? = nil
+    /// Logged-in user's id, used to decide which side of the chat each
+    /// bubble lives on. For user_user / group both parties share
+    /// sender_type=="user"; without the id check both sides would
+    /// render as right-aligned "mine" bubbles.
+    var currentUserId: String? = nil
+    /// Peer profile for user_user conversations — drives the left-side
+    /// avatar on the other person's bubbles. nil for user_bot / self.
+    var peerProfile: (userId: String, displayName: String, avatarPath: String?)? = nil
     let serverURL: URL?
     /// Web-search citations referenced by inline `[N]` markers in
     /// `message.content`. Empty for bubbles that didn't trigger search.
@@ -30,7 +38,7 @@ struct BubbleView: View {
     private var hasText: Bool { !message.content.isEmpty }
 
     var body: some View {
-        if message.isUser {
+        if message.isMine(currentUserId: currentUserId) {
             userLayout
         } else {
             botLayout
@@ -42,7 +50,11 @@ struct BubbleView: View {
     private var botLayout: some View {
         HStack(alignment: .top, spacing: 8) {
             Group {
-                if let s = selfAvatar {
+                if let peer = peerProfile, message.sender_type == "user" {
+                    // user_user / group peer — use UserAvatar so it matches
+                    // the same person's avatar in the friends list.
+                    UserAvatar(seed: peer.userId, attachmentId: peer.avatarPath, size: 30)
+                } else if let s = selfAvatar {
                     UserAvatar(seed: s.seed, attachmentId: s.attachmentId, size: 30)
                 } else {
                     BotAvatar(

@@ -121,6 +121,13 @@ struct ConversationView: View {
     /// append as a duplicate bubble.
     @State private var pendingCanonicalBotIds: Set<String> = []
 
+    /// Other-side profile for a user_user conv, fetched once on appear
+    /// when we don't already have a `pendingPeer`. Drives the chat
+    /// header (title + avatar) and the left-side avatar on incoming
+    /// bubbles.
+    struct ResolvedPeer { let userId: String; let displayName: String; let avatarPath: String? }
+    @State private var resolvedPeer: ResolvedPeer?
+
     /// "<bot_name> · <effective-model-tag>". Effective model = the per-conv
     /// override if set, otherwise the bot's resolved model (which itself
     /// already accounts for the user's per-bot pin from 我 → 机器人管理).
@@ -169,6 +176,24 @@ struct ConversationView: View {
         return (seed: seed, attachmentId: store.avatarAttachmentId)
     }
 
+    /// Peer profile for the *other* person in a user_user conv. Drives
+    /// the left-side avatar that BubbleView renders on incoming bubbles.
+    /// Sourced from `pendingPeer` when we navigated in from a friends-tab
+    /// tap; once a backend lookup endpoint is wired the receiver side
+    /// will fill `resolvedPeer` instead. Avatar attachment-id is nil for
+    /// now — the friends list itself uses a generic person glyph and we
+    /// don't yet expose other users' uploaded avatars.
+    private var peerProfileForBubble: (userId: String, displayName: String, avatarPath: String?)? {
+        guard conversation.conversation_type == "user_user" else { return nil }
+        if let p = resolvedPeer {
+            return (userId: p.userId, displayName: p.displayName, avatarPath: p.avatarPath)
+        }
+        if let p = pendingPeer, p.kind == "user" {
+            return (userId: p.peerId, displayName: p.displayName, avatarPath: nil)
+        }
+        return nil
+    }
+
     private func shortSlug(_ slug: String) -> String {
         slug.split(separator: "/").last.map(String.init) ?? slug
     }
@@ -200,6 +225,8 @@ struct ConversationView: View {
                                        conversationID: conversation.id,
                                        botID: avatarEmojiSeed,
                                        selfAvatar: bubbleSelfAvatar,
+                                       currentUserId: AccountStore.shared.current?.id,
+                                       peerProfile: peerProfileForBubble,
                                        serverURL: account?.workerURL,
                                        citations: citationsByMsgId[msg.id] ?? [])
                                 .id(msg.id)
@@ -208,15 +235,19 @@ struct ConversationView: View {
                                         UIPasteboard.general.string = msg.content
                                         Haptics.tap()
                                     } label: { Label("复制", systemImage: "doc.on.doc") }
-                                    if !msg.isUser {
+                                    if !msg.isMine(currentUserId: AccountStore.shared.current?.id) {
                                         ShareLink(item: msg.content) {
                                             Label("分享", systemImage: "square.and.arrow.up")
                                         }
-                                        Button {
-                                            saveAsSkillBody = msg.content
-                                            Haptics.tap()
-                                        } label: {
-                                            Label("保存为技能", systemImage: "square.and.arrow.down.on.square")
+                                        if msg.sender_type == "bot" {
+                                            // 保存为技能 only makes sense for bot output;
+                                            // for human peers the menu just gets 复制 / 分享 / 删除.
+                                            Button {
+                                                saveAsSkillBody = msg.content
+                                                Haptics.tap()
+                                            } label: {
+                                                Label("保存为技能", systemImage: "square.and.arrow.down.on.square")
+                                            }
                                         }
                                     }
                                     Button(role: .destructive) {
@@ -227,8 +258,11 @@ struct ConversationView: View {
                             // Tool-call trace sits between the user msg that
                             // triggered the turn and the bot's reply. Hidden
                             // when the bucket is empty so plain (non-search)
-                            // turns look identical to before.
-                            if msg.isUser, let trace = tracesByUserMsgId[msg.id], !trace.isEmpty {
+                            // turns look identical to before. Only ever
+                            // attached to user_bot turns, so the simple
+                            // sender_type check is enough — no need to
+                            // disambiguate by sender_id here.
+                            if msg.sender_type == "user", let trace = tracesByUserMsgId[msg.id], !trace.isEmpty {
                                 ToolTraceView(
                                     events: trace,
                                     isLive: liveTraceUserMsgId == msg.id,
@@ -644,10 +678,16 @@ struct ConversationView: View {
                      && conversation.conversation_type != "group"
         if isUserBot {
             let localId = "local-\(UUID().uuidString)"
+            // Stamp sender_id with the current user — without it the
+            // ChatMessage.isMine(currentUserId:) check that drives bubble
+            // side can't tell our own optimistic row from a peer's, and
+            // the bubble would render on the wrong side until the
+            // canonical Realtime row arrives.
+            let myId = AccountStore.shared.current?.id ?? ""
             messages.append(ChatMessage(
                 id: localId,
                 conversation_id: conversation.id,
-                sender_type: "user", sender_id: "",
+                sender_type: "user", sender_id: myId,
                 content: text,
                 created_at: Int(Date().timeIntervalSince1970),
                 attachments: attachmentSnapshot.map {
