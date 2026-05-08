@@ -85,8 +85,34 @@ struct ChatMessage: Codable, Identifiable, Hashable {
     let content: String
     let created_at: Int
     let attachments: [Attachment]?
+    /// Optimistic-send state for locally-inserted user rows. nil for any
+    /// canonical row (loaded from server / Realtime / cache) and for bot
+    /// bubbles. "sending" while the conv materialise + SSE turn is in
+    /// flight, "failed" if either step errored before the canonical row
+    /// arrived. Drives the red/dimmed treatment in BubbleView.
+    let status: String?
 
     var isUser: Bool { sender_type == "user" }
+    var isFailed: Bool { status == "failed" }
+    var isSending: Bool { status == "sending" }
+
+    init(id: String,
+         conversation_id: String,
+         sender_type: String,
+         sender_id: String,
+         content: String,
+         created_at: Int,
+         attachments: [Attachment]?,
+         status: String? = nil) {
+        self.id = id
+        self.conversation_id = conversation_id
+        self.sender_type = sender_type
+        self.sender_id = sender_id
+        self.content = content
+        self.created_at = created_at
+        self.attachments = attachments
+        self.status = status
+    }
 }
 
 struct Attachment: Codable, Identifiable, Hashable {

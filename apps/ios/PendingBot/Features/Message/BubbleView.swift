@@ -98,17 +98,37 @@ struct BubbleView: View {
                 }
 
                 if hasText {
-                    Text(message.content)
-                        .textSelection(.enabled)
-                        .font(Theme.Fonts.body)
-                        .foregroundStyle(Theme.Palette.ink)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius,
-                                             style: .continuous)
-                                .fill(Theme.Palette.userBubble)
-                        )
+                    HStack(alignment: .center, spacing: 6) {
+                        if message.isFailed {
+                            Image(systemName: "exclamationmark.circle.fill")
+                                .font(.system(size: 18))
+                                .foregroundStyle(Color.red.opacity(0.85))
+                        }
+                        Text(message.content)
+                            .textSelection(.enabled)
+                            .font(Theme.Fonts.body)
+                            .foregroundStyle(message.isFailed
+                                             ? Color.red.opacity(0.95)
+                                             : Theme.Palette.ink)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius,
+                                                 style: .continuous)
+                                    .fill(message.isFailed
+                                          ? Color.red.opacity(0.12)
+                                          : Theme.Palette.userBubble)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius,
+                                                 style: .continuous)
+                                    .strokeBorder(
+                                        message.isFailed ? Color.red.opacity(0.55) : .clear,
+                                        lineWidth: 1
+                                    )
+                            )
+                            .opacity(message.isSending ? 0.55 : 1)
+                    }
                 }
             }
         }

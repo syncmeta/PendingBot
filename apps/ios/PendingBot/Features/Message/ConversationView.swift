@@ -591,30 +591,21 @@ struct ConversationView: View {
         guard canSend else { return }
         let text = input.trimmingCharacters(in: .whitespaces)
         let attachIds = pendingAttachments.map(\.id)
+        let attachmentSnapshot = pendingAttachments
         input = ""
         pendingAttachments = []
         photoPickerItems = []
         Haptics.send()
 
-        if conversation.id.isEmpty {
-            let ok = await materializeIfPending()
-            guard ok else {
-                input = text
-                return
-            }
-        }
-
-        switch conversation.conversation_type {
-        case "user_user":
-            // Plain human-to-human chat — no bot reply, just persist.
-            await sendPlainUserMessage(text)
-        case "group":
-            // Group MVP: persist user message, no auto bot reply yet.
-            // Bot speaks only when explicitly @-mentioned; that lands in
-            // a follow-up.
-            await sendPlainUserMessage(text)
-        default:
-            // user_bot: SSE turn against the pinned bot.
+        // user_bot: optimistic — drop the bubble in immediately, light the
+        // typing indicator, then materialise the conv (if pending) and kick
+        // off SSE in the background. From the user's POV the new conv is
+        // already "live" the moment they hit send; if the materialise round-
+        // trip or the SSE turn fails before the canonical row lands, the
+        // row gets flipped to .failed (red) and we surface the error alert.
+        let isUserBot = conversation.conversation_type != "user_user"
+                     && conversation.conversation_type != "group"
+        if isUserBot {
             let localId = "local-\(UUID().uuidString)"
             messages.append(ChatMessage(
                 id: localId,
@@ -622,13 +613,93 @@ struct ConversationView: View {
                 sender_type: "user", sender_id: "",
                 content: text,
                 created_at: Int(Date().timeIntervalSince1970),
-                attachments: pendingAttachments.map {
+                attachments: attachmentSnapshot.map {
                     Attachment(id: $0.id, kind: "image", mime: $0.mime, size: $0.size,
                                width: nil, height: nil, url: "/uploads/\($0.id)")
-                }
+                },
+                status: "sending"
             ))
+            // Light the typing indicator now so the gap between bubble +
+            // first bot token reads as "working" instead of "stuck".
+            pending = true
+
+            if conversation.id.isEmpty {
+                let ok = await materializeIfPending()
+                guard ok else {
+                    markUserMessageFailed(localId)
+                    pending = false
+                    return
+                }
+                // Bubble was inserted with conversation_id="" — refresh it
+                // in place so realtime dedupe (which keys on conv id +
+                // content) works when the canonical row arrives.
+                if let idx = messages.firstIndex(where: { $0.id == localId }) {
+                    let prev = messages[idx]
+                    messages[idx] = ChatMessage(
+                        id: prev.id,
+                        conversation_id: conversation.id,
+                        sender_type: prev.sender_type, sender_id: prev.sender_id,
+                        content: prev.content,
+                        created_at: prev.created_at,
+                        attachments: prev.attachments,
+                        status: "sending"
+                    )
+                }
+            }
+
+            // Conv exists now — clear the optimistic-sending tint and
+            // hand off to the SSE turn. SSE failures repaint the bubble
+            // red from inside sendViaSSE's catch.
+            clearUserMessageStatus(localId)
             sendViaSSE(text: text, attachmentIds: attachIds, userMsgId: localId)
+            return
         }
+
+        // user_user / group: still need a real conv id before INSERT, since
+        // those go straight to Postgres without an SSE handshake. The
+        // existing flow (await materialise, then insert) is correct here —
+        // the round-trip is cheap relative to bot turns and there's no
+        // typing indicator to play hide-and-seek with.
+        if conversation.id.isEmpty {
+            let ok = await materializeIfPending()
+            guard ok else {
+                input = text
+                return
+            }
+        }
+        await sendPlainUserMessage(text)
+    }
+
+    /// Flip an in-flight optimistic user row to .failed (red bubble + alert).
+    /// No-op if the row has already been replaced by its canonical Realtime
+    /// version — that means the message did persist and we shouldn't pretend
+    /// otherwise.
+    private func markUserMessageFailed(_ localId: String) {
+        guard let idx = messages.firstIndex(where: { $0.id == localId }) else { return }
+        let prev = messages[idx]
+        messages[idx] = ChatMessage(
+            id: prev.id, conversation_id: prev.conversation_id,
+            sender_type: prev.sender_type, sender_id: prev.sender_id,
+            content: prev.content, created_at: prev.created_at,
+            attachments: prev.attachments, status: "failed"
+        )
+        Haptics.error()
+    }
+
+    /// Drop the .sending tint once the conv exists / SSE has begun. The
+    /// canonical row that arrives via Realtime will replace this row
+    /// outright (with status=nil), so this is just a brief pre-replace
+    /// state where the bubble looks "sent" without yet being persisted.
+    private func clearUserMessageStatus(_ localId: String) {
+        guard let idx = messages.firstIndex(where: { $0.id == localId }),
+              messages[idx].status != nil else { return }
+        let prev = messages[idx]
+        messages[idx] = ChatMessage(
+            id: prev.id, conversation_id: prev.conversation_id,
+            sender_type: prev.sender_type, sender_id: prev.sender_id,
+            content: prev.content, created_at: prev.created_at,
+            attachments: prev.attachments, status: nil
+        )
     }
 
     private func sendPlainUserMessage(_ text: String) async {
@@ -777,6 +848,13 @@ struct ConversationView: View {
                 if !(error is CancellationError) {
                     self.error = "发送失败: \(error.localizedDescription)"
                     Haptics.error()
+                    // Mid-turn failure: paint the user's message red so the
+                    // failure attaches to a concrete bubble, not just a
+                    // free-floating alert. No-op if the canonical row has
+                    // already replaced the local- id (= server *did* save
+                    // the message; the failure was downstream of the
+                    // persisted user row, so don't lie about it).
+                    if let userMsgId { markUserMessageFailed(userMsgId) }
                 }
                 splitter.flushTail()
                 applyBubbleEmissions(splitter.drain())
@@ -1067,6 +1145,7 @@ struct ConversationView: View {
                 ? "服务端错误（空）— 请重试或检查网络"
                 : trimmed
             log.error("worker error event: \(m, privacy: .public)")
+            if let key = liveTraceUserMsgId { markUserMessageFailed(key) }
         }
     }
 
