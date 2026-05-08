@@ -268,6 +268,41 @@ export type Database = {
           },
         ]
       }
+      audit_log_splits: {
+        Row: {
+          audit_log_id: string
+          created_at: string
+          debit_status: string
+          debited_credits: number
+          share_bps: number
+          user_id: string
+        }
+        Insert: {
+          audit_log_id: string
+          created_at?: string
+          debit_status?: string
+          debited_credits?: number
+          share_bps: number
+          user_id: string
+        }
+        Update: {
+          audit_log_id?: string
+          created_at?: string
+          debit_status?: string
+          debited_credits?: number
+          share_bps?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "audit_log_splits_audit_fkey"
+            columns: ["audit_log_id"]
+            isOneToOne: false
+            referencedRelation: "audit_log"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       billing_config: {
         Row: {
           key: string
@@ -580,11 +615,57 @@ export type Database = {
         }
         Relationships: []
       }
+      conversation_group_meta: {
+        Row: {
+          avatar_url: string | null
+          conversation_id: string
+          created_at: string
+          created_by: string
+          join_policy: Database["pendingbot"]["Enums"]["group_join_policy"]
+          max_members: number
+          router_model_slug: string | null
+          title: string | null
+          updated_at: string
+        }
+        Insert: {
+          avatar_url?: string | null
+          conversation_id: string
+          created_at?: string
+          created_by: string
+          join_policy?: Database["pendingbot"]["Enums"]["group_join_policy"]
+          max_members?: number
+          router_model_slug?: string | null
+          title?: string | null
+          updated_at?: string
+        }
+        Update: {
+          avatar_url?: string | null
+          conversation_id?: string
+          created_at?: string
+          created_by?: string
+          join_policy?: Database["pendingbot"]["Enums"]["group_join_policy"]
+          max_members?: number
+          router_model_slug?: string | null
+          title?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "conversation_group_meta_conv_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: true
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       conversation_participants: {
         Row: {
           conversation_id: string
           joined_at: string
           last_read_message_id: string | null
+          muted: boolean
+          nickname: string | null
           participant_id: string
           participant_type: string
           role: string
@@ -593,6 +674,8 @@ export type Database = {
           conversation_id: string
           joined_at?: string
           last_read_message_id?: string | null
+          muted?: boolean
+          nickname?: string | null
           participant_id: string
           participant_type: string
           role?: string
@@ -601,6 +684,8 @@ export type Database = {
           conversation_id?: string
           joined_at?: string
           last_read_message_id?: string | null
+          muted?: boolean
+          nickname?: string | null
           participant_id?: string
           participant_type?: string
           role?: string
@@ -706,6 +791,294 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      group_billing_config: {
+        Row: {
+          conversation_id: string
+          mode: Database["pendingbot"]["Enums"]["group_split_mode"]
+          new_member_grace_seconds: number
+          updated_at: string
+          updated_by: string | null
+          window_seconds: number
+        }
+        Insert: {
+          conversation_id: string
+          mode?: Database["pendingbot"]["Enums"]["group_split_mode"]
+          new_member_grace_seconds?: number
+          updated_at?: string
+          updated_by?: string | null
+          window_seconds?: number
+        }
+        Update: {
+          conversation_id?: string
+          mode?: Database["pendingbot"]["Enums"]["group_split_mode"]
+          new_member_grace_seconds?: number
+          updated_at?: string
+          updated_by?: string | null
+          window_seconds?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "group_billing_config_conv_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: true
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      group_billing_custom_shares: {
+        Row: {
+          conversation_id: string
+          updated_at: string
+          user_id: string
+          weight_bps: number
+        }
+        Insert: {
+          conversation_id: string
+          updated_at?: string
+          user_id: string
+          weight_bps: number
+        }
+        Update: {
+          conversation_id?: string
+          updated_at?: string
+          user_id?: string
+          weight_bps?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "group_billing_custom_shares_conv_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      group_bot_descriptions: {
+        Row: {
+          bot_id: string
+          conversation_id: string
+          description: string
+          revision_count: number
+          updated_at: string
+        }
+        Insert: {
+          bot_id: string
+          conversation_id: string
+          description: string
+          revision_count?: number
+          updated_at?: string
+        }
+        Update: {
+          bot_id?: string
+          conversation_id?: string
+          description?: string
+          revision_count?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "group_bot_descriptions_bot_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "bots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "group_bot_descriptions_conv_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      group_continue_requests: {
+        Row: {
+          conversation_id: string
+          decided_at: string | null
+          decided_by: string | null
+          decision_message_id: string | null
+          id: string
+          pending_bot_ids: string[]
+          prompt_message_id: string | null
+          requested_at: string
+          status: Database["pendingbot"]["Enums"]["continue_request_status"]
+        }
+        Insert: {
+          conversation_id: string
+          decided_at?: string | null
+          decided_by?: string | null
+          decision_message_id?: string | null
+          id?: string
+          pending_bot_ids: string[]
+          prompt_message_id?: string | null
+          requested_at?: string
+          status?: Database["pendingbot"]["Enums"]["continue_request_status"]
+        }
+        Update: {
+          conversation_id?: string
+          decided_at?: string | null
+          decided_by?: string | null
+          decision_message_id?: string | null
+          id?: string
+          pending_bot_ids?: string[]
+          prompt_message_id?: string | null
+          requested_at?: string
+          status?: Database["pendingbot"]["Enums"]["continue_request_status"]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "group_continue_requests_conv_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "group_continue_requests_decision_msg_fkey"
+            columns: ["decision_message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "group_continue_requests_prompt_msg_fkey"
+            columns: ["prompt_message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      group_join_handles: {
+        Row: {
+          conversation_id: string
+          created_at: string
+          enabled: boolean
+          handle_type: string
+          id: string
+          value: string
+        }
+        Insert: {
+          conversation_id: string
+          created_at?: string
+          enabled?: boolean
+          handle_type: string
+          id?: string
+          value: string
+        }
+        Update: {
+          conversation_id?: string
+          created_at?: string
+          enabled?: boolean
+          handle_type?: string
+          id?: string
+          value?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "group_join_handles_conv_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      group_join_requests: {
+        Row: {
+          conversation_id: string
+          created_at: string
+          decided_at: string | null
+          decided_by: string | null
+          id: string
+          message: string | null
+          requester_id: string
+          status: Database["pendingbot"]["Enums"]["join_request_status"]
+          via_handle_id: string | null
+        }
+        Insert: {
+          conversation_id: string
+          created_at?: string
+          decided_at?: string | null
+          decided_by?: string | null
+          id?: string
+          message?: string | null
+          requester_id: string
+          status?: Database["pendingbot"]["Enums"]["join_request_status"]
+          via_handle_id?: string | null
+        }
+        Update: {
+          conversation_id?: string
+          created_at?: string
+          decided_at?: string | null
+          decided_by?: string | null
+          id?: string
+          message?: string | null
+          requester_id?: string
+          status?: Database["pendingbot"]["Enums"]["join_request_status"]
+          via_handle_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "group_join_requests_conv_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "group_join_requests_handle_fkey"
+            columns: ["via_handle_id"]
+            isOneToOne: false
+            referencedRelation: "group_join_handles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      group_member_billing: {
+        Row: {
+          cap_credits: number | null
+          conversation_id: string
+          joined_at: string
+          muted: boolean
+          overdrawn: boolean
+          participates: boolean
+          spent_credits: number
+          user_id: string
+        }
+        Insert: {
+          cap_credits?: number | null
+          conversation_id: string
+          joined_at?: string
+          muted?: boolean
+          overdrawn?: boolean
+          participates?: boolean
+          spent_credits?: number
+          user_id: string
+        }
+        Update: {
+          cap_credits?: number | null
+          conversation_id?: string
+          joined_at?: string
+          muted?: boolean
+          overdrawn?: boolean
+          participates?: boolean
+          spent_credits?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "group_member_billing_conv_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       invites: {
         Row: {
@@ -1862,7 +2235,15 @@ export type Database = {
       uuidv7: { Args: never; Returns: string }
     }
     Enums: {
-      [_ in never]: never
+      continue_request_status: "pending" | "allowed" | "denied" | "expired"
+      group_join_policy: "scan_open" | "approval" | "closed"
+      group_split_mode:
+        | "custom"
+        | "per_head"
+        | "per_message"
+        | "per_token"
+        | "hybrid"
+      join_request_status: "pending" | "approved" | "rejected" | "expired"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1989,6 +2370,17 @@ export type CompositeTypes<
 
 export const Constants = {
   pendingbot: {
-    Enums: {},
+    Enums: {
+      continue_request_status: ["pending", "allowed", "denied", "expired"],
+      group_join_policy: ["scan_open", "approval", "closed"],
+      group_split_mode: [
+        "custom",
+        "per_head",
+        "per_message",
+        "per_token",
+        "hybrid",
+      ],
+      join_request_status: ["pending", "approved", "rejected", "expired"],
+    },
   },
 } as const
