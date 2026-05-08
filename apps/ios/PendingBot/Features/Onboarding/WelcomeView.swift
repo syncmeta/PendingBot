@@ -26,12 +26,6 @@ struct WelcomeView: View {
     /// Kept separate from `stage` so Apple/Google verification doesn't
     /// flip the UI into the email-code step.
     @State private var isVerifying: Bool = false
-    /// Drives the Turnstile sheet that gates `sendCode`. We toggle this
-    /// from `primaryAction` and the sheet's result handler dispatches
-    /// the actual OTP request — keeps the captcha entirely out of the
-    /// Apple / Google paths since those providers carry their own
-    /// anti-abuse signals.
-    @State private var captchaSheetPresented: Bool = false
     @State private var email: String = ""
     @State private var code: String = ""
     /// Random nonce mixed into the SIWA request. Apple bakes its SHA-256
@@ -85,11 +79,6 @@ struct WelcomeView: View {
             // explicitly so the keyboard doesn't fly up on launch. The code
             // step still autofocuses (set when sendCode succeeds).
             if stage == .codeSent { focusedField = .code }
-        }
-        .sheet(isPresented: $captchaSheetPresented) {
-            TurnstileChallenge { result in
-                Task { await handleCaptchaResult(result) }
-            }
         }
     }
 
@@ -312,44 +301,16 @@ struct WelcomeView: View {
         if isVerifying { return }
         errorText = nil
         switch stage {
-        case .enteringEmail:
-            // Don't fire requestCode directly — gate it behind a
-            // Turnstile challenge so bots can't spam OTP sends and
-            // farm signup bonuses. handleCaptchaResult bridges back
-            // into sendCode once a token is available.
-            captchaSheetPresented = true
-        case .codeSent:
-            await verifyCode()
+        case .enteringEmail: await sendCode()
+        case .codeSent:      await verifyCode()
         }
     }
 
     @MainActor
-    private func handleCaptchaResult(
-        _ result: Result<String, Error>
-    ) async {
-        switch result {
-        case .failure(let err):
-            // Silent on user cancel; show a message on real failures.
-            if case TurnstileChallenge.ChallengeError.dismissed = err {
-                return
-            }
-            errorText = err.localizedDescription
-            Haptics.error()
-        case .success(let token):
-            await sendCode(captchaToken: token)
-        }
-    }
-
-    @MainActor
-    private func sendCode(captchaToken: String) async {
+    private func sendCode() async {
         let trimmed = email.trimmingCharacters(in: .whitespaces)
-        isVerifying = true
-        defer { isVerifying = false }
         do {
-            try await EmailSignIn.requestCode(
-                email: trimmed,
-                captchaToken: captchaToken
-            )
+            try await EmailSignIn.requestCode(email: trimmed)
             stage = .codeSent
             focusedField = .code
             Haptics.tap()

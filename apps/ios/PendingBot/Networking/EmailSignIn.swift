@@ -25,18 +25,11 @@ enum EmailSignIn {
     }
 
     /// Send the OTP. Throws if the address is malformed or rate-limited.
-    ///
-    /// `captchaToken` is the Cloudflare Turnstile token obtained from
-    /// `TurnstileChallenge`. Required when the Supabase project has
-    /// captcha protection enabled (local dev: `supabase/config.toml`,
-    /// remote: Dashboard → Auth). Pass `nil` only for tests / local
-    /// runs where captcha is intentionally off.
-    static func requestCode(email: String, captchaToken: String? = nil) async throws {
+    static func requestCode(email: String) async throws {
         do {
             try await SupabaseStack.shared.auth.signInWithOTP(
                 email: email,
-                shouldCreateUser: true,
-                captchaToken: captchaToken
+                shouldCreateUser: true
             )
         } catch {
             throw Error.underlying(error)
