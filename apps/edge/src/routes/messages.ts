@@ -110,7 +110,12 @@ messageRoutes.post('/', async (c) => {
   // happen anyway — the post below early-returns at !conv.bot_id). When
   // a bot IS pinned, refuse before inserting the user row so a broke
   // account can't fill the chat with replies that never get answered.
-  if (conv.bot_id) {
+  //
+  // Groups deliberately bypass this gate: per spec the user-experience
+  // must never block on balance — exhausted members are excluded from
+  // the next cost split (group_member_billing.overdrawn) instead of 402.
+  // group-billing.ts (M6) handles that exclusion.
+  if (conv.bot_id && conv.conversation_type !== 'group') {
     try {
       await requireBalance(supaUser, userId);
     } catch (err) {
@@ -169,7 +174,23 @@ messageRoutes.post('/', async (c) => {
     parentMessageId = (lastUser?.id as string | undefined) ?? null;
   }
 
-  // No bot pinned (e.g. user_user, group with no default bot) → just ack
+  // Group branch — bot wake decisions live in the DO router (M4) and
+  // the @mention parser (M5). For now the user write is acked and
+  // Realtime takes over; bots stay silent unless a downstream caller
+  // (router/mention) explicitly invokes dispatchGroupTurn.
+  //
+  // We *could* fire-and-forget a DO signal here once M4 lands; that
+  // wiring goes in then. M3's only job is to make sure groups don't
+  // accidentally fall into the user_bot SSE path below (they wouldn't,
+  // because conv.bot_id is NULL, but defending explicitly).
+  if (conv.conversation_type === 'group') {
+    return c.json({
+      message: { id: parentMessageId },
+      botReplyScheduled: 'async' as const,
+    });
+  }
+
+  // No bot pinned (e.g. user_user, self with no bot) → just ack
   // the user write.
   if (!conv.bot_id) {
     return c.json({ message: { id: parentMessageId }, botReplyScheduled: false });
