@@ -2,6 +2,7 @@ import SwiftUI
 import CoreImage.CIFilterBuiltins
 import Photos
 import Supabase
+import UIKit
 
 /// "我的名片" — shared QR business-card view used by both the
 /// Friends-tab `MyQRSheet` and the QR section in `AddMeMethodsView`,
@@ -62,18 +63,20 @@ struct MyQRBusinessCard: View {
 
             if loading {
                 ProgressView().controlSize(.large)
-            } else if let value = currentValue, let mask = qrMaskImage(for: value) {
-                // Tint: solid deep green, masked through the QR's
-                // alpha pattern. Inverted+mask-to-alpha makes the data
-                // pixels opaque and the white background drop out.
-                Theme.Palette.accent
+            } else if let value = currentValue, let qr = qrImage(for: PendingBotQR.url(forToken: value)) {
+                // Solid white card behind the QR provides the quiet zone
+                // scanners need — the surrounding glass background is
+                // translucent and unreliable as a "white" baseline.
+                Image(uiImage: qr)
+                    .interpolation(.none)
+                    .resizable()
+                    .scaledToFit()
                     .frame(width: size - 32, height: size - 32)
-                    .mask {
-                        Image(uiImage: mask)
-                            .interpolation(.none)
-                            .resizable()
-                            .scaledToFit()
-                    }
+                    .padding(10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(Color.white)
+                    )
 
                 // Brand mark in the centre — sits inside a soft cream
                 // halo so it reads cleanly against the dense pattern.
@@ -214,28 +217,55 @@ struct MyQRBusinessCard: View {
         self.currentValue = token
     }
 
-    // MARK: - QR mask image
+    // MARK: - QR image
     //
-    // Inverts the generator's black-on-white output and converts to
-    // alpha mask so SwiftUI's `.mask()` can colour the data pixels in
-    // deep green while letting the background drop out entirely.
-    private func qrMaskImage(for s: String) -> UIImage? {
+    // Produces an opaque deep-green-on-cream QR with a 4-module quiet
+    // zone baked in. A scannable QR needs (a) ≥4 modules of solid
+    // background around the data and (b) a high-contrast colour pair
+    // — `CIQRCodeGenerator` provides neither on its own, so we add the
+    // border in CGContext and recolour with `CIFalseColor`.
+    private func qrImage(for payload: String) -> UIImage? {
         let filter = CIFilter.qrCodeGenerator()
-        filter.message = Data(s.utf8)
+        filter.message = Data(payload.utf8)
         filter.correctionLevel = "H"
-        guard let out = filter.outputImage else { return nil }
+        guard let raw = filter.outputImage else { return nil }
 
-        let invert = CIFilter.colorInvert()
-        invert.inputImage = out
-        guard let inverted = invert.outputImage else { return nil }
+        // Recolour: 0 → deep green (data), 1 → cream (background).
+        let recolour = CIFilter.falseColor()
+        recolour.inputImage = raw
+        recolour.color0 = CIColor(red: 4 / 255.0, green: 71 / 255.0, blue: 53 / 255.0)   // accent
+        recolour.color1 = CIColor(red: 253 / 255.0, green: 252 / 255.0, blue: 250 / 255.0) // canvas
+        guard let coloured = recolour.outputImage else { return nil }
 
-        let mask = CIFilter.maskToAlpha()
-        mask.inputImage = inverted
-        guard let masked = mask.outputImage else { return nil }
-
-        let scaled = masked.transformed(by: CGAffineTransform(scaleX: 10, y: 10))
+        // Render at 10× without interpolation. CIQRCodeGenerator does NOT
+        // emit a quiet zone, so we blit into a slightly larger canvas
+        // pre-filled with the same cream colour to give scanners the
+        // 4-module margin they need.
+        let scale: CGFloat = 10
+        let scaled = coloured.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
         guard let cg = context.createCGImage(scaled, from: scaled.extent) else { return nil }
-        return UIImage(cgImage: cg)
+
+        let inner = CGFloat(cg.width)
+        let quiet = scale * 4   // 4 modules per QR spec
+        let total = inner + quiet * 2
+        let renderer = UIGraphicsImageRenderer(
+            size: CGSize(width: total, height: total),
+            format: {
+                let f = UIGraphicsImageRendererFormat.default()
+                f.scale = 1
+                f.opaque = true
+                return f
+            }(),
+        )
+        // Draw via UIImage rather than ctx.cgContext.draw — the CGContext
+        // form would flip the result vertically (mirrored QRs don't scan).
+        let qrUIImage = UIImage(cgImage: cg)
+        return renderer.image { ctx in
+            UIColor(red: 253 / 255.0, green: 252 / 255.0, blue: 250 / 255.0, alpha: 1).setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: total, height: total))
+            ctx.cgContext.interpolationQuality = .none
+            qrUIImage.draw(in: CGRect(x: quiet, y: quiet, width: inner, height: inner))
+        }
     }
 
     // MARK: - Save card image

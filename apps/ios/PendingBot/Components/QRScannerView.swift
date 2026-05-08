@@ -2,6 +2,40 @@ import SwiftUI
 import AVFoundation
 import UIKit
 
+/// Codec for the contact-share QR.
+///
+/// Encoded form is a `https://pendingname.com/c/<token>` URL so the
+/// QR is "a link" rather than an opaque string — pasting the URL in
+/// Safari, scanning with the iOS Camera app, etc. all surface the
+/// link cleanly. The path prefix is `/c/` ("contact"); the token is
+/// the raw value stored in `user_handles.value` (kind=qr).
+///
+/// Old QRs minted before this change encoded the bare token. Both
+/// the in-app scanner and the worker route accept either form so
+/// already-printed QRs keep working.
+enum PendingBotQR {
+    static let host = "pendingname.com"
+    static let pathPrefix = "/c/"
+
+    static func url(forToken token: String) -> String {
+        "https://\(host)\(pathPrefix)\(token)"
+    }
+
+    /// Parse a scanner payload back into the bare token. Accepts:
+    ///   - `https://pendingname.com/c/<token>` (and `http://` / no scheme)
+    ///   - bare `<token>` (legacy QRs)
+    static func token(fromScanned raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let url = URL(string: trimmed),
+           url.host?.lowercased().hasSuffix(host) == true,
+           url.path.hasPrefix(pathPrefix) {
+            let token = String(url.path.dropFirst(pathPrefix.count))
+            if !token.isEmpty { return token }
+        }
+        return trimmed
+    }
+}
+
 /// SwiftUI wrapper around AVCaptureSession for QR-code scanning. The
 /// preview fills the parent; first valid QR detection fires `onScan`
 /// with the decoded string and stops the session.
