@@ -305,9 +305,9 @@ enum ScrollPhaseLabel {
         case "research": return "上网查证"
         case "compose":  return "落笔"
         case "done":     return "收尾"
-        case "error":    return "拟稿失败"
+        case "error":    return "写信失败"
         case .some(let p) where !p.isEmpty: return p
-        default:         return "拟稿中"
+        default:         return "写信中"
         }
     }
 }

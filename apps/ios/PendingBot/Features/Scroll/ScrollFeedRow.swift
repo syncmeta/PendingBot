@@ -31,7 +31,7 @@ struct ScrollFeedRow: View {
                     .lineLimit(3)
                     .multilineTextAlignment(.leading)
             } else if run.status == "error" {
-                Text("拟稿失败")
+                Text("写信失败")
                     .font(Theme.Fonts.footnote)
                     .foregroundStyle(Theme.Palette.inkMuted)
             }
@@ -74,9 +74,9 @@ struct ScrollFeedRow: View {
 
     private var displayTitle: String {
         if let t = run.title, !t.isEmpty { return t }
-        if run.isRunning { return "正在拟稿…" }
-        if run.status == "error" { return "未命名奏折" }
-        return "未命名奏折"
+        if run.isRunning { return "正在写来信…" }
+        if run.status == "error" { return "未命名来信" }
+        return "未命名来信"
     }
 
     /// Phase tag from `progress.phase`. Falls back to a generic label

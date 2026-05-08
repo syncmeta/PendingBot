@@ -34,7 +34,7 @@ struct ScrollArticleView: View {
             .readableColumnWidth()
         }
         .background(Theme.Palette.canvas.ignoresSafeArea())
-        .navigationTitle("奏折")
+        .navigationTitle("来信")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if let run, run.isRunning {
@@ -45,7 +45,7 @@ struct ScrollArticleView: View {
             }
         }
         .confirmationDialog(
-            "中止这次拟稿？",
+            "中止这封来信？",
             isPresented: $showCancelConfirm,
             titleVisibility: .visible
         ) {
@@ -166,7 +166,7 @@ struct ScrollArticleView: View {
                 }
             }
 
-            Text("拟好之后会出现在这里。可以离开这页，等会儿回来看。")
+            Text("写好之后会出现在这里。可以离开这页，等会儿回来看。")
                 .font(Theme.Fonts.footnote)
                 .foregroundStyle(Theme.Palette.inkMuted)
         }
