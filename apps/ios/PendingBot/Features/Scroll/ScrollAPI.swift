@@ -29,23 +29,109 @@ struct ScrollRun: Codable, Identifiable, Hashable {
 }
 
 extension APIClient {
-    /// Kicks off a new scroll run for the given bot conversation. Returns
-    /// the scroll_runs id immediately; the runner streams progress via
+    /// Kicks off a new envelope (scroll_runs) for the given conversation.
+    /// `settings` lets the caller override the conversation's saved
+    /// envelope_settings — the worker persists whatever the caller sent
+    /// back onto the conversation row so the next trigger inherits.
+    /// Returns the run id immediately; the runner streams progress via
     /// Realtime. Caller subscribes to the feed channel to watch it.
-    func scrollTrigger(conversationId: String) async throws -> String {
-        struct Body: Encodable { let conversationId: String }
+    func scrollTrigger(conversationId: String, settings: EnvelopeSettings? = nil) async throws -> String {
+        struct Body: Encodable {
+            let conversationId: String
+            let settings: EnvelopeSettings?
+        }
         struct Resp: Decodable { let scrollRunId: String }
         let resp: Resp = try await post(
             "v1/scroll/trigger",
-            body: Body(conversationId: conversationId)
+            body: Body(conversationId: conversationId, settings: settings)
         )
         return resp.scrollRunId
     }
 
-    /// Marks a running scroll as cancelled. The runner notices on its
+    /// Marks a running envelope as cancelled. The runner notices on its
     /// next turn and exits cleanly.
     func scrollCancel(id: String) async throws {
         try await postVoid("v1/scroll/\(id)/cancel")
+    }
+}
+
+// ── Envelope settings (per-conversation) ─────────────────────────────────
+//
+// Mirrors the shape of EnvelopeSettings on the edge runner — explorer
+// model, optional collaborator model, search/scrape provider, turn cap.
+// Stored on `conversations.envelope_settings` (JSONB); the worker reads
+// it as the trigger's defaults. Sent in the trigger body so a one-off
+// override doesn't have to round-trip through a separate save call.
+
+/// Search providers the runner knows. `brave` is the default.
+enum EnvelopeSearchProvider: String, Codable, CaseIterable, Hashable {
+    case brave, tavily, exa, serper
+    var label: String {
+        switch self {
+        case .brave:  return "Brave"
+        case .tavily: return "Tavily"
+        case .exa:    return "Exa"
+        case .serper: return "Serper"
+        }
+    }
+}
+
+/// Scrape providers the runner knows. `firecrawl` is the default.
+enum EnvelopeScrapeProvider: String, Codable, CaseIterable, Hashable {
+    case firecrawl, tavily, exa
+    var label: String {
+        switch self {
+        case .firecrawl: return "Firecrawl"
+        case .tavily:    return "Tavily"
+        case .exa:       return "Exa"
+        }
+    }
+}
+
+struct EnvelopeSettings: Codable, Hashable {
+    var explorerModel: String
+    /// nil = no collaborator (single-explorer mode); empty string is
+    /// treated the same on the wire to keep JSON shape stable.
+    var collaboratorModel: String?
+    var searchProvider: EnvelopeSearchProvider
+    var scrapeProvider: EnvelopeScrapeProvider
+    var turnCap: Int
+
+    static let defaults = EnvelopeSettings(
+        explorerModel: "~google/gemini-flash-latest",
+        collaboratorModel: "~google/gemini-flash-latest",
+        searchProvider: .brave,
+        scrapeProvider: .firecrawl,
+        turnCap: 15
+    )
+
+    /// Decode from a Supabase JSONB blob (`AnyJSON`). Tolerant: missing
+    /// fields fall back to defaults so older rows still render.
+    static func from(_ json: AnyJSON?) -> EnvelopeSettings {
+        var s = EnvelopeSettings.defaults
+        guard let json, case let .object(dict) = json else { return s }
+        if case let .string(v)? = dict["explorerModel"], !v.isEmpty {
+            s.explorerModel = v
+        }
+        if case let .string(v)? = dict["collaboratorModel"] {
+            s.collaboratorModel = v.isEmpty ? nil : v
+        } else if case .null = dict["collaboratorModel"] {
+            s.collaboratorModel = nil
+        }
+        if case let .string(v)? = dict["searchProvider"],
+           let p = EnvelopeSearchProvider(rawValue: v) {
+            s.searchProvider = p
+        }
+        if case let .string(v)? = dict["scrapeProvider"],
+           let p = EnvelopeScrapeProvider(rawValue: v) {
+            s.scrapeProvider = p
+        }
+        if case let .integer(v)? = dict["turnCap"], v > 0 {
+            s.turnCap = v
+        } else if case let .double(v)? = dict["turnCap"], v > 0 {
+            s.turnCap = Int(v)
+        }
+        return s
     }
 }
 
