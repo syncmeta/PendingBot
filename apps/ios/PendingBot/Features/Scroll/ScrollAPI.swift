@@ -253,6 +253,11 @@ final class ScrollFeedChannel {
 /// is optional so older rows / drift in shape still render something.
 struct ScrollProgress {
     let phase: String?
+    /// Live "what's happening right now" line written by the runner
+    /// between awaits (model call → tools → collaborator). When set,
+    /// this is what the UI shows next to the typing dots so a slow
+    /// turn doesn't look frozen. Cleared by the runner at end of turn.
+    let currentActivity: String?
     let notes: [Note]
     let visitedURLs: [String]
 
@@ -261,13 +266,18 @@ struct ScrollProgress {
         let source: String?
     }
 
-    static let empty = ScrollProgress(phase: nil, notes: [], visitedURLs: [])
+    static let empty = ScrollProgress(phase: nil, currentActivity: nil, notes: [], visitedURLs: [])
 
     static func from(_ json: AnyJSON?) -> ScrollProgress {
         guard let json, case let .object(dict) = json else { return .empty }
 
         var phase: String?
         if case let .string(s)? = dict["phase"] { phase = s }
+
+        var currentActivity: String?
+        if case let .string(s)? = dict["current_activity"], !s.isEmpty {
+            currentActivity = s
+        }
 
         var notes: [Note] = []
         if case let .array(arr)? = dict["notes"] {
@@ -289,7 +299,7 @@ struct ScrollProgress {
             }
         }
 
-        return ScrollProgress(phase: phase, notes: notes, visitedURLs: urls)
+        return ScrollProgress(phase: phase, currentActivity: currentActivity, notes: notes, visitedURLs: urls)
     }
 }
 

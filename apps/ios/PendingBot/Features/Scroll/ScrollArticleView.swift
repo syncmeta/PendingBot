@@ -121,11 +121,23 @@ struct ScrollArticleView: View {
     @ViewBuilder
     private func runningSection(progress: ScrollProgress) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 6) {
-                TypingDots()
-                Text(ScrollPhaseLabel.text(progress.phase))
-                    .font(Theme.Fonts.footnote)
-                    .foregroundStyle(Theme.Palette.inkMuted)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    TypingDots()
+                    Text(progress.currentActivity ?? ScrollPhaseLabel.text(progress.phase))
+                        .font(Theme.Fonts.footnote)
+                        .foregroundStyle(Theme.Palette.ink)
+                }
+                // When the runner has a fresher activity line, keep the
+                // phase label visible underneath as quieter context so
+                // the user can still see "上网查证" while the heartbeat
+                // line updates per step.
+                if progress.currentActivity != nil {
+                    Text(ScrollPhaseLabel.text(progress.phase))
+                        .font(Theme.Fonts.caption)
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                        .padding(.leading, 22)
+                }
             }
 
             if !progress.notes.isEmpty {
@@ -174,6 +186,7 @@ struct ScrollArticleView: View {
         .animation(.default, value: progress.notes.count)
         .animation(.default, value: progress.visitedURLs.count)
         .animation(.default, value: progress.phase)
+        .animation(.default, value: progress.currentActivity)
     }
 
     /// Strip scheme + path so the URL list reads as a quiet list of

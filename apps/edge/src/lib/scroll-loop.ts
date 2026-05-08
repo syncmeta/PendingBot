@@ -17,6 +17,32 @@ export const MAX_WALL_MS = 4 * 60 * 1000;    // Worker hard cap is ~5min, leave 
 export const READ_TRUNCATE_CHARS = 8000;     // keep tool replies bounded
 export const SILENT_TOKEN = '[SILENT]';
 
+// Per-tool-call hard timeout. Without these, a hung Firecrawl scrape
+// or a stalled Brave query would block the loop indefinitely — the
+// for-loop's MAX_WALL_MS check only fires between turns, so a tool
+// await would never cede back. Tripping these surfaces an error string
+// to the model on the same turn so it can move on.
+export const WEB_SEARCH_TIMEOUT_MS = 30 * 1000;
+export const FETCH_URL_TIMEOUT_MS = 60 * 1000;
+
+// Promise.race against a setTimeout — rejects with a labeled Error so
+// the per-tool catch in execTool can stringify it cleanly. The original
+// promise keeps running (we don't have an abort signal threaded through
+// the provider HTTP calls yet); when it eventually resolves the result
+// is dropped. That's fine for one-shot calls; revisit if it ever causes
+// resource leaks.
+async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let to: ReturnType<typeof setTimeout> | undefined;
+  const timer = new Promise<never>((_, reject) => {
+    to = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  try {
+    return await Promise.race([p, timer]);
+  } finally {
+    if (to) clearTimeout(to);
+  }
+}
+
 export const TOOLS: ChatCompletionTool[] = [
   {
     type: 'function',
@@ -119,6 +145,11 @@ export interface ProgressState {
   notes: NoteEntry[];
   visited_urls: string[];
   plan_rounds: number;
+  // Live "what's happening right now" line written between awaits (model
+  // call → tool execution → collaborator). UI surfaces this next to the
+  // typing dots so a long single turn doesn't look frozen. Cleared at
+  // the end of a turn so the phase label takes over until the next.
+  current_activity?: string | null;
 }
 
 export type ScrollLoopExitReason =
@@ -153,6 +184,13 @@ export interface ScrollLoopDeps {
   // Fires after each turn (model call + any tool calls). Use it for
   // progress persistence (worker) or stdout logging (replay script).
   onTurn?: (info: ScrollTurnInfo) => Promise<void> | void;
+  // Fires between awaits inside a turn so the UI can show a live
+  // "current_activity" line — "主探索者在思考…", "正在搜索 X", "协作者
+  // 在评议…". The runner persists each snapshot to scroll_runs.progress
+  // so iOS Realtime gets ticks within a single long turn instead of one
+  // bulk update at the end. Snapshot is a fresh object — caller is free
+  // to keep it.
+  onActivity?: (snapshot: ProgressState) => Promise<void> | void;
   // Polled at the top of each iteration. Return true to abort cleanly.
   isCancelled?: () => Promise<boolean>;
   hardCapTurns?: number;
@@ -317,8 +355,22 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
     systemPrompt,
     initialUserContent,
     onTurn,
+    onActivity,
     isCancelled,
   } = deps;
+  // Heartbeat helper — sets progress.current_activity and flushes via
+  // onActivity. Snapshot is a shallow copy so the runner can update its
+  // db row without us mutating it later. Awaiting keeps order, but the
+  // runner is free to fire-and-forget by not awaiting inside.
+  const setActivity = async (text: string | null): Promise<void> => {
+    progress.current_activity = text;
+    if (!onActivity) return;
+    await onActivity({
+      ...progress,
+      notes: [...progress.notes],
+      visited_urls: [...progress.visited_urls],
+    });
+  };
   const hardCap = deps.hardCapTurns ?? HARD_CAP_TURNS;
   const wallCap = deps.maxWallMs ?? MAX_WALL_MS;
   const startedAt = Date.now();
@@ -370,6 +422,7 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
       break;
     }
 
+    await setActivity(turn === 0 ? '主探索者在思考开场…' : '主探索者在想下一步…');
     const completion = await openai.chat.completions.create({
       model: modelId,
       messages,
@@ -433,6 +486,7 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
       // treating the assistant text as a finished article.
       messages.push(assistantForApi);
       reason = 'no_tool_call';
+      progress.current_activity = null;
       if (onTurn) {
         await onTurn({
           turn,
@@ -454,6 +508,7 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
       : true;
     const blockResearch = !researchUnlocked;
 
+    await setActivity(summarizeToolActivity(toolCalls));
     const toolReplies = await Promise.all(
       toolCalls.map((tc) =>
         execTool(
@@ -521,6 +576,7 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
     );
     const skipCollaborator = stopTurn || researchTurn;
     if (deps.simulateCollaboratorReply && !skipCollaborator) {
+      await setActivity('协作者在评议…');
       try {
         const out = await deps.simulateCollaboratorReply({
           turn,
@@ -573,6 +629,7 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
       newMessages.push(hint);
     }
 
+    progress.current_activity = null;
     if (onTurn) {
       await onTurn({
         turn,
@@ -617,6 +674,40 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
   };
 }
 
+// One-line "what's about to happen" string shown next to the typing
+// dots while a turn's tools are executing. Picks a representative tool
+// (search query / fetched host / first note) so the user sees concrete
+// progress, not a generic "正在工作".
+function summarizeToolActivity(toolCalls: ChatCompletionMessageToolCall[]): string {
+  if (toolCalls.length === 0) return '主探索者在落笔…';
+  const parts: string[] = [];
+  for (const tc of toolCalls) {
+    const args = safeParse(tc.function.arguments);
+    const name = tc.function.name;
+    if (name === 'web_search') {
+      const q = String(args.query ?? '').trim();
+      if (q) parts.push(`搜索 "${q.slice(0, 40)}"`);
+      else parts.push('搜索');
+    } else if (name === 'fetch_url') {
+      const url = String(args.url ?? '').trim();
+      let host = url;
+      try { host = new URL(url).host.replace(/^www\./, ''); } catch { /* keep raw */ }
+      parts.push(`读 ${host.slice(0, 40)}`);
+    } else if (name === 'take_note') {
+      const text = String(args.text ?? '').trim();
+      parts.push(text ? `记 "${text.slice(0, 30)}"` : '记笔记');
+    } else if (name === 'propose_plan') {
+      parts.push('和协作者过方案');
+    } else if (name === 'stop_exploring') {
+      parts.push('准备收笔');
+    }
+  }
+  if (parts.length === 0) return '主探索者在落笔…';
+  // Cap the line — multi-tool turns can otherwise produce a wall of text.
+  const joined = parts.slice(0, 3).join(' · ');
+  return parts.length > 3 ? `${joined}…` : joined;
+}
+
 // Execute a single tool call. Side effects (notes / visited urls) are
 // recorded onto `progress` so the runner can persist them. The return
 // value is the string content the model sees back.
@@ -656,7 +747,11 @@ async function execTool(
       }
       const query = String(args.query ?? '').trim();
       if (!query) return JSON.stringify({ error: 'empty query' });
-      const hits = await tools.webSearch(query);
+      const hits = await withTimeout(
+        tools.webSearch(query),
+        WEB_SEARCH_TIMEOUT_MS,
+        `web_search "${query.slice(0, 40)}"`,
+      );
       return JSON.stringify({
         query,
         total: hits.length,
@@ -680,7 +775,11 @@ async function execTool(
         return '(此 URL 之前已抓取过)';
       }
       progress.visited_urls.push(url);
-      const page = await tools.fetchUrl(url);
+      const page = await withTimeout(
+        tools.fetchUrl(url),
+        FETCH_URL_TIMEOUT_MS,
+        `fetch_url ${url.slice(0, 80)}`,
+      );
       const trimmed = (page.content ?? '').slice(0, READ_TRUNCATE_CHARS);
       return trimmed || '(空)';
     }

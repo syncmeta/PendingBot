@@ -79,10 +79,13 @@ struct ScrollFeedRow: View {
         return "未命名来信"
     }
 
-    /// Phase tag from `progress.phase`. Falls back to a generic label
-    /// when the runner hasn't written one yet.
+    /// What the row says next to the typing dots while the run is going.
+    /// Prefers the runner's live `current_activity` heartbeat so the
+    /// feed updates per step (e.g. "搜索 X · 读 host.com"); falls back to
+    /// the coarser phase label between heartbeats.
     private var progressLabel: String {
-        ScrollPhaseLabel.text(ScrollProgress.from(run.progress).phase)
+        let p = ScrollProgress.from(run.progress)
+        return p.currentActivity ?? ScrollPhaseLabel.text(p.phase)
     }
 
     private var relativeTime: String? {
