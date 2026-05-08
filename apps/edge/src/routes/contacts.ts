@@ -160,3 +160,50 @@ contactRoutes.post('/open-chat', async (c) => {
   ]);
   return c.json({ conversationId: convId, created: true });
 });
+
+// GET /v1/contacts/conv-peer/:convId — resolve the other user's display
+// info for a user_user conversation. Caller must already be a participant
+// (RLS on `pendingbot.users` is self-only, so iOS can't read this directly
+// even though it's their own peer). Returns the peer's display_name +
+// avatar_path along with the caller's local alias for them, if any.
+contactRoutes.get('/conv-peer/:convId', async (c) => {
+  const userId = c.var.userId!;
+  const convId = c.req.param('convId');
+
+  const supa = serviceClient(c.env);
+
+  // Verify the conv is user_user and the caller is a participant. One
+  // round-trip via a join: pull both participant rows for the conv,
+  // gated by conversation_type, then check membership client-side.
+  const { data: parts, error: partsErr } = await supa
+    .from('conversation_participants')
+    .select('participant_type, participant_id, conversations!inner(conversation_type)')
+    .eq('conversation_id', convId)
+    .eq('participant_type', 'user')
+    .eq('conversations.conversation_type', 'user_user');
+  if (partsErr) return c.json({ error: 'database', detail: partsErr.message }, 500);
+  const ids = (parts ?? []).map((r) => r.participant_id as string);
+  if (!ids.includes(userId)) return c.json({ error: 'not a participant' }, 403);
+  const otherId = ids.find((id) => id !== userId);
+  if (!otherId) return c.json({ error: 'no peer' }, 404);
+
+  // Read the peer's basic profile + the caller's local alias (if any).
+  // Both lookups are independent so they fire in parallel.
+  const [profileRes, contactRes] = await Promise.all([
+    supa.from('users').select('id, display_name, avatar_path').eq('id', otherId).maybeSingle(),
+    supa
+      .from('user_contacts')
+      .select('alias')
+      .eq('user_id', userId)
+      .eq('contact_user_id', otherId)
+      .maybeSingle(),
+  ]);
+  if (profileRes.error) return c.json({ error: 'database', detail: profileRes.error.message }, 500);
+
+  return c.json({
+    userId: otherId,
+    displayName: (profileRes.data?.display_name as string | null) ?? '',
+    avatarPath: (profileRes.data?.avatar_path as string | null) ?? null,
+    alias: (contactRes.data?.alias as string | null) ?? null,
+  });
+});

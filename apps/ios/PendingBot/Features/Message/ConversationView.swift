@@ -157,6 +157,11 @@ struct ConversationView: View {
     private func headerAvatar(size: CGFloat) -> some View {
         if let s = bubbleSelfAvatar {
             UserAvatar(seed: s.seed, attachmentId: s.attachmentId, size: size)
+        } else if let peer = peerProfileForBubble {
+            // user_user — the other person's avatar is what reads as
+            // "this conversation". Match the bubble side's avatar so the
+            // header and the incoming bubbles look like one identity.
+            UserAvatar(seed: peer.userId, attachmentId: peer.avatarPath, size: size)
         } else {
             BotAvatar(
                 emojiSeed: avatarEmojiSeed,
@@ -192,6 +197,19 @@ struct ConversationView: View {
             return (userId: p.peerId, displayName: p.displayName, avatarPath: nil)
         }
         return nil
+    }
+
+    /// Header title — for user_user, prefer the peer's display name (or
+    /// caller's local alias) so the header doesn't read "未命名" on convs
+    /// whose `title` column is null. Falls back to the conversation's
+    /// stored title for every other conv type.
+    private var headerTitle: String {
+        if conversation.conversation_type == "user_user",
+           let peer = peerProfileForBubble,
+           !peer.displayName.isEmpty {
+            return peer.displayName
+        }
+        return conversation.displayTitle
     }
 
     private func shortSlug(_ slug: String) -> String {
@@ -321,6 +339,7 @@ struct ConversationView: View {
             await loadSkills()
             await loadActiveLookbacks()
             await subscribeRealtime()
+            await loadPeerProfileIfNeeded()
         }
         .onDisappear {
             if let token = realtimeToken {
@@ -444,7 +463,7 @@ struct ConversationView: View {
             headerAvatar(size: 30)
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(conversation.displayTitle)
+                Text(headerTitle)
                     .font(Theme.Fonts.serif(size: 16, weight: .semibold))
                     .foregroundStyle(Theme.Palette.ink)
                     .lineLimit(1)
@@ -1371,6 +1390,52 @@ struct ConversationView: View {
         // Skills load left disabled until /v1/skills lands. The chip stays
         // empty; chat is unaffected.
         self.skills = []
+    }
+
+    /// Resolve the user_user peer's display name + avatar path so the
+    /// header and incoming bubbles read as that person, not "未命名" + a
+    /// generic glyph. Skips when we already have a `pendingPeer` (the
+    /// friends-tab tap path supplies it eagerly) or when the conv is not
+    /// user_user. RLS on `pendingbot.users` is self-only, so we go through
+    /// the worker which uses service-role to read the peer row.
+    private func loadPeerProfileIfNeeded() async {
+        guard conversation.conversation_type == "user_user" else { return }
+        guard !conversation.id.isEmpty else { return }
+        if pendingPeer?.kind == "user" { return }
+        if resolvedPeer != nil { return }
+        do {
+            let url = HostedConfig.environment.workerURL
+                .appendingPathComponent("v1/contacts/conv-peer/\(conversation.id)")
+            var req = URLRequest(url: url)
+            req.httpMethod = "GET"
+            let token = try await SupabaseStack.shared.auth.session.accessToken
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode)
+            else { return }
+            struct Payload: Decodable {
+                let userId: String
+                let displayName: String
+                let avatarPath: String?
+                let alias: String?
+            }
+            let p = try JSONDecoder().decode(Payload.self, from: data)
+            // Prefer the caller's local alias when set, otherwise the
+            // peer's own display name. The avatar always uses the peer's
+            // user id as the deterministic seed so it matches whatever
+            // the friends list is rendering for the same person.
+            let name = (p.alias?.isEmpty == false ? p.alias! : p.displayName)
+            self.resolvedPeer = ResolvedPeer(
+                userId: p.userId,
+                displayName: name.isEmpty ? String(p.userId.prefix(8)) : name,
+                avatarPath: p.avatarPath
+            )
+        } catch {
+            // Non-fatal: header just keeps showing the existing fallback
+            // until next reopen. Log via the conversation logger so it's
+            // not silent in dev.
+            log.warning("conv-peer load failed: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     private func loadHistory() async {
