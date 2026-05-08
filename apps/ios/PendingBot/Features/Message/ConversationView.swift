@@ -335,6 +335,11 @@ struct ConversationView: View {
                     continueRequestBanner(pc)
                         .readableColumnWidth()
                 }
+                if conversation.conversation_type == "group",
+                   let prefix = mentionPrefix {
+                    mentionPickerOverlay(prefix: prefix)
+                        .readableColumnWidth()
+                }
                 Divider().opacity(0.5)
                 ComposerView(
                     input: $input,
@@ -1640,6 +1645,100 @@ struct ConversationView: View {
         } catch {
             log.warning("pending continue load failed: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    /// Detects an in-progress @-mention at the end of `input`. Returns
+    /// the substring AFTER the `@` (possibly empty when the user just
+    /// typed `@`). nil when there's no @-trigger active. We trigger on
+    /// "@" preceded by whitespace or start-of-string so emails / inline
+    /// at-signs don't accidentally open the picker.
+    private var mentionPrefix: String? {
+        guard let atRange = input.range(of: "@", options: .backwards) else { return nil }
+        // Must be followed only by chars that look like a name token (no
+        // whitespace, no newlines) — anything else means the user moved on.
+        let after = input[atRange.upperBound...]
+        if after.contains(where: { $0.isWhitespace || $0.isNewline }) {
+            return nil
+        }
+        // The `@` must be at the start of input or immediately after a
+        // whitespace; reject things like "alice@host" inside an email.
+        if atRange.lowerBound > input.startIndex {
+            let prev = input[input.index(before: atRange.lowerBound)]
+            if !prev.isWhitespace { return nil }
+        }
+        return String(after)
+    }
+
+    /// Filter groupSenders by the in-progress prefix (case-insensitive),
+    /// drop "myself" so I don't mention me. Cap at a few rows so the
+    /// picker doesn't push the message list off-screen.
+    private func mentionCandidates(prefix: String) -> [GroupBubbleSender] {
+        let me = AccountStore.shared.current?.id ?? ""
+        let needle = prefix.lowercased()
+        return groupSenders.values
+            .filter { sender in
+                if sender.kind == .user && sender.id == me { return false }
+                if needle.isEmpty { return true }
+                return sender.displayName.lowercased().contains(needle)
+            }
+            .sorted { $0.displayName.lowercased() < $1.displayName.lowercased() }
+            .prefix(6)
+            .map { $0 }
+    }
+
+    @ViewBuilder
+    private func mentionPickerOverlay(prefix: String) -> some View {
+        let candidates = mentionCandidates(prefix: prefix)
+        if candidates.isEmpty {
+            EmptyView()
+        } else {
+            VStack(spacing: 0) {
+                ForEach(candidates, id: \.id) { sender in
+                    Button {
+                        insertMention(sender, prefix: prefix)
+                    } label: {
+                        HStack(spacing: 10) {
+                            switch sender.kind {
+                            case .bot:
+                                BotAvatar(emojiSeed: sender.id, colorSeed: sender.id, size: 24)
+                            case .user:
+                                UserAvatar(seed: sender.id, attachmentId: sender.avatarPath, size: 24)
+                            }
+                            Text(sender.displayName)
+                                .font(Theme.Fonts.body)
+                                .foregroundStyle(Theme.Palette.ink)
+                            Spacer()
+                            if sender.kind == .bot {
+                                Text("机器人")
+                                    .font(Theme.Fonts.rounded(size: 10, weight: .medium))
+                                    .foregroundStyle(Theme.Palette.inkMuted)
+                            }
+                        }
+                        .padding(.horizontal, Theme.Metrics.gutter)
+                        .padding(.vertical, 8)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    Divider().opacity(0.4)
+                }
+            }
+            .background(Theme.Palette.surface)
+            .overlay(
+                Rectangle().frame(height: 0.5).foregroundStyle(Theme.Palette.hairline),
+                alignment: .top,
+            )
+        }
+    }
+
+    private func insertMention(_ sender: GroupBubbleSender, prefix: String) {
+        // Drop the trailing "@<prefix>" and re-insert "@<displayName> ".
+        // Spaces inside nicknames stay because we replace by length, not
+        // by whitespace boundary — DB enforces no-whitespace inside a
+        // single nickname so this is unambiguous in practice.
+        let dropCount = prefix.count + 1   // include the "@"
+        let head = String(input.dropLast(dropCount))
+        input = head + "@" + sender.displayName + " "
+        Haptics.tap()
     }
 
     @ViewBuilder
