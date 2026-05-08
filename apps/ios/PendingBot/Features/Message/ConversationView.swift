@@ -128,6 +128,12 @@ struct ConversationView: View {
     struct ResolvedPeer { let userId: String; let displayName: String; let avatarPath: String? }
     @State private var resolvedPeer: ResolvedPeer?
 
+    /// Group conv only — sender lookup keyed by "user:<id>" / "bot:<id>"
+    /// so each bubble can render its own avatar + nickname above the
+    /// content. Loaded on appear via loadGroupSenders(); 1v1 stays nil
+    /// and the existing peerProfile path serves it.
+    @State private var groupSenders: [String: GroupBubbleSender] = [:]
+
     /// "<bot_name> · <effective-model-tag>". Effective model = the per-conv
     /// override if set, otherwise the bot's resolved model (which itself
     /// already accounts for the user's per-bot pin from 我 → 机器人管理).
@@ -245,6 +251,7 @@ struct ConversationView: View {
                                        selfAvatar: bubbleSelfAvatar,
                                        currentUserId: AccountStore.shared.current?.id,
                                        peerProfile: peerProfileForBubble,
+                                       groupSender: groupSenderFor(msg),
                                        serverURL: account?.workerURL,
                                        citations: citationsByMsgId[msg.id] ?? [])
                                 .id(msg.id)
@@ -340,6 +347,7 @@ struct ConversationView: View {
             await loadActiveLookbacks()
             await subscribeRealtime()
             await loadPeerProfileIfNeeded()
+            await loadGroupSendersIfNeeded()
         }
         .onDisappear {
             if let token = realtimeToken {
@@ -1501,6 +1509,90 @@ struct ConversationView: View {
             // not silent in dev.
             log.warning("conv-peer load failed: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    /// Group-only — build the per-message sender lookup so each bubble
+    /// can show its own avatar + nickname above the content. Pulls
+    /// participants once on conv open; new senders that join mid-stream
+    /// fall back to the avatar-only render until next conv reopen
+    /// (Realtime delta sync for membership is M9 polish).
+    private func loadGroupSendersIfNeeded() async {
+        guard conversation.conversation_type == "group" else { return }
+        guard !conversation.id.isEmpty else { return }
+        do {
+            struct PartRow: Decodable {
+                let participant_type: String
+                let participant_id: String
+                let nickname: String?
+            }
+            let parts: [PartRow] = try await SupabaseStack.shared
+                .from("conversation_participants")
+                .select("participant_type, participant_id, nickname")
+                .eq("conversation_id", value: conversation.id)
+                .execute()
+                .value
+
+            let botIds = parts.filter { $0.participant_type == "bot" }
+                .map(\.participant_id)
+            let userIds = parts.filter { $0.participant_type == "user" }
+                .map(\.participant_id)
+
+            struct BotRow: Decodable { let id: String; let display_name: String }
+            struct UserRow: Decodable { let id: String; let display_name: String? }
+
+            async let botResp: [BotRow] = botIds.isEmpty ? [] : SupabaseStack.shared
+                .from("bots").select("id, display_name").in("id", values: botIds)
+                .execute().value
+            async let userResp: [UserRow] = userIds.isEmpty ? [] : SupabaseStack.shared
+                .from("users").select("id, display_name").in("id", values: userIds)
+                .execute().value
+
+            let botMap = Dictionary(uniqueKeysWithValues:
+                (try await botResp).map { ($0.id, $0.display_name) })
+            let userMap = Dictionary(uniqueKeysWithValues:
+                (try await userResp).map { ($0.id, $0.display_name ?? "") })
+
+            var lookup: [String: GroupBubbleSender] = [:]
+            for p in parts {
+                let key = "\(p.participant_type):\(p.participant_id)"
+                let fallback: String = {
+                    if p.participant_type == "bot" {
+                        return botMap[p.participant_id] ?? "未知机器人"
+                    }
+                    let name = userMap[p.participant_id] ?? ""
+                    return name.isEmpty ? String(p.participant_id.prefix(8)) : name
+                }()
+                let nick = p.nickname?.trimmingCharacters(in: .whitespaces)
+                let display = (nick?.isEmpty == false ? nick! : fallback)
+                lookup[key] = GroupBubbleSender(
+                    kind: p.participant_type == "bot" ? .bot : .user,
+                    id: p.participant_id,
+                    displayName: display,
+                    avatarPath: nil,  // user avatars TBD; UserAvatar(seed:) is still distinct
+                )
+            }
+            self.groupSenders = lookup
+        } catch {
+            log.warning("group senders load failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Pick the sender for a single bubble. Returns nil for non-group
+    /// convs (BubbleView falls through to peerProfile/selfAvatar/botID),
+    /// and also nil for our own messages so they keep the right-side
+    /// "user" layout instead of being rendered as a bot bubble with
+    /// our own name on top.
+    private func groupSenderFor(_ msg: ChatMessage) -> GroupBubbleSender? {
+        guard conversation.conversation_type == "group" else { return nil }
+        let me = AccountStore.shared.current?.id
+        if msg.isMine(currentUserId: me) { return nil }
+        let key: String
+        switch msg.sender_type {
+        case "bot":  key = "bot:\(msg.sender_id)"
+        case "user", "human": key = "user:\(msg.sender_id)"
+        default: return nil
+        }
+        return groupSenders[key]
     }
 
     private func loadHistory() async {

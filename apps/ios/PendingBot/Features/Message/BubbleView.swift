@@ -30,6 +30,13 @@ struct BubbleView: View {
     /// Peer profile for user_user conversations — drives the left-side
     /// avatar on the other person's bubbles. nil for user_bot / self.
     var peerProfile: (userId: String, displayName: String, avatarPath: String?)? = nil
+    /// Per-message sender resolution for *group* convs — many possible
+    /// senders, name shown above the bubble. Takes precedence over
+    /// peerProfile / selfAvatar / botID when set. `kind == "bot"`
+    /// renders BotAvatar; `"user"` renders UserAvatar. The display
+    /// name sits above the bubble so multi-sender threads stay
+    /// readable.
+    var groupSender: GroupBubbleSender? = nil
     let serverURL: URL?
     /// Web-search citations referenced by inline `[N]` markers in
     /// `message.content`. Empty for bubbles that didn't trigger search.
@@ -50,7 +57,15 @@ struct BubbleView: View {
     private var botLayout: some View {
         HStack(alignment: .top, spacing: 8) {
             Group {
-                if let peer = peerProfile, message.sender_type == "user" {
+                if let g = groupSender {
+                    // Group conv — sender resolved per-message.
+                    switch g.kind {
+                    case .bot:
+                        BotAvatar(emojiSeed: g.id, colorSeed: g.id, size: 30)
+                    case .user:
+                        UserAvatar(seed: g.id, attachmentId: g.avatarPath, size: 30)
+                    }
+                } else if let peer = peerProfile, message.sender_type == "user" {
                     // user_user / group peer — use UserAvatar so it matches
                     // the same person's avatar in the friends list.
                     UserAvatar(seed: peer.userId, attachmentId: peer.avatarPath, size: 30)
@@ -66,7 +81,13 @@ struct BubbleView: View {
             }
             .padding(.top, 2)
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 4) {
+                if let g = groupSender {
+                    Text(g.displayName)
+                        .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                }
+
                 if let attachments = message.attachments, !attachments.isEmpty,
                    let serverURL {
                     AttachmentGrid(attachments: attachments, serverURL: serverURL)
@@ -147,6 +168,22 @@ struct BubbleView: View {
         .padding(.horizontal, Theme.Metrics.gutter)
         .padding(.vertical, 4)
     }
+}
+
+/// Per-message sender resolution for group convs. ConversationView
+/// builds a `[messageKey: GroupBubbleSender]` map from the conv's
+/// participants and hands the right one to each BubbleView.
+struct GroupBubbleSender: Equatable {
+    enum Kind { case bot, user }
+    let kind: Kind
+    /// participant_id (bot.id or user.id). Drives avatar seed.
+    let id: String
+    /// Per-group nickname if set; otherwise the bot.display_name /
+    /// user.display_name. Rendered above the bubble.
+    let displayName: String
+    /// Avatar attachment id for users (nil for bots, which use the
+    /// emoji-seed avatar derived from id).
+    let avatarPath: String?
 }
 
 struct AttachmentGrid: View {
