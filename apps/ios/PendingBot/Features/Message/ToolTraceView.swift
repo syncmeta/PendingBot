@@ -47,11 +47,13 @@ struct ToolTraceEvent: Identifiable, Hashable {
 /// Inline, non-bubble trace of the bot's tool calls for one turn. Reads as
 /// a quiet sidebar in the conversation flow:
 ///
-///   - While searching: auto-expanded — one row per tool call + a list of
-///     hits as they arrive (domain · title), so the user sees the search
-///     unfold in real time.
-///   - After all tools complete: auto-collapses to a single header row
-///     ("搜索 · 3 条结果"), tappable to re-expand for review.
+///   - Header row + the citation list (the *search summary*) are always
+///     visible whenever the trace exists — they're the load-bearing payoff
+///     and shouldn't get hidden behind a tap.
+///   - The per-tool *process* detail (query strings, result snippets,
+///     spinners) is what expand/collapse toggles. Auto-expanded while the
+///     turn is live so a fast 500ms search doesn't pop in and out before
+///     the user can read it; auto-collapsed once the turn ends.
 ///
 /// Colors are intentionally muted (no surface fill, no border) so the trace
 /// recedes — the bot's actual reply remains the visual anchor.
@@ -59,7 +61,8 @@ struct ToolTraceView: View {
     let events: [ToolTraceEvent]
     /// True while the turn is still streaming (we don't yet know whether
     /// more tool calls will arrive). Drives the live spinner + "搜索中…"
-    /// wording on the header.
+    /// wording on the header AND the auto-expand window — the trace stays
+    /// open for the full live span, not just per-tool pending.
     let isLive: Bool
     /// Cumulative web-search hits surfaced during the turn — same list the
     /// bot's `[N]` markers resolve against. Rendered as tappable rows in
@@ -69,16 +72,25 @@ struct ToolTraceView: View {
     @State private var expanded: Bool = false
     @Environment(\.openURL) private var openURL
 
-    /// Any tool still in flight → trace is "live activity". Drives the
-    /// auto-expand-while-searching, auto-collapse-when-done behavior.
+    /// Any tool still in flight → drives the typing-dots indicator on the
+    /// header. Decoupled from `expanded` (see `isLive`) so a fast search
+    /// finishing doesn't slam the panel shut mid-turn.
     private var anyPending: Bool { !events.allSatisfy(\.done) }
 
     var body: some View {
         if !events.isEmpty {
-            VStack(alignment: .leading, spacing: expanded ? 8 : 0) {
+            VStack(alignment: .leading, spacing: 6) {
                 header
+                // Process detail (per-tool query + status) — only this part
+                // toggles. The citation list below stays visible even when
+                // the user collapses the events.
                 if expanded {
-                    detail
+                    eventList
+                }
+                // Search summary — always visible whenever we have hits.
+                // The whole point of the trace from the user's POV.
+                if !citations.isEmpty {
+                    citationList
                 }
             }
             .padding(.leading, Theme.Metrics.gutter + 30 + 8) // align under bot avatar gutter
@@ -87,14 +99,14 @@ struct ToolTraceView: View {
             .onAppear {
                 // Mid-stream mount → reflect live state immediately so the
                 // user sees the search unfolding without having to tap.
-                expanded = anyPending
+                expanded = isLive
             }
-            .onChange(of: anyPending) { _, nowPending in
-                // Searches just started → expand. Last result landed → collapse.
-                // User taps still override either direction; the next pending
-                // transition re-syncs.
+            .onChange(of: isLive) { _, nowLive in
+                // Turn just kicked off → expand. Turn ended → collapse to
+                // a quiet summary row. User taps still override either
+                // direction; the next isLive transition re-syncs.
                 withAnimation(.easeInOut(duration: 0.2)) {
-                    expanded = nowPending
+                    expanded = nowLive
                 }
             }
         }
@@ -157,7 +169,9 @@ struct ToolTraceView: View {
         return joined
     }
 
-    private var detail: some View {
+    /// Per-tool process rows — query string, spinner, result snippet.
+    /// Toggled by the expand/collapse chevron; hidden once the turn ends.
+    private var eventList: some View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(events) { ev in
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -184,10 +198,17 @@ struct ToolTraceView: View {
                     }
                 }
             }
-            if !citations.isEmpty {
-                ForEach(Array(citations.enumerated()), id: \.element.id) { idx, c in
-                    citationRow(index: idx + 1, citation: c)
-                }
+        }
+        .padding(.leading, 2)
+    }
+
+    /// Search summary — the citations the bot's `[N]` markers resolve to.
+    /// Always rendered (when non-empty), regardless of expand state, so a
+    /// user who collapses the trace still sees what was found.
+    private var citationList: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(citations.enumerated()), id: \.element.id) { idx, c in
+                citationRow(index: idx + 1, citation: c)
             }
         }
         .padding(.leading, 2)
