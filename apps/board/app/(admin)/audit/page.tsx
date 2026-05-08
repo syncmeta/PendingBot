@@ -73,10 +73,14 @@ export default async function AuditPage({
   const { data: dailyRows, error } = await dailyQ;
 
   // Recent requests panel — independent slice, raw audit_log rows.
+  // est_input_tokens / est_output_tokens are local heuristic estimates
+  // written by edge alongside the provider-reported counts; the panel
+  // surfaces both so a divergent ratio (e.g. provider 1.4× the local
+  // estimate) shows up as a billing-honesty smell test.
   let recentQ = supa
     .from('audit_log')
     .select(
-      'id, created_at, user_id, task_type, model_id, status, error_class, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, latency_ms',
+      'id, created_at, user_id, task_type, model_id, status, error_class, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, est_input_tokens, est_output_tokens, cost_usd, latency_ms',
     )
     .order('created_at', { ascending: false })
     .limit(50);
@@ -255,7 +259,19 @@ export default async function AuditPage({
                 <Th>model</Th>
                 <Th>状态</Th>
                 <Th className="text-right">in</Th>
+                <Th className="text-right" title="本地启发式估算 (token-estimate.ts)">
+                  in est
+                </Th>
+                <Th className="text-right" title="provider / local — 偏离 1.0 越多越可疑">
+                  Δin
+                </Th>
                 <Th className="text-right">out</Th>
+                <Th className="text-right" title="本地启发式估算">
+                  out est
+                </Th>
+                <Th className="text-right" title="provider / local">
+                  Δout
+                </Th>
                 <Th className="text-right">cache↓</Th>
                 <Th className="text-right">cost</Th>
                 <Th className="text-right">延迟</Th>
@@ -275,7 +291,19 @@ export default async function AuditPage({
                     )}
                   </Td>
                   <Td className="text-right">{fmtTokens(r.input_tokens)}</Td>
+                  <Td className="text-right text-muted-foreground">
+                    {r.est_input_tokens == null ? '—' : fmtTokens(r.est_input_tokens)}
+                  </Td>
+                  <Td className="text-right">
+                    <Ratio actual={r.input_tokens} estimate={r.est_input_tokens} />
+                  </Td>
                   <Td className="text-right">{fmtTokens(r.output_tokens)}</Td>
+                  <Td className="text-right text-muted-foreground">
+                    {r.est_output_tokens == null ? '—' : fmtTokens(r.est_output_tokens)}
+                  </Td>
+                  <Td className="text-right">
+                    <Ratio actual={r.output_tokens} estimate={r.est_output_tokens} />
+                  </Td>
                   <Td className="text-right">{fmtTokens(r.cache_read_tokens)}</Td>
                   <Td className="text-right">{fmtUsd(r.cost_usd)}</Td>
                   <Td className="text-right">{fmtMs(r.latency_ms)}</Td>
@@ -283,7 +311,7 @@ export default async function AuditPage({
               ))}
               {(recent ?? []).length === 0 && (
                 <tr>
-                  <td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">
+                  <td colSpan={12} className="px-4 py-8 text-center text-muted-foreground">
                     暂无 audit 记录
                   </td>
                 </tr>
@@ -355,11 +383,42 @@ function TopTable({
   );
 }
 
-function Th({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <th className={`px-4 py-2 font-medium ${className ?? ''}`}>{children}</th>;
+function Th({
+  children,
+  className,
+  title,
+}: {
+  children: React.ReactNode;
+  className?: string;
+  title?: string;
+}) {
+  return (
+    <th className={`px-4 py-2 font-medium ${className ?? ''}`} title={title}>
+      {children}
+    </th>
+  );
 }
 function Td({ children, className }: { children: React.ReactNode; className?: string }) {
   return <td className={`px-4 py-2 ${className ?? ''}`}>{children}</td>;
+}
+
+// Provider-vs-local ratio cell. 1.00 = perfect agreement, >1 means
+// the provider reported more tokens than our heuristic estimated, <1
+// the other way. We color cells outside [0.7, 1.3] amber and outside
+// [0.5, 1.6] red — those are the "look at this turn closely" thresholds.
+// Estimate of 0 (or null) gives '—' rather than a misleading ∞ ratio.
+function Ratio({ actual, estimate }: { actual: number; estimate: number | null }) {
+  if (estimate == null || estimate === 0) {
+    return <span className="text-muted-foreground">—</span>;
+  }
+  const r = actual / estimate;
+  const color =
+    r > 1.6 || r < 0.5
+      ? 'text-destructive'
+      : r > 1.3 || r < 0.7
+        ? 'text-amber-600 dark:text-amber-400'
+        : 'text-muted-foreground';
+  return <span className={`tabular-nums ${color}`}>{r.toFixed(2)}×</span>;
 }
 
 // Common task_type values emitted by the router callers — kept in
