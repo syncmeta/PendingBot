@@ -36,6 +36,7 @@ struct MessageTabView: View {
     @State private var loading = false
     @State private var error: String?
     @State private var creatingGroup = false
+    @State private var joiningGroup = false
     @State private var addingFriend = false
     @State private var scanning = false
     // Path-based nav for compact: keyed to .toolbar(.hidden, for: .tabBar)
@@ -74,6 +75,32 @@ struct MessageTabView: View {
             CreateGroupSheet { _ in Task { await load() } }
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $joiningGroup) {
+            GroupJoinView { convId in
+                // After successful join, refresh the conv list and
+                // navigate into the new group conv.
+                Task { await load() }
+                // Build a Conversation stub so the existing nav path
+                // works without waiting on Realtime to deliver the row.
+                let userId = AccountStore.shared.current?.id ?? ""
+                let stub = Conversation(
+                    id: convId, bot_id: "", user_id: userId,
+                    title: nil, feature_type: "message",
+                    conversation_type: "group",
+                    last_activity_at: Int(Date().timeIntervalSince1970),
+                    round_count: 0, bot_name: nil,
+                    last_message_content: nil, last_message_sender_type: nil,
+                    model_override: nil, provider_override: nil,
+                )
+                if sidebarLayout {
+                    selected = .existing(stub)
+                } else {
+                    path.append(.existing(stub))
+                }
+            }
+            .presentationDetents([.medium])
+            .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $addingFriend) {
             AddFriendSheet { Task { await load() } }
@@ -204,6 +231,9 @@ struct MessageTabView: View {
                             }
                             Button { creatingGroup = true; Haptics.tap() } label: {
                                 Label("拉群", systemImage: "person.3")
+                            }
+                            Button { joiningGroup = true; Haptics.tap() } label: {
+                                Label("加群", systemImage: "person.3.sequence")
                             }
                             Button { scanning = true; Haptics.tap() } label: {
                                 Label("扫码", systemImage: "qrcode.viewfinder")
