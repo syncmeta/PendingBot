@@ -2,19 +2,39 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
 import { serviceClient, userClient } from '../lib/supabase';
-import { runScroll } from '../lib/scroll-runner';
+import { runScroll, resolveEnvelopeSettings, HARD_CAP_TURNS } from '../lib/scroll-runner';
 import { requireBalance, InsufficientBalanceError } from '../lib/billing';
 import type { AppBindings } from '../types';
+import type { Json } from '../db/schema';
 
-// 奏折/Scroll routes — feed-style article output, manual trigger only
-// (cron auto-trigger pending the user's testing).
+// 奏折/Scroll routes — surfaced to users as 来信/Envelopes. The trigger
+// body now carries the per-run config the user picked in conversation
+// settings (explorer/collaborator models, search/scrape providers,
+// turn cap). Caller-supplied settings win; otherwise we read whatever
+// the conversation has saved; otherwise defaults.
 
 export const scrollRoutes = new Hono<AppBindings>();
 scrollRoutes.use('*', requireSession());
 
+// All settings are optional — server fills in defaults via
+// resolveEnvelopeSettings. Empty string for collaboratorModel means
+// "no collaborator" (vs. unset which means "use default"). turnCap
+// is clamped to [1, HARD_CAP_TURNS].
+const SettingsBody = z
+  .object({
+    explorerModel: z.string().optional(),
+    collaboratorModel: z.string().nullable().optional(),
+    searchProvider: z.enum(['brave', 'tavily', 'exa', 'serper']).optional(),
+    scrapeProvider: z.enum(['firecrawl', 'tavily', 'exa']).optional(),
+    turnCap: z.number().int().min(1).max(HARD_CAP_TURNS).optional(),
+  })
+  .strict()
+  .optional();
+
 const TriggerBody = z.object({
   conversationId: z.string().uuid(),
   trigger: z.enum(['user', 'auto']).optional(),
+  settings: SettingsBody,
 });
 
 // POST /v1/scroll/trigger
@@ -34,17 +54,40 @@ scrollRoutes.post('/trigger', async (c) => {
   }
 
   // RLS-gate: confirm the caller participates in this conv and that it
-  // has a pinned bot we can run on its behalf.
+  // has a pinned bot we can run on its behalf. Also pull the saved
+  // envelope_settings so we can fall through body → conv defaults →
+  // hard defaults inside resolveEnvelopeSettings.
   const supaUser = userClient(c.env, userJwt);
   const { data: conv, error: convErr } = await supaUser
     .from('conversations')
-    .select('id, bot_id')
+    .select('id, bot_id, envelope_settings')
     .eq('id', parsed.conversationId)
     .maybeSingle();
   if (convErr) return c.json({ error: 'database', detail: convErr.message }, 500);
   if (!conv) return c.json({ error: 'conversation not found or no access' }, 404);
   if (!conv.bot_id) {
     return c.json({ error: 'conversation has no bot to write the scroll' }, 400);
+  }
+
+  // Caller-supplied settings win; fall through to whatever the
+  // conversation saved last; resolveEnvelopeSettings fills the rest.
+  const savedSettings =
+    conv.envelope_settings && typeof conv.envelope_settings === 'object'
+      ? (conv.envelope_settings as Record<string, unknown>)
+      : null;
+  const settings = resolveEnvelopeSettings({
+    ...(savedSettings ?? {}),
+    ...(parsed.settings ?? {}),
+  });
+
+  // If the caller passed settings, persist them as the conversation's
+  // new defaults so the next manual trigger (and the auto-trigger when
+  // it lands) follows the same config without resending the body.
+  if (parsed.settings) {
+    await supaUser
+      .from('conversations')
+      .update({ envelope_settings: settings as unknown as Json })
+      .eq('id', parsed.conversationId);
   }
 
   // Billing gate. A scroll is multi-step LLM work (probably the most
@@ -76,6 +119,7 @@ scrollRoutes.post('/trigger', async (c) => {
       status: 'running',
       trigger: parsed.trigger ?? 'user',
       progress: { phase: 'queued' },
+      settings: settings as unknown as Json,
     })
     .select('id')
     .single();
@@ -90,6 +134,7 @@ scrollRoutes.post('/trigger', async (c) => {
       conversationId: parsed.conversationId,
       userId,
       botId: conv.bot_id as string,
+      settings,
     }),
   );
 
@@ -125,7 +170,7 @@ scrollRoutes.get('/:id', async (c) => {
   const supa = userClient(c.env, userJwt);
   const { data, error } = await supa
     .from('scroll_runs')
-    .select('id, bot_id, conversation_id, status, title, summary, body_md, progress, created_at, started_at, finished_at')
+    .select('id, bot_id, conversation_id, status, title, summary, body_md, progress, settings, turns, created_at, started_at, finished_at')
     .eq('id', id)
     .maybeSingle();
   if (error) return c.json({ error: 'database', detail: error.message }, 500);

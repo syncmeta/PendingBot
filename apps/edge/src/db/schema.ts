@@ -602,6 +602,7 @@ export type Database = {
           bot_id: string | null
           conversation_type: string
           created_at: string
+          envelope_settings: Json | null
           feature: string
           id: string
           last_turn_status: string | null
@@ -616,6 +617,7 @@ export type Database = {
           bot_id?: string | null
           conversation_type?: string
           created_at?: string
+          envelope_settings?: Json | null
           feature?: string
           id?: string
           last_turn_status?: string | null
@@ -630,6 +632,7 @@ export type Database = {
           bot_id?: string | null
           conversation_type?: string
           created_at?: string
+          envelope_settings?: Json | null
           feature?: string
           id?: string
           last_turn_status?: string | null
@@ -1123,11 +1126,13 @@ export type Database = {
           finished_at: string | null
           id: string
           progress: Json
+          settings: Json | null
           started_at: string | null
           status: string
           summary: string | null
           title: string | null
           trigger: string | null
+          turns: Json
           updated_at: string
           user_id: string
         }
@@ -1141,11 +1146,13 @@ export type Database = {
           finished_at?: string | null
           id?: string
           progress?: Json
+          settings?: Json | null
           started_at?: string | null
           status?: string
           summary?: string | null
           title?: string | null
           trigger?: string | null
+          turns?: Json
           updated_at?: string
           user_id: string
         }
@@ -1159,11 +1166,13 @@ export type Database = {
           finished_at?: string | null
           id?: string
           progress?: Json
+          settings?: Json | null
           started_at?: string | null
           status?: string
           summary?: string | null
           title?: string | null
           trigger?: string | null
+          turns?: Json
           updated_at?: string
           user_id?: string
         }
