@@ -785,6 +785,48 @@ private struct ScanQRSheet: View {
     private func submit(value: String) async {
         submitting = true
         defer { submitting = false }
+        let handleToken = PendingBotQR.token(fromScanned: value)
+        // Try the scanned token as a group handle first; if the worker
+        // returns "group not found" we fall through to the friend-add
+        // path. Group + user handle namespaces don't formally collide
+        // (different tables, both UNIQUE), so the order is just about
+        // picking which kind of error message to surface.
+        if await tryJoinGroup(token: handleToken) { return }
+        await addFriend(token: handleToken)
+    }
+
+    /// Returns true when we either joined or filed a pending request.
+    /// Returns false (without setting error) when the token isn't a
+    /// known group handle — caller falls back to the friend path.
+    private func tryJoinGroup(token: String) async -> Bool {
+        do {
+            let url = HostedConfig.environment.workerURL.appendingPathComponent("v1/groups/join")
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            let accessToken = try await SupabaseStack.shared.auth.session.accessToken
+            req.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+            req.httpBody = try JSONSerialization.data(withJSONObject: ["handleValue": token])
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard let http = resp as? HTTPURLResponse else { return false }
+            if http.statusCode == 404 { return false }
+            if !(200..<300).contains(http.statusCode) {
+                let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                error = (payload?["error"] as? String) ?? "HTTP \(http.statusCode)"
+                return true   // surfaced the error; don't try friend path
+            }
+            Haptics.success()
+            onAdded()
+            dismiss()
+            return true
+        } catch {
+            // Network glitch or auth error — let the friend path try too,
+            // it'll fail the same way and surface a real message.
+            return false
+        }
+    }
+
+    private func addFriend(token: String) async {
         do {
             let url = HostedConfig.environment.workerURL.appendingPathComponent("v1/friend-requests")
             var req = URLRequest(url: url)
@@ -792,8 +834,7 @@ private struct ScanQRSheet: View {
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
             let accessToken = try await SupabaseStack.shared.auth.session.accessToken
             req.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-            let handleToken = PendingBotQR.token(fromScanned: value)
-            req.httpBody = try JSONSerialization.data(withJSONObject: ["handleValue": handleToken])
+            req.httpBody = try JSONSerialization.data(withJSONObject: ["handleValue": token])
             let (data, resp) = try await URLSession.shared.data(for: req)
             guard let http = resp as? HTTPURLResponse else { throw URLError(.badServerResponse) }
             if !(200..<300).contains(http.statusCode) {
@@ -828,7 +869,12 @@ private struct CreateGroupSheet: View {
         let id: String
         let name: String
     }
-    private struct BotDecodable: Decodable { let id: String; let display_name: String; let model_id: String? }
+    private struct BotDecodable: Decodable {
+        let id: String
+        let display_name: String
+        let model_id: String?
+        let visibility: String?
+    }
     private struct ContactDecodable: Decodable { let contact_user_id: String; let alias: String? }
 
     @State private var title = ""
@@ -918,7 +964,7 @@ private struct CreateGroupSheet: View {
         do {
             async let botRowsResp: [BotDecodable] = SupabaseStack.shared
                 .from("bots")
-                .select("id, display_name, model_id")
+                .select("id, display_name, model_id, visibility")
                 .eq("is_active", value: true)
                 .execute()
                 .value
@@ -929,7 +975,12 @@ private struct CreateGroupSheet: View {
                 .value
             let botRows = try await botRowsResp
             let humanRows = try await contactRowsResp
-            self.bots = botRows.map { BotPick(id: $0.id, name: $0.display_name, model_id: $0.model_id) }
+            // Drop private bots — open_group_conv RPC rejects them
+            // server-side, so showing them in the picker just leads to
+            // a confusing failure.
+            self.bots = botRows
+                .filter { $0.visibility != "private" }
+                .map { BotPick(id: $0.id, name: $0.display_name, model_id: $0.model_id) }
             self.humans = humanRows.map { HumanPick(id: $0.contact_user_id, name: $0.alias ?? String($0.contact_user_id.prefix(8))) }
         } catch {
             self.error = error.localizedDescription
