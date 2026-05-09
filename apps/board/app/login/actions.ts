@@ -9,13 +9,20 @@ export type LoginState = { error?: string };
 export async function loginAction(_prev: LoginState, formData: FormData): Promise<LoginState> {
   const email = String(formData.get('email') ?? '').trim();
   const password = String(formData.get('password') ?? '');
+  const captchaToken = String(formData.get('captchaToken') ?? '');
 
   if (!email || !password) {
     return { error: '邮箱和密码都要填' };
   }
 
+  // Supabase 开了 captcha protection 后，signInWithPassword 必须带 token；
+  // 没开就忽略 options.captchaToken 也无害。
   const supa = await supabaseServer();
-  const { data, error } = await supa.auth.signInWithPassword({ email, password });
+  const { data, error } = await supa.auth.signInWithPassword({
+    email,
+    password,
+    options: captchaToken ? { captchaToken } : undefined,
+  });
 
   if (error || !data.user) {
     return { error: error?.message ?? '登录失败' };
