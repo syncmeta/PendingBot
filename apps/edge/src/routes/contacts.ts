@@ -13,6 +13,47 @@ contactRoutes.use('*', requireSession());
 // straggler client gets a clean 404 instead of silently writing the old
 // symmetric-upsert path.)
 
+// GET /v1/contacts — full friends list with peer display info. RLS on
+// pendingbot.users is self-only, so iOS can't join from user_contacts to
+// users client-side; the worker uses service-role to attach
+// display_name + avatar_path for each contact in one trip. Drives both
+// the friends tab and the message-list peer lookup for user_user convs.
+contactRoutes.get('/', async (c) => {
+  const userId = c.var.userId!;
+  const supa = serviceClient(c.env);
+  const { data: rows, error } = await supa
+    .from('user_contacts')
+    .select('contact_user_id, alias, created_at')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: true });
+  if (error) return c.json({ error: 'database', detail: error.message }, 500);
+  const ids = (rows ?? []).map((r) => r.contact_user_id as string);
+  if (ids.length === 0) return c.json({ contacts: [] });
+
+  const { data: profiles, error: profErr } = await supa
+    .from('users')
+    .select('id, display_name, avatar_path')
+    .in('id', ids);
+  if (profErr) return c.json({ error: 'database', detail: profErr.message }, 500);
+  const byId = new Map<string, { display_name: string | null; avatar_path: string | null }>();
+  for (const p of profiles ?? []) {
+    byId.set(p.id as string, {
+      display_name: (p.display_name as string | null) ?? null,
+      avatar_path: (p.avatar_path as string | null) ?? null,
+    });
+  }
+  const contacts = (rows ?? []).map((r) => {
+    const p = byId.get(r.contact_user_id as string);
+    return {
+      userId: r.contact_user_id as string,
+      alias: (r.alias as string | null) ?? null,
+      displayName: p?.display_name ?? '',
+      avatarPath: p?.avatar_path ?? null,
+    };
+  });
+  return c.json({ contacts });
+});
+
 // POST /v1/contacts/open-chat — find-or-create the singleton user_user
 // conversation between the caller and another user. iOS calls this when
 // the user taps a human friend from the friends list; subsequent taps
