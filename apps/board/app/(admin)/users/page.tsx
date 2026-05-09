@@ -7,6 +7,10 @@ import { GenerateLoginCodeButton } from './_login-code-button';
 
 type SearchParams = { sort?: string; q?: string };
 
+// Keep in sync with /users/[id] (and the underlying
+// finalize_account_deletion RPC's 28-day window).
+const COOLDOWN_DAYS = 28;
+
 export default async function UsersPage({
   searchParams,
 }: {
@@ -118,17 +122,29 @@ export default async function UsersPage({
               const monthlyLimit = Number(quota?.monthly_limit_usd ?? 0);
               const dailyHot = dailyLimit > 0 && dailyUsed / dailyLimit >= 0.8;
               const monthlyHot = monthlyLimit > 0 && monthlyUsed / monthlyLimit >= 0.8;
+              const pendingAt = u.pending_deletion_at
+                ? new Date(u.pending_deletion_at)
+                : null;
+              const cooldownEnd = pendingAt
+                ? new Date(pendingAt.getTime() + COOLDOWN_DAYS * 24 * 3600 * 1000)
+                : null;
+              const daysLeft = cooldownEnd
+                ? Math.max(
+                    0,
+                    Math.ceil((cooldownEnd.getTime() - Date.now()) / (24 * 3600 * 1000)),
+                  )
+                : 0;
               return (
                 <tr key={u.id} className="border-b last:border-0">
                   <td className="px-4 py-2">
                     <div className="flex items-center gap-2">
                       <span>{u.display_name || '(无名)'}</span>
-                      {u.pending_deletion_at && (
+                      {pendingAt && (
                         <span
-                          className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-amber-800"
-                          title={`已申请注销 — ${new Date(u.pending_deletion_at).toISOString().slice(0, 10)} 起冷静期`}
+                          className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800"
+                          title={`申请于 ${pendingAt.toISOString().slice(0, 10)} · 冷静期到期于 ${cooldownEnd!.toISOString().slice(0, 10)}`}
                         >
-                          注销中
+                          注销中 · 剩 {daysLeft} 天
                         </span>
                       )}
                     </div>
