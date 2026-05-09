@@ -33,6 +33,12 @@ struct MessageTabView: View {
     @EnvironmentObject private var unread: UnreadStore
     @State private var conversations: [Conversation] = []
     @State private var bots: [Bot] = []
+    /// Peer profile keyed by user_user conv id. Populated alongside the
+    /// conversations fetch — joins the embedded `participants` rows back
+    /// against `/v1/contacts` so each user_user row can render the other
+    /// person's avatar + name (alias > display_name) without each row
+    /// hitting the worker on its own.
+    @State private var userPeers: [String: UserUserPeer] = [:]
     @State private var loading = false
     @State private var error: String?
     @State private var creatingGroup = false
@@ -158,7 +164,16 @@ struct MessageTabView: View {
     private func destinationView(for dest: ChatDest) -> some View {
         switch dest {
         case .existing(let conv):
-            ConversationView(conversation: conv, bot: bot(for: conv)) {
+            // user_user 行点进去时,把列表里已经解析过的 peer (alias /
+            // displayName / avatarPath) 直接喂给 ConversationView 当
+            // pendingPeer,这样头像 + 标题第一帧就对,不用等
+            // loadPeerProfileIfNeeded() 那次 round-trip。
+            let pending: PendingPeer? = {
+                guard conv.conversation_type == "user_user",
+                      let p = userPeers[conv.id] else { return nil }
+                return PendingPeer(kind: "user", peerId: p.userId, displayName: p.rowName)
+            }()
+            ConversationView(conversation: conv, bot: bot(for: conv), pendingPeer: pending) {
                 reload()
             }
             .onAppear { unread.markRead(conv.id) }
@@ -331,6 +346,7 @@ struct MessageTabView: View {
         let row = ConversationListRow(
             conv: conv,
             bot: bot(for: conv),
+            userPeer: userPeers[conv.id],
             isUnread: unread.isUnread(conv.id),
             isSelected: isSelected
         )
@@ -397,13 +413,17 @@ struct MessageTabView: View {
             // user_unread_counts has a row per (user, conv) only after the
             // conv received its first message. Joining it INNER is the
             // empty-conv filter (item: 如果会话内消息是空的就不要出现).
+            // `participants` is embedded so user_user rows know the peer's
+            // user id without a second trip — RLS lets us see both rows of
+            // a conv we participate in.
             async let convRows: [ConvRow] = SupabaseStack.shared
                 .from("conversations")
                 .select("""
                     id, bot_id, user_id, title, conversation_type, feature, round_count, updated_at,
                     provider_override,
                     bot:bots!conversations_bot_id_fkey(display_name, model_id, visibility, creator_id),
-                    unread:user_unread_counts(last_message_at, last_message_preview, unread_count)
+                    unread:user_unread_counts(last_message_at, last_message_preview, unread_count),
+                    participants:conversation_participants(participant_type, participant_id)
                 """)
                 .order("updated_at", ascending: false)
                 // Tie-break: ascending id so the order is deterministic when
@@ -412,18 +432,45 @@ struct MessageTabView: View {
                 .order("id", ascending: true)
                 .execute()
                 .value
+            // Friends list — cheap (single worker round-trip, even cheaper
+            // when the cache is warm), and we need it to render avatars +
+            // names on user_user rows. Empty list on auth/network failure
+            // is fine; rows fall back to the id-prefix.
+            let contactsTask = Task { (try? await ContactsAPI.fetchContacts()) ?? [] }
 
             self.bots = try await botRows.map(\.asBot)
             // Sort client-side too — the local cache hydrate above and any
             // future Realtime patch can interleave; keep the visible order
             // (newest first, then ascending id on ties) consistent.
-            let fresh = try await convRows.map(\.asConversation).sorted { l, r in
+            let convFetched = try await convRows
+            let fresh = convFetched.map(\.asConversation).sorted { l, r in
                 if l.last_activity_at != r.last_activity_at {
                     return l.last_activity_at > r.last_activity_at
                 }
                 return l.id < r.id
             }
             self.conversations = fresh
+
+            // Build the user_user peer map. Only convs of that type carry
+            // a meaningful peer; bot/group/self rows skip the lookup.
+            let myId = AccountStore.shared.current?.id ?? ""
+            let contactsById: [String: FriendsTabView.HumanPick] =
+                Dictionary(uniqueKeysWithValues: (await contactsTask.value).map { ($0.id, $0) })
+            var peers: [String: UserUserPeer] = [:]
+            for row in convFetched where row.conversation_type == "user_user" {
+                let otherId = row.participants?.first {
+                    $0.participant_type == "user" && $0.participant_id != myId
+                }?.participant_id
+                guard let otherId else { continue }
+                let pick = contactsById[otherId]
+                peers[row.id] = UserUserPeer(
+                    userId: otherId,
+                    alias: pick?.alias,
+                    displayName: pick?.displayName ?? "",
+                    avatarPath: pick?.avatarPath
+                )
+            }
+            self.userPeers = peers
             LocalDatabase.shared.upsertConversations(fresh.map { c in
                 LocalDatabase.ConversationRow(
                     id: c.id,
@@ -489,6 +536,7 @@ struct MessageTabView: View {
         // (the FK has no unique constraint on conversation_id alone — one
         // row per (user, conv)). With !inner + RLS, callers see at most one.
         let unread: [UnreadJoin]?
+        let participants: [ParticipantJoin]?
         struct BotJoin: Decodable {
             let display_name: String?
             let model_id: String?
@@ -499,6 +547,10 @@ struct MessageTabView: View {
             let last_message_at: String?
             let last_message_preview: String?
             let unread_count: Int?
+        }
+        struct ParticipantJoin: Decodable {
+            let participant_type: String
+            let participant_id: String
         }
         var asConversation: Conversation {
             let unreadRow = unread?.first
@@ -564,9 +616,29 @@ struct MessageTabView: View {
     }
 }
 
+/// Resolved peer for a user_user conv shown in the list. Built once during
+/// `load()` from the participants embed + the friends list so each row can
+/// render the other person's name + avatar without per-row worker calls.
+struct UserUserPeer: Hashable {
+    let userId: String
+    let alias: String?
+    let displayName: String
+    let avatarPath: String?
+
+    /// Title shown on the row + carried into ConversationView's pendingPeer
+    /// so opening the chat doesn't re-flicker the header label.
+    var rowName: String {
+        if let a = alias, !a.isEmpty { return a }
+        if !displayName.isEmpty { return displayName }
+        return String(userId.prefix(8))
+    }
+}
+
 private struct ConversationListRow: View {
     let conv: Conversation
     let bot: Bot?
+    /// Resolved peer for user_user rows; nil for bot / group / self.
+    let userPeer: UserUserPeer?
     let isUnread: Bool
     /// True only in the regular-size sidebar layout when this row's
     /// conversation is the one currently shown in the detail pane.
@@ -574,19 +646,33 @@ private struct ConversationListRow: View {
     /// (compact mode pushes a new screen, so it never needs this).
     var isSelected: Bool = false
 
-    // Bot name pill. Falls back to the joined `bot_name` from the
-    // conversation row if we haven't loaded the live bot record yet.
+    // Right-side name pill. For user_user it carries the peer's nickname
+    // (the user's own profile name, not the local alias — the title above
+    // already shows the alias). For bots it carries the bot's name. Falls
+    // back to bot_name / title / "—" so we never show a raw uuid.
     private var primaryName: String {
-        // Never fall through to the raw uuid. Until the bot list lands or
-        // the cache hydrate carries a name, just show the conv title (or
-        // an em-dash placeholder) — the long green ID badge was an
-        // eyesore on first paint.
+        if isHumanConv {
+            if let p = userPeer, !p.displayName.isEmpty { return p.displayName }
+            if let p = userPeer { return p.rowName }
+        }
         if let n = bot?.display_name, !n.isEmpty { return n }
         if let n = conv.bot_name, !n.isEmpty { return n }
         if let t = conv.title, !t.isEmpty { return t }
         return "—"
     }
     private var isHumanConv: Bool { conv.conversation_type == "user_user" }
+
+    /// What the row title reads as. user_user prefers the local alias
+    /// (备注) → peer nickname → id-prefix; everything else keeps the
+    /// existing `conv.title` path with the "新对话" placeholder.
+    private var rowTitle: String {
+        if isHumanConv, let p = userPeer { return p.rowName }
+        return conv.title?.isEmpty == false ? conv.title! : "新对话"
+    }
+    private var rowTitleIsPlaceholder: Bool {
+        if isHumanConv, userPeer != nil { return false }
+        return !(conv.title?.isEmpty == false)
+    }
 
     /// Pill colors for the name tag carry the bot type now that the
     /// dedicated 公/私 tag is gone: green = human, plum = private bot,
@@ -599,25 +685,29 @@ private struct ConversationListRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            // Emoji stays per-bot so the same bot looks recognisable
-            // across all your chats with it; tint varies per conv.
-            BotAvatar(
-                emojiSeed: conv.bot_id.isEmpty ? conv.id : conv.bot_id,
-                colorSeed: conv.id,
-                size: 36
-            )
+            // user_user gets the peer's UserAvatar so the same person
+            // reads consistently across the friends list / chat header /
+            // bubbles. Bot/group/self keep the per-bot BotAvatar with a
+            // per-conv tint.
+            if isHumanConv, let p = userPeer {
+                UserAvatar(seed: p.userId, attachmentId: p.avatarPath, size: 36)
+            } else {
+                BotAvatar(
+                    emojiSeed: conv.bot_id.isEmpty ? conv.id : conv.bot_id,
+                    colorSeed: conv.id,
+                    size: 36
+                )
+            }
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     if isUnread {
                         Circle().fill(Theme.Palette.accent).frame(width: 7, height: 7)
                     }
-                    Text(conv.title?.isEmpty == false ? conv.title! : "新对话")
+                    Text(rowTitle)
                         .font(Theme.Fonts.serif(size: 16, weight: .semibold))
                         .foregroundStyle(
-                            conv.title?.isEmpty == false
-                            ? Theme.Palette.ink
-                            : Theme.Palette.inkMuted
+                            rowTitleIsPlaceholder ? Theme.Palette.inkMuted : Theme.Palette.ink
                         )
                         .lineLimit(1)
                     if let badge = ConvTypeBadge(forType: conv.conversation_type) {
