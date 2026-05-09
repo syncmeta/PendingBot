@@ -62,24 +62,34 @@ struct RootView: View {
     @EnvironmentObject var store: AccountStore
 
     var body: some View {
-        if !store.sessionHydrated {
-            // bootstrap() runs in `.task` (after first frame) so we can't
-            // know auth state synchronously — paint a launch-screen lookalike
-            // until it's resolved, otherwise already-signed-in users see a
-            // flash of WelcomeView before TabRoot.
-            SplashView()
-        } else if store.current == nil {
-            WelcomeView()
-        } else if store.hasBootstrapped == false {
-            // Right after sign-in we run the random-name + random-avatar
-            // onboarding. While `hasBootstrapped` is still nil (refresh
-            // in flight) we show TabRoot to avoid a flash of onboarding
-            // for users who already finished it on a previous launch.
-            ProfileBootstrapView()
-                .environmentObject(store)
-        } else {
-            TabRoot()
-                .id(store.current?.id)
+        Group {
+            if !store.sessionHydrated {
+                // bootstrap() runs in `.task` (after first frame) so we can't
+                // know auth state synchronously — paint a launch-screen lookalike
+                // until it's resolved, otherwise already-signed-in users see a
+                // flash of WelcomeView before TabRoot.
+                SplashView()
+            } else if store.current == nil {
+                WelcomeView()
+            } else if store.hasBootstrapped == false {
+                // Right after sign-in we run the random-name + random-avatar
+                // onboarding. While `hasBootstrapped` is still nil (refresh
+                // in flight) we show TabRoot to avoid a flash of onboarding
+                // for users who already finished it on a previous launch.
+                ProfileBootstrapView()
+                    .environmentObject(store)
+            } else {
+                TabRoot()
+                    .id(store.current?.id)
+            }
+        }
+        // One-shot recovery banner: fires the first time we sign back in
+        // while a deletion tombstone was still pending. AccountStore flips
+        // accountRecovered after cancel_account_deletion() returned true.
+        .alert("账号已恢复", isPresented: $store.accountRecovered) {
+            Button("好") {}
+        } message: {
+            Text("你之前申请的注销已取消，账号和数据都还在。")
         }
     }
 }

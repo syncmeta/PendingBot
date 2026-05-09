@@ -3,12 +3,14 @@ import { syncModelPricing } from './model-pricing';
 import { cleanupOrphanUploads } from './uploads-cleanup';
 import { cleanupIdleSandboxes } from './sandbox-cleanup';
 import { reapStuckScrolls } from './scroll-reaper';
+import { finalizeExpiredAccountDeletions } from './account-deletion-sweep';
 
 // Workers cron entrypoint. wrangler.jsonc declares `triggers.crons` with
 // each schedule pattern; the same handler routes by `controller.cron`.
 //
 // Wired schedules (must agree with wrangler.jsonc):
-//   "0 4 * * *"    daily 04:00 UTC — orphan upload sweep
+//   "0 4 * * *"    daily 04:00 UTC — orphan upload sweep + finalize
+//                  expired account-deletion tombstones (28d cooldown)
 //   "5 * * * *"    hourly at xx:05 — idle Daytona sandbox sweep (TTL 1h)
 //   "*/5 * * * *"  every 5 min — scroll_runs watchdog (force-fail rows
 //                  stuck in 'running' past the loop's 4-min wall budget)
@@ -32,6 +34,9 @@ export async function handleScheduled(
   // each task — they run concurrently from the runtime's perspective.
   if (cron === '0 4 * * *') {
     ctx.waitUntil(safe('uploads-cleanup', () => cleanupOrphanUploads(env)));
+    ctx.waitUntil(
+      safe('deletion-sweep', () => finalizeExpiredAccountDeletions(env)),
+    );
   } else if (cron === '5 * * * *') {
     ctx.waitUntil(safe('sandbox-cleanup', () => cleanupIdleSandboxes(env)));
   } else if (cron === '*/5 * * * *') {

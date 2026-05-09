@@ -36,6 +36,10 @@ final class AccountStore: ObservableObject {
     /// the bootstrap step). Falls back to the auth-metadata name when the
     /// row hasn't been refreshed yet.
     @Published var profileDisplayName: String?
+    /// One-shot flag that flips to true the moment we cancel a pending
+    /// account-deletion tombstone on sign-in. RootView watches it to
+    /// show "账号已恢复" once, then resets it. See refreshProfileFlags().
+    @Published var accountRecovered: Bool = false
 
     private var stateTask: Task<Void, Never>?
     private var didBootstrap = false
@@ -101,7 +105,7 @@ final class AccountStore: ObservableObject {
             // but other code paths could put nested values in there).
             let data = try await SupabaseStack.shared
                 .from("users")
-                .select("display_name, custom_fields")
+                .select("display_name, custom_fields, pending_deletion_at")
                 .eq("id", value: userId)
                 .single()
                 .execute()
@@ -114,6 +118,12 @@ final class AccountStore: ObservableObject {
                 if let dn = json["display_name"] as? String, !dn.isEmpty {
                     self.profileDisplayName = dn
                 }
+                // 28-day deletion cooldown: if there's a tombstone, signing
+                // back in is the cancellation gesture. Clear it server-side
+                // and surface a one-shot banner via accountRecovered.
+                if json["pending_deletion_at"] is String {
+                    await cancelPendingDeletion()
+                }
             } else {
                 self.hasBootstrapped = false
             }
@@ -121,6 +131,27 @@ final class AccountStore: ObservableObject {
             // Most likely cause is the user row not existing yet — treat as
             // "needs bootstrap" so the onboarding view runs and creates it.
             self.hasBootstrapped = false
+        }
+    }
+
+    /// Clears a pending-deletion tombstone via the cancel_account_deletion
+    /// RPC and flags accountRecovered so RootView can show a one-shot
+    /// "已恢复你的账号" alert. Failures are logged but not surfaced — if the
+    /// RPC fails the tombstone stays put and tomorrow's cron sweep is the
+    /// next chance for the user to log in and recover.
+    private func cancelPendingDeletion() async {
+        struct EmptyArgs: Encodable {}
+        do {
+            let res = try await SupabaseStack.shared
+                .rpc("cancel_account_deletion", params: EmptyArgs())
+                .execute()
+            // RPC returns boolean (true if a tombstone was cleared).
+            if let json = try? JSONSerialization.jsonObject(with: res.data),
+               let cleared = json as? Bool, cleared {
+                self.accountRecovered = true
+            }
+        } catch {
+            log.error("cancel_account_deletion failed: \(String(describing: error), privacy: .public)")
         }
     }
 

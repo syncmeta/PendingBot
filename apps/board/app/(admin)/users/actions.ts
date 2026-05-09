@@ -145,6 +145,85 @@ export async function grantCredits(
   return { ok: { credits, new_balance: Number(newBalance ?? 0) } };
 }
 
+/// Force-finalize a user's account, bypassing the 28-day cooldown. Calls
+/// finalize_account_deletion(p_uid, p_force=true) which:
+///   • logs the user's stored sentiment to account_deletion_log (if any),
+///   • runs _delete_account_internal (cascading wipe + auth.users delete).
+/// After this, the user row is gone — there's nothing left on the
+/// /users/<id> page, so we redirect back to /users.
+export async function forceDeleteAccount(userId: string) {
+  const admin = await requireAdmin();
+  const supa = supabaseAdmin();
+
+  // Snapshot the row for the audit entry before it disappears.
+  const { data: before } = await supa
+    .from('users')
+    .select('id, email, display_name, pending_deletion_at, pending_deletion_sentiment')
+    .eq('id', userId)
+    .maybeSingle();
+  if (!before) return;
+
+  const { error } = await supa.rpc('finalize_account_deletion', {
+    p_uid: userId,
+    p_force: true,
+  });
+  if (error) {
+    // Surface in the audit trail so we can debug; the redirect still
+    // happens to /users (the page will just show the user still there).
+    await audit({
+      action: 'user.force_delete_failed',
+      targetId: userId,
+      before,
+      after: { error: error.message },
+      actorId: admin.id,
+    });
+    return;
+  }
+
+  await audit({
+    action: 'user.force_delete',
+    targetId: userId,
+    before,
+    after: null,
+    actorId: admin.id,
+  });
+  revalidatePath('/users');
+  redirect('/users');
+}
+
+/// Clear a user's pending-deletion tombstone from the board. Mostly an
+/// escape hatch: the user normally cancels their own tombstone by
+/// signing back in, but support might need to do it on their behalf.
+export async function cancelPendingDeletion(userId: string) {
+  const admin = await requireAdmin();
+  const supa = supabaseAdmin();
+  const { data: before } = await supa
+    .from('users')
+    .select('pending_deletion_at, pending_deletion_sentiment')
+    .eq('id', userId)
+    .maybeSingle();
+  if (!before?.pending_deletion_at) return;
+
+  await supa
+    .from('users')
+    .update({
+      pending_deletion_at: null,
+      pending_deletion_sentiment: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', userId);
+
+  await audit({
+    action: 'user.cancel_pending_deletion',
+    targetId: userId,
+    before,
+    after: { pending_deletion_at: null, pending_deletion_sentiment: null },
+    actorId: admin.id,
+  });
+  revalidatePath('/users');
+  revalidatePath(`/users/${userId}`);
+}
+
 export async function toggleAdmin(userId: string) {
   const admin = await requireAdmin();
   // Don't let an admin demote themselves through the UI — easy way to

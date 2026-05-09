@@ -23,9 +23,10 @@ struct MeTabView: View {
         var id: Self { self }
     }
 
-    /// Two-way sentiment captured when finalizing account deletion. The
-    /// outcome is the same — full account wipe — but recording which
-    /// button the user picked tells us how people feel when they leave.
+    /// Two-way sentiment captured when requesting account deletion. The
+    /// outcome is the same — pending-deletion tombstone, finalized 28
+    /// days later — but recording which button the user picked tells us
+    /// how people feel when they leave.
     enum DeletionSentiment: String {
         case seeYouAgain     = "see_you_again"     // "有缘再见"
         case farewellForever = "farewell_forever"  // "再也不见"
@@ -84,7 +85,7 @@ struct MeTabView: View {
             }
         } message: {
             if pendingConfirm == .delete {
-                Text("删所有数据，云端和本地都删。\n两个选项都能完全注销账号，我只是想知道你对我的态度。")
+                Text("进入 28 天注销冷静期。\n期间在任意设备登录就能恢复账号，过了 28 天数据全部删除。\n两个选项触发同一个流程，我只是想知道你对我的态度。")
             }
         }
     }
@@ -92,7 +93,7 @@ struct MeTabView: View {
     private var confirmTitle: String {
         switch pendingConfirm {
         case .signOut: return "确定？"
-        case .delete:  return "不可撤销 想好再点"
+        case .delete:  return "28 天后正式注销 期间登录可恢复"
         case .none:    return ""
         }
     }
@@ -155,7 +156,7 @@ struct MeTabView: View {
                                 Haptics.tap()
                             } label: {
                                 GroupedRow(
-                                    title: deleting ? "正在删除…" : "注销账号",
+                                    title: deleting ? "提交中…" : "注销账号",
                                     role: .destructive,
                                     showsChevron: false
                                 )
@@ -238,7 +239,7 @@ struct MeTabView: View {
         do {
             struct Args: Encodable { let p_sentiment: String }
             try await SupabaseStack.shared
-                .rpc("delete_self_account",
+                .rpc("request_account_deletion",
                      params: Args(p_sentiment: sentiment.rawValue))
                 .execute()
             await store.signOut()

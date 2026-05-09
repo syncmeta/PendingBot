@@ -2,9 +2,17 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { fmtPnd, fmtUsd } from '@/lib/format';
-import { grantCredits, updateQuota } from '../actions';
+import {
+  cancelPendingDeletion,
+  forceDeleteAccount,
+  grantCredits,
+  updateQuota,
+} from '../actions';
 import { QuotaForm } from './_form';
 import { GrantForm } from './_grant-form';
+import { ConfirmDeletionAction } from './_deletion-actions';
+
+const COOLDOWN_DAYS = 28;
 
 const DEFAULT_DAILY = 1.0;
 const DEFAULT_MONTHLY = 10.0;
@@ -20,7 +28,7 @@ export default async function UserDetailPage({
   const [{ data: user }, { data: quota }, { data: ledger }] = await Promise.all([
     supa
       .from('users')
-      .select('id, display_name, email, is_admin, created_at, updated_at, bio, balance_credits, lifetime_topup_credits, lifetime_spent_credits')
+      .select('id, display_name, email, is_admin, created_at, updated_at, bio, balance_credits, lifetime_topup_credits, lifetime_spent_credits, pending_deletion_at, pending_deletion_sentiment')
       .eq('id', id)
       .maybeSingle(),
     supa.from('user_quota').select('*').eq('user_id', id).maybeSingle(),
@@ -32,6 +40,19 @@ export default async function UserDetailPage({
       .limit(15),
   ]);
   if (!user) notFound();
+
+  const pendingDeletionAt = user.pending_deletion_at
+    ? new Date(user.pending_deletion_at)
+    : null;
+  const cooldownEnd = pendingDeletionAt
+    ? new Date(pendingDeletionAt.getTime() + COOLDOWN_DAYS * 24 * 3600 * 1000)
+    : null;
+  const daysLeft = cooldownEnd
+    ? Math.max(
+        0,
+        Math.ceil((cooldownEnd.getTime() - Date.now()) / (24 * 3600 * 1000)),
+      )
+    : 0;
 
   // Pull last 30 days of audit_log for this user — quick "what's this
   // user actually been doing" preview without sending them to /audit.
@@ -59,6 +80,60 @@ export default async function UserDetailPage({
           )}
         </p>
       </div>
+
+      <section className="space-y-3">
+        <h2 className="text-sm font-medium">注销状态</h2>
+        <div className="rounded-lg border bg-card p-4 space-y-3 text-sm">
+          {pendingDeletionAt ? (
+            <>
+              <p>
+                用户已申请注销,处于 28 天冷静期。
+                <span className="ml-1 rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-800">
+                  剩余 {daysLeft} 天
+                </span>
+              </p>
+              <p className="text-xs text-muted-foreground">
+                申请于 {pendingDeletionAt.toISOString().replace('T', ' ').slice(0, 19)} UTC ·
+                到期于 {cooldownEnd!.toISOString().replace('T', ' ').slice(0, 19)} UTC ·
+                心情：
+                <span className="ml-1 font-mono">
+                  {user.pending_deletion_sentiment ?? '—'}
+                </span>
+              </p>
+              <div className="flex items-center gap-2 pt-1">
+                <ConfirmDeletionAction
+                  action={forceDeleteAccount}
+                  userId={user.id}
+                  label="立即彻底删除"
+                  pendingLabel="正在删除…"
+                  confirmText={`确定立即彻底删除 ${user.email ?? user.display_name} 的账号和所有数据？此操作不可撤销。`}
+                />
+                <ConfirmDeletionAction
+                  action={cancelPendingDeletion}
+                  userId={user.id}
+                  variant="normal"
+                  label="替用户取消注销"
+                  pendingLabel="处理中…"
+                  confirmText={`确定取消该用户的注销申请？`}
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="text-muted-foreground">
+                用户未申请注销。下面这个按钮跳过冷静期立即删除全部数据,合规 / 滥用场景用。
+              </p>
+              <ConfirmDeletionAction
+                action={forceDeleteAccount}
+                userId={user.id}
+                label="立即彻底删除（无冷静期）"
+                pendingLabel="正在删除…"
+                confirmText={`确定立即彻底删除 ${user.email ?? user.display_name} 的账号和所有数据？此操作不可撤销。`}
+              />
+            </>
+          )}
+        </div>
+      </section>
 
       <section className="space-y-3">
         <h2 className="text-sm font-medium">余额（PND ∂）</h2>
