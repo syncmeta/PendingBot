@@ -195,7 +195,7 @@ struct WelcomeView: View {
                 } else if humanChoice == .robot {
                     robotEasterEgg
                         .transition(.opacity)
-                } else if humanChoice == .human && !turnstileInteractive {
+                } else if humanChoice == .human && !turnstileInteractive && !turnstileFailed {
                     verifyingHint
                         .transition(.opacity)
                 }
@@ -625,6 +625,11 @@ struct WelcomeView: View {
     private func handleTurnstileError(_ msg: String) {
         turnstileFailed = true
         turnstileInteractive = false
+        // Drop any prior token — error/expired callbacks invalidate it,
+        // and we don't want the 发送 button to remain tappable with a
+        // stale value (which the Supabase backend may or may not reject
+        // depending on whether captcha-secret is configured).
+        turnstileToken = nil
         if humanChoice == .human {
             errorText = "人机验证失败：\(msg)"
             Haptics.error()
