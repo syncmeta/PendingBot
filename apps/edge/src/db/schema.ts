@@ -582,7 +582,7 @@ export type Database = {
           avatar_url: string | null
           conversation_id: string
           created_at: string
-          created_by: string
+          created_by: string | null
           join_policy: Database["pendingbot"]["Enums"]["group_join_policy"]
           max_members: number
           router_model_slug: string | null
@@ -593,7 +593,7 @@ export type Database = {
           avatar_url?: string | null
           conversation_id: string
           created_at?: string
-          created_by: string
+          created_by?: string | null
           join_policy?: Database["pendingbot"]["Enums"]["group_join_policy"]
           max_members?: number
           router_model_slug?: string | null
@@ -604,7 +604,7 @@ export type Database = {
           avatar_url?: string | null
           conversation_id?: string
           created_at?: string
-          created_by?: string
+          created_by?: string | null
           join_policy?: Database["pendingbot"]["Enums"]["group_join_policy"]
           max_members?: number
           router_model_slug?: string | null
