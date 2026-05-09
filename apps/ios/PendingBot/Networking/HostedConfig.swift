@@ -62,24 +62,29 @@ enum HostedConfig {
         var turnstileSiteKey: String {
             switch self {
             case .dev:    return "1x00000000000000000000AA"
-            // TODO(captcha): swap in the live Turnstile site key after
-            // registering pendingname.com in the Cloudflare dashboard.
-            // Until then `.remote` shares the dev test key — Supabase
-            // backend captcha is also off in `.remote` until the matching
-            // secret is set in Dashboard → Auth → Captcha protection.
-            case .remote: return "1x00000000000000000000AA"
+            // Live site key registered for `bot.pendingname.com` in
+            // the Cloudflare Turnstile dashboard. The matching secret
+            // is only useful once it's pasted into the remote Supabase
+            // project (Dashboard → Authentication → Captcha protection)
+            // — until that's done, the iOS client will still mint
+            // tokens but the Supabase backend won't validate them, so
+            // captcha effectively no-ops.
+            case .remote: return "0x4AAAAAADLy8thL0jSFWJKF"
             }
         }
 
         /// Origin that hosts the inline Turnstile challenge page inside
         /// the in-app WKWebView. Must match a hostname registered for
         /// the Turnstile site key — Cloudflare validates the embedding
-        /// origin server-side. We piggyback on the canonical site URL
-        /// rather than registering a separate domain just for this.
+        /// origin server-side. We use `bot.pendingname.com` to match the
+        /// project's existing convention (AASA, Universal Links, and
+        /// QR-code landing all live under `bot.`), keeping iOS-app
+        /// origins namespaced away from the brand root `pendingname.com`
+        /// in case that ever gets a separate web property.
         var turnstileHost: URL {
             switch self {
             case .dev:    return URL(string: "https://localhost")!
-            case .remote: return URL(string: "https://pendingname.com")!
+            case .remote: return URL(string: "https://bot.pendingname.com")!
             }
         }
     }
