@@ -326,7 +326,7 @@ struct WelcomeView: View {
     private var codeBlock: some View {
         VStack(spacing: 14) {
             codeStatusRow
-            if otpSent {
+            if otpSent || isTestEmail {
                 codeRow
                     .transition(.opacity)
             }
@@ -582,7 +582,7 @@ struct WelcomeView: View {
         case .enteringEmail:
             return email.contains("@") && email.contains(".")
         case .humanCheck:
-            return otpSent && code.count >= 4
+            return (otpSent || isTestEmail) && code.count >= 4
         }
     }
 
@@ -705,7 +705,7 @@ struct WelcomeView: View {
 
     @MainActor
     private func verifyCode() async {
-        guard otpSent else { return }
+        guard otpSent || isTestEmail else { return }
         isVerifying = true
         defer { isVerifying = false }
         do {
