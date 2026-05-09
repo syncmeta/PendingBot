@@ -56,9 +56,10 @@ struct WelcomeView: View {
     /// fresh token — used on resend, since Turnstile tokens are
     /// single-use.
     @State private var turnstileWidgetID: UUID = UUID()
-    /// True after a successful `sendCode`. Drives the cross-fade from
-    /// the (possibly visible) Turnstile widget to the code-entry row.
-    @State private var codeSent: Bool = false
+    /// True after the first successful `sendCode`. Used to flip the
+    /// status row from "码将发至" / 发送 → "码已发至" / 重发, and to
+    /// reveal the code-entry input.
+    @State private var otpSent: Bool = false
     /// Seconds remaining on the resend cooldown. >0 ⇒ button is the
     /// grey countdown; ==0 ⇒ "重发" is tappable again.
     @State private var resendCooldown: Int = 0
@@ -125,14 +126,15 @@ struct WelcomeView: View {
         .onAppear {
             // Don't grab focus for the email field — let users tap it
             // explicitly so the keyboard doesn't fly up on launch.
-            if codeSent { focusedField = .code }
+            if otpSent { focusedField = .code }
         }
         .onReceive(resendTimer) { _ in
             if resendCooldown > 0 { resendCooldown -= 1 }
         }
         .animation(.easeInOut(duration: 0.28), value: stage)
         .animation(.easeInOut(duration: 0.28), value: humanChoice)
-        .animation(.easeInOut(duration: 0.28), value: codeSent)
+        .animation(.easeInOut(duration: 0.28), value: otpSent)
+        .animation(.easeInOut(duration: 0.28), value: codeBlockShown)
         .animation(.easeInOut(duration: 0.28), value: turnstileInteractive)
     }
 
@@ -172,7 +174,7 @@ struct WelcomeView: View {
                 humanButton
                 robotButton
             }
-            .disabled(isBusy || codeSent)
+            .disabled(isBusy || codeBlockShown)
 
             // The Turnstile widget is mounted as soon as we land on this
             // stage so it can pre-load while the user reads the prompt.
@@ -181,62 +183,31 @@ struct WelcomeView: View {
             // callback fires.
             turnstileWidget
 
-            // Sub-content under the buttons. Cross-fades between the
-            // verify-code row (after sendCode succeeds), the robot
-            // easter egg, and the explicit "发送验证码" button (or
-            // its loading hint) on the human path.
+            // Sub-content under the buttons. The code block is shown
+            // as soon as Turnstile clears (or the OTP has already been
+            // sent at least once); the inline "发送" tap is what
+            // actually fires the OTP. While CF is still working on a
+            // silent pass, show a small loading hint instead.
             Group {
-                if codeSent {
+                if codeBlockShown {
                     codeBlock
                         .transition(.opacity)
                 } else if humanChoice == .robot {
                     robotEasterEgg
                         .transition(.opacity)
-                } else if humanChoice == .human {
-                    humanSendArea
+                } else if humanChoice == .human && !turnstileInteractive {
+                    verifyingHint
                         .transition(.opacity)
                 }
             }
         }
     }
 
-    /// What sits below the 人类 button while the user is on the human
-    /// path but hasn't yet sent the OTP. The Turnstile token may already
-    /// be in hand (silent pass) or still pending; the UI flips between
-    /// the explicit 发送验证码 button and a small "正在验证…" hint.
-    @ViewBuilder
-    private var humanSendArea: some View {
-        if turnstileToken != nil {
-            sendCodeButton
-        } else if !turnstileInteractive {
-            verifyingHint
-        }
-        // else: the inline Turnstile widget is itself visible and the
-        // user is solving it; no extra UI needed underneath.
-    }
-
-    private var sendCodeButton: some View {
-        Button {
-            guard let token = turnstileToken else { return }
-            turnstileToken = nil
-            Task { await sendCode(captchaToken: token) }
-        } label: {
-            HStack(spacing: 8) {
-                if isVerifying {
-                    ProgressView()
-                        .tint(.white)
-                }
-                Text("发送验证码")
-                    .font(.system(size: 17, weight: .medium))
-                    .foregroundStyle(.white)
-            }
-            .frame(maxWidth: .infinity)
-            .frame(height: 52)
-            .background(Capsule().fill(Theme.Palette.accent))
-            .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
-        }
-        .buttonStyle(.plain)
-        .disabled(isVerifying)
+    /// True once we're ready to surface the verify-code block: either
+    /// Turnstile has handed us a token (we just need the user to tap
+    /// 发送) or an OTP has already been sent at least once.
+    private var codeBlockShown: Bool {
+        humanChoice == .human && (turnstileToken != nil || otpSent)
     }
 
     /// Top-left chevron back to the email-entry stage. Native glass on
@@ -303,7 +274,7 @@ struct WelcomeView: View {
     /// for silent passes; only animates open if Cloudflare actually
     /// fires the `before-interactive-callback`.
     private var turnstileWidget: some View {
-        let visible = humanChoice == .human && !codeSent && turnstileInteractive
+        let visible = humanChoice == .human && !codeBlockShown && turnstileInteractive
         return TurnstileWebView(
             siteKey: HostedConfig.environment.turnstileSiteKey,
             host: HostedConfig.environment.turnstileHost,
@@ -332,7 +303,10 @@ struct WelcomeView: View {
     private var codeBlock: some View {
         VStack(spacing: 14) {
             codeStatusRow
-            codeRow
+            if otpSent {
+                codeRow
+                    .transition(.opacity)
+            }
         }
     }
 
@@ -341,23 +315,37 @@ struct WelcomeView: View {
             Image(systemName: "envelope")
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.Palette.inkMuted)
-            Text("码已发至：\(email)")
+            Text("\(otpSent ? "码已发至：" : "码将发至：")\(email)")
                 .font(Theme.Fonts.footnote)
                 .foregroundStyle(Theme.Palette.inkMuted)
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer()
-            resendButton
+            sendOrResendButton
         }
         .padding(.horizontal, 4)
     }
 
-    private var resendButton: some View {
+    /// Right-side action in the status row. The first tap fires the
+    /// initial OTP using the Turnstile token already in hand; later
+    /// taps go through `resend` (which remounts the widget for a
+    /// fresh single-use token). Greyed-out countdown when on cooldown.
+    private var sendOrResendButton: some View {
         Group {
             if resendCooldown > 0 {
                 Text("\(resendCooldown)s")
                     .font(Theme.Fonts.caption)
                     .foregroundStyle(Theme.Palette.inkMuted.opacity(0.7))
+            } else if !otpSent {
+                Button("发送") {
+                    guard let token = turnstileToken else { return }
+                    turnstileToken = nil
+                    Task { await sendCode(captchaToken: token) }
+                }
+                .buttonStyle(.plain)
+                .font(Theme.Fonts.caption)
+                .foregroundStyle(Theme.Palette.accent.opacity(0.85))
+                .disabled(isVerifying || turnstileToken == nil)
             } else {
                 Button("重发") {
                     Task { await resend() }
@@ -557,7 +545,7 @@ struct WelcomeView: View {
         case .enteringEmail:
             return email.contains("@") && email.contains(".")
         case .humanCheck:
-            return codeSent && code.count >= 4
+            return otpSent && code.count >= 4
         }
     }
 
@@ -571,7 +559,7 @@ struct WelcomeView: View {
         awaitingTurnstileSend = false
         turnstileInteractive = false
         turnstileFailed = false
-        codeSent = false
+        otpSent = false
         code = ""
         resendCooldown = 0
         // Drop the WebView so it stops loading; it'll be remounted with
@@ -590,7 +578,7 @@ struct WelcomeView: View {
         awaitingTurnstileSend = false
         turnstileInteractive = false
         turnstileFailed = false
-        codeSent = false
+        otpSent = false
         // New widget instance ⇒ fresh token. Cheap because the WebView
         // hasn't been mounted yet (we're about to enter humanCheck).
         turnstileWidgetID = UUID()
@@ -599,7 +587,7 @@ struct WelcomeView: View {
 
     @MainActor
     private func tapHuman() {
-        if codeSent { return }
+        if codeBlockShown { return }
         humanChoice = .human
         errorText = nil
         if turnstileFailed {
@@ -644,7 +632,7 @@ struct WelcomeView: View {
                 email: trimmed,
                 captchaToken: captchaToken
             )
-            codeSent = true
+            otpSent = true
             resendCooldown = 60
             focusedField = .code
             Haptics.tap()
@@ -670,7 +658,7 @@ struct WelcomeView: View {
 
     @MainActor
     private func verifyCode() async {
-        guard codeSent else { return }
+        guard otpSent else { return }
         isVerifying = true
         defer { isVerifying = false }
         do {
