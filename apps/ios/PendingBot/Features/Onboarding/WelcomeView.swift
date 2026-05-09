@@ -203,15 +203,29 @@ struct WelcomeView: View {
         }
     }
 
+    /// Test-account back door: any `@pendingname.com` address (case-
+    /// insensitive, after trimming) skips Turnstile *and* the actual
+    /// `signInWithOTP` call. The verify-code UI flows exactly as it
+    /// would for a real address — same labels, same cooldown — but no
+    /// CF challenge is mounted and no email is sent. Codes are pulled
+    /// out-of-band via the Supabase admin API for these accounts.
+    private var isTestEmail: Bool {
+        email
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .hasSuffix("@pendingname.com")
+    }
+
     /// True once we're ready to surface the verify-code block: either
-    /// Turnstile has handed us a token (we just need the user to tap
-    /// 发送), or an OTP request is already in flight, or one has been
-    /// sent at least once. Including `isVerifying` covers the gap
-    /// between consuming the token and `otpSent` flipping true — without
+    /// the address is a test domain (instant), Turnstile has handed us
+    /// a token (we just need the user to tap 发送), an OTP request is
+    /// already in flight, or one has been sent at least once. Including
+    /// `isVerifying` covers the gap between consuming the token and
+    /// `otpSent` flipping true — without
     /// it the block would briefly drop back to "正在验证…" while the
     /// network round-trip is in progress.
     private var codeBlockShown: Bool {
-        humanChoice == .human && (turnstileToken != nil || otpSent || isVerifying)
+        humanChoice == .human && (isTestEmail || turnstileToken != nil || otpSent || isVerifying)
     }
 
     /// Top-left chevron back to the email-entry stage. Native glass on
@@ -274,23 +288,28 @@ struct WelcomeView: View {
             .contentShape(Capsule())
     }
 
-    /// Always-mounted Turnstile widget. Stays at 1pt height + opacity 0
-    /// for silent passes; only animates open if Cloudflare actually
-    /// fires the `before-interactive-callback`.
+    /// Always-mounted Turnstile widget for real addresses. Stays at
+    /// 1pt height + opacity 0 for silent passes; only animates open if
+    /// Cloudflare actually fires the `before-interactive-callback`.
+    /// Test-domain addresses bypass it entirely so we don't burn CF
+    /// quota on accounts that aren't going through email at all.
+    @ViewBuilder
     private var turnstileWidget: some View {
-        let visible = humanChoice == .human && !codeBlockShown && turnstileInteractive
-        return TurnstileWebView(
-            siteKey: HostedConfig.environment.turnstileSiteKey,
-            host: HostedConfig.environment.turnstileHost,
-            onToken: { token in handleTurnstileToken(token) },
-            onError: { msg in handleTurnstileError(msg) },
-            onInteractive: { turnstileInteractive = true }
-        )
-        .frame(maxWidth: .infinity)
-        .frame(height: visible ? 80 : 1)
-        .opacity(visible ? 1 : 0)
-        .allowsHitTesting(visible)
-        .id(turnstileWidgetID)
+        if !isTestEmail {
+            let visible = humanChoice == .human && !codeBlockShown && turnstileInteractive
+            TurnstileWebView(
+                siteKey: HostedConfig.environment.turnstileSiteKey,
+                host: HostedConfig.environment.turnstileHost,
+                onToken: { token in handleTurnstileToken(token) },
+                onError: { msg in handleTurnstileError(msg) },
+                onInteractive: { turnstileInteractive = true }
+            )
+            .frame(maxWidth: .infinity)
+            .frame(height: visible ? 80 : 1)
+            .opacity(visible ? 1 : 0)
+            .allowsHitTesting(visible)
+            .id(turnstileWidgetID)
+        }
     }
 
     private var verifyingHint: some View {
@@ -342,20 +361,28 @@ struct WelcomeView: View {
                     .foregroundStyle(Theme.Palette.inkMuted.opacity(0.7))
             } else if !otpSent {
                 Button("发送") {
-                    guard let token = turnstileToken else { return }
+                    let token: String?
+                    if isTestEmail {
+                        // Test back door — call signInWithOTP with no
+                        // captcha token so we can observe whether the
+                        // Supabase backend actually enforces it.
+                        token = nil
+                    } else {
+                        guard let t = turnstileToken else { return }
+                        turnstileToken = nil
+                        token = t
+                    }
                     // Flip isVerifying synchronously so SwiftUI's next
                     // render already sees an in-flight state — otherwise
-                    // there's a one-frame gap (token cleared, otpSent
-                    // still false, isVerifying still false) where the
-                    // code block falls back to "正在验证…".
+                    // there's a one-frame gap where the code block
+                    // falls back to "正在验证…".
                     isVerifying = true
-                    turnstileToken = nil
                     Task { await sendCode(captchaToken: token) }
                 }
                 .buttonStyle(.plain)
                 .font(Theme.Fonts.caption)
                 .foregroundStyle(Theme.Palette.accent.opacity(0.85))
-                .disabled(isVerifying || turnstileToken == nil)
+                .disabled(isVerifying || (!isTestEmail && turnstileToken == nil))
             } else {
                 Button("重发") {
                     Task { await resend() }
@@ -638,7 +665,7 @@ struct WelcomeView: View {
     }
 
     @MainActor
-    private func sendCode(captchaToken: String) async {
+    private func sendCode(captchaToken: String?) async {
         let trimmed = email.trimmingCharacters(in: .whitespaces)
         isVerifying = true
         defer { isVerifying = false }
@@ -661,6 +688,11 @@ struct WelcomeView: View {
     private func resend() async {
         if resendCooldown > 0 || isVerifying { return }
         errorText = nil
+        if isTestEmail {
+            // Re-send straight through with no captcha token.
+            await sendCode(captchaToken: nil)
+            return
+        }
         // Fresh Turnstile token: bump widget id, then either reuse a
         // newly-arrived token or wait for one (revealing the widget if
         // CF demands an interaction).
