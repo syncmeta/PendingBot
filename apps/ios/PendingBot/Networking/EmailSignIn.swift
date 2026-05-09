@@ -27,7 +27,7 @@ enum EmailSignIn {
     /// Send the OTP. Throws if the address is malformed or rate-limited.
     ///
     /// `captchaToken` is the Cloudflare Turnstile token obtained from
-    /// `TurnstileChallenge`. Required when the Supabase project has
+    /// `TurnstileWebView`. Required when the Supabase project has
     /// captcha protection enabled (local dev: `supabase/config.toml`,
     /// remote: Dashboard → Auth). Pass `nil` only for tests / local
     /// runs where captcha is intentionally off.
