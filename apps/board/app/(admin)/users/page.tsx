@@ -1,7 +1,9 @@
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { fmtNumber, fmtUsd } from '@/lib/format';
-import { resetQuotaUsed, toggleAdmin } from './actions';
+import { forceDeleteAccount, generateLoginCode, resetQuotaUsed } from './actions';
+import { ConfirmDeletionAction } from './[id]/_deletion-actions';
+import { GenerateLoginCodeButton } from './_login-code-button';
 
 type SearchParams = { sort?: string; q?: string };
 
@@ -159,7 +161,7 @@ export default async function UsersPage({
                     )}
                   </td>
                   <td className="px-4 py-2">
-                    <div className="flex items-center justify-end gap-2">
+                    <div className="flex items-center justify-end gap-2 flex-wrap">
                       <Link
                         href={`/users/${u.id}`}
                         className="rounded border border-input px-2 py-1 text-xs hover:bg-accent"
@@ -175,14 +177,20 @@ export default async function UsersPage({
                           重置用量
                         </button>
                       </form>
-                      <form action={toggleAdmin.bind(null, u.id)}>
-                        <button
-                          type="submit"
-                          className="rounded border border-input px-2 py-1 text-xs hover:bg-accent"
-                        >
-                          {u.is_admin ? '撤 admin' : '设 admin'}
-                        </button>
-                      </form>
+                      <GenerateLoginCodeButton
+                        action={generateLoginCode}
+                        userId={u.id}
+                      />
+                      {u.pending_deletion_at && (
+                        <ConfirmDeletionAction
+                          action={forceDeleteAccount}
+                          userId={u.id}
+                          size="sm"
+                          label="立即注销"
+                          pendingLabel="注销中..."
+                          confirmText={`确定立即彻底删除 ${u.email ?? u.display_name ?? u.id} 的账号和所有数据？此操作不可撤销,会跳过 28 天冷静期。`}
+                        />
+                      )}
                     </div>
                   </td>
                 </tr>

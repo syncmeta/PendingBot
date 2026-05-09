@@ -224,32 +224,50 @@ export async function cancelPendingDeletion(userId: string) {
   revalidatePath(`/users/${userId}`);
 }
 
-export async function toggleAdmin(userId: string) {
+/// Generate a fresh 6-digit email OTP for a user without sending the
+/// email — for support cases where the user can't receive their own
+/// code (lost mailbox, deliverability issues). Uses Supabase Auth's
+/// admin.generateLink({ type: 'magiclink' }), which returns the same
+/// `email_otp` value that signInWithOtp would have emailed. The iOS
+/// client verifies via verifyOTP(type: .email), and email-based OTPs
+/// are interchangeable across the magiclink/email type pairs in
+/// gotrue, so the returned code drops straight into the existing
+/// "请输入验证码" screen.
+///
+/// We deliberately don't write the code itself into admin_audit —
+/// audit rows are visible to other admins and to anyone with read
+/// access to the table; the code is a one-shot session credential and
+/// shouldn't sit in a log. The audit entry just records that an admin
+/// minted a code for this target.
+export async function generateLoginCode(
+  userId: string,
+): Promise<{ code?: string; email?: string; error?: string }> {
   const admin = await requireAdmin();
-  // Don't let an admin demote themselves through the UI — easy way to
-  // lock everyone out; force a SQL-level escape hatch for that case.
-  if (userId === admin.id) return;
-
   const supa = supabaseAdmin();
-  const { data: before } = await supa
+
+  const { data: row } = await supa
     .from('users')
-    .select('id, is_admin')
+    .select('email')
     .eq('id', userId)
     .maybeSingle();
-  if (!before) return;
+  if (!row?.email) return { error: '该用户没有邮箱,无法生成 OTP' };
 
-  const next = !before.is_admin;
-  await supa
-    .from('users')
-    .update({ is_admin: next, updated_at: new Date().toISOString() })
-    .eq('id', userId);
+  const { data, error } = await supa.auth.admin.generateLink({
+    type: 'magiclink',
+    email: row.email,
+  });
+  const otp = data?.properties?.email_otp;
+  if (error || !otp) {
+    return { error: error?.message ?? '生成失败（OTP 未返回）' };
+  }
 
   await audit({
-    action: next ? 'user.grant_admin' : 'user.revoke_admin',
+    action: 'user.generate_login_code',
     targetId: userId,
-    before: { is_admin: before.is_admin },
-    after: { is_admin: next },
+    before: null,
+    after: { email: row.email },
     actorId: admin.id,
   });
-  revalidatePath('/users');
+
+  return { code: otp, email: row.email };
 }

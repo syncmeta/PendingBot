@@ -13,6 +13,7 @@ export function ConfirmDeletionAction({
   label,
   pendingLabel,
   variant = 'destructive',
+  size = 'md',
 }: {
   action: (userId: string) => Promise<void>;
   userId: string;
@@ -20,6 +21,7 @@ export function ConfirmDeletionAction({
   label: string;
   pendingLabel: string;
   variant?: 'destructive' | 'normal';
+  size?: 'sm' | 'md';
 }) {
   const [pending, startTransition] = useTransition();
   const onClick = () => {
@@ -28,10 +30,11 @@ export function ConfirmDeletionAction({
       action(userId);
     });
   };
+  const sizeCls = size === 'sm' ? 'px-2 py-1 text-xs' : 'px-3 py-1.5 text-sm';
   const cls =
     variant === 'destructive'
-      ? 'rounded-md border border-destructive/40 bg-destructive/10 px-3 py-1.5 text-sm font-medium text-destructive hover:bg-destructive/15 disabled:opacity-50'
-      : 'rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-accent disabled:opacity-50';
+      ? `rounded-md border border-destructive/40 bg-destructive/10 ${sizeCls} font-medium text-destructive hover:bg-destructive/15 disabled:opacity-50`
+      : `rounded-md border border-input bg-background ${sizeCls} hover:bg-accent disabled:opacity-50`;
   return (
     <button type="button" onClick={onClick} disabled={pending} className={cls}>
       {pending ? pendingLabel : label}
