@@ -205,9 +205,13 @@ struct WelcomeView: View {
 
     /// True once we're ready to surface the verify-code block: either
     /// Turnstile has handed us a token (we just need the user to tap
-    /// 发送) or an OTP has already been sent at least once.
+    /// 发送), or an OTP request is already in flight, or one has been
+    /// sent at least once. Including `isVerifying` covers the gap
+    /// between consuming the token and `otpSent` flipping true — without
+    /// it the block would briefly drop back to "正在验证…" while the
+    /// network round-trip is in progress.
     private var codeBlockShown: Bool {
-        humanChoice == .human && (turnstileToken != nil || otpSent)
+        humanChoice == .human && (turnstileToken != nil || otpSent || isVerifying)
     }
 
     /// Top-left chevron back to the email-entry stage. Native glass on
@@ -339,6 +343,12 @@ struct WelcomeView: View {
             } else if !otpSent {
                 Button("发送") {
                     guard let token = turnstileToken else { return }
+                    // Flip isVerifying synchronously so SwiftUI's next
+                    // render already sees an in-flight state — otherwise
+                    // there's a one-frame gap (token cleared, otpSent
+                    // still false, isVerifying still false) where the
+                    // code block falls back to "正在验证…".
+                    isVerifying = true
                     turnstileToken = nil
                     Task { await sendCode(captchaToken: token) }
                 }
