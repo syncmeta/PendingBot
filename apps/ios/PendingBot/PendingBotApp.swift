@@ -45,7 +45,7 @@ struct PendingBotApp: App {
                     // Hydrate auth + start observing AFTER the first frame
                     // paints — keeps the launch screen short on real-device
                     // debug builds where SupabaseClient lazy init is heavy.
-                    accountStore.bootstrap()
+                    await accountStore.bootstrap()
                     unreadStore.bind(account: accountStore.current)
                     // If the user is already signed in from a previous
                     // launch, kick off the push registration flow now.

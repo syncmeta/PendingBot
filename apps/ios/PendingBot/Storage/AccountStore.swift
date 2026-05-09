@@ -52,13 +52,29 @@ final class AccountStore: ObservableObject {
     /// blocks SwiftUI's first frame if it runs at App.init time — leaving
     /// the launch screen visible while LLDB resolves symbols.
     /// Idempotent; PendingBotApp calls this from `.task`.
-    func bootstrap() {
+    func bootstrap() async {
         guard !didBootstrap else { return }
         didBootstrap = true
-        if let session = SupabaseStack.shared.auth.currentSession,
-           !Self.isExpired(session) {
-            current = Self.makeAccount(session: session)
-            Task { await self.refreshProfileFlags() }
+        // If a session is persisted on disk, let the SDK refresh it before
+        // we flip `sessionHydrated`. Without this await, an expired-but-
+        // refreshable session (access token's default lifetime is 1h, so
+        // any cold start past that hits this) takes the no-current branch,
+        // RootView paints WelcomeView for one tick, then authStateChanges
+        // fires with the refreshed token and we jump to TabRoot — exactly
+        // the "先进登录页再跳主页" symptom. Awaiting `auth.session` keeps
+        // SplashView up while the refresh is in flight.
+        if SupabaseStack.shared.auth.currentSession != nil {
+            do {
+                let session = try await SupabaseStack.shared.auth.session
+                if !Self.isExpired(session) {
+                    current = Self.makeAccount(session: session)
+                    Task { await self.refreshProfileFlags() }
+                }
+            } catch {
+                // Refresh failed (network down, refresh token revoked, …).
+                // Fall through with current = nil — WelcomeView is correct.
+                log.error("session refresh failed: \(String(describing: error), privacy: .public)")
+            }
         }
         sessionHydrated = true
         observeAuth()
