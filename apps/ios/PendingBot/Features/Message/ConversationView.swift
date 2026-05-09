@@ -473,7 +473,7 @@ struct ConversationView: View {
     private var emptyConversation: some View {
         VStack(spacing: 14) {
             headerAvatar(size: 64)
-            Text(botName)
+            Text(conversation.conversation_type == "user_user" ? headerTitle : botName)
                 .font(Theme.Fonts.serif(size: 22, weight: .semibold))
                 .foregroundStyle(Theme.Palette.ink)
         }
@@ -512,17 +512,21 @@ struct ConversationView: View {
                     .font(Theme.Fonts.serif(size: 16, weight: .semibold))
                     .foregroundStyle(Theme.Palette.ink)
                     .lineLimit(1)
-                HStack(spacing: 6) {
-                    Text(botName)
-                        .font(Theme.Fonts.rounded(size: 11, weight: .medium))
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                        .lineLimit(1)
-                    if pending {
-                        Text("·")
+                // user_user 单聊没有 bot · model 这一行可显示;隐掉副标题
+                // 让头像 + 备注/昵称就是全部识别信息,贴近普通 IM 的呈现。
+                if conversation.conversation_type != "user_user" {
+                    HStack(spacing: 6) {
+                        Text(botName)
                             .font(Theme.Fonts.rounded(size: 11, weight: .medium))
                             .foregroundStyle(Theme.Palette.inkMuted)
-                        TypingDots()
-                            .transition(.opacity)
+                            .lineLimit(1)
+                        if pending {
+                            Text("·")
+                                .font(Theme.Fonts.rounded(size: 11, weight: .medium))
+                                .foregroundStyle(Theme.Palette.inkMuted)
+                            TypingDots()
+                                .transition(.opacity)
+                        }
                     }
                 }
             }
@@ -840,9 +844,56 @@ struct ConversationView: View {
             return
         }
 
-        // user_user / group: still need a real conv id before INSERT, since
-        // those go straight to Postgres without an SSE handshake. The
-        // existing flow (await materialise, then insert) is correct here —
+        // user_user: optimistic — drop the bubble in immediately so the
+        // sender sees their own message without waiting on the Realtime
+        // echo, then materialise (if pending) and INSERT. The realtime
+        // dedup keyed on `local-` prefix + recency replaces the optimistic
+        // row with the canonical one when it lands; if realtime is slow
+        // or drops, the optimistic row stays in place and reads correctly.
+        if conversation.conversation_type == "user_user" {
+            let myId = AccountStore.shared.current?.id ?? ""
+            let localId = "local-\(UUID().uuidString)"
+            messages.append(ChatMessage(
+                id: localId,
+                conversation_id: conversation.id,
+                sender_type: "user", sender_id: myId,
+                content: text,
+                created_at: Int(Date().timeIntervalSince1970),
+                attachments: attachmentSnapshot.map {
+                    Attachment(id: $0.id, kind: "image", mime: $0.mime, size: $0.size,
+                               width: nil, height: nil, url: "/uploads/\($0.id)")
+                },
+                status: "sending"
+            ))
+            if conversation.id.isEmpty {
+                let ok = await materializeIfPending()
+                guard ok else {
+                    markUserMessageFailed(localId)
+                    return
+                }
+                // Re-stamp conv id on the optimistic row so the realtime
+                // dedup match keys on the right (conv, content, recency).
+                if let idx = messages.firstIndex(where: { $0.id == localId }) {
+                    let prev = messages[idx]
+                    messages[idx] = ChatMessage(
+                        id: prev.id,
+                        conversation_id: conversation.id,
+                        sender_type: prev.sender_type, sender_id: prev.sender_id,
+                        content: prev.content,
+                        created_at: prev.created_at,
+                        attachments: prev.attachments,
+                        status: "sending"
+                    )
+                }
+            }
+            clearUserMessageStatus(localId)
+            await sendUserUserMessage(text, localId: localId)
+            return
+        }
+
+        // group: still need a real conv id before the worker call, since
+        // it goes straight to Postgres without an SSE handshake. The
+        // existing flow (await materialise, then post) is correct here —
         // the round-trip is cheap relative to bot turns and there's no
         // typing indicator to play hide-and-seek with.
         if conversation.id.isEmpty {
@@ -852,7 +903,7 @@ struct ConversationView: View {
                 return
             }
         }
-        await sendPlainUserMessage(text)
+        await sendGroupUserMessage(text)
     }
 
     /// Flip an in-flight optimistic user row to .failed (red bubble + alert).
@@ -887,20 +938,11 @@ struct ConversationView: View {
         )
     }
 
-    private func sendPlainUserMessage(_ text: String) async {
-        // group convs MUST go through POST /v1/messages so the worker can
-        // (a) parse @-mentions, (b) signal GroupRouterDO to wake bots, and
-        // (c) book the cost split. A direct INSERT into `messages` would
-        // skip all three. user_user stays direct — no bots, no router.
-        if conversation.conversation_type == "group" {
-            await sendGroupUserMessage(text)
-        } else {
-            await sendUserUserMessage(text)
+    private func sendUserUserMessage(_ text: String, localId: String) async {
+        guard let userId = AccountStore.shared.current?.id else {
+            markUserMessageFailed(localId)
+            return
         }
-    }
-
-    private func sendUserUserMessage(_ text: String) async {
-        guard let userId = AccountStore.shared.current?.id else { return }
         struct Insert: Encodable {
             let client_message_id: String
             let conversation_id: String
@@ -921,7 +963,7 @@ struct ConversationView: View {
                 .execute()
         } catch {
             self.error = "发送失败: \(error.localizedDescription)"
-            Haptics.error()
+            markUserMessageFailed(localId)
         }
     }
 

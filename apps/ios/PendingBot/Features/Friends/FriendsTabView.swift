@@ -234,7 +234,8 @@ struct FriendsTabView: View {
                                 let selected = sidebarLayout && isSelected(kind: "user", id: c.id)
                                 FriendRow(kind: .human,
                                           avatarSeed: c.id,
-                                          name: c.alias ?? String(c.id.prefix(8)),
+                                          avatarAttachmentId: c.avatarPath,
+                                          name: c.rowName,
                                           modelTag: nil,
                                           botVisibility: nil)
                                     .listRowBackground(selected ? Theme.Palette.accentBg : Theme.Palette.surface)
@@ -282,7 +283,26 @@ struct FriendsTabView: View {
     }
     struct HumanPick: Identifiable, Hashable {
         let id: String
+        /// Caller's local remark for this contact. Wins over `displayName`
+        /// when present so the user's own naming choice always takes
+        /// precedence in the friend list.
         let alias: String?
+        /// Peer's own profile name (read by the worker via service-role,
+        /// because pendingbot.users RLS is self-only). Empty string when
+        /// they haven't set one — the row falls back to id-prefix.
+        let displayName: String
+        /// Avatar attachment id if uploaded; nil falls through to the
+        /// emoji-glyph deterministic avatar.
+        let avatarPath: String?
+
+        /// What to render in the row title and pass on to ConversationView
+        /// as the header label. Mirrors the chat-header alias > displayName
+        /// preference so opening a chat doesn't change the displayed name.
+        var rowName: String {
+            if let a = alias, !a.isEmpty { return a }
+            if !displayName.isEmpty { return displayName }
+            return String(id.prefix(8))
+        }
     }
     /// Slim model for an inbox row. Only carries fields the inline accept /
     /// decline UI cares about — `peerDisplayName` falls back to the first 8
@@ -301,11 +321,6 @@ struct FriendsTabView: View {
         let visibility: String?
         let creator_id: String?
     }
-    private struct ContactDecodable: Decodable {
-        let contact_user_id: String
-        let alias: String?
-    }
-
     private func load() async {
         loading = true; defer { loading = false }
         do {
@@ -316,23 +331,17 @@ struct FriendsTabView: View {
                 .order("created_at", ascending: true)
                 .execute()
                 .value
-            async let contactRowsResp: [ContactDecodable] = SupabaseStack.shared
-                .from("user_contacts")
-                .select("contact_user_id, alias")
-                .order("created_at", ascending: true)
-                .execute()
-                .value
+            async let contactsResp: [HumanPick] = loadContactsWithProfiles()
             async let incomingFR: [PendingFriendRequest] = loadIncomingFriendRequests()
 
             let botRows = try await botRowsResp
-            let contactRows = try await contactRowsResp
 
             self.bots = botRows.map {
                 BotPick(id: $0.id, display_name: $0.display_name,
                         model_id: $0.model_id, visibility: $0.visibility,
                         creator_id: $0.creator_id)
             }
-            self.humans = contactRows.map { HumanPick(id: $0.contact_user_id, alias: $0.alias) }
+            self.humans = (try? await contactsResp) ?? []
             self.pendingFriendRequests = (try? await incomingFR) ?? []
         } catch is CancellationError {
             // Tab switch / refreshable cancellation — silent. The Mac
@@ -343,6 +352,15 @@ struct FriendsTabView: View {
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    // MARK: - Contacts
+
+    /// Pull the friends list from the worker so peer display_name +
+    /// avatar_path land in one trip. iOS can't read those columns directly
+    /// because pendingbot.users RLS is self-only.
+    private func loadContactsWithProfiles() async throws -> [HumanPick] {
+        try await ContactsAPI.fetchContacts()
     }
 
     // MARK: - Friend requests
@@ -482,7 +500,7 @@ struct FriendsTabView: View {
     private func tapHuman(_ c: HumanPick) async {
         open(PendingPeer(kind: "user",
                          peerId: c.id,
-                         displayName: c.alias ?? String(c.id.prefix(8))))
+                         displayName: c.rowName))
     }
 
     /// Route to the right surface based on layout: regular (Mac /
@@ -556,6 +574,11 @@ private struct FriendRow: View {
     enum Kind { case bot, human }
     let kind: Kind
     let avatarSeed: String
+    /// Uploaded avatar attachment id for human friends; ignored for bots.
+    /// nil falls through UserAvatar to its deterministic emoji glyph keyed
+    /// off `avatarSeed` (the peer's user id), so the same person reads
+    /// consistently across the friend list / chat header / bubbles.
+    var avatarAttachmentId: String? = nil
     let name: String
     let modelTag: String?
     /// Drives the right-side tag pill for bots. `nil` for humans
@@ -568,10 +591,7 @@ private struct FriendRow: View {
             case .bot:
                 BotAvatar(seed: avatarSeed, size: 36)
             case .human:
-                Image(systemName: "person.crop.circle.fill")
-                    .font(.system(size: 30))
-                    .foregroundStyle(Theme.Palette.accent.opacity(0.85))
-                    .frame(width: 36, height: 36)
+                UserAvatar(seed: avatarSeed, attachmentId: avatarAttachmentId, size: 36)
             }
 
             // Name + (bot) inline model tag — same pill style as the
