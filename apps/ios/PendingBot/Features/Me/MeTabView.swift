@@ -85,7 +85,7 @@ struct MeTabView: View {
             }
         } message: {
             if pendingConfirm == .delete {
-                Text("进入 28 天注销冷静期。\n期间在任意设备登录就能恢复账号，过了 28 天数据全部删除。\n两个选项触发同一个流程，我只是想知道你对我的态度。")
+                Text("若去意已决，28天后将会删除你在这个应用里的所有数据，期间在任意设备登录可恢复账号\n两个选项触发同一个流程，我只是想知道你的态度")
             }
         }
     }
@@ -93,7 +93,7 @@ struct MeTabView: View {
     private var confirmTitle: String {
         switch pendingConfirm {
         case .signOut: return "确定？"
-        case .delete:  return "28 天后正式注销 期间登录可恢复"
+        case .delete:  return "确定注销账号？"
         case .none:    return ""
         }
     }
