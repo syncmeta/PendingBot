@@ -108,6 +108,12 @@ struct WelcomeView: View {
         }
         .padding(.horizontal, 28)
         .background(Theme.Palette.canvas.ignoresSafeArea())
+        // Keyboard avoidance respects the bottom safe-area inset, so
+        // adding a clear strip here lifts the verify-code row off the
+        // keyboard instead of letting it stick flush against it.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            Color.clear.frame(height: 24)
+        }
         .overlay(alignment: .topLeading) {
             if stage == .humanCheck {
                 backButton
@@ -176,8 +182,9 @@ struct WelcomeView: View {
             turnstileWidget
 
             // Sub-content under the buttons. Cross-fades between the
-            // verify-code row (after sendCode succeeds) and the robot
-            // easter egg.
+            // verify-code row (after sendCode succeeds), the robot
+            // easter egg, and the explicit "发送验证码" button (or
+            // its loading hint) on the human path.
             Group {
                 if codeSent {
                     codeBlock
@@ -185,12 +192,51 @@ struct WelcomeView: View {
                 } else if humanChoice == .robot {
                     robotEasterEgg
                         .transition(.opacity)
-                } else if humanChoice == .human && !turnstileInteractive && !turnstileFailed {
-                    verifyingHint
+                } else if humanChoice == .human {
+                    humanSendArea
                         .transition(.opacity)
                 }
             }
         }
+    }
+
+    /// What sits below the 人类 button while the user is on the human
+    /// path but hasn't yet sent the OTP. The Turnstile token may already
+    /// be in hand (silent pass) or still pending; the UI flips between
+    /// the explicit 发送验证码 button and a small "正在验证…" hint.
+    @ViewBuilder
+    private var humanSendArea: some View {
+        if turnstileToken != nil {
+            sendCodeButton
+        } else if !turnstileInteractive {
+            verifyingHint
+        }
+        // else: the inline Turnstile widget is itself visible and the
+        // user is solving it; no extra UI needed underneath.
+    }
+
+    private var sendCodeButton: some View {
+        Button {
+            guard let token = turnstileToken else { return }
+            turnstileToken = nil
+            Task { await sendCode(captchaToken: token) }
+        } label: {
+            HStack(spacing: 8) {
+                if isVerifying {
+                    ProgressView()
+                        .tint(.white)
+                }
+                Text("发送验证码")
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(.white)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 52)
+            .background(Capsule().fill(Theme.Palette.accent))
+            .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
+        }
+        .buttonStyle(.plain)
+        .disabled(isVerifying)
     }
 
     /// Top-left chevron back to the email-entry stage. Native glass on
@@ -325,21 +371,20 @@ struct WelcomeView: View {
     }
 
     private var robotEasterEgg: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(spacing: 22) {
             Text("😲😲😲")
-                .font(.system(size: 36))
-            Text("尊敬的机器人您好，请联系 kipper_yonder.0u@icloud.com")
-                .font(Theme.Fonts.footnote)
-                .foregroundStyle(Theme.Palette.ink)
-            Text("我就在这里，不躲，不藏，不绕，不逃，稳稳地接住你")
-                .font(Theme.Fonts.footnote)
-                .foregroundStyle(Theme.Palette.inkMuted)
-            Text("如果你需要，我可以帮你生成我和机器人的关系图，要我画吗？")
-                .font(Theme.Fonts.footnote)
-                .foregroundStyle(Theme.Palette.inkMuted)
+                .font(.system(size: 56))
+            VStack(spacing: 10) {
+                Text("尊敬的机器人您好，请联系 kipper_yonder.0u@icloud.com")
+                Text("我会稳稳地接住你")
+                Text("我还可以帮你生成我和机器人的关系图")
+            }
+            .font(Theme.Fonts.footnote)
+            .foregroundStyle(Theme.Palette.ink)
+            .multilineTextAlignment(.center)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 4)
+        .frame(maxWidth: .infinity)
+        .padding(.top, 4)
     }
 
     // MARK: - Apple / Google buttons
@@ -557,27 +602,24 @@ struct WelcomeView: View {
         if codeSent { return }
         humanChoice = .human
         errorText = nil
-        if let token = turnstileToken {
-            turnstileToken = nil
-            Task { await sendCode(captchaToken: token) }
-        } else if turnstileFailed {
+        if turnstileFailed {
             // Force a fresh widget — the previous one already errored.
             turnstileFailed = false
             turnstileInteractive = false
+            turnstileToken = nil
             turnstileWidgetID = UUID()
-            awaitingTurnstileSend = true
-        } else {
-            awaitingTurnstileSend = true
         }
     }
 
     @MainActor
     private func handleTurnstileToken(_ token: String) {
+        turnstileToken = token
+        // Resend path: the user has already implicitly authorized a send,
+        // so consume the fresh token immediately.
         if awaitingTurnstileSend {
             awaitingTurnstileSend = false
+            turnstileToken = nil
             Task { await sendCode(captchaToken: token) }
-        } else {
-            turnstileToken = token
         }
     }
 
