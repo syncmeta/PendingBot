@@ -50,6 +50,7 @@
 		73218F689FB323F50181FA6F /* PendingBotApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4230E5DEF138A3DC7320FD18 /* PendingBotApp.swift */; };
 		7441BBB82513354F86E2D12E /* ChatActionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37E2067C1C372EB858B6A6DC /* ChatActionSheet.swift */; };
 		756AB114C3C20E0E06623B83 /* MessageTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E68B229EDD3BD50361009601 /* MessageTabView.swift */; };
+		7D1661C95F98D7DCA6F08419 /* ContactsAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 734AE1910A15CE782A2C0BE5 /* ContactsAPI.swift */; };
 		7EC924CCEF279940B5934910 /* ConversationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C99F8DD8956403453040B34E /* ConversationSettingsView.swift */; };
 		83035210F6619E0993F92CEE /* CodeRunnerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A573816C9B62D5FDB2747B1 /* CodeRunnerSheet.swift */; };
 		88978249B3DE9BBB9F495363 /* SwipeRevealRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = E08EA5C0C04D043A83FDCB72 /* SwipeRevealRow.swift */; };
@@ -124,6 +125,7 @@
 		6F8977E1E361EFE65810D4F1 /* ScrollAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollAPI.swift; sourceTree = "<group>"; };
 		6FB18020603674A7F6885245 /* BotManagement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotManagement.swift; sourceTree = "<group>"; };
 		6FEEDBCFBE31FB849F1F40E0 /* TypingDots.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypingDots.swift; sourceTree = "<group>"; };
+		734AE1910A15CE782A2C0BE5 /* ContactsAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactsAPI.swift; sourceTree = "<group>"; };
 		749E1E89D81BCBC4FF10E935 /* Account.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Account.swift; sourceTree = "<group>"; };
 		75FB644111BD8AF1F7D62533 /* ServerTimestamp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerTimestamp.swift; sourceTree = "<group>"; };
 		79007915941D4BE087C69822 /* AppleSignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSignIn.swift; sourceTree = "<group>"; };
@@ -309,6 +311,7 @@
 				79007915941D4BE087C69822 /* AppleSignIn.swift */,
 				54E1D0F65173FEE03FB14635 /* BillingService.swift */,
 				B14FCE8ADC9DE6D22FBC7387 /* ChatStream.swift */,
+				734AE1910A15CE782A2C0BE5 /* ContactsAPI.swift */,
 				CC72DD613E133EB252CB3F5D /* EmailSignIn.swift */,
 				3CEA9699F1801C4960BBE127 /* GoogleSignIn.swift */,
 				C608CB73D14B114D2399FE59 /* HostedConfig.swift */,
@@ -487,6 +490,7 @@
 				83035210F6619E0993F92CEE /* CodeRunnerSheet.swift in Sources */,
 				4B8F775758566FA94BB05F1B /* ColorHash.swift in Sources */,
 				F21D3DA278967B87BA15A3EF /* ComposerView.swift in Sources */,
+				7D1661C95F98D7DCA6F08419 /* ContactsAPI.swift in Sources */,
 				7EC924CCEF279940B5934910 /* ConversationSettingsView.swift in Sources */,
 				091D2F4E1050EAF98F72B1B1 /* ConversationView.swift in Sources */,
 				88D44D5A01A220D83A913D39 /* EmailSignIn.swift in Sources */,
