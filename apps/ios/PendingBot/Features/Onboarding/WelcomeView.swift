@@ -93,6 +93,7 @@ struct WelcomeView: View {
                     enteringEmailBody
                 case .humanCheck:
                     humanCheckBody
+                        .transition(.opacity)
                 }
 
                 if let errorText {
@@ -107,6 +108,14 @@ struct WelcomeView: View {
         }
         .padding(.horizontal, 28)
         .background(Theme.Palette.canvas.ignoresSafeArea())
+        .overlay(alignment: .topLeading) {
+            if stage == .humanCheck {
+                backButton
+                    .padding(.leading, 12)
+                    .padding(.top, 4)
+                    .transition(.opacity)
+            }
+        }
         .onAppear {
             // Don't grab focus for the email field — let users tap it
             // explicitly so the keyboard doesn't fly up on launch.
@@ -182,6 +191,23 @@ struct WelcomeView: View {
                 }
             }
         }
+    }
+
+    /// Top-left chevron back to the email-entry stage. Native glass on
+    /// iOS 26+ via `.glassEffect`; pre-26 falls back to a thin material
+    /// circle so it still reads as a button.
+    private var backButton: some View {
+        Button { backToEmailEntry() } label: {
+            Image(systemName: "chevron.left")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Theme.Palette.ink)
+                .frame(width: 38, height: 38)
+                .glassCircle()
+                .shadow(color: .black.opacity(0.06), radius: 6, y: 2)
+        }
+        .buttonStyle(.plain)
+        .disabled(isVerifying)
+        .accessibilityLabel("返回")
     }
 
     private var humanButton: some View {
@@ -492,6 +518,24 @@ struct WelcomeView: View {
 
     // MARK: - Email-code flow
 
+    private func backToEmailEntry() {
+        if isVerifying { return }
+        errorText = nil
+        humanChoice = .undecided
+        turnstileToken = nil
+        awaitingTurnstileSend = false
+        turnstileInteractive = false
+        turnstileFailed = false
+        codeSent = false
+        code = ""
+        resendCooldown = 0
+        // Drop the WebView so it stops loading; it'll be remounted with
+        // a fresh id next time the user advances.
+        turnstileWidgetID = UUID()
+        stage = .enteringEmail
+        focusedField = .email
+    }
+
     private func advanceToHumanCheck() {
         guard email.contains("@") && email.contains(".") else { return }
         errorText = nil
@@ -744,6 +788,17 @@ private extension View {
             self
                 .background(Capsule().fill(.regularMaterial))
                 .overlay(Capsule().strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
+        }
+    }
+
+    @ViewBuilder
+    func glassCircle() -> some View {
+        if #available(iOS 26.0, *) {
+            self.glassEffect(.regular, in: Circle())
+        } else {
+            self
+                .background(Circle().fill(.regularMaterial))
+                .overlay(Circle().strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
         }
     }
 }
