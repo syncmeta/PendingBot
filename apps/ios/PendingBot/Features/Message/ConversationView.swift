@@ -473,7 +473,7 @@ struct ConversationView: View {
     private var emptyConversation: some View {
         VStack(spacing: 14) {
             headerAvatar(size: 64)
-            Text(botName)
+            Text(conversation.conversation_type == "user_user" ? headerTitle : botName)
                 .font(Theme.Fonts.serif(size: 22, weight: .semibold))
                 .foregroundStyle(Theme.Palette.ink)
         }
@@ -512,17 +512,21 @@ struct ConversationView: View {
                     .font(Theme.Fonts.serif(size: 16, weight: .semibold))
                     .foregroundStyle(Theme.Palette.ink)
                     .lineLimit(1)
-                HStack(spacing: 6) {
-                    Text(botName)
-                        .font(Theme.Fonts.rounded(size: 11, weight: .medium))
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                        .lineLimit(1)
-                    if pending {
-                        Text("·")
+                // user_user 单聊没有 bot · model 这一行可显示;隐掉副标题
+                // 让头像 + 备注/昵称就是全部识别信息,贴近普通 IM 的呈现。
+                if conversation.conversation_type != "user_user" {
+                    HStack(spacing: 6) {
+                        Text(botName)
                             .font(Theme.Fonts.rounded(size: 11, weight: .medium))
                             .foregroundStyle(Theme.Palette.inkMuted)
-                        TypingDots()
-                            .transition(.opacity)
+                            .lineLimit(1)
+                        if pending {
+                            Text("·")
+                                .font(Theme.Fonts.rounded(size: 11, weight: .medium))
+                                .foregroundStyle(Theme.Palette.inkMuted)
+                            TypingDots()
+                                .transition(.opacity)
+                        }
                     }
                 }
             }
