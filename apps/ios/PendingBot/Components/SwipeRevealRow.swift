@@ -71,6 +71,13 @@ struct SwipeRevealRow<Content: View>: View {
     @State private var lockedToHorizontal = false
     @State private var lastTickDX: CGFloat = 0
     @State private var didArm: Bool = false
+    /// True from the moment a horizontal drag locks in until the tap that
+    /// accompanies the touch-up has been swallowed. Without this, dragging
+    /// the row sideways and then snapping it back to rest would still let
+    /// the underlying NavigationLink / Button fire on release — because
+    /// `simultaneousGesture` lets both recognizers win — and the user
+    /// would land inside the conversation they were trying to *not* open.
+    @State private var swallowTap = false
 
     private var rawOffset: CGFloat { settled + dragDX }
     /// Card offset including the leading-trigger rubber band. Past the
@@ -108,6 +115,7 @@ struct SwipeRevealRow<Content: View>: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             content()
+                .allowsHitTesting(!swallowTap)
                 .offset(x: clampedOffset)
                 .overlay {
                     // While open, intercept taps on the visible card so the
@@ -134,6 +142,7 @@ struct SwipeRevealRow<Content: View>: View {
                     if !lockedToHorizontal {
                         guard abs(dx) > abs(dy) else { return }
                         lockedToHorizontal = true
+                        swallowTap = true
                         lastTickDX = 0
                         didArm = false
                     }
@@ -143,10 +152,23 @@ struct SwipeRevealRow<Content: View>: View {
                     }
                 }
                 .onEnded { value in
+                    let wasLocked = lockedToHorizontal
                     defer {
                         lockedToHorizontal = false
                         lastTickDX = 0
                         didArm = false
+                        if wasLocked {
+                            // Hold the tap-swallow shield through the
+                            // current run loop so the touch-up event that
+                            // would otherwise trigger the NavigationLink
+                            // / Button under us has nowhere to land. One
+                            // dispatch is enough — by the next tick the
+                            // tap has already been resolved (or not) and
+                            // the row is interactive again.
+                            DispatchQueue.main.async { swallowTap = false }
+                        } else {
+                            swallowTap = false
+                        }
                     }
                     guard lockedToHorizontal else {
                         dragDX = 0
