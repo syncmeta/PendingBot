@@ -135,6 +135,30 @@ messageRoutes.post('/', async (c) => {
   }
 
   const supaService = serviceClient(c.env);
+
+  // Attachment ownership gate. attachmentIds rides in the body uncontrolled —
+  // verify each row's user_id matches the sender and (if already bound) its
+  // conversation_id matches this conv, so a caller can't pin someone else's
+  // upload onto their own bubble or recycle attachments across convs.
+  if (parsed.attachmentIds && parsed.attachmentIds.length > 0) {
+    const { data: rows, error: attErr } = await supaService
+      .from('attachments')
+      .select('id, user_id, conversation_id')
+      .in('id', parsed.attachmentIds);
+    if (attErr) return c.json({ error: 'database', detail: attErr.message }, 500);
+    if (!rows || rows.length !== parsed.attachmentIds.length) {
+      return c.json({ error: 'attachment not found' }, 403);
+    }
+    for (const r of rows) {
+      if (r.user_id !== userId) {
+        return c.json({ error: 'attachment not owned' }, 403);
+      }
+      if (r.conversation_id && r.conversation_id !== parsed.conversationId) {
+        return c.json({ error: 'attachment bound to another conversation' }, 403);
+      }
+    }
+  }
+
   let parentMessageId: string | null = null;
   if (!parsed.autoLookback) {
     const { error: insertErr } = await supaService
