@@ -781,6 +781,7 @@ export type Database = {
           from_user_id: string
           id: string
           message: string | null
+          remark_for_contact: string | null
           responded_at: string | null
           status: string
           to_user_id: string
@@ -793,6 +794,7 @@ export type Database = {
           from_user_id: string
           id?: string
           message?: string | null
+          remark_for_contact?: string | null
           responded_at?: string | null
           status?: string
           to_user_id: string
@@ -805,6 +807,7 @@ export type Database = {
           from_user_id?: string
           id?: string
           message?: string | null
+          remark_for_contact?: string | null
           responded_at?: string | null
           status?: string
           to_user_id?: string

@@ -59,7 +59,6 @@ struct FriendsTabView: View {
         } message: { Text(error ?? "") }
         .sheet(isPresented: $addingFriend) {
             AddFriendSheet { Task { await load() } }
-                .presentationDetents([.medium])
                 .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $creatingBot) {
@@ -848,53 +847,69 @@ private struct FilterPill: View {
     }
 }
 
-// MARK: - Add friend (handle / email)
+// MARK: - Add friend (handle only, with preview)
 
+/// 加好友 page — handle-only entry. The user types a number, we
+/// debounce-lookup the matching profile (avatar + nickname only — by
+/// design, no email or other PII surfaces here), then surface a 备注
+/// field for the sender to label this contact. The remark rides along
+/// on the friend request and lands in `user_contacts.alias` when the
+/// recipient accepts (see migration 0060).
 struct AddFriendSheet: View {
     @Environment(\.dismiss) private var dismiss
     var onAdded: () -> Void = {}
 
-    enum Mode: String, CaseIterable, Identifiable {
-        case handle = "号码"
-        case email = "邮箱"
-        var id: String { rawValue }
+    /// Preview state for the looked-up profile. `idle` covers both the
+    /// "haven't typed enough yet" and "between debounce ticks" cases —
+    /// the row simply doesn't render.
+    enum Preview: Equatable {
+        case idle
+        case loading
+        case loaded(userId: String, displayName: String, avatarPath: String?)
+        case notFound(message: String)
     }
 
-    @State private var mode: Mode = .handle
     @State private var handleValue: String = ""
-    @State private var email: String = ""
-    @State private var introMessage: String = ""
+    @State private var remark: String = ""
+    @State private var preview: Preview = .idle
+    @State private var lookupTask: Task<Void, Never>?
     @State private var submitting = false
     @State private var error: String?
-    /// Shown after a successful submit. The flow has three branches —
-    /// vanilla "request sent", "you're already friends", and "auto
-    /// accepted because they had a pending request to you" — each
-    /// surfaced as a small accent-coloured note before the sheet closes.
     @State private var successHint: String?
+
+    private var trimmedHandle: String {
+        handleValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Send is only meaningful once we have a confirmed match. Disables
+    /// the button on partial input, lookup-in-flight, and not-found, so
+    /// the user can't fire a request that the worker would just reject.
+    private var canSubmit: Bool {
+        if submitting { return false }
+        if case .loaded = preview { return true }
+        return false
+    }
 
     var body: some View {
         NavigationStack {
             Form {
-                Picker("方式", selection: $mode) {
-                    ForEach(Mode.allCases) { m in Text(m.rawValue).tag(m) }
-                }
-                .pickerStyle(.segmented)
-
                 Section {
-                    if mode == .handle {
-                        TextField("号码 / QR 解码后的串", text: $handleValue)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                    } else {
-                        TextField("对方的注册邮箱", text: $email)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .keyboardType(.emailAddress)
-                    }
-                    TextField("打个招呼（可选）", text: $introMessage, axis: .vertical)
-                        .lineLimit(1...3)
+                    TextField("号码 / 隐私号", text: $handleValue)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .onChange(of: handleValue) { _, _ in scheduleLookup() }
                 } footer: {
-                    Text("对方收到好友申请后,同意才能开始聊天。")
+                    Text("只能用号码（ID/隐私号）添加,不支持邮箱。")
+                }
+
+                Section("对方") {
+                    previewRow
+                }
+
+                Section("备注（可选）") {
+                    TextField("给 TA 起个备注", text: $remark)
+                        .textInputAutocapitalization(.sentences)
+                        .autocorrectionDisabled()
                 }
 
                 if let successHint {
@@ -903,7 +918,9 @@ struct AddFriendSheet: View {
                     }
                 }
                 if let error {
-                    Text(error).foregroundStyle(.red).font(.footnote)
+                    Section {
+                        Text(error).foregroundStyle(.red).font(.footnote)
+                    }
                 }
             }
             .navigationTitle("加好友")
@@ -914,9 +931,93 @@ struct AddFriendSheet: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("发送申请") { Task { await submit() } }
-                        .disabled(submitting || (mode == .handle ? handleValue.isEmpty : email.isEmpty))
+                        .disabled(!canSubmit)
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var previewRow: some View {
+        switch preview {
+        case .idle:
+            Text("输入号码后会显示对方的头像和昵称")
+                .foregroundStyle(.secondary)
+                .font(.footnote)
+        case .loading:
+            HStack(spacing: 12) {
+                ProgressView()
+                Text("正在查找…").foregroundStyle(.secondary).font(.footnote)
+            }
+        case .loaded(let userId, let displayName, let avatarPath):
+            HStack(spacing: 12) {
+                UserAvatar(seed: userId, attachmentId: avatarPath, size: 44)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(displayName.isEmpty ? String(userId.prefix(8)) : displayName)
+                        .font(.body)
+                    Text("可以添加为好友").foregroundStyle(.secondary).font(.footnote)
+                }
+            }
+            .padding(.vertical, 2)
+        case .notFound(let message):
+            Text(message).foregroundStyle(.red).font(.footnote)
+        }
+    }
+
+    /// Debounced lookup. Each keystroke cancels the prior in-flight
+    /// task; only the trailing 350ms of stillness fires the request.
+    /// Resets to `.idle` when the user clears the field or types fewer
+    /// than the worker-allowed minimum (4 chars).
+    private func scheduleLookup() {
+        lookupTask?.cancel()
+        let value = trimmedHandle
+        guard value.count >= 4 else {
+            preview = .idle
+            return
+        }
+        preview = .loading
+        lookupTask = Task {
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            if Task.isCancelled { return }
+            await runLookup(value: value)
+        }
+    }
+
+    private func runLookup(value: String) async {
+        do {
+            var comps = URLComponents(
+                url: HostedConfig.environment.workerURL
+                    .appendingPathComponent("v1/friend-requests/lookup"),
+                resolvingAgainstBaseURL: false
+            )!
+            comps.queryItems = [URLQueryItem(name: "handleValue", value: value)]
+            var req = URLRequest(url: comps.url!)
+            let token = try await SupabaseStack.shared.auth.session.accessToken
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            if Task.isCancelled { return }
+            guard let http = resp as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+            if http.statusCode == 404 {
+                preview = .notFound(message: "号码无效或已撤销")
+                return
+            }
+            if !(200..<300).contains(http.statusCode) {
+                let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                let msg = (payload?["error"] as? String) ?? "HTTP \(http.statusCode)"
+                preview = .notFound(message: msg)
+                return
+            }
+            struct LookupResp: Decodable {
+                let userId: String
+                let displayName: String
+                let avatarPath: String?
+            }
+            let r = try JSONDecoder().decode(LookupResp.self, from: data)
+            preview = .loaded(userId: r.userId, displayName: r.displayName, avatarPath: r.avatarPath)
+        } catch is CancellationError {
+            // User kept typing — drop the result silently.
+        } catch {
+            preview = .notFound(message: error.localizedDescription)
         }
     }
 
@@ -926,11 +1027,9 @@ struct AddFriendSheet: View {
         error = nil
         successHint = nil
         do {
-            var body: [String: Any] = [:]
-            if mode == .handle { body["handleValue"] = handleValue.trimmingCharacters(in: .whitespaces) }
-            else { body["email"] = email.trimmingCharacters(in: .whitespaces) }
-            let trimmedMsg = introMessage.trimmingCharacters(in: .whitespaces)
-            if !trimmedMsg.isEmpty { body["message"] = trimmedMsg }
+            var body: [String: Any] = ["handleValue": trimmedHandle]
+            let trimmedRemark = remark.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedRemark.isEmpty { body["remark"] = trimmedRemark }
 
             let url = HostedConfig.environment.workerURL.appendingPathComponent("v1/friend-requests")
             var req = URLRequest(url: url)
@@ -957,7 +1056,6 @@ struct AddFriendSheet: View {
             }
             Haptics.success()
             onAdded()
-            // Brief read-the-hint pause before auto-dismissing the sheet.
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             dismiss()
         } catch {
