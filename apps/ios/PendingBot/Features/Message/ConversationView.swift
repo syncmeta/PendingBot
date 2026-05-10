@@ -434,6 +434,9 @@ struct ConversationView: View {
                         providerOverride = slug
                         providerOverrideTouched = true
                         Haptics.tap()
+                    },
+                    onApplyVisionModel: { slug in
+                        Task { await patchConversationVisionModel(slug: slug) }
                     }
                 )
             }
@@ -2188,6 +2191,19 @@ struct ConversationView: View {
             try await api.patchVoid("v1/conversations/\(conversation.id)",
                                     body: Body(model_slug: slug))
             Haptics.tap()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    /// PATCH the per-conv vision-model pin (0064). nil = auto. Server
+    /// re-uses the model-pin gate (private bot creator only).
+    private func patchConversationVisionModel(slug: String?) async {
+        guard let api else { return }
+        struct Body: Encodable { let vision_model_slug: String? }
+        do {
+            try await api.patchVoid("v1/conversations/\(conversation.id)",
+                                    body: Body(vision_model_slug: slug))
         } catch {
             self.error = error.localizedDescription
         }

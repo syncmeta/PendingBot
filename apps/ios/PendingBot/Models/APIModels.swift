@@ -155,6 +155,11 @@ struct OpenRouterModel: Codable, Identifiable, Hashable {
     let display_name: String
     let provider: String
     let context_length: Int?
+    /// True when the model accepts image input. Server derives this from
+    /// OpenRouter's architecture.input_modalities. Optional for backwards
+    /// compat with cached responses from older builds — treat nil as
+    /// "unknown/no" (we can't show it in a vision-only filter).
+    let supports_vision: Bool?
     var id: String { slug }
 }
 
