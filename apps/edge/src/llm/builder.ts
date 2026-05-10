@@ -273,7 +273,10 @@ export function buildMessages(input: BuildMessagesInput): ChatCompletionMessageP
     if (!llmRole) continue;
     const text = m.content ?? '';
     if (!text) continue;
-    historyMsgs.push({ role: llmRole, content: withTimeHint(text, m.created_at, clientTz) });
+    historyMsgs.push({
+      role: llmRole,
+      content: llmRole === 'user' ? withTimeHint(text, m.created_at, clientTz) : text,
+    });
   }
 
   // Cache breakpoint on the chosen history index. Strategy: every 4 rounds
