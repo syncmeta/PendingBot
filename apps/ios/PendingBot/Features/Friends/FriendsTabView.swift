@@ -316,6 +316,7 @@ struct FriendsTabView: View {
 
     private struct BotDecodable: Decodable {
         let id: String
+        let slug: String?
         let display_name: String
         let model_id: String?
         let visibility: String?
@@ -326,7 +327,7 @@ struct FriendsTabView: View {
         do {
             async let botRowsResp: [BotDecodable] = SupabaseStack.shared
                 .from("bots")
-                .select("id, display_name, model_id, visibility, creator_id")
+                .select("id, slug, display_name, model_id, visibility, creator_id")
                 .eq("is_active", value: true)
                 .order("created_at", ascending: true)
                 .execute()
@@ -336,11 +337,18 @@ struct FriendsTabView: View {
 
             let botRows = try await botRowsResp
 
-            self.bots = botRows.map {
-                BotPick(id: $0.id, display_name: $0.display_name,
-                        model_id: $0.model_id, visibility: $0.visibility,
-                        creator_id: $0.creator_id)
-            }
+            // Drop the per-user self-bot from the regular bot list — its
+            // entry is the SelfRow pinned at the top of the friends tab,
+            // and chatting with it via the bot path would skip the
+            // self-chat materialiser (open_self_conv RPC) and the
+            // user-memory swap in bot-reply.
+            self.bots = botRows
+                .filter { !($0.slug?.hasPrefix("self-") ?? false) }
+                .map {
+                    BotPick(id: $0.id, display_name: $0.display_name,
+                            model_id: $0.model_id, visibility: $0.visibility,
+                            creator_id: $0.creator_id)
+                }
             self.humans = (try? await contactsResp) ?? []
             self.pendingFriendRequests = (try? await incomingFR) ?? []
         } catch is CancellationError {
@@ -486,8 +494,8 @@ struct FriendsTabView: View {
     }
 
     /// Push a "chat with self" conv. Materialises server-side via the
-    /// dedicated open_self_conv RPC (see migration 0018) which seeds
-    /// the user's bio as the bot's persona.
+    /// dedicated open_self_conv RPC, which find-or-creates the user's
+    /// per-user private self-bot and a singleton self-conv attached to it.
     private func tapSelf() async {
         guard let userId = AccountStore.shared.current?.id else { return }
         let displayName = AccountStore.shared.profileDisplayName
