@@ -97,6 +97,24 @@ final class LocalDatabase {
                 t.add(column: "last_message_sender_type", .text)
             }
         }
+        // Cache the friends list (bots + human contacts) so the friends
+        // tab paints last-known state instantly on entry instead of
+        // flashing empty until the network round-trip lands.
+        m.registerMigration("v3_friends_cache") { db in
+            try db.create(table: "bots") { t in
+                t.column("id", .text).primaryKey()
+                t.column("display_name", .text).notNull()
+                t.column("model_id", .text)
+                t.column("visibility", .text)
+                t.column("creator_id", .text)
+            }
+            try db.create(table: "contacts") { t in
+                t.column("id", .text).primaryKey()
+                t.column("alias", .text)
+                t.column("display_name", .text).notNull().defaults(to: "")
+                t.column("avatar_path", .text)
+            }
+        }
         return m
     }
 
@@ -105,6 +123,8 @@ final class LocalDatabase {
         try? dbQueue.write { db in
             try db.execute(sql: "DELETE FROM messages")
             try db.execute(sql: "DELETE FROM conversations")
+            try db.execute(sql: "DELETE FROM bots")
+            try db.execute(sql: "DELETE FROM contacts")
         }
     }
 
@@ -182,6 +202,57 @@ final class LocalDatabase {
     func deleteMessage(id: String) {
         try? dbQueue.write { db in
             _ = try MessageRow.deleteOne(db, key: id)
+        }
+    }
+
+    // MARK: - Friends (bots + contacts)
+
+    struct BotRow: Codable, FetchableRecord, PersistableRecord {
+        var id: String
+        var display_name: String
+        var model_id: String?
+        var visibility: String?
+        var creator_id: String?
+
+        static let databaseTableName = "bots"
+    }
+
+    struct ContactRow: Codable, FetchableRecord, PersistableRecord {
+        var id: String
+        var alias: String?
+        var display_name: String
+        var avatar_path: String?
+
+        static let databaseTableName = "contacts"
+    }
+
+    func loadBots() -> [BotRow] {
+        (try? dbQueue.read { db in
+            try BotRow.fetchAll(db)
+        }) ?? []
+    }
+
+    func loadContacts() -> [ContactRow] {
+        (try? dbQueue.read { db in
+            try ContactRow.fetchAll(db)
+        }) ?? []
+    }
+
+    /// Wholesale replacement — server is the source of truth for which
+    /// bots / contacts the user has, so a partial upsert would leave
+    /// stale rows behind after deletions. Called only on a successful
+    /// fetch; on network failure we keep the prior cache intact.
+    func replaceBots(_ rows: [BotRow]) {
+        try? dbQueue.write { db in
+            try db.execute(sql: "DELETE FROM bots")
+            for r in rows { try r.save(db) }
+        }
+    }
+
+    func replaceContacts(_ rows: [ContactRow]) {
+        try? dbQueue.write { db in
+            try db.execute(sql: "DELETE FROM contacts")
+            for r in rows { try r.save(db) }
         }
     }
 }

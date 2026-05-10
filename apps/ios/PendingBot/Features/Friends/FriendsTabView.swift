@@ -340,6 +340,31 @@ struct FriendsTabView: View {
         let creator_id: String?
     }
     private func load() async {
+        // Hydrate from local cache so the tab paints last-known friends
+        // instantly instead of flashing empty until the network round-trip
+        // lands. First-paint fallback only — guarded on `bots.isEmpty &&
+        // humans.isEmpty` so a pull-to-refresh on a warm screen doesn't
+        // visibly drop fresh data back to cache while the call is in
+        // flight. Pending friend requests aren't cached: the state changes
+        // too quickly to be worth showing stale.
+        if bots.isEmpty && humans.isEmpty {
+            let cachedBots = LocalDatabase.shared.loadBots()
+            let cachedContacts = LocalDatabase.shared.loadContacts()
+            if !cachedBots.isEmpty {
+                self.bots = cachedBots.map {
+                    BotPick(id: $0.id, display_name: $0.display_name,
+                            model_id: $0.model_id, visibility: $0.visibility,
+                            creator_id: $0.creator_id)
+                }
+            }
+            if !cachedContacts.isEmpty {
+                self.humans = cachedContacts.map {
+                    HumanPick(id: $0.id, alias: $0.alias,
+                              displayName: $0.display_name,
+                              avatarPath: $0.avatar_path)
+                }
+            }
+        }
         loading = true; defer { loading = false }
         do {
             async let botRowsResp: [BotDecodable] = SupabaseStack.shared
@@ -366,7 +391,31 @@ struct FriendsTabView: View {
                             model_id: $0.model_id, visibility: $0.visibility,
                             creator_id: $0.creator_id)
                 }
-            self.humans = (try? await contactsResp) ?? []
+            // Persist bots wholesale on success — server is the source of
+            // truth for which ones are still active / visible to us.
+            LocalDatabase.shared.replaceBots(self.bots.map {
+                LocalDatabase.BotRow(
+                    id: $0.id, display_name: $0.display_name,
+                    model_id: $0.model_id, visibility: $0.visibility,
+                    creator_id: $0.creator_id
+                )
+            })
+
+            // Contacts: only overwrite the cache when the fetch actually
+            // succeeded. A transient failure preserves whatever was last
+            // persisted so the next tab entry can hydrate from it.
+            if let contacts = try? await contactsResp {
+                self.humans = contacts
+                LocalDatabase.shared.replaceContacts(contacts.map {
+                    LocalDatabase.ContactRow(
+                        id: $0.id, alias: $0.alias,
+                        display_name: $0.displayName,
+                        avatar_path: $0.avatarPath
+                    )
+                })
+            } else {
+                self.humans = []
+            }
             self.pendingFriendRequests = (try? await incomingFR) ?? []
         } catch is CancellationError {
             // Tab switch / refreshable cancellation — silent. The Mac
