@@ -93,7 +93,7 @@ struct MarkdownText: View {
                     FontWeight(.semibold)
                     FontSize(22)
                 }
-                .markdownMargin(top: 6, bottom: 2)
+                .markdownMargin(top: 14, bottom: 6)
         }
         .heading2 { configuration in
             configuration.label
@@ -101,7 +101,7 @@ struct MarkdownText: View {
                     FontWeight(.semibold)
                     FontSize(19)
                 }
-                .markdownMargin(top: 6, bottom: 2)
+                .markdownMargin(top: 14, bottom: 6)
         }
         .heading3 { configuration in
             configuration.label
@@ -109,12 +109,12 @@ struct MarkdownText: View {
                     FontWeight(.semibold)
                     FontSize(17)
                 }
-                .markdownMargin(top: 4, bottom: 2)
+                .markdownMargin(top: 12, bottom: 4)
         }
         .blockquote { configuration in
             configuration.label
-                .padding(.leading, 12)
-                .padding(.vertical, 4)
+                .padding(.leading, 14)
+                .padding(.vertical, 6)
                 .overlay(alignment: .leading) {
                     Rectangle()
                         .fill(AppTheme.Palette.hairline)
@@ -123,12 +123,13 @@ struct MarkdownText: View {
                 .markdownTextStyle { ForegroundColor(AppTheme.Palette.inkMuted) }
         }
         .listItem { configuration in
-            configuration.label.markdownMargin(top: 2, bottom: 2)
+            configuration.label.markdownMargin(top: 4, bottom: 4)
         }
         .paragraph { configuration in
             configuration.label
                 .fixedSize(horizontal: false, vertical: true)
-                .markdownMargin(top: 0, bottom: 6)
+                .lineSpacing(4)
+                .markdownMargin(top: 0, bottom: 12)
         }
 }
 

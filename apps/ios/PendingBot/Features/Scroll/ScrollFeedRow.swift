@@ -18,7 +18,7 @@ struct ScrollFeedRow: View {
                 .fill(run.isRunning ? Theme.Palette.accent : Color.clear)
                 .frame(width: 3)
 
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 14) {
                 kickerRow
                 Rectangle()
                     .fill(Theme.Palette.hairline)
@@ -29,6 +29,7 @@ struct ScrollFeedRow: View {
                     .foregroundStyle(Theme.Palette.ink)
                     .lineLimit(3)
                     .multilineTextAlignment(.leading)
+                    .lineSpacing(3)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 if run.isRunning {
@@ -40,17 +41,21 @@ struct ScrollFeedRow: View {
                             .lineLimit(1)
                     }
                 } else if let summary = run.summary, !summary.isEmpty {
+                    // Cover deck — the bot's deliberate subtitle. Allow up
+                    // to three lines so a 60-char Chinese subtitle can
+                    // breathe instead of getting clipped mid-clause.
                     Text(summary)
                         .font(Theme.Fonts.body)
                         .foregroundStyle(Theme.Palette.inkMuted)
                         .lineLimit(3)
                         .multilineTextAlignment(.leading)
+                        .lineSpacing(3)
                 }
 
                 statusPill
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 18)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(Theme.Palette.surface)

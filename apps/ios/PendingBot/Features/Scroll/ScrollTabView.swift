@@ -74,7 +74,7 @@ struct ScrollTabView: View {
                         EmptyState()
                     } else {
                         ScrollView {
-                            LazyVStack(spacing: 12) {
+                            LazyVStack(spacing: 16) {
                                 ForEach(runs) { run in
                                     ScrollFeedRow(run: run, botName: botNames[run.bot_id])
                                         .contentShape(Rectangle())
@@ -86,7 +86,7 @@ struct ScrollTabView: View {
                                 }
                             }
                             .padding(.horizontal, Theme.Metrics.gutter)
-                            .padding(.vertical, 12)
+                            .padding(.vertical, 16)
                             .readableColumnWidth()
                         }
                         .refreshable { await load() }
