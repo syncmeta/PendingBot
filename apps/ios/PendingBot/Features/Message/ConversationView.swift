@@ -192,6 +192,8 @@ struct ConversationView: View {
             // "this conversation". Match the bubble side's avatar so the
             // header and the incoming bubbles look like one identity.
             UserAvatar(seed: peer.userId, attachmentId: peer.avatarPath, size: size)
+        } else if conversation.conversation_type == "group" {
+            GroupAvatar(seed: conversation.id, size: size)
         } else {
             BotAvatar(
                 emojiSeed: avatarEmojiSeed,

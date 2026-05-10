@@ -685,12 +685,12 @@ private struct ConversationListRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            // user_user gets the peer's UserAvatar so the same person
-            // reads consistently across the friends list / chat header /
-            // bubbles. Bot/group/self keep the per-bot BotAvatar with a
-            // per-conv tint.
+            // user_user → peer's photo / generated; group → cluster
+            // GroupAvatar; bot/self → per-bot BotAvatar with per-conv tint.
             if isHumanConv, let p = userPeer {
                 UserAvatar(seed: p.userId, attachmentId: p.avatarPath, size: 36)
+            } else if isGroupConv {
+                GroupAvatar(seed: conv.id, size: 36)
             } else {
                 BotAvatar(
                     emojiSeed: conv.bot_id.isEmpty ? conv.id : conv.bot_id,

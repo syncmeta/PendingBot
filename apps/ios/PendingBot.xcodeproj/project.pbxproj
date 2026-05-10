@@ -29,6 +29,7 @@
 		45E11B6891D22968CE984C46 /* ChatStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = B14FCE8ADC9DE6D22FBC7387 /* ChatStream.swift */; };
 		4652FC81866F99C1C6AE6A11 /* TypingDots.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FEEDBCFBE31FB849F1F40E0 /* TypingDots.swift */; };
 		48F89A47F914E0463C91D6BB /* BotAvatar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 279FB8EA2B3130084E4F8C44 /* BotAvatar.swift */; };
+		A001B0AA01CE000000000001 /* GroupAvatar.swift in Sources */ = {isa = PBXBuildFile; fileRef = A001B0AA01CE000000000002 /* GroupAvatar.swift */; };
 		4979F0D379FC22722B743958 /* GroupQRCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33E761E1099E8B059DB355AB /* GroupQRCard.swift */; };
 		4B188C25211FC2C93428265C /* MarkdownText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 296C608D9B4B9E5870149CD4 /* MarkdownText.swift */; };
 		4B8F775758566FA94BB05F1B /* ColorHash.swift in Sources */ = {isa = PBXBuildFile; fileRef = A556C3B2E5456D4E589468E3 /* ColorHash.swift */; };
@@ -96,6 +97,7 @@
 		24809B6D2A44FDE3FF39D6F7 /* Log.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Log.swift; sourceTree = "<group>"; };
 		24E4E56DDBD71AB05278A385 /* ServerImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerImage.swift; sourceTree = "<group>"; };
 		279FB8EA2B3130084E4F8C44 /* BotAvatar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotAvatar.swift; sourceTree = "<group>"; };
+		A001B0AA01CE000000000002 /* GroupAvatar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupAvatar.swift; sourceTree = "<group>"; };
 		288EC6D8680B326A27B8A731 /* TabHeaderBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabHeaderBar.swift; sourceTree = "<group>"; };
 		296C608D9B4B9E5870149CD4 /* MarkdownText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownText.swift; sourceTree = "<group>"; };
 		2A461F1DD0D7D01B3BE81A18 /* SupabaseStack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseStack.swift; sourceTree = "<group>"; };
@@ -356,6 +358,7 @@
 				0F27E0F931ABFA8CDAE1ADD7 /* BlinkingCursor.swift */,
 				279FB8EA2B3130084E4F8C44 /* BotAvatar.swift */,
 				7B55AE8CBABF2C99EE083746 /* BotVisibilityTag.swift */,
+				A001B0AA01CE000000000002 /* GroupAvatar.swift */,
 				6A573816C9B62D5FDB2747B1 /* CodeRunnerSheet.swift */,
 				A556C3B2E5456D4E589468E3 /* ColorHash.swift */,
 				5CADBAC8F028F13BC61D5286 /* EmptyHint.swift */,
@@ -481,6 +484,7 @@
 				2EF8FE7582EC1C71D4DED9DC /* BillingService.swift in Sources */,
 				6AEA2941D8681D6D10B4AA9E /* BlinkingCursor.swift in Sources */,
 				48F89A47F914E0463C91D6BB /* BotAvatar.swift in Sources */,
+				A001B0AA01CE000000000001 /* GroupAvatar.swift in Sources */,
 				2C4C6BB79FF77588C3D8D502 /* BotManagement.swift in Sources */,
 				536B9BEF9D1541ADE1759645 /* BotVisibilityTag.swift in Sources */,
 				58EDA71C7AEE2D168E2D4949 /* BubbleSplitter.swift in Sources */,
