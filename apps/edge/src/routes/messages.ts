@@ -94,9 +94,8 @@ messageRoutes.post('/', async (c) => {
   const supaUser = userClient(c.env, userJwt);
   const { data: conv, error: convErr } = await supaUser
     .from('conversations')
-    // provider_override lands in 0038; schema.ts is regenerated lazily,
-    // hence the cast below where it's read.
-    .select('id, conversation_type, bot_id, round_count, provider_override')
+    // provider_override (0038) + model_slug_override (0057) — both column-on-conv pins.
+    .select('id, conversation_type, bot_id, round_count, provider_override, model_slug_override')
     .eq('id', parsed.conversationId)
     .maybeSingle();
   if (convErr) return c.json({ error: 'database', detail: convErr.message }, 500);
@@ -306,6 +305,14 @@ messageRoutes.post('/', async (c) => {
     }
   }
 
+  // Per-conv model pin. NULL → fall back to bot.model_id. Set via
+  // PATCH /v1/conversations/:id (only on convs whose bot is private and
+  // owned by the user).
+  const effectiveModelId: string =
+    conv.model_slug_override && conv.model_slug_override.length > 0
+      ? conv.model_slug_override
+      : (bot.model_id as string);
+
   const isSelfChat = conv.conversation_type === 'self';
 
   // Lazy Honcho refresh: if the client's window has moved past memory's
@@ -357,7 +364,7 @@ messageRoutes.post('/', async (c) => {
             parentMessageId: parentMessageId ?? '',
             bot: {
               id: bot.id,
-              model_id: bot.model_id,
+              model_id: effectiveModelId,
               // CHECK constraint guarantees one of these two; types can't see it.
               output_mode: bot.output_mode === 'bubble' ? 'bubble' : 'single',
             },
@@ -416,7 +423,7 @@ messageRoutes.post('/', async (c) => {
                 runTitle({
                   env: c.env,
                   conversationId: parsed.conversationId,
-                  botModelId: bot.model_id as string,
+                  botModelId: effectiveModelId,
                 }),
               );
             }
