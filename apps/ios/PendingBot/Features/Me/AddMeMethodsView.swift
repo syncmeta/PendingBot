@@ -2,7 +2,8 @@ import SwiftUI
 import Supabase
 
 /// 加我为好友的方式 — 合并了二维码（QR-kind handle）与号码（number-kind
-/// handle）两套入口。NavigationLink 推入此页面，原生 List 分组样式。
+/// handle）两套入口。号码区块按 API key 管理面板的形态来：列表 + 右上「新建」
+/// 入口，每行卡片展示 label / value / 创建时间 / 状态，复制和撤销在「⋯」菜单里。
 struct AddMeMethodsView: View {
     var body: some View {
         List {
@@ -35,119 +36,96 @@ private struct QRCardSection: View {
     }
 }
 
-// MARK: - Handles (number-kind) section
+// MARK: - Handles (number-kind) section — API-key-management style
+
+private struct HandleRow: Identifiable, Hashable {
+    let id: String
+    let value: String
+    let label: String?
+    let kind: String
+    let is_active: Bool
+    let created_at: String?
+}
+
+private struct HandleRowDecoded: Decodable {
+    let id: String
+    let value: String
+    let label: String?
+    let kind: String
+    let is_active: Bool
+    let created_at: String?
+}
 
 private struct HandlesSection: View {
     @State private var handles: [HandleRow] = []
     @State private var loading = false
-    @State private var newLabel: String = ""
-    @State private var newValue: String = ""
     @State private var error: String?
+    @State private var showCreate = false
 
-    private let valueFormat = #"^[A-Za-z0-9_-]{4,20}$"#
     private var activeCount: Int { handles.filter(\.is_active).count }
     private var atLimit: Bool { activeCount >= 5 }
-    private var trimmedValue: String {
-        newValue.trimmingCharacters(in: .whitespaces)
-    }
-    private var valueIsValid: Bool {
-        trimmedValue.isEmpty
-            || trimmedValue.range(of: valueFormat, options: .regularExpression) != nil
-    }
-
-    struct HandleRow: Identifiable, Hashable {
-        let id: String
-        let value: String
-        let label: String?
-        let kind: String
-        let is_active: Bool
-        let created_at: String?
-    }
-    private struct Decoded: Decodable {
-        let id: String
-        let value: String
-        let label: String?
-        let kind: String
-        let is_active: Bool
-        let created_at: String?
-    }
 
     var body: some View {
         Group {
             Section {
-                TextField("自定义号码（留空则随机生成）", text: $newValue)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled(true)
-                    .font(Theme.Fonts.monoSmall)
-                TextField("备注（如 'blog'）", text: $newLabel)
-                HStack {
-                    if !valueIsValid {
-                        Text("格式：4-20 位字母 / 数字 / _ / -")
-                            .font(.footnote)
-                            .foregroundStyle(.red)
-                    } else if atLimit {
-                        Text("已达到 5 个上限，先撤销一个")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
+                if handles.isEmpty {
+                    if loading {
+                        HStack {
+                            ProgressView().controlSize(.small)
+                            Text("加载中…").foregroundStyle(.secondary)
+                        }
                     } else {
-                        Text("已用 \(activeCount) / 5")
-                            .font(.footnote)
+                        Text("还没生成过号码，点右上角「新建」")
                             .foregroundStyle(.secondary)
+                            .font(.footnote)
                     }
-                    Spacer()
-                    Button(trimmedValue.isEmpty ? "随机生成" : "添加") {
-                        Task { await mint() }
+                } else {
+                    ForEach(handles) { h in
+                        HandleCardRow(
+                            handle: h,
+                            onRevoke: { Task { await revoke(h.id) } }
+                        )
                     }
-                    .disabled(atLimit || !valueIsValid)
                 }
             } header: {
-                Text("新增号码")
-            } footer: {
-                Text("号码全局唯一。别人加你时你能看到他用了哪个号码。")
-            }
-
-            Section("我的号码") {
-                if handles.isEmpty {
-                    Text("还没生成过号码").foregroundStyle(.secondary)
-                }
-                ForEach(handles) { h in
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text(h.value)
-                                .font(Theme.Fonts.monoSmall)
-                                .textSelection(.enabled)
-                            Spacer()
-                            if h.is_active {
-                                Button("撤销") { Task { await revoke(h.id) } }
-                                    .foregroundStyle(.red)
-                                    .font(.footnote)
-                            } else {
-                                Text("已撤销")
-                                    .font(.footnote)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        if let label = h.label {
-                            Text(label)
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
+                HStack {
+                    Text("我的号码")
+                    Spacer()
+                    Button {
+                        showCreate = true
+                    } label: {
+                        Label("新建", systemImage: "plus")
+                            .labelStyle(.titleAndIcon)
+                            .font(.footnote.weight(.medium))
                     }
-                    .padding(.vertical, 2)
+                    .disabled(atLimit)
+                    .textCase(nil)
+                }
+            } footer: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("号码全局唯一。别人加你时你能看到他用了哪个号码。")
+                    Text("已用 \(activeCount) / 5")
                 }
             }
 
             if let error {
-                Section { Text(error).foregroundStyle(.red).font(.footnote) }
+                Section {
+                    Text(error).foregroundStyle(.red).font(.footnote)
+                }
             }
         }
         .task { await load() }
+        .sheet(isPresented: $showCreate) {
+            MintHandleSheet(activeCount: activeCount) { reload in
+                if reload { Task { await load() } }
+            }
+        }
     }
 
     private func load() async {
         loading = true; defer { loading = false }
         do {
-            let rows: [Decoded] = try await SupabaseStack.shared
+            let rows: [HandleRowDecoded] = try await SupabaseStack.shared
                 .from("user_handles")
                 .select("id, value, label, kind, is_active, created_at")
                 .eq("kind", value: "number")
@@ -164,9 +142,201 @@ private struct HandlesSection: View {
         }
     }
 
+    private func revoke(_ id: String) async {
+        do {
+            try await SupabaseStack.shared
+                .from("user_handles")
+                .update(["is_active": false])
+                .eq("id", value: id)
+                .execute()
+            Haptics.tap()
+            await load()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+}
+
+// MARK: - Handle row (card)
+
+private struct HandleCardRow: View {
+    let handle: HandleRow
+    let onRevoke: () -> Void
+
+    @State private var copied = false
+
+    private var titleText: String {
+        if let l = handle.label, !l.isEmpty { return l }
+        return "未命名"
+    }
+
+    private var relativeCreated: String? {
+        guard let raw = handle.created_at,
+              let date = ServerTimestamp.parse(raw) else { return nil }
+        let f = RelativeDateTimeFormatter()
+        f.locale = Locale(identifier: "zh_Hans_CN")
+        f.unitsStyle = .short
+        return f.localizedString(for: date, relativeTo: Date())
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(titleText)
+                    .font(Theme.Fonts.bodyEmphasized)
+                    .foregroundStyle(handle.is_active ? Theme.Palette.ink : Theme.Palette.inkMuted)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                Menu {
+                    Button {
+                        copy()
+                    } label: {
+                        Label("复制号码", systemImage: "doc.on.doc")
+                    }
+                    if handle.is_active {
+                        Button(role: .destructive) {
+                            onRevoke()
+                        } label: {
+                            Label("撤销", systemImage: "xmark.circle")
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.body)
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                        .frame(width: 32, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+
+            HStack(spacing: 8) {
+                Text(handle.value)
+                    .font(Theme.Fonts.monoSmall)
+                    .foregroundStyle(handle.is_active ? Theme.Palette.ink : Theme.Palette.inkMuted)
+                    .textSelection(.enabled)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Button {
+                    copy()
+                } label: {
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                        .font(.footnote)
+                        .foregroundStyle(copied ? Theme.Palette.accent : Theme.Palette.inkMuted)
+                }
+                .buttonStyle(.plain)
+                .disabled(!handle.is_active)
+                Spacer()
+            }
+
+            HStack(spacing: 6) {
+                if let t = relativeCreated {
+                    Text("创建于 \(t)")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                Text("·").foregroundStyle(.secondary).font(.footnote)
+                StatusPill(active: handle.is_active)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func copy() {
+        UIPasteboard.general.string = handle.value
+        Haptics.tap()
+        copied = true
+        Task {
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            await MainActor.run { copied = false }
+        }
+    }
+}
+
+private struct StatusPill: View {
+    let active: Bool
+    var body: some View {
+        Text(active ? "启用中" : "已撤销")
+            .font(.caption.weight(.medium))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2)
+            .background(
+                Capsule().fill(active ? Theme.Palette.accentBg : Theme.Palette.surfaceMuted)
+            )
+            .foregroundStyle(active ? Theme.Palette.accent : Theme.Palette.inkMuted)
+    }
+}
+
+// MARK: - Mint sheet
+
+private struct MintHandleSheet: View {
+    let activeCount: Int
+    /// Called on dismiss; `reload == true` if a row was successfully minted.
+    let onClose: (_ reload: Bool) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var newLabel: String = ""
+    @State private var newValue: String = ""
+    @State private var error: String?
+    @State private var minting = false
+
+    private let valueFormat = #"^[A-Za-z0-9_-]{4,20}$"#
+    private var trimmedValue: String { newValue.trimmingCharacters(in: .whitespaces) }
+    private var trimmedLabel: String { newLabel.trimmingCharacters(in: .whitespaces) }
+    private var valueIsValid: Bool {
+        trimmedValue.isEmpty
+            || trimmedValue.range(of: valueFormat, options: .regularExpression) != nil
+    }
+    private var atLimit: Bool { activeCount >= 5 }
+    private var submitTitle: String { trimmedValue.isEmpty ? "随机生成" : "添加" }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("自定义号码（留空则随机生成）", text: $newValue)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled(true)
+                        .font(Theme.Fonts.monoSmall)
+                    TextField("备注（如 'blog'）", text: $newLabel)
+                } footer: {
+                    if !valueIsValid {
+                        Text("格式：4-20 位字母 / 数字 / _ / -").foregroundStyle(.red)
+                    } else if atLimit {
+                        Text("已达到 5 个上限，先撤销一个再来")
+                    } else {
+                        Text("号码全局唯一。备注只你自己能看到。")
+                    }
+                }
+
+                if let error {
+                    Section {
+                        Text(error).foregroundStyle(.red).font(.footnote)
+                    }
+                }
+            }
+            .navigationTitle("新建号码")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("取消") {
+                        onClose(false)
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(submitTitle) {
+                        Task { await mint() }
+                    }
+                    .disabled(atLimit || !valueIsValid || minting)
+                }
+            }
+        }
+    }
+
     private func mint() async {
         guard let userId = AccountStore.shared.current?.id else { return }
-        let trimmedLabel = newLabel.trimmingCharacters(in: .whitespaces)
+        minting = true; defer { minting = false }
         let custom = trimmedValue
         let value: String
         if custom.isEmpty {
@@ -188,10 +358,9 @@ private struct HandlesSection: View {
                                label: trimmedLabel.isEmpty ? nil : trimmedLabel,
                                kind: "number"))
                 .execute()
-            newLabel = ""
-            newValue = ""
             Haptics.success()
-            await load()
+            onClose(true)
+            dismiss()
         } catch {
             let raw = error.localizedDescription
             if raw.contains("duplicate") || raw.contains("unique") {
@@ -203,20 +372,6 @@ private struct HandlesSection: View {
             } else {
                 self.error = raw
             }
-        }
-    }
-
-    private func revoke(_ id: String) async {
-        do {
-            try await SupabaseStack.shared
-                .from("user_handles")
-                .update(["is_active": false])
-                .eq("id", value: id)
-                .execute()
-            Haptics.tap()
-            await load()
-        } catch {
-            self.error = error.localizedDescription
         }
     }
 }
