@@ -1,13 +1,15 @@
 import SwiftUI
 import Supabase
 
-/// 加我为好友的方式 — 合并了二维码（QR-kind handle）与号码（number-kind
-/// handle）两套入口。号码区块按 API key 管理面板的形态来：列表 + 右上「新建」
-/// 入口，每行卡片展示 label / value / 创建时间 / 状态，复制和撤销在「⋯」菜单里。
+/// 加我为好友的方式 — 三部分:
+///   1. 二维码 (QR-kind handle)
+///   2. 我的 ID — 注册时系统预置的不可更改 handle (kind='id')
+///   3. 我的隐私号 — 用户自定义的 handle (kind='number'), 最多 3 个
 struct AddMeMethodsView: View {
     var body: some View {
         List {
             QRCardSection()
+            PresetIdSection()
             HandlesSection()
         }
         .listStyle(.insetGrouped)
@@ -32,6 +34,73 @@ private struct QRCardSection: View {
                 .listRowBackground(Color.clear)
                 .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                 .listRowSeparator(.hidden)
+        }
+    }
+}
+
+// MARK: - Preset ID (id-kind) section — read-only
+
+/// 系统注册时预置的 ID handle (kind='id')。每个用户恰好一个,值不可更改、
+/// 不可撤销。展示用一行 + 复制按钮,没有「⋯」菜单。
+private struct PresetIdSection: View {
+    @State private var presetValue: String?
+    @State private var loading = false
+    @State private var error: String?
+    @State private var copied = false
+
+    var body: some View {
+        Section {
+            if let v = presetValue {
+                HStack(spacing: 8) {
+                    Text(v)
+                        .font(Theme.Fonts.monoSmall)
+                        .foregroundStyle(Theme.Palette.ink)
+                        .textSelection(.enabled)
+                        .lineLimit(1)
+                    Button {
+                        UIPasteboard.general.string = v
+                        Haptics.tap()
+                        copied = true
+                        Task {
+                            try? await Task.sleep(nanoseconds: 1_500_000_000)
+                            await MainActor.run { copied = false }
+                        }
+                    } label: {
+                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                            .font(.footnote)
+                            .foregroundStyle(copied ? Theme.Palette.accent : Theme.Palette.inkMuted)
+                    }
+                    .buttonStyle(.plain)
+                    Spacer()
+                }
+                .padding(.vertical, 4)
+            } else if loading {
+                HStack {
+                    ProgressView().controlSize(.small)
+                    Text("加载中…").foregroundStyle(.secondary)
+                }
+            } else if let error {
+                Text(error).foregroundStyle(.red).font(.footnote)
+            }
+        } header: {
+            Text("我的 ID（不可更改）")
+        }
+        .task { await load() }
+    }
+
+    private func load() async {
+        loading = true; defer { loading = false }
+        do {
+            let rows: [HandleRowDecoded] = try await SupabaseStack.shared
+                .from("user_handles")
+                .select("id, value, label, kind, is_active, created_at")
+                .eq("kind", value: "id")
+                .limit(1)
+                .execute()
+                .value
+            self.presetValue = rows.first?.value
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 }
@@ -63,7 +132,7 @@ private struct HandlesSection: View {
     @State private var showCreate = false
 
     private var activeCount: Int { handles.filter(\.is_active).count }
-    private var atLimit: Bool { activeCount >= 5 }
+    private var atLimit: Bool { activeCount >= 3 }
 
     var body: some View {
         Group {
@@ -75,7 +144,7 @@ private struct HandlesSection: View {
                             Text("加载中…").foregroundStyle(.secondary)
                         }
                     } else {
-                        Text("还没生成过号码，点右上角「新建」")
+                        Text("还没创建过隐私号，点右上角「新建」")
                             .foregroundStyle(.secondary)
                             .font(.footnote)
                     }
@@ -89,7 +158,7 @@ private struct HandlesSection: View {
                 }
             } header: {
                 HStack {
-                    Text("我的号码")
+                    Text("我的隐私号")
                     Spacer()
                     Button {
                         showCreate = true
@@ -103,8 +172,11 @@ private struct HandlesSection: View {
                 }
             } footer: {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("号码全局唯一。别人加你时你能看到他用了哪个号码。")
-                    Text("已用 \(activeCount) / 5")
+                    Text("1. 别人可以通过 ID 或者隐私号添加你为好友")
+                    Text("2. 你在这里最多可以同时有三个隐私号")
+                    Text("3. 你可以看别人通过哪个号加的你")
+                    Text("4. 你可以随时创建隐私号，随时更改、撤销你自己创建的隐私号")
+                    Text("5. 你同意好友申请后别人可看到你的真实 ID")
                 }
             }
 
@@ -191,7 +263,7 @@ private struct HandleCardRow: View {
                     Button {
                         copy()
                     } label: {
-                        Label("复制号码", systemImage: "doc.on.doc")
+                        Label("复制", systemImage: "doc.on.doc")
                     }
                     if handle.is_active {
                         Button(role: .destructive) {
@@ -287,14 +359,14 @@ private struct MintHandleSheet: View {
         trimmedValue.isEmpty
             || trimmedValue.range(of: valueFormat, options: .regularExpression) != nil
     }
-    private var atLimit: Bool { activeCount >= 5 }
+    private var atLimit: Bool { activeCount >= 3 }
     private var submitTitle: String { trimmedValue.isEmpty ? "随机生成" : "添加" }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("自定义号码（留空则随机生成）", text: $newValue)
+                    TextField("自定义隐私号（留空则随机生成）", text: $newValue)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled(true)
                         .font(Theme.Fonts.monoSmall)
@@ -303,9 +375,9 @@ private struct MintHandleSheet: View {
                     if !valueIsValid {
                         Text("格式：4-20 位字母 / 数字 / _ / -").foregroundStyle(.red)
                     } else if atLimit {
-                        Text("已达到 5 个上限，先撤销一个再来")
+                        Text("已达到 3 个上限，先撤销一个再来")
                     } else {
-                        Text("号码全局唯一。备注只你自己能看到。")
+                        Text("隐私号全局唯一。备注只你自己能看到。")
                     }
                 }
 
@@ -315,7 +387,7 @@ private struct MintHandleSheet: View {
                     }
                 }
             }
-            .navigationTitle("新建号码")
+            .navigationTitle("新建隐私号")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -364,11 +436,11 @@ private struct MintHandleSheet: View {
         } catch {
             let raw = error.localizedDescription
             if raw.contains("duplicate") || raw.contains("unique") {
-                self.error = "号码已被占用，换一个"
+                self.error = "隐私号已被占用，换一个"
             } else if raw.contains("handles_value_format") {
-                self.error = "号码格式不符（4-20 位字母 / 数字 / _ / -）"
+                self.error = "格式不符（4-20 位字母 / 数字 / _ / -）"
             } else if raw.contains("handle limit") {
-                self.error = "最多 5 个号码，先撤销一个再来"
+                self.error = "最多 3 个隐私号，先撤销一个再来"
             } else {
                 self.error = raw
             }
