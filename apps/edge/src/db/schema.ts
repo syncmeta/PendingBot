@@ -1565,19 +1565,19 @@ export type Database = {
       }
       skill_subscriptions: {
         Row: {
-          conversation_id: string
+          conversation_id: string | null
           installed_at: string
           skill_id: string
           user_id: string
         }
         Insert: {
-          conversation_id: string
+          conversation_id?: string | null
           installed_at?: string
           skill_id: string
           user_id: string
         }
         Update: {
-          conversation_id?: string
+          conversation_id?: string | null
           installed_at?: string
           skill_id?: string
           user_id?: string
@@ -2153,10 +2153,12 @@ export type Database = {
         Returns: string
       }
       cancel_account_deletion: { Args: never; Returns: boolean }
+      ensure_preset_handle: { Args: { p_uid: string }; Returns: undefined }
       finalize_account_deletion: {
         Args: { p_force?: boolean; p_uid: string }
         Returns: undefined
       }
+      gen_preset_handle_value: { Args: never; Returns: string }
       group_continue_decide: {
         Args: {
           p_decision: string
@@ -2286,6 +2288,7 @@ export type Database = {
         Args: { p_sentiment: string }
         Returns: undefined
       }
+      seed_example_letter: { Args: { p_user_id: string }; Returns: undefined }
       seed_sample_dialogue: {
         Args: {
           p_bot_id: string
