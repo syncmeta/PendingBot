@@ -43,37 +43,22 @@ private struct QRCardSection: View {
 /// 系统注册时预置的 ID handle (kind='id')。每个用户恰好一个,值不可更改、
 /// 不可撤销。展示用一行 + 复制按钮,没有「⋯」菜单。
 private struct PresetIdSection: View {
-    @State private var presetValue: String?
+    @State private var preset: HandleRow?
     @State private var loading = false
     @State private var error: String?
-    @State private var copied = false
 
     var body: some View {
         Section {
-            if let v = presetValue {
-                HStack(spacing: 8) {
-                    Text(v)
+            if let h = preset {
+                NavigationLink {
+                    HandleContactsView(handle: h, onRevoke: nil)
+                } label: {
+                    Text(h.value)
                         .font(Theme.Fonts.monoSmall)
                         .foregroundStyle(Theme.Palette.ink)
-                        .textSelection(.enabled)
                         .lineLimit(1)
-                    Button {
-                        UIPasteboard.general.string = v
-                        Haptics.tap()
-                        copied = true
-                        Task {
-                            try? await Task.sleep(nanoseconds: 1_500_000_000)
-                            await MainActor.run { copied = false }
-                        }
-                    } label: {
-                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                            .font(.footnote)
-                            .foregroundStyle(copied ? Theme.Palette.accent : Theme.Palette.inkMuted)
-                    }
-                    .buttonStyle(.plain)
-                    Spacer()
+                        .padding(.vertical, 4)
                 }
-                .padding(.vertical, 4)
             } else if loading {
                 HStack {
                     ProgressView().controlSize(.small)
@@ -98,7 +83,11 @@ private struct PresetIdSection: View {
                 .limit(1)
                 .execute()
                 .value
-            self.presetValue = rows.first?.value
+            self.preset = rows.first.map {
+                HandleRow(id: $0.id, value: $0.value, label: $0.label,
+                          kind: $0.kind, is_active: $0.is_active,
+                          created_at: $0.created_at)
+            }
         } catch {
             self.error = error.localizedDescription
         }
@@ -408,7 +397,9 @@ private struct MintHandleSheet: View {
 /// 通过此号加你为好友的人的列表(GET /v1/contacts?via_handle_id=…)。
 private struct HandleContactsView: View {
     let handle: HandleRow
-    let onRevoke: () -> Void
+    /// `nil` for the preset ID row (kind='id') — the DB blocks revoke for
+    /// kind='id' anyway, so the UI hides the action entirely.
+    let onRevoke: (() -> Void)?
 
     @Environment(\.dismiss) private var dismiss
     @State private var contacts: [FriendsTabView.HumanPick] = []
@@ -418,6 +409,7 @@ private struct HandleContactsView: View {
     @State private var confirmRevoke = false
 
     private var titleText: String {
+        if handle.kind == "id" { return "我的 ID" }
         if let l = handle.label, !l.isEmpty { return l }
         return "未命名"
     }
@@ -449,7 +441,7 @@ private struct HandleContactsView: View {
                     StatusPill(active: handle.is_active)
                 }
                 .padding(.vertical, 2)
-                if handle.is_active {
+                if handle.is_active && onRevoke != nil {
                     Button(role: .destructive) {
                         confirmRevoke = true
                     } label: {
@@ -459,7 +451,9 @@ private struct HandleContactsView: View {
             } header: {
                 Text(titleText)
             } footer: {
-                if !handle.is_active {
+                if handle.kind == "id" {
+                    Text("ID 是注册时系统预置的,不可更改、不可撤销。")
+                } else if !handle.is_active {
                     Text("此号已撤销,新的好友申请会被拒。已通过它加上的好友不受影响。")
                 }
             }
@@ -505,7 +499,7 @@ private struct HandleContactsView: View {
             titleVisibility: .visible
         ) {
             Button("撤销", role: .destructive) {
-                onRevoke()
+                onRevoke?()
                 dismiss()
             }
             Button("取消", role: .cancel) {}
