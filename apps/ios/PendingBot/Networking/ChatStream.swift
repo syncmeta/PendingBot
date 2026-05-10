@@ -3,6 +3,11 @@ import Foundation
 /// Server-sent event from POST /v1/messages. Mirrors the events Worker
 /// emits in `runChatTurn` — keep names in lockstep with apps/edge/src/lib/bot-reply.ts.
 enum ChatEvent: Sendable {
+    /// First frame of a /v1/messages/start turn — carries the canonical
+    /// conv id and user-message id so the client can rekey its optimistic
+    /// local row before any token arrives. Not emitted by the regular
+    /// /v1/messages endpoint (its caller already has both ids).
+    case meta(conversationId: String, userMessageId: String)
     case typing(state: String)
     case token(delta: String)
     case bubble(id: String, index: Int, groupId: String, content: String)
@@ -45,11 +50,13 @@ struct ChatStream {
     /// Body shape is intentionally `[String: Any]` — chat POST has optional
     /// fields (recentContext, oldestContextMessageId, attachmentIds) and we
     /// don't want a typed model that has to mirror Worker's zod schema.
-    func send(body: [String: Any]) -> AsyncThrowingStream<ChatEvent, Error> {
+    /// `path` defaults to the regular endpoint; pass "v1/messages/start" for
+    /// the lazy-cloud-conv first-turn flow.
+    func send(body: [String: Any], path: String = "v1/messages") -> AsyncThrowingStream<ChatEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    var req = URLRequest(url: workerURL.appendingPathComponent("v1/messages"))
+                    var req = URLRequest(url: workerURL.appendingPathComponent(path))
                     req.httpMethod = "POST"
                     req.setValue("application/json", forHTTPHeaderField: "Content-Type")
                     req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
@@ -170,6 +177,11 @@ enum ChatStreamError: LocalizedError {
 private func decode(eventName: String, dataJSON: String) -> ChatEvent {
     let json = (try? JSONSerialization.jsonObject(with: Data(dataJSON.utf8))) as? [String: Any] ?? [:]
     switch eventName {
+    case "meta":
+        return .meta(
+            conversationId: (json["conversationId"] as? String) ?? "",
+            userMessageId: (json["userMessageId"] as? String) ?? ""
+        )
     case "typing":
         return .typing(state: (json["state"] as? String) ?? "")
     case "token":

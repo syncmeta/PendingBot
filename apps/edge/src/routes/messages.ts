@@ -471,6 +471,233 @@ messageRoutes.post('/', async (c) => {
   });
 });
 
+// POST /v1/messages/start
+//
+// Lazy-cloud-conv first turn for a user_bot conversation. Body carries the
+// botId (no convId yet) — the worker uses a SECURITY DEFINER RPC to check
+// bot visibility, create the conv + participant rows, and insert the user
+// message in one trip, then streams the bot reply via the same SSE format
+// as /v1/messages. The first SSE frame is `event: meta` with the canonical
+// conversationId + userMessageId so the client can rekey its optimistic
+// local row before any token arrives.
+//
+// On any failure before the meta frame, the response is a JSON error and
+// the client keeps the message local (no cloud conv was created). On
+// failure during streaming, we emit `event: error` and the partial conv +
+// user msg stay in the DB; the client can re-open the conv later to see
+// what landed.
+const StartBody = z.object({
+  botId: z.string().uuid(),
+  clientMessageId: z.string().uuid(),
+  newMessage: z.string().min(1).max(64_000),
+  attachmentIds: z.array(z.string().uuid()).optional(),
+  recentContext: z
+    .array(
+      z.object({
+        role: z.enum(['user', 'bot', 'human', 'log']),
+        content: z.string().nullable().optional(),
+        created_at: z.string(),
+      }),
+    )
+    .max(50)
+    .optional(),
+  providerOverride: z.string().nullable().optional(),
+  clientTz: z.string().max(64).optional(),
+});
+
+messageRoutes.post('/start', async (c) => {
+  const userId = c.var.userId!;
+  const userJwt = c.var.userJwt!;
+
+  let parsed: z.infer<typeof StartBody>;
+  try {
+    parsed = StartBody.parse(await c.req.json());
+  } catch (err) {
+    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+  }
+
+  const supaUser = userClient(c.env, userJwt);
+  const supaService = serviceClient(c.env);
+
+  // Bot row needed for runChatTurn (model_id / output_mode / config).
+  // Visibility is gated inside the SECURITY DEFINER RPC below — this read
+  // just pulls the config we need to drive the turn.
+  const { data: bot, error: botErr } = await supaService
+    .from('bots')
+    .select('id, model_id, output_mode, is_active, config, visibility, creator_id')
+    .eq('id', parsed.botId)
+    .single();
+  if (botErr || !bot) return c.json({ error: 'bot not found' }, 404);
+  if (!bot.is_active) return c.json({ error: 'bot inactive' }, 400);
+
+  try {
+    await requireBalance(supaUser, userId);
+  } catch (err) {
+    if (err instanceof InsufficientBalanceError) {
+      return c.json(
+        {
+          error: 'insufficient_balance',
+          balance_credits: err.balance,
+          min_threshold: err.threshold,
+        },
+        402,
+      );
+    }
+    throw err;
+  }
+
+  // Attachment ownership gate. First-turn uploads should not be bound to
+  // any conv yet; reject anything that already is, and verify ownership.
+  if (parsed.attachmentIds && parsed.attachmentIds.length > 0) {
+    const { data: rows, error: attErr } = await supaService
+      .from('attachments')
+      .select('id, user_id, conversation_id')
+      .in('id', parsed.attachmentIds);
+    if (attErr) return c.json({ error: 'database', detail: attErr.message }, 500);
+    if (!rows || rows.length !== parsed.attachmentIds.length) {
+      return c.json({ error: 'attachment not found' }, 403);
+    }
+    for (const r of rows) {
+      if (r.user_id !== userId) return c.json({ error: 'attachment not owned' }, 403);
+      if (r.conversation_id) return c.json({ error: 'attachment bound to another conversation' }, 403);
+    }
+  }
+
+  // Atomic conv + participants + user-msg insert. The RPC also gates bot
+  // visibility (private creator match, public_invite invite check) using
+  // auth.uid(), so failures come back as raised exceptions.
+  //
+  // Cast through `any` because schema.ts is regenerated lazily after each
+  // migration — the new function may not be in the generated union yet.
+  // Worker-edge tsc still catches misspelled arg names because we read the
+  // returned shape below.
+  const rpcResp = await (supaUser.rpc as any)('start_user_bot_turn', {
+    p_bot_id: parsed.botId,
+    p_client_message_id: parsed.clientMessageId,
+    p_content: parsed.newMessage,
+    p_attachment_ids: parsed.attachmentIds ?? null,
+  });
+  if (rpcResp.error) {
+    const msg = rpcResp.error.message || 'start failed';
+    if (/没有权限|inactive|not found|auth required/.test(msg)) {
+      return c.json({ error: msg }, 403);
+    }
+    return c.json({ error: 'database', detail: msg }, 500);
+  }
+  const startInfo = rpcResp.data as { conv_id?: string; user_message_id?: string } | null;
+  if (!startInfo?.conv_id || !startInfo?.user_message_id) {
+    return c.json({ error: 'rpc returned malformed payload' }, 500);
+  }
+  const convId = startInfo.conv_id;
+  const userMessageId = startInfo.user_message_id;
+
+  let effectiveProviderOverride: string | null = null;
+  if (parsed.providerOverride !== undefined) {
+    effectiveProviderOverride = parsed.providerOverride;
+    if (effectiveProviderOverride !== null) {
+      await supaService
+        .from('conversations')
+        .update({ provider_override: effectiveProviderOverride })
+        .eq('id', convId);
+    }
+  }
+
+  const encoder = new TextEncoder();
+  const detachedAbort = new AbortController();
+  let streamClosed = false;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const emit = (event: string, data: unknown) => {
+        if (streamClosed) return;
+        try {
+          controller.enqueue(
+            encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+          );
+        } catch {
+          /* may already be cancelled */
+        }
+      };
+
+      // Send canonical ids before any token so the client can rekey the
+      // optimistic local row immediately.
+      emit('meta', {
+        conversationId: convId,
+        userMessageId: userMessageId,
+      });
+
+      const turnWork = (async () => {
+        try {
+          const result = await runChatTurn({
+            env: c.env,
+            conversationId: convId,
+            userId,
+            parentMessageId: userMessageId,
+            bot: {
+              id: bot.id,
+              model_id: bot.model_id,
+              output_mode: bot.output_mode === 'bubble' ? 'bubble' : 'single',
+            },
+            selfPersona: null,
+            recentContext: parsed.recentContext ?? [],
+            newMessage: parsed.newMessage,
+            activeLookbacks: [],
+            providerOverride: effectiveProviderOverride,
+            clientTz: parsed.clientTz,
+            signal: detachedAbort.signal,
+            emit,
+          });
+
+          if (result.finalStatus === 'done' && result.bubblesInserted > 0) {
+            await supaService
+              .from('conversations')
+              .update({
+                round_count: 1,
+                last_turn_status: 'done',
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', convId);
+
+            // Round 1 — kick off auto-title to replace the random place-name
+            // fallback that start_user_bot_turn seeded.
+            c.executionCtx.waitUntil(
+              runTitle({
+                env: c.env,
+                conversationId: convId,
+                botModelId: bot.model_id as string,
+              }),
+            );
+          }
+        } catch (err) {
+          const message =
+            err instanceof Error
+              ? err.message || err.name || 'Error'
+              : (() => {
+                  try { return JSON.stringify(err).slice(0, 500); }
+                  catch { return String(err) || 'unknown error'; }
+                })();
+          console.error('[messages/start] turn error:', err);
+          emit('error', { message });
+        } finally {
+          streamClosed = true;
+          try { controller.close(); } catch {}
+        }
+      })();
+      c.executionCtx.waitUntil(turnWork);
+    },
+    cancel() {
+      streamClosed = true;
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      'X-Accel-Buffering': 'no',
+    },
+  });
+});
+
 // Per-bot lookback config. Lives in `bots.config` jsonb. Defaults:
 // enabled, every 10 rounds.
 interface LookbackConfigEnvelope {

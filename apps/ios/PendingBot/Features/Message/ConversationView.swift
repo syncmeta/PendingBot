@@ -824,6 +824,27 @@ struct ConversationView: View {
             // first bot token reads as "working" instead of "stuck".
             pending = true
 
+            // Lazy-cloud-conv: a fresh user_bot conv with no cloud row yet
+            // skips the materialise round-trip entirely. /v1/messages/start
+            // creates the conv inside the worker and surfaces the canonical
+            // ids back via the first SSE `meta` frame, which sendViaSSE
+            // wires into `conversation` + the optimistic row in real time.
+            if conversation.id.isEmpty
+                && conversation.conversation_type == "user_bot" {
+                let botId = pendingPeer?.peerId ?? conversation.bot_id
+                if botId.isEmpty {
+                    self.error = "未知机器人"
+                    markUserMessageFailed(localId)
+                    pending = false
+                    return
+                }
+                clearUserMessageStatus(localId)
+                sendViaSSE(text: text, attachmentIds: attachIds,
+                           userMsgId: localId, clientMessageId: cmid,
+                           startBotId: botId)
+                return
+            }
+
             if conversation.id.isEmpty {
                 let ok = await materializeIfPending()
                 guard ok else {
@@ -1018,10 +1039,16 @@ struct ConversationView: View {
     }
 
     /// Start the bot reply over SSE. Bubble emissions land in `messages`
-    /// via incremental insert/update. Cancel the returned Task (via the
-    /// stop button) to close the SSE — Worker observes request.signal.aborted
-    /// and stops the LLM stream.
-    private func sendViaSSE(text: String, attachmentIds: [String], autoLookback: Bool = false, userMsgId: String? = nil, clientMessageId: String? = nil) {
+    /// via incremental insert/update.
+    ///
+    /// Two modes:
+    ///   - regular: conversation.id is set, POST /v1/messages with convId
+    ///   - start: conversation.id is empty (lazy-cloud-conv first turn),
+    ///     pass `startBotId` and POST /v1/messages/start. Worker creates
+    ///     the conv server-side and emits `event: meta` with the canonical
+    ///     ids before any tokens. We wire those back into the optimistic
+    ///     local row + conversation state on the fly.
+    private func sendViaSSE(text: String, attachmentIds: [String], autoLookback: Bool = false, userMsgId: String? = nil, clientMessageId: String? = nil, startBotId: String? = nil) {
         chatTurnTask?.cancel()
         flushRevealImmediately()
         // User taking action (or auto-fire firing) cancels the pending
@@ -1059,23 +1086,28 @@ struct ConversationView: View {
                         ),
                     ]
                 }
-            let oldestId = messages.first { $0.id.range(of: "^[0-9a-f-]{36}$",
-                                                        options: .regularExpression) != nil }?.id
             var b: [String: Any] = [
-                "conversationId": conversation.id,
                 "clientMessageId": clientMsgId,
                 "recentContext": recent,
                 // IANA tz so the server can format the per-turn time hint in
                 // the user's local clock (server only knows UTC otherwise).
                 "clientTz": TimeZone.current.identifier,
             ]
-            if !text.isEmpty { b["newMessage"] = text }
-            if autoLookback { b["autoLookback"] = true }
-            if !activeLookbacks.isEmpty {
-                b["activeLookbacks"] = activeLookbacks.map { ["id": $0.id, "body_md": $0.body_md] }
+            if let startBotId {
+                // Start flow: server creates the conv, no convId yet.
+                b["botId"] = startBotId
+            } else {
+                b["conversationId"] = conversation.id
+                let oldestId = messages.first { $0.id.range(of: "^[0-9a-f-]{36}$",
+                                                            options: .regularExpression) != nil }?.id
+                if let oldestId { b["oldestContextMessageId"] = oldestId }
+                if autoLookback { b["autoLookback"] = true }
+                if !activeLookbacks.isEmpty {
+                    b["activeLookbacks"] = activeLookbacks.map { ["id": $0.id, "body_md": $0.body_md] }
+                }
             }
+            if !text.isEmpty { b["newMessage"] = text }
             if !attachmentIds.isEmpty { b["attachmentIds"] = attachmentIds }
-            if let oldestId { b["oldestContextMessageId"] = oldestId }
             // Tri-state on the wire: only attach the field when the user
             // has expressed an opinion via the settings sheet. Server
             // treats absence as "leave the persisted row alone" — so a
@@ -1088,13 +1120,65 @@ struct ConversationView: View {
             return b
         }()
 
+        let path = startBotId == nil ? "v1/messages" : "v1/messages/start"
         chatTurnTask = Task { @MainActor in
             let splitter = BubbleSplitter()
-            let stream = ChatStream().send(body: body)
+            let stream = ChatStream().send(body: body, path: path)
             do {
                 for try await event in stream {
                     if Task.isCancelled { break }
                     switch event {
+                    case .meta(let convId, let userMsgServerId):
+                        // Lazy-cloud-conv first turn: rekey the optimistic
+                        // local row to the canonical user-message id and
+                        // promote the conversation from pending to materialised
+                        // so subsequent UI (header, conv list refresh, realtime
+                        // subscription) tracks the cloud row.
+                        if conversation.id.isEmpty, !convId.isEmpty {
+                            conversation = Conversation(
+                                id: convId,
+                                bot_id: conversation.bot_id,
+                                user_id: conversation.user_id,
+                                title: conversation.title,
+                                feature_type: conversation.feature_type,
+                                conversation_type: conversation.conversation_type,
+                                last_activity_at: conversation.last_activity_at,
+                                round_count: conversation.round_count,
+                                bot_name: conversation.bot_name,
+                                last_message_content: conversation.last_message_content,
+                                last_message_sender_type: conversation.last_message_sender_type,
+                                model_override: conversation.model_override,
+                                provider_override: conversation.provider_override
+                            )
+                            await subscribeRealtime()
+                            onChange()
+                        }
+                        if let localId = userMsgId, !userMsgServerId.isEmpty,
+                           let idx = messages.firstIndex(where: { $0.id == localId }) {
+                            let prev = messages[idx]
+                            messages[idx] = ChatMessage(
+                                id: userMsgServerId,
+                                conversation_id: convId.isEmpty ? prev.conversation_id : convId,
+                                sender_type: prev.sender_type,
+                                sender_id: prev.sender_id,
+                                content: prev.content,
+                                created_at: prev.created_at,
+                                attachments: prev.attachments,
+                                status: nil
+                            )
+                            // Move tracked cmid + tool trace bookkeeping onto
+                            // the canonical id so realtime echoes / trace
+                            // expansion all key off the same row from now on.
+                            if let cmid = localMsgClientIds.removeValue(forKey: localId) {
+                                localMsgClientIds[userMsgServerId] = cmid
+                            }
+                            if let trace = tracesByUserMsgId.removeValue(forKey: localId) {
+                                tracesByUserMsgId[userMsgServerId] = trace
+                            }
+                            if liveTraceUserMsgId == localId {
+                                liveTraceUserMsgId = userMsgServerId
+                            }
+                        }
                     case .typing:
                         break // pending state already true
                     case .token(let delta):
