@@ -15,6 +15,12 @@ interface OpenRouterCatalogModel {
   id: string;
   name?: string;
   context_length?: number;
+  /// OpenRouter exposes per-model `architecture.input_modalities` like
+  /// ["text","image","video"]. We surface a derived boolean so the iOS
+  /// vision-model picker can filter without having to know the schema.
+  architecture?: {
+    input_modalities?: string[];
+  };
 }
 
 interface OpenRouterModelOut {
@@ -22,6 +28,9 @@ interface OpenRouterModelOut {
   display_name: string;
   provider: string;
   context_length: number | null;
+  /// True when the model accepts image input. The vision-model picker
+  /// in ConversationSettingsView filters on this.
+  supports_vision: boolean;
 }
 
 openrouterRoutes.get('/models', async (c) => {
@@ -41,11 +50,13 @@ openrouterRoutes.get('/models', async (c) => {
     // OpenRouter's "name" is "Vendor: Model" — strip the vendor prefix so
     // the picker's section header isn't redundant with the row title.
     const displayName = stripVendorPrefix(m.name) ?? prettifyTail(tail);
+    const inputModalities = m.architecture?.input_modalities ?? [];
     return {
       slug: m.id,
       display_name: displayName,
       provider,
       context_length: typeof m.context_length === 'number' ? m.context_length : null,
+      supports_vision: inputModalities.includes('image'),
     };
   });
   return c.json(out);

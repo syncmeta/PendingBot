@@ -9,8 +9,15 @@ conversationRoutes.use('*', requireSession());
 
 const PatchBody = z.object({
   // OpenRouter slug. `null` clears the per-conv override (turns fall back
-  // to the bot's default model).
-  model_slug: z.string().min(1).max(200).nullable(),
+  // to the bot's default model). Optional — clients only send the field
+  // they're changing.
+  model_slug: z.string().min(1).max(200).nullable().optional(),
+  // Per-conv vision-model pin (0064). `null` = auto: use main model if it
+  // has vision, else DEFAULT_VISION_MODEL. Slug is not validated against
+  // capabilities.vision here — the iOS picker already filters that list,
+  // and a future operator-curated mismatch would just route normally
+  // (read_attachment would fail at the upstream provider, not at the gate).
+  vision_model_slug: z.string().min(1).max(200).nullable().optional(),
 });
 
 // PATCH /v1/conversations/:id — currently only handles the per-conv model
@@ -57,9 +64,22 @@ conversationRoutes.patch('/:id', async (c) => {
     return c.json({ error: '只能为自己的私有机器人改模型' }, 403);
   }
 
+  // Build the partial update — only set keys the client actually sent.
+  // (Sending {model_slug: null} clears the model pin without disturbing
+  // vision_model_override, and vice versa.)
+  const update: Record<string, string | null> = {};
+  if (Object.prototype.hasOwnProperty.call(parsed, 'model_slug')) {
+    update.model_slug_override = parsed.model_slug ?? null;
+  }
+  if (Object.prototype.hasOwnProperty.call(parsed, 'vision_model_slug')) {
+    update.vision_model_override = parsed.vision_model_slug ?? null;
+  }
+  if (Object.keys(update).length === 0) {
+    return c.json({ error: 'no fields to update' }, 400);
+  }
   const { error: updErr } = await supaService
     .from('conversations')
-    .update({ model_slug_override: parsed.model_slug })
+    .update(update as never)
     .eq('id', id);
   if (updErr) return c.json({ error: 'database', detail: updErr.message }, 500);
 
