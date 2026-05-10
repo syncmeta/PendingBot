@@ -25,6 +25,7 @@ import {
   HISTORY_LIMIT,
   runScrollLoop,
   SILENT_TOKEN,
+  stripLeadingTitleAndSubtitle,
   type ProgressState,
   type ScrollLoopResult,
   type ScrollTurnInfo,
@@ -429,12 +430,16 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
 
     const title = extractTitle(stripped);
     const summary = extractSummary(stripped);
+    // Title + subtitle live in their own columns and are rendered by
+    // the iOS header; stripping them out of body_md keeps the markdown
+    // body from showing them a second time.
+    const cleanedBody = stripLeadingTitleAndSubtitle(stripped);
 
     await supa
       .from('scroll_runs')
       .update({
         status: 'done',
-        body_md: stripped,
+        body_md: cleanedBody,
         title,
         summary,
         progress: finalProgress as unknown as Json,

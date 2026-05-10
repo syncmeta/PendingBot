@@ -295,33 +295,89 @@ export function formatTranscript(
 }
 
 // Title heuristic: prefer the first markdown heading (## Foo / # Foo);
-// fall back to the first non-empty line, capped at 30 chars. Returns
-// null if neither yields anything.
+// fall back to the first non-empty line. Hard-capped slightly above the
+// prompt's 24-char request so a one-character overshoot still fits;
+// well-behaved output won't hit this limit. Returns null if neither
+// yields anything.
 export function extractTitle(body: string): string | null {
   const lines = body.split('\n').map((l) => l.trim()).filter(Boolean);
   for (const line of lines) {
     const m = line.match(/^#{1,3}\s+(.+)$/);
-    if (m) return m[1].trim().slice(0, 30);
+    if (m) return m[1].trim().slice(0, 32);
   }
-  return lines[0] ? lines[0].slice(0, 30) : null;
+  return lines[0] ? lines[0].slice(0, 32) : null;
 }
 
-// Summary heuristic: first paragraph (until blank line), markdown stripped,
-// capped at 100 chars. Skips a title-like first line if present.
+// Summary heuristic. The current prompt asks for an explicit subtitle as
+// a `> blockquote` right after the H1; prefer that. Fall back to the
+// legacy "first paragraph" behaviour for bodies written before the
+// format change. Capped slightly above the prompt's 60-char request so
+// the feed cover doesn't truncate well-formed output.
 export function extractSummary(body: string): string | null {
   const blocks = body.split(/\n\s*\n/).map((b) => b.trim()).filter(Boolean);
+  if (blocks.length === 0) return null;
+
+  // Locate the explicit subtitle blockquote — the first `> ...` block
+  // we hit before any non-heading paragraph counts as the subtitle.
+  for (const block of blocks) {
+    if (/^#{1,3}\s+/.test(block) && !block.includes('\n')) continue;
+    if (block.startsWith('>')) {
+      const subtitle = block
+        .split('\n')
+        .map((l) => l.replace(/^>\s?/, '').trim())
+        .filter(Boolean)
+        .join(' ');
+      const stripped = stripInlineMarkdown(subtitle);
+      if (stripped) return stripped.slice(0, 80);
+    }
+    break;
+  }
+
+  // Legacy fallback: first non-heading paragraph.
   let first = blocks[0] ?? '';
   if (/^#{1,3}\s+/.test(first) && !first.includes('\n')) first = blocks[1] ?? '';
   if (!first) return null;
-  const stripped = first
+  const stripped = stripInlineMarkdown(first);
+  return stripped ? stripped.slice(0, 100) : null;
+}
+
+function stripInlineMarkdown(text: string): string {
+  return text
     .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^>\s?/gm, '')
     .replace(/\*\*([^*]+)\*\*/g, '$1')
     .replace(/\*([^*]+)\*/g, '$1')
     .replace(/`([^`]+)`/g, '$1')
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
     .replace(/\s+/g, ' ')
     .trim();
-  return stripped ? stripped.slice(0, 100) : null;
+}
+
+// Strip the leading H1 + subtitle blockquote from a finished article so
+// the stored body_md is just the body. The header on iOS already
+// surfaces title and subtitle from their own columns; rendering them a
+// second time inside the markdown body duplicates them on screen.
+export function stripLeadingTitleAndSubtitle(body: string): string {
+  const lines = body.split('\n');
+  let i = 0;
+
+  // Skip blank lines.
+  while (i < lines.length && lines[i].trim() === '') i++;
+
+  // Drop a single leading H1/H2/H3 line if present.
+  if (i < lines.length && /^\s*#{1,3}\s+/.test(lines[i])) {
+    i++;
+    while (i < lines.length && lines[i].trim() === '') i++;
+  }
+
+  // Drop a leading blockquote (the subtitle) — every consecutive `> `
+  // line plus the blank line that closes it.
+  if (i < lines.length && /^\s*>/.test(lines[i])) {
+    while (i < lines.length && /^\s*>/.test(lines[i])) i++;
+    while (i < lines.length && lines[i].trim() === '') i++;
+  }
+
+  return lines.slice(i).join('\n').trim();
 }
 
 // Build the user-side opener that frames the conversation: bot's long-term
