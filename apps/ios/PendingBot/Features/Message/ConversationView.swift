@@ -126,6 +126,13 @@ struct ConversationView: View {
     /// append as a duplicate bubble.
     @State private var pendingCanonicalBotIds: Set<String> = []
 
+    /// Maps `local-<uuid>` → `client_message_id` so a Realtime INSERT echo
+    /// can dedupe against our optimistic row by matching the server's
+    /// `client_message_id` field exactly, instead of guessing via a 5s
+    /// recency window that fails on slow networks. Cleared once the
+    /// canonical row has replaced the optimistic one.
+    @State private var localMsgClientIds: [String: String] = [:]
+
     /// Other-side profile for a user_user conv, fetched once on appear
     /// when we don't already have a `pendingPeer`. Drives the chat
     /// header (title + avatar) and the left-side avatar on incoming
@@ -790,6 +797,11 @@ struct ConversationView: View {
                      && conversation.conversation_type != "group"
         if isUserBot {
             let localId = "local-\(UUID().uuidString)"
+            // Bind a stable client_message_id to the optimistic row up
+            // front so the Realtime INSERT echo can dedupe via exact-match
+            // (see localMsgClientIds), not a recency window.
+            let cmid = UUID().uuidString.lowercased()
+            localMsgClientIds[localId] = cmid
             // Stamp sender_id with the current user — without it the
             // ChatMessage.isMine(currentUserId:) check that drives bubble
             // side can't tell our own optimistic row from a peer's, and
@@ -840,7 +852,7 @@ struct ConversationView: View {
             // hand off to the SSE turn. SSE failures repaint the bubble
             // red from inside sendViaSSE's catch.
             clearUserMessageStatus(localId)
-            sendViaSSE(text: text, attachmentIds: attachIds, userMsgId: localId)
+            sendViaSSE(text: text, attachmentIds: attachIds, userMsgId: localId, clientMessageId: cmid)
             return
         }
 
@@ -853,6 +865,8 @@ struct ConversationView: View {
         if conversation.conversation_type == "user_user" {
             let myId = AccountStore.shared.current?.id ?? ""
             let localId = "local-\(UUID().uuidString)"
+            let cmid = UUID().uuidString.lowercased()
+            localMsgClientIds[localId] = cmid
             messages.append(ChatMessage(
                 id: localId,
                 conversation_id: conversation.id,
@@ -887,7 +901,7 @@ struct ConversationView: View {
                 }
             }
             clearUserMessageStatus(localId)
-            await sendUserUserMessage(text, localId: localId)
+            await sendUserUserMessage(text, localId: localId, clientMessageId: cmid)
             return
         }
 
@@ -938,7 +952,7 @@ struct ConversationView: View {
         )
     }
 
-    private func sendUserUserMessage(_ text: String, localId: String) async {
+    private func sendUserUserMessage(_ text: String, localId: String, clientMessageId: String) async {
         guard let userId = AccountStore.shared.current?.id else {
             markUserMessageFailed(localId)
             return
@@ -955,7 +969,7 @@ struct ConversationView: View {
             try await SupabaseStack.shared
                 .from("messages")
                 .insert(Insert(
-                    client_message_id: UUID().uuidString.lowercased(),
+                    client_message_id: clientMessageId,
                     conversation_id: conversation.id,
                     user_id: userId,
                     content: text
@@ -1007,7 +1021,7 @@ struct ConversationView: View {
     /// via incremental insert/update. Cancel the returned Task (via the
     /// stop button) to close the SSE — Worker observes request.signal.aborted
     /// and stops the LLM stream.
-    private func sendViaSSE(text: String, attachmentIds: [String], autoLookback: Bool = false, userMsgId: String? = nil) {
+    private func sendViaSSE(text: String, attachmentIds: [String], autoLookback: Bool = false, userMsgId: String? = nil, clientMessageId: String? = nil) {
         chatTurnTask?.cancel()
         flushRevealImmediately()
         // User taking action (or auto-fire firing) cancels the pending
@@ -1027,7 +1041,11 @@ struct ConversationView: View {
         liveCitations = []
 
         let body: [String: Any] = {
-            let clientMsgId = UUID().uuidString.lowercased()
+            // Reuse the cmid bound to the optimistic row when there is one
+            // (caller threads it through from `send()`); auto-fire turns
+            // and any future caller without an optimistic row still get a
+            // fresh id.
+            let clientMsgId = clientMessageId ?? UUID().uuidString.lowercased()
             // Exclude the just-appended optimistic user row — it gets sent
             // as `newMessage` and would otherwise show up to the LLM twice.
             let recent = messages.suffix(20)
@@ -1325,6 +1343,7 @@ struct ConversationView: View {
             // they're still being revealed by the typewriter when the
             // canonical INSERT lands, so their displayed content is partial.
             let isOurBotEcho = role == "bot" && pendingCanonicalBotIds.contains(id)
+            let serverCmid = r["client_message_id"]?.stringValue
             let now = Int(Date().timeIntervalSince1970)
             let staleIndex: Int? = {
                 if isOurBotEcho {
@@ -1333,6 +1352,16 @@ struct ConversationView: View {
                     }
                 }
                 if role != "bot" {
+                    // Prefer exact client_message_id match — survives any
+                    // round-trip latency.
+                    if let cmid = serverCmid,
+                       let local = localMsgClientIds.first(where: { $0.value == cmid })?.key,
+                       let idx = messages.firstIndex(where: { $0.id == local }) {
+                        return idx
+                    }
+                    // Fallback for legacy / cross-device echoes that landed
+                    // here without a tracked cmid (e.g. a peer device that
+                    // just inserted a row in a user_user thread we have open).
                     return messages.firstIndex { m in
                         m.id.hasPrefix("local-")
                             && m.sender_type == senderType
@@ -1344,6 +1373,7 @@ struct ConversationView: View {
             if isOurBotEcho { pendingCanonicalBotIds.remove(id) }
             if let stale = staleIndex {
                 let oldId = messages[stale].id
+                localMsgClientIds.removeValue(forKey: oldId)
                 messages[stale] = msg
                 // Re-key any tool trace bound to the optimistic local id so
                 // it stays attached after the canonical row replaces it.
