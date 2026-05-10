@@ -73,8 +73,11 @@ const PostBody = z.object({
 //   event: interrupted  data: { bubble_group_id, total_content }
 //   event: error        data: { message }
 //
-// Client closes the connection to interrupt — Worker's request.signal fires
-// and the LLM upstream is aborted.
+// Client closing the connection no longer aborts the LLM — the turn keeps
+// running (writing content_partial / final content to messages) so a flaky
+// network or a backgrounded app can pick up where it left off via Realtime
+// UPDATEs when the user re-opens the conv. Explicit stop is a separate POST
+// (set messages.stop_requested) — TODO when that endpoint lands.
 messageRoutes.post('/', async (c) => {
   const userId = c.var.userId!;
   const userJwt = c.var.userJwt!;
@@ -339,11 +342,15 @@ messageRoutes.post('/', async (c) => {
   // Open SSE stream. Each ReadableStream chunk is one fully-formed
   // `event: NAME\ndata: JSON\n\n` block.
   const encoder = new TextEncoder();
+  // Detached signal — passed to runChatTurn instead of c.req.raw.signal so a
+  // client disconnect doesn't abort the LLM. The bot turn runs to completion
+  // and Realtime UPDATEs deliver the rest when the user re-opens the conv.
+  const detachedAbort = new AbortController();
+  let streamClosed = false;
   const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      let closed = false;
+    start(controller) {
       const emit = (event: string, data: unknown) => {
-        if (closed) return;
+        if (streamClosed) return;
         try {
           controller.enqueue(
             encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
@@ -353,100 +360,105 @@ messageRoutes.post('/', async (c) => {
         }
       };
 
-      try {
-        const result = await runChatTurn({
-          env: c.env,
-          conversationId: parsed.conversationId,
-          userId,
-          parentMessageId: parentMessageId ?? '',
-          bot: {
-            id: bot.id,
-            model_id: bot.model_id,
-            // CHECK constraint guarantees one of these two; types can't see it.
-            output_mode: bot.output_mode === 'bubble' ? 'bubble' : 'single',
-          },
-          selfPersona,
-          recentContext: parsed.recentContext ?? [],
-          newMessage: parsed.newMessage ?? '（系统注入：根据上一轮的查证笔记，自然继续上面的对话。不要提到这是自动触发的。）',
-          activeLookbacks: parsed.activeLookbacks ?? [],
-          providerOverride: effectiveProviderOverride,
-          clientTz: parsed.clientTz,
-          signal: c.req.raw.signal,
-          emit,
-        });
-
-        if (result.finalStatus === 'done' && result.bubblesInserted > 0) {
-          const { data: updatedConv } = await supaService
-            .from('conversations')
-            .update({
-              round_count: (conv.round_count ?? 0) + 1,
-              last_turn_status: 'done',
-              updated_at: new Date().toISOString(),
-            })
-            .eq('id', parsed.conversationId)
-            .select('round_count')
-            .single();
-
-          // If the bot opted to drop the lookbacks (emitted [DROP_LOOKBACK]),
-          // mark them inactive. runChatTurn returned the ids it dropped.
-          if (result.droppedLookbackIds.length > 0) {
-            await supaService
-              .from('bot_lookbacks')
-              .update({ active: false, updated_at: new Date().toISOString() })
-              .in('id', result.droppedLookbackIds);
-          }
-
-          // Per-bot opt-in lookback cadence; defaults below mirror the old
-          // auto-review knobs (every 10 rounds).
-          maybeAutoLookback({
+      // The whole turn — LLM stream + post-turn DB updates — runs detached
+      // from this response. waitUntil keeps the Worker alive past stream
+      // cancel so partial UPDATEs continue to land in the DB and reach the
+      // client through Realtime when they re-open the conv.
+      const turnWork = (async () => {
+        try {
+          const result = await runChatTurn({
             env: c.env,
-            ctx: c.executionCtx,
             conversationId: parsed.conversationId,
-            botId: bot.id,
-            botConfig: bot.config as LookbackConfigEnvelope | null,
-            roundCount: updatedConv?.round_count ?? 0,
+            userId,
+            parentMessageId: parentMessageId ?? '',
+            bot: {
+              id: bot.id,
+              model_id: bot.model_id,
+              // CHECK constraint guarantees one of these two; types can't see it.
+              output_mode: bot.output_mode === 'bubble' ? 'bubble' : 'single',
+            },
+            selfPersona,
+            recentContext: parsed.recentContext ?? [],
+            newMessage: parsed.newMessage ?? '（系统注入：根据上一轮的查证笔记，自然继续上面的对话。不要提到这是自动触发的。）',
+            activeLookbacks: parsed.activeLookbacks ?? [],
+            providerOverride: effectiveProviderOverride,
+            clientTz: parsed.clientTz,
+            signal: detachedAbort.signal,
+            emit,
           });
 
-          // Auto-rename: round 1 replaces the random place-name fallback
-          // set at conv creation; thereafter regenerate every 3 rounds so
-          // long-running convs whose topic drifted get a fresher title.
-          // Self convs keep their `caller_name | 我自己` title.
-          const rc = updatedConv?.round_count ?? 0;
-          if (
-            conv.conversation_type !== 'self' &&
-            (rc === 1 || (rc > 0 && rc % 3 === 0))
-          ) {
-            c.executionCtx.waitUntil(
-              runTitle({
-                env: c.env,
-                conversationId: parsed.conversationId,
-                botModelId: bot.model_id as string,
-              }),
-            );
+          if (result.finalStatus === 'done' && result.bubblesInserted > 0) {
+            const { data: updatedConv } = await supaService
+              .from('conversations')
+              .update({
+                round_count: (conv.round_count ?? 0) + 1,
+                last_turn_status: 'done',
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', parsed.conversationId)
+              .select('round_count')
+              .single();
+
+            // If the bot opted to drop the lookbacks (emitted [DROP_LOOKBACK]),
+            // mark them inactive. runChatTurn returned the ids it dropped.
+            if (result.droppedLookbackIds.length > 0) {
+              await supaService
+                .from('bot_lookbacks')
+                .update({ active: false, updated_at: new Date().toISOString() })
+                .in('id', result.droppedLookbackIds);
+            }
+
+            // Per-bot opt-in lookback cadence; defaults below mirror the old
+            // auto-review knobs (every 10 rounds).
+            maybeAutoLookback({
+              env: c.env,
+              ctx: c.executionCtx,
+              conversationId: parsed.conversationId,
+              botId: bot.id,
+              botConfig: bot.config as LookbackConfigEnvelope | null,
+              roundCount: updatedConv?.round_count ?? 0,
+            });
+
+            // Auto-rename: round 1 replaces the random place-name fallback
+            // set at conv creation; thereafter regenerate every 3 rounds so
+            // long-running convs whose topic drifted get a fresher title.
+            // Self convs keep their `caller_name | 我自己` title.
+            const rc = updatedConv?.round_count ?? 0;
+            if (
+              conv.conversation_type !== 'self' &&
+              (rc === 1 || (rc > 0 && rc % 3 === 0))
+            ) {
+              c.executionCtx.waitUntil(
+                runTitle({
+                  env: c.env,
+                  conversationId: parsed.conversationId,
+                  botModelId: bot.model_id as string,
+                }),
+              );
+            }
           }
+        } catch (err) {
+          const message =
+            err instanceof Error
+              ? err.message || err.name || 'Error'
+              : (() => {
+                  try { return JSON.stringify(err).slice(0, 500); }
+                  catch { return String(err) || 'unknown error'; }
+                })();
+          console.error('[messages] stream error after runChatTurn:', err);
+          emit('error', { message });
+        } finally {
+          streamClosed = true;
+          try { controller.close(); } catch {}
         }
-      } catch (err) {
-        // runChatTurn handles its own errors and emits `event: error`,
-        // but anything outside it (db update, lookback scheduling, ...)
-        // would otherwise close the stream silently. Emit a visible error
-        // so the iOS alert says what went wrong instead of an empty body.
-        const message =
-          err instanceof Error
-            ? err.message || err.name || 'Error'
-            : (() => {
-                try { return JSON.stringify(err).slice(0, 500); }
-                catch { return String(err) || 'unknown error'; }
-              })();
-        console.error('[messages] stream error after runChatTurn:', err);
-        emit('error', { message });
-      } finally {
-        closed = true;
-        try { controller.close(); } catch {}
-      }
+      })();
+      c.executionCtx.waitUntil(turnWork);
     },
     cancel() {
-      // Caller closed the stream — nothing to do; runChatTurn observes the
-      // same signal via signal.addEventListener('abort').
+      // Client closed the SSE — stop emitting. The detached turnWork keeps
+      // running and persists everything via the DB; Realtime UPDATEs cover
+      // the rest of the bot's reply when the user re-opens the conv.
+      streamClosed = true;
     },
   });
 

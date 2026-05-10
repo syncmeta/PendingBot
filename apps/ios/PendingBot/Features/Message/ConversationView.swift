@@ -1302,7 +1302,13 @@ struct ConversationView: View {
         let role = r["role"]?.stringValue ?? "user"
         // Logs are server-only (review step entries) — never rendered here.
         if role == "log" { return }
-        let content = r["content"]?.stringValue ?? ""
+        // Prefer content_partial while a bot turn is mid-stream — content
+        // stays null until the worker writes the final string at done. This
+        // is what lets a user re-enter a conv whose SSE they dropped and
+        // still see the bubble fill in via Realtime UPDATEs.
+        let finalContent = r["content"]?.stringValue ?? ""
+        let partialContent = r["content_partial"]?.stringValue ?? ""
+        let content = finalContent.isEmpty ? partialContent : finalContent
         let createdRaw = r["created_at"]?.stringValue ?? ""
         // Default to "now" so live messages don't collapse to 1970 if the
         // timestamp format ever drifts.
@@ -1989,6 +1995,7 @@ struct ConversationView: View {
                 let role: String
                 let log_kind: String?
                 let content: String?
+                let content_partial: String?
                 let status: String?
                 let created_at: String
                 let citations: [MessageCitation]?
@@ -1997,7 +2004,7 @@ struct ConversationView: View {
             // filtered out client-side — they don't render here.
             let rows: [Row] = try await SupabaseStack.shared
                 .from("messages")
-                .select("id, client_message_id, conversation_id, user_id, sender_bot_id, role, log_kind, content, status, created_at, citations")
+                .select("id, client_message_id, conversation_id, user_id, sender_bot_id, role, log_kind, content, content_partial, status, created_at, citations")
                 .eq("conversation_id", value: conversation.id)
                 .order("created_at", ascending: true)
                 .limit(200)
@@ -2013,12 +2020,16 @@ struct ConversationView: View {
                 let senderType: String = r.role == "bot" ? "bot" : "user"
                 let senderId = r.role == "bot" ? (r.sender_bot_id ?? "") : (r.user_id ?? "")
                 let secs = ServerTimestamp.epochSeconds(r.created_at, default: 0)
+                // Mid-stream bot rows have content=null and only content_partial set;
+                // fall back so a re-enter shows the in-flight bubble at its current
+                // length, not blank.
+                let renderContent = (r.content?.isEmpty == false ? r.content : r.content_partial) ?? ""
                 viewMessages.append(ChatMessage(
                     id: r.id,
                     conversation_id: r.conversation_id,
                     sender_type: senderType,
                     sender_id: senderId,
-                    content: r.content ?? "",
+                    content: renderContent,
                     created_at: secs,
                     attachments: nil
                 ))
@@ -2032,7 +2043,7 @@ struct ConversationView: View {
                     user_id: r.user_id,
                     sender_bot_id: r.sender_bot_id,
                     role: r.role,
-                    content: r.content,
+                    content: renderContent,
                     status: r.status,
                     created_at: secs
                 ))
