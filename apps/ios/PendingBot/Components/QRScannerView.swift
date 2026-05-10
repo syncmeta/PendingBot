@@ -41,6 +41,20 @@ enum PendingBotQR {
         }
         return trimmed
     }
+
+    /// Strict check: only true when the scanned payload is unambiguously
+    /// a PendingBot contact-share URL (`*pendingname.com/c/<token>`).
+    /// Bare tokens are *not* recognised here because they're
+    /// indistinguishable from arbitrary scanned text — callers that
+    /// want the legacy bare-token behaviour should use
+    /// `token(fromScanned:)` directly.
+    static func isPendingBotQR(_ raw: String) -> Bool {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed),
+              url.host?.lowercased().hasSuffix(urlHostSuffix) == true,
+              url.path.hasPrefix(pathPrefix) else { return false }
+        return !url.path.dropFirst(pathPrefix.count).isEmpty
+    }
 }
 
 /// SwiftUI wrapper around AVCaptureSession for QR-code scanning. The
