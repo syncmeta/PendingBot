@@ -139,7 +139,11 @@ final class RealtimeManager {
         // Group-only tables. Subscriptions fire on every conv channel
         // regardless of conv type — that's fine; non-group convs simply
         // never produce rows in these tables, so the closures are
-        // never invoked.
+        // never invoked. Each must be in `supabase_realtime` publication
+        // — Realtime accepts the channel join when one isn't, but silently
+        // drops events for *every* postgres_changes filter on the same
+        // channel (incl. messages), surfacing as user_user real-time
+        // delivery silently breaking. See migration 0057.
         handle.subs.append(ch.onPostgresChange(
             InsertAction.self,
             schema: "pendingbot",
