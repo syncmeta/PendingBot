@@ -19,7 +19,7 @@ struct ScrollArticleView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 24) {
                 if let run {
                     headerSection(run: run)
                     bodySection(run: run)
@@ -28,9 +28,9 @@ struct ScrollArticleView: View {
                         .frame(maxWidth: .infinity)
                 }
             }
-            .padding(.horizontal, Theme.Metrics.gutter)
-            .padding(.top, 12)
-            .padding(.bottom, 32)
+            .padding(.horizontal, Theme.Metrics.gutter + 4)
+            .padding(.top, 24)
+            .padding(.bottom, 48)
             .readableColumnWidth()
         }
         .background(Theme.Palette.canvas.ignoresSafeArea())
@@ -61,52 +61,63 @@ struct ScrollArticleView: View {
 
     // MARK: - Header
 
-    /// Editorial header — kicker (bot name in tracked caps), large serif
-    /// title, hairline divider, and a small metadata strip below with the
-    /// avatar + full date. Reads top-down like the masthead of a column.
+    /// Editorial header — large serif title, optional subtitle as a quiet
+    /// deck line under it, hairline divider, then a single byline row:
+    /// avatar + bot name on the leading edge, "于 5月10日 14:23" set in
+    /// muted caption on the trailing edge. No green kicker on top — the
+    /// title is allowed to lead.
     @ViewBuilder
     private func headerSection(run: ScrollRun) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 8) {
-                Rectangle()
-                    .fill(Theme.Palette.accent)
-                    .frame(width: 18, height: 1)
-                Text(bot?.display_name ?? "机器人")
-                    .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
-                    .tracking(0.8)
-                    .foregroundStyle(Theme.Palette.accent)
-                    .textCase(.uppercase)
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-            }
-
+        VStack(alignment: .leading, spacing: 16) {
             if let title = run.title, !title.isEmpty {
                 Text(title)
                     .font(Theme.Fonts.serif(size: 28, weight: .semibold))
                     .foregroundStyle(Theme.Palette.ink)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
+                    .lineSpacing(4)
+            }
+
+            if let subtitle = run.summary, !subtitle.isEmpty {
+                Text(subtitle)
+                    .font(Theme.Fonts.serif(size: 17, weight: .regular))
+                    .foregroundStyle(Theme.Palette.inkMuted)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .lineSpacing(3)
             }
 
             Rectangle()
                 .fill(Theme.Palette.hairline)
                 .frame(height: 0.5)
 
-            HStack(spacing: 10) {
+            HStack(alignment: .center, spacing: 10) {
                 BotAvatar(seed: run.bot_id, size: 28)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(bot?.display_name ?? "机器人")
-                        .font(Theme.Fonts.rounded(size: 13, weight: .medium))
-                        .foregroundStyle(Theme.Palette.ink)
-                    if let date = ServerTimestamp.parse(run.created_at) {
-                        Text(date.formatted(date: .abbreviated, time: .shortened))
-                            .font(Theme.Fonts.caption)
-                            .foregroundStyle(Theme.Palette.inkMuted)
-                    }
+                Text(bot?.display_name ?? "机器人")
+                    .font(Theme.Fonts.rounded(size: 13, weight: .medium))
+                    .foregroundStyle(Theme.Palette.ink)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                if let stamp = formattedTimestamp(run.created_at) {
+                    Text(stamp)
+                        .font(Theme.Fonts.caption)
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                        .lineLimit(1)
                 }
-                Spacer()
             }
         }
+    }
+
+    /// "于 5月10日 14:23" — Chinese-locale month/day + 24h time. Returns
+    /// nil if the row's timestamp can't be parsed (very old / corrupted
+    /// rows) so the byline row gracefully drops the date instead of
+    /// rendering "于 ".
+    private func formattedTimestamp(_ raw: String) -> String? {
+        guard let date = ServerTimestamp.parse(raw) else { return nil }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_Hans_CN")
+        f.dateFormat = "M月d日 HH:mm"
+        return "于 " + f.string(from: date)
     }
 
     // MARK: - Body
