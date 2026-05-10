@@ -10,12 +10,19 @@ fileprivate typealias MDTheme = MarkdownUI.Theme
 
 /// Renders chat / log content as full Markdown — headings, lists, tables,
 /// blockquotes, fenced code (with a copy + ▶ 运行 toolbar). Bot messages
-/// and 奏折 articles both use this, so the styling tracks `Theme.Palette`
-/// / `Theme.Fonts` rather than MarkdownUI's stock palette.
+/// and 来信 articles both use this, parameterized by `variant` —
+///
+/// - `.chat` keeps the dense, sans-serif rhythm a chat bubble needs.
+/// - `.article` switches to an editorial serif body with looser line
+///   height, larger heading hierarchy, and italic blockquotes — meant
+///   to read like a column rather than a chat reply.
 struct MarkdownText: View {
     let text: String
+    /// Which typographic register to render in. `.chat` is the default
+    /// because the chat surface vastly out-renders 来信 in volume.
+    var variant: Variant = .chat
     /// True for the chat surface — turns on the heavyweight code-block
-    /// toolbar. False keeps it lightweight (used in 奏折 articles where
+    /// toolbar. False keeps it lightweight (used in 来信 articles where
     /// "run" doesn't make sense).
     var allowCodeRun: Bool = false
     /// Web-search references for inline `[N]` markers. Empty disables the
@@ -23,11 +30,13 @@ struct MarkdownText: View {
     /// `[1]`-style brackets the bot might have meant as plain text.
     var citations: [MessageCitation] = []
 
+    enum Variant { case chat, article }
+
     @State private var presentedCitation: PresentedCitation?
 
     var body: some View {
         Markdown(rewrittenText)
-            .markdownTheme(MarkdownText.chatTheme)
+            .markdownTheme(variant == .article ? MarkdownText.articleTheme : MarkdownText.chatTheme)
             .markdownBlockStyle(\.codeBlock) { configuration in
                 ChatCodeBlock(
                     content: configuration.content,
@@ -59,11 +68,10 @@ struct MarkdownText: View {
         return CitationScheme.rewrite(text, citations: citations)
     }
 
-    // ── Theme ──────────────────────────────────────────────────────────────
+    // ── Themes ─────────────────────────────────────────────────────────────
 
-    /// Chat-tuned theme: matches the warm-ink palette + serif heads. Tighter
-    /// vertical rhythm than `.basic` so a short bot reply doesn't feel like
-    /// a blog post.
+    /// Chat-tuned theme: tight vertical rhythm so a short bot reply doesn't
+    /// feel like a blog post. Default for `.chat` variant.
     fileprivate static let chatTheme: MDTheme = MDTheme()
         .text {
             ForegroundColor(AppTheme.Palette.ink)
@@ -93,7 +101,7 @@ struct MarkdownText: View {
                     FontWeight(.semibold)
                     FontSize(22)
                 }
-                .markdownMargin(top: 14, bottom: 6)
+                .markdownMargin(top: 6, bottom: 2)
         }
         .heading2 { configuration in
             configuration.label
@@ -101,7 +109,7 @@ struct MarkdownText: View {
                     FontWeight(.semibold)
                     FontSize(19)
                 }
-                .markdownMargin(top: 14, bottom: 6)
+                .markdownMargin(top: 6, bottom: 2)
         }
         .heading3 { configuration in
             configuration.label
@@ -109,12 +117,12 @@ struct MarkdownText: View {
                     FontWeight(.semibold)
                     FontSize(17)
                 }
-                .markdownMargin(top: 12, bottom: 4)
+                .markdownMargin(top: 4, bottom: 2)
         }
         .blockquote { configuration in
             configuration.label
-                .padding(.leading, 14)
-                .padding(.vertical, 6)
+                .padding(.leading, 12)
+                .padding(.vertical, 4)
                 .overlay(alignment: .leading) {
                     Rectangle()
                         .fill(AppTheme.Palette.hairline)
@@ -123,13 +131,142 @@ struct MarkdownText: View {
                 .markdownTextStyle { ForegroundColor(AppTheme.Palette.inkMuted) }
         }
         .listItem { configuration in
-            configuration.label.markdownMargin(top: 4, bottom: 4)
+            configuration.label.markdownMargin(top: 2, bottom: 2)
         }
         .paragraph { configuration in
             configuration.label
                 .fixedSize(horizontal: false, vertical: true)
-                .lineSpacing(4)
-                .markdownMargin(top: 0, bottom: 12)
+                .markdownMargin(top: 0, bottom: 6)
+        }
+
+    /// Article-tuned theme: editorial serif body, looser line height,
+    /// larger heading hierarchy with real space above. Built for the
+    /// 来信 detail page where a reader stays on one column for minutes,
+    /// not seconds — closer to a magazine column than a chat log.
+    ///
+    /// Notes on the choices:
+    /// - Body is `.serif` 17pt with `lineSpacing 7` — that resolves to
+    ///   roughly 1.55× line-height on iOS, which reads cleanly for both
+    ///   long Chinese paragraphs and English clauses without the cramped
+    ///   feeling 16pt sans gives in long form.
+    /// - Headings get progressively wider top margins so a `## section`
+    ///   actually breathes apart from the paragraph above it. Bottom
+    ///   margins stay tight so the heading still belongs to the paragraph
+    ///   it introduces.
+    /// - Blockquotes go italic + indented from both sides — the standard
+    ///   editorial pull-quote register, distinct from the chat theme's
+    ///   muted-aside register.
+    /// - Lists get larger inter-item margins and a markdown bullet style
+    ///   inherited from MarkdownUI defaults so nested lists still read.
+    /// - Tables get a hairline border and per-cell padding so a bot
+    ///   that drops a comparison table doesn't end up with mashed cells.
+    /// - Thematic breaks render as a centered short hairline rather than
+    ///   a full-width rule — feels more like a section break in print.
+    fileprivate static let articleTheme: MDTheme = MDTheme()
+        .text {
+            ForegroundColor(AppTheme.Palette.ink)
+            FontFamily(.system(.serif))
+            FontSize(17)
+        }
+        .link {
+            // Same green pill the chat theme uses — citations and inline
+            // links read consistently across both surfaces.
+            ForegroundColor(AppTheme.Palette.accent)
+            BackgroundColor(AppTheme.Palette.accentBg)
+            FontSize(.em(0.88))
+            FontWeight(.medium)
+        }
+        .strong { FontWeight(.semibold) }
+        .emphasis { FontStyle(.italic) }
+        .code {
+            FontFamilyVariant(.monospaced)
+            FontSize(.em(0.9))
+            BackgroundColor(AppTheme.Palette.surfaceMuted)
+        }
+        .heading1 { configuration in
+            configuration.label
+                .markdownTextStyle {
+                    FontFamily(.system(.serif))
+                    FontWeight(.semibold)
+                    FontSize(26)
+                }
+                .markdownMargin(top: 28, bottom: 10)
+        }
+        .heading2 { configuration in
+            configuration.label
+                .markdownTextStyle {
+                    FontFamily(.system(.serif))
+                    FontWeight(.semibold)
+                    FontSize(22)
+                }
+                .markdownMargin(top: 32, bottom: 8)
+        }
+        .heading3 { configuration in
+            configuration.label
+                .markdownTextStyle {
+                    FontFamily(.system(.serif))
+                    FontWeight(.semibold)
+                    FontSize(18)
+                }
+                .markdownMargin(top: 24, bottom: 6)
+        }
+        .blockquote { configuration in
+            configuration.label
+                .padding(.leading, 16)
+                .padding(.vertical, 10)
+                .overlay(alignment: .leading) {
+                    Rectangle()
+                        .fill(AppTheme.Palette.accent.opacity(0.55))
+                        .frame(width: 2)
+                }
+                .markdownTextStyle {
+                    FontFamily(.system(.serif))
+                    FontStyle(.italic)
+                    ForegroundColor(AppTheme.Palette.inkMuted)
+                }
+                .markdownMargin(top: 16, bottom: 16)
+        }
+        .listItem { configuration in
+            configuration.label
+                .markdownMargin(top: 6, bottom: 6)
+        }
+        .paragraph { configuration in
+            configuration.label
+                .fixedSize(horizontal: false, vertical: true)
+                .lineSpacing(7)
+                .markdownMargin(top: 0, bottom: 18)
+        }
+        .thematicBreak {
+            HStack {
+                Spacer()
+                Rectangle()
+                    .fill(AppTheme.Palette.hairline)
+                    .frame(width: 64, height: 0.5)
+                Spacer()
+            }
+            .padding(.vertical, 12)
+        }
+        .table { configuration in
+            configuration.label
+                .fixedSize(horizontal: false, vertical: true)
+                .markdownTableBorderStyle(.init(.allBorders, color: AppTheme.Palette.hairline, strokeStyle: .init(lineWidth: 0.5)))
+                .markdownTableBackgroundStyle(
+                    .alternatingRows(AppTheme.Palette.surface, AppTheme.Palette.surfaceMuted.opacity(0.5))
+                )
+                .markdownMargin(top: 14, bottom: 18)
+        }
+        .tableCell { configuration in
+            configuration.label
+                .markdownTextStyle {
+                    FontFamily(.system(.serif))
+                    FontSize(15)
+                    if configuration.row == 0 {
+                        FontWeight(.semibold)
+                    }
+                }
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
         }
 }
 

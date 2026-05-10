@@ -93,17 +93,22 @@ struct ScrollArticleView: View {
 
             HStack(alignment: .center, spacing: 10) {
                 BotAvatar(seed: run.bot_id, size: 28)
+                // Name and timestamp sit as a single byline cluster on
+                // the leading edge — the timestamp clings to the name
+                // (separated by a thin space) rather than being trailing-
+                // aligned to the column edge, which read as two unrelated
+                // pieces of metadata in the previous version.
                 Text(bot?.display_name ?? "机器人")
                     .font(Theme.Fonts.rounded(size: 13, weight: .medium))
                     .foregroundStyle(Theme.Palette.ink)
                     .lineLimit(1)
-                Spacer(minLength: 8)
                 if let stamp = formattedTimestamp(run.created_at) {
                     Text(stamp)
                         .font(Theme.Fonts.caption)
                         .foregroundStyle(Theme.Palette.inkMuted)
                         .lineLimit(1)
                 }
+                Spacer(minLength: 0)
             }
         }
     }
@@ -125,7 +130,7 @@ struct ScrollArticleView: View {
     @ViewBuilder
     private func bodySection(run: ScrollRun) -> some View {
         if let body = run.body_md, !body.isEmpty {
-            MarkdownText(text: body)
+            MarkdownText(text: body, variant: .article)
             // Even after the article is done, keep the thinking trace
             // available so the reader can audit the research path.
             EnvelopeThinkingTrace(turns: EnvelopeTurn.parse(run.turns), collapsed: true)
