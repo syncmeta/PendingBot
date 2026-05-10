@@ -1490,14 +1490,16 @@ export type Database = {
       }
       scroll_runs: {
         Row: {
+          author_user_id: string | null
           body_md: string | null
-          bot_id: string
+          bot_id: string | null
           conversation_id: string
           cost_budget_usd: number | null
           cost_used_usd: number
           created_at: string
           finished_at: string | null
           id: string
+          kind: string
           progress: Json
           settings: Json | null
           started_at: string | null
@@ -1510,14 +1512,16 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          author_user_id?: string | null
           body_md?: string | null
-          bot_id: string
+          bot_id?: string | null
           conversation_id: string
           cost_budget_usd?: number | null
           cost_used_usd?: number
           created_at?: string
           finished_at?: string | null
           id?: string
+          kind?: string
           progress?: Json
           settings?: Json | null
           started_at?: string | null
@@ -1530,14 +1534,16 @@ export type Database = {
           user_id: string
         }
         Update: {
+          author_user_id?: string | null
           body_md?: string | null
-          bot_id?: string
+          bot_id?: string | null
           conversation_id?: string
           cost_budget_usd?: number | null
           cost_used_usd?: number
           created_at?: string
           finished_at?: string | null
           id?: string
+          kind?: string
           progress?: Json
           settings?: Json | null
           started_at?: string | null
@@ -1550,6 +1556,13 @@ export type Database = {
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "scroll_runs_author_fkey"
+            columns: ["author_user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "scroll_runs_bot_id_fkey"
             columns: ["bot_id"]
@@ -2118,6 +2131,10 @@ export type Database = {
       apply_audit_split: {
         Args: { p_audit_log_id: string; p_splits: Json }
         Returns: undefined
+      }
+      are_mutual_friends: {
+        Args: { a: string; b: string }
+        Returns: boolean
       }
       billing_admin_grant: {
         Args: { p_credits: number; p_reason?: string; p_user_id: string }
