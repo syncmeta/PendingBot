@@ -13,7 +13,14 @@ import Realtime
 /// earlier but the runner won't write it until the article is final.
 struct ScrollRun: Codable, Identifiable, Hashable {
     let id: String
-    let bot_id: String
+    /// Set when kind == "bot". Null on human-authored letters.
+    let bot_id: String?
+    /// Set when kind == "human" — the user_id of the person who wrote
+    /// the letter. Null on bot-authored envelopes.
+    let author_user_id: String?
+    /// "bot" (runner-written article) or "human" (peer-to-peer letter).
+    /// Older rows pre-0065 are decoded as "bot" by ScrollRunDecoder.
+    let kind: String
     let conversation_id: String
     let status: String
     let title: String?
@@ -23,7 +30,7 @@ struct ScrollRun: Codable, Identifiable, Hashable {
     /// Per-turn trace appended by the runner — assistant text, reasoning
     /// content, tool calls/results, collaborator replies. Drives the
     /// thinking-process panel on the Envelope detail page. Optional because
-    /// older rows pre-migration won't have it.
+    /// older rows pre-migration won't have it. Always empty for human letters.
     let turns: AnyJSON?
     let created_at: String
     let started_at: String?
@@ -31,6 +38,7 @@ struct ScrollRun: Codable, Identifiable, Hashable {
 
     var isDone: Bool { status == "done" && body_md != nil }
     var isRunning: Bool { status == "running" }
+    var isHuman: Bool { kind == "human" }
 }
 
 extension APIClient {
@@ -58,6 +66,41 @@ extension APIClient {
     func scrollCancel(id: String) async throws {
         try await postVoid("v1/scroll/\(id)/cancel")
     }
+
+    /// Send a markdown letter to a mutual friend (kind='human' row in
+    /// scroll_runs). The recipient sees it on their own 来信 tab via
+    /// the same realtime feed channel that bot envelopes use. Server
+    /// returns 403 / `not_mutual_friends` if the friendship requirement
+    /// fails — APIClient surfaces that as an error the caller can show.
+    func scrollSendLetter(
+        conversationId: String,
+        recipientUserId: String,
+        title: String?,
+        bodyMd: String
+    ) async throws -> String {
+        struct Body: Encodable {
+            let conversationId: String
+            let recipientUserId: String
+            let title: String?
+            let bodyMd: String
+        }
+        struct Resp: Decodable { let scrollRunId: String }
+        let resp: Resp = try await post(
+            "v1/scroll/letter",
+            body: Body(
+                conversationId: conversationId,
+                recipientUserId: recipientUserId,
+                title: title?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .nonEmpty,
+                bodyMd: bodyMd
+            )
+        )
+        return resp.scrollRunId
+    }
+}
+
+private extension String {
+    var nonEmpty: String? { isEmpty ? nil : self }
 }
 
 // ── Envelope settings (per-conversation) ─────────────────────────────────
@@ -101,13 +144,20 @@ struct EnvelopeSettings: Codable, Hashable {
     var searchProvider: EnvelopeSearchProvider
     var scrapeProvider: EnvelopeScrapeProvider
     var turnCap: Int
+    /// Percentage of the bot's main-model context window allotted to
+    /// (chat history + framing prompts). The runner trims newest-first
+    /// across every conversation between this user and this bot. 35%
+    /// is a balanced default; higher = more recall, less room for the
+    /// research loop.
+    var historyTokenBudgetPct: Int
 
     static let defaults = EnvelopeSettings(
         explorerModel: "~google/gemini-flash-latest",
         collaboratorModel: "~google/gemini-flash-latest",
         searchProvider: .brave,
         scrapeProvider: .firecrawl,
-        turnCap: 15
+        turnCap: 15,
+        historyTokenBudgetPct: 35
     )
 
     /// Decode from a Supabase JSONB blob (`AnyJSON`). Tolerant: missing
@@ -135,6 +185,11 @@ struct EnvelopeSettings: Codable, Hashable {
             s.turnCap = v
         } else if case let .double(v)? = dict["turnCap"], v > 0 {
             s.turnCap = Int(v)
+        }
+        if case let .integer(v)? = dict["historyTokenBudgetPct"], v > 0, v <= 100 {
+            s.historyTokenBudgetPct = v
+        } else if case let .double(v)? = dict["historyTokenBudgetPct"], v > 0, v <= 100 {
+            s.historyTokenBudgetPct = Int(v.rounded())
         }
         return s
     }
@@ -446,16 +501,20 @@ enum ScrollRunDecoder {
     static func decode(_ record: [String: AnyJSON]) -> ScrollRun? {
         guard
             let id = record["id"]?.stringValue,
-            let bot = record["bot_id"]?.stringValue,
             let conv = record["conversation_id"]?.stringValue,
             let status = record["status"]?.stringValue,
             let createdAt = record["created_at"]?.stringValue
         else {
             return nil
         }
+        // bot_id is now nullable (kind='human' rows have no bot). Default
+        // kind to 'bot' so realtime rows from old workers / pre-migration
+        // backfill still decode without surfacing a nil.
         return ScrollRun(
             id: id,
-            bot_id: bot,
+            bot_id: record["bot_id"]?.stringValue,
+            author_user_id: record["author_user_id"]?.stringValue,
+            kind: record["kind"]?.stringValue ?? "bot",
             conversation_id: conv,
             status: status,
             title: record["title"]?.stringValue,

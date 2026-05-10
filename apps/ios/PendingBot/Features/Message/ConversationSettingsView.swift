@@ -1,6 +1,16 @@
 import SwiftUI
 import Supabase
 
+/// Recipient profile for human-to-human letters. Non-nil only on
+/// user_user conversations — when set, the 来信 section flips from
+/// "请这位机器人写信给你" (kick off bot envelope) to "给对方写信"
+/// (open the markdown editor sheet). Mirrors what `peerProfileForBubble`
+/// produces in ConversationView.
+struct LetterRecipient: Equatable, Hashable {
+    let userId: String
+    let displayName: String
+}
+
 /// Per-conversation settings page — pushed from the gear icon in the chat
 /// header. Houses skills, model, provider, the 来信 (Envelopes) trigger
 /// + per-conversation envelope config, and the lookback notes log.
@@ -19,6 +29,9 @@ struct ConversationSettingsView: View {
     let bot: Bot?
     /// Currently signed-in user — needed to compare against bot.creator_id.
     let currentUserId: String?
+    /// Set on user_user conversations to switch the 来信 section into
+    /// "compose a letter to this person" mode. nil on bot/self/group.
+    let recipient: LetterRecipient?
     let enabledSkillCount: Int
     let totalSkillCount: Int
     var onOpenSkills: () -> Void
@@ -43,6 +56,10 @@ struct ConversationSettingsView: View {
     @State private var pickerTarget: EnvelopeModelPickerTarget?
     @State private var triggering: Bool = false
     @State private var triggerError: String?
+
+    // ── 给对方写信 / human letter compose ────────────────────────────────
+    @State private var showingLetterCompose: Bool = false
+    @State private var sendingLetter: Bool = false
 
     // ── Lookback 笔记 ─────────────────────────────────────────────────────
     @State private var lookbacks: [LookbackRow] = []
@@ -286,13 +303,63 @@ struct ConversationSettingsView: View {
 
     @ViewBuilder
     private var envelopeSection: some View {
+        if let recipient {
+            humanLetterSection(recipient: recipient)
+        } else if bot != nil {
+            botLetterSection
+        }
+        // self / group / no-bot conv with no peer → hide section.
+    }
+
+    /// User-to-user conversation: a single entry that opens the markdown
+    /// compose sheet. The recipient sees the resulting letter on their
+    /// own 来信 tab. Server enforces mutual-friend gating; the entry is
+    /// always visible inside the conversation settings — friendship is
+    /// already implied by being able to message each other.
+    @ViewBuilder
+    private func humanLetterSection(recipient: LetterRecipient) -> some View {
+        Section {
+            Button {
+                showingLetterCompose = true
+            } label: {
+                HStack {
+                    Image(systemName: "square.and.pencil")
+                    Text("给对方写信")
+                    Spacer()
+                    if sendingLetter { ProgressView() }
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .foregroundStyle(Theme.Palette.ink)
+            .disabled(sendingLetter || conversationId.isEmpty)
+        } header: {
+            Text("来信 / Envelopes")
+        } footer: {
+            Text("写一封 markdown 信给「\(recipient.displayName)」，发出后对方会在自己的「来信」选项卡里看到。")
+        }
+        .sheet(isPresented: $showingLetterCompose) {
+            LetterComposeSheet(recipient: recipient) { title, bodyMd in
+                await sendHumanLetter(title: title, bodyMd: bodyMd)
+            }
+            .presentationDragIndicator(.visible)
+            .tint(Theme.Palette.accent)
+        }
+    }
+
+    /// User-to-bot conversation: kick off the bot's envelope (research
+    /// loop + writer phase). Settings here are local overrides — the
+    /// trigger handler persists them as the conversation's new defaults.
+    @ViewBuilder
+    private var botLetterSection: some View {
         Section {
             Button {
                 Task { await triggerEnvelope() }
             } label: {
                 HStack {
                     Image(systemName: "envelope.open")
-                    Text(triggering ? "正在派出来信…" : "请这位写一封来信")
+                    Text(triggering ? "正在派出来信…" : "请这位机器人写信给你")
                     Spacer()
                     if triggering { ProgressView() }
                 }
@@ -308,7 +375,7 @@ struct ConversationSettingsView: View {
             } label: {
                 HStack {
                     Image(systemName: "person.crop.square")
-                    Text("主探索者模型")
+                    Text("探索模型")
                     Spacer()
                     Text(shortSlug(envelope.explorerModel))
                         .foregroundStyle(.secondary)
@@ -325,7 +392,7 @@ struct ConversationSettingsView: View {
             } label: {
                 HStack {
                     Image(systemName: "person.2.crop.square.stack")
-                    Text("协作者模型")
+                    Text("协作模型")
                     Spacer()
                     Text(envelope.collaboratorModel.map(shortSlug) ?? "无")
                         .foregroundStyle(.secondary)
@@ -344,7 +411,7 @@ struct ConversationSettingsView: View {
             } label: {
                 HStack {
                     Image(systemName: "magnifyingglass")
-                    Text("搜索")
+                    Text("搜索引擎")
                 }
             }
             .foregroundStyle(Theme.Palette.ink)
@@ -356,7 +423,7 @@ struct ConversationSettingsView: View {
             } label: {
                 HStack {
                     Image(systemName: "doc.text.magnifyingglass")
-                    Text("抓取")
+                    Text("用什么读网页")
                 }
             }
             .foregroundStyle(Theme.Palette.ink)
@@ -372,10 +439,64 @@ struct ConversationSettingsView: View {
                 }
             }
             .foregroundStyle(Theme.Palette.ink)
+
+            // History budget — caps (history + framing prompts) at this
+            // fraction of the bot's main-model context window. Default
+            // 35%; user can dial up to fit more chat history at the cost
+            // of leaving less room for the loop's research turns.
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Image(systemName: "tray.full")
+                    Text("聊天记录占用")
+                    Spacer()
+                    Text("\(envelope.historyTokenBudgetPct)%")
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+                Slider(
+                    value: Binding(
+                        get: { Double(envelope.historyTokenBudgetPct) },
+                        set: { envelope.historyTokenBudgetPct = Int($0.rounded()) }
+                    ),
+                    in: 5...90,
+                    step: 5
+                )
+                .tint(Theme.Palette.accent)
+            }
+            .foregroundStyle(Theme.Palette.ink)
         } header: {
             Text("来信 / Envelopes")
         } footer: {
-            Text("机器人会读你和它的聊天记录，自己决定要不要上网查资料、记笔记，最后写一封来信发回来。在「来信」标签里能读到。轮数上限到了还没收笔就直接结束。")
+            Text("你可以在「来信」选项卡看到它写的信。")
+        }
+    }
+
+    /// Shared helper for the user_user compose sheet — calls the edge
+    /// endpoint, surfaces errors via the existing alert binding, and
+    /// dismisses the conversation settings on success so the user lands
+    /// back on the chat (the recipient's 来信 tab is where the letter
+    /// will appear, not this user's).
+    private func sendHumanLetter(title: String?, bodyMd: String) async -> Bool {
+        guard let api, let recipient, !conversationId.isEmpty else { return false }
+        sendingLetter = true
+        defer { sendingLetter = false }
+        do {
+            _ = try await api.scrollSendLetter(
+                conversationId: conversationId,
+                recipientUserId: recipient.userId,
+                title: title,
+                bodyMd: bodyMd
+            )
+            Haptics.success()
+            return true
+        } catch is CancellationError {
+            return false
+        } catch let error as NSError where error.domain == NSURLErrorDomain
+            && error.code == NSURLErrorCancelled {
+            return false
+        } catch {
+            triggerError = error.localizedDescription
+            return false
         }
     }
 

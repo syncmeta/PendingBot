@@ -420,6 +420,9 @@ struct ConversationView: View {
                     conversationId: conversation.id,
                     bot: bot,
                     currentUserId: AccountStore.shared.current?.id,
+                    recipient: peerProfileForBubble.map {
+                        LetterRecipient(userId: $0.userId, displayName: $0.displayName)
+                    },
                     enabledSkillCount: skills.filter { $0.enabled }.count,
                     totalSkillCount: skills.count,
                     onOpenSkills: { showingSkills = true },

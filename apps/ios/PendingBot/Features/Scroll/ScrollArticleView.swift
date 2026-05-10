@@ -92,13 +92,13 @@ struct ScrollArticleView: View {
                 .frame(height: 0.5)
 
             HStack(alignment: .center, spacing: 10) {
-                BotAvatar(seed: run.bot_id, size: 28)
+                BotAvatar(seed: avatarSeed(run: run), size: 28)
                 // Name and timestamp sit as a single byline cluster on
                 // the leading edge — the timestamp clings to the name
                 // (separated by a thin space) rather than being trailing-
                 // aligned to the column edge, which read as two unrelated
                 // pieces of metadata in the previous version.
-                Text(bot?.display_name ?? "机器人")
+                Text(senderLabel(run: run))
                     .font(Theme.Fonts.rounded(size: 13, weight: .medium))
                     .foregroundStyle(Theme.Palette.ink)
                     .lineLimit(1)
@@ -111,6 +111,29 @@ struct ScrollArticleView: View {
                 Spacer(minLength: 0)
             }
         }
+    }
+
+    /// Avatar seed differs by row kind. Bot rows carry bot_id; human
+    /// rows carry author_user_id. Both feed BotAvatar's deterministic
+    /// glyph generator the same way.
+    private func avatarSeed(run: ScrollRun) -> String {
+        run.bot_id ?? run.author_user_id ?? run.id
+    }
+
+    /// Byline label: bot's display_name (loaded async) for kind='bot',
+    /// or the local contact alias / display name for kind='human'. The
+    /// human path doesn't trigger a network fetch — pendingbot.users is
+    /// RLS-self so we only know names of people already in our contacts.
+    private func senderLabel(run: ScrollRun) -> String {
+        if run.isHuman {
+            guard let id = run.author_user_id else { return "好友" }
+            for c in LocalDatabase.shared.loadContacts() where c.id == id {
+                if let alias = c.alias, !alias.isEmpty { return alias }
+                if !c.display_name.isEmpty { return c.display_name }
+            }
+            return "好友"
+        }
+        return bot?.display_name ?? "机器人"
     }
 
     /// "于 5月10日 14:23" — Chinese-locale month/day + 24h time. Returns
@@ -131,9 +154,11 @@ struct ScrollArticleView: View {
     private func bodySection(run: ScrollRun) -> some View {
         if let body = run.body_md, !body.isEmpty {
             MarkdownText(text: body, variant: .article)
-            // Even after the article is done, keep the thinking trace
-            // available so the reader can audit the research path.
-            EnvelopeThinkingTrace(turns: EnvelopeTurn.parse(run.turns), collapsed: true)
+            // Bot envelopes carry a per-turn research trace; human-written
+            // letters don't run a loop, so there's nothing to audit there.
+            if !run.isHuman {
+                EnvelopeThinkingTrace(turns: EnvelopeTurn.parse(run.turns), collapsed: true)
+            }
         } else if run.isRunning {
             runningSection(progress: ScrollProgress.from(run.progress))
             EnvelopeThinkingTrace(turns: EnvelopeTurn.parse(run.turns), collapsed: false)
@@ -257,7 +282,7 @@ struct ScrollArticleView: View {
             // instead of throwing PostgREST's "cannot coerce" error.
             let rows: [ScrollRun] = try await SupabaseStack.shared
                 .from("scroll_runs")
-                .select("id, bot_id, conversation_id, status, title, summary, body_md, progress, turns, created_at, started_at, finished_at")
+                .select("id, kind, bot_id, author_user_id, conversation_id, status, title, summary, body_md, progress, turns, created_at, started_at, finished_at")
                 .eq("id", value: scrollRunId)
                 .limit(1)
                 .execute()
@@ -267,7 +292,12 @@ struct ScrollArticleView: View {
                 return
             }
             self.run = row
-            await loadBot(id: row.bot_id)
+            if let botId = row.bot_id {
+                await loadBot(id: botId)
+            }
+            // No async fetch for human authors — pull whatever the local
+            // contacts cache has and let the byline fall back to "好友"
+            // if the row arrived from someone not yet cached.
             if row.isRunning { await subscribe() }
         } catch {
             self.error = error.localizedDescription

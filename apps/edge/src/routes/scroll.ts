@@ -27,6 +27,7 @@ const SettingsBody = z
     searchProvider: z.enum(['brave', 'tavily', 'exa', 'serper']).optional(),
     scrapeProvider: z.enum(['firecrawl', 'tavily', 'exa']).optional(),
     turnCap: z.number().int().min(1).max(HARD_CAP_TURNS).optional(),
+    historyTokenBudgetPct: z.number().int().min(1).max(100).optional(),
   })
   .strict()
   .optional();
@@ -176,6 +177,107 @@ scrollRoutes.get('/:id', async (c) => {
   if (error) return c.json({ error: 'database', detail: error.message }, 500);
   if (!data) return c.json({ error: 'not found' }, 404);
   return c.json(data);
+});
+
+// POST /v1/scroll/letter
+//   Human-authored letter to a mutual friend. Same scroll_runs row
+//   shape as a bot envelope but kind='human', author_user_id set, no
+//   bot_id, status='done' on insert (no async runner). The recipient
+//   sees it on their 来信 tab via the existing scroll-feed Realtime
+//   filter (user_id=eq.<recipient>). Mutual-friend gating happens
+//   server-side too (RLS + this handler) — the iOS sheet only shows
+//   the entry for user_user convs but RLS is the real backstop.
+const LetterBody = z.object({
+  conversationId: z.string().uuid(),
+  recipientUserId: z.string().uuid(),
+  title: z.string().trim().max(200).optional(),
+  bodyMd: z.string().min(1).max(50_000),
+});
+
+scrollRoutes.post('/letter', async (c) => {
+  const userId = c.var.userId!;
+  const userJwt = c.var.userJwt!;
+
+  let parsed: z.infer<typeof LetterBody>;
+  try {
+    parsed = LetterBody.parse(await c.req.json());
+  } catch (err) {
+    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+  }
+
+  if (parsed.recipientUserId === userId) {
+    return c.json({ error: 'cannot send a letter to yourself' }, 400);
+  }
+
+  const supaUser = userClient(c.env, userJwt);
+
+  // Confirm caller participates in the conversation and that it's a
+  // user_user conv with the named peer. RLS would catch a wrong
+  // conversation_id, but the kind/peer pairing is a logic check on top.
+  const { data: conv, error: convErr } = await supaUser
+    .from('conversations')
+    .select('id, conversation_type')
+    .eq('id', parsed.conversationId)
+    .maybeSingle();
+  if (convErr) return c.json({ error: 'database', detail: convErr.message }, 500);
+  if (!conv) return c.json({ error: 'conversation not found or no access' }, 404);
+  if (conv.conversation_type !== 'user_user') {
+    return c.json(
+      { error: 'letters can only be sent inside a user-to-user conversation' },
+      400,
+    );
+  }
+
+  // Mutual-friend gate. The RLS WITH CHECK calls are_mutual_friends
+  // too; we check up-front so we can return a 403 with a clear reason
+  // instead of the RLS rejection looking like a generic 500 / 42501.
+  const { data: mutual, error: mutualErr } = await supaUser.rpc('are_mutual_friends', {
+    a: userId,
+    b: parsed.recipientUserId,
+  });
+  if (mutualErr) return c.json({ error: 'database', detail: mutualErr.message }, 500);
+  if (!mutual) {
+    return c.json(
+      { error: 'not_mutual_friends', detail: '只能给互为好友的人写信' },
+      403,
+    );
+  }
+
+  // Title is optional — fall back to the first non-empty line of the
+  // body, capped, so the feed row has something to show.
+  const fallbackTitle = parsed.bodyMd
+    .split('\n')
+    .map((s) => s.trim().replace(/^#+\s*/, ''))
+    .find((s) => s.length > 0)
+    ?.slice(0, 80);
+  const title = (parsed.title?.trim() || fallbackTitle || '来信').slice(0, 200);
+  const summary = parsed.bodyMd.replace(/\s+/g, ' ').trim().slice(0, 200);
+
+  const nowIso = new Date().toISOString();
+  const { data: row, error: insertErr } = await supaUser
+    .from('scroll_runs')
+    .insert({
+      conversation_id: parsed.conversationId,
+      user_id: parsed.recipientUserId,
+      author_user_id: userId,
+      kind: 'human',
+      status: 'done',
+      trigger: 'user',
+      progress: { phase: 'done' } as Json,
+      turns: [] as unknown as Json,
+      title,
+      summary,
+      body_md: parsed.bodyMd,
+      started_at: nowIso,
+      finished_at: nowIso,
+    })
+    .select('id')
+    .single();
+  if (insertErr || !row) {
+    return c.json({ error: 'database', detail: insertErr?.message ?? 'insert failed' }, 500);
+  }
+
+  return c.json({ scrollRunId: row.id }, 201);
 });
 
 // POST /v1/scroll/:id/cancel — flip status='cancelled'. The runner

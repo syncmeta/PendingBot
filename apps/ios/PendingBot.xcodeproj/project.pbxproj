@@ -32,6 +32,7 @@
 		4979F0D379FC22722B743958 /* GroupQRCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33E761E1099E8B059DB355AB /* GroupQRCard.swift */; };
 		4B188C25211FC2C93428265C /* MarkdownText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 296C608D9B4B9E5870149CD4 /* MarkdownText.swift */; };
 		4B8F775758566FA94BB05F1B /* ColorHash.swift in Sources */ = {isa = PBXBuildFile; fileRef = A556C3B2E5456D4E589468E3 /* ColorHash.swift */; };
+		4E8CCB60EABEF69A1C9ED4E7 /* LetterComposeSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD3D7FCD8843347E31304809 /* LetterComposeSheet.swift */; };
 		52F96822550D55A2446083BE /* ServerTimestamp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75FB644111BD8AF1F7D62533 /* ServerTimestamp.swift */; };
 		536B9BEF9D1541ADE1759645 /* BotVisibilityTag.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B55AE8CBABF2C99EE083746 /* BotVisibilityTag.swift */; };
 		58EDA71C7AEE2D168E2D4949 /* BubbleSplitter.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDE5ADA3C16B8D916CDF48CB /* BubbleSplitter.swift */; };
@@ -141,6 +142,7 @@
 		A32CFD03CE72A90611766007 /* ScrollFeedRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollFeedRow.swift; sourceTree = "<group>"; };
 		A3B6EA75EA86539059BB4D37 /* GroupJoinView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupJoinView.swift; sourceTree = "<group>"; };
 		A556C3B2E5456D4E589468E3 /* ColorHash.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorHash.swift; sourceTree = "<group>"; };
+		AD3D7FCD8843347E31304809 /* LetterComposeSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LetterComposeSheet.swift; sourceTree = "<group>"; };
 		B14FCE8ADC9DE6D22FBC7387 /* ChatStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatStream.swift; sourceTree = "<group>"; };
 		B1DB7B76BE5141EDA731228F /* EnvelopeThinkingTrace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvelopeThinkingTrace.swift; sourceTree = "<group>"; };
 		BC94DFE7E01003DB9976ADA0 /* PushService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushService.swift; sourceTree = "<group>"; };
@@ -339,6 +341,7 @@
 			isa = PBXGroup;
 			children = (
 				B1DB7B76BE5141EDA731228F /* EnvelopeThinkingTrace.swift */,
+				AD3D7FCD8843347E31304809 /* LetterComposeSheet.swift */,
 				6F8977E1E361EFE65810D4F1 /* ScrollAPI.swift */,
 				33B8F3751DF5EDACE6B8E705 /* ScrollArticleView.swift */,
 				A32CFD03CE72A90611766007 /* ScrollFeedRow.swift */,
@@ -503,6 +506,7 @@
 				EABBC05F4DAA86B67E517662 /* HostedConfig.swift in Sources */,
 				2F3A780BB3565053823B85BB /* JoinRequestsInboxView.swift in Sources */,
 				BB86AB9AFA3A0EDAA7473700 /* Keychain.swift in Sources */,
+				4E8CCB60EABEF69A1C9ED4E7 /* LetterComposeSheet.swift in Sources */,
 				359C376EAADF988A6CE84F76 /* LocalDatabase.swift in Sources */,
 				395FA3FAA3835D1C25EB65BF /* Log.swift in Sources */,
 				4B188C25211FC2C93428265C /* MarkdownText.swift in Sources */,

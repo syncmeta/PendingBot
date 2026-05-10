@@ -8,7 +8,11 @@ import Supabase
 /// "still being written" without crowding the body with typing dots.
 struct ScrollFeedRow: View {
     let run: ScrollRun
-    let botName: String?
+    /// Display name for the sender — bot's display_name when kind='bot',
+    /// the author's profile name (resolved from local contacts cache)
+    /// when kind='human'. Nil while the lookup is in flight; the row
+    /// renders a generic kicker label as fallback.
+    let senderName: String?
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
@@ -75,8 +79,11 @@ struct ScrollFeedRow: View {
     @ViewBuilder
     private var kickerRow: some View {
         HStack(spacing: 8) {
-            BotAvatar(seed: run.bot_id, size: 18)
-            if let name = botName, !name.isEmpty {
+            // Use whichever id is set — bot for kind='bot', author for
+            // kind='human'. BotAvatar is seed-based so it produces a
+            // stable glyph either way.
+            BotAvatar(seed: avatarSeed, size: 18)
+            if let name = senderName, !name.isEmpty {
                 Text(name)
                     .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
                     .tracking(0.6)
@@ -84,7 +91,7 @@ struct ScrollFeedRow: View {
                     .textCase(.uppercase)
                     .lineLimit(1)
             } else {
-                Text("机器人")
+                Text(run.isHuman ? "好友" : "机器人")
                     .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
                     .tracking(0.6)
                     .foregroundStyle(Theme.Palette.inkMuted)
@@ -98,6 +105,10 @@ struct ScrollFeedRow: View {
                     .lineLimit(1)
             }
         }
+    }
+
+    private var avatarSeed: String {
+        run.bot_id ?? run.author_user_id ?? run.id
     }
 
     // MARK: - Status pill (only for non-done, non-running)

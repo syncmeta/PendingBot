@@ -8,6 +8,7 @@ import {
   type ResolvedRoute,
 } from '../llm/router';
 import { getPrompt } from '../llm/prompt-loader';
+import { estimateTokens } from '../llm/token-estimate';
 import { getBotMemory } from './memory';
 import {
   DEFAULT_SEARCH_PROVIDER,
@@ -69,6 +70,19 @@ export {
 export const DEFAULT_EXPLORER_MODEL = '~google/gemini-flash-latest';
 export const DEFAULT_COLLABORATOR_MODEL = '~google/gemini-flash-latest';
 export const DEFAULT_TURN_CAP = 15;
+// Cap on (history + framing prompts) as a fraction of the bot's main
+// model context window. 35% leaves the rest for the loop's research
+// turns + tool replies + the writer-phase article. User-tunable per
+// conversation in envelope_settings.historyTokenBudgetPct.
+export const DEFAULT_HISTORY_TOKEN_BUDGET_PCT = 35;
+// If a bot's model_id isn't registered in llm_models we don't know its
+// context window. Fall through to a conservative central estimate so
+// the budget calculation still produces something sensible.
+const FALLBACK_CONTEXT_WINDOW = 200_000;
+// Hard ceiling on rows fetched from `messages` before token-trimming.
+// Catches pathological accounts with millions of rows; in practice the
+// token budget bites long before this does.
+const HISTORY_ROW_CAP = 2000;
 
 export interface EnvelopeSettings {
   explorerModel: string;
@@ -76,6 +90,7 @@ export interface EnvelopeSettings {
   searchProvider: SearchProvider;
   scrapeProvider: ScrapeProvider;
   turnCap: number;
+  historyTokenBudgetPct: number;
 }
 
 const VALID_SEARCH: SearchProvider[] = ['brave', 'tavily', 'exa', 'serper'];
@@ -107,12 +122,20 @@ export function resolveEnvelopeSettings(
     typeof i.collaboratorModel === 'string' && i.collaboratorModel.trim()
       ? i.collaboratorModel.trim()
       : DEFAULT_COLLABORATOR_MODEL;
+  // Clamp to (0, 100] so the slider can't disable history outright nor
+  // pretend to have more context than the model actually offers.
+  const rawPct = Number(i.historyTokenBudgetPct);
+  const historyTokenBudgetPct =
+    Number.isFinite(rawPct) && rawPct > 0 && rawPct <= 100
+      ? Math.round(rawPct)
+      : DEFAULT_HISTORY_TOKEN_BUDGET_PCT;
   return {
     explorerModel,
     collaboratorModel,
     searchProvider: search,
     scrapeProvider: scrape,
     turnCap,
+    historyTokenBudgetPct,
   };
 }
 
@@ -204,23 +227,81 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
   const turnTrace: TurnTraceEntry[] = [];
 
   try {
-    const [historyRes, botRes, botMemory] = await Promise.all([
-      supa
-        .from('messages')
-        .select('role, content, created_at')
-        .eq('conversation_id', conversationId)
-        .neq('role', 'log')
-        .order('created_at', { ascending: false })
-        .limit(HISTORY_LIMIT),
-      supa.from('bots').select('id, model_id, display_name').eq('id', botId).single(),
-      getBotMemory(env, botId),
-    ]);
-
+    // We pull bot first because everything else (context-window lookup,
+    // peer convs, memory) needs its row. The history is intentionally
+    // *cross-conversation* — the letter is "from this bot to this user",
+    // and any chat they've had together is fair game; pinning it to a
+    // single conversation_id was an artifact of the original design.
+    const botRes = await supa
+      .from('bots')
+      .select('id, model_id, display_name')
+      .eq('id', botId)
+      .single();
     if (botRes.error || !botRes.data) {
       throw new Error(`bot lookup failed: ${botRes.error?.message ?? 'no row'}`);
     }
 
-    const history = (historyRes.data ?? []).reverse() as Array<{
+    const [convIdsRes, botMemory, modelCtxRes] = await Promise.all([
+      supa
+        .from('conversations')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('bot_id', botId)
+        .eq('conversation_type', 'user_bot'),
+      getBotMemory(env, botId),
+      supa
+        .from('llm_models')
+        .select('context_window')
+        .eq('slug', botRes.data.model_id)
+        .maybeSingle(),
+    ]);
+
+    const conversationIds = (convIdsRes.data ?? []).map((r) => r.id as string);
+    if (conversationIds.length === 0) conversationIds.push(conversationId);
+    const contextWindow = modelCtxRes.data?.context_window ?? FALLBACK_CONTEXT_WINDOW;
+    const tokenBudget = Math.max(
+      1024,
+      Math.floor((contextWindow * settings.historyTokenBudgetPct) / 100),
+    );
+
+    const historyRes = await supa
+      .from('messages')
+      .select('role, content, created_at, conversation_id')
+      .in('conversation_id', conversationIds)
+      .neq('role', 'log')
+      .order('created_at', { ascending: false })
+      .limit(HISTORY_ROW_CAP);
+
+    // Trim newest-first until adding the next row would push us past the
+    // budget. The "framing" overhead — system prompt, injected directive,
+    // memory block — is reserved up-front so a giant memory section
+    // can't push the prompt over the model's hard limit.
+    const framingTokens =
+      estimateTokens(getPrompt('scroll')) +
+      estimateTokens(getPrompt('scroll-injected')) +
+      estimateTokens(botMemory?.representation ?? '') +
+      512; // slack for transcript headers / separators / silent-token
+    let used = framingTokens;
+    const kept: Array<{
+      role: 'user' | 'bot' | 'human';
+      content: string | null;
+      created_at: string;
+    }> = [];
+    for (const row of (historyRes.data ?? []) as Array<{
+      role: 'user' | 'bot' | 'human';
+      content: string | null;
+      created_at: string;
+    }>) {
+      const cost = estimateTokens(row.content) + 8; // role + sep framing
+      if (used + cost > tokenBudget) break;
+      used += cost;
+      kept.push(row);
+    }
+    // The loop assembles transcripts in chronological order. Sort here
+    // by created_at so messages from different conversations interleave
+    // correctly even though Supabase ordering was newest-first.
+    kept.sort((a, b) => a.created_at.localeCompare(b.created_at));
+    const history = kept as Array<{
       role: 'user' | 'bot' | 'human';
       content: string | null;
     }>;
