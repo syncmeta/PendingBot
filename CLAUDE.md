@@ -61,6 +61,17 @@ Before merging into `main`, run typecheck on whatever was touched:
 
 If typecheck fails, fix on the branch and re-commit; don't merge red.
 
+## Before writing a new migration — claim a number from the registry
+
+Multiple parallel sessions routinely land migrations at the same time, so "look at `ls supabase/migrations/` and pick max+1" deadlocks two sessions onto the same number. Use [`supabase/migrations/REGISTRY.md`](supabase/migrations/REGISTRY.md) as the canonical claim list:
+
+1. Read `REGISTRY.md` — the `Last assigned` line and the `Reserved (unmerged branches)` table tell you the next free number.
+2. Defense in depth — also run `git fetch --quiet && git log --all --name-only --pretty=format: -- 'supabase/migrations/*.sql' | grep -oE '00[0-9]+' | sort -u | tail -5` and pick higher than anything you see, in case a sibling session pushed without updating the registry.
+3. In the **same commit** as the new migration, update `REGISTRY.md`: bump `Last assigned`, append the row to `History`, and if the branch is unmerged also add it to `Reserved` (drop that row when the branch lands on main).
+4. Auto-push will publish the reservation; sibling sessions then see it via `git fetch`.
+
+If a collision happens anyway (both sessions claimed before either pushed), the loser renumbers on their branch with a `chore(db): renumber 00NN → 00MM` commit before merging.
+
 ## After applying a migration
 
 Anything that lands a new file under `supabase/migrations/` is only half done — once the user has applied it (Supabase Studio / `supabase db push` / however they sync), the TypeScript schema needs to be regenerated so edge code that references new tables/columns typechecks:
