@@ -270,13 +270,13 @@ struct MessageTabView: View {
                                     actions: [
                                         SwipeRevealAction(
                                             systemImage: "envelope.badge",
-                                            tint: Color(red: 0.42, green: 0.62, blue: 0.92)
+                                            tint: Color(red: 0.20, green: 0.40, blue: 0.78)
                                         ) {
                                             unread.markUnread(conv.id)
                                         },
                                         SwipeRevealAction(
                                             systemImage: "trash",
-                                            tint: Color(red: 0.93, green: 0.50, blue: 0.50)
+                                            tint: Color(red: 0.78, green: 0.22, blue: 0.26)
                                         ) {
                                             Task { await delete(conv) }
                                         },

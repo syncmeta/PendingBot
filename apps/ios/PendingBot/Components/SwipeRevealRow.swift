@@ -194,6 +194,14 @@ struct SwipeRevealRow<Content: View>: View {
                     let shouldOpen: Bool = isOpen
                         ? !(dx > buttonSize * 0.5 || velocity > 200)
                         : (-dx > buttonSize * 0.5 || velocity < -200)
+                    // Right-swipe that didn't reach the trigger — pair the
+                    // spring snap-back with a soft "thud" so the cancel
+                    // *feels* like a rubber band releasing, not a silent
+                    // glide back.
+                    if leadingTrigger != nil, settled == 0, rawOffset > 0 {
+                        UIImpactFeedbackGenerator(style: .soft)
+                            .impactOccurred(intensity: 0.7)
+                    }
                     withAnimation(.spring(response: 0.34, dampingFraction: 0.72)) {
                         dragDX = 0
                         settled = shouldOpen ? -actionsWidth : 0
@@ -267,12 +275,17 @@ struct SwipeRevealRow<Content: View>: View {
                     action.action()
                     close()
                 } label: {
+                    // Light tinted disc + saturated icon, lifted off the
+                    // canvas with a soft black drop shadow. The shadow's
+                    // alpha rides `appearance` so it fades in alongside
+                    // the staggered reveal — no shadow trailing the disc
+                    // before the disc itself is visible.
                     Image(systemName: action.systemImage)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(action.tint)
                         .frame(width: buttonSize, height: buttonSize)
-                        .background(Circle().fill(action.tint))
-                        .shadow(color: action.tint.opacity(0.25 * appearance), radius: 6, y: 2)
+                        .background(Circle().fill(action.tint.opacity(0.16)))
+                        .shadow(color: Color.black.opacity(0.12 * appearance), radius: 4, y: 1.5)
                 }
                 .buttonStyle(.plain)
                 .scaleEffect(appearance)
