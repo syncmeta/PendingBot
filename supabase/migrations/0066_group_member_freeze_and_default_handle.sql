@@ -20,12 +20,12 @@
 --    facing rule is "running out of balance freezes you the same way
 --    hitting the cap does", which this fixes.
 --
--- 3. _mint_default_group_number trigger on conversation_group_meta —
---    every fresh group gets a random 8-char 'number' handle right away,
---    same way users get a registration-time 'id' handle. This way a
---    group has an ID to show in settings the moment it's created, no
---    explicit admin step needed; admin can still rotate it through the
---    existing group_set_handle RPC.
+-- 3. _mint_default_group_handles trigger on conversation_group_meta —
+--    every fresh group gets a random 8-char 'number' AND 'qr' handle
+--    right away, same way users get a registration-time 'id' handle.
+--    This way a group has an ID to show in settings + a scannable QR
+--    the moment it's created, no explicit admin step needed; admin can
+--    still rotate either through the existing group_set_handle RPC.
 
 BEGIN;
 
@@ -145,7 +145,7 @@ REVOKE ALL ON FUNCTION pendingbot.apply_audit_split(uuid, jsonb) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION pendingbot.apply_audit_split(uuid, jsonb) TO service_role;
 
 -- ─────────────────────────────────────────────────────────────────────
--- 3. Auto-mint default 'number' handle on group creation
+-- 3. Auto-mint default 'number' + 'qr' handles on group creation
 -- ─────────────────────────────────────────────────────────────────────
 --
 -- conversation_group_meta is the 1:1 sidecar that open_group_conv
@@ -159,8 +159,10 @@ GRANT EXECUTE ON FUNCTION pendingbot.apply_audit_split(uuid, jsonb) TO service_r
 -- are effectively impossible at our scale, but we retry up to 5×
 -- defensively.
 
-CREATE OR REPLACE FUNCTION pendingbot._mint_default_group_number()
-RETURNS trigger
+CREATE OR REPLACE FUNCTION pendingbot._mint_random_group_handle(
+  p_conv_id uuid,
+  p_handle_type text
+) RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path TO 'pendingbot', 'public'
@@ -170,17 +172,6 @@ DECLARE
   v_token text;
   v_attempt int := 0;
 BEGIN
-  -- Skip if a 'number' handle already exists for this group (idempotent
-  -- under retries, and also a no-op on re-runs of the migration against
-  -- existing rows since this trigger only fires on AFTER INSERT).
-  IF EXISTS (
-    SELECT 1 FROM pendingbot.group_join_handles
-     WHERE conversation_id = NEW.conversation_id
-       AND handle_type = 'number'
-  ) THEN
-    RETURN NEW;
-  END IF;
-
   LOOP
     v_token := '';
     FOR i IN 1..8 LOOP
@@ -194,16 +185,43 @@ BEGIN
       INSERT INTO pendingbot.group_join_handles
         (conversation_id, handle_type, value, enabled)
       VALUES
-        (NEW.conversation_id, 'number', v_token, true);
-      EXIT;
+        (p_conv_id, p_handle_type, v_token, true);
+      RETURN;
     EXCEPTION WHEN unique_violation THEN
       v_attempt := v_attempt + 1;
       IF v_attempt > 5 THEN RAISE; END IF;
     END;
   END LOOP;
+END $$;
+
+CREATE OR REPLACE FUNCTION pendingbot._mint_default_group_handles()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'pendingbot', 'public'
+AS $$
+BEGIN
+  -- Idempotent: skip whichever handle type the group already has, so
+  -- re-runs and partial backfills don't double-insert.
+  IF NOT EXISTS (
+    SELECT 1 FROM pendingbot.group_join_handles
+     WHERE conversation_id = NEW.conversation_id
+       AND handle_type = 'number'
+  ) THEN
+    PERFORM pendingbot._mint_random_group_handle(NEW.conversation_id, 'number');
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pendingbot.group_join_handles
+     WHERE conversation_id = NEW.conversation_id
+       AND handle_type = 'qr'
+  ) THEN
+    PERFORM pendingbot._mint_random_group_handle(NEW.conversation_id, 'qr');
+  END IF;
+
   RETURN NEW;
 END $$;
-ALTER FUNCTION pendingbot._mint_default_group_number() OWNER TO postgres;
+ALTER FUNCTION pendingbot._mint_default_group_handles() OWNER TO postgres;
 
 DROP TRIGGER IF EXISTS conversation_group_meta_default_handle_trg
   ON pendingbot.conversation_group_meta;
@@ -211,17 +229,13 @@ DROP TRIGGER IF EXISTS conversation_group_meta_default_handle_trg
 CREATE TRIGGER conversation_group_meta_default_handle_trg
   AFTER INSERT ON pendingbot.conversation_group_meta
   FOR EACH ROW
-  EXECUTE FUNCTION pendingbot._mint_default_group_number();
+  EXECUTE FUNCTION pendingbot._mint_default_group_handles();
 
 -- Backfill: any group that was created before this trigger and doesn't
--- have a 'number' handle yet gets one minted now. Loop in plpgsql so we
--- can call the existing token generator inline.
+-- have either a 'number' or 'qr' handle yet gets one minted now.
 DO $$
 DECLARE
   r record;
-  v_alphabet text := 'abcdefghijkmnpqrstuvwxyz23456789';
-  v_token text;
-  v_attempt int;
 BEGIN
   FOR r IN
     SELECT m.conversation_id
@@ -231,26 +245,18 @@ BEGIN
        AND h.handle_type = 'number'
      WHERE h.conversation_id IS NULL
   LOOP
-    v_attempt := 0;
-    LOOP
-      v_token := '';
-      FOR i IN 1..8 LOOP
-        v_token := v_token || substr(
-          v_alphabet,
-          1 + floor(random() * length(v_alphabet))::int,
-          1
-        );
-      END LOOP;
-      BEGIN
-        INSERT INTO pendingbot.group_join_handles
-          (conversation_id, handle_type, value, enabled)
-        VALUES (r.conversation_id, 'number', v_token, true);
-        EXIT;
-      EXCEPTION WHEN unique_violation THEN
-        v_attempt := v_attempt + 1;
-        IF v_attempt > 5 THEN RAISE; END IF;
-      END;
-    END LOOP;
+    PERFORM pendingbot._mint_random_group_handle(r.conversation_id, 'number');
+  END LOOP;
+
+  FOR r IN
+    SELECT m.conversation_id
+      FROM pendingbot.conversation_group_meta m
+      LEFT JOIN pendingbot.group_join_handles h
+        ON h.conversation_id = m.conversation_id
+       AND h.handle_type = 'qr'
+     WHERE h.conversation_id IS NULL
+  LOOP
+    PERFORM pendingbot._mint_random_group_handle(r.conversation_id, 'qr');
   END LOOP;
 END $$;
 
