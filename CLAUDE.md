@@ -57,20 +57,23 @@ Before merging into `main`, run typecheck on whatever was touched:
 
 - Edge changes: `bun --filter='@pendingbot/edge' run typecheck`
 - iOS changes: `cd apps/ios && xcodebuild -project PendingBot.xcodeproj -scheme PendingBot -configuration Debug -sdk iphonesimulator build` (or whatever scheme the user has wired)
-- Migrations: ensure file numbering is contiguous and the latest migration number matches `supabase/migrations/`
+- Migrations: new files use a timestamp prefix (see "Before writing a new migration" below); legacy 4-digit files are fine left as-is
 
 If typecheck fails, fix on the branch and re-commit; don't merge red.
 
-## Before writing a new migration — claim a number from the registry
+## Before writing a new migration — use a timestamp prefix
 
-Multiple parallel sessions routinely land migrations at the same time, so "look at `ls supabase/migrations/` and pick max+1" deadlocks two sessions onto the same number. Use [`supabase/migrations/REGISTRY.md`](supabase/migrations/REGISTRY.md) as the canonical claim list:
+Parallel worktree sessions can't reliably coordinate on a 4-digit sequential number (each branch only sees what's been merged), so new migrations use a UTC timestamp prefix — `YYYYMMDDHHMMSS_<short_name>.sql` — which is collision-free by construction. Generate with the supabase CLI:
 
-1. Read `REGISTRY.md` — the `Last assigned` line and the `Reserved (unmerged branches)` table tell you the next free number.
-2. Defense in depth — also run `git fetch --quiet && git log --all --name-only --pretty=format: -- 'supabase/migrations/*.sql' | grep -oE '00[0-9]+' | sort -u | tail -5` and pick higher than anything you see, in case a sibling session pushed without updating the registry.
-3. In the **same commit** as the new migration, update `REGISTRY.md`: bump `Last assigned`, append the row to `History`, and if the branch is unmerged also add it to `Reserved` (drop that row when the branch lands on main).
-4. Auto-push will publish the reservation; sibling sessions then see it via `git fetch`.
+```
+supabase migration new <short_name>
+```
 
-If a collision happens anyway (both sessions claimed before either pushed), the loser renumbers on their branch with a `chore(db): renumber 00NN → 00MM` commit before merging.
+This writes `supabase/migrations/<timestamp>_<short_name>.sql`. Two sessions run a second apart get distinct filenames and never fight.
+
+Legacy `0001`–`0061` files stay as-is — supabase applies migrations in lexicographic order and `00xx` < `20xx`, so the legacy block keeps running first. Don't bulk-rename them; only renumber if a collision in the legacy space ever needs untangling.
+
+If you can't run `supabase` for some reason (e.g. seed-style migration drafted by hand), grab the prefix with `date -u +%Y%m%d%H%M%S` and create the file directly. Don't pick numbers manually.
 
 ## After applying a migration
 
@@ -83,7 +86,7 @@ supabase gen types typescript --local --schema pendingbot \
 
 (Or `--linked` instead of `--local` if pulling from the linked project; the `apps/edge/src/db/schema.ts` header documents the exact command.)
 
-If you (the agent) are the one running it: run that command, then re-run `bun --filter='@pendingbot/edge' run typecheck` and commit the regen as a separate `chore(db): regen schema.ts after 00NN` commit.
+If you (the agent) are the one running it: run that command, then re-run `bun --filter='@pendingbot/edge' run typecheck` and commit the regen as a separate `chore(db): regen schema.ts after <migration_name>` commit.
 
 If the user is running it: tell them in the wrap-up which migration they need to apply and that schema.ts regen + edge typecheck go together. Don't claim a feature is done if it depends on a not-yet-applied migration.
 
