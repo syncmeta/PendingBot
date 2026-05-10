@@ -38,7 +38,7 @@ pushed), the loser renumbers on their branch with a `chore(db): renumber 00NN â†
 
 | Number | Filename | Branch | Notes |
 |--------|----------|--------|-------|
-| 0064 | `0064_attachments_vision_summary.sql` | `feat/vision-attachments` | adds attachments.summary/tags/vision_model + conversations.vision_model_override + seeds llm_models.capabilities.vision |
+| _(none)_ | | | |
 
 ## History
 
