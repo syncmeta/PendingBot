@@ -8,16 +8,11 @@ struct Bot: Codable, Identifiable, Hashable {
     let id: String
     let display_name: String
     let access_mode: String?
-    /// Resolved model — server returns the user's per-bot override if any,
-    /// otherwise the bot's default. Drives `modelTag` / `nameWithModel`.
+    /// The bot's default model (bots.model_id). For private bots the
+    /// owner can change it via PATCH /v1/bots/:id; per-conv pins live on
+    /// `conversations.model_slug_override` instead. Drives `modelTag` /
+    /// `nameWithModel`.
     let model: String?
-    /// The bot's config-default model. Used by the bot-management screen
-    /// to label what "跟随机器人默认" actually picks. Optional for
-    /// backwards compat with older server builds.
-    let default_model: String?
-    /// The user's per-bot override (nil = follow default). Set/cleared via
-    /// PATCH /api/mobile/bots/:id with { model: <slug> | null }.
-    let user_model: String?
     /// Visibility — drives the 私有/公有机器人 tag in friend + message lists.
     /// `private` | `public_invite` | `public_open`. Optional so older
     /// payloads that pre-date 0002_bot_visibility decode without breaking.

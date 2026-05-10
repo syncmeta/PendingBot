@@ -672,6 +672,7 @@ export type Database = {
           id: string
           last_turn_status: string | null
           metadata: Json
+          model_slug_override: string | null
           provider_override: string | null
           round_count: number
           title: string | null
@@ -687,6 +688,7 @@ export type Database = {
           id?: string
           last_turn_status?: string | null
           metadata?: Json
+          model_slug_override?: string | null
           provider_override?: string | null
           round_count?: number
           title?: string | null
@@ -702,6 +704,7 @@ export type Database = {
           id?: string
           last_turn_status?: string | null
           metadata?: Json
+          model_slug_override?: string | null
           provider_override?: string | null
           round_count?: number
           title?: string | null

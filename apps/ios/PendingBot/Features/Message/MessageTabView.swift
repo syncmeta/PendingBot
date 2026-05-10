@@ -508,7 +508,6 @@ struct MessageTabView: View {
             Bot(
                 id: id, display_name: display_name,
                 access_mode: nil, model: model_id,
-                default_model: model_id, user_model: nil,
                 visibility: visibility, creator_id: creator_id
             )
         }

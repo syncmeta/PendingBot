@@ -4,6 +4,8 @@ import { logger } from 'hono/logger';
 import type { AppBindings, Env } from './types';
 import { healthRoutes } from './routes/health';
 import { messageRoutes } from './routes/messages';
+import { conversationRoutes } from './routes/conversations';
+import { botRoutes } from './routes/bots';
 import { uploadRoutes } from './routes/upload';
 import { scrollRoutes } from './routes/scroll';
 import { meRoutes } from './routes/me';
@@ -58,6 +60,8 @@ app.onError((err, c) => {
 const v1 = new Hono<AppBindings>();
 v1.route('/health', healthRoutes);
 v1.route('/messages', messageRoutes);
+v1.route('/conversations', conversationRoutes);
+v1.route('/bots', botRoutes);
 v1.route('/upload', uploadRoutes);
 v1.route('/uploads', uploadRoutes);   // GET /v1/uploads/:id
 v1.route('/scroll', scrollRoutes);

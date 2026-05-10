@@ -55,6 +55,11 @@ struct APIClient {
         _ = try await sendRaw(req)
     }
 
+    func patchVoid<Body: Encodable>(_ path: String, body: Body) async throws {
+        let req = try await makeRequest(method: "PATCH", path: path, query: [], body: body)
+        _ = try await sendRaw(req)
+    }
+
     // MARK: - Multipart upload (POST /v1/upload)
 
     func upload<T: Decodable>(_ path: String, fileData: Data, fileName: String, mime: String,
