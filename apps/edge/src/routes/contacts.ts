@@ -18,14 +18,23 @@ contactRoutes.use('*', requireSession());
 // users client-side; the worker uses service-role to attach
 // display_name + avatar_path for each contact in one trip. Drives both
 // the friends tab and the message-list peer lookup for user_user convs.
+//
+// Optional `?via_handle_id=<uuid>` narrows the list to contacts who
+// added the caller via that specific handle (drives the per-handle
+// friend list in 加我为好友的方式 → 我的隐私号 detail view).
 contactRoutes.get('/', async (c) => {
   const userId = c.var.userId!;
+  const viaHandleId = c.req.query('via_handle_id') ?? null;
   const supa = serviceClient(c.env);
-  const { data: rows, error } = await supa
+  let query = supa
     .from('user_contacts')
-    .select('contact_user_id, alias, created_at')
+    .select('contact_user_id, alias, created_at, added_via_handle_id')
     .eq('user_id', userId)
     .order('created_at', { ascending: true });
+  if (viaHandleId) {
+    query = query.eq('added_via_handle_id', viaHandleId);
+  }
+  const { data: rows, error } = await query;
   if (error) return c.json({ error: 'database', detail: error.message }, 500);
   const ids = (rows ?? []).map((r) => r.contact_user_id as string);
   if (ids.length === 0) return c.json({ contacts: [] });
