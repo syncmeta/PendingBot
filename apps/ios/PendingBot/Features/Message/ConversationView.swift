@@ -2229,7 +2229,7 @@ struct ConversationView: View {
             let ext = mime.split(separator: "/").last.map(String.init) ?? "jpg"
             do {
                 let response: UploadResponse = try await api.upload(
-                    "api/upload/",
+                    "v1/upload",
                     fileData: data,
                     fileName: "image-\(UUID().uuidString.prefix(8)).\(ext)",
                     mime: mime,
@@ -2255,7 +2255,7 @@ struct ConversationView: View {
         guard let api, let data = image.jpegData(compressionQuality: 0.85) else { return }
         do {
             let response: UploadResponse = try await api.upload(
-                "api/upload/",
+                "v1/upload",
                 fileData: data,
                 fileName: "camera-\(UUID().uuidString.prefix(8)).jpg",
                 mime: "image/jpeg",
