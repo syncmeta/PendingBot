@@ -1,6 +1,6 @@
 # Migration number registry
 
-**Last assigned: `0061`**
+**Last assigned: `0063`**
 
 This file is the canonical record of every supabase migration number that has been
 claimed in this repo, including ones still unmerged on feature branches. It exists
@@ -90,3 +90,5 @@ pushed), the loser renumbers on their branch with a `chore(db): renumber 00NN â†
 | 0059 | `0059_skill_subscriptions_nullable_conv.sql` |
 | 0060 | `0060_publish_group_continue_requests.sql` |
 | 0061 | `0061_friend_request_remark.sql` |
+| 0062 | `0062_backfill_user_avatar_path.sql` |
+| 0063 | `0063_attachments_rls_avatar_visibility.sql` |

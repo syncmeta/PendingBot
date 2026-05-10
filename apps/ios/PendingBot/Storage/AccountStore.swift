@@ -121,7 +121,7 @@ final class AccountStore: ObservableObject {
             // but other code paths could put nested values in there).
             let data = try await SupabaseStack.shared
                 .from("users")
-                .select("display_name, custom_fields, pending_deletion_at")
+                .select("display_name, avatar_path, custom_fields, pending_deletion_at")
                 .eq("id", value: userId)
                 .single()
                 .execute()
@@ -130,7 +130,11 @@ final class AccountStore: ObservableObject {
                 let cf = json["custom_fields"] as? [String: Any] ?? [:]
                 self.hasBootstrapped = (cf["bootstrapped"] as? String) == "1"
                 self.avatarSeed = cf["avatar_seed"] as? String
-                self.avatarAttachmentId = cf["avatar_attachment_id"] as? String
+                // avatar_path is the canonical column read by /v1/contacts.
+                // 0062 backfilled and removed the legacy custom_fields key.
+                self.avatarAttachmentId = (json["avatar_path"] as? String).flatMap {
+                    $0.isEmpty ? nil : $0
+                }
                 if let dn = json["display_name"] as? String, !dn.isEmpty {
                     self.profileDisplayName = dn
                 }

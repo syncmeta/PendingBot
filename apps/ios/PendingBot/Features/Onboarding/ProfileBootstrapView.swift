@@ -339,19 +339,20 @@ struct ProfileBootstrapView: View {
         saving = true; defer { saving = false }
         struct Patch: Encodable {
             let display_name: String
+            let avatar_path: String?
             let custom_fields: [String: String]
         }
-        var fields: [String: String] = [
+        let fields: [String: String] = [
             "avatar_seed": c.seed,
             "bootstrapped": "1",
         ]
-        if let aid = c.customAttachmentId, !aid.isEmpty {
-            fields["avatar_attachment_id"] = aid
-        }
+        let aid = (c.customAttachmentId?.isEmpty == false) ? c.customAttachmentId : nil
         do {
             try await SupabaseStack.shared
                 .from("users")
-                .update(Patch(display_name: trimmed, custom_fields: fields))
+                .update(Patch(display_name: trimmed,
+                              avatar_path: aid,
+                              custom_fields: fields))
                 .eq("id", value: userId)
                 .execute()
             store.markBootstrapped(displayName: trimmed,
