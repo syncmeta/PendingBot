@@ -59,7 +59,10 @@ final class RealtimeManager {
         userSubs.forEach { $0.cancel() }
         userSubs.removeAll()
         if let ch = userChannel {
-            await ch.unsubscribe()
+            // removeChannel — not just unsubscribe — so the SDK drops its
+            // cached entry; next `channel(topic)` returns a fresh instance
+            // instead of a stale one whose postgres_changes buffer is full.
+            await SupabaseStack.shared.realtimeV2.removeChannel(ch)
             userChannel = nil
         }
     }
@@ -195,7 +198,8 @@ final class RealtimeManager {
         handle.observers.removeValue(forKey: token.id)
         if handle.observers.isEmpty {
             handle.subs.forEach { $0.cancel() }
-            await handle.channel.unsubscribe()
+            // See `stopUserChannel`.
+            await SupabaseStack.shared.realtimeV2.removeChannel(handle.channel)
             convChannels.removeValue(forKey: token.conversationId)
         }
     }
@@ -205,7 +209,7 @@ final class RealtimeManager {
         await stopUserChannel()
         for (_, handle) in convChannels {
             handle.subs.forEach { $0.cancel() }
-            await handle.channel.unsubscribe()
+            await SupabaseStack.shared.realtimeV2.removeChannel(handle.channel)
         }
         convChannels.removeAll()
     }
