@@ -25,11 +25,11 @@ struct ScrollFeedRow: View {
                     .frame(height: 0.5)
 
                 Text(displayTitle)
-                    .font(Theme.Fonts.serif(size: 22, weight: .semibold))
+                    .font(Theme.Fonts.serif(size: 17, weight: .semibold))
                     .foregroundStyle(Theme.Palette.ink)
                     .lineLimit(3)
                     .multilineTextAlignment(.leading)
-                    .lineSpacing(3)
+                    .lineSpacing(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 if run.isRunning {
@@ -45,11 +45,11 @@ struct ScrollFeedRow: View {
                     // to three lines so a 60-char Chinese subtitle can
                     // breathe instead of getting clipped mid-clause.
                     Text(summary)
-                        .font(Theme.Fonts.body)
+                        .font(Theme.Fonts.footnote)
                         .foregroundStyle(Theme.Palette.inkMuted)
                         .lineLimit(3)
                         .multilineTextAlignment(.leading)
-                        .lineSpacing(3)
+                        .lineSpacing(2)
                 }
 
                 statusPill
