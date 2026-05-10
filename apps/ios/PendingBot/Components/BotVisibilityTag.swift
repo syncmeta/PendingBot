@@ -25,7 +25,15 @@ struct BotVisibilityTag: View {
 /// three entity-type tag bgs (人类 / 私有机器人 / 公有机器人), kept
 /// intentionally pale so the pill reads as "all categories" without
 /// shouting over the per-type pills around it.
+///
+/// On every appearance (tab switch, pop-back from chat, pull-to-refresh,
+/// scroll-into-view) the gradient slides in over 3s with `easeOut` —
+/// instant motion at start, decelerating to a static rest position. Lives
+/// inside a `LazyVStack` so only visible rows ever animate; off-screen
+/// cells aren't even instantiated until they scroll in.
 struct GroupChatTag: View {
+    @State private var phase: CGFloat = 0
+
     var body: some View {
         Text("群聊")
             .font(.system(size: 10, weight: .semibold))
@@ -40,10 +48,28 @@ struct GroupChatTag: View {
                             Theme.Palette.amberBg.opacity(0.55),
                             Theme.Palette.plumBg.opacity(0.55),
                         ],
-                        startPoint: .leading,
-                        endPoint: .trailing
+                        // phase=0 → gradient sits entirely off the left
+                        // edge, so the pill reads as a uniform plumBg
+                        // (clamp colour past endPoint). phase=1 → gradient
+                        // fits the pill exactly: the static rest state.
+                        startPoint: UnitPoint(x: phase - 1, y: 0.5),
+                        endPoint: UnitPoint(x: phase, y: 0.5)
                     )
                 )
             )
+            .onAppear {
+                // Snap to the start state, then on the next runloop tick
+                // animate to rest. The async hop is what gives SwiftUI a
+                // frame to commit phase=0 before the withAnimation hint
+                // reads it — without it the two state writes get coalesced
+                // into a single transition from the previous value to 1.
+                phase = 0
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 16_000_000)
+                    withAnimation(.easeOut(duration: 3.0)) {
+                        phase = 1
+                    }
+                }
+            }
     }
 }
