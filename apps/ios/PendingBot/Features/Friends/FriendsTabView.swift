@@ -200,39 +200,39 @@ struct FriendsTabView: View {
                         }
                     }
 
-                    if !botsForFilter.isEmpty {
+                    // Single merged section — bots and humans interleaved in
+                    // alphabetical order. Filter chips above narrow by type.
+                    if !friendsForFilter.isEmpty {
                         Section {
-                            ForEach(botsForFilter) { bot in
-                                let selected = sidebarLayout && isSelected(kind: "bot", id: bot.id)
-                                FriendRow(kind: .bot,
-                                          avatarSeed: bot.id,
-                                          name: bot.display_name,
-                                          modelTag: bot.modelTag,
-                                          botVisibility: bot.visibility)
-                                    .listRowBackground(selected ? Theme.Palette.accentBg : Theme.Palette.surface)
-                                    .contentShape(Rectangle())
-                                    .onTapGesture { Task { await tapBot(bot) } }
-                                    .modifier(BotRowOwnerActions(
-                                        bot: bot,
-                                        isMine: ownsBot(bot),
-                                        onManage: { managingBot = bot }
-                                    ))
-                            }
-                        }
-                    }
-                    if !humansForFilter.isEmpty {
-                        Section {
-                            ForEach(humansForFilter) { c in
-                                let selected = sidebarLayout && isSelected(kind: "user", id: c.id)
-                                FriendRow(kind: .human,
-                                          avatarSeed: c.id,
-                                          avatarAttachmentId: c.avatarPath,
-                                          name: c.rowName,
-                                          modelTag: nil,
-                                          botVisibility: nil)
-                                    .listRowBackground(selected ? Theme.Palette.accentBg : Theme.Palette.surface)
-                                    .contentShape(Rectangle())
-                                    .onTapGesture { Task { await tapHuman(c) } }
+                            ForEach(friendsForFilter) { item in
+                                switch item {
+                                case .bot(let bot):
+                                    let selected = sidebarLayout && isSelected(kind: "bot", id: bot.id)
+                                    FriendRow(kind: .bot,
+                                              avatarSeed: bot.id,
+                                              name: bot.display_name,
+                                              modelTag: bot.modelTag,
+                                              botVisibility: bot.visibility)
+                                        .listRowBackground(selected ? Theme.Palette.accentBg : Theme.Palette.surface)
+                                        .contentShape(Rectangle())
+                                        .onTapGesture { Task { await tapBot(bot) } }
+                                        .modifier(BotRowOwnerActions(
+                                            bot: bot,
+                                            isMine: ownsBot(bot),
+                                            onManage: { managingBot = bot }
+                                        ))
+                                case .human(let c):
+                                    let selected = sidebarLayout && isSelected(kind: "user", id: c.id)
+                                    FriendRow(kind: .human,
+                                              avatarSeed: c.id,
+                                              avatarAttachmentId: c.avatarPath,
+                                              name: c.rowName,
+                                              modelTag: nil,
+                                              botVisibility: nil)
+                                        .listRowBackground(selected ? Theme.Palette.accentBg : Theme.Palette.surface)
+                                        .contentShape(Rectangle())
+                                        .onTapGesture { Task { await tapHuman(c) } }
+                                }
                             }
                         }
                     }
@@ -304,6 +304,31 @@ struct FriendsTabView: View {
         let peerUserId: String
         let peerDisplayName: String
         let message: String?
+    }
+
+    /// Unified row type so bots and humans share one alphabetically-sorted
+    /// section. Filter chips already do the type-narrowing that separate
+    /// sections used to.
+    enum FriendRowItem: Identifiable, Hashable {
+        case bot(BotPick)
+        case human(HumanPick)
+
+        var id: String {
+            switch self {
+            case .bot(let b):   return "bot:\(b.id)"
+            case .human(let h): return "user:\(h.id)"
+            }
+        }
+
+        /// Name used for both the row label and the sort key, so the
+        /// visible order matches what the user reads (alias > displayName
+        /// for humans; display_name for bots).
+        var sortName: String {
+            switch self {
+            case .bot(let b):   return b.display_name
+            case .human(let h): return h.rowName
+            }
+        }
     }
 
     private struct BotDecodable: Decodable {
@@ -431,19 +456,26 @@ struct FriendsTabView: View {
 
     // MARK: - Filtering
 
-    private var botsForFilter: [BotPick] {
+    /// Merged + alphabetically-sorted friend list for the current filter.
+    /// Bots and humans share one section so the sort can interleave them;
+    /// `localizedStandardCompare` handles pinyin for Chinese names and is
+    /// case-insensitive for ASCII.
+    private var friendsForFilter: [FriendRowItem] {
+        let items: [FriendRowItem]
         switch filter {
-        case .all:         return bots
-        case .privateBots: return bots.filter { $0.visibility == "private" }
-        case .publicBots:  return bots.filter { $0.visibility != "private" }
-        case .humans, .groups: return []
+        case .all:
+            items = bots.map { .bot($0) } + humans.map { .human($0) }
+        case .humans:
+            items = humans.map { .human($0) }
+        case .privateBots:
+            items = bots.filter { $0.visibility == "private" }.map { .bot($0) }
+        case .publicBots:
+            items = bots.filter { $0.visibility != "private" }.map { .bot($0) }
+        case .groups:
+            items = []
         }
-    }
-
-    private var humansForFilter: [HumanPick] {
-        switch filter {
-        case .all, .humans: return humans
-        case .privateBots, .publicBots, .groups: return []
+        return items.sorted {
+            $0.sortName.localizedStandardCompare($1.sortName) == .orderedAscending
         }
     }
 
@@ -455,11 +487,11 @@ struct FriendsTabView: View {
         case .all:
             return nil
         case .humans:
-            return humans.isEmpty ? "还没有人类朋友" : nil
+            return friendsForFilter.isEmpty ? "还没有人类朋友" : nil
         case .privateBots:
-            return botsForFilter.isEmpty ? "还没有私有机器人" : nil
+            return friendsForFilter.isEmpty ? "还没有私有机器人" : nil
         case .publicBots:
-            return botsForFilter.isEmpty ? "还没有公有机器人" : nil
+            return friendsForFilter.isEmpty ? "还没有公有机器人" : nil
         case .groups:
             return "还没有群聊"
         }
