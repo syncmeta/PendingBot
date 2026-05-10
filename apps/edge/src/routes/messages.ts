@@ -306,23 +306,7 @@ messageRoutes.post('/', async (c) => {
     }
   }
 
-  // Self-chat: load the user's profile so the bot can wear their persona.
-  // The bio + display_name get prepended to the system prompt as a
-  // "play this person" instruction.
-  let selfPersona: { displayName: string; bio: string } | null = null;
-  if (conv.conversation_type === 'self') {
-    const { data: u } = await supaService
-      .from('users')
-      .select('display_name, bio')
-      .eq('id', userId)
-      .maybeSingle();
-    if (u) {
-      selfPersona = {
-        displayName: (u.display_name as string | null) || '你',
-        bio: (u.bio as string | null) || '',
-      };
-    }
-  }
+  const isSelfChat = conv.conversation_type === 'self';
 
   // Lazy Honcho refresh: if the client's window has moved past memory's
   // coverage, kick off a background catch-up. Doesn't block the SSE stream
@@ -377,7 +361,7 @@ messageRoutes.post('/', async (c) => {
               // CHECK constraint guarantees one of these two; types can't see it.
               output_mode: bot.output_mode === 'bubble' ? 'bubble' : 'single',
             },
-            selfPersona,
+            isSelfChat,
             recentContext: parsed.recentContext ?? [],
             newMessage: parsed.newMessage ?? '（系统注入：根据上一轮的查证笔记，自然继续上面的对话。不要提到这是自动触发的。）',
             activeLookbacks: parsed.activeLookbacks ?? [],
@@ -655,7 +639,7 @@ messageRoutes.post('/start', async (c) => {
               model_id: bot.model_id,
               output_mode: bot.output_mode === 'bubble' ? 'bubble' : 'single',
             },
-            selfPersona: null,
+            isSelfChat: false,
             recentContext: parsed.recentContext ?? [],
             newMessage: parsed.newMessage,
             activeLookbacks: [],
