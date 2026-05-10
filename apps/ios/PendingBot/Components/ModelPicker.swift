@@ -58,6 +58,11 @@ struct ModelPickerSheet: View {
     /// Different surfaces want different wording — e.g. envelope picker
     /// uses "无协作者", a bot/conv picker would use "跟随机器人默认".
     var clearLabel: String = "跟随机器人默认"
+    /// When true, only show models whose server-side `supports_vision` is
+    /// true. Used by the per-conv vision-model picker — picking a non-
+    /// vision model there would just route into a runtime error at the
+    /// upstream provider, so filtering up front is the right move.
+    var visionOnly: Bool = false
     var onPick: (String?) -> Void
 
     @State private var allModels: [OpenRouterModel] = []
@@ -67,9 +72,12 @@ struct ModelPickerSheet: View {
     @State private var expandedProviders: Set<String> = []
 
     private var filtered: [OpenRouterModel] {
+        let visionFiltered = visionOnly
+            ? allModels.filter { $0.supports_vision == true }
+            : allModels
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !q.isEmpty else { return allModels }
-        return allModels.filter {
+        guard !q.isEmpty else { return visionFiltered }
+        return visionFiltered.filter {
             $0.slug.lowercased().contains(q)
             || $0.display_name.lowercased().contains(q)
             || $0.provider.lowercased().contains(q)

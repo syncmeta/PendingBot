@@ -1,4 +1,7 @@
-import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
+import type {
+  ChatCompletionMessageParam,
+  ChatCompletionContentPart,
+} from 'openai/resources/chat/completions';
 import { getPrompt } from './prompt-loader';
 import type { Memory } from '../lib/memory';
 
@@ -29,6 +32,31 @@ export interface BuildMessagesInput {
     created_at: string; // ISO 8601 with timezone
   }>;
   newMessage: string;
+  /// Image content parts to attach to the *current* user turn — only set
+  /// when the main model has vision. Each part is an OpenAI-style
+  /// {type:'image_url', image_url:{url:'data:...'}} block. When present,
+  /// the user message goes out as a content array (text + images) so the
+  /// model reads the image directly. When absent or empty, the model only
+  /// sees the text turn — but the inventory section below carries the
+  /// summary as a fallback signal.
+  currentImageParts?: ChatCompletionContentPart[];
+  /// "[图 ID:abc12345] 摘要... 标签: ..." rows for every image visible
+  /// in this conv's recent history (typically last ~20 messages). Built
+  /// from attachments.summary by the caller and rendered as a system
+  /// context block. Empty array / undefined → section omitted.
+  attachmentInventory?: Array<{
+    id: string;
+    summary: string | null;
+    tags: string[];
+    /// 'pending' / 'failed' get a small note in the rendered line so the
+    /// model knows the summary isn't available yet (and shouldn't
+    /// hallucinate). 'done' is the normal case.
+    status: 'pending' | 'done' | 'failed' | 'skipped' | string;
+    /// Whether the row belongs to *this* turn's user message — flagged
+    /// in rendering so the model can correlate "the user just sent this
+    /// image" without us putting the summary inside the user turn.
+    isCurrentTurn?: boolean;
+  }>;
   // IANA timezone from the client (e.g. "Asia/Shanghai"). Used to format
   // the *current* user turn's timestamp (server only knows UTC for "now").
   // Historical messages carry their own offset in `created_at`, so we
@@ -105,6 +133,38 @@ function buildBotNoteSection(note: string | null): string {
     '（这份笔记是你过去自己整理的，对方看不到——交往时参考着用。）',
     '',
     note.trim(),
+  ].join('\n');
+}
+
+// Render the attachment inventory as a system context block. Each row
+// becomes "- [图 ID:xxxxxxxx] 摘要... 标签: a, b" — the bare 8-char prefix
+// is what the model passes to read_attachment when it needs more detail
+// (the tool resolves either full UUID or any unique prefix).
+function buildAttachmentInventorySection(
+  inv: BuildMessagesInput['attachmentInventory'],
+): string {
+  if (!inv || inv.length === 0) return '';
+  const lines = inv.map((a) => {
+    const idShort = a.id.slice(0, 8);
+    const idLabel = a.isCurrentTurn ? `${idShort}（本轮）` : idShort;
+    if (a.status !== 'done' || !a.summary) {
+      const why =
+        a.status === 'pending'
+          ? '摘要生成中'
+          : a.status === 'failed'
+            ? '摘要失败'
+            : a.status === 'skipped'
+              ? '摘要已跳过'
+              : `摘要状态:${a.status}`;
+      return `- [图 ID:${idLabel}] (${why}，无文字描述。需要的话可以调 read_attachment 直接看图。)`;
+    }
+    const tagPart = a.tags.length > 0 ? `  标签: ${a.tags.join(', ')}` : '';
+    return `- [图 ID:${idLabel}] ${a.summary}${tagPart}`;
+  });
+  return [
+    '## 历史图片附件',
+    '这个会话里出现过下列图片，已由识图模型预先生成摘要。如果摘要不够用、需要看图本身的细节，调用 `read_attachment` 工具（参数 `attachment_id` 填上面 [图 ID:xxx] 的 8 位前缀或完整 UUID，`question` 提具体问题）。',
+    ...lines,
   ].join('\n');
 }
 
@@ -227,10 +287,14 @@ export function buildMessages(input: BuildMessagesInput): ChatCompletionMessageP
   const skillsSection = buildSkillsSection(skills);
   const botNoteSection = buildBotNoteSection(input.botNote);
   const lookbackSection = buildLookbackSection(input.lookbacks);
+  const attachmentSection = buildAttachmentInventorySection(input.attachmentInventory);
   const modeInstr = bot.output_mode === 'bubble' ? BUBBLE_INSTRUCTIONS : SINGLE_INSTRUCTIONS;
+  // attachmentSection sits between lookbacks and modeInstr — out of the
+  // cached prefix because the inventory mutates with every new image,
+  // before the always-mutating mode/recent-turn segment.
   const systemContent = [
     platform, selfSection, skillsSection,
-    botNoteSection, lookbackSection, modeInstr,
+    botNoteSection, lookbackSection, attachmentSection, modeInstr,
   ].filter(Boolean).join('\n\n');
 
   // System message: always cached. Stable across turns until prompts change.
@@ -264,8 +328,20 @@ export function buildMessages(input: BuildMessagesInput): ChatCompletionMessageP
     }
   }
 
-  // Current user turn — outside the cache (always fresh).
-  messages.push({ role: 'user', content: withTimeHint(newMessage, nowIso, clientTz) });
+  // Current user turn — outside the cache (always fresh). When the main
+  // model has vision and the caller passed image parts, send a content
+  // array so the model reads images directly. Otherwise plain text — the
+  // attachment-inventory section above carries the summary.
+  const userText = withTimeHint(newMessage, nowIso, clientTz);
+  if (input.currentImageParts && input.currentImageParts.length > 0) {
+    const parts: ChatCompletionContentPart[] = [
+      { type: 'text', text: userText },
+      ...input.currentImageParts,
+    ];
+    messages.push({ role: 'user', content: parts });
+  } else {
+    messages.push({ role: 'user', content: userText });
+  }
 
   return messages;
 }

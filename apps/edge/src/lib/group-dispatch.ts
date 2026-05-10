@@ -118,10 +118,12 @@ export async function dispatchGroupTurn(
   //    then runChatTurn's recordAudit writes user_id = creator.
   const { data: convRow } = await supa
     .from('conversations')
-    .select('user_id, provider_override, round_count')
+    .select('user_id, provider_override, round_count, vision_model_override' as never)
     .eq('id', conversationId)
     .single();
-  const placeholderUserId = (convRow?.user_id as string | null) ?? '';
+  const placeholderUserId =
+    ((convRow as unknown as { user_id?: string | null } | null)?.user_id as string | null) ??
+    '';
 
   // 4. Serial dispatch. Each bot's runChatTurn writes its bubbles to
   //    `messages` directly; Realtime fans those out to iOS. We don't
@@ -192,7 +194,12 @@ export async function dispatchGroupTurn(
         },
         recentContext,
         newMessage: nudge,
-        providerOverride: (convRow?.provider_override as string | null) ?? null,
+        providerOverride:
+          ((convRow as unknown as { provider_override?: string | null } | null)
+            ?.provider_override as string | null) ?? null,
+        visionModelOverride:
+          ((convRow as unknown as { vision_model_override?: string | null } | null)
+            ?.vision_model_override as string | null) ?? null,
         // Exposes set_my_group_nickname + set_bot_group_description
         // tools to this turn. The bot can call them mid-reply to
         // refine its group identity / "when to call me" doc.

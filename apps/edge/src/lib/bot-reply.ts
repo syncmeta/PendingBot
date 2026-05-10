@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type {
+  ChatCompletionContentPart,
   ChatCompletionMessageParam,
   ChatCompletionMessageToolCall,
   ChatCompletionTool,
@@ -19,6 +20,12 @@ import {
   estimateAssistantOutputTokens,
   estimateRequestInputTokens,
 } from '../llm/token-estimate';
+import {
+  loadAttachmentAsImagePart,
+  modelSupportsVision,
+  readAttachmentForTool,
+  summarizeAttachments,
+} from '../llm/vision';
 import { getBotMemory, getUserMemory } from './memory';
 import { queryUserRepresentation } from './honcho';
 import { braveSearch, firecrawlScrape } from './web';
@@ -106,6 +113,28 @@ const CHAT_TOOLS: ChatCompletionTool[] = [
           },
         },
         required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_attachment',
+      description:
+        '重新查看会话里之前出现过的某张图片。系统提示词的「历史图片附件」段会列出每张图的 ID 前缀和摘要——当摘要不足以回答用户的问题（比如要看图中文字、人物服饰细节、表格数据、UI 布局）时调用本工具。识图模型会针对你提的 question 给出针对性回答。**只在确实需要直接看图时用**——已经在摘要里写得很清楚的就别再调，会浪费成本。',
+      parameters: {
+        type: 'object',
+        properties: {
+          attachment_id: {
+            type: 'string',
+            description: '附件 ID（系统提示词里 [图 ID:xxxxxxxx] 的 8 位前缀，或完整 UUID）。前缀必须能在当前会话里唯一定位一张图。',
+          },
+          question: {
+            type: 'string',
+            description: '想知道关于这张图的什么。问得越具体回答越针对。例：「图中文字内容是什么」「人物穿什么衣服」「左下角的图表数据」。1–500 字。',
+          },
+        },
+        required: ['attachment_id', 'question'],
       },
     },
   },
@@ -256,6 +285,17 @@ export interface RunChatTurnInput {
   };
   recentContext: BuildMessagesInput['recentContext'];
   newMessage: string;
+  /// Attachment ids on the current user turn (the message that triggered
+  /// this reply). When the bot's main model has vision, these load as
+  /// image_url content parts on the user turn so the model reads them
+  /// directly. When it doesn't, runChatTurn ensures their summaries land
+  /// before the LLM call so the inventory section carries the description.
+  /// Caller in routes/messages.ts forwards parsed.attachmentIds.
+  currentAttachmentIds?: string[];
+  /// conversations.vision_model_override (0064). NULL = auto. Threaded
+  /// through to summarize + read_attachment so the per-conv pin actually
+  /// kicks in.
+  visionModelOverride?: string | null;
   /// Per-conversation provider pin (slug from llm_providers.slug, e.g.
   /// 'worldrouter' / 'openrouter'). When set, passed to LLMRouter as
   /// preferProvider; the existing fallback chain still kicks in if the
@@ -346,6 +386,135 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   }
   const botNote = (botNoteRes.data?.body_md as string | undefined) ?? null;
 
+  // 1.5 Vision/attachment resolution.
+  //
+  // - mainHasVision: lookup llm_models.capabilities.vision for this conv's
+  //   main model. Drives whether we send images inline on the current
+  //   turn or rely on text summaries.
+  // - attachmentInventory: every image visible in this conv's recent
+  //   history, rendered as a "## 历史图片附件" system block by the builder.
+  //   The model can call read_attachment with the listed IDs to look at
+  //   any image again.
+  // - currentImageParts: actual image_url blocks for the current turn's
+  //   images, only populated when main has vision.
+  // - When main lacks vision and the current turn has unsummarized images,
+  //   we sync-trigger summarizeAttachments so the inventory has at least
+  //   the summary by the time we hit the LLM. summarizeAttachments is
+  //   idempotent — the async hook in routes/messages.ts may already be
+  //   running; this just guarantees we don't ship without summaries.
+  const visionOverride = input.visionModelOverride ?? null;
+  const mainHasVision = await modelSupportsVision(supa, bot.model_id);
+  const currentSet = new Set(input.currentAttachmentIds ?? []);
+
+  // History inventory pull. Service client bypasses RLS — fine, we
+  // already gated this caller (route handler verified the user is a
+  // conv participant). Cap at 30 to bound prompt size.
+  const invRes = await supa
+    .from('attachments')
+    .select(
+      'id, summary, tags, summary_status, created_at' as never,
+    )
+    .eq('conversation_id', conversationId)
+    .order('created_at', { ascending: true })
+    .limit(30);
+  const inventory = (
+    ((invRes.data as unknown) as
+      | Array<{
+          id: string;
+          summary: string | null;
+          tags: string[] | null;
+          summary_status: string;
+        }>
+      | null) ?? []
+  ).map((r) => ({
+    id: r.id,
+    summary: r.summary,
+    tags: r.tags ?? [],
+    status: r.summary_status,
+    isCurrentTurn: currentSet.has(r.id),
+  }));
+
+  let currentImageParts: ChatCompletionContentPart[] | undefined;
+  if (
+    mainHasVision &&
+    input.currentAttachmentIds &&
+    input.currentAttachmentIds.length > 0
+  ) {
+    const { data: rows } = await supa
+      .from('attachments')
+      .select('id, r2_key, mime_type, byte_size')
+      .in('id', input.currentAttachmentIds);
+    const parts: ChatCompletionContentPart[] = [];
+    for (const r of (rows ?? []) as Array<{
+      r2_key: string;
+      mime_type: string;
+      byte_size: number;
+    }>) {
+      const p = await loadAttachmentAsImagePart(env, r);
+      if (p) parts.push(p);
+    }
+    if (parts.length > 0) currentImageParts = parts;
+  } else if (
+    !mainHasVision &&
+    input.currentAttachmentIds &&
+    input.currentAttachmentIds.length > 0
+  ) {
+    // Block on summarization for any current-turn images that don't yet
+    // have summaries. The async hook fired by routes/messages.ts may be
+    // mid-flight; summarizeAttachment is idempotent and short-circuits
+    // on summary_status='done', so a second concurrent call costs at
+    // most one duplicated LLM round-trip. Worth it for the determinism.
+    const pending = inventory
+      .filter(
+        (a) =>
+          a.isCurrentTurn && a.status !== 'done' && a.status !== 'skipped',
+      )
+      .map((a) => a.id);
+    if (pending.length > 0) {
+      await summarizeAttachments(
+        {
+          supa,
+          env,
+          conversationId,
+          userId,
+          mainModelSlug: bot.model_id,
+          visionOverride,
+        },
+        pending,
+      );
+      // Re-pull the rows we just summarized so the inventory reflects
+      // the new state (rather than re-querying the whole list).
+      const { data: refreshed } = await supa
+        .from('attachments')
+        .select('id, summary, tags, summary_status' as never)
+        .in('id', pending);
+      const updates = new Map<
+        string,
+        { summary: string | null; tags: string[]; status: string }
+      >();
+      for (const r of ((refreshed as unknown) as Array<{
+        id: string;
+        summary: string | null;
+        tags: string[] | null;
+        summary_status: string;
+      }> | null) ?? []) {
+        updates.set(r.id, {
+          summary: r.summary,
+          tags: r.tags ?? [],
+          status: r.summary_status,
+        });
+      }
+      for (const item of inventory) {
+        const u = updates.get(item.id);
+        if (u) {
+          item.summary = u.summary;
+          item.tags = u.tags;
+          item.status = u.status;
+        }
+      }
+    }
+  }
+
   // 2. Build prompt. The builder marks the cache breakpoint per plan/02
   // (every 4 rounds; see llm/builder.ts). activeLookbacks become an
   // additional system block so the bot sees its prior fact-check notes.
@@ -353,6 +522,8 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     bot, botMemory, skills, botNote,
     lookbacks: activeLookbacks,
     recentContext, newMessage,
+    currentImageParts,
+    attachmentInventory: inventory,
     clientTz: input.clientTz,
   });
 
@@ -555,6 +726,8 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
             emit,
             userId,
             botId: bot.id,
+            botModelId: bot.model_id,
+            visionOverride,
             conversationId,
             citations,
           });
@@ -723,6 +896,12 @@ interface ToolCtx {
   userId: string;
   botId: string;
   conversationId: string;
+  /// Conv's main model slug — needed by read_attachment to decide whether
+  /// to route the tool call to the main model itself (vision-capable) or
+  /// fall back to the configured vision model.
+  botModelId: string;
+  /// conversations.vision_model_override — null = auto fallback chain.
+  visionOverride: string | null;
   /// Accumulator shared with runChatTurn — search_web pushes deduped hits
   /// here so the per-turn `[N]` numbering stays stable across rounds.
   citations: Citation[];
@@ -798,6 +977,9 @@ async function runTool(
     }
     if (name === 'create_skill') {
       return await createSkillTool(env, args, ctx);
+    }
+    if (name === 'read_attachment') {
+      return await readAttachmentTool(env, args, ctx);
     }
     if (name === 'execute_code') {
       return await executeCodeTool(env, args, ctx);
@@ -880,6 +1062,96 @@ async function createSkillTool(
 
   ctx.emit('tool_result', { name: 'create_skill', skill_id: data.id, skill_name: rawName });
   return JSON.stringify({ skill_id: data.id, name: rawName, subscribed: true });
+}
+
+// read_attachment — let the model re-look at an image visible in this
+// conv's history. The system prompt's "## 历史图片附件" section lists
+// every image with an 8-char ID prefix; the bot passes either that
+// prefix or the full UUID, plus a question. We resolve prefix → full
+// UUID against this conversation's attachments table (so the model
+// can't poke at images from other convs even if it guesses an id),
+// then call readAttachmentForTool which routes to the configured
+// vision model.
+async function readAttachmentTool(
+  env: Env,
+  args: Record<string, unknown>,
+  ctx: ToolCtx,
+): Promise<string> {
+  const idArg = String(args.attachment_id ?? '').trim();
+  const question = String(args.question ?? '').trim();
+  if (!idArg) return JSON.stringify({ error: 'attachment_id is required' });
+  if (!question) return JSON.stringify({ error: 'question is required' });
+  if (question.length > 500) {
+    return JSON.stringify({ error: 'question exceeds 500 chars' });
+  }
+
+  ctx.emit('tool_call', {
+    name: 'read_attachment',
+    attachment_id: idArg,
+    question,
+  });
+
+  const supa = serviceClient(env);
+
+  // Resolve prefix → full UUID. Full UUIDs (36 chars) match exactly;
+  // shorter inputs get matched by prefix within this conv. UUID prefix
+  // search via ilike on the text-cast id — the conversation_id filter
+  // bounds the row count, so this stays cheap without a dedicated index.
+  let fullId = idArg;
+  if (!/^[0-9a-f-]{36}$/i.test(idArg)) {
+    const { data: matches, error: matchErr } = await supa
+      .from('attachments')
+      .select('id')
+      .eq('conversation_id', ctx.conversationId)
+      .ilike('id::text' as never, `${idArg.toLowerCase()}%`);
+    if (matchErr) {
+      ctx.emit('tool_result', { name: 'read_attachment', error: matchErr.message });
+      return JSON.stringify({ error: `database: ${matchErr.message}` });
+    }
+    const rows = (matches ?? []) as Array<{ id: string }>;
+    if (rows.length === 0) {
+      ctx.emit('tool_result', { name: 'read_attachment', error: 'no match' });
+      return JSON.stringify({
+        error: `no attachment in this conversation matches prefix "${idArg}"`,
+      });
+    }
+    if (rows.length > 1) {
+      ctx.emit('tool_result', { name: 'read_attachment', error: 'ambiguous' });
+      return JSON.stringify({
+        error: `prefix "${idArg}" matches ${rows.length} images; pass a longer prefix or the full UUID`,
+        candidates: rows.map((r) => r.id),
+      });
+    }
+    fullId = rows[0]!.id;
+  }
+
+  const result = await readAttachmentForTool(
+    {
+      supa,
+      env,
+      conversationId: ctx.conversationId,
+      userId: ctx.userId,
+      mainModelSlug: ctx.botModelId,
+      visionOverride: ctx.visionOverride,
+    },
+    fullId,
+    question,
+  );
+
+  if ('error' in result) {
+    ctx.emit('tool_result', {
+      name: 'read_attachment',
+      attachment_id: fullId,
+      error: result.error,
+    });
+    return JSON.stringify({ error: result.error });
+  }
+  ctx.emit('tool_result', {
+    name: 'read_attachment',
+    attachment_id: fullId,
+    chars: result.answer.length,
+  });
+  return JSON.stringify({ attachment_id: fullId, answer: result.answer });
 }
 
 // Group-only — bot tells the system "call me <X> in this group". The

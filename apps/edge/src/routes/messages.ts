@@ -8,6 +8,7 @@ import { runLookback } from '../lib/lookback-runner';
 import { runTitle } from '../lib/title-runner';
 import { requireBalance, InsufficientBalanceError } from '../lib/billing';
 import { resolveGroupMentions } from '../lib/group-mentions';
+import { summarizeAttachments, DEFAULT_VISION_MODEL } from '../llm/vision';
 import type { AppBindings } from '../types';
 
 export const messageRoutes = new Hono<AppBindings>();
@@ -92,13 +93,25 @@ messageRoutes.post('/', async (c) => {
   // RLS-gate: user must be a participant of the conversation. We use the
   // user JWT for the read so the gate is RLS-driven, not Worker-trusted.
   const supaUser = userClient(c.env, userJwt);
-  const { data: conv, error: convErr } = await supaUser
+  // Cast through unknown — vision_model_override lands in 0064; schema.ts
+  // is regenerated lazily after migrations. Other column accesses on the
+  // returned row (provider_override etc.) stay structurally safe.
+  const convRes = await supaUser
     .from('conversations')
-    // provider_override (0038) + model_slug_override (0058) — both column-on-conv pins.
-    .select('id, conversation_type, bot_id, round_count, provider_override, model_slug_override')
+    // provider_override (0038) + model_slug_override (0058) + vision_model_override (0064).
+    .select('id, conversation_type, bot_id, round_count, provider_override, model_slug_override, vision_model_override' as never)
     .eq('id', parsed.conversationId)
     .maybeSingle();
-  if (convErr) return c.json({ error: 'database', detail: convErr.message }, 500);
+  if (convRes.error) return c.json({ error: 'database', detail: convRes.error.message }, 500);
+  const conv = convRes.data as unknown as {
+    id: string;
+    conversation_type: 'user_bot' | 'self' | 'group' | 'user_user';
+    bot_id: string | null;
+    round_count: number | null;
+    provider_override: string | null;
+    model_slug_override: string | null;
+    vision_model_override: string | null;
+  } | null;
   if (!conv) return c.json({ error: 'conversation not found or no access' }, 404);
 
   // Body shape varies by mode:
@@ -187,6 +200,24 @@ messageRoutes.post('/', async (c) => {
       return c.json({ error: 'database', detail: selectErr?.message ?? 'row missing' }, 500);
     }
     parentMessageId = userRow.id as string;
+
+    // Detached attachment summarization. Generates a 1-2 sentence summary
+    // + tags per image and writes them onto attachments rows. This runs
+    // independently of the bot reply path so groups / no-bot convs /
+    // user_user also get image summaries (which iOS / future tools may
+    // surface). See edge/llm/vision.ts.
+    if (parsed.attachmentIds && parsed.attachmentIds.length > 0) {
+      c.executionCtx.waitUntil(
+        scheduleAttachmentSummary({
+          env: c.env,
+          conversationId: parsed.conversationId,
+          userId,
+          attachmentIds: parsed.attachmentIds,
+          botId: conv.bot_id ?? null,
+          visionOverride: conv.vision_model_override ?? null,
+        }),
+      );
+    }
   } else {
     // autoLookback: anchor parent to the last user row in this conv so the
     // bot reply still has something sensible to point at if anyone queries.
@@ -371,6 +402,8 @@ messageRoutes.post('/', async (c) => {
             isSelfChat,
             recentContext: parsed.recentContext ?? [],
             newMessage: parsed.newMessage ?? '（系统注入：根据上一轮的查证笔记，自然继续上面的对话。不要提到这是自动触发的。）',
+            currentAttachmentIds: parsed.attachmentIds,
+            visionModelOverride: conv.vision_model_override,
             activeLookbacks: parsed.activeLookbacks ?? [],
             providerOverride: effectiveProviderOverride,
             clientTz: parsed.clientTz,
@@ -582,6 +615,23 @@ messageRoutes.post('/start', async (c) => {
   const convId = startInfo.conv_id;
   const userMessageId = startInfo.user_message_id;
 
+  // Detached attachment summarization for the just-created conv. New convs
+  // can't have vision_model_override set yet (form doesn't expose it on
+  // first turn), so we pass null — scheduleAttachmentSummary falls back to
+  // bot.model_id-vs-vision check, then DEFAULT_VISION_MODEL.
+  if (parsed.attachmentIds && parsed.attachmentIds.length > 0) {
+    c.executionCtx.waitUntil(
+      scheduleAttachmentSummary({
+        env: c.env,
+        conversationId: convId,
+        userId,
+        attachmentIds: parsed.attachmentIds,
+        botId: bot.id,
+        visionOverride: null,
+      }),
+    );
+  }
+
   let effectiveProviderOverride: string | null = null;
   if (parsed.providerOverride !== undefined) {
     effectiveProviderOverride = parsed.providerOverride;
@@ -649,6 +699,9 @@ messageRoutes.post('/start', async (c) => {
             isSelfChat: false,
             recentContext: parsed.recentContext ?? [],
             newMessage: parsed.newMessage,
+            currentAttachmentIds: parsed.attachmentIds,
+            // Brand-new conv from /start — no override possible yet.
+            visionModelOverride: null,
             activeLookbacks: [],
             providerOverride: effectiveProviderOverride,
             clientTz: parsed.clientTz,
@@ -794,4 +847,49 @@ function maybeAutoLookback(input: {
       botId: input.botId,
     }),
   );
+}
+
+// Resolves the conversation's main model (bot.model_id, falling back to
+// DEFAULT_VISION_MODEL when the conv has no bot pinned), then kicks off
+// summarizeAttachments for the just-uploaded image set. Self-contained so
+// the route can fire it via waitUntil without holding up the response.
+async function scheduleAttachmentSummary(input: {
+  env: AppBindings['Bindings'];
+  conversationId: string;
+  userId: string;
+  attachmentIds: string[];
+  /// May be null for user_user / no-bot self convs — those use
+  /// DEFAULT_VISION_MODEL directly since there's no main model to align
+  /// with.
+  botId: string | null;
+  visionOverride: string | null;
+}): Promise<void> {
+  try {
+    const supa = serviceClient(input.env);
+    let mainModelSlug: string = DEFAULT_VISION_MODEL;
+    if (input.botId) {
+      const { data: bot } = await supa
+        .from('bots')
+        .select('model_id')
+        .eq('id', input.botId)
+        .maybeSingle();
+      const botModelId = (bot as { model_id?: string } | null)?.model_id;
+      if (botModelId && botModelId.length > 0) {
+        mainModelSlug = botModelId;
+      }
+    }
+    await summarizeAttachments(
+      {
+        supa,
+        env: input.env,
+        conversationId: input.conversationId,
+        userId: input.userId,
+        mainModelSlug,
+        visionOverride: input.visionOverride,
+      },
+      input.attachmentIds,
+    );
+  } catch (err) {
+    console.warn('[messages] scheduleAttachmentSummary failed', err);
+  }
 }

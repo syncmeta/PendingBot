@@ -24,11 +24,18 @@ struct ConversationSettingsView: View {
     var onOpenSkills: () -> Void
     var onApplyModel: (String?, ModelPickScope) -> Void
     var onApplyProvider: (String?) -> Void
+    /// Per-conv vision-model pin. nil means "auto" (use the main model
+    /// when it has vision, else server's default — currently kimi-latest).
+    /// Saved via PATCH /v1/conversations/:id { vision_model_slug }.
+    var onApplyVisionModel: (String?) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.api) private var api
     @State private var showModelPicker = false
+    @State private var showVisionPicker = false
     @State private var pendingPick: PickPayload?
+    @State private var visionModelOverride: String? = nil
+    @State private var visionLoaded: Bool = false
 
     // ── 来信 / Envelopes ─────────────────────────────────────────────────
     @State private var envelope: EnvelopeSettings = .defaults
@@ -100,6 +107,30 @@ struct ConversationSettingsView: View {
                         }
                         .foregroundStyle(Theme.Palette.ink)
                     }
+
+                    // 识图模型 — only used when the bot needs to describe
+                    // an image. nil = auto: main model if it has vision,
+                    // else server falls back to kimi-latest.
+                    Section {
+                        Button {
+                            showVisionPicker = true
+                        } label: {
+                            HStack {
+                                Image(systemName: "eye")
+                                Text("识图模型")
+                                Spacer()
+                                Text(currentVisionLabel)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+                        .foregroundStyle(Theme.Palette.ink)
+                    } footer: {
+                        Text("看图、给图片写摘要、回答关于图片的问题时用这个模型。「自动」时：主模型若支持识图就直接用主模型，否则回落到默认（kimi-latest）。")
+                    }
                 }
 
                 // 提供商：本地选择走 LLMRouter 的 preferProvider，挂了
@@ -137,6 +168,7 @@ struct ConversationSettingsView: View {
         .task {
             await loadEnvelopeSettings()
             await loadLookbacks()
+            await loadVisionSettings()
         }
         .alert("出错", isPresented: .constant(triggerError != nil)) {
             Button("好") { triggerError = nil }
@@ -149,6 +181,23 @@ struct ConversationSettingsView: View {
                     showModelPicker = false
                     // allowsClear=false → picker only emits non-nil slugs.
                     if let picked { pendingPick = PickPayload(slug: picked) }
+                }
+            )
+            .presentationDragIndicator(.visible)
+            .tint(Theme.Palette.accent)
+        }
+        .sheet(isPresented: $showVisionPicker) {
+            ModelPickerSheet(
+                initial: visionModelOverride ?? "",
+                allowsClear: true,
+                clearLabel: "自动（跟随主模型 / 默认 kimi-latest）",
+                visionOnly: true,
+                onPick: { picked in
+                    showVisionPicker = false
+                    let normalized = picked.flatMap { $0.isEmpty ? nil : $0 }
+                    visionModelOverride = normalized
+                    onApplyVisionModel(normalized)
+                    Haptics.success()
                 }
             )
             .presentationDragIndicator(.visible)
@@ -223,6 +272,14 @@ struct ConversationSettingsView: View {
         if !modelOverride.isEmpty { return shortSlug(modelOverride) }
         if let m = bot?.model, !m.isEmpty { return shortSlug(m) }
         return "—"
+    }
+
+    /// Label for the vision-model picker. nil = "自动" (server resolves
+    /// at call time). Don't surface "kimi-latest" as the visible default
+    /// here — that's a server-side detail and could change.
+    private var currentVisionLabel: String {
+        guard let slug = visionModelOverride, !slug.isEmpty else { return "自动" }
+        return shortSlug(slug)
     }
 
     // MARK: - Envelope (来信) section
@@ -320,6 +377,31 @@ struct ConversationSettingsView: View {
         } footer: {
             Text("机器人会读你和它的聊天记录，自己决定要不要上网查资料、记笔记，最后写一封来信发回来。在「来信」标签里能读到。轮数上限到了还没收笔就直接结束。")
         }
+    }
+
+    /// Pull the conversation row's saved vision_model_override (0064)
+    /// straight through Supabase RLS. nil = auto. Read-only here; saves
+    /// flow through the API patch in onApplyVisionModel.
+    private func loadVisionSettings() async {
+        guard !conversationId.isEmpty else {
+            visionLoaded = true
+            return
+        }
+        struct Row: Decodable { let vision_model_override: String? }
+        do {
+            let row: Row = try await SupabaseStack.shared
+                .from("conversations")
+                .select("vision_model_override")
+                .eq("id", value: conversationId)
+                .single()
+                .execute()
+                .value
+            visionModelOverride = row.vision_model_override
+        } catch {
+            // No row yet, no access, or column missing on an unmigrated
+            // server — fall through to "auto" so the UI still works.
+        }
+        visionLoaded = true
     }
 
     /// Pull the conversation row's saved envelope_settings, if any. We
