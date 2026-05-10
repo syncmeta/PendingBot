@@ -17,6 +17,12 @@ struct ScrollTabView: View {
 
     @State private var runs: [ScrollRun] = []
     @State private var botNames: [String: String] = [:]
+    /// Display names for human-letter authors. Resolved from the local
+    /// contacts cache (LocalDatabase) since pendingbot.users is RLS-self
+    /// and a server round-trip per author would noisy up the feed; if a
+    /// letter arrives from a contact not yet cached, the row just shows
+    /// the generic "好友" fallback.
+    @State private var authorNames: [String: String] = [:]
     @State private var loading = false
     @State private var error: String?
     @State private var path: [ScrollNav] = []
@@ -76,7 +82,7 @@ struct ScrollTabView: View {
                         ScrollView {
                             LazyVStack(spacing: 16) {
                                 ForEach(runs) { run in
-                                    ScrollFeedRow(run: run, botName: botNames[run.bot_id])
+                                    ScrollFeedRow(run: run, senderName: senderName(for: run))
                                         .contentShape(Rectangle())
                                         .onTapGesture {
                                             guard run.isDone || run.isRunning else { return }
@@ -127,7 +133,7 @@ struct ScrollTabView: View {
         do {
             let rows: [ScrollRun] = try await SupabaseStack.shared
                 .from("scroll_runs")
-                .select("id, bot_id, conversation_id, status, title, summary, body_md, progress, turns, created_at, started_at, finished_at")
+                .select("id, kind, bot_id, author_user_id, conversation_id, status, title, summary, body_md, progress, turns, created_at, started_at, finished_at")
                 .order("created_at", ascending: false)
                 .limit(50)
                 .execute()
@@ -137,6 +143,7 @@ struct ScrollTabView: View {
             // updates to running). The feed is meant to read as articles.
             runs = rows.filter { $0.status != "cancelled" }
             await refreshBotNames(for: runs)
+            refreshAuthorNames(for: runs)
         } catch is CancellationError {
             // Tab switch / refreshable cancellation — silent.
         } catch let error as NSError where error.domain == NSURLErrorDomain
@@ -146,11 +153,27 @@ struct ScrollTabView: View {
         }
     }
 
+    /// What to render as the kicker name on a feed row. Bot-letter rows
+    /// look up by bot_id; human-letter rows use the local-cached author
+    /// name (or alias). Returns nil if the lookup hasn't landed yet —
+    /// the row falls back to a generic "机器人" / "好友" label.
+    private func senderName(for run: ScrollRun) -> String? {
+        if run.isHuman {
+            guard let id = run.author_user_id else { return nil }
+            return authorNames[id]
+        }
+        guard let id = run.bot_id else { return nil }
+        return botNames[id]
+    }
+
     /// Resolve any bot_ids referenced by `feed` into display names so the
     /// row's byline reads "<bot> · 2 分钟前" instead of an anonymous
     /// avatar. Cached in `botNames`; only the missing ids hit the table.
     private func refreshBotNames(for feed: [ScrollRun]) async {
-        let missing = Array(Set(feed.map { $0.bot_id }).subtracting(botNames.keys))
+        let missing = Array(
+            Set(feed.compactMap { $0.kind == "bot" ? $0.bot_id : nil })
+                .subtracting(botNames.keys)
+        )
         guard !missing.isEmpty else { return }
         struct Row: Decodable { let id: String; let display_name: String }
         do {
@@ -165,6 +188,24 @@ struct ScrollTabView: View {
             }
         } catch {
             // Non-fatal — rows just render without a name.
+        }
+    }
+
+    /// Pull author display names (and the caller's local alias if set)
+    /// for human-letter rows out of the local contacts cache. We only
+    /// add to the cache; LocalDatabase is the source of truth.
+    private func refreshAuthorNames(for feed: [ScrollRun]) {
+        let missing = Set(feed.compactMap { $0.kind == "human" ? $0.author_user_id : nil })
+            .subtracting(authorNames.keys)
+        guard !missing.isEmpty else { return }
+        let contacts = LocalDatabase.shared.loadContacts()
+        var resolved: [String: String] = [:]
+        for c in contacts where missing.contains(c.id) {
+            if let alias = c.alias, !alias.isEmpty { resolved[c.id] = alias }
+            else if !c.display_name.isEmpty { resolved[c.id] = c.display_name }
+        }
+        if !resolved.isEmpty {
+            for (k, v) in resolved { authorNames[k] = v }
         }
     }
 
@@ -198,7 +239,9 @@ struct ScrollTabView: View {
         } else {
             runs.insert(run, at: 0)
         }
-        if botNames[run.bot_id] == nil {
+        if run.kind == "human" {
+            refreshAuthorNames(for: [run])
+        } else if let botId = run.bot_id, botNames[botId] == nil {
             Task { await refreshBotNames(for: [run]) }
         }
     }
