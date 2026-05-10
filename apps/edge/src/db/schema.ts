@@ -2292,6 +2292,15 @@ export type Database = {
         }
         Returns: undefined
       }
+      start_user_bot_turn: {
+        Args: {
+          p_attachment_ids?: string[]
+          p_bot_id: string
+          p_client_message_id: string
+          p_content: string
+        }
+        Returns: Json
+      }
       user_has_conv_with_bot: {
         Args: { p_bot_id: string; p_user_id: string }
         Returns: boolean
