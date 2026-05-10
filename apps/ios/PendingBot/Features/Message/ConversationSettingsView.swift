@@ -13,6 +13,12 @@ struct ConversationSettingsView: View {
     @Binding var providerOverride: String?
 
     let conversationId: String
+    /// Bot powering this conv. Drives the "model picker visible?" gate:
+    /// only the creator of a *private* bot can change the model. nil for
+    /// non-bot convs (group/user_user); section hides outright there too.
+    let bot: Bot?
+    /// Currently signed-in user — needed to compare against bot.creator_id.
+    let currentUserId: String?
     let enabledSkillCount: Int
     let totalSkillCount: Int
     var onOpenSkills: () -> Void
@@ -75,23 +81,25 @@ struct ConversationSettingsView: View {
                     .foregroundStyle(Theme.Palette.ink)
                 }
 
-                Section("模型") {
-                    Button {
-                        showModelPicker = true
-                    } label: {
-                        HStack {
-                            Image(systemName: "cube.transparent")
-                            Text("选择模型")
-                            Spacer()
-                            Text(modelOverride.isEmpty ? "跟随默认" : shortSlug(modelOverride))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                            Image(systemName: "chevron.right")
-                                .font(.caption)
-                                .foregroundStyle(.tertiary)
+                if canEditModel {
+                    Section("模型") {
+                        Button {
+                            showModelPicker = true
+                        } label: {
+                            HStack {
+                                Image(systemName: "cube.transparent")
+                                Text("选择模型")
+                                Spacer()
+                                Text(currentModelLabel)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
+                            }
                         }
+                        .foregroundStyle(Theme.Palette.ink)
                     }
-                    .foregroundStyle(Theme.Palette.ink)
                 }
 
                 // 提供商：本地选择走 LLMRouter 的 preferProvider，挂了
@@ -136,10 +144,11 @@ struct ConversationSettingsView: View {
         .sheet(isPresented: $showModelPicker) {
             ModelPickerSheet(
                 initial: modelOverride,
-                allowsClear: true,
+                allowsClear: false,
                 onPick: { picked in
                     showModelPicker = false
-                    pendingPick = PickPayload(slug: picked)
+                    // allowsClear=false → picker only emits non-nil slugs.
+                    if let picked { pendingPick = PickPayload(slug: picked) }
                 }
             )
             .presentationDragIndicator(.visible)
@@ -155,6 +164,7 @@ struct ConversationSettingsView: View {
             ModelPickerSheet(
                 initial: initialSlug,
                 allowsClear: target == .collaborator,
+                clearLabel: "无协作者",
                 onPick: { picked in
                     switch target {
                     case .explorer:
@@ -171,7 +181,7 @@ struct ConversationSettingsView: View {
             .tint(Theme.Palette.accent)
         }
         .confirmationDialog(
-            pendingPick?.slug.map { "应用「\(shortSlug($0))」到…" } ?? "清除模型选择…",
+            pendingPick.map { "应用「\(shortSlug($0.slug ?? ""))」到…" } ?? "",
             isPresented: Binding(
                 get: { pendingPick != nil },
                 set: { if !$0 { pendingPick = nil } }
@@ -182,21 +192,37 @@ struct ConversationSettingsView: View {
                 if let p = pendingPick { onApplyModel(p.slug, .conversation) }
                 pendingPick = nil
             }
-            Button("这个机器人（仅自己）") {
+            Button("改机器人默认模型") {
                 if let p = pendingPick { onApplyModel(p.slug, .bot) }
                 pendingPick = nil
             }
             Button("取消", role: .cancel) { pendingPick = nil }
         } message: {
-            Text(pendingPick?.slug == nil
-                 ? "选择「仅本次会话」会清掉本会话的临时指定；选择「这个机器人」会把你为这个机器人指定的模型也一并清掉，回到机器人默认。"
-                 : "选择「仅本次会话」只影响当前对话；选择「这个机器人」会改你这台号上这个机器人的默认模型，对所有未单独指定的会话生效。")
+            Text("「仅本次会话」只影响当前对话；「改机器人默认模型」会替换这个机器人的默认模型，并清掉本会话的会话级指定，让这里也跟上新默认。")
         }
         .tint(Theme.Palette.accent)
     }
 
     private func shortSlug(_ slug: String) -> String {
         slug.split(separator: "/").last.map(String.init) ?? slug
+    }
+
+    /// Only the creator of a *private* bot may pin a model — for this conv
+    /// (per-conv override) or for the bot itself (default model). Public
+    /// and preset bots are read-only on the client; the worker enforces
+    /// the same gate server-side.
+    private var canEditModel: Bool {
+        guard let bot, let me = currentUserId else { return false }
+        return bot.visibility == "private" && bot.creator_id == me
+    }
+
+    /// Label for the picker row: per-conv pin first, then the bot's
+    /// default. Both are slugs — show the short tail to match the rest of
+    /// the UI.
+    private var currentModelLabel: String {
+        if !modelOverride.isEmpty { return shortSlug(modelOverride) }
+        if let m = bot?.model, !m.isEmpty { return shortSlug(m) }
+        return "—"
     }
 
     // MARK: - Envelope (来信) section

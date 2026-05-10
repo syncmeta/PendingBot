@@ -418,6 +418,8 @@ struct ConversationView: View {
                     modelOverride: $modelOverride,
                     providerOverride: $providerOverride,
                     conversationId: conversation.id,
+                    bot: bot,
+                    currentUserId: AccountStore.shared.current?.id,
                     enabledSkillCount: skills.filter { $0.enabled }.count,
                     totalSkillCount: skills.count,
                     onOpenSkills: { showingSkills = true },
@@ -2159,41 +2161,50 @@ struct ConversationView: View {
     }
 
     /// Apply a model pick from the settings sheet. The user chose a scope:
-    ///   - `.conversation` — only this conversation; sets/clears the
+    ///   - `.conversation` — only this conversation; pins or replaces the
     ///     per-conversation override on the server.
-    ///   - `.bot` — this bot for this user across all conversations; sets
-    ///     the per-user-per-bot override AND clears the per-conv override
-    ///     so this conversation actually picks up the new default.
+    ///   - `.bot` — replace the bot's default model (server updates
+    ///     bots.model_id directly). Also clears any per-conv pin here so
+    ///     this conversation picks up the new default.
+    /// Both scopes require a non-nil slug — picker no longer offers a
+    /// "follow default" affordance.
     private func applyModelPick(slug: String?, scope: ModelPickScope) async {
-        let normalized = slug.flatMap { $0.isEmpty ? nil : $0 }
+        guard let normalized = slug.flatMap({ $0.isEmpty ? nil : $0 }) else { return }
         switch scope {
         case .conversation:
-            modelOverride = normalized ?? ""
+            modelOverride = normalized
             await patchConversationModel(slug: normalized)
         case .bot:
-            // Clear the per-conv pin so the new bot default wins here too.
             modelOverride = ""
             await patchConversationModel(slug: nil)
-            await patchBotUserModel(slug: normalized)
+            await patchBotDefaultModel(slug: normalized)
         }
     }
 
     private func patchConversationModel(slug: String?) async {
-        // Per-conv model override endpoint not yet on the new Worker; the
-        // conversation_settings sheet still calls this. UI affordance is
-        // present but the change doesn't persist until the route lands.
-        _ = slug
-        Haptics.tap()
+        guard let api else { return }
+        struct Body: Encodable { let model_slug: String? }
+        do {
+            try await api.patchVoid("v1/conversations/\(conversation.id)",
+                                    body: Body(model_slug: slug))
+            Haptics.tap()
+        } catch {
+            self.error = error.localizedDescription
+        }
     }
 
-    private func patchBotUserModel(slug: String?) async {
-        // Per-user-per-bot model override has no storage yet — there's no
-        // user_bot_settings (or equivalent) table on the schema, and the
-        // edge has no /v1/bots/:id PATCH endpoint. Mirror the
-        // patchConversationModel stub so the picker is a clean local-only
-        // affordance until the persistence layer lands.
-        _ = slug
-        Haptics.tap()
+    /// PATCH the bot's default model. Server gates: only the creator of a
+    /// private bot can call this — public/preset bots are read-only.
+    private func patchBotDefaultModel(slug: String) async {
+        guard let api, !conversation.bot_id.isEmpty else { return }
+        struct Body: Encodable { let model_id: String }
+        do {
+            try await api.patchVoid("v1/bots/\(conversation.bot_id)",
+                                    body: Body(model_id: slug))
+            Haptics.tap()
+        } catch {
+            self.error = error.localizedDescription
+        }
     }
 
     private func deleteMessage(_ msg: ChatMessage) async {

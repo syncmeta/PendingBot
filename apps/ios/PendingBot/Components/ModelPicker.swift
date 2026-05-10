@@ -54,6 +54,10 @@ struct ModelPickerSheet: View {
 
     let initial: String
     var allowsClear: Bool = false
+    /// Label shown on the "clear selection" row when `allowsClear` is on.
+    /// Different surfaces want different wording — e.g. envelope picker
+    /// uses "无协作者", a bot/conv picker would use "跟随机器人默认".
+    var clearLabel: String = "跟随机器人默认"
     var onPick: (String?) -> Void
 
     @State private var allModels: [OpenRouterModel] = []
@@ -202,7 +206,7 @@ struct ModelPickerSheet: View {
                             Image(systemName: "arrow.uturn.backward")
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundStyle(Theme.Palette.accent)
-                            Text("跟随机器人默认")
+                            Text(clearLabel)
                                 .font(Theme.Fonts.rounded(size: 14, weight: .medium))
                                 .foregroundStyle(Theme.Palette.ink)
                             Spacer(minLength: 8)
