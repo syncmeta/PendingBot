@@ -1,9 +1,10 @@
 import SwiftUI
 import Supabase
 
-/// 好友 tab — sectioned contact list (机器人朋友 / 真人朋友), no nav title.
-/// Filter chips above the list narrow to one section; each row carries
-/// an AI / 人类 tag on the far right.
+/// 好友 tab — single alphabetically-sorted list of bots and humans, no
+/// nav title. Filter chips above the list narrow by type (人类 / 私有
+/// 机器人 / 公有机器人 / 群); each row carries an AI / 人类 tag on the
+/// far right so the type stays visible in the merged list.
 ///
 /// Toolbar:
 ///   left  qrcode → live QR sheet (mint + refresh)
