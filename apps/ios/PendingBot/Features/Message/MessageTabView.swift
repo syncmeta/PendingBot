@@ -221,7 +221,7 @@ struct MessageTabView: View {
             TabHeaderBar(
                 title: "消息",
                 trailing: {
-                    HStack(spacing: 8) {
+                    GroupedHeaderControls {
                         Menu {
                             if !recentBots.isEmpty {
                                 Section("最近聊过") {
@@ -240,6 +240,7 @@ struct MessageTabView: View {
                         } label: {
                             CircleComposeButton()
                         }
+                    } trailing: {
                         PlusActionPopover(items: [
                             PlusActionItem(title: "加好友", systemImage: "person.badge.plus") {
                                 addingFriend = true

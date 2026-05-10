@@ -60,61 +60,78 @@ extension TabHeaderBar where Leading == EmptyView {
     }
 }
 
-/// "+" icon inside a native-iOS "white glass" capsule — same idiom Apple
-/// uses for nav-bar action chips on translucent chrome (Maps, Photos).
-/// Used as the trailing item in the message + friends tab headers.
-struct CirclePlusButton: View {
-    var size: CGFloat = 32
-    var body: some View {
-        CircleGlassChip(systemImage: "plus", size: size)
-    }
-}
-
-/// Sibling to CirclePlusButton — same glass capsule, three-dot glyph.
-/// Used in the messages header for the "more actions" menu.
-struct CircleEllipsisButton: View {
-    var size: CGFloat = 32
-    var body: some View {
-        CircleGlassChip(systemImage: "ellipsis", size: size)
-    }
-}
-
-/// Sibling to CirclePlusButton — same glass capsule, compose glyph (the
-/// pencil-in-square Apple uses across Messages / Mail to mean "new").
-/// Used in the messages header to start a fresh conversation.
-struct CircleComposeButton: View {
-    var size: CGFloat = 32
-    var body: some View {
-        CircleGlassChip(systemImage: "square.and.pencil", size: size)
-    }
-}
-
-private struct CircleGlassChip: View {
+/// Plain SF Symbol icon used as a tab-header trailing action. Mirrors
+/// Apple's own list headers (Mail, Messages, Reminders) — bare glyph in
+/// the accent tint, no capsule chip behind it. The 36×36 frame keeps the
+/// hit target HIG-compliant even though the glyph itself is smaller.
+struct HeaderActionIcon: View {
     let systemImage: String
-    let size: CGFloat
+    var size: CGFloat = 36
+    var glyphPointSize: CGFloat = 19
+    var glyphWeight: Font.Weight = .regular
     var body: some View {
         Image(systemName: systemImage)
-            .font(.system(size: 16, weight: .semibold))
+            .font(.system(size: glyphPointSize, weight: glyphWeight))
             .foregroundStyle(Theme.Palette.accent)
             .frame(width: size, height: size)
-            .glassChipBackground()
+            .contentShape(Rectangle())
     }
 }
 
-/// iOS 26+ uses the system Liquid Glass material via `.glassEffect`;
-/// older systems fall back to `.ultraThinMaterial` in a circle. The
-/// iOS 26 path picks up the system's reactive blur / specular highlight
-/// instead of our hand-rolled border + shadow.
+/// "+" trailing action — bare SF Symbol, no chip.
+struct CirclePlusButton: View {
+    var size: CGFloat = 36
+    var body: some View {
+        HeaderActionIcon(systemImage: "plus", size: size)
+    }
+}
+
+/// Three-dot "more actions" trailing action.
+struct CircleEllipsisButton: View {
+    var size: CGFloat = 36
+    var body: some View {
+        HeaderActionIcon(systemImage: "ellipsis", size: size)
+    }
+}
+
+/// Compose glyph (`square.and.pencil`) — Apple's "new" idiom in
+/// Messages / Mail. Used in the messages header to start a fresh chat.
+struct CircleComposeButton: View {
+    var size: CGFloat = 36
+    var body: some View {
+        HeaderActionIcon(systemImage: "square.and.pencil", size: size)
+    }
+}
+
+/// Wraps a left + right header action into a single visually-grouped
+/// pill — used in the messages tab to merge the compose + "+" pair so
+/// they read as one control instead of two floating icons. iOS 26+ gets
+/// the system Liquid Glass material via `.glassEffect`; older systems
+/// fall back to a flat muted-surface capsule with a hairline divider
+/// between the two buttons.
+struct GroupedHeaderControls<Leading: View, Trailing: View>: View {
+    @ViewBuilder var leading: () -> Leading
+    @ViewBuilder var trailing: () -> Trailing
+
+    var body: some View {
+        HStack(spacing: 0) {
+            leading()
+            Rectangle()
+                .fill(Theme.Palette.ink.opacity(0.10))
+                .frame(width: 0.5, height: 18)
+            trailing()
+        }
+        .groupedHeaderBackground()
+    }
+}
+
 private extension View {
     @ViewBuilder
-    func glassChipBackground() -> some View {
+    func groupedHeaderBackground() -> some View {
         if #available(iOS 26.0, *) {
-            self.glassEffect(.regular.interactive(), in: Circle())
+            self.glassEffect(.regular.interactive(), in: Capsule())
         } else {
-            self
-                .background(Circle().fill(.ultraThinMaterial))
-                .overlay(Circle().strokeBorder(Color.white.opacity(0.5), lineWidth: 0.5))
-                .shadow(color: .black.opacity(0.08), radius: 6, x: 0, y: 2)
+            self.background(Capsule(style: .continuous).fill(Theme.Palette.surfaceMuted))
         }
     }
 }
@@ -135,7 +152,7 @@ struct PlusActionItem: Identifiable {
 /// a fixed (smaller) width and roomier vertical spacing.
 struct PlusActionPopover: View {
     let items: [PlusActionItem]
-    var size: CGFloat = 32
+    var size: CGFloat = 36
     var width: CGFloat = 168
 
     @State private var isPresented = false
