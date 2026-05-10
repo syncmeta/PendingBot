@@ -146,22 +146,14 @@ struct FriendsTabView: View {
             // the lower ZStack) so the TabHeaderBar at the top sits
             // on canvas instead of the default white safe-area fill.
             TabHeaderBar(title: "好友") {
-                Menu {
-                    Button {
+                PlusActionPopover(items: [
+                    PlusActionItem(title: "加好友", systemImage: "person.badge.plus") {
                         addingFriend = true
-                        Haptics.tap()
-                    } label: {
-                        Label("加好友", systemImage: "person.badge.plus")
-                    }
-                    Button {
+                    },
+                    PlusActionItem(title: "新建机器人", systemImage: "sparkles") {
                         creatingBot = true
-                        Haptics.tap()
-                    } label: {
-                        Label("新建机器人", systemImage: "sparkles")
-                    }
-                } label: {
-                    CirclePlusButton()
-                }
+                    },
+                ])
             }
             ZStack {
                 Theme.Palette.canvas.ignoresSafeArea()

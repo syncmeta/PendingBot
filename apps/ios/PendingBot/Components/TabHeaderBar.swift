@@ -97,8 +97,88 @@ private struct CircleGlassChip: View {
             .font(.system(size: 16, weight: .semibold))
             .foregroundStyle(Theme.Palette.accent)
             .frame(width: size, height: size)
-            .background(Circle().fill(.ultraThinMaterial))
-            .overlay(Circle().strokeBorder(Color.white.opacity(0.5), lineWidth: 0.5))
-            .shadow(color: .black.opacity(0.08), radius: 6, x: 0, y: 2)
+            .glassChipBackground()
+    }
+}
+
+/// iOS 26+ uses the system Liquid Glass material via `.glassEffect`;
+/// older systems fall back to `.ultraThinMaterial` in a circle. The
+/// iOS 26 path picks up the system's reactive blur / specular highlight
+/// instead of our hand-rolled border + shadow.
+private extension View {
+    @ViewBuilder
+    func glassChipBackground() -> some View {
+        if #available(iOS 26.0, *) {
+            self.glassEffect(.regular.interactive(), in: Circle())
+        } else {
+            self
+                .background(Circle().fill(.ultraThinMaterial))
+                .overlay(Circle().strokeBorder(Color.white.opacity(0.5), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.08), radius: 6, x: 0, y: 2)
+        }
+    }
+}
+
+// MARK: - Plus-button popover menu
+
+/// One row in a `PlusActionPopover`.
+struct PlusActionItem: Identifiable {
+    let id = UUID()
+    let title: String
+    let systemImage: String
+    let action: () -> Void
+}
+
+/// Tab-header "+" trigger that opens a narrow popover instead of the
+/// default `Menu`. The native menu's row spacing is too tight for
+/// thumb taps on these short option lists, so we render our own with
+/// a fixed (smaller) width and roomier vertical spacing.
+struct PlusActionPopover: View {
+    let items: [PlusActionItem]
+    var size: CGFloat = 32
+    var width: CGFloat = 168
+
+    @State private var isPresented = false
+
+    var body: some View {
+        Button {
+            Haptics.tap()
+            isPresented = true
+        } label: {
+            CirclePlusButton(size: size)
+        }
+        .buttonStyle(.plain)
+        .popover(
+            isPresented: $isPresented,
+            attachmentAnchor: .point(.bottom),
+            arrowEdge: .top
+        ) {
+            VStack(spacing: 4) {
+                ForEach(items) { item in
+                    Button {
+                        isPresented = false
+                        Haptics.tap()
+                        item.action()
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: item.systemImage)
+                                .font(.system(size: 15, weight: .regular))
+                                .frame(width: 22, alignment: .center)
+                            Text(item.title)
+                                .font(.system(size: 15))
+                            Spacer(minLength: 0)
+                        }
+                        .foregroundStyle(Theme.Palette.ink)
+                        .padding(.vertical, 12)
+                        .padding(.horizontal, 14)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.vertical, 6)
+            .frame(width: width)
+            .presentationCompactAdaptation(.popover)
+        }
     }
 }

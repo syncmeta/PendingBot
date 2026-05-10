@@ -240,22 +240,20 @@ struct MessageTabView: View {
                         } label: {
                             CircleComposeButton()
                         }
-                        Menu {
-                            Button { addingFriend = true; Haptics.tap() } label: {
-                                Label("加好友", systemImage: "person.badge.plus")
-                            }
-                            Button { creatingGroup = true; Haptics.tap() } label: {
-                                Label("拉群", systemImage: "person.3")
-                            }
-                            Button { joiningGroup = true; Haptics.tap() } label: {
-                                Label("加群", systemImage: "person.3.sequence")
-                            }
-                            Button { scanning = true; Haptics.tap() } label: {
-                                Label("扫码", systemImage: "qrcode.viewfinder")
-                            }
-                        } label: {
-                            CirclePlusButton()
-                        }
+                        PlusActionPopover(items: [
+                            PlusActionItem(title: "加好友", systemImage: "person.badge.plus") {
+                                addingFriend = true
+                            },
+                            PlusActionItem(title: "拉群", systemImage: "person.3") {
+                                creatingGroup = true
+                            },
+                            PlusActionItem(title: "加群", systemImage: "person.3.sequence") {
+                                joiningGroup = true
+                            },
+                            PlusActionItem(title: "扫码", systemImage: "qrcode.viewfinder") {
+                                scanning = true
+                            },
+                        ])
                     }
                 }
             )
@@ -770,9 +768,9 @@ private struct ConversationListRow: View {
 
 // MARK: - Conv-type badge
 
-/// Compact pill rendered next to a list-row title to call out non-1:1
-/// conversation types. Returns nil for `user_bot` since that's the
-/// default and doesn't need a label.
+/// Compact pill rendered next to a list-row title to call out group
+/// conversations. 1:1 chats (user_bot / user_user) return nil — the
+/// row's name-tag color already differentiates them.
 private struct ConvTypeBadge: View {
     let text: String
     let fg: Color
@@ -783,10 +781,6 @@ private struct ConvTypeBadge: View {
             self.text = "群"
             self.fg = Color(hex: 0x1F4F8A)
             self.bg = Color(hex: 0xE6EEF8)
-        case "user_user":
-            self.text = "私聊"
-            self.fg = Color(hex: 0x2E5C3D)
-            self.bg = Color(hex: 0xE3EEEA)
         default:
             return nil
         }
