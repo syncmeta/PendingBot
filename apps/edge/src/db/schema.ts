@@ -122,8 +122,14 @@ export type Database = {
           metadata: Json
           mime_type: string
           r2_key: string
+          summarized_at: string | null
+          summary: string | null
+          summary_error: string | null
+          summary_status: string
+          tags: string[]
           thumb_r2_key: string | null
           user_id: string
+          vision_model: string | null
           width: number | null
         }
         Insert: {
@@ -135,8 +141,14 @@ export type Database = {
           metadata?: Json
           mime_type: string
           r2_key: string
+          summarized_at?: string | null
+          summary?: string | null
+          summary_error?: string | null
+          summary_status?: string
+          tags?: string[]
           thumb_r2_key?: string | null
           user_id: string
+          vision_model?: string | null
           width?: number | null
         }
         Update: {
@@ -148,8 +160,14 @@ export type Database = {
           metadata?: Json
           mime_type?: string
           r2_key?: string
+          summarized_at?: string | null
+          summary?: string | null
+          summary_error?: string | null
+          summary_status?: string
+          tags?: string[]
           thumb_r2_key?: string | null
           user_id?: string
+          vision_model?: string | null
           width?: number | null
         }
         Relationships: [
@@ -678,6 +696,7 @@ export type Database = {
           title: string | null
           updated_at: string
           user_id: string | null
+          vision_model_override: string | null
         }
         Insert: {
           bot_id?: string | null
@@ -694,6 +713,7 @@ export type Database = {
           title?: string | null
           updated_at?: string
           user_id?: string | null
+          vision_model_override?: string | null
         }
         Update: {
           bot_id?: string | null
@@ -710,6 +730,7 @@ export type Database = {
           title?: string | null
           updated_at?: string
           user_id?: string | null
+          vision_model_override?: string | null
         }
         Relationships: [
           {
@@ -1076,6 +1097,7 @@ export type Database = {
         Row: {
           cap_credits: number | null
           conversation_id: string
+          frozen_at: string | null
           joined_at: string
           muted: boolean
           overdrawn: boolean
@@ -1086,6 +1108,7 @@ export type Database = {
         Insert: {
           cap_credits?: number | null
           conversation_id: string
+          frozen_at?: string | null
           joined_at?: string
           muted?: boolean
           overdrawn?: boolean
@@ -1096,6 +1119,7 @@ export type Database = {
         Update: {
           cap_credits?: number | null
           conversation_id?: string
+          frozen_at?: string | null
           joined_at?: string
           muted?: boolean
           overdrawn?: boolean
@@ -1556,13 +1580,6 @@ export type Database = {
           user_id?: string
         }
         Relationships: [
-          {
-            foreignKeyName: "scroll_runs_author_fkey"
-            columns: ["author_user_id"]
-            isOneToOne: false
-            referencedRelation: "users"
-            referencedColumns: ["id"]
-          },
           {
             foreignKeyName: "scroll_runs_bot_id_fkey"
             columns: ["bot_id"]
@@ -2124,6 +2141,10 @@ export type Database = {
       }
       _delete_account_internal: { Args: { p_uid: string }; Returns: undefined }
       _group_member_count: { Args: { p_conv_id: string }; Returns: number }
+      _mint_random_group_handle: {
+        Args: { p_conv_id: string; p_handle_type: string }
+        Returns: undefined
+      }
       accept_friend_request: {
         Args: { p_request_id: string; p_user_id: string }
         Returns: undefined
@@ -2132,10 +2153,7 @@ export type Database = {
         Args: { p_audit_log_id: string; p_splits: Json }
         Returns: undefined
       }
-      are_mutual_friends: {
-        Args: { a: string; b: string }
-        Returns: boolean
-      }
+      are_mutual_friends: { Args: { a: string; b: string }; Returns: boolean }
       billing_admin_grant: {
         Args: { p_credits: number; p_reason?: string; p_user_id: string }
         Returns: number
