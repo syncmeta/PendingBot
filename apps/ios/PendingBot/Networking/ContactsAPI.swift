@@ -9,9 +9,17 @@ import Supabase
 enum ContactsAPI {
     /// Full contacts list with peer profile fields. Order matches
     /// user_contacts.created_at ascending (oldest friend first).
-    static func fetchContacts() async throws -> [FriendsTabView.HumanPick] {
-        let url = HostedConfig.environment.workerURL
+    ///
+    /// Pass `viaHandleId` to narrow the list to contacts who reached
+    /// the caller via that specific handle — drives the per-handle
+    /// friend list in 加我为好友的方式 → 我的隐私号 详情页。
+    static func fetchContacts(viaHandleId: String? = nil) async throws -> [FriendsTabView.HumanPick] {
+        var url = HostedConfig.environment.workerURL
             .appendingPathComponent("v1/contacts")
+        if let viaHandleId, var comps = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            comps.queryItems = [URLQueryItem(name: "via_handle_id", value: viaHandleId)]
+            if let withQuery = comps.url { url = withQuery }
+        }
         var req = URLRequest(url: url)
         req.httpMethod = "GET"
         let token = try await SupabaseStack.shared.auth.session.accessToken

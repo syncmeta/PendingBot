@@ -150,10 +150,14 @@ private struct HandlesSection: View {
                     }
                 } else {
                     ForEach(handles) { h in
-                        HandleCardRow(
-                            handle: h,
-                            onRevoke: { Task { await revoke(h.id) } }
-                        )
+                        NavigationLink {
+                            HandleContactsView(
+                                handle: h,
+                                onRevoke: { Task { await revoke(h.id); await load() } }
+                            )
+                        } label: {
+                            HandleCardRow(handle: h)
+                        }
                     }
                 }
             } header: {
@@ -233,9 +237,6 @@ private struct HandlesSection: View {
 
 private struct HandleCardRow: View {
     let handle: HandleRow
-    let onRevoke: () -> Void
-
-    @State private var copied = false
 
     private var titleText: String {
         if let l = handle.label, !l.isEmpty { return l }
@@ -253,53 +254,16 @@ private struct HandleCardRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(titleText)
-                    .font(Theme.Fonts.bodyEmphasized)
-                    .foregroundStyle(handle.is_active ? Theme.Palette.ink : Theme.Palette.inkMuted)
-                    .lineLimit(1)
-                Spacer(minLength: 8)
-                Menu {
-                    Button {
-                        copy()
-                    } label: {
-                        Label("复制", systemImage: "doc.on.doc")
-                    }
-                    if handle.is_active {
-                        Button(role: .destructive) {
-                            onRevoke()
-                        } label: {
-                            Label("撤销", systemImage: "xmark.circle")
-                        }
-                    }
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.body)
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                        .frame(width: 32, height: 28)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
+            Text(titleText)
+                .font(Theme.Fonts.bodyEmphasized)
+                .foregroundStyle(handle.is_active ? Theme.Palette.ink : Theme.Palette.inkMuted)
+                .lineLimit(1)
 
-            HStack(spacing: 8) {
-                Text(handle.value)
-                    .font(Theme.Fonts.monoSmall)
-                    .foregroundStyle(handle.is_active ? Theme.Palette.ink : Theme.Palette.inkMuted)
-                    .textSelection(.enabled)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Button {
-                    copy()
-                } label: {
-                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                        .font(.footnote)
-                        .foregroundStyle(copied ? Theme.Palette.accent : Theme.Palette.inkMuted)
-                }
-                .buttonStyle(.plain)
-                .disabled(!handle.is_active)
-                Spacer()
-            }
+            Text(handle.value)
+                .font(Theme.Fonts.monoSmall)
+                .foregroundStyle(handle.is_active ? Theme.Palette.ink : Theme.Palette.inkMuted)
+                .lineLimit(1)
+                .truncationMode(.middle)
 
             HStack(spacing: 6) {
                 if let t = relativeCreated {
@@ -312,16 +276,6 @@ private struct HandleCardRow: View {
             }
         }
         .padding(.vertical, 4)
-    }
-
-    private func copy() {
-        UIPasteboard.general.string = handle.value
-        Haptics.tap()
-        copied = true
-        Task {
-            try? await Task.sleep(nanoseconds: 1_500_000_000)
-            await MainActor.run { copied = false }
-        }
     }
 }
 
@@ -444,6 +398,128 @@ private struct MintHandleSheet: View {
             } else {
                 self.error = raw
             }
+        }
+    }
+}
+
+// MARK: - Per-handle detail (friend list filtered by added_via_handle_id)
+
+/// 点击某个隐私号进入的详情页 —— 上面是号码本身 + 复制 / 撤销;下面是
+/// 通过此号加你为好友的人的列表(GET /v1/contacts?via_handle_id=…)。
+private struct HandleContactsView: View {
+    let handle: HandleRow
+    let onRevoke: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var contacts: [FriendsTabView.HumanPick] = []
+    @State private var loading = false
+    @State private var error: String?
+    @State private var copied = false
+    @State private var confirmRevoke = false
+
+    private var titleText: String {
+        if let l = handle.label, !l.isEmpty { return l }
+        return "未命名"
+    }
+
+    var body: some View {
+        List {
+            Section {
+                HStack(spacing: 8) {
+                    Text(handle.value)
+                        .font(Theme.Fonts.monoSmall)
+                        .foregroundStyle(handle.is_active ? Theme.Palette.ink : Theme.Palette.inkMuted)
+                        .textSelection(.enabled)
+                        .lineLimit(1)
+                    Button {
+                        UIPasteboard.general.string = handle.value
+                        Haptics.tap()
+                        copied = true
+                        Task {
+                            try? await Task.sleep(nanoseconds: 1_500_000_000)
+                            await MainActor.run { copied = false }
+                        }
+                    } label: {
+                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                            .font(.footnote)
+                            .foregroundStyle(copied ? Theme.Palette.accent : Theme.Palette.inkMuted)
+                    }
+                    .buttonStyle(.plain)
+                    Spacer()
+                    StatusPill(active: handle.is_active)
+                }
+                .padding(.vertical, 2)
+                if handle.is_active {
+                    Button(role: .destructive) {
+                        confirmRevoke = true
+                    } label: {
+                        Label("撤销此隐私号", systemImage: "xmark.circle")
+                    }
+                }
+            } header: {
+                Text(titleText)
+            } footer: {
+                if !handle.is_active {
+                    Text("此号已撤销,新的好友申请会被拒。已通过它加上的好友不受影响。")
+                }
+            }
+
+            Section {
+                if loading && contacts.isEmpty {
+                    HStack {
+                        ProgressView().controlSize(.small)
+                        Text("加载中…").foregroundStyle(.secondary)
+                    }
+                } else if let error {
+                    Text(error).foregroundStyle(.red).font(.footnote)
+                } else if contacts.isEmpty {
+                    Text("还没有人通过这个号加过你")
+                        .foregroundStyle(.secondary)
+                        .font(.footnote)
+                } else {
+                    ForEach(contacts) { c in
+                        HStack(spacing: 10) {
+                            UserAvatar(seed: c.id, attachmentId: c.avatarPath, size: 32)
+                            Text(c.rowName)
+                                .font(Theme.Fonts.serif(size: 16, weight: .semibold))
+                                .foregroundStyle(Theme.Palette.ink)
+                                .lineLimit(1)
+                            Spacer()
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+            } header: {
+                Text("通过此号加你的好友")
+            }
+        }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(Theme.Palette.canvas.ignoresSafeArea())
+        .navigationTitle(titleText)
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await load() }
+        .confirmationDialog(
+            "撤销「\(titleText)」?",
+            isPresented: $confirmRevoke,
+            titleVisibility: .visible
+        ) {
+            Button("撤销", role: .destructive) {
+                onRevoke()
+                dismiss()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("撤销后别人无法用这个号给你发好友申请。已是好友的人不受影响。")
+        }
+    }
+
+    private func load() async {
+        loading = true; defer { loading = false }
+        do {
+            contacts = try await ContactsAPI.fetchContacts(viaHandleId: handle.id)
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 }
