@@ -156,8 +156,11 @@ struct GroupSettingsView: View {
             }
         }
         .sheet(item: $addFriendTarget) { target in
-            AddFriendSheet(targetUserId: target.userId,
-                           targetDisplayName: target.displayLabel) { ok in
+            // Sheet only opens for tappable human members, all of which
+            // carry a non-nil userId — `??""` is a defensive fallback
+            // that the edge will reject as "用户不存在".
+            GroupAddFriendSheet(targetUserId: target.userId ?? "",
+                                targetDisplayName: target.displayLabel) { ok in
                 if ok { Task { await reloadFriends() } }
             }
             .presentationDetents([.medium])
@@ -625,7 +628,7 @@ struct GroupSettingsView: View {
 /// member is tapped in the member list. Mirrors the title / placeholder
 /// / button copy spelled out by product: 标题 "加他好友？", 文本框占位符
 /// "备注", 按钮 "发送加好友请求".
-private struct AddFriendSheet: View {
+private struct GroupAddFriendSheet: View {
     let targetUserId: String
     let targetDisplayName: String
     let onClose: (_ sentSuccessfully: Bool) -> Void
