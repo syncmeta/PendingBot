@@ -607,7 +607,7 @@ messageRoutes.post('/start', async (c) => {
   let streamClosed = false;
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      const emit = (event: string, data: unknown) => {
+      const rawEmit = (event: string, data: unknown) => {
         if (streamClosed) return;
         try {
           controller.enqueue(
@@ -618,14 +618,32 @@ messageRoutes.post('/start', async (c) => {
         }
       };
 
-      // Send canonical ids before any token so the client can rekey the
-      // optimistic local row immediately.
-      emit('meta', {
-        conversationId: convId,
-        userMessageId: userMessageId,
-      });
+      // Defer the `meta` frame until the bot actually produces something —
+      // so a turn that errors before any LLM output never tells the client
+      // about a conv id, and we can roll back the eagerly-created cloud row
+      // (delete CASCADEs participants + user msg) on the way out. From the
+      // user's POV: failed sends leave the optimistic bubble in pending /
+      // failed state with no cloud trace; only a turn that produced at
+      // least one token / bubble / tool call commits.
+      let metaEmitted = false;
+      const flushMeta = () => {
+        if (metaEmitted) return;
+        metaEmitted = true;
+        rawEmit('meta', { conversationId: convId, userMessageId });
+      };
+      const emit = (event: string, data: unknown) => {
+        if (
+          !metaEmitted &&
+          (event === 'token' || event === 'bubble' ||
+            event === 'tool_call' || event === 'silent')
+        ) {
+          flushMeta();
+        }
+        rawEmit(event, data);
+      };
 
       const turnWork = (async () => {
+        let producedOutput = false;
         try {
           const result = await runChatTurn({
             env: c.env,
@@ -646,6 +664,8 @@ messageRoutes.post('/start', async (c) => {
             signal: detachedAbort.signal,
             emit,
           });
+
+          producedOutput = metaEmitted || result.bubblesInserted > 0;
 
           if (result.finalStatus === 'done' && result.bubblesInserted > 0) {
             await supaService
@@ -676,8 +696,18 @@ messageRoutes.post('/start', async (c) => {
                   catch { return String(err) || 'unknown error'; }
                 })();
           console.error('[messages/start] turn error:', err);
-          emit('error', { message });
+          rawEmit('error', { message });
         } finally {
+          if (!producedOutput) {
+            // Rollback: nothing the user can see ever made it out, so wipe
+            // the cloud trace. CASCADE on conversations removes participants
+            // and the user msg row that start_user_bot_turn inserted.
+            try {
+              await supaService.from('conversations').delete().eq('id', convId);
+            } catch (delErr) {
+              console.error('[messages/start] rollback delete failed', delErr);
+            }
+          }
           streamClosed = true;
           try { controller.close(); } catch {}
         }

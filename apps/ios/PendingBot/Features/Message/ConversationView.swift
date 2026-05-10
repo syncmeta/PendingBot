@@ -1227,6 +1227,18 @@ struct ConversationView: View {
                         }
                     case .error(let msg):
                         splitter.reportError(msg)
+                        // Start-mode failure with no meta yet means the
+                        // worker rolled back the cloud conv (no bot output
+                        // ever landed). Mirror that on the client: red the
+                        // user's bubble, surface the reason, and leave
+                        // conversation.id empty so retrying re-runs the
+                        // /start path with the same cmid (idempotent at
+                        // the worker, so a second tap is safe).
+                        if startBotId != nil && conversation.id.isEmpty,
+                           let userMsgId {
+                            markUserMessageFailed(userMsgId)
+                            self.error = msg.isEmpty ? "发送失败" : msg
+                        }
                     case .unknown:
                         break
                     }
