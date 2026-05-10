@@ -7,7 +7,13 @@ import type { AppBindings } from '../types';
 // /v1/friend-requests — request/accept gate for human-to-human chat.
 //
 // Flow:
-//   POST /                — A creates a pending request to B (by handle/email)
+//   GET  /lookup?handleValue=…  — preview a user (avatar + nickname) before
+//                                  the sender commits to a request. Returns
+//                                  only the two display fields by design —
+//                                  no email, no created_at, no other PII.
+//   POST /                — A creates a pending request to B by handle.
+//                           Optional `remark` becomes A's user_contacts.alias
+//                           for B once B accepts.
 //   GET  /                — list my incoming + outgoing
 //   POST /:id/accept      — B accepts; RPC writes user_contacts both ways
 //   POST /:id/decline     — B declines; row stays for audit
@@ -15,15 +21,49 @@ import type { AppBindings } from '../types';
 //
 // Writes go through service-role; the RLS on friend_requests only exposes
 // SELECT to either party. The accept side-effect (symmetric user_contacts
-// rows) lives in pendingbot.accept_friend_request — see migration 0045.
+// rows + remark→alias copy) lives in pendingbot.accept_friend_request —
+// see migrations 0046 / 0049 / 0060.
 
 export const friendRequestRoutes = new Hono<AppBindings>();
 friendRequestRoutes.use('*', requireSession());
 
 const CreateBody = z.object({
-  handleValue: z.string().min(4).max(64).optional(),
-  email: z.string().email().optional(),
-  message: z.string().max(500).optional(),
+  handleValue: z.string().min(4).max(64),
+  remark: z.string().max(64).optional(),
+});
+
+// Preview a user by handle. Used by the iOS 加好友 page after the user
+// finishes typing the number, so they can confirm "this is the person I
+// meant" before sending the request. Intentionally returns only the
+// display fields — exposing email or created_at here would leak data
+// beyond what the recipient consented to via their handle.
+friendRequestRoutes.get('/lookup', async (c) => {
+  const handleValue = c.req.query('handleValue')?.trim();
+  if (!handleValue || handleValue.length < 4 || handleValue.length > 64) {
+    return c.json({ error: 'handleValue required' }, 400);
+  }
+  const supa = serviceClient(c.env);
+  const { data: handle, error } = await supa
+    .from('user_handles')
+    .select('user_id, is_active')
+    .eq('value', handleValue)
+    .maybeSingle();
+  if (error) return c.json({ error: '号码查询失败,请稍后重试', detail: error.message }, 500);
+  if (!handle || !handle.is_active) return c.json({ error: '号码无效或已撤销' }, 404);
+
+  const { data: profile, error: profErr } = await supa
+    .from('users')
+    .select('id, display_name, avatar_path')
+    .eq('id', handle.user_id as string)
+    .maybeSingle();
+  if (profErr) return c.json({ error: 'database', detail: profErr.message }, 500);
+  if (!profile) return c.json({ error: '号码无效或已撤销' }, 404);
+
+  return c.json({
+    userId: profile.id as string,
+    displayName: (profile.display_name as string | null) ?? '',
+    avatarPath: (profile.avatar_path as string | null) ?? null,
+  });
 });
 
 friendRequestRoutes.post('/', async (c) => {
@@ -34,48 +74,22 @@ friendRequestRoutes.post('/', async (c) => {
   } catch (err) {
     return c.json({ error: 'invalid body', detail: String(err) }, 400);
   }
-  if (!parsed.handleValue && !parsed.email) {
-    return c.json({ error: 'handleValue or email required' }, 400);
-  }
 
   const supa = serviceClient(c.env);
 
-  // Resolve target (handle wins if both supplied).
-  let targetUserId: string | null = null;
-  let viaHandleId: string | null = null;
-  let viaEmail: string | null = null;
+  const { data: handle, error: handleErr } = await supa
+    .from('user_handles')
+    .select('id, user_id, is_active')
+    .eq('value', parsed.handleValue)
+    .maybeSingle();
+  if (handleErr) return c.json({ error: '号码查询失败,请稍后重试', detail: handleErr.message }, 500);
+  if (!handle || !handle.is_active) return c.json({ error: '号码无效或已撤销' }, 404);
+  const targetUserId = handle.user_id as string;
+  const viaHandleId = handle.id as string;
 
-  if (parsed.handleValue) {
-    const { data: handle, error } = await supa
-      .from('user_handles')
-      .select('id, user_id, is_active')
-      .eq('value', parsed.handleValue)
-      .maybeSingle();
-    if (error) return c.json({ error: '号码查询失败,请稍后重试', detail: error.message }, 500);
-    if (!handle || !handle.is_active) return c.json({ error: '号码无效或已撤销' }, 404);
-    targetUserId = handle.user_id as string;
-    viaHandleId = handle.id as string;
-  } else if (parsed.email) {
-    const url = new URL('/auth/v1/admin/users', c.env.SUPABASE_URL);
-    url.searchParams.set('email', parsed.email);
-    const res = await fetch(url, {
-      headers: {
-        apikey: c.env.SUPABASE_SERVICE_ROLE_KEY,
-        Authorization: `Bearer ${c.env.SUPABASE_SERVICE_ROLE_KEY}`,
-      },
-    });
-    if (!res.ok) return c.json({ error: '邮箱查询失败,请稍后重试', detail: `status ${res.status}` }, 500);
-    const body = (await res.json()) as { users?: Array<{ id: string; email?: string }> };
-    const match = (body.users ?? []).find(
-      (u) => (u.email ?? '').toLowerCase() === parsed.email!.toLowerCase(),
-    );
-    if (!match) return c.json({ error: '没找到这个邮箱注册的用户' }, 404);
-    targetUserId = match.id;
-    viaEmail = parsed.email;
-  }
-
-  if (!targetUserId) return c.json({ error: '没找到这个用户' }, 404);
   if (targetUserId === userId) return c.json({ error: '不能加自己' }, 400);
+
+  const remark = parsed.remark?.trim() || null;
 
   // Already contacts → 200 with `alreadyContacts: true`. iOS surfaces this as
   // "你们已经是好友" and routes to the existing chat instead of asking again.
@@ -106,6 +120,16 @@ friendRequestRoutes.post('/', async (c) => {
       p_user_id: userId,
     });
     if (rpcErr) return c.json({ error: '处理对方申请失败,请稍后重试', detail: rpcErr.message }, 500);
+    // accept_friend_request only carries an alias from the *other* side's
+    // remark_for_contact. Our own remark would be dropped here, so write
+    // it explicitly into our user_contacts row for the new friend.
+    if (remark) {
+      await supa
+        .from('user_contacts')
+        .update({ alias: remark })
+        .eq('user_id', userId)
+        .eq('contact_user_id', targetUserId);
+    }
     return c.json({ autoAccepted: true, requestId: theirPending.id });
   }
 
@@ -118,9 +142,8 @@ friendRequestRoutes.post('/', async (c) => {
       from_user_id: userId,
       to_user_id: targetUserId,
       status: 'pending',
-      message: parsed.message ?? null,
+      remark_for_contact: remark,
       via_handle_id: viaHandleId,
-      via_email: viaEmail,
     })
     .select('id')
     .single();
