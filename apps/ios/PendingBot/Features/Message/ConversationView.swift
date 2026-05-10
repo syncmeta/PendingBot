@@ -2211,7 +2211,7 @@ struct ConversationView: View {
     private func deleteMessage(_ msg: ChatMessage) async {
         guard let api else { return }
         do {
-            try await api.deleteVoid("api/mobile/messages/\(msg.id)")
+            try await api.deleteVoid("v1/messages/\(msg.id)")
             messages.removeAll { $0.id == msg.id }
             Haptics.success()
         } catch {

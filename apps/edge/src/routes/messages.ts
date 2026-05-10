@@ -712,6 +712,54 @@ messageRoutes.post('/start', async (c) => {
   });
 });
 
+// DELETE /v1/messages/:id
+//
+// Removes a single message. Allowed when the caller authored the message OR
+// owns the enclosing conversation (covers deleting bot replies in your own
+// user_bot conv, but not other people's messages in groups). No soft-delete
+// column on `messages`, so this is a hard DELETE — UI already removes the
+// row optimistically once we return 200.
+messageRoutes.delete('/:id', async (c) => {
+  const userId = c.var.userId!;
+  const id = c.req.param('id');
+  if (!/^[0-9a-f-]{36}$/i.test(id)) {
+    return c.json({ error: 'invalid id' }, 400);
+  }
+
+  const supa = serviceClient(c.env);
+
+  const { data: msg, error: fetchErr } = await supa
+    .schema('pendingbot')
+    .from('messages')
+    .select('id, user_id, conversation_id')
+    .eq('id', id)
+    .maybeSingle();
+  if (fetchErr) return c.json({ error: 'database', detail: fetchErr.message }, 500);
+  if (!msg) return c.json({ error: 'not found' }, 404);
+
+  let allowed = msg.user_id === userId;
+  if (!allowed) {
+    const { data: conv, error: convErr } = await supa
+      .schema('pendingbot')
+      .from('conversations')
+      .select('user_id')
+      .eq('id', msg.conversation_id)
+      .maybeSingle();
+    if (convErr) return c.json({ error: 'database', detail: convErr.message }, 500);
+    allowed = !!conv && conv.user_id === userId;
+  }
+  if (!allowed) return c.json({ error: 'forbidden' }, 403);
+
+  const { error: delErr } = await supa
+    .schema('pendingbot')
+    .from('messages')
+    .delete()
+    .eq('id', id);
+  if (delErr) return c.json({ error: 'database', detail: delErr.message }, 500);
+
+  return c.json({ ok: true });
+});
+
 // Per-bot lookback config. Lives in `bots.config` jsonb. Defaults:
 // enabled, every 10 rounds.
 interface LookbackConfigEnvelope {
