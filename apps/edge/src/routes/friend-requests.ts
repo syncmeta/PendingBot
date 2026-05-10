@@ -22,7 +22,7 @@ import type { AppBindings } from '../types';
 // Writes go through service-role; the RLS on friend_requests only exposes
 // SELECT to either party. The accept side-effect (symmetric user_contacts
 // rows + remark→alias copy) lives in pendingbot.accept_friend_request —
-// see migrations 0046 / 0049 / 0060.
+// see migrations 0046 / 0049 / 0061.
 
 export const friendRequestRoutes = new Hono<AppBindings>();
 friendRequestRoutes.use('*', requireSession());
