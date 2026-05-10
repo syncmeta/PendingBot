@@ -402,6 +402,8 @@ messageRoutes.post('/', async (c) => {
             isSelfChat,
             recentContext: parsed.recentContext ?? [],
             newMessage: parsed.newMessage ?? '（系统注入：根据上一轮的查证笔记，自然继续上面的对话。不要提到这是自动触发的。）',
+            currentAttachmentIds: parsed.attachmentIds,
+            visionModelOverride: conv.vision_model_override,
             activeLookbacks: parsed.activeLookbacks ?? [],
             providerOverride: effectiveProviderOverride,
             clientTz: parsed.clientTz,
@@ -697,6 +699,9 @@ messageRoutes.post('/start', async (c) => {
             isSelfChat: false,
             recentContext: parsed.recentContext ?? [],
             newMessage: parsed.newMessage,
+            currentAttachmentIds: parsed.attachmentIds,
+            // Brand-new conv from /start — no override possible yet.
+            visionModelOverride: null,
             activeLookbacks: [],
             providerOverride: effectiveProviderOverride,
             clientTz: parsed.clientTz,
