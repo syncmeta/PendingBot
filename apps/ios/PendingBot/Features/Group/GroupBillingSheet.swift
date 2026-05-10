@@ -97,7 +97,7 @@ struct GroupBillingSheet: View {
                     .buttonStyle(.borderedProminent)
                 }
             }
-            .navigationTitle("分摊设置")
+            .navigationTitle("谁为机器人的 Token 买单")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
