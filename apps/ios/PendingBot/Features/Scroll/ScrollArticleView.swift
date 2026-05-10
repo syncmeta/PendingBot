@@ -61,15 +61,43 @@ struct ScrollArticleView: View {
 
     // MARK: - Header
 
+    /// Editorial header — kicker (bot name in tracked caps), large serif
+    /// title, hairline divider, and a small metadata strip below with the
+    /// avatar + full date. Reads top-down like the masthead of a column.
     @ViewBuilder
     private func headerSection(run: ScrollRun) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                Rectangle()
+                    .fill(Theme.Palette.accent)
+                    .frame(width: 18, height: 1)
+                Text(bot?.display_name ?? "机器人")
+                    .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
+                    .tracking(0.8)
+                    .foregroundStyle(Theme.Palette.accent)
+                    .textCase(.uppercase)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+
+            if let title = run.title, !title.isEmpty {
+                Text(title)
+                    .font(Theme.Fonts.serif(size: 28, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.ink)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Rectangle()
+                .fill(Theme.Palette.hairline)
+                .frame(height: 0.5)
+
             HStack(spacing: 10) {
-                BotAvatar(seed: run.bot_id, size: 36)
-                VStack(alignment: .leading, spacing: 2) {
+                BotAvatar(seed: run.bot_id, size: 28)
+                VStack(alignment: .leading, spacing: 1) {
                     Text(bot?.display_name ?? "机器人")
                         .font(Theme.Fonts.rounded(size: 13, weight: .medium))
-                        .foregroundStyle(Theme.Palette.inkMuted)
+                        .foregroundStyle(Theme.Palette.ink)
                     if let date = ServerTimestamp.parse(run.created_at) {
                         Text(date.formatted(date: .abbreviated, time: .shortened))
                             .font(Theme.Fonts.caption)
@@ -77,12 +105,6 @@ struct ScrollArticleView: View {
                     }
                 }
                 Spacer()
-            }
-            if let title = run.title, !title.isEmpty {
-                Text(title)
-                    .font(Theme.Fonts.serif(size: 26, weight: .semibold))
-                    .foregroundStyle(Theme.Palette.ink)
-                    .multilineTextAlignment(.leading)
             }
         }
     }
@@ -182,7 +204,17 @@ struct ScrollArticleView: View {
                 .font(Theme.Fonts.footnote)
                 .foregroundStyle(Theme.Palette.inkMuted)
         }
-        .padding(.top, 8)
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
+                .fill(Theme.Palette.surface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
+                .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
+        )
+        .padding(.top, 4)
         .animation(.default, value: progress.notes.count)
         .animation(.default, value: progress.visitedURLs.count)
         .animation(.default, value: progress.phase)

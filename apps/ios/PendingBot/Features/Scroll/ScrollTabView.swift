@@ -55,7 +55,19 @@ struct ScrollTabView: View {
             VStack(spacing: 0) {
                 // No "+" trigger — new envelopes are kicked off from each
                 // conversation's settings sheet. This tab is read-only.
-                TabHeaderBar(title: "来信")
+                TabHeaderBar(title: "来信") {
+                    if !runs.isEmpty {
+                        Text("\(runs.count) 封")
+                            .font(Theme.Fonts.rounded(size: 12, weight: .medium))
+                            .foregroundStyle(Theme.Palette.inkMuted)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(Theme.Palette.surfaceMuted)
+                            )
+                    }
+                }
                 ZStack {
                     Theme.Palette.canvas.ignoresSafeArea()
                     if runs.isEmpty && !loading {
@@ -199,15 +211,29 @@ enum ScrollNav: Hashable {
 
 private struct EmptyState: View {
     var body: some View {
-        VStack(spacing: 8) {
-            Text("还没有来信")
-                .font(Theme.Fonts.serif(size: 18, weight: .semibold))
-                .foregroundStyle(Theme.Palette.ink)
-            Text("打开任意一个机器人对话，进入会话设置，请它写一封来信。")
-                .font(Theme.Fonts.footnote)
-                .foregroundStyle(Theme.Palette.inkMuted)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 32)
+        VStack(spacing: 16) {
+            ZStack {
+                Circle()
+                    .fill(Theme.Palette.surface)
+                    .frame(width: 88, height: 88)
+                    .overlay(
+                        Circle().strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
+                    )
+                Image(systemName: "envelope")
+                    .font(.system(size: 34, weight: .light))
+                    .foregroundStyle(Theme.Palette.accent)
+            }
+            VStack(spacing: 8) {
+                Text("还没有来信")
+                    .font(Theme.Fonts.serif(size: 20, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.ink)
+                Text("打开任意一个机器人对话，进入会话设置，\n请它写一封来信。")
+                    .font(Theme.Fonts.footnote)
+                    .foregroundStyle(Theme.Palette.inkMuted)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(4)
+                    .padding(.horizontal, 32)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
