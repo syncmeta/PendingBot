@@ -19,7 +19,7 @@ import {
   estimateAssistantOutputTokens,
   estimateRequestInputTokens,
 } from '../llm/token-estimate';
-import { getBotMemory } from './memory';
+import { getBotMemory, getUserMemory } from './memory';
 import { queryUserRepresentation } from './honcho';
 import { braveSearch, firecrawlScrape } from './web';
 import { bootstrapPython, createSandbox, runPython } from './sandbox';
@@ -264,10 +264,11 @@ export interface RunChatTurnInput {
   /// Lookback notes the client cached. Each is fed into the prompt as a
   /// private context block; the bot decides per turn whether to keep them.
   activeLookbacks?: Array<{ id: string; body_md: string }>;
-  /// Set when conv.conversation_type === 'self'. The bot adopts the
-  /// user's display_name + bio as its persona — the conversation reads
-  /// as the user talking to a mirror of themselves.
-  selfPersona?: { displayName: string; bio: string } | null;
+  /// True when conv.conversation_type === 'self'. The standard "self
+  /// section" of the system prompt is filled from the user's Honcho
+  /// representation (user-${userId}) instead of the bot's own — so the
+  /// per-user self-bot's self-model is the user's accumulated peer model.
+  isSelfChat?: boolean;
   /// Client's IANA timezone (e.g. "Asia/Shanghai"). Used to format the
   /// "this message was sent at ..." hint we attach to each turn.
   clientTz?: string;
@@ -299,8 +300,10 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   const startedAt = Date.now();
 
   // 1. Look up self section + skills + bot-authored note in parallel.
+  // In self-chat the "self section" is filled from the user's own peer
+  // memory — see RunChatTurnInput.isSelfChat.
   const [botMemory, skillsRes, botNoteRes] = await Promise.all([
-    getBotMemory(env, bot.id),
+    input.isSelfChat ? getUserMemory(env, userId) : getBotMemory(env, bot.id),
     supa
       .from('skill_subscriptions')
       .select('skills(frontmatter, body_md)')
@@ -350,7 +353,6 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     bot, botMemory, skills, botNote,
     lookbacks: activeLookbacks,
     recentContext, newMessage,
-    selfPersona: input.selfPersona ?? null,
     clientTz: input.clientTz,
   });
 

@@ -29,10 +29,6 @@ export interface BuildMessagesInput {
     created_at: string; // ISO 8601 with timezone
   }>;
   newMessage: string;
-  /// Self-chat persona: when present, the bot adopts the user's
-  /// display_name + bio for the duration of the conversation (the user
-  /// is talking to a mirror of themselves).
-  selfPersona?: { displayName: string; bio: string } | null;
   // IANA timezone from the client (e.g. "Asia/Shanghai"). Used to format
   // the *current* user turn's timestamp (server only knows UTC for "now").
   // Historical messages carry their own offset in `created_at`, so we
@@ -100,27 +96,6 @@ function buildSkillsSection(skills: BuildMessagesInput['skills']): string {
         `## Skill: ${s.name}\n**When to use**: ${s.description}\n\n${s.body}`,
     )
     .join('\n\n');
-}
-
-function buildSelfPersonaSection(
-  persona: BuildMessagesInput['selfPersona'],
-): string {
-  if (!persona) return '';
-  const name = (persona.displayName || '').trim() || '对方';
-  const bio = (persona.bio || '').trim();
-  const lines: string[] = [
-    '## 这是一段「自我对话」',
-    `对方就是 **${name}** 本人——你正在扮演 Ta，跟 Ta 自己说话。`,
-    '',
-    '请用第一人称、Ta 的口吻、Ta 的语气回话；像 Ta 自己在心里跟自己说话一样。',
-    '不要解释你在扮演谁、不要跳出角色。',
-  ];
-  if (bio) {
-    lines.push('', '### Ta 的自我介绍', bio);
-  } else {
-    lines.push('', '（Ta 还没填自我介绍——按上下文里 Ta 说过的话推断 Ta 的语气和关注点。）');
-  }
-  return lines.join('\n');
 }
 
 function buildBotNoteSection(note: string | null): string {
@@ -252,12 +227,9 @@ export function buildMessages(input: BuildMessagesInput): ChatCompletionMessageP
   const skillsSection = buildSkillsSection(skills);
   const botNoteSection = buildBotNoteSection(input.botNote);
   const lookbackSection = buildLookbackSection(input.lookbacks);
-  const personaSection = buildSelfPersonaSection(input.selfPersona ?? null);
   const modeInstr = bot.output_mode === 'bubble' ? BUBBLE_INSTRUCTIONS : SINGLE_INSTRUCTIONS;
-  // Self-chat persona section sits at the very top so it overrides the
-  // bot's stock identity for the duration of the conversation.
   const systemContent = [
-    personaSection, platform, selfSection, skillsSection,
+    platform, selfSection, skillsSection,
     botNoteSection, lookbackSection, modeInstr,
   ].filter(Boolean).join('\n\n');
 
