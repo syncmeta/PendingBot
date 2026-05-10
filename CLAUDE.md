@@ -85,7 +85,7 @@ git branch -d <branch>          # -d, not -D — refusal means there are unmerge
 
 ## Pushing main
 
-Harness blocks Claude from pushing `main`. After merging, tell the user to run `git push origin main` themselves. (Auto-push of feat/fix/chore branches as backups is fine — that's already in user memory.)
+Pre-launch (no users yet): after merging into `main`, push it yourself with `git push origin main`. Re-add the "user pushes main themselves" gate after launch.
 
 ## Deploys
 
