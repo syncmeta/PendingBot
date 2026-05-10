@@ -27,10 +27,20 @@ import type { AppBindings } from '../types';
 export const friendRequestRoutes = new Hono<AppBindings>();
 friendRequestRoutes.use('*', requireSession());
 
-const CreateBody = z.object({
-  handleValue: z.string().min(4).max(64),
-  remark: z.string().max(64).optional(),
-});
+// Either path: classic handle-based add (`handleValue`) for QR / number
+// scans, or peer-id-based add (`peerUserId`) for the in-group "加他好友"
+// flow where iOS already knows the user_id from the participants list.
+// Exactly one must be provided.
+const CreateBody = z
+  .object({
+    handleValue: z.string().min(4).max(64).optional(),
+    peerUserId: z.string().uuid().optional(),
+    remark: z.string().max(64).optional(),
+  })
+  .refine(
+    (v) => (v.handleValue ? 1 : 0) + (v.peerUserId ? 1 : 0) === 1,
+    { message: 'must specify exactly one of handleValue or peerUserId' },
+  );
 
 // Preview a user by handle. Used by the iOS 加好友 page after the user
 // finishes typing the number, so they can confirm "this is the person I
@@ -77,15 +87,33 @@ friendRequestRoutes.post('/', async (c) => {
 
   const supa = serviceClient(c.env);
 
-  const { data: handle, error: handleErr } = await supa
-    .from('user_handles')
-    .select('id, user_id, is_active')
-    .eq('value', parsed.handleValue)
-    .maybeSingle();
-  if (handleErr) return c.json({ error: '号码查询失败,请稍后重试', detail: handleErr.message }, 500);
-  if (!handle || !handle.is_active) return c.json({ error: '号码无效或已撤销' }, 404);
-  const targetUserId = handle.user_id as string;
-  const viaHandleId = handle.id as string;
+  // Resolve target user. Handle path looks the value up in user_handles
+  // and pins the resulting friend row to that handle (so the recipient
+  // can see "joined via blog"). Peer-id path skips the handle lookup
+  // entirely — used by the in-group "加他好友" prompt where the caller
+  // already has the participant's user_id.
+  let targetUserId: string;
+  let viaHandleId: string | null = null;
+  if (parsed.handleValue) {
+    const { data: handle, error: handleErr } = await supa
+      .from('user_handles')
+      .select('id, user_id, is_active')
+      .eq('value', parsed.handleValue)
+      .maybeSingle();
+    if (handleErr) return c.json({ error: '号码查询失败,请稍后重试', detail: handleErr.message }, 500);
+    if (!handle || !handle.is_active) return c.json({ error: '号码无效或已撤销' }, 404);
+    targetUserId = handle.user_id as string;
+    viaHandleId = handle.id as string;
+  } else {
+    targetUserId = parsed.peerUserId!;
+    const { data: peer, error: peerErr } = await supa
+      .from('users')
+      .select('id')
+      .eq('id', targetUserId)
+      .maybeSingle();
+    if (peerErr) return c.json({ error: 'database', detail: peerErr.message }, 500);
+    if (!peer) return c.json({ error: '用户不存在' }, 404);
+  }
 
   if (targetUserId === userId) return c.json({ error: '不能加自己' }, 400);
 

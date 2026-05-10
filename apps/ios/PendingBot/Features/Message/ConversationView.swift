@@ -158,6 +158,14 @@ struct ConversationView: View {
     @State private var pendingContinue: PendingContinue?
     @State private var continueDeciding: Bool = false
 
+    /// Group conv only — set when the caller's group_member_billing.
+    /// overdrawn = true (per-group cap exhausted OR wallet balance can't
+    /// cover the next allocation; migration 0066 unifies both into the
+    /// same flag). The timestamp is the moment of the flip — messages
+    /// from this point forward are hidden and the composer locks. Older
+    /// messages stay visible so the user can still scroll their history.
+    @State private var groupFreezeAt: Date?
+
     /// "<bot_name> · <effective-model-tag>". Effective model = the per-conv
     /// override if set, otherwise the bot's resolved model (which itself
     /// already accounts for the user's per-bot pin from 我 → 机器人管理).
@@ -192,6 +200,8 @@ struct ConversationView: View {
             // "this conversation". Match the bubble side's avatar so the
             // header and the incoming bubbles look like one identity.
             UserAvatar(seed: peer.userId, attachmentId: peer.avatarPath, size: size)
+        } else if conversation.conversation_type == "group" {
+            GroupAvatar(seed: conversation.id, size: size)
         } else {
             BotAvatar(
                 emojiSeed: avatarEmojiSeed,
@@ -263,11 +273,11 @@ struct ConversationView: View {
                     LazyVStack(alignment: .leading, spacing: 2) {
                         Color.clear.frame(height: 8)
 
-                        if messages.isEmpty && !pending {
+                        if displayedMessages.isEmpty && !pending {
                             emptyConversation
                         }
 
-                        ForEach(messages) { msg in
+                        ForEach(displayedMessages) { msg in
                             BubbleView(message: msg,
                                        botName: botName,
                                        conversationID: conversation.id,
@@ -345,6 +355,10 @@ struct ConversationView: View {
         // ScrollView and composer animating against each other.
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
+                if iAmFrozen {
+                    frozenComposerBanner
+                        .readableColumnWidth()
+                }
                 if let pc = pendingContinue {
                     continueRequestBanner(pc)
                         .readableColumnWidth()
@@ -384,6 +398,7 @@ struct ConversationView: View {
             await loadPeerProfileIfNeeded()
             await loadGroupSendersIfNeeded()
             await loadPendingContinueIfNeeded()
+            await loadGroupFreezeIfNeeded()
         }
         .onDisappear {
             if let token = realtimeToken {
@@ -467,7 +482,26 @@ struct ConversationView: View {
     }
 
     private var canSend: Bool {
-        !input.trimmingCharacters(in: .whitespaces).isEmpty || !pendingAttachments.isEmpty
+        guard !iAmFrozen else { return false }
+        return !input.trimmingCharacters(in: .whitespaces).isEmpty || !pendingAttachments.isEmpty
+    }
+
+    /// True iff this is a group conv and the caller has been frozen out
+    /// by group_member_billing.overdrawn. Drives the banner above the
+    /// composer and the displayed-message filter below.
+    private var iAmFrozen: Bool {
+        groupFreezeAt != nil
+    }
+
+    /// Messages the freeze gate allows the caller to see. Pre-freeze
+    /// rows stay visible (they were already in this user's allowance
+    /// when posted); rows whose `created_at` is at-or-after the freeze
+    /// timestamp are hidden — that's the user-facing rule "你看不到
+    /// 自从达到上限之后的新消息".
+    private var displayedMessages: [ChatMessage] {
+        guard let freezeAt = groupFreezeAt else { return messages }
+        let cutoff = Int(freezeAt.timeIntervalSince1970)
+        return messages.filter { $0.created_at < cutoff }
     }
 
     private func scrollToBottom(proxy: ScrollViewProxy) {
@@ -1277,6 +1311,11 @@ struct ConversationView: View {
             // expanding it after the turn completes; only the live binding
             // is cleared here.
             liveTraceUserMsgId = nil
+            // Re-check the freeze flag after a turn — billing for this
+            // turn may have flipped the caller from active to overdrawn,
+            // and the banner / message filter need to update without
+            // waiting for a manual refresh.
+            await loadGroupFreezeIfNeeded()
         }
     }
 
@@ -1871,6 +1910,64 @@ struct ConversationView: View {
         default: return nil
         }
         return groupSenders[key]
+    }
+
+    /// Group conv only — read the caller's group_member_billing row to
+    /// learn whether they've crossed their per-group cap or run out of
+    /// wallet balance (migration 0066 unifies both into `overdrawn`).
+    /// When true, `frozen_at` carries the wall-clock moment of the flip
+    /// — used by `displayedMessages` to hide post-freeze rows and by
+    /// `iAmFrozen` to lock the composer + show the banner.
+    private func loadGroupFreezeIfNeeded() async {
+        guard conversation.conversation_type == "group" else { return }
+        guard !conversation.id.isEmpty else { return }
+        guard let me = AccountStore.shared.current?.id else { return }
+        do {
+            struct Row: Decodable {
+                let overdrawn: Bool
+                let frozen_at: String?
+            }
+            let rows: [Row] = try await SupabaseStack.shared
+                .from("group_member_billing")
+                .select("overdrawn, frozen_at")
+                .eq("conversation_id", value: conversation.id)
+                .eq("user_id", value: me)
+                .limit(1)
+                .execute()
+                .value
+            if let row = rows.first, row.overdrawn,
+               let raw = row.frozen_at, let parsed = ServerTimestamp.parse(raw) {
+                self.groupFreezeAt = parsed
+            } else {
+                self.groupFreezeAt = nil
+            }
+        } catch {
+            log.warning("group freeze load failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Banner shown above the composer when the caller is frozen out of
+    /// the group. Composer itself stays mounted (so the field still
+    /// shows the typed-but-not-sent draft) but `canSend` is false.
+    private var frozenComposerBanner: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(Theme.Palette.amber)
+                .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("已达本群 PND 上限,新消息和发送已暂停")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Theme.Palette.ink)
+                Text("提高上限或为账户充值后会自动恢复")
+                    .font(.caption)
+                    .foregroundStyle(Theme.Palette.inkMuted)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, Theme.Metrics.gutter)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.Palette.amberBg)
     }
 
     /// Group conv only — pull the most recent pending continue-request
