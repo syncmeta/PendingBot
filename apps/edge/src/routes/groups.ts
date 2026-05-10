@@ -23,13 +23,28 @@ groupRoutes.use('*', requireSession());
 // Convert a postgres error from supabase-js into a structured HTTP
 // response. We surface the message verbatim — RPC error messages are
 // human-readable Chinese/English by design.
+//
+// supabase-js .rpc() returns the postgres error as a plain object
+// (`{ code, message, details, hint }`) — `PostgrestError` is only
+// constructed when the caller opted into `.throwOnError()`. So we
+// can't rely on `instanceof Error`; pull `.message` off the object.
+// Without this, every well-known RPC exception fell through to the
+// "database" 500 branch (e.g. a QR scan that resolved to a user QR
+// rather than a group surfaced as "database error" instead of 404,
+// blocking iOS from falling back to the friend-add path).
 function rpcError(err: unknown, fallback = 'database error') {
-  const msg = err instanceof Error ? err.message : String(err ?? fallback);
+  let msg = fallback;
+  if (typeof err === 'string') msg = err;
+  else if (err && typeof err === 'object' && typeof (err as { message?: unknown }).message === 'string') {
+    msg = (err as { message: string }).message;
+  } else if (err != null) {
+    msg = String(err);
+  }
   // Heuristic: a few well-known RPC exceptions map to non-500 codes.
   if (/auth required/i.test(msg)) return { status: 401 as const, body: { error: msg } };
   if (/forbidden|cannot remove|cannot leave/i.test(msg)) return { status: 403 as const, body: { error: msg } };
   if (/not found/i.test(msg)) return { status: 404 as const, body: { error: msg } };
-  if (/already decided|full|invalid|too long|must|requires|empty/i.test(msg)) {
+  if (/already decided|full|invalid|too long|must|requires|empty|closed to new/i.test(msg)) {
     return { status: 400 as const, body: { error: msg } };
   }
   return { status: 500 as const, body: { error: 'database', detail: msg } };
