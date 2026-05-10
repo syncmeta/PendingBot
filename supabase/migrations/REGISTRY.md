@@ -1,6 +1,6 @@
 # Migration number registry
 
-**Last assigned: `0063`**
+**Last assigned: `0064`**
 
 This file is the canonical record of every supabase migration number that has been
 claimed in this repo, including ones still unmerged on feature branches. It exists
@@ -38,7 +38,7 @@ pushed), the loser renumbers on their branch with a `chore(db): renumber 00NN â†
 
 | Number | Filename | Branch | Notes |
 |--------|----------|--------|-------|
-| _(none)_ | | | |
+| 0064 | `0064_attachments_vision_summary.sql` | `feat/vision-attachments` | adds attachments.summary/tags/vision_model + conversations.vision_model_override + seeds llm_models.capabilities.vision |
 
 ## History
 
@@ -92,3 +92,4 @@ pushed), the loser renumbers on their branch with a `chore(db): renumber 00NN â†
 | 0061 | `0061_friend_request_remark.sql` |
 | 0062 | `0062_backfill_user_avatar_path.sql` |
 | 0063 | `0063_attachments_rls_avatar_visibility.sql` |
+| 0064 | `0064_attachments_vision_summary.sql` |
