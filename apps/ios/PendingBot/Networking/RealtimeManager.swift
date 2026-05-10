@@ -143,7 +143,7 @@ final class RealtimeManager {
         // — Realtime accepts the channel join when one isn't, but silently
         // drops events for *every* postgres_changes filter on the same
         // channel (incl. messages), surfacing as user_user real-time
-        // delivery silently breaking. See migration 0057.
+        // delivery silently breaking. See migration 0060.
         handle.subs.append(ch.onPostgresChange(
             InsertAction.self,
             schema: "pendingbot",
