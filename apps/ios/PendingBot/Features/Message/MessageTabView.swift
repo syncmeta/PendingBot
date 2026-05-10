@@ -680,6 +680,8 @@ private struct ConversationListRow: View {
         return (Theme.Palette.amber, Theme.Palette.amberBg)
     }
 
+    private var isGroupConv: Bool { conv.conversation_type == "group" }
+
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             // user_user gets the peer's UserAvatar so the same person
@@ -707,9 +709,6 @@ private struct ConversationListRow: View {
                             rowTitleIsPlaceholder ? Theme.Palette.inkMuted : Theme.Palette.ink
                         )
                         .lineLimit(1)
-                    if let badge = ConvTypeBadge(forType: conv.conversation_type) {
-                        badge
-                    }
                     Spacer(minLength: 8)
                     if conv.last_activity_at > 0 {
                         // Preset preseeded conversations are stamped with a
@@ -738,14 +737,19 @@ private struct ConversationListRow: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
                     Spacer(minLength: 8)
-                    Text(primaryName)
-                        .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
-                        .foregroundStyle(nameTagColors.fg)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Capsule().fill(nameTagColors.bg))
-                        .lineLimit(1)
-                        .layoutPriority(1)
+                    if isGroupConv {
+                        GroupChatTag()
+                            .layoutPriority(1)
+                    } else {
+                        Text(primaryName)
+                            .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
+                            .foregroundStyle(nameTagColors.fg)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(nameTagColors.bg))
+                            .lineLimit(1)
+                            .layoutPriority(1)
+                    }
                 }
             }
         }
@@ -763,35 +767,6 @@ private struct ConversationListRow: View {
                 )
         )
         .contentShape(RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous))
-    }
-}
-
-// MARK: - Conv-type badge
-
-/// Compact pill rendered next to a list-row title to call out group
-/// conversations. 1:1 chats (user_bot / user_user) return nil — the
-/// row's name-tag color already differentiates them.
-private struct ConvTypeBadge: View {
-    let text: String
-    let fg: Color
-    let bg: Color
-    init?(forType type: String?) {
-        switch type {
-        case "group":
-            self.text = "群"
-            self.fg = Color(hex: 0x1F4F8A)
-            self.bg = Color(hex: 0xE6EEF8)
-        default:
-            return nil
-        }
-    }
-    var body: some View {
-        Text(text)
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(fg)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(bg))
     }
 }
 
