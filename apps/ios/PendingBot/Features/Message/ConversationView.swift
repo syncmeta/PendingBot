@@ -2187,25 +2187,13 @@ struct ConversationView: View {
     }
 
     private func patchBotUserModel(slug: String?) async {
-        guard let api else { return }
-        let botId = bot?.id ?? conversation.bot_id
-        struct Body: Encodable { let model: String? }
-        struct Reply: Decodable { let ok: Bool; let user_model: String? }
-        do {
-            _ = try await api.patch(
-                "api/mobile/bots/\(botId)",
-                body: Body(model: slug)
-            ) as Reply
-            Haptics.success()
-            // Bot.model is a let on a struct passed in from the parent — we
-            // can't mutate it locally. The parent list refreshes via
-            // onChange() (covers both list refresh and reopened-conversation
-            // flows); next reopen will reflect the new resolved model.
-            onChange()
-        } catch {
-            self.error = "更换机器人模型失败: \(error.localizedDescription)"
-            Haptics.error()
-        }
+        // Per-user-per-bot model override has no storage yet — there's no
+        // user_bot_settings (or equivalent) table on the schema, and the
+        // edge has no /v1/bots/:id PATCH endpoint. Mirror the
+        // patchConversationModel stub so the picker is a clean local-only
+        // affordance until the persistence layer lands.
+        _ = slug
+        Haptics.tap()
     }
 
     private func deleteMessage(_ msg: ChatMessage) async {
