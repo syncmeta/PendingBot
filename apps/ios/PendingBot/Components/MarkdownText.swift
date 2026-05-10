@@ -41,7 +41,8 @@ struct MarkdownText: View {
                 ChatCodeBlock(
                     content: configuration.content,
                     language: configuration.language,
-                    allowRun: allowCodeRun
+                    allowRun: allowCodeRun,
+                    variant: variant
                 )
             }
             .textSelection(.enabled)
@@ -407,10 +408,17 @@ private struct CitationSheet: View {
 /// Run is offered for `js` / `javascript` / `html` only — anything else
 /// shows a static lang chip so users don't tap into a sandbox that can't
 /// execute their language.
+///
+/// `variant` retunes the block for its surrounding surface:
+/// - `.chat` keeps the dense bubble-companion treatment.
+/// - `.article` switches to editorial register — bigger monospace, more
+///   breathing room, quieter chrome — so a code block sits inside a 17pt
+///   serif column without reading like a chat snippet glued in.
 private struct ChatCodeBlock: View {
     let content: String
     let language: String?
     let allowRun: Bool
+    var variant: MarkdownText.Variant = .chat
 
     @State private var copied = false
     @State private var runnerSheet = false
@@ -422,67 +430,95 @@ private struct ChatCodeBlock: View {
 
     private static let runnableLangs: Set<String> = ["js", "javascript", "html"]
 
+    private var codeFontSize: CGFloat { variant == .article ? 14.5 : 13.5 }
+    private var horizontalPadding: CGFloat { variant == .article ? 16 : 12 }
+    private var verticalPadding: CGFloat { variant == .article ? 14 : 10 }
+    private var cornerRadius: CGFloat { variant == .article ? 6 : 10 }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             toolbar
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(content)
-                    .font(.system(size: 13.5, design: .monospaced))
+                    .font(.system(size: codeFontSize, design: .monospaced))
                     .foregroundStyle(AppTheme.Palette.ink)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
+                    .lineSpacing(variant == .article ? 3 : 1)
+                    .padding(.horizontal, horizontalPadding)
+                    .padding(.vertical, verticalPadding)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
             }
         }
-        .background(AppTheme.Palette.surfaceMuted.opacity(0.85))
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(AppTheme.Palette.surfaceMuted.opacity(variant == .article ? 0.6 : 0.85))
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .strokeBorder(AppTheme.Palette.hairline, lineWidth: 0.5)
         )
-        .padding(.vertical, 4)
+        .padding(.vertical, variant == .article ? 10 : 4)
         .sheet(isPresented: $runnerSheet) {
             CodeRunnerSheet(content: content, language: language ?? "")
         }
     }
 
+    @ViewBuilder
     private var toolbar: some View {
-        HStack(spacing: 10) {
+        // In article register, only show the chrome row when there's
+        // actually something to show (a language tag or a run button).
+        // The 复制 control is already redundant with iOS text selection's
+        // long-press menu in the editorial reading mode, and the empty
+        // toolbar above each block was the loudest source of "looks
+        // chatty" in 来信.
+        if variant == .article {
             if let lang = language, !lang.isEmpty {
-                Text(lang.lowercased())
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(AppTheme.Palette.inkMuted)
-            }
-            Spacer(minLength: 0)
-            Button {
-                UIPasteboard.general.string = content
-                Haptics.tap()
-                copied = true
-                Task {
-                    try? await Task.sleep(nanoseconds: 1_200_000_000)
-                    copied = false
+                HStack(spacing: 0) {
+                    Text(lang.lowercased())
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .foregroundStyle(AppTheme.Palette.inkMuted)
+                        .tracking(0.4)
+                    Spacer(minLength: 0)
                 }
-            } label: {
-                Text(copied ? "已复制" : "复制")
-                    .font(AppTheme.Fonts.rounded(size: 11, weight: .medium))
-                    .foregroundStyle(AppTheme.Palette.inkMuted)
+                .padding(.horizontal, horizontalPadding)
+                .padding(.top, 8)
+                .padding(.bottom, 2)
             }
-            .buttonStyle(.plain)
-            if canRun {
+        } else {
+            HStack(spacing: 10) {
+                if let lang = language, !lang.isEmpty {
+                    Text(lang.lowercased())
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(AppTheme.Palette.inkMuted)
+                }
+                Spacer(minLength: 0)
                 Button {
+                    UIPasteboard.general.string = content
                     Haptics.tap()
-                    runnerSheet = true
+                    copied = true
+                    Task {
+                        try? await Task.sleep(nanoseconds: 1_200_000_000)
+                        copied = false
+                    }
                 } label: {
-                    Text("▶ 运行")
+                    Text(copied ? "已复制" : "复制")
                         .font(AppTheme.Fonts.rounded(size: 11, weight: .medium))
-                        .foregroundStyle(AppTheme.Palette.accent)
+                        .foregroundStyle(AppTheme.Palette.inkMuted)
                 }
                 .buttonStyle(.plain)
+                if canRun {
+                    Button {
+                        Haptics.tap()
+                        runnerSheet = true
+                    } label: {
+                        Text("▶ 运行")
+                            .font(AppTheme.Fonts.rounded(size: 11, weight: .medium))
+                            .foregroundStyle(AppTheme.Palette.accent)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
+            .padding(.horizontal, 10)
+            .padding(.top, 6)
+            .padding(.bottom, 4)
         }
-        .padding(.horizontal, 10)
-        .padding(.top, 6)
-        .padding(.bottom, 4)
     }
 }
