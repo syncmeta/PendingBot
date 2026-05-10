@@ -94,7 +94,7 @@ messageRoutes.post('/', async (c) => {
   const supaUser = userClient(c.env, userJwt);
   const { data: conv, error: convErr } = await supaUser
     .from('conversations')
-    // provider_override (0038) + model_slug_override (0057) — both column-on-conv pins.
+    // provider_override (0038) + model_slug_override (0058) — both column-on-conv pins.
     .select('id, conversation_type, bot_id, round_count, provider_override, model_slug_override')
     .eq('id', parsed.conversationId)
     .maybeSingle();
