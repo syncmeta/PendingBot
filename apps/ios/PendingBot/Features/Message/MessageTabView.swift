@@ -806,30 +806,30 @@ private struct ScanQRSheet: View {
     @State private var scannedValue: String?
     @State private var submitting = false
     @State private var error: String?
+    @State private var displayText: String?
 
     var body: some View {
         NavigationStack {
             ZStack {
                 Color.black.ignoresSafeArea()
-                if scannedValue == nil {
+                if let displayText {
+                    Text(displayText)
+                        .font(.system(size: 22, weight: .regular, design: .serif))
+                        .foregroundStyle(.white)
+                        .multilineTextAlignment(.center)
+                        .lineSpacing(10)
+                        .padding(.horizontal, 40)
+                        .padding(.vertical, 32)
+                        .textSelection(.enabled)
+                } else if scannedValue == nil {
                     QRScannerView { value in
                         scannedValue = value
                         Haptics.tap()
-                        Task { await submit(value: value) }
+                        Task { await handle(value: value) }
                     } onError: { err in
                         error = err.localizedDescription
                     }
                     .ignoresSafeArea()
-                    VStack {
-                        Spacer()
-                        Text("把对方的二维码对准相机")
-                            .font(.footnote)
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            .background(Capsule().fill(Color.black.opacity(0.5)))
-                            .padding(.bottom, 40)
-                    }
                 } else if submitting {
                     VStack(spacing: 12) {
                         ProgressView().tint(.white).controlSize(.large)
@@ -863,6 +863,27 @@ private struct ScanQRSheet: View {
                 }
             }
         }
+    }
+
+    /// Three-way fan-out for whatever the camera saw:
+    ///   1. PendingBot contact-share URL → existing add-friend / join-group flow.
+    ///   2. Other http(s) URL → hand off to Safari and dismiss.
+    ///   3. Anything else → render the raw text in the centre of the sheet.
+    private func handle(value: String) async {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if PendingBotQR.isPendingBotQR(trimmed) {
+            await submit(value: trimmed)
+            return
+        }
+        if let url = URL(string: trimmed),
+           let scheme = url.scheme?.lowercased(),
+           scheme == "http" || scheme == "https",
+           url.host?.isEmpty == false {
+            await UIApplication.shared.open(url)
+            dismiss()
+            return
+        }
+        displayText = trimmed
     }
 
     private func submit(value: String) async {
