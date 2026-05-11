@@ -10,7 +10,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "pendingbot-edge",
   "main": "src/index.ts",
-  "compatibility_date": "2025-04-01",
+  "compatibility_date": "2026-05-01",
   "compatibility_flags": ["nodejs_compat"],
 
   // Treat .md as raw text, importable as string. Powers prompts/*.md.
