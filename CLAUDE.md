@@ -77,18 +77,19 @@ If you can't run `supabase` for some reason (e.g. seed-style migration drafted b
 
 ## After applying a migration
 
-Anything that lands a new file under `supabase/migrations/` is only half done — once the user has applied it (Supabase Studio / `supabase db push` / however they sync), the TypeScript schema needs to be regenerated so edge code that references new tables/columns typechecks:
+Anything that lands a new file under `supabase/migrations/` is only half done — after applying it, the TypeScript schema needs to be regenerated so edge code that references new tables/columns typechecks:
 
 ```
-supabase gen types typescript --local --schema pendingbot \
-  > apps/edge/src/db/schema.ts
+bun --filter='@pendingbot/edge' run types:db
 ```
 
-(Or `--linked` instead of `--local` if pulling from the linked project; the `apps/edge/src/db/schema.ts` header documents the exact command.)
+The script wraps `supabase gen types typescript --linked --schema pendingbot 2>/dev/null > src/db/schema.ts`. **The `2>/dev/null` matters**: the supabase CLI emits "new version available" notifications to stdout (not stderr alone), which would otherwise corrupt schema.ts. Use the script, don't invoke the bare command — past sessions have lost time to that footgun.
 
-If you (the agent) are the one running it: run that command, then re-run `bun --filter='@pendingbot/edge' run typecheck` and commit the regen as a separate `chore(db): regen schema.ts after <migration_name>` commit.
-
-If the user is running it: tell them in the wrap-up which migration they need to apply and that schema.ts regen + edge typecheck go together. Don't claim a feature is done if it depends on a not-yet-applied migration.
+Apply order (the agent does this, not the user):
+1. `supabase db push --linked` (from the main worktree dir; that's where `supabase/.temp/linked-project.json` lives)
+2. `bun --filter='@pendingbot/edge' run types:db`
+3. `bun --filter='@pendingbot/edge' run typecheck`
+4. Commit the regen as `chore(db): regen schema.ts after <migration_name>`
 
 ## Cleanup after merge
 

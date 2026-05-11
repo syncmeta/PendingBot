@@ -9,6 +9,7 @@
     "tail": "wrangler tail --env production",
     "typecheck": "tsc --noEmit",
     "types:cf": "wrangler types --env-interface Env src/types.ts",
+    "types:db": "supabase gen types typescript --linked --schema pendingbot 2>/dev/null > src/db/schema.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
