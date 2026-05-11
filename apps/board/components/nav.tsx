@@ -14,6 +14,7 @@ const LINKS: { href: string; label: string }[] = [
   { href: '/aliases', label: 'Aliases' },
   { href: '/web-tool-prices', label: 'Web tools' },
   { href: '/routing-rules', label: 'Routing' },
+  { href: '/prompts', label: 'Prompts' },
   { href: '/users', label: 'Users' },
   { href: '/admin-audit', label: 'Admin audit' },
 ];
