@@ -45,11 +45,17 @@ deviceRoutes.post('/register', async (c) => {
   return c.json({ ok: true });
 });
 
+const UnregisterBody = z.object({ token: z.string().min(8).max(512) });
+
 // POST /v1/devices/unregister — flip is_active=false.
 deviceRoutes.post('/unregister', async (c) => {
   const userId = c.var.userId!;
-  const body: { token?: string } = await c.req.json().catch(() => ({}));
-  if (!body.token) return c.json({ error: 'token required' }, 400);
+  let body: z.infer<typeof UnregisterBody>;
+  try {
+    body = UnregisterBody.parse(await c.req.json());
+  } catch (err) {
+    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+  }
   const supa = serviceClient(c.env);
   const { error } = await supa
     .from('device_tokens')
