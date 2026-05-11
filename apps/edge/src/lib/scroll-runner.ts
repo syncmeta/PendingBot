@@ -7,7 +7,7 @@ import {
   resolveRoute,
   type ResolvedRoute,
 } from '../llm/router';
-import { getPrompt } from '../llm/prompt-loader';
+import { ensurePromptOverridesLoaded, getPrompt } from '../llm/prompt-loader';
 import { estimateTokens } from '../llm/token-estimate';
 import { getBotMemory } from './memory';
 import {
@@ -212,6 +212,7 @@ function summarizeTurn(i: number, newMessages: ChatCompletionMessageParam[]): Tu
 export async function runScroll(input: RunScrollInput): Promise<void> {
   const { env, scrollRunId, conversationId, userId, botId, settings } = input;
   const supa = serviceClient(env);
+  await ensurePromptOverridesLoaded(supa);
   const startedAt = Date.now();
 
   await supa

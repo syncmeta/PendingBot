@@ -6,7 +6,7 @@ import {
   usageFromCompletion,
   withFallback,
 } from '../llm/router';
-import { getPrompt } from '../llm/prompt-loader';
+import { ensurePromptOverridesLoaded, getPrompt } from '../llm/prompt-loader';
 
 // Lookback runner — invisible to the user, written by the bot for its
 // future self.
@@ -51,6 +51,7 @@ export interface RunLookbackInput {
 export async function runLookback(input: RunLookbackInput): Promise<void> {
   const { env, conversationId, botId } = input;
   const supa = serviceClient(env);
+  await ensurePromptOverridesLoaded(supa);
   const startedAt = Date.now();
 
   try {
