@@ -94,11 +94,17 @@ where m.slug = 'gpt-realtime'
 --   placeholder 0.10 USD/min should be reset to a conservative figure derived
 --   from (6.25 in tok/s + 25 out tok/s) × 牌价 once we validate against an
 --   actual Volcengine bill. provider_model_id is the SDK ResourceId.
+--
+--   input_price / output_price are NOT NULL on llm_model_aliases (legacy
+--   constraint from the text-only era), so we feed 0 to satisfy the schema
+--   even though Doubao is billed off audio_per_minute_price alone.
 insert into pendingbot.llm_model_aliases
   (model_id, provider_id, provider_model_id,
+   input_price, output_price,
    audio_per_minute_price,
    weight, enabled)
 select m.id, p.id, 'volc.speech.dialog',
+       0, 0,
        0.10,
        100, true
 from pendingbot.llm_models m
