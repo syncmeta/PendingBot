@@ -7,11 +7,6 @@ export type Json =
   | Json[]
 
 export type Database = {
-  // Allows to automatically instantiate createClient with right options
-  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
-  __InternalSupabase: {
-    PostgrestVersion: "14.5"
-  }
   pendingbot: {
     Tables: {
       account_deletion_log: {
@@ -182,6 +177,9 @@ export type Database = {
       }
       audit_log: {
         Row: {
+          audio_input_tokens: number
+          audio_output_tokens: number
+          audio_seconds_billed: number | null
           billing_status: string
           cache_read_tokens: number
           cache_write_tokens: number
@@ -210,6 +208,9 @@ export type Database = {
           user_id: string | null
         }
         Insert: {
+          audio_input_tokens?: number
+          audio_output_tokens?: number
+          audio_seconds_billed?: number | null
           billing_status?: string
           cache_read_tokens?: number
           cache_write_tokens?: number
@@ -238,6 +239,9 @@ export type Database = {
           user_id?: string | null
         }
         Update: {
+          audio_input_tokens?: number
+          audio_output_tokens?: number
+          audio_seconds_billed?: number | null
           billing_status?: string
           cache_read_tokens?: number
           cache_write_tokens?: number
@@ -619,6 +623,8 @@ export type Database = {
           slug: string
           updated_at: string
           visibility: string
+          voice_call_enabled: boolean
+          voice_call_provider: string
         }
         Insert: {
           config?: Json
@@ -632,6 +638,8 @@ export type Database = {
           slug: string
           updated_at?: string
           visibility?: string
+          voice_call_enabled?: boolean
+          voice_call_provider?: string
         }
         Update: {
           config?: Json
@@ -645,6 +653,8 @@ export type Database = {
           slug?: string
           updated_at?: string
           visibility?: string
+          voice_call_enabled?: boolean
+          voice_call_provider?: string
         }
         Relationships: []
       }
@@ -1190,6 +1200,33 @@ export type Database = {
           },
         ]
       }
+      i18n_prompts: {
+        Row: {
+          body_md: string
+          locale: string
+          name: string
+          updated_at: string
+          updated_by: string | null
+          version: number
+        }
+        Insert: {
+          body_md: string
+          locale: string
+          name: string
+          updated_at?: string
+          updated_by?: string | null
+          version?: number
+        }
+        Update: {
+          body_md?: string
+          locale?: string
+          name?: string
+          updated_at?: string
+          updated_by?: string | null
+          version?: number
+        }
+        Relationships: []
+      }
       invites: {
         Row: {
           code: string
@@ -1222,6 +1259,9 @@ export type Database = {
       }
       llm_model_aliases: {
         Row: {
+          audio_input_price: number | null
+          audio_output_price: number | null
+          audio_per_minute_price: number | null
           cache_write_price: number | null
           cached_input_price: number | null
           config: Json
@@ -1239,6 +1279,9 @@ export type Database = {
           weight: number
         }
         Insert: {
+          audio_input_price?: number | null
+          audio_output_price?: number | null
+          audio_per_minute_price?: number | null
           cache_write_price?: number | null
           cached_input_price?: number | null
           config?: Json
@@ -1256,6 +1299,9 @@ export type Database = {
           weight?: number
         }
         Update: {
+          audio_input_price?: number | null
+          audio_output_price?: number | null
+          audio_per_minute_price?: number | null
           cache_write_price?: number | null
           cached_input_price?: number | null
           config?: Json
@@ -1393,6 +1439,7 @@ export type Database = {
           id: string
           log_kind: string | null
           log_payload: Json | null
+          metadata: Json | null
           parent_message_id: string | null
           replaced_by_message_id: string | null
           replaces_message_id: string | null
@@ -1416,6 +1463,7 @@ export type Database = {
           id?: string
           log_kind?: string | null
           log_payload?: Json | null
+          metadata?: Json | null
           parent_message_id?: string | null
           replaced_by_message_id?: string | null
           replaces_message_id?: string | null
@@ -1439,6 +1487,7 @@ export type Database = {
           id?: string
           log_kind?: string | null
           log_payload?: Json | null
+          metadata?: Json | null
           parent_message_id?: string | null
           replaced_by_message_id?: string | null
           replaces_message_id?: string | null
@@ -2588,3 +2637,4 @@ export const Constants = {
     },
   },
 } as const
+
