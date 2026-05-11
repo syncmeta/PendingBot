@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { fmtNumber, fmtTokens } from '@/lib/format';
+import { ActionButton } from '@/components/action-button';
 import { deleteModel } from './actions';
 
 export default async function ModelsPage() {
@@ -113,14 +114,15 @@ export default async function ModelsPage() {
                       >
                         编辑
                       </Link>
-                      <form action={deleteModel.bind(null, m.id)}>
-                        <button
-                          type="submit"
-                          className="rounded border border-destructive/50 px-2 py-1 text-xs text-destructive hover:bg-destructive/10"
-                        >
-                          删除
-                        </button>
-                      </form>
+                      <ActionButton
+                        action={deleteModel}
+                        args={[m.id]}
+                        size="sm"
+                        variant="destructive"
+                        label="删除"
+                        pendingLabel="删除中…"
+                        confirmText={`确定删除 model ${m.slug}？这会级联删除其下所有 alias。`}
+                      />
                     </div>
                   </td>
                 </tr>

@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase/admin';
+import { ActionButton } from '@/components/action-button';
 import { toggleRuleEnabled, deleteRule } from './actions';
 
 export default async function RoutingRulesPage() {
@@ -96,22 +97,22 @@ export default async function RoutingRulesPage() {
                       >
                         编辑
                       </Link>
-                      <form action={toggleRuleEnabled.bind(null, r.id)}>
-                        <button
-                          type="submit"
-                          className="rounded border border-input px-2 py-1 text-xs hover:bg-accent"
-                        >
-                          {r.enabled ? '停用' : '启用'}
-                        </button>
-                      </form>
-                      <form action={deleteRule.bind(null, r.id)}>
-                        <button
-                          type="submit"
-                          className="rounded border border-destructive/50 px-2 py-1 text-xs text-destructive hover:bg-destructive/10"
-                        >
-                          删除
-                        </button>
-                      </form>
+                      <ActionButton
+                        action={toggleRuleEnabled}
+                        args={[r.id]}
+                        size="sm"
+                        label={r.enabled ? '停用' : '启用'}
+                        pendingLabel={r.enabled ? '停用中…' : '启用中…'}
+                      />
+                      <ActionButton
+                        action={deleteRule}
+                        args={[r.id]}
+                        size="sm"
+                        variant="destructive"
+                        label="删除"
+                        pendingLabel="删除中…"
+                        confirmText={`确定删除 task=${r.task_type} 的这条 rule？`}
+                      />
                     </div>
                   </td>
                 </tr>

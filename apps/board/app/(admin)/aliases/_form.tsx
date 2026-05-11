@@ -1,6 +1,7 @@
 'use client';
 
 import { useActionState } from 'react';
+import { useFormErrorToast } from '@/components/use-form-error-toast';
 import type { AliasFormState } from './actions';
 
 export type AliasFormValues = {
@@ -37,6 +38,7 @@ export function AliasForm({
   providerLocked?: boolean;
 }) {
   const [state, formAction, pending] = useActionState<AliasFormState, FormData>(action, {});
+  useFormErrorToast(state.error);
 
   return (
     <form action={formAction} className="space-y-4">

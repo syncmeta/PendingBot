@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { fmtUsd } from '@/lib/format';
+import { ActionButton } from '@/components/action-button';
 import { toggleAliasEnabled, deleteAlias } from './actions';
 
 export default async function AliasesPage() {
@@ -190,22 +191,22 @@ function ModelGroup({
                       >
                         编辑
                       </Link>
-                      <form action={toggleAliasEnabled.bind(null, a.id)}>
-                        <button
-                          type="submit"
-                          className="rounded border border-input px-2 py-1 text-xs hover:bg-accent"
-                        >
-                          {a.enabled ? '停用' : '启用'}
-                        </button>
-                      </form>
-                      <form action={deleteAlias.bind(null, a.id)}>
-                        <button
-                          type="submit"
-                          className="rounded border border-destructive/50 px-2 py-1 text-xs text-destructive hover:bg-destructive/10"
-                        >
-                          删除
-                        </button>
-                      </form>
+                      <ActionButton
+                        action={toggleAliasEnabled}
+                        args={[a.id]}
+                        size="sm"
+                        label={a.enabled ? '停用' : '启用'}
+                        pendingLabel={a.enabled ? '停用中…' : '启用中…'}
+                      />
+                      <ActionButton
+                        action={deleteAlias}
+                        args={[a.id]}
+                        size="sm"
+                        variant="destructive"
+                        label="删除"
+                        pendingLabel="删除中…"
+                        confirmText={`确定删除 ${a.llm_providers?.slug ?? 'provider'} 上 ${a.provider_model_id} 的 alias？`}
+                      />
                     </div>
                   </td>
                 </tr>

@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { fmtNumber } from '@/lib/format';
+import { ActionButton } from '@/components/action-button';
 import { toggleProviderEnabled, deleteProvider } from './actions';
 
 export default async function ProvidersPage() {
@@ -85,23 +86,23 @@ export default async function ProvidersPage() {
                     >
                       编辑
                     </Link>
-                    <form action={toggleProviderEnabled.bind(null, p.id)}>
-                      <button
-                        type="submit"
-                        className="rounded border border-input px-2 py-1 text-xs hover:bg-accent"
-                      >
-                        {p.enabled ? '停用' : '启用'}
-                      </button>
-                    </form>
+                    <ActionButton
+                      action={toggleProviderEnabled}
+                      args={[p.id]}
+                      size="sm"
+                      label={p.enabled ? '停用' : '启用'}
+                      pendingLabel={p.enabled ? '停用中…' : '启用中…'}
+                    />
                     {p.slug !== 'openrouter' && (
-                      <form action={deleteProvider.bind(null, p.id)}>
-                        <button
-                          type="submit"
-                          className="rounded border border-destructive/50 px-2 py-1 text-xs text-destructive hover:bg-destructive/10"
-                        >
-                          删除
-                        </button>
-                      </form>
+                      <ActionButton
+                        action={deleteProvider}
+                        args={[p.id]}
+                        size="sm"
+                        variant="destructive"
+                        label="删除"
+                        pendingLabel="删除中…"
+                        confirmText={`确定删除 provider ${p.slug}？这会级联删除该 provider 下所有 model alias。`}
+                      />
                     )}
                   </div>
                 </td>

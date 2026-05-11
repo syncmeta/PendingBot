@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { logoutAction } from '@/app/login/actions';
+import { ActionButton } from '@/components/action-button';
 
 const LINKS: { href: string; label: string }[] = [
   { href: '/audit', label: 'Audit' },
@@ -56,14 +57,12 @@ export function Nav({
           <span className="hidden text-muted-foreground sm:inline">
             {user.display_name || user.email}
           </span>
-          <form action={logoutAction}>
-            <button
-              type="submit"
-              className="rounded-md border border-input px-2.5 py-1 text-xs hover:bg-accent"
-            >
-              退出
-            </button>
-          </form>
+          <ActionButton
+            action={logoutAction}
+            size="sm"
+            label="退出"
+            pendingLabel="退出中…"
+          />
         </div>
       </div>
     </header>

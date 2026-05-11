@@ -8,6 +8,10 @@ import {
   type ApplyState,
 } from './actions';
 import type { AliasDiffRow } from '@/lib/upstream-prices';
+import {
+  useFormErrorToast,
+  useFormToast,
+} from '@/components/use-form-error-toast';
 
 // Client component owning the pull→diff→apply lifecycle. Two server
 // actions back the two buttons:
@@ -27,6 +31,20 @@ export function DiffTable() {
   const [applyState, runApply, applyPending] = useActionState<ApplyState, FormData>(
     applyUpstreamPrices,
     { ok: false },
+  );
+
+  // Pull just needs an error surface — success is communicated by the
+  // diff table itself rendering. Apply gets a full success toast with
+  // counts so the admin doesn't have to re-read the inline summary.
+  useFormErrorToast(pullState.error);
+  useFormToast(
+    applyState,
+    applyState.ok
+      ? `已写入 ${applyState.appliedCount ?? 0} 条${applyState.skippedCount ? ` · 跳过 ${applyState.skippedCount}` : ''}`
+      : '已写入',
+    applyState.ok
+      ? `${applyState.appliedCount}|${applyState.skippedCount}`
+      : undefined,
   );
 
   const rows = pullState.rows ?? [];

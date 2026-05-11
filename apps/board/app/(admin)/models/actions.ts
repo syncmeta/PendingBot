@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { requireAdmin } from '@/lib/auth';
 import { supabaseAdmin } from '@/lib/supabase/admin';
+import { withFlash } from '@/components/toast';
 
 export type ModelFormState = { error?: string };
 
@@ -98,7 +99,7 @@ export async function createModel(
     actorId: admin.id,
   });
   revalidatePath('/models');
-  redirect('/models');
+  redirect(withFlash('/models', `已新增 model ${parsed.row.slug}`));
 }
 
 export async function updateModel(
@@ -131,10 +132,12 @@ export async function updateModel(
     actorId: admin.id,
   });
   revalidatePath('/models');
-  redirect('/models');
+  redirect(withFlash('/models', `已保存 model ${parsed.row.slug}`));
 }
 
-export async function deleteModel(id: string) {
+export type ActionResult = { ok?: true; error?: string; message?: string };
+
+export async function deleteModel(id: string): Promise<ActionResult> {
   const admin = await requireAdmin();
   const supa = supabaseAdmin();
   const { data: before } = await supa
@@ -142,9 +145,10 @@ export async function deleteModel(id: string) {
     .select('*')
     .eq('id', id)
     .maybeSingle();
+  if (!before) return { error: 'model 不存在' };
 
   const { error } = await supa.from('llm_models').delete().eq('id', id);
-  if (error) return;
+  if (error) return { error: error.message };
 
   await audit({
     action: 'model.delete',
@@ -154,4 +158,5 @@ export async function deleteModel(id: string) {
     actorId: admin.id,
   });
   revalidatePath('/models');
+  return { ok: true, message: `已删除 model ${before.slug}` };
 }

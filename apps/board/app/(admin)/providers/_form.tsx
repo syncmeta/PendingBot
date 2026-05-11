@@ -1,6 +1,7 @@
 'use client';
 
 import { useActionState } from 'react';
+import { useFormErrorToast } from '@/components/use-form-error-toast';
 import type { ProviderFormState } from './actions';
 
 export type ProviderFormValues = {
@@ -29,6 +30,7 @@ export function ProviderForm({
     action,
     {},
   );
+  useFormErrorToast(state.error);
 
   return (
     <form action={formAction} className="space-y-4">
