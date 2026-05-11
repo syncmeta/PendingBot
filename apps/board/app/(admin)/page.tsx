@@ -37,6 +37,11 @@ export default function HomePage() {
           desc="(model × provider) 映射 + 价格 + 路由权重"
         />
         <Card
+          href="/web-tool-prices"
+          title="Web tool prices"
+          desc="搜索 / 抓取服务的批发单价（Brave、Tavily、Exa、Firecrawl 等）"
+        />
+        <Card
           href="/routing-rules"
           title="Routing rules"
           desc="按 task_type 覆盖 model / provider（让 'title' 走 cheap 等）"
