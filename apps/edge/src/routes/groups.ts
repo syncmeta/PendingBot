@@ -590,6 +590,21 @@ groupRoutes.post('/:id/continue-decision', async (c) => {
     return c.json({ error: 'request does not belong to this conversation' }, 400);
   }
 
+  // Explicit membership check: the caller must be a participant of the
+  // conversation. RLS on group_continue_requests would normally hide
+  // requests outside the user's groups, but the lookup above uses
+  // service-role for a consistent 404 vs 403 surface, so we re-prove
+  // membership here before writing a message attributed to the user.
+  const { data: membership, error: memberErr } = await supaSvc
+    .from('conversation_participants')
+    .select('participant_id')
+    .eq('conversation_id', convId)
+    .eq('participant_type', 'user')
+    .eq('participant_id', userId)
+    .maybeSingle();
+  if (memberErr) return c.json({ error: 'database', detail: memberErr.message }, 500);
+  if (!membership) return c.json({ error: 'not a participant' }, 403);
+
   const decisionText = parsed.decision === 'allowed' ? '✅ 让机器人继续' : '❌ 让机器人闭嘴';
 
   const { data: msg, error: msgErr } = await supaSvc
