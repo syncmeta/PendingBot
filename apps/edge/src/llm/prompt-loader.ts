@@ -22,6 +22,7 @@
 
 import { DEFAULT_LOCALE, type Locale } from '../i18n/types';
 import type { SupabaseClient } from '../lib/supabase';
+import type { PromptName } from './prompt-names';
 
 import system_zh from '../../prompts/zh/system.md';
 import identityQuest_zh from '../../prompts/zh/identity-quest.md';
@@ -43,8 +44,7 @@ const PROMPTS_ZH = {
   'group-router': groupRouter_zh,
 } as const;
 
-export type PromptName = keyof typeof PROMPTS_ZH;
-export const PROMPT_NAMES: readonly PromptName[] = Object.keys(PROMPTS_ZH) as PromptName[];
+export { PROMPT_NAMES, type PromptName } from './prompt-names';
 
 const PROMPTS_BY_LOCALE: Record<Locale, Partial<Record<PromptName, string>>> = {
   zh: PROMPTS_ZH,
