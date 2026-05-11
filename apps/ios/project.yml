@@ -53,6 +53,14 @@ packages:
     # No Safari handoff (cleaner UX than ASWebAuthenticationSession).
     url: https://github.com/google/GoogleSignIn-iOS
     from: 8.0.0
+  WebRTC:
+    # Google libwebrtc, repackaged as a SwiftPM xcframework by stasel.
+    # Used by the OpenAI Realtime voice transport for the SDP exchange
+    # against api.openai.com/v1/realtime. ~30 MB added to the app binary;
+    # only the OpenAI path links against this — Doubao uses its own
+    # WebSocket-based SDK (SpeechEngineToB via CocoaPods, see Podfile).
+    url: https://github.com/stasel/WebRTC
+    from: 130.0.0
 
 targets:
   PendingBot:
@@ -104,6 +112,8 @@ targets:
         product: GRDB
       - package: GoogleSignIn
         product: GoogleSignIn
+      - package: WebRTC
+        product: WebRTC
     info:
       path: PendingBot/Resources/Info.plist
       properties:
@@ -138,6 +148,13 @@ targets:
         NSCameraUsageDescription: 用于扫描分享二维码导入服务器
         NSPhotoLibraryUsageDescription: 用于在聊天中发送本地图片
         NSPhotoLibraryAddUsageDescription: 用于将我的二维码名片保存到相册
+        # Microphone — voice calls with bots that have voice_call_enabled.
+        NSMicrophoneUsageDescription: 用于和大绿豆 AI 角色进行实时语音通话
+        # Background audio — keep the voice call alive when the screen is
+        # locked or the user switches apps mid-call. Without this the
+        # AVAudioSession gets suspended within ~30s of backgrounding.
+        UIBackgroundModes:
+          - audio
         # Triggered the first time we hit a private-IP server (10.x / 172.16-31.x
         # / 192.168.x / 169.254.x / *.local). The system prompt blocks the call
         # until the user responds; we proactively warm it from ImportFlow so
