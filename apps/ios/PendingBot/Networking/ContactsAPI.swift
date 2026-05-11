@@ -34,6 +34,11 @@ enum ContactsAPI {
                 let alias: String?
                 let displayName: String
                 let avatarPath: String?
+                /// Server-supplied placeholder-emoji seed — see HumanPick.avatarSeed.
+                /// Older worker builds may omit the field; default to userId so the
+                /// emoji still renders consistently across viewers (everyone hashes
+                /// the same fallback).
+                let avatarSeed: String?
             }
             let contacts: [Row]
         }
@@ -43,7 +48,8 @@ enum ContactsAPI {
                 id: $0.userId,
                 alias: $0.alias,
                 displayName: $0.displayName,
-                avatarPath: $0.avatarPath
+                avatarPath: $0.avatarPath,
+                avatarSeed: $0.avatarSeed ?? $0.userId
             )
         }
     }

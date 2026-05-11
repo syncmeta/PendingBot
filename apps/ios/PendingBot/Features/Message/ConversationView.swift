@@ -18,6 +18,13 @@ struct PendingPeer: Hashable {
     let kind: String       // "bot" | "user"
     let peerId: String
     let displayName: String
+    /// Pre-resolved conv id, populated by the friends-tab tap path when
+    /// we already looked up the singleton user_user conv before navigating.
+    /// When set, `pendingConversation(for:)` builds a fully-keyed Conversation
+    /// instead of one with `id: ""`, so ConversationView jumps straight to
+    /// loading existing history instead of waiting for a first message to
+    /// materialize the row.
+    var existingConvId: String? = nil
 }
 
 struct ConversationView: View {
@@ -137,7 +144,15 @@ struct ConversationView: View {
     /// when we don't already have a `pendingPeer`. Drives the chat
     /// header (title + avatar) and the left-side avatar on incoming
     /// bubbles.
-    struct ResolvedPeer { let userId: String; let displayName: String; let avatarPath: String? }
+    struct ResolvedPeer {
+        let userId: String
+        let displayName: String
+        let avatarPath: String?
+        /// Server-supplied placeholder-emoji seed (users.custom_fields
+        /// .avatar_seed). Falls back to userId when the peer is a legacy
+        /// account that never bootstrapped.
+        let avatarSeed: String
+    }
     @State private var resolvedPeer: ResolvedPeer?
 
     /// Group conv only — sender lookup keyed by "user:<id>" / "bot:<id>"
@@ -199,7 +214,7 @@ struct ConversationView: View {
             // user_user — the other person's avatar is what reads as
             // "this conversation". Match the bubble side's avatar so the
             // header and the incoming bubbles look like one identity.
-            UserAvatar(seed: peer.userId, attachmentId: peer.avatarPath, size: size)
+            UserAvatar(seed: peer.avatarSeed, attachmentId: peer.avatarPath, size: size)
         } else if conversation.conversation_type == "group" {
             GroupAvatar(seed: conversation.id, size: size)
         } else {
@@ -228,13 +243,17 @@ struct ConversationView: View {
     /// will fill `resolvedPeer` instead. Avatar attachment-id is nil for
     /// now — the friends list itself uses a generic person glyph and we
     /// don't yet expose other users' uploaded avatars.
-    private var peerProfileForBubble: (userId: String, displayName: String, avatarPath: String?)? {
+    private var peerProfileForBubble: (userId: String, displayName: String, avatarPath: String?, avatarSeed: String)? {
         guard conversation.conversation_type == "user_user" else { return nil }
         if let p = resolvedPeer {
-            return (userId: p.userId, displayName: p.displayName, avatarPath: p.avatarPath)
+            return (userId: p.userId, displayName: p.displayName, avatarPath: p.avatarPath, avatarSeed: p.avatarSeed)
         }
         if let p = pendingPeer, p.kind == "user" {
-            return (userId: p.peerId, displayName: p.displayName, avatarPath: nil)
+            // No server lookup yet — seed defaults to peerId so the
+            // initial render at least matches what the friends list
+            // shows for legacy accounts. loadPeerProfileIfNeeded
+            // upgrades this to the server-supplied seed when it lands.
+            return (userId: p.peerId, displayName: p.displayName, avatarPath: nil, avatarSeed: p.peerId)
         }
         return nil
     }
@@ -1807,24 +1826,69 @@ struct ConversationView: View {
                 let userId: String
                 let displayName: String
                 let avatarPath: String?
+                let avatarSeed: String?
                 let alias: String?
             }
             let p = try JSONDecoder().decode(Payload.self, from: data)
             // Prefer the caller's local alias when set, otherwise the
-            // peer's own display name. The avatar always uses the peer's
-            // user id as the deterministic seed so it matches whatever
-            // the friends list is rendering for the same person.
+            // peer's own display name. The avatar uses the server-supplied
+            // seed (users.custom_fields.avatar_seed) so it matches what
+            // every other viewer of this person renders.
             let name = (p.alias?.isEmpty == false ? p.alias! : p.displayName)
             self.resolvedPeer = ResolvedPeer(
                 userId: p.userId,
                 displayName: name.isEmpty ? String(p.userId.prefix(8)) : name,
-                avatarPath: p.avatarPath
+                avatarPath: p.avatarPath,
+                avatarSeed: p.avatarSeed ?? p.userId
             )
         } catch {
             // Non-fatal: header just keeps showing the existing fallback
             // until next reopen. Log via the conversation logger so it's
             // not silent in dev.
             log.warning("conv-peer load failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Bulk profile lookup for group members through the worker — same
+    /// shape as GroupSettingsView.fetchMemberProfiles. Direct supabase
+    /// queries against pendingbot.users hit the self-only RLS policy and
+    /// silently return empty for everyone except the caller; the worker
+    /// uses service-role and gates on conversation membership.
+    private func fetchGroupMemberProfiles(
+        userIds: [String]
+    ) async -> [String: (String, String?, String)] {
+        guard !userIds.isEmpty else { return [:] }
+        do {
+            let url = HostedConfig.environment.workerURL
+                .appendingPathComponent("v1/contacts/profiles")
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            let token = try await SupabaseStack.shared.auth.session.accessToken
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            req.httpBody = try JSONSerialization.data(withJSONObject: [
+                "conversationId": conversation.id,
+                "userIds": userIds,
+            ])
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                return [:]
+            }
+            struct Payload: Decodable {
+                struct Row: Decodable {
+                    let userId: String
+                    let displayName: String
+                    let avatarPath: String?
+                    let avatarSeed: String?
+                }
+                let profiles: [Row]
+            }
+            let payload = try JSONDecoder().decode(Payload.self, from: data)
+            return Dictionary(uniqueKeysWithValues: payload.profiles.map {
+                ($0.userId, ($0.displayName, $0.avatarPath, $0.avatarSeed ?? $0.userId))
+            })
+        } catch {
+            return [:]
         }
     }
 
@@ -1855,37 +1919,45 @@ struct ConversationView: View {
                 .map(\.participant_id)
 
             struct BotRow: Decodable { let id: String; let display_name: String }
-            struct UserRow: Decodable { let id: String; let display_name: String? }
 
             async let botResp: [BotRow] = botIds.isEmpty ? [] : SupabaseStack.shared
                 .from("bots").select("id, display_name").in("id", values: botIds)
                 .execute().value
-            async let userResp: [UserRow] = userIds.isEmpty ? [] : SupabaseStack.shared
-                .from("users").select("id, display_name").in("id", values: userIds)
-                .execute().value
+            // pendingbot.users RLS is self-only — a direct query here
+            // returns ONLY the caller's row, so every other member's
+            // display_name comes back empty and the bubble label falls
+            // back to id-prefix. Route through the worker (service-role)
+            // so display_name + avatar_path + avatar_seed land for the
+            // whole group.
+            async let userInfoMap: [String: (String, String?, String)] =
+                userIds.isEmpty
+                    ? [:]
+                    : fetchGroupMemberProfiles(userIds: userIds)
 
             let botMap = Dictionary(uniqueKeysWithValues:
                 (try await botResp).map { ($0.id, $0.display_name) })
-            let userMap = Dictionary(uniqueKeysWithValues:
-                (try await userResp).map { ($0.id, $0.display_name ?? "") })
+            let userMap = await userInfoMap
 
             var lookup: [String: GroupBubbleSender] = [:]
             for p in parts {
                 let key = "\(p.participant_type):\(p.participant_id)"
+                let isBot = p.participant_type == "bot"
                 let fallback: String = {
-                    if p.participant_type == "bot" {
+                    if isBot {
                         return botMap[p.participant_id] ?? "未知机器人"
                     }
-                    let name = userMap[p.participant_id] ?? ""
+                    let name = userMap[p.participant_id]?.0 ?? ""
                     return name.isEmpty ? String(p.participant_id.prefix(8)) : name
                 }()
                 let nick = p.nickname?.trimmingCharacters(in: .whitespaces)
                 let display = (nick?.isEmpty == false ? nick! : fallback)
+                let info = isBot ? nil : userMap[p.participant_id]
                 lookup[key] = GroupBubbleSender(
-                    kind: p.participant_type == "bot" ? .bot : .user,
+                    kind: isBot ? .bot : .user,
                     id: p.participant_id,
                     displayName: display,
-                    avatarPath: nil,  // user avatars TBD; UserAvatar(seed:) is still distinct
+                    avatarPath: info?.1,
+                    avatarSeed: info?.2 ?? p.participant_id,
                 )
             }
             self.groupSenders = lookup
@@ -2055,7 +2127,7 @@ struct ConversationView: View {
                             case .bot:
                                 BotAvatar(emojiSeed: sender.id, colorSeed: sender.id, size: 24)
                             case .user:
-                                UserAvatar(seed: sender.id, attachmentId: sender.avatarPath, size: 24)
+                                UserAvatar(seed: sender.avatarSeed, attachmentId: sender.avatarPath, size: 24)
                             }
                             Text(sender.displayName)
                                 .font(Theme.Fonts.body)

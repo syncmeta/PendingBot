@@ -29,7 +29,9 @@ struct BubbleView: View {
     var currentUserId: String? = nil
     /// Peer profile for user_user conversations — drives the left-side
     /// avatar on the other person's bubbles. nil for user_bot / self.
-    var peerProfile: (userId: String, displayName: String, avatarPath: String?)? = nil
+    /// `avatarSeed` is the server-supplied placeholder-emoji seed so the
+    /// same person renders identically across every viewer's device.
+    var peerProfile: (userId: String, displayName: String, avatarPath: String?, avatarSeed: String)? = nil
     /// Per-message sender resolution for *group* convs — many possible
     /// senders, name shown above the bubble. Takes precedence over
     /// peerProfile / selfAvatar / botID when set. `kind == "bot"`
@@ -70,12 +72,12 @@ struct BubbleView: View {
                     case .bot:
                         BotAvatar(emojiSeed: g.id, colorSeed: g.id, size: 30)
                     case .user:
-                        UserAvatar(seed: g.id, attachmentId: g.avatarPath, size: 30)
+                        UserAvatar(seed: g.avatarSeed, attachmentId: g.avatarPath, size: 30)
                     }
                 } else if let peer = peerProfile, message.sender_type == "user" {
                     // user_user / group peer — use UserAvatar so it matches
                     // the same person's avatar in the friends list.
-                    UserAvatar(seed: peer.userId, attachmentId: peer.avatarPath, size: 30)
+                    UserAvatar(seed: peer.avatarSeed, attachmentId: peer.avatarPath, size: 30)
                 } else if let s = selfAvatar {
                     UserAvatar(seed: s.seed, attachmentId: s.attachmentId, size: 30)
                 } else {
@@ -197,7 +199,8 @@ struct BubbleView: View {
 struct GroupBubbleSender: Equatable {
     enum Kind { case bot, user }
     let kind: Kind
-    /// participant_id (bot.id or user.id). Drives avatar seed.
+    /// participant_id (bot.id or user.id). Drives the bot path which
+    /// uses BotAvatar(emojiSeed: id, …); for users see `avatarSeed`.
     let id: String
     /// Per-group nickname if set; otherwise the bot.display_name /
     /// user.display_name. Rendered above the bubble.
@@ -205,6 +208,11 @@ struct GroupBubbleSender: Equatable {
     /// Avatar attachment id for users (nil for bots, which use the
     /// emoji-seed avatar derived from id).
     let avatarPath: String?
+    /// Server-supplied placeholder-emoji seed for user senders
+    /// (users.custom_fields.avatar_seed). Same value across every
+    /// viewer's device so the same person renders the same emoji.
+    /// Falls back to `id` for legacy accounts that never bootstrapped.
+    let avatarSeed: String
 }
 
 struct AttachmentGrid: View {

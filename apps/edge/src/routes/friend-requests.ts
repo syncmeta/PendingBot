@@ -12,8 +12,11 @@ import type { AppBindings } from '../types';
 //                                  only the two display fields by design —
 //                                  no email, no created_at, no other PII.
 //   POST /                — A creates a pending request to B by handle.
-//                           Optional `remark` becomes A's user_contacts.alias
-//                           for B once B accepts.
+//                           Optional `message` is the verification text B
+//                           sees alongside the request (WeChat-style). The
+//                           legacy `remark` body field is still accepted as
+//                           a fallback alias-on-accept path but is no longer
+//                           how iOS surfaces the entry.
 //   GET  /                — list my incoming + outgoing
 //   POST /:id/accept      — B accepts; RPC writes user_contacts both ways
 //   POST /:id/decline     — B declines; row stays for audit
@@ -21,8 +24,9 @@ import type { AppBindings } from '../types';
 //
 // Writes go through service-role; the RLS on friend_requests only exposes
 // SELECT to either party. The accept side-effect (symmetric user_contacts
-// rows + remark→alias copy) lives in pendingbot.accept_friend_request —
-// see migrations 0046 / 0049 / 0061.
+// rows) lives in pendingbot.accept_friend_request — see migrations
+// 0046 / 0049 / 0061. Aliases for an existing contact are set separately
+// via PATCH /v1/contacts/:contactUserId.
 
 export const friendRequestRoutes = new Hono<AppBindings>();
 friendRequestRoutes.use('*', requireSession());
@@ -31,10 +35,16 @@ friendRequestRoutes.use('*', requireSession());
 // scans, or peer-id-based add (`peerUserId`) for the in-group "加他好友"
 // flow where iOS already knows the user_id from the participants list.
 // Exactly one must be provided.
+//
+// `message` is the verification text the recipient sees before accepting
+// (WeChat-style). `remark` is the legacy field that became the sender's
+// alias-on-accept; kept for backward compat but iOS no longer surfaces it
+// from the add-friend sheet — aliases are set later via PATCH /contacts/:id.
 const CreateBody = z
   .object({
     handleValue: z.string().min(4).max(64).optional(),
     peerUserId: z.string().uuid().optional(),
+    message: z.string().max(200).optional(),
     remark: z.string().max(64).optional(),
   })
   .refine(
@@ -63,16 +73,22 @@ friendRequestRoutes.get('/lookup', async (c) => {
 
   const { data: profile, error: profErr } = await supa
     .from('users')
-    .select('id, display_name, avatar_path')
+    .select('id, display_name, avatar_path, custom_fields')
     .eq('id', handle.user_id as string)
     .maybeSingle();
   if (profErr) return c.json({ error: 'database', detail: profErr.message }, 500);
   if (!profile) return c.json({ error: '号码无效或已撤销' }, 404);
 
+  const cf = profile.custom_fields as Record<string, unknown> | null;
+  const seed = (typeof cf?.avatar_seed === 'string' && cf.avatar_seed.length > 0)
+    ? cf.avatar_seed
+    : (profile.id as string);
+
   return c.json({
     userId: profile.id as string,
     displayName: (profile.display_name as string | null) ?? '',
     avatarPath: (profile.avatar_path as string | null) ?? null,
+    avatarSeed: seed,
   });
 });
 
@@ -118,6 +134,7 @@ friendRequestRoutes.post('/', async (c) => {
   if (targetUserId === userId) return c.json({ error: '不能加自己' }, 400);
 
   const remark = parsed.remark?.trim() || null;
+  const message = parsed.message?.trim() || null;
 
   // Already contacts → 200 with `alreadyContacts: true`. iOS surfaces this as
   // "你们已经是好友" and routes to the existing chat instead of asking again.
@@ -170,6 +187,7 @@ friendRequestRoutes.post('/', async (c) => {
       from_user_id: userId,
       to_user_id: targetUserId,
       status: 'pending',
+      message,
       remark_for_contact: remark,
       via_handle_id: viaHandleId,
     })
@@ -217,16 +235,25 @@ friendRequestRoutes.get('/', async (c) => {
   const peerIds = Array.from(
     new Set((rows ?? []).map((r) => (r.from_user_id === userId ? r.to_user_id : r.from_user_id))),
   );
-  let profilesById: Record<string, { display_name: string; avatar_path: string | null }> = {};
+  let profilesById: Record<string, {
+    display_name: string;
+    avatar_path: string | null;
+    avatar_seed: string;
+  }> = {};
   if (peerIds.length > 0) {
     const { data: profiles } = await supa
       .from('users')
-      .select('id, display_name, avatar_path')
+      .select('id, display_name, avatar_path, custom_fields')
       .in('id', peerIds);
     for (const p of profiles ?? []) {
+      const cf = p.custom_fields as Record<string, unknown> | null;
+      const seed = (typeof cf?.avatar_seed === 'string' && cf.avatar_seed.length > 0)
+        ? cf.avatar_seed
+        : (p.id as string);
       profilesById[p.id as string] = {
         display_name: (p.display_name as string) ?? '',
         avatar_path: (p.avatar_path as string | null) ?? null,
+        avatar_seed: seed,
       };
     }
   }
@@ -246,6 +273,7 @@ friendRequestRoutes.get('/', async (c) => {
       peerUserId: peerId,
       peerDisplayName: profile?.display_name ?? '',
       peerAvatarPath: profile?.avatar_path ?? null,
+      peerAvatarSeed: profile?.avatar_seed ?? (peerId as string),
     };
   });
 

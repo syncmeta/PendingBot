@@ -466,7 +466,8 @@ struct MessageTabView: View {
                     userId: otherId,
                     alias: pick?.alias,
                     displayName: pick?.displayName ?? "",
-                    avatarPath: pick?.avatarPath
+                    avatarPath: pick?.avatarPath,
+                    avatarSeed: pick?.avatarSeed ?? otherId
                 )
             }
             self.userPeers = peers
@@ -622,6 +623,10 @@ struct UserUserPeer: Hashable {
     let alias: String?
     let displayName: String
     let avatarPath: String?
+    /// Server-supplied placeholder-emoji seed (mirrored from the friends
+    /// list HumanPick.avatarSeed) so the conv row renders the same emoji
+    /// every viewer of this peer sees.
+    let avatarSeed: String
 
     /// Title shown on the row + carried into ConversationView's pendingPeer
     /// so opening the chat doesn't re-flicker the header label.
@@ -688,7 +693,7 @@ private struct ConversationListRow: View {
             // user_user → peer's photo / generated; group → cluster
             // GroupAvatar; bot/self → per-bot BotAvatar with per-conv tint.
             if isHumanConv, let p = userPeer {
-                UserAvatar(seed: p.userId, attachmentId: p.avatarPath, size: 36)
+                UserAvatar(seed: p.avatarSeed, attachmentId: p.avatarPath, size: 36)
             } else if isGroupConv {
                 GroupAvatar(seed: conv.id, size: 36)
             } else {
@@ -955,7 +960,12 @@ private struct CreateGroupSheet: View {
         let model_id: String?
         let visibility: String?
     }
-    private struct ContactDecodable: Decodable { let contact_user_id: String; let alias: String? }
+    // ContactDecodable is gone — the picker now uses ContactsAPI which
+    // routes through the worker so display_name + avatar_path land
+    // alongside alias. The previous direct supabase query against
+    // user_contacts couldn't join pendingbot.users (RLS is self-only),
+    // so the picker fell back to alias-or-id-prefix and humans appeared
+    // as 8-char hex strings instead of their real display names.
 
     @State private var title = ""
     @State private var bots: [BotPick] = []
@@ -1048,20 +1058,21 @@ private struct CreateGroupSheet: View {
                 .eq("is_active", value: true)
                 .execute()
                 .value
-            async let contactRowsResp: [ContactDecodable] = SupabaseStack.shared
-                .from("user_contacts")
-                .select("contact_user_id, alias")
-                .execute()
-                .value
+            // Friends list goes through the worker (service-role read of
+            // pendingbot.users) so display_name + alias both land. Direct
+            // supabase queries can't get display_name — the users table's
+            // RLS is self-only.
+            async let humanRowsResp: [FriendsTabView.HumanPick] = ContactsAPI.fetchContacts()
             let botRows = try await botRowsResp
-            let humanRows = try await contactRowsResp
             // Drop private bots — open_group_conv RPC rejects them
             // server-side, so showing them in the picker just leads to
             // a confusing failure.
             self.bots = botRows
                 .filter { $0.visibility != "private" }
                 .map { BotPick(id: $0.id, name: $0.display_name, model_id: $0.model_id) }
-            self.humans = humanRows.map { HumanPick(id: $0.contact_user_id, name: $0.alias ?? String($0.contact_user_id.prefix(8))) }
+            self.humans = (try await humanRowsResp).map {
+                HumanPick(id: $0.id, name: $0.rowName)
+            }
         } catch {
             self.error = error.localizedDescription
         }

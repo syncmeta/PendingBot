@@ -147,14 +147,23 @@ scrollRoutes.post('/trigger', async (c) => {
 //   articles surface — running rows are picked up via Realtime, not list.
 //   `before` is an ISO timestamp from the previous page's tail.
 scrollRoutes.get('/list', async (c) => {
+  const userId = c.var.userId!;
   const userJwt = c.var.userJwt!;
   const limit = Math.min(50, Math.max(1, Number(c.req.query('limit') ?? 20)));
   const before = c.req.query('before');
 
   const supa = userClient(c.env, userJwt);
+  // 来信 = received only. RLS opened SELECT to "recipient OR author" in 0065
+  // so the sender can fetch their outgoing rows from other endpoints, but
+  // the list endpoint must only return the inbox. Scope to user_id = caller:
+  //   - bot envelopes have user_id = the requesting user (recipient = self)
+  //   - human letters have user_id = recipient_user_id, author_user_id = sender
+  //   So eq(user_id, caller) returns both bot envelopes and inbound human
+  //   letters, and drops the caller's own outgoing rows.
   let q = supa
     .from('scroll_runs')
     .select('id, bot_id, conversation_id, status, title, summary, created_at, finished_at')
+    .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(limit);
   if (before) q = q.lt('created_at', before);

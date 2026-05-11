@@ -37,6 +37,7 @@ struct FriendsTabView: View {
     @State private var addingFriend = false
     @State private var creatingBot = false
     @State private var managingBot: BotPick?
+    @State private var aliasEditTarget: HumanPick?
     @State private var showingQR = false
     @State private var filter: FriendFilter = .all
     @State private var path: [PendingPeer] = []
@@ -84,6 +85,10 @@ struct FriendsTabView: View {
         .sheet(isPresented: $showingQR) {
             MyQRSheet()
                 .presentationDetents([.fraction(0.72), .large])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $aliasEditTarget) { contact in
+            ContactAliasSheet(contact: contact) { Task { await load() } }
                 .presentationDragIndicator(.visible)
         }
     }
@@ -224,7 +229,7 @@ struct FriendsTabView: View {
                                 case .human(let c):
                                     let selected = sidebarLayout && isSelected(kind: "user", id: c.id)
                                     FriendRow(kind: .human,
-                                              avatarSeed: c.id,
+                                              avatarSeed: c.avatarSeed,
                                               avatarAttachmentId: c.avatarPath,
                                               name: c.rowName,
                                               modelTag: nil,
@@ -232,6 +237,14 @@ struct FriendsTabView: View {
                                         .listRowBackground(selected ? Theme.Palette.accentBg : Theme.Palette.surface)
                                         .contentShape(Rectangle())
                                         .onTapGesture { Task { await tapHuman(c) } }
+                                        .contextMenu {
+                                            Button {
+                                                aliasEditTarget = c
+                                            } label: {
+                                                Label(c.alias?.isEmpty == false ? "修改备注" : "设置备注",
+                                                      systemImage: "person.text.rectangle")
+                                            }
+                                        }
                                 }
                             }
                         }
@@ -286,6 +299,15 @@ struct FriendsTabView: View {
         /// Avatar attachment id if uploaded; nil falls through to the
         /// emoji-glyph deterministic avatar.
         let avatarPath: String?
+        /// Stable per-account seed for the placeholder emoji. Source of
+        /// truth lives in `users.custom_fields.avatar_seed` (set by
+        /// onboarding); the worker's /v1/contacts response includes it
+        /// so every viewer (self / friend / web) hashes the SAME string
+        /// and lands on the same emoji. Falls back to `id` when the peer
+        /// is a legacy account that never bootstrapped — different
+        /// viewers will still pick the same emoji for that user since
+        /// they're hashing the same id.
+        let avatarSeed: String
 
         /// What to render in the row title and pass on to ConversationView
         /// as the header label. Mirrors the chat-header alias > displayName
@@ -304,6 +326,10 @@ struct FriendsTabView: View {
         let peerUserId: String
         let peerDisplayName: String
         let message: String?
+        /// Server-supplied placeholder-emoji seed (peerAvatarSeed in the
+        /// /v1/friend-requests response). Falls back to peerUserId when
+        /// the request comes from a legacy account that never bootstrapped.
+        let peerAvatarSeed: String
     }
 
     /// Unified row type so bots and humans share one alphabetically-sorted
@@ -361,7 +387,8 @@ struct FriendsTabView: View {
                 self.humans = cachedContacts.map {
                     HumanPick(id: $0.id, alias: $0.alias,
                               displayName: $0.display_name,
-                              avatarPath: $0.avatar_path)
+                              avatarPath: $0.avatar_path,
+                              avatarSeed: $0.avatar_seed ?? $0.id)
                 }
             }
         }
@@ -410,7 +437,8 @@ struct FriendsTabView: View {
                     LocalDatabase.ContactRow(
                         id: $0.id, alias: $0.alias,
                         display_name: $0.displayName,
-                        avatar_path: $0.avatarPath
+                        avatar_path: $0.avatarPath,
+                        avatar_seed: $0.avatarSeed
                     )
                 })
             } else {
@@ -458,6 +486,7 @@ struct FriendsTabView: View {
                     let message: String?
                     let peerUserId: String
                     let peerDisplayName: String
+                    let peerAvatarSeed: String?
                 }
                 let requests: [Row]
             }
@@ -469,7 +498,8 @@ struct FriendsTabView: View {
                         ? String(r.peerUserId.prefix(8)) : r.peerDisplayName
                     return PendingFriendRequest(
                         id: r.id, peerUserId: r.peerUserId,
-                        peerDisplayName: name, message: r.message
+                        peerDisplayName: name, message: r.message,
+                        peerAvatarSeed: r.peerAvatarSeed ?? r.peerUserId
                     )
                 }
         } catch {
@@ -579,9 +609,35 @@ struct FriendsTabView: View {
     }
 
     private func tapHuman(_ c: HumanPick) async {
+        // Eagerly resolve the singleton 1:1 conv id so the chat view
+        // loads existing history immediately. The worker's
+        // /v1/contacts/open-chat endpoint is find-or-create; if no conv
+        // exists yet (brand-new friendship) it creates one and returns
+        // the id. Failures here fall through to the materialize-on-first-
+        // send path (PendingPeer with no convId).
+        let existing = try? await fetchOrCreateUserUserConv(peerId: c.id)
         open(PendingPeer(kind: "user",
                          peerId: c.id,
-                         displayName: c.rowName))
+                         displayName: c.rowName,
+                         existingConvId: existing))
+    }
+
+    private func fetchOrCreateUserUserConv(peerId: String) async throws -> String {
+        let url = HostedConfig.environment.workerURL
+            .appendingPathComponent("v1/contacts/open-chat")
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let token = try await SupabaseStack.shared.auth.session.accessToken
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.httpBody = try JSONSerialization.data(
+            withJSONObject: ["contactUserId": peerId])
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+        struct OpenChat: Decodable { let conversationId: String }
+        return try JSONDecoder().decode(OpenChat.self, from: data).conversationId
     }
 
     /// Route to the right surface based on layout: regular (Mac /
@@ -598,8 +654,12 @@ struct FriendsTabView: View {
 
     private func pendingConversation(for peer: PendingPeer) -> Conversation {
         let userId = AccountStore.shared.current?.id ?? ""
+        // If the caller already resolved an existing conv id, hand it
+        // through so ConversationView treats this as a materialised conv
+        // (id non-empty) and loads its history right away instead of
+        // sitting blank until the first message is sent.
         return Conversation(
-            id: "",
+            id: peer.existingConvId ?? "",
             bot_id: peer.kind == "bot" ? peer.peerId : "",
             user_id: userId,
             title: peer.displayName,
@@ -712,9 +772,9 @@ private struct FriendRow: View {
 }
 
 /// One pending incoming friend request, with inline 同意 / 拒绝.
-/// Avatar uses the peer's user id as the seed so the same person reads
-/// consistently across the inbox row, the chat header, and bubbles once
-/// the request is accepted.
+/// Avatar uses the peer's server-supplied avatar seed so the same person
+/// reads consistently across the inbox row, the chat header, and bubbles
+/// once the request is accepted.
 private struct FriendRequestRow: View {
     let request: FriendsTabView.PendingFriendRequest
     let onAccept: () -> Void
@@ -722,7 +782,7 @@ private struct FriendRequestRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            UserAvatar(seed: request.peerUserId, attachmentId: nil, size: 36)
+            UserAvatar(seed: request.peerAvatarSeed, attachmentId: nil, size: 36)
             VStack(alignment: .leading, spacing: 4) {
                 Text(request.peerDisplayName)
                     .font(Theme.Fonts.serif(size: 16, weight: .semibold))
@@ -898,36 +958,43 @@ private struct FilterPill: View {
 
 // MARK: - Add friend (handle only, with preview)
 
-/// 加好友 page — handle-only entry. The user types a number, we
-/// debounce-lookup the matching profile (avatar + nickname only — by
-/// design, no email or other PII surfaces here), then surface a 备注
-/// field for the sender to label this contact. The remark rides along
-/// on the friend request and lands in `user_contacts.alias` when the
-/// recipient accepts (see migration 0060).
+/// 加好友 page — handle-only entry. The user types a number, hits the
+/// 查找 button, and we look up the matching profile (avatar + nickname
+/// only — by design, no email or other PII surfaces here). After the
+/// preview confirms it's the right person, the sender can attach an
+/// optional 验证信息 that the recipient sees alongside the request
+/// (WeChat-style); the alias for *the sender's own contact list* is
+/// set separately from the friend row after acceptance.
 struct AddFriendSheet: View {
     @Environment(\.dismiss) private var dismiss
     var onAdded: () -> Void = {}
 
-    /// Preview state for the looked-up profile. `idle` covers both the
-    /// "haven't typed enough yet" and "between debounce ticks" cases —
-    /// the row simply doesn't render.
+    /// Preview state for the looked-up profile. `idle` is the initial /
+    /// post-edit state (user changed input → preview cleared, must tap
+    /// 查找 again). `loading` shows the spinner during the round-trip.
     enum Preview: Equatable {
         case idle
         case loading
-        case loaded(userId: String, displayName: String, avatarPath: String?)
+        case loaded(userId: String, displayName: String, avatarPath: String?, avatarSeed: String)
         case notFound(message: String)
     }
 
     @State private var handleValue: String = ""
-    @State private var remark: String = ""
+    @State private var verifyMessage: String = ""
     @State private var preview: Preview = .idle
     @State private var lookupTask: Task<Void, Never>?
+    @State private var lastLookupAt: Date = .distantPast
     @State private var submitting = false
     @State private var error: String?
     @State private var successHint: String?
 
     private var trimmedHandle: String {
         handleValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var canLookup: Bool {
+        if case .loading = preview { return false }
+        return trimmedHandle.count >= 4
     }
 
     /// Send is only meaningful once we have a confirmed match. Disables
@@ -943,22 +1010,38 @@ struct AddFriendSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("号码 / 隐私号", text: $handleValue)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .onChange(of: handleValue) { _, _ in scheduleLookup() }
+                    HStack(spacing: 8) {
+                        TextField("号码 / 隐私号", text: $handleValue)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            // Clear stale preview whenever the user edits
+                            // the field — they must tap 查找 again to re-
+                            // confirm. Keeps "submit" disabled until the
+                            // preview matches what's in the text field.
+                            .onChange(of: handleValue) { _, _ in
+                                if case .loading = preview { return }
+                                if case .idle = preview { return }
+                                preview = .idle
+                            }
+                            .onSubmit { Task { await runLookupTapped() } }
+                        Button("查找") { Task { await runLookupTapped() } }
+                            .disabled(!canLookup)
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                    }
                 } footer: {
-                    Text("只能用号码（ID/隐私号）添加,不支持邮箱。")
+                    Text("只能用号码（ID/隐私号）添加,不支持邮箱。输入后点「查找」确认对方。")
                 }
 
                 Section("对方") {
                     previewRow
                 }
 
-                Section("备注（可选）") {
-                    TextField("给 TA 起个备注", text: $remark)
+                Section("验证信息（可选）") {
+                    TextField("给对方留个话,会和申请一起送达", text: $verifyMessage, axis: .vertical)
                         .textInputAutocapitalization(.sentences)
                         .autocorrectionDisabled()
+                        .lineLimit(1...3)
                 }
 
                 if let successHint {
@@ -998,9 +1081,9 @@ struct AddFriendSheet: View {
                 ProgressView()
                 Text("正在查找…").foregroundStyle(.secondary).font(.footnote)
             }
-        case .loaded(let userId, let displayName, let avatarPath):
+        case .loaded(let userId, let displayName, let avatarPath, let avatarSeed):
             HStack(spacing: 12) {
-                UserAvatar(seed: userId, attachmentId: avatarPath, size: 44)
+                UserAvatar(seed: avatarSeed, attachmentId: avatarPath, size: 44)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(displayName.isEmpty ? String(userId.prefix(8)) : displayName)
                         .font(.body)
@@ -1013,23 +1096,21 @@ struct AddFriendSheet: View {
         }
     }
 
-    /// Debounced lookup. Each keystroke cancels the prior in-flight
-    /// task; only the trailing 350ms of stillness fires the request.
-    /// Resets to `.idle` when the user clears the field or types fewer
-    /// than the worker-allowed minimum (4 chars).
-    private func scheduleLookup() {
-        lookupTask?.cancel()
+    /// Explicit lookup fired by the 查找 button / keyboard submit. Trips
+    /// a soft client-side rate limit (1.5s between calls) so a wrist-spasm
+    /// double-tap doesn't double-fire; further server-side throttling lives
+    /// behind the auth gate.
+    private func runLookupTapped() async {
         let value = trimmedHandle
-        guard value.count >= 4 else {
-            preview = .idle
-            return
-        }
+        guard value.count >= 4 else { return }
+        let now = Date()
+        if now.timeIntervalSince(lastLookupAt) < 1.5 { return }
+        lastLookupAt = now
+        lookupTask?.cancel()
         preview = .loading
-        lookupTask = Task {
-            try? await Task.sleep(nanoseconds: 350_000_000)
-            if Task.isCancelled { return }
-            await runLookup(value: value)
-        }
+        let task = Task { await runLookup(value: value) }
+        lookupTask = task
+        await task.value
     }
 
     private func runLookup(value: String) async {
@@ -1060,9 +1141,15 @@ struct AddFriendSheet: View {
                 let userId: String
                 let displayName: String
                 let avatarPath: String?
+                let avatarSeed: String?
             }
             let r = try JSONDecoder().decode(LookupResp.self, from: data)
-            preview = .loaded(userId: r.userId, displayName: r.displayName, avatarPath: r.avatarPath)
+            preview = .loaded(
+                userId: r.userId,
+                displayName: r.displayName,
+                avatarPath: r.avatarPath,
+                avatarSeed: r.avatarSeed ?? r.userId
+            )
         } catch is CancellationError {
             // User kept typing — drop the result silently.
         } catch {
@@ -1077,8 +1164,8 @@ struct AddFriendSheet: View {
         successHint = nil
         do {
             var body: [String: Any] = ["handleValue": trimmedHandle]
-            let trimmedRemark = remark.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmedRemark.isEmpty { body["remark"] = trimmedRemark }
+            let trimmedMessage = verifyMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedMessage.isEmpty { body["message"] = trimmedMessage }
 
             let url = HostedConfig.environment.workerURL.appendingPathComponent("v1/friend-requests")
             var req = URLRequest(url: url)
@@ -1106,6 +1193,90 @@ struct AddFriendSheet: View {
             Haptics.success()
             onAdded()
             try? await Task.sleep(nanoseconds: 1_500_000_000)
+            dismiss()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+}
+
+// MARK: - Contact alias edit sheet
+
+/// 设置备注 — pulled from the friend row's long-press menu. Empty value
+/// clears the alias (the row reverts to displaying the contact's own
+/// display_name). Posts to PATCH /v1/contacts/:contactUserId so the
+/// change is symmetric with the WeChat-style "alias is local to me"
+/// model: only the caller sees this label.
+struct ContactAliasSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let contact: FriendsTabView.HumanPick
+    var onSaved: () -> Void = {}
+
+    @State private var alias: String = ""
+    @State private var saving: Bool = false
+    @State private var error: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField(contact.displayName.isEmpty ? "起个备注" : "默认显示「\(contact.displayName)」",
+                              text: $alias)
+                        .textInputAutocapitalization(.sentences)
+                        .autocorrectionDisabled()
+                } header: {
+                    Text("备注")
+                } footer: {
+                    Text("只有你能看到这个备注。留空则恢复对方自己的昵称。")
+                }
+                if let error {
+                    Section { Text(error).foregroundStyle(.red).font(.footnote) }
+                }
+            }
+            .navigationTitle("设置备注")
+            .navigationBarTitleDisplayMode(.inline)
+            .onAppear { alias = contact.alias ?? "" }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("保存") { Task { await save() } }
+                        .disabled(saving)
+                }
+            }
+        }
+    }
+
+    private func save() async {
+        saving = true; defer { saving = false }
+        error = nil
+        let trimmed = alias.trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            let url = HostedConfig.environment.workerURL
+                .appendingPathComponent("v1/contacts/")
+                .appendingPathComponent(contact.id)
+            var req = URLRequest(url: url)
+            req.httpMethod = "PATCH"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            let token = try await SupabaseStack.shared.auth.session.accessToken
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            // Send `null` to clear, otherwise the trimmed string. Server
+            // also accepts an empty string and treats it as null.
+            let body: [String: Any] = trimmed.isEmpty
+                ? ["alias": NSNull()]
+                : ["alias": trimmed]
+            req.httpBody = try JSONSerialization.data(withJSONObject: body)
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard let http = resp as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+            if !(200..<300).contains(http.statusCode) {
+                let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                let msg = (payload?["error"] as? String) ?? "HTTP \(http.statusCode)"
+                self.error = msg
+                return
+            }
+            Haptics.success()
+            onSaved()
             dismiss()
         } catch {
             self.error = error.localizedDescription
