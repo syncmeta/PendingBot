@@ -23,7 +23,31 @@ enum BillingService {
     }
 
     static func fetchBalance(api: APIClient = APIClient()) async throws -> Balance {
-        try await api.get("/v1/me/balance")
+        let b: Balance = try await api.get("/v1/me/balance")
+        await MainActor.run { cachedBalanceCredits = b.balanceCredits }
+        return b
+    }
+
+    /// Cache for the most recent balance the server told us. The Wallet
+    /// view checks this before its `.task` initial fetch so the new value
+    /// from a finished call is visible the moment the user opens it.
+    /// Threading: MainActor-isolated.
+    @MainActor
+    private static var cachedBalanceCredits: Int?
+
+    /// The most recently seen balance, if any. nil before the first call
+    /// to fetchBalance / applySilentUpdate.
+    @MainActor
+    static var lastKnownBalance: Int? { cachedBalanceCredits }
+
+    /// Push the worker-authoritative balance into the cache without
+    /// triggering UI refresh side effects. Used by the realtime call
+    /// flow — each /usage round-trip returns balance_credits but the
+    /// call screen deliberately doesn't show it (avoiding mid-call
+    /// distraction). Wallet picks the new value up on next render.
+    @MainActor
+    static func applySilentUpdate(balance: Int) {
+        cachedBalanceCredits = balance
     }
 
     // MARK: - Redeem

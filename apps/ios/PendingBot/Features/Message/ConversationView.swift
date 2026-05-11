@@ -106,6 +106,9 @@ struct ConversationView: View {
     @State private var showingSkills = false
     @State private var showingSettings = false
     @State private var saveAsSkillBody: String?
+    /// Active voice call session, present while CallView is on screen.
+    /// Created on phone-button tap and torn down when CallView dismisses.
+    @State private var callSession: CallSession?
 
     // Streaming reveal smoother — see applyBubbleEmissions. Bubbles that the
     // splitter promotes to .streaming (≥ BUBBLE_OVERFLOW_CHARS without a
@@ -438,6 +441,16 @@ struct ConversationView: View {
             .presentationDragIndicator(.visible)
             .onDisappear { Task { await loadSkills() } }
         }
+        .fullScreenCover(
+            isPresented: Binding(
+                get: { callSession != nil },
+                set: { if !$0 { callSession = nil } },
+            ),
+        ) {
+            if let session = callSession {
+                CallView(session: session)
+            }
+        }
         .navigationDestination(isPresented: $showingSettings) {
             // Group convs route to GroupSettingsView (members, nickname,
             // mute, leave). Owner/admin-only knobs (billing, handle,
@@ -599,6 +612,19 @@ struct ConversationView: View {
                 }
             }
             Spacer(minLength: 0)
+            if canStartVoiceCall {
+                Button {
+                    Haptics.tap()
+                    startVoiceCall()
+                } label: {
+                    Image(systemName: "phone.fill")
+                        .font(.system(size: 17, weight: .regular))
+                        .foregroundStyle(Theme.Palette.ink)
+                        .frame(width: 32, height: 32)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("语音通话")
+            }
             if canStartNewBotConv {
                 Button {
                     Haptics.tap()
@@ -693,6 +719,32 @@ struct ConversationView: View {
         if conversation.conversation_type != "user_bot" { return false }
         if let bid = bot?.id, !bid.isEmpty { return true }
         return !conversation.bot_id.isEmpty
+    }
+
+    /// Phone-button visibility — only 1v1 bot chats with voice_call_enabled
+    /// flipped by the bot owner. Pending convs need a materialized id for
+    /// the /v1/realtime/session round-trip, so we gate on conv.id too.
+    private var canStartVoiceCall: Bool {
+        guard !conversation.id.isEmpty else { return false }
+        if conversation.conversation_type != "user_bot" { return false }
+        return bot?.voice_call_enabled == true
+    }
+
+    /// Spin up a CallSession for the current bot + present CallView via
+    /// the .fullScreenCover bound to `callSession`. Tearing down happens
+    /// in the cover's onDismiss; we don't await session.start() here so
+    /// the UI flips to the call screen immediately.
+    private func startVoiceCall() {
+        let botId: String = {
+            if let bid = bot?.id, !bid.isEmpty { return bid }
+            return conversation.bot_id
+        }()
+        guard !botId.isEmpty else { return }
+        callSession = CallSession(
+            conversationId: conversation.id,
+            botId: botId,
+            botDisplayName: bot?.display_name ?? "AI",
+        )
     }
 
     /// Flip this view onto a fresh pending user_bot conv with the same bot.
