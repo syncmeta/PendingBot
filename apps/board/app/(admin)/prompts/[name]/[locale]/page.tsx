@@ -32,13 +32,6 @@ async function readBundled(name: string, locale: string): Promise<string | null>
   }
 }
 
-type OverrideRow = {
-  body_md: string;
-  version: number;
-  updated_at: string;
-  updated_by: string | null;
-};
-
 export default async function PromptEditPage({
   params,
 }: {
@@ -50,17 +43,7 @@ export default async function PromptEditPage({
   if (!(SUPPORTED_LOCALES as readonly string[]).includes(locale)) notFound();
 
   const supa = supabaseAdmin();
-  const { data: override } = await (supa as unknown as {
-    from: (t: string) => {
-      select: (cols: string) => {
-        eq: (c: string, v: string) => {
-          eq: (c: string, v: string) => {
-            maybeSingle: () => Promise<{ data: OverrideRow | null }>;
-          };
-        };
-      };
-    };
-  })
+  const { data: override } = await supa
     .from('i18n_prompts')
     .select('body_md, version, updated_at, updated_by')
     .eq('name', name)

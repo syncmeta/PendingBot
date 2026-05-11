@@ -9,42 +9,6 @@ import {
   type PromptName,
 } from '@pendingbot/edge/llm/prompt-names';
 
-// pendingbot.i18n_prompts is freshly created (migration
-// 20260511064939_i18n_prompts.sql) and not yet in apps/edge/src/db/schema.ts.
-// Use a thin typed gateway to keep the casts in one place — once schema is
-// regenerated this collapses to direct supa.from('i18n_prompts').
-type PromptRow = {
-  name: string;
-  locale: string;
-  body_md: string;
-  version: number;
-  updated_at: string;
-  updated_by: string | null;
-};
-type AnySupa = ReturnType<typeof supabaseAdmin>;
-function promptsTable(supa: AnySupa) {
-  return (supa as unknown as {
-    from: (t: string) => {
-      select: (cols: string) => Promise<{ data: PromptRow[] | null; error: { message: string } | null }> & {
-        eq: (col: string, val: string) => {
-          eq: (col: string, val: string) => {
-            maybeSingle: () => Promise<{ data: PromptRow | null; error: { message: string } | null }>;
-          };
-        };
-      };
-      upsert: (
-        row: Partial<PromptRow>,
-        opts?: { onConflict?: string },
-      ) => Promise<{ error: { message: string } | null }>;
-      delete: () => {
-        eq: (col: string, val: string) => {
-          eq: (col: string, val: string) => Promise<{ error: { message: string } | null }>;
-        };
-      };
-    };
-  }).from('i18n_prompts');
-}
-
 export const SUPPORTED_LOCALES = ['zh', 'en'] as const;
 export type PromptLocale = (typeof SUPPORTED_LOCALES)[number];
 
@@ -81,14 +45,15 @@ export async function savePrompt(
   }
 
   const supa = supabaseAdmin();
-  const { data: before } = await promptsTable(supa)
-    .select('name, locale, body_md, version, updated_at, updated_by')
+  const { data: before } = await supa
+    .from('i18n_prompts')
+    .select('body_md, version')
     .eq('name', name)
     .eq('locale', locale)
     .maybeSingle();
 
   const nextVersion = (before?.version ?? 0) + 1;
-  const { error } = await promptsTable(supa).upsert(
+  const { error } = await supa.from('i18n_prompts').upsert(
     {
       name,
       locale,
@@ -124,8 +89,9 @@ export async function resetPrompt(name: string, locale: string): Promise<void> {
   assertLocale(locale);
 
   const supa = supabaseAdmin();
-  const { data: before } = await promptsTable(supa)
-    .select('name, locale, body_md, version, updated_at, updated_by')
+  const { data: before } = await supa
+    .from('i18n_prompts')
+    .select('body_md, version')
     .eq('name', name)
     .eq('locale', locale)
     .maybeSingle();
@@ -135,7 +101,11 @@ export async function resetPrompt(name: string, locale: string): Promise<void> {
     return;
   }
 
-  await promptsTable(supa).delete().eq('name', name).eq('locale', locale);
+  await supa
+    .from('i18n_prompts')
+    .delete()
+    .eq('name', name)
+    .eq('locale', locale);
 
   const h = await headers();
   await supa.from('admin_audit').insert({

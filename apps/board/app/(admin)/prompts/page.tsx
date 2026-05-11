@@ -6,18 +6,11 @@ import {
 } from '@pendingbot/edge/llm/prompt-names';
 import { SUPPORTED_LOCALES } from './actions';
 
-// See actions.ts — i18n_prompts not yet in db/schema.ts.
-type Overview = { name: string; locale: string; version: number; updated_at: string };
-
 export default async function PromptsPage() {
   const supa = supabaseAdmin();
-  const { data: rows } = (await (supa as unknown as {
-    from: (t: string) => {
-      select: (cols: string) => Promise<{ data: Overview[] | null }>;
-    };
-  })
+  const { data: rows } = await supa
     .from('i18n_prompts')
-    .select('name, locale, version, updated_at')) ?? { data: [] };
+    .select('name, locale, version, updated_at');
 
   const overrides = new Map<string, { version: number; updated_at: string }>();
   for (const r of rows ?? []) {

@@ -57,22 +57,12 @@ let cacheLoadedAt = 0;
 let inflightLoad: Promise<void> | null = null;
 const CACHE_TTL_MS = 30_000;
 
-type PromptRow = { name: string; locale: string; body_md: string };
-
 export async function ensurePromptOverridesLoaded(supa: SupabaseClient): Promise<void> {
   if (Date.now() - cacheLoadedAt < CACHE_TTL_MS) return;
   if (inflightLoad) return inflightLoad;
   inflightLoad = (async () => {
     try {
-      // i18n_prompts schema not yet in db/schema.ts; regen with
-      // `supabase gen types typescript --local --schema pendingbot >
-      // apps/edge/src/db/schema.ts` after applying the migration to drop
-      // this cast.
-      const { data, error } = await (supa as unknown as {
-        from: (table: string) => {
-          select: (cols: string) => Promise<{ data: PromptRow[] | null; error: unknown }>;
-        };
-      })
+      const { data, error } = await supa
         .from('i18n_prompts')
         .select('name, locale, body_md');
       if (error) {
