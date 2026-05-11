@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 import type { Env } from '../types';
 import type { SupabaseClient } from '../lib/supabase';
-import { billingDebit, usdToPnd } from '../lib/billing';
+import { billingDebit, getMarkup, usdToPnd } from '../lib/billing';
 import { splitAndDebit } from '../lib/group-billing';
 import type { WebToolUsage } from '../lib/web-meter';
 
@@ -363,8 +363,11 @@ export async function recordAudit(
   // Combined USD for billing. usdToPnd treats null/<=0 as 0, so a turn
   // with neither LLM pricing nor any tool cost still settles into the
   // 'skipped' branch below without us special-casing nulls here.
+  // Markup is read from billing_config (cached) — ops retunes it from
+  // the board without redeploying the worker.
   const combinedUsd = (llmCost ?? 0) + toolCostUsd;
-  const pnd = usdToPnd(combinedUsd);
+  const markup = await getMarkup(supa);
+  const pnd = usdToPnd(combinedUsd, markup);
   const total =
     (opts.inputTokens ?? 0) +
     (opts.outputTokens ?? 0) +

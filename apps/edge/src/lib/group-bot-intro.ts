@@ -1,7 +1,7 @@
 import { resolveRoute } from '../llm/router';
 import { serviceClient } from './supabase';
 import { splitAndDebit } from './group-billing';
-import { usdToPnd } from './billing';
+import { getMarkup, usdToPnd } from './billing';
 import type { Env } from '../types';
 
 // First-version "call me when..." description, generated immediately
@@ -142,7 +142,8 @@ export async function generateInitialBotDescription(input: {
   const cost = route.alias
     ? computeCost(route.alias, inputTokens, outputTokens)
     : null;
-  const pnd = usdToPnd(cost);
+  const markup = await getMarkup(supa);
+  const pnd = usdToPnd(cost, markup);
 
   const { data: audit } = await supa
     .from('audit_log')
