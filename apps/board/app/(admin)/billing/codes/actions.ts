@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { requireAdmin } from '@/lib/auth';
 import { supabaseAdmin } from '@/lib/supabase/admin';
+import { withFlash } from '@/components/toast';
 
 // Reuse the admin_audit pattern from users/actions.ts so billing-side
 // admin moves are visible in the same /admin-audit feed.
@@ -37,10 +38,10 @@ export async function issueCodes(formData: FormData) {
   const label = labelRaw || null;
 
   if (!Number.isFinite(count) || count <= 0 || count > 1000) {
-    redirect('/billing/codes?err=count');
+    redirect(withFlash('/billing/codes', '数量必须在 1–1000 之间', 'error'));
   }
   if (!Number.isFinite(credits) || credits <= 0) {
-    redirect('/billing/codes?err=credits');
+    redirect(withFlash('/billing/codes', '每张面值必须是正整数', 'error'));
   }
 
   const supa = supabaseAdmin();
@@ -50,7 +51,7 @@ export async function issueCodes(formData: FormData) {
     p_label: label ?? undefined,
   });
   if (error) {
-    redirect(`/billing/codes?err=${encodeURIComponent(error.message)}`);
+    redirect(withFlash('/billing/codes', error.message, 'error'));
   }
 
   await audit({
@@ -66,14 +67,20 @@ export async function issueCodes(formData: FormData) {
   // explicit code strings via the URL when no label was provided —
   // 1000 codes × 16 chars + commas fits well under URL length limits
   // for chrome (8k+).
+  const successMsg = `已发 ${count} 张码 · 每张 ∂${credits}`;
   if (label) {
     revalidatePath('/billing/codes');
-    redirect(`/billing/codes?just=${encodeURIComponent(label)}`);
+    redirect(
+      withFlash(`/billing/codes?just=${encodeURIComponent(label)}`, successMsg),
+    );
   }
   const codes = (data as string[] | null) ?? [];
   revalidatePath('/billing/codes');
   redirect(
-    `/billing/codes?just_codes=${encodeURIComponent(codes.join(','))}`,
+    withFlash(
+      `/billing/codes?just_codes=${encodeURIComponent(codes.join(','))}`,
+      successMsg,
+    ),
   );
 }
 

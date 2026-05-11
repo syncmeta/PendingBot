@@ -9,7 +9,6 @@ import { StatusFilter } from './_status-filter';
 type SearchParams = {
   just?: string;
   just_codes?: string;
-  err?: string;
   status?: 'enabled' | 'disabled' | 'used' | 'all';
 };
 
@@ -89,12 +88,6 @@ export default async function CodesPage({
           按批次发码,用户在 iOS / Web 端 POST /v1/me/redeem 兑换。每个码只能用一次。
         </p>
       </header>
-
-      {params.err && (
-        <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
-          发码失败：{decodeURIComponent(params.err)}
-        </div>
-      )}
 
       {justCodes.length > 0 && <JustIssued codes={justCodes} label={params.just ?? null} />}
 

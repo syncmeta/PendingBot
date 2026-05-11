@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { requireAdmin } from '@/lib/auth';
 import { supabaseAdmin } from '@/lib/supabase/admin';
+import { withFlash } from '@/components/toast';
 
 export type ProviderFormState = { error?: string };
 
@@ -79,7 +80,7 @@ export async function createProvider(
   });
 
   revalidatePath('/providers');
-  redirect('/providers');
+  redirect(withFlash('/providers', `已新增 provider ${parsed.row.slug}`));
 }
 
 export async function updateProvider(
@@ -113,7 +114,7 @@ export async function updateProvider(
   });
 
   revalidatePath('/providers');
-  redirect('/providers');
+  redirect(withFlash('/providers', `已保存 provider ${parsed.row.slug}`));
 }
 
 export type ActionResult = { ok?: true; error?: string; message?: string };

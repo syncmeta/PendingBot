@@ -1,6 +1,7 @@
 'use client';
 
 import { useActionState } from 'react';
+import { useFormToast } from '@/components/use-form-error-toast';
 import type { GrantFormState } from '../actions';
 
 // Inline grant form that lives inside the user's detail page. Shows
@@ -13,6 +14,13 @@ export function GrantForm({
   action: (prev: GrantFormState, formData: FormData) => Promise<GrantFormState>;
 }) {
   const [state, formAction, pending] = useActionState<GrantFormState, FormData>(action, {});
+  useFormToast(
+    state,
+    state.ok
+      ? `已发放 ∂${state.ok.credits} · 新余额 ∂${state.ok.new_balance}`
+      : '已发放',
+    state.ok ? `${state.ok.credits}|${state.ok.new_balance}` : undefined,
+  );
   return (
     <form action={formAction} className="space-y-3">
       <div className="grid grid-cols-3 gap-3">

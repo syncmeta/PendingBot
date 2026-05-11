@@ -1,6 +1,7 @@
 'use client';
 
 import { useActionState } from 'react';
+import { useFormToast } from '@/components/use-form-error-toast';
 import type { PriceFormState } from './actions';
 
 export type PriceRow = {
@@ -37,6 +38,7 @@ export function PriceRowForm({
     action,
     {},
   );
+  useFormToast(state, `已保存 ${row.provider}/${row.kind} 价格`);
   const billed = Math.ceil(row.unit_cost_usd * USD_TO_PND * markup);
 
   return (

@@ -1,6 +1,7 @@
 'use client';
 
 import { useActionState } from 'react';
+import { useFormErrorToast } from '@/components/use-form-error-toast';
 import type { ModelFormState } from './actions';
 
 export type ModelFormValues = {
@@ -33,6 +34,7 @@ export function ModelForm({
   submitLabel: string;
 }) {
   const [state, formAction, pending] = useActionState<ModelFormState, FormData>(action, {});
+  useFormErrorToast(state.error);
   const caps = (initial?.capabilities ?? {}) as Record<string, unknown>;
 
   return (

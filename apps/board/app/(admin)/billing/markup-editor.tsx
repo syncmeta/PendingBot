@@ -1,6 +1,7 @@
 'use client';
 
 import { useActionState } from 'react';
+import { useFormToast } from '@/components/use-form-error-toast';
 import type { MarkupFormState } from './actions';
 
 // Inline editor for billing_config.markup. Lives on the /billing
@@ -19,6 +20,7 @@ export function MarkupEditor({
     action,
     {},
   );
+  useFormToast(state, '已保存 markup');
   return (
     <form
       action={formAction}

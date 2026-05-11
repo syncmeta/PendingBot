@@ -1,6 +1,7 @@
 'use client';
 
 import { useActionState } from 'react';
+import { useFormErrorToast } from '@/components/use-form-error-toast';
 import type { QuotaFormState } from '../actions';
 
 export function QuotaForm({
@@ -11,6 +12,7 @@ export function QuotaForm({
   initial: { daily_limit_usd: number; monthly_limit_usd: number };
 }) {
   const [state, formAction, pending] = useActionState<QuotaFormState, FormData>(action, {});
+  useFormErrorToast(state.error);
   return (
     <form action={formAction} className="space-y-4">
       <div className="grid gap-4 sm:grid-cols-2">

@@ -1,6 +1,7 @@
 'use client';
 
 import { useActionState } from 'react';
+import { useFormErrorToast } from '@/components/use-form-error-toast';
 import type { RuleFormState } from './actions';
 
 // task_types currently emitted by the router callers. Keep this in
@@ -42,6 +43,7 @@ export function RuleForm({
   submitLabel: string;
 }) {
   const [state, formAction, pending] = useActionState<RuleFormState, FormData>(action, {});
+  useFormErrorToast(state.error);
   const taskValue = initial?.task_type ?? '';
   const taskInList = KNOWN_TASKS.includes(taskValue as (typeof KNOWN_TASKS)[number]);
 

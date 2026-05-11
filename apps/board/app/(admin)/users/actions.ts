@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { requireAdmin } from '@/lib/auth';
 import { supabaseAdmin } from '@/lib/supabase/admin';
+import { withFlash } from '@/components/toast';
 
 export type QuotaFormState = { error?: string };
 
@@ -72,7 +73,7 @@ export async function updateQuota(
     actorId: admin.id,
   });
   revalidatePath('/users');
-  redirect('/users');
+  redirect(withFlash('/users', '已保存配额'));
 }
 
 export async function resetQuotaUsed(

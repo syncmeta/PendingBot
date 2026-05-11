@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { requireAdmin } from '@/lib/auth';
 import { supabaseAdmin } from '@/lib/supabase/admin';
+import { withFlash } from '@/components/toast';
 
 export type RuleFormState = { error?: string };
 
@@ -78,7 +79,7 @@ export async function createRule(
     actorId: admin.id,
   });
   revalidatePath('/routing-rules');
-  redirect('/routing-rules');
+  redirect(withFlash('/routing-rules', `已新增 rule (task=${parsed.row.task_type})`));
 }
 
 export async function updateRule(
@@ -111,7 +112,7 @@ export async function updateRule(
     actorId: admin.id,
   });
   revalidatePath('/routing-rules');
-  redirect('/routing-rules');
+  redirect(withFlash('/routing-rules', `已保存 rule (task=${parsed.row.task_type})`));
 }
 
 export type ActionResult = { ok?: true; error?: string; message?: string };

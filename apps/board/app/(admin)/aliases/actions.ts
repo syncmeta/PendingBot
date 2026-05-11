@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { requireAdmin } from '@/lib/auth';
 import { supabaseAdmin } from '@/lib/supabase/admin';
+import { withFlash } from '@/components/toast';
 
 export type AliasFormState = { error?: string };
 
@@ -108,7 +109,7 @@ export async function createAlias(
     actorId: admin.id,
   });
   revalidatePath('/aliases');
-  redirect('/aliases');
+  redirect(withFlash('/aliases', '已新增 alias'));
 }
 
 export async function updateAlias(
@@ -141,7 +142,7 @@ export async function updateAlias(
     actorId: admin.id,
   });
   revalidatePath('/aliases');
-  redirect('/aliases');
+  redirect(withFlash('/aliases', '已保存 alias'));
 }
 
 export type ActionResult = { ok?: true; error?: string; message?: string };
