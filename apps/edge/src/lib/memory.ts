@@ -139,8 +139,14 @@ export async function maybeRefreshMemory(input: MaybeRefreshInput): Promise<void
 
     // Piggyback bot's private "manual on this user" update on the same
     // trigger — same cadence as Honcho refresh, much cheaper than per-turn
-    // and lazy enough that the LLM call doesn't pile up.
-    await refreshBotNote({ env, botId, userId, conversationId });
+    // and lazy enough that the LLM call doesn't pile up. chat-memo runs
+    // in parallel; one is a (bot, user) cross-conv operating manual, the
+    // other a per-conv log of "what we talked about / quotes I want to
+    // keep" plus search-tool index — they serve different prompts.
+    await Promise.all([
+      refreshBotNote({ env, botId, userId, conversationId }),
+      refreshChatMemo({ env, botId, conversationId }),
+    ]);
   } catch (err) {
     console.warn('[memory] maybeRefresh failed', err);
   }
@@ -274,6 +280,166 @@ async function refreshBotNote(input: RefreshBotNoteInput): Promise<void> {
       });
     }
   }
+}
+
+interface RefreshChatMemoInput {
+  env: Env;
+  botId: string;
+  conversationId: string;
+}
+
+/// Per-conv markdown the bot maintains for itself: a loose timeline of what
+/// got talked about and which exact quotes (from either side) stuck with
+/// it. Paired with the search_chat_history tool — the memo is the index,
+/// the tool is the way back to original text. Stored on skills under the
+/// new (bot_id+conversation_id) authorship branch so the row stays bot-
+/// private regardless of conv type (1v1 / group / self).
+///
+/// Length is on the bot — prompt tells it to summarize / drop old material
+/// when the memo grows past ~2 KiB. We don't enforce.
+async function refreshChatMemo(input: RefreshChatMemoInput): Promise<void> {
+  const { env, botId, conversationId } = input;
+  const startedAt = Date.now();
+  try {
+    const supa = serviceClient(env);
+    const { data: existing } = await supa
+      .from('skills')
+      .select('id, body_md' as never)
+      .eq('bot_id', botId)
+      .eq('conversation_id' as never, conversationId)
+      .is('user_id', null)
+      .maybeSingle<{ id: string; body_md: string }>();
+
+    const { data: msgs } = await supa
+      .from('messages')
+      .select('role, content, created_at')
+      .eq('conversation_id', conversationId)
+      .neq('role', 'log')
+      .order('created_at', { ascending: false })
+      .limit(40);
+    const recent = (msgs ?? []).reverse();
+    if (recent.length < 4) return;
+
+    const { data: bot } = await supa
+      .from('bots')
+      .select('model_id, display_name')
+      .eq('id', botId)
+      .single();
+    if (!bot?.model_id) return;
+
+    const transcript = recent
+      .map((m) => {
+        const speaker = m.role === 'bot' ? '我' : '对方';
+        const ts = (m.created_at as string).slice(0, 16).replace('T', ' ');
+        return `[${ts}] ${speaker}：${m.content ?? ''}`;
+      })
+      .join('\n');
+    const currentMemo = (existing?.body_md ?? '').trim();
+
+    const prompt = [
+      `你（${bot.display_name}）在维护一份只有自己能看的对话备忘 (chat-memo)。`,
+      '这份备忘是你给「未来的自己」准备的，对方永远看不到。它有两个用途：',
+      '1) 记录时间段大概聊了什么——比如「~5月初：聊了关于 X 的几轮，对方提到 Y」；',
+      '2) 摘录让你印象深刻的原文（不限是谁说的），让以后能定位到那一刻。每条原文带上大概的时间。',
+      '',
+      '写法没有强制 schema，按你舒服的方式组织（时间段分节最自然）。语气放松，给自己看。',
+      '篇幅控制在 ~2KB 以内。如果上一版已经接近上限：',
+      '- 把更早的时间段压缩成一行总结',
+      '- 删掉重复的或不再有价值的原文摘录',
+      '- 合并相邻的话题',
+      '',
+      '配套：你还有一个 `search_chat_history` 工具，可以用关键词或时间段回查这个对话的原文。',
+      '所以备忘本身做「索引和点睛」就行，不必逐字——觉得重要时再调工具回查。',
+      '',
+      currentMemo
+        ? `## 上一版备忘\n${currentMemo}`
+        : '## 上一版备忘\n（还没写过——这是第一版）',
+      '',
+      '## 最近对话',
+      transcript,
+      '',
+      '## 任务',
+      '基于最近对话和上一版，写出新一版备忘。直接输出 markdown 正文，不要前言后语。',
+      '如果实在没什么可记的，输出 [SILENT] 一个 token 即可（保留上一版不动）。',
+    ].join('\n');
+
+    const { result: completion, route, routeTrace } = await withFallback(
+      supa,
+      env,
+      { modelSlug: bot.model_id as string, taskType: 'chat_memo' },
+      (r) =>
+        r.client.chat.completions.create({
+          model: r.modelToCall,
+          messages: [{ role: 'user', content: prompt }],
+        }),
+    );
+    const raw = completion.choices[0]?.message?.content?.trim() ?? '';
+    const action: 'silent' | 'update' = raw && raw !== '[SILENT]' ? 'update' : 'silent';
+    await recordAudit(supa, route, {
+      conversationId,
+      taskType: 'chat_memo',
+      startedAt,
+      generationId: completion.id,
+      status: 'success',
+      routeTrace,
+      metadata: { bot_id: botId, action },
+      ...usageFromCompletion(completion.usage),
+    });
+    if (action === 'silent') return;
+
+    if (existing?.id) {
+      await supa
+        .from('skills')
+        .update({ body_md: raw, updated_at: new Date().toISOString() })
+        .eq('id', existing.id);
+    } else {
+      await supa.from('skills').insert({
+        owner_id: null,
+        bot_id: botId,
+        user_id: null,
+        conversation_id: conversationId,
+        visibility: 'private',
+        frontmatter: {
+          name: `chat-memo:${botId.slice(0, 8)}/${conversationId.slice(0, 8)}`,
+          description: 'Bot private chat memo for this conversation',
+        },
+        body_md: raw,
+      } as never);
+    }
+  } catch (err) {
+    console.warn('[memory] refreshChatMemo failed', err);
+    if (err instanceof FallbackError) {
+      const supa = serviceClient(env);
+      await recordAudit(supa, err.lastRoute, {
+        conversationId,
+        taskType: 'chat_memo',
+        startedAt,
+        status: 'error',
+        errorClass:
+          err.routeTrace[err.routeTrace.length - 1]?.error_class ?? 'unknown',
+        routeTrace: err.routeTrace,
+        metadata: { bot_id: botId, action: 'error' },
+      });
+    }
+  }
+}
+
+/// Look up the chat-memo body for a conversation, if any. Used by the bot
+/// reply path to inject it into the system prompt. Service-role read.
+export async function getChatMemo(
+  env: Env,
+  botId: string,
+  conversationId: string,
+): Promise<string | null> {
+  const supa = serviceClient(env);
+  const { data } = await supa
+    .from('skills')
+    .select('body_md' as never)
+    .eq('bot_id', botId)
+    .eq('conversation_id' as never, conversationId)
+    .is('user_id', null)
+    .maybeSingle<{ body_md: string }>();
+  return data?.body_md?.trim() || null;
 }
 
 // Returns true if `oldestContextId` is strictly newer than `coveredId`. Null
