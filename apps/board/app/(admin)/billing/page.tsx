@@ -1,15 +1,18 @@
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { fmtPnd, fmtNumber, fmtUsd } from '@/lib/format';
+import { MarkupEditor } from './markup-editor';
+import { setMarkup } from './actions';
 
 // Display ratio — must match USD_TO_PND in apps/edge/src/lib/billing.ts.
 // Used here only to render USD-equivalent next to PND for the "ops
 // headlines" cards (rate hint, not strict reporting).
 const USD_TO_PND = 2700;
 
-// Markup for cost-side (we paid X to providers, charged users PND) —
-// shown only as a hint in the "毛利" card. Tweak alongside billing.ts.
-const MARKUP = 2.5;
+// Fallback when billing_config.markup is missing — matches
+// DEFAULT_MARKUP in apps/edge/src/lib/billing.ts. The DB value is the
+// source of truth at runtime.
+const DEFAULT_MARKUP = 2.5;
 
 export default async function BillingDashboardPage() {
   const supa = supabaseAdmin();
@@ -17,7 +20,7 @@ export default async function BillingDashboardPage() {
   const since24h = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
 
   // ── Snapshot: balance/lifetime sums + low-balance count ────────────
-  const [usersAgg, threshold] = await Promise.all([
+  const [usersAgg, threshold, markupRow] = await Promise.all([
     supa.from('users').select(
       'balance_credits, lifetime_topup_credits, lifetime_spent_credits',
     ),
@@ -26,7 +29,17 @@ export default async function BillingDashboardPage() {
       .select('value')
       .eq('key', 'min_balance_threshold')
       .maybeSingle(),
+    supa
+      .from('billing_config')
+      .select('value')
+      .eq('key', 'markup')
+      .maybeSingle(),
   ]);
+  const markup = ((): number => {
+    const raw = markupRow.data?.value;
+    const n = typeof raw === 'number' ? raw : Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : DEFAULT_MARKUP;
+  })();
   const users = usersAgg.data ?? [];
   const totalBalance = users.reduce((s, u) => s + Number(u.balance_credits ?? 0), 0);
   const lifetimeTopup = users.reduce(
@@ -149,7 +162,7 @@ export default async function BillingDashboardPage() {
 
   // Display helpers
   const displayUsd = (pnd: number) =>
-    fmtUsd(pnd / USD_TO_PND / MARKUP);
+    fmtUsd(pnd / USD_TO_PND / markup);
 
   return (
     <main className="container py-10 space-y-8">
@@ -157,7 +170,7 @@ export default async function BillingDashboardPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Billing</h1>
           <p className="text-sm text-muted-foreground">
-            PND（∂）计费 · markup {MARKUP}× · $1 = {USD_TO_PND} ∂
+            PND（∂）计费 · markup {markup}× · $1 = {USD_TO_PND} ∂
           </p>
         </div>
         <div className="flex gap-2 text-sm">
@@ -176,6 +189,8 @@ export default async function BillingDashboardPage() {
         </div>
       </header>
 
+      <MarkupEditor current={markup} action={setMarkup} />
+
       {/* Snapshot cards */}
       <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Card label="用户" value={fmtNumber(users.length)} />
@@ -192,7 +207,7 @@ export default async function BillingDashboardPage() {
         <Card
           label="累计消费"
           value={fmtPnd(lifetimeSpent)}
-          hint={`成本 ≈ ${fmtUsd(lifetimeSpent / USD_TO_PND / MARKUP)}`}
+          hint={`成本 ≈ ${fmtUsd(lifetimeSpent / USD_TO_PND / markup)}`}
         />
       </section>
 

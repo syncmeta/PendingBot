@@ -7,22 +7,39 @@ import { PriceRowForm, type PriceRow, type UsageCell } from './_row';
 // table with a 60s TTL — saved changes take effect on the next worker
 // isolate that refreshes its cache, no deploy needed.
 
+// Fallback markup if billing_config.markup row is missing — matches
+// DEFAULT_MARKUP in apps/edge/src/lib/billing.ts.
+const DEFAULT_MARKUP = 2.5;
+
 export default async function WebToolPricesPage() {
   const supa = supabaseAdmin();
-  const { data: rows } = await supa
-    .from('web_tool_prices')
-    .select('provider, kind, unit_cost_usd, notes, updated_at')
-    .order('kind', { ascending: true })
-    .order('provider', { ascending: true });
-
-  // 7-day usage by provider+kind so the admin sees which price actually
-  // moves the needle. Single audit_web_tool_calls scan; the row count
-  // is small enough that grouping in JS is cheaper than a custom view.
   const since7d = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
-  const { data: usage } = await supa
-    .from('audit_web_tool_calls')
-    .select('provider, kind, cost_usd, status')
-    .gte('created_at', since7d);
+  const [pricesRes, usageRes, markupRow] = await Promise.all([
+    supa
+      .from('web_tool_prices')
+      .select('provider, kind, unit_cost_usd, notes, updated_at')
+      .order('kind', { ascending: true })
+      .order('provider', { ascending: true }),
+    // 7-day usage by provider+kind so the admin sees which price actually
+    // moves the needle. Single audit_web_tool_calls scan; the row count
+    // is small enough that grouping in JS is cheaper than a custom view.
+    supa
+      .from('audit_web_tool_calls')
+      .select('provider, kind, cost_usd, status')
+      .gte('created_at', since7d),
+    supa
+      .from('billing_config')
+      .select('value')
+      .eq('key', 'markup')
+      .maybeSingle(),
+  ]);
+  const rows = pricesRes.data;
+  const usage = usageRes.data;
+  const markup = ((): number => {
+    const raw = markupRow.data?.value;
+    const n = typeof raw === 'number' ? raw : Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : DEFAULT_MARKUP;
+  })();
 
   const usageByKey = new Map<
     string,
@@ -77,6 +94,7 @@ export default async function WebToolPricesPage() {
                   key={`${row.provider}:${row.kind}`}
                   row={row}
                   usage={usageCell}
+                  markup={markup}
                   action={updateWebToolPrice.bind(null, row.provider, row.kind)}
                 />
               );

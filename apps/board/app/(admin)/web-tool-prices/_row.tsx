@@ -17,26 +17,27 @@ export type UsageCell = {
   usd: number;
 } | null;
 
-// Display-only markup hint so admins can sanity-check what a price
-// change implies for the user. Mirror constants in
-// apps/edge/src/lib/billing.ts; if those move, update here too.
+// USD→PND display ratio; mirrors USD_TO_PND in apps/edge/src/lib/billing.ts.
+// The markup arrives as a prop from the page (sourced from billing_config),
+// so this component never holds a duplicate of that knob.
 const USD_TO_PND = 2700;
-const MARKUP = 2.5;
 
 export function PriceRowForm({
   row,
   usage,
+  markup,
   action,
 }: {
   row: PriceRow;
   usage: UsageCell;
+  markup: number;
   action: (prev: PriceFormState, fd: FormData) => Promise<PriceFormState>;
 }) {
   const [state, formAction, pending] = useActionState<PriceFormState, FormData>(
     action,
     {},
   );
-  const billed = Math.ceil(row.unit_cost_usd * USD_TO_PND * MARKUP);
+  const billed = Math.ceil(row.unit_cost_usd * USD_TO_PND * markup);
 
   return (
     <tr className="border-b align-top last:border-0">
@@ -61,7 +62,7 @@ export function PriceRowForm({
               <span className="tabular-nums">{billed.toLocaleString()} ∂</span>
               <span className="text-muted-foreground/70">
                 {' '}
-                (markup {MARKUP}×)
+                (markup {markup}×)
               </span>
             </span>
           </div>
