@@ -3,32 +3,40 @@
 // zero-IO at runtime.
 //
 // Adding a new prompt:
-//   1. drop a .md file into apps/edge/prompts/...
-//   2. import it here
-//   3. add to the PROMPTS map
+//   1. drop a .md file into apps/edge/prompts/<locale>/
+//   2. import it here under the matching locale block
+//   3. add to the PROMPTS_BY_LOCALE map
 //
-// Then any handler can `getPrompt('your-name')`.
+// Then any handler can `getPrompt('your-name')` (defaults to zh) or
+// `getPrompt('your-name', locale)`. Missing translations fall back to zh.
 
-import system from '../../prompts/system.md';
-import identityQuest from '../../prompts/identity-quest.md';
-import scroll from '../../prompts/scroll.md';
-import scrollInjected from '../../prompts/scroll-injected.md';
-import scrollWrite from '../../prompts/scroll-write.md';
-import scrollCollaborator from '../../prompts/scroll-collaborator.md';
-import title from '../../prompts/title.md';
+import { DEFAULT_LOCALE, type Locale } from '../i18n/types';
 
-const PROMPTS = {
-  'system': system,
-  'identity-quest': identityQuest,
-  'scroll': scroll,
-  'scroll-injected': scrollInjected,
-  'scroll-write': scrollWrite,
-  'scroll-collaborator': scrollCollaborator,
-  'title': title,
+import system_zh from '../../prompts/zh/system.md';
+import identityQuest_zh from '../../prompts/zh/identity-quest.md';
+import scroll_zh from '../../prompts/zh/scroll.md';
+import scrollInjected_zh from '../../prompts/zh/scroll-injected.md';
+import scrollWrite_zh from '../../prompts/zh/scroll-write.md';
+import scrollCollaborator_zh from '../../prompts/zh/scroll-collaborator.md';
+import title_zh from '../../prompts/zh/title.md';
+
+const PROMPTS_ZH = {
+  'system': system_zh,
+  'identity-quest': identityQuest_zh,
+  'scroll': scroll_zh,
+  'scroll-injected': scrollInjected_zh,
+  'scroll-write': scrollWrite_zh,
+  'scroll-collaborator': scrollCollaborator_zh,
+  'title': title_zh,
 } as const;
 
-export type PromptName = keyof typeof PROMPTS;
+export type PromptName = keyof typeof PROMPTS_ZH;
 
-export function getPrompt(name: PromptName): string {
-  return PROMPTS[name];
+const PROMPTS_BY_LOCALE: Record<Locale, Partial<Record<PromptName, string>>> = {
+  zh: PROMPTS_ZH,
+  en: {},
+};
+
+export function getPrompt(name: PromptName, locale: Locale = DEFAULT_LOCALE): string {
+  return PROMPTS_BY_LOCALE[locale]?.[name] ?? PROMPTS_ZH[name];
 }
