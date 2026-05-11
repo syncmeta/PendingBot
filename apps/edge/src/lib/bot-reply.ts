@@ -26,7 +26,7 @@ import {
   readAttachmentForTool,
   summarizeAttachments,
 } from '../llm/vision';
-import { getBotMemory, getUserMemory } from './memory';
+import { getBotMemory, getChatMemo, getUserMemory } from './memory';
 import { queryUserRepresentation } from './honcho';
 import { runWebScrape, runWebSearch } from './web';
 import { WebToolMeter } from './web-meter';
@@ -340,10 +340,10 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   const supa = serviceClient(env);
   const startedAt = Date.now();
 
-  // 1. Look up self section + skills + bot-authored note in parallel.
-  // In self-chat the "self section" is filled from the user's own peer
-  // memory — see RunChatTurnInput.isSelfChat.
-  const [botMemory, skillsRes, botNoteRes] = await Promise.all([
+  // 1. Look up self section + skills + bot-authored note + chat memo in
+  // parallel. In self-chat the "self section" is filled from the user's
+  // own peer memory — see RunChatTurnInput.isSelfChat.
+  const [botMemory, skillsRes, botNoteRes, chatMemo] = await Promise.all([
     input.isSelfChat ? getUserMemory(env, userId) : getBotMemory(env, bot.id),
     supa
       .from('skill_subscriptions')
@@ -356,6 +356,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       .eq('bot_id', bot.id)
       .eq('user_id', userId)
       .maybeSingle(),
+    getChatMemo(env, bot.id, conversationId),
   ]);
   type SkillRow = {
     frontmatter: {
@@ -520,7 +521,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   // (every 4 rounds; see llm/builder.ts). activeLookbacks become an
   // additional system block so the bot sees its prior fact-check notes.
   const messages: ChatCompletionMessageParam[] = buildMessages({
-    bot, botMemory, skills, botNote,
+    bot, botMemory, skills, botNote, chatMemo,
     lookbacks: activeLookbacks,
     recentContext, newMessage,
     currentImageParts,
