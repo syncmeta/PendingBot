@@ -44,6 +44,15 @@ function parseForm(formData: FormData) {
   if (output != null && typeof output === 'object') return output;
   const cacheWrite = parsePrice(formData, 'cache_write_price');
   if (cacheWrite != null && typeof cacheWrite === 'object') return cacheWrite;
+  // Voice-call dims — all three optional; an alias may bill on tokens
+  // (audio_input/output_price) or on elapsed seconds folded to minutes
+  // (audio_per_minute_price), or on neither for text-only aliases.
+  const audioInput = parsePrice(formData, 'audio_input_price');
+  if (audioInput != null && typeof audioInput === 'object') return audioInput;
+  const audioOutput = parsePrice(formData, 'audio_output_price');
+  if (audioOutput != null && typeof audioOutput === 'object') return audioOutput;
+  const audioPerMinute = parsePrice(formData, 'audio_per_minute_price');
+  if (audioPerMinute != null && typeof audioPerMinute === 'object') return audioPerMinute;
 
   if (input == null) return { error: 'input_price 必填' };
   if (output == null) return { error: 'output_price 必填' };
@@ -59,6 +68,9 @@ function parseForm(formData: FormData) {
       cached_input_price: cachedInput as number | null,
       output_price: output as number,
       cache_write_price: cacheWrite as number | null,
+      audio_input_price: audioInput as number | null,
+      audio_output_price: audioOutput as number | null,
+      audio_per_minute_price: audioPerMinute as number | null,
       notes,
     },
   };

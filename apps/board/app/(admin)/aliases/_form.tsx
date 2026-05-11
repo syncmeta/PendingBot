@@ -14,6 +14,10 @@ export type AliasFormValues = {
   cached_input_price?: number | string | null;
   output_price?: number | string | null;
   cache_write_price?: number | string | null;
+  // Voice-call pricing dims — null on text-only aliases.
+  audio_input_price?: number | string | null;
+  audio_output_price?: number | string | null;
+  audio_per_minute_price?: number | string | null;
   notes?: string | null;
 };
 
@@ -170,6 +174,51 @@ export function AliasForm({
               step="0.000001"
               min={0}
               defaultValue={initial?.cache_write_price ?? ''}
+              className="block w-full rounded-md border border-input bg-background px-3 py-2 tabular-nums"
+            />
+          </Field>
+        </div>
+      </fieldset>
+
+      <fieldset className="rounded-lg border p-4">
+        <legend className="px-2 text-sm font-medium">语音通话价格（可选）</legend>
+        <p className="mb-3 text-xs text-muted-foreground">
+          仅语音通话 alias 需要填。OpenAI Realtime 走 token 维度（USD per 1M）；
+          豆包 SDK 不暴露 token，走"每分钟"维度。两套字段同一 alias 上可以共存，
+          provider 按自己实际下发的 usage 字段命中其中一组——computeCost 把命中
+          的项加进 cost_usd。三个都为空则该 alias 不计音频费用。
+        </p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="audio_input_price (USD / 1M)" hint="OpenAI Realtime：每百万音频输入 token 的价">
+            <input
+              name="audio_input_price"
+              type="number"
+              step="0.000001"
+              min={0}
+              defaultValue={initial?.audio_input_price ?? ''}
+              className="block w-full rounded-md border border-input bg-background px-3 py-2 tabular-nums"
+            />
+          </Field>
+          <Field label="audio_output_price (USD / 1M)" hint="OpenAI Realtime：每百万音频输出 token 的价">
+            <input
+              name="audio_output_price"
+              type="number"
+              step="0.000001"
+              min={0}
+              defaultValue={initial?.audio_output_price ?? ''}
+              className="block w-full rounded-md border border-input bg-background px-3 py-2 tabular-nums"
+            />
+          </Field>
+          <Field
+            label="audio_per_minute_price (USD / min)"
+            hint="豆包 SpeechEngineToB：客户端按 10s 上报秒数，服务端按这里的单价折算"
+          >
+            <input
+              name="audio_per_minute_price"
+              type="number"
+              step="0.000001"
+              min={0}
+              defaultValue={initial?.audio_per_minute_price ?? ''}
               className="block w-full rounded-md border border-input bg-background px-3 py-2 tabular-nums"
             />
           </Field>
