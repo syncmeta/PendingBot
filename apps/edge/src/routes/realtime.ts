@@ -1,14 +1,18 @@
-// Voice call HTTP surface (M5+). Two providers, one route file:
+// Voice call HTTP surface (M5+). One provider — OpenAI Realtime.
 //
-//   POST /v1/realtime/session      — mint provider creds + bot system prompt
+//   POST /v1/realtime/session      — mint ephemeral client_secret + bake
+//                                    bot system prompt server-side
 //   POST /v1/realtime/usage        — per-turn audit + debit + balance gate
 //   POST /v1/realtime/transcripts  — write turn rows to messages
-//   POST /v1/realtime/end          — close session (no-op for openai, optional
-//                                    audit marker for doubao)
+//   POST /v1/realtime/end          — close session (no-op, kept as a
+//                                    uniform tail-call for the iOS client
+//                                    and an extension point for future
+//                                    cleanup hooks)
 //
-// The worker never proxies the audio. iOS connects directly:
-//   OpenAI → WebRTC SDP exchange to https://api.openai.com/v1/realtime
-//   Doubao → SpeechEngineToB SDK opens wss://openspeech.bytedance.com/...
+// The worker never proxies the audio. The system prompt is sent to OpenAI
+// during the mint step (POST /v1/realtime/client_secrets) and baked into
+// the session; only the ephemeral 60s client_secret reaches iOS, which
+// uses it for the WebRTC SDP exchange against api.openai.com/v1/realtime/calls.
 //
 // All four endpoints require a Supabase JWT (requireSession) and re-verify
 // caller ↔ conversation ownership on every call so a leaked session_id
@@ -40,15 +44,10 @@ realtimeRoutes.use('*', requireSession());
 // 36-char UUID guard — same shape as conversation/bot ids elsewhere.
 const UUID_RE = /^[0-9a-f-]{36}$/i;
 
-// One source of truth for the model slugs the realtime route understands;
-// task_routing_rules lookup is keyed off these in resolveRoute(...,
-// taskType: 'voice_call'). Provider columns on bots constrain which slug
-// gets selected per call.
+// Canonical model slug. task_routing_rules lookup is keyed off this in
+// resolveRoute(..., taskType: 'voice_call') so admins can override per
+// task/user without touching the route handler.
 const OPENAI_MODEL_SLUG = 'gpt-realtime';
-const DOUBAO_MODEL_SLUG = 'doubao-realtime';
-
-const PROVIDERS = ['openai', 'doubao'] as const;
-type VoiceProvider = (typeof PROVIDERS)[number];
 
 interface SessionContext {
   userId: string;
@@ -60,7 +59,6 @@ interface SessionContext {
     display_name: string;
     output_mode: string;
     voice_call_enabled: boolean;
-    voice_call_provider: VoiceProvider;
   };
 }
 
@@ -110,7 +108,7 @@ async function loadSessionContext(
   const supaService = serviceClient(env);
   const { data: bot } = await supaService
     .from('bots')
-    .select('id, display_name, output_mode, voice_call_enabled, voice_call_provider')
+    .select('id, display_name, output_mode, voice_call_enabled')
     .eq('id', conv.bot_id)
     .maybeSingle();
   if (!bot) {
@@ -120,26 +118,11 @@ async function loadSessionContext(
       body: { error: 'bot_not_found' },
     };
   }
-  const botRow = bot as unknown as {
-    id: string;
-    display_name: string;
-    output_mode: string;
-    voice_call_enabled: boolean | null;
-    voice_call_provider: string | null;
-  };
-  if (!botRow.voice_call_enabled) {
+  if (!bot.voice_call_enabled) {
     return {
       ok: false,
       status: 403,
       body: { error: 'voice_call_disabled', message: t('voice.bot_not_enabled', locale) },
-    };
-  }
-  const provider = botRow.voice_call_provider;
-  if (provider !== 'openai' && provider !== 'doubao') {
-    return {
-      ok: false,
-      status: 400,
-      body: { error: 'invalid_provider', message: t('voice.invalid_provider', locale) },
     };
   }
   return {
@@ -150,11 +133,10 @@ async function loadSessionContext(
       locale,
       conversation: { id: conv.id, bot_id: conv.bot_id, user_id: conv.user_id },
       bot: {
-        id: botRow.id,
-        display_name: botRow.display_name,
-        output_mode: botRow.output_mode,
+        id: bot.id,
+        display_name: bot.display_name,
+        output_mode: bot.output_mode,
         voice_call_enabled: true,
-        voice_call_provider: provider,
       },
     },
   };
@@ -162,9 +144,9 @@ async function loadSessionContext(
 
 /**
  * Load the bot's persona context (memory, skills, bot-note, chat-memo,
- * lookbacks) and run it through the existing builder. Result is the same
+ * lookbacks) and run it through the existing builder. Returns the same
  * system prompt string text turns get, ready to drop into OpenAI's
- * `instructions` field or Doubao's StartSession `dialog.system_role`.
+ * `instructions` field at session-mint time.
  */
 async function assembleInstructions(
   env: AppBindings['Bindings'],
@@ -284,38 +266,33 @@ realtimeRoutes.post('/session', async (c) => {
     );
   }
 
-  // OpenAI-only: region gate (Doubao serves CN natively).
-  if (ctx.bot.voice_call_provider === 'openai') {
-    const cfCountry = (c.req.raw as unknown as { cf?: { country?: string } }).cf
-      ?.country;
-    const region = checkOpenAIRegion(cfCountry ?? null);
-    if (!region.allowed) {
-      return c.json(
-        {
-          error: 'region_unsupported',
-          country: region.country,
-          message: t('voice.region_unsupported', locale),
-          supported_url: OPENAI_SUPPORTED_URL,
-        },
-        451,
-      );
-    }
+  // Region gate. cf.country is what Cloudflare's edge GeoIP reports for
+  // the request's egress IP; blocked list lives in lib/openai-regions.ts.
+  const cfCountry = (c.req.raw as unknown as { cf?: { country?: string } }).cf
+    ?.country;
+  const region = checkOpenAIRegion(cfCountry ?? null);
+  if (!region.allowed) {
+    return c.json(
+      {
+        error: 'region_unsupported',
+        country: region.country,
+        message: t('voice.region_unsupported', locale),
+        supported_url: OPENAI_SUPPORTED_URL,
+      },
+      451,
+    );
   }
 
-  // Persona — same string both providers consume.
+  // Persona assembled server-side. Goes into the upstream mint body —
+  // never touches the iOS device.
   const instructions = await assembleInstructions(c.env, ctx);
 
-  // Route resolution gives us alias + provider rows from llm_model_aliases.
-  // The model slug is fixed per provider here; task_routing_rules can still
-  // override at admin discretion via taskType='voice_call'.
-  const modelSlug =
-    ctx.bot.voice_call_provider === 'openai'
-      ? OPENAI_MODEL_SLUG
-      : DOUBAO_MODEL_SLUG;
+  // Route resolution. task_routing_rules can still override at admin
+  // discretion via taskType='voice_call'.
   let route;
   try {
     route = await resolveRoute(supaUser, c.env, {
-      modelSlug,
+      modelSlug: OPENAI_MODEL_SLUG,
       taskType: 'voice_call',
     });
   } catch (err) {
@@ -327,23 +304,10 @@ realtimeRoutes.post('/session', async (c) => {
   }
 
   const sessionId = crypto.randomUUID();
-
-  if (ctx.bot.voice_call_provider === 'openai') {
-    return await mintOpenAISession(c.env, locale, {
-      sessionId,
-      route,
-      instructions,
-      balanceCredits,
-      minThreshold,
-    });
-  }
-
-  return mintDoubaoSession(c.env, locale, {
+  return await mintOpenAISession(c.env, locale, {
     sessionId,
     route,
     instructions,
-    bot: ctx.bot,
-    userId,
     balanceCredits,
     minThreshold,
   });
@@ -446,50 +410,6 @@ async function mintOpenAISession(
   });
 }
 
-interface DoubaoMintArgs extends MintArgs {
-  bot: SessionContext['bot'];
-  userId: string;
-}
-
-function mintDoubaoSession(
-  env: AppBindings['Bindings'],
-  locale: Awaited<ReturnType<typeof resolveLocale>>,
-  args: DoubaoMintArgs,
-) {
-  // The Doubao SDK opens its own WebSocket from the device; the worker's
-  // job is just to forward the static console-issued credentials together
-  // with the persona text. AppKey leaving the worker is the upstream's
-  // design (SE_PARAMS_KEY_APP_KEY_STRING is a client-side parameter); we
-  // gate on auth + balance + bot.voice_call_enabled before sending.
-  const { DOUBAO_DIALOG_APP_ID, DOUBAO_DIALOG_APP_KEY, DOUBAO_DIALOG_ACCESS_TOKEN } = env;
-  if (!DOUBAO_DIALOG_APP_ID || !DOUBAO_DIALOG_APP_KEY || !DOUBAO_DIALOG_ACCESS_TOKEN) {
-    return jsonError(503, 'route_unavailable', t('voice.upstream_failed', locale));
-  }
-  // Deterministic device-side uid built from the supabase user_id. The
-  // upstream uses this for log correlation and per-user throttling.
-  const uid = `pb_${args.userId.slice(0, 8)}_${args.sessionId.slice(0, 8)}`;
-  return Response.json({
-    provider: 'doubao' as const,
-    session_id: args.sessionId,
-    model: args.route.modelToCall,
-    alias_id: args.route.alias?.aliasId ?? null,
-    provider_id: args.route.provider.id,
-    min_threshold: args.minThreshold,
-    balance_credits: args.balanceCredits,
-    doubao: {
-      app_id: DOUBAO_DIALOG_APP_ID,
-      app_key: DOUBAO_DIALOG_APP_KEY,
-      access_token: DOUBAO_DIALOG_ACCESS_TOKEN,
-      resource_id: 'volc.speech.dialog',
-      dialog_address: 'wss://openspeech.bytedance.com',
-      dialog_uri: '/api/v3/realtime/dialogue',
-      uid,
-      bot_name: args.bot.display_name,
-      system_prompt: args.instructions,
-    },
-  });
-}
-
 function jsonError(status: number, error: string, message: string) {
   return Response.json({ error, message }, { status });
 }
@@ -503,14 +423,11 @@ const UsageBody = z.object({
   conversation_id: z.string(),
   alias_id: z.string().nullable().optional(),
   provider_id: z.string(),
-  provider: z.enum(PROVIDERS),
-  // OpenAI dims (per-turn deltas pulled from response.done.usage)
+  // Per-turn deltas pulled from response.done.usage on the iOS side.
   audio_input_tokens: z.number().int().min(0).optional(),
   audio_output_tokens: z.number().int().min(0).optional(),
   text_input_tokens: z.number().int().min(0).optional(),
   text_output_tokens: z.number().int().min(0).optional(),
-  // Doubao dim (seconds elapsed since last tick)
-  audio_seconds_billed: z.number().min(0).optional(),
   latency_ms: z.number().int().min(0).optional(),
   turn_index: z.number().int().min(0),
 });
@@ -538,17 +455,15 @@ realtimeRoutes.post('/usage', async (c) => {
   if (!loaded.ok) return c.json(loaded.body, loaded.status);
 
   // Re-resolve the route so recordAudit gets fresh pricing — admin may
-  // have tweaked audio_*_price between session start and this tick.
-  // Note: this means a mid-call price edit takes effect on the next turn,
-  // which is exactly the propagation latency users expect from the board.
-  const modelSlug =
-    parsed.provider === 'openai' ? OPENAI_MODEL_SLUG : DOUBAO_MODEL_SLUG;
+  // have tweaked audio_*_price between session start and this tick. The
+  // mid-call price edit takes effect on the next turn, which is the
+  // propagation window admins expect from the board.
   let route;
   try {
     route = await resolveRoute(supaUser, c.env, {
-      modelSlug,
+      modelSlug: OPENAI_MODEL_SLUG,
       taskType: 'voice_call',
-      preferProvider: parsed.provider,
+      preferProvider: 'openai',
     });
   } catch (err) {
     console.warn('[realtime/usage] resolveRoute failed', err);
@@ -566,11 +481,9 @@ realtimeRoutes.post('/usage', async (c) => {
     outputTokens: parsed.text_output_tokens ?? 0,
     audioInputTokens: parsed.audio_input_tokens ?? 0,
     audioOutputTokens: parsed.audio_output_tokens ?? 0,
-    audioSecondsBilled: parsed.audio_seconds_billed,
     metadata: {
       source: 'voice_call',
       session_id: parsed.session_id,
-      provider: parsed.provider,
       turn_index: parsed.turn_index,
       ...(parsed.latency_ms != null ? { latency_ms: parsed.latency_ms } : {}),
     },
@@ -599,11 +512,8 @@ realtimeRoutes.post('/usage', async (c) => {
     (s, r) => s + (Number(r.cost_credits) || 0),
     0,
   );
-  // Approximate turn cost as "total at this session, minus what it was
-  // before this insert" — we don't ledger by-turn separately. Negative
-  // is impossible here since recordAudit only adds. Fall back to 0 when
-  // the alias has no audio pricing (e.g. doubao with audio_per_minute
-  // null in the alias table).
+  // Approximate turn cost as the most recent row's cost — we don't ledger
+  // by-turn separately. Falls back to 0 on an alias without audio pricing.
   const turnCost = sessionRows.length > 0
     ? Number(sessionRows[sessionRows.length - 1]?.cost_credits) || 0
     : 0;
@@ -694,14 +604,10 @@ realtimeRoutes.post('/transcripts', async (c) => {
 // POST /v1/realtime/end — session terminator
 // =============================================================================
 //
-// OpenAI: no-op (client disconnect ends the session; ephemeral key expires
-// on its own).
-// Doubao: no-op too — the SDK closes its WebSocket when iOS calls
-// SyncStopEngine, there is no server-side task to stop.
-//
-// Endpoint exists so the iOS client can issue one uniform call after the
-// transcripts upload, and so we have an extension point for any future
-// per-session cleanup (e.g. webhook acks, cron-friendly markers).
+// No-op: client disconnect ends the OpenAI WebRTC session, and the
+// ephemeral key has already expired (~60s TTL) by the time iOS calls
+// this. Kept as a uniform tail-call from the iOS client and a future
+// extension point for any per-session cleanup we may want to add.
 const EndBody = z.object({
   session_id: z.string(),
   conversation_id: z.string(),

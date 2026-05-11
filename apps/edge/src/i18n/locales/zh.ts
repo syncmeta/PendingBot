@@ -9,7 +9,6 @@ const zh: Dictionary = {
   'voice.bot_not_enabled': '这个 bot 还没开通语音通话',
   'voice.insufficient_balance': '余额不足，无法开始通话',
   'voice.conversation_not_found': '会话不存在',
-  'voice.invalid_provider': '未知的语音通话 provider',
   'voice.upstream_failed': '语音服务暂时不可用，稍后再试',
   'voice.session_not_found': '通话会话不存在或已过期',
 };
