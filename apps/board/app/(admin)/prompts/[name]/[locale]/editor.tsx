@@ -2,7 +2,8 @@
 
 import { useActionState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { savePrompt, resetPrompt, type SavePromptState } from '../../actions';
+import { savePrompt, resetPrompt } from '../../actions';
+import type { SavePromptState } from '../../_shared';
 
 export function PromptEditor({
   name,

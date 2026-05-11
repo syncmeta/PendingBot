@@ -8,7 +8,7 @@ import {
   PROMPT_DESCRIPTIONS,
   type PromptName,
 } from '@pendingbot/edge/llm/prompt-names';
-import { SUPPORTED_LOCALES, type PromptLocale } from '../../actions';
+import { SUPPORTED_LOCALES, type PromptLocale } from '../../_shared';
 import { PromptEditor } from './editor';
 
 // Best-effort read of the bundled .md from the sibling apps/edge tree. Works

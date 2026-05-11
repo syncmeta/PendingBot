@@ -4,7 +4,7 @@ import {
   PROMPT_NAMES,
   PROMPT_DESCRIPTIONS,
 } from '@pendingbot/edge/llm/prompt-names';
-import { SUPPORTED_LOCALES } from './actions';
+import { SUPPORTED_LOCALES } from './_shared';
 
 export default async function PromptsPage() {
   const supa = supabaseAdmin();

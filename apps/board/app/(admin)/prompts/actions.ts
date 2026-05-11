@@ -8,11 +8,11 @@ import {
   PROMPT_NAMES,
   type PromptName,
 } from '@pendingbot/edge/llm/prompt-names';
-
-export const SUPPORTED_LOCALES = ['zh', 'en'] as const;
-export type PromptLocale = (typeof SUPPORTED_LOCALES)[number];
-
-export type SavePromptState = { error?: string; ok?: boolean };
+import {
+  SUPPORTED_LOCALES,
+  type PromptLocale,
+  type SavePromptState,
+} from './_shared';
 
 function assertPromptName(s: string): asserts s is PromptName {
   if (!(PROMPT_NAMES as readonly string[]).includes(s)) {
