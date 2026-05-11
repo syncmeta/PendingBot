@@ -9,6 +9,7 @@ import { runTitle } from '../lib/title-runner';
 import { requireBalance, InsufficientBalanceError } from '../lib/billing';
 import { resolveGroupMentions } from '../lib/group-mentions';
 import { summarizeAttachments, DEFAULT_VISION_MODEL } from '../llm/vision';
+import { UUID_RE } from '../lib/ids';
 import type { AppBindings } from '../types';
 
 export const messageRoutes = new Hono<AppBindings>();
@@ -782,7 +783,7 @@ messageRoutes.post('/start', async (c) => {
 messageRoutes.delete('/:id', async (c) => {
   const userId = c.var.userId!;
   const id = c.req.param('id');
-  if (!/^[0-9a-f-]{36}$/i.test(id)) {
+  if (!UUID_RE.test(id)) {
     return c.json({ error: 'invalid id' }, 400);
   }
 

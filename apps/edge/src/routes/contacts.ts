@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
 import { serviceClient } from '../lib/supabase';
+import { UUID_RE } from '../lib/ids';
 import type { AppBindings } from '../types';
 
 export const contactRoutes = new Hono<AppBindings>();
@@ -221,7 +222,7 @@ const AliasBody = z.object({ alias: z.string().max(64).nullable() });
 contactRoutes.patch('/:contactUserId', async (c) => {
   const userId = c.var.userId!;
   const contactUserId = c.req.param('contactUserId');
-  if (!/^[0-9a-f-]{36}$/i.test(contactUserId)) {
+  if (!UUID_RE.test(contactUserId)) {
     return c.json({ error: 'invalid contactUserId' }, 400);
   }
   let parsed: z.infer<typeof AliasBody>;

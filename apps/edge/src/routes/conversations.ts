@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
 import { serviceClient, userClient } from '../lib/supabase';
+import { UUID_RE } from '../lib/ids';
 import type { AppBindings } from '../types';
 
 export const conversationRoutes = new Hono<AppBindings>();
@@ -28,7 +29,7 @@ conversationRoutes.patch('/:id', async (c) => {
   const userId = c.var.userId!;
   const userJwt = c.var.userJwt!;
   const id = c.req.param('id');
-  if (!/^[0-9a-f-]{36}$/i.test(id)) {
+  if (!UUID_RE.test(id)) {
     return c.json({ error: 'invalid id' }, 400);
   }
 

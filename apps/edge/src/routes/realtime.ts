@@ -28,6 +28,7 @@ import { buildSystemPrompt, type BuildSystemPromptInput } from '../llm/builder';
 import { getBotMemory, getChatMemo } from '../lib/memory';
 import { resolveLocale } from '../i18n/locale';
 import { t } from '../i18n/index';
+import { UUID_RE } from '../lib/ids';
 import {
   checkOpenAIRegion,
   OPENAI_SUPPORTED_URL,
@@ -40,9 +41,6 @@ realtimeRoutes.use('*', requireSession());
 // =============================================================================
 // shared helpers
 // =============================================================================
-
-// 36-char UUID guard — same shape as conversation/bot ids elsewhere.
-const UUID_RE = /^[0-9a-f-]{36}$/i;
 
 // Canonical model slug. task_routing_rules lookup is keyed off this in
 // resolveRoute(..., taskType: 'voice_call') so admins can override per

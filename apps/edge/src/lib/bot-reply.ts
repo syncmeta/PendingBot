@@ -32,6 +32,7 @@ import { queryUserRepresentation } from './honcho';
 import { runWebScrape, runWebSearch } from './web';
 import { WebToolMeter } from './web-meter';
 import { bootstrapPython, createSandbox, runPython } from './sandbox';
+import { UUID_RE } from './ids';
 
 // Multi-bubble splitter — bot's reply may be one continuous block, or several
 // short bubbles separated by `\n---\n`.
@@ -1291,7 +1292,7 @@ async function readAttachmentTool(
   // search via ilike on the text-cast id — the conversation_id filter
   // bounds the row count, so this stays cheap without a dedicated index.
   let fullId = idArg;
-  if (!/^[0-9a-f-]{36}$/i.test(idArg)) {
+  if (!UUID_RE.test(idArg)) {
     const { data: matches, error: matchErr } = await supa
       .from('attachments')
       .select('id')
