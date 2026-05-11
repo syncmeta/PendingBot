@@ -51,9 +51,10 @@ struct ToolTraceEvent: Identifiable, Hashable {
 ///     visible whenever the trace exists — they're the load-bearing payoff
 ///     and shouldn't get hidden behind a tap.
 ///   - The per-tool *process* detail (query strings, result snippets,
-///     spinners) is what expand/collapse toggles. Auto-expanded while the
-///     turn is live so a fast 500ms search doesn't pop in and out before
-///     the user can read it; auto-collapsed once the turn ends.
+///     spinners) is what expand/collapse toggles. Auto-expanded while any
+///     tool is in flight; auto-collapsed the moment the last pending tool
+///     finishes — even if the bot is still typing its reply afterwards.
+///     The citation list below stays visible so the payoff isn't hidden.
 ///
 /// Colors are intentionally muted (no surface fill, no border) so the trace
 /// recedes — the bot's actual reply remains the visual anchor.
@@ -61,8 +62,8 @@ struct ToolTraceView: View {
     let events: [ToolTraceEvent]
     /// True while the turn is still streaming (we don't yet know whether
     /// more tool calls will arrive). Drives the live spinner + "搜索中…"
-    /// wording on the header AND the auto-expand window — the trace stays
-    /// open for the full live span, not just per-tool pending.
+    /// wording on the header. Expand/collapse is driven by `anyPending`
+    /// (the search itself), not the full turn — see body docs.
     let isLive: Bool
     /// Cumulative web-search hits surfaced during the turn — same list the
     /// bot's `[N]` markers resolve against. Rendered as tappable rows in
@@ -97,16 +98,17 @@ struct ToolTraceView: View {
             .padding(.trailing, Theme.Metrics.gutter)
             .padding(.vertical, 2)
             .onAppear {
-                // Mid-stream mount → reflect live state immediately so the
-                // user sees the search unfolding without having to tap.
-                expanded = isLive
+                // Mid-stream mount → reflect pending state immediately so
+                // an in-flight search unfolds without the user tapping.
+                expanded = anyPending
             }
-            .onChange(of: isLive) { _, nowLive in
-                // Turn just kicked off → expand. Turn ended → collapse to
-                // a quiet summary row. User taps still override either
-                // direction; the next isLive transition re-syncs.
+            .onChange(of: anyPending) { _, nowPending in
+                // Tool kicked off → expand. Last pending tool just
+                // finished → collapse to a quiet summary row, even if the
+                // bot is still typing its reply. User taps still override
+                // either direction; the next pending transition re-syncs.
                 withAnimation(.easeInOut(duration: 0.2)) {
-                    expanded = nowLive
+                    expanded = nowPending
                 }
             }
         }
