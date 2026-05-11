@@ -3,6 +3,7 @@ import { serviceClient } from '../lib/supabase';
 import { estimateTokens } from './token-estimate';
 import { splitAndDebit } from '../lib/group-billing';
 import { getMarkup, usdToPnd } from '../lib/billing';
+import { getPrompt } from './prompt-loader';
 import type { Env } from '../types';
 
 // Small-model classifier that decides which bots to wake on a group
@@ -155,23 +156,14 @@ export async function runGroupRouter(
     .map((b) => `- ${b.label} (id=${b.id}): ${b.description}`)
     .join('\n');
 
-  const systemPrompt = `你是一个群聊调度器。给定群里最近的若干消息和群内每个机器人的"何时叫我"描述,你需要决定本轮应该唤醒哪些机器人发言。
-
-规则:
-- 只唤醒描述明显匹配最新消息话题的机器人
-- 没有明显匹配时返回空数组,这是常见且正确的(让群更安静)
-- 同一轮可以唤醒多个机器人,但通常 0~2 个最自然
-- 严格输出 JSON,字段:
-  {"wake_bots": [机器人id字符串...], "rationale": "中文一句话说明"}
-- 不要输出 JSON 以外的任何内容`;
-
-  const userPrompt = `群里最近的消息:
-${conversationTranscript || '(无)'}
-
-群里的机器人:
-${botCatalog}
-
-请判断本轮要唤醒哪些机器人。`;
+  // prompt template lives in prompts/zh/group-router.md ; split on the
+  // `\n\n---\n\n` boundary into system + user halves, then interpolate.
+  const [systemPart, userTemplate] = getPrompt('group-router').split(/\n---\n/);
+  const systemPrompt = systemPart.trim();
+  const userPrompt = userTemplate
+    .trim()
+    .replace('{{conversationTranscript}}', conversationTranscript || '(无)')
+    .replace('{{botCatalog}}', botCatalog);
 
   // 4. Call the LLM. We use the same router pipeline as bot-reply so
   //    audit_log + cost get computed identically.

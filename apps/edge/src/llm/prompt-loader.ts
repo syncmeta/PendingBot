@@ -19,6 +19,7 @@ import scrollInjected_zh from '../../prompts/zh/scroll-injected.md';
 import scrollWrite_zh from '../../prompts/zh/scroll-write.md';
 import scrollCollaborator_zh from '../../prompts/zh/scroll-collaborator.md';
 import title_zh from '../../prompts/zh/title.md';
+import groupRouter_zh from '../../prompts/zh/group-router.md';
 
 const PROMPTS_ZH = {
   'system': system_zh,
@@ -28,6 +29,7 @@ const PROMPTS_ZH = {
   'scroll-write': scrollWrite_zh,
   'scroll-collaborator': scrollCollaborator_zh,
   'title': title_zh,
+  'group-router': groupRouter_zh,
 } as const;
 
 export type PromptName = keyof typeof PROMPTS_ZH;
