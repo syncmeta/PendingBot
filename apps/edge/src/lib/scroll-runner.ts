@@ -13,11 +13,12 @@ import { getBotMemory } from './memory';
 import {
   DEFAULT_SEARCH_PROVIDER,
   DEFAULT_SCRAPE_PROVIDER,
-  makeSearch,
-  makeScrape,
+  runWebScrape,
+  runWebSearch,
   type SearchProvider,
   type ScrapeProvider,
 } from './web';
+import { WebToolMeter, type WebToolUsage } from './web-meter';
 import {
   buildScrollInitialUserContent,
   extractSummary,
@@ -225,6 +226,11 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
   let route: ResolvedRoute | null = null;
   let result: ScrollLoopResult | null = null;
   const turnTrace: TurnTraceEntry[] = [];
+  // Web-tool meter for this scroll run. Covers every search_web /
+  // fetch_url call the explorer fires; snapshot is handed to recordAudit
+  // at the end so tool spend lands in audit_web_tool_calls and folds
+  // into the billed credits.
+  const webMeter = await WebToolMeter.create(supa);
 
   try {
     // We pull bot first because everything else (context-window lookup,
@@ -366,8 +372,18 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
       modelId: route.modelToCall,
       systemPrompt: getPrompt('scroll'),
       initialUserContent: initialUser,
-      webSearch: makeSearch(env, settings.searchProvider),
-      fetchUrl: makeScrape(env, settings.scrapeProvider),
+      webSearch: (query) =>
+        runWebSearch(env, {
+          provider: settings.searchProvider,
+          query,
+          meter: webMeter,
+        }),
+      fetchUrl: (url) =>
+        runWebScrape(env, {
+          provider: settings.scrapeProvider,
+          url,
+          meter: webMeter,
+        }),
       hardCapTurns: settings.turnCap,
       simulateCollaboratorReply: collaboratorRoute
         ? async ({ turn, newMessages }) => {
@@ -505,6 +521,7 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
         generationId: writeGenerationId ?? result.lastGenerationId,
         startedAt,
         action: 'silent',
+        webTools: webMeter.snapshot(),
       });
       return;
     }
@@ -538,6 +555,7 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
       generationId: result.lastGenerationId,
       startedAt,
       action: 'memorial',
+      webTools: webMeter.snapshot(),
     });
   } catch (err) {
     console.error('[scroll-runner]', err);
@@ -559,6 +577,29 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
         updated_at: new Date().toISOString(),
       })
       .eq('id', scrollRunId);
+
+    // Bill any web tool calls that landed before the failure (upstream
+    // providers already consumed those quotas) plus any LLM tokens the
+    // loop accumulated. Mirrors bot-reply's error-path audit. If neither
+    // tool calls nor LLM tokens accrued, recordAudit settles into
+    // 'skipped'/'free' and no debit fires.
+    try {
+      await auditRun(supa, route, {
+        userId,
+        conversationId,
+        scrollRunId,
+        botId,
+        usage: result?.usage ?? { input: 0, output: 0, total: 0, cached: 0 },
+        generationId: result?.lastGenerationId,
+        startedAt,
+        action: 'error',
+        status: 'error',
+        errorClass: err instanceof Error ? err.name : 'unknown',
+        webTools: webMeter.snapshot(),
+      });
+    } catch (auditErr) {
+      console.warn('[scroll-runner] audit on error failed:', auditErr);
+    }
   }
 }
 
@@ -619,12 +660,15 @@ interface AuditInput {
   usage: UsageStats;
   generationId?: string;
   startedAt: number;
-  action: 'memorial' | 'silent';
+  action: 'memorial' | 'silent' | 'error';
+  status?: 'success' | 'error';
+  errorClass?: string | null;
+  webTools?: WebToolUsage[];
 }
 
 async function auditRun(
   supa: ReturnType<typeof serviceClient>,
-  route: ResolvedRoute,
+  route: ResolvedRoute | null,
   i: AuditInput,
 ): Promise<void> {
   const cacheRead = i.usage.cached;
@@ -635,11 +679,13 @@ async function auditRun(
     taskType: 'scroll',
     startedAt: i.startedAt,
     generationId: i.generationId,
-    status: 'success',
+    status: i.status ?? 'success',
+    errorClass: i.errorClass ?? null,
     inputTokens: freshInput,
     outputTokens: i.usage.output,
     cacheReadTokens: cacheRead,
     cacheWriteTokens: 0,
+    webTools: i.webTools,
     metadata: { scroll_run_id: i.scrollRunId, bot_id: i.botId, action: i.action },
   });
 }

@@ -43,7 +43,8 @@ import {
   runScrollLoop,
   type ScrollTurnInfo,
 } from '../src/lib/scroll-loop';
-import { braveSearch, firecrawlScrape } from '../src/lib/web';
+import { runWebScrape, runWebSearch } from '../src/lib/web';
+import { WebToolMeter } from '../src/lib/web-meter';
 
 // ── Args ─────────────────────────────────────────────────────────────
 const argv = process.argv.slice(2);
@@ -302,10 +303,16 @@ async function main(): Promise<void> {
     },
   });
 
-  // braveSearch / firecrawlScrape only read env.BRAVE_API_KEY /
+  // The web fetch helpers only read env.BRAVE_API_KEY /
   // env.FIRECRAWL_API_KEY. Cast through `unknown` because Env is the
   // worker bindings interface (R2/KV etc.) we don't have here.
-  const webEnv = { BRAVE_API_KEY, FIRECRAWL_API_KEY } as unknown as Parameters<typeof braveSearch>[0];
+  const webEnv = { BRAVE_API_KEY, FIRECRAWL_API_KEY } as unknown as Parameters<typeof runWebSearch>[0];
+
+  // No-op meter — the offline harness has no Supabase to write
+  // audit_web_tool_calls into. Calls are still recorded in-memory so
+  // the script can print a summary at the end if we ever want one;
+  // costs come out as 0 since the price map is empty.
+  const replayMeter = WebToolMeter.withPrices({});
 
   const startedAt = Date.now();
   const onTurn = ({ turn, progress, newMessages }: ScrollTurnInfo): void => {
@@ -337,10 +344,10 @@ async function main(): Promise<void> {
     initialUserContent: initialUser,
     webSearch: stubSearch
       ? async () => []
-      : (q) => braveSearch(webEnv, q),
+      : (q) => runWebSearch(webEnv, { provider: 'brave', query: q, meter: replayMeter }),
     fetchUrl: stubFetch
       ? async (u) => ({ url: u, title: '', content: '(harness 跳过抓取)' })
-      : (u) => firecrawlScrape(webEnv, u),
+      : (u) => runWebScrape(webEnv, { provider: 'firecrawl', url: u, meter: replayMeter }),
     onTurn,
     hardCapTurns: turnCap,
   });

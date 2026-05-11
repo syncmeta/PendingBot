@@ -2,7 +2,7 @@ import { resolveRoute, recordAudit } from './router';
 import { serviceClient } from '../lib/supabase';
 import { estimateTokens } from './token-estimate';
 import { splitAndDebit } from '../lib/group-billing';
-import { usdToPnd } from '../lib/billing';
+import { getMarkup, usdToPnd } from '../lib/billing';
 import type { Env } from '../types';
 
 // Small-model classifier that decides which bots to wake on a group
@@ -269,7 +269,8 @@ async function writeAuditAndGetId(
   const cost = route.alias
     ? computeRouterCost(route.alias, opts.inputTokens, opts.outputTokens)
     : null;
-  const pnd = usdToPnd(cost);
+  const markup = await getMarkup(supa);
+  const pnd = usdToPnd(cost, markup);
   const { data, error } = await supa
     .from('audit_log')
     .insert({

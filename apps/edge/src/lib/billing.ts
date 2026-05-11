@@ -12,19 +12,54 @@ import type { SupabaseClient } from './supabase';
 // models so ceil() rounding bites less.
 const USD_TO_PND = 2700;
 
-// Markup over our wholesale provider cost. WorldRouter is ~70% of OpenRouter
-// list; Apple IAP takes 30%; we still want margin for ops + free tier
-// signup grant. 2.5× is the conservative starting point; tune in P1 once
-// real consumption shows up. Independent of the USD↔PND ratio above.
-const MARKUP = 2.5;
+// Default markup if billing_config.markup is missing. WorldRouter is ~70%
+// of OpenRouter list; Apple IAP takes 30%; we want margin for ops + free
+// tier signup grant. 2.5× was the seed value and stays as the fallback
+// so a wiped billing_config never silently zeroes out billing.
+const DEFAULT_MARKUP = 2.5;
 
 // Pre-call gate threshold default — read from billing_config at runtime.
 // 0 means "no gate" (don't block anyone); deny only when the value is
 // configured AND the user falls below it.
 const DEFAULT_MIN_THRESHOLD = 0;
 
+// Worker-isolate cache for the markup value. The billing_config table is
+// edited from the board roughly never; a short TTL keeps drift bounded
+// without putting an extra DB roundtrip on every LLM turn. Match the
+// web-tool price cache so admins see a consistent "≤ 60s after save"
+// propagation window across the billing knobs.
+const MARKUP_TTL_MS = 60_000;
+let markupCache: { at: number; value: number } | null = null;
+
+/**
+ * Read billing_config.markup (numeric jsonb scalar). Falls back to
+ * DEFAULT_MARKUP on missing key / bad value / DB error so a transient
+ * Supabase issue can't break billing. Cached for MARKUP_TTL_MS.
+ */
+export async function getMarkup(supa: SupabaseClient): Promise<number> {
+  const now = Date.now();
+  if (markupCache && now - markupCache.at < MARKUP_TTL_MS) return markupCache.value;
+  // getConfigInt reads a jsonb number — works for the markup float
+  // too; the name is just historical (min_balance_threshold was the
+  // only key for a while).
+  const v = await getConfigInt(supa, 'markup');
+  const value = v != null && v > 0 ? v : DEFAULT_MARKUP;
+  markupCache = { at: now, value };
+  return value;
+}
+
+/** For tests / forced refresh after an admin edit on the same isolate. */
+export function _resetMarkupCache(): void {
+  markupCache = null;
+}
+
 /**
  * Convert a USD provider cost to integer PND debit, applying markup.
+ *
+ * Callers fetch the markup once per call via getMarkup(supa) and pass
+ * it here, rather than this function hitting the DB itself — keeps
+ * usdToPnd pure/synchronous and makes the "what markup applied to
+ * this debit" trail explicit at the call site.
  *
  * Returns 0 for null / 0 / negative inputs (e.g. fallback flows where the
  * provider responded but we don't have alias pricing — we don't know the
@@ -34,9 +69,13 @@ const DEFAULT_MIN_THRESHOLD = 0;
  * (balance_credits, cost_credits, p_credits, …). They store PND values;
  * the column name is just historical and invisible to users.
  */
-export function usdToPnd(costUsd: number | null | undefined): number {
+export function usdToPnd(
+  costUsd: number | null | undefined,
+  markup: number,
+): number {
   if (!costUsd || costUsd <= 0) return 0;
-  return Math.ceil(costUsd * USD_TO_PND * MARKUP);
+  if (!Number.isFinite(markup) || markup <= 0) return 0;
+  return Math.ceil(costUsd * USD_TO_PND * markup);
 }
 
 // ---------------------------------------------------------------------------

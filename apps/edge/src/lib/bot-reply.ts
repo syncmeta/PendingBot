@@ -28,7 +28,8 @@ import {
 } from '../llm/vision';
 import { getBotMemory, getUserMemory } from './memory';
 import { queryUserRepresentation } from './honcho';
-import { braveSearch, firecrawlScrape } from './web';
+import { runWebScrape, runWebSearch } from './web';
+import { WebToolMeter } from './web-meter';
 import { bootstrapPython, createSandbox, runPython } from './sandbox';
 
 // Multi-bubble splitter — bot's reply may be one continuous block, or several
@@ -552,6 +553,12 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   // their snapshot's bounds.
   const citations: Citation[] = [];
 
+  // Per-turn web-tool meter. Every runWebSearch / runWebScrape call below
+  // records into this; the snapshot is passed to recordAudit so the
+  // tool spend folds into audit_log.tool_cost_usd + cost_credits and
+  // each call lands in audit_web_tool_calls.
+  const webMeter = await WebToolMeter.create(supa);
+
   const emitBubble = async (text: string) => {
     if (!text) return;
     bubbleIndex++;
@@ -730,6 +737,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
             visionOverride,
             conversationId,
             citations,
+            webMeter,
           });
           messages.push({ role: 'tool', tool_call_id: tc.id, content: result });
         }
@@ -789,6 +797,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       // splitAndDebit (M6) instead of single-user billingDebit. 1v1
       // and self-chat just ignore it.
       env,
+      webTools: webMeter.snapshot(),
       metadata: {
         bot_id: bot.id,
         status: finalStatus,
@@ -860,6 +869,10 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
         estInputTokens: est.input,
         estOutputTokens: est.output,
         env,
+        // Tool calls that landed before the LLM stream errored should
+        // still be billed — the upstream provider already consumed
+        // those quotas regardless of how the turn ended.
+        webTools: webMeter.snapshot(),
         metadata: { bot_id: bot.id, status, message: message.slice(0, 200) },
       });
     } catch (auditErr) {
@@ -905,6 +918,9 @@ interface ToolCtx {
   /// Accumulator shared with runChatTurn — search_web pushes deduped hits
   /// here so the per-turn `[N]` numbering stays stable across rounds.
   citations: Citation[];
+  /// Per-turn meter — every web search / read goes through it so the
+  /// call lands in audit_web_tool_calls and folds into billing.
+  webMeter: WebToolMeter;
 }
 
 async function runTool(
@@ -918,7 +934,12 @@ async function runTool(
       const query = String(args.query ?? '').trim();
       if (!query) return JSON.stringify({ error: 'empty query' });
       ctx.emit('tool_call', { name: 'search_web', query });
-      const hits = await braveSearch(env, query, ctx.signal);
+      const hits = await runWebSearch(env, {
+        provider: 'brave',
+        query,
+        signal: ctx.signal,
+        meter: ctx.webMeter,
+      });
       // Dedupe by url against prior search calls in this same turn so the
       // model sees stable `n`s — once it learned the New York Times piece is
       // [3], that mapping survives a follow-up search that re-surfaces the
@@ -947,7 +968,12 @@ async function runTool(
       const url = String(args.url ?? '').trim();
       if (!url) return JSON.stringify({ error: 'empty url' });
       ctx.emit('tool_call', { name: 'read_url', url });
-      const page = await firecrawlScrape(env, url, ctx.signal);
+      const page = await runWebScrape(env, {
+        provider: 'firecrawl',
+        url,
+        signal: ctx.signal,
+        meter: ctx.webMeter,
+      });
       ctx.emit('tool_result', { name: 'read_url', title: page.title });
       return JSON.stringify({
         url: page.url,

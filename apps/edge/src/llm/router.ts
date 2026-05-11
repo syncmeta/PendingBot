@@ -1,8 +1,9 @@
 import OpenAI from 'openai';
 import type { Env } from '../types';
 import type { SupabaseClient } from '../lib/supabase';
-import { billingDebit, usdToPnd } from '../lib/billing';
+import { billingDebit, getMarkup, usdToPnd } from '../lib/billing';
 import { splitAndDebit } from '../lib/group-billing';
+import type { WebToolUsage } from '../lib/web-meter';
 
 // LLM router — resolves a caller-supplied model slug to a concrete
 // (provider, alias) pair, hands back an OpenAI-compatible client
@@ -307,6 +308,11 @@ export interface AuditCallOpts extends AuditUsage {
   /// than a SupabaseClient so the group-billing module can run with
   /// service-role rights regardless of the caller's client kind.)
   env?: Env;
+  /// External web search / scrape calls fired during this LLM turn,
+  /// captured by WebToolMeter. Each entry lands in audit_web_tool_calls
+  /// and sum(costUsd) folds into audit_log.tool_cost_usd + cost_credits
+  /// so the single billing_debit covers both LLM and tool spend.
+  webTools?: WebToolUsage[];
 }
 
 const PER_MILLION = 1_000_000;
@@ -346,8 +352,22 @@ export async function recordAudit(
   route: ResolvedRoute | null,
   opts: AuditCallOpts,
 ): Promise<void> {
-  const cost = route?.alias ? computeCost(route.alias, opts) : null;
-  const pnd = usdToPnd(cost);
+  const llmCost = route?.alias ? computeCost(route.alias, opts) : null;
+  // Web-tool spend (Brave / Tavily / Exa / Serper / Firecrawl) accrues
+  // during the same LLM turn. We fold its USD sum into the parent row
+  // and apply the same usdToPnd markup so a single billing_debit
+  // covers both. Per-call detail goes into audit_web_tool_calls below.
+  const toolCalls = opts.webTools ?? [];
+  const toolCostUsd = toolCalls.reduce((s, c) => s + (c.costUsd || 0), 0);
+  const hasTools = toolCalls.length > 0;
+  // Combined USD for billing. usdToPnd treats null/<=0 as 0, so a turn
+  // with neither LLM pricing nor any tool cost still settles into the
+  // 'skipped' branch below without us special-casing nulls here.
+  // Markup is read from billing_config (cached) — ops retunes it from
+  // the board without redeploying the worker.
+  const combinedUsd = (llmCost ?? 0) + toolCostUsd;
+  const markup = await getMarkup(supa);
+  const pnd = usdToPnd(combinedUsd, markup);
   const total =
     (opts.inputTokens ?? 0) +
     (opts.outputTokens ?? 0) +
@@ -360,7 +380,7 @@ export async function recordAudit(
   // settle into a final state on insert.
   //   - 'free'    : no userId at all (system-triggered call w/o owner)
   //   - 'skipped' : has userId but pnd == 0 (error / no usage / no
-  //                 alias pricing)
+  //                 alias pricing AND no tool spend)
   //   - 'pending' : will be flipped to billed/unbilled by billing_debit
   const initialBilling: 'free' | 'skipped' | 'pending' = !opts.userId
     ? 'free'
@@ -383,7 +403,11 @@ export async function recordAudit(
     est_input_tokens: opts.estInputTokens ?? null,
     est_output_tokens: opts.estOutputTokens ?? null,
     total_tokens: total,
-    cost_usd: cost,
+    // cost_usd stays LLM-only for dashboard continuity. tool_cost_usd
+    // breaks out the web-tool spend; cost_credits below is the
+    // combined debit (LLM + tools, after markup).
+    cost_usd: llmCost,
+    tool_cost_usd: hasTools ? toolCostUsd : null,
     cost_credits: pnd,
     billing_status: initialBilling,
     generation_id: opts.generationId ?? null,
@@ -405,6 +429,30 @@ export async function recordAudit(
   if (error) {
     console.warn('[audit_log insert]', error.message);
     return;
+  }
+
+  // Per-call web-tool breakdown. Best-effort: an insert error here
+  // leaves the parent row + debit intact but loses the detail row(s)
+  // for ops. We log and move on — never propagate to the LLM caller.
+  if (hasTools && inserted?.id) {
+    const auditId = inserted.id as string;
+    const childRows = toolCalls.map((c) => ({
+      audit_log_id: auditId,
+      provider: c.provider,
+      kind: c.kind,
+      target: c.target,
+      status: c.status,
+      error_class: c.errorClass ?? null,
+      latency_ms: c.latencyMs,
+      result_count: c.resultCount ?? null,
+      cost_usd: c.costUsd,
+    }));
+    const { error: childErr } = await supa
+      .from('audit_web_tool_calls')
+      .insert(childRows);
+    if (childErr) {
+      console.warn('[audit_web_tool_calls insert]', childErr.message);
+    }
   }
 
   // Post-insert debit. Errors are swallowed inside billingDebit /

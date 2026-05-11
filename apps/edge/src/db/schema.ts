@@ -205,6 +205,7 @@ export type Database = {
           status: string | null
           tag: string | null
           task_type: string
+          tool_cost_usd: number | null
           total_tokens: number
           user_id: string | null
         }
@@ -232,6 +233,7 @@ export type Database = {
           status?: string | null
           tag?: string | null
           task_type: string
+          tool_cost_usd?: number | null
           total_tokens?: number
           user_id?: string | null
         }
@@ -259,6 +261,7 @@ export type Database = {
           status?: string | null
           tag?: string | null
           task_type?: string
+          tool_cost_usd?: number | null
           total_tokens?: number
           user_id?: string | null
         }
@@ -314,6 +317,56 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "audit_log_splits_audit_fkey"
+            columns: ["audit_log_id"]
+            isOneToOne: false
+            referencedRelation: "audit_log"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      audit_web_tool_calls: {
+        Row: {
+          audit_log_id: string
+          cost_usd: number
+          created_at: string
+          error_class: string | null
+          id: string
+          kind: string
+          latency_ms: number | null
+          provider: string
+          result_count: number | null
+          status: string
+          target: string
+        }
+        Insert: {
+          audit_log_id: string
+          cost_usd?: number
+          created_at?: string
+          error_class?: string | null
+          id?: string
+          kind: string
+          latency_ms?: number | null
+          provider: string
+          result_count?: number | null
+          status: string
+          target: string
+        }
+        Update: {
+          audit_log_id?: string
+          cost_usd?: number
+          created_at?: string
+          error_class?: string | null
+          id?: string
+          kind?: string
+          latency_ms?: number | null
+          provider?: string
+          result_count?: number | null
+          status?: string
+          target?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "audit_web_tool_calls_audit_fkey"
             columns: ["audit_log_id"]
             isOneToOne: false
             referencedRelation: "audit_log"
@@ -2132,6 +2185,30 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      web_tool_prices: {
+        Row: {
+          kind: string
+          notes: string | null
+          provider: string
+          unit_cost_usd: number
+          updated_at: string
+        }
+        Insert: {
+          kind: string
+          notes?: string | null
+          provider: string
+          unit_cost_usd: number
+          updated_at?: string
+        }
+        Update: {
+          kind?: string
+          notes?: string | null
+          provider?: string
+          unit_cost_usd?: number
+          updated_at?: string
+        }
+        Relationships: []
       }
     }
     Functions: {
