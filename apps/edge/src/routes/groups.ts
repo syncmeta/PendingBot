@@ -572,12 +572,24 @@ groupRoutes.post('/:id/continue-decision', async (c) => {
     return c.json({ error: 'invalid body', detail: String(err) }, 400);
   }
 
-  // Insert a normal user message expressing the decision so the whole
-  // group can see who said yes/no. Service-role insert is fine: we trust
-  // the caller's identity from requireSession() and the RPC verifies
-  // group membership + status before linking.
+  // Cross-check that the requestId actually belongs to this conv. The
+  // message insert below uses service-role (bypasses RLS); without this
+  // guard a caller could pass `:id` for any group and a `requestId` from
+  // a group they actually belong to — injecting a 「✅ 让机器人继续」
+  // message into a third-party group.
   const userId = c.var.userId!;
   const supaSvc = serviceClient(c.env);
+  const { data: req, error: reqErr } = await supaSvc
+    .from('group_continue_requests')
+    .select('conversation_id')
+    .eq('id', parsed.requestId)
+    .maybeSingle();
+  if (reqErr) return c.json({ error: 'database', detail: reqErr.message }, 500);
+  if (!req) return c.json({ error: 'request not found' }, 404);
+  if (req.conversation_id !== convId) {
+    return c.json({ error: 'request does not belong to this conversation' }, 400);
+  }
+
   const decisionText = parsed.decision === 'allowed' ? '✅ 让机器人继续' : '❌ 让机器人闭嘴';
 
   const { data: msg, error: msgErr } = await supaSvc
