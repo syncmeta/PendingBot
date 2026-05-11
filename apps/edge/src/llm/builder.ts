@@ -2,7 +2,9 @@ import type {
   ChatCompletionMessageParam,
   ChatCompletionContentPart,
 } from 'openai/resources/chat/completions';
-import { getPrompt } from './prompt-loader';
+import { loadPrompt } from '../i18n/prompts';
+import { DEFAULT_LOCALE, type Locale } from '../i18n/types';
+import type { SupabaseClient } from '../lib/supabase';
 import type { Memory } from '../lib/memory';
 
 export interface BuildMessagesInput {
@@ -112,11 +114,13 @@ function toLlmRole(role: 'user' | 'bot' | 'human' | 'log'): 'user' | 'assistant'
 // Self section comes from the bot's passive Honcho representation. On cold
 // start (no memory yet) we hand the bot the identity-quest meta-prompt — a
 // motive, not a persona.
-function buildSelfSection(
+async function buildSelfSection(
+  supa: SupabaseClient,
   botMemory: BuildMessagesInput['botMemory'],
-): string {
+  locale: Locale,
+): Promise<string> {
   const hasMemory = !!botMemory && botMemory.representation.trim().length > 0;
-  if (!hasMemory) return getPrompt('identity-quest');
+  if (!hasMemory) return loadPrompt(supa, 'identity-quest', locale);
   return `## How I observe myself (passive)\n${botMemory!.representation.trim()}`;
 }
 
@@ -286,33 +290,59 @@ function withCacheControl(text: string): { type: 'text'; text: string; cache_con
   return [{ type: 'text', text, cache_control: { type: 'ephemeral' } }];
 }
 
-export function buildMessages(input: BuildMessagesInput): ChatCompletionMessageParam[] {
+// System-prompt-only assembly. Returns the joined system text without any
+// of the user/assistant history wrapper messages — useful for callers that
+// only need the system block (e.g. realtime voice SDKs whose `instructions`
+// field IS the system prompt).
+export type BuildSystemPromptInput = Pick<
+  BuildMessagesInput,
+  | 'bot'
+  | 'botMemory'
+  | 'skills'
+  | 'botNote'
+  | 'chatMemo'
+  | 'lookbacks'
+  | 'attachmentInventory'
+>;
+
+export async function buildSystemPrompt(
+  supa: SupabaseClient,
+  input: BuildSystemPromptInput,
+  locale: Locale = DEFAULT_LOCALE,
+): Promise<string> {
+  const [platform, selfSection] = await Promise.all([
+    loadPrompt(supa, 'system', locale),
+    buildSelfSection(supa, input.botMemory, locale),
+  ]);
+  const skillsSection = buildSkillsSection(input.skills);
+  const botNoteSection = buildBotNoteSection(input.botNote);
+  const chatMemoSection = buildChatMemoSection(input.chatMemo);
+  const lookbackSection = buildLookbackSection(input.lookbacks);
+  const attachmentSection = buildAttachmentInventorySection(input.attachmentInventory);
+  const modeInstr = input.bot.output_mode === 'bubble' ? BUBBLE_INSTRUCTIONS : SINGLE_INSTRUCTIONS;
+  // attachmentSection sits between lookbacks and modeInstr — out of the
+  // cached prefix because the inventory mutates with every new image,
+  // before the always-mutating mode/recent-turn segment. chat-memo sits
+  // right after bot-note since both are bot-private long-term context.
+  return [
+    platform, selfSection, skillsSection,
+    botNoteSection, chatMemoSection, lookbackSection, attachmentSection, modeInstr,
+  ].filter(Boolean).join('\n\n');
+}
+
+export async function buildMessages(
+  supa: SupabaseClient,
+  input: BuildMessagesInput,
+  locale: Locale = DEFAULT_LOCALE,
+): Promise<ChatCompletionMessageParam[]> {
   const {
-    bot,
-    botMemory,
-    skills,
     recentContext,
     newMessage,
     clientTz,
     nowIso = new Date().toISOString(),
   } = input;
 
-  const platform = getPrompt('system');
-  const selfSection = buildSelfSection(botMemory);
-  const skillsSection = buildSkillsSection(skills);
-  const botNoteSection = buildBotNoteSection(input.botNote);
-  const chatMemoSection = buildChatMemoSection(input.chatMemo);
-  const lookbackSection = buildLookbackSection(input.lookbacks);
-  const attachmentSection = buildAttachmentInventorySection(input.attachmentInventory);
-  const modeInstr = bot.output_mode === 'bubble' ? BUBBLE_INSTRUCTIONS : SINGLE_INSTRUCTIONS;
-  // attachmentSection sits between lookbacks and modeInstr — out of the
-  // cached prefix because the inventory mutates with every new image,
-  // before the always-mutating mode/recent-turn segment. chat-memo sits
-  // right after bot-note since both are bot-private long-term context.
-  const systemContent = [
-    platform, selfSection, skillsSection,
-    botNoteSection, chatMemoSection, lookbackSection, attachmentSection, modeInstr,
-  ].filter(Boolean).join('\n\n');
+  const systemContent = await buildSystemPrompt(supa, input, locale);
 
   // System message: always cached. Stable across turns until prompts change.
   const messages: ChatCompletionMessageParam[] = [

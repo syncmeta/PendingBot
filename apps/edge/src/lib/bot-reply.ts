@@ -16,7 +16,7 @@ import {
   withFallback,
 } from '../llm/router';
 import { buildMessages, type BuildMessagesInput } from '../llm/builder';
-import { ensurePromptOverridesLoaded } from '../llm/prompt-loader';
+import { resolveLocale } from '../i18n/locale';
 import {
   estimateAssistantOutputTokens,
   estimateRequestInputTokens,
@@ -375,9 +375,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   const activeLookbacks = input.activeLookbacks ?? [];
   const supa = serviceClient(env);
   const startedAt = Date.now();
-
-  // Refresh DB prompt overrides (Board edits propagate within CACHE_TTL_MS).
-  await ensurePromptOverridesLoaded(supa);
+  const locale = await resolveLocale(null, supa, userId);
 
   // 1. Look up self section + skills + bot-authored note + chat memo in
   // parallel. In self-chat the "self section" is filled from the user's
@@ -559,14 +557,18 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   // 2. Build prompt. The builder marks the cache breakpoint per plan/02
   // (every 4 rounds; see llm/builder.ts). activeLookbacks become an
   // additional system block so the bot sees its prior fact-check notes.
-  const messages: ChatCompletionMessageParam[] = buildMessages({
-    bot, botMemory, skills, botNote, chatMemo,
-    lookbacks: activeLookbacks,
-    recentContext, newMessage,
-    currentImageParts,
-    attachmentInventory: inventory,
-    clientTz: input.clientTz,
-  });
+  const messages: ChatCompletionMessageParam[] = await buildMessages(
+    supa,
+    {
+      bot, botMemory, skills, botNote, chatMemo,
+      lookbacks: activeLookbacks,
+      recentContext, newMessage,
+      currentImageParts,
+      attachmentInventory: inventory,
+      clientTz: input.clientTz,
+    },
+    locale,
+  );
 
   // AbortSignal propagation: caller's signal aborts the upstream openai fetch.
   const ac = new AbortController();

@@ -3,7 +3,7 @@ import { serviceClient } from '../lib/supabase';
 import { estimateTokens } from './token-estimate';
 import { splitAndDebit } from '../lib/group-billing';
 import { getMarkup, usdToPnd } from '../lib/billing';
-import { ensurePromptOverridesLoaded, getPrompt } from './prompt-loader';
+import { loadPrompt } from '../i18n/prompts';
 import type { Env } from '../types';
 
 // Small-model classifier that decides which bots to wake on a group
@@ -52,7 +52,6 @@ export async function runGroupRouter(
 ): Promise<GroupRouterDecision> {
   const { env, conversationId } = input;
   const supa = serviceClient(env);
-  await ensurePromptOverridesLoaded(supa);
 
   // 1. Resolve the small-model slug. Order:
   //    a. conversation_group_meta.router_model_slug (per-group)
@@ -157,9 +156,12 @@ export async function runGroupRouter(
     .map((b) => `- ${b.label} (id=${b.id}): ${b.description}`)
     .join('\n');
 
-  // prompt template lives in prompts/zh/group-router.md ; split on the
-  // `\n\n---\n\n` boundary into system + user halves, then interpolate.
-  const [systemPart, userTemplate] = getPrompt('group-router').split(/\n---\n/);
+  // prompt template lives in prompts/zh/group-router.md (or DB override);
+  // split on the `\n\n---\n\n` boundary into system + user halves.
+  // Group router runs against the whole group so we use DEFAULT_LOCALE
+  // here — per-user locale would require picking one participant.
+  const groupRouterPrompt = await loadPrompt(supa, 'group-router');
+  const [systemPart, userTemplate] = groupRouterPrompt.split(/\n---\n/);
   const systemPrompt = systemPart.trim();
   const userPrompt = userTemplate
     .trim()
