@@ -60,25 +60,26 @@ extension TabHeaderBar where Leading == EmptyView {
     }
 }
 
-/// Plain SF Symbol icon used as a tab-header trailing action. Mirrors
-/// Apple's own list headers (Mail, Messages, Reminders) — bare glyph in
-/// the accent tint, no capsule chip behind it. The 36×36 frame keeps the
-/// hit target HIG-compliant even though the glyph itself is smaller.
+/// SF Symbol icon used as a tab-header trailing action — rendered as a
+/// glass chip (iOS 26+) or a flat muted capsule (older). Mirrors Apple's
+/// circular header pills in iOS 26 Mail / Messages (camera, compose,
+/// ellipsis). 36×36 hit target keeps it HIG-compliant.
 struct HeaderActionIcon: View {
     let systemImage: String
     var size: CGFloat = 36
-    var glyphPointSize: CGFloat = 19
+    var glyphPointSize: CGFloat = 17
     var glyphWeight: Font.Weight = .regular
     var body: some View {
         Image(systemName: systemImage)
             .font(.system(size: glyphPointSize, weight: glyphWeight))
             .foregroundStyle(Theme.Palette.accent)
             .frame(width: size, height: size)
-            .contentShape(Rectangle())
+            .contentShape(Capsule())
+            .headerChipBackground()
     }
 }
 
-/// "+" trailing action — bare SF Symbol, no chip.
+/// "+" trailing action chip.
 struct CirclePlusButton: View {
     var size: CGFloat = 36
     var body: some View {
@@ -103,31 +104,39 @@ struct CircleComposeButton: View {
     }
 }
 
-/// Wraps a left + right header action into a single visually-grouped
-/// pill — used in the messages tab to merge the compose + "+" pair so
-/// they read as one control instead of two floating icons. iOS 26+ gets
-/// the system Liquid Glass material via `.glassEffect`; older systems
-/// fall back to a flat muted-surface capsule with a hairline divider
-/// between the two buttons.
+/// Pairs a left + right header action as two **independent** chips with
+/// a small gap — mirrors iOS 26 Messages app's camera + compose pair,
+/// where each pill has its own press feedback. Each child carries its
+/// own chip background (via `HeaderActionIcon`); on iOS 26 a
+/// `GlassEffectContainer` coordinates their glass surfaces, on older
+/// systems they're just spaced muted capsules.
 struct GroupedHeaderControls<Leading: View, Trailing: View>: View {
     @ViewBuilder var leading: () -> Leading
     @ViewBuilder var trailing: () -> Trailing
 
     var body: some View {
-        HStack(spacing: 0) {
-            leading()
-            Rectangle()
-                .fill(Theme.Palette.ink.opacity(0.10))
-                .frame(width: 0.5, height: 18)
-            trailing()
+        if #available(iOS 26.0, *) {
+            GlassEffectContainer(spacing: 2) {
+                HStack(spacing: 4) {
+                    leading()
+                    trailing()
+                }
+            }
+        } else {
+            HStack(spacing: 6) {
+                leading()
+                trailing()
+            }
         }
-        .groupedHeaderBackground()
     }
 }
 
 private extension View {
+    /// Glass-or-capsule background applied to a single header chip. Glass
+    /// is `.interactive()` so press state flows from the enclosing Button
+    /// or Menu rather than highlighting a multi-button group as one.
     @ViewBuilder
-    func groupedHeaderBackground() -> some View {
+    func headerChipBackground() -> some View {
         if #available(iOS 26.0, *) {
             self.glassEffect(.regular.interactive(), in: Capsule())
         } else {
