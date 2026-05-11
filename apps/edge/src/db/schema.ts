@@ -1724,6 +1724,7 @@ export type Database = {
         Row: {
           body_md: string
           bot_id: string | null
+          conversation_id: string | null
           created_at: string
           forked_from: string | null
           frontmatter: Json
@@ -1736,6 +1737,7 @@ export type Database = {
         Insert: {
           body_md: string
           bot_id?: string | null
+          conversation_id?: string | null
           created_at?: string
           forked_from?: string | null
           frontmatter: Json
@@ -1748,6 +1750,7 @@ export type Database = {
         Update: {
           body_md?: string
           bot_id?: string | null
+          conversation_id?: string | null
           created_at?: string
           forked_from?: string | null
           frontmatter?: Json
@@ -1763,6 +1766,13 @@ export type Database = {
             columns: ["bot_id"]
             isOneToOne: false
             referencedRelation: "bots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "skills_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
             referencedColumns: ["id"]
           },
           {
@@ -2123,6 +2133,30 @@ export type Database = {
         }
         Relationships: []
       }
+      web_tool_prices: {
+        Row: {
+          kind: string
+          notes: string | null
+          provider: string
+          unit_cost_usd: number
+          updated_at: string
+        }
+        Insert: {
+          kind: string
+          notes?: string | null
+          provider: string
+          unit_cost_usd: number
+          updated_at?: string
+        }
+        Update: {
+          kind?: string
+          notes?: string | null
+          provider?: string
+          unit_cost_usd?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       v_audit_daily: {
@@ -2185,30 +2219,6 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
-      }
-      web_tool_prices: {
-        Row: {
-          kind: string
-          notes: string | null
-          provider: string
-          unit_cost_usd: number
-          updated_at: string
-        }
-        Insert: {
-          kind: string
-          notes?: string | null
-          provider: string
-          unit_cost_usd: number
-          updated_at?: string
-        }
-        Update: {
-          kind?: string
-          notes?: string | null
-          provider?: string
-          unit_cost_usd?: number
-          updated_at?: string
-        }
-        Relationships: []
       }
     }
     Functions: {
