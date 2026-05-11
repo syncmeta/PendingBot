@@ -6,7 +6,7 @@ import {
   usageFromCompletion,
   withFallback,
 } from '../llm/router';
-import { getPrompt } from '../llm/prompt-loader';
+import { ensurePromptOverridesLoaded, getPrompt } from '../llm/prompt-loader';
 
 // Title runner — auto-generates a short conversation name by summarizing
 // the first few turns. Fire-and-forget via waitUntil; failure leaves the
@@ -29,6 +29,7 @@ export interface RunTitleInput {
 export async function runTitle(input: RunTitleInput): Promise<void> {
   const { env, conversationId, botModelId } = input;
   const supa = serviceClient(env);
+  await ensurePromptOverridesLoaded(supa);
   const startedAt = Date.now();
 
   // Pull the most recent turns (descending) and flip back to chronological

@@ -16,6 +16,7 @@ import {
   withFallback,
 } from '../llm/router';
 import { buildMessages, type BuildMessagesInput } from '../llm/builder';
+import { ensurePromptOverridesLoaded } from '../llm/prompt-loader';
 import {
   estimateAssistantOutputTokens,
   estimateRequestInputTokens,
@@ -374,6 +375,9 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   const activeLookbacks = input.activeLookbacks ?? [];
   const supa = serviceClient(env);
   const startedAt = Date.now();
+
+  // Refresh DB prompt overrides (Board edits propagate within CACHE_TTL_MS).
+  await ensurePromptOverridesLoaded(supa);
 
   // 1. Look up self section + skills + bot-authored note + chat memo in
   // parallel. In self-chat the "self section" is filled from the user's

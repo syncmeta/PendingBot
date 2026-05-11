@@ -3,7 +3,7 @@ import { serviceClient } from '../lib/supabase';
 import { estimateTokens } from './token-estimate';
 import { splitAndDebit } from '../lib/group-billing';
 import { getMarkup, usdToPnd } from '../lib/billing';
-import { getPrompt } from './prompt-loader';
+import { ensurePromptOverridesLoaded, getPrompt } from './prompt-loader';
 import type { Env } from '../types';
 
 // Small-model classifier that decides which bots to wake on a group
@@ -52,6 +52,7 @@ export async function runGroupRouter(
 ): Promise<GroupRouterDecision> {
   const { env, conversationId } = input;
   const supa = serviceClient(env);
+  await ensurePromptOverridesLoaded(supa);
 
   // 1. Resolve the small-model slug. Order:
   //    a. conversation_group_meta.router_model_slug (per-group)
