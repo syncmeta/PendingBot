@@ -20,6 +20,12 @@ struct Bot: Codable, Identifiable, Hashable {
     /// User who created this bot. NULL for system preset bots. Used to tell
     /// the creator they may edit/delete (private) or toggle visibility (public).
     let creator_id: String?
+    /// Voice-call gate — when true the conversation header shows a phone
+    /// button. Optional in the payload so pre-migration payloads decode.
+    let voice_call_enabled: Bool?
+    /// Which realtime stack handles the call. 'openai' (Realtime API) or
+    /// 'doubao' (火山 SpeechEngineToB). Optional + defaults to openai in UI.
+    let voice_call_provider: String?
 
     /// Short tag derived from the OpenRouter slug — drops the provider prefix
     /// so "z-ai/glm-5.1" renders as "glm-5.1". Returns nil when no model is set.

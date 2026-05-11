@@ -15,6 +15,7 @@ import { groupRoutes } from './routes/groups';
 import { deviceRoutes } from './routes/devices';
 import { codeExecRoutes } from './routes/code-exec';
 import { openrouterRoutes } from './routes/openrouter';
+import { realtimeRoutes } from './routes/realtime';
 import { wellKnownRoutes } from './routes/well-known';
 import { handleScheduled } from './cron';
 
@@ -72,6 +73,7 @@ v1.route('/groups', groupRoutes);
 v1.route('/devices', deviceRoutes);
 v1.route('/code-exec-requests', codeExecRoutes);
 v1.route('/openrouter', openrouterRoutes);
+v1.route('/realtime', realtimeRoutes);
 
 app.route('/v1', v1);
 

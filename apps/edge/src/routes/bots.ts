@@ -7,15 +7,27 @@ import type { AppBindings } from '../types';
 export const botRoutes = new Hono<AppBindings>();
 botRoutes.use('*', requireSession());
 
-const PatchBody = z.object({
-  // OpenRouter slug. Becomes the bot's new default — applies to every conv
-  // with this bot that doesn't have a per-conv pin.
-  model_id: z.string().min(1).max(200),
-});
+const PatchBody = z
+  .object({
+    // OpenRouter slug. Becomes the bot's new default — applies to every conv
+    // with this bot that doesn't have a per-conv pin.
+    model_id: z.string().min(1).max(200).optional(),
+    // Voice call toggles. enabled gates the iOS phone button; provider
+    // picks which realtime stack handles the call (openai or doubao).
+    voice_call_enabled: z.boolean().optional(),
+    voice_call_provider: z.enum(['openai', 'doubao']).optional(),
+  })
+  .refine(
+    (v) =>
+      v.model_id !== undefined ||
+      v.voice_call_enabled !== undefined ||
+      v.voice_call_provider !== undefined,
+    { message: 'no fields to update' },
+  );
 
-// PATCH /v1/bots/:id — owner-only edits to a private bot. Right now the
-// only field exposed is the default model. Public/preset bots are
-// off-limits: model is locked.
+// PATCH /v1/bots/:id — owner-only edits to a private bot. Currently
+// exposes default model + the two voice-call flags. Public/preset bots
+// are off-limits.
 botRoutes.patch('/:id', async (c) => {
   const userId = c.var.userId!;
   const id = c.req.param('id');
@@ -42,9 +54,21 @@ botRoutes.patch('/:id', async (c) => {
     return c.json({ error: '只能改自己创建的私有机器人' }, 403);
   }
 
+  // Build partial update — only the keys the client actually sent.
+  // The Record/never cast covers the partial-builder pattern: each
+  // typed key on its own would satisfy the supabase Update generic,
+  // but a Record<string, unknown> bag won't unify without help.
+  const update: Record<string, unknown> = {
+    updated_at: new Date().toISOString(),
+  };
+  if (parsed.model_id !== undefined) update.model_id = parsed.model_id;
+  if (parsed.voice_call_enabled !== undefined)
+    update.voice_call_enabled = parsed.voice_call_enabled;
+  if (parsed.voice_call_provider !== undefined)
+    update.voice_call_provider = parsed.voice_call_provider;
   const { error: updErr } = await supa
     .from('bots')
-    .update({ model_id: parsed.model_id, updated_at: new Date().toISOString() })
+    .update(update as never)
     .eq('id', id);
   if (updErr) return c.json({ error: 'database', detail: updErr.message }, 500);
 
