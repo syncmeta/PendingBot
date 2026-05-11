@@ -50,12 +50,20 @@ export default async function AliasesPage() {
             (model × provider) 映射表 + 价格 + 路由权重。
           </p>
         </div>
-        <Link
-          href="/aliases/new"
-          className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground"
-        >
-          新增 alias
-        </Link>
+        <div className="flex gap-2">
+          <Link
+            href="/aliases/upstream"
+            className="rounded-md border border-input px-3 py-1.5 text-sm hover:bg-accent"
+          >
+            上游对账
+          </Link>
+          <Link
+            href="/aliases/new"
+            className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground"
+          >
+            新增 alias
+          </Link>
+        </div>
       </header>
 
       {grouped.size === 0 ? (
