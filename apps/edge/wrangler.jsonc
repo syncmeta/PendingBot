@@ -119,9 +119,6 @@
   //   DAYTONA_API_URL        (optional — defaults to https://app.daytona.io/api)
   //   DAYTONA_TOOLBOX_URL    (optional — defaults to https://proxy.app.daytona.io/toolbox)
   //
-  //   --- voice call providers (optional; per-bot opt-in via bots.voice_call_*) ---
-  //   OPENAI_API_KEY                (mint Realtime ephemeral client_secret)
-  //   DOUBAO_DIALOG_APP_ID          (火山 Dialog SDK 三件套, 由 worker 按 session 下发)
-  //   DOUBAO_DIALOG_APP_KEY
-  //   DOUBAO_DIALOG_ACCESS_TOKEN
+  //   --- voice call (optional; per-bot opt-in via bots.voice_call_enabled) ---
+  //   OPENAI_API_KEY        (mint Realtime ephemeral client_secret)
 }

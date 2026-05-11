@@ -8,7 +8,6 @@ const en: Dictionary = {
   'voice.bot_not_enabled': 'This bot does not have voice calls enabled.',
   'voice.insufficient_balance': 'Not enough balance to start a call.',
   'voice.conversation_not_found': 'Conversation not found.',
-  'voice.invalid_provider': 'Unknown voice call provider.',
   'voice.upstream_failed': 'Voice service is temporarily unavailable. Try again shortly.',
   'voice.session_not_found': 'Call session not found or expired.',
 };

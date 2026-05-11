@@ -12,22 +12,20 @@ const PatchBody = z
     // OpenRouter slug. Becomes the bot's new default — applies to every conv
     // with this bot that doesn't have a per-conv pin.
     model_id: z.string().min(1).max(200).optional(),
-    // Voice call toggles. enabled gates the iOS phone button; provider
-    // picks which realtime stack handles the call (openai or doubao).
+    // Voice-call gate. When true the iOS conversation header shows the
+    // phone button. Bot owner-only — public/preset bots stay locked.
     voice_call_enabled: z.boolean().optional(),
-    voice_call_provider: z.enum(['openai', 'doubao']).optional(),
   })
   .refine(
     (v) =>
       v.model_id !== undefined ||
-      v.voice_call_enabled !== undefined ||
-      v.voice_call_provider !== undefined,
+      v.voice_call_enabled !== undefined,
     { message: 'no fields to update' },
   );
 
 // PATCH /v1/bots/:id — owner-only edits to a private bot. Currently
-// exposes default model + the two voice-call flags. Public/preset bots
-// are off-limits.
+// exposes default model + voice-call gate. Public/preset bots are
+// off-limits.
 botRoutes.patch('/:id', async (c) => {
   const userId = c.var.userId!;
   const id = c.req.param('id');
@@ -64,8 +62,6 @@ botRoutes.patch('/:id', async (c) => {
   if (parsed.model_id !== undefined) update.model_id = parsed.model_id;
   if (parsed.voice_call_enabled !== undefined)
     update.voice_call_enabled = parsed.voice_call_enabled;
-  if (parsed.voice_call_provider !== undefined)
-    update.voice_call_provider = parsed.voice_call_provider;
   const { error: updErr } = await supa
     .from('bots')
     .update(update as never)

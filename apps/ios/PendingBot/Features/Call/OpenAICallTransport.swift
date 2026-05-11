@@ -13,9 +13,12 @@ import WebRTC
 ///      channel called "oai-events" that the server uses to push
 ///      response.done / transcript events at us.
 ///   3. Generate an SDP offer, POST it as raw text to
-///      `https://api.openai.com/v1/realtime?model=<model>` with
+///      `https://api.openai.com/v1/realtime/calls` with
 ///      `Authorization: Bearer <client_secret>`. The body is the SDP
-///      itself, not JSON. The response is the SDP answer.
+///      itself, not JSON. The response is the SDP answer in plain text.
+///      Model is fixed at mint time on the server side — do NOT add a
+///      `?model=` query param (the GA endpoint returns an empty 400 when
+///      the query is present; see https://community.openai.com/t/realtime-webrtc-returns-empty-400-when-hitting-v1-realtime-calls-model/1363928).
 ///   4. Apply the answer; remote audio starts flowing automatically.
 ///   5. Server events arrive on the data channel; we parse response.done
 ///      usage into a UsageDelta + concat the inline transcripts onto the
@@ -173,9 +176,11 @@ final class OpenAICallTransport: NSObject, CallTransport {
     }
 
     private func exchangeSDP(offerSDP: String) async throws -> String {
-        // Endpoint convention: model in the query, body is SDP plain text,
-        // Authorization is the ephemeral client_secret.
-        let url = URL(string: "https://api.openai.com/v1/realtime?model=\(model)")!
+        // GA endpoint: POST /v1/realtime/calls, body is SDP plain text,
+        // Authorization is the ephemeral client_secret. NO ?model= query —
+        // the GA endpoint returns 400 on any query string, model is fixed
+        // at session-mint time on the server side.
+        let url = URL(string: "https://api.openai.com/v1/realtime/calls")!
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("Bearer \(clientSecret)", forHTTPHeaderField: "Authorization")
@@ -265,7 +270,6 @@ final class OpenAICallTransport: NSObject, CallTransport {
             audioOutputTokens: audioOut,
             textInputTokens: textIn,
             textOutputTokens: textOut,
-            audioSecondsBilled: nil,
             latencyMs: nil,
             turnIndex: nextTurn,
         )

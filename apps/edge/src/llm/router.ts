@@ -55,14 +55,10 @@ export interface RouteAlias {
   cachedInputPrice: number | null;
   outputPrice: number | null;
   cacheWritePrice: number | null;
-  // Voice call dims. audio_input_price / audio_output_price are per-1M
-  // audio token (OpenAI Realtime side); audio_per_minute_price is USD
-  // per minute (Doubao SpeechEngineToB side, billed on elapsed seconds
-  // the client ticks). An alias normally uses one of the two pricing
-  // schemes — both null means the alias doesn't bill audio.
+  // Voice call pricing — per-1M audio token, populated on the alias that
+  // backs the OpenAI Realtime path. Both null on text-only aliases.
   audioInputPrice: number | null;
   audioOutputPrice: number | null;
-  audioPerMinutePrice: number | null;
 }
 
 export interface ResolvedRoute {
@@ -94,7 +90,6 @@ type AliasJoinRow = {
   cache_write_price: number | null;
   audio_input_price: number | null;
   audio_output_price: number | null;
-  audio_per_minute_price: number | null;
   llm_providers:
     | {
         id: string;
@@ -200,7 +195,7 @@ export async function resolveRoute(
   const ALIAS_COLS =
     `id, provider_id, provider_model_id, weight,
      input_price, cached_input_price, output_price, cache_write_price,
-     audio_input_price, audio_output_price, audio_per_minute_price`;
+     audio_input_price, audio_output_price`;
 
   const { data: byCanonical, error: e1 } = await supa
     .from('llm_model_aliases')
@@ -252,7 +247,6 @@ export async function resolveRoute(
         cacheWritePrice: picked.cache_write_price,
         audioInputPrice: picked.audio_input_price,
         audioOutputPrice: picked.audio_output_price,
-        audioPerMinutePrice: picked.audio_per_minute_price,
       },
       provider: { id: provider.id, slug: provider.slug },
     };
@@ -305,14 +299,11 @@ export interface AuditUsage {
   // so the panel can show a provider-vs-local ratio per row.
   estInputTokens?: number;
   estOutputTokens?: number;
-  // Voice call dims. audioInputTokens / audioOutputTokens are per-turn
-  // deltas from OpenAI Realtime's response.done.usage; audioSecondsBilled
-  // is the elapsed seconds the iOS client ticks every ~10s on the Doubao
-  // SpeechEngineToB path. text_input/output_tokens for realtime sessions
-  // flow into the existing inputTokens / outputTokens fields.
+  // Voice call dims. Per-turn deltas pulled from OpenAI Realtime's
+  // response.done.usage. text_input/output_tokens for realtime sessions
+  // ride along on the existing inputTokens / outputTokens fields.
   audioInputTokens?: number;
   audioOutputTokens?: number;
-  audioSecondsBilled?: number;
 }
 
 export interface AuditCallOpts extends AuditUsage {
@@ -375,10 +366,6 @@ export function computeCost(alias: RouteAlias, usage: AuditUsage): number | null
     cost += (usage.audioOutputTokens * alias.audioOutputPrice) / PER_MILLION;
     known = true;
   }
-  if (alias.audioPerMinutePrice != null && usage.audioSecondsBilled) {
-    cost += (usage.audioSecondsBilled / 60) * alias.audioPerMinutePrice;
-    known = true;
-  }
   return known ? cost : null;
 }
 
@@ -431,12 +418,9 @@ export async function recordAudit(
 
   // Voice call dims land in dedicated columns so dashboards can split
   // "audio token spend" vs "text token spend" without re-deriving from
-  // task_type. audio_seconds_billed is null for text + OpenAI-audio
-  // turns (cost is captured via audio_input/output_tokens); set on
-  // Doubao ticks where the client reports elapsed seconds.
+  // task_type. Both zero for text-only turns.
   const audioInputTokens = opts.audioInputTokens ?? 0;
   const audioOutputTokens = opts.audioOutputTokens ?? 0;
-  const audioSecondsBilled = opts.audioSecondsBilled ?? null;
 
   const insertRow = {
     user_id: opts.userId ?? null,
@@ -454,7 +438,6 @@ export async function recordAudit(
     est_output_tokens: opts.estOutputTokens ?? null,
     audio_input_tokens: audioInputTokens,
     audio_output_tokens: audioOutputTokens,
-    audio_seconds_billed: audioSecondsBilled,
     total_tokens: total,
     // cost_usd stays LLM-only for dashboard continuity. tool_cost_usd
     // breaks out the web-tool spend; cost_credits below is the

@@ -53,21 +53,12 @@ export interface Env {
   DAYTONA_API_URL?: string;
   DAYTONA_TOOLBOX_URL?: string;
 
-  // ── Voice call providers (M5+) ─────────────────────────────────
-  // OpenAI Realtime — the worker only mints a 60s ephemeral
-  // client_secret for the iOS WebRTC handshake; the API key never
-  // leaves the worker. Also referenced by llm_providers row slug
-  // 'openai' via secret_ref.
+  // ── Voice call (M5+) ───────────────────────────────────────────
+  // OpenAI Realtime — the worker mints a 60s ephemeral client_secret
+  // for the iOS WebRTC handshake; the API key never leaves the
+  // worker. Also referenced by llm_providers row slug 'openai' via
+  // secret_ref.
   OPENAI_API_KEY?: string;
-  // Doubao 端到端实时语音 (火山 SpeechEngineToB SDK). All three are
-  // forwarded to the iOS client per call so the SDK can open its
-  // own wss:// connection — there is no per-user ephemeral token
-  // mechanism upstream, so the trio rotates only at the
-  // Volcengine console level. Risk surface documented in
-  // plans/adaptive-swinging-harp.md.
-  DOUBAO_DIALOG_APP_ID?: string;
-  DOUBAO_DIALOG_APP_KEY?: string;
-  DOUBAO_DIALOG_ACCESS_TOKEN?: string;
 }
 
 // Hono's c.var slot — populated by middleware (auth, version, etc.)
