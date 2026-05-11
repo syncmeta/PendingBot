@@ -212,6 +212,11 @@ struct UsageDelta: Sendable {
     let audioOutputTokens: Int?
     let textInputTokens: Int?
     let textOutputTokens: Int?
+    /// Subset of the input tokens that came from a cache hit. Worker
+    /// prices them via alias.cached_input_price (GA cached-audio rate
+    /// is ~80× cheaper than full input). Sum of cached_text +
+    /// cached_audio per response.done.usage.input_token_details.cached_tokens.
+    let cachedInputTokens: Int?
     let latencyMs: Int?
     let turnIndex: Int
 }
@@ -237,6 +242,7 @@ extension CallSession: CallTransportDelegate {
                     audio_output_tokens: delta.audioOutputTokens,
                     text_input_tokens: delta.textInputTokens,
                     text_output_tokens: delta.textOutputTokens,
+                    cached_input_tokens: delta.cachedInputTokens,
                     latency_ms: delta.latencyMs,
                     turn_index: delta.turnIndex,
                 ),

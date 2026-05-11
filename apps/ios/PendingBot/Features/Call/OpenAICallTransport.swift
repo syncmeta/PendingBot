@@ -225,17 +225,30 @@ final class OpenAICallTransport: NSObject, CallTransport {
     }
 
     private func handleResponseDone(_ obj: [String: Any]) {
-        // Shape per OpenAI docs (subject to change — keep the path-walk
-        // defensive so a renamed field doesn't crash the call):
-        //   response.usage.input_token_details.{audio_tokens,text_tokens}
-        //   response.usage.output_token_details.{audio_tokens,text_tokens}
-        //   response.output[].content[].transcript  (bot-side transcript)
+        // Usage shape per https://platform.openai.com/docs/guides/realtime-costs:
+        //   response.usage.input_token_details.{text_tokens, audio_tokens,
+        //                                       image_tokens, cached_tokens,
+        //                                       cached_tokens_details:
+        //                                         {text_tokens, audio_tokens, image_tokens}}
+        //   response.usage.output_token_details.{text_tokens, audio_tokens}
+        //
+        // Transcript:
+        //   response.output[].content[].transcript  (aggregated bot text)
+        //
+        // We sum cached_text + cached_audio for the parent cached_tokens
+        // and forward it to the worker as a single bucket. The alias's
+        // cached_input_price covers the audio-cached rate ($0.40 /1M in
+        // GA) — text-cached share is tiny in a voice call so the small
+        // overbill (text-cached priced at the audio-cached rate) is in
+        // the noise. Keep parsing defensive so a renamed field on
+        // OpenAI's side doesn't crash the call.
         let response = (obj["response"] as? [String: Any]) ?? [:]
         let usage = (response["usage"] as? [String: Any]) ?? [:]
         let inDetails = (usage["input_token_details"] as? [String: Any]) ?? [:]
         let outDetails = (usage["output_token_details"] as? [String: Any]) ?? [:]
         let audioIn = (inDetails["audio_tokens"] as? Int) ?? 0
         let textIn = (inDetails["text_tokens"] as? Int) ?? 0
+        let cachedIn = (inDetails["cached_tokens"] as? Int) ?? 0
         let audioOut = (outDetails["audio_tokens"] as? Int) ?? 0
         let textOut = (outDetails["text_tokens"] as? Int) ?? 0
 
@@ -265,11 +278,18 @@ final class OpenAICallTransport: NSObject, CallTransport {
 
         let nextTurn = turnIndex
         turnIndex += 1
+        // cached_tokens reported here means "of the input tokens above,
+        // this many came from a cache". They're a subset, not in addition.
+        // The worker computeCost handles the split: charges the
+        // (audio_in − cached_audio_share) at audio_input_price and the
+        // cached portion at cached_input_price. We forward the parent
+        // cached_tokens; the worker holds the alias prices, not iOS.
         let delta = UsageDelta(
             audioInputTokens: audioIn,
             audioOutputTokens: audioOut,
             textInputTokens: textIn,
             textOutputTokens: textOut,
+            cachedInputTokens: cachedIn,
             latencyMs: nil,
             turnIndex: nextTurn,
         )

@@ -42,11 +42,15 @@ struct VoiceCallAPI {
         let conversation_id: String
         let alias_id: String?
         let provider_id: String
-        // Per-turn deltas from response.done.usage.
+        // Per-turn deltas from response.done.usage. cached_input_tokens
+        // is a SUBSET of the audio/text input tokens above (already
+        // counted there) — the worker uses it to apply the alias's
+        // cached_input_price discount on that portion.
         let audio_input_tokens: Int?
         let audio_output_tokens: Int?
         let text_input_tokens: Int?
         let text_output_tokens: Int?
+        let cached_input_tokens: Int?
         let latency_ms: Int?
         let turn_index: Int
     }
