@@ -11,6 +11,16 @@ import { sendApns, type ApnsPayload } from './apns';
 // inactive so we stop hammering it. Other errors are logged-and-shrugged
 // (transient).
 
+// PRIVACY: do not embed message text, sender display name, or any other
+// content the user might consider private in `payload.alert.body` or
+// `.title`. iOS Notification Center retains the alert verbatim and shows
+// it on the lock screen, where anyone with physical access can read it.
+// The intended pattern (once a real caller arrives) is a generic alert
+// ("New message" / "BotX replied") plus a structured extra object the
+// app reads after unlock to fetch the actual content over HTTPS.
+//
+// See the audit follow-up: tightening this into a semantic `kind` enum
+// belongs with the first product caller that wires push into a flow.
 export interface NotifyUserInput {
   env: Env;
   userId: string;

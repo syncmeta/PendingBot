@@ -16,8 +16,11 @@ interface CachedToken {
   expiresAt: number; // ms epoch
 }
 const TOKEN_CACHE = new Map<'dev' | 'prod', CachedToken>();
-// Refresh well before Apple's 1-hour ceiling to dodge clock skew.
-const TOKEN_TTL_MS = 50 * 60 * 1000;
+// Refresh well before Apple's 1-hour ceiling to dodge clock skew between
+// Workers isolates (no monotonic clock) and Apple's edge — a stale JWT
+// gets a 403 ExpiredProviderToken and forces every push in the burst to
+// retry. 45min leaves 15min of headroom in both directions.
+const TOKEN_TTL_MS = 45 * 60 * 1000;
 
 async function signApnsToken(
   env: Env,
