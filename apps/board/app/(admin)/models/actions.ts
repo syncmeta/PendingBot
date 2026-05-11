@@ -134,7 +134,9 @@ export async function updateModel(
   redirect('/models');
 }
 
-export async function deleteModel(id: string) {
+export type ActionResult = { ok?: true; error?: string; message?: string };
+
+export async function deleteModel(id: string): Promise<ActionResult> {
   const admin = await requireAdmin();
   const supa = supabaseAdmin();
   const { data: before } = await supa
@@ -142,9 +144,10 @@ export async function deleteModel(id: string) {
     .select('*')
     .eq('id', id)
     .maybeSingle();
+  if (!before) return { error: 'model 不存在' };
 
   const { error } = await supa.from('llm_models').delete().eq('id', id);
-  if (error) return;
+  if (error) return { error: error.message };
 
   await audit({
     action: 'model.delete',
@@ -154,4 +157,5 @@ export async function deleteModel(id: string) {
     actorId: admin.id,
   });
   revalidatePath('/models');
+  return { ok: true, message: `已删除 model ${before.slug}` };
 }

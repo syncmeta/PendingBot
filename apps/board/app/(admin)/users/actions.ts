@@ -75,7 +75,9 @@ export async function updateQuota(
   redirect('/users');
 }
 
-export async function resetQuotaUsed(userId: string) {
+export async function resetQuotaUsed(
+  userId: string,
+): Promise<DeletionActionResult> {
   const admin = await requireAdmin();
   const supa = supabaseAdmin();
   const { data: before } = await supa
@@ -83,9 +85,9 @@ export async function resetQuotaUsed(userId: string) {
     .select('daily_used_usd, monthly_used_usd')
     .eq('user_id', userId)
     .maybeSingle();
-  if (!before) return;
+  if (!before) return { error: '该用户还没有 user_quota 行,无需重置' };
 
-  await supa
+  const { error } = await supa
     .from('user_quota')
     .update({
       daily_used_usd: 0,
@@ -93,6 +95,7 @@ export async function resetQuotaUsed(userId: string) {
       updated_at: new Date().toISOString(),
     })
     .eq('user_id', userId);
+  if (error) return { error: error.message };
 
   await audit({
     action: 'user_quota.reset_used',
@@ -102,6 +105,7 @@ export async function resetQuotaUsed(userId: string) {
     actorId: admin.id,
   });
   revalidatePath('/users');
+  return { ok: true, message: '已重置 daily / monthly 用量' };
 }
 
 export type GrantFormState = { error?: string; ok?: { credits: number; new_balance: number } };
@@ -145,7 +149,7 @@ export async function grantCredits(
   return { ok: { credits, new_balance: Number(newBalance ?? 0) } };
 }
 
-export type DeletionActionResult = { ok?: true; error?: string };
+export type DeletionActionResult = { ok?: true; error?: string; message?: string };
 
 /// Force-finalize a user's account, bypassing the 28-day cooldown. Calls
 /// finalize_account_deletion(p_uid, p_force=true) which:

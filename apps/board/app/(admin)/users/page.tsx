@@ -4,6 +4,7 @@ import { fmtNumber, fmtUsd } from '@/lib/format';
 import { forceDeleteAccount, generateLoginCode, resetQuotaUsed } from './actions';
 import { ConfirmDeletionAction } from './[id]/_deletion-actions';
 import { GenerateLoginCodeButton } from './_login-code-button';
+import { ActionButton } from '@/components/action-button';
 
 type SearchParams = { sort?: string; q?: string };
 
@@ -184,15 +185,14 @@ export default async function UsersPage({
                       >
                         编辑限额
                       </Link>
-                      <form action={resetQuotaUsed.bind(null, u.id)}>
-                        <button
-                          type="submit"
-                          className="rounded border border-input px-2 py-1 text-xs hover:bg-accent"
-                          title="把 daily/monthly 用量计数器手动归零"
-                        >
-                          重置用量
-                        </button>
-                      </form>
+                      <ActionButton
+                        action={resetQuotaUsed}
+                        args={[u.id]}
+                        size="sm"
+                        label="重置用量"
+                        pendingLabel="重置中…"
+                        title="把 daily/monthly 用量计数器手动归零"
+                      />
                       <GenerateLoginCodeButton
                         action={generateLoginCode}
                         userId={u.id}

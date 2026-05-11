@@ -114,7 +114,9 @@ export async function updateRule(
   redirect('/routing-rules');
 }
 
-export async function toggleRuleEnabled(id: string) {
+export type ActionResult = { ok?: true; error?: string; message?: string };
+
+export async function toggleRuleEnabled(id: string): Promise<ActionResult> {
   const admin = await requireAdmin();
   const supa = supabaseAdmin();
   const { data: before } = await supa
@@ -122,13 +124,14 @@ export async function toggleRuleEnabled(id: string) {
     .select('id, enabled')
     .eq('id', id)
     .maybeSingle();
-  if (!before) return;
+  if (!before) return { error: 'routing rule 不存在' };
 
   const next = !before.enabled;
-  await supa
+  const { error } = await supa
     .from('task_routing_rules')
     .update({ enabled: next, updated_at: new Date().toISOString() })
     .eq('id', id);
+  if (error) return { error: error.message };
 
   await audit({
     action: next ? 'routing_rule.enable' : 'routing_rule.disable',
@@ -138,9 +141,10 @@ export async function toggleRuleEnabled(id: string) {
     actorId: admin.id,
   });
   revalidatePath('/routing-rules');
+  return { ok: true, message: next ? '已启用 rule' : '已停用 rule' };
 }
 
-export async function deleteRule(id: string) {
+export async function deleteRule(id: string): Promise<ActionResult> {
   const admin = await requireAdmin();
   const supa = supabaseAdmin();
   const { data: before } = await supa
@@ -148,8 +152,10 @@ export async function deleteRule(id: string) {
     .select('*')
     .eq('id', id)
     .maybeSingle();
+  if (!before) return { error: 'routing rule 不存在' };
 
-  await supa.from('task_routing_rules').delete().eq('id', id);
+  const { error } = await supa.from('task_routing_rules').delete().eq('id', id);
+  if (error) return { error: error.message };
 
   await audit({
     action: 'routing_rule.delete',
@@ -159,4 +165,5 @@ export async function deleteRule(id: string) {
     actorId: admin.id,
   });
   revalidatePath('/routing-rules');
+  return { ok: true, message: '已删除 rule' };
 }

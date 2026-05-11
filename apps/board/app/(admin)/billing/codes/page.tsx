@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { fmtPnd } from '@/lib/format';
 import { disableCode, enableCode, issueCodes } from './actions';
+import { ActionButton } from '@/components/action-button';
 import { JustIssued } from './_just-issued';
 import { StatusFilter } from './_status-filter';
 
@@ -239,24 +240,22 @@ export default async function CodesPage({
                   </td>
                   <td className="px-4 py-2 text-right">
                     {c.status === 'enabled' && (
-                      <form action={disableCode.bind(null, c.id)}>
-                        <button
-                          type="submit"
-                          className="rounded border border-input px-2 py-0.5 text-xs hover:bg-accent"
-                        >
-                          停用
-                        </button>
-                      </form>
+                      <ActionButton
+                        action={disableCode}
+                        args={[c.id]}
+                        size="sm"
+                        label="停用"
+                        pendingLabel="停用中…"
+                      />
                     )}
                     {c.status === 'disabled' && (
-                      <form action={enableCode.bind(null, c.id)}>
-                        <button
-                          type="submit"
-                          className="rounded border border-input px-2 py-0.5 text-xs hover:bg-accent"
-                        >
-                          启用
-                        </button>
-                      </form>
+                      <ActionButton
+                        action={enableCode}
+                        args={[c.id]}
+                        size="sm"
+                        label="启用"
+                        pendingLabel="启用中…"
+                      />
                     )}
                   </td>
                 </tr>

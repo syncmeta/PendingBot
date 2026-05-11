@@ -77,7 +77,9 @@ export async function issueCodes(formData: FormData) {
   );
 }
 
-export async function disableCode(id: string) {
+export type ActionResult = { ok?: true; error?: string; message?: string };
+
+export async function disableCode(id: string): Promise<ActionResult> {
   const admin = await requireAdmin();
   const supa = supabaseAdmin();
   const { data: before } = await supa
@@ -85,13 +87,14 @@ export async function disableCode(id: string) {
     .select('code, status')
     .eq('id', id)
     .maybeSingle();
-  if (!before) return;
-  if (before.status === 'used') return; // already terminal
+  if (!before) return { error: '兑换码不存在' };
+  if (before.status === 'used') return { error: '该码已被使用,无法停用' };
 
-  await supa
+  const { error } = await supa
     .from('redemption_codes')
     .update({ status: 'disabled' })
     .eq('id', id);
+  if (error) return { error: error.message };
 
   await audit({
     action: 'billing.disable_code',
@@ -101,9 +104,10 @@ export async function disableCode(id: string) {
     actorId: admin.id,
   });
   revalidatePath('/billing/codes');
+  return { ok: true, message: `已停用 ${before.code}` };
 }
 
-export async function enableCode(id: string) {
+export async function enableCode(id: string): Promise<ActionResult> {
   const admin = await requireAdmin();
   const supa = supabaseAdmin();
   const { data: before } = await supa
@@ -111,13 +115,14 @@ export async function enableCode(id: string) {
     .select('code, status')
     .eq('id', id)
     .maybeSingle();
-  if (!before) return;
-  if (before.status !== 'disabled') return;
+  if (!before) return { error: '兑换码不存在' };
+  if (before.status !== 'disabled') return { error: '该码当前不是 disabled 状态' };
 
-  await supa
+  const { error } = await supa
     .from('redemption_codes')
     .update({ status: 'enabled' })
     .eq('id', id);
+  if (error) return { error: error.message };
 
   await audit({
     action: 'billing.enable_code',
@@ -127,4 +132,5 @@ export async function enableCode(id: string) {
     actorId: admin.id,
   });
   revalidatePath('/billing/codes');
+  return { ok: true, message: `已启用 ${before.code}` };
 }

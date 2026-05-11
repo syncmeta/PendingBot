@@ -116,22 +116,24 @@ export async function updateProvider(
   redirect('/providers');
 }
 
-export async function toggleProviderEnabled(id: string) {
+export type ActionResult = { ok?: true; error?: string; message?: string };
+
+export async function toggleProviderEnabled(id: string): Promise<ActionResult> {
   const admin = await requireAdmin();
   const supa = supabaseAdmin();
   const { data: before } = await supa
     .from('llm_providers')
-    .select('id, enabled')
+    .select('id, slug, enabled')
     .eq('id', id)
     .maybeSingle();
-  if (!before) return;
+  if (!before) return { error: 'provider 不存在' };
 
   const next = !before.enabled;
   const { error } = await supa
     .from('llm_providers')
     .update({ enabled: next, updated_at: new Date().toISOString() })
     .eq('id', id);
-  if (error) return;
+  if (error) return { error: error.message };
 
   await audit({
     action: next ? 'provider.enable' : 'provider.disable',
@@ -142,9 +144,10 @@ export async function toggleProviderEnabled(id: string) {
   });
 
   revalidatePath('/providers');
+  return { ok: true, message: next ? `已启用 ${before.slug}` : `已停用 ${before.slug}` };
 }
 
-export async function deleteProvider(id: string) {
+export async function deleteProvider(id: string): Promise<ActionResult> {
   const admin = await requireAdmin();
   const supa = supabaseAdmin();
   const { data: before } = await supa
@@ -152,13 +155,14 @@ export async function deleteProvider(id: string) {
     .select('*')
     .eq('id', id)
     .maybeSingle();
+  if (!before) return { error: 'provider 不存在' };
 
   // Hard delete cascades to llm_model_aliases. Don't allow it for the
   // OpenRouter row by accident — that's the fallback path's anchor.
-  if (before?.slug === 'openrouter') return;
+  if (before.slug === 'openrouter') return { error: 'OpenRouter 是 fallback 锚点,不允许删除（可停用）' };
 
   const { error } = await supa.from('llm_providers').delete().eq('id', id);
-  if (error) return;
+  if (error) return { error: error.message };
 
   await audit({
     action: 'provider.delete',
@@ -169,4 +173,5 @@ export async function deleteProvider(id: string) {
   });
 
   revalidatePath('/providers');
+  return { ok: true, message: `已删除 ${before.slug}` };
 }

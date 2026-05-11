@@ -144,7 +144,9 @@ export async function updateAlias(
   redirect('/aliases');
 }
 
-export async function toggleAliasEnabled(id: string) {
+export type ActionResult = { ok?: true; error?: string; message?: string };
+
+export async function toggleAliasEnabled(id: string): Promise<ActionResult> {
   const admin = await requireAdmin();
   const supa = supabaseAdmin();
   const { data: before } = await supa
@@ -152,13 +154,14 @@ export async function toggleAliasEnabled(id: string) {
     .select('id, enabled')
     .eq('id', id)
     .maybeSingle();
-  if (!before) return;
+  if (!before) return { error: 'alias 不存在' };
 
   const next = !before.enabled;
-  await supa
+  const { error } = await supa
     .from('llm_model_aliases')
     .update({ enabled: next, updated_at: new Date().toISOString() })
     .eq('id', id);
+  if (error) return { error: error.message };
 
   await audit({
     action: next ? 'alias.enable' : 'alias.disable',
@@ -168,9 +171,10 @@ export async function toggleAliasEnabled(id: string) {
     actorId: admin.id,
   });
   revalidatePath('/aliases');
+  return { ok: true, message: next ? '已启用 alias' : '已停用 alias' };
 }
 
-export async function deleteAlias(id: string) {
+export async function deleteAlias(id: string): Promise<ActionResult> {
   const admin = await requireAdmin();
   const supa = supabaseAdmin();
   const { data: before } = await supa
@@ -178,8 +182,10 @@ export async function deleteAlias(id: string) {
     .select('*')
     .eq('id', id)
     .maybeSingle();
+  if (!before) return { error: 'alias 不存在' };
 
-  await supa.from('llm_model_aliases').delete().eq('id', id);
+  const { error } = await supa.from('llm_model_aliases').delete().eq('id', id);
+  if (error) return { error: error.message };
 
   await audit({
     action: 'alias.delete',
@@ -189,4 +195,5 @@ export async function deleteAlias(id: string) {
     actorId: admin.id,
   });
   revalidatePath('/aliases');
+  return { ok: true, message: '已删除 alias' };
 }
