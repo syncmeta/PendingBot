@@ -34,10 +34,16 @@ app.use('*', logger());
 
 // CORS — lock to the configured origin per env. Worker exposes Authorization
 // header for the supabase JWT carried on writes.
+//
+// Fallback when ALLOWED_ORIGIN is unset: deny all browser origins (return []).
+// Native iOS clients don't honor CORS so they're unaffected — only browsers
+// hit this code path, and we want a hostile site to be unable to mount
+// credentialed requests against a misconfigured deploy. Production must set
+// ALLOWED_ORIGIN explicitly.
 app.use('*', async (c, next) => {
   const origin = c.env.ALLOWED_ORIGIN;
   return cors({
-    origin: origin ? [origin] : '*',
+    origin: origin ? [origin] : [],
     credentials: true,
     allowHeaders: ['Authorization', 'Content-Type', 'X-Client-Version', 'X-Client-Platform'],
     maxAge: 600,
