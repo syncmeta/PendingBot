@@ -79,6 +79,9 @@ targets:
           - "Resources/Info.plist"
     resources:
       - path: PendingBot/Resources/Assets.xcassets
+      # AEC model file required by SpeechEngineToB (Doubao voice transport).
+      # Bundle.main.path(forResource: "aec", ofType: "model") reads it.
+      - path: PendingBot/Resources/aec.model
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.pendingname.pendingbot
