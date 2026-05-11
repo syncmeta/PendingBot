@@ -74,7 +74,7 @@ const CHAT_TOOLS: ChatCompletionTool[] = [
       // the same n for already-seen urls). The bot is told to cite a result by
       // dropping `[N]` inline next to whatever fact came from it; iOS reads the
       // citations array stored alongside the message and renders tappable chips.
-      description: '搜索互联网。返回最多 8 条结果，每条带 url+标题+摘要+一个 1 基的 `n`。需要事实查证或了解最新信息时使用。在回复里引用某条结果时，请紧跟相关说法加 `[N]` 行内标记（N 对应结果的 n，可以连续如 `[1][3]`），客户端会把它渲染成可点击的小角标。不引用的话不要写 `[N]`。',
+      description: '搜索互联网。返回最多 8 条结果，每条带 url+标题+摘要+一个 1 基的 `n`。需要事实查证或了解最新信息时使用。\n\n**节制使用：先发 1–2 个查询，看回结果再决定要不要补**。不要一上来就并发铺开 3+ 条查询——后发的查询应该被前面的结果启发（换关键词、换语言、换站点），盲目广撒网既费钱又往往返回重复或不相关的内容。如果前两条已经够答题就停手；不够就再加 1–2 条更针对性的。\n\n在回复里引用某条结果时，请紧跟相关说法加 `[N]` 行内标记（N 对应结果的 n，可以连续如 `[1][3]`），客户端会把它渲染成可点击的小角标。不引用的话不要写 `[N]`。',
       parameters: {
         type: 'object',
         properties: { query: { type: 'string' } },
