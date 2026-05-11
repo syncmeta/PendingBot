@@ -1,8 +1,9 @@
 import { z } from 'zod';
 
-// Supabase Auth issues HS256 JWTs with these payload fields. We verify with
-// SUPABASE_JWT_SECRET (server-side; never reaches the client). The shape
-// below is the minimum we rely on.
+// Supabase Auth issues asymmetric-signed JWTs (ES256/RS256/EdDSA per the
+// project's key rotation) with these payload fields. Verified via the
+// JWKS endpoint in jwt.ts — see that module for the algorithm allowlist
+// and JWKS caching. The shape below is the minimum we rely on.
 
 export const SupabaseJwtPayload = z.object({
   sub: z.string().uuid(),               // auth.users.id
