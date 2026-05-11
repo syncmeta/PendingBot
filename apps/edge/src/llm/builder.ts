@@ -20,6 +20,10 @@ export interface BuildMessagesInput {
   // itself over time, never shown to the user. Null when the bot hasn't
   // written one yet (cold start).
   botNote: string | null;
+  // Per-conversation markdown the bot keeps for itself — rough timeline of
+  // what got talked about plus quotes worth remembering. Index to the
+  // search_chat_history tool, not a transcript. Null until first refresh.
+  chatMemo: string | null;
   // Active lookback notes from the lookback runner — fact-check / clarify
   // jots the bot wrote about prior turns. Each is presented as a context
   // block; the bot may emit [DROP_LOOKBACK] in its reply to retire them.
@@ -133,6 +137,17 @@ function buildBotNoteSection(note: string | null): string {
     '（这份笔记是你过去自己整理的，对方看不到——交往时参考着用。）',
     '',
     note.trim(),
+  ].join('\n');
+}
+
+function buildChatMemoSection(memo: string | null): string {
+  if (!memo || !memo.trim()) return '';
+  return [
+    '## 我跟 ta 的对话备忘 (chat-memo)',
+    '（这份备忘是你自己写的、只有自己看得到。记的是这个对话里聊过什么大致时间段、哪些原文印象深刻——给「未来的你」做索引。）',
+    '需要回看原文时调 `search_chat_history` 工具按关键词或时间段查（只能搜当前这个对话）。',
+    '',
+    memo.trim(),
   ].join('\n');
 }
 
@@ -286,15 +301,17 @@ export function buildMessages(input: BuildMessagesInput): ChatCompletionMessageP
   const selfSection = buildSelfSection(botMemory);
   const skillsSection = buildSkillsSection(skills);
   const botNoteSection = buildBotNoteSection(input.botNote);
+  const chatMemoSection = buildChatMemoSection(input.chatMemo);
   const lookbackSection = buildLookbackSection(input.lookbacks);
   const attachmentSection = buildAttachmentInventorySection(input.attachmentInventory);
   const modeInstr = bot.output_mode === 'bubble' ? BUBBLE_INSTRUCTIONS : SINGLE_INSTRUCTIONS;
   // attachmentSection sits between lookbacks and modeInstr — out of the
   // cached prefix because the inventory mutates with every new image,
-  // before the always-mutating mode/recent-turn segment.
+  // before the always-mutating mode/recent-turn segment. chat-memo sits
+  // right after bot-note since both are bot-private long-term context.
   const systemContent = [
     platform, selfSection, skillsSection,
-    botNoteSection, lookbackSection, attachmentSection, modeInstr,
+    botNoteSection, chatMemoSection, lookbackSection, attachmentSection, modeInstr,
   ].filter(Boolean).join('\n\n');
 
   // System message: always cached. Stable across turns until prompts change.

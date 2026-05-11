@@ -26,7 +26,7 @@ import {
   readAttachmentForTool,
   summarizeAttachments,
 } from '../llm/vision';
-import { getBotMemory, getUserMemory } from './memory';
+import { getBotMemory, getChatMemo, getUserMemory } from './memory';
 import { queryUserRepresentation } from './honcho';
 import { runWebScrape, runWebSearch } from './web';
 import { WebToolMeter } from './web-meter';
@@ -114,6 +114,41 @@ const CHAT_TOOLS: ChatCompletionTool[] = [
           },
         },
         required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'search_chat_history',
+      // Verbatim recall of this conversation's own messages. Strictly
+      // scoped to ctx.conversationId by the runner — group surfaces can
+      // only search their own group's transcript; 1v1 only that 1v1 (which
+      // is the entire user-bot history since user_bot convs are
+      // (user, bot) one-to-one). At least one of `query` / `since` / `until`
+      // must be set so the model can't just paginate the whole conv out.
+      description:
+        '检索当前对话的历史原文。配合 chat-memo 用——备忘里有个时间段或印象深刻的原文片段，但你想确切回到那一刻看原话时调它。**只搜你正在说话的这个对话**，群里就是这个群、1v1 就是这条 1v1，看不到别的对话/别的人。`query` 走全文搜索（中英文皆可），`since`/`until` 用 ISO 8601 日期（例 `2026-04-01` 或 `2026-04-01T00:00:00+08:00`）。query 和时间范围至少给一个。返回最多 limit 条结果（默认 10，上限 30）。',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: '关键词；支持空格分词、引号包住短语精确匹配（PostgreSQL websearch 语法）。可省略，只用时间范围搜。',
+          },
+          since: {
+            type: 'string',
+            description: 'ISO 8601 起始时间（含）。可省略。',
+          },
+          until: {
+            type: 'string',
+            description: 'ISO 8601 截止时间（不含）。可省略。',
+          },
+          limit: {
+            type: 'integer',
+            description: '最多返回条数。1–30，默认 10。',
+          },
+        },
       },
     },
   },
@@ -340,10 +375,10 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   const supa = serviceClient(env);
   const startedAt = Date.now();
 
-  // 1. Look up self section + skills + bot-authored note in parallel.
-  // In self-chat the "self section" is filled from the user's own peer
-  // memory — see RunChatTurnInput.isSelfChat.
-  const [botMemory, skillsRes, botNoteRes] = await Promise.all([
+  // 1. Look up self section + skills + bot-authored note + chat memo in
+  // parallel. In self-chat the "self section" is filled from the user's
+  // own peer memory — see RunChatTurnInput.isSelfChat.
+  const [botMemory, skillsRes, botNoteRes, chatMemo] = await Promise.all([
     input.isSelfChat ? getUserMemory(env, userId) : getBotMemory(env, bot.id),
     supa
       .from('skill_subscriptions')
@@ -356,6 +391,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       .eq('bot_id', bot.id)
       .eq('user_id', userId)
       .maybeSingle(),
+    getChatMemo(env, bot.id, conversationId),
   ]);
   type SkillRow = {
     frontmatter: {
@@ -520,7 +556,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   // (every 4 rounds; see llm/builder.ts). activeLookbacks become an
   // additional system block so the bot sees its prior fact-check notes.
   const messages: ChatCompletionMessageParam[] = buildMessages({
-    bot, botMemory, skills, botNote,
+    bot, botMemory, skills, botNote, chatMemo,
     lookbacks: activeLookbacks,
     recentContext, newMessage,
     currentImageParts,
@@ -1001,6 +1037,9 @@ async function runTool(
       });
       return JSON.stringify({ answer: answer ?? '(no information yet)' });
     }
+    if (name === 'search_chat_history') {
+      return await searchChatHistoryTool(env, args, ctx);
+    }
     if (name === 'create_skill') {
       return await createSkillTool(env, args, ctx);
     }
@@ -1024,6 +1063,128 @@ async function runTool(
     ctx.emit('tool_result', { name, error: String(err) });
     return JSON.stringify({ error: String(err) });
   }
+}
+
+// Strictly conversation-scoped search across pendingbot.messages. The
+// model uses this together with the chat-memo block — the memo gives it
+// pointers (time ranges, key quotes), the tool lets it pull the original
+// text. Permissions piggy-back on `ctx.conversationId`: the row already
+// authorized this turn is the only conv we scan, so a public bot in a
+// group can only ever read that group's transcript.
+//
+// content_tsv on messages is a STORED generated tsvector (simple
+// regconfig) — works for cjk + ascii alike via word-bounded matching.
+const SEARCH_HISTORY_LIMIT_DEFAULT = 10;
+const SEARCH_HISTORY_LIMIT_MAX = 30;
+const SEARCH_HISTORY_SNIPPET_MAX = 400;
+
+async function searchChatHistoryTool(
+  env: Env,
+  args: Record<string, unknown>,
+  ctx: ToolCtx,
+): Promise<string> {
+  const query = typeof args.query === 'string' ? args.query.trim() : '';
+  const since = typeof args.since === 'string' ? args.since.trim() : '';
+  const until = typeof args.until === 'string' ? args.until.trim() : '';
+  const rawLimit = typeof args.limit === 'number'
+    ? args.limit
+    : Number(args.limit ?? NaN);
+  const limit = Number.isFinite(rawLimit)
+    ? Math.max(1, Math.min(SEARCH_HISTORY_LIMIT_MAX, Math.round(rawLimit)))
+    : SEARCH_HISTORY_LIMIT_DEFAULT;
+
+  if (!query && !since && !until) {
+    return JSON.stringify({
+      error: 'at least one of query / since / until is required',
+    });
+  }
+  // Validate ISO dates loosely — Postgres will surface a clearer error too,
+  // but a quick guard avoids a wasted round-trip.
+  if (since && Number.isNaN(Date.parse(since))) {
+    return JSON.stringify({ error: 'since is not a valid ISO date' });
+  }
+  if (until && Number.isNaN(Date.parse(until))) {
+    return JSON.stringify({ error: 'until is not a valid ISO date' });
+  }
+
+  ctx.emit('tool_call', {
+    name: 'search_chat_history',
+    query: query || null,
+    since: since || null,
+    until: until || null,
+    limit,
+  });
+
+  const supa = serviceClient(env);
+  let q = supa
+    .from('messages')
+    .select('id, role, content, sender_bot_id, user_id, created_at')
+    .eq('conversation_id', ctx.conversationId)
+    .neq('role', 'log')
+    .not('content', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (query) {
+    // websearch_to_tsquery handles quoted phrases, OR, NOT — most natural
+    // for a model that's been told "use websearch syntax". The column
+    // content_tsv is GENERATED with the simple regconfig so we match the
+    // same regconfig on the query side.
+    q = q.textSearch('content_tsv' as never, query, {
+      type: 'websearch',
+      config: 'simple',
+    });
+  }
+  if (since) q = q.gte('created_at', since);
+  if (until) q = q.lt('created_at', until);
+
+  const { data, error } = await q;
+  if (error) {
+    ctx.emit('tool_result', {
+      name: 'search_chat_history',
+      error: error.message,
+    });
+    return JSON.stringify({ error: `search failed: ${error.message}` });
+  }
+
+  const rows = (data ?? []) as Array<{
+    id: string;
+    role: string;
+    content: string | null;
+    sender_bot_id: string | null;
+    user_id: string | null;
+    created_at: string;
+  }>;
+
+  // Sort ascending for the model's reading — newer last reads more naturally.
+  const results = rows
+    .slice()
+    .reverse()
+    .map((m) => {
+      const speaker =
+        m.role === 'bot' && m.sender_bot_id === ctx.botId
+          ? 'me'
+          : m.role === 'bot'
+            ? 'bot'
+            : 'them';
+      const content = (m.content ?? '').slice(0, SEARCH_HISTORY_SNIPPET_MAX);
+      return {
+        when: m.created_at,
+        speaker,
+        content,
+      };
+    });
+
+  ctx.emit('tool_result', {
+    name: 'search_chat_history',
+    count: results.length,
+  });
+  return JSON.stringify({
+    results,
+    hint: results.length === 0
+      ? '没有命中。换个关键词、放宽时间范围，或者先看 chat-memo 里有没有线索。'
+      : `命中 ${results.length} 条。speaker=me 是你自己说的，them 是对面用户，bot 是这个对话里别的 bot（群里才会有）。`,
+  });
 }
 
 // Inserts a user-owned skill row + auto-subscribes it for the current
