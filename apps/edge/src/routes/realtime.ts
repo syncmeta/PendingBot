@@ -369,26 +369,39 @@ async function mintOpenAISession(
       t('voice.upstream_failed', locale),
     );
   }
-  // OpenAI Realtime: POST /v1/realtime/sessions returns a short-lived
-  // client_secret (~60s) the iOS WebRTC layer carries as a Bearer when
-  // it does the SDP exchange. We never see the audio.
+  // OpenAI Realtime GA endpoint. Returns a short-lived (~60s) client_secret
+  // the iOS WebRTC layer carries as Bearer when it does the SDP exchange
+  // against api.openai.com/v1/realtime/calls. We never see the audio.
+  //
+  // Request shape per https://developers.openai.com/api/reference/resources/realtime/subresources/sessions/methods/create
+  //   POST /v1/realtime/client_secrets
+  //   body: { session: { type: 'realtime', model, instructions,
+  //                       audio: { input: { transcription }, output: { voice } } } }
+  //
+  // Beta path POST /v1/realtime/sessions (flat body) still works but is
+  // not the recommended long-term shape.
   let upstream: Response;
   try {
-    upstream = await fetch('https://api.openai.com/v1/realtime/sessions', {
+    upstream = await fetch('https://api.openai.com/v1/realtime/client_secrets', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${env.OPENAI_API_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: args.route.modelToCall,
-        voice: 'alloy',
-        instructions: args.instructions,
-        input_audio_format: 'pcm16',
-        output_audio_format: 'pcm16',
-        // Whisper-based user transcript so iOS can collect both halves
-        // of the conversation for the post-call /transcripts upload.
-        input_audio_transcription: { model: 'whisper-1' },
+        session: {
+          type: 'realtime',
+          model: args.route.modelToCall,
+          instructions: args.instructions,
+          audio: {
+            output: { voice: 'alloy' },
+            // Whisper-based user-side transcription. The
+            // conversation.item.input_audio_transcription.completed event
+            // carries the result so iOS can buffer it for the post-call
+            // /transcripts upload.
+            input: { transcription: { model: 'whisper-1' } },
+          },
+        },
       }),
     });
   } catch (err) {
@@ -406,10 +419,17 @@ async function mintOpenAISession(
   }
   const data = (await upstream.json()) as {
     id?: string;
+    value?: string;          // GA response may surface the value at top level
+    expires_at?: number;     // and the expires_at alongside it.
     client_secret?: { value?: string; expires_at?: number };
+    session?: { id?: string; model?: string };
     model?: string;
   };
-  const clientSecret = data.client_secret?.value;
+  // The GA response schema places the ephemeral key under `value` /
+  // `expires_at` at the root; some deployments still nest it as
+  // `client_secret.value`. Accept both shapes.
+  const clientSecret = data.value ?? data.client_secret?.value;
+  const expiresAt = data.expires_at ?? data.client_secret?.expires_at ?? null;
   if (!clientSecret) {
     console.warn('[realtime/session] openai response missing client_secret', data);
     return jsonError(502, 'upstream_error', t('voice.upstream_failed', locale));
@@ -417,11 +437,8 @@ async function mintOpenAISession(
   return Response.json({
     provider: 'openai' as const,
     session_id: args.sessionId,
-    client_secret: {
-      value: clientSecret,
-      expires_at: data.client_secret?.expires_at ?? null,
-    },
-    model: data.model ?? args.route.modelToCall,
+    client_secret: { value: clientSecret, expires_at: expiresAt },
+    model: data.session?.model ?? data.model ?? args.route.modelToCall,
     alias_id: args.route.alias?.aliasId ?? null,
     provider_id: args.route.provider.id,
     min_threshold: args.minThreshold,
