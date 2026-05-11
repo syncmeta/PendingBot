@@ -17,7 +17,6 @@
 		18BC93D327B246AC5A5AB9B4 /* TabHeaderBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 288EC6D8680B326A27B8A731 /* TabHeaderBar.swift */; };
 		19870C7F165F857406EF4BCC /* EnvelopeThinkingTrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1DB7B76BE5141EDA731228F /* EnvelopeThinkingTrace.swift */; };
 		1FAC8EB09B3C9F529CF57142 /* GroupBillingSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C5EA3C2D0CE28EE588F08FB /* GroupBillingSheet.swift */; };
-		23354F504FEFEAF80398DB97 /* aec.model in Resources */ = {isa = PBXBuildFile; fileRef = 45C46111F99CC0ABDB846512 /* aec.model */; };
 		24896FE870AF890607D5C008 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0424B09389C21A9BB73F1069 /* Theme.swift */; };
 		252E72745FF2F6B5758D2523 /* SupabaseStack.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A461F1DD0D7D01B3BE81A18 /* SupabaseStack.swift */; };
 		2A629BF058F4834777600BE4 /* Haptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54274B6144493F79AB8DC3D1 /* Haptics.swift */; };
@@ -45,7 +44,6 @@
 		605CB401FEBBDFB15C26BC0D /* GroupSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46789D89F437D52724B2568C /* GroupSettingsView.swift */; };
 		61B9F7BF2AE1D63124CD6B5E /* ModelPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CA54E69A2AB50E902FF3E4E /* ModelPicker.swift */; };
 		624542244CE3957C2DAD747E /* MeTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F5A6C6876FF131B3D8AA437 /* MeTabView.swift */; };
-		6250AD9EC68759DB29D04BAD /* DoubaoCallTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29020F78631BA42581F5D653 /* DoubaoCallTransport.swift */; };
 		642FBF31ECF09038C94D6065 /* TabTitle.swift in Sources */ = {isa = PBXBuildFile; fileRef = A15111FAA33922E228085D64 /* TabTitle.swift */; };
 		68CC7CE5D41AC8BE5940E886 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 42AEEDC8DF7B9FD796EE879D /* Supabase */; };
 		6AEA2941D8681D6D10B4AA9E /* BlinkingCursor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F27E0F931ABFA8CDAE1ADD7 /* BlinkingCursor.swift */; };
@@ -57,7 +55,6 @@
 		7441BBB82513354F86E2D12E /* ChatActionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37E2067C1C372EB858B6A6DC /* ChatActionSheet.swift */; };
 		756AB114C3C20E0E06623B83 /* MessageTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E68B229EDD3BD50361009601 /* MessageTabView.swift */; };
 		7D1661C95F98D7DCA6F08419 /* ContactsAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 734AE1910A15CE782A2C0BE5 /* ContactsAPI.swift */; };
-		7E4970083FD230A102F166FD /* Pods_PendingBot.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 83C37B525DCE176191C813A7 /* Pods_PendingBot.framework */; };
 		7EC924CCEF279940B5934910 /* ConversationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C99F8DD8956403453040B34E /* ConversationSettingsView.swift */; };
 		83035210F6619E0993F92CEE /* CodeRunnerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A573816C9B62D5FDB2747B1 /* CodeRunnerSheet.swift */; };
 		88978249B3DE9BBB9F495363 /* SwipeRevealRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = E08EA5C0C04D043A83FDCB72 /* SwipeRevealRow.swift */; };
@@ -107,7 +104,6 @@
 		24E4E56DDBD71AB05278A385 /* ServerImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerImage.swift; sourceTree = "<group>"; };
 		279FB8EA2B3130084E4F8C44 /* BotAvatar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotAvatar.swift; sourceTree = "<group>"; };
 		288EC6D8680B326A27B8A731 /* TabHeaderBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabHeaderBar.swift; sourceTree = "<group>"; };
-		29020F78631BA42581F5D653 /* DoubaoCallTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoubaoCallTransport.swift; sourceTree = "<group>"; };
 		296C608D9B4B9E5870149CD4 /* MarkdownText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownText.swift; sourceTree = "<group>"; };
 		2A461F1DD0D7D01B3BE81A18 /* SupabaseStack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseStack.swift; sourceTree = "<group>"; };
 		2CE994684E5E6189CC090363 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -124,7 +120,6 @@
 		3CEA9699F1801C4960BBE127 /* GoogleSignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleSignIn.swift; sourceTree = "<group>"; };
 		4230E5DEF138A3DC7320FD18 /* PendingBotApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingBotApp.swift; sourceTree = "<group>"; };
 		42A11830F64F80977210B443 /* PendingBot.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = PendingBot.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		45C46111F99CC0ABDB846512 /* aec.model */ = {isa = PBXFileReference; path = aec.model; sourceTree = "<group>"; };
 		46789D89F437D52724B2568C /* GroupSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupSettingsView.swift; sourceTree = "<group>"; };
 		47CBECD15BE9204330CB00AD /* SkillsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkillsView.swift; sourceTree = "<group>"; };
 		4CC956D0BC262560F70E112A /* AccountStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountStore.swift; sourceTree = "<group>"; };
@@ -145,7 +140,6 @@
 		7CA54E69A2AB50E902FF3E4E /* ModelPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelPicker.swift; sourceTree = "<group>"; };
 		807F5D6DCD9D7DAF34512DBC /* LocalDatabase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalDatabase.swift; sourceTree = "<group>"; };
 		81C2890EA2926BA046697ED2 /* names.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = names.txt; sourceTree = "<group>"; };
-		83C37B525DCE176191C813A7 /* Pods_PendingBot.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_PendingBot.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		855E9460774778B78AA51DE3 /* SplitNav.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplitNav.swift; sourceTree = "<group>"; };
 		8BDBE35089EC0A16CBE8D181 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
 		8C5EA3C2D0CE28EE588F08FB /* GroupBillingSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupBillingSheet.swift; sourceTree = "<group>"; };
@@ -165,7 +159,6 @@
 		BC94DFE7E01003DB9976ADA0 /* PushService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushService.swift; sourceTree = "<group>"; };
 		BDE5ADA3C16B8D916CDF48CB /* BubbleSplitter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BubbleSplitter.swift; sourceTree = "<group>"; };
 		C608CB73D14B114D2399FE59 /* HostedConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostedConfig.swift; sourceTree = "<group>"; };
-		C820339AAE85AE2C9CE92B2B /* Pods-PendingBot.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-PendingBot.debug.xcconfig"; path = "Target Support Files/Pods-PendingBot/Pods-PendingBot.debug.xcconfig"; sourceTree = "<group>"; };
 		C99F8DD8956403453040B34E /* ConversationSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationSettingsView.swift; sourceTree = "<group>"; };
 		CA3C55E2C308AF92E34C9383 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		CC72DD613E133EB252CB3F5D /* EmailSignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmailSignIn.swift; sourceTree = "<group>"; };
@@ -178,7 +171,6 @@
 		E68B229EDD3BD50361009601 /* MessageTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageTabView.swift; sourceTree = "<group>"; };
 		F008290DF52AAFA1B6AB1DE5 /* UserAvatar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserAvatar.swift; sourceTree = "<group>"; };
 		F22DAAC2BF897900CBB54FCD /* APIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIModels.swift; sourceTree = "<group>"; };
-		F91D4FCF5021C1ACBC81FD6A /* Pods-PendingBot.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-PendingBot.release.xcconfig"; path = "Target Support Files/Pods-PendingBot/Pods-PendingBot.release.xcconfig"; sourceTree = "<group>"; };
 		F932206D62405FD4C1F0143B /* BubbleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BubbleView.swift; sourceTree = "<group>"; };
 		F9E90A433CF0CAC8986218C6 /* ConversationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationView.swift; sourceTree = "<group>"; };
 		FA76A59CB9DB38987FE36E33 /* WalletView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletView.swift; sourceTree = "<group>"; };
@@ -195,7 +187,6 @@
 				A2E9CBC1BBEC585F2594DFAC /* GRDB in Frameworks */,
 				AE2E39CEFC00A4D6517ABAE9 /* GoogleSignIn in Frameworks */,
 				30E08775E0377B26A0398856 /* WebRTC in Frameworks */,
-				7E4970083FD230A102F166FD /* Pods_PendingBot.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -211,14 +202,6 @@
 			path = Models;
 			sourceTree = "<group>";
 		};
-		32D58D628A7F8D03EB727630 /* Frameworks */ = {
-			isa = PBXGroup;
-			children = (
-				83C37B525DCE176191C813A7 /* Pods_PendingBot.framework */,
-			);
-			name = Frameworks;
-			sourceTree = "<group>";
-		};
 		3D8FF77E58261CCFB943BE90 /* Message */ = {
 			isa = PBXGroup;
 			children = (
@@ -232,16 +215,6 @@
 				955D6B93ACB33271FCCA3FC2 /* ToolTraceView.swift */,
 			);
 			path = Message;
-			sourceTree = "<group>";
-		};
-		47DC886DFDB8B141631DECC5 /* Pods */ = {
-			isa = PBXGroup;
-			children = (
-				C820339AAE85AE2C9CE92B2B /* Pods-PendingBot.debug.xcconfig */,
-				F91D4FCF5021C1ACBC81FD6A /* Pods-PendingBot.release.xcconfig */,
-			);
-			name = Pods;
-			path = Pods;
 			sourceTree = "<group>";
 		};
 		5345D52902A52221FE922D90 /* Skills */ = {
@@ -331,8 +304,6 @@
 			children = (
 				8EECA9539CEAF3AEAFBBB643 /* PendingBot */,
 				5499C93C9DF42D382007DFA9 /* Products */,
-				47DC886DFDB8B141631DECC5 /* Pods */,
-				32D58D628A7F8D03EB727630 /* Frameworks */,
 			);
 			sourceTree = "<group>";
 		};
@@ -387,7 +358,6 @@
 			children = (
 				BA46A65B33759B4EC85F985D /* CallSession.swift */,
 				ABDADB4EF94D06B74B02EE8F /* CallView.swift */,
-				29020F78631BA42581F5D653 /* DoubaoCallTransport.swift */,
 				BC2ABD8515508D964920FDB2 /* OpenAICallTransport.swift */,
 			);
 			path = Call;
@@ -438,7 +408,6 @@
 		FABD90DE005E2D5E0D83D292 /* Resources */ = {
 			isa = PBXGroup;
 			children = (
-				45C46111F99CC0ABDB846512 /* aec.model */,
 				2CE994684E5E6189CC090363 /* Assets.xcassets */,
 				E4727211455C3629DA8744BE /* Localizable.xcstrings */,
 				81C2890EA2926BA046697ED2 /* names.txt */,
@@ -454,11 +423,9 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = E443C09870F236B5BCD1BDB0 /* Build configuration list for PBXNativeTarget "PendingBot" */;
 			buildPhases = (
-				AF2FEA57871811F58E86958A /* [CP] Check Pods Manifest.lock */,
 				65F7DAB3D50FA1D92EC0F8BB /* Sources */,
 				49321AEA4AC04FCB01280B8E /* Resources */,
 				98B97DDECE2DD7036F70C709 /* Frameworks */,
-				E48B03F5A7F26ABCF0DA576C /* [CP] Embed Pods Frameworks */,
 			);
 			buildRules = (
 			);
@@ -524,54 +491,11 @@
 			files = (
 				96C09BE5D54583A8016A5E8B /* Assets.xcassets in Resources */,
 				E07E640D575A1DEECE378E3E /* Localizable.xcstrings in Resources */,
-				23354F504FEFEAF80398DB97 /* aec.model in Resources */,
 				08773A5FBDCBAB29D4BD812E /* names.txt in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
-
-/* Begin PBXShellScriptBuildPhase section */
-		AF2FEA57871811F58E86958A /* [CP] Check Pods Manifest.lock */ = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
-				"${PODS_ROOT}/Manifest.lock",
-			);
-			name = "[CP] Check Pods Manifest.lock";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-				"$(DERIVED_FILE_DIR)/Pods-PendingBot-checkManifestLockResult.txt",
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
-			showEnvVarsInLog = 0;
-		};
-		E48B03F5A7F26ABCF0DA576C /* [CP] Embed Pods Frameworks */ = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-				"${PODS_ROOT}/Target Support Files/Pods-PendingBot/Pods-PendingBot-frameworks-${CONFIGURATION}-input-files.xcfilelist",
-			);
-			name = "[CP] Embed Pods Frameworks";
-			outputFileListPaths = (
-				"${PODS_ROOT}/Target Support Files/Pods-PendingBot/Pods-PendingBot-frameworks-${CONFIGURATION}-output-files.xcfilelist",
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-PendingBot/Pods-PendingBot-frameworks.sh\"\n";
-			showEnvVarsInLog = 0;
-		};
-/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		65F7DAB3D50FA1D92EC0F8BB /* Sources */ = {
@@ -602,7 +526,6 @@
 				7D1661C95F98D7DCA6F08419 /* ContactsAPI.swift in Sources */,
 				7EC924CCEF279940B5934910 /* ConversationSettingsView.swift in Sources */,
 				091D2F4E1050EAF98F72B1B1 /* ConversationView.swift in Sources */,
-				6250AD9EC68759DB29D04BAD /* DoubaoCallTransport.swift in Sources */,
 				88D44D5A01A220D83A913D39 /* EmailSignIn.swift in Sources */,
 				0AC7612397D7D0B4E07DD2AC /* EmptyHint.swift in Sources */,
 				19870C7F165F857406EF4BCC /* EnvelopeThinkingTrace.swift in Sources */,
@@ -663,7 +586,6 @@
 /* Begin XCBuildConfiguration section */
 		5F78C3397FB9D7E73D134061 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = F91D4FCF5021C1ACBC81FD6A /* Pods-PendingBot.release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -690,7 +612,6 @@
 		};
 		737849DACE615938280F8CCE /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = C820339AAE85AE2C9CE92B2B /* Pods-PendingBot.debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;

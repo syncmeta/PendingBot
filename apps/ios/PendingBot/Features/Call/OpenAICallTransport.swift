@@ -270,7 +270,6 @@ final class OpenAICallTransport: NSObject, CallTransport {
             audioOutputTokens: audioOut,
             textInputTokens: textIn,
             textOutputTokens: textOut,
-            audioSecondsBilled: nil,
             latencyMs: nil,
             turnIndex: nextTurn,
         )

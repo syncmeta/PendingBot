@@ -1,10 +1,10 @@
 import Foundation
 
-/// Provider-agnostic shape for a single voice call. `CallView` owns one
-/// of these and binds its UI to the @Observable state. Each provider
-/// (OpenAI Realtime, Doubao SpeechEngineToB) implements the lifecycle —
-/// start / hangUp / transcript collection / per-turn usage report — and
-/// publishes state changes through the published properties.
+/// State container for a single OpenAI Realtime voice call. `CallView`
+/// owns one of these and binds its UI to the @Observable state. The
+/// underlying transport (OpenAICallTransport) handles WebRTC, audio
+/// session, and SDP exchange, publishing events back through the
+/// CallTransportDelegate protocol below.
 ///
 /// All callbacks must hop to MainActor before mutating state since the UI
 /// observes these via SwiftUI. Implementations should use `@MainActor`
@@ -74,7 +74,6 @@ final class CallSession {
     private(set) var sessionId: String?
     private(set) var providerId: String?
     private(set) var aliasId: String?
-    private(set) var provider: VoiceCallAPI.Provider?
 
     init(
         conversationId: String,
@@ -90,10 +89,10 @@ final class CallSession {
 
     // MARK: - Lifecycle
 
-    /// Tap on the phone button enters here. Mints credentials via the
-    /// worker, then picks the matching transport. Throws via terminating
-    /// the session (UI listens via phase rather than try/catch propagation
-    /// — keeps the call buttons free of error-throwing initializers).
+    /// Tap on the phone button enters here. Mints the OpenAI Realtime
+    /// session via the worker, then spins up OpenAICallTransport. Errors
+    /// surface through `phase = .terminated(...)` so UI can listen via
+    /// the @Observable contract rather than try/catch.
     func start() async {
         guard phase == .idle else { return }
         phase = .connecting
@@ -111,30 +110,12 @@ final class CallSession {
         sessionId = resp.session_id
         providerId = resp.provider_id
         aliasId = resp.alias_id
-        provider = resp.provider
 
-        let transport: CallTransport
-        switch resp.provider {
-        case .openai:
-            guard let cs = resp.client_secret else {
-                phase = .terminated(.startupError("missing client_secret"))
-                return
-            }
-            transport = OpenAICallTransport(
-                clientSecret: cs.value,
-                model: resp.model,
-                delegate: self,
-            )
-        case .doubao:
-            guard let cfg = resp.doubao else {
-                phase = .terminated(.startupError("missing doubao config"))
-                return
-            }
-            transport = DoubaoCallTransport(
-                config: cfg,
-                delegate: self,
-            )
-        }
+        let transport = OpenAICallTransport(
+            clientSecret: resp.client_secret.value,
+            model: resp.model,
+            delegate: self,
+        )
         self.transport = transport
         await transport.start()
     }
@@ -196,9 +177,10 @@ final class CallSession {
 
 // MARK: - Transport interface
 
-/// Implemented by OpenAICallTransport + DoubaoCallTransport. Holds the
-/// audio plumbing (WebRTC peer, AVAudioSession, or SDK engine) and
-/// reports back through the CallTransportDelegate protocol.
+/// Implemented by OpenAICallTransport. Holds the audio plumbing (WebRTC
+/// peer + AVAudioSession) and reports back through CallTransportDelegate.
+/// Pulled out as a protocol so the call session and tests don't bind to
+/// the WebRTC type directly.
 @MainActor
 protocol CallTransport: AnyObject {
     func start() async
@@ -211,9 +193,10 @@ protocol CallTransport: AnyObject {
 protocol CallTransportDelegate: AnyObject {
     /// Transport connected and remote audio is flowing.
     func transportDidConnect(_ t: CallTransport)
-    /// One turn's usage delta is ready to report. Implementations build
-    /// the UsageRequest skeleton and call this; CallSession fills in
-    /// session_id / conversation_id / alias_id / provider_id and POSTs.
+    /// One turn's usage delta is ready to report. Transport builds the
+    /// per-turn UsageDelta from the response.done.usage event; CallSession
+    /// fills in session_id / conversation_id / alias_id / provider_id
+    /// and POSTs to /v1/realtime/usage.
     func transport(_ t: CallTransport, didProduceUsageDelta delta: UsageDelta) async
     /// Append a transcript turn to the post-call upload buffer.
     func transport(_ t: CallTransport, didAppendTranscript turn: VoiceCallAPI.TranscriptTurn)
@@ -229,7 +212,6 @@ struct UsageDelta: Sendable {
     let audioOutputTokens: Int?
     let textInputTokens: Int?
     let textOutputTokens: Int?
-    let audioSecondsBilled: Double?
     let latencyMs: Int?
     let turnIndex: Int
 }
@@ -243,11 +225,7 @@ extension CallSession: CallTransportDelegate {
     }
 
     func transport(_ t: CallTransport, didProduceUsageDelta delta: UsageDelta) async {
-        guard
-            let sid = sessionId,
-            let pid = providerId,
-            let provider
-        else { return }
+        guard let sid = sessionId, let pid = providerId else { return }
         do {
             let resp = try await api.reportUsage(
                 .init(
@@ -255,12 +233,10 @@ extension CallSession: CallTransportDelegate {
                     conversation_id: conversationId,
                     alias_id: aliasId,
                     provider_id: pid,
-                    provider: provider,
                     audio_input_tokens: delta.audioInputTokens,
                     audio_output_tokens: delta.audioOutputTokens,
                     text_input_tokens: delta.textInputTokens,
                     text_output_tokens: delta.textOutputTokens,
-                    audio_seconds_billed: delta.audioSecondsBilled,
                     latency_ms: delta.latencyMs,
                     turn_index: delta.turnIndex,
                 ),

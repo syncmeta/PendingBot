@@ -18,44 +18,22 @@ struct VoiceCallAPI {
 
     // MARK: - Wire types
 
-    enum Provider: String, Codable, Sendable {
-        case openai
-        case doubao
-    }
-
-    /// Response payload for POST /v1/realtime/session. The provider-specific
-    /// branch (`openai` vs `doubao`) is keyed by `provider`; iOS picks the
-    /// matching CallTransport at runtime.
+    /// Response payload for POST /v1/realtime/session. Worker mints an
+    /// ephemeral client_secret against OpenAI's /v1/realtime/client_secrets,
+    /// pre-baking the system prompt — iOS only carries the 60s token to
+    /// the WebRTC SDP exchange.
     struct SessionResponse: Decodable, Sendable {
-        let provider: Provider
         let session_id: String
         let model: String
         let alias_id: String?
         let provider_id: String
         let min_threshold: Int
         let balance_credits: Int
-
-        // OpenAI branch — present iff provider == .openai
-        let client_secret: ClientSecret?
-
-        // Doubao branch — present iff provider == .doubao
-        let doubao: DoubaoConfig?
+        let client_secret: ClientSecret
 
         struct ClientSecret: Decodable, Sendable {
             let value: String
             let expires_at: Int?
-        }
-
-        struct DoubaoConfig: Decodable, Sendable {
-            let app_id: String
-            let app_key: String
-            let access_token: String
-            let resource_id: String
-            let dialog_address: String
-            let dialog_uri: String
-            let uid: String
-            let bot_name: String
-            let system_prompt: String
         }
     }
 
@@ -64,14 +42,11 @@ struct VoiceCallAPI {
         let conversation_id: String
         let alias_id: String?
         let provider_id: String
-        let provider: Provider
-        // OpenAI deltas
+        // Per-turn deltas from response.done.usage.
         let audio_input_tokens: Int?
         let audio_output_tokens: Int?
         let text_input_tokens: Int?
         let text_output_tokens: Int?
-        // Doubao seconds since last tick
-        let audio_seconds_billed: Double?
         let latency_ms: Int?
         let turn_index: Int
     }
