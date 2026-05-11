@@ -5,7 +5,7 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { requireAdmin } from '@/lib/auth';
 import { supabaseAdmin } from '@/lib/supabase/admin';
-import { withFlash } from '@/components/toast';
+import { withFlash } from '@/components/toast-redirect';
 
 // Reuse the admin_audit pattern from users/actions.ts so billing-side
 // admin moves are visible in the same /admin-audit feed.

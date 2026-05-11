@@ -11,12 +11,20 @@ import {
 } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
+import { type ToastKind } from './toast-redirect';
+
 // Tiny zero-dep toast system. One Provider mounted in the (admin) layout
 // exposes `useToast().push({ kind, message })` to every client component.
 // Toasts auto-dismiss after 4s; click X to close earlier. Capped at 5
 // visible so a runaway loop doesn't paper over the screen.
+//
+// The redirect-side helper `withFlash` and its `ToastKind` type live in
+// components/toast-redirect.ts so server actions can import them
+// without crossing the 'use client' boundary that wraps this file.
+// Re-exported here for backward-compat with existing client callers.
 
-export type ToastKind = 'success' | 'error' | 'info';
+export type { ToastKind } from './toast-redirect';
+export { withFlash } from './toast-redirect';
 
 export type Toast = {
   id: number;
@@ -145,15 +153,7 @@ export function FlashToastReader() {
   return null;
 }
 
-/// Helper for server actions: build a redirect URL with flash params.
-/// Pure string-building, safe to import in server-only files.
-export function withFlash(
-  path: string,
-  message: string,
-  kind: ToastKind = 'success',
-): string {
-  const u = new URL(path, 'http://_local');
-  u.searchParams.set('toast', message);
-  u.searchParams.set('toastKind', kind);
-  return u.pathname + (u.search ? u.search : '');
-}
+// withFlash + ToastKind moved to ./toast-redirect.ts so server actions
+// can import them without tripping Next.js's 'use client' boundary.
+// The re-export at the top of this file keeps existing client callers
+// working with the old import path.

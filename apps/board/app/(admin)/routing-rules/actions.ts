@@ -5,7 +5,7 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { requireAdmin } from '@/lib/auth';
 import { supabaseAdmin } from '@/lib/supabase/admin';
-import { withFlash } from '@/components/toast';
+import { withFlash } from '@/components/toast-redirect';
 
 export type RuleFormState = { error?: string };
 
