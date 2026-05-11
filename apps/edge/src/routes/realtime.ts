@@ -337,13 +337,23 @@ async function mintOpenAISession(
   // the iOS WebRTC layer carries as Bearer when it does the SDP exchange
   // against api.openai.com/v1/realtime/calls. We never see the audio.
   //
-  // Request shape per https://developers.openai.com/api/reference/resources/realtime/subresources/sessions/methods/create
-  //   POST /v1/realtime/client_secrets
-  //   body: { session: { type: 'realtime', model, instructions,
-  //                       audio: { input: { transcription }, output: { voice } } } }
+  // POST /v1/realtime/client_secrets — GA mint endpoint per
+  // https://developers.openai.com/api/docs/guides/realtime-webrtc.
   //
-  // Beta path POST /v1/realtime/sessions (flat body) still works but is
-  // not the recommended long-term shape.
+  // The session config sent here is baked into the session OpenAI
+  // returns the ephemeral key for; the iOS WebRTC client does not
+  // need (and cannot do) a session.update for instructions later.
+  // session.voice is locked once the model has emitted audio, so
+  // we set it once here and never touch it again on this session.
+  //
+  // turn_detection defaults to semantic_vad (server-side VAD that
+  // automatically truncates unplayed bot audio when the user speaks
+  // mid-response — WebRTC handles the truncation transparently, no
+  // client-side response.cancel needed). Leaving it unset keeps the
+  // default; explicit-null disables VAD for push-to-talk only.
+  //
+  // audio.input.format / audio.output.format are WebSocket-only —
+  // WebRTC negotiates Opus via the SDP, so we don't set them.
   let upstream: Response;
   try {
     upstream = await fetch('https://api.openai.com/v1/realtime/client_secrets', {
@@ -357,12 +367,17 @@ async function mintOpenAISession(
           type: 'realtime',
           model: args.route.modelToCall,
           instructions: args.instructions,
+          output_modalities: ['audio'],
           audio: {
-            output: { voice: 'alloy' },
-            // Whisper-based user-side transcription. The
-            // conversation.item.input_audio_transcription.completed event
-            // carries the result so iOS can buffer it for the post-call
-            // /transcripts upload.
+            output: { voice: 'marin' },
+            // Streaming user-side transcription. The
+            // conversation.item.input_audio_transcription.completed
+            // event then carries the final text iOS buffers for the
+            // post-call /transcripts upload. whisper-1 is the more
+            // stable in-session option vs the newer gpt-realtime-
+            // whisper which is still showing intermittent
+            // reliability gaps inside Realtime sessions per the
+            // 2025-11 community thread; revisit once that settles.
             input: { transcription: { model: 'whisper-1' } },
           },
         },
@@ -399,7 +414,6 @@ async function mintOpenAISession(
     return jsonError(502, 'upstream_error', t('voice.upstream_failed', locale));
   }
   return Response.json({
-    provider: 'openai' as const,
     session_id: args.sessionId,
     client_secret: { value: clientSecret, expires_at: expiresAt },
     model: data.session?.model ?? data.model ?? args.route.modelToCall,
@@ -424,10 +438,14 @@ const UsageBody = z.object({
   alias_id: z.string().nullable().optional(),
   provider_id: z.string(),
   // Per-turn deltas pulled from response.done.usage on the iOS side.
+  // cached_input_tokens is a subset of audio_input_tokens + text_input_tokens
+  // (cached portion already counted in those), discounted via the alias
+  // cached_input_price (GA cached-audio rate is ~80× cheaper than full).
   audio_input_tokens: z.number().int().min(0).optional(),
   audio_output_tokens: z.number().int().min(0).optional(),
   text_input_tokens: z.number().int().min(0).optional(),
   text_output_tokens: z.number().int().min(0).optional(),
+  cached_input_tokens: z.number().int().min(0).optional(),
   latency_ms: z.number().int().min(0).optional(),
   turn_index: z.number().int().min(0),
 });
@@ -471,6 +489,24 @@ realtimeRoutes.post('/usage', async (c) => {
   }
 
   const startedAt = Date.now();
+  // recordAudit's computeCost pricing model:
+  //   audio_in  cost  = audio_input_tokens  × alias.audio_input_price /1M
+  //   audio_out cost  = audio_output_tokens × alias.audio_output_price /1M
+  //   text_in   cost  = text_input_tokens   × alias.input_price        /1M
+  //   text_out  cost  = text_output_tokens  × alias.output_price       /1M
+  //   cached_in cost  = cache_read_tokens   × alias.cached_input_price /1M
+  // The cached_input_tokens forwarded from iOS is a SUBSET of the audio
+  // and text input tokens above — recordAudit ends up double-counting
+  // them (full price + cached price), which is exactly wrong: it
+  // OVERcharges. Per the GA pricing model, cached tokens replace the
+  // full-rate input charge for that portion. We compensate by
+  // subtracting cached_input_tokens from audio_input_tokens before
+  // passing it to recordAudit (assume cached tokens are predominantly
+  // audio in a voice call — the text-instruction cache is tiny).
+  const audioIn = Math.max(
+    0,
+    (parsed.audio_input_tokens ?? 0) - (parsed.cached_input_tokens ?? 0),
+  );
   await recordAudit(supaUser, route, {
     userId,
     conversationId: parsed.conversation_id,
@@ -479,8 +515,9 @@ realtimeRoutes.post('/usage', async (c) => {
     status: 'success',
     inputTokens: parsed.text_input_tokens ?? 0,
     outputTokens: parsed.text_output_tokens ?? 0,
-    audioInputTokens: parsed.audio_input_tokens ?? 0,
+    audioInputTokens: audioIn,
     audioOutputTokens: parsed.audio_output_tokens ?? 0,
+    cacheReadTokens: parsed.cached_input_tokens ?? 0,
     metadata: {
       source: 'voice_call',
       session_id: parsed.session_id,
