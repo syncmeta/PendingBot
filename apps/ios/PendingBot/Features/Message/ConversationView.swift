@@ -18,6 +18,13 @@ struct PendingPeer: Hashable {
     let kind: String       // "bot" | "user"
     let peerId: String
     let displayName: String
+    /// Pre-resolved conv id, populated by the friends-tab tap path when
+    /// we already looked up the singleton user_user conv before navigating.
+    /// When set, `pendingConversation(for:)` builds a fully-keyed Conversation
+    /// instead of one with `id: ""`, so ConversationView jumps straight to
+    /// loading existing history instead of waiting for a first message to
+    /// materialize the row.
+    var existingConvId: String? = nil
 }
 
 struct ConversationView: View {

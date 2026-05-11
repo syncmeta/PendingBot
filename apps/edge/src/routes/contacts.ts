@@ -137,6 +137,41 @@ contactRoutes.post('/open-chat', async (c) => {
   return c.json({ conversationId: convId, created: true });
 });
 
+// PATCH /v1/contacts/:contactUserId — update the caller's local alias
+// for a contact (WeChat-style 备注). Empty string clears the alias and
+// the friend reverts to displaying their own display_name. Doesn't change
+// anything on the contact's side — they keep whatever alias (or none)
+// they set for the caller independently.
+const AliasBody = z.object({ alias: z.string().max(64).nullable() });
+contactRoutes.patch('/:contactUserId', async (c) => {
+  const userId = c.var.userId!;
+  const contactUserId = c.req.param('contactUserId');
+  if (!/^[0-9a-f-]{36}$/i.test(contactUserId)) {
+    return c.json({ error: 'invalid contactUserId' }, 400);
+  }
+  let parsed: z.infer<typeof AliasBody>;
+  try {
+    parsed = AliasBody.parse(await c.req.json());
+  } catch (err) {
+    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+  }
+  const trimmed = parsed.alias?.trim();
+  const aliasValue = trimmed && trimmed.length > 0 ? trimmed : null;
+
+  const supa = serviceClient(c.env);
+  const { data, error } = await supa
+    .from('user_contacts')
+    .update({ alias: aliasValue })
+    .eq('user_id', userId)
+    .eq('contact_user_id', contactUserId)
+    .select('contact_user_id');
+  if (error) return c.json({ error: 'database', detail: error.message }, 500);
+  if (!data || data.length === 0) {
+    return c.json({ error: '不是好友,无法设置备注' }, 404);
+  }
+  return c.json({ ok: true, alias: aliasValue });
+});
+
 // GET /v1/contacts/conv-peer/:convId — resolve the other user's display
 // info for a user_user conversation. Caller must already be a participant
 // (RLS on `pendingbot.users` is self-only, so iOS can't read this directly

@@ -634,7 +634,7 @@ private struct GroupAddFriendSheet: View {
     let onClose: (_ sentSuccessfully: Bool) -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @State private var remark: String = ""
+    @State private var verifyMessage: String = ""
     @State private var sending = false
     @State private var error: String?
 
@@ -642,8 +642,9 @@ private struct GroupAddFriendSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("备注", text: $remark)
-                        .textInputAutocapitalization(.never)
+                    TextField("验证信息（可选）", text: $verifyMessage, axis: .vertical)
+                        .textInputAutocapitalization(.sentences)
+                        .lineLimit(1...3)
                 } header: {
                     Text("加他好友？")
                 } footer: {
@@ -693,7 +694,7 @@ private struct GroupAddFriendSheet: View {
         // /v1/friend-requests POST handler in apps/edge/src/routes/.
         struct Body: Encodable {
             let peerUserId: String
-            let remark: String?
+            let message: String?
         }
         do {
             let url = HostedConfig.environment.workerURL
@@ -703,10 +704,10 @@ private struct GroupAddFriendSheet: View {
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
             let token = try await SupabaseStack.shared.auth.session.accessToken
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            let trimmed = remark.trimmingCharacters(in: .whitespaces)
+            let trimmed = verifyMessage.trimmingCharacters(in: .whitespaces)
             req.httpBody = try JSONEncoder().encode(Body(
                 peerUserId: targetUserId,
-                remark: trimmed.isEmpty ? nil : trimmed,
+                message: trimmed.isEmpty ? nil : trimmed,
             ))
             let (data, resp) = try await URLSession.shared.data(for: req)
             guard let http = resp as? HTTPURLResponse else { throw URLError(.badServerResponse) }

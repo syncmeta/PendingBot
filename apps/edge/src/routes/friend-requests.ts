@@ -12,8 +12,11 @@ import type { AppBindings } from '../types';
 //                                  only the two display fields by design —
 //                                  no email, no created_at, no other PII.
 //   POST /                — A creates a pending request to B by handle.
-//                           Optional `remark` becomes A's user_contacts.alias
-//                           for B once B accepts.
+//                           Optional `message` is the verification text B
+//                           sees alongside the request (WeChat-style). The
+//                           legacy `remark` body field is still accepted as
+//                           a fallback alias-on-accept path but is no longer
+//                           how iOS surfaces the entry.
 //   GET  /                — list my incoming + outgoing
 //   POST /:id/accept      — B accepts; RPC writes user_contacts both ways
 //   POST /:id/decline     — B declines; row stays for audit
@@ -21,8 +24,9 @@ import type { AppBindings } from '../types';
 //
 // Writes go through service-role; the RLS on friend_requests only exposes
 // SELECT to either party. The accept side-effect (symmetric user_contacts
-// rows + remark→alias copy) lives in pendingbot.accept_friend_request —
-// see migrations 0046 / 0049 / 0061.
+// rows) lives in pendingbot.accept_friend_request — see migrations
+// 0046 / 0049 / 0061. Aliases for an existing contact are set separately
+// via PATCH /v1/contacts/:contactUserId.
 
 export const friendRequestRoutes = new Hono<AppBindings>();
 friendRequestRoutes.use('*', requireSession());
@@ -31,10 +35,16 @@ friendRequestRoutes.use('*', requireSession());
 // scans, or peer-id-based add (`peerUserId`) for the in-group "加他好友"
 // flow where iOS already knows the user_id from the participants list.
 // Exactly one must be provided.
+//
+// `message` is the verification text the recipient sees before accepting
+// (WeChat-style). `remark` is the legacy field that became the sender's
+// alias-on-accept; kept for backward compat but iOS no longer surfaces it
+// from the add-friend sheet — aliases are set later via PATCH /contacts/:id.
 const CreateBody = z
   .object({
     handleValue: z.string().min(4).max(64).optional(),
     peerUserId: z.string().uuid().optional(),
+    message: z.string().max(200).optional(),
     remark: z.string().max(64).optional(),
   })
   .refine(
@@ -118,6 +128,7 @@ friendRequestRoutes.post('/', async (c) => {
   if (targetUserId === userId) return c.json({ error: '不能加自己' }, 400);
 
   const remark = parsed.remark?.trim() || null;
+  const message = parsed.message?.trim() || null;
 
   // Already contacts → 200 with `alreadyContacts: true`. iOS surfaces this as
   // "你们已经是好友" and routes to the existing chat instead of asking again.
@@ -170,6 +181,7 @@ friendRequestRoutes.post('/', async (c) => {
       from_user_id: userId,
       to_user_id: targetUserId,
       status: 'pending',
+      message,
       remark_for_contact: remark,
       via_handle_id: viaHandleId,
     })
