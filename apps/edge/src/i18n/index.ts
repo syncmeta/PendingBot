@@ -36,3 +36,6 @@ export {
   type Dictionary,
   type Locale,
 } from './types';
+export { resolveLocale } from './locale';
+export { loadPrompt, ensurePromptsLoaded, getPromptSync, getBundledPrompt, invalidatePromptCache } from './prompts';
+export { PROMPT_NAMES, PROMPT_DESCRIPTIONS, type PromptName } from '../llm/prompt-names';
