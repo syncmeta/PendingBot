@@ -108,13 +108,9 @@ async function loadSessionContext(
     };
   }
   const supaService = serviceClient(env);
-  // bots.voice_call_enabled / voice_call_provider are new columns; schema.ts
-  // hasn't been regen'd, so the select string is cast to never for now.
   const { data: bot } = await supaService
     .from('bots')
-    .select(
-      'id, display_name, output_mode, voice_call_enabled, voice_call_provider' as never,
-    )
+    .select('id, display_name, output_mode, voice_call_enabled, voice_call_provider')
     .eq('id', conv.bot_id)
     .maybeSingle();
   if (!bot) {
@@ -667,11 +663,9 @@ realtimeRoutes.post('/transcripts', async (c) => {
       ts: t.ts,
     },
   }));
-  // Cast: schema.ts hasn't been regen'd for the new messages.metadata
-  // column yet; the cast clears once the user applies the migration.
   const { error } = await supaService
     .from('messages')
-    .insert(rows as never);
+    .insert(rows);
   if (error) {
     console.warn('[realtime/transcripts] insert failed', error.message);
     return c.json({ error: 'database', detail: error.message }, 500);

@@ -227,13 +227,9 @@ export async function resolveRoute(
   // is registered as a canonical model, "the same string also happens
   // to be a provider_model_id somewhere" should not override the
   // curated routing decision.
-  // Double cast through unknown because schema.ts hasn't been regen'd
-  // after the voice-call migration adds audio_*_price columns. Once the
-  // user applies the migration and reruns `supabase gen types`, the
-  // direct `as AliasJoinRow[]` cast will be valid again.
-  const merged = [...((byCanonical as unknown as AliasJoinRow[] | null) ?? [])];
+  const merged = [...((byCanonical as AliasJoinRow[] | null) ?? [])];
   if (merged.length === 0) {
-    merged.push(...((byPassthrough as unknown as AliasJoinRow[] | null) ?? []));
+    merged.push(...((byPassthrough as AliasJoinRow[] | null) ?? []));
   }
   const picked = pickAlias(merged, {
     preferProvider,
@@ -456,10 +452,9 @@ export async function recordAudit(
     cache_write_tokens: opts.cacheWriteTokens ?? 0,
     est_input_tokens: opts.estInputTokens ?? null,
     est_output_tokens: opts.estOutputTokens ?? null,
-    // Audio dims (cast: schema.ts regen pending the voice-call migration apply).
-    audio_input_tokens: audioInputTokens as never,
-    audio_output_tokens: audioOutputTokens as never,
-    audio_seconds_billed: audioSecondsBilled as never,
+    audio_input_tokens: audioInputTokens,
+    audio_output_tokens: audioOutputTokens,
+    audio_seconds_billed: audioSecondsBilled,
     total_tokens: total,
     // cost_usd stays LLM-only for dashboard continuity. tool_cost_usd
     // breaks out the web-tool spend; cost_credits below is the

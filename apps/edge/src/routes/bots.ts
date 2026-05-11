@@ -54,8 +54,10 @@ botRoutes.patch('/:id', async (c) => {
     return c.json({ error: '只能改自己创建的私有机器人' }, 403);
   }
 
-  // Build partial update — only the keys the client actually sent. Cast
-  // covers voice_call_* until schema.ts is regen'd post-migration.
+  // Build partial update — only the keys the client actually sent.
+  // The Record/never cast covers the partial-builder pattern: each
+  // typed key on its own would satisfy the supabase Update generic,
+  // but a Record<string, unknown> bag won't unify without help.
   const update: Record<string, unknown> = {
     updated_at: new Date().toISOString(),
   };
