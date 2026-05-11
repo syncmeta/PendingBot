@@ -6,9 +6,15 @@ import Supabase
 /// "请这位机器人写信给你" (kick off bot envelope) to "给对方写信"
 /// (open the markdown editor sheet). Mirrors what `peerProfileForBubble`
 /// produces in ConversationView.
-struct LetterRecipient: Equatable, Hashable {
+///
+/// `Identifiable` via `userId` so the compose sheet can be driven by
+/// `.sheet(item:)` from a stable parent — the prior `.sheet(isPresented:)`
+/// attached inside a conditional sub-view would auto-dismiss on first
+/// open because the conditional re-evaluated when the bool flipped.
+struct LetterRecipient: Equatable, Hashable, Identifiable {
     let userId: String
     let displayName: String
+    var id: String { userId }
 }
 
 /// Per-conversation settings page — pushed from the gear icon in the chat
@@ -58,7 +64,11 @@ struct ConversationSettingsView: View {
     @State private var triggerError: String?
 
     // ── 给对方写信 / human letter compose ────────────────────────────────
-    @State private var showingLetterCompose: Bool = false
+    // Driven via `.sheet(item:)` from the outer body so that flipping the
+    // entry-point button doesn't fight the conditional `if let recipient`
+    // inside `envelopeSection` (which used to dismiss the sheet on its
+    // first open).
+    @State private var letterTarget: LetterRecipient? = nil
     @State private var sendingLetter: Bool = false
 
     // ── Lookback 笔记 ─────────────────────────────────────────────────────
@@ -190,6 +200,13 @@ struct ConversationSettingsView: View {
         .alert("出错", isPresented: .constant(triggerError != nil)) {
             Button("好") { triggerError = nil }
         } message: { Text(triggerError ?? "") }
+        .sheet(item: $letterTarget) { recipient in
+            LetterComposeSheet(recipient: recipient) { title, bodyMd in
+                await sendHumanLetter(title: title, bodyMd: bodyMd)
+            }
+            .presentationDragIndicator(.visible)
+            .tint(Theme.Palette.accent)
+        }
         .sheet(isPresented: $showModelPicker) {
             ModelPickerSheet(
                 initial: modelOverride,
@@ -320,7 +337,7 @@ struct ConversationSettingsView: View {
     private func humanLetterSection(recipient: LetterRecipient) -> some View {
         Section {
             Button {
-                showingLetterCompose = true
+                letterTarget = recipient
             } label: {
                 HStack {
                     Image(systemName: "square.and.pencil")
@@ -338,13 +355,6 @@ struct ConversationSettingsView: View {
             Text("来信 / Envelopes")
         } footer: {
             Text("写一封 markdown 信给「\(recipient.displayName)」，发出后对方会在自己的「来信」选项卡里看到。")
-        }
-        .sheet(isPresented: $showingLetterCompose) {
-            LetterComposeSheet(recipient: recipient) { title, bodyMd in
-                await sendHumanLetter(title: title, bodyMd: bodyMd)
-            }
-            .presentationDragIndicator(.visible)
-            .tint(Theme.Palette.accent)
         }
     }
 
