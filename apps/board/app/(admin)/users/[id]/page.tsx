@@ -107,6 +107,7 @@ export default async function UserDetailPage({
                   label="立即彻底删除"
                   pendingLabel="正在删除…"
                   confirmText={`确定立即彻底删除 ${user.email ?? user.display_name} 的账号和所有数据？此操作不可撤销。`}
+                  successHref="/users"
                 />
                 <ConfirmDeletionAction
                   action={cancelPendingDeletion}
@@ -129,6 +130,7 @@ export default async function UserDetailPage({
                 label="立即彻底删除（无冷静期）"
                 pendingLabel="正在删除…"
                 confirmText={`确定立即彻底删除 ${user.email ?? user.display_name} 的账号和所有数据？此操作不可撤销。`}
+                successHref="/users"
               />
             </>
           )}

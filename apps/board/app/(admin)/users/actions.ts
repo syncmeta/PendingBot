@@ -145,31 +145,34 @@ export async function grantCredits(
   return { ok: { credits, new_balance: Number(newBalance ?? 0) } };
 }
 
+export type DeletionActionResult = { ok?: true; error?: string };
+
 /// Force-finalize a user's account, bypassing the 28-day cooldown. Calls
 /// finalize_account_deletion(p_uid, p_force=true) which:
 ///   • logs the user's stored sentiment to account_deletion_log (if any),
 ///   • runs _delete_account_internal (cascading wipe + auth.users delete).
-/// After this, the user row is gone — there's nothing left on the
-/// /users/<id> page, so we redirect back to /users.
-export async function forceDeleteAccount(userId: string) {
+///
+/// Returns the result instead of redirecting — the client wrapper alerts
+/// on error and navigates on success. (Older revisions swallowed the RPC
+/// error silently: the button just looked dead.)
+export async function forceDeleteAccount(
+  userId: string,
+): Promise<DeletionActionResult> {
   const admin = await requireAdmin();
   const supa = supabaseAdmin();
 
-  // Snapshot the row for the audit entry before it disappears.
   const { data: before } = await supa
     .from('users')
     .select('id, email, display_name, pending_deletion_at, pending_deletion_sentiment')
     .eq('id', userId)
     .maybeSingle();
-  if (!before) return;
+  if (!before) return { error: '用户不存在' };
 
   const { error } = await supa.rpc('finalize_account_deletion', {
     p_uid: userId,
     p_force: true,
   });
   if (error) {
-    // Surface in the audit trail so we can debug; the redirect still
-    // happens to /users (the page will just show the user still there).
     await audit({
       action: 'user.force_delete_failed',
       targetId: userId,
@@ -177,7 +180,7 @@ export async function forceDeleteAccount(userId: string) {
       after: { error: error.message },
       actorId: admin.id,
     });
-    return;
+    return { error: error.message };
   }
 
   await audit({
@@ -188,13 +191,15 @@ export async function forceDeleteAccount(userId: string) {
     actorId: admin.id,
   });
   revalidatePath('/users');
-  redirect('/users');
+  return { ok: true };
 }
 
 /// Clear a user's pending-deletion tombstone from the board. Mostly an
 /// escape hatch: the user normally cancels their own tombstone by
 /// signing back in, but support might need to do it on their behalf.
-export async function cancelPendingDeletion(userId: string) {
+export async function cancelPendingDeletion(
+  userId: string,
+): Promise<DeletionActionResult> {
   const admin = await requireAdmin();
   const supa = supabaseAdmin();
   const { data: before } = await supa
@@ -202,9 +207,9 @@ export async function cancelPendingDeletion(userId: string) {
     .select('pending_deletion_at, pending_deletion_sentiment')
     .eq('id', userId)
     .maybeSingle();
-  if (!before?.pending_deletion_at) return;
+  if (!before?.pending_deletion_at) return { error: '该用户没有待注销标记' };
 
-  await supa
+  const { error } = await supa
     .from('users')
     .update({
       pending_deletion_at: null,
@@ -212,6 +217,7 @@ export async function cancelPendingDeletion(userId: string) {
       updated_at: new Date().toISOString(),
     })
     .eq('id', userId);
+  if (error) return { error: error.message };
 
   await audit({
     action: 'user.cancel_pending_deletion',
@@ -222,6 +228,7 @@ export async function cancelPendingDeletion(userId: string) {
   });
   revalidatePath('/users');
   revalidatePath(`/users/${userId}`);
+  return { ok: true };
 }
 
 /// Generate a fresh 6-digit email OTP for a user without sending the
