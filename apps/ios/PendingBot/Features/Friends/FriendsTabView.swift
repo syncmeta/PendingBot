@@ -229,7 +229,7 @@ struct FriendsTabView: View {
                                 case .human(let c):
                                     let selected = sidebarLayout && isSelected(kind: "user", id: c.id)
                                     FriendRow(kind: .human,
-                                              avatarSeed: c.id,
+                                              avatarSeed: c.avatarSeed,
                                               avatarAttachmentId: c.avatarPath,
                                               name: c.rowName,
                                               modelTag: nil,
@@ -299,6 +299,15 @@ struct FriendsTabView: View {
         /// Avatar attachment id if uploaded; nil falls through to the
         /// emoji-glyph deterministic avatar.
         let avatarPath: String?
+        /// Stable per-account seed for the placeholder emoji. Source of
+        /// truth lives in `users.custom_fields.avatar_seed` (set by
+        /// onboarding); the worker's /v1/contacts response includes it
+        /// so every viewer (self / friend / web) hashes the SAME string
+        /// and lands on the same emoji. Falls back to `id` when the peer
+        /// is a legacy account that never bootstrapped — different
+        /// viewers will still pick the same emoji for that user since
+        /// they're hashing the same id.
+        let avatarSeed: String
 
         /// What to render in the row title and pass on to ConversationView
         /// as the header label. Mirrors the chat-header alias > displayName
@@ -317,6 +326,10 @@ struct FriendsTabView: View {
         let peerUserId: String
         let peerDisplayName: String
         let message: String?
+        /// Server-supplied placeholder-emoji seed (peerAvatarSeed in the
+        /// /v1/friend-requests response). Falls back to peerUserId when
+        /// the request comes from a legacy account that never bootstrapped.
+        let peerAvatarSeed: String
     }
 
     /// Unified row type so bots and humans share one alphabetically-sorted
@@ -374,7 +387,8 @@ struct FriendsTabView: View {
                 self.humans = cachedContacts.map {
                     HumanPick(id: $0.id, alias: $0.alias,
                               displayName: $0.display_name,
-                              avatarPath: $0.avatar_path)
+                              avatarPath: $0.avatar_path,
+                              avatarSeed: $0.avatar_seed ?? $0.id)
                 }
             }
         }
@@ -423,7 +437,8 @@ struct FriendsTabView: View {
                     LocalDatabase.ContactRow(
                         id: $0.id, alias: $0.alias,
                         display_name: $0.displayName,
-                        avatar_path: $0.avatarPath
+                        avatar_path: $0.avatarPath,
+                        avatar_seed: $0.avatarSeed
                     )
                 })
             } else {
@@ -471,6 +486,7 @@ struct FriendsTabView: View {
                     let message: String?
                     let peerUserId: String
                     let peerDisplayName: String
+                    let peerAvatarSeed: String?
                 }
                 let requests: [Row]
             }
@@ -482,7 +498,8 @@ struct FriendsTabView: View {
                         ? String(r.peerUserId.prefix(8)) : r.peerDisplayName
                     return PendingFriendRequest(
                         id: r.id, peerUserId: r.peerUserId,
-                        peerDisplayName: name, message: r.message
+                        peerDisplayName: name, message: r.message,
+                        peerAvatarSeed: r.peerAvatarSeed ?? r.peerUserId
                     )
                 }
         } catch {
@@ -755,9 +772,9 @@ private struct FriendRow: View {
 }
 
 /// One pending incoming friend request, with inline 同意 / 拒绝.
-/// Avatar uses the peer's user id as the seed so the same person reads
-/// consistently across the inbox row, the chat header, and bubbles once
-/// the request is accepted.
+/// Avatar uses the peer's server-supplied avatar seed so the same person
+/// reads consistently across the inbox row, the chat header, and bubbles
+/// once the request is accepted.
 private struct FriendRequestRow: View {
     let request: FriendsTabView.PendingFriendRequest
     let onAccept: () -> Void
@@ -765,7 +782,7 @@ private struct FriendRequestRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            UserAvatar(seed: request.peerUserId, attachmentId: nil, size: 36)
+            UserAvatar(seed: request.peerAvatarSeed, attachmentId: nil, size: 36)
             VStack(alignment: .leading, spacing: 4) {
                 Text(request.peerDisplayName)
                     .font(Theme.Fonts.serif(size: 16, weight: .semibold))
@@ -958,7 +975,7 @@ struct AddFriendSheet: View {
     enum Preview: Equatable {
         case idle
         case loading
-        case loaded(userId: String, displayName: String, avatarPath: String?)
+        case loaded(userId: String, displayName: String, avatarPath: String?, avatarSeed: String)
         case notFound(message: String)
     }
 
@@ -1064,9 +1081,9 @@ struct AddFriendSheet: View {
                 ProgressView()
                 Text("正在查找…").foregroundStyle(.secondary).font(.footnote)
             }
-        case .loaded(let userId, let displayName, let avatarPath):
+        case .loaded(let userId, let displayName, let avatarPath, let avatarSeed):
             HStack(spacing: 12) {
-                UserAvatar(seed: userId, attachmentId: avatarPath, size: 44)
+                UserAvatar(seed: avatarSeed, attachmentId: avatarPath, size: 44)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(displayName.isEmpty ? String(userId.prefix(8)) : displayName)
                         .font(.body)
@@ -1124,9 +1141,15 @@ struct AddFriendSheet: View {
                 let userId: String
                 let displayName: String
                 let avatarPath: String?
+                let avatarSeed: String?
             }
             let r = try JSONDecoder().decode(LookupResp.self, from: data)
-            preview = .loaded(userId: r.userId, displayName: r.displayName, avatarPath: r.avatarPath)
+            preview = .loaded(
+                userId: r.userId,
+                displayName: r.displayName,
+                avatarPath: r.avatarPath,
+                avatarSeed: r.avatarSeed ?? r.userId
+            )
         } catch is CancellationError {
             // User kept typing — drop the result silently.
         } catch {

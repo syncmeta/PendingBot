@@ -115,6 +115,14 @@ final class LocalDatabase {
                 t.column("avatar_path", .text)
             }
         }
+        // Placeholder-emoji seed is now server-supplied (worker reads
+        // users.custom_fields.avatar_seed) so it agrees across every
+        // viewer; cache it alongside the rest of the contact row.
+        m.registerMigration("v4_contacts_avatar_seed") { db in
+            try db.alter(table: "contacts") { t in
+                t.add(column: "avatar_seed", .text)
+            }
+        }
         return m
     }
 
@@ -222,6 +230,11 @@ final class LocalDatabase {
         var alias: String?
         var display_name: String
         var avatar_path: String?
+        /// Stable per-account placeholder-emoji seed. Optional only because
+        /// the column was added in a later GRDB migration; rows persisted
+        /// before that migration will have null. Callers should fall back
+        /// to `id` so legacy cached entries still render.
+        var avatar_seed: String?
 
         static let databaseTableName = "contacts"
     }

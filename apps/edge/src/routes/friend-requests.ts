@@ -73,16 +73,22 @@ friendRequestRoutes.get('/lookup', async (c) => {
 
   const { data: profile, error: profErr } = await supa
     .from('users')
-    .select('id, display_name, avatar_path')
+    .select('id, display_name, avatar_path, custom_fields')
     .eq('id', handle.user_id as string)
     .maybeSingle();
   if (profErr) return c.json({ error: 'database', detail: profErr.message }, 500);
   if (!profile) return c.json({ error: '号码无效或已撤销' }, 404);
 
+  const cf = profile.custom_fields as Record<string, unknown> | null;
+  const seed = (typeof cf?.avatar_seed === 'string' && cf.avatar_seed.length > 0)
+    ? cf.avatar_seed
+    : (profile.id as string);
+
   return c.json({
     userId: profile.id as string,
     displayName: (profile.display_name as string | null) ?? '',
     avatarPath: (profile.avatar_path as string | null) ?? null,
+    avatarSeed: seed,
   });
 });
 
@@ -229,16 +235,25 @@ friendRequestRoutes.get('/', async (c) => {
   const peerIds = Array.from(
     new Set((rows ?? []).map((r) => (r.from_user_id === userId ? r.to_user_id : r.from_user_id))),
   );
-  let profilesById: Record<string, { display_name: string; avatar_path: string | null }> = {};
+  let profilesById: Record<string, {
+    display_name: string;
+    avatar_path: string | null;
+    avatar_seed: string;
+  }> = {};
   if (peerIds.length > 0) {
     const { data: profiles } = await supa
       .from('users')
-      .select('id, display_name, avatar_path')
+      .select('id, display_name, avatar_path, custom_fields')
       .in('id', peerIds);
     for (const p of profiles ?? []) {
+      const cf = p.custom_fields as Record<string, unknown> | null;
+      const seed = (typeof cf?.avatar_seed === 'string' && cf.avatar_seed.length > 0)
+        ? cf.avatar_seed
+        : (p.id as string);
       profilesById[p.id as string] = {
         display_name: (p.display_name as string) ?? '',
         avatar_path: (p.avatar_path as string | null) ?? null,
+        avatar_seed: seed,
       };
     }
   }
@@ -258,6 +273,7 @@ friendRequestRoutes.get('/', async (c) => {
       peerUserId: peerId,
       peerDisplayName: profile?.display_name ?? '',
       peerAvatarPath: profile?.avatar_path ?? null,
+      peerAvatarSeed: profile?.avatar_seed ?? (peerId as string),
     };
   });
 

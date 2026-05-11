@@ -473,7 +473,7 @@ private struct HandleContactsView: View {
                 } else {
                     ForEach(contacts) { c in
                         HStack(spacing: 10) {
-                            UserAvatar(seed: c.id, attachmentId: c.avatarPath, size: 32)
+                            UserAvatar(seed: c.avatarSeed, attachmentId: c.avatarPath, size: 32)
                             Text(c.rowName)
                                 .font(Theme.Fonts.serif(size: 16, weight: .semibold))
                                 .foregroundStyle(Theme.Palette.ink)

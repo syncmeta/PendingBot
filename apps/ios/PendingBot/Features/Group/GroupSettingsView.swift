@@ -311,8 +311,8 @@ struct GroupSettingsView: View {
             BotAvatar(emojiSeed: m.botId ?? m.id,
                       colorSeed: conversationId,
                       size: size)
-        } else if let uid = m.userId {
-            UserAvatar(seed: uid, attachmentId: m.avatarPath, size: size)
+        } else if m.userId != nil {
+            UserAvatar(seed: m.avatarSeed, attachmentId: m.avatarPath, size: size)
         } else {
             BotAvatar(emojiSeed: m.id, colorSeed: conversationId, size: size)
         }
@@ -436,17 +436,19 @@ struct GroupSettingsView: View {
                 .in("id", values: botIds)
                 .execute()
                 .value
-            async let userNamesResp: [UserNameDecodable] = userIds.isEmpty ? [] : SupabaseStack.shared
-                .from("users")
-                .select("id, display_name, avatar_path")
-                .in("id", values: userIds)
-                .execute()
-                .value
+            // pendingbot.users RLS is self-only — a direct supabase query
+            // would return ONLY the caller's row and every other member
+            // would silently fall back to id-prefix. Routing through the
+            // worker (service-role) gives us display_name + avatar_path
+            // + avatar_seed for everyone in the group.
+            async let userInfoResp: [String: (String, String?, String)] =
+                userIds.isEmpty
+                    ? [:]
+                    : fetchMemberProfiles(conversationId: conversationId, userIds: userIds)
 
             let botNames = Dictionary(uniqueKeysWithValues:
                 (try await botNamesResp).map { ($0.id, $0.display_name) })
-            let userInfo = Dictionary(uniqueKeysWithValues:
-                (try await userNamesResp).map { ($0.id, ($0.display_name, $0.avatar_path)) })
+            let userInfo = await userInfoResp
 
             let me = parts.first(where: { $0.participant_type == "user" && $0.participant_id == myUserId })
 
@@ -465,6 +467,9 @@ struct GroupSettingsView: View {
                     return String(p.participant_id.prefix(8))
                 }()
                 let avatarPath = isBot ? nil : userInfo[p.participant_id]?.1 ?? nil
+                let avatarSeed = isBot
+                    ? p.participant_id
+                    : (userInfo[p.participant_id]?.2 ?? p.participant_id)
                 let frozen = !isBot && (billingByUser[p.participant_id]?.overdrawn ?? false)
                 return Member(
                     id: "\(p.participant_type):\(p.participant_id)",
@@ -473,6 +478,7 @@ struct GroupSettingsView: View {
                     userId: isBot ? nil : p.participant_id,
                     displayLabel: label,
                     avatarPath: avatarPath,
+                    avatarSeed: avatarSeed,
                     role: p.role,
                     isOwner: p.role == "owner",
                     frozen: frozen,
@@ -579,6 +585,11 @@ struct GroupSettingsView: View {
         let userId: String?
         let displayLabel: String
         let avatarPath: String?
+        /// Server-supplied placeholder-emoji seed (users.custom_fields
+        /// .avatar_seed). Always the same value for a given user across
+        /// every viewer's device, so the same person renders the same
+        /// emoji everywhere.
+        let avatarSeed: String
         let role: String
         let isOwner: Bool
         let frozen: Bool
@@ -615,10 +626,50 @@ struct GroupSettingsView: View {
         let display_name: String
     }
 
-    private struct UserNameDecodable: Decodable {
-        let id: String
-        let display_name: String
-        let avatar_path: String?
+    /// Bulk-fetch member profile data through the worker. The worker
+    /// gates on shared-conversation membership and reads via service-role
+    /// so it can return rows for users other than the caller (which a
+    /// direct supabase query can't, since pendingbot.users RLS is
+    /// self-only). Returns map: user_id → (display_name, avatar_path,
+    /// avatar_seed). On failure returns empty so the caller falls back
+    /// to id-prefix rendering.
+    private func fetchMemberProfiles(
+        conversationId: String,
+        userIds: [String]
+    ) async -> [String: (String, String?, String)] {
+        guard !userIds.isEmpty else { return [:] }
+        do {
+            let url = HostedConfig.environment.workerURL
+                .appendingPathComponent("v1/contacts/profiles")
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            let token = try await SupabaseStack.shared.auth.session.accessToken
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            req.httpBody = try JSONSerialization.data(withJSONObject: [
+                "conversationId": conversationId,
+                "userIds": userIds,
+            ])
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                return [:]
+            }
+            struct Payload: Decodable {
+                struct Row: Decodable {
+                    let userId: String
+                    let displayName: String
+                    let avatarPath: String?
+                    let avatarSeed: String?
+                }
+                let profiles: [Row]
+            }
+            let payload = try JSONDecoder().decode(Payload.self, from: data)
+            return Dictionary(uniqueKeysWithValues: payload.profiles.map {
+                ($0.userId, ($0.displayName, $0.avatarPath, $0.avatarSeed ?? $0.userId))
+            })
+        } catch {
+            return [:]
+        }
     }
 }
 
