@@ -30,6 +30,11 @@ import { resolveLocale } from '../i18n/locale';
 import { t } from '../i18n/index';
 import { UUID_RE } from '../lib/ids';
 import {
+  endRealtimeSession,
+  recordRealtimeSession,
+  requireActiveSession,
+} from '../lib/realtime-sessions';
+import {
   checkOpenAIRegion,
   OPENAI_SUPPORTED_URL,
 } from '../lib/openai-regions';
@@ -304,6 +309,9 @@ realtimeRoutes.post('/session', async (c) => {
   const sessionId = crypto.randomUUID();
   return await mintOpenAISession(c.env, locale, {
     sessionId,
+    userId,
+    conversationId: parsed.conversation_id,
+    botId: ctx.bot.id,
     route,
     instructions,
     balanceCredits,
@@ -313,6 +321,9 @@ realtimeRoutes.post('/session', async (c) => {
 
 interface MintArgs {
   sessionId: string;
+  userId: string;
+  conversationId: string;
+  botId: string;
   route: Awaited<ReturnType<typeof resolveRoute>>;
   instructions: string;
   balanceCredits: number;
@@ -411,6 +422,19 @@ async function mintOpenAISession(
     console.warn('[realtime/session] openai response missing client_secret', data);
     return jsonError(502, 'upstream_error', t('voice.upstream_failed', locale));
   }
+
+  // Bind session_id to (user, conversation, bot) so /usage /transcripts
+  // /end can't be replayed across users or after termination. Failure
+  // here is logged but non-fatal — the call still works, just without
+  // server-side replay protection. recordRealtimeSession itself logs.
+  await recordRealtimeSession(env, {
+    session_id: args.sessionId,
+    user_id: args.userId,
+    conversation_id: args.conversationId,
+    bot_id: args.botId,
+    openai_session_id: data.session?.id ?? data.id ?? null,
+  });
+
   return Response.json({
     session_id: args.sessionId,
     client_secret: { value: clientSecret, expires_at: expiresAt },
@@ -459,6 +483,17 @@ realtimeRoutes.post('/usage', async (c) => {
     parsed = UsageBody.parse(await c.req.json());
   } catch (err) {
     return c.json({ error: 'invalid_body', detail: String(err) }, 400);
+  }
+
+  // Replay protection. The session_id MUST map to a row in
+  // realtime_sessions, owned by the caller, not closed, not aged out.
+  // We then trust the conversation_id from that row, not from the
+  // request body — guards against a caller forging a body that names
+  // a different conversation than the session was minted for.
+  const sessGate = await requireActiveSession(c.env, parsed.session_id, userId);
+  if (!sessGate.ok) return c.json(sessGate.body, sessGate.status);
+  if (sessGate.session.conversation_id !== parsed.conversation_id) {
+    return c.json({ error: 'session_conversation_mismatch' }, 403);
   }
 
   const loaded = await loadSessionContext(
@@ -592,6 +627,16 @@ realtimeRoutes.post('/transcripts', async (c) => {
     return c.json({ error: 'invalid_body', detail: String(err) }, 400);
   }
 
+  // Same gate as /usage — every persistence call must be on a still-
+  // active session owned by the caller. user_id and bot_id used in the
+  // rows below come from the session row, not the request body.
+  const sessGate = await requireActiveSession(c.env, parsed.session_id, userId);
+  if (!sessGate.ok) return c.json(sessGate.body, sessGate.status);
+  if (sessGate.session.conversation_id !== parsed.conversation_id) {
+    return c.json({ error: 'session_conversation_mismatch' }, 403);
+  }
+  const session = sessGate.session;
+
   const loaded = await loadSessionContext(
     c.env,
     userId,
@@ -600,7 +645,6 @@ realtimeRoutes.post('/transcripts', async (c) => {
     locale,
   );
   if (!loaded.ok) return c.json(loaded.body, loaded.status);
-  const ctx = loaded.ctx;
   if (parsed.turns.length === 0) return c.json({ inserted: 0 });
 
   // Sort by ts ascending so the bubble order matches the live call. The
@@ -616,8 +660,8 @@ realtimeRoutes.post('/transcripts', async (c) => {
     role: t.role,
     status: 'done',
     content: t.content,
-    user_id: t.role === 'user' ? ctx.userId : null,
-    sender_bot_id: t.role === 'bot' ? ctx.bot.id : null,
+    user_id: t.role === 'user' ? session.user_id : null,
+    sender_bot_id: t.role === 'bot' ? session.bot_id : null,
     metadata: {
       source: 'voice_call',
       session_id: parsed.session_id,
@@ -650,9 +694,6 @@ const EndBody = z.object({
 
 realtimeRoutes.post('/end', async (c) => {
   const userId = c.var.userId!;
-  const userJwt = c.var.userJwt!;
-  const supaUser = userClient(c.env, userJwt);
-  const locale = await resolveLocale(c.req.raw, supaUser, userId);
 
   let parsed: z.infer<typeof EndBody>;
   try {
@@ -660,13 +701,18 @@ realtimeRoutes.post('/end', async (c) => {
   } catch (err) {
     return c.json({ error: 'invalid_body', detail: String(err) }, 400);
   }
-  const loaded = await loadSessionContext(
-    c.env,
-    userId,
-    userJwt,
-    parsed.conversation_id,
-    locale,
-  );
-  if (!loaded.ok) return c.json(loaded.body, loaded.status);
+
+  // Idempotent — calling /end twice or for an already-aged-out session
+  // returns ok. We only reject when the session doesn't exist at all
+  // or belongs to another caller (don't help an attacker confirm
+  // someone else's session_id).
+  const sessGate = await requireActiveSession(c.env, parsed.session_id, userId);
+  if (!sessGate.ok && sessGate.status === 403) {
+    return c.json(sessGate.body, sessGate.status);
+  }
+  if (sessGate.ok && sessGate.session.conversation_id !== parsed.conversation_id) {
+    return c.json({ error: 'session_conversation_mismatch' }, 403);
+  }
+  await endRealtimeSession(c.env, parsed.session_id);
   return c.json({ ok: true });
 });

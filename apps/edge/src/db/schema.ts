@@ -1571,6 +1571,51 @@ export type Database = {
         }
         Relationships: []
       }
+      realtime_sessions: {
+        Row: {
+          bot_id: string
+          conversation_id: string
+          created_at: string
+          ended_at: string | null
+          openai_session_id: string | null
+          session_id: string
+          user_id: string
+        }
+        Insert: {
+          bot_id: string
+          conversation_id: string
+          created_at?: string
+          ended_at?: string | null
+          openai_session_id?: string | null
+          session_id: string
+          user_id: string
+        }
+        Update: {
+          bot_id?: string
+          conversation_id?: string
+          created_at?: string
+          ended_at?: string | null
+          openai_session_id?: string | null
+          session_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "realtime_sessions_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "bots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "realtime_sessions_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       redemption_codes: {
         Row: {
           batch_label: string | null
