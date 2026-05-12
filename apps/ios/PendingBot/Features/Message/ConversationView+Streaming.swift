@@ -4,61 +4,33 @@ import SwiftUI
 
 private let streamingLog = Logger.category("ConversationView.Streaming")
 
-// Streaming reveal smoother + bubble emission router.
+// Bubble emission router.
 //
-// Two surfaces:
-//   • applyBubbleEmissions / applyDirect — translate the SSE event
-//     stream (begin / append / end / turn-done / error) into local
-//     ChatMessage mutations.
-//   • startRevealTaskIfNeeded / flushRevealImmediately — paced
-//     typewriter that drains the head-buffer at ~60 fps so a fast
-//     LLM stream doesn't render as a single jump.
+// Tokens land on the bubble as fast as they arrive from the SSE stream
+// — no paced typewriter. The BubbleSplitter (BubbleSplitter.swift) still
+// decides whether a bubble streams or pops in whole: short replies
+// (< BUBBLE_OVERFLOW_CHARS before delimiter / end-of-turn) emit as
+// .begin(.complete, content); longer ones promote to .begin(.streaming,
+// head-buffer) once enough text has accumulated, and subsequent .append
+// events extend the live bubble's tail.
 //
-// Reveal-task tuning lives here too (revealCharsPerSec /
-// revealMaxBehindSec) as ConversationView-scoped statics — kept on
-// the type so the timing parameters stay co-located with the loop
-// that uses them.
+// The cursor's blink mode is driven by an idle debounce: actively
+// flowing tokens → solid, ~350 ms with no new token → blink. The
+// debounce Task lives in `revealTask`.
 
 extension ConversationView {
 
-    /// Tuning: nominal reveal rate. ~60 tokens/sec × ~3 chars/token =
-    /// 180 chars/sec across mixed CJK / ASCII content. Anything slower
-    /// than the live stream means the typewriter falls behind and the
-    /// visible reveal jumps to the canonical row when Realtime lands.
-    /// The adaptive drain in startRevealTaskIfNeeded still catches up
-    /// when the provider bursts faster than this, so the floor here is
-    /// "no slower than".
-    static let revealCharsPerSec: Double = 180
-
-    /// Cap on how far the visible reveal is allowed to lag behind the
-    /// live stream. Anything queued beyond this many seconds of
-    /// base-rate output is drained on the current frame.
-    static let revealMaxBehindSec: Double = 0.1
+    /// How long to wait with no .append before flipping the cursor into
+    /// blink mode. Shorter than the blink period so the user sees at
+    /// least one blink cycle before tokens land again.
+    static let cursorBlinkAfterIdle: TimeInterval = 0.35
 
     /// Translate a batch of SSE-derived bubble events into local
-    /// ChatMessage mutations.
-    ///
-    /// Streaming bubbles get routed through the reveal smoother:
-    /// `.begin` appends an empty bubble and stashes the head buffer
-    /// for paced reveal; subsequent `.append` events feed that
-    /// buffer; events that belong to *other* bubbles get queued
-    /// behind so the next bubble doesn't appear before the typewriter
-    /// is done.
+    /// ChatMessage mutations. Events are applied in order, immediately;
+    /// no queueing because the splitter ends one bubble before beginning
+    /// the next.
     func applyBubbleEmissions(_ events: [BubbleEmission]) {
         for evt in events {
-            if let target = revealTargetId {
-                switch evt {
-                case .append(let id, let delta) where "live-\(id.uuidString)" == target:
-                    revealBuffer += delta
-                    continue
-                case .end(let id) where "live-\(id.uuidString)" == target:
-                    revealEnded = true
-                    continue
-                default:
-                    pendingEmissions.append(evt)
-                    continue
-                }
-            }
             applyDirect(evt)
         }
     }
@@ -67,13 +39,12 @@ extension ConversationView {
         switch evt {
         case .begin(let id, let mode, let content):
             let key = "live-\(id.uuidString)"
-            let initial = mode == .streaming ? "" : content
             messages.append(ChatMessage(
                 id: key,
                 conversation_id: conversation.id,
                 sender_type: "bot",
                 sender_id: conversation.bot_id,
-                content: initial,
+                content: content,
                 created_at: Int(Date().timeIntervalSince1970),
                 attachments: nil
             ))
@@ -86,12 +57,11 @@ extension ConversationView {
             }
             if mode == .streaming {
                 revealTargetId = key
-                revealBuffer = content
-                revealEnded = false
+                streamPaused = false
                 // Soft bump on the first streaming bubble so the user
                 // feels the bot start "typing" — matches ChatGPT iOS.
                 Haptics.receive()
-                startRevealTaskIfNeeded()
+                scheduleBlinkAfterIdle()
             }
         case .append(let id, let delta):
             let key = "live-\(id.uuidString)"
@@ -105,8 +75,25 @@ extension ConversationView {
                     attachments: prev.attachments
                 )
             }
-        case .end, .turnDone, .turnInterrupted:
-            break
+            if revealTargetId == key {
+                if streamPaused { streamPaused = false }
+                // Throttled inside Haptics — safe to call per-token.
+                Haptics.streamTick()
+                scheduleBlinkAfterIdle()
+            }
+        case .end(let id):
+            let key = "live-\(id.uuidString)"
+            if revealTargetId == key {
+                revealTargetId = nil
+                streamPaused = false
+                revealTask?.cancel()
+                revealTask = nil
+            }
+        case .turnDone, .turnInterrupted:
+            revealTargetId = nil
+            streamPaused = false
+            revealTask?.cancel()
+            revealTask = nil
         case .error(let m):
             // Worker sometimes emits an error event with an empty
             // `message` field (e.g. when the underlying error stringifies
@@ -121,120 +108,28 @@ extension ConversationView {
         }
     }
 
-    /// Spin up the 60-fps reveal pump if one isn't already running.
-    /// Drains revealBuffer onto the target bubble at a paced rate, with
-    /// an adaptive overflow drain so a fast LLM doesn't backpressure
-    /// the visible reveal indefinitely. Exits when revealTargetId is
-    /// cleared (turn ended or interrupted).
-    func startRevealTaskIfNeeded() {
-        guard revealTask == nil else { return }
-        // Cursor goes solid the moment a stream takes over the bubble.
-        // The blink only kicks in if we then sit idle waiting for tokens.
-        streamPaused = false
+    /// Restart the idle debounce — after `cursorBlinkAfterIdle` with no
+    /// further .append on the live bubble, flip `streamPaused = true`
+    /// so the cursor switches from solid to TTY-style blink.
+    private func scheduleBlinkAfterIdle() {
+        revealTask?.cancel()
+        let delayNs = UInt64(Self.cursorBlinkAfterIdle * 1_000_000_000)
         revealTask = Task { @MainActor in
-            let frameNs: UInt64 = 16_000_000   // ~60 fps
-            let perFrame = Self.revealCharsPerSec * Double(frameNs) / 1_000_000_000
-            let maxBehindChars = Int(Self.revealCharsPerSec * Self.revealMaxBehindSec)
-            var carry: Double = 0
-            // Empty-buffer dwell time before flipping the cursor into
-            // blink mode. Shorter than the blink period so the user sees
-            // at least one blink cycle before tokens land again.
-            let pauseDelay: TimeInterval = 0.35
-            var idleSince: Date? = nil
-            while !Task.isCancelled, revealTargetId != nil {
-                try? await Task.sleep(nanoseconds: frameNs)
-                carry += perFrame
-                // Catch-up: if buffer holds more than maxBehindChars, drain
-                // the overflow this frame so we don't lag behind a fast LLM.
-                let baseAdvance = Int(carry)
-                let overflow = max(0, revealBuffer.count - maxBehindChars)
-                let advance = baseAdvance + overflow
-                if advance > 0, !revealBuffer.isEmpty, let target = revealTargetId {
-                    carry -= Double(baseAdvance)
-                    let take = min(advance, revealBuffer.count)
-                    let chunk = String(revealBuffer.prefix(take))
-                    revealBuffer.removeFirst(take)
-                    if let idx = messages.lastIndex(where: { $0.id == target }) {
-                        let prev = messages[idx]
-                        messages[idx] = ChatMessage(
-                            id: prev.id, conversation_id: prev.conversation_id,
-                            sender_type: prev.sender_type, sender_id: prev.sender_id,
-                            content: prev.content + chunk,
-                            created_at: prev.created_at,
-                            attachments: prev.attachments
-                        )
-                    }
-                    // Throttled inside Haptics — we can call every frame
-                    // here without flooding the actuator.
-                    Haptics.streamTick()
-                    idleSince = nil
-                    if streamPaused { streamPaused = false }
-                } else if revealBuffer.isEmpty && !revealEnded {
-                    // No tokens to drain and the producer hasn't signaled
-                    // end-of-turn — we're between chunks. Flip to blink
-                    // after a short dwell so a one-frame lull doesn't
-                    // visibly toggle the cursor.
-                    let now = Date()
-                    if let since = idleSince {
-                        if !streamPaused, now.timeIntervalSince(since) >= pauseDelay {
-                            streamPaused = true
-                        }
-                    } else {
-                        idleSince = now
-                    }
-                }
-                if revealEnded && revealBuffer.isEmpty {
-                    let queued = pendingEmissions
-                    pendingEmissions.removeAll()
-                    revealTargetId = nil
-                    revealEnded = false
-                    streamPaused = false
-                    revealTask = nil
-                    if !queued.isEmpty {
-                        applyBubbleEmissions(queued)
-                    }
-                    return
-                }
+            try? await Task.sleep(nanoseconds: delayNs)
+            if !Task.isCancelled, revealTargetId != nil {
+                streamPaused = true
             }
-            streamPaused = false
-            revealTask = nil
         }
     }
 
-    /// Skip the typewriter and apply everything pending immediately.
-    /// Called when the user interrupts (Stop button), navigates away,
-    /// or fires another send — they want the full content now, not the
-    /// rest of the animation.
+    /// Tear down any in-flight streaming state — called when the user
+    /// hits Stop, sends another message, or switches conv. With paced
+    /// reveal gone there's no buffer to flush; this just drops the
+    /// cursor + cancels the blink debounce.
     func flushRevealImmediately() {
         revealTask?.cancel()
         revealTask = nil
-        if let target = revealTargetId, !revealBuffer.isEmpty,
-           let idx = messages.lastIndex(where: { $0.id == target }) {
-            let prev = messages[idx]
-            messages[idx] = ChatMessage(
-                id: prev.id, conversation_id: prev.conversation_id,
-                sender_type: prev.sender_type, sender_id: prev.sender_id,
-                content: prev.content + revealBuffer,
-                created_at: prev.created_at,
-                attachments: prev.attachments
-            )
-        }
-        revealBuffer = ""
         revealTargetId = nil
-        revealEnded = false
         streamPaused = false
-        let queued = pendingEmissions
-        pendingEmissions.removeAll()
-        // User wants everything visible now — force-flatten any queued
-        // .begin(streaming) into complete bubbles so we don't kick off
-        // another typewriter for the next bubble in the chain.
-        for evt in queued {
-            switch evt {
-            case .begin(let id, _, let content):
-                applyDirect(.begin(id: id, mode: .complete, content: content))
-            default:
-                applyDirect(evt)
-            }
-        }
     }
 }
