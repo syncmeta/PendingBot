@@ -2,10 +2,12 @@ import { Hono } from 'hono';
 import { requireSession } from '@pendingbot/identity';
 import { serviceClient, userClient } from '../lib/supabase';
 import {
+  DEFAULT_ATTACHMENT_QUOTA_BYTES,
   MAX_UPLOAD_BYTES,
   isSupportedImageMime,
   r2KeyFor,
 } from '../lib/attachments';
+import { getConfigInt } from '../lib/billing';
 import type { AppBindings } from '../types';
 
 export const uploadRoutes = new Hono<AppBindings>();
@@ -64,6 +66,35 @@ uploadRoutes.post('/', async (c) => {
     if (!data) {
       return c.json({ error: 'conversation not found or no access' }, 404);
     }
+  }
+
+  // Per-user storage quota check. Sum live byte_size for this caller
+  // and reject if the new file would tip them over the cap. Cap lives
+  // in billing_config so ops can tune without a deploy; fallback to
+  // DEFAULT_ATTACHMENT_QUOTA_BYTES if the row is missing or the DB
+  // read trips (don't let a transient outage open the gate).
+  const supaForQuota = serviceClient(c.env);
+  const [quotaCfg, usedRes] = await Promise.all([
+    getConfigInt(supaForQuota, 'default_attachment_quota_bytes'),
+    supaForQuota
+      .from('attachments')
+      .select('byte_size')
+      .eq('user_id', userId),
+  ]);
+  const quotaBytes = quotaCfg && quotaCfg > 0 ? quotaCfg : DEFAULT_ATTACHMENT_QUOTA_BYTES;
+  const usedBytes = ((usedRes.data as Array<{ byte_size: number | null }> | null) ?? [])
+    .reduce((sum, r) => sum + (Number(r.byte_size) || 0), 0);
+  if (usedBytes + file.size > quotaBytes) {
+    return c.json(
+      {
+        error: 'quota_exceeded',
+        quota_bytes: quotaBytes,
+        used_bytes: usedBytes,
+        attempted_bytes: file.size,
+        message: '云端附件存储已达上限,请先删除一些旧的附件再试',
+      },
+      413,
+    );
   }
 
   // Allocate id + R2 key. UUID v7 keeps the bucket sortable by time.
