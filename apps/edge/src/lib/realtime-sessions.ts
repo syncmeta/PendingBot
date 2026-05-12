@@ -63,7 +63,7 @@ export async function requireActiveSession(
     return { ok: false, status: 401, body: { error: 'session_not_found' } };
   }
 
-  const session = data as unknown as RealtimeSession;
+  const session: RealtimeSession = data;
 
   if (session.user_id !== callerUserId) {
     return {

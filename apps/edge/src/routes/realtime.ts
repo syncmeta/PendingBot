@@ -61,7 +61,7 @@ interface SessionContext {
   bot: {
     id: string;
     display_name: string;
-    output_mode: string;
+    output_mode: 'single' | 'bubble';
     voice_call_enabled: boolean;
   };
 }
@@ -139,7 +139,9 @@ async function loadSessionContext(
       bot: {
         id: bot.id,
         display_name: bot.display_name,
-        output_mode: bot.output_mode,
+        // CHECK constraint on bots.output_mode permits exactly these two;
+        // schema.ts types the column as plain `string` so we narrow here.
+        output_mode: bot.output_mode === 'bubble' ? 'bubble' : 'single',
         voice_call_enabled: true,
       },
     },
@@ -205,9 +207,8 @@ async function assembleInstructions(
   const sysInput: BuildSystemPromptInput = {
     bot: {
       id: ctx.bot.id,
-      display_name: ctx.bot.display_name,
       output_mode: ctx.bot.output_mode,
-    } as never,
+    },
     botMemory,
     skills,
     botNote,

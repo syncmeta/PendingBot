@@ -176,7 +176,7 @@ export async function requestExecuteCodeTool(
       code,
       reason,
       estimated_seconds: estimated,
-    } as never)
+    })
     .select('id')
     .single();
   if (insert.error || !insert.data) {
@@ -309,7 +309,7 @@ async function pollCodeExecDecision(
       // landed in the same tick.
       await supa
         .from('bot_code_exec_requests')
-        .update({ status: 'timeout', responded_at: new Date().toISOString() } as never)
+        .update({ status: 'timeout', responded_at: new Date().toISOString() })
         .eq('id', requestId)
         .eq('status', 'pending');
       return 'timeout';

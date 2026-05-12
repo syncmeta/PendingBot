@@ -1,5 +1,7 @@
--- Tighten attachments visibility to strict scope (per the May-2026
--- audit decision UX-B).
+-- Tighten attachments visibility to strict scope: an attachment is
+-- visible only to its uploader; cross-user visibility happens via the
+-- worker (GET /v1/uploads/:id) which gates on current conversation
+-- membership + message-not-recalled.
 --
 -- Before: attachments_self_read used
 --   (user_id = auth.uid()) OR is_participant(conversation_id)

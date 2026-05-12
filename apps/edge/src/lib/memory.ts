@@ -306,11 +306,11 @@ async function refreshChatMemo(input: RefreshChatMemoInput): Promise<void> {
     const supa = serviceClient(env);
     const { data: existing } = await supa
       .from('skills')
-      .select('id, body_md' as never)
+      .select('id, body_md')
       .eq('bot_id', botId)
-      .eq('conversation_id' as never, conversationId)
+      .eq('conversation_id', conversationId)
       .is('user_id', null)
-      .maybeSingle<{ id: string; body_md: string }>();
+      .maybeSingle();
 
     const { data: msgs } = await supa
       .from('messages')
@@ -407,7 +407,7 @@ async function refreshChatMemo(input: RefreshChatMemoInput): Promise<void> {
           description: 'Bot private chat memo for this conversation',
         },
         body_md: raw,
-      } as never);
+      });
     }
   } catch (err) {
     console.warn('[memory] refreshChatMemo failed', err);
@@ -437,11 +437,11 @@ export async function getChatMemo(
   const supa = serviceClient(env);
   const { data } = await supa
     .from('skills')
-    .select('body_md' as never)
+    .select('body_md')
     .eq('bot_id', botId)
-    .eq('conversation_id' as never, conversationId)
+    .eq('conversation_id', conversationId)
     .is('user_id', null)
-    .maybeSingle<{ body_md: string }>();
+    .maybeSingle();
   return data?.body_md?.trim() || null;
 }
 

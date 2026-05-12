@@ -2,23 +2,16 @@ import type { Context } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { AppBindings } from '../types';
 
-// Typed error envelope used by every /v1 route. Replaces the old
-// free-shape `c.json({ error: '...', detail?, message? }, status)` that
-// the May-2026 audit flagged as 100+ inconsistent forms — sometimes
-// `error` was a machine code (`invalid_body`), sometimes a human
-// sentence (`'号码无效或已撤销'`), sometimes both via a `message` field.
+// Typed error envelope used by every /v1 route.
 //
 // Shape:
 //   { error: { code: ApiErrorCode, message?: string, detail?: unknown } }
 //
-//   • `code`    — stable snake_case identifier. The vocabulary is the
+//   • `code`    — stable snake_case identifier from the ApiErrorCode
 //                  union below. Adding a code = adding to the union.
-//                  iOS branches on this; future LLM-based error analysis
-//                  reads this. No i18n on the code itself.
-//   • `message` — optional human-readable string (Chinese per product
-//                  default). Currently shown verbatim by iOS; future
-//                  iOS UI may swap to its own localized strings keyed
-//                  by `code` and treat `message` as fallback.
+//                  iOS branches on this. No i18n on the code itself.
+//   • `message` — optional human-readable string, Chinese per product
+//                  default. iOS surfaces verbatim when present.
 //   • `detail`  — optional structured payload (e.g. { quota_bytes,
 //                  used_bytes } for quota_exceeded). Free shape; meant
 //                  for debugging / structured rendering.

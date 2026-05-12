@@ -53,12 +53,6 @@ extension ConversationView {
     /// the bytes for up to a year (Cache-Control: immutable). Without
     /// this call a stolen-but-unlocked device could still surface the
     /// image from local disk after the conversation has scrubbed it.
-    ///
-    /// One day this whole pipeline should move to a custom URLCache
-    /// in an `NSFileProtectionComplete` directory so even non-recalled
-    /// attachments are at-rest-encrypted while the device is locked,
-    /// but that's a larger refactor (custom URLSession for AsyncImage)
-    /// — see follow-up notes.
     func scrubAttachmentCache(_ ids: [String]) {
         guard !ids.isEmpty else { return }
         let workerURL = account?.workerURL ?? HostedConfig.environment.workerURL

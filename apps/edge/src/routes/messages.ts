@@ -95,17 +95,17 @@ messageRoutes.post('/', async (c) => {
   // RLS-gate: user must be a participant of the conversation. We use the
   // user JWT for the read so the gate is RLS-driven, not Worker-trusted.
   const supaUser = userClient(c.env, userJwt);
-  // Cast through unknown — vision_model_override lands in 0064; schema.ts
-  // is regenerated lazily after migrations. Other column accesses on the
-  // returned row (provider_override etc.) stay structurally safe.
   const convRes = await supaUser
     .from('conversations')
-    // provider_override (0038) + model_slug_override (0058) + vision_model_override (0064).
-    .select('id, conversation_type, bot_id, round_count, provider_override, model_slug_override, vision_model_override' as never)
+    .select('id, conversation_type, bot_id, round_count, provider_override, model_slug_override, vision_model_override')
     .eq('id', parsed.conversationId)
     .maybeSingle();
   if (convRes.error) return jsonError(c, 500, 'database_error', { detail: convRes.error.message });
-  const conv = convRes.data as unknown as {
+  // Narrow the conversation_type literal — schema.ts types it as the full
+  // set the CHECK constraint allows; this route only handles the message
+  // surface, so we treat the others (discuss/surf/portrait) the same as
+  // user_bot for routing purposes.
+  const conv = convRes.data as {
     id: string;
     conversation_type: 'user_bot' | 'self' | 'group' | 'user_user';
     bot_id: string | null;
@@ -592,16 +592,11 @@ messageRoutes.post('/start', async (c) => {
   // Atomic conv + participants + user-msg insert. The RPC also gates bot
   // visibility (private creator match, public_invite invite check) using
   // auth.uid(), so failures come back as raised exceptions.
-  //
-  // Cast through `any` because schema.ts is regenerated lazily after each
-  // migration — the new function may not be in the generated union yet.
-  // Worker-edge tsc still catches misspelled arg names because we read the
-  // returned shape below.
-  const rpcResp = await (supaUser.rpc as any)('start_user_bot_turn', {
+  const rpcResp = await supaUser.rpc('start_user_bot_turn', {
     p_bot_id: parsed.botId,
     p_client_message_id: parsed.clientMessageId,
     p_content: parsed.newMessage,
-    p_attachment_ids: parsed.attachmentIds ?? null,
+    p_attachment_ids: parsed.attachmentIds,
   });
   if (rpcResp.error) {
     const msg = rpcResp.error.message || 'start failed';

@@ -211,14 +211,12 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   // conv participant). Cap at 30 to bound prompt size.
   const invRes = await supa
     .from('attachments')
-    .select(
-      'id, summary, tags, summary_status, created_at' as never,
-    )
+    .select('id, summary, tags, summary_status, created_at')
     .eq('conversation_id', conversationId)
     .order('created_at', { ascending: true })
     .limit(30);
   const inventory = (
-    ((invRes.data as unknown) as
+    (invRes.data as
       | Array<{
           id: string;
           summary: string | null;
@@ -286,13 +284,13 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       // the new state (rather than re-querying the whole list).
       const { data: refreshed } = await supa
         .from('attachments')
-        .select('id, summary, tags, summary_status' as never)
+        .select('id, summary, tags, summary_status')
         .in('id', pending);
       const updates = new Map<
         string,
         { summary: string | null; tags: string[]; status: string }
       >();
-      for (const r of ((refreshed as unknown) as Array<{
+      for (const r of (refreshed as Array<{
         id: string;
         summary: string | null;
         tags: string[] | null;
@@ -390,10 +388,8 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       content: text,
       parent_message_id: parentMessageId,
       bubble_group_id: bubbleGroupId,
-      // Cast: schema.ts is regenerated lazily after `supabase db push`; the
-      // citations column lands in 0035 but typed-client doesn't know yet.
       citations: snapshot,
-    } as never);
+    });
     bubblesInserted++;
     emit('bubble', {
       id: bubbleId,

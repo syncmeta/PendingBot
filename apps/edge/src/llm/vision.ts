@@ -237,7 +237,7 @@ export async function summarizeAttachment(
           att.byte_size > MAX_DATA_URL_BYTES
             ? `oversize: ${att.byte_size} bytes (max ${MAX_DATA_URL_BYTES})`
             : 'r2 object missing',
-      } as never)
+      })
       .eq('id', attachmentId);
     return;
   }
@@ -306,7 +306,7 @@ export async function summarizeAttachment(
             text,
           ).slice(0, 200)}`,
           vision_model: picked.slug,
-        } as never)
+        })
         .eq('id', attachmentId);
       return;
     }
@@ -320,7 +320,7 @@ export async function summarizeAttachment(
         summary_status: 'done',
         summary_error: null,
         summarized_at: new Date().toISOString(),
-      } as never)
+      })
       .eq('id', attachmentId);
   } catch (err) {
     const message =
@@ -332,7 +332,7 @@ export async function summarizeAttachment(
         summary_status: 'failed',
         summary_error: message.slice(0, 500),
         vision_model: picked.slug,
-      } as never)
+      })
       .eq('id', attachmentId);
   }
 }

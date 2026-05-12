@@ -160,9 +160,10 @@ uploadRoutes.post('/', async (c) => {
       mime_type: file.type,
       byte_size: file.size,
       content_sha256: contentSha256,
-      // width/height: TODO — generate via image-resizing or embed-meta when
-      // we run thumbnail generation (see plans/.../11-scale-and-ux.md).
-    } as never)
+      // width/height filled in once thumbnail / embed-meta generation
+      // lands (see plans/.../11-scale-and-ux.md). Until then both stay
+      // null, which the iOS image renderer handles.
+    })
     .select('id, r2_key, mime_type, byte_size, created_at')
     .single();
 
@@ -213,7 +214,7 @@ uploadRoutes.post('/', async (c) => {
 
 // GET /v1/uploads/:id — fetch raw bytes.
 //
-// Access model (strict scope, post May-2026 audit):
+// Access model (strict scope):
 //
 //   1. The uploader (attachments.user_id == caller) — always served.
 //   2. A *current* participant of a conversation that has a *non-deleted*

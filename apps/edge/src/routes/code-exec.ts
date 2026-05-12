@@ -60,7 +60,7 @@ codeExecRoutes.post('/:id/respond', async (c) => {
   const newStatus = parsed.decision === 'approve' ? 'approved' : 'denied';
   const { error: updErr } = await supa
     .from('bot_code_exec_requests')
-    .update({ status: newStatus, responded_at: new Date().toISOString() } as never)
+    .update({ status: newStatus, responded_at: new Date().toISOString() })
     .eq('id', id)
     .eq('status', 'pending');
   if (updErr) return jsonError(c, 500, 'database_error', { detail: updErr.message });

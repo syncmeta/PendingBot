@@ -1,14 +1,16 @@
 -- Content-addressable attachment dedup + bigger default quota.
 --
--- Two problems the May-2026 audit follow-up flagged:
+-- Content-addressable per-user attachment dedup + larger default quota.
 --
 --   1. Re-uploading the same image (re-pick from Photos, forward
---      from another conv, screenshot copies, etc) creates a fresh
---      R2 object and a fresh `attachments` row, doubling storage
---      and double-counting against the user's quota.
+--      from another conv, screenshot copies, etc) used to create a
+--      fresh R2 object and a fresh `attachments` row, doubling
+--      storage and double-counting against the user's quota.
+--      Adding SHA-256 content addressing collapses identical-bytes
+--      uploads from the same user into one row.
 --
 --   2. Default per-user quota was 1 GiB which lands around ~400
---      photos — far short of a multi-year chat history.
+--      photos — short of a multi-year chat history. Bumped to 5 GiB.
 --
 -- Strategy: tag every attachment row with the SHA-256 of its body
 -- (hex, 64 chars). UNIQUE on (user_id, content_sha256) — so a second

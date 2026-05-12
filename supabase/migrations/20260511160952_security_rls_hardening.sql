@@ -1,6 +1,6 @@
--- Security / RLS hardening from the May-2026 audit. Four independent fixes,
--- grouped because they share the same shape (defensive RLS + audit + index)
--- and none touch product behaviour:
+-- Security / RLS hardening — four independent fixes, grouped because
+-- they share shape (defensive RLS + audit + index) and none touch
+-- product behaviour:
 --
 --   1. billing_config — was readable by every authenticated user via
 --      `USING (true)`. Tighten to a key allowlist so future admin knobs
