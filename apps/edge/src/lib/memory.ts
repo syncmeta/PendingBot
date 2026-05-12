@@ -1,6 +1,7 @@
 import type { Env } from '../types';
 import { honchoClient, userPeerId, botPeerId, conversationSessionId } from './honcho';
 import { serviceClient } from './supabase';
+import { putCachedBotNote, putCachedChatMemo } from './persona-cache';
 import {
   FallbackError,
   recordAudit,
@@ -265,6 +266,9 @@ async function refreshBotNote(input: RefreshBotNoteInput): Promise<void> {
         body_md: newBody,
       });
     }
+    // Keep the per-(bot,user) KV in sync so the next message hot path
+    // skips Supabase. Errors here are non-fatal — TTL bounds drift.
+    await putCachedBotNote(env, botId, userId, newBody).catch(() => undefined);
   } catch (err) {
     console.warn('[memory] refreshBotNote failed', err);
     if (err instanceof FallbackError) {
@@ -409,6 +413,9 @@ async function refreshChatMemo(input: RefreshChatMemoInput): Promise<void> {
         body_md: raw,
       });
     }
+    // Keep the per-(bot,conv) KV in sync so the next message hot path
+    // skips Supabase. Errors here are non-fatal — TTL bounds drift.
+    await putCachedChatMemo(env, botId, conversationId, raw).catch(() => undefined);
   } catch (err) {
     console.warn('[memory] refreshChatMemo failed', err);
     if (err instanceof FallbackError) {
