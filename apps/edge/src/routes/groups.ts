@@ -4,6 +4,7 @@ import { requireSession } from '@pendingbot/identity';
 import { userClient, serviceClient } from '../lib/supabase';
 import { generateInitialBotDescription } from '../lib/group-bot-intro';
 import { rateLimitOrBlock } from '../lib/rate-limit';
+import { jsonError } from '../lib/http-error';
 import type { AppBindings } from '../types';
 
 // All group endpoints sit under /v1/groups. Schema + RPCs live in
@@ -67,7 +68,7 @@ groupRoutes.post('/', async (c) => {
   try {
     parsed = CreateBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
   const supa = userClient(c.env, userJwt);
@@ -94,7 +95,7 @@ groupRoutes.post('/:id/invite-user', async (c) => {
   try {
     parsed = InviteUserBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
   const supa = userClient(c.env, c.var.userJwt!);
@@ -116,7 +117,7 @@ groupRoutes.post('/:id/invite-bot', async (c) => {
   try {
     parsed = InviteBotBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
   const supa = userClient(c.env, c.var.userJwt!);
@@ -154,7 +155,7 @@ groupRoutes.post('/:id/remove-user', async (c) => {
   try {
     parsed = RemoveMemberBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
   const supa = userClient(c.env, c.var.userJwt!);
@@ -191,7 +192,7 @@ groupRoutes.post('/:id/remove-bot', async (c) => {
   try {
     parsed = RemoveBotBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
   const supa = userClient(c.env, c.var.userJwt!);
@@ -216,7 +217,7 @@ groupRoutes.post('/:id/role', async (c) => {
   try {
     parsed = SetRoleBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
   const supa = userClient(c.env, c.var.userJwt!);
@@ -243,7 +244,7 @@ groupRoutes.post('/:id/nickname', async (c) => {
   try {
     parsed = NicknameBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
   const supa = userClient(c.env, c.var.userJwt!);
@@ -268,7 +269,7 @@ groupRoutes.post('/:id/bot-nickname', async (c) => {
   try {
     parsed = BotNicknameBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
   const supa = userClient(c.env, c.var.userJwt!);
@@ -296,7 +297,7 @@ groupRoutes.post('/:id/bot-description', async (c) => {
   try {
     parsed = BotDescriptionBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
   const supa = userClient(c.env, c.var.userJwt!);
@@ -334,7 +335,7 @@ groupRoutes.post('/:id/billing', async (c) => {
   try {
     parsed = BillingBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
   const supa = userClient(c.env, c.var.userJwt!);
@@ -364,7 +365,7 @@ groupRoutes.post('/:id/cap', async (c) => {
   try {
     parsed = CapBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
   const supa = userClient(c.env, c.var.userJwt!);
@@ -393,7 +394,7 @@ groupRoutes.post('/:id/participates', async (c) => {
   try {
     parsed = ParticipatesBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
   const supa = userClient(c.env, c.var.userJwt!);
@@ -416,7 +417,7 @@ groupRoutes.post('/:id/mute', async (c) => {
   try {
     parsed = MuteBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
   const supa = userClient(c.env, c.var.userJwt!);
@@ -446,7 +447,7 @@ groupRoutes.post('/:id/handle', async (c) => {
   try {
     parsed = HandleBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
   const supa = userClient(c.env, c.var.userJwt!);
@@ -469,7 +470,7 @@ groupRoutes.post('/:id/policy', async (c) => {
   try {
     parsed = PolicyBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
   const supa = userClient(c.env, c.var.userJwt!);
@@ -500,7 +501,7 @@ groupRoutes.post('/join', async (c) => {
   try {
     parsed = JoinRequestBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
   const supa = userClient(c.env, c.var.userJwt!);
@@ -530,7 +531,7 @@ groupRoutes.post('/:id/join-decide', async (c) => {
   try {
     parsed = DecideBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
   const supa = userClient(c.env, c.var.userJwt!);
@@ -555,7 +556,7 @@ groupRoutes.get('/:id/join-requests', async (c) => {
     .select('id, conversation_id, requester_id, via_handle_id, status, message, decided_by, decided_at, created_at')
     .eq('conversation_id', convId)
     .order('created_at', { ascending: false });
-  if (error) return c.json({ error: 'database', detail: error.message }, 500);
+  if (error) return jsonError(c, 500, 'database_error', { detail: error.message });
   return c.json({ requests: data ?? [] });
 });
 
@@ -575,7 +576,7 @@ groupRoutes.post('/:id/continue-decision', async (c) => {
   try {
     parsed = ContinueDecisionBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
   // Cross-check that the requestId actually belongs to this conv. The
@@ -590,10 +591,10 @@ groupRoutes.post('/:id/continue-decision', async (c) => {
     .select('conversation_id')
     .eq('id', parsed.requestId)
     .maybeSingle();
-  if (reqErr) return c.json({ error: 'database', detail: reqErr.message }, 500);
-  if (!req) return c.json({ error: 'request not found' }, 404);
+  if (reqErr) return jsonError(c, 500, 'database_error', { detail: reqErr.message });
+  if (!req) return jsonError(c, 404, 'request_not_found');
   if (req.conversation_id !== convId) {
-    return c.json({ error: 'request does not belong to this conversation' }, 400);
+    return jsonError(c, 400, 'request_not_found', { message: 'request does not belong to this conversation' });
   }
 
   // Explicit membership check: the caller must be a participant of the
@@ -608,8 +609,8 @@ groupRoutes.post('/:id/continue-decision', async (c) => {
     .eq('participant_type', 'user')
     .eq('participant_id', userId)
     .maybeSingle();
-  if (memberErr) return c.json({ error: 'database', detail: memberErr.message }, 500);
-  if (!membership) return c.json({ error: 'not a participant' }, 403);
+  if (memberErr) return jsonError(c, 500, 'database_error', { detail: memberErr.message });
+  if (!membership) return jsonError(c, 403, 'not_a_participant');
 
   const decisionText = parsed.decision === 'allowed' ? '✅ 让机器人继续' : '❌ 让机器人闭嘴';
 
@@ -625,7 +626,7 @@ groupRoutes.post('/:id/continue-decision', async (c) => {
     })
     .select('id')
     .single();
-  if (msgErr || !msg) return c.json({ error: 'database', detail: msgErr?.message }, 500);
+  if (msgErr || !msg) return jsonError(c, 500, 'database_error', { detail: msgErr?.message });
 
   const supa = userClient(c.env, c.var.userJwt!);
   const { data, error } = await supa.rpc('group_continue_decide', {

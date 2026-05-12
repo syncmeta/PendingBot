@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import type { AppBindings, Env } from './types';
+import { jsonError } from './lib/http-error';
 import { healthRoutes } from './routes/health';
 import { messageRoutes } from './routes/messages';
 import { conversationRoutes } from './routes/conversations';
@@ -50,17 +51,13 @@ app.use('*', async (c, next) => {
   })(c, next);
 });
 
-app.notFound((c) => c.json({ error: 'not found', path: c.req.path }, 404));
+app.notFound((c) => jsonError(c, 404, 'not_found', { detail: { path: c.req.path } }));
 
 app.onError((err, c) => {
   console.error('[edge] unhandled', err);
-  return c.json(
-    {
-      error: 'internal',
-      message: c.env.ENVIRONMENT === 'production' ? undefined : String(err),
-    },
-    500,
-  );
+  return jsonError(c, 500, 'internal_error', {
+    message: c.env.ENVIRONMENT === 'production' ? undefined : String(err),
+  });
 });
 
 // Routes — mounted under /v1/

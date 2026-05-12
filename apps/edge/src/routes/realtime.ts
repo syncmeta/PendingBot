@@ -34,6 +34,7 @@ import {
   recordRealtimeSession,
   requireActiveSession,
 } from '../lib/realtime-sessions';
+import { jsonError as routeJsonError, type ApiErrorCode } from '../lib/http-error';
 import {
   checkOpenAIRegion,
   OPENAI_SUPPORTED_URL,
@@ -236,7 +237,7 @@ realtimeRoutes.post('/session', async (c) => {
   try {
     parsed = SessionBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid_body', detail: String(err) }, 400);
+    return routeJsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
   const loaded = await loadSessionContext(
@@ -301,7 +302,7 @@ realtimeRoutes.post('/session', async (c) => {
   } catch (err) {
     console.warn('[realtime/session] resolveRoute failed', err);
     return c.json(
-      { error: 'route_unavailable', message: t('voice.upstream_failed', locale) },
+      { error: { code: 'voice_upstream_failed', message: t('voice.upstream_failed', locale) } },
       503,
     );
   }
@@ -338,7 +339,7 @@ async function mintOpenAISession(
   if (!env.OPENAI_API_KEY) {
     return jsonError(
       503,
-      'route_unavailable',
+      'upstream_unavailable',
       t('voice.upstream_failed', locale),
     );
   }
@@ -394,7 +395,7 @@ async function mintOpenAISession(
     });
   } catch (err) {
     console.warn('[realtime/session] openai fetch failed', err);
-    return jsonError(503, 'route_unavailable', t('voice.upstream_failed', locale));
+    return jsonError(503, 'voice_upstream_failed', t('voice.upstream_failed', locale));
   }
   if (!upstream.ok) {
     const body = await upstream.text();
@@ -421,6 +422,7 @@ async function mintOpenAISession(
   if (!clientSecret) {
     console.warn('[realtime/session] openai response missing client_secret', data);
     return jsonError(502, 'upstream_error', t('voice.upstream_failed', locale));
+
   }
 
   // Bind session_id to (user, conversation, bot) so /usage /transcripts
@@ -446,8 +448,14 @@ async function mintOpenAISession(
   });
 }
 
-function jsonError(status: number, error: string, message: string) {
-  return Response.json({ error, message }, { status });
+// Local helper used inside mintOpenAISession — that function has no
+// Hono Context, so we produce a raw Response that matches the shared
+// jsonError envelope shape ({ error: { code, message? } }).
+function jsonError(status: number, code: ApiErrorCode, message?: string) {
+  return Response.json(
+    { error: { code, ...(message ? { message } : {}) } },
+    { status },
+  );
 }
 
 // =============================================================================
@@ -482,7 +490,7 @@ realtimeRoutes.post('/usage', async (c) => {
   try {
     parsed = UsageBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid_body', detail: String(err) }, 400);
+    return routeJsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
   // Replay protection. The session_id MUST map to a row in
@@ -493,7 +501,7 @@ realtimeRoutes.post('/usage', async (c) => {
   const sessGate = await requireActiveSession(c.env, parsed.session_id, userId);
   if (!sessGate.ok) return c.json(sessGate.body, sessGate.status);
   if (sessGate.session.conversation_id !== parsed.conversation_id) {
-    return c.json({ error: 'session_conversation_mismatch' }, 403);
+    return routeJsonError(c, 403, 'session_conversation_mismatch');
   }
 
   const loaded = await loadSessionContext(
@@ -518,7 +526,7 @@ realtimeRoutes.post('/usage', async (c) => {
     });
   } catch (err) {
     console.warn('[realtime/usage] resolveRoute failed', err);
-    return c.json({ error: 'route_unavailable' }, 503);
+    return routeJsonError(c, 503, 'upstream_unavailable');
   }
 
   const startedAt = Date.now();
@@ -624,7 +632,7 @@ realtimeRoutes.post('/transcripts', async (c) => {
   try {
     parsed = TranscriptBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid_body', detail: String(err) }, 400);
+    return routeJsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
   // Same gate as /usage — every persistence call must be on a still-
@@ -633,7 +641,7 @@ realtimeRoutes.post('/transcripts', async (c) => {
   const sessGate = await requireActiveSession(c.env, parsed.session_id, userId);
   if (!sessGate.ok) return c.json(sessGate.body, sessGate.status);
   if (sessGate.session.conversation_id !== parsed.conversation_id) {
-    return c.json({ error: 'session_conversation_mismatch' }, 403);
+    return routeJsonError(c, 403, 'session_conversation_mismatch');
   }
   const session = sessGate.session;
 
@@ -674,7 +682,7 @@ realtimeRoutes.post('/transcripts', async (c) => {
     .insert(rows);
   if (error) {
     console.warn('[realtime/transcripts] insert failed', error.message);
-    return c.json({ error: 'database', detail: error.message }, 500);
+    return routeJsonError(c, 500, 'database_error', { detail: error.message });
   }
   return c.json({ inserted: rows.length });
 });
@@ -699,7 +707,7 @@ realtimeRoutes.post('/end', async (c) => {
   try {
     parsed = EndBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid_body', detail: String(err) }, 400);
+    return routeJsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
   // Idempotent — calling /end twice or for an already-aged-out session
@@ -711,7 +719,7 @@ realtimeRoutes.post('/end', async (c) => {
     return c.json(sessGate.body, sessGate.status);
   }
   if (sessGate.ok && sessGate.session.conversation_id !== parsed.conversation_id) {
-    return c.json({ error: 'session_conversation_mismatch' }, 403);
+    return routeJsonError(c, 403, 'session_conversation_mismatch');
   }
   await endRealtimeSession(c.env, parsed.session_id);
   return c.json({ ok: true });

@@ -4,6 +4,7 @@ import { requireSession } from '@pendingbot/identity';
 import { serviceClient, userClient } from '../lib/supabase';
 import { runScroll, resolveEnvelopeSettings, HARD_CAP_TURNS } from '../lib/scroll-runner';
 import { requireBalance, InsufficientBalanceError } from '../lib/billing';
+import { jsonError } from '../lib/http-error';
 import type { AppBindings } from '../types';
 import type { Json } from '../db/schema';
 
@@ -51,7 +52,7 @@ scrollRoutes.post('/trigger', async (c) => {
   try {
     parsed = TriggerBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
   // RLS-gate: confirm the caller participates in this conv and that it
@@ -64,10 +65,10 @@ scrollRoutes.post('/trigger', async (c) => {
     .select('id, bot_id, envelope_settings')
     .eq('id', parsed.conversationId)
     .maybeSingle();
-  if (convErr) return c.json({ error: 'database', detail: convErr.message }, 500);
-  if (!conv) return c.json({ error: 'conversation not found or no access' }, 404);
+  if (convErr) return jsonError(c, 500, 'database_error', { detail: convErr.message });
+  if (!conv) return jsonError(c, 404, 'conversation_no_access');
   if (!conv.bot_id) {
-    return c.json({ error: 'conversation has no bot to write the scroll' }, 400);
+    return jsonError(c, 400, 'conversation_has_no_bot', { message: 'conversation has no bot to write the scroll' });
   }
 
   // Caller-supplied settings win; fall through to whatever the
@@ -125,7 +126,7 @@ scrollRoutes.post('/trigger', async (c) => {
     .select('id')
     .single();
   if (runErr || !run) {
-    return c.json({ error: 'database', detail: runErr?.message ?? 'insert failed' }, 500);
+    return jsonError(c, 500, 'database_error', { detail: runErr?.message ?? 'insert failed' });
   }
 
   c.executionCtx.waitUntil(
@@ -169,7 +170,7 @@ scrollRoutes.get('/list', async (c) => {
   if (before) q = q.lt('created_at', before);
 
   const { data, error } = await q;
-  if (error) return c.json({ error: 'database', detail: error.message }, 500);
+  if (error) return jsonError(c, 500, 'database_error', { detail: error.message });
   return c.json({ items: data ?? [] });
 });
 
@@ -183,8 +184,8 @@ scrollRoutes.get('/:id', async (c) => {
     .select('id, bot_id, conversation_id, status, title, summary, body_md, progress, settings, turns, created_at, started_at, finished_at')
     .eq('id', id)
     .maybeSingle();
-  if (error) return c.json({ error: 'database', detail: error.message }, 500);
-  if (!data) return c.json({ error: 'not found' }, 404);
+  if (error) return jsonError(c, 500, 'database_error', { detail: error.message });
+  if (!data) return jsonError(c, 404, 'not_found');
   return c.json(data);
 });
 
@@ -211,11 +212,11 @@ scrollRoutes.post('/letter', async (c) => {
   try {
     parsed = LetterBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
   if (parsed.recipientUserId === userId) {
-    return c.json({ error: 'cannot send a letter to yourself' }, 400);
+    return jsonError(c, 400, 'self_chat_not_allowed', { message: 'cannot send a letter to yourself' });
   }
 
   const supaUser = userClient(c.env, userJwt);
@@ -228,8 +229,8 @@ scrollRoutes.post('/letter', async (c) => {
     .select('id, conversation_type')
     .eq('id', parsed.conversationId)
     .maybeSingle();
-  if (convErr) return c.json({ error: 'database', detail: convErr.message }, 500);
-  if (!conv) return c.json({ error: 'conversation not found or no access' }, 404);
+  if (convErr) return jsonError(c, 500, 'database_error', { detail: convErr.message });
+  if (!conv) return jsonError(c, 404, 'conversation_no_access');
   if (conv.conversation_type !== 'user_user') {
     return c.json(
       { error: 'letters can only be sent inside a user-to-user conversation' },
@@ -244,7 +245,7 @@ scrollRoutes.post('/letter', async (c) => {
     a: userId,
     b: parsed.recipientUserId,
   });
-  if (mutualErr) return c.json({ error: 'database', detail: mutualErr.message }, 500);
+  if (mutualErr) return jsonError(c, 500, 'database_error', { detail: mutualErr.message });
   if (!mutual) {
     return c.json(
       { error: 'not_mutual_friends', detail: '只能给互为好友的人写信' },
@@ -283,7 +284,7 @@ scrollRoutes.post('/letter', async (c) => {
     .select('id')
     .single();
   if (insertErr || !row) {
-    return c.json({ error: 'database', detail: insertErr?.message ?? 'insert failed' }, 500);
+    return jsonError(c, 500, 'database_error', { detail: insertErr?.message ?? 'insert failed' });
   }
 
   return c.json({ scrollRunId: row.id }, 201);
@@ -299,6 +300,6 @@ scrollRoutes.post('/:id/cancel', async (c) => {
     .from('scroll_runs')
     .update({ status: 'cancelled', finished_at: new Date().toISOString() })
     .eq('id', id);
-  if (error) return c.json({ error: 'database', detail: error.message }, 500);
+  if (error) return jsonError(c, 500, 'database_error', { detail: error.message });
   return c.json({ ok: true });
 });
