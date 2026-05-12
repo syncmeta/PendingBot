@@ -100,6 +100,13 @@ struct ConversationView: View {
     /// optimistic-id → canonical-id swap so re-expanding an old trace still
     /// shows its results.
     @State private var traceCitationsByUserMsgId: [String: [MessageCitation]] = [:]
+    /// Attachment ids per message id. Populated from `messages.attachments`
+    /// jsonb on load + Realtime, and from the local pending attachment set
+    /// when the user sends. Used on recall (own + peer's, via the
+    /// status='deleted' Realtime UPDATE) to scrub the matching responses
+    /// from URLCache.shared so cached image bytes for a recalled message
+    /// don't linger on disk after the server-side R2 object is purged.
+    @State private var attachmentIdsByMsgId: [String: [String]] = [:]
     // Skill summaries — counted in the settings sheet so the user sees
     // how many are active without leaving the conversation.
     @State private var skills: [SkillSummary] = []
@@ -990,6 +997,13 @@ struct ConversationView: View {
                 },
                 status: "sending"
             ))
+            // Mirror the attachment ids into the sidecar dict the
+            // recall path scrubs from URLCache — keyed by localId
+            // here; rekeyed to the canonical id when Realtime resolves
+            // (see the live-* → canonical swap below).
+            if !attachmentSnapshot.isEmpty {
+                attachmentIdsByMsgId[localId] = attachmentSnapshot.map { $0.id }
+            }
             // Light the typing indicator now so the gap between bubble +
             // first bot token reads as "working" instead of "stuck".
             pending = true
@@ -1576,8 +1590,14 @@ struct ConversationView: View {
         // server's POST /v1/messages/:id/recall), drop it from the
         // visible timeline. Works for both our own optimistic-already-
         // removed rows (no-op) and peer recalls (the bubble vanishes).
+        // Also scrub URLCache for any attachment ids we cached for
+        // this row — the worker's R2 object is already gone, but iOS's
+        // HTTP cache hangs onto the bytes for up to a year.
         if status == "deleted" {
             messages.removeAll { $0.id == id }
+            let attIds = attachmentIdsByMsgId[id] ?? []
+            scrubAttachmentCache(attIds)
+            attachmentIdsByMsgId.removeValue(forKey: id)
             return
         }
         // Recall tombstone — the log_kind='recall' insert that pairs
@@ -1610,6 +1630,12 @@ struct ConversationView: View {
                 }
             }
             return
+        }
+        // Capture attachment ids into the sidecar dict so a later
+        // recall (status='deleted' UPDATE) can scrub URLCache for the
+        // right ids. Cheap; only fires when the row actually has any.
+        if let attValue = r["attachments"], let aids = decodeAttachmentIds(attValue), !aids.isEmpty {
+            attachmentIdsByMsgId[id] = aids
         }
         // Prefer content_partial while a bot turn is mid-stream — content
         // stays null until the worker writes the final string at done. This
@@ -1700,6 +1726,12 @@ struct ConversationView: View {
                 }
                 if let traceCites = traceCitationsByUserMsgId.removeValue(forKey: oldId) {
                     traceCitationsByUserMsgId[id] = traceCites
+                }
+                // Same swap for the attachment-id sidecar — the recall
+                // path keys by current msg id, so the canonical row
+                // must carry the same scrub list forward.
+                if let aids = attachmentIdsByMsgId.removeValue(forKey: oldId) {
+                    attachmentIdsByMsgId[id] = aids
                 }
                 // Same rekey for citations — the live-id snapshot was set
                 // from the SSE event; the canonical row may carry the same
@@ -2415,6 +2447,10 @@ struct ConversationView: View {
                 let role: String
                 let log_kind: String?
                 let log_payload: RecallPayload?
+                /// jsonb shape on `messages.attachments`: { ids: [uuid, ...] }
+                /// (see apps/edge/src/routes/messages.ts upsert). Captured so
+                /// recall can scrub URLCache for the right ids.
+                let attachments: AttachmentRef?
                 let content: String?
                 let content_partial: String?
                 let status: String?
@@ -2430,7 +2466,7 @@ struct ConversationView: View {
             // "我撤回了 几分钟前 的一条消息" without further look-ups.
             let rows: [Row] = try await SupabaseStack.shared
                 .from("messages")
-                .select("id, client_message_id, conversation_id, user_id, sender_bot_id, role, log_kind, log_payload, content, content_partial, status, created_at, citations")
+                .select("id, client_message_id, conversation_id, user_id, sender_bot_id, role, log_kind, log_payload, attachments, content, content_partial, status, created_at, citations")
                 .eq("conversation_id", value: conversation.id)
                 .order("created_at", ascending: true)
                 .limit(200)
@@ -2441,6 +2477,7 @@ struct ConversationView: View {
             viewMessages.reserveCapacity(rows.count)
             cacheRows.reserveCapacity(rows.count)
             var citationsLoaded: [String: [MessageCitation]] = [:]
+            var attachmentIdsLoaded: [String: [String]] = [:]
             for r in rows {
                 let secs = ServerTimestamp.epochSeconds(r.created_at, default: 0)
                 // Recalled message rows (status='deleted') shouldn't render —
@@ -2485,6 +2522,9 @@ struct ConversationView: View {
                 if let cites = r.citations, !cites.isEmpty {
                     citationsLoaded[r.id] = cites
                 }
+                if let aids = r.attachments?.ids, !aids.isEmpty {
+                    attachmentIdsLoaded[r.id] = aids
+                }
                 cacheRows.append(LocalDatabase.MessageRow(
                     id: r.id,
                     client_message_id: r.client_message_id,
@@ -2501,6 +2541,7 @@ struct ConversationView: View {
             // Merge — keep any in-flight live snapshots that the SSE turn
             // already populated; history's persisted values win on key collision.
             self.citationsByMsgId.merge(citationsLoaded) { _, new in new }
+            self.attachmentIdsByMsgId.merge(attachmentIdsLoaded) { _, new in new }
             LocalDatabase.shared.upsertMessages(cacheRows)
         } catch {
             // Network down + we have a cache: stay quiet (cached msgs still
@@ -2595,6 +2636,38 @@ struct ConversationView: View {
         }
     }
 
+    /// Same trick for the `attachments` jsonb column on a Realtime
+    /// record. The worker writes `{ ids: [uuid, ...] }`.
+    private func decodeAttachmentIds(_ value: AnyJSON) -> [String]? {
+        do {
+            let data = try JSONEncoder().encode(value)
+            return try JSONDecoder().decode(AttachmentRef.self, from: data).ids
+        } catch {
+            return nil
+        }
+    }
+
+    /// Drop URLCache.shared entries for each attachment id we know
+    /// belonged to a now-recalled message. The worker stops serving
+    /// /v1/uploads/:id after recall (404), but iOS's HTTP cache holds
+    /// the bytes for up to a year (Cache-Control: immutable). Without
+    /// this call a stolen-but-unlocked device could still surface the
+    /// image from local disk after the conversation has scrubbed it.
+    ///
+    /// One day this whole pipeline should move to a custom URLCache
+    /// in an `NSFileProtectionComplete` directory so even non-recalled
+    /// attachments are at-rest-encrypted while the device is locked,
+    /// but that's a larger refactor (custom URLSession for AsyncImage)
+    /// — see follow-up notes.
+    private func scrubAttachmentCache(_ ids: [String]) {
+        guard !ids.isEmpty else { return }
+        let workerURL = account?.workerURL ?? HostedConfig.environment.workerURL
+        for id in ids {
+            let url = workerURL.appendingPathComponent("v1/uploads/\(id)")
+            URLCache.shared.removeCachedResponse(for: URLRequest(url: url))
+        }
+    }
+
     /// WeChat-style sender recall. POSTs to /v1/messages/:id/recall and
     /// removes the row from the local view optimistically.
     ///
@@ -2611,9 +2684,15 @@ struct ConversationView: View {
         // Snapshot first so we can roll back if the POST fails.
         guard let idx = messages.firstIndex(where: { $0.id == msg.id }) else { return }
         let snapshot = messages[idx]
+        // Capture attachment ids BEFORE the optimistic remove drops
+        // the sidecar entry — we'll use them to scrub URLCache once
+        // the server confirms (or roll-back leaves them untouched).
+        let attIds = attachmentIdsByMsgId[msg.id] ?? []
         messages.remove(at: idx)
         do {
             try await api.postVoid("v1/messages/\(msg.id)/recall")
+            attachmentIdsByMsgId.removeValue(forKey: msg.id)
+            scrubAttachmentCache(attIds)
             Haptics.success()
         } catch {
             // Rollback — preserve the prior position on failure.
@@ -2702,6 +2781,14 @@ struct RecallPayload: Decodable, Hashable {
         guard let s = original_created_at else { return 0 }
         return ServerTimestamp.epochSeconds(s, default: 0)
     }
+}
+
+/// Decoded shape of a `messages.attachments` jsonb column. Worker writes
+/// `{ ids: [uuid, ...] }` on insert; we only read the ids back to scrub
+/// URLCache on recall — the full Attachment objects are reconstructed
+/// elsewhere for rendering.
+struct AttachmentRef: Decodable, Hashable {
+    let ids: [String]?
 }
 
 /// Centered "我撤回了 X 的一条消息" / "对方撤回了 X 的一条消息" pill.
