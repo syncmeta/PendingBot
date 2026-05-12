@@ -60,6 +60,7 @@ struct PendingBotApp: App {
 /// Decides whether to show onboarding or the main TabView based on auth state.
 struct RootView: View {
     @EnvironmentObject var store: AccountStore
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         Group {
@@ -83,6 +84,23 @@ struct RootView: View {
                     .id(store.current?.id)
             }
         }
+        // Privacy overlay for the app-switcher snapshot. iOS captures a
+        // screenshot of the frontmost frame when the user enters the
+        // multitasking switcher; without a cover, that snapshot — kept in
+        // /var/mobile/.../Snapshots and visible to anyone with brief
+        // device access — shows the last open conversation verbatim.
+        // Painting the SplashView over the content during `.inactive` (the
+        // brief transition phase before `.background`, which is when the
+        // snapshot is taken) replaces the leak with the launch logo.
+        // Only signed-in surfaces need the cover; sign-in / onboarding
+        // screens are non-sensitive.
+        .overlay {
+            if scenePhase != .active && store.current != nil {
+                SplashView()
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.15), value: scenePhase)
         // One-shot recovery banner: fires the first time we sign back in
         // while a deletion tombstone was still pending. AccountStore flips
         // accountRecovered after cancel_account_deletion() returned true.
