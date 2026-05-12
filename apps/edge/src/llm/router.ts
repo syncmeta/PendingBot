@@ -3,6 +3,7 @@ import type { Env } from '../types';
 import type { SupabaseClient } from '../lib/supabase';
 import type { Json } from '../db/schema';
 import { billingDebit, getMarkup, usdToPnd } from '../lib/billing';
+import { putCachedBalance } from '../lib/balance-cache';
 import { splitAndDebit } from '../lib/group-billing';
 import type { WebToolUsage } from '../lib/web-meter';
 
@@ -509,7 +510,13 @@ export async function recordAudit(
         console.warn('[recordAudit] splitAndDebit failed', err),
       );
     } else if (opts.userId) {
-      await billingDebit(supa, opts.userId, auditId, pnd);
+      const newBalance = await billingDebit(supa, opts.userId, auditId, pnd);
+      // Keep the per-user KV balance cache in sync so the next
+      // requireBalance call skips Supabase. RPC returned null = swallowed
+      // error; leave the cache alone so the next miss re-reads.
+      if (newBalance != null && opts.env) {
+        await putCachedBalance(opts.env, opts.userId, newBalance).catch(() => undefined);
+      }
     }
   }
 }

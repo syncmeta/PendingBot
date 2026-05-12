@@ -8,6 +8,7 @@ import {
   redeemCode,
   RedemptionError,
 } from '../lib/billing';
+import { putCachedBalance } from '../lib/balance-cache';
 import { jsonError } from '../lib/http-error';
 import type { AppBindings } from '../types';
 
@@ -64,8 +65,12 @@ meRoutes.post('/redeem', async (c) => {
 
   // billing_redeem reads auth.uid() — must use user-scoped client.
   const supa = userClient(c.env, userJwt);
+  const userId = c.var.userId!;
   try {
     const result = await redeemCode(supa, code);
+    // Sync KV with the post-redemption balance so the next pre-call
+    // gate sees the new value without a Supabase round-trip.
+    await putCachedBalance(c.env, userId, result.new_balance).catch(() => undefined);
     return c.json({
       ok: true,
       credits: result.credits,

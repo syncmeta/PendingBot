@@ -171,7 +171,7 @@ messageRoutes.post('/', async (c) => {
   // in parallel. INSERT runs detached (waitUntil) using the
   // pre-generated id, so the pre-stream path holds no write RTT.
   const balancePromise: Promise<InsufficientBalanceError | null> = needsBotPath
-    ? requireBalance(supaUser, userId)
+    ? requireBalance(c.env, supaUser, userId)
         .then(() => null)
         .catch((err) => {
           if (err instanceof InsufficientBalanceError) return err;
@@ -587,7 +587,7 @@ messageRoutes.post('/start', async (c) => {
   if (!bot.is_active) return jsonError(c, 400, 'forbidden', { message: 'bot inactive' });
 
   try {
-    await requireBalance(supaUser, userId);
+    await requireBalance(c.env, supaUser, userId);
   } catch (err) {
     if (err instanceof InsufficientBalanceError) {
       return c.json(
