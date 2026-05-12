@@ -6,6 +6,7 @@ import {
   MAX_UPLOAD_BYTES,
   isSupportedImageMime,
   r2KeyFor,
+  sha256Hex,
 } from '../lib/attachments';
 import { getConfigInt } from '../lib/billing';
 import { jsonError } from '../lib/http-error';
@@ -71,15 +72,50 @@ uploadRoutes.post('/', async (c) => {
     }
   }
 
+  // Compute content hash up-front. Cheap on these payloads (≤10 MB)
+  // via WebCrypto SHA-256, and lets us short-circuit before quota
+  // check + R2 write when this user has already uploaded these bytes.
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const contentSha256 = await sha256Hex(bytes);
+
+  const supa = serviceClient(c.env);
+
+  // Per-user content-addressable dedup. If the user already has an
+  // attachment row for these bytes, reuse it — zero R2 write, zero
+  // quota delta. The (user_id, content_sha256) UNIQUE index in
+  // migration 20260512052048 makes the lookup an index seek; the
+  // duplicate-key collision on insert below is the second line of
+  // defense if two parallel uploads race past this check.
+  {
+    const { data: dup } = await supa
+      .schema('pendingbot')
+      .from('attachments')
+      .select('id, r2_key, mime_type, byte_size, created_at')
+      .eq('user_id', userId)
+      .eq('content_sha256', contentSha256)
+      .maybeSingle();
+    if (dup) {
+      const r = dup as { id: string; r2_key: string; mime_type: string; byte_size: number; created_at: string };
+      return c.json({
+        id: r.id,
+        r2_key: r.r2_key,
+        mime: r.mime_type,
+        size: r.byte_size,
+        url: `/v1/uploads/${r.id}`,
+        created_at: r.created_at,
+        deduped: true,
+      });
+    }
+  }
+
   // Per-user storage quota check. Sum live byte_size for this caller
   // and reject if the new file would tip them over the cap. Cap lives
   // in billing_config so ops can tune without a deploy; fallback to
   // DEFAULT_ATTACHMENT_QUOTA_BYTES if the row is missing or the DB
   // read trips (don't let a transient outage open the gate).
-  const supaForQuota = serviceClient(c.env);
   const [quotaCfg, usedRes] = await Promise.all([
-    getConfigInt(supaForQuota, 'default_attachment_quota_bytes'),
-    supaForQuota
+    getConfigInt(supa, 'default_attachment_quota_bytes'),
+    supa
       .from('attachments')
       .select('byte_size')
       .eq('user_id', userId),
@@ -101,7 +137,6 @@ uploadRoutes.post('/', async (c) => {
   // Allocate id + R2 key. UUID v7 keeps the bucket sortable by time.
   const id = crypto.randomUUID();          // V4 client-side; DB row id is V7 server-side
   const key = r2KeyFor(id, file.type);
-  const bytes = new Uint8Array(await file.arrayBuffer());
 
   await c.env.UPLOADS.put(key, bytes, {
     httpMetadata: { contentType: file.type },
@@ -115,7 +150,6 @@ uploadRoutes.post('/', async (c) => {
   // Insert into pendingbot.attachments via service role — RLS would let the
   // user write their own rows but going service-role lets us write the row
   // even if the user's JWT is on a borderline state (just refreshed, etc.).
-  const supa = serviceClient(c.env);
   const { data: row, error: insertErr } = await supa
     .schema('pendingbot')
     .from('attachments')
@@ -125,13 +159,40 @@ uploadRoutes.post('/', async (c) => {
       r2_key: key,
       mime_type: file.type,
       byte_size: file.size,
+      content_sha256: contentSha256,
       // width/height: TODO — generate via image-resizing or embed-meta when
       // we run thumbnail generation (see plans/.../11-scale-and-ux.md).
-    })
+    } as never)
     .select('id, r2_key, mime_type, byte_size, created_at')
     .single();
 
   if (insertErr) {
+    // Race fallback: a parallel upload of the same bytes hit the
+    // (user_id, content_sha256) UNIQUE index in between our dedup
+    // SELECT and this INSERT. Re-fetch the winning row and return it.
+    if ((insertErr as { code?: string }).code === '23505') {
+      const { data: winner } = await supa
+        .schema('pendingbot')
+        .from('attachments')
+        .select('id, r2_key, mime_type, byte_size, created_at')
+        .eq('user_id', userId)
+        .eq('content_sha256', contentSha256)
+        .maybeSingle();
+      // Roll back our R2 write — the other side already has theirs.
+      await c.env.UPLOADS.delete(key).catch(() => {});
+      if (winner) {
+        const r = winner as { id: string; r2_key: string; mime_type: string; byte_size: number; created_at: string };
+        return c.json({
+          id: r.id,
+          r2_key: r.r2_key,
+          mime: r.mime_type,
+          size: r.byte_size,
+          url: `/v1/uploads/${r.id}`,
+          created_at: r.created_at,
+          deduped: true,
+        });
+      }
+    }
     // Best-effort R2 rollback. If the delete fails the orphan upload
     // sweep (cron 04:00 UTC) will reap the key on its next run.
     await c.env.UPLOADS.delete(key).catch((err) => {

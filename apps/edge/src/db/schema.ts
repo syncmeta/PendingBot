@@ -115,6 +115,7 @@ export type Database = {
       attachments: {
         Row: {
           byte_size: number
+          content_sha256: string | null
           conversation_id: string | null
           created_at: string
           height: number | null
@@ -134,6 +135,7 @@ export type Database = {
         }
         Insert: {
           byte_size: number
+          content_sha256?: string | null
           conversation_id?: string | null
           created_at?: string
           height?: number | null
@@ -153,6 +155,7 @@ export type Database = {
         }
         Update: {
           byte_size?: number
+          content_sha256?: string | null
           conversation_id?: string | null
           created_at?: string
           height?: number | null

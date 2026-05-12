@@ -849,10 +849,21 @@ messageRoutes.post('/:id/recall', async (c) => {
     .eq('id', id);
   if (updErr) return jsonError(c, 500, 'database_error', { detail: updErr.message });
 
-  // 2) Purge attachment rows + R2 objects. Done unconditionally — even
-  //    in user_user the original message's images shouldn't survive a
-  //    recall. Failures are logged but don't roll back the recall
-  //    itself; a daily R2 sweep will reap any orphans.
+  // 2) Purge attachment rows + R2 objects.
+  //
+  //    Per-row safety: an R2 object's lifetime is "as long as ANY
+  //    attachments row still references it via r2_key". With the
+  //    dedup work in migration 20260512052048 a single user upload
+  //    of the same bytes already collapses to one row, but a
+  //    cross-user upload (different users uploading the same image)
+  //    still produces two rows with the same r2_key. Delete the R2
+  //    object only when this user's row was the last one pointing
+  //    at it — otherwise we'd 404 the other user's view.
+  //
+  //    Done unconditionally — even in user_user the original
+  //    message's images shouldn't survive a recall. Failures are
+  //    logged but don't roll back the recall itself; the daily R2
+  //    orphan-sweep cron will catch any leaks.
   if (attIds.length > 0) {
     const { data: attRows } = await supa
       .schema('pendingbot')
@@ -860,26 +871,37 @@ messageRoutes.post('/:id/recall', async (c) => {
       .select('id, r2_key')
       .in('id', attIds)
       .eq('user_id', userId);
-    const keys = (attRows ?? []).map((r) => r.r2_key as string).filter(Boolean);
+    const rows = (attRows ?? []) as Array<{ id: string; r2_key: string }>;
 
-    if ((attRows ?? []).length > 0) {
+    if (rows.length > 0) {
       const { error: delAttErr } = await supa
         .schema('pendingbot')
         .from('attachments')
         .delete()
-        .in('id', attIds)
+        .in('id', rows.map((r) => r.id))
         .eq('user_id', userId);
       if (delAttErr) {
         console.warn('[messages/recall] attachments delete failed', delAttErr.message);
       }
     }
 
+    // For each r2_key the recaller used to own, check whether any
+    // other attachments row still references it. If yes, leave the
+    // R2 object alone (someone else still has a valid claim). If
+    // no, delete the object.
     await Promise.all(
-      keys.map((key) =>
-        c.env.UPLOADS.delete(key).catch((err) => {
+      rows.map(async ({ r2_key: key }) => {
+        if (!key) return;
+        const { count } = await supa
+          .schema('pendingbot')
+          .from('attachments')
+          .select('id', { count: 'exact', head: true })
+          .eq('r2_key', key);
+        if ((count ?? 0) > 0) return;
+        await c.env.UPLOADS.delete(key).catch((err) => {
           console.warn('[messages/recall] R2 delete failed', { key, err });
-        }),
-      ),
+        });
+      }),
     );
   }
 
