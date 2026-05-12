@@ -9,7 +9,7 @@ import {
   sha256Hex,
 } from '../lib/attachments';
 import { getConfigInt } from '../lib/billing';
-import { putCachedAttachment } from '../lib/attachment-cache';
+import { appendInventoryId, putCachedAttachment } from '../lib/attachment-cache';
 import { safeWaitUntil } from '../lib/safe-wait-until';
 import { jsonError } from '../lib/http-error';
 import type { AppBindings } from '../types';
@@ -92,12 +92,22 @@ uploadRoutes.post('/', async (c) => {
     const { data: dup } = await supa
       .schema('pendingbot')
       .from('attachments')
-      .select('id, r2_key, mime_type, byte_size, created_at, conversation_id')
+      .select('id, r2_key, mime_type, byte_size, created_at, conversation_id, summary, tags, summary_status')
       .eq('user_id', userId)
       .eq('content_sha256', contentSha256)
       .maybeSingle();
     if (dup) {
-      const r = dup as { id: string; r2_key: string; mime_type: string; byte_size: number; created_at: string; conversation_id: string | null };
+      const r = dup as {
+        id: string;
+        r2_key: string;
+        mime_type: string;
+        byte_size: number;
+        created_at: string;
+        conversation_id: string | null;
+        summary: string | null;
+        tags: string[] | null;
+        summary_status: string;
+      };
       // Warm KV so subsequent POST /v1/messages ownership checks skip
       // Supabase. Cache the existing binding (not the current request's
       // conversationId) — the dup row's binding is what the DB enforces.
@@ -106,8 +116,18 @@ uploadRoutes.post('/', async (c) => {
         putCachedAttachment(c.env, r.id, {
           user_id: userId,
           conversation_id: r.conversation_id,
+          summary: r.summary,
+          tags: r.tags,
+          summary_status: r.summary_status,
+          created_at: r.created_at,
         }),
       );
+      // Maintain the per-conv inventory list. Only the dup row's own
+      // conversation_id counts — the bot-reply inventory query filters
+      // on attachments.conversation_id, which the DB enforces.
+      if (r.conversation_id) {
+        safeWaitUntil(c, appendInventoryId(c.env, r.conversation_id, r.id));
+      }
       return c.json({
         id: r.id,
         r2_key: r.r2_key,
@@ -219,19 +239,37 @@ uploadRoutes.post('/', async (c) => {
       const { data: winner } = await supa
         .schema('pendingbot')
         .from('attachments')
-        .select('id, r2_key, mime_type, byte_size, created_at, conversation_id')
+        .select('id, r2_key, mime_type, byte_size, created_at, conversation_id, summary, tags, summary_status')
         .eq('user_id', userId)
         .eq('content_sha256', contentSha256)
         .maybeSingle();
       await safeRollback();
       if (winner) {
-        const r = winner as { id: string; r2_key: string; mime_type: string; byte_size: number; created_at: string; conversation_id: string | null };
-        c.executionCtx.waitUntil(
+        const r = winner as {
+          id: string;
+          r2_key: string;
+          mime_type: string;
+          byte_size: number;
+          created_at: string;
+          conversation_id: string | null;
+          summary: string | null;
+          tags: string[] | null;
+          summary_status: string;
+        };
+        safeWaitUntil(
+          c,
           putCachedAttachment(c.env, r.id, {
             user_id: userId,
             conversation_id: r.conversation_id,
+            summary: r.summary,
+            tags: r.tags,
+            summary_status: r.summary_status,
+            created_at: r.created_at,
           }),
         );
+        if (r.conversation_id) {
+          safeWaitUntil(c, appendInventoryId(c.env, r.conversation_id, r.id));
+        }
         return c.json({
           id: r.id,
           r2_key: r.r2_key,
@@ -247,14 +285,22 @@ uploadRoutes.post('/', async (c) => {
     return jsonError(c, 500, 'database_error', { detail: insertErr.message });
   }
 
-  // Warm KV with the freshly-inserted row's ownership tuple.
+  // Warm KV with the freshly-inserted row. Summary/tags start unset —
+  // the vision summarizer will patch them when it runs.
   safeWaitUntil(
     c,
     putCachedAttachment(c.env, row.id, {
       user_id: userId,
       conversation_id: conversationIdStr,
+      summary: null,
+      tags: null,
+      summary_status: 'pending',
+      created_at: row.created_at,
     }),
   );
+  if (conversationIdStr) {
+    safeWaitUntil(c, appendInventoryId(c.env, conversationIdStr, row.id));
+  }
 
   return c.json({
     id: row.id,

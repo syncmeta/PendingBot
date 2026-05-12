@@ -27,6 +27,7 @@ import {
   summarizeAttachments,
 } from '../../llm/vision';
 import { getBotMemory, getChatMemo, getUserMemory } from '../memory';
+import { resolveInventory } from '../attachment-cache';
 import { WebToolMeter } from '../web-meter';
 import {
   CHAT_TOOLS,
@@ -206,29 +207,23 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   const mainHasVision = await modelSupportsVision(supa, bot.model_id);
   const currentSet = new Set(input.currentAttachmentIds ?? []);
 
-  // History inventory pull. Service client bypasses RLS — fine, we
-  // already gated this caller (route handler verified the user is a
-  // conv participant). Cap at 30 to bound prompt size.
-  const invRes = await supa
-    .from('attachments')
-    .select('id, summary, tags, summary_status, created_at')
-    .eq('conversation_id', conversationId)
-    .order('created_at', { ascending: true })
-    .limit(30);
-  const inventory = (
-    (invRes.data as
-      | Array<{
-          id: string;
-          summary: string | null;
-          tags: string[] | null;
-          summary_status: string;
-        }>
-      | null) ?? []
-  ).map((r) => ({
+  // History inventory pull. KV-first via per-conv id list + per-id
+  // metadata; falls back to Supabase on miss (cold conv) and warms KV.
+  // Cap at 30 mirrors the Supabase query's `limit(30)`. The fall-through
+  // KV writes are detached — no waitUntil binding here since we're
+  // inside a long-lived turnWork promise that's already kept alive by
+  // the SSE stream's own waitUntil. Use the no-op waitUntil shim.
+  const inventoryRows = await resolveInventory(
+    env,
+    supa,
+    conversationId,
+    (p) => { p.catch(() => undefined); },
+  );
+  const inventory = inventoryRows.map((r) => ({
     id: r.id,
     summary: r.summary,
-    tags: r.tags ?? [],
-    status: r.summary_status,
+    tags: r.tags,
+    status: r.status,
     isCurrentTurn: currentSet.has(r.id),
   }));
 

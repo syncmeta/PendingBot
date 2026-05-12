@@ -11,7 +11,7 @@ import { resolveGroupMentions } from '../lib/group-mentions';
 import { summarizeAttachments, DEFAULT_VISION_MODEL } from '../llm/vision';
 import { UUID_RE } from '../lib/ids';
 import { jsonError } from '../lib/http-error';
-import { deleteCachedAttachment, resolveAttachmentOwnership } from '../lib/attachment-cache';
+import { deleteCachedAttachment, removeInventoryIds, resolveAttachmentOwnership } from '../lib/attachment-cache';
 import { safeWaitUntil } from '../lib/safe-wait-until';
 import type { AppBindings } from '../types';
 
@@ -908,13 +908,16 @@ messageRoutes.post('/:id/recall', async (c) => {
       if (delAttErr) {
         console.warn('[messages/recall] attachments delete failed', delAttErr.message);
       }
-      // Invalidate the KV ownership cache for each recalled attachment.
-      // Detached — a stale entry is acceptable (the row is gone from
-      // Supabase, so any future ownership check that falls through to
-      // DB will get attachment_not_found anyway).
+      // Invalidate KV: per-attachment metadata + the conv's inventory
+      // list. Detached — a stale entry is acceptable (the row is gone
+      // from Supabase, so any future check that falls through to DB
+      // will get attachment_not_found anyway).
       safeWaitUntil(
         c,
-        Promise.all(rows.map((r) => deleteCachedAttachment(c.env, r.id))).then(() => undefined),
+        Promise.all([
+          ...rows.map((r) => deleteCachedAttachment(c.env, r.id)),
+          removeInventoryIds(c.env, msg.conversation_id, rows.map((r) => r.id)),
+        ]).then(() => undefined),
       );
     }
 

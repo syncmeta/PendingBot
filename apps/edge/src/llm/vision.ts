@@ -30,6 +30,7 @@
 import type { ChatCompletionContentPart } from 'openai/resources/chat/completions';
 import type { Env } from '../types';
 import type { SupabaseClient } from '../lib/supabase';
+import { patchCachedAttachment } from '../lib/attachment-cache';
 import { recordAudit, withFallback, usageFromCompletion } from './router';
 
 /// When the conversation's main model lacks vision and no
@@ -308,6 +309,7 @@ export async function summarizeAttachment(
           vision_model: picked.slug,
         })
         .eq('id', attachmentId);
+      await patchCachedAttachment(deps.env, attachmentId, { summary_status: 'failed' });
       return;
     }
 
@@ -322,6 +324,11 @@ export async function summarizeAttachment(
         summarized_at: new Date().toISOString(),
       })
       .eq('id', attachmentId);
+    await patchCachedAttachment(deps.env, attachmentId, {
+      summary: parsed.summary,
+      tags: parsed.tags,
+      summary_status: 'done',
+    });
   } catch (err) {
     const message =
       err instanceof Error ? err.message : String(err) || 'unknown error';
@@ -334,6 +341,7 @@ export async function summarizeAttachment(
         vision_model: picked.slug,
       })
       .eq('id', attachmentId);
+    await patchCachedAttachment(deps.env, attachmentId, { summary_status: 'failed' });
   }
 }
 
