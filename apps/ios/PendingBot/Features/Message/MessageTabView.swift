@@ -405,7 +405,7 @@ struct MessageTabView: View {
         do {
             async let botRows: [BotRow] = SupabaseStack.shared
                 .from("bots")
-                .select("id, display_name, model_id, visibility, creator_id")
+                .select("id, display_name, model_id, visibility, creator_id, voice_call_enabled")
                 .eq("is_active", value: true)
                 .execute()
                 .value
@@ -504,12 +504,13 @@ struct MessageTabView: View {
         let model_id: String?
         let visibility: String?
         let creator_id: String?
+        let voice_call_enabled: Bool?
         var asBot: Bot {
             Bot(
                 id: id, display_name: display_name,
                 access_mode: nil, model: model_id,
                 visibility: visibility, creator_id: creator_id,
-                voice_call_enabled: nil
+                voice_call_enabled: voice_call_enabled
             )
         }
     }
