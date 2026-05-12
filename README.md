@@ -68,12 +68,10 @@
 整仓正在从旧 Bun + Fly 后端切到 Cloudflare Worker + Supabase；目前**没有公开的自部署路径**。能用的只有 iOS app（仍未上架）：
 
 ```bash
-brew install xcodegen
-cd apps/ios && xcodegen generate
-open PendingBot.xcodeproj
+open apps/ios/PendingBot.xcodeproj
 ```
 
-首次打开 Xcode 选 Signing Team。详见 [apps/ios/README.md](apps/ios/README.md)。
+首次打开 Xcode 选 Signing Team。
 
 ## 📍 进度
 

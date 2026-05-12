@@ -64,12 +64,10 @@ A few concrete moments:
 The repo is mid-rewrite, moving from the old Bun + Fly backend to a Cloudflare Worker + Supabase one. **There is no public self-host path right now.** Only the iOS app is usable (still unreleased):
 
 ```bash
-brew install xcodegen
-cd apps/ios && xcodegen generate
-open PendingBot.xcodeproj
+open apps/ios/PendingBot.xcodeproj
 ```
 
-Pick a Signing Team on first open. See [apps/ios/README.md](apps/ios/README.md).
+Pick a Signing Team on first open.
 
 ## 📍 Progress
 
