@@ -84,6 +84,7 @@ export async function maybeRefreshMemory(input: MaybeRefreshInput): Promise<void
       .eq('conversation_id', conversationId)
       .lt('id', oldestContextMessageId)
       .neq('role', 'log')
+      .neq('status', 'deleted')  // recall: model must forget recalled messages
       .order('id', { ascending: true });
     if (!msgs?.length) return;
 
@@ -183,6 +184,7 @@ async function refreshBotNote(input: RefreshBotNoteInput): Promise<void> {
       .select('role, content, created_at')
       .eq('conversation_id', conversationId)
       .neq('role', 'log')
+      .neq('status', 'deleted')  // recall: reflection shouldn't include recalled rows
       .order('created_at', { ascending: false })
       .limit(30);
     const recent = (msgs ?? []).reverse();
@@ -315,6 +317,7 @@ async function refreshChatMemo(input: RefreshChatMemoInput): Promise<void> {
       .select('role, content, created_at')
       .eq('conversation_id', conversationId)
       .neq('role', 'log')
+      .neq('status', 'deleted')  // recall: skip recalled rows in memo build
       .order('created_at', { ascending: false })
       .limit(40);
     const recent = (msgs ?? []).reverse();

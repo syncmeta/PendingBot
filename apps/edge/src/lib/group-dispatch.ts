@@ -160,6 +160,7 @@ export async function dispatchGroupTurn(
       .select('role, content, created_at')
       .eq('conversation_id', conversationId)
       .in('role', ['user', 'bot', 'human', 'log'])
+      .neq('status', 'deleted')  // recall: bot must not see recalled rows
       .order('created_at', { ascending: false })
       .limit(20);
     const recentContext = ((ctx ?? []) as Array<{

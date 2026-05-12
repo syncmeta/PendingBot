@@ -1128,6 +1128,11 @@ async function searchChatHistoryTool(
     .select('id, role, content, sender_bot_id, user_id, created_at')
     .eq('conversation_id', ctx.conversationId)
     .neq('role', 'log')
+    // Drop recalled messages from LLM context — the user's intent on
+    // recall is "make the model forget this ever happened", and we'd
+    // otherwise feed the model rows where content was nulled (or
+    // worse, stale content from before status was flipped).
+    .neq('status', 'deleted')
     .not('content', 'is', null)
     .order('created_at', { ascending: false })
     .limit(limit);

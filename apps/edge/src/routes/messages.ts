@@ -773,6 +773,144 @@ messageRoutes.post('/start', async (c) => {
   });
 });
 
+// POST /v1/messages/:id/recall
+//
+// Sender-initiated recall. Two modes, picked by conversation_type:
+//
+//   • user_user (human ↔ human) — soft-delete the original (status='deleted',
+//     blank content/attachments) and INSERT a log row marking the recall
+//     so peers see "我撤回了 X 的一条消息" in their conversation. Mirrors
+//     the WeChat UX, with no time limit per product spec.
+//
+//   • user_bot / group / self — soft-delete the original and PURGE its
+//     attachments (DB rows + R2 objects) so quota / storage are
+//     reclaimed and the bot's future context can no longer see them.
+//     No tombstone log row — the message just disappears from view.
+//
+// LLM context queries filter on `.neq('status', 'deleted')` so the model
+// never sees the original message after recall, regardless of mode.
+//
+// Allowed only when caller authored the message. (Conversation-owner
+// deletion of arbitrary messages is the separate DELETE /:id below.)
+messageRoutes.post('/:id/recall', async (c) => {
+  const userId = c.var.userId!;
+  const id = c.req.param('id');
+  if (!UUID_RE.test(id)) {
+    return c.json({ error: 'invalid id' }, 400);
+  }
+
+  const supa = serviceClient(c.env);
+
+  const { data: msg, error: fetchErr } = await supa
+    .schema('pendingbot')
+    .from('messages')
+    .select('id, user_id, sender_bot_id, conversation_id, status, attachments, created_at')
+    .eq('id', id)
+    .maybeSingle();
+  if (fetchErr) return c.json({ error: 'database', detail: fetchErr.message }, 500);
+  if (!msg) return c.json({ error: 'not found' }, 404);
+
+  // Only the original sender may recall. Bot rows have user_id=null /
+  // sender_bot_id set; they cannot be recalled by anyone via this path.
+  if (msg.user_id !== userId) return c.json({ error: 'forbidden' }, 403);
+
+  // Idempotent: already recalled → ok.
+  if (msg.status === 'deleted') return c.json({ ok: true, already: true });
+
+  const { data: conv, error: convErr } = await supa
+    .schema('pendingbot')
+    .from('conversations')
+    .select('conversation_type')
+    .eq('id', msg.conversation_id)
+    .maybeSingle();
+  if (convErr) return c.json({ error: 'database', detail: convErr.message }, 500);
+  const convType = (conv as { conversation_type?: string } | null)?.conversation_type ?? 'user_bot';
+
+  // Collect attachment ids before we clear the column so we can purge
+  // them after. Shape: attachments = { ids: [uuid, ...] }
+  const attIds: string[] = (() => {
+    const a = msg.attachments as { ids?: unknown } | null;
+    if (!a || !Array.isArray(a.ids)) return [];
+    return a.ids.filter((x): x is string => typeof x === 'string');
+  })();
+
+  // 1) Soft-delete the original. Clearing content + attachments makes
+  //    the row useless for both display and any backfill query.
+  const { error: updErr } = await supa
+    .schema('pendingbot')
+    .from('messages')
+    .update({
+      status: 'deleted',
+      content: null,
+      content_partial: null,
+      attachments: null,
+    })
+    .eq('id', id);
+  if (updErr) return c.json({ error: 'database', detail: updErr.message }, 500);
+
+  // 2) Purge attachment rows + R2 objects. Done unconditionally — even
+  //    in user_user the original message's images shouldn't survive a
+  //    recall. Failures are logged but don't roll back the recall
+  //    itself; a daily R2 sweep will reap any orphans.
+  if (attIds.length > 0) {
+    const { data: attRows } = await supa
+      .schema('pendingbot')
+      .from('attachments')
+      .select('id, r2_key')
+      .in('id', attIds)
+      .eq('user_id', userId);
+    const keys = (attRows ?? []).map((r) => r.r2_key as string).filter(Boolean);
+
+    if ((attRows ?? []).length > 0) {
+      const { error: delAttErr } = await supa
+        .schema('pendingbot')
+        .from('attachments')
+        .delete()
+        .in('id', attIds)
+        .eq('user_id', userId);
+      if (delAttErr) {
+        console.warn('[messages/recall] attachments delete failed', delAttErr.message);
+      }
+    }
+
+    await Promise.all(
+      keys.map((key) =>
+        c.env.UPLOADS.delete(key).catch((err) => {
+          console.warn('[messages/recall] R2 delete failed', { key, err });
+        }),
+      ),
+    );
+  }
+
+  // 3) For user_user only, drop a tombstone log row so the peer sees a
+  //    "我撤回了 X 的一条消息" line. iOS renders the relative time from
+  //    original_created_at using its existing formatter. Other conv
+  //    types don't surface a tombstone (per product spec).
+  if (convType === 'user_user') {
+    const { error: logErr } = await supa
+      .schema('pendingbot')
+      .from('messages')
+      .insert({
+        client_message_id: crypto.randomUUID(),
+        conversation_id: msg.conversation_id,
+        user_id: userId,
+        role: 'log',
+        status: 'done',
+        log_kind: 'recall',
+        log_payload: {
+          original_message_id: id,
+          original_created_at: msg.created_at,
+          recaller_user_id: userId,
+        },
+      });
+    if (logErr) {
+      console.warn('[messages/recall] tombstone log insert failed', logErr.message);
+    }
+  }
+
+  return c.json({ ok: true });
+});
+
 // DELETE /v1/messages/:id
 //
 // Removes a single message. Allowed when the caller authored the message OR
