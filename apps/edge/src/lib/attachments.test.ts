@@ -5,6 +5,7 @@ import {
   extForMime,
   isSupportedImageMime,
   r2KeyFor,
+  r2KeyForHash,
   sha256Hex,
 } from './attachments';
 
@@ -96,6 +97,30 @@ describe('r2KeyFor', () => {
     // 2026-01, not slip into the previous year.
     const key = r2KeyFor('id', 'image/png', Date.UTC(2026, 0, 1, 0, 0, 0));
     expect(key.startsWith('2026-01/')).toBe(true);
+  });
+});
+
+describe('r2KeyForHash', () => {
+  it('produces blobs/<hash>.<ext> shape', () => {
+    expect(
+      r2KeyForHash(
+        'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+        'image/png',
+      ),
+    ).toBe('blobs/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855.png');
+  });
+
+  it('is deterministic — two callers with the same bytes get the same key', () => {
+    // This is the whole point: cross-user dedup hinges on the function
+    // being a pure mapping of (hash, mime) → key. Any drift (time-based
+    // prefix, random salt, user id) would break the dedup.
+    const a = r2KeyForHash('abc123', 'image/jpeg');
+    const b = r2KeyForHash('abc123', 'image/jpeg');
+    expect(a).toBe(b);
+  });
+
+  it('falls back to "bin" ext for unsupported mimes', () => {
+    expect(r2KeyForHash('h', 'application/octet-stream')).toBe('blobs/h.bin');
   });
 });
 

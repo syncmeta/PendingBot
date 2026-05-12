@@ -5,7 +5,7 @@ import {
   DEFAULT_ATTACHMENT_QUOTA_BYTES,
   MAX_UPLOAD_BYTES,
   isSupportedImageMime,
-  r2KeyFor,
+  r2KeyForHash,
   sha256Hex,
 } from '../lib/attachments';
 import { getConfigInt } from '../lib/billing';
@@ -134,18 +134,31 @@ uploadRoutes.post('/', async (c) => {
     });
   }
 
-  // Allocate id + R2 key. UUID v7 keeps the bucket sortable by time.
-  const id = crypto.randomUUID();          // V4 client-side; DB row id is V7 server-side
-  const key = r2KeyFor(id, file.type);
+  // Content-addressable R2 key. Two users uploading the same bytes
+  // land on the same key, so R2 stores them once and we save the PUT
+  // when this user's bytes are a cross-user duplicate. The per-user
+  // attachments row still gets inserted below (recall + quota +
+  // privacy boundaries are per-user, not per-blob).
+  const key = r2KeyForHash(contentSha256, file.type);
 
-  await c.env.UPLOADS.put(key, bytes, {
-    httpMetadata: { contentType: file.type },
-    customMetadata: {
-      userId,
-      conversationId: conversationIdStr ?? '',
-      originalName: file.name || '',
-    },
-  });
+  // HEAD before PUT — if the blob already exists from another user's
+  // earlier upload, skip the write. Best-effort: any HEAD error treats
+  // the object as absent and we re-PUT (idempotent on R2 — same key +
+  // same bytes is a no-op overwrite, just slightly wasteful).
+  const existing = await c.env.UPLOADS.head(key).catch(() => null);
+  if (!existing) {
+    await c.env.UPLOADS.put(key, bytes, {
+      httpMetadata: { contentType: file.type },
+      customMetadata: {
+        // First-uploader metadata — leaving these on the shared object
+        // is fine because /v1/uploads/:id never surfaces them; the
+        // per-user attachment row carries its own conversation_id.
+        userId,
+        conversationId: conversationIdStr ?? '',
+        originalName: file.name || '',
+      },
+    });
+  }
 
   // Insert into pendingbot.attachments via service role — RLS would let the
   // user write their own rows but going service-role lets us write the row
@@ -168,6 +181,25 @@ uploadRoutes.post('/', async (c) => {
     .single();
 
   if (insertErr) {
+    // R2 rollback is delicate now that keys are content-addressable: a
+    // delete here would wipe another user's blob if they happen to
+    // reference the same bytes. Re-check ref count before each delete,
+    // and bail out (leak to the orphan sweep) when in doubt.
+    const safeRollback = async () => {
+      // Was the object even ours to write? If `existing` was non-null
+      // before the PUT, we never wrote — nothing to roll back.
+      if (existing) return;
+      const { count } = await supa
+        .schema('pendingbot')
+        .from('attachments')
+        .select('id', { count: 'exact', head: true })
+        .eq('r2_key', key);
+      if ((count ?? 0) > 0) return; // someone else has a row, leave it
+      await c.env.UPLOADS.delete(key).catch((err) => {
+        console.warn('[upload] R2 rollback failed', { key, err });
+      });
+    };
+
     // Race fallback: a parallel upload of the same bytes hit the
     // (user_id, content_sha256) UNIQUE index in between our dedup
     // SELECT and this INSERT. Re-fetch the winning row and return it.
@@ -179,8 +211,7 @@ uploadRoutes.post('/', async (c) => {
         .eq('user_id', userId)
         .eq('content_sha256', contentSha256)
         .maybeSingle();
-      // Roll back our R2 write — the other side already has theirs.
-      await c.env.UPLOADS.delete(key).catch(() => {});
+      await safeRollback();
       if (winner) {
         const r = winner as { id: string; r2_key: string; mime_type: string; byte_size: number; created_at: string };
         return c.json({
@@ -194,11 +225,7 @@ uploadRoutes.post('/', async (c) => {
         });
       }
     }
-    // Best-effort R2 rollback. If the delete fails the orphan upload
-    // sweep (cron 04:00 UTC) will reap the key on its next run.
-    await c.env.UPLOADS.delete(key).catch((err) => {
-      console.warn('[upload] R2 rollback failed', { key, err });
-    });
+    await safeRollback();
     return jsonError(c, 500, 'database_error', { detail: insertErr.message });
   }
 
