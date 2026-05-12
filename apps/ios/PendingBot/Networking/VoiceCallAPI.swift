@@ -78,16 +78,68 @@ struct VoiceCallAPI {
         let inserted: Int
     }
 
-    /// Structured error payload that the realtime routes emit (worker side
-    /// uses i18n `t(...)` for `message`, so it's already in the user's
-    /// locale and safe to surface raw).
+    /// Structured error payload that the realtime routes emit. Matches
+    /// the typed envelope from apps/edge/src/lib/http-error.ts:
+    ///   { error: { code, message?, detail? } }
+    ///
+    /// `detail` carries voice-specific fields (country, supported_url,
+    /// balance_credits, min_threshold). We also keep flat aliases at
+    /// the top level for forward-compat with any legacy response shape
+    /// that might still surface from a non-migrated layer.
     struct ErrorPayload: Decodable, Sendable {
-        let error: String
+        let error: String           // legacy flat shape: error string
         let message: String?
         let country: String?
         let supported_url: String?
         let balance_credits: Int?
         let min_threshold: Int?
+        let detail: Detail?
+
+        struct Detail: Decodable, Sendable {
+            let country: String?
+            let supported_url: String?
+            let balance_credits: Int?
+            let min_threshold: Int?
+        }
+
+        // Custom decoder: tolerate both
+        //   { error: "code", country, ... }            (legacy flat)
+        //   { error: { code, message, detail: { … } } } (new envelope)
+        // by trying the envelope first and falling back to flat fields.
+        enum CodingKeys: String, CodingKey {
+            case error, message, country, supported_url, balance_credits, min_threshold, detail
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            // The new envelope nests the code inside an object under `error`.
+            // Try that first; if `error` is a string, treat it as flat.
+            if let envelope = try? c.decode(EnvelopeError.self, forKey: .error) {
+                self.error = envelope.code
+                self.message = envelope.message
+                self.detail = envelope.detail
+                // Flat fields don't exist in the envelope shape.
+                self.country = nil
+                self.supported_url = nil
+                self.balance_credits = nil
+                self.min_threshold = nil
+            } else {
+                // Legacy flat shape.
+                self.error = try c.decode(String.self, forKey: .error)
+                self.message = try c.decodeIfPresent(String.self, forKey: .message)
+                self.country = try c.decodeIfPresent(String.self, forKey: .country)
+                self.supported_url = try c.decodeIfPresent(String.self, forKey: .supported_url)
+                self.balance_credits = try c.decodeIfPresent(Int.self, forKey: .balance_credits)
+                self.min_threshold = try c.decodeIfPresent(Int.self, forKey: .min_threshold)
+                self.detail = try c.decodeIfPresent(Detail.self, forKey: .detail)
+            }
+        }
+
+        struct EnvelopeError: Decodable, Sendable {
+            let code: String
+            let message: String?
+            let detail: Detail?
+        }
     }
 
     // MARK: - Calls
@@ -135,32 +187,36 @@ struct VoiceCallAPI {
         }
     }
 
+
     private func mapAPIError(_ err: APIError) -> VoiceCallError? {
-        guard case let .http(status, body) = err else { return nil }
-        guard let data = body.data(using: .utf8),
-              let payload = try? JSONDecoder().decode(ErrorPayload.self, from: data)
-        else {
-            return nil
+        guard case let .http(status, code, message, body) = err else { return nil }
+        // Detail payload (country, balance_credits, etc.) still lives in
+        // the JSON body — APIClient only lifts code+message into the
+        // typed enum. Re-parse the body when we need those fields.
+        let payload: ErrorPayload? = body.data(using: .utf8).flatMap {
+            try? JSONDecoder().decode(ErrorPayload.self, from: $0)
         }
-        switch payload.error {
-        case "region_unsupported":
+        switch code {
+        case "voice_region_unsupported", "region_unsupported":
             return .regionUnsupported(
-                country: payload.country,
-                message: payload.message ?? "",
-                supportedURL: payload.supported_url.flatMap(URL.init(string:)),
+                country: payload?.detail?.country,
+                message: message ?? "",
+                supportedURL: payload?.detail?.supported_url.flatMap(URL.init(string:)),
             )
-        case "insufficient_balance", "voice_call_disabled":
+        case "insufficient_balance":
             return .insufficientBalance(
-                message: payload.message ?? "",
-                balance: payload.balance_credits ?? 0,
-                threshold: payload.min_threshold ?? 0,
+                message: message ?? "",
+                balance: payload?.balance_credits ?? payload?.detail?.balance_credits ?? 0,
+                threshold: payload?.min_threshold ?? payload?.detail?.min_threshold ?? 0,
             )
-        case "route_unavailable", "upstream_error":
-            return .routeUnavailable(message: payload.message ?? "")
-        case "session_not_found":
+        case "voice_upstream_failed", "upstream_unavailable", "upstream_error", "route_unavailable":
+            return .routeUnavailable(message: message ?? "")
+        case "session_not_found", "session_forbidden", "session_ended", "session_expired":
             return .sessionExpired
-        default:
-            return .other(status: status, error: payload.error, message: payload.message ?? "")
+        case .some(let raw):
+            return .other(status: status, error: raw, message: message ?? "")
+        case .none:
+            return .other(status: status, error: payload?.error ?? "", message: message ?? "")
         }
     }
 }

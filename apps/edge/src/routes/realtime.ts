@@ -259,15 +259,13 @@ realtimeRoutes.post('/session', async (c) => {
   const minThreshold = threshold ?? 0;
   const balanceCredits = balance?.balance_credits ?? 0;
   if (minThreshold > 0 && balanceCredits < minThreshold) {
-    return c.json(
-      {
-        error: 'insufficient_balance',
-        message: t('voice.insufficient_balance', locale),
+    return routeJsonError(c, 402, 'insufficient_balance', {
+      message: t('voice.insufficient_balance', locale),
+      detail: {
         balance_credits: balanceCredits,
         min_threshold: minThreshold,
       },
-      402,
-    );
+    });
   }
 
   // Region gate. cf.country is what Cloudflare's edge GeoIP reports for
@@ -276,15 +274,13 @@ realtimeRoutes.post('/session', async (c) => {
     ?.country;
   const region = checkOpenAIRegion(cfCountry ?? null);
   if (!region.allowed) {
-    return c.json(
-      {
-        error: 'region_unsupported',
+    return routeJsonError(c, 451, 'voice_region_unsupported', {
+      message: t('voice.region_unsupported', locale),
+      detail: {
         country: region.country,
-        message: t('voice.region_unsupported', locale),
         supported_url: OPENAI_SUPPORTED_URL,
       },
-      451,
-    );
+    });
   }
 
   // Persona assembled server-side. Goes into the upstream mint body —

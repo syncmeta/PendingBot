@@ -136,10 +136,21 @@ struct APIClient {
         guard let http = response as? HTTPURLResponse else { throw APIError.notHTTP }
         if !(200..<300).contains(http.statusCode) {
             let bodyMsg = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+            // Try to parse the typed error envelope produced by jsonError
+            // on the worker. Shape: { error: { code, message?, detail? } }.
+            // Falls back to raw body when parsing fails (e.g. CDN-emitted
+            // error pages, or a route we haven't migrated yet).
+            let envelope = (data.flatMap { try? JSONDecoder().decode(ServerErrorEnvelope.self, from: $0) })?.error
             switch http.statusCode {
             case 401: throw APIError.unauthorized
-            case 410: throw APIError.gone(message: bodyMsg)
-            default:  throw APIError.http(status: http.statusCode, body: bodyMsg)
+            case 410: throw APIError.gone(message: envelope?.message ?? bodyMsg)
+            default:
+                throw APIError.http(
+                    status: http.statusCode,
+                    code: envelope?.code,
+                    message: envelope?.message,
+                    body: bodyMsg
+                )
             }
         }
     }
@@ -147,13 +158,42 @@ struct APIClient {
 
 private struct Empty: Encodable {}
 
+/// On-the-wire shape of the worker's typed error envelope. Matches
+/// apps/edge/src/lib/http-error.ts:ApiErrorBody. Optional everywhere
+/// because we may receive responses from a non-migrated route or from
+/// a CDN/edge layer that emits its own body.
+struct ServerErrorEnvelope: Decodable {
+    let error: ServerErrorPayload?
+}
+
+struct ServerErrorPayload: Decodable {
+    let code: String?
+    let message: String?
+    // `detail` deliberately omitted from this Decodable — its shape is
+    // free-form per code, and we surface it via the raw JSON body when
+    // needed rather than typing every variant.
+}
+
 enum APIError: LocalizedError {
     case badURL
     case notHTTP
     case unauthorized
     case gone(message: String)
-    case http(status: Int, body: String)
+    /// Non-2xx response. `code` is the typed envelope code when the
+    /// worker emitted one; nil for legacy / CDN responses. `message` is
+    /// the optional human string from the envelope. `body` is the raw
+    /// response body for fallback display and debugging.
+    case http(status: Int, code: String?, message: String?, body: String)
     case decode(underlying: Error, body: String)
+
+    /// Stable error code from the typed envelope, when available. iOS
+    /// branches on this for things like `quota_exceeded` ->
+    /// "go free up space" CTA, `voice_region_unsupported` -> show the
+    /// region-supported list, etc.
+    var code: String? {
+        if case let .http(_, code, _, _) = self { return code }
+        return nil
+    }
 
     var errorDescription: String? {
         switch self {
@@ -161,7 +201,13 @@ enum APIError: LocalizedError {
         case .notHTTP:               return "非 HTTP 响应"
         case .unauthorized:          return "登录已失效，请重新登录"
         case .gone(let m):           return "资源已失效: \(m)"
-        case .http(let s, let body): return "HTTP \(s): \(body.prefix(200))"
+        case .http(let s, _, let msg, let body):
+            // Prefer the envelope message when present — it's the
+            // human-readable string the server picked. Fall back to a
+            // truncated raw body so legacy responses still surface
+            // something useful.
+            if let msg, !msg.isEmpty { return msg }
+            return "HTTP \(s): \(body.prefix(200))"
         case .decode(_, let body):   return "解析失败: \(body.prefix(200))"
         }
     }
