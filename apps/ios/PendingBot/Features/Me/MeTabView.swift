@@ -112,50 +112,44 @@ struct MeTabView: View {
                                 Haptics.tap()
                             }
 
-                        GroupedRowsCard {
+                        VStack(spacing: 12) {
                             NavigationLink {
                                 AddMeMethodsView().toolbar(.hidden, for: .tabBar)
                             } label: {
-                                GroupedRow(title: "加我为好友的方式")
+                                GlassOptionRow(title: "加我为好友的方式")
                             }
                             .buttonStyle(.plain)
-
-                            GroupedRowDivider()
 
                             NavigationLink {
                                 WalletView().toolbar(.hidden, for: .tabBar)
                             } label: {
-                                GroupedRow(title: "钱包")
+                                GlassOptionRow(title: "钱包")
                             }
                             .buttonStyle(.plain)
-
-                            GroupedRowDivider()
 
                             NavigationLink {
                                 SkillsView().toolbar(.hidden, for: .tabBar)
                             } label: {
-                                GroupedRow(title: "技能管理")
+                                GlassOptionRow(title: "技能管理")
                             }
                             .buttonStyle(.plain)
                         }
 
-                        GroupedRowsCard {
+                        VStack(spacing: 12) {
                             Button {
                                 pendingConfirm = .signOut
                                 Haptics.tap()
                             } label: {
-                                GroupedRow(title: "退出登录", role: .destructive, showsChevron: false)
+                                GlassOptionRow(title: "退出登录", role: .destructive, showsChevron: false)
                             }
                             .buttonStyle(.plain)
                             .disabled(store.current == nil)
-                        }
 
-                        GroupedRowsCard {
                             Button {
                                 pendingConfirm = .delete
                                 Haptics.tap()
                             } label: {
-                                GroupedRow(
+                                GlassOptionRow(
                                     title: deleting ? "提交中…" : "注销账号",
                                     role: .destructive,
                                     showsChevron: false
@@ -193,6 +187,7 @@ struct MeTabView: View {
                 attachmentId: store.avatarAttachmentId,
                 size: 88
             )
+            .shadow(color: .black.opacity(0.14), radius: 14, x: 0, y: 7)
             VStack(spacing: 6) {
                 Text(displayLabel)
                     .font(Theme.Fonts.serif(size: 24, weight: .semibold))
@@ -251,38 +246,9 @@ struct MeTabView: View {
     }
 }
 
-/// Native iOS grouped-list container — one rounded surface card holding
-/// connected rows separated by hairline dividers. Caller is responsible
-/// for placing `GroupedRowDivider()` between rows.
-private struct GroupedRowsCard<Content: View>: View {
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        VStack(spacing: 0) { content }
-            .background(Theme.Palette.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
-            )
-    }
-}
-
-/// Inset hairline separator between rows in a `GroupedRowsCard`. Inset
-/// matches the row's leading text padding, like iOS Settings.
-private struct GroupedRowDivider: View {
-    var body: some View {
-        Rectangle()
-            .fill(Theme.Palette.hairline)
-            .frame(height: 0.5)
-            .padding(.leading, 20)
-    }
-}
-
-/// One row inside a `GroupedRowsCard`. No background of its own — the
-/// card supplies the surface; the row only paints text + optional
-/// chevron with consistent padding.
-private struct GroupedRow: View {
+/// One glass capsule option row, matching the welcome screen's Google
+/// sign-in pill treatment.
+private struct GlassOptionRow: View {
     enum Role { case normal, destructive }
 
     let title: String
@@ -304,8 +270,25 @@ private struct GroupedRow: View {
             }
         }
         .padding(.horizontal, 20)
-        .padding(.vertical, 20)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
+        .frame(height: 52)
+        .meGlassCapsule()
+        .shadow(color: .black.opacity(0.08), radius: 10, x: 0, y: 4)
+        .contentShape(Capsule())
+    }
+}
+
+/// Local copy of the welcome screen's glass capsule so the Me tab can use
+/// the same iOS 26 Liquid Glass path and the same material fallback.
+private extension View {
+    @ViewBuilder
+    func meGlassCapsule() -> some View {
+        if #available(iOS 26.0, *) {
+            self.glassEffect(.regular, in: Capsule())
+        } else {
+            self
+                .background(Capsule().fill(.regularMaterial))
+                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
+        }
     }
 }
