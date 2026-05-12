@@ -273,7 +273,7 @@ function formatTimeHint(iso: string, tzFallback?: string): string {
   }
 
   const pad = (n: number) => String(n).padStart(2, '0');
-  return `${parts.mo}月${parts.d}日 ${pad(parts.h)}:${pad(parts.mi)}:${pad(parts.s)}`;
+  return `${parts.y}年${parts.mo}月${parts.d}日 ${pad(parts.h)}:${pad(parts.mi)}:${pad(parts.s)}`;
 }
 
 function withTimeHint(text: string, iso: string, tzFallback?: string): string {

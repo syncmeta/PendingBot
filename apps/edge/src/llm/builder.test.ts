@@ -1,0 +1,56 @@
+import { describe, expect, it, vi } from 'vitest';
+import type { Memory } from '../lib/memory';
+import type { SupabaseClient } from '../lib/supabase';
+import { buildMessages } from './builder';
+
+vi.mock('../i18n/prompts', () => ({
+  loadPrompt: vi.fn(async (_supa: unknown, name: string) => `prompt:${name}`),
+}));
+
+const supa = {} as SupabaseClient;
+const botMemory: Memory = {
+  card: [],
+  representation: 'I am a bot.',
+  syncedAt: '2026-05-12T00:00:00.000Z',
+  lastCoveredMessageId: null,
+};
+
+describe('buildMessages time hints', () => {
+  it('includes the full year for the current user turn in the client timezone', async () => {
+    const messages = await buildMessages(supa, {
+      bot: { id: 'bot-1', output_mode: 'single' },
+      botMemory,
+      skills: [],
+      botNote: null,
+      chatMemo: null,
+      recentContext: [],
+      newMessage: '现在是哪一年',
+      clientTz: 'Asia/Shanghai',
+      nowIso: '2026-05-12T03:23:45.000Z',
+    });
+
+    expect(messages.at(-1)?.content).toContain('2026年5月12日 11:23:45');
+  });
+
+  it('includes the full year for historical user turns with explicit offsets', async () => {
+    const messages = await buildMessages(supa, {
+      bot: { id: 'bot-1', output_mode: 'single' },
+      botMemory,
+      skills: [],
+      botNote: null,
+      chatMemo: null,
+      recentContext: [
+        {
+          role: 'user',
+          content: '昨天聊到这里',
+          created_at: '2026-05-08T11:23:45+08:00',
+        },
+      ],
+      newMessage: '继续',
+      clientTz: 'America/Los_Angeles',
+      nowIso: '2026-05-12T03:23:45.000Z',
+    });
+
+    expect(messages[1]?.content).toContain('2026年5月8日 11:23:45');
+  });
+});
