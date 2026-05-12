@@ -11,6 +11,8 @@ import { resolveGroupMentions } from '../lib/group-mentions';
 import { summarizeAttachments, DEFAULT_VISION_MODEL } from '../llm/vision';
 import { UUID_RE } from '../lib/ids';
 import { jsonError } from '../lib/http-error';
+import { deleteCachedAttachment, resolveAttachmentOwnership } from '../lib/attachment-cache';
+import { safeWaitUntil } from '../lib/safe-wait-until';
 import type { AppBindings } from '../types';
 
 export const messageRoutes = new Hono<AppBindings>();
@@ -106,8 +108,9 @@ messageRoutes.post('/', async (c) => {
   // Phase 1 — fire conv lookup (RLS gate + routing/config) and attachment
   // ownership check in parallel. Both must succeed before any state
   // change. The conv read uses the user JWT so RLS confirms membership;
-  // the attachment read uses service role because the ownership check
-  // here IS the gate.
+  // the attachment check reads from the per-attachment KV cache and only
+  // falls back to Supabase on miss (cold attachments — older uploads not
+  // yet warmed).
   const convPromise = supaUser
     .from('conversations')
     .select('id, conversation_type, bot_id, round_count, provider_override, model_slug_override, vision_model_override')
@@ -116,13 +119,12 @@ messageRoutes.post('/', async (c) => {
 
   const hasAttachments = (parsed.attachmentIds?.length ?? 0) > 0;
   const attCheckPromise = hasAttachments
-    ? supaService
-        .from('attachments')
-        .select('id, user_id, conversation_id')
-        .in('id', parsed.attachmentIds!)
-    : Promise.resolve({ data: null as null | Array<{ id: string; user_id: string; conversation_id: string | null }>, error: null as null | { message: string } });
+    ? resolveAttachmentOwnership(c.env, supaService, parsed.attachmentIds!, (p) =>
+        safeWaitUntil(c, p),
+      )
+    : Promise.resolve([] as Array<{ id: string; user_id: string; conversation_id: string | null }>);
 
-  const [convRes, attRes] = await Promise.all([convPromise, attCheckPromise]);
+  const [convRes, attRows] = await Promise.all([convPromise, attCheckPromise]);
 
   if (convRes.error) return jsonError(c, 500, 'database_error', { detail: convRes.error.message });
   // Narrow the conversation_type literal — schema.ts types it as the full
@@ -145,11 +147,10 @@ messageRoutes.post('/', async (c) => {
   // conversation_id matches this conv, so a caller can't pin someone else's
   // upload onto their own bubble or recycle attachments across convs.
   if (hasAttachments) {
-    if (attRes.error) return jsonError(c, 500, 'database_error', { detail: attRes.error.message });
-    if (!attRes.data || attRes.data.length !== parsed.attachmentIds!.length) {
+    if (!attRows) {
       return jsonError(c, 403, 'attachment_not_found');
     }
-    for (const r of attRes.data) {
+    for (const r of attRows) {
       if (r.user_id !== userId) {
         return jsonError(c, 403, 'attachment_not_owned');
       }
@@ -907,6 +908,14 @@ messageRoutes.post('/:id/recall', async (c) => {
       if (delAttErr) {
         console.warn('[messages/recall] attachments delete failed', delAttErr.message);
       }
+      // Invalidate the KV ownership cache for each recalled attachment.
+      // Detached — a stale entry is acceptable (the row is gone from
+      // Supabase, so any future ownership check that falls through to
+      // DB will get attachment_not_found anyway).
+      safeWaitUntil(
+        c,
+        Promise.all(rows.map((r) => deleteCachedAttachment(c.env, r.id))).then(() => undefined),
+      );
     }
 
     // For each r2_key the recaller used to own, check whether any

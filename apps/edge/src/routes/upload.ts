@@ -9,6 +9,8 @@ import {
   sha256Hex,
 } from '../lib/attachments';
 import { getConfigInt } from '../lib/billing';
+import { putCachedAttachment } from '../lib/attachment-cache';
+import { safeWaitUntil } from '../lib/safe-wait-until';
 import { jsonError } from '../lib/http-error';
 import type { AppBindings } from '../types';
 
@@ -90,12 +92,22 @@ uploadRoutes.post('/', async (c) => {
     const { data: dup } = await supa
       .schema('pendingbot')
       .from('attachments')
-      .select('id, r2_key, mime_type, byte_size, created_at')
+      .select('id, r2_key, mime_type, byte_size, created_at, conversation_id')
       .eq('user_id', userId)
       .eq('content_sha256', contentSha256)
       .maybeSingle();
     if (dup) {
-      const r = dup as { id: string; r2_key: string; mime_type: string; byte_size: number; created_at: string };
+      const r = dup as { id: string; r2_key: string; mime_type: string; byte_size: number; created_at: string; conversation_id: string | null };
+      // Warm KV so subsequent POST /v1/messages ownership checks skip
+      // Supabase. Cache the existing binding (not the current request's
+      // conversationId) — the dup row's binding is what the DB enforces.
+      safeWaitUntil(
+        c,
+        putCachedAttachment(c.env, r.id, {
+          user_id: userId,
+          conversation_id: r.conversation_id,
+        }),
+      );
       return c.json({
         id: r.id,
         r2_key: r.r2_key,
@@ -207,13 +219,19 @@ uploadRoutes.post('/', async (c) => {
       const { data: winner } = await supa
         .schema('pendingbot')
         .from('attachments')
-        .select('id, r2_key, mime_type, byte_size, created_at')
+        .select('id, r2_key, mime_type, byte_size, created_at, conversation_id')
         .eq('user_id', userId)
         .eq('content_sha256', contentSha256)
         .maybeSingle();
       await safeRollback();
       if (winner) {
-        const r = winner as { id: string; r2_key: string; mime_type: string; byte_size: number; created_at: string };
+        const r = winner as { id: string; r2_key: string; mime_type: string; byte_size: number; created_at: string; conversation_id: string | null };
+        c.executionCtx.waitUntil(
+          putCachedAttachment(c.env, r.id, {
+            user_id: userId,
+            conversation_id: r.conversation_id,
+          }),
+        );
         return c.json({
           id: r.id,
           r2_key: r.r2_key,
@@ -228,6 +246,15 @@ uploadRoutes.post('/', async (c) => {
     await safeRollback();
     return jsonError(c, 500, 'database_error', { detail: insertErr.message });
   }
+
+  // Warm KV with the freshly-inserted row's ownership tuple.
+  safeWaitUntil(
+    c,
+    putCachedAttachment(c.env, row.id, {
+      user_id: userId,
+      conversation_id: conversationIdStr,
+    }),
+  );
 
   return c.json({
     id: row.id,
