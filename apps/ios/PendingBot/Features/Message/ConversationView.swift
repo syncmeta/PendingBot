@@ -300,6 +300,14 @@ struct ConversationView: View {
                         }
 
                         ForEach(displayedMessages) { msg in
+                            if idsWithLeadingTimeSeparator.contains(msg.id) {
+                                TimeSeparatorPill(
+                                    date: Date(timeIntervalSince1970: TimeInterval(msg.created_at))
+                                )
+                                .id("time-sep:\(msg.id)")
+                                .padding(.vertical, 6)
+                                .frame(maxWidth: .infinity)
+                            }
                             BubbleView(message: msg,
                                        botName: botName,
                                        conversationID: conversation.id,
@@ -534,6 +542,27 @@ struct ConversationView: View {
         guard let freezeAt = groupFreezeAt else { return messages }
         let cutoff = Int(freezeAt.timeIntervalSince1970)
         return messages.filter { $0.created_at < cutoff }
+    }
+
+    /// Set of message ids that should have a centered time-separator
+    /// pill rendered immediately BEFORE them. WeChat-style cadence:
+    /// always before the very first message in the visible window,
+    /// then again whenever the gap to the previous message exceeds
+    /// RelativeMessageTime.separatorGapSeconds (5 min). Kept as a
+    /// derived Set so the ForEach body's lookup is O(1).
+    private var idsWithLeadingTimeSeparator: Set<String> {
+        var ids: Set<String> = []
+        let shown = displayedMessages
+        guard let first = shown.first else { return ids }
+        ids.insert(first.id)
+        for i in 1..<shown.count {
+            let prev = shown[i - 1].created_at
+            let cur = shown[i].created_at
+            if Double(cur - prev) >= RelativeMessageTime.separatorGapSeconds {
+                ids.insert(shown[i].id)
+            }
+        }
+        return ids
     }
 
     private func scrollToBottom(proxy: ScrollViewProxy) {
