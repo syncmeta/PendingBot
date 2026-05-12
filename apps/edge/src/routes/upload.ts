@@ -118,29 +118,73 @@ uploadRoutes.post('/', async (c) => {
   });
 });
 
-// GET /v1/uploads/:id — fetch raw bytes, gated by RLS check on attachments.
+// GET /v1/uploads/:id — fetch raw bytes.
+//
+// Access model (strict scope, post May-2026 audit):
+//
+//   1. The uploader (attachments.user_id == caller) — always served.
+//   2. A *current* participant of a conversation that has a *non-deleted*
+//      message referencing this attachment — served. Membership lapses
+//      (left the group) revoke server-side access immediately; deleted
+//      messages (status='deleted') drop their attachments off-limits
+//      even for users who'd previously seen them.
+//   3. Everyone else — 404 (same shape as "doesn't exist" so we don't
+//      help enumerate attachment ids).
+//
+// All checks happen here, server-side, via service role. RLS on
+// `attachments` is uploader-only now (migration 20260512042940), so a
+// direct DB read by anyone other than the uploader fails-closed.
 uploadRoutes.get('/:id', async (c) => {
-  const userJwt = c.var.userJwt!;
+  const userId = c.var.userId!;
   const id = c.req.param('id');
 
-  // Fetch attachment metadata via user JWT — RLS守门 ensures the user can
-  // only see attachments in their conversations or their own.
-  const supa = userClient(c.env, userJwt);
-  const { data, error } = await supa
+  const supa = serviceClient(c.env);
+
+  const { data: att, error: attErr } = await supa
     .from('attachments')
-    .select('r2_key, mime_type')
+    .select('id, user_id, r2_key, mime_type')
     .eq('id', id)
     .maybeSingle();
 
-  if (error) return c.json({ error: 'database', detail: error.message }, 500);
-  if (!data) return c.json({ error: 'not found or no access' }, 404);
+  if (attErr) return c.json({ error: 'database', detail: attErr.message }, 500);
+  if (!att) return c.json({ error: 'not found' }, 404);
 
-  const obj = await c.env.UPLOADS.get(data.r2_key);
+  let allowed = att.user_id === userId;
+
+  if (!allowed) {
+    // Find a non-deleted message that references this attachment and
+    // is in a conversation the caller is currently a participant of.
+    // attachments jsonb shape: { ids: [uuid, …] }
+    const { data: msgRows, error: msgErr } = await supa
+      .from('messages')
+      .select('conversation_id, status')
+      .filter('attachments->ids', 'cs', JSON.stringify([id]))
+      .neq('status', 'deleted');
+    if (msgErr) return c.json({ error: 'database', detail: msgErr.message }, 500);
+
+    if (msgRows && msgRows.length > 0) {
+      const convIds = Array.from(
+        new Set(msgRows.map((r) => r.conversation_id as string)),
+      );
+      const { data: memberRows, error: memberErr } = await supa
+        .from('conversation_participants')
+        .select('conversation_id')
+        .eq('participant_type', 'user')
+        .eq('participant_id', userId)
+        .in('conversation_id', convIds);
+      if (memberErr) return c.json({ error: 'database', detail: memberErr.message }, 500);
+      allowed = !!memberRows && memberRows.length > 0;
+    }
+  }
+
+  if (!allowed) return c.json({ error: 'not found' }, 404);
+
+  const obj = await c.env.UPLOADS.get(att.r2_key);
   if (!obj) return c.json({ error: 'object missing' }, 410);
 
   return new Response(obj.body, {
     headers: {
-      'Content-Type': data.mime_type,
+      'Content-Type': att.mime_type,
       'Cache-Control': 'private, max-age=31536000, immutable',
       'ETag': obj.httpEtag,
     },
