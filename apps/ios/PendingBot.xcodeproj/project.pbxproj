@@ -11,6 +11,7 @@
 		091D2F4E1050EAF98F72B1B1 /* ConversationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9E90A433CF0CAC8986218C6 /* ConversationView.swift */; };
 		22BC48E752651922053AA03D /* ConversationView+Recall.swift in Sources */ = {isa = PBXBuildFile; fileRef = D177F1FF6ADC5CEEAFB768F9 /* ConversationView+Recall.swift */; };
 		F573EAA4480B4724A544C657 /* ConversationView+Attachments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EFC3D34959391E94AB90B70 /* ConversationView+Attachments.swift */; };
+		BF83A4E9D2B30F988D49851B /* ConversationView+Loading.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1EA52C7EA043EF86CACA0231 /* ConversationView+Loading.swift */; };
 		09D5A4914D4689005DD29F37 /* VoiceCallAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1EE5159E66202C9655580D7 /* VoiceCallAPI.swift */; };
 		0AC7612397D7D0B4E07DD2AC /* EmptyHint.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CADBAC8F028F13BC61D5286 /* EmptyHint.swift */; };
 		0E293F1B0321CB4CB0FDBB51 /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BDBE35089EC0A16CBE8D181 /* QRScannerView.swift */; };
@@ -179,6 +180,7 @@
 		F9E90A433CF0CAC8986218C6 /* ConversationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationView.swift; sourceTree = "<group>"; };
 		D177F1FF6ADC5CEEAFB768F9 /* ConversationView+Recall.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConversationView+Recall.swift"; sourceTree = "<group>"; };
 		3EFC3D34959391E94AB90B70 /* ConversationView+Attachments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConversationView+Attachments.swift"; sourceTree = "<group>"; };
+		1EA52C7EA043EF86CACA0231 /* ConversationView+Loading.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConversationView+Loading.swift"; sourceTree = "<group>"; };
 		FA76A59CB9DB38987FE36E33 /* WalletView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletView.swift; sourceTree = "<group>"; };
 		FB16E5402FB9F31D68B74165 /* TabRoot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabRoot.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -219,6 +221,7 @@
 				F9E90A433CF0CAC8986218C6 /* ConversationView.swift */,
 				D177F1FF6ADC5CEEAFB768F9 /* ConversationView+Recall.swift */,
 				3EFC3D34959391E94AB90B70 /* ConversationView+Attachments.swift */,
+				1EA52C7EA043EF86CACA0231 /* ConversationView+Loading.swift */,
 				E68B229EDD3BD50361009601 /* MessageTabView.swift */,
 				955D6B93ACB33271FCCA3FC2 /* ToolTraceView.swift */,
 			);
@@ -538,6 +541,7 @@
 				091D2F4E1050EAF98F72B1B1 /* ConversationView.swift in Sources */,
 				22BC48E752651922053AA03D /* ConversationView+Recall.swift in Sources */,
 				F573EAA4480B4724A544C657 /* ConversationView+Attachments.swift in Sources */,
+				BF83A4E9D2B30F988D49851B /* ConversationView+Loading.swift in Sources */,
 				88D44D5A01A220D83A913D39 /* EmailSignIn.swift in Sources */,
 				0AC7612397D7D0B4E07DD2AC /* EmptyHint.swift in Sources */,
 				19870C7F165F857406EF4BCC /* EnvelopeThinkingTrace.swift in Sources */,

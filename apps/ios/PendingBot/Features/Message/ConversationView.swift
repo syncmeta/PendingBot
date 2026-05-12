@@ -74,7 +74,7 @@ struct ConversationView: View {
     /// Lookback notes the bot wrote about prior turns (Realtime push from
     /// pendingbot.bot_lookbacks). Invisible to the user; passed in
     /// `activeLookbacks` on the next POST so the bot sees them as context.
-    @State private var activeLookbacks: [LookbackNote] = []
+    @State var activeLookbacks: [LookbackNote] = []
     /// 30s grace timer started when a new lookback arrives. If user hasn't
     /// sent anything before it fires, we auto-trigger a continuation turn
     /// so the bot's fact-check actually surfaces.
@@ -92,7 +92,7 @@ struct ConversationView: View {
     /// Sources: history `select citations`, Realtime UPDATE on the row, and
     /// the per-turn `citations` SSE event copied to each in-flight bubble.
     /// `MarkdownText` reads the entry to resolve inline `[N]` markers.
-    @State private var citationsByMsgId: [String: [MessageCitation]] = [:]
+    @State var citationsByMsgId: [String: [MessageCitation]] = [:]
     /// Cumulative citations for the in-flight turn — last value pushed by the
     /// `citations` SSE event. Snapshotted onto each bubble created during
     /// the turn so the live preview can resolve `[N]` taps before the
@@ -113,7 +113,7 @@ struct ConversationView: View {
     @State var attachmentIdsByMsgId: [String: [String]] = [:]
     // Skill summaries — counted in the settings sheet so the user sees
     // how many are active without leaving the conversation.
-    @State private var skills: [SkillSummary] = []
+    @State var skills: [SkillSummary] = []
     @State private var showingSkills = false
     @State private var showingSettings = false
     @State private var saveAsSkillBody: String?
@@ -167,13 +167,13 @@ struct ConversationView: View {
         /// account that never bootstrapped.
         let avatarSeed: String
     }
-    @State private var resolvedPeer: ResolvedPeer?
+    @State var resolvedPeer: ResolvedPeer?
 
     /// Group conv only — sender lookup keyed by "user:<id>" / "bot:<id>"
     /// so each bubble can render its own avatar + nickname above the
     /// content. Loaded on appear via loadGroupSenders(); 1v1 stays nil
     /// and the existing peerProfile path serves it.
-    @State private var groupSenders: [String: GroupBubbleSender] = [:]
+    @State var groupSenders: [String: GroupBubbleSender] = [:]
 
     /// Group conv only — when the GroupRouterDO held back a bot turn
     /// because the last 30s of messages was bot-only, it filed a
@@ -184,7 +184,7 @@ struct ConversationView: View {
         let id: String
         let pendingBotIds: [String]
     }
-    @State private var pendingContinue: PendingContinue?
+    @State var pendingContinue: PendingContinue?
     @State private var continueDeciding: Bool = false
 
     /// Group conv only — set when the caller's group_member_billing.
@@ -193,7 +193,7 @@ struct ConversationView: View {
     /// same flag). The timestamp is the moment of the flip — messages
     /// from this point forward are hidden and the composer locks. Older
     /// messages stay visible so the user can still scroll their history.
-    @State private var groupFreezeAt: Date?
+    @State var groupFreezeAt: Date?
 
     /// "<bot_name> · <effective-model-tag>". Effective model = the per-conv
     /// override if set, otherwise the bot's resolved model (which itself
@@ -1498,33 +1498,13 @@ struct ConversationView: View {
 
     // MARK: - Lookback notes (invisible context-edit notes from the bot)
 
-    private struct LookbackNote: Identifiable, Equatable {
+    struct LookbackNote: Identifiable, Equatable {
         let id: String
         let body_md: String
         let active: Bool
     }
 
-    private func loadActiveLookbacks() async {
-        struct Row: Decodable {
-            let id: String
-            let body_md: String
-            let active: Bool
-        }
-        do {
-            let rows: [Row] = try await SupabaseStack.shared
-                .from("bot_lookbacks")
-                .select("id, body_md, active")
-                .eq("conversation_id", value: conversation.id)
-                .eq("active", value: true)
-                .order("created_at", ascending: true)
-                .execute()
-                .value
-            self.activeLookbacks = rows.map { LookbackNote(id: $0.id, body_md: $0.body_md, active: true) }
-        } catch {
-            // Lookbacks are an enhancement — silent fail.
-            log.warning("lookback load failed: \(error.localizedDescription, privacy: .public)")
-        }
-    }
+    // loadActiveLookbacks lives in ConversationView+Loading.swift.
 
     private func applyLookbackEvent(_ event: LookbackEvent) {
         let r = event.record
@@ -1978,176 +1958,8 @@ struct ConversationView: View {
 
     // ── REST: history + delete ─────────────────────────────────────────────
 
-    private func loadSkills() async {
-        // Skills load left disabled until /v1/skills lands. The chip stays
-        // empty; chat is unaffected.
-        self.skills = []
-    }
-
-    /// Resolve the user_user peer's display name + avatar path so the
-    /// header and incoming bubbles read as that person, not "未命名" + a
-    /// generic glyph. Skips when we already have a `pendingPeer` (the
-    /// friends-tab tap path supplies it eagerly) or when the conv is not
-    /// user_user. RLS on `pendingbot.users` is self-only, so we go through
-    /// the worker which uses service-role to read the peer row.
-    private func loadPeerProfileIfNeeded() async {
-        guard conversation.conversation_type == "user_user" else { return }
-        guard !conversation.id.isEmpty else { return }
-        if pendingPeer?.kind == "user" { return }
-        if resolvedPeer != nil { return }
-        do {
-            let url = HostedConfig.environment.workerURL
-                .appendingPathComponent("v1/contacts/conv-peer/\(conversation.id)")
-            var req = URLRequest(url: url)
-            req.httpMethod = "GET"
-            let token = try await SupabaseStack.shared.auth.session.accessToken
-            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            let (data, resp) = try await URLSession.shared.data(for: req)
-            guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode)
-            else { return }
-            struct Payload: Decodable {
-                let userId: String
-                let displayName: String
-                let avatarPath: String?
-                let avatarSeed: String?
-                let alias: String?
-            }
-            let p = try JSONDecoder().decode(Payload.self, from: data)
-            // Prefer the caller's local alias when set, otherwise the
-            // peer's own display name. The avatar uses the server-supplied
-            // seed (users.custom_fields.avatar_seed) so it matches what
-            // every other viewer of this person renders.
-            let name = (p.alias?.isEmpty == false ? p.alias! : p.displayName)
-            self.resolvedPeer = ResolvedPeer(
-                userId: p.userId,
-                displayName: name.isEmpty ? String(p.userId.prefix(8)) : name,
-                avatarPath: p.avatarPath,
-                avatarSeed: p.avatarSeed ?? p.userId
-            )
-        } catch {
-            // Non-fatal: header just keeps showing the existing fallback
-            // until next reopen. Log via the conversation logger so it's
-            // not silent in dev.
-            log.warning("conv-peer load failed: \(error.localizedDescription, privacy: .public)")
-        }
-    }
-
-    /// Bulk profile lookup for group members through the worker — same
-    /// shape as GroupSettingsView.fetchMemberProfiles. Direct supabase
-    /// queries against pendingbot.users hit the self-only RLS policy and
-    /// silently return empty for everyone except the caller; the worker
-    /// uses service-role and gates on conversation membership.
-    private func fetchGroupMemberProfiles(
-        userIds: [String]
-    ) async -> [String: (String, String?, String)] {
-        guard !userIds.isEmpty else { return [:] }
-        do {
-            let url = HostedConfig.environment.workerURL
-                .appendingPathComponent("v1/contacts/profiles")
-            var req = URLRequest(url: url)
-            req.httpMethod = "POST"
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            let token = try await SupabaseStack.shared.auth.session.accessToken
-            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            req.httpBody = try JSONSerialization.data(withJSONObject: [
-                "conversationId": conversation.id,
-                "userIds": userIds,
-            ])
-            let (data, resp) = try await URLSession.shared.data(for: req)
-            guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-                return [:]
-            }
-            struct Payload: Decodable {
-                struct Row: Decodable {
-                    let userId: String
-                    let displayName: String
-                    let avatarPath: String?
-                    let avatarSeed: String?
-                }
-                let profiles: [Row]
-            }
-            let payload = try JSONDecoder().decode(Payload.self, from: data)
-            return Dictionary(uniqueKeysWithValues: payload.profiles.map {
-                ($0.userId, ($0.displayName, $0.avatarPath, $0.avatarSeed ?? $0.userId))
-            })
-        } catch {
-            return [:]
-        }
-    }
-
-    /// Group-only — build the per-message sender lookup so each bubble
-    /// can show its own avatar + nickname above the content. Pulls
-    /// participants once on conv open; new senders that join mid-stream
-    /// fall back to the avatar-only render until next conv reopen
-    /// (Realtime delta sync for membership is M9 polish).
-    private func loadGroupSendersIfNeeded() async {
-        guard conversation.conversation_type == "group" else { return }
-        guard !conversation.id.isEmpty else { return }
-        do {
-            struct PartRow: Decodable {
-                let participant_type: String
-                let participant_id: String
-                let nickname: String?
-            }
-            let parts: [PartRow] = try await SupabaseStack.shared
-                .from("conversation_participants")
-                .select("participant_type, participant_id, nickname")
-                .eq("conversation_id", value: conversation.id)
-                .execute()
-                .value
-
-            let botIds = parts.filter { $0.participant_type == "bot" }
-                .map(\.participant_id)
-            let userIds = parts.filter { $0.participant_type == "user" }
-                .map(\.participant_id)
-
-            struct BotRow: Decodable { let id: String; let display_name: String }
-
-            async let botResp: [BotRow] = botIds.isEmpty ? [] : SupabaseStack.shared
-                .from("bots").select("id, display_name").in("id", values: botIds)
-                .execute().value
-            // pendingbot.users RLS is self-only — a direct query here
-            // returns ONLY the caller's row, so every other member's
-            // display_name comes back empty and the bubble label falls
-            // back to id-prefix. Route through the worker (service-role)
-            // so display_name + avatar_path + avatar_seed land for the
-            // whole group.
-            async let userInfoMap: [String: (String, String?, String)] =
-                userIds.isEmpty
-                    ? [:]
-                    : fetchGroupMemberProfiles(userIds: userIds)
-
-            let botMap = Dictionary(uniqueKeysWithValues:
-                (try await botResp).map { ($0.id, $0.display_name) })
-            let userMap = await userInfoMap
-
-            var lookup: [String: GroupBubbleSender] = [:]
-            for p in parts {
-                let key = "\(p.participant_type):\(p.participant_id)"
-                let isBot = p.participant_type == "bot"
-                let fallback: String = {
-                    if isBot {
-                        return botMap[p.participant_id] ?? "未知机器人"
-                    }
-                    let name = userMap[p.participant_id]?.0 ?? ""
-                    return name.isEmpty ? String(p.participant_id.prefix(8)) : name
-                }()
-                let nick = p.nickname?.trimmingCharacters(in: .whitespaces)
-                let display = (nick?.isEmpty == false ? nick! : fallback)
-                let info = isBot ? nil : userMap[p.participant_id]
-                lookup[key] = GroupBubbleSender(
-                    kind: isBot ? .bot : .user,
-                    id: p.participant_id,
-                    displayName: display,
-                    avatarPath: info?.1,
-                    avatarSeed: info?.2 ?? p.participant_id,
-                )
-            }
-            self.groupSenders = lookup
-        } catch {
-            log.warning("group senders load failed: \(error.localizedDescription, privacy: .public)")
-        }
-    }
+    // loadSkills + loadPeerProfileIfNeeded + fetchGroupMemberProfiles +
+    // loadGroupSendersIfNeeded live in ConversationView+Loading.swift.
 
     /// Pick the sender for a single bubble. Returns nil for non-group
     /// convs (BubbleView falls through to peerProfile/selfAvatar/botID),
@@ -2173,33 +1985,7 @@ struct ConversationView: View {
     /// When true, `frozen_at` carries the wall-clock moment of the flip
     /// — used by `displayedMessages` to hide post-freeze rows and by
     /// `iAmFrozen` to lock the composer + show the banner.
-    private func loadGroupFreezeIfNeeded() async {
-        guard conversation.conversation_type == "group" else { return }
-        guard !conversation.id.isEmpty else { return }
-        guard let me = AccountStore.shared.current?.id else { return }
-        do {
-            struct Row: Decodable {
-                let overdrawn: Bool
-                let frozen_at: String?
-            }
-            let rows: [Row] = try await SupabaseStack.shared
-                .from("group_member_billing")
-                .select("overdrawn, frozen_at")
-                .eq("conversation_id", value: conversation.id)
-                .eq("user_id", value: me)
-                .limit(1)
-                .execute()
-                .value
-            if let row = rows.first, row.overdrawn,
-               let raw = row.frozen_at, let parsed = ServerTimestamp.parse(raw) {
-                self.groupFreezeAt = parsed
-            } else {
-                self.groupFreezeAt = nil
-            }
-        } catch {
-            log.warning("group freeze load failed: \(error.localizedDescription, privacy: .public)")
-        }
-    }
+    // loadGroupFreezeIfNeeded lives in ConversationView+Loading.swift.
 
     /// Banner shown above the composer when the caller is frozen out of
     /// the group. Composer itself stays mounted (so the field still
@@ -2230,30 +2016,7 @@ struct ConversationView: View {
     /// notes also poll-on-open today, so we follow the same pattern;
     /// continue prompts are infrequent enough that a refresh on open +
     /// after-send is sufficient.
-    private func loadPendingContinueIfNeeded() async {
-        guard conversation.conversation_type == "group" else { return }
-        guard !conversation.id.isEmpty else { return }
-        do {
-            struct Row: Decodable {
-                let id: String
-                let pending_bot_ids: [String]
-            }
-            let rows: [Row] = try await SupabaseStack.shared
-                .from("group_continue_requests")
-                .select("id, pending_bot_ids")
-                .eq("conversation_id", value: conversation.id)
-                .eq("status", value: "pending")
-                .order("requested_at", ascending: false)
-                .limit(1)
-                .execute()
-                .value
-            self.pendingContinue = rows.first.map {
-                PendingContinue(id: $0.id, pendingBotIds: $0.pending_bot_ids)
-            }
-        } catch {
-            log.warning("pending continue load failed: \(error.localizedDescription, privacy: .public)")
-        }
-    }
+    // loadPendingContinueIfNeeded lives in ConversationView+Loading.swift.
 
     /// Detects an in-progress @-mention at the end of `input`. Returns
     /// the substring AFTER the `@` (possibly empty when the user just
@@ -2421,140 +2184,7 @@ struct ConversationView: View {
         }
     }
 
-    private func loadHistory() async {
-        // Hydrate from local cache instantly so the conv opens with last-known
-        // content even if the user is offline / on a flaky network.
-        let cached = LocalDatabase.shared.loadMessages(conversationId: conversation.id)
-        if !cached.isEmpty {
-            self.messages = cached.map { r in
-                ChatMessage(
-                    id: r.id,
-                    conversation_id: r.conversation_id,
-                    sender_type: r.role == "bot" ? "bot" : "user",
-                    sender_id: r.role == "bot" ? (r.sender_bot_id ?? "") : (r.user_id ?? ""),
-                    content: r.content ?? "",
-                    created_at: r.created_at,
-                    attachments: nil
-                )
-            }
-        }
-
-        do {
-            // Direct Supabase read — RLS gates participation. Excludes role='log'
-            // (review step entries) which are rendered separately.
-            struct Row: Decodable {
-                let id: String
-                let client_message_id: String?
-                let conversation_id: String
-                let user_id: String?
-                let sender_bot_id: String?
-                let role: String
-                let log_kind: String?
-                let log_payload: RecallPayload?
-                /// jsonb shape on `messages.attachments`: { ids: [uuid, ...] }
-                /// (see apps/edge/src/routes/messages.ts upsert). Captured so
-                /// recall can scrub URLCache for the right ids.
-                let attachments: AttachmentRef?
-                let content: String?
-                let content_partial: String?
-                let status: String?
-                let created_at: String
-                let citations: [MessageCitation]?
-            }
-            // Most role='log' rows are server-only (review step entries)
-            // and never render. The one exception is log_kind='recall':
-            // it's the WeChat-style tombstone the recall flow inserts
-            // for user_user convs. We synthesise a ChatMessage with
-            // sender_type="recall_log" and stash the original message's
-            // created_at in `content` so the row renderer can format
-            // "我撤回了 几分钟前 的一条消息" without further look-ups.
-            let rows: [Row] = try await SupabaseStack.shared
-                .from("messages")
-                .select("id, client_message_id, conversation_id, user_id, sender_bot_id, role, log_kind, log_payload, attachments, content, content_partial, status, created_at, citations")
-                .eq("conversation_id", value: conversation.id)
-                .order("created_at", ascending: true)
-                .limit(200)
-                .execute()
-                .value
-            var viewMessages: [ChatMessage] = []
-            var cacheRows: [LocalDatabase.MessageRow] = []
-            viewMessages.reserveCapacity(rows.count)
-            cacheRows.reserveCapacity(rows.count)
-            var citationsLoaded: [String: [MessageCitation]] = [:]
-            var attachmentIdsLoaded: [String: [String]] = [:]
-            for r in rows {
-                let secs = ServerTimestamp.epochSeconds(r.created_at, default: 0)
-                // Recalled message rows (status='deleted') shouldn't render —
-                // their content has been blanked server-side and the
-                // user-facing affordance is the tombstone log row instead.
-                if r.status == "deleted" { continue }
-                if r.role == "log" {
-                    // Recall tombstone — synthesise into a render-only
-                    // ChatMessage. Other log_kinds (review steps, etc.)
-                    // stay server-only and don't render here.
-                    if r.log_kind == "recall", let payload = r.log_payload {
-                        let originalSecs = payload.original_created_at_secs
-                        viewMessages.append(ChatMessage(
-                            id: r.id,
-                            conversation_id: r.conversation_id,
-                            sender_type: "recall_log",
-                            sender_id: payload.recaller_user_id ?? (r.user_id ?? ""),
-                            // `content` carries the original message's
-                            // epoch-seconds for the tombstone formatter.
-                            content: String(originalSecs),
-                            created_at: secs,
-                            attachments: nil
-                        ))
-                    }
-                    continue
-                }
-                let senderType: String = r.role == "bot" ? "bot" : "user"
-                let senderId = r.role == "bot" ? (r.sender_bot_id ?? "") : (r.user_id ?? "")
-                // Mid-stream bot rows have content=null and only content_partial set;
-                // fall back so a re-enter shows the in-flight bubble at its current
-                // length, not blank.
-                let renderContent = (r.content?.isEmpty == false ? r.content : r.content_partial) ?? ""
-                viewMessages.append(ChatMessage(
-                    id: r.id,
-                    conversation_id: r.conversation_id,
-                    sender_type: senderType,
-                    sender_id: senderId,
-                    content: renderContent,
-                    created_at: secs,
-                    attachments: nil
-                ))
-                if let cites = r.citations, !cites.isEmpty {
-                    citationsLoaded[r.id] = cites
-                }
-                if let aids = r.attachments?.ids, !aids.isEmpty {
-                    attachmentIdsLoaded[r.id] = aids
-                }
-                cacheRows.append(LocalDatabase.MessageRow(
-                    id: r.id,
-                    client_message_id: r.client_message_id,
-                    conversation_id: r.conversation_id,
-                    user_id: r.user_id,
-                    sender_bot_id: r.sender_bot_id,
-                    role: r.role,
-                    content: renderContent,
-                    status: r.status,
-                    created_at: secs
-                ))
-            }
-            self.messages = viewMessages
-            // Merge — keep any in-flight live snapshots that the SSE turn
-            // already populated; history's persisted values win on key collision.
-            self.citationsByMsgId.merge(citationsLoaded) { _, new in new }
-            self.attachmentIdsByMsgId.merge(attachmentIdsLoaded) { _, new in new }
-            LocalDatabase.shared.upsertMessages(cacheRows)
-        } catch {
-            // Network down + we have a cache: stay quiet (cached msgs still
-            // visible). Show the error only if we have nothing to display.
-            if messages.isEmpty {
-                self.error = error.localizedDescription
-            }
-        }
-    }
+    // loadHistory lives in ConversationView+Loading.swift.
 
     /// Apply a model pick from the settings sheet. The user chose a scope:
     ///   - `.conversation` — only this conversation; pins or replaces the
