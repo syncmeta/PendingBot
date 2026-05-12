@@ -35,15 +35,19 @@ struct ConversationView: View {
     @State var pendingPeer: PendingPeer?
     var onChange: () -> Void = {}
 
-    @Environment(\.api) private var api
-    @Environment(\.account) private var account
+    // Note: these are intentionally module-internal (not `private`) so
+    // that cross-file `extension ConversationView { … }` blocks (Recall,
+    // Loading, ToolTrace, Attachments) can read them. Within the module,
+    // only ConversationView instances expose them — same effective scope.
+    @Environment(\.api) var api
+    @Environment(\.account) var account
     @Environment(\.dismiss) private var dismiss
     @Environment(\.useSidebarLayout) private var sidebarLayout
-    @State private var messages: [ChatMessage] = []
+    @State var messages: [ChatMessage] = []
     @State private var input = ""
-    @State private var pendingAttachments: [PendingAttachment] = []
-    @State private var photoPickerItems: [PhotosPickerItem] = []
-    @State private var cameraImage: UIImage?
+    @State var pendingAttachments: [PendingAttachment] = []
+    @State var photoPickerItems: [PhotosPickerItem] = []
+    @State var cameraImage: UIImage?
     @State private var modelOverride: String = ""    // "" = use bot default
     /// Per-conv LLM provider pin. nil = follow alias-weight routing
     /// (默认). Set via the conversation settings sheet; sent on each
@@ -57,7 +61,7 @@ struct ConversationView: View {
     /// (providerOverride != conversation.provider_override) because the
     /// row's value may itself be nil and we still need to clear it idempotently.
     @State private var providerOverrideTouched: Bool = false
-    @State private var error: String?
+    @State var error: String?
     @State private var pending = false              // server is generating (bot_typing active)
     /// Active SSE turn task; canceling it closes the stream which Worker
     /// reads as request.signal.aborted (= interrupt). Set by sendViaSSE,
@@ -106,7 +110,7 @@ struct ConversationView: View {
     /// status='deleted' Realtime UPDATE) to scrub the matching responses
     /// from URLCache.shared so cached image bytes for a recalled message
     /// don't linger on disk after the server-side R2 object is purged.
-    @State private var attachmentIdsByMsgId: [String: [String]] = [:]
+    @State var attachmentIdsByMsgId: [String: [String]] = [:]
     // Skill summaries — counted in the settings sheet so the user sees
     // how many are active without leaving the conversation.
     @State private var skills: [SkillSummary] = []
@@ -2612,146 +2616,9 @@ struct ConversationView: View {
         }
     }
 
-    private func deleteMessage(_ msg: ChatMessage) async {
-        guard let api else { return }
-        do {
-            try await api.deleteVoid("v1/messages/\(msg.id)")
-            messages.removeAll { $0.id == msg.id }
-            Haptics.success()
-        } catch {
-            self.error = error.localizedDescription
-        }
-    }
+    // Recall + delete + URLCache scrubbing live in ConversationView+Recall.swift.
 
-    /// Round-trip a Realtime `log_payload` field through JSONEncoder
-    /// so it can decode as our typed RecallPayload struct. AnyJSON
-    /// (supabase-swift's tagged variant) is already encodable, so this
-    /// is just JSON → bytes → typed-Swift in two steps.
-    private func decodeRecallPayload(_ value: AnyJSON) -> RecallPayload? {
-        do {
-            let data = try JSONEncoder().encode(value)
-            return try JSONDecoder().decode(RecallPayload.self, from: data)
-        } catch {
-            return nil
-        }
-    }
-
-    /// Same trick for the `attachments` jsonb column on a Realtime
-    /// record. The worker writes `{ ids: [uuid, ...] }`.
-    private func decodeAttachmentIds(_ value: AnyJSON) -> [String]? {
-        do {
-            let data = try JSONEncoder().encode(value)
-            return try JSONDecoder().decode(AttachmentRef.self, from: data).ids
-        } catch {
-            return nil
-        }
-    }
-
-    /// Drop URLCache.shared entries for each attachment id we know
-    /// belonged to a now-recalled message. The worker stops serving
-    /// /v1/uploads/:id after recall (404), but iOS's HTTP cache holds
-    /// the bytes for up to a year (Cache-Control: immutable). Without
-    /// this call a stolen-but-unlocked device could still surface the
-    /// image from local disk after the conversation has scrubbed it.
-    ///
-    /// One day this whole pipeline should move to a custom URLCache
-    /// in an `NSFileProtectionComplete` directory so even non-recalled
-    /// attachments are at-rest-encrypted while the device is locked,
-    /// but that's a larger refactor (custom URLSession for AsyncImage)
-    /// — see follow-up notes.
-    private func scrubAttachmentCache(_ ids: [String]) {
-        guard !ids.isEmpty else { return }
-        let workerURL = account?.workerURL ?? HostedConfig.environment.workerURL
-        for id in ids {
-            let url = workerURL.appendingPathComponent("v1/uploads/\(id)")
-            URLCache.shared.removeCachedResponse(for: URLRequest(url: url))
-        }
-    }
-
-    /// WeChat-style sender recall. POSTs to /v1/messages/:id/recall and
-    /// removes the row from the local view optimistically.
-    ///
-    ///   • user_user (human↔human): server leaves a `log_kind='recall'`
-    ///     tombstone row that both peers will pick up via Realtime
-    ///     INSERT — that's what renders as "你/对方撤回了 …".
-    ///   • user_bot / group / self: server hard-purges including R2
-    ///     attachments. The row just disappears.
-    ///
-    /// Either way our optimistic remove matches what Realtime will
-    /// shortly confirm (status='deleted' UPDATE for the original row).
-    private func recallMessage(_ msg: ChatMessage) async {
-        guard let api else { return }
-        // Snapshot first so we can roll back if the POST fails.
-        guard let idx = messages.firstIndex(where: { $0.id == msg.id }) else { return }
-        let snapshot = messages[idx]
-        // Capture attachment ids BEFORE the optimistic remove drops
-        // the sidecar entry — we'll use them to scrub URLCache once
-        // the server confirms (or roll-back leaves them untouched).
-        let attIds = attachmentIdsByMsgId[msg.id] ?? []
-        messages.remove(at: idx)
-        do {
-            try await api.postVoid("v1/messages/\(msg.id)/recall")
-            attachmentIdsByMsgId.removeValue(forKey: msg.id)
-            scrubAttachmentCache(attIds)
-            Haptics.success()
-        } catch {
-            // Rollback — preserve the prior position on failure.
-            messages.insert(snapshot, at: min(idx, messages.count))
-            self.error = error.localizedDescription
-        }
-    }
-
-    // ── Image upload ────────────────────────────────────────────────────────
-
-    private func ingestPhotos(_ items: [PhotosPickerItem]) async {
-        guard let api else { return }
-        for item in items {
-            guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
-            let mime = item.supportedContentTypes.first?.preferredMIMEType ?? "image/jpeg"
-            let ext = mime.split(separator: "/").last.map(String.init) ?? "jpg"
-            do {
-                let response: UploadResponse = try await api.upload(
-                    "v1/upload",
-                    fileData: data,
-                    fileName: "image-\(UUID().uuidString.prefix(8)).\(ext)",
-                    mime: mime,
-                    extraFields: ["conversationId": conversation.id]
-                )
-                pendingAttachments.append(PendingAttachment(
-                    id: response.id, mime: response.mime, size: response.size
-                ))
-                Haptics.tap()
-            } catch {
-                self.error = "上传失败: \(error.localizedDescription)"
-                Haptics.error()
-            }
-        }
-        photoPickerItems = []
-    }
-
-    /// Same upload flow as `ingestPhotos`, but for one-shot camera captures.
-    /// JPEG-encode at 0.85 (same balance the rest of the app uses) so the
-    /// upload size matches what users get from the library picker.
-    private func ingestCameraImage(_ image: UIImage) async {
-        defer { cameraImage = nil }
-        guard let api, let data = image.jpegData(compressionQuality: 0.85) else { return }
-        do {
-            let response: UploadResponse = try await api.upload(
-                "v1/upload",
-                fileData: data,
-                fileName: "camera-\(UUID().uuidString.prefix(8)).jpg",
-                mime: "image/jpeg",
-                extraFields: ["conversationId": conversation.id]
-            )
-            pendingAttachments.append(PendingAttachment(
-                id: response.id, mime: response.mime, size: response.size
-            ))
-            Haptics.tap()
-        } catch {
-            self.error = "上传失败: \(error.localizedDescription)"
-            Haptics.error()
-        }
-    }
+    // ingestPhotos + ingestCameraImage live in ConversationView+Attachments.swift.
 }
 
 struct PendingAttachment: Identifiable, Hashable {
