@@ -84,6 +84,7 @@ export async function maybeRefreshMemory(input: MaybeRefreshInput): Promise<void
       .eq('conversation_id', conversationId)
       .lt('id', oldestContextMessageId)
       .neq('role', 'log')
+      .neq('status', 'deleted')  // recall: model must forget recalled messages
       .order('id', { ascending: true });
     if (!msgs?.length) return;
 
@@ -183,6 +184,7 @@ async function refreshBotNote(input: RefreshBotNoteInput): Promise<void> {
       .select('role, content, created_at')
       .eq('conversation_id', conversationId)
       .neq('role', 'log')
+      .neq('status', 'deleted')  // recall: reflection shouldn't include recalled rows
       .order('created_at', { ascending: false })
       .limit(30);
     const recent = (msgs ?? []).reverse();
@@ -304,17 +306,18 @@ async function refreshChatMemo(input: RefreshChatMemoInput): Promise<void> {
     const supa = serviceClient(env);
     const { data: existing } = await supa
       .from('skills')
-      .select('id, body_md' as never)
+      .select('id, body_md')
       .eq('bot_id', botId)
-      .eq('conversation_id' as never, conversationId)
+      .eq('conversation_id', conversationId)
       .is('user_id', null)
-      .maybeSingle<{ id: string; body_md: string }>();
+      .maybeSingle();
 
     const { data: msgs } = await supa
       .from('messages')
       .select('role, content, created_at')
       .eq('conversation_id', conversationId)
       .neq('role', 'log')
+      .neq('status', 'deleted')  // recall: skip recalled rows in memo build
       .order('created_at', { ascending: false })
       .limit(40);
     const recent = (msgs ?? []).reverse();
@@ -404,7 +407,7 @@ async function refreshChatMemo(input: RefreshChatMemoInput): Promise<void> {
           description: 'Bot private chat memo for this conversation',
         },
         body_md: raw,
-      } as never);
+      });
     }
   } catch (err) {
     console.warn('[memory] refreshChatMemo failed', err);
@@ -434,11 +437,11 @@ export async function getChatMemo(
   const supa = serviceClient(env);
   const { data } = await supa
     .from('skills')
-    .select('body_md' as never)
+    .select('body_md')
     .eq('bot_id', botId)
-    .eq('conversation_id' as never, conversationId)
+    .eq('conversation_id', conversationId)
     .is('user_id', null)
-    .maybeSingle<{ body_md: string }>();
+    .maybeSingle();
   return data?.body_md?.trim() || null;
 }
 

@@ -2,6 +2,8 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
 import { serviceClient } from '../lib/supabase';
+import { UUID_RE } from '../lib/ids';
+import { jsonError } from '../lib/http-error';
 import type { AppBindings } from '../types';
 
 export const contactRoutes = new Hono<AppBindings>();
@@ -35,7 +37,7 @@ contactRoutes.get('/', async (c) => {
     query = query.eq('added_via_handle_id', viaHandleId);
   }
   const { data: rows, error } = await query;
-  if (error) return c.json({ error: 'database', detail: error.message }, 500);
+  if (error) return jsonError(c, 500, 'database_error', { detail: error.message });
   const ids = (rows ?? []).map((r) => r.contact_user_id as string);
   if (ids.length === 0) return c.json({ contacts: [] });
 
@@ -43,7 +45,7 @@ contactRoutes.get('/', async (c) => {
     .from('users')
     .select('id, display_name, avatar_path, custom_fields')
     .in('id', ids);
-  if (profErr) return c.json({ error: 'database', detail: profErr.message }, 500);
+  if (profErr) return jsonError(c, 500, 'database_error', { detail: profErr.message });
   const byId = new Map<string, {
     display_name: string | null;
     avatar_path: string | null;
@@ -95,10 +97,10 @@ contactRoutes.post('/open-chat', async (c) => {
   try {
     parsed = OpenChatBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
   const otherId = parsed.contactUserId;
-  if (otherId === userId) return c.json({ error: 'cannot open chat with yourself' }, 400);
+  if (otherId === userId) return jsonError(c, 400, 'self_chat_not_allowed', { message: 'cannot open chat with yourself' });
 
   const supa = serviceClient(c.env);
 
@@ -113,7 +115,7 @@ contactRoutes.post('/open-chat', async (c) => {
     .eq('contact_user_id', otherId)
     .maybeSingle();
   if (!contact) {
-    return c.json({ error: '还不是好友,先发送好友申请' }, 403);
+    return jsonError(c, 403, 'forbidden', { message: '还不是好友,先发送好友申请' });
   }
 
   // Find an existing user_user conv where both users participate. We can
@@ -149,7 +151,7 @@ contactRoutes.post('/open-chat', async (c) => {
     })
     .select('id')
     .single();
-  if (convErr || !conv) return c.json({ error: 'database', detail: convErr?.message }, 500);
+  if (convErr || !conv) return jsonError(c, 500, 'database_error', { detail: convErr?.message });
   const convId = conv.id as string;
   await supa.from('conversation_participants').insert([
     { conversation_id: convId, participant_type: 'user', participant_id: userId, role: 'owner' },
@@ -178,7 +180,7 @@ contactRoutes.post('/profiles', async (c) => {
   try {
     parsed = ProfilesBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
   const supa = serviceClient(c.env);
@@ -189,10 +191,10 @@ contactRoutes.post('/profiles', async (c) => {
     .eq('conversation_id', parsed.conversationId)
     .eq('participant_type', 'user')
     .in('participant_id', ids);
-  if (partsErr) return c.json({ error: 'database', detail: partsErr.message }, 500);
+  if (partsErr) return jsonError(c, 500, 'database_error', { detail: partsErr.message });
   const participantIds = new Set((parts ?? []).map((r) => r.participant_id as string));
   if (!participantIds.has(userId)) {
-    return c.json({ error: 'not a participant of this conversation' }, 403);
+    return jsonError(c, 403, 'not_a_participant');
   }
   const requested = parsed.userIds.filter((id) => participantIds.has(id));
   if (requested.length === 0) return c.json({ profiles: [] });
@@ -201,7 +203,7 @@ contactRoutes.post('/profiles', async (c) => {
     .from('users')
     .select('id, display_name, avatar_path, custom_fields')
     .in('id', requested);
-  if (usersErr) return c.json({ error: 'database', detail: usersErr.message }, 500);
+  if (usersErr) return jsonError(c, 500, 'database_error', { detail: usersErr.message });
 
   const profiles = (users ?? []).map((u) => ({
     userId: u.id as string,
@@ -221,14 +223,14 @@ const AliasBody = z.object({ alias: z.string().max(64).nullable() });
 contactRoutes.patch('/:contactUserId', async (c) => {
   const userId = c.var.userId!;
   const contactUserId = c.req.param('contactUserId');
-  if (!/^[0-9a-f-]{36}$/i.test(contactUserId)) {
-    return c.json({ error: 'invalid contactUserId' }, 400);
+  if (!UUID_RE.test(contactUserId)) {
+    return jsonError(c, 400, 'invalid_id');
   }
   let parsed: z.infer<typeof AliasBody>;
   try {
     parsed = AliasBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
   const trimmed = parsed.alias?.trim();
   const aliasValue = trimmed && trimmed.length > 0 ? trimmed : null;
@@ -240,9 +242,9 @@ contactRoutes.patch('/:contactUserId', async (c) => {
     .eq('user_id', userId)
     .eq('contact_user_id', contactUserId)
     .select('contact_user_id');
-  if (error) return c.json({ error: 'database', detail: error.message }, 500);
+  if (error) return jsonError(c, 500, 'database_error', { detail: error.message });
   if (!data || data.length === 0) {
-    return c.json({ error: '不是好友,无法设置备注' }, 404);
+    return jsonError(c, 404, 'not_found', { message: '不是好友,无法设置备注' });
   }
   return c.json({ ok: true, alias: aliasValue });
 });
@@ -267,11 +269,11 @@ contactRoutes.get('/conv-peer/:convId', async (c) => {
     .eq('conversation_id', convId)
     .eq('participant_type', 'user')
     .eq('conversations.conversation_type', 'user_user');
-  if (partsErr) return c.json({ error: 'database', detail: partsErr.message }, 500);
+  if (partsErr) return jsonError(c, 500, 'database_error', { detail: partsErr.message });
   const ids = (parts ?? []).map((r) => r.participant_id as string);
-  if (!ids.includes(userId)) return c.json({ error: 'not a participant' }, 403);
+  if (!ids.includes(userId)) return jsonError(c, 403, 'not_a_participant');
   const otherId = ids.find((id) => id !== userId);
-  if (!otherId) return c.json({ error: 'no peer' }, 404);
+  if (!otherId) return jsonError(c, 404, 'peer_not_found');
 
   // Read the peer's basic profile + the caller's local alias (if any).
   // Both lookups are independent so they fire in parallel.
@@ -284,7 +286,7 @@ contactRoutes.get('/conv-peer/:convId', async (c) => {
       .eq('contact_user_id', otherId)
       .maybeSingle(),
   ]);
-  if (profileRes.error) return c.json({ error: 'database', detail: profileRes.error.message }, 500);
+  if (profileRes.error) return jsonError(c, 500, 'database_error', { detail: profileRes.error.message });
 
   return c.json({
     userId: otherId,

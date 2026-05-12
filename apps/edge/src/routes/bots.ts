@@ -2,6 +2,8 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
 import { serviceClient } from '../lib/supabase';
+import { UUID_RE } from '../lib/ids';
+import { jsonError } from '../lib/http-error';
 import type { AppBindings } from '../types';
 
 export const botRoutes = new Hono<AppBindings>();
@@ -29,15 +31,15 @@ const PatchBody = z
 botRoutes.patch('/:id', async (c) => {
   const userId = c.var.userId!;
   const id = c.req.param('id');
-  if (!/^[0-9a-f-]{36}$/i.test(id)) {
-    return c.json({ error: 'invalid id' }, 400);
+  if (!UUID_RE.test(id)) {
+    return jsonError(c, 400, 'invalid_id');
   }
 
   let parsed: z.infer<typeof PatchBody>;
   try {
     parsed = PatchBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
   const supa = serviceClient(c.env);
@@ -46,10 +48,10 @@ botRoutes.patch('/:id', async (c) => {
     .select('id, visibility, creator_id')
     .eq('id', id)
     .maybeSingle();
-  if (botErr) return c.json({ error: 'database', detail: botErr.message }, 500);
-  if (!bot) return c.json({ error: 'not found' }, 404);
+  if (botErr) return jsonError(c, 500, 'database_error', { detail: botErr.message });
+  if (!bot) return jsonError(c, 404, 'not_found');
   if (bot.visibility !== 'private' || bot.creator_id !== userId) {
-    return c.json({ error: '只能改自己创建的私有机器人' }, 403);
+    return jsonError(c, 403, 'forbidden', { message: '只能改自己创建的私有机器人' });
   }
 
   // Build partial update — only the keys the client actually sent.
@@ -66,7 +68,7 @@ botRoutes.patch('/:id', async (c) => {
     .from('bots')
     .update(update as never)
     .eq('id', id);
-  if (updErr) return c.json({ error: 'database', detail: updErr.message }, 500);
+  if (updErr) return jsonError(c, 500, 'database_error', { detail: updErr.message });
 
   return c.json({ ok: true });
 });

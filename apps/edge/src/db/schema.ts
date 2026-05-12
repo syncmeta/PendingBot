@@ -7,6 +7,11 @@ export type Json =
   | Json[]
 
 export type Database = {
+  // Allows to automatically instantiate createClient with right options
+  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
+  __InternalSupabase: {
+    PostgrestVersion: "14.5"
+  }
   pendingbot: {
     Tables: {
       account_deletion_log: {
@@ -110,6 +115,7 @@ export type Database = {
       attachments: {
         Row: {
           byte_size: number
+          content_sha256: string | null
           conversation_id: string | null
           created_at: string
           height: number | null
@@ -129,6 +135,7 @@ export type Database = {
         }
         Insert: {
           byte_size: number
+          content_sha256?: string | null
           conversation_id?: string | null
           created_at?: string
           height?: number | null
@@ -148,6 +155,7 @@ export type Database = {
         }
         Update: {
           byte_size?: number
+          content_sha256?: string | null
           conversation_id?: string | null
           created_at?: string
           height?: number | null
@@ -1566,6 +1574,51 @@ export type Database = {
         }
         Relationships: []
       }
+      realtime_sessions: {
+        Row: {
+          bot_id: string
+          conversation_id: string
+          created_at: string
+          ended_at: string | null
+          openai_session_id: string | null
+          session_id: string
+          user_id: string
+        }
+        Insert: {
+          bot_id: string
+          conversation_id: string
+          created_at?: string
+          ended_at?: string | null
+          openai_session_id?: string | null
+          session_id: string
+          user_id: string
+        }
+        Update: {
+          bot_id?: string
+          conversation_id?: string
+          created_at?: string
+          ended_at?: string | null
+          openai_session_id?: string | null
+          session_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "realtime_sessions_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "bots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "realtime_sessions_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       redemption_codes: {
         Row: {
           batch_label: string | null
@@ -2628,4 +2681,3 @@ export const Constants = {
     },
   },
 } as const
-

@@ -35,16 +35,23 @@ struct ConversationView: View {
     @State var pendingPeer: PendingPeer?
     var onChange: () -> Void = {}
 
-    @Environment(\.api) private var api
-    @Environment(\.account) private var account
+    // Note: these are intentionally module-internal (not `private`) so
+    // that cross-file `extension ConversationView { … }` blocks (Recall,
+    // Loading, ToolTrace, Attachments) can read them. Within the module,
+    // only ConversationView instances expose them — same effective scope.
+    @Environment(\.api) var api
+    @Environment(\.account) var account
     @Environment(\.dismiss) private var dismiss
     @Environment(\.useSidebarLayout) private var sidebarLayout
-    @State private var messages: [ChatMessage] = []
-    @State private var input = ""
-    @State private var pendingAttachments: [PendingAttachment] = []
-    @State private var photoPickerItems: [PhotosPickerItem] = []
-    @State private var cameraImage: UIImage?
-    @State private var modelOverride: String = ""    // "" = use bot default
+    @State var messages: [ChatMessage] = []
+    // Composer text — needs to be accessible from ConversationView+Group
+    // (mention picker / insertMention rewrites the trailing "@<prefix>"),
+    // so it can't be file-private.
+    @State var input = ""
+    @State var pendingAttachments: [PendingAttachment] = []
+    @State var photoPickerItems: [PhotosPickerItem] = []
+    @State var cameraImage: UIImage?
+    @State var modelOverride: String = ""    // "" = use bot default
     /// Per-conv LLM provider pin. nil = follow alias-weight routing
     /// (默认). Set via the conversation settings sheet; sent on each
     /// chat POST as `providerOverride` so the server persists it onto
@@ -57,58 +64,67 @@ struct ConversationView: View {
     /// (providerOverride != conversation.provider_override) because the
     /// row's value may itself be nil and we still need to clear it idempotently.
     @State private var providerOverrideTouched: Bool = false
-    @State private var error: String?
+    @State var error: String?
     @State private var pending = false              // server is generating (bot_typing active)
     /// Active SSE turn task; canceling it closes the stream which Worker
     /// reads as request.signal.aborted (= interrupt). Set by sendViaSSE,
     /// cleared on completion. Non-nil while a turn is in flight.
-    @State private var chatTurnTask: Task<Void, Never>?
+    // chatTurnTask gates the auto-lookback fire timer in
+    // ConversationView+Realtime, so it needs to be cross-extension visible.
+    @State var chatTurnTask: Task<Void, Never>?
     /// Realtime subscription token for this conv's `messages` channel —
     /// dropped when the view disappears. Picks up cross-device messages
     /// and bot rows that land via background paths (cron, review).
-    @State private var realtimeToken: ConvSubscriptionToken?
+    @State var realtimeToken: ConvSubscriptionToken?
     /// Lookback notes the bot wrote about prior turns (Realtime push from
     /// pendingbot.bot_lookbacks). Invisible to the user; passed in
     /// `activeLookbacks` on the next POST so the bot sees them as context.
-    @State private var activeLookbacks: [LookbackNote] = []
+    @State var activeLookbacks: [LookbackNote] = []
     /// 30s grace timer started when a new lookback arrives. If user hasn't
     /// sent anything before it fires, we auto-trigger a continuation turn
     /// so the bot's fact-check actually surfaces.
-    @State private var lookbackAutoFireTask: Task<Void, Never>?
+    @State var lookbackAutoFireTask: Task<Void, Never>?
     /// Tool-call trace per user message. Rendered inline (non-bubble, auto-
     /// collapsed) right after the user message that triggered it. Worker emits
     /// `tool_call` / `tool_result` SSE events during a turn — we accumulate
     /// them into the bucket for the in-flight `liveTraceUserMsgId`.
-    @State private var tracesByUserMsgId: [String: [ToolTraceEvent]] = [:]
+    @State var tracesByUserMsgId: [String: [ToolTraceEvent]] = [:]
     /// Local id of the user message currently driving an SSE turn — set in
     /// sendViaSSE before the stream starts, cleared when the turn ends.
     /// Multiple traces can land for the same user msg if the agent loops.
-    @State private var liveTraceUserMsgId: String?
+    @State var liveTraceUserMsgId: String?
     /// Web-search citations attached to a bot bubble, keyed by message id.
     /// Sources: history `select citations`, Realtime UPDATE on the row, and
     /// the per-turn `citations` SSE event copied to each in-flight bubble.
     /// `MarkdownText` reads the entry to resolve inline `[N]` markers.
-    @State private var citationsByMsgId: [String: [MessageCitation]] = [:]
+    @State var citationsByMsgId: [String: [MessageCitation]] = [:]
     /// Cumulative citations for the in-flight turn — last value pushed by the
     /// `citations` SSE event. Snapshotted onto each bubble created during
     /// the turn so the live preview can resolve `[N]` taps before the
     /// canonical row arrives via Realtime.
-    @State private var liveCitations: [MessageCitation] = []
+    @State var liveCitations: [MessageCitation] = []
     /// Per-trace citations bucket so the inline `搜索` trace can list the
     /// hits it surfaced even after the turn ends + `liveCitations` resets.
     /// Keyed by user-message id like `tracesByUserMsgId`; rekeyed on the
     /// optimistic-id → canonical-id swap so re-expanding an old trace still
     /// shows its results.
-    @State private var traceCitationsByUserMsgId: [String: [MessageCitation]] = [:]
+    @State var traceCitationsByUserMsgId: [String: [MessageCitation]] = [:]
+    /// Attachment ids per message id. Populated from `messages.attachments`
+    /// jsonb on load + Realtime, and from the local pending attachment set
+    /// when the user sends. Used on recall (own + peer's, via the
+    /// status='deleted' Realtime UPDATE) to scrub the matching responses
+    /// from URLCache.shared so cached image bytes for a recalled message
+    /// don't linger on disk after the server-side R2 object is purged.
+    @State var attachmentIdsByMsgId: [String: [String]] = [:]
     // Skill summaries — counted in the settings sheet so the user sees
     // how many are active without leaving the conversation.
-    @State private var skills: [SkillSummary] = []
+    @State var skills: [SkillSummary] = []
     @State private var showingSkills = false
     @State private var showingSettings = false
     @State private var saveAsSkillBody: String?
     /// Active voice call session, present while CallView is on screen.
     /// Created on phone-button tap and torn down when CallView dismisses.
-    @State private var callSession: CallSession?
+    @State var callSession: CallSession?
 
     // Streaming reveal smoother — see applyBubbleEmissions. Bubbles that the
     // splitter promotes to .streaming (≥ BUBBLE_OVERFLOW_CHARS without a
@@ -116,16 +132,16 @@ struct ConversationView: View {
     // tokens trickled in by `revealTask` at a fixed rate, giving a fast
     // typewriter catch-up effect instead of the old "pop in 15 chars then
     // stutter".
-    @State private var revealTargetId: String?
-    @State private var revealBuffer: String = ""
-    @State private var revealEnded: Bool = false
-    @State private var pendingEmissions: [BubbleEmission] = []
-    @State private var revealTask: Task<Void, Never>?
+    @State var revealTargetId: String?
+    @State var revealBuffer: String = ""
+    @State var revealEnded: Bool = false
+    @State var pendingEmissions: [BubbleEmission] = []
+    @State var revealTask: Task<Void, Never>?
     /// True when the reveal task is mounted on a bubble but has nothing
     /// to drain right now (upstream paused mid-turn). Drives the cursor's
     /// blink mode in BubbleView — solid while tokens flow, blinking when
     /// we're sitting between chunks.
-    @State private var streamPaused: Bool = false
+    @State var streamPaused: Bool = false
 
     /// Canonical bot-row ids announced by the SSE `bubble` event but not yet
     /// reconciled with a Realtime INSERT. When the INSERT lands with one of
@@ -134,14 +150,14 @@ struct ConversationView: View {
     /// long the round-trip took. Without this, slow streams (>5s) used to
     /// blow past the recency-window dedup and the canonical row would
     /// append as a duplicate bubble.
-    @State private var pendingCanonicalBotIds: Set<String> = []
+    @State var pendingCanonicalBotIds: Set<String> = []
 
     /// Maps `local-<uuid>` → `client_message_id` so a Realtime INSERT echo
     /// can dedupe against our optimistic row by matching the server's
     /// `client_message_id` field exactly, instead of guessing via a 5s
     /// recency window that fails on slow networks. Cleared once the
     /// canonical row has replaced the optimistic one.
-    @State private var localMsgClientIds: [String: String] = [:]
+    @State var localMsgClientIds: [String: String] = [:]
 
     /// Other-side profile for a user_user conv, fetched once on appear
     /// when we don't already have a `pendingPeer`. Drives the chat
@@ -156,13 +172,13 @@ struct ConversationView: View {
         /// account that never bootstrapped.
         let avatarSeed: String
     }
-    @State private var resolvedPeer: ResolvedPeer?
+    @State var resolvedPeer: ResolvedPeer?
 
     /// Group conv only — sender lookup keyed by "user:<id>" / "bot:<id>"
     /// so each bubble can render its own avatar + nickname above the
     /// content. Loaded on appear via loadGroupSenders(); 1v1 stays nil
     /// and the existing peerProfile path serves it.
-    @State private var groupSenders: [String: GroupBubbleSender] = [:]
+    @State var groupSenders: [String: GroupBubbleSender] = [:]
 
     /// Group conv only — when the GroupRouterDO held back a bot turn
     /// because the last 30s of messages was bot-only, it filed a
@@ -173,8 +189,11 @@ struct ConversationView: View {
         let id: String
         let pendingBotIds: [String]
     }
-    @State private var pendingContinue: PendingContinue?
-    @State private var continueDeciding: Bool = false
+    @State var pendingContinue: PendingContinue?
+    // Decision-in-flight for the continue-request banner — accessed by
+    // both the banner view (in ConversationView+Group) and the worker
+    // POST handler in the same extension.
+    @State var continueDeciding: Bool = false
 
     /// Group conv only — set when the caller's group_member_billing.
     /// overdrawn = true (per-group cap exhausted OR wallet balance can't
@@ -182,7 +201,7 @@ struct ConversationView: View {
     /// same flag). The timestamp is the moment of the flip — messages
     /// from this point forward are hidden and the composer locks. Older
     /// messages stay visible so the user can still scroll their history.
-    @State private var groupFreezeAt: Date?
+    @State var groupFreezeAt: Date?
 
     /// "<bot_name> · <effective-model-tag>". Effective model = the per-conv
     /// override if set, otherwise the bot's resolved model (which itself
@@ -300,6 +319,28 @@ struct ConversationView: View {
                         }
 
                         ForEach(displayedMessages) { msg in
+                            if idsWithLeadingTimeSeparator.contains(msg.id) {
+                                TimeSeparatorPill(
+                                    date: Date(timeIntervalSince1970: TimeInterval(msg.created_at))
+                                )
+                                .id("time-sep:\(msg.id)")
+                                .padding(.vertical, 6)
+                                .frame(maxWidth: .infinity)
+                            }
+                            if msg.sender_type == "recall_log" {
+                                // Tombstone for a recall. `content`
+                                // carries the original message's epoch
+                                // seconds (see loadHistory mapping);
+                                // `sender_id` is the recaller's user
+                                // id, used to pick the 1st-person vs
+                                // 3rd-person wording.
+                                let originalSecs = Int(msg.content) ?? msg.created_at
+                                RecallTombstoneView(
+                                    wasMine: msg.sender_id == AccountStore.shared.current?.id,
+                                    originalAt: Date(timeIntervalSince1970: TimeInterval(originalSecs))
+                                )
+                                .id(msg.id)
+                            } else {
                             BubbleView(message: msg,
                                        botName: botName,
                                        conversationID: conversation.id,
@@ -333,6 +374,18 @@ struct ConversationView: View {
                                             }
                                         }
                                     }
+                                    if msg.isMine(currentUserId: AccountStore.shared.current?.id) {
+                                        // 撤回: WeChat-style sender-only retract.
+                                        // In user_user convs this leaves a
+                                        // tombstone log row visible to both
+                                        // parties; in user_bot / group convs
+                                        // it's a hard purge (bot's future
+                                        // context won't see it either).
+                                        // Server side: POST /v1/messages/:id/recall.
+                                        Button {
+                                            Task { await recallMessage(msg) }
+                                        } label: { Label("撤回", systemImage: "arrow.uturn.backward") }
+                                    }
                                     Button(role: .destructive) {
                                         Task { await deleteMessage(msg) }
                                     } label: { Label("删除", systemImage: "trash") }
@@ -354,6 +407,7 @@ struct ConversationView: View {
                                 .id("trace:\(msg.id)")
                                 .transition(.opacity)
                             }
+                            }  // end else (non-recall_log branch)
                         }
 
                         Color.clear.frame(height: 8).id("bottom")
@@ -536,6 +590,27 @@ struct ConversationView: View {
         return messages.filter { $0.created_at < cutoff }
     }
 
+    /// Set of message ids that should have a centered time-separator
+    /// pill rendered immediately BEFORE them. WeChat-style cadence:
+    /// always before the very first message in the visible window,
+    /// then again whenever the gap to the previous message exceeds
+    /// RelativeMessageTime.separatorGapSeconds (5 min). Kept as a
+    /// derived Set so the ForEach body's lookup is O(1).
+    private var idsWithLeadingTimeSeparator: Set<String> {
+        var ids: Set<String> = []
+        let shown = displayedMessages
+        guard let first = shown.first else { return ids }
+        ids.insert(first.id)
+        for i in 1..<shown.count {
+            let prev = shown[i - 1].created_at
+            let cur = shown[i].created_at
+            if Double(cur - prev) >= RelativeMessageTime.separatorGapSeconds {
+                ids.insert(shown[i].id)
+            }
+        }
+        return ids
+    }
+
     private func scrollToBottom(proxy: ScrollViewProxy) {
         // Defer one runloop so LazyVStack has measured any just-appended row;
         // scrolling synchronously inside the same state-change tick lands on a
@@ -658,58 +733,9 @@ struct ConversationView: View {
 
     // ── Send ────────────────────────────────────────────────────────────────
 
-    private func subscribeRealtime() async {
-        let convId = conversation.id
-        guard !convId.isEmpty else { return }
-        realtimeToken = await RealtimeManager.shared.startConvChannel(
-            conversationId: convId,
-            onMessage: { event in
-                Task { @MainActor in
-                    applyRealtimeEvent(event)
-                }
-            },
-            onLookback: { event in
-                Task { @MainActor in
-                    applyLookbackEvent(event)
-                }
-            },
-            onContinueRequest: { event in
-                Task { @MainActor in
-                    applyContinueEvent(event)
-                }
-            },
-            onParticipants: { _ in
-                Task { @MainActor in
-                    // Senders map is small and the event fires only on
-                    // joins / role changes / leaves — re-running the
-                    // load-once function is fine. Cheap enough that
-                    // we don't bother diffing.
-                    await loadGroupSendersIfNeeded()
-                }
-            }
-        )
-    }
-
-    /// Apply a Realtime event from group_continue_requests to the
-    /// composer banner. New row pending → show banner with its bot ids;
-    /// existing row flipped to allowed/denied/expired → clear banner.
-    private func applyContinueEvent(_ event: ContinueRequestEvent) {
-        let r = event.record
-        guard let id = r["id"]?.stringValue else { return }
-        let status = r["status"]?.stringValue ?? "pending"
-        if status != "pending" {
-            // Decided / expired — clear our banner if it was for this row.
-            if pendingContinue?.id == id { pendingContinue = nil }
-            return
-        }
-        // pending_bot_ids comes through as a JSON array; AnyJSON →
-        // [String] requires a tiny manual decode.
-        var botIds: [String] = []
-        if let arr = r["pending_bot_ids"]?.arrayValue {
-            botIds = arr.compactMap { $0.stringValue }
-        }
-        pendingContinue = PendingContinue(id: id, pendingBotIds: botIds)
-    }
+    // subscribeRealtime + applyContinueEvent + applyRealtimeEvent +
+    // applyLookbackEvent + scheduleLookbackAutoFire + canStartVoiceCall
+    // + startVoiceCall live in ConversationView+Realtime.swift.
 
     /// Show the "+ new conv" header button only for materialized chats with
     /// an identifiable bot — pending convs and user_user/self chats can't
@@ -719,32 +745,6 @@ struct ConversationView: View {
         if conversation.conversation_type != "user_bot" { return false }
         if let bid = bot?.id, !bid.isEmpty { return true }
         return !conversation.bot_id.isEmpty
-    }
-
-    /// Phone-button visibility — only 1v1 bot chats with voice_call_enabled
-    /// flipped by the bot owner. Pending convs need a materialized id for
-    /// the /v1/realtime/session round-trip, so we gate on conv.id too.
-    private var canStartVoiceCall: Bool {
-        guard !conversation.id.isEmpty else { return false }
-        if conversation.conversation_type != "user_bot" { return false }
-        return bot?.voice_call_enabled == true
-    }
-
-    /// Spin up a CallSession for the current bot + present CallView via
-    /// the .fullScreenCover bound to `callSession`. Tearing down happens
-    /// in the cover's onDismiss; we don't await session.start() here so
-    /// the UI flips to the call screen immediately.
-    private func startVoiceCall() {
-        let botId: String = {
-            if let bid = bot?.id, !bid.isEmpty { return bid }
-            return conversation.bot_id
-        }()
-        guard !botId.isEmpty else { return }
-        callSession = CallSession(
-            conversationId: conversation.id,
-            botId: botId,
-            botDisplayName: bot?.display_name ?? "AI",
-        )
     }
 
     /// Flip this view onto a fresh pending user_bot conv with the same bot.
@@ -933,6 +933,13 @@ struct ConversationView: View {
                 },
                 status: "sending"
             ))
+            // Mirror the attachment ids into the sidecar dict the
+            // recall path scrubs from URLCache — keyed by localId
+            // here; rekeyed to the canonical id when Realtime resolves
+            // (see the live-* → canonical swap below).
+            if !attachmentSnapshot.isEmpty {
+                attachmentIdsByMsgId[localId] = attachmentSnapshot.map { $0.id }
+            }
             // Light the typing indicator now so the gap between bubble +
             // first bot token reads as "working" instead of "stuck".
             pending = true
@@ -1058,7 +1065,7 @@ struct ConversationView: View {
     /// No-op if the row has already been replaced by its canonical Realtime
     /// version — that means the message did persist and we shouldn't pretend
     /// otherwise.
-    private func markUserMessageFailed(_ localId: String) {
+    func markUserMessageFailed(_ localId: String) {
         guard let idx = messages.firstIndex(where: { $0.id == localId }) else { return }
         let prev = messages[idx]
         messages[idx] = ChatMessage(
@@ -1161,7 +1168,9 @@ struct ConversationView: View {
     ///     the conv server-side and emits `event: meta` with the canonical
     ///     ids before any tokens. We wire those back into the optimistic
     ///     local row + conversation state on the fly.
-    private func sendViaSSE(text: String, attachmentIds: [String], autoLookback: Bool = false, userMsgId: String? = nil, clientMessageId: String? = nil, startBotId: String? = nil) {
+    // Internal access — called from scheduleLookbackAutoFire (auto-fire
+    // a no-input turn) in ConversationView+Realtime.swift.
+    func sendViaSSE(text: String, attachmentIds: [String], autoLookback: Bool = false, userMsgId: String? = nil, clientMessageId: String? = nil, startBotId: String? = nil) {
         chatTurnTask?.cancel()
         flushRevealImmediately()
         // User taking action (or auto-fire firing) cancels the pending
@@ -1390,1125 +1399,49 @@ struct ConversationView: View {
         }
     }
 
-    // MARK: - Tool-call trace
-
-    private func appendToolCall(name: String, input: String?) {
-        guard let key = liveTraceUserMsgId else { return }
-        var bucket = tracesByUserMsgId[key] ?? []
-        bucket.append(ToolTraceEvent(name: name, input: input))
-        tracesByUserMsgId[key] = bucket
-    }
-
-    private func completeToolCall(name: String, summary: String?, error: String?) {
-        guard let key = liveTraceUserMsgId else { return }
-        var bucket = tracesByUserMsgId[key] ?? []
-        // Match the most recent unfinished event with the same tool name.
-        // Bot can issue parallel tool calls; FIFO completion is wrong in
-        // theory but right in practice for our current 2-tool surface.
-        if let idx = bucket.lastIndex(where: { $0.name == name && !$0.done }) {
-            bucket[idx].resultSummary = summary
-            bucket[idx].resultError = error
-            bucket[idx].done = true
-        } else {
-            // Result without a matching call (shouldn't happen but stay
-            // defensive — the worker's emitter could miss a tool_call).
-            var ev = ToolTraceEvent(name: name, input: nil)
-            ev.resultSummary = summary
-            ev.resultError = error
-            ev.done = true
-            bucket.append(ev)
-        }
-        tracesByUserMsgId[key] = bucket
-    }
+    // Tool-call trace accumulation lives in ConversationView+ToolTrace.swift.
 
     // MARK: - Lookback notes (invisible context-edit notes from the bot)
 
-    private struct LookbackNote: Identifiable, Equatable {
+    struct LookbackNote: Identifiable, Equatable {
         let id: String
         let body_md: String
         let active: Bool
     }
 
-    private func loadActiveLookbacks() async {
-        struct Row: Decodable {
-            let id: String
-            let body_md: String
-            let active: Bool
-        }
-        do {
-            let rows: [Row] = try await SupabaseStack.shared
-                .from("bot_lookbacks")
-                .select("id, body_md, active")
-                .eq("conversation_id", value: conversation.id)
-                .eq("active", value: true)
-                .order("created_at", ascending: true)
-                .execute()
-                .value
-            self.activeLookbacks = rows.map { LookbackNote(id: $0.id, body_md: $0.body_md, active: true) }
-        } catch {
-            // Lookbacks are an enhancement — silent fail.
-            log.warning("lookback load failed: \(error.localizedDescription, privacy: .public)")
-        }
-    }
+    // loadActiveLookbacks lives in ConversationView+Loading.swift.
 
-    private func applyLookbackEvent(_ event: LookbackEvent) {
-        let r = event.record
-        guard let id = r["id"]?.stringValue else { return }
-        let body = r["body_md"]?.stringValue ?? ""
-        let active = (r["active"]?.boolValue) ?? true
-        if active {
-            // INSERT (new note) or UPDATE that brought it back. Replace by id.
-            if let idx = activeLookbacks.firstIndex(where: { $0.id == id }) {
-                activeLookbacks[idx] = LookbackNote(id: id, body_md: body, active: true)
-            } else {
-                activeLookbacks.append(LookbackNote(id: id, body_md: body, active: true))
-                // New note arrived — schedule auto-fire after 30s of user silence
-                // (skip if a turn is already in flight: the next user reply or
-                // the in-flight reply will pick the lookback up via prompt).
-                if chatTurnTask == nil {
-                    scheduleLookbackAutoFire()
-                }
-            }
-        } else {
-            // active=false → bot retired this note (via [DROP_LOOKBACK]).
-            activeLookbacks.removeAll { $0.id == id }
-        }
-    }
-
-    private func scheduleLookbackAutoFire() {
-        lookbackAutoFireTask?.cancel()
-        lookbackAutoFireTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
-            if Task.isCancelled { return }
-            // Re-check: still no in-flight turn, still some active lookbacks?
-            guard chatTurnTask == nil, !activeLookbacks.isEmpty else { return }
-            sendViaSSE(text: "", attachmentIds: [], autoLookback: true)
-        }
-    }
+    // applyLookbackEvent + scheduleLookbackAutoFire +
+    // applyRealtimeEvent live in ConversationView+Realtime.swift.
 
     /// Decode a Realtime row's `citations` value into the typed model. Returns
     /// nil when absent / null / malformed — callers fall back to whatever was
     /// already in `citationsByMsgId` for the row (e.g. the live-bubble snapshot).
-    private func parseCitations(from any: AnyJSON?) -> [MessageCitation]? {
-        guard let any else { return nil }
-        do {
-            let data = try JSONEncoder().encode(any)
-            // AnyJSON.null encodes as the literal "null" — short-circuit
-            // before the array decoder throws on the wrong shape.
-            if data.count == 4, String(data: data, encoding: .utf8) == "null" {
-                return nil
-            }
-            return try JSONDecoder().decode([MessageCitation].self, from: data)
-        } catch {
-            return nil
-        }
-    }
+    // parseCitations lives in ConversationView+ToolTrace.swift.
 
-    /// Realtime postgres_changes payload → ChatMessage in the local list.
-    /// Dedupe by canonical row id so this device's own SSE-emitted bubbles
-    /// (which carry "live-<uuid>" ids until reconciled) get either skipped
-    /// or replaced cleanly. role='log' rows are filtered out (rendered via
-    /// a different surface).
-    private func applyRealtimeEvent(_ event: MessageEvent) {
-        let r = event.record
-        guard let id = r["id"]?.stringValue,
-              r["conversation_id"]?.stringValue == conversation.id else { return }
-        let role = r["role"]?.stringValue ?? "user"
-        // Logs are server-only (review step entries) — never rendered here.
-        if role == "log" { return }
-        // Prefer content_partial while a bot turn is mid-stream — content
-        // stays null until the worker writes the final string at done. This
-        // is what lets a user re-enter a conv whose SSE they dropped and
-        // still see the bubble fill in via Realtime UPDATEs.
-        let finalContent = r["content"]?.stringValue ?? ""
-        let partialContent = r["content_partial"]?.stringValue ?? ""
-        let content = finalContent.isEmpty ? partialContent : finalContent
-        let createdRaw = r["created_at"]?.stringValue ?? ""
-        // Default to "now" so live messages don't collapse to 1970 if the
-        // timestamp format ever drifts.
-        let secs = ServerTimestamp.epochSeconds(createdRaw, default: Int(Date().timeIntervalSince1970))
-        let senderType = role == "bot" ? "bot" : "user"
-        let senderId = role == "bot"
-            ? (r["sender_bot_id"]?.stringValue ?? "")
-            : (r["user_id"]?.stringValue ?? "")
-        let msg = ChatMessage(
-            id: id,
-            conversation_id: conversation.id,
-            sender_type: senderType,
-            sender_id: senderId,
-            content: content,
-            created_at: secs,
-            attachments: nil
-        )
-        let citations = parseCitations(from: r["citations"])
-        if let existing = messages.firstIndex(where: { $0.id == id }) {
-            messages[existing] = msg
-            if let citations { citationsByMsgId[id] = citations }
-        } else {
-            // Drop our own optimistic local/live row if we can match it.
-            //
-            // For bot rows, the SSE `bubble` event told us this canonical
-            // id ahead of time → match by membership in
-            // `pendingCanonicalBotIds`, then FIFO-replace the first
-            // `live-*` bot bubble. This is timing-independent and handles
-            // slow streams where the optimistic bubble is older than any
-            // sensible recency window.
-            //
-            // For user rows we don't have a server-announced id (the user
-            // message is materialized server-side without acking back),
-            // so fall back to (prefix + role + recency) — same heuristic
-            // as before, just bounded to user rows where it's accurate.
-            //
-            // We deliberately don't compare content for live-* bot bubbles:
-            // they're still being revealed by the typewriter when the
-            // canonical INSERT lands, so their displayed content is partial.
-            let isOurBotEcho = role == "bot" && pendingCanonicalBotIds.contains(id)
-            let serverCmid = r["client_message_id"]?.stringValue
-            let now = Int(Date().timeIntervalSince1970)
-            let staleIndex: Int? = {
-                if isOurBotEcho {
-                    return messages.firstIndex { m in
-                        m.id.hasPrefix("live-") && m.sender_type == "bot"
-                    }
-                }
-                if role != "bot" {
-                    // Prefer exact client_message_id match — survives any
-                    // round-trip latency.
-                    if let cmid = serverCmid,
-                       let local = localMsgClientIds.first(where: { $0.value == cmid })?.key,
-                       let idx = messages.firstIndex(where: { $0.id == local }) {
-                        return idx
-                    }
-                    // Fallback for legacy / cross-device echoes that landed
-                    // here without a tracked cmid (e.g. a peer device that
-                    // just inserted a row in a user_user thread we have open).
-                    return messages.firstIndex { m in
-                        m.id.hasPrefix("local-")
-                            && m.sender_type == senderType
-                            && abs(m.created_at - now) < 5
-                    }
-                }
-                return nil
-            }()
-            if isOurBotEcho { pendingCanonicalBotIds.remove(id) }
-            if let stale = staleIndex {
-                let oldId = messages[stale].id
-                localMsgClientIds.removeValue(forKey: oldId)
-                messages[stale] = msg
-                // Re-key any tool trace bound to the optimistic local id so
-                // it stays attached after the canonical row replaces it.
-                if let trace = tracesByUserMsgId.removeValue(forKey: oldId) {
-                    tracesByUserMsgId[id] = trace
-                    if liveTraceUserMsgId == oldId {
-                        liveTraceUserMsgId = id
-                    }
-                }
-                if let traceCites = traceCitationsByUserMsgId.removeValue(forKey: oldId) {
-                    traceCitationsByUserMsgId[id] = traceCites
-                }
-                // Same rekey for citations — the live-id snapshot was set
-                // from the SSE event; the canonical row may carry the same
-                // (or fresher) list, so prefer the canonical when present.
-                let priorCitations = citationsByMsgId.removeValue(forKey: oldId)
-                citationsByMsgId[id] = citations ?? priorCitations
-            } else {
-                messages.append(msg)
-                if let citations { citationsByMsgId[id] = citations }
-            }
-        }
-        // Mirror to local cache.
-        LocalDatabase.shared.upsertMessages([
-            LocalDatabase.MessageRow(
-                id: id,
-                client_message_id: r["client_message_id"]?.stringValue,
-                conversation_id: conversation.id,
-                user_id: r["user_id"]?.stringValue,
-                sender_bot_id: r["sender_bot_id"]?.stringValue,
-                role: role,
-                content: content,
-                status: r["status"]?.stringValue,
-                created_at: secs
-            ),
-        ])
-    }
 
-    /// Translate splitter emissions into mutations on the local `messages`
-    /// array. Begin = append a new bot message; append = mutate the last
-    /// one's content; end / turnDone / turnInterrupted are status signals.
-    ///
-    /// Streaming bubbles get routed through the reveal smoother: `.begin`
-    /// appends an empty bubble and stashes the head buffer for paced
-    /// reveal; subsequent `.append` events feed that buffer; events that
-    /// belong to *other* bubbles get queued behind so the next bubble
-    /// doesn't appear before the typewriter is done.
-    private func applyBubbleEmissions(_ events: [BubbleEmission]) {
-        for evt in events {
-            if let target = revealTargetId {
-                switch evt {
-                case .append(let id, let delta) where "live-\(id.uuidString)" == target:
-                    revealBuffer += delta
-                    continue
-                case .end(let id) where "live-\(id.uuidString)" == target:
-                    revealEnded = true
-                    continue
-                default:
-                    pendingEmissions.append(evt)
-                    continue
-                }
-            }
-            applyDirect(evt)
-        }
-    }
-
-    private func applyDirect(_ evt: BubbleEmission) {
-        switch evt {
-        case .begin(let id, let mode, let content):
-            let key = "live-\(id.uuidString)"
-            let initial = mode == .streaming ? "" : content
-            messages.append(ChatMessage(
-                id: key,
-                conversation_id: conversation.id,
-                sender_type: "bot",
-                sender_id: conversation.bot_id,
-                content: initial,
-                created_at: Int(Date().timeIntervalSince1970),
-                attachments: nil
-            ))
-            // Inherit the turn's accumulated citations so any [N] in the
-            // bubble's content lands tappable from the first frame. The
-            // canonical row's Realtime UPDATE later refreshes the same key
-            // (after rekeying live-id → canonical id below).
-            if !liveCitations.isEmpty {
-                citationsByMsgId[key] = liveCitations
-            }
-            if mode == .streaming {
-                revealTargetId = key
-                revealBuffer = content
-                revealEnded = false
-                // Soft bump on the first streaming bubble so the user
-                // feels the bot start "typing" — matches ChatGPT iOS.
-                Haptics.receive()
-                startRevealTaskIfNeeded()
-            }
-        case .append(let id, let delta):
-            let key = "live-\(id.uuidString)"
-            if let idx = messages.lastIndex(where: { $0.id == key }) {
-                let prev = messages[idx]
-                messages[idx] = ChatMessage(
-                    id: prev.id, conversation_id: prev.conversation_id,
-                    sender_type: prev.sender_type, sender_id: prev.sender_id,
-                    content: prev.content + delta,
-                    created_at: prev.created_at,
-                    attachments: prev.attachments
-                )
-            }
-        case .end, .turnDone, .turnInterrupted:
-            break
-        case .error(let m):
-            // Worker sometimes emits an error event with an empty
-            // `message` field (e.g. when the underlying error stringifies
-            // to ""). Surface a placeholder so the user sees something
-            // and we can grep the console log for the SSE event.
-            let trimmed = m.trimmingCharacters(in: .whitespacesAndNewlines)
-            self.error = trimmed.isEmpty
-                ? "服务端错误（空）— 请重试或检查网络"
-                : trimmed
-            log.error("worker error event: \(m, privacy: .public)")
-            if let key = liveTraceUserMsgId { markUserMessageFailed(key) }
-        }
-    }
-
-    // MARK: - Streaming reveal smoother
-
-    /// Base reveal rate (chars/sec) — calibrated to ~60 tokens/sec, the
-    /// rate mainstream LLMs stream at (1 token ≈ 3 chars across mixed
-    /// Chinese/English content). Anything slower than the live stream
-    /// just means the typewriter falls behind and the visible reveal
-    /// jumps to the canonical row when Realtime lands. The adaptive drain
-    /// in startRevealTaskIfNeeded still catches up if a provider bursts
-    /// faster than this, so this is a "no slower than" floor.
-    private static let revealCharsPerSec: Double = 180
-    /// Cap on how far the visible reveal is allowed to lag behind the live
-    /// stream. Anything queued beyond this many seconds of base-rate output
-    /// gets drained on the current frame.
-    private static let revealMaxBehindSec: Double = 0.1
-
-    private func startRevealTaskIfNeeded() {
-        guard revealTask == nil else { return }
-        // Cursor goes solid the moment a stream takes over the bubble.
-        // The blink only kicks in if we then sit idle waiting for tokens.
-        streamPaused = false
-        revealTask = Task { @MainActor in
-            let frameNs: UInt64 = 16_000_000   // ~60 fps
-            let perFrame = Self.revealCharsPerSec * Double(frameNs) / 1_000_000_000
-            let maxBehindChars = Int(Self.revealCharsPerSec * Self.revealMaxBehindSec)
-            var carry: Double = 0
-            // Empty-buffer dwell time before flipping the cursor into
-            // blink mode. Shorter than the blink period so the user sees
-            // at least one blink cycle before tokens land again.
-            let pauseDelay: TimeInterval = 0.35
-            var idleSince: Date? = nil
-            while !Task.isCancelled, revealTargetId != nil {
-                try? await Task.sleep(nanoseconds: frameNs)
-                carry += perFrame
-                // Catch-up: if buffer holds more than maxBehindChars, drain
-                // the overflow this frame so we don't lag behind a fast LLM.
-                let baseAdvance = Int(carry)
-                let overflow = max(0, revealBuffer.count - maxBehindChars)
-                let advance = baseAdvance + overflow
-                if advance > 0, !revealBuffer.isEmpty, let target = revealTargetId {
-                    carry -= Double(baseAdvance)
-                    let take = min(advance, revealBuffer.count)
-                    let chunk = String(revealBuffer.prefix(take))
-                    revealBuffer.removeFirst(take)
-                    if let idx = messages.lastIndex(where: { $0.id == target }) {
-                        let prev = messages[idx]
-                        messages[idx] = ChatMessage(
-                            id: prev.id, conversation_id: prev.conversation_id,
-                            sender_type: prev.sender_type, sender_id: prev.sender_id,
-                            content: prev.content + chunk,
-                            created_at: prev.created_at,
-                            attachments: prev.attachments
-                        )
-                    }
-                    // Throttled inside Haptics — we can call every frame
-                    // here without flooding the actuator.
-                    Haptics.streamTick()
-                    idleSince = nil
-                    if streamPaused { streamPaused = false }
-                } else if revealBuffer.isEmpty && !revealEnded {
-                    // No tokens to drain and the producer hasn't signaled
-                    // end-of-turn — we're between chunks. Flip to blink
-                    // after a short dwell so a one-frame lull doesn't
-                    // visibly toggle the cursor.
-                    let now = Date()
-                    if let since = idleSince {
-                        if !streamPaused, now.timeIntervalSince(since) >= pauseDelay {
-                            streamPaused = true
-                        }
-                    } else {
-                        idleSince = now
-                    }
-                }
-                if revealEnded && revealBuffer.isEmpty {
-                    let queued = pendingEmissions
-                    pendingEmissions.removeAll()
-                    revealTargetId = nil
-                    revealEnded = false
-                    streamPaused = false
-                    revealTask = nil
-                    if !queued.isEmpty {
-                        applyBubbleEmissions(queued)
-                    }
-                    return
-                }
-            }
-            streamPaused = false
-            revealTask = nil
-        }
-    }
-
-    /// Skip the typewriter and apply everything pending immediately.
-    /// Called when the user interrupts (Stop button), navigates away,
-    /// or fires another send — they want the full content now, not the
-    /// rest of the animation.
-    private func flushRevealImmediately() {
-        revealTask?.cancel()
-        revealTask = nil
-        if let target = revealTargetId, !revealBuffer.isEmpty,
-           let idx = messages.lastIndex(where: { $0.id == target }) {
-            let prev = messages[idx]
-            messages[idx] = ChatMessage(
-                id: prev.id, conversation_id: prev.conversation_id,
-                sender_type: prev.sender_type, sender_id: prev.sender_id,
-                content: prev.content + revealBuffer,
-                created_at: prev.created_at,
-                attachments: prev.attachments
-            )
-        }
-        revealBuffer = ""
-        revealTargetId = nil
-        revealEnded = false
-        streamPaused = false
-        let queued = pendingEmissions
-        pendingEmissions.removeAll()
-        // User wants everything visible now — force-flatten any queued
-        // .begin(streaming) into complete bubbles so we don't kick off
-        // another typewriter for the next bubble in the chain.
-        for evt in queued {
-            switch evt {
-            case .begin(let id, _, let content):
-                applyDirect(.begin(id: id, mode: .complete, content: content))
-            default:
-                applyDirect(evt)
-            }
-        }
-    }
+    // applyBubbleEmissions + applyDirect + the streaming reveal smoother
+    // (startRevealTaskIfNeeded + flushRevealImmediately + tuning lets)
+    // live in ConversationView+Streaming.swift.
 
     // ── REST: history + delete ─────────────────────────────────────────────
 
-    private func loadSkills() async {
-        // Skills load left disabled until /v1/skills lands. The chip stays
-        // empty; chat is unaffected.
-        self.skills = []
-    }
+    // loadSkills + loadPeerProfileIfNeeded + fetchGroupMemberProfiles +
+    // loadGroupSendersIfNeeded + loadGroupFreezeIfNeeded +
+    // loadPendingContinueIfNeeded + loadHistory live in
+    // ConversationView+Loading.swift.
 
-    /// Resolve the user_user peer's display name + avatar path so the
-    /// header and incoming bubbles read as that person, not "未命名" + a
-    /// generic glyph. Skips when we already have a `pendingPeer` (the
-    /// friends-tab tap path supplies it eagerly) or when the conv is not
-    /// user_user. RLS on `pendingbot.users` is self-only, so we go through
-    /// the worker which uses service-role to read the peer row.
-    private func loadPeerProfileIfNeeded() async {
-        guard conversation.conversation_type == "user_user" else { return }
-        guard !conversation.id.isEmpty else { return }
-        if pendingPeer?.kind == "user" { return }
-        if resolvedPeer != nil { return }
-        do {
-            let url = HostedConfig.environment.workerURL
-                .appendingPathComponent("v1/contacts/conv-peer/\(conversation.id)")
-            var req = URLRequest(url: url)
-            req.httpMethod = "GET"
-            let token = try await SupabaseStack.shared.auth.session.accessToken
-            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            let (data, resp) = try await URLSession.shared.data(for: req)
-            guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode)
-            else { return }
-            struct Payload: Decodable {
-                let userId: String
-                let displayName: String
-                let avatarPath: String?
-                let avatarSeed: String?
-                let alias: String?
-            }
-            let p = try JSONDecoder().decode(Payload.self, from: data)
-            // Prefer the caller's local alias when set, otherwise the
-            // peer's own display name. The avatar uses the server-supplied
-            // seed (users.custom_fields.avatar_seed) so it matches what
-            // every other viewer of this person renders.
-            let name = (p.alias?.isEmpty == false ? p.alias! : p.displayName)
-            self.resolvedPeer = ResolvedPeer(
-                userId: p.userId,
-                displayName: name.isEmpty ? String(p.userId.prefix(8)) : name,
-                avatarPath: p.avatarPath,
-                avatarSeed: p.avatarSeed ?? p.userId
-            )
-        } catch {
-            // Non-fatal: header just keeps showing the existing fallback
-            // until next reopen. Log via the conversation logger so it's
-            // not silent in dev.
-            log.warning("conv-peer load failed: \(error.localizedDescription, privacy: .public)")
-        }
-    }
+    // Group-only surfaces — groupSenderFor + frozenComposerBanner +
+    // mentionPrefix / mentionCandidates / mentionPickerOverlay /
+    // insertMention + continueRequestBanner / decideContinue — live in
+    // ConversationView+Group.swift.
 
-    /// Bulk profile lookup for group members through the worker — same
-    /// shape as GroupSettingsView.fetchMemberProfiles. Direct supabase
-    /// queries against pendingbot.users hit the self-only RLS policy and
-    /// silently return empty for everyone except the caller; the worker
-    /// uses service-role and gates on conversation membership.
-    private func fetchGroupMemberProfiles(
-        userIds: [String]
-    ) async -> [String: (String, String?, String)] {
-        guard !userIds.isEmpty else { return [:] }
-        do {
-            let url = HostedConfig.environment.workerURL
-                .appendingPathComponent("v1/contacts/profiles")
-            var req = URLRequest(url: url)
-            req.httpMethod = "POST"
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            let token = try await SupabaseStack.shared.auth.session.accessToken
-            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            req.httpBody = try JSONSerialization.data(withJSONObject: [
-                "conversationId": conversation.id,
-                "userIds": userIds,
-            ])
-            let (data, resp) = try await URLSession.shared.data(for: req)
-            guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-                return [:]
-            }
-            struct Payload: Decodable {
-                struct Row: Decodable {
-                    let userId: String
-                    let displayName: String
-                    let avatarPath: String?
-                    let avatarSeed: String?
-                }
-                let profiles: [Row]
-            }
-            let payload = try JSONDecoder().decode(Payload.self, from: data)
-            return Dictionary(uniqueKeysWithValues: payload.profiles.map {
-                ($0.userId, ($0.displayName, $0.avatarPath, $0.avatarSeed ?? $0.userId))
-            })
-        } catch {
-            return [:]
-        }
-    }
+    // applyModelPick + patchConversationModel + patchConversationVisionModel
+    // + patchBotDefaultModel live in ConversationView+Model.swift.
 
-    /// Group-only — build the per-message sender lookup so each bubble
-    /// can show its own avatar + nickname above the content. Pulls
-    /// participants once on conv open; new senders that join mid-stream
-    /// fall back to the avatar-only render until next conv reopen
-    /// (Realtime delta sync for membership is M9 polish).
-    private func loadGroupSendersIfNeeded() async {
-        guard conversation.conversation_type == "group" else { return }
-        guard !conversation.id.isEmpty else { return }
-        do {
-            struct PartRow: Decodable {
-                let participant_type: String
-                let participant_id: String
-                let nickname: String?
-            }
-            let parts: [PartRow] = try await SupabaseStack.shared
-                .from("conversation_participants")
-                .select("participant_type, participant_id, nickname")
-                .eq("conversation_id", value: conversation.id)
-                .execute()
-                .value
+    // Recall + delete + URLCache scrubbing live in ConversationView+Recall.swift.
 
-            let botIds = parts.filter { $0.participant_type == "bot" }
-                .map(\.participant_id)
-            let userIds = parts.filter { $0.participant_type == "user" }
-                .map(\.participant_id)
-
-            struct BotRow: Decodable { let id: String; let display_name: String }
-
-            async let botResp: [BotRow] = botIds.isEmpty ? [] : SupabaseStack.shared
-                .from("bots").select("id, display_name").in("id", values: botIds)
-                .execute().value
-            // pendingbot.users RLS is self-only — a direct query here
-            // returns ONLY the caller's row, so every other member's
-            // display_name comes back empty and the bubble label falls
-            // back to id-prefix. Route through the worker (service-role)
-            // so display_name + avatar_path + avatar_seed land for the
-            // whole group.
-            async let userInfoMap: [String: (String, String?, String)] =
-                userIds.isEmpty
-                    ? [:]
-                    : fetchGroupMemberProfiles(userIds: userIds)
-
-            let botMap = Dictionary(uniqueKeysWithValues:
-                (try await botResp).map { ($0.id, $0.display_name) })
-            let userMap = await userInfoMap
-
-            var lookup: [String: GroupBubbleSender] = [:]
-            for p in parts {
-                let key = "\(p.participant_type):\(p.participant_id)"
-                let isBot = p.participant_type == "bot"
-                let fallback: String = {
-                    if isBot {
-                        return botMap[p.participant_id] ?? "未知机器人"
-                    }
-                    let name = userMap[p.participant_id]?.0 ?? ""
-                    return name.isEmpty ? String(p.participant_id.prefix(8)) : name
-                }()
-                let nick = p.nickname?.trimmingCharacters(in: .whitespaces)
-                let display = (nick?.isEmpty == false ? nick! : fallback)
-                let info = isBot ? nil : userMap[p.participant_id]
-                lookup[key] = GroupBubbleSender(
-                    kind: isBot ? .bot : .user,
-                    id: p.participant_id,
-                    displayName: display,
-                    avatarPath: info?.1,
-                    avatarSeed: info?.2 ?? p.participant_id,
-                )
-            }
-            self.groupSenders = lookup
-        } catch {
-            log.warning("group senders load failed: \(error.localizedDescription, privacy: .public)")
-        }
-    }
-
-    /// Pick the sender for a single bubble. Returns nil for non-group
-    /// convs (BubbleView falls through to peerProfile/selfAvatar/botID),
-    /// and also nil for our own messages so they keep the right-side
-    /// "user" layout instead of being rendered as a bot bubble with
-    /// our own name on top.
-    private func groupSenderFor(_ msg: ChatMessage) -> GroupBubbleSender? {
-        guard conversation.conversation_type == "group" else { return nil }
-        let me = AccountStore.shared.current?.id
-        if msg.isMine(currentUserId: me) { return nil }
-        let key: String
-        switch msg.sender_type {
-        case "bot":  key = "bot:\(msg.sender_id)"
-        case "user", "human": key = "user:\(msg.sender_id)"
-        default: return nil
-        }
-        return groupSenders[key]
-    }
-
-    /// Group conv only — read the caller's group_member_billing row to
-    /// learn whether they've crossed their per-group cap or run out of
-    /// wallet balance (migration 0066 unifies both into `overdrawn`).
-    /// When true, `frozen_at` carries the wall-clock moment of the flip
-    /// — used by `displayedMessages` to hide post-freeze rows and by
-    /// `iAmFrozen` to lock the composer + show the banner.
-    private func loadGroupFreezeIfNeeded() async {
-        guard conversation.conversation_type == "group" else { return }
-        guard !conversation.id.isEmpty else { return }
-        guard let me = AccountStore.shared.current?.id else { return }
-        do {
-            struct Row: Decodable {
-                let overdrawn: Bool
-                let frozen_at: String?
-            }
-            let rows: [Row] = try await SupabaseStack.shared
-                .from("group_member_billing")
-                .select("overdrawn, frozen_at")
-                .eq("conversation_id", value: conversation.id)
-                .eq("user_id", value: me)
-                .limit(1)
-                .execute()
-                .value
-            if let row = rows.first, row.overdrawn,
-               let raw = row.frozen_at, let parsed = ServerTimestamp.parse(raw) {
-                self.groupFreezeAt = parsed
-            } else {
-                self.groupFreezeAt = nil
-            }
-        } catch {
-            log.warning("group freeze load failed: \(error.localizedDescription, privacy: .public)")
-        }
-    }
-
-    /// Banner shown above the composer when the caller is frozen out of
-    /// the group. Composer itself stays mounted (so the field still
-    /// shows the typed-but-not-sent draft) but `canSend` is false.
-    private var frozenComposerBanner: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(Theme.Palette.amber)
-                .padding(.top, 1)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("已达本群 PND 上限,新消息和发送已暂停")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(Theme.Palette.ink)
-                Text("提高上限或为账户充值后会自动恢复")
-                    .font(.caption)
-                    .foregroundStyle(Theme.Palette.inkMuted)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, Theme.Metrics.gutter)
-        .padding(.vertical, 8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.Palette.amberBg)
-    }
-
-    /// Group conv only — pull the most recent pending continue-request
-    /// row, if any. Realtime subscription would be nicer but lookback
-    /// notes also poll-on-open today, so we follow the same pattern;
-    /// continue prompts are infrequent enough that a refresh on open +
-    /// after-send is sufficient.
-    private func loadPendingContinueIfNeeded() async {
-        guard conversation.conversation_type == "group" else { return }
-        guard !conversation.id.isEmpty else { return }
-        do {
-            struct Row: Decodable {
-                let id: String
-                let pending_bot_ids: [String]
-            }
-            let rows: [Row] = try await SupabaseStack.shared
-                .from("group_continue_requests")
-                .select("id, pending_bot_ids")
-                .eq("conversation_id", value: conversation.id)
-                .eq("status", value: "pending")
-                .order("requested_at", ascending: false)
-                .limit(1)
-                .execute()
-                .value
-            self.pendingContinue = rows.first.map {
-                PendingContinue(id: $0.id, pendingBotIds: $0.pending_bot_ids)
-            }
-        } catch {
-            log.warning("pending continue load failed: \(error.localizedDescription, privacy: .public)")
-        }
-    }
-
-    /// Detects an in-progress @-mention at the end of `input`. Returns
-    /// the substring AFTER the `@` (possibly empty when the user just
-    /// typed `@`). nil when there's no @-trigger active. We trigger on
-    /// "@" preceded by whitespace or start-of-string so emails / inline
-    /// at-signs don't accidentally open the picker.
-    private var mentionPrefix: String? {
-        guard let atRange = input.range(of: "@", options: .backwards) else { return nil }
-        // Must be followed only by chars that look like a name token (no
-        // whitespace, no newlines) — anything else means the user moved on.
-        let after = input[atRange.upperBound...]
-        if after.contains(where: { $0.isWhitespace || $0.isNewline }) {
-            return nil
-        }
-        // The `@` must be at the start of input or immediately after a
-        // whitespace; reject things like "alice@host" inside an email.
-        if atRange.lowerBound > input.startIndex {
-            let prev = input[input.index(before: atRange.lowerBound)]
-            if !prev.isWhitespace { return nil }
-        }
-        return String(after)
-    }
-
-    /// Filter groupSenders by the in-progress prefix (case-insensitive),
-    /// drop "myself" so I don't mention me. Cap at a few rows so the
-    /// picker doesn't push the message list off-screen.
-    private func mentionCandidates(prefix: String) -> [GroupBubbleSender] {
-        let me = AccountStore.shared.current?.id ?? ""
-        let needle = prefix.lowercased()
-        return groupSenders.values
-            .filter { sender in
-                if sender.kind == .user && sender.id == me { return false }
-                if needle.isEmpty { return true }
-                return sender.displayName.lowercased().contains(needle)
-            }
-            .sorted { $0.displayName.lowercased() < $1.displayName.lowercased() }
-            .prefix(6)
-            .map { $0 }
-    }
-
-    @ViewBuilder
-    private func mentionPickerOverlay(prefix: String) -> some View {
-        let candidates = mentionCandidates(prefix: prefix)
-        if candidates.isEmpty {
-            EmptyView()
-        } else {
-            VStack(spacing: 0) {
-                ForEach(candidates, id: \.id) { sender in
-                    Button {
-                        insertMention(sender, prefix: prefix)
-                    } label: {
-                        HStack(spacing: 10) {
-                            switch sender.kind {
-                            case .bot:
-                                BotAvatar(emojiSeed: sender.id, colorSeed: sender.id, size: 24)
-                            case .user:
-                                UserAvatar(seed: sender.avatarSeed, attachmentId: sender.avatarPath, size: 24)
-                            }
-                            Text(sender.displayName)
-                                .font(Theme.Fonts.body)
-                                .foregroundStyle(Theme.Palette.ink)
-                            Spacer()
-                            if sender.kind == .bot {
-                                Text("机器人")
-                                    .font(Theme.Fonts.rounded(size: 10, weight: .medium))
-                                    .foregroundStyle(Theme.Palette.inkMuted)
-                            }
-                        }
-                        .padding(.horizontal, Theme.Metrics.gutter)
-                        .padding(.vertical, 8)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    Divider().opacity(0.4)
-                }
-            }
-            .background(Theme.Palette.surface)
-            .overlay(
-                Rectangle().frame(height: 0.5).foregroundStyle(Theme.Palette.hairline),
-                alignment: .top,
-            )
-        }
-    }
-
-    private func insertMention(_ sender: GroupBubbleSender, prefix: String) {
-        // Drop the trailing "@<prefix>" and re-insert "@<displayName> ".
-        // Spaces inside nicknames stay because we replace by length, not
-        // by whitespace boundary — DB enforces no-whitespace inside a
-        // single nickname so this is unambiguous in practice.
-        let dropCount = prefix.count + 1   // include the "@"
-        let head = String(input.dropLast(dropCount))
-        input = head + "@" + sender.displayName + " "
-        Haptics.tap()
-    }
-
-    @ViewBuilder
-    private func continueRequestBanner(_ pc: PendingContinue) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text("机器人还有话想说,让它继续吗?")
-                .font(Theme.Fonts.body)
-                .foregroundStyle(Theme.Palette.ink)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 8)
-            if continueDeciding {
-                ProgressView()
-            } else {
-                Button {
-                    Task { await decideContinue(pc, allow: false) }
-                } label: {
-                    Text("✕ 闭嘴")
-                        .font(Theme.Fonts.body)
-                        .foregroundStyle(.red)
-                }
-                .buttonStyle(.bordered)
-                Button {
-                    Task { await decideContinue(pc, allow: true) }
-                } label: {
-                    Text("✓ 继续")
-                        .font(Theme.Fonts.body)
-                }
-                .buttonStyle(.borderedProminent)
-            }
-        }
-        .padding(.horizontal, Theme.Metrics.gutter)
-        .padding(.vertical, 10)
-        .background(Theme.Palette.surface)
-    }
-
-    private func decideContinue(_ pc: PendingContinue, allow: Bool) async {
-        continueDeciding = true
-        defer { continueDeciding = false }
-        struct Body: Encodable {
-            let requestId: String
-            let decision: String
-        }
-        do {
-            let url = HostedConfig.environment.workerURL
-                .appendingPathComponent("v1/groups/\(conversation.id)/continue-decision")
-            var req = URLRequest(url: url)
-            req.httpMethod = "POST"
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            let token = try await SupabaseStack.shared.auth.session.accessToken
-            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            req.httpBody = try JSONEncoder().encode(Body(
-                requestId: pc.id,
-                decision: allow ? "allowed" : "denied",
-            ))
-            let (data, resp) = try await URLSession.shared.data(for: req)
-            guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode)
-            else {
-                let msg = String(data: data, encoding: .utf8) ?? "HTTP error"
-                throw NSError(
-                    domain: "ContinueVote",
-                    code: (resp as? HTTPURLResponse)?.statusCode ?? -1,
-                    userInfo: [NSLocalizedDescriptionKey: msg],
-                )
-            }
-            // The decision message is inserted by the worker (Realtime
-            // delivers it); just clear the local banner.
-            self.pendingContinue = nil
-            Haptics.tap()
-        } catch {
-            self.error = "投票失败: \(error.localizedDescription)"
-            Haptics.error()
-        }
-    }
-
-    private func loadHistory() async {
-        // Hydrate from local cache instantly so the conv opens with last-known
-        // content even if the user is offline / on a flaky network.
-        let cached = LocalDatabase.shared.loadMessages(conversationId: conversation.id)
-        if !cached.isEmpty {
-            self.messages = cached.map { r in
-                ChatMessage(
-                    id: r.id,
-                    conversation_id: r.conversation_id,
-                    sender_type: r.role == "bot" ? "bot" : "user",
-                    sender_id: r.role == "bot" ? (r.sender_bot_id ?? "") : (r.user_id ?? ""),
-                    content: r.content ?? "",
-                    created_at: r.created_at,
-                    attachments: nil
-                )
-            }
-        }
-
-        do {
-            // Direct Supabase read — RLS gates participation. Excludes role='log'
-            // (review step entries) which are rendered separately.
-            struct Row: Decodable {
-                let id: String
-                let client_message_id: String?
-                let conversation_id: String
-                let user_id: String?
-                let sender_bot_id: String?
-                let role: String
-                let log_kind: String?
-                let content: String?
-                let content_partial: String?
-                let status: String?
-                let created_at: String
-                let citations: [MessageCitation]?
-            }
-            // role='log' rows (review step entries) are server-only and
-            // filtered out client-side — they don't render here.
-            let rows: [Row] = try await SupabaseStack.shared
-                .from("messages")
-                .select("id, client_message_id, conversation_id, user_id, sender_bot_id, role, log_kind, content, content_partial, status, created_at, citations")
-                .eq("conversation_id", value: conversation.id)
-                .order("created_at", ascending: true)
-                .limit(200)
-                .execute()
-                .value
-            var viewMessages: [ChatMessage] = []
-            var cacheRows: [LocalDatabase.MessageRow] = []
-            viewMessages.reserveCapacity(rows.count)
-            cacheRows.reserveCapacity(rows.count)
-            var citationsLoaded: [String: [MessageCitation]] = [:]
-            for r in rows {
-                if r.role == "log" { continue }
-                let senderType: String = r.role == "bot" ? "bot" : "user"
-                let senderId = r.role == "bot" ? (r.sender_bot_id ?? "") : (r.user_id ?? "")
-                let secs = ServerTimestamp.epochSeconds(r.created_at, default: 0)
-                // Mid-stream bot rows have content=null and only content_partial set;
-                // fall back so a re-enter shows the in-flight bubble at its current
-                // length, not blank.
-                let renderContent = (r.content?.isEmpty == false ? r.content : r.content_partial) ?? ""
-                viewMessages.append(ChatMessage(
-                    id: r.id,
-                    conversation_id: r.conversation_id,
-                    sender_type: senderType,
-                    sender_id: senderId,
-                    content: renderContent,
-                    created_at: secs,
-                    attachments: nil
-                ))
-                if let cites = r.citations, !cites.isEmpty {
-                    citationsLoaded[r.id] = cites
-                }
-                cacheRows.append(LocalDatabase.MessageRow(
-                    id: r.id,
-                    client_message_id: r.client_message_id,
-                    conversation_id: r.conversation_id,
-                    user_id: r.user_id,
-                    sender_bot_id: r.sender_bot_id,
-                    role: r.role,
-                    content: renderContent,
-                    status: r.status,
-                    created_at: secs
-                ))
-            }
-            self.messages = viewMessages
-            // Merge — keep any in-flight live snapshots that the SSE turn
-            // already populated; history's persisted values win on key collision.
-            self.citationsByMsgId.merge(citationsLoaded) { _, new in new }
-            LocalDatabase.shared.upsertMessages(cacheRows)
-        } catch {
-            // Network down + we have a cache: stay quiet (cached msgs still
-            // visible). Show the error only if we have nothing to display.
-            if messages.isEmpty {
-                self.error = error.localizedDescription
-            }
-        }
-    }
-
-    /// Apply a model pick from the settings sheet. The user chose a scope:
-    ///   - `.conversation` — only this conversation; pins or replaces the
-    ///     per-conversation override on the server.
-    ///   - `.bot` — replace the bot's default model (server updates
-    ///     bots.model_id directly). Also clears any per-conv pin here so
-    ///     this conversation picks up the new default.
-    /// Both scopes require a non-nil slug — picker no longer offers a
-    /// "follow default" affordance.
-    private func applyModelPick(slug: String?, scope: ModelPickScope) async {
-        guard let normalized = slug.flatMap({ $0.isEmpty ? nil : $0 }) else { return }
-        switch scope {
-        case .conversation:
-            modelOverride = normalized
-            await patchConversationModel(slug: normalized)
-        case .bot:
-            modelOverride = ""
-            await patchConversationModel(slug: nil)
-            await patchBotDefaultModel(slug: normalized)
-        }
-    }
-
-    private func patchConversationModel(slug: String?) async {
-        guard let api else { return }
-        struct Body: Encodable { let model_slug: String? }
-        do {
-            try await api.patchVoid("v1/conversations/\(conversation.id)",
-                                    body: Body(model_slug: slug))
-            Haptics.tap()
-        } catch {
-            self.error = error.localizedDescription
-        }
-    }
-
-    /// PATCH the per-conv vision-model pin (0064). nil = auto. Server
-    /// re-uses the model-pin gate (private bot creator only).
-    private func patchConversationVisionModel(slug: String?) async {
-        guard let api else { return }
-        struct Body: Encodable { let vision_model_slug: String? }
-        do {
-            try await api.patchVoid("v1/conversations/\(conversation.id)",
-                                    body: Body(vision_model_slug: slug))
-        } catch {
-            self.error = error.localizedDescription
-        }
-    }
-
-    /// PATCH the bot's default model. Server gates: only the creator of a
-    /// private bot can call this — public/preset bots are read-only.
-    private func patchBotDefaultModel(slug: String) async {
-        guard let api, !conversation.bot_id.isEmpty else { return }
-        struct Body: Encodable { let model_id: String }
-        do {
-            try await api.patchVoid("v1/bots/\(conversation.bot_id)",
-                                    body: Body(model_id: slug))
-            Haptics.tap()
-        } catch {
-            self.error = error.localizedDescription
-        }
-    }
-
-    private func deleteMessage(_ msg: ChatMessage) async {
-        guard let api else { return }
-        do {
-            try await api.deleteVoid("v1/messages/\(msg.id)")
-            messages.removeAll { $0.id == msg.id }
-            Haptics.success()
-        } catch {
-            self.error = error.localizedDescription
-        }
-    }
-
-    // ── Image upload ────────────────────────────────────────────────────────
-
-    private func ingestPhotos(_ items: [PhotosPickerItem]) async {
-        guard let api else { return }
-        for item in items {
-            guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
-            let mime = item.supportedContentTypes.first?.preferredMIMEType ?? "image/jpeg"
-            let ext = mime.split(separator: "/").last.map(String.init) ?? "jpg"
-            do {
-                let response: UploadResponse = try await api.upload(
-                    "v1/upload",
-                    fileData: data,
-                    fileName: "image-\(UUID().uuidString.prefix(8)).\(ext)",
-                    mime: mime,
-                    extraFields: ["conversationId": conversation.id]
-                )
-                pendingAttachments.append(PendingAttachment(
-                    id: response.id, mime: response.mime, size: response.size
-                ))
-                Haptics.tap()
-            } catch {
-                self.error = "上传失败: \(error.localizedDescription)"
-                Haptics.error()
-            }
-        }
-        photoPickerItems = []
-    }
-
-    /// Same upload flow as `ingestPhotos`, but for one-shot camera captures.
-    /// JPEG-encode at 0.85 (same balance the rest of the app uses) so the
-    /// upload size matches what users get from the library picker.
-    private func ingestCameraImage(_ image: UIImage) async {
-        defer { cameraImage = nil }
-        guard let api, let data = image.jpegData(compressionQuality: 0.85) else { return }
-        do {
-            let response: UploadResponse = try await api.upload(
-                "v1/upload",
-                fileData: data,
-                fileName: "camera-\(UUID().uuidString.prefix(8)).jpg",
-                mime: "image/jpeg",
-                extraFields: ["conversationId": conversation.id]
-            )
-            pendingAttachments.append(PendingAttachment(
-                id: response.id, mime: response.mime, size: response.size
-            ))
-            Haptics.tap()
-        } catch {
-            self.error = "上传失败: \(error.localizedDescription)"
-            Haptics.error()
-        }
-    }
+    // ingestPhotos + ingestCameraImage live in ConversationView+Attachments.swift.
 }
 
 struct PendingAttachment: Identifiable, Hashable {
@@ -2522,5 +1455,55 @@ struct PendingAttachment: Identifiable, Hashable {
 private struct SkillDraft: Identifiable {
     let body: String
     var id: String { String(body.hashValue) }
+}
+
+/// Decoded shape of a `log_kind='recall'` row's `log_payload` jsonb.
+/// Mirrors what the edge worker emits in apps/edge/src/routes/messages.ts.
+/// `original_created_at` arrives as an ISO-8601 string from Postgres
+/// (jsonb encoding of a timestamptz column); we parse it into epoch
+/// seconds for the tombstone's relative-time formatter.
+struct RecallPayload: Decodable, Hashable {
+    let original_message_id: String?
+    let original_created_at: String?
+    let recaller_user_id: String?
+
+    var original_created_at_secs: Int {
+        guard let s = original_created_at else { return 0 }
+        return ServerTimestamp.epochSeconds(s, default: 0)
+    }
+}
+
+/// Decoded shape of a `messages.attachments` jsonb column. Worker writes
+/// `{ ids: [uuid, ...] }` on insert; we only read the ids back to scrub
+/// URLCache on recall — the full Attachment objects are reconstructed
+/// elsewhere for rendering.
+struct AttachmentRef: Decodable, Hashable {
+    let ids: [String]?
+}
+
+/// Centered "我撤回了 X 的一条消息" / "对方撤回了 X 的一条消息" pill.
+/// Rendered inline by ConversationView whenever a `sender_type ==
+/// "recall_log"` ChatMessage shows up in the timeline. The original
+/// message's epoch-seconds is encoded in the row's `content` field
+/// — see loadHistory's row mapper for the upstream side.
+struct RecallTombstoneView: View {
+    let wasMine: Bool
+    let originalAt: Date
+
+    var body: some View {
+        Text(label)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
+            .accessibilityLabel(label)
+    }
+
+    private var label: String {
+        let timePhrase = RelativeMessageTime.format(originalAt, style: .tombstone)
+        return wasMine
+            ? "你撤回了 \(timePhrase) 的一条消息"
+            : "对方撤回了 \(timePhrase) 的一条消息"
+    }
 }
 

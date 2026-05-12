@@ -11,6 +11,11 @@ export interface Env {
   /// env.GROUP_ROUTER.idFromName(conversationId)). See
   /// src/durable-objects/group-router.ts.
   GROUP_ROUTER: DurableObjectNamespace;
+  /// Cloudflare ratelimit binding for handle-enumeration endpoints
+  /// (friend-request /lookup, group /join, friend-request POST /).
+  /// Limit + period live in wrangler.jsonc — call from a route via
+  /// `withRateLimit(env.HANDLE_LOOKUP_RL, key)` in lib/rate-limit.ts.
+  HANDLE_LOOKUP_RL: RateLimit;
 
   // ── Vars (per env in wrangler.jsonc) ───────────────────────────
   ENVIRONMENT: 'dev' | 'production';

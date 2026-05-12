@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
 import { serviceClient } from '../lib/supabase';
+import { jsonError } from '../lib/http-error';
 import type { AppBindings } from '../types';
 
 export const deviceRoutes = new Hono<AppBindings>();
@@ -23,7 +24,7 @@ deviceRoutes.post('/register', async (c) => {
   try {
     parsed = RegisterBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
   const supa = serviceClient(c.env);
@@ -41,21 +42,27 @@ deviceRoutes.post('/register', async (c) => {
     },
     { onConflict: 'user_id,token' },
   );
-  if (error) return c.json({ error: 'database', detail: error.message }, 500);
+  if (error) return jsonError(c, 500, 'database_error', { detail: error.message });
   return c.json({ ok: true });
 });
+
+const UnregisterBody = z.object({ token: z.string().min(8).max(512) });
 
 // POST /v1/devices/unregister — flip is_active=false.
 deviceRoutes.post('/unregister', async (c) => {
   const userId = c.var.userId!;
-  const body: { token?: string } = await c.req.json().catch(() => ({}));
-  if (!body.token) return c.json({ error: 'token required' }, 400);
+  let body: z.infer<typeof UnregisterBody>;
+  try {
+    body = UnregisterBody.parse(await c.req.json());
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
   const supa = serviceClient(c.env);
   const { error } = await supa
     .from('device_tokens')
     .update({ is_active: false })
     .eq('user_id', userId)
     .eq('token', body.token);
-  if (error) return c.json({ error: 'database', detail: error.message }, 500);
+  if (error) return jsonError(c, 500, 'database_error', { detail: error.message });
   return c.json({ ok: true });
 });

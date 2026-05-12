@@ -79,7 +79,7 @@ final class CallSession {
         conversationId: String,
         botId: String,
         botDisplayName: String,
-        api: VoiceCallAPI = VoiceCallAPI(),
+        api: VoiceCallAPI,
     ) {
         self.conversationId = conversationId
         self.botId = botId

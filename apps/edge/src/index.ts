@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import type { AppBindings, Env } from './types';
+import { jsonError } from './lib/http-error';
 import { healthRoutes } from './routes/health';
 import { messageRoutes } from './routes/messages';
 import { conversationRoutes } from './routes/conversations';
@@ -34,27 +35,29 @@ app.use('*', logger());
 
 // CORS — lock to the configured origin per env. Worker exposes Authorization
 // header for the supabase JWT carried on writes.
+//
+// Fallback when ALLOWED_ORIGIN is unset: deny all browser origins (return []).
+// Native iOS clients don't honor CORS so they're unaffected — only browsers
+// hit this code path, and we want a hostile site to be unable to mount
+// credentialed requests against a misconfigured deploy. Production must set
+// ALLOWED_ORIGIN explicitly.
 app.use('*', async (c, next) => {
   const origin = c.env.ALLOWED_ORIGIN;
   return cors({
-    origin: origin ? [origin] : '*',
+    origin: origin ? [origin] : [],
     credentials: true,
     allowHeaders: ['Authorization', 'Content-Type', 'X-Client-Version', 'X-Client-Platform'],
     maxAge: 600,
   })(c, next);
 });
 
-app.notFound((c) => c.json({ error: 'not found', path: c.req.path }, 404));
+app.notFound((c) => jsonError(c, 404, 'not_found', { detail: { path: c.req.path } }));
 
 app.onError((err, c) => {
   console.error('[edge] unhandled', err);
-  return c.json(
-    {
-      error: 'internal',
-      message: c.env.ENVIRONMENT === 'production' ? undefined : String(err),
-    },
-    500,
-  );
+  return jsonError(c, 500, 'internal_error', {
+    message: c.env.ENVIRONMENT === 'production' ? undefined : String(err),
+  });
 });
 
 // Routes — mounted under /v1/

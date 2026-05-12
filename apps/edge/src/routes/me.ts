@@ -8,6 +8,7 @@ import {
   redeemCode,
   RedemptionError,
 } from '../lib/billing';
+import { jsonError } from '../lib/http-error';
 import type { AppBindings } from '../types';
 
 export const meRoutes = new Hono<AppBindings>();
@@ -54,11 +55,11 @@ meRoutes.post('/redeem', async (c) => {
   try {
     body = await c.req.json();
   } catch {
-    return c.json({ error: 'invalid_body' }, 400);
+    return jsonError(c, 400, 'invalid_body');
   }
   const code = typeof body.code === 'string' ? body.code.trim() : '';
   if (!code) {
-    return c.json({ error: 'missing_code' }, 400);
+    return jsonError(c, 400, 'invalid_body', { message: 'missing code' });
   }
 
   // billing_redeem reads auth.uid() — must use user-scoped client.
@@ -72,11 +73,19 @@ meRoutes.post('/redeem', async (c) => {
     });
   } catch (err) {
     if (err instanceof RedemptionError) {
-      const status = err.kind === 'not_authenticated' ? 401 : 400;
-      return c.json({ error: err.kind, message: err.message }, status);
+      if (err.kind === 'not_authenticated') {
+        return jsonError(c, 401, 'unauthorized', { message: err.message });
+      }
+      if (err.kind === 'not_found') {
+        return jsonError(c, 400, 'redemption_not_found', { message: err.message });
+      }
+      if (err.kind === 'already_used') {
+        return jsonError(c, 400, 'redemption_already_used', { message: err.message });
+      }
+      return jsonError(c, 400, 'internal_error', { message: err.message });
     }
     console.error('[me/redeem] unexpected', err);
-    return c.json({ error: 'internal' }, 500);
+    return jsonError(c, 500, 'internal_error');
   }
 });
 

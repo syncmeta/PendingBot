@@ -56,10 +56,51 @@ Never squash-merge — it destroys the small-unit commit history we deliberately
 Before merging into `main`, run typecheck on whatever was touched:
 
 - Edge changes: `bun --filter='@pendingbot/edge' run typecheck`
+- Edge tests: `cd apps/edge && ./node_modules/.bin/vitest run` (vitest tests sit under `apps/edge/src/lib/*.test.ts` + `apps/edge/tests/*.test.ts`)
 - iOS changes: `cd apps/ios && xcodebuild -project PendingBot.xcodeproj -scheme PendingBot -configuration Debug -sdk iphonesimulator build` (or whatever scheme the user has wired)
 - Migrations: new files use a timestamp prefix (see "Before writing a new migration" below); legacy 4-digit files are fine left as-is
 
 If typecheck fails, fix on the branch and re-commit; don't merge red.
+
+## Pre-commit hook (lefthook)
+
+This repo ships a `lefthook.yml` with a `pre-commit` block that runs two checks in parallel:
+
+1. **schema-regen-check** — if any `supabase/migrations/*.sql` file is in the staged set, refuse the commit unless `apps/edge/src/db/schema.ts` is also staged. Stops the "migration landed, schema.ts forgotten" pattern.
+2. **typecheck-edge** — runs `bun --filter='@pendingbot/edge' run typecheck` whenever `apps/edge/src/**/*.ts` or `packages/identity/src/**/*.ts` is staged. Cheap (~3s) and saves a CI round-trip.
+
+Install (once per clone):
+```
+bunx lefthook install
+```
+
+If your `git config core.hooksPath` is already set globally, `lefthook install` will warn; `bunx lefthook install --reset-hooks-path` clears the override (don't run this blindly if your global hooks do important things). The repo's `package.json` includes `"prepare": "lefthook install"`, so a fresh `bun install` after clone will set it up.
+
+Escape hatch for emergencies: `LEFTHOOK=0 git commit ...` skips all hooks for that one commit. Use this when the schema-regen check trips on a comment-only edit to a migration file (the check is intentionally coarse — it watches the path, not the content).
+
+## Edge HTTP error envelope
+
+Every non-2xx response from `/v1/*` goes through `apps/edge/src/lib/http-error.ts:jsonError(c, status, code, opts?)`. Wire shape:
+
+```ts
+{ error: { code: ApiErrorCode, message?: string, detail?: unknown } }
+```
+
+- `code` is a stable snake_case identifier from the `ApiErrorCode` union — adding a new code = adding to the union in `http-error.ts`. iOS branches on `err.code` via `APIError.http(status:code:message:body:)`.
+- `message` is human Chinese copy when the route has one; iOS surfaces it as-is.
+- `detail` is free-form structured payload (e.g. `{ quota_bytes, used_bytes }` for `quota_exceeded`).
+
+Don't fall back to bespoke `c.json({ error: 'foo' }, 400)` shapes — the typed envelope is what iOS expects.
+
+## Edge rate limiting
+
+For endpoints that expose an enumerable resource (handle lookups, group join codes, anything where a 404-vs-200 confirms existence), gate via the Cloudflare native ratelimit binding:
+
+1. Declare the binding in `apps/edge/wrangler.jsonc` under `env.production.ratelimits` (or the top level for the default env). Use distinct `namespace_id` per logical bucket.
+2. Add the binding to `Env` in `apps/edge/src/types.ts` typed as `RateLimit`.
+3. At the top of the handler, call `await rateLimitOrBlock(c, c.env.YOUR_LIMITER)`; return the `Response` directly if non-null.
+
+Key resolution defaults to `c.var.userId` → `CF-Connecting-IP` → `'anon'`, so logged-in users get per-user buckets and pre-auth paths bucket by IP.
 
 ## Before writing a new migration — use a timestamp prefix
 

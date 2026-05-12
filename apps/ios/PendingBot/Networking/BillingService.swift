@@ -84,32 +84,30 @@ enum BillingService {
         }
     }
 
-    private struct RedeemErrorBody: Decodable {
-        let error: String?
-    }
-
     static func redeem(code: String, api: APIClient = APIClient()) async throws -> RedeemResponse {
         let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw RedeemError.empty }
         do {
             return try await api.post("/v1/me/redeem", body: ["code": trimmed])
-        } catch let APIError.http(status, body) {
-            throw mapRedeemError(status: status, body: body)
-        } catch APIError.unauthorized {
-            throw RedeemError.unauthorized
+        } catch let err as APIError {
+            if case .unauthorized = err { throw RedeemError.unauthorized }
+            if case let .http(status, _, _, _) = err {
+                throw mapRedeemError(status: status, code: err.code)
+            }
+            throw err
         }
     }
 
-    private static func mapRedeemError(status: Int, body: String) -> RedeemError {
-        let kind: String? = body.data(using: .utf8)
-            .flatMap { try? JSONDecoder().decode(RedeemErrorBody.self, from: $0) }?
-            .error
-        switch kind {
-        case "not_found":         return .notFound
-        case "already_used":      return .alreadyUsed
-        case "not_authenticated": return .unauthorized
-        case "missing_code":      return .empty
-        default:                  return .other("HTTP \(status)")
+    private static func mapRedeemError(status: Int, code: String?) -> RedeemError {
+        // Codes the worker emits per the typed envelope (apps/edge/src/
+        // routes/me.ts → /redeem path). Fallback covers legacy bodies
+        // and unrecognised codes alike.
+        switch code {
+        case "redemption_not_found":    return .notFound
+        case "redemption_already_used": return .alreadyUsed
+        case "unauthorized":            return .unauthorized
+        case "invalid_body":            return .empty
+        default:                        return .other("HTTP \(status)")
         }
     }
 

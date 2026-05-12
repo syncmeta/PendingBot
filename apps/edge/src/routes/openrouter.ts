@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { requireSession } from '@pendingbot/identity';
+import { jsonError } from '../lib/http-error';
 import type { AppBindings } from '../types';
 
 // GET /v1/openrouter/models — proxy OpenRouter's catalog, reshaped for the
@@ -40,7 +41,7 @@ openrouterRoutes.get('/models', async (c) => {
   if (!res.ok) {
     const body = (await res.text()).slice(0, 300);
     console.warn('[openrouter/models] upstream', res.status, body);
-    return c.json({ error: 'upstream_failed', status: res.status }, 502);
+    return jsonError(c, 502, 'upstream_error', { detail: { status: res.status } });
   }
   const json = (await res.json()) as { data?: OpenRouterCatalogModel[] };
   const out: OpenRouterModelOut[] = (json.data ?? []).map((m) => {

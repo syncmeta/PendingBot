@@ -25,9 +25,9 @@ import WebRTC
 ///      session buffer.
 ///
 /// `#if canImport(WebRTC)` guards the file so it still compiles on a
-/// fresh checkout before someone runs `xcodegen generate`. The fallback
-/// shim publishes a startup error so the UI surface still works during
-/// project setup.
+/// fresh checkout before the WebRTC SwiftPM package has resolved. The
+/// fallback shim publishes a startup error so the UI surface still
+/// works during project setup.
 
 #if canImport(WebRTC)
 
@@ -369,7 +369,7 @@ final class OpenAICallTransport: CallTransport {
     }
     func start() async {
         await delegate?.transport(self, didFailWith: .startupError(
-            "WebRTC SDK 未集成（执行 xcodegen generate 后重新构建）",
+            "WebRTC SDK 未集成（请在 Xcode 中 resolve SwiftPM 依赖后重新构建）",
         ))
     }
     func hangUp() async {}

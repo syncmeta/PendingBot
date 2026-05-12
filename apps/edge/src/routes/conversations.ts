@@ -2,6 +2,8 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
 import { serviceClient, userClient } from '../lib/supabase';
+import { UUID_RE } from '../lib/ids';
+import { jsonError } from '../lib/http-error';
 import type { AppBindings } from '../types';
 
 export const conversationRoutes = new Hono<AppBindings>();
@@ -28,15 +30,15 @@ conversationRoutes.patch('/:id', async (c) => {
   const userId = c.var.userId!;
   const userJwt = c.var.userJwt!;
   const id = c.req.param('id');
-  if (!/^[0-9a-f-]{36}$/i.test(id)) {
-    return c.json({ error: 'invalid id' }, 400);
+  if (!UUID_RE.test(id)) {
+    return jsonError(c, 400, 'invalid_id');
   }
 
   let parsed: z.infer<typeof PatchBody>;
   try {
     parsed = PatchBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
   // RLS read so a user can't probe other users' convs through this gate.
@@ -46,10 +48,10 @@ conversationRoutes.patch('/:id', async (c) => {
     .select('id, bot_id, user_id')
     .eq('id', id)
     .maybeSingle();
-  if (convErr) return c.json({ error: 'database', detail: convErr.message }, 500);
-  if (!conv) return c.json({ error: 'not found' }, 404);
-  if (conv.user_id !== userId) return c.json({ error: 'forbidden' }, 403);
-  if (!conv.bot_id) return c.json({ error: 'conv has no bot' }, 400);
+  if (convErr) return jsonError(c, 500, 'database_error', { detail: convErr.message });
+  if (!conv) return jsonError(c, 404, 'conversation_not_found');
+  if (conv.user_id !== userId) return jsonError(c, 403, 'forbidden');
+  if (!conv.bot_id) return jsonError(c, 400, 'conversation_has_no_bot');
 
   const supaService = serviceClient(c.env);
   const { data: bot, error: botErr } = await supaService
@@ -58,10 +60,10 @@ conversationRoutes.patch('/:id', async (c) => {
     .eq('id', conv.bot_id)
     .single();
   if (botErr || !bot) {
-    return c.json({ error: 'bot lookup failed', detail: botErr?.message }, 500);
+    return jsonError(c, 500, 'database_error', { detail: botErr?.message });
   }
   if (bot.visibility !== 'private' || bot.creator_id !== userId) {
-    return c.json({ error: '只能为自己的私有机器人改模型' }, 403);
+    return jsonError(c, 403, 'forbidden', { message: '只能为自己的私有机器人改模型' });
   }
 
   // Build the partial update — only set keys the client actually sent.
@@ -75,13 +77,13 @@ conversationRoutes.patch('/:id', async (c) => {
     update.vision_model_override = parsed.vision_model_slug ?? null;
   }
   if (Object.keys(update).length === 0) {
-    return c.json({ error: 'no fields to update' }, 400);
+    return jsonError(c, 400, 'invalid_body', { message: 'no fields to update' });
   }
   const { error: updErr } = await supaService
     .from('conversations')
     .update(update as never)
     .eq('id', id);
-  if (updErr) return c.json({ error: 'database', detail: updErr.message }, 500);
+  if (updErr) return jsonError(c, 500, 'database_error', { detail: updErr.message });
 
   return c.json({ ok: true });
 });

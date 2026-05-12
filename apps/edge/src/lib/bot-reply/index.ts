@@ -1,0 +1,687 @@
+import { randomUUID } from 'node:crypto';
+import type {
+  ChatCompletionContentPart,
+  ChatCompletionMessageParam,
+  ChatCompletionMessageToolCall,
+  ChatCompletionTool,
+} from 'openai/resources/chat/completions';
+import type { Env } from '../../types';
+import { serviceClient } from '../supabase';
+import {
+  FallbackError,
+  recordAudit,
+  type ResolvedRoute,
+  type RouteTraceEntry,
+  usageFromCompletion,
+  withFallback,
+} from '../../llm/router';
+import { buildMessages, type BuildMessagesInput } from '../../llm/builder';
+import { resolveLocale } from '../../i18n/locale';
+import {
+  estimateAssistantOutputTokens,
+  estimateRequestInputTokens,
+} from '../../llm/token-estimate';
+import {
+  loadAttachmentAsImagePart,
+  modelSupportsVision,
+  summarizeAttachments,
+} from '../../llm/vision';
+import { getBotMemory, getChatMemo, getUserMemory } from '../memory';
+import { WebToolMeter } from '../web-meter';
+import {
+  CHAT_TOOLS,
+  EXECUTE_CODE_TOOL,
+  GROUP_BOT_TOOLS,
+  REQUEST_EXECUTE_CODE_TOOL,
+} from './tool-defs';
+import {
+  type Citation,
+  type ToolCtx,
+  runTool,
+  safeParseArgs,
+} from './tool-runner';
+
+// Public re-exports — callers do
+//   import { runChatTurn, type RunChatTurnInput } from '../lib/bot-reply';
+// which resolves through this barrel.
+export { type Citation } from './tool-runner';
+
+// Multi-bubble splitter — bot's reply may be one continuous block, or several
+// short bubbles separated by `\n---\n`.
+const BUBBLE_DELIMITER = '\n---\n';
+export const BUBBLE_OVERFLOW_CHARS = 60;
+
+// Bot's "I have nothing to say" control token (system.md). Dropped if the
+// final reply trims to exactly this — no DB row, no bubble event.
+const SILENT_TOKEN = '[SILENT]';
+
+// Marker the bot can emit anywhere in its reply (typically the end) to
+// flag the active lookback notes as no longer relevant. Stripped from the
+// user-visible content; route handler then UPDATEs bot_lookbacks.active=false
+// for whichever ids the runner reports.
+const DROP_LOOKBACK_TOKEN = '[DROP_LOOKBACK]';
+
+function couldStillBeSilent(s: string): boolean {
+  if (s.length === 0) return true;
+  if (s.length > SILENT_TOKEN.length) return false;
+  return SILENT_TOKEN.startsWith(s);
+}
+
+// Maximum agent-loop iterations (one LLM call + tool execution per iteration).
+// Bounds runaway tool spam if the model keeps calling tools indefinitely.
+const MAX_TOOL_ROUNDS = 6;
+
+export interface RunChatTurnInput {
+  env: Env;
+  conversationId: string;
+  userId: string;
+  parentMessageId: string;     // user's just-inserted message id
+  bot: {
+    id: string;
+    model_id: string;
+    output_mode: 'single' | 'bubble';
+  };
+  recentContext: BuildMessagesInput['recentContext'];
+  newMessage: string;
+  /// Attachment ids on the current user turn (the message that triggered
+  /// this reply). When the bot's main model has vision, these load as
+  /// image_url content parts on the user turn so the model reads them
+  /// directly. When it doesn't, runChatTurn ensures their summaries land
+  /// before the LLM call so the inventory section carries the description.
+  /// Caller in routes/messages.ts forwards parsed.attachmentIds.
+  currentAttachmentIds?: string[];
+  /// conversations.vision_model_override (0064). NULL = auto. Threaded
+  /// through to summarize + read_attachment so the per-conv pin actually
+  /// kicks in.
+  visionModelOverride?: string | null;
+  /// Per-conversation provider pin (slug from llm_providers.slug, e.g.
+  /// 'worldrouter' / 'openrouter'). When set, passed to LLMRouter as
+  /// preferProvider; the existing fallback chain still kicks in if the
+  /// chosen provider 5xxs. NULL = follow the default routing.
+  providerOverride?: string | null;
+  /// Lookback notes the client cached. Each is fed into the prompt as a
+  /// private context block; the bot decides per turn whether to keep them.
+  activeLookbacks?: Array<{ id: string; body_md: string }>;
+  /// True when conv.conversation_type === 'self'. The standard "self
+  /// section" of the system prompt is filled from the user's Honcho
+  /// representation (user-${userId}) instead of the bot's own — so the
+  /// per-user self-bot's self-model is the user's accumulated peer model.
+  isSelfChat?: boolean;
+  /// Client's IANA timezone (e.g. "Asia/Shanghai"). Used to format the
+  /// "this message was sent at ..." hint we attach to each turn.
+  clientTz?: string;
+  signal: AbortSignal;
+  emit: (event: string, data: unknown) => void;
+  /// Set true by dispatchGroupTurn so the bot gets the
+  /// set_my_group_nickname / set_bot_group_description tools in this
+  /// turn's tool list. Default false keeps 1v1 / self / user_user
+  /// surfaces clean.
+  inGroup?: boolean;
+}
+
+export interface RunChatTurnResult {
+  finalStatus: 'done' | 'interrupted' | 'error';
+  totalContent: string;
+  bubblesInserted: number;
+  /// IDs of lookback notes the bot decided to retire this turn (because
+  /// it emitted [DROP_LOOKBACK]). Caller flips active=false for them.
+  droppedLookbackIds: string[];
+}
+
+export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnResult> {
+  const {
+    env, conversationId, userId, parentMessageId,
+    bot, recentContext, newMessage, signal, emit,
+  } = input;
+  const activeLookbacks = input.activeLookbacks ?? [];
+  const supa = serviceClient(env);
+  const startedAt = Date.now();
+  const locale = await resolveLocale(null, supa, userId);
+
+  // 1. Look up self section + skills + bot-authored note + chat memo in
+  // parallel. In self-chat the "self section" is filled from the user's
+  // own peer memory — see RunChatTurnInput.isSelfChat.
+  const [botMemory, skillsRes, botNoteRes, chatMemo] = await Promise.all([
+    input.isSelfChat ? getUserMemory(env, userId) : getBotMemory(env, bot.id),
+    supa
+      .from('skill_subscriptions')
+      .select('skills(frontmatter, body_md)')
+      .eq('user_id', userId)
+      .or(`conversation_id.eq.${conversationId},conversation_id.is.null`),
+    supa
+      .from('skills')
+      .select('body_md')
+      .eq('bot_id', bot.id)
+      .eq('user_id', userId)
+      .maybeSingle(),
+    getChatMemo(env, bot.id, conversationId),
+  ]);
+  type SkillRow = {
+    frontmatter: {
+      name?: string;
+      description?: string;
+      allowed_tools?: unknown;
+    };
+    body_md: string;
+  };
+  const skills: Array<{ name: string; description: string; body: string }> = [];
+  // Aggregate allowed_tools across the active skill set. Sensitive tools
+  // (currently: execute_code) are only exposed when at least one
+  // subscribed skill explicitly opts the user in via this list.
+  const allowedTools = new Set<string>();
+  for (const row of skillsRes.data ?? []) {
+    const joined = (row as { skills: SkillRow | SkillRow[] | null }).skills;
+    const arr = Array.isArray(joined) ? joined : joined ? [joined] : [];
+    for (const s of arr) {
+      skills.push({
+        name: s.frontmatter?.name ?? 'unnamed',
+        description: s.frontmatter?.description ?? '',
+        body: s.body_md,
+      });
+      const tools = s.frontmatter?.allowed_tools;
+      if (Array.isArray(tools)) {
+        for (const t of tools) if (typeof t === 'string') allowedTools.add(t);
+      }
+    }
+  }
+  const botNote = (botNoteRes.data?.body_md as string | undefined) ?? null;
+
+  // 1.5 Vision/attachment resolution.
+  //
+  // - mainHasVision: lookup llm_models.capabilities.vision for this conv's
+  //   main model. Drives whether we send images inline on the current
+  //   turn or rely on text summaries.
+  // - attachmentInventory: every image visible in this conv's recent
+  //   history, rendered as a "## 历史图片附件" system block by the builder.
+  //   The model can call read_attachment with the listed IDs to look at
+  //   any image again.
+  // - currentImageParts: actual image_url blocks for the current turn's
+  //   images, only populated when main has vision.
+  // - When main lacks vision and the current turn has unsummarized images,
+  //   we sync-trigger summarizeAttachments so the inventory has at least
+  //   the summary by the time we hit the LLM. summarizeAttachments is
+  //   idempotent — the async hook in routes/messages.ts may already be
+  //   running; this just guarantees we don't ship without summaries.
+  const visionOverride = input.visionModelOverride ?? null;
+  const mainHasVision = await modelSupportsVision(supa, bot.model_id);
+  const currentSet = new Set(input.currentAttachmentIds ?? []);
+
+  // History inventory pull. Service client bypasses RLS — fine, we
+  // already gated this caller (route handler verified the user is a
+  // conv participant). Cap at 30 to bound prompt size.
+  const invRes = await supa
+    .from('attachments')
+    .select('id, summary, tags, summary_status, created_at')
+    .eq('conversation_id', conversationId)
+    .order('created_at', { ascending: true })
+    .limit(30);
+  const inventory = (
+    (invRes.data as
+      | Array<{
+          id: string;
+          summary: string | null;
+          tags: string[] | null;
+          summary_status: string;
+        }>
+      | null) ?? []
+  ).map((r) => ({
+    id: r.id,
+    summary: r.summary,
+    tags: r.tags ?? [],
+    status: r.summary_status,
+    isCurrentTurn: currentSet.has(r.id),
+  }));
+
+  let currentImageParts: ChatCompletionContentPart[] | undefined;
+  if (
+    mainHasVision &&
+    input.currentAttachmentIds &&
+    input.currentAttachmentIds.length > 0
+  ) {
+    const { data: rows } = await supa
+      .from('attachments')
+      .select('id, r2_key, mime_type, byte_size')
+      .in('id', input.currentAttachmentIds);
+    const parts: ChatCompletionContentPart[] = [];
+    for (const r of (rows ?? []) as Array<{
+      r2_key: string;
+      mime_type: string;
+      byte_size: number;
+    }>) {
+      const p = await loadAttachmentAsImagePart(env, r);
+      if (p) parts.push(p);
+    }
+    if (parts.length > 0) currentImageParts = parts;
+  } else if (
+    !mainHasVision &&
+    input.currentAttachmentIds &&
+    input.currentAttachmentIds.length > 0
+  ) {
+    // Block on summarization for any current-turn images that don't yet
+    // have summaries. The async hook fired by routes/messages.ts may be
+    // mid-flight; summarizeAttachment is idempotent and short-circuits
+    // on summary_status='done', so a second concurrent call costs at
+    // most one duplicated LLM round-trip. Worth it for the determinism.
+    const pending = inventory
+      .filter(
+        (a) =>
+          a.isCurrentTurn && a.status !== 'done' && a.status !== 'skipped',
+      )
+      .map((a) => a.id);
+    if (pending.length > 0) {
+      await summarizeAttachments(
+        {
+          supa,
+          env,
+          conversationId,
+          userId,
+          mainModelSlug: bot.model_id,
+          visionOverride,
+        },
+        pending,
+      );
+      // Re-pull the rows we just summarized so the inventory reflects
+      // the new state (rather than re-querying the whole list).
+      const { data: refreshed } = await supa
+        .from('attachments')
+        .select('id, summary, tags, summary_status')
+        .in('id', pending);
+      const updates = new Map<
+        string,
+        { summary: string | null; tags: string[]; status: string }
+      >();
+      for (const r of (refreshed as Array<{
+        id: string;
+        summary: string | null;
+        tags: string[] | null;
+        summary_status: string;
+      }> | null) ?? []) {
+        updates.set(r.id, {
+          summary: r.summary,
+          tags: r.tags ?? [],
+          status: r.summary_status,
+        });
+      }
+      for (const item of inventory) {
+        const u = updates.get(item.id);
+        if (u) {
+          item.summary = u.summary;
+          item.tags = u.tags;
+          item.status = u.status;
+        }
+      }
+    }
+  }
+
+  // 2. Build prompt. The builder marks the cache breakpoint per plan/02
+  // (every 4 rounds; see llm/builder.ts). activeLookbacks become an
+  // additional system block so the bot sees its prior fact-check notes.
+  const messages: ChatCompletionMessageParam[] = await buildMessages(
+    supa,
+    {
+      bot, botMemory, skills, botNote, chatMemo,
+      lookbacks: activeLookbacks,
+      recentContext, newMessage,
+      currentImageParts,
+      attachmentInventory: inventory,
+      clientTz: input.clientTz,
+    },
+    locale,
+  );
+
+  // AbortSignal propagation: caller's signal aborts the upstream openai fetch.
+  const ac = new AbortController();
+  const onCallerAbort = () => ac.abort();
+  signal.addEventListener('abort', onCallerAbort, { once: true });
+
+  // Bubble grouping: every visible message in this turn shares one bubble_group_id.
+  const bubbleGroupId = randomUUID();
+  let bubbleIndex = 0;
+  let pending = '';
+  let totalContent = '';
+  let emittedLen = 0;
+  let bubblesInserted = 0;
+  const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  // Local heuristic estimates, summed across tool-rounds. Sanity-check
+  // signal alongside provider-reported usage; persisted to audit_log.
+  const est = { input: 0, output: 0 };
+  let generationId: string | undefined;
+
+  // Per-turn web-search citations. Every search_web call appends new urls
+  // (deduped by url, so `[N]` stays stable across rounds in the same turn).
+  // Each emitted bubble row stores the snapshot at insert time — later bubbles
+  // may carry a longer list, but earlier ones never reference an [N] beyond
+  // their snapshot's bounds.
+  const citations: Citation[] = [];
+
+  // Per-turn web-tool meter. Every runWebSearch / runWebScrape call below
+  // records into this; the snapshot is passed to recordAudit so the
+  // tool spend folds into audit_log.tool_cost_usd + cost_credits and
+  // each call lands in audit_web_tool_calls.
+  const webMeter = await WebToolMeter.create(supa);
+
+  const toolCtx: ToolCtx = {
+    signal: ac.signal,
+    emit,
+    userId,
+    botId: bot.id,
+    botModelId: bot.model_id,
+    visionOverride,
+    conversationId,
+    citations,
+    webMeter,
+  };
+
+  const emitBubble = async (text: string) => {
+    if (!text) return;
+    bubbleIndex++;
+    const bubbleId = randomUUID();
+    const clientMessageId = randomUUID();
+    const snapshot = citations.length > 0 ? citations.map((c) => ({ ...c })) : null;
+    await supa.from('messages').insert({
+      id: bubbleId,
+      client_message_id: clientMessageId,
+      conversation_id: conversationId,
+      sender_bot_id: bot.id,
+      role: 'bot',
+      status: 'done',
+      content: text,
+      parent_message_id: parentMessageId,
+      bubble_group_id: bubbleGroupId,
+      citations: snapshot,
+    });
+    bubblesInserted++;
+    emit('bubble', {
+      id: bubbleId,
+      index: bubbleIndex,
+      bubble_group_id: bubbleGroupId,
+      content: text,
+      citations: snapshot,
+    });
+  };
+
+  // Each round inside the agent loop runs its own withFallback — when
+  // one provider fails before-first-chunk, the router can re-resolve
+  // and try the next-best alias for the same canonical model. Once a
+  // stream has started yielding chunks (i.e. bytes have flown to the
+  // iOS client), fallback is no longer safe; iteration errors below
+  // surface as 'interrupted'/'error' status instead.
+  let route: ResolvedRoute | null = null;
+  const routeTrace: RouteTraceEntry[] = [];
+  emit('typing', { state: 'thinking' });
+
+  // Compose this turn's tool list. Always-on tools come from CHAT_TOOLS,
+  // plus request_execute_code (user-approval-gated, safe by construction).
+  // Skill-gated tools (currently: unsupervised execute_code) only appear
+  // when at least one subscribed skill opts the user in via its
+  // frontmatter.allowed_tools.
+  const turnTools: ChatCompletionTool[] = [...CHAT_TOOLS, REQUEST_EXECUTE_CODE_TOOL];
+  if (allowedTools.has('execute_code')) turnTools.push(EXECUTE_CODE_TOOL);
+  if (input.inGroup) turnTools.push(...GROUP_BOT_TOOLS);
+
+  try {
+    // Outer agent loop. Each iteration is one LLM call. If the model emits
+    // tool_calls, we execute them and re-iterate; otherwise we exit.
+    for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+      if (ac.signal.aborted) break;
+
+      // Estimate input tokens for this round before sending. messages
+      // grows across rounds (we push assistant + tool results onto it),
+      // so summing per round mirrors how providers bill cumulative
+      // usage across the agentic loop.
+      est.input += estimateRequestInputTokens({ messages, tools: turnTools });
+
+      const roundOpen = await withFallback(
+        supa,
+        env,
+        {
+          modelSlug: bot.model_id,
+          taskType: 'message_reply',
+          preferProvider: input.providerOverride ?? undefined,
+        },
+        (r) =>
+          r.client.chat.completions.create(
+            {
+              model: r.modelToCall,
+              messages,
+              tools: turnTools,
+              tool_choice: 'auto',
+              stream: true,
+              stream_options: { include_usage: true },
+            },
+            { signal: ac.signal },
+          ),
+      );
+      const stream = roundOpen.result;
+      route = roundOpen.route;
+      routeTrace.push(...roundOpen.routeTrace);
+
+      // Per-call accumulators.
+      let assistantContent = '';
+      const toolCalls: ChatCompletionMessageToolCall[] = [];
+
+      for await (const chunk of stream) {
+        if (ac.signal.aborted) break;
+        const id = (chunk as { id?: string }).id;
+        if (id && !generationId) generationId = id;
+
+        const delta = chunk.choices?.[0]?.delta;
+
+        // Visible content delta.
+        const contentDelta = delta?.content ?? '';
+        if (contentDelta) {
+          pending += contentDelta;
+          totalContent += contentDelta;
+          assistantContent += contentDelta;
+
+          // Hold token emissions while the cumulative reply could still be
+          // the [SILENT] control token. Once the prefix breaks, flush.
+          if (!couldStillBeSilent(totalContent.trimStart())) {
+            const toEmit = totalContent.slice(emittedLen);
+            if (toEmit) emit('token', { delta: toEmit });
+            emittedLen = totalContent.length;
+          }
+
+          // Drain complete bubbles from pending.
+          // eslint-disable-next-line no-constant-condition
+          while (true) {
+            const idx = pending.indexOf(BUBBLE_DELIMITER);
+            if (idx === -1) break;
+            const bubble = pending.slice(0, idx).trim();
+            pending = pending.slice(idx + BUBBLE_DELIMITER.length);
+            if (bubble) await emitBubble(bubble);
+          }
+        }
+
+        // Tool call streaming. OpenAI emits tool_calls in chunks; merge by
+        // index so we end up with one entry per call.
+        const tcDeltas = delta?.tool_calls;
+        if (tcDeltas) {
+          for (const tc of tcDeltas) {
+            const i = tc.index;
+            if (!toolCalls[i]) {
+              toolCalls[i] = {
+                id: tc.id ?? '',
+                type: 'function',
+                function: { name: '', arguments: '' },
+              };
+            }
+            if (tc.id) toolCalls[i].id = tc.id;
+            if (tc.function?.name) toolCalls[i].function.name = tc.function.name;
+            if (tc.function?.arguments) {
+              toolCalls[i].function.arguments += tc.function.arguments;
+            }
+          }
+        }
+
+        if (chunk.usage) {
+          const u = usageFromCompletion(chunk.usage);
+          usage.input += u.inputTokens ?? 0;
+          usage.output += u.outputTokens ?? 0;
+          usage.cacheRead += u.cacheReadTokens ?? 0;
+          usage.cacheWrite += u.cacheWriteTokens ?? 0;
+        }
+      }
+
+      // Local estimate of what the model emitted this round — visible
+      // assistant text plus any tool_call name/arguments JSON it
+      // produced. Mirrors the provider-reported completion_tokens.
+      est.output += estimateAssistantOutputTokens(assistantContent, toolCalls);
+
+      // Push the assistant turn (with any tool_calls) into running history
+      // so the next iteration sees its own decision.
+      if (toolCalls.length > 0) {
+        messages.push({
+          role: 'assistant',
+          content: assistantContent || null,
+          tool_calls: toolCalls,
+        });
+        // Execute tools. Each result becomes a tool message in history.
+        for (const tc of toolCalls) {
+          const args = safeParseArgs(tc.function.arguments);
+          const result = await runTool(env, tc.function.name, args, toolCtx);
+          messages.push({ role: 'tool', tool_call_id: tc.id, content: result });
+        }
+        // Loop: the model may want to call more tools or finally produce
+        // user-visible content. Carry on.
+        continue;
+      }
+
+      // No tool calls — this iteration's assistant text IS the final reply.
+      messages.push({
+        role: 'assistant',
+        content: assistantContent || null,
+      });
+      break;
+    }
+
+    // Strip any [DROP_LOOKBACK] marker before emitting the tail bubble
+    // OR running the silent check — the marker is a control token, not
+    // user-visible content.
+    let droppedLookbackIds: string[] = [];
+    if (pending.includes(DROP_LOOKBACK_TOKEN) || totalContent.includes(DROP_LOOKBACK_TOKEN)) {
+      pending = pending.split(DROP_LOOKBACK_TOKEN).join('').trim();
+      totalContent = totalContent.split(DROP_LOOKBACK_TOKEN).join('').trim();
+      droppedLookbackIds = activeLookbacks.map((l) => l.id);
+    }
+
+    const trimmed = totalContent.trim();
+    if (trimmed === SILENT_TOKEN || trimmed === '') {
+      emit('silent', { bubble_group_id: bubbleGroupId });
+      bubblesInserted = 0;
+      pending = '';
+    } else if (pending.trim()) {
+      await emitBubble(pending.trim());
+      pending = '';
+    }
+
+    const finalStatus: RunChatTurnResult['finalStatus'] = ac.signal.aborted ? 'interrupted' : 'done';
+    if (trimmed !== SILENT_TOKEN) {
+      emit(finalStatus, { bubble_group_id: bubbleGroupId, total_content: totalContent });
+    }
+
+    await recordAudit(supa, route, {
+      userId,
+      conversationId,
+      taskType: 'message_reply',
+      startedAt,
+      generationId,
+      status: 'success',
+      routeTrace,
+      inputTokens: usage.input,
+      outputTokens: usage.output,
+      cacheReadTokens: usage.cacheRead,
+      cacheWriteTokens: usage.cacheWrite,
+      estInputTokens: est.input,
+      estOutputTokens: est.output,
+      // env passes through so recordAudit can route group convs into
+      // splitAndDebit (M6) instead of single-user billingDebit. 1v1
+      // and self-chat just ignore it.
+      env,
+      webTools: webMeter.snapshot(),
+      metadata: {
+        bot_id: bot.id,
+        status: finalStatus,
+        bubble_group_id: bubbleGroupId,
+        bubbles: bubblesInserted,
+      },
+    });
+
+    return { finalStatus, totalContent, bubblesInserted, droppedLookbackIds };
+  } catch (err) {
+    const aborted = ac.signal.aborted;
+    if (pending.trim()) {
+      try { await emitBubble(pending.trim()); } catch {}
+    }
+    const status: RunChatTurnResult['finalStatus'] = aborted ? 'interrupted' : 'error';
+    // String(err) drops to "" / "[object Object]" for thrown plain objects;
+    // dig into common error shapes so the iOS alert shows something useful.
+    const message = aborted
+      ? 'aborted'
+      : (() => {
+          if (err instanceof Error) {
+            const head = err.message || err.name || 'Error';
+            return err.stack ? `${head}\n${err.stack.split('\n').slice(0, 4).join('\n')}` : head;
+          }
+          if (err && typeof err === 'object') {
+            try {
+              return JSON.stringify(err).slice(0, 500);
+            } catch {
+              return Object.prototype.toString.call(err);
+            }
+          }
+          return String(err) || 'unknown error';
+        })();
+    console.error('[bot-reply] runChatTurn failed:', err);
+    emit(status, { message });
+
+    // Audit the failed turn so error rate / fallback metrics in the
+    // panel see this. Two error paths:
+    //   - FallbackError: every alias re-resolution attempt failed
+    //     before any stream chunk arrived. lastRoute may be null.
+    //     routeTrace shows the chain.
+    //   - Anything else (mid-stream throw, tool error, etc.): we
+    //     stayed on whatever route last opened a stream. Use the
+    //     accumulated routeTrace from prior round successes.
+    try {
+      const fbErr = err instanceof FallbackError ? err : null;
+      const auditRoute = fbErr ? fbErr.lastRoute : route;
+      const auditTrace = fbErr ? fbErr.routeTrace : routeTrace;
+      const errorClass = aborted
+        ? null
+        : fbErr
+          ? fbErr.routeTrace[fbErr.routeTrace.length - 1]?.error_class ?? 'unknown'
+          : err instanceof Error
+            ? err.name
+            : 'unknown';
+      await recordAudit(supa, auditRoute, {
+        userId,
+        conversationId,
+        taskType: 'message_reply',
+        startedAt,
+        generationId,
+        status: aborted ? 'success' : 'error',
+        errorClass,
+        routeTrace: auditTrace,
+        inputTokens: usage.input,
+        outputTokens: usage.output,
+        cacheReadTokens: usage.cacheRead,
+        cacheWriteTokens: usage.cacheWrite,
+        estInputTokens: est.input,
+        estOutputTokens: est.output,
+        env,
+        // Tool calls that landed before the LLM stream errored should
+        // still be billed — the upstream provider already consumed
+        // those quotas regardless of how the turn ended.
+        webTools: webMeter.snapshot(),
+        metadata: { bot_id: bot.id, status, message: message.slice(0, 200) },
+      });
+    } catch (auditErr) {
+      console.warn('[bot-reply] audit on error failed:', auditErr);
+    }
+
+    return { finalStatus: status, totalContent, bubblesInserted, droppedLookbackIds: [] };
+  } finally {
+    signal.removeEventListener('abort', onCallerAbort);
+  }
+}

@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import type { Env } from '../types';
 import type { SupabaseClient } from '../lib/supabase';
+import type { Json } from '../db/schema';
 import { billingDebit, getMarkup, usdToPnd } from '../lib/billing';
 import { splitAndDebit } from '../lib/group-billing';
 import type { WebToolUsage } from '../lib/web-meter';
@@ -452,9 +453,9 @@ export async function recordAudit(
     error_class: opts.errorClass ?? null,
     provider_id: route?.provider.id ?? null,
     model_alias_id: route?.alias?.aliasId ?? null,
-    route_trace: (opts.routeTrace as never) ?? null,
+    route_trace: (opts.routeTrace as Json | null) ?? null,
     tag: opts.tag ?? null,
-    ...(opts.metadata ? { metadata: opts.metadata as never } : {}),
+    ...(opts.metadata ? { metadata: opts.metadata as Json } : {}),
   };
 
   const { data: inserted, error } = await supa

@@ -9,6 +9,8 @@ import { runTitle } from '../lib/title-runner';
 import { requireBalance, InsufficientBalanceError } from '../lib/billing';
 import { resolveGroupMentions } from '../lib/group-mentions';
 import { summarizeAttachments, DEFAULT_VISION_MODEL } from '../llm/vision';
+import { UUID_RE } from '../lib/ids';
+import { jsonError } from '../lib/http-error';
 import type { AppBindings } from '../types';
 
 export const messageRoutes = new Hono<AppBindings>();
@@ -87,23 +89,23 @@ messageRoutes.post('/', async (c) => {
   try {
     parsed = PostBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
   // RLS-gate: user must be a participant of the conversation. We use the
   // user JWT for the read so the gate is RLS-driven, not Worker-trusted.
   const supaUser = userClient(c.env, userJwt);
-  // Cast through unknown — vision_model_override lands in 0064; schema.ts
-  // is regenerated lazily after migrations. Other column accesses on the
-  // returned row (provider_override etc.) stay structurally safe.
   const convRes = await supaUser
     .from('conversations')
-    // provider_override (0038) + model_slug_override (0058) + vision_model_override (0064).
-    .select('id, conversation_type, bot_id, round_count, provider_override, model_slug_override, vision_model_override' as never)
+    .select('id, conversation_type, bot_id, round_count, provider_override, model_slug_override, vision_model_override')
     .eq('id', parsed.conversationId)
     .maybeSingle();
-  if (convRes.error) return c.json({ error: 'database', detail: convRes.error.message }, 500);
-  const conv = convRes.data as unknown as {
+  if (convRes.error) return jsonError(c, 500, 'database_error', { detail: convRes.error.message });
+  // Narrow the conversation_type literal — schema.ts types it as the full
+  // set the CHECK constraint allows; this route only handles the message
+  // surface, so we treat the others (discuss/surf/portrait) the same as
+  // user_bot for routing purposes.
+  const conv = convRes.data as {
     id: string;
     conversation_type: 'user_bot' | 'self' | 'group' | 'user_user';
     bot_id: string | null;
@@ -112,14 +114,14 @@ messageRoutes.post('/', async (c) => {
     model_slug_override: string | null;
     vision_model_override: string | null;
   } | null;
-  if (!conv) return c.json({ error: 'conversation not found or no access' }, 404);
+  if (!conv) return jsonError(c, 404, 'conversation_no_access');
 
   // Body shape varies by mode:
   //   normal     newMessage required, INSERT user row, parent = that row
   //   autoLookback newMessage absent, no user row written, parent = last
   //                user row in conv (best effort) or null
   if (!parsed.autoLookback && !parsed.newMessage) {
-    return c.json({ error: 'newMessage required' }, 400);
+    return jsonError(c, 400, 'invalid_body', { message: 'newMessage required' });
   }
 
   // Billing gate. Skip when the conv has no bot pinned (no LLM call will
@@ -160,16 +162,16 @@ messageRoutes.post('/', async (c) => {
       .from('attachments')
       .select('id, user_id, conversation_id')
       .in('id', parsed.attachmentIds);
-    if (attErr) return c.json({ error: 'database', detail: attErr.message }, 500);
+    if (attErr) return jsonError(c, 500, 'database_error', { detail: attErr.message });
     if (!rows || rows.length !== parsed.attachmentIds.length) {
-      return c.json({ error: 'attachment not found' }, 403);
+      return jsonError(c, 403, 'attachment_not_found');
     }
     for (const r of rows) {
       if (r.user_id !== userId) {
-        return c.json({ error: 'attachment not owned' }, 403);
+        return jsonError(c, 403, 'attachment_not_owned');
       }
       if (r.conversation_id && r.conversation_id !== parsed.conversationId) {
-        return c.json({ error: 'attachment bound to another conversation' }, 403);
+        return jsonError(c, 403, 'attachment_conversation_mismatch');
       }
     }
   }
@@ -190,14 +192,14 @@ messageRoutes.post('/', async (c) => {
         },
         { onConflict: 'client_message_id', ignoreDuplicates: true },
       );
-    if (insertErr) return c.json({ error: 'database', detail: insertErr.message }, 500);
+    if (insertErr) return jsonError(c, 500, 'database_error', { detail: insertErr.message });
     const { data: userRow, error: selectErr } = await supaService
       .from('messages')
       .select('id')
       .eq('client_message_id', parsed.clientMessageId)
       .single();
     if (selectErr || !userRow) {
-      return c.json({ error: 'database', detail: selectErr?.message ?? 'row missing' }, 500);
+      return jsonError(c, 500, 'database_error', { detail: selectErr?.message ?? 'row missing' });
     }
     parentMessageId = userRow.id as string;
 
@@ -287,7 +289,7 @@ messageRoutes.post('/', async (c) => {
     .eq('id', conv.bot_id)
     .single();
   if (botErr || !bot) {
-    return c.json({ error: 'bot lookup failed', detail: botErr?.message }, 500);
+    return jsonError(c, 500, 'database_error', { message: 'bot lookup failed', detail: botErr?.message });
   }
   if (!bot.is_active) {
     return c.json({ message: { id: parentMessageId }, botReplyScheduled: false });
@@ -304,7 +306,7 @@ messageRoutes.post('/', async (c) => {
     bot.creator_id !== null &&
     bot.creator_id !== userId
   ) {
-    return c.json({ error: '私有机器人只允许创建者使用' }, 403);
+    return jsonError(c, 403, 'forbidden', { message: '私有机器人只允许创建者使用' });
   }
   if (bot.visibility === 'public_invite' && bot.creator_id !== userId) {
     const { data: invite } = await supaService
@@ -314,7 +316,7 @@ messageRoutes.post('/', async (c) => {
       .eq('user_id', userId)
       .maybeSingle();
     if (!invite) {
-      return c.json({ error: '没有权限和这个机器人聊天,可能已被取消邀请' }, 403);
+      return jsonError(c, 403, 'forbidden', { message: '没有权限和这个机器人聊天,可能已被取消邀请' });
     }
   }
 
@@ -537,7 +539,7 @@ messageRoutes.post('/start', async (c) => {
   try {
     parsed = StartBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
   const supaUser = userClient(c.env, userJwt);
@@ -551,8 +553,8 @@ messageRoutes.post('/start', async (c) => {
     .select('id, model_id, output_mode, is_active, config, visibility, creator_id')
     .eq('id', parsed.botId)
     .single();
-  if (botErr || !bot) return c.json({ error: 'bot not found' }, 404);
-  if (!bot.is_active) return c.json({ error: 'bot inactive' }, 400);
+  if (botErr || !bot) return jsonError(c, 404, 'not_found', { message: 'bot not found' });
+  if (!bot.is_active) return jsonError(c, 400, 'forbidden', { message: 'bot inactive' });
 
   try {
     await requireBalance(supaUser, userId);
@@ -577,40 +579,35 @@ messageRoutes.post('/start', async (c) => {
       .from('attachments')
       .select('id, user_id, conversation_id')
       .in('id', parsed.attachmentIds);
-    if (attErr) return c.json({ error: 'database', detail: attErr.message }, 500);
+    if (attErr) return jsonError(c, 500, 'database_error', { detail: attErr.message });
     if (!rows || rows.length !== parsed.attachmentIds.length) {
-      return c.json({ error: 'attachment not found' }, 403);
+      return jsonError(c, 403, 'attachment_not_found');
     }
     for (const r of rows) {
-      if (r.user_id !== userId) return c.json({ error: 'attachment not owned' }, 403);
-      if (r.conversation_id) return c.json({ error: 'attachment bound to another conversation' }, 403);
+      if (r.user_id !== userId) return jsonError(c, 403, 'attachment_not_owned');
+      if (r.conversation_id) return jsonError(c, 403, 'attachment_conversation_mismatch');
     }
   }
 
   // Atomic conv + participants + user-msg insert. The RPC also gates bot
   // visibility (private creator match, public_invite invite check) using
   // auth.uid(), so failures come back as raised exceptions.
-  //
-  // Cast through `any` because schema.ts is regenerated lazily after each
-  // migration — the new function may not be in the generated union yet.
-  // Worker-edge tsc still catches misspelled arg names because we read the
-  // returned shape below.
-  const rpcResp = await (supaUser.rpc as any)('start_user_bot_turn', {
+  const rpcResp = await supaUser.rpc('start_user_bot_turn', {
     p_bot_id: parsed.botId,
     p_client_message_id: parsed.clientMessageId,
     p_content: parsed.newMessage,
-    p_attachment_ids: parsed.attachmentIds ?? null,
+    p_attachment_ids: parsed.attachmentIds,
   });
   if (rpcResp.error) {
     const msg = rpcResp.error.message || 'start failed';
     if (/没有权限|inactive|not found|auth required/.test(msg)) {
-      return c.json({ error: msg }, 403);
+      return jsonError(c, 403, 'forbidden', { message: msg });
     }
-    return c.json({ error: 'database', detail: msg }, 500);
+    return jsonError(c, 500, 'database_error', { detail: msg });
   }
   const startInfo = rpcResp.data as { conv_id?: string; user_message_id?: string } | null;
   if (!startInfo?.conv_id || !startInfo?.user_message_id) {
-    return c.json({ error: 'rpc returned malformed payload' }, 500);
+    return jsonError(c, 500, 'internal_error', { message: 'rpc returned malformed payload' });
   }
   const convId = startInfo.conv_id;
   const userMessageId = startInfo.user_message_id;
@@ -772,6 +769,166 @@ messageRoutes.post('/start', async (c) => {
   });
 });
 
+// POST /v1/messages/:id/recall
+//
+// Sender-initiated recall. Two modes, picked by conversation_type:
+//
+//   • user_user (human ↔ human) — soft-delete the original (status='deleted',
+//     blank content/attachments) and INSERT a log row marking the recall
+//     so peers see "我撤回了 X 的一条消息" in their conversation. Mirrors
+//     the WeChat UX, with no time limit per product spec.
+//
+//   • user_bot / group / self — soft-delete the original and PURGE its
+//     attachments (DB rows + R2 objects) so quota / storage are
+//     reclaimed and the bot's future context can no longer see them.
+//     No tombstone log row — the message just disappears from view.
+//
+// LLM context queries filter on `.neq('status', 'deleted')` so the model
+// never sees the original message after recall, regardless of mode.
+//
+// Allowed only when caller authored the message. (Conversation-owner
+// deletion of arbitrary messages is the separate DELETE /:id below.)
+messageRoutes.post('/:id/recall', async (c) => {
+  const userId = c.var.userId!;
+  const id = c.req.param('id');
+  if (!UUID_RE.test(id)) {
+    return jsonError(c, 400, 'invalid_id');
+  }
+
+  const supa = serviceClient(c.env);
+
+  const { data: msg, error: fetchErr } = await supa
+    .schema('pendingbot')
+    .from('messages')
+    .select('id, user_id, sender_bot_id, conversation_id, status, attachments, created_at')
+    .eq('id', id)
+    .maybeSingle();
+  if (fetchErr) return jsonError(c, 500, 'database_error', { detail: fetchErr.message });
+  if (!msg) return jsonError(c, 404, 'not_found');
+
+  // Only the original sender may recall. Bot rows have user_id=null /
+  // sender_bot_id set; they cannot be recalled by anyone via this path.
+  if (msg.user_id !== userId) return jsonError(c, 403, 'forbidden');
+
+  // Idempotent: already recalled → ok.
+  if (msg.status === 'deleted') return c.json({ ok: true, already: true });
+
+  const { data: conv, error: convErr } = await supa
+    .schema('pendingbot')
+    .from('conversations')
+    .select('conversation_type')
+    .eq('id', msg.conversation_id)
+    .maybeSingle();
+  if (convErr) return jsonError(c, 500, 'database_error', { detail: convErr.message });
+  const convType = (conv as { conversation_type?: string } | null)?.conversation_type ?? 'user_bot';
+
+  // Collect attachment ids before we clear the column so we can purge
+  // them after. Shape: attachments = { ids: [uuid, ...] }
+  const attIds: string[] = (() => {
+    const a = msg.attachments as { ids?: unknown } | null;
+    if (!a || !Array.isArray(a.ids)) return [];
+    return a.ids.filter((x): x is string => typeof x === 'string');
+  })();
+
+  // 1) Soft-delete the original. Clearing content + attachments makes
+  //    the row useless for both display and any backfill query.
+  const { error: updErr } = await supa
+    .schema('pendingbot')
+    .from('messages')
+    .update({
+      status: 'deleted',
+      content: null,
+      content_partial: null,
+      attachments: null,
+    })
+    .eq('id', id);
+  if (updErr) return jsonError(c, 500, 'database_error', { detail: updErr.message });
+
+  // 2) Purge attachment rows + R2 objects.
+  //
+  //    Per-row safety: an R2 object's lifetime is "as long as ANY
+  //    attachments row still references it via r2_key". With the
+  //    dedup work in migration 20260512052048 a single user upload
+  //    of the same bytes already collapses to one row, but a
+  //    cross-user upload (different users uploading the same image)
+  //    still produces two rows with the same r2_key. Delete the R2
+  //    object only when this user's row was the last one pointing
+  //    at it — otherwise we'd 404 the other user's view.
+  //
+  //    Done unconditionally — even in user_user the original
+  //    message's images shouldn't survive a recall. Failures are
+  //    logged but don't roll back the recall itself; the daily R2
+  //    orphan-sweep cron will catch any leaks.
+  if (attIds.length > 0) {
+    const { data: attRows } = await supa
+      .schema('pendingbot')
+      .from('attachments')
+      .select('id, r2_key')
+      .in('id', attIds)
+      .eq('user_id', userId);
+    const rows = (attRows ?? []) as Array<{ id: string; r2_key: string }>;
+
+    if (rows.length > 0) {
+      const { error: delAttErr } = await supa
+        .schema('pendingbot')
+        .from('attachments')
+        .delete()
+        .in('id', rows.map((r) => r.id))
+        .eq('user_id', userId);
+      if (delAttErr) {
+        console.warn('[messages/recall] attachments delete failed', delAttErr.message);
+      }
+    }
+
+    // For each r2_key the recaller used to own, check whether any
+    // other attachments row still references it. If yes, leave the
+    // R2 object alone (someone else still has a valid claim). If
+    // no, delete the object.
+    await Promise.all(
+      rows.map(async ({ r2_key: key }) => {
+        if (!key) return;
+        const { count } = await supa
+          .schema('pendingbot')
+          .from('attachments')
+          .select('id', { count: 'exact', head: true })
+          .eq('r2_key', key);
+        if ((count ?? 0) > 0) return;
+        await c.env.UPLOADS.delete(key).catch((err) => {
+          console.warn('[messages/recall] R2 delete failed', { key, err });
+        });
+      }),
+    );
+  }
+
+  // 3) For user_user only, drop a tombstone log row so the peer sees a
+  //    "我撤回了 X 的一条消息" line. iOS renders the relative time from
+  //    original_created_at using its existing formatter. Other conv
+  //    types don't surface a tombstone (per product spec).
+  if (convType === 'user_user') {
+    const { error: logErr } = await supa
+      .schema('pendingbot')
+      .from('messages')
+      .insert({
+        client_message_id: crypto.randomUUID(),
+        conversation_id: msg.conversation_id,
+        user_id: userId,
+        role: 'log',
+        status: 'done',
+        log_kind: 'recall',
+        log_payload: {
+          original_message_id: id,
+          original_created_at: msg.created_at,
+          recaller_user_id: userId,
+        },
+      });
+    if (logErr) {
+      console.warn('[messages/recall] tombstone log insert failed', logErr.message);
+    }
+  }
+
+  return c.json({ ok: true });
+});
+
 // DELETE /v1/messages/:id
 //
 // Removes a single message. Allowed when the caller authored the message OR
@@ -782,8 +939,8 @@ messageRoutes.post('/start', async (c) => {
 messageRoutes.delete('/:id', async (c) => {
   const userId = c.var.userId!;
   const id = c.req.param('id');
-  if (!/^[0-9a-f-]{36}$/i.test(id)) {
-    return c.json({ error: 'invalid id' }, 400);
+  if (!UUID_RE.test(id)) {
+    return jsonError(c, 400, 'invalid_id');
   }
 
   const supa = serviceClient(c.env);
@@ -794,8 +951,8 @@ messageRoutes.delete('/:id', async (c) => {
     .select('id, user_id, conversation_id')
     .eq('id', id)
     .maybeSingle();
-  if (fetchErr) return c.json({ error: 'database', detail: fetchErr.message }, 500);
-  if (!msg) return c.json({ error: 'not found' }, 404);
+  if (fetchErr) return jsonError(c, 500, 'database_error', { detail: fetchErr.message });
+  if (!msg) return jsonError(c, 404, 'not_found');
 
   let allowed = msg.user_id === userId;
   if (!allowed) {
@@ -805,17 +962,17 @@ messageRoutes.delete('/:id', async (c) => {
       .select('user_id')
       .eq('id', msg.conversation_id)
       .maybeSingle();
-    if (convErr) return c.json({ error: 'database', detail: convErr.message }, 500);
+    if (convErr) return jsonError(c, 500, 'database_error', { detail: convErr.message });
     allowed = !!conv && conv.user_id === userId;
   }
-  if (!allowed) return c.json({ error: 'forbidden' }, 403);
+  if (!allowed) return jsonError(c, 403, 'forbidden');
 
   const { error: delErr } = await supa
     .schema('pendingbot')
     .from('messages')
     .delete()
     .eq('id', id);
-  if (delErr) return c.json({ error: 'database', detail: delErr.message }, 500);
+  if (delErr) return jsonError(c, 500, 'database_error', { detail: delErr.message });
 
   return c.json({ ok: true });
 });

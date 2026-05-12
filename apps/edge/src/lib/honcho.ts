@@ -24,31 +24,34 @@ export interface QueryUserOptions {
   env: Env;
   userId: string;
   /// Scope the dialectic call to this conversation's session so the answer
-  /// reflects only what's been said in this thread. Omit (undefined) to query
-  /// across all sessions the user peer participates in.
-  conversationId?: string;
+  /// reflects only what's been said in this thread. REQUIRED: an unscoped
+  /// query lets a bot in one conv learn about the user from a different
+  /// conv they share (private chat → group leak), which is precisely the
+  /// per-conversation isolation the rest of the codebase enforces.
+  conversationId: string;
   query: string;
   signal?: AbortSignal;
 }
 
 /// Ask Honcho's dialectic endpoint a natural-language question about the user.
-/// The dialectic agent does retrieval + reasoning over everything observed
-/// about the peer (conclusions, raw messages, peer card) and returns a
-/// grounded answer. Returns null when Honcho has nothing to say.
+/// The dialectic agent does retrieval + reasoning over what's been observed
+/// inside the named conversation's session (conclusions, raw messages, peer
+/// card) and returns a grounded answer. Returns null when Honcho has nothing
+/// to say.
 export async function queryUserRepresentation(
   opts: QueryUserOptions,
 ): Promise<string | null> {
   const { env, userId, conversationId, query, signal } = opts;
   const honcho = honchoClient(env);
   const peer = await honcho.peer(userPeerId(userId));
-  // SDK v2: peer.chat(query, { sessionId? }) returns { content: string | null }.
+  // SDK v2: peer.chat(query, { session }) returns { content: string | null }.
   // We don't pipe AbortSignal through (SDK doesn't accept one); the dialectic
   // call is bounded server-side, and this tool is invoked inside an agent loop
   // whose outer abort flips the model's stream — a stale dialectic in flight
   // is harmless.
   void signal;
-  const content = await peer.chat(query, conversationId
-    ? { session: conversationSessionId(conversationId) }
-    : undefined);
+  const content = await peer.chat(query, {
+    session: conversationSessionId(conversationId),
+  });
   return content?.trim() || null;
 }

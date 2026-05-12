@@ -10,7 +10,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "pendingbot-edge",
   "main": "src/index.ts",
-  "compatibility_date": "2025-04-01",
+  "compatibility_date": "2026-05-01",
   "compatibility_flags": ["nodejs_compat"],
 
   // Treat .md as raw text, importable as string. Powers prompts/*.md.
@@ -90,6 +90,19 @@
           { "name": "GROUP_ROUTER", "class_name": "GroupRouterDO" }
         ]
       },
+      // Cloudflare native rate limiting. Per-namespace_id counters shared
+      // across worker instances; key chosen by caller (we use userId, or
+      // CF-Connecting-IP when auth is missing). 30 req / 60s is generous
+      // for normal use ("type a handle, fetch once") but blocks brute-
+      // force enumeration of user_handles values. Tune in prod if real
+      // traffic patterns show false positives.
+      "ratelimits": [
+        {
+          "name": "HANDLE_LOOKUP_RL",
+          "namespace_id": "100",
+          "simple": { "limit": 30, "period": 60 }
+        }
+      ],
       "migrations": [
         {
           "tag": "v1",
@@ -101,18 +114,33 @@
 
   // Secrets (set on the deployed env via `wrangler secret put --env production`,
   // or in `.dev.vars` for local `wrangler dev`):
+  //
+  //   --- supabase + LLM gateway ---
   //   SUPABASE_ANON_KEY
   //   SUPABASE_SERVICE_ROLE_KEY
   //   OPENROUTER_API_KEY
-  //   WORLDROUTER_API_KEY    (optional — alt LLM gateway, see admin /providers)
-  //   BRAVE_API_KEY
-  //   FIRECRAWL_API_KEY
+  //   WORLDROUTER_API_KEY    (declared but currently unread — leave unset
+  //                           until the LLMRouter wires it back in)
+  //
+  //   --- web tools (search + scrape) ---
+  //   Each provider is optional. The runner reads only the keys for
+  //   providers actually selected by task_routing_rules / default. Setting
+  //   none leaves search/scrape disabled; setting one or more enables those.
+  //   BRAVE_API_KEY          (search; current DEFAULT_SEARCH_PROVIDER)
+  //   TAVILY_API_KEY         (search + scrape)
+  //   EXA_API_KEY            (search + scrape)
+  //   SERPER_API_KEY         (search)
+  //   FIRECRAWL_API_KEY      (scrape; current DEFAULT_SCRAPE_PROVIDER)
+  //
+  //   --- push (APNs token auth, per-environment keys) ---
   //   APNS_TEAM_ID
   //   APNS_TOPIC
   //   APNS_KEY_ID_DEV
   //   APNS_KEY_ID_PROD
   //   APNS_KEY_DEV   (.p8 PEM content, multi-line)
   //   APNS_KEY_PROD  (.p8 PEM content, multi-line)
+  //
+  //   --- memory + sandbox ---
   //   HONCHO_API_KEY
   //   HONCHO_WORKSPACE_ID
   //   DAYTONA_API_KEY        (code-exec sandbox; free tier)

@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
 import { serviceClient } from '../lib/supabase';
+import { jsonError } from '../lib/http-error';
 import type { AppBindings } from '../types';
 
 // POST /v1/code-exec-requests/:id/respond
@@ -33,7 +34,7 @@ codeExecRoutes.post('/:id/respond', async (c) => {
   try {
     parsed = RespondBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid body', detail: String(err) }, 400);
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
   const supa = serviceClient(c.env);
@@ -45,10 +46,10 @@ codeExecRoutes.post('/:id/respond', async (c) => {
     .select('id, user_id, status')
     .eq('id', id)
     .maybeSingle();
-  if (readErr) return c.json({ error: 'database', detail: readErr.message }, 500);
-  if (!row) return c.json({ error: 'not found' }, 404);
+  if (readErr) return jsonError(c, 500, 'database_error', { detail: readErr.message });
+  if (!row) return jsonError(c, 404, 'not_found');
   const r = row as { id: string; user_id: string; status: string };
-  if (r.user_id !== userId) return c.json({ error: 'not found' }, 404);
+  if (r.user_id !== userId) return jsonError(c, 404, 'not_found');
 
   // If the request already resolved (timeout, prior tap), tell iOS the
   // current state so the card can dismiss itself without flipping again.
@@ -59,10 +60,10 @@ codeExecRoutes.post('/:id/respond', async (c) => {
   const newStatus = parsed.decision === 'approve' ? 'approved' : 'denied';
   const { error: updErr } = await supa
     .from('bot_code_exec_requests')
-    .update({ status: newStatus, responded_at: new Date().toISOString() } as never)
+    .update({ status: newStatus, responded_at: new Date().toISOString() })
     .eq('id', id)
     .eq('status', 'pending');
-  if (updErr) return c.json({ error: 'database', detail: updErr.message }, 500);
+  if (updErr) return jsonError(c, 500, 'database_error', { detail: updErr.message });
 
   return c.json({ ok: true, status: newStatus });
 });

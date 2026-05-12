@@ -9,6 +9,11 @@ import { SupabaseJwtPayload } from './schema';
 //
 // JWKS URL convention: `${SUPABASE_URL}/auth/v1/.well-known/jwks.json`.
 
+// Algorithm allowlist — anything outside this set is rejected during
+// verification, which closes the legacy HS256 path even if a JWKS
+// entry ever advertised it.
+export const ALLOWED_JWT_ALGS = ['ES256', 'RS256', 'EdDSA'] as const;
+
 const JWKS_CACHE = new Map<string, JWTVerifyGetKey>();
 
 function getJwks(supabaseUrl: string): JWTVerifyGetKey {
@@ -21,14 +26,30 @@ function getJwks(supabaseUrl: string): JWTVerifyGetKey {
   return jwks;
 }
 
+/**
+ * Inner verification: given a resolved JWKS, verify signature + algorithm
+ * + payload shape. Exposed so tests can pass a local JWKS without hitting
+ * jose's network fetcher (which in Node bypasses globalThis.fetch and
+ * goes straight to node:https, making it untestable via fetch stubs).
+ *
+ * Production callers use `verifySupabaseJwt`, which wires the remote
+ * JWKS up automatically.
+ */
+export async function verifyJwtWithJwks(
+  token: string,
+  jwks: JWTVerifyGetKey,
+): Promise<SupabaseJwtPayload> {
+  const { payload } = await jwtVerify(token, jwks, {
+    // Allow whichever asymmetric algorithm the project's signing key uses.
+    // Locking to ES256/RS256/EdDSA blocks the deprecated HS256 path.
+    algorithms: [...ALLOWED_JWT_ALGS],
+  });
+  return SupabaseJwtPayload.parse(payload);
+}
+
 export async function verifySupabaseJwt(
   token: string,
   supabaseUrl: string,
 ): Promise<SupabaseJwtPayload> {
-  const { payload } = await jwtVerify(token, getJwks(supabaseUrl), {
-    // Allow whichever asymmetric algorithm the project's signing key uses.
-    // Locking to ES256/RS256/EdDSA blocks the deprecated HS256 path.
-    algorithms: ['ES256', 'RS256', 'EdDSA'],
-  });
-  return SupabaseJwtPayload.parse(payload);
+  return verifyJwtWithJwks(token, getJwks(supabaseUrl));
 }

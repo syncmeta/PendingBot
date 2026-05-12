@@ -28,6 +28,13 @@ import { buildSystemPrompt, type BuildSystemPromptInput } from '../llm/builder';
 import { getBotMemory, getChatMemo } from '../lib/memory';
 import { resolveLocale } from '../i18n/locale';
 import { t } from '../i18n/index';
+import { UUID_RE } from '../lib/ids';
+import {
+  endRealtimeSession,
+  recordRealtimeSession,
+  requireActiveSession,
+} from '../lib/realtime-sessions';
+import { jsonError as routeJsonError, type ApiErrorCode } from '../lib/http-error';
 import {
   checkOpenAIRegion,
   OPENAI_SUPPORTED_URL,
@@ -40,9 +47,6 @@ realtimeRoutes.use('*', requireSession());
 // =============================================================================
 // shared helpers
 // =============================================================================
-
-// 36-char UUID guard — same shape as conversation/bot ids elsewhere.
-const UUID_RE = /^[0-9a-f-]{36}$/i;
 
 // Canonical model slug. task_routing_rules lookup is keyed off this in
 // resolveRoute(..., taskType: 'voice_call') so admins can override per
@@ -57,7 +61,7 @@ interface SessionContext {
   bot: {
     id: string;
     display_name: string;
-    output_mode: string;
+    output_mode: 'single' | 'bubble';
     voice_call_enabled: boolean;
   };
 }
@@ -135,7 +139,9 @@ async function loadSessionContext(
       bot: {
         id: bot.id,
         display_name: bot.display_name,
-        output_mode: bot.output_mode,
+        // CHECK constraint on bots.output_mode permits exactly these two;
+        // schema.ts types the column as plain `string` so we narrow here.
+        output_mode: bot.output_mode === 'bubble' ? 'bubble' : 'single',
         voice_call_enabled: true,
       },
     },
@@ -201,9 +207,8 @@ async function assembleInstructions(
   const sysInput: BuildSystemPromptInput = {
     bot: {
       id: ctx.bot.id,
-      display_name: ctx.bot.display_name,
       output_mode: ctx.bot.output_mode,
-    } as never,
+    },
     botMemory,
     skills,
     botNote,
@@ -233,7 +238,7 @@ realtimeRoutes.post('/session', async (c) => {
   try {
     parsed = SessionBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid_body', detail: String(err) }, 400);
+    return routeJsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
   const loaded = await loadSessionContext(
@@ -255,15 +260,13 @@ realtimeRoutes.post('/session', async (c) => {
   const minThreshold = threshold ?? 0;
   const balanceCredits = balance?.balance_credits ?? 0;
   if (minThreshold > 0 && balanceCredits < minThreshold) {
-    return c.json(
-      {
-        error: 'insufficient_balance',
-        message: t('voice.insufficient_balance', locale),
+    return routeJsonError(c, 402, 'insufficient_balance', {
+      message: t('voice.insufficient_balance', locale),
+      detail: {
         balance_credits: balanceCredits,
         min_threshold: minThreshold,
       },
-      402,
-    );
+    });
   }
 
   // Region gate. cf.country is what Cloudflare's edge GeoIP reports for
@@ -272,15 +275,13 @@ realtimeRoutes.post('/session', async (c) => {
     ?.country;
   const region = checkOpenAIRegion(cfCountry ?? null);
   if (!region.allowed) {
-    return c.json(
-      {
-        error: 'region_unsupported',
+    return routeJsonError(c, 451, 'voice_region_unsupported', {
+      message: t('voice.region_unsupported', locale),
+      detail: {
         country: region.country,
-        message: t('voice.region_unsupported', locale),
         supported_url: OPENAI_SUPPORTED_URL,
       },
-      451,
-    );
+    });
   }
 
   // Persona assembled server-side. Goes into the upstream mint body —
@@ -298,7 +299,7 @@ realtimeRoutes.post('/session', async (c) => {
   } catch (err) {
     console.warn('[realtime/session] resolveRoute failed', err);
     return c.json(
-      { error: 'route_unavailable', message: t('voice.upstream_failed', locale) },
+      { error: { code: 'voice_upstream_failed', message: t('voice.upstream_failed', locale) } },
       503,
     );
   }
@@ -306,6 +307,9 @@ realtimeRoutes.post('/session', async (c) => {
   const sessionId = crypto.randomUUID();
   return await mintOpenAISession(c.env, locale, {
     sessionId,
+    userId,
+    conversationId: parsed.conversation_id,
+    botId: ctx.bot.id,
     route,
     instructions,
     balanceCredits,
@@ -315,6 +319,9 @@ realtimeRoutes.post('/session', async (c) => {
 
 interface MintArgs {
   sessionId: string;
+  userId: string;
+  conversationId: string;
+  botId: string;
   route: Awaited<ReturnType<typeof resolveRoute>>;
   instructions: string;
   balanceCredits: number;
@@ -329,7 +336,7 @@ async function mintOpenAISession(
   if (!env.OPENAI_API_KEY) {
     return jsonError(
       503,
-      'route_unavailable',
+      'upstream_unavailable',
       t('voice.upstream_failed', locale),
     );
   }
@@ -385,7 +392,7 @@ async function mintOpenAISession(
     });
   } catch (err) {
     console.warn('[realtime/session] openai fetch failed', err);
-    return jsonError(503, 'route_unavailable', t('voice.upstream_failed', locale));
+    return jsonError(503, 'voice_upstream_failed', t('voice.upstream_failed', locale));
   }
   if (!upstream.ok) {
     const body = await upstream.text();
@@ -412,7 +419,21 @@ async function mintOpenAISession(
   if (!clientSecret) {
     console.warn('[realtime/session] openai response missing client_secret', data);
     return jsonError(502, 'upstream_error', t('voice.upstream_failed', locale));
+
   }
+
+  // Bind session_id to (user, conversation, bot) so /usage /transcripts
+  // /end can't be replayed across users or after termination. Failure
+  // here is logged but non-fatal — the call still works, just without
+  // server-side replay protection. recordRealtimeSession itself logs.
+  await recordRealtimeSession(env, {
+    session_id: args.sessionId,
+    user_id: args.userId,
+    conversation_id: args.conversationId,
+    bot_id: args.botId,
+    openai_session_id: data.session?.id ?? data.id ?? null,
+  });
+
   return Response.json({
     session_id: args.sessionId,
     client_secret: { value: clientSecret, expires_at: expiresAt },
@@ -424,8 +445,14 @@ async function mintOpenAISession(
   });
 }
 
-function jsonError(status: number, error: string, message: string) {
-  return Response.json({ error, message }, { status });
+// Local helper used inside mintOpenAISession — that function has no
+// Hono Context, so we produce a raw Response that matches the shared
+// jsonError envelope shape ({ error: { code, message? } }).
+function jsonError(status: number, code: ApiErrorCode, message?: string) {
+  return Response.json(
+    { error: { code, ...(message ? { message } : {}) } },
+    { status },
+  );
 }
 
 // =============================================================================
@@ -460,7 +487,18 @@ realtimeRoutes.post('/usage', async (c) => {
   try {
     parsed = UsageBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid_body', detail: String(err) }, 400);
+    return routeJsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+
+  // Replay protection. The session_id MUST map to a row in
+  // realtime_sessions, owned by the caller, not closed, not aged out.
+  // We then trust the conversation_id from that row, not from the
+  // request body — guards against a caller forging a body that names
+  // a different conversation than the session was minted for.
+  const sessGate = await requireActiveSession(c.env, parsed.session_id, userId);
+  if (!sessGate.ok) return c.json(sessGate.body, sessGate.status);
+  if (sessGate.session.conversation_id !== parsed.conversation_id) {
+    return routeJsonError(c, 403, 'session_conversation_mismatch');
   }
 
   const loaded = await loadSessionContext(
@@ -485,7 +523,7 @@ realtimeRoutes.post('/usage', async (c) => {
     });
   } catch (err) {
     console.warn('[realtime/usage] resolveRoute failed', err);
-    return c.json({ error: 'route_unavailable' }, 503);
+    return routeJsonError(c, 503, 'upstream_unavailable');
   }
 
   const startedAt = Date.now();
@@ -591,8 +629,18 @@ realtimeRoutes.post('/transcripts', async (c) => {
   try {
     parsed = TranscriptBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid_body', detail: String(err) }, 400);
+    return routeJsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
+
+  // Same gate as /usage — every persistence call must be on a still-
+  // active session owned by the caller. user_id and bot_id used in the
+  // rows below come from the session row, not the request body.
+  const sessGate = await requireActiveSession(c.env, parsed.session_id, userId);
+  if (!sessGate.ok) return c.json(sessGate.body, sessGate.status);
+  if (sessGate.session.conversation_id !== parsed.conversation_id) {
+    return routeJsonError(c, 403, 'session_conversation_mismatch');
+  }
+  const session = sessGate.session;
 
   const loaded = await loadSessionContext(
     c.env,
@@ -602,7 +650,6 @@ realtimeRoutes.post('/transcripts', async (c) => {
     locale,
   );
   if (!loaded.ok) return c.json(loaded.body, loaded.status);
-  const ctx = loaded.ctx;
   if (parsed.turns.length === 0) return c.json({ inserted: 0 });
 
   // Sort by ts ascending so the bubble order matches the live call. The
@@ -618,8 +665,8 @@ realtimeRoutes.post('/transcripts', async (c) => {
     role: t.role,
     status: 'done',
     content: t.content,
-    user_id: t.role === 'user' ? ctx.userId : null,
-    sender_bot_id: t.role === 'bot' ? ctx.bot.id : null,
+    user_id: t.role === 'user' ? session.user_id : null,
+    sender_bot_id: t.role === 'bot' ? session.bot_id : null,
     metadata: {
       source: 'voice_call',
       session_id: parsed.session_id,
@@ -632,7 +679,7 @@ realtimeRoutes.post('/transcripts', async (c) => {
     .insert(rows);
   if (error) {
     console.warn('[realtime/transcripts] insert failed', error.message);
-    return c.json({ error: 'database', detail: error.message }, 500);
+    return routeJsonError(c, 500, 'database_error', { detail: error.message });
   }
   return c.json({ inserted: rows.length });
 });
@@ -652,23 +699,25 @@ const EndBody = z.object({
 
 realtimeRoutes.post('/end', async (c) => {
   const userId = c.var.userId!;
-  const userJwt = c.var.userJwt!;
-  const supaUser = userClient(c.env, userJwt);
-  const locale = await resolveLocale(c.req.raw, supaUser, userId);
 
   let parsed: z.infer<typeof EndBody>;
   try {
     parsed = EndBody.parse(await c.req.json());
   } catch (err) {
-    return c.json({ error: 'invalid_body', detail: String(err) }, 400);
+    return routeJsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
-  const loaded = await loadSessionContext(
-    c.env,
-    userId,
-    userJwt,
-    parsed.conversation_id,
-    locale,
-  );
-  if (!loaded.ok) return c.json(loaded.body, loaded.status);
+
+  // Idempotent — calling /end twice or for an already-aged-out session
+  // returns ok. We only reject when the session doesn't exist at all
+  // or belongs to another caller (don't help an attacker confirm
+  // someone else's session_id).
+  const sessGate = await requireActiveSession(c.env, parsed.session_id, userId);
+  if (!sessGate.ok && sessGate.status === 403) {
+    return c.json(sessGate.body, sessGate.status);
+  }
+  if (sessGate.ok && sessGate.session.conversation_id !== parsed.conversation_id) {
+    return routeJsonError(c, 403, 'session_conversation_mismatch');
+  }
+  await endRealtimeSession(c.env, parsed.session_id);
   return c.json({ ok: true });
 });
