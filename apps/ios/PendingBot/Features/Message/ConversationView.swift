@@ -744,6 +744,7 @@ struct ConversationView: View {
             conversationId: conversation.id,
             botId: botId,
             botDisplayName: bot?.display_name ?? "AI",
+            api: VoiceCallAPI(),
         )
     }
 
