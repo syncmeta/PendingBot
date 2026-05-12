@@ -142,7 +142,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   const activeLookbacks = input.activeLookbacks ?? [];
   const supa = serviceClient(env);
   const startedAt = Date.now();
-  const locale = await resolveLocale(null, supa, userId);
+  const locale = await resolveLocale(null, supa, userId, env);
 
   // 1. Look up self section + skills + bot-authored note + chat memo in
   // parallel. All four are KV-first (botMemory + subscriptions + note +
