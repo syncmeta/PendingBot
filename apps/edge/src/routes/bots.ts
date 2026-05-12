@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
 import { serviceClient } from '../lib/supabase';
+import { deleteCachedBot } from '../lib/bot-cache';
 import { UUID_RE } from '../lib/ids';
 import { jsonError } from '../lib/http-error';
 import type { AppBindings } from '../types';
@@ -69,6 +70,11 @@ botRoutes.patch('/:id', async (c) => {
     .update(update as never)
     .eq('id', id);
   if (updErr) return jsonError(c, 500, 'database_error', { detail: updErr.message });
+
+  // Drop the KV entry so the next read pulls fresh values. Cheaper than
+  // re-warming the whole row here (the next message request will warm
+  // it from Supabase). Failure is non-fatal — the 1h TTL bounds drift.
+  await deleteCachedBot(c.env, id).catch(() => undefined);
 
   return c.json({ ok: true });
 });

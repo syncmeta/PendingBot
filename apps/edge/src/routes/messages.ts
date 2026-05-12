@@ -12,6 +12,7 @@ import { summarizeAttachments, DEFAULT_VISION_MODEL } from '../llm/vision';
 import { UUID_RE } from '../lib/ids';
 import { jsonError } from '../lib/http-error';
 import { deleteCachedAttachment, removeInventoryIds, resolveAttachmentOwnership } from '../lib/attachment-cache';
+import { resolveBot } from '../lib/bot-cache';
 import { safeWaitUntil } from '../lib/safe-wait-until';
 import type { AppBindings } from '../types';
 
@@ -180,11 +181,7 @@ messageRoutes.post('/', async (c) => {
     : Promise.resolve(null);
 
   const botPromise = needsBotPath
-    ? supaService
-        .from('bots')
-        .select('id, model_id, output_mode, is_active, config, visibility, creator_id')
-        .eq('id', conv.bot_id!)
-        .single()
+    ? resolveBot(c.env, supaService, conv.bot_id!, (p) => safeWaitUntil(c, p))
     : Promise.resolve(null);
 
   const parentLookupPromise: Promise<string | null> = parsed.autoLookback
@@ -311,10 +308,10 @@ messageRoutes.post('/', async (c) => {
   }
 
   // botRes was awaited in Phase 2 (needsBotPath was true). Narrow + check.
-  if (!botRes || botRes.error || !botRes.data) {
-    return jsonError(c, 500, 'database_error', { message: 'bot lookup failed', detail: botRes?.error?.message });
+  if (!botRes) {
+    return jsonError(c, 500, 'database_error', { message: 'bot lookup failed' });
   }
-  const bot = botRes.data;
+  const bot = botRes;
   if (!bot.is_active) {
     return c.json({ message: { id: parentMessageId }, botReplyScheduled: false });
   }
@@ -577,14 +574,13 @@ messageRoutes.post('/start', async (c) => {
 
   // Bot row needed for runChatTurn (model_id / output_mode / config).
   // Visibility is gated inside the SECURITY DEFINER RPC below — this read
-  // just pulls the config we need to drive the turn.
-  const { data: bot, error: botErr } = await supaService
-    .from('bots')
-    .select('id, model_id, output_mode, is_active, config, visibility, creator_id')
-    .eq('id', parsed.botId)
-    .single();
-  if (botErr || !bot) return jsonError(c, 404, 'not_found', { message: 'bot not found' });
-  if (!bot.is_active) return jsonError(c, 400, 'forbidden', { message: 'bot inactive' });
+  // just pulls the config we need to drive the turn. KV cache with 1h
+  // TTL bounds staleness for iOS-direct bot edits.
+  const botRaw = await resolveBot(c.env, supaService, parsed.botId, (p) => safeWaitUntil(c, p));
+  if (!botRaw) return jsonError(c, 404, 'not_found', { message: 'bot not found' });
+  if (!botRaw.is_active) return jsonError(c, 400, 'forbidden', { message: 'bot inactive' });
+  if (!botRaw.model_id) return jsonError(c, 500, 'database_error', { message: 'bot has no model pinned' });
+  const bot = { ...botRaw, model_id: botRaw.model_id };
 
   try {
     await requireBalance(c.env, supaUser, userId);
