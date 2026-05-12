@@ -34,6 +34,7 @@ node_modules/
 
 # Claude Code
 .claude/
+.codex/
 AGENTS.md
 
 # Deploy script (contains prod infra defaults)
