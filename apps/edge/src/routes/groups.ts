@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
 import { userClient, serviceClient } from '../lib/supabase';
 import { generateInitialBotDescription } from '../lib/group-bot-intro';
+import { rateLimitOrBlock } from '../lib/rate-limit';
 import type { AppBindings } from '../types';
 
 // All group endpoints sit under /v1/groups. Schema + RPCs live in
@@ -490,6 +491,11 @@ const JoinRequestBody = z.object({
 // POST /v1/groups/join — caller doesn't know the conversation_id yet,
 // they only have a scanned/typed handle. RPC resolves it.
 groupRoutes.post('/join', async (c) => {
+  // Same rate-limit family as friend-request /lookup — handle values
+  // are the enumerable resource here too.
+  const blocked = await rateLimitOrBlock(c, c.env.HANDLE_LOOKUP_RL);
+  if (blocked) return blocked;
+
   let parsed: z.infer<typeof JoinRequestBody>;
   try {
     parsed = JoinRequestBody.parse(await c.req.json());

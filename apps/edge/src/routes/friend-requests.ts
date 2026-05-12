@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
 import { serviceClient } from '../lib/supabase';
+import { rateLimitOrBlock } from '../lib/rate-limit';
 import type { AppBindings } from '../types';
 
 // /v1/friend-requests — request/accept gate for human-to-human chat.
@@ -58,6 +59,9 @@ const CreateBody = z
 // display fields — exposing email or created_at here would leak data
 // beyond what the recipient consented to via their handle.
 friendRequestRoutes.get('/lookup', async (c) => {
+  const blocked = await rateLimitOrBlock(c, c.env.HANDLE_LOOKUP_RL);
+  if (blocked) return blocked;
+
   const handleValue = c.req.query('handleValue')?.trim();
   if (!handleValue || handleValue.length < 4 || handleValue.length > 64) {
     return c.json({ error: 'handleValue required' }, 400);
@@ -93,6 +97,12 @@ friendRequestRoutes.get('/lookup', async (c) => {
 });
 
 friendRequestRoutes.post('/', async (c) => {
+  // Share the same enumeration limiter as /lookup — POST / can be used
+  // for blind brute-force the same way (each rejection 404 still
+  // confirms whether the handle is registered).
+  const blocked = await rateLimitOrBlock(c, c.env.HANDLE_LOOKUP_RL);
+  if (blocked) return blocked;
+
   const userId = c.var.userId!;
   let parsed: z.infer<typeof CreateBody>;
   try {

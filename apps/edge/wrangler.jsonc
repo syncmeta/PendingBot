@@ -90,6 +90,19 @@
           { "name": "GROUP_ROUTER", "class_name": "GroupRouterDO" }
         ]
       },
+      // Cloudflare native rate limiting. Per-namespace_id counters shared
+      // across worker instances; key chosen by caller (we use userId, or
+      // CF-Connecting-IP when auth is missing). 30 req / 60s is generous
+      // for normal use ("type a handle, fetch once") but blocks brute-
+      // force enumeration of user_handles values. Tune in prod if real
+      // traffic patterns show false positives.
+      "ratelimits": [
+        {
+          "name": "HANDLE_LOOKUP_RL",
+          "namespace_id": "100",
+          "simple": { "limit": 30, "period": 60 }
+        }
+      ],
       "migrations": [
         {
           "tag": "v1",
