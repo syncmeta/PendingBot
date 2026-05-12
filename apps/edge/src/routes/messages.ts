@@ -92,14 +92,38 @@ messageRoutes.post('/', async (c) => {
     return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
-  // RLS-gate: user must be a participant of the conversation. We use the
-  // user JWT for the read so the gate is RLS-driven, not Worker-trusted.
+  // Body shape varies by mode:
+  //   normal     newMessage required, INSERT user row, parent = that row
+  //   autoLookback newMessage absent, no user row written, parent = last
+  //                user row in conv (best effort) or null
+  if (!parsed.autoLookback && !parsed.newMessage) {
+    return jsonError(c, 400, 'invalid_body', { message: 'newMessage required' });
+  }
+
   const supaUser = userClient(c.env, userJwt);
-  const convRes = await supaUser
+  const supaService = serviceClient(c.env);
+
+  // Phase 1 — fire conv lookup (RLS gate + routing/config) and attachment
+  // ownership check in parallel. Both must succeed before any state
+  // change. The conv read uses the user JWT so RLS confirms membership;
+  // the attachment read uses service role because the ownership check
+  // here IS the gate.
+  const convPromise = supaUser
     .from('conversations')
     .select('id, conversation_type, bot_id, round_count, provider_override, model_slug_override, vision_model_override')
     .eq('id', parsed.conversationId)
     .maybeSingle();
+
+  const hasAttachments = (parsed.attachmentIds?.length ?? 0) > 0;
+  const attCheckPromise = hasAttachments
+    ? supaService
+        .from('attachments')
+        .select('id, user_id, conversation_id')
+        .in('id', parsed.attachmentIds!)
+    : Promise.resolve({ data: null as null | Array<{ id: string; user_id: string; conversation_id: string | null }>, error: null as null | { message: string } });
+
+  const [convRes, attRes] = await Promise.all([convPromise, attCheckPromise]);
+
   if (convRes.error) return jsonError(c, 500, 'database_error', { detail: convRes.error.message });
   // Narrow the conversation_type literal — schema.ts types it as the full
   // set the CHECK constraint allows; this route only handles the message
@@ -116,57 +140,16 @@ messageRoutes.post('/', async (c) => {
   } | null;
   if (!conv) return jsonError(c, 404, 'conversation_no_access');
 
-  // Body shape varies by mode:
-  //   normal     newMessage required, INSERT user row, parent = that row
-  //   autoLookback newMessage absent, no user row written, parent = last
-  //                user row in conv (best effort) or null
-  if (!parsed.autoLookback && !parsed.newMessage) {
-    return jsonError(c, 400, 'invalid_body', { message: 'newMessage required' });
-  }
-
-  // Billing gate. Skip when the conv has no bot pinned (no LLM call will
-  // happen anyway — the post below early-returns at !conv.bot_id). When
-  // a bot IS pinned, refuse before inserting the user row so a broke
-  // account can't fill the chat with replies that never get answered.
-  //
-  // Groups deliberately bypass this gate: per spec the user-experience
-  // must never block on balance — exhausted members are excluded from
-  // the next cost split (group_member_billing.overdrawn) instead of 402.
-  // group-billing.ts (M6) handles that exclusion.
-  if (conv.bot_id && conv.conversation_type !== 'group') {
-    try {
-      await requireBalance(supaUser, userId);
-    } catch (err) {
-      if (err instanceof InsufficientBalanceError) {
-        return c.json(
-          {
-            error: 'insufficient_balance',
-            balance_credits: err.balance,
-            min_threshold: err.threshold,
-          },
-          402,
-        );
-      }
-      throw err;
-    }
-  }
-
-  const supaService = serviceClient(c.env);
-
   // Attachment ownership gate. attachmentIds rides in the body uncontrolled —
   // verify each row's user_id matches the sender and (if already bound) its
   // conversation_id matches this conv, so a caller can't pin someone else's
   // upload onto their own bubble or recycle attachments across convs.
-  if (parsed.attachmentIds && parsed.attachmentIds.length > 0) {
-    const { data: rows, error: attErr } = await supaService
-      .from('attachments')
-      .select('id, user_id, conversation_id')
-      .in('id', parsed.attachmentIds);
-    if (attErr) return jsonError(c, 500, 'database_error', { detail: attErr.message });
-    if (!rows || rows.length !== parsed.attachmentIds.length) {
+  if (hasAttachments) {
+    if (attRes.error) return jsonError(c, 500, 'database_error', { detail: attRes.error.message });
+    if (!attRes.data || attRes.data.length !== parsed.attachmentIds!.length) {
       return jsonError(c, 403, 'attachment_not_found');
     }
-    for (const r of rows) {
+    for (const r of attRes.data) {
       if (r.user_id !== userId) {
         return jsonError(c, 403, 'attachment_not_owned');
       }
@@ -176,62 +159,105 @@ messageRoutes.post('/', async (c) => {
     }
   }
 
-  let parentMessageId: string | null = null;
-  if (!parsed.autoLookback) {
-    const { error: insertErr } = await supaService
-      .from('messages')
-      .upsert(
-        {
-          client_message_id: parsed.clientMessageId,
-          conversation_id: parsed.conversationId,
-          user_id: userId,
-          role: 'user',
-          content: parsed.newMessage,
-          status: 'done',
-          attachments: parsed.attachmentIds ? { ids: parsed.attachmentIds } : null,
-        },
-        { onConflict: 'client_message_id', ignoreDuplicates: true },
-      );
-    if (insertErr) return jsonError(c, 500, 'database_error', { detail: insertErr.message });
-    const { data: userRow, error: selectErr } = await supaService
-      .from('messages')
-      .select('id')
-      .eq('client_message_id', parsed.clientMessageId)
-      .single();
-    if (selectErr || !userRow) {
-      return jsonError(c, 500, 'database_error', { detail: selectErr?.message ?? 'row missing' });
-    }
-    parentMessageId = userRow.id as string;
+  // Pre-generate the user message id so we can return it to the client
+  // and reference it as parent_message_id without waiting for the INSERT
+  // to land. The actual write fires through waitUntil below — idempotent
+  // on client_message_id, so a retry collapses server-side.
+  const needsBotPath = conv.bot_id !== null && conv.conversation_type !== 'group';
+  const userMessageId = !parsed.autoLookback ? crypto.randomUUID() : null;
 
-    // Detached attachment summarization. Generates a 1-2 sentence summary
-    // + tags per image and writes them onto attachments rows. This runs
-    // independently of the bot reply path so groups / no-bot convs /
-    // user_user also get image summaries (which iOS / future tools may
-    // surface). See edge/llm/vision.ts.
-    if (parsed.attachmentIds && parsed.attachmentIds.length > 0) {
+  // Phase 2 — fire balance gate, bot lookup, autoLookback parent lookup
+  // in parallel. INSERT runs detached (waitUntil) using the
+  // pre-generated id, so the pre-stream path holds no write RTT.
+  const balancePromise: Promise<InsufficientBalanceError | null> = needsBotPath
+    ? requireBalance(supaUser, userId)
+        .then(() => null)
+        .catch((err) => {
+          if (err instanceof InsufficientBalanceError) return err;
+          throw err;
+        })
+    : Promise.resolve(null);
+
+  const botPromise = needsBotPath
+    ? supaService
+        .from('bots')
+        .select('id, model_id, output_mode, is_active, config, visibility, creator_id')
+        .eq('id', conv.bot_id!)
+        .single()
+    : Promise.resolve(null);
+
+  const parentLookupPromise: Promise<string | null> = parsed.autoLookback
+    ? (async () => {
+        const { data } = await supaService
+          .from('messages')
+          .select('id')
+          .eq('conversation_id', parsed.conversationId)
+          .eq('role', 'user')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        return (data?.id as string | undefined) ?? null;
+      })()
+    : Promise.resolve(userMessageId);
+
+  // Detached user-message INSERT. Idempotent on client_message_id, so a
+  // client retry de-dupes. Errors go to console.error — operations can
+  // chase, but the user gets a 200 OK either way (Realtime will reflect
+  // the row once it lands; if it never does, the client's next send
+  // with the same client_message_id triggers the same upsert).
+  if (!parsed.autoLookback && userMessageId) {
+    c.executionCtx.waitUntil(
+      (async () => {
+        const { error } = await supaService
+          .from('messages')
+          .upsert(
+            {
+              id: userMessageId,
+              client_message_id: parsed.clientMessageId,
+              conversation_id: parsed.conversationId,
+              user_id: userId,
+              role: 'user',
+              content: parsed.newMessage,
+              status: 'done',
+              attachments: parsed.attachmentIds ? { ids: parsed.attachmentIds } : null,
+            },
+            { onConflict: 'client_message_id', ignoreDuplicates: true },
+          );
+        if (error) console.error('[messages] user upsert failed', error.message);
+      })(),
+    );
+
+    // Attachment summarization runs independently of the bot reply path
+    // so groups / no-bot convs / user_user also get image summaries.
+    if (hasAttachments) {
       c.executionCtx.waitUntil(
         scheduleAttachmentSummary({
           env: c.env,
           conversationId: parsed.conversationId,
           userId,
-          attachmentIds: parsed.attachmentIds,
+          attachmentIds: parsed.attachmentIds!,
           botId: conv.bot_id ?? null,
           visionOverride: conv.vision_model_override ?? null,
         }),
       );
     }
-  } else {
-    // autoLookback: anchor parent to the last user row in this conv so the
-    // bot reply still has something sensible to point at if anyone queries.
-    const { data: lastUser } = await supaService
-      .from('messages')
-      .select('id')
-      .eq('conversation_id', parsed.conversationId)
-      .eq('role', 'user')
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    parentMessageId = (lastUser?.id as string | undefined) ?? null;
+  }
+
+  const [balanceErr, botRes, parentMessageId] = await Promise.all([
+    balancePromise,
+    botPromise,
+    parentLookupPromise,
+  ]);
+
+  if (balanceErr) {
+    return c.json(
+      {
+        error: 'insufficient_balance',
+        balance_credits: balanceErr.balance,
+        min_threshold: balanceErr.threshold,
+      },
+      402,
+    );
   }
 
   // Group branch — wake decisions go to the GroupRouterDO. The DO
@@ -283,14 +309,11 @@ messageRoutes.post('/', async (c) => {
     return c.json({ message: { id: parentMessageId }, botReplyScheduled: false });
   }
 
-  const { data: bot, error: botErr } = await supaService
-    .from('bots')
-    .select('id, model_id, output_mode, is_active, config, visibility, creator_id')
-    .eq('id', conv.bot_id)
-    .single();
-  if (botErr || !bot) {
-    return jsonError(c, 500, 'database_error', { message: 'bot lookup failed', detail: botErr?.message });
+  // botRes was awaited in Phase 2 (needsBotPath was true). Narrow + check.
+  if (!botRes || botRes.error || !botRes.data) {
+    return jsonError(c, 500, 'database_error', { message: 'bot lookup failed', detail: botRes?.error?.message });
   }
+  const bot = botRes.data;
   if (!bot.is_active) {
     return c.json({ message: { id: parentMessageId }, botReplyScheduled: false });
   }
@@ -324,17 +347,23 @@ messageRoutes.post('/', async (c) => {
   // (see PostBody comment): when the body carries an opinion (defined,
   // even null), persist it onto the conv row so other devices see it on
   // their next conv-list fetch. Whichever value lands here is what gets
-  // passed to LLMRouter as preferProvider.
+  // passed to LLMRouter as preferProvider. Persistence is fire-and-forget
+  // so the SSE stream doesn't wait on it.
   const persistedOverride = conv.provider_override ?? null;
   let effectiveProviderOverride: string | null = persistedOverride;
   if (parsed.providerOverride !== undefined) {
     const desired = parsed.providerOverride;
     effectiveProviderOverride = desired;
     if (desired !== persistedOverride) {
-      await supaService
-        .from('conversations')
-        .update({ provider_override: desired })
-        .eq('id', parsed.conversationId);
+      c.executionCtx.waitUntil(
+        (async () => {
+          const { error } = await supaService
+            .from('conversations')
+            .update({ provider_override: desired })
+            .eq('id', parsed.conversationId);
+          if (error) console.error('[messages] provider_override persist failed', error.message);
+        })(),
+      );
     }
   }
 
