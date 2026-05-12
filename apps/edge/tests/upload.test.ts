@@ -100,7 +100,7 @@ async function post(
     if (typeof v === 'string') {
       fd.append(k, v);
     } else {
-      fd.append(k, new File([v.file], v.name, { type: v.type }));
+      fd.append(k, new File([new Uint8Array(v.file)], v.name, { type: v.type }));
     }
   }
 
