@@ -113,6 +113,7 @@ function makeClient(db: FakeDb): unknown {
     let selectOpts: { count?: 'exact'; head?: boolean } | undefined;
     let patch: Row | null = null;
     let insertRow: Row | null = null;
+    let insertError: { code?: string; message: string } | null = null;
 
     const api = {
       select(c: string = '*', opts?: { count?: 'exact'; head?: boolean }) {
@@ -153,25 +154,38 @@ function makeClient(db: FakeDb): unknown {
         mode = 'delete';
         return api;
       },
-      async insert(r: Row) {
+      insert(r: Row) {
+        // supabase-js .insert returns a chainable filter builder — the
+        // route can do `.insert(row).select(cols).single()`. We perform
+        // the actual side effect here so the row is observable in db.rows
+        // even when the caller doesn't await before reading.
         mode = 'insert';
         insertRow = r;
         const err = db.errors?.insert?.(table, r);
-        if (err) return { data: null, error: err };
-        const tableRows = (db.rows[table] ??= []);
-        tableRows.push({ ...r });
-        db.inserts.push({ table, row: { ...r } });
-        // .insert(...).select(...).single() chains await the same builder.
-        // For now we expose `data` as the inserted row to satisfy .single().
-        return { data: { ...r }, error: null };
+        if (!err) {
+          const tableRows = (db.rows[table] ??= []);
+          tableRows.push({ ...r });
+          db.inserts.push({ table, row: { ...r } });
+        }
+        // Stash the error for terminal ops to surface.
+        insertError = err ?? null;
+        return api;
       },
       async maybeSingle() {
+        if (mode === 'insert') {
+          if (insertError) return { data: null, error: insertError };
+          return { data: insertRow ? { ...insertRow } : null, error: null };
+        }
         const err = db.errors?.select?.(table);
         if (err) return { data: null, error: err };
         const rs = rowsForFilters(db.rows[table] ?? [], filters);
         return { data: rs[0] ? { ...rs[0] } : null, error: null };
       },
       async single() {
+        if (mode === 'insert') {
+          if (insertError) return { data: null, error: insertError };
+          return { data: insertRow ? { ...insertRow } : null, error: null };
+        }
         const err = db.errors?.select?.(table);
         if (err) return { data: null, error: err };
         const rs = rowsForFilters(db.rows[table] ?? [], filters);
@@ -212,7 +226,7 @@ function makeClient(db: FakeDb): unknown {
               return { data: null, error: null };
             }
             case 'insert': {
-              // already handled in api.insert
+              if (insertError) return { data: null, error: insertError };
               return { data: insertRow ? { ...insertRow } : null, error: null };
             }
             case 'select': {
