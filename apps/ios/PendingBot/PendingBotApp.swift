@@ -7,6 +7,12 @@ struct PendingBotApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     init() {
+        // Swap URLCache.shared for one whose backing dir is marked
+        // NSFileProtectionCompleteUnlessOpen — attachment image bytes
+        // cached by AsyncImage / ServerImage now sit encrypted at rest
+        // while the device is locked. Must happen before the first
+        // network request, hence early-init not .task.
+        ProtectedURLCache.install()
         Haptics.warmUp()
     }
 
