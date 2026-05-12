@@ -13,6 +13,7 @@ import { UUID_RE } from '../lib/ids';
 import { jsonError } from '../lib/http-error';
 import { deleteCachedAttachment, removeInventoryIds, resolveAttachmentOwnership } from '../lib/attachment-cache';
 import { resolveBot } from '../lib/bot-cache';
+import { deleteCachedConv, resolveConv } from '../lib/conv-cache';
 import { safeWaitUntil } from '../lib/safe-wait-until';
 import type { AppBindings } from '../types';
 
@@ -106,17 +107,13 @@ messageRoutes.post('/', async (c) => {
   const supaUser = userClient(c.env, userJwt);
   const supaService = serviceClient(c.env);
 
-  // Phase 1 — fire conv lookup (RLS gate + routing/config) and attachment
-  // ownership check in parallel. Both must succeed before any state
-  // change. The conv read uses the user JWT so RLS confirms membership;
-  // the attachment check reads from the per-attachment KV cache and only
-  // falls back to Supabase on miss (cold attachments — older uploads not
-  // yet warmed).
-  const convPromise = supaUser
-    .from('conversations')
-    .select('id, conversation_type, bot_id, round_count, provider_override, model_slug_override, vision_model_override')
-    .eq('id', parsed.conversationId)
-    .maybeSingle();
+  // Phase 1 — resolve conv (KV with RLS-gated fallback) and attachment
+  // ownership in parallel. Both must succeed before any state change.
+  // The conv resolver does a local user_id check for single-owner conv
+  // types and only round-trips Supabase for groups / cold reads.
+  const convPromise = resolveConv(c.env, supaUser, parsed.conversationId, userId, (p) =>
+    safeWaitUntil(c, p),
+  ).catch((err: { message?: string }) => ({ __error: err.message ?? 'database_error' as const }));
 
   const hasAttachments = (parsed.attachmentIds?.length ?? 0) > 0;
   const attCheckPromise = hasAttachments
@@ -125,14 +122,16 @@ messageRoutes.post('/', async (c) => {
       )
     : Promise.resolve([] as Array<{ id: string; user_id: string; conversation_id: string | null }>);
 
-  const [convRes, attRows] = await Promise.all([convPromise, attCheckPromise]);
+  const [convResolved, attRows] = await Promise.all([convPromise, attCheckPromise]);
 
-  if (convRes.error) return jsonError(c, 500, 'database_error', { detail: convRes.error.message });
+  if (convResolved && typeof convResolved === 'object' && '__error' in convResolved) {
+    return jsonError(c, 500, 'database_error', { detail: convResolved.__error });
+  }
   // Narrow the conversation_type literal — schema.ts types it as the full
   // set the CHECK constraint allows; this route only handles the message
   // surface, so we treat the others (discuss/surf/portrait) the same as
   // user_bot for routing purposes.
-  const conv = convRes.data as {
+  const conv = convResolved as {
     id: string;
     conversation_type: 'user_bot' | 'self' | 'group' | 'user_user';
     bot_id: string | null;
@@ -353,13 +352,16 @@ messageRoutes.post('/', async (c) => {
     const desired = parsed.providerOverride;
     effectiveProviderOverride = desired;
     if (desired !== persistedOverride) {
-      c.executionCtx.waitUntil(
+      safeWaitUntil(
+        c,
         (async () => {
           const { error } = await supaService
             .from('conversations')
             .update({ provider_override: desired })
             .eq('id', parsed.conversationId);
           if (error) console.error('[messages] provider_override persist failed', error.message);
+          // Invalidate KV so the next message reads the new override.
+          await deleteCachedConv(c.env, parsed.conversationId).catch(() => undefined);
         })(),
       );
     }
