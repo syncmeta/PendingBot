@@ -18,7 +18,7 @@ extension ConversationView {
         tracesByUserMsgId[key] = bucket
     }
 
-    func completeToolCall(name: String, summary: String?, error: String?) {
+    func completeToolCall(name: String, summary: String?, error: String?, detail: String?) {
         guard let key = liveTraceUserMsgId else { return }
         var bucket = tracesByUserMsgId[key] ?? []
         // Match the most recent unfinished event with the same tool name.
@@ -27,6 +27,7 @@ extension ConversationView {
         if let idx = bucket.lastIndex(where: { $0.name == name && !$0.done }) {
             bucket[idx].resultSummary = summary
             bucket[idx].resultError = error
+            bucket[idx].resultDetail = detail
             bucket[idx].done = true
         } else {
             // Result without a matching call (shouldn't happen but stay
@@ -34,6 +35,7 @@ extension ConversationView {
             var ev = ToolTraceEvent(name: name, input: nil)
             ev.resultSummary = summary
             ev.resultError = error
+            ev.resultDetail = detail
             ev.done = true
             bucket.append(ev)
         }
