@@ -15,6 +15,34 @@ private let log = Logger.category("LocalDatabase")
 ///
 /// Single-user-per-device — no per-account scoping in the file path; on
 /// sign-out we wipe the DB.
+///
+/// ## Encryption (SQLCipher)
+///
+/// `DatabaseQueue` is opened with a `prepareDatabase` hook that issues
+/// `PRAGMA key = '…'` against a 256-bit random passphrase stored in
+/// Keychain (device-only, no iCloud sync). The behaviour depends on
+/// which SQLite the GRDB SPM target is linked against:
+///
+///   • Vanilla GRDB (current default — `groue/GRDB.swift`):
+///     `PRAGMA key` is silently ignored by upstream SQLite. The DB
+///     file stays plaintext. The keychain key is generated and held
+///     anyway, so flipping the dependency to a SQLCipher-enabled
+///     fork (e.g. `duckduckgo/GRDB.swift`) "lights up" encryption
+///     without further code changes.
+///
+///   • SQLCipher-enabled GRDB:
+///     `PRAGMA key` is the canonical setup call and must precede any
+///     other operation on the connection. After it succeeds the DB
+///     file on disk is AES-encrypted; without the key the file
+///     decodes as random noise.
+///
+/// First-launch-after-flipping handling: when a pre-encryption plaintext
+/// DB file already exists on disk, SQLCipher will fail to open it with
+/// the key (file-format mismatch surfaces as a corrupt/IO error). The
+/// existing two-tier recovery below catches that and recreates an
+/// encrypted file from scratch. Acceptable for pre-launch where the
+/// only data is the user's own testing — documented explicitly so the
+/// behaviour isn't a surprise.
 @MainActor
 final class LocalDatabase {
     static let shared = LocalDatabase()
@@ -23,17 +51,24 @@ final class LocalDatabase {
 
     private init() {
         let url = Self.databaseURL()
+        let key = Self.loadOrCreatePassphrase()
+        let config = Self.makeConfiguration(passphrase: key)
+
         do {
-            let queue = try DatabaseQueue(path: url.path)
+            let queue = try DatabaseQueue(path: url.path, configuration: config)
             try Self.migrator.migrate(queue)
             self.dbQueue = queue
             return
         } catch {
-            // First-resort recovery: nuke a possibly-corrupt file and retry.
+            // First-resort recovery: nuke a possibly-corrupt OR
+            // wrong-format file and retry. Triggers on the
+            // plaintext→encrypted flip too — a legacy plaintext DB
+            // file fails to open when SQLCipher applies the key, and
+            // we'd rather start fresh than crash.
             try? FileManager.default.removeItem(at: url)
         }
         do {
-            let queue = try DatabaseQueue(path: url.path)
+            let queue = try DatabaseQueue(path: url.path, configuration: config)
             try Self.migrator.migrate(queue)
             self.dbQueue = queue
             return
@@ -46,7 +81,7 @@ final class LocalDatabase {
         }
         // In-memory init has no I/O so the only error path here would be
         // an internal GRDB precondition; treat as unrecoverable.
-        let memQueue = (try? DatabaseQueue()) ?? {
+        let memQueue = (try? DatabaseQueue(configuration: config)) ?? {
             fatalError("LocalDatabase: in-memory DatabaseQueue() failed — unrecoverable")
         }()
         try? Self.migrator.migrate(memQueue)
@@ -57,6 +92,63 @@ final class LocalDatabase {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("pendingbot.sqlite")
+    }
+
+    // MARK: - Encryption passphrase
+
+    /// Keychain account name for the local DB passphrase. The Keychain
+    /// service is the app's bundle id (see Keychain.service); the
+    /// account scopes within that. Once written, the value is
+    /// device-only (no iCloud sync) and survives reinstalls under the
+    /// same Apple ID — which means a fresh install of the app on the
+    /// same device WILL recover access to its DB file if one's left
+    /// over. We rely on `clear()` at sign-out to flush content; we do
+    /// NOT delete the passphrase on sign-out, so the same passphrase
+    /// is reused for the next user. That's fine — the passphrase is
+    /// only a key, never a user identifier.
+    private static let dbPassphraseAccount = "local-db-passphrase-v1"
+
+    private static func loadOrCreatePassphrase() -> String {
+        if let existing = Keychain.get(account: dbPassphraseAccount),
+           !existing.isEmpty {
+            return existing
+        }
+        // 32 random bytes → hex string. 256 bits of entropy, well
+        // above any practical brute-force threshold. Hex (rather than
+        // base64) keeps the PRAGMA SQL escape-free.
+        var bytes = [UInt8](repeating: 0, count: 32)
+        let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        let pass: String
+        if status == errSecSuccess {
+            pass = bytes.map { String(format: "%02x", $0) }.joined()
+        } else {
+            // Vanishingly unlikely, but fall back to UUID-based key so
+            // we never leave the DB un-keyed once SQLCipher is on.
+            log.error("SecRandomCopyBytes failed (\(status, privacy: .public)) — falling back to UUID-based passphrase")
+            pass = UUID().uuidString + UUID().uuidString
+        }
+        do {
+            try Keychain.set(pass, account: dbPassphraseAccount)
+        } catch {
+            log.error("failed to persist DB passphrase to Keychain: \(error.localizedDescription, privacy: .public)")
+            // Keep going with the in-memory passphrase — better than
+            // crashing. Next launch will mint a new one and the cache
+            // will be unreadable; we'll fall through to the recovery
+            // path and start clean.
+        }
+        return pass
+    }
+
+    private static func makeConfiguration(passphrase: String) -> Configuration {
+        var config = Configuration()
+        config.prepareDatabase { db in
+            // SQLCipher requires PRAGMA key BEFORE any other operation.
+            // Vanilla SQLite ignores this pragma, so the call is safe
+            // either way. Quoted with single quotes; passphrase is hex
+            // so no escaping needed.
+            try db.execute(sql: "PRAGMA key = '\(passphrase)'")
+        }
+        return config
     }
 
     static var migrator: DatabaseMigrator {
