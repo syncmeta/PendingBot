@@ -19,9 +19,10 @@ import type { Env } from '../types';
 const DEFAULT_API_URL = 'https://app.daytona.io/api';
 const DEFAULT_TOOLBOX_URL = 'https://proxy.app.daytona.io/toolbox';
 
-// Sandbox creation defaults: 1 vCPU / 1 GiB RAM / 3 GiB disk Python image.
-// Daytona's defaults already match this; we send `{}` and rely on it.
-const CREATE_BODY = '{}';
+// Sandbox creation defaults: 1 vCPU / 1 GiB RAM / 3 GiB disk.
+// We run Python source through process/code-run, so keep the language
+// explicit instead of relying on Daytona's account/API defaults.
+const CREATE_BODY = JSON.stringify({ language: 'python' });
 
 // Common Python data-stack packages installed once per sandbox at first use.
 // Kept tight so the bootstrap pip install doesn't burn too much wall time
@@ -53,6 +54,21 @@ export interface CodeRunResult {
   stdout: string;        // post-truncation; combined stdout+stderr per Daytona's stateless run
   exitCode: number;
   truncated: boolean;
+}
+
+export class DaytonaApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly responseText: string,
+  ) {
+    super(message);
+    this.name = 'DaytonaApiError';
+  }
+}
+
+export function isMissingDaytonaSandbox(err: unknown): boolean {
+  return err instanceof DaytonaApiError && (err.status === 404 || err.status === 410);
 }
 
 /// Create a fresh sandbox. Caller persists the returned id (and bootstraps
@@ -153,7 +169,11 @@ async function daytonaFetch(
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new Error(`daytona ${method} ${path} failed: ${res.status} ${text.slice(0, 200)}`);
+    throw new DaytonaApiError(
+      `daytona ${method} ${path} failed: ${res.status} ${text.slice(0, 200)}`,
+      res.status,
+      text,
+    );
   }
   return res;
 }
