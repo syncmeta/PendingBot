@@ -83,11 +83,11 @@ struct ConversationView: View {
     /// collapsed) right after the user message that triggered it. Worker emits
     /// `tool_call` / `tool_result` SSE events during a turn — we accumulate
     /// them into the bucket for the in-flight `liveTraceUserMsgId`.
-    @State private var tracesByUserMsgId: [String: [ToolTraceEvent]] = [:]
+    @State var tracesByUserMsgId: [String: [ToolTraceEvent]] = [:]
     /// Local id of the user message currently driving an SSE turn — set in
     /// sendViaSSE before the stream starts, cleared when the turn ends.
     /// Multiple traces can land for the same user msg if the agent loops.
-    @State private var liveTraceUserMsgId: String?
+    @State var liveTraceUserMsgId: String?
     /// Web-search citations attached to a bot bubble, keyed by message id.
     /// Sources: history `select citations`, Realtime UPDATE on the row, and
     /// the per-turn `citations` SSE event copied to each in-flight bubble.
@@ -1465,36 +1465,7 @@ struct ConversationView: View {
         }
     }
 
-    // MARK: - Tool-call trace
-
-    private func appendToolCall(name: String, input: String?) {
-        guard let key = liveTraceUserMsgId else { return }
-        var bucket = tracesByUserMsgId[key] ?? []
-        bucket.append(ToolTraceEvent(name: name, input: input))
-        tracesByUserMsgId[key] = bucket
-    }
-
-    private func completeToolCall(name: String, summary: String?, error: String?) {
-        guard let key = liveTraceUserMsgId else { return }
-        var bucket = tracesByUserMsgId[key] ?? []
-        // Match the most recent unfinished event with the same tool name.
-        // Bot can issue parallel tool calls; FIFO completion is wrong in
-        // theory but right in practice for our current 2-tool surface.
-        if let idx = bucket.lastIndex(where: { $0.name == name && !$0.done }) {
-            bucket[idx].resultSummary = summary
-            bucket[idx].resultError = error
-            bucket[idx].done = true
-        } else {
-            // Result without a matching call (shouldn't happen but stay
-            // defensive — the worker's emitter could miss a tool_call).
-            var ev = ToolTraceEvent(name: name, input: nil)
-            ev.resultSummary = summary
-            ev.resultError = error
-            ev.done = true
-            bucket.append(ev)
-        }
-        tracesByUserMsgId[key] = bucket
-    }
+    // Tool-call trace accumulation lives in ConversationView+ToolTrace.swift.
 
     // MARK: - Lookback notes (invisible context-edit notes from the bot)
 
@@ -1544,20 +1515,7 @@ struct ConversationView: View {
     /// Decode a Realtime row's `citations` value into the typed model. Returns
     /// nil when absent / null / malformed — callers fall back to whatever was
     /// already in `citationsByMsgId` for the row (e.g. the live-bubble snapshot).
-    private func parseCitations(from any: AnyJSON?) -> [MessageCitation]? {
-        guard let any else { return nil }
-        do {
-            let data = try JSONEncoder().encode(any)
-            // AnyJSON.null encodes as the literal "null" — short-circuit
-            // before the array decoder throws on the wrong shape.
-            if data.count == 4, String(data: data, encoding: .utf8) == "null" {
-                return nil
-            }
-            return try JSONDecoder().decode([MessageCitation].self, from: data)
-        } catch {
-            return nil
-        }
-    }
+    // parseCitations lives in ConversationView+ToolTrace.swift.
 
     /// Realtime postgres_changes payload → ChatMessage in the local list.
     /// Dedupe by canonical row id so this device's own SSE-emitted bubbles
