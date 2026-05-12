@@ -308,6 +308,20 @@ struct ConversationView: View {
                                 .padding(.vertical, 6)
                                 .frame(maxWidth: .infinity)
                             }
+                            if msg.sender_type == "recall_log" {
+                                // Tombstone for a recall. `content`
+                                // carries the original message's epoch
+                                // seconds (see loadHistory mapping);
+                                // `sender_id` is the recaller's user
+                                // id, used to pick the 1st-person vs
+                                // 3rd-person wording.
+                                let originalSecs = Int(msg.content) ?? msg.created_at
+                                RecallTombstoneView(
+                                    wasMine: msg.sender_id == AccountStore.shared.current?.id,
+                                    originalAt: Date(timeIntervalSince1970: TimeInterval(originalSecs))
+                                )
+                                .id(msg.id)
+                            } else {
                             BubbleView(message: msg,
                                        botName: botName,
                                        conversationID: conversation.id,
@@ -341,6 +355,18 @@ struct ConversationView: View {
                                             }
                                         }
                                     }
+                                    if msg.isMine(currentUserId: AccountStore.shared.current?.id) {
+                                        // 撤回: WeChat-style sender-only retract.
+                                        // In user_user convs this leaves a
+                                        // tombstone log row visible to both
+                                        // parties; in user_bot / group convs
+                                        // it's a hard purge (bot's future
+                                        // context won't see it either).
+                                        // Server side: POST /v1/messages/:id/recall.
+                                        Button {
+                                            Task { await recallMessage(msg) }
+                                        } label: { Label("撤回", systemImage: "arrow.uturn.backward") }
+                                    }
                                     Button(role: .destructive) {
                                         Task { await deleteMessage(msg) }
                                     } label: { Label("删除", systemImage: "trash") }
@@ -362,6 +388,7 @@ struct ConversationView: View {
                                 .id("trace:\(msg.id)")
                                 .transition(.opacity)
                             }
+                            }  // end else (non-recall_log branch)
                         }
 
                         Color.clear.frame(height: 8).id("bottom")
@@ -1544,8 +1571,46 @@ struct ConversationView: View {
         guard let id = r["id"]?.stringValue,
               r["conversation_id"]?.stringValue == conversation.id else { return }
         let role = r["role"]?.stringValue ?? "user"
-        // Logs are server-only (review step entries) — never rendered here.
-        if role == "log" { return }
+        let status = r["status"]?.stringValue ?? ""
+        // Recall: when a message flips to status='deleted' (via the
+        // server's POST /v1/messages/:id/recall), drop it from the
+        // visible timeline. Works for both our own optimistic-already-
+        // removed rows (no-op) and peer recalls (the bubble vanishes).
+        if status == "deleted" {
+            messages.removeAll { $0.id == id }
+            return
+        }
+        // Recall tombstone — the log_kind='recall' insert that pairs
+        // with the soft-delete above for user_user convs. Synthesise a
+        // recall_log ChatMessage so the ForEach renderer drops a
+        // centered "你/对方撤回了 X 的一条消息" pill at the right spot.
+        if role == "log" {
+            let logKind = r["log_kind"]?.stringValue ?? ""
+            if logKind == "recall" {
+                guard let payloadValue = r["log_payload"],
+                      let payload = decodeRecallPayload(payloadValue)
+                else { return }
+                let createdRaw = r["created_at"]?.stringValue ?? ""
+                let secs = ServerTimestamp.epochSeconds(createdRaw, default: Int(Date().timeIntervalSince1970))
+                let recaller = payload.recaller_user_id ?? (r["user_id"]?.stringValue ?? "")
+                let synth = ChatMessage(
+                    id: id,
+                    conversation_id: conversation.id,
+                    sender_type: "recall_log",
+                    sender_id: recaller,
+                    content: String(payload.original_created_at_secs),
+                    created_at: secs,
+                    attachments: nil
+                )
+                if let existing = messages.firstIndex(where: { $0.id == id }) {
+                    messages[existing] = synth
+                } else {
+                    messages.append(synth)
+                    messages.sort { $0.created_at < $1.created_at }
+                }
+            }
+            return
+        }
         // Prefer content_partial while a bot turn is mid-stream — content
         // stays null until the worker writes the final string at done. This
         // is what lets a user re-enter a conv whose SSE they dropped and
@@ -2349,17 +2414,23 @@ struct ConversationView: View {
                 let sender_bot_id: String?
                 let role: String
                 let log_kind: String?
+                let log_payload: RecallPayload?
                 let content: String?
                 let content_partial: String?
                 let status: String?
                 let created_at: String
                 let citations: [MessageCitation]?
             }
-            // role='log' rows (review step entries) are server-only and
-            // filtered out client-side — they don't render here.
+            // Most role='log' rows are server-only (review step entries)
+            // and never render. The one exception is log_kind='recall':
+            // it's the WeChat-style tombstone the recall flow inserts
+            // for user_user convs. We synthesise a ChatMessage with
+            // sender_type="recall_log" and stash the original message's
+            // created_at in `content` so the row renderer can format
+            // "我撤回了 几分钟前 的一条消息" without further look-ups.
             let rows: [Row] = try await SupabaseStack.shared
                 .from("messages")
-                .select("id, client_message_id, conversation_id, user_id, sender_bot_id, role, log_kind, content, content_partial, status, created_at, citations")
+                .select("id, client_message_id, conversation_id, user_id, sender_bot_id, role, log_kind, log_payload, content, content_partial, status, created_at, citations")
                 .eq("conversation_id", value: conversation.id)
                 .order("created_at", ascending: true)
                 .limit(200)
@@ -2371,10 +2442,33 @@ struct ConversationView: View {
             cacheRows.reserveCapacity(rows.count)
             var citationsLoaded: [String: [MessageCitation]] = [:]
             for r in rows {
-                if r.role == "log" { continue }
+                let secs = ServerTimestamp.epochSeconds(r.created_at, default: 0)
+                // Recalled message rows (status='deleted') shouldn't render —
+                // their content has been blanked server-side and the
+                // user-facing affordance is the tombstone log row instead.
+                if r.status == "deleted" { continue }
+                if r.role == "log" {
+                    // Recall tombstone — synthesise into a render-only
+                    // ChatMessage. Other log_kinds (review steps, etc.)
+                    // stay server-only and don't render here.
+                    if r.log_kind == "recall", let payload = r.log_payload {
+                        let originalSecs = payload.original_created_at_secs
+                        viewMessages.append(ChatMessage(
+                            id: r.id,
+                            conversation_id: r.conversation_id,
+                            sender_type: "recall_log",
+                            sender_id: payload.recaller_user_id ?? (r.user_id ?? ""),
+                            // `content` carries the original message's
+                            // epoch-seconds for the tombstone formatter.
+                            content: String(originalSecs),
+                            created_at: secs,
+                            attachments: nil
+                        ))
+                    }
+                    continue
+                }
                 let senderType: String = r.role == "bot" ? "bot" : "user"
                 let senderId = r.role == "bot" ? (r.sender_bot_id ?? "") : (r.user_id ?? "")
-                let secs = ServerTimestamp.epochSeconds(r.created_at, default: 0)
                 // Mid-stream bot rows have content=null and only content_partial set;
                 // fall back so a re-enter shows the in-flight bubble at its current
                 // length, not blank.
@@ -2488,6 +2582,46 @@ struct ConversationView: View {
         }
     }
 
+    /// Round-trip a Realtime `log_payload` field through JSONEncoder
+    /// so it can decode as our typed RecallPayload struct. AnyJSON
+    /// (supabase-swift's tagged variant) is already encodable, so this
+    /// is just JSON → bytes → typed-Swift in two steps.
+    private func decodeRecallPayload(_ value: AnyJSON) -> RecallPayload? {
+        do {
+            let data = try JSONEncoder().encode(value)
+            return try JSONDecoder().decode(RecallPayload.self, from: data)
+        } catch {
+            return nil
+        }
+    }
+
+    /// WeChat-style sender recall. POSTs to /v1/messages/:id/recall and
+    /// removes the row from the local view optimistically.
+    ///
+    ///   • user_user (human↔human): server leaves a `log_kind='recall'`
+    ///     tombstone row that both peers will pick up via Realtime
+    ///     INSERT — that's what renders as "你/对方撤回了 …".
+    ///   • user_bot / group / self: server hard-purges including R2
+    ///     attachments. The row just disappears.
+    ///
+    /// Either way our optimistic remove matches what Realtime will
+    /// shortly confirm (status='deleted' UPDATE for the original row).
+    private func recallMessage(_ msg: ChatMessage) async {
+        guard let api else { return }
+        // Snapshot first so we can roll back if the POST fails.
+        guard let idx = messages.firstIndex(where: { $0.id == msg.id }) else { return }
+        let snapshot = messages[idx]
+        messages.remove(at: idx)
+        do {
+            try await api.postVoid("v1/messages/\(msg.id)/recall")
+            Haptics.success()
+        } catch {
+            // Rollback — preserve the prior position on failure.
+            messages.insert(snapshot, at: min(idx, messages.count))
+            self.error = error.localizedDescription
+        }
+    }
+
     // ── Image upload ────────────────────────────────────────────────────────
 
     private func ingestPhotos(_ items: [PhotosPickerItem]) async {
@@ -2552,5 +2686,47 @@ struct PendingAttachment: Identifiable, Hashable {
 private struct SkillDraft: Identifiable {
     let body: String
     var id: String { String(body.hashValue) }
+}
+
+/// Decoded shape of a `log_kind='recall'` row's `log_payload` jsonb.
+/// Mirrors what the edge worker emits in apps/edge/src/routes/messages.ts.
+/// `original_created_at` arrives as an ISO-8601 string from Postgres
+/// (jsonb encoding of a timestamptz column); we parse it into epoch
+/// seconds for the tombstone's relative-time formatter.
+struct RecallPayload: Decodable, Hashable {
+    let original_message_id: String?
+    let original_created_at: String?
+    let recaller_user_id: String?
+
+    var original_created_at_secs: Int {
+        guard let s = original_created_at else { return 0 }
+        return ServerTimestamp.epochSeconds(s, default: 0)
+    }
+}
+
+/// Centered "我撤回了 X 的一条消息" / "对方撤回了 X 的一条消息" pill.
+/// Rendered inline by ConversationView whenever a `sender_type ==
+/// "recall_log"` ChatMessage shows up in the timeline. The original
+/// message's epoch-seconds is encoded in the row's `content` field
+/// — see loadHistory's row mapper for the upstream side.
+struct RecallTombstoneView: View {
+    let wasMine: Bool
+    let originalAt: Date
+
+    var body: some View {
+        Text(label)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
+            .accessibilityLabel(label)
+    }
+
+    private var label: String {
+        let timePhrase = RelativeMessageTime.format(originalAt, style: .tombstone)
+        return wasMine
+            ? "你撤回了 \(timePhrase) 的一条消息"
+            : "对方撤回了 \(timePhrase) 的一条消息"
+    }
 }
 
