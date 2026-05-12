@@ -8,6 +8,7 @@ import {
   r2KeyFor,
 } from '../lib/attachments';
 import { getConfigInt } from '../lib/billing';
+import { jsonError } from '../lib/http-error';
 import type { AppBindings } from '../types';
 
 export const uploadRoutes = new Hono<AppBindings>();
@@ -25,25 +26,27 @@ uploadRoutes.post('/', async (c) => {
   // Quick reject by Content-Length (full multipart parse is expensive)
   const cl = c.req.header('content-length');
   if (cl && Number(cl) > MAX_UPLOAD_BYTES + 4096) {
-    return c.json({ error: 'file too large', max_bytes: MAX_UPLOAD_BYTES }, 413);
+    return jsonError(c, 413, 'attachment_too_large', { detail: { max_bytes: MAX_UPLOAD_BYTES } });
   }
 
   let form: FormData;
   try {
     form = await c.req.formData();
   } catch {
-    return c.json({ error: 'invalid multipart body' }, 400);
+    return jsonError(c, 400, 'invalid_body', { message: 'invalid multipart body' });
   }
 
   const file = form.get('file');
   if (!(file instanceof File)) {
-    return c.json({ error: 'missing file field' }, 400);
+    return jsonError(c, 400, 'attachment_missing_field', { message: 'missing file field' });
   }
   if (file.size > MAX_UPLOAD_BYTES) {
-    return c.json({ error: 'file too large', max_bytes: MAX_UPLOAD_BYTES }, 413);
+    return jsonError(c, 413, 'attachment_too_large', { detail: { max_bytes: MAX_UPLOAD_BYTES } });
   }
   if (!isSupportedImageMime(file.type)) {
-    return c.json({ error: 'unsupported mime', supported: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] }, 415);
+    return jsonError(c, 415, 'attachment_unsupported_mime', {
+      detail: { supported: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] },
+    });
   }
 
   const conversationId = form.get('conversationId');
@@ -61,10 +64,10 @@ uploadRoutes.post('/', async (c) => {
       .eq('id', conversationIdStr)
       .maybeSingle();
     if (error) {
-      return c.json({ error: 'database', detail: error.message }, 500);
+      return jsonError(c, 500, 'database_error', { detail: error.message });
     }
     if (!data) {
-      return c.json({ error: 'conversation not found or no access' }, 404);
+      return jsonError(c, 404, 'conversation_no_access');
     }
   }
 
@@ -85,16 +88,14 @@ uploadRoutes.post('/', async (c) => {
   const usedBytes = ((usedRes.data as Array<{ byte_size: number | null }> | null) ?? [])
     .reduce((sum, r) => sum + (Number(r.byte_size) || 0), 0);
   if (usedBytes + file.size > quotaBytes) {
-    return c.json(
-      {
-        error: 'quota_exceeded',
+    return jsonError(c, 413, 'quota_exceeded', {
+      message: '云端附件存储已达上限,请先删除一些旧的附件再试',
+      detail: {
         quota_bytes: quotaBytes,
         used_bytes: usedBytes,
         attempted_bytes: file.size,
-        message: '云端附件存储已达上限,请先删除一些旧的附件再试',
       },
-      413,
-    );
+    });
   }
 
   // Allocate id + R2 key. UUID v7 keeps the bucket sortable by time.
@@ -136,7 +137,7 @@ uploadRoutes.post('/', async (c) => {
     await c.env.UPLOADS.delete(key).catch((err) => {
       console.warn('[upload] R2 rollback failed', { key, err });
     });
-    return c.json({ error: 'database', detail: insertErr.message }, 500);
+    return jsonError(c, 500, 'database_error', { detail: insertErr.message });
   }
 
   return c.json({
@@ -177,8 +178,8 @@ uploadRoutes.get('/:id', async (c) => {
     .eq('id', id)
     .maybeSingle();
 
-  if (attErr) return c.json({ error: 'database', detail: attErr.message }, 500);
-  if (!att) return c.json({ error: 'not found' }, 404);
+  if (attErr) return jsonError(c, 500, 'database_error', { detail: attErr.message });
+  if (!att) return jsonError(c, 404, 'not_found');
 
   let allowed = att.user_id === userId;
 
@@ -191,7 +192,7 @@ uploadRoutes.get('/:id', async (c) => {
       .select('conversation_id, status')
       .filter('attachments->ids', 'cs', JSON.stringify([id]))
       .neq('status', 'deleted');
-    if (msgErr) return c.json({ error: 'database', detail: msgErr.message }, 500);
+    if (msgErr) return jsonError(c, 500, 'database_error', { detail: msgErr.message });
 
     if (msgRows && msgRows.length > 0) {
       const convIds = Array.from(
@@ -203,15 +204,15 @@ uploadRoutes.get('/:id', async (c) => {
         .eq('participant_type', 'user')
         .eq('participant_id', userId)
         .in('conversation_id', convIds);
-      if (memberErr) return c.json({ error: 'database', detail: memberErr.message }, 500);
+      if (memberErr) return jsonError(c, 500, 'database_error', { detail: memberErr.message });
       allowed = !!memberRows && memberRows.length > 0;
     }
   }
 
-  if (!allowed) return c.json({ error: 'not found' }, 404);
+  if (!allowed) return jsonError(c, 404, 'not_found');
 
   const obj = await c.env.UPLOADS.get(att.r2_key);
-  if (!obj) return c.json({ error: 'object missing' }, 410);
+  if (!obj) return jsonError(c, 410, 'attachment_object_missing');
 
   return new Response(obj.body, {
     headers: {
