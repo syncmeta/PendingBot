@@ -44,7 +44,10 @@ struct ConversationView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.useSidebarLayout) private var sidebarLayout
     @State var messages: [ChatMessage] = []
-    @State private var input = ""
+    // Composer text — needs to be accessible from ConversationView+Group
+    // (mention picker / insertMention rewrites the trailing "@<prefix>"),
+    // so it can't be file-private.
+    @State var input = ""
     @State var pendingAttachments: [PendingAttachment] = []
     @State var photoPickerItems: [PhotosPickerItem] = []
     @State var cameraImage: UIImage?
@@ -185,7 +188,10 @@ struct ConversationView: View {
         let pendingBotIds: [String]
     }
     @State var pendingContinue: PendingContinue?
-    @State private var continueDeciding: Bool = false
+    // Decision-in-flight for the continue-request banner — accessed by
+    // both the banner view (in ConversationView+Group) and the worker
+    // POST handler in the same extension.
+    @State var continueDeciding: Bool = false
 
     /// Group conv only — set when the caller's group_member_billing.
     /// overdrawn = true (per-group cap exhausted OR wallet balance can't
@@ -1708,232 +1714,14 @@ struct ConversationView: View {
     // ── REST: history + delete ─────────────────────────────────────────────
 
     // loadSkills + loadPeerProfileIfNeeded + fetchGroupMemberProfiles +
-    // loadGroupSendersIfNeeded live in ConversationView+Loading.swift.
+    // loadGroupSendersIfNeeded + loadGroupFreezeIfNeeded +
+    // loadPendingContinueIfNeeded + loadHistory live in
+    // ConversationView+Loading.swift.
 
-    /// Pick the sender for a single bubble. Returns nil for non-group
-    /// convs (BubbleView falls through to peerProfile/selfAvatar/botID),
-    /// and also nil for our own messages so they keep the right-side
-    /// "user" layout instead of being rendered as a bot bubble with
-    /// our own name on top.
-    private func groupSenderFor(_ msg: ChatMessage) -> GroupBubbleSender? {
-        guard conversation.conversation_type == "group" else { return nil }
-        let me = AccountStore.shared.current?.id
-        if msg.isMine(currentUserId: me) { return nil }
-        let key: String
-        switch msg.sender_type {
-        case "bot":  key = "bot:\(msg.sender_id)"
-        case "user", "human": key = "user:\(msg.sender_id)"
-        default: return nil
-        }
-        return groupSenders[key]
-    }
-
-    /// Group conv only — read the caller's group_member_billing row to
-    /// learn whether they've crossed their per-group cap or run out of
-    /// wallet balance (migration 0066 unifies both into `overdrawn`).
-    /// When true, `frozen_at` carries the wall-clock moment of the flip
-    /// — used by `displayedMessages` to hide post-freeze rows and by
-    /// `iAmFrozen` to lock the composer + show the banner.
-    // loadGroupFreezeIfNeeded lives in ConversationView+Loading.swift.
-
-    /// Banner shown above the composer when the caller is frozen out of
-    /// the group. Composer itself stays mounted (so the field still
-    /// shows the typed-but-not-sent draft) but `canSend` is false.
-    private var frozenComposerBanner: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(Theme.Palette.amber)
-                .padding(.top, 1)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("已达本群 PND 上限,新消息和发送已暂停")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(Theme.Palette.ink)
-                Text("提高上限或为账户充值后会自动恢复")
-                    .font(.caption)
-                    .foregroundStyle(Theme.Palette.inkMuted)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, Theme.Metrics.gutter)
-        .padding(.vertical, 8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.Palette.amberBg)
-    }
-
-    /// Group conv only — pull the most recent pending continue-request
-    /// row, if any. Realtime subscription would be nicer but lookback
-    /// notes also poll-on-open today, so we follow the same pattern;
-    /// continue prompts are infrequent enough that a refresh on open +
-    /// after-send is sufficient.
-    // loadPendingContinueIfNeeded lives in ConversationView+Loading.swift.
-
-    /// Detects an in-progress @-mention at the end of `input`. Returns
-    /// the substring AFTER the `@` (possibly empty when the user just
-    /// typed `@`). nil when there's no @-trigger active. We trigger on
-    /// "@" preceded by whitespace or start-of-string so emails / inline
-    /// at-signs don't accidentally open the picker.
-    private var mentionPrefix: String? {
-        guard let atRange = input.range(of: "@", options: .backwards) else { return nil }
-        // Must be followed only by chars that look like a name token (no
-        // whitespace, no newlines) — anything else means the user moved on.
-        let after = input[atRange.upperBound...]
-        if after.contains(where: { $0.isWhitespace || $0.isNewline }) {
-            return nil
-        }
-        // The `@` must be at the start of input or immediately after a
-        // whitespace; reject things like "alice@host" inside an email.
-        if atRange.lowerBound > input.startIndex {
-            let prev = input[input.index(before: atRange.lowerBound)]
-            if !prev.isWhitespace { return nil }
-        }
-        return String(after)
-    }
-
-    /// Filter groupSenders by the in-progress prefix (case-insensitive),
-    /// drop "myself" so I don't mention me. Cap at a few rows so the
-    /// picker doesn't push the message list off-screen.
-    private func mentionCandidates(prefix: String) -> [GroupBubbleSender] {
-        let me = AccountStore.shared.current?.id ?? ""
-        let needle = prefix.lowercased()
-        return groupSenders.values
-            .filter { sender in
-                if sender.kind == .user && sender.id == me { return false }
-                if needle.isEmpty { return true }
-                return sender.displayName.lowercased().contains(needle)
-            }
-            .sorted { $0.displayName.lowercased() < $1.displayName.lowercased() }
-            .prefix(6)
-            .map { $0 }
-    }
-
-    @ViewBuilder
-    private func mentionPickerOverlay(prefix: String) -> some View {
-        let candidates = mentionCandidates(prefix: prefix)
-        if candidates.isEmpty {
-            EmptyView()
-        } else {
-            VStack(spacing: 0) {
-                ForEach(candidates, id: \.id) { sender in
-                    Button {
-                        insertMention(sender, prefix: prefix)
-                    } label: {
-                        HStack(spacing: 10) {
-                            switch sender.kind {
-                            case .bot:
-                                BotAvatar(emojiSeed: sender.id, colorSeed: sender.id, size: 24)
-                            case .user:
-                                UserAvatar(seed: sender.avatarSeed, attachmentId: sender.avatarPath, size: 24)
-                            }
-                            Text(sender.displayName)
-                                .font(Theme.Fonts.body)
-                                .foregroundStyle(Theme.Palette.ink)
-                            Spacer()
-                            if sender.kind == .bot {
-                                Text("机器人")
-                                    .font(Theme.Fonts.rounded(size: 10, weight: .medium))
-                                    .foregroundStyle(Theme.Palette.inkMuted)
-                            }
-                        }
-                        .padding(.horizontal, Theme.Metrics.gutter)
-                        .padding(.vertical, 8)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    Divider().opacity(0.4)
-                }
-            }
-            .background(Theme.Palette.surface)
-            .overlay(
-                Rectangle().frame(height: 0.5).foregroundStyle(Theme.Palette.hairline),
-                alignment: .top,
-            )
-        }
-    }
-
-    private func insertMention(_ sender: GroupBubbleSender, prefix: String) {
-        // Drop the trailing "@<prefix>" and re-insert "@<displayName> ".
-        // Spaces inside nicknames stay because we replace by length, not
-        // by whitespace boundary — DB enforces no-whitespace inside a
-        // single nickname so this is unambiguous in practice.
-        let dropCount = prefix.count + 1   // include the "@"
-        let head = String(input.dropLast(dropCount))
-        input = head + "@" + sender.displayName + " "
-        Haptics.tap()
-    }
-
-    @ViewBuilder
-    private func continueRequestBanner(_ pc: PendingContinue) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text("机器人还有话想说,让它继续吗?")
-                .font(Theme.Fonts.body)
-                .foregroundStyle(Theme.Palette.ink)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 8)
-            if continueDeciding {
-                ProgressView()
-            } else {
-                Button {
-                    Task { await decideContinue(pc, allow: false) }
-                } label: {
-                    Text("✕ 闭嘴")
-                        .font(Theme.Fonts.body)
-                        .foregroundStyle(.red)
-                }
-                .buttonStyle(.bordered)
-                Button {
-                    Task { await decideContinue(pc, allow: true) }
-                } label: {
-                    Text("✓ 继续")
-                        .font(Theme.Fonts.body)
-                }
-                .buttonStyle(.borderedProminent)
-            }
-        }
-        .padding(.horizontal, Theme.Metrics.gutter)
-        .padding(.vertical, 10)
-        .background(Theme.Palette.surface)
-    }
-
-    private func decideContinue(_ pc: PendingContinue, allow: Bool) async {
-        continueDeciding = true
-        defer { continueDeciding = false }
-        struct Body: Encodable {
-            let requestId: String
-            let decision: String
-        }
-        do {
-            let url = HostedConfig.environment.workerURL
-                .appendingPathComponent("v1/groups/\(conversation.id)/continue-decision")
-            var req = URLRequest(url: url)
-            req.httpMethod = "POST"
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            let token = try await SupabaseStack.shared.auth.session.accessToken
-            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            req.httpBody = try JSONEncoder().encode(Body(
-                requestId: pc.id,
-                decision: allow ? "allowed" : "denied",
-            ))
-            let (data, resp) = try await URLSession.shared.data(for: req)
-            guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode)
-            else {
-                let msg = String(data: data, encoding: .utf8) ?? "HTTP error"
-                throw NSError(
-                    domain: "ContinueVote",
-                    code: (resp as? HTTPURLResponse)?.statusCode ?? -1,
-                    userInfo: [NSLocalizedDescriptionKey: msg],
-                )
-            }
-            // The decision message is inserted by the worker (Realtime
-            // delivers it); just clear the local banner.
-            self.pendingContinue = nil
-            Haptics.tap()
-        } catch {
-            self.error = "投票失败: \(error.localizedDescription)"
-            Haptics.error()
-        }
-    }
-
-    // loadHistory lives in ConversationView+Loading.swift.
+    // Group-only surfaces — groupSenderFor + frozenComposerBanner +
+    // mentionPrefix / mentionCandidates / mentionPickerOverlay /
+    // insertMention + continueRequestBanner / decideContinue — live in
+    // ConversationView+Group.swift.
 
     // applyModelPick + patchConversationModel + patchConversationVisionModel
     // + patchBotDefaultModel live in ConversationView+Model.swift.
