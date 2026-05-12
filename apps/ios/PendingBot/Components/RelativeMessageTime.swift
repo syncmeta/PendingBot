@@ -122,12 +122,7 @@ struct TimeSeparatorPill: View {
         Text(RelativeMessageTime.format(date, style: .pill))
             .font(.caption2)
             .foregroundStyle(.secondary)
-            .padding(.horizontal, 8)
             .padding(.vertical, 2)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Color(.tertiarySystemFill))
-            )
             .accessibilityLabel("时间:\(RelativeMessageTime.format(date, style: .pill))")
     }
 }

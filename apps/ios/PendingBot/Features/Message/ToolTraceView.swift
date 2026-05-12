@@ -47,14 +47,11 @@ struct ToolTraceEvent: Identifiable, Hashable {
 /// Inline, non-bubble trace of the bot's tool calls for one turn. Reads as
 /// a quiet sidebar in the conversation flow:
 ///
-///   - Header row + the citation list (the *search summary*) are always
-///     visible whenever the trace exists — they're the load-bearing payoff
-///     and shouldn't get hidden behind a tap.
-///   - The per-tool *process* detail (query strings, result snippets,
-///     spinners) is what expand/collapse toggles. Auto-expanded while any
+///   - Header row is always visible whenever the trace exists.
+///   - The process detail (query strings, result snippets, spinners) and
+///     search result list expand/collapse together. Auto-expanded while any
 ///     tool is in flight; auto-collapsed the moment the last pending tool
 ///     finishes — even if the bot is still typing its reply afterwards.
-///     The citation list below stays visible so the payoff isn't hidden.
 ///
 /// Colors are intentionally muted (no surface fill, no border) so the trace
 /// recedes — the bot's actual reply remains the visual anchor.
@@ -82,16 +79,13 @@ struct ToolTraceView: View {
         if !events.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
                 header
-                // Process detail (per-tool query + status) — only this part
-                // toggles. The citation list below stays visible even when
-                // the user collapses the events.
+                // Process detail and search results collapse together, so
+                // the closed state is just the quiet summary row.
                 if expanded {
                     eventList
-                }
-                // Search summary — always visible whenever we have hits.
-                // The whole point of the trace from the user's POV.
-                if !citations.isEmpty {
-                    citationList
+                    if !citations.isEmpty {
+                        citationList
+                    }
                 }
             }
             .padding(.leading, Theme.Metrics.gutter + 30 + 8) // align under bot avatar gutter
@@ -204,9 +198,8 @@ struct ToolTraceView: View {
         .padding(.leading, 2)
     }
 
-    /// Search summary — the citations the bot's `[N]` markers resolve to.
-    /// Always rendered (when non-empty), regardless of expand state, so a
-    /// user who collapses the trace still sees what was found.
+    /// Search results — the citations the bot's `[N]` markers resolve to.
+    /// Rendered inside the expanded trace body.
     private var citationList: some View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(Array(citations.enumerated()), id: \.element.id) { idx, c in
