@@ -1323,8 +1323,8 @@ struct ConversationView: View {
                         _ = splitter.drain()
                     case .toolCall(let name, let input):
                         appendToolCall(name: name, input: input)
-                    case .toolResult(let name, let summary, let error):
-                        completeToolCall(name: name, summary: summary, error: error)
+                    case .toolResult(let name, let summary, let error, let detail):
+                        completeToolCall(name: name, summary: summary, error: error, detail: detail)
                     case .citations(let items):
                         // Update the per-turn snapshot AND backfill every
                         // bubble already created in this turn so an early
@@ -1500,4 +1500,3 @@ struct RecallTombstoneView: View {
             : "对方撤回了 \(timePhrase) 的一条消息"
     }
 }
-

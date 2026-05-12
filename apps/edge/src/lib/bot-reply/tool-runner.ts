@@ -1,4 +1,5 @@
 import type { Env } from '../../types';
+import { DaytonaApiError } from '../sandbox';
 import { runWebScrape, runWebSearch } from '../web';
 import { WebToolMeter } from '../web-meter';
 import { queryUserRepresentation } from '../honcho';
@@ -167,7 +168,44 @@ export async function runTool(
     }
     return JSON.stringify({ error: `unknown tool: ${name}` });
   } catch (err) {
-    ctx.emit('tool_result', { name, error: String(err) });
-    return JSON.stringify({ error: String(err) });
+    const formatted = formatToolError(err);
+    ctx.emit('tool_result', {
+      name,
+      error: formatted.message,
+      detail: formatted.detail,
+      status: formatted.status,
+    });
+    return JSON.stringify({
+      error: formatted.message,
+      detail: formatted.detail,
+      status: formatted.status,
+    });
   }
+}
+
+function formatToolError(err: unknown): { message: string; detail?: string; status?: number } {
+  if (err instanceof DaytonaApiError) {
+    return {
+      message: err.message || `Daytona API failed with HTTP ${err.status}`,
+      detail: err.responseText || undefined,
+      status: err.status,
+    };
+  }
+  if (err instanceof Error) {
+    return {
+      message: err.message || err.name || 'Error',
+      detail: err.stack,
+    };
+  }
+  if (err && typeof err === 'object') {
+    try {
+      return {
+        message: 'tool failed',
+        detail: JSON.stringify(err, null, 2),
+      };
+    } catch {
+      return { message: Object.prototype.toString.call(err) };
+    }
+  }
+  return { message: String(err) || 'unknown error' };
 }

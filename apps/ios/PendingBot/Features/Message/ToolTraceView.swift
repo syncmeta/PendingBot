@@ -9,6 +9,7 @@ struct ToolTraceEvent: Identifiable, Hashable {
     var input: String?
     var resultSummary: String?
     var resultError: String?
+    var resultDetail: String?
     var done: Bool
 
     init(name: String, input: String?) {
@@ -17,6 +18,7 @@ struct ToolTraceEvent: Identifiable, Hashable {
         self.input = input
         self.resultSummary = nil
         self.resultError = nil
+        self.resultDetail = nil
         self.done = false
     }
 
@@ -186,8 +188,16 @@ struct ToolTraceView: View {
                             Text(preview)
                                 .font(Theme.Fonts.footnote)
                                 .foregroundStyle(Theme.Palette.ink)
-                                .lineLimit(2)
+                                .lineLimit(ev.resultError == nil ? 2 : nil)
                                 .truncationMode(.tail)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        if let detail = ev.resultDetail, !detail.isEmpty {
+                            Text(softWrapped(detail))
+                                .font(Theme.Fonts.monoSmall)
+                                .foregroundStyle(Theme.Palette.inkMuted)
+                                .textSelection(.enabled)
                                 .multilineTextAlignment(.leading)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -243,5 +253,23 @@ struct ToolTraceView: View {
 
     private func host(_ url: String) -> String {
         URL(string: url)?.host?.replacingOccurrences(of: "www.", with: "") ?? url
+    }
+
+    private func softWrapped(_ text: String) -> String {
+        var out = ""
+        var run = 0
+        for ch in text {
+            out.append(ch)
+            if ch.isWhitespace || "/._-:".contains(ch) {
+                run = 0
+            } else {
+                run += 1
+                if run >= 48 {
+                    out.append("\u{200B}")
+                    run = 0
+                }
+            }
+        }
+        return out
     }
 }

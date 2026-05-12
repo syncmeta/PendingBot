@@ -157,6 +157,7 @@ export async function executeCodeTool(
       name: 'execute_code',
       error: 'sandbox bootstrap failed',
       exit_code: run.exitCode,
+      detail: run.stderr,
     });
     return JSON.stringify({
       error: 'sandbox bootstrap failed',
@@ -174,8 +175,10 @@ export async function executeCodeTool(
   ctx.emit('tool_result', {
     name: 'execute_code',
     exit_code: run.result.exitCode,
+    error: run.result.exitCode === 0 ? undefined : `code exited with status ${run.result.exitCode}`,
     truncated: run.result.truncated,
     stdout_tail: stdoutTail,
+    detail: run.result.exitCode === 0 ? undefined : run.result.stdout,
   });
   return JSON.stringify({
     stdout: run.result.stdout,
@@ -290,6 +293,7 @@ export async function requestExecuteCodeTool(
       decision: 'approved',
       error: 'sandbox bootstrap failed',
       exit_code: run.exitCode,
+      detail: run.stderr,
     });
     return JSON.stringify({
       approved: true,
@@ -308,8 +312,10 @@ export async function requestExecuteCodeTool(
     request_id: requestId,
     decision: 'approved',
     exit_code: run.result.exitCode,
+    error: run.result.exitCode === 0 ? undefined : `code exited with status ${run.result.exitCode}`,
     truncated: run.result.truncated,
     stdout_tail: stdoutTail,
+    detail: run.result.exitCode === 0 ? undefined : run.result.stdout,
   });
   return JSON.stringify({
     approved: true,

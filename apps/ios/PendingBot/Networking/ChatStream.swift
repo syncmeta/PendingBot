@@ -20,7 +20,7 @@ enum ChatEvent: Sendable {
     /// Worker emits a paired `tool_result` once the tool returns; UI accumulates
     /// the pair into the per-turn trace shown inline above the bot reply.
     case toolCall(name: String, input: String?)
-    case toolResult(name: String, summary: String?, error: String?)
+    case toolResult(name: String, summary: String?, error: String?, detail: String?)
     /// Cumulative web-search citations for this turn. Server emits after each
     /// `search_web` returns; the list grows monotonically (deduped by url).
     /// UI resolves inline `[N]` markers in the bot's reply against `items`
@@ -76,11 +76,12 @@ struct ChatStream {
                         throw URLError(.badServerResponse)
                     }
                     guard (200..<300).contains(http.statusCode) else {
-                        // Read up to ~2KB of error body for diagnosis.
+                        // Read enough error body for diagnosis; server-side
+                        // tool failures often include provider response text.
                         var errBytes: [UInt8] = []
                         for try await b in bytes {
                             errBytes.append(b)
-                            if errBytes.count >= 2048 { break }
+                            if errBytes.count >= 8192 { break }
                         }
                         let body = String(decoding: errBytes, as: UTF8.self)
                         throw ChatStreamError.http(status: http.statusCode, body: body)
@@ -167,7 +168,7 @@ enum ChatStreamError: LocalizedError {
     case http(status: Int, body: String)
     var errorDescription: String? {
         switch self {
-        case .http(let s, let body): return "HTTP \(s): \(body.prefix(200))"
+        case .http(let s, let body): return "HTTP \(s): \(body.prefix(4000))"
         }
     }
 }
@@ -221,6 +222,9 @@ private func decode(eventName: String, dataJSON: String) -> ChatEvent {
     case "tool_result":
         let name = (json["name"] as? String) ?? ""
         let err = (json["error"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        let detail = (json["detail"] as? String)
+            .flatMap { $0.isEmpty ? nil : $0 }
+            ?? (json["stderr"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         let summary: String? = {
             if let n = json["count"] as? Int { return "\(n) 条结果" }
             if let t = json["title"] as? String, !t.isEmpty { return t }
@@ -236,7 +240,7 @@ private func decode(eventName: String, dataJSON: String) -> ChatEvent {
             }
             return nil
         }()
-        return .toolResult(name: name, summary: summary, error: err)
+        return .toolResult(name: name, summary: summary, error: err, detail: detail)
     case "citations":
         // `items` is a JSON array of {url, title, snippet?}. Re-encode the
         // sub-tree and decode through Codable so the model layer owns the
