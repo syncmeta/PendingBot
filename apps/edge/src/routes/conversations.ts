@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
 import { serviceClient, userClient } from '../lib/supabase';
+import { deleteCachedConv } from '../lib/conv-cache';
 import { UUID_RE } from '../lib/ids';
 import { jsonError } from '../lib/http-error';
 import type { AppBindings } from '../types';
@@ -84,6 +85,9 @@ conversationRoutes.patch('/:id', async (c) => {
     .update(update as never)
     .eq('id', id);
   if (updErr) return jsonError(c, 500, 'database_error', { detail: updErr.message });
+
+  // Drop the KV entry so the next message read pulls the new overrides.
+  await deleteCachedConv(c.env, id).catch(() => undefined);
 
   return c.json({ ok: true });
 });

@@ -96,7 +96,7 @@ scrollRoutes.post('/trigger', async (c) => {
   // expensive single trigger we have); reject up-front when balance is
   // below threshold rather than burn credits half-way through.
   try {
-    await requireBalance(supaUser, userId);
+    await requireBalance(c.env, supaUser, userId);
   } catch (err) {
     if (err instanceof InsufficientBalanceError) {
       return c.json(

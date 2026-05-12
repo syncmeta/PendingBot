@@ -3,12 +3,28 @@ import {
   InsufficientBalanceError,
   RedemptionError,
   _resetMarkupCache,
+  _resetThresholdCache,
   getMarkup,
   redeemCode,
   requireBalance,
   usdToPnd,
 } from './billing';
 import type { SupabaseClient } from './supabase';
+import type { Env } from '../types';
+
+// Minimal Env stub for tests that call requireBalance. The MEMORY KV
+// always misses, forcing the balance/threshold reads to fall through
+// to the Supabase stub (which is what these tests actually verify).
+function fakeEnv(): Env {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return {
+    MEMORY: {
+      get: async () => null,
+      put: async () => undefined,
+      delete: async () => undefined,
+    },
+  } as any;
+}
 
 // Shape of the chained Supabase query we use throughout. A real
 // SupabaseClient ships ~200 methods we don't touch; mock only what the
@@ -54,6 +70,7 @@ function stubSupa(
 
 afterEach(() => {
   _resetMarkupCache();
+  _resetThresholdCache();
   vi.useRealTimers();
 });
 
@@ -141,7 +158,7 @@ describe('requireBalance', () => {
       users: () => ({ data: { balance_credits: 1000 } }),
       billing_config: () => ({ data: { value: 100 }, error: null }),
     });
-    await expect(requireBalance(supa, 'u1')).resolves.toBeUndefined();
+    await expect(requireBalance(fakeEnv(), supa, 'u1')).resolves.toBeUndefined();
   });
 
   it('passes when threshold is 0 (no gate)', async () => {
@@ -150,7 +167,7 @@ describe('requireBalance', () => {
       users: () => ({ data: { balance_credits: -50 } }),
       billing_config: () => ({ data: { value: 0 }, error: null }),
     });
-    await expect(requireBalance(supa, 'u1')).resolves.toBeUndefined();
+    await expect(requireBalance(fakeEnv(), supa, 'u1')).resolves.toBeUndefined();
   });
 
   it('throws InsufficientBalanceError when balance < threshold', async () => {
@@ -158,7 +175,7 @@ describe('requireBalance', () => {
       users: () => ({ data: { balance_credits: 5 } }),
       billing_config: () => ({ data: { value: 100 }, error: null }),
     });
-    await expect(requireBalance(supa, 'u1')).rejects.toBeInstanceOf(InsufficientBalanceError);
+    await expect(requireBalance(fakeEnv(), supa, 'u1')).rejects.toBeInstanceOf(InsufficientBalanceError);
   });
 
   it('error carries actual balance + threshold (so client can render copy)', async () => {
@@ -167,7 +184,7 @@ describe('requireBalance', () => {
       billing_config: () => ({ data: { value: 100 }, error: null }),
     });
     try {
-      await requireBalance(supa, 'u1');
+      await requireBalance(fakeEnv(), supa, 'u1');
       expect.fail('should have thrown');
     } catch (err) {
       expect(err).toBeInstanceOf(InsufficientBalanceError);
@@ -182,7 +199,7 @@ describe('requireBalance', () => {
       users: () => ({ data: null }),
       billing_config: () => ({ data: { value: 1 }, error: null }),
     });
-    await expect(requireBalance(supa, 'u1')).rejects.toBeInstanceOf(InsufficientBalanceError);
+    await expect(requireBalance(fakeEnv(), supa, 'u1')).rejects.toBeInstanceOf(InsufficientBalanceError);
   });
 });
 

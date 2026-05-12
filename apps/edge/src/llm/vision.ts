@@ -30,6 +30,7 @@
 import type { ChatCompletionContentPart } from 'openai/resources/chat/completions';
 import type { Env } from '../types';
 import type { SupabaseClient } from '../lib/supabase';
+import { patchCachedAttachment } from '../lib/attachment-cache';
 import { recordAudit, withFallback, usageFromCompletion } from './router';
 
 /// When the conversation's main model lacks vision and no
@@ -66,25 +67,45 @@ interface AttachmentRow {
   vision_model: string | null;
 }
 
+// Isolate-local cache for llm_models.capabilities lookups. The table
+// changes only when the admin board edits model pricing/capabilities;
+// 5 min TTL bounds drift without putting a Supabase RTT on every turn.
+// Per-slug entries so different bots' models stay independent.
+const VISION_CAP_TTL_MS = 5 * 60_000;
+const visionCapCache = new Map<string, { at: number; value: boolean }>();
+
+export function _resetVisionCapCache(): void {
+  visionCapCache.clear();
+}
+
 /// Returns true iff llm_models has an entry for this slug with
 /// capabilities.vision = true. Unknown slugs (passthrough) return false —
 /// conservatively assume no vision so we route through the default model.
+///
+/// Result cached for 5 min on the worker isolate; an admin edit
+/// propagates within ~TTL across all isolates.
 export async function modelSupportsVision(
   supa: SupabaseClient,
   slug: string,
 ): Promise<boolean> {
   if (!slug) return false;
+  const now = Date.now();
+  const hit = visionCapCache.get(slug);
+  if (hit && now - hit.at < VISION_CAP_TTL_MS) return hit.value;
   const { data } = await supa
     .from('llm_models')
     .select('capabilities')
     .eq('slug', slug)
     .eq('enabled', true)
     .maybeSingle();
-  if (!data) return false;
-  const caps = (data as { capabilities?: Record<string, unknown> | null })
-    .capabilities;
-  if (!caps || typeof caps !== 'object') return false;
-  return caps.vision === true;
+  let value = false;
+  if (data) {
+    const caps = (data as { capabilities?: Record<string, unknown> | null })
+      .capabilities;
+    if (caps && typeof caps === 'object' && caps.vision === true) value = true;
+  }
+  visionCapCache.set(slug, { at: now, value });
+  return value;
 }
 
 export interface PickVisionModelInput {
@@ -308,6 +329,7 @@ export async function summarizeAttachment(
           vision_model: picked.slug,
         })
         .eq('id', attachmentId);
+      await patchCachedAttachment(deps.env, attachmentId, { summary_status: 'failed' });
       return;
     }
 
@@ -322,6 +344,11 @@ export async function summarizeAttachment(
         summarized_at: new Date().toISOString(),
       })
       .eq('id', attachmentId);
+    await patchCachedAttachment(deps.env, attachmentId, {
+      summary: parsed.summary,
+      tags: parsed.tags,
+      summary_status: 'done',
+    });
   } catch (err) {
     const message =
       err instanceof Error ? err.message : String(err) || 'unknown error';
@@ -334,6 +361,7 @@ export async function summarizeAttachment(
         vision_model: picked.slug,
       })
       .eq('id', attachmentId);
+    await patchCachedAttachment(deps.env, attachmentId, { summary_status: 'failed' });
   }
 }
 

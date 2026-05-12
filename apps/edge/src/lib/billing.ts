@@ -1,4 +1,6 @@
 import type { SupabaseClient } from './supabase';
+import type { Env } from '../types';
+import { getCachedBalance, putCachedBalance } from './balance-cache';
 
 // Billing layer (P0). All schema changes ship in 0033_billing.sql /
 // 0034_billing_admin_rpcs.sql. This module is the single point that knows
@@ -51,6 +53,26 @@ export async function getMarkup(supa: SupabaseClient): Promise<number> {
 /** For tests / forced refresh after an admin edit on the same isolate. */
 export function _resetMarkupCache(): void {
   markupCache = null;
+}
+
+// Same isolate-local pattern for the pre-call gate threshold. The value
+// is global (one knob in billing_config), tiny, and changes rarely;
+// caching it on the worker isolate avoids a KV round-trip in
+// requireBalance and survives across requests within a single isolate.
+const THRESHOLD_TTL_MS = 60_000;
+let thresholdCache: { at: number; value: number } | null = null;
+
+export async function getThreshold(supa: SupabaseClient): Promise<number> {
+  const now = Date.now();
+  if (thresholdCache && now - thresholdCache.at < THRESHOLD_TTL_MS) return thresholdCache.value;
+  const v = await getConfigInt(supa, 'min_balance_threshold');
+  const value = v ?? DEFAULT_MIN_THRESHOLD;
+  thresholdCache = { at: now, value };
+  return value;
+}
+
+export function _resetThresholdCache(): void {
+  thresholdCache = null;
 }
 
 /**
@@ -151,20 +173,41 @@ export class InsufficientBalanceError extends Error {
  * Call this BEFORE issuing an LLM request from a user-initiated path
  * (message reply, scroll). Skip for system-triggered cascades
  * (title, lookback, bot_note) — those bill but don't gate.
+ *
+ * Reads:
+ *   - threshold from the isolate-local cache (60s TTL, refreshes via
+ *     Supabase on miss)
+ *   - balance from the per-user KV cache; falls back to Supabase on
+ *     miss and warms KV with the result. Subsequent debits keep the
+ *     cache fresh via the billingDebit hook in router.ts.
  */
 export async function requireBalance(
+  env: Env,
   supa: SupabaseClient,
   userId: string,
 ): Promise<void> {
-  const [bal, threshold] = await Promise.all([
-    getBalance(supa, userId),
-    getConfigInt(supa, 'min_balance_threshold'),
+  const [cached, threshold] = await Promise.all([
+    getCachedBalance(env, userId),
+    getThreshold(supa),
   ]);
-  const balance = bal?.balance_credits ?? 0;
-  const t = threshold ?? DEFAULT_MIN_THRESHOLD;
-  if (t > 0 && balance < t) {
-    throw new InsufficientBalanceError(balance, t);
+  if (threshold <= 0) return; // gate disabled globally — short-circuit
+
+  if (cached) {
+    if (cached.balance_credits < threshold) {
+      throw new InsufficientBalanceError(cached.balance_credits, threshold);
+    }
+    return;
   }
+
+  // Cache miss → Supabase. Warm KV with the result so the next call
+  // skips the round-trip.
+  const bal = await getBalance(supa, userId);
+  const balance = bal?.balance_credits ?? 0;
+  if (balance < threshold) {
+    throw new InsufficientBalanceError(balance, threshold);
+  }
+  // Fire-and-forget warm. Errors are non-fatal — next miss re-reads.
+  putCachedBalance(env, userId, balance).catch(() => undefined);
 }
 
 // ---------------------------------------------------------------------------

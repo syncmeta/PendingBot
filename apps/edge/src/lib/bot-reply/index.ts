@@ -26,7 +26,13 @@ import {
   modelSupportsVision,
   summarizeAttachments,
 } from '../../llm/vision';
-import { getBotMemory, getChatMemo, getUserMemory } from '../memory';
+import { getBotMemory, getUserMemory } from '../memory';
+import { resolveInventory } from '../attachment-cache';
+import {
+  resolveBotNote,
+  resolveChatMemo,
+  resolveSubscriptions,
+} from '../persona-cache';
 import { WebToolMeter } from '../web-meter';
 import {
   CHAT_TOOLS,
@@ -136,55 +142,28 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   const activeLookbacks = input.activeLookbacks ?? [];
   const supa = serviceClient(env);
   const startedAt = Date.now();
-  const locale = await resolveLocale(null, supa, userId);
+  const locale = await resolveLocale(null, supa, userId, env);
 
   // 1. Look up self section + skills + bot-authored note + chat memo in
-  // parallel. In self-chat the "self section" is filled from the user's
-  // own peer memory — see RunChatTurnInput.isSelfChat.
-  const [botMemory, skillsRes, botNoteRes, chatMemo] = await Promise.all([
+  // parallel. All four are KV-first (botMemory + subscriptions + note +
+  // memo) with read-through fallback to Supabase on miss, so the
+  // happy-path batch is pure KV — zero Supabase RTT before LLM dispatch.
+  // The fall-through KV writes are detached via a no-op shim since
+  // we're already inside turnWork (kept alive by the SSE stream's own
+  // waitUntil binding).
+  const noop = (p: Promise<unknown>) => { p.catch(() => undefined); };
+  const [botMemory, subsBundle, botNote, chatMemo] = await Promise.all([
     input.isSelfChat ? getUserMemory(env, userId) : getBotMemory(env, bot.id),
-    supa
-      .from('skill_subscriptions')
-      .select('skills(frontmatter, body_md)')
-      .eq('user_id', userId)
-      .or(`conversation_id.eq.${conversationId},conversation_id.is.null`),
-    supa
-      .from('skills')
-      .select('body_md')
-      .eq('bot_id', bot.id)
-      .eq('user_id', userId)
-      .maybeSingle(),
-    getChatMemo(env, bot.id, conversationId),
+    resolveSubscriptions(env, supa, userId, conversationId, noop),
+    resolveBotNote(env, supa, bot.id, userId, noop),
+    resolveChatMemo(env, supa, bot.id, conversationId, noop),
   ]);
-  type SkillRow = {
-    frontmatter: {
-      name?: string;
-      description?: string;
-      allowed_tools?: unknown;
-    };
-    body_md: string;
-  };
-  const skills: Array<{ name: string; description: string; body: string }> = [];
-  // Aggregate allowed_tools across the active skill set. Sensitive tools
-  // (currently: execute_code) are only exposed when at least one
-  // subscribed skill explicitly opts the user in via this list.
-  const allowedTools = new Set<string>();
-  for (const row of skillsRes.data ?? []) {
-    const joined = (row as { skills: SkillRow | SkillRow[] | null }).skills;
-    const arr = Array.isArray(joined) ? joined : joined ? [joined] : [];
-    for (const s of arr) {
-      skills.push({
-        name: s.frontmatter?.name ?? 'unnamed',
-        description: s.frontmatter?.description ?? '',
-        body: s.body_md,
-      });
-      const tools = s.frontmatter?.allowed_tools;
-      if (Array.isArray(tools)) {
-        for (const t of tools) if (typeof t === 'string') allowedTools.add(t);
-      }
-    }
-  }
-  const botNote = (botNoteRes.data?.body_md as string | undefined) ?? null;
+  const skills = subsBundle.skills.map((s) => ({
+    name: s.name,
+    description: s.description,
+    body: s.body,
+  }));
+  const allowedTools = new Set<string>(subsBundle.allowedTools);
 
   // 1.5 Vision/attachment resolution.
   //
@@ -206,29 +185,23 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   const mainHasVision = await modelSupportsVision(supa, bot.model_id);
   const currentSet = new Set(input.currentAttachmentIds ?? []);
 
-  // History inventory pull. Service client bypasses RLS — fine, we
-  // already gated this caller (route handler verified the user is a
-  // conv participant). Cap at 30 to bound prompt size.
-  const invRes = await supa
-    .from('attachments')
-    .select('id, summary, tags, summary_status, created_at')
-    .eq('conversation_id', conversationId)
-    .order('created_at', { ascending: true })
-    .limit(30);
-  const inventory = (
-    (invRes.data as
-      | Array<{
-          id: string;
-          summary: string | null;
-          tags: string[] | null;
-          summary_status: string;
-        }>
-      | null) ?? []
-  ).map((r) => ({
+  // History inventory pull. KV-first via per-conv id list + per-id
+  // metadata; falls back to Supabase on miss (cold conv) and warms KV.
+  // Cap at 30 mirrors the Supabase query's `limit(30)`. The fall-through
+  // KV writes are detached — no waitUntil binding here since we're
+  // inside a long-lived turnWork promise that's already kept alive by
+  // the SSE stream's own waitUntil. Use the no-op waitUntil shim.
+  const inventoryRows = await resolveInventory(
+    env,
+    supa,
+    conversationId,
+    (p) => { p.catch(() => undefined); },
+  );
+  const inventory = inventoryRows.map((r) => ({
     id: r.id,
     summary: r.summary,
-    tags: r.tags ?? [],
-    status: r.summary_status,
+    tags: r.tags,
+    status: r.status,
     isCurrentTurn: currentSet.has(r.id),
   }));
 

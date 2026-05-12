@@ -1,4 +1,5 @@
 import { serviceClient } from './supabase';
+import { deleteCachedBalance } from './balance-cache';
 import { estimateTokens } from '../llm/token-estimate';
 import type { Env } from '../types';
 
@@ -198,6 +199,17 @@ export async function splitAndDebit(input: SplitInput): Promise<void> {
     .from('audit_log')
     .update({ billing_status: anyDebited ? 'billed' : 'unbilled' })
     .eq('id', auditLogId);
+
+  // Invalidate the KV balance cache for every actually-billed member.
+  // We don't know the post-debit balance without an extra round-trip
+  // (apply_audit_split doesn't return per-user remaining balance), so
+  // dropping the entry forces the next requireBalance to refresh from
+  // Supabase. Cheaper than a per-user RPC + write here.
+  await Promise.all(
+    splits
+      .filter((s) => s.debit_status === 'debited')
+      .map((s) => deleteCachedBalance(env, s.user_id).catch(() => undefined)),
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────

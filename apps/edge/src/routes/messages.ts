@@ -11,6 +11,10 @@ import { resolveGroupMentions } from '../lib/group-mentions';
 import { summarizeAttachments, DEFAULT_VISION_MODEL } from '../llm/vision';
 import { UUID_RE } from '../lib/ids';
 import { jsonError } from '../lib/http-error';
+import { deleteCachedAttachment, removeInventoryIds, resolveAttachmentOwnership } from '../lib/attachment-cache';
+import { resolveBot } from '../lib/bot-cache';
+import { deleteCachedConv, resolveConv } from '../lib/conv-cache';
+import { safeWaitUntil } from '../lib/safe-wait-until';
 import type { AppBindings } from '../types';
 
 export const messageRoutes = new Hono<AppBindings>();
@@ -92,20 +96,42 @@ messageRoutes.post('/', async (c) => {
     return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
-  // RLS-gate: user must be a participant of the conversation. We use the
-  // user JWT for the read so the gate is RLS-driven, not Worker-trusted.
+  // Body shape varies by mode:
+  //   normal     newMessage required, INSERT user row, parent = that row
+  //   autoLookback newMessage absent, no user row written, parent = last
+  //                user row in conv (best effort) or null
+  if (!parsed.autoLookback && !parsed.newMessage) {
+    return jsonError(c, 400, 'invalid_body', { message: 'newMessage required' });
+  }
+
   const supaUser = userClient(c.env, userJwt);
-  const convRes = await supaUser
-    .from('conversations')
-    .select('id, conversation_type, bot_id, round_count, provider_override, model_slug_override, vision_model_override')
-    .eq('id', parsed.conversationId)
-    .maybeSingle();
-  if (convRes.error) return jsonError(c, 500, 'database_error', { detail: convRes.error.message });
+  const supaService = serviceClient(c.env);
+
+  // Phase 1 — resolve conv (KV with RLS-gated fallback) and attachment
+  // ownership in parallel. Both must succeed before any state change.
+  // The conv resolver does a local user_id check for single-owner conv
+  // types and only round-trips Supabase for groups / cold reads.
+  const convPromise = resolveConv(c.env, supaUser, parsed.conversationId, userId, (p) =>
+    safeWaitUntil(c, p),
+  ).catch((err: { message?: string }) => ({ __error: err.message ?? 'database_error' as const }));
+
+  const hasAttachments = (parsed.attachmentIds?.length ?? 0) > 0;
+  const attCheckPromise = hasAttachments
+    ? resolveAttachmentOwnership(c.env, supaService, parsed.attachmentIds!, (p) =>
+        safeWaitUntil(c, p),
+      )
+    : Promise.resolve([] as Array<{ id: string; user_id: string; conversation_id: string | null }>);
+
+  const [convResolved, attRows] = await Promise.all([convPromise, attCheckPromise]);
+
+  if (convResolved && typeof convResolved === 'object' && '__error' in convResolved) {
+    return jsonError(c, 500, 'database_error', { detail: convResolved.__error });
+  }
   // Narrow the conversation_type literal — schema.ts types it as the full
   // set the CHECK constraint allows; this route only handles the message
   // surface, so we treat the others (discuss/surf/portrait) the same as
   // user_bot for routing purposes.
-  const conv = convRes.data as {
+  const conv = convResolved as {
     id: string;
     conversation_type: 'user_bot' | 'self' | 'group' | 'user_user';
     bot_id: string | null;
@@ -116,57 +142,15 @@ messageRoutes.post('/', async (c) => {
   } | null;
   if (!conv) return jsonError(c, 404, 'conversation_no_access');
 
-  // Body shape varies by mode:
-  //   normal     newMessage required, INSERT user row, parent = that row
-  //   autoLookback newMessage absent, no user row written, parent = last
-  //                user row in conv (best effort) or null
-  if (!parsed.autoLookback && !parsed.newMessage) {
-    return jsonError(c, 400, 'invalid_body', { message: 'newMessage required' });
-  }
-
-  // Billing gate. Skip when the conv has no bot pinned (no LLM call will
-  // happen anyway — the post below early-returns at !conv.bot_id). When
-  // a bot IS pinned, refuse before inserting the user row so a broke
-  // account can't fill the chat with replies that never get answered.
-  //
-  // Groups deliberately bypass this gate: per spec the user-experience
-  // must never block on balance — exhausted members are excluded from
-  // the next cost split (group_member_billing.overdrawn) instead of 402.
-  // group-billing.ts (M6) handles that exclusion.
-  if (conv.bot_id && conv.conversation_type !== 'group') {
-    try {
-      await requireBalance(supaUser, userId);
-    } catch (err) {
-      if (err instanceof InsufficientBalanceError) {
-        return c.json(
-          {
-            error: 'insufficient_balance',
-            balance_credits: err.balance,
-            min_threshold: err.threshold,
-          },
-          402,
-        );
-      }
-      throw err;
-    }
-  }
-
-  const supaService = serviceClient(c.env);
-
   // Attachment ownership gate. attachmentIds rides in the body uncontrolled —
   // verify each row's user_id matches the sender and (if already bound) its
   // conversation_id matches this conv, so a caller can't pin someone else's
   // upload onto their own bubble or recycle attachments across convs.
-  if (parsed.attachmentIds && parsed.attachmentIds.length > 0) {
-    const { data: rows, error: attErr } = await supaService
-      .from('attachments')
-      .select('id, user_id, conversation_id')
-      .in('id', parsed.attachmentIds);
-    if (attErr) return jsonError(c, 500, 'database_error', { detail: attErr.message });
-    if (!rows || rows.length !== parsed.attachmentIds.length) {
+  if (hasAttachments) {
+    if (!attRows) {
       return jsonError(c, 403, 'attachment_not_found');
     }
-    for (const r of rows) {
+    for (const r of attRows) {
       if (r.user_id !== userId) {
         return jsonError(c, 403, 'attachment_not_owned');
       }
@@ -176,62 +160,101 @@ messageRoutes.post('/', async (c) => {
     }
   }
 
-  let parentMessageId: string | null = null;
-  if (!parsed.autoLookback) {
-    const { error: insertErr } = await supaService
-      .from('messages')
-      .upsert(
-        {
-          client_message_id: parsed.clientMessageId,
-          conversation_id: parsed.conversationId,
-          user_id: userId,
-          role: 'user',
-          content: parsed.newMessage,
-          status: 'done',
-          attachments: parsed.attachmentIds ? { ids: parsed.attachmentIds } : null,
-        },
-        { onConflict: 'client_message_id', ignoreDuplicates: true },
-      );
-    if (insertErr) return jsonError(c, 500, 'database_error', { detail: insertErr.message });
-    const { data: userRow, error: selectErr } = await supaService
-      .from('messages')
-      .select('id')
-      .eq('client_message_id', parsed.clientMessageId)
-      .single();
-    if (selectErr || !userRow) {
-      return jsonError(c, 500, 'database_error', { detail: selectErr?.message ?? 'row missing' });
-    }
-    parentMessageId = userRow.id as string;
+  // Pre-generate the user message id so we can return it to the client
+  // and reference it as parent_message_id without waiting for the INSERT
+  // to land. The actual write fires through waitUntil below — idempotent
+  // on client_message_id, so a retry collapses server-side.
+  const needsBotPath = conv.bot_id !== null && conv.conversation_type !== 'group';
+  const userMessageId = !parsed.autoLookback ? crypto.randomUUID() : null;
 
-    // Detached attachment summarization. Generates a 1-2 sentence summary
-    // + tags per image and writes them onto attachments rows. This runs
-    // independently of the bot reply path so groups / no-bot convs /
-    // user_user also get image summaries (which iOS / future tools may
-    // surface). See edge/llm/vision.ts.
-    if (parsed.attachmentIds && parsed.attachmentIds.length > 0) {
+  // Phase 2 — fire balance gate, bot lookup, autoLookback parent lookup
+  // in parallel. INSERT runs detached (waitUntil) using the
+  // pre-generated id, so the pre-stream path holds no write RTT.
+  const balancePromise: Promise<InsufficientBalanceError | null> = needsBotPath
+    ? requireBalance(c.env, supaUser, userId)
+        .then(() => null)
+        .catch((err) => {
+          if (err instanceof InsufficientBalanceError) return err;
+          throw err;
+        })
+    : Promise.resolve(null);
+
+  const botPromise = needsBotPath
+    ? resolveBot(c.env, supaService, conv.bot_id!, (p) => safeWaitUntil(c, p))
+    : Promise.resolve(null);
+
+  const parentLookupPromise: Promise<string | null> = parsed.autoLookback
+    ? (async () => {
+        const { data } = await supaService
+          .from('messages')
+          .select('id')
+          .eq('conversation_id', parsed.conversationId)
+          .eq('role', 'user')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        return (data?.id as string | undefined) ?? null;
+      })()
+    : Promise.resolve(userMessageId);
+
+  // Detached user-message INSERT. Idempotent on client_message_id, so a
+  // client retry de-dupes. Errors go to console.error — operations can
+  // chase, but the user gets a 200 OK either way (Realtime will reflect
+  // the row once it lands; if it never does, the client's next send
+  // with the same client_message_id triggers the same upsert).
+  if (!parsed.autoLookback && userMessageId) {
+    c.executionCtx.waitUntil(
+      (async () => {
+        const { error } = await supaService
+          .from('messages')
+          .upsert(
+            {
+              id: userMessageId,
+              client_message_id: parsed.clientMessageId,
+              conversation_id: parsed.conversationId,
+              user_id: userId,
+              role: 'user',
+              content: parsed.newMessage,
+              status: 'done',
+              attachments: parsed.attachmentIds ? { ids: parsed.attachmentIds } : null,
+            },
+            { onConflict: 'client_message_id', ignoreDuplicates: true },
+          );
+        if (error) console.error('[messages] user upsert failed', error.message);
+      })(),
+    );
+
+    // Attachment summarization runs independently of the bot reply path
+    // so groups / no-bot convs / user_user also get image summaries.
+    if (hasAttachments) {
       c.executionCtx.waitUntil(
         scheduleAttachmentSummary({
           env: c.env,
           conversationId: parsed.conversationId,
           userId,
-          attachmentIds: parsed.attachmentIds,
+          attachmentIds: parsed.attachmentIds!,
           botId: conv.bot_id ?? null,
           visionOverride: conv.vision_model_override ?? null,
         }),
       );
     }
-  } else {
-    // autoLookback: anchor parent to the last user row in this conv so the
-    // bot reply still has something sensible to point at if anyone queries.
-    const { data: lastUser } = await supaService
-      .from('messages')
-      .select('id')
-      .eq('conversation_id', parsed.conversationId)
-      .eq('role', 'user')
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    parentMessageId = (lastUser?.id as string | undefined) ?? null;
+  }
+
+  const [balanceErr, botRes, parentMessageId] = await Promise.all([
+    balancePromise,
+    botPromise,
+    parentLookupPromise,
+  ]);
+
+  if (balanceErr) {
+    return c.json(
+      {
+        error: 'insufficient_balance',
+        balance_credits: balanceErr.balance,
+        min_threshold: balanceErr.threshold,
+      },
+      402,
+    );
   }
 
   // Group branch — wake decisions go to the GroupRouterDO. The DO
@@ -283,14 +306,11 @@ messageRoutes.post('/', async (c) => {
     return c.json({ message: { id: parentMessageId }, botReplyScheduled: false });
   }
 
-  const { data: bot, error: botErr } = await supaService
-    .from('bots')
-    .select('id, model_id, output_mode, is_active, config, visibility, creator_id')
-    .eq('id', conv.bot_id)
-    .single();
-  if (botErr || !bot) {
-    return jsonError(c, 500, 'database_error', { message: 'bot lookup failed', detail: botErr?.message });
+  // botRes was awaited in Phase 2 (needsBotPath was true). Narrow + check.
+  if (!botRes) {
+    return jsonError(c, 500, 'database_error', { message: 'bot lookup failed' });
   }
+  const bot = botRes;
   if (!bot.is_active) {
     return c.json({ message: { id: parentMessageId }, botReplyScheduled: false });
   }
@@ -324,17 +344,26 @@ messageRoutes.post('/', async (c) => {
   // (see PostBody comment): when the body carries an opinion (defined,
   // even null), persist it onto the conv row so other devices see it on
   // their next conv-list fetch. Whichever value lands here is what gets
-  // passed to LLMRouter as preferProvider.
+  // passed to LLMRouter as preferProvider. Persistence is fire-and-forget
+  // so the SSE stream doesn't wait on it.
   const persistedOverride = conv.provider_override ?? null;
   let effectiveProviderOverride: string | null = persistedOverride;
   if (parsed.providerOverride !== undefined) {
     const desired = parsed.providerOverride;
     effectiveProviderOverride = desired;
     if (desired !== persistedOverride) {
-      await supaService
-        .from('conversations')
-        .update({ provider_override: desired })
-        .eq('id', parsed.conversationId);
+      safeWaitUntil(
+        c,
+        (async () => {
+          const { error } = await supaService
+            .from('conversations')
+            .update({ provider_override: desired })
+            .eq('id', parsed.conversationId);
+          if (error) console.error('[messages] provider_override persist failed', error.message);
+          // Invalidate KV so the next message reads the new override.
+          await deleteCachedConv(c.env, parsed.conversationId).catch(() => undefined);
+        })(),
+      );
     }
   }
 
@@ -547,17 +576,16 @@ messageRoutes.post('/start', async (c) => {
 
   // Bot row needed for runChatTurn (model_id / output_mode / config).
   // Visibility is gated inside the SECURITY DEFINER RPC below — this read
-  // just pulls the config we need to drive the turn.
-  const { data: bot, error: botErr } = await supaService
-    .from('bots')
-    .select('id, model_id, output_mode, is_active, config, visibility, creator_id')
-    .eq('id', parsed.botId)
-    .single();
-  if (botErr || !bot) return jsonError(c, 404, 'not_found', { message: 'bot not found' });
-  if (!bot.is_active) return jsonError(c, 400, 'forbidden', { message: 'bot inactive' });
+  // just pulls the config we need to drive the turn. KV cache with 1h
+  // TTL bounds staleness for iOS-direct bot edits.
+  const botRaw = await resolveBot(c.env, supaService, parsed.botId, (p) => safeWaitUntil(c, p));
+  if (!botRaw) return jsonError(c, 404, 'not_found', { message: 'bot not found' });
+  if (!botRaw.is_active) return jsonError(c, 400, 'forbidden', { message: 'bot inactive' });
+  if (!botRaw.model_id) return jsonError(c, 500, 'database_error', { message: 'bot has no model pinned' });
+  const bot = { ...botRaw, model_id: botRaw.model_id };
 
   try {
-    await requireBalance(supaUser, userId);
+    await requireBalance(c.env, supaUser, userId);
   } catch (err) {
     if (err instanceof InsufficientBalanceError) {
       return c.json(
@@ -878,6 +906,17 @@ messageRoutes.post('/:id/recall', async (c) => {
       if (delAttErr) {
         console.warn('[messages/recall] attachments delete failed', delAttErr.message);
       }
+      // Invalidate KV: per-attachment metadata + the conv's inventory
+      // list. Detached — a stale entry is acceptable (the row is gone
+      // from Supabase, so any future check that falls through to DB
+      // will get attachment_not_found anyway).
+      safeWaitUntil(
+        c,
+        Promise.all([
+          ...rows.map((r) => deleteCachedAttachment(c.env, r.id)),
+          removeInventoryIds(c.env, msg.conversation_id, rows.map((r) => r.id)),
+        ]).then(() => undefined),
+      );
     }
 
     // For each r2_key the recaller used to own, check whether any

@@ -126,21 +126,15 @@ struct ConversationView: View {
     /// Created on phone-button tap and torn down when CallView dismisses.
     @State var callSession: CallSession?
 
-    // Streaming reveal smoother — see applyBubbleEmissions. Bubbles that the
-    // splitter promotes to .streaming (≥ BUBBLE_OVERFLOW_CHARS without a
-    // delimiter) appear empty and have their head buffer + subsequent live
-    // tokens trickled in by `revealTask` at a fixed rate, giving a fast
-    // typewriter catch-up effect instead of the old "pop in 15 chars then
-    // stutter".
+    // Streaming bubble state — see applyBubbleEmissions. The splitter
+    // (BubbleSplitter.swift) decides whether a bubble pops in whole or
+    // streams; for the streaming case `revealTargetId` is the local key
+    // of the live bubble (tokens append to its tail as they arrive),
+    // and `streamPaused` drives the cursor's blink mode (solid while
+    // tokens flow, blink after a short idle). `revealTask` holds the
+    // idle debounce that flips streamPaused.
     @State var revealTargetId: String?
-    @State var revealBuffer: String = ""
-    @State var revealEnded: Bool = false
-    @State var pendingEmissions: [BubbleEmission] = []
     @State var revealTask: Task<Void, Never>?
-    /// True when the reveal task is mounted on a bubble but has nothing
-    /// to drain right now (upstream paused mid-turn). Drives the cursor's
-    /// blink mode in BubbleView — solid while tokens flow, blinking when
-    /// we're sitting between chunks.
     @State var streamPaused: Bool = false
 
     /// Canonical bot-row ids announced by the SSE `bubble` event but not yet

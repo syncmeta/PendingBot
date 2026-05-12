@@ -3,6 +3,7 @@ import type { Env } from '../types';
 import type { SupabaseClient } from '../lib/supabase';
 import type { Json } from '../db/schema';
 import { billingDebit, getMarkup, usdToPnd } from '../lib/billing';
+import { putCachedBalance } from '../lib/balance-cache';
 import { splitAndDebit } from '../lib/group-billing';
 import type { WebToolUsage } from '../lib/web-meter';
 
@@ -158,6 +159,137 @@ function buildClient(
   });
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Isolate-local caches for admin-curated routing config. All three
+// tables (task_routing_rules / llm_model_aliases / llm_providers) are
+// edited from the board admin roughly never and read on every LLM
+// dispatch — a small TTL keeps them hot on the worker isolate without
+// putting Supabase RTTs on the first-token path.
+//
+// 5 min was picked to match getMarkup + getThreshold patterns. An admin
+// price edit propagates within ~TTL across all isolates.
+// ─────────────────────────────────────────────────────────────────────
+const ROUTE_CACHE_TTL_MS = 5 * 60_000;
+
+interface CachedRule {
+  overrideSlug: string | null;
+  preferProvider: string | null;
+}
+const taskRuleCache = new Map<string, { at: number; value: CachedRule | null }>();
+
+interface CachedAliasSet {
+  byCanonical: AliasJoinRow[];
+  byPassthrough: AliasJoinRow[];
+}
+const aliasCache = new Map<string, { at: number; value: CachedAliasSet }>();
+
+interface CachedProvider {
+  id: string;
+  slug: string;
+  base_url: string;
+  auth_type: string;
+  secret_ref: string;
+  priority: number;
+  enabled: boolean;
+  config: unknown;
+}
+const providerCache = new Map<string, { at: number; value: CachedProvider | null }>();
+
+/** For tests / forced refresh after an admin edit on the same isolate. */
+export function _resetRouteCaches(): void {
+  taskRuleCache.clear();
+  aliasCache.clear();
+  providerCache.clear();
+}
+
+async function getTaskRule(
+  supa: SupabaseClient,
+  taskType: string,
+): Promise<CachedRule | null> {
+  const now = Date.now();
+  const hit = taskRuleCache.get(taskType);
+  if (hit && now - hit.at < ROUTE_CACHE_TTL_MS) return hit.value;
+  const { data: rule } = await supa
+    .from('task_routing_rules')
+    .select(
+      `match_priority, override_model_id, prefer_provider_id,
+       override_model:llm_models!task_routing_rules_override_model_fkey ( slug ),
+       prefer_provider:llm_providers!task_routing_rules_prefer_provider_fkey ( slug )`,
+    )
+    .eq('task_type', taskType)
+    .eq('enabled', true)
+    .order('match_priority', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  const value: CachedRule | null = rule
+    ? {
+        overrideSlug: (rule.override_model as { slug?: string } | null)?.slug ?? null,
+        preferProvider: (rule.prefer_provider as { slug?: string } | null)?.slug ?? null,
+      }
+    : null;
+  taskRuleCache.set(taskType, { at: now, value });
+  return value;
+}
+
+async function getAliasSet(
+  supa: SupabaseClient,
+  slug: string,
+): Promise<CachedAliasSet> {
+  const now = Date.now();
+  const hit = aliasCache.get(slug);
+  if (hit && now - hit.at < ROUTE_CACHE_TTL_MS) return hit.value;
+  const ALIAS_COLS =
+    `id, provider_id, provider_model_id, weight,
+     input_price, cached_input_price, output_price, cache_write_price,
+     audio_input_price, audio_output_price`;
+  const [{ data: byCanonical, error: e1 }, { data: byPassthrough, error: e2 }] =
+    await Promise.all([
+      supa
+        .from('llm_model_aliases')
+        .select(
+          `${ALIAS_COLS},
+           llm_providers ( id, slug, base_url, auth_type, secret_ref, priority, enabled, config ),
+           llm_models!inner ( slug, enabled )`,
+        )
+        .eq('enabled', true)
+        .eq('llm_models.slug', slug),
+      supa
+        .from('llm_model_aliases')
+        .select(
+          `${ALIAS_COLS},
+           llm_providers ( id, slug, base_url, auth_type, secret_ref, priority, enabled, config )`,
+        )
+        .eq('enabled', true)
+        .eq('provider_model_id', slug),
+    ]);
+  if (e1) throw new NoRouteError(`alias canonical lookup failed: ${e1.message}`);
+  if (e2) throw new NoRouteError(`alias passthrough lookup failed: ${e2.message}`);
+  const value: CachedAliasSet = {
+    byCanonical: (byCanonical as AliasJoinRow[] | null) ?? [],
+    byPassthrough: (byPassthrough as AliasJoinRow[] | null) ?? [],
+  };
+  aliasCache.set(slug, { at: now, value });
+  return value;
+}
+
+async function getProvider(
+  supa: SupabaseClient,
+  slug: string,
+): Promise<CachedProvider | null> {
+  const now = Date.now();
+  const hit = providerCache.get(slug);
+  if (hit && now - hit.at < ROUTE_CACHE_TTL_MS) return hit.value;
+  const { data } = await supa
+    .from('llm_providers')
+    .select('id, slug, base_url, auth_type, secret_ref, priority, enabled, config')
+    .eq('slug', slug)
+    .eq('enabled', true)
+    .maybeSingle();
+  const value = (data as CachedProvider | null) ?? null;
+  providerCache.set(slug, { at: now, value });
+  return value;
+}
+
 export async function resolveRoute(
   supa: SupabaseClient,
   env: Env,
@@ -167,65 +299,28 @@ export async function resolveRoute(
   if (!slug) throw new NoRouteError('empty model slug');
   let preferProvider = opts.preferProvider;
 
-  // Per-task override pass. We pull the lowest-priority enabled rule
-  // for this task_type — at most one applies. Caller-supplied
-  // preferProvider wins over the rule (admin/incident overrides).
+  // Per-task override pass. Lowest-priority enabled rule wins; caller-
+  // supplied preferProvider overrides the rule's. Cached on the worker
+  // isolate per task_type for 5 min.
   if (opts.taskType) {
-    const { data: rule } = await supa
-      .from('task_routing_rules')
-      .select(
-        `match_priority, override_model_id, prefer_provider_id,
-         override_model:llm_models!task_routing_rules_override_model_fkey ( slug ),
-         prefer_provider:llm_providers!task_routing_rules_prefer_provider_fkey ( slug )`,
-      )
-      .eq('task_type', opts.taskType)
-      .eq('enabled', true)
-      .order('match_priority', { ascending: true })
-      .limit(1)
-      .maybeSingle();
+    const rule = await getTaskRule(supa, opts.taskType);
     if (rule) {
-      const overrideSlug = (rule.override_model as { slug?: string } | null)?.slug;
-      if (overrideSlug) slug = overrideSlug;
-      const ruleProvider = (rule.prefer_provider as { slug?: string } | null)?.slug;
-      if (!preferProvider && ruleProvider) preferProvider = ruleProvider;
+      if (rule.overrideSlug) slug = rule.overrideSlug;
+      if (!preferProvider && rule.preferProvider) preferProvider = rule.preferProvider;
     }
   }
 
-  // Step 1 + 2: pull all aliases that match by canonical name OR by
-  // provider_model_id. One round-trip; we partition in JS.
-  const ALIAS_COLS =
-    `id, provider_id, provider_model_id, weight,
-     input_price, cached_input_price, output_price, cache_write_price,
-     audio_input_price, audio_output_price`;
-
-  const { data: byCanonical, error: e1 } = await supa
-    .from('llm_model_aliases')
-    .select(
-      `${ALIAS_COLS},
-       llm_providers ( id, slug, base_url, auth_type, secret_ref, priority, enabled, config ),
-       llm_models!inner ( slug, enabled )`,
-    )
-    .eq('enabled', true)
-    .eq('llm_models.slug', slug);
-  if (e1) throw new NoRouteError(`alias canonical lookup failed: ${e1.message}`);
-
-  const { data: byPassthrough, error: e2 } = await supa
-    .from('llm_model_aliases')
-    .select(
-      `${ALIAS_COLS},
-       llm_providers ( id, slug, base_url, auth_type, secret_ref, priority, enabled, config )`,
-    )
-    .eq('enabled', true)
-    .eq('provider_model_id', slug);
-  if (e2) throw new NoRouteError(`alias passthrough lookup failed: ${e2.message}`);
+  // Pull all aliases that match by canonical slug OR by passthrough
+  // provider_model_id, then partition in JS. Cached per slug.
+  const { byCanonical, byPassthrough } = await getAliasSet(supa, slug);
 
   // Canonical hits take precedence over passthrough hits — once a slug
   // is registered as a canonical model, "the same string also happens
   // to be a provider_model_id somewhere" should not override the
   // curated routing decision.
-  const merged = [...((byCanonical as AliasJoinRow[] | null) ?? [])];
+  const merged = [...byCanonical];
   if (merged.length === 0) {
-    merged.push(...((byPassthrough as AliasJoinRow[] | null) ?? []));
+    merged.push(...byPassthrough);
   }
   const picked = pickAlias(merged, {
     preferProvider,
@@ -266,13 +361,8 @@ export async function resolveRoute(
       `no enabled alias for ${slug} and OpenRouter passthrough is excluded`,
     );
   }
-  const { data: openrouter, error: e3 } = await supa
-    .from('llm_providers')
-    .select('id, slug, base_url, auth_type, secret_ref, priority, enabled, config')
-    .eq('slug', 'openrouter')
-    .eq('enabled', true)
-    .maybeSingle();
-  if (e3 || !openrouter) {
+  const openrouter = await getProvider(supa, 'openrouter');
+  if (!openrouter) {
     throw new NoRouteError(
       `no alias for ${slug} and OpenRouter passthrough provider is not configured`,
     );
@@ -509,7 +599,13 @@ export async function recordAudit(
         console.warn('[recordAudit] splitAndDebit failed', err),
       );
     } else if (opts.userId) {
-      await billingDebit(supa, opts.userId, auditId, pnd);
+      const newBalance = await billingDebit(supa, opts.userId, auditId, pnd);
+      // Keep the per-user KV balance cache in sync so the next
+      // requireBalance call skips Supabase. RPC returned null = swallowed
+      // error; leave the cache alone so the next miss re-reads.
+      if (newBalance != null && opts.env) {
+        await putCachedBalance(opts.env, opts.userId, newBalance).catch(() => undefined);
+      }
     }
   }
 }
