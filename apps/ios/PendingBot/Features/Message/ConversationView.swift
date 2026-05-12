@@ -69,11 +69,13 @@ struct ConversationView: View {
     /// Active SSE turn task; canceling it closes the stream which Worker
     /// reads as request.signal.aborted (= interrupt). Set by sendViaSSE,
     /// cleared on completion. Non-nil while a turn is in flight.
-    @State private var chatTurnTask: Task<Void, Never>?
+    // chatTurnTask gates the auto-lookback fire timer in
+    // ConversationView+Realtime, so it needs to be cross-extension visible.
+    @State var chatTurnTask: Task<Void, Never>?
     /// Realtime subscription token for this conv's `messages` channel —
     /// dropped when the view disappears. Picks up cross-device messages
     /// and bot rows that land via background paths (cron, review).
-    @State private var realtimeToken: ConvSubscriptionToken?
+    @State var realtimeToken: ConvSubscriptionToken?
     /// Lookback notes the bot wrote about prior turns (Realtime push from
     /// pendingbot.bot_lookbacks). Invisible to the user; passed in
     /// `activeLookbacks` on the next POST so the bot sees them as context.
@@ -81,7 +83,7 @@ struct ConversationView: View {
     /// 30s grace timer started when a new lookback arrives. If user hasn't
     /// sent anything before it fires, we auto-trigger a continuation turn
     /// so the bot's fact-check actually surfaces.
-    @State private var lookbackAutoFireTask: Task<Void, Never>?
+    @State var lookbackAutoFireTask: Task<Void, Never>?
     /// Tool-call trace per user message. Rendered inline (non-bubble, auto-
     /// collapsed) right after the user message that triggered it. Worker emits
     /// `tool_call` / `tool_result` SSE events during a turn — we accumulate
@@ -106,7 +108,7 @@ struct ConversationView: View {
     /// Keyed by user-message id like `tracesByUserMsgId`; rekeyed on the
     /// optimistic-id → canonical-id swap so re-expanding an old trace still
     /// shows its results.
-    @State private var traceCitationsByUserMsgId: [String: [MessageCitation]] = [:]
+    @State var traceCitationsByUserMsgId: [String: [MessageCitation]] = [:]
     /// Attachment ids per message id. Populated from `messages.attachments`
     /// jsonb on load + Realtime, and from the local pending attachment set
     /// when the user sends. Used on recall (own + peer's, via the
@@ -122,7 +124,7 @@ struct ConversationView: View {
     @State private var saveAsSkillBody: String?
     /// Active voice call session, present while CallView is on screen.
     /// Created on phone-button tap and torn down when CallView dismisses.
-    @State private var callSession: CallSession?
+    @State var callSession: CallSession?
 
     // Streaming reveal smoother — see applyBubbleEmissions. Bubbles that the
     // splitter promotes to .streaming (≥ BUBBLE_OVERFLOW_CHARS without a
@@ -148,14 +150,14 @@ struct ConversationView: View {
     /// long the round-trip took. Without this, slow streams (>5s) used to
     /// blow past the recency-window dedup and the canonical row would
     /// append as a duplicate bubble.
-    @State private var pendingCanonicalBotIds: Set<String> = []
+    @State var pendingCanonicalBotIds: Set<String> = []
 
     /// Maps `local-<uuid>` → `client_message_id` so a Realtime INSERT echo
     /// can dedupe against our optimistic row by matching the server's
     /// `client_message_id` field exactly, instead of guessing via a 5s
     /// recency window that fails on slow networks. Cleared once the
     /// canonical row has replaced the optimistic one.
-    @State private var localMsgClientIds: [String: String] = [:]
+    @State var localMsgClientIds: [String: String] = [:]
 
     /// Other-side profile for a user_user conv, fetched once on appear
     /// when we don't already have a `pendingPeer`. Drives the chat
@@ -731,58 +733,9 @@ struct ConversationView: View {
 
     // ── Send ────────────────────────────────────────────────────────────────
 
-    private func subscribeRealtime() async {
-        let convId = conversation.id
-        guard !convId.isEmpty else { return }
-        realtimeToken = await RealtimeManager.shared.startConvChannel(
-            conversationId: convId,
-            onMessage: { event in
-                Task { @MainActor in
-                    applyRealtimeEvent(event)
-                }
-            },
-            onLookback: { event in
-                Task { @MainActor in
-                    applyLookbackEvent(event)
-                }
-            },
-            onContinueRequest: { event in
-                Task { @MainActor in
-                    applyContinueEvent(event)
-                }
-            },
-            onParticipants: { _ in
-                Task { @MainActor in
-                    // Senders map is small and the event fires only on
-                    // joins / role changes / leaves — re-running the
-                    // load-once function is fine. Cheap enough that
-                    // we don't bother diffing.
-                    await loadGroupSendersIfNeeded()
-                }
-            }
-        )
-    }
-
-    /// Apply a Realtime event from group_continue_requests to the
-    /// composer banner. New row pending → show banner with its bot ids;
-    /// existing row flipped to allowed/denied/expired → clear banner.
-    private func applyContinueEvent(_ event: ContinueRequestEvent) {
-        let r = event.record
-        guard let id = r["id"]?.stringValue else { return }
-        let status = r["status"]?.stringValue ?? "pending"
-        if status != "pending" {
-            // Decided / expired — clear our banner if it was for this row.
-            if pendingContinue?.id == id { pendingContinue = nil }
-            return
-        }
-        // pending_bot_ids comes through as a JSON array; AnyJSON →
-        // [String] requires a tiny manual decode.
-        var botIds: [String] = []
-        if let arr = r["pending_bot_ids"]?.arrayValue {
-            botIds = arr.compactMap { $0.stringValue }
-        }
-        pendingContinue = PendingContinue(id: id, pendingBotIds: botIds)
-    }
+    // subscribeRealtime + applyContinueEvent + applyRealtimeEvent +
+    // applyLookbackEvent + scheduleLookbackAutoFire + canStartVoiceCall
+    // + startVoiceCall live in ConversationView+Realtime.swift.
 
     /// Show the "+ new conv" header button only for materialized chats with
     /// an identifiable bot — pending convs and user_user/self chats can't
@@ -792,33 +745,6 @@ struct ConversationView: View {
         if conversation.conversation_type != "user_bot" { return false }
         if let bid = bot?.id, !bid.isEmpty { return true }
         return !conversation.bot_id.isEmpty
-    }
-
-    /// Phone-button visibility — only 1v1 bot chats with voice_call_enabled
-    /// flipped by the bot owner. Pending convs need a materialized id for
-    /// the /v1/realtime/session round-trip, so we gate on conv.id too.
-    private var canStartVoiceCall: Bool {
-        guard !conversation.id.isEmpty else { return false }
-        if conversation.conversation_type != "user_bot" { return false }
-        return bot?.voice_call_enabled == true
-    }
-
-    /// Spin up a CallSession for the current bot + present CallView via
-    /// the .fullScreenCover bound to `callSession`. Tearing down happens
-    /// in the cover's onDismiss; we don't await session.start() here so
-    /// the UI flips to the call screen immediately.
-    private func startVoiceCall() {
-        let botId: String = {
-            if let bid = bot?.id, !bid.isEmpty { return bid }
-            return conversation.bot_id
-        }()
-        guard !botId.isEmpty else { return }
-        callSession = CallSession(
-            conversationId: conversation.id,
-            botId: botId,
-            botDisplayName: bot?.display_name ?? "AI",
-            api: VoiceCallAPI(),
-        )
     }
 
     /// Flip this view onto a fresh pending user_bot conv with the same bot.
@@ -1242,7 +1168,9 @@ struct ConversationView: View {
     ///     the conv server-side and emits `event: meta` with the canonical
     ///     ids before any tokens. We wire those back into the optimistic
     ///     local row + conversation state on the fly.
-    private func sendViaSSE(text: String, attachmentIds: [String], autoLookback: Bool = false, userMsgId: String? = nil, clientMessageId: String? = nil, startBotId: String? = nil) {
+    // Internal access — called from scheduleLookbackAutoFire (auto-fire
+    // a no-input turn) in ConversationView+Realtime.swift.
+    func sendViaSSE(text: String, attachmentIds: [String], autoLookback: Bool = false, userMsgId: String? = nil, clientMessageId: String? = nil, startBotId: String? = nil) {
         chatTurnTask?.cancel()
         flushRevealImmediately()
         // User taking action (or auto-fire firing) cancels the pending
@@ -1483,229 +1411,14 @@ struct ConversationView: View {
 
     // loadActiveLookbacks lives in ConversationView+Loading.swift.
 
-    private func applyLookbackEvent(_ event: LookbackEvent) {
-        let r = event.record
-        guard let id = r["id"]?.stringValue else { return }
-        let body = r["body_md"]?.stringValue ?? ""
-        let active = (r["active"]?.boolValue) ?? true
-        if active {
-            // INSERT (new note) or UPDATE that brought it back. Replace by id.
-            if let idx = activeLookbacks.firstIndex(where: { $0.id == id }) {
-                activeLookbacks[idx] = LookbackNote(id: id, body_md: body, active: true)
-            } else {
-                activeLookbacks.append(LookbackNote(id: id, body_md: body, active: true))
-                // New note arrived — schedule auto-fire after 30s of user silence
-                // (skip if a turn is already in flight: the next user reply or
-                // the in-flight reply will pick the lookback up via prompt).
-                if chatTurnTask == nil {
-                    scheduleLookbackAutoFire()
-                }
-            }
-        } else {
-            // active=false → bot retired this note (via [DROP_LOOKBACK]).
-            activeLookbacks.removeAll { $0.id == id }
-        }
-    }
-
-    private func scheduleLookbackAutoFire() {
-        lookbackAutoFireTask?.cancel()
-        lookbackAutoFireTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
-            if Task.isCancelled { return }
-            // Re-check: still no in-flight turn, still some active lookbacks?
-            guard chatTurnTask == nil, !activeLookbacks.isEmpty else { return }
-            sendViaSSE(text: "", attachmentIds: [], autoLookback: true)
-        }
-    }
+    // applyLookbackEvent + scheduleLookbackAutoFire +
+    // applyRealtimeEvent live in ConversationView+Realtime.swift.
 
     /// Decode a Realtime row's `citations` value into the typed model. Returns
     /// nil when absent / null / malformed — callers fall back to whatever was
     /// already in `citationsByMsgId` for the row (e.g. the live-bubble snapshot).
     // parseCitations lives in ConversationView+ToolTrace.swift.
 
-    /// Realtime postgres_changes payload → ChatMessage in the local list.
-    /// Dedupe by canonical row id so this device's own SSE-emitted bubbles
-    /// (which carry "live-<uuid>" ids until reconciled) get either skipped
-    /// or replaced cleanly. role='log' rows are filtered out (rendered via
-    /// a different surface).
-    private func applyRealtimeEvent(_ event: MessageEvent) {
-        let r = event.record
-        guard let id = r["id"]?.stringValue,
-              r["conversation_id"]?.stringValue == conversation.id else { return }
-        let role = r["role"]?.stringValue ?? "user"
-        let status = r["status"]?.stringValue ?? ""
-        // Recall: when a message flips to status='deleted' (via the
-        // server's POST /v1/messages/:id/recall), drop it from the
-        // visible timeline. Works for both our own optimistic-already-
-        // removed rows (no-op) and peer recalls (the bubble vanishes).
-        // Also scrub URLCache for any attachment ids we cached for
-        // this row — the worker's R2 object is already gone, but iOS's
-        // HTTP cache hangs onto the bytes for up to a year.
-        if status == "deleted" {
-            messages.removeAll { $0.id == id }
-            let attIds = attachmentIdsByMsgId[id] ?? []
-            scrubAttachmentCache(attIds)
-            attachmentIdsByMsgId.removeValue(forKey: id)
-            return
-        }
-        // Recall tombstone — the log_kind='recall' insert that pairs
-        // with the soft-delete above for user_user convs. Synthesise a
-        // recall_log ChatMessage so the ForEach renderer drops a
-        // centered "你/对方撤回了 X 的一条消息" pill at the right spot.
-        if role == "log" {
-            let logKind = r["log_kind"]?.stringValue ?? ""
-            if logKind == "recall" {
-                guard let payloadValue = r["log_payload"],
-                      let payload = decodeRecallPayload(payloadValue)
-                else { return }
-                let createdRaw = r["created_at"]?.stringValue ?? ""
-                let secs = ServerTimestamp.epochSeconds(createdRaw, default: Int(Date().timeIntervalSince1970))
-                let recaller = payload.recaller_user_id ?? (r["user_id"]?.stringValue ?? "")
-                let synth = ChatMessage(
-                    id: id,
-                    conversation_id: conversation.id,
-                    sender_type: "recall_log",
-                    sender_id: recaller,
-                    content: String(payload.original_created_at_secs),
-                    created_at: secs,
-                    attachments: nil
-                )
-                if let existing = messages.firstIndex(where: { $0.id == id }) {
-                    messages[existing] = synth
-                } else {
-                    messages.append(synth)
-                    messages.sort { $0.created_at < $1.created_at }
-                }
-            }
-            return
-        }
-        // Capture attachment ids into the sidecar dict so a later
-        // recall (status='deleted' UPDATE) can scrub URLCache for the
-        // right ids. Cheap; only fires when the row actually has any.
-        if let attValue = r["attachments"], let aids = decodeAttachmentIds(attValue), !aids.isEmpty {
-            attachmentIdsByMsgId[id] = aids
-        }
-        // Prefer content_partial while a bot turn is mid-stream — content
-        // stays null until the worker writes the final string at done. This
-        // is what lets a user re-enter a conv whose SSE they dropped and
-        // still see the bubble fill in via Realtime UPDATEs.
-        let finalContent = r["content"]?.stringValue ?? ""
-        let partialContent = r["content_partial"]?.stringValue ?? ""
-        let content = finalContent.isEmpty ? partialContent : finalContent
-        let createdRaw = r["created_at"]?.stringValue ?? ""
-        // Default to "now" so live messages don't collapse to 1970 if the
-        // timestamp format ever drifts.
-        let secs = ServerTimestamp.epochSeconds(createdRaw, default: Int(Date().timeIntervalSince1970))
-        let senderType = role == "bot" ? "bot" : "user"
-        let senderId = role == "bot"
-            ? (r["sender_bot_id"]?.stringValue ?? "")
-            : (r["user_id"]?.stringValue ?? "")
-        let msg = ChatMessage(
-            id: id,
-            conversation_id: conversation.id,
-            sender_type: senderType,
-            sender_id: senderId,
-            content: content,
-            created_at: secs,
-            attachments: nil
-        )
-        let citations = parseCitations(from: r["citations"])
-        if let existing = messages.firstIndex(where: { $0.id == id }) {
-            messages[existing] = msg
-            if let citations { citationsByMsgId[id] = citations }
-        } else {
-            // Drop our own optimistic local/live row if we can match it.
-            //
-            // For bot rows, the SSE `bubble` event told us this canonical
-            // id ahead of time → match by membership in
-            // `pendingCanonicalBotIds`, then FIFO-replace the first
-            // `live-*` bot bubble. This is timing-independent and handles
-            // slow streams where the optimistic bubble is older than any
-            // sensible recency window.
-            //
-            // For user rows we don't have a server-announced id (the user
-            // message is materialized server-side without acking back),
-            // so fall back to (prefix + role + recency) — same heuristic
-            // as before, just bounded to user rows where it's accurate.
-            //
-            // We deliberately don't compare content for live-* bot bubbles:
-            // they're still being revealed by the typewriter when the
-            // canonical INSERT lands, so their displayed content is partial.
-            let isOurBotEcho = role == "bot" && pendingCanonicalBotIds.contains(id)
-            let serverCmid = r["client_message_id"]?.stringValue
-            let now = Int(Date().timeIntervalSince1970)
-            let staleIndex: Int? = {
-                if isOurBotEcho {
-                    return messages.firstIndex { m in
-                        m.id.hasPrefix("live-") && m.sender_type == "bot"
-                    }
-                }
-                if role != "bot" {
-                    // Prefer exact client_message_id match — survives any
-                    // round-trip latency.
-                    if let cmid = serverCmid,
-                       let local = localMsgClientIds.first(where: { $0.value == cmid })?.key,
-                       let idx = messages.firstIndex(where: { $0.id == local }) {
-                        return idx
-                    }
-                    // Fallback for legacy / cross-device echoes that landed
-                    // here without a tracked cmid (e.g. a peer device that
-                    // just inserted a row in a user_user thread we have open).
-                    return messages.firstIndex { m in
-                        m.id.hasPrefix("local-")
-                            && m.sender_type == senderType
-                            && abs(m.created_at - now) < 5
-                    }
-                }
-                return nil
-            }()
-            if isOurBotEcho { pendingCanonicalBotIds.remove(id) }
-            if let stale = staleIndex {
-                let oldId = messages[stale].id
-                localMsgClientIds.removeValue(forKey: oldId)
-                messages[stale] = msg
-                // Re-key any tool trace bound to the optimistic local id so
-                // it stays attached after the canonical row replaces it.
-                if let trace = tracesByUserMsgId.removeValue(forKey: oldId) {
-                    tracesByUserMsgId[id] = trace
-                    if liveTraceUserMsgId == oldId {
-                        liveTraceUserMsgId = id
-                    }
-                }
-                if let traceCites = traceCitationsByUserMsgId.removeValue(forKey: oldId) {
-                    traceCitationsByUserMsgId[id] = traceCites
-                }
-                // Same swap for the attachment-id sidecar — the recall
-                // path keys by current msg id, so the canonical row
-                // must carry the same scrub list forward.
-                if let aids = attachmentIdsByMsgId.removeValue(forKey: oldId) {
-                    attachmentIdsByMsgId[id] = aids
-                }
-                // Same rekey for citations — the live-id snapshot was set
-                // from the SSE event; the canonical row may carry the same
-                // (or fresher) list, so prefer the canonical when present.
-                let priorCitations = citationsByMsgId.removeValue(forKey: oldId)
-                citationsByMsgId[id] = citations ?? priorCitations
-            } else {
-                messages.append(msg)
-                if let citations { citationsByMsgId[id] = citations }
-            }
-        }
-        // Mirror to local cache.
-        LocalDatabase.shared.upsertMessages([
-            LocalDatabase.MessageRow(
-                id: id,
-                client_message_id: r["client_message_id"]?.stringValue,
-                conversation_id: conversation.id,
-                user_id: r["user_id"]?.stringValue,
-                sender_bot_id: r["sender_bot_id"]?.stringValue,
-                role: role,
-                content: content,
-                status: r["status"]?.stringValue,
-                created_at: secs
-            ),
-        ])
-    }
 
     // applyBubbleEmissions + applyDirect + the streaming reveal smoother
     // (startRevealTaskIfNeeded + flushRevealImmediately + tuning lets)
