@@ -206,7 +206,7 @@ export const EXECUTE_CODE_TOOL: ChatCompletionTool = {
   function: {
     name: 'execute_code',
     description:
-      'Run Python 3 code in a sandboxed VM dedicated to this conversation. Stdout+stderr (combined) and the exit code come back. Useful for math, data wrangling with numpy/pandas, quick scrapes, file/text manipulation. Avoid pop-ups, GUIs, or long-running interactive scripts. The sandbox keeps state across calls in the same conversation, so vars/imports persist for short stretches.',
+      'Run Python 3 code in a sandboxed VM dedicated to this conversation. Stdout+stderr (combined) and the exit code come back. Useful for math, data wrangling with numpy/pandas, quick scrapes, file/text manipulation. Avoid pop-ups, GUIs, or long-running interactive scripts. The sandbox filesystem and installed packages persist for short stretches in the same conversation, but each code-run starts a fresh interpreter, so include needed imports/variable setup every time.',
     parameters: {
       type: 'object',
       properties: {
