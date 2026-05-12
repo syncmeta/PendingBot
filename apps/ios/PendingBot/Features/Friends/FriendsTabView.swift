@@ -103,7 +103,7 @@ struct FriendsTabView: View {
                 .navigationDestination(for: PendingPeer.self) { peer in
                     ConversationView(
                         conversation: pendingConversation(for: peer),
-                        bot: nil,
+                        bot: bot(for: peer),
                         pendingPeer: peer
                     )
                 }
@@ -128,7 +128,7 @@ struct FriendsTabView: View {
             if let peer = selectedPeer {
                 ConversationView(
                     conversation: pendingConversation(for: peer),
-                    bot: nil,
+                    bot: bot(for: peer),
                     pendingPeer: peer
                 )
                 // .id forces a fresh ConversationView (and a fresh WS)
@@ -281,6 +281,7 @@ struct FriendsTabView: View {
         let model_id: String?
         let visibility: String?
         let creator_id: String?
+        let voice_call_enabled: Bool?
         var modelTag: String? {
             guard let m = model_id, let i = m.lastIndex(of: "/") else { return model_id }
             return String(m[m.index(after: i)...])
@@ -364,6 +365,7 @@ struct FriendsTabView: View {
         let model_id: String?
         let visibility: String?
         let creator_id: String?
+        let voice_call_enabled: Bool?
     }
     private func load() async {
         // Hydrate from local cache so the tab paints last-known friends
@@ -380,7 +382,8 @@ struct FriendsTabView: View {
                 self.bots = cachedBots.map {
                     BotPick(id: $0.id, display_name: $0.display_name,
                             model_id: $0.model_id, visibility: $0.visibility,
-                            creator_id: $0.creator_id)
+                            creator_id: $0.creator_id,
+                            voice_call_enabled: nil)
                 }
             }
             if !cachedContacts.isEmpty {
@@ -396,7 +399,7 @@ struct FriendsTabView: View {
         do {
             async let botRowsResp: [BotDecodable] = SupabaseStack.shared
                 .from("bots")
-                .select("id, slug, display_name, model_id, visibility, creator_id")
+                .select("id, slug, display_name, model_id, visibility, creator_id, voice_call_enabled")
                 .eq("is_active", value: true)
                 .order("created_at", ascending: true)
                 .execute()
@@ -416,7 +419,8 @@ struct FriendsTabView: View {
                 .map {
                     BotPick(id: $0.id, display_name: $0.display_name,
                             model_id: $0.model_id, visibility: $0.visibility,
-                            creator_id: $0.creator_id)
+                            creator_id: $0.creator_id,
+                            voice_call_enabled: $0.voice_call_enabled)
                 }
             // Persist bots wholesale on success — server is the source of
             // truth for which ones are still active / visible to us.
@@ -594,6 +598,22 @@ struct FriendsTabView: View {
         open(PendingPeer(kind: "bot",
                          peerId: bot.id,
                          displayName: bot.display_name))
+    }
+
+    private func bot(for peer: PendingPeer) -> Bot? {
+        guard peer.kind == "bot",
+              let pick = bots.first(where: { $0.id == peer.peerId }) else {
+            return nil
+        }
+        return Bot(
+            id: pick.id,
+            display_name: pick.display_name,
+            access_mode: nil,
+            model: pick.model_id,
+            visibility: pick.visibility,
+            creator_id: pick.creator_id,
+            voice_call_enabled: pick.voice_call_enabled
+        )
     }
 
     /// Push a "chat with self" conv. Materialises server-side via the
@@ -1338,4 +1358,3 @@ private struct BotRowOwnerActions: ViewModifier {
         }
     }
 }
-

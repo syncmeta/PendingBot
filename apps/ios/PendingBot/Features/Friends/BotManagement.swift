@@ -159,7 +159,8 @@ struct CreateBotSheet: View {
                 display_name: row.display_name,
                 model_id: row.model_id,
                 visibility: row.visibility,
-                creator_id: row.creator_id
+                creator_id: row.creator_id,
+                voice_call_enabled: false
             )
             onCreated(pick)
             Haptics.success()
