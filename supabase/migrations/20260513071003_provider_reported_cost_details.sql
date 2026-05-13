@@ -43,12 +43,12 @@ SELECT
     coalesce(sum(cache_read_tokens), 0) AS cache_read_tokens,
     coalesce(sum(cache_write_tokens), 0) AS cache_write_tokens,
     coalesce(sum(cost_usd), 0) AS cost_usd,
-    coalesce(sum(tool_cost_usd), 0) AS tool_cost_usd,
     avg(latency_ms)::int AS avg_latency_ms,
     count(*) FILTER (WHERE status = 'error') AS error_count,
     count(*) FILTER (WHERE jsonb_array_length(coalesce(route_trace, '[]'::jsonb)) > 1)
         AS fallback_count,
-    coalesce(sum(estimated_cost_usd), 0) AS estimated_cost_usd
+    coalesce(sum(estimated_cost_usd), 0) AS estimated_cost_usd,
+    coalesce(sum(tool_cost_usd), 0) AS tool_cost_usd
 FROM pendingbot.audit_log
 GROUP BY 1, 2, 3, 4, 5, 6;
 
@@ -65,9 +65,9 @@ SELECT
     coalesce(sum(cache_read_tokens), 0) AS cache_read_tokens,
     coalesce(sum(cache_write_tokens), 0) AS cache_write_tokens,
     coalesce(sum(cost_usd), 0) AS cost_usd,
-    coalesce(sum(tool_cost_usd), 0) AS tool_cost_usd,
     avg(latency_ms)::int AS avg_latency_ms,
     count(*) FILTER (WHERE status = 'error') AS error_count,
-    coalesce(sum(estimated_cost_usd), 0) AS estimated_cost_usd
+    coalesce(sum(estimated_cost_usd), 0) AS estimated_cost_usd,
+    coalesce(sum(tool_cost_usd), 0) AS tool_cost_usd
 FROM pendingbot.audit_log
 GROUP BY 1, 2, 3, 4, 5;
