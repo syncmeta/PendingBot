@@ -6,6 +6,7 @@ import type {
   ChatCompletionTool,
 } from 'openai/resources/chat/completions';
 import type { Env } from '../../types';
+import type { Json } from '../../db/schema';
 import { serviceClient } from '../supabase';
 import {
   FallbackError,
@@ -73,9 +74,104 @@ function couldStillBeSilent(s: string): boolean {
   return SILENT_TOKEN.startsWith(s);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function stringField(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
+function firstCodeLine(code: string): string | null {
+  return code
+    .split('\n')
+    .map((line) => line.trim())
+    .find((line) => line.length > 0)
+    ?.slice(0, 120) ?? null;
+}
+
+function toolInputPreview(name: string, payload: Record<string, unknown>): string | null {
+  const query = stringField(payload.query);
+  if (query) return query;
+  const url = stringField(payload.url);
+  if (url) return url;
+  const skillName = stringField(payload.skill_name);
+  if (skillName) return skillName;
+  const codePreview = stringField(payload.code_preview);
+  if (codePreview) return codePreview;
+  const code = stringField(payload.code);
+  if (code) return firstCodeLine(code) ?? `${code.length} chars`;
+  const reason = name === 'request_execute_code' ? stringField(payload.reason) : null;
+  if (reason) return reason;
+  if (typeof payload.chars === 'number') return `${payload.chars} chars`;
+  return null;
+}
+
+function toolResultSummary(payload: Record<string, unknown>): string | null {
+  if (typeof payload.count === 'number') return `${payload.count} 条结果`;
+  const title = stringField(payload.title);
+  if (title) return title;
+  const skillName = stringField(payload.skill_name);
+  if (skillName) return skillName;
+  const decision = stringField(payload.decision);
+  if (decision) {
+    if (decision === 'approved') return '已批准';
+    if (decision === 'denied') return '已拒绝';
+    if (decision === 'timeout') return '已超时';
+    return decision;
+  }
+  if (typeof payload.exit_code === 'number') {
+    const tail = stringField(payload.stdout_tail);
+    return tail ? `exit ${payload.exit_code} · ${tail}` : `exit ${payload.exit_code}`;
+  }
+  if (typeof payload.chars === 'number') {
+    return payload.chars > 0 ? `${payload.chars} 字回答` : '暂无相关记忆';
+  }
+  return null;
+}
+
+async function persistToolTraceMetadata(
+  supa: ReturnType<typeof serviceClient>,
+  parentMessageId: string,
+  toolTrace: PersistedToolTraceEvent[],
+  citations: Citation[],
+): Promise<void> {
+  if (toolTrace.length === 0 && citations.length === 0) return;
+
+  const { data, error: readError } = await supa
+    .from('messages')
+    .select('metadata')
+    .eq('id', parentMessageId)
+    .maybeSingle();
+  if (readError) return;
+
+  const existing = isRecord(data?.metadata) ? data.metadata : {};
+  const next: Record<string, Json> = {
+    ...(existing as Record<string, Json>),
+    tool_trace: toolTrace.map((ev) => ({ ...ev })),
+  };
+  if (citations.length > 0) {
+    next.tool_citations = citations.map((c) => ({ ...c }));
+  }
+
+  await supa
+    .from('messages')
+    .update({ metadata: next })
+    .eq('id', parentMessageId);
+}
+
 // Maximum agent-loop iterations (one LLM call + tool execution per iteration).
 // Bounds runaway tool spam if the model keeps calling tools indefinitely.
 const MAX_TOOL_ROUNDS = 6;
+
+type PersistedToolTraceEvent = {
+  name: string;
+  input: string | null;
+  result_summary: string | null;
+  result_error: string | null;
+  result_detail: string | null;
+  done: boolean;
+};
 
 export interface RunChatTurnInput {
   env: Env;
@@ -333,9 +429,75 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   // each call lands in audit_web_tool_calls.
   const webMeter = await WebToolMeter.create(supa);
 
+  const toolTrace: PersistedToolTraceEvent[] = [];
+  let toolTracePersist = Promise.resolve();
+  const queueToolTracePersist = () => {
+    const traceSnapshot = toolTrace.map((ev) => ({ ...ev }));
+    const citationSnapshot = citations.map((c) => ({ ...c }));
+    toolTracePersist = toolTracePersist
+      .catch(() => undefined)
+      .then(() => persistToolTraceMetadata(
+        supa,
+        parentMessageId,
+        traceSnapshot,
+        citationSnapshot,
+      ))
+      .catch(() => undefined);
+  };
+  const emitToolEvent = (event: string, data: unknown) => {
+    if (isRecord(data)) {
+      if (event === 'tool_call') {
+        const name = String(data.name ?? '');
+        if (name) {
+          toolTrace.push({
+            name,
+            input: toolInputPreview(name, data),
+            result_summary: null,
+            result_error: null,
+            result_detail: null,
+            done: false,
+          });
+          queueToolTracePersist();
+        }
+      } else if (event === 'tool_result') {
+        const name = String(data.name ?? '');
+        let idx = -1;
+        for (let i = toolTrace.length - 1; i >= 0; i--) {
+          if (toolTrace[i].name === name && !toolTrace[i].done) {
+            idx = i;
+            break;
+          }
+        }
+        const ev: PersistedToolTraceEvent = idx >= 0
+          ? toolTrace[idx]
+          : {
+              name,
+              input: null,
+              result_summary: null,
+              result_error: null,
+              result_detail: null,
+              done: false,
+            };
+        ev.result_summary = toolResultSummary(data);
+        ev.result_error = stringField(data.error);
+        ev.result_detail = stringField(data.detail) ?? stringField(data.stderr);
+        ev.done = true;
+        if (idx >= 0) {
+          toolTrace[idx] = ev;
+        } else {
+          toolTrace.push(ev);
+        }
+        queueToolTracePersist();
+      } else if (event === 'citations') {
+        queueToolTracePersist();
+      }
+    }
+    emit(event, data);
+  };
+
   const toolCtx: ToolCtx = {
     signal: ac.signal,
-    emit,
+    emit: emitToolEvent,
     userId,
     botId: bot.id,
     botModelId: bot.model_id,
@@ -552,6 +714,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     if (trimmed !== SILENT_TOKEN) {
       emit(finalStatus, { bubble_group_id: bubbleGroupId, total_content: totalContent });
     }
+    await toolTracePersist;
 
     await recordAudit(supa, route, {
       userId,
@@ -607,6 +770,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
         })();
     console.error('[bot-reply] runChatTurn failed:', err);
     emit(status, { message });
+    await toolTracePersist;
 
     // Audit the failed turn so error rate / fallback metrics in the
     // panel see this. Two error paths:

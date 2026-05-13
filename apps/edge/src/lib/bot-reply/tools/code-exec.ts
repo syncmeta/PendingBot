@@ -241,10 +241,17 @@ export async function requestExecuteCodeTool(
   // Tell iOS to render the confirmation card. Includes the full code
   // (so user can preview), reason, ETA, and the request id (used both
   // for visual identity and to address the POST decision endpoint).
+  const codePreview = code
+    .split('\n')
+    .map((l) => l.trim())
+    .find((l) => l.length > 0)
+    ?.slice(0, 80) ?? '';
   ctx.emit('tool_call', {
     name: 'request_execute_code',
     request_id: requestId,
     code,
+    chars: code.length,
+    code_preview: codePreview,
     reason,
     estimated_seconds: estimated,
   });

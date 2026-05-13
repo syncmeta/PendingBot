@@ -59,4 +59,26 @@ extension ConversationView {
             return nil
         }
     }
+
+    func parsePersistedToolTrace(from any: AnyJSON?) -> ([ToolTraceEvent], [MessageCitation])? {
+        guard let any else { return nil }
+        do {
+            let data = try JSONEncoder().encode(any)
+            if data.count == 4, String(data: data, encoding: .utf8) == "null" {
+                return nil
+            }
+            let metadata = try JSONDecoder().decode(ToolTraceMetadata.self, from: data)
+            let events = metadata.tool_trace ?? []
+            let citations = metadata.tool_citations ?? []
+            if events.isEmpty && citations.isEmpty { return nil }
+            return (events, citations)
+        } catch {
+            return nil
+        }
+    }
+}
+
+private struct ToolTraceMetadata: Decodable {
+    let tool_trace: [ToolTraceEvent]?
+    let tool_citations: [MessageCitation]?
 }

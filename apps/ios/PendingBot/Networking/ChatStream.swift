@@ -211,10 +211,29 @@ private func decode(eventName: String, dataJSON: String) -> ChatEvent {
         // Each tool emits its own input shape — flatten the relevant
         // field into a single string so the UI doesn't have to switch.
         let input: String? = {
+            if name == "request_execute_code" {
+                let reason = (json["reason"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                let preview = (json["code_preview"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                    ?? (json["code"] as? String)?
+                        .split(separator: "\n")
+                        .map { $0.trimmingCharacters(in: .whitespaces) }
+                        .first(where: { !$0.isEmpty })
+                        .map { String($0) }
+                if let reason, let preview { return "\(reason) · \(preview)" }
+                if let preview { return preview }
+                if let reason { return reason }
+            }
             if let q = json["query"] as? String, !q.isEmpty { return q }
             if let u = json["url"] as? String, !u.isEmpty { return u }
             if let s = json["skill_name"] as? String, !s.isEmpty { return s }
             if let p = json["code_preview"] as? String, !p.isEmpty { return p }
+            if let c = json["code"] as? String, !c.isEmpty {
+                return c
+                    .split(separator: "\n")
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                    .first(where: { !$0.isEmpty })
+                    .map { String($0) }
+            }
             if let c = json["chars"] as? Int { return "\(c) chars" }
             return nil
         }()
@@ -229,6 +248,14 @@ private func decode(eventName: String, dataJSON: String) -> ChatEvent {
             if let n = json["count"] as? Int { return "\(n) 条结果" }
             if let t = json["title"] as? String, !t.isEmpty { return t }
             if let s = json["skill_name"] as? String, !s.isEmpty { return s }
+            if let decision = json["decision"] as? String, !decision.isEmpty {
+                switch decision {
+                case "approved": return "已批准"
+                case "denied": return "已拒绝"
+                case "timeout": return "已超时"
+                default: return decision
+                }
+            }
             if let exit = json["exit_code"] as? Int {
                 let tail = (json["stdout_tail"] as? String)
                     .flatMap { $0.isEmpty ? nil : $0 }

@@ -3,7 +3,7 @@ import SwiftUI
 /// One tool invocation captured from the SSE turn — `tool_call` creates it,
 /// the matching `tool_result` fills in the result. Multiple tools per turn
 /// stack into the trace shown above the bot's reply.
-struct ToolTraceEvent: Identifiable, Hashable {
+struct ToolTraceEvent: Identifiable, Hashable, Decodable {
     let id: UUID
     let name: String
     var input: String?
@@ -22,17 +22,76 @@ struct ToolTraceEvent: Identifiable, Hashable {
         self.done = false
     }
 
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case input
+        case resultSummary = "result_summary"
+        case resultError = "result_error"
+        case resultDetail = "result_detail"
+        case done
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = (try? c.decode(UUID.self, forKey: .id)) ?? UUID()
+        self.name = try c.decode(String.self, forKey: .name)
+        self.input = try c.decodeIfPresent(String.self, forKey: .input)
+        self.resultSummary = try c.decodeIfPresent(String.self, forKey: .resultSummary)
+        self.resultError = try c.decodeIfPresent(String.self, forKey: .resultError)
+        self.resultDetail = try c.decodeIfPresent(String.self, forKey: .resultDetail)
+        self.done = (try? c.decode(Bool.self, forKey: .done)) ?? false
+    }
+
     /// Per-tool human label. Mirrors the Scroll runner phrasing so the two
     /// surfaces (chat trace + scroll progress) read consistently.
     var headline: String {
         switch name {
         case "search_web":        return "搜索"
+        case "search_chat_history": return "搜会话"
         case "read_url":          return "翻网页"
         case "execute_code":      return "跑代码"
+        case "request_execute_code": return "请求跑代码"
         case "create_skill":      return "新增技能"
         case "query_user_memory": return "查记忆"
+        case "read_attachment":   return "读附件"
+        case "set_my_group_nickname": return "改群昵称"
+        case "set_bot_group_description": return "改群简介"
         default:                  return name
         }
+    }
+
+    var iconName: String {
+        switch name {
+        case "search_web", "search_chat_history": return "magnifyingglass"
+        case "read_url": return "safari"
+        case "execute_code", "request_execute_code": return "terminal"
+        case "create_skill": return "sparkles"
+        case "query_user_memory": return "brain.head.profile"
+        case "read_attachment": return "paperclip"
+        default: return "hammer"
+        }
+    }
+
+    var inputLabel: String {
+        switch name {
+        case "search_web": return "搜索词"
+        case "search_chat_history": return "会话搜索词"
+        case "read_url": return "网址"
+        case "execute_code", "request_execute_code": return "代码"
+        case "query_user_memory": return "记忆查询"
+        case "create_skill": return "技能名"
+        default: return "输入"
+        }
+    }
+
+    var isCodeLike: Bool {
+        name == "execute_code" || name == "request_execute_code"
+    }
+
+    var stateText: String {
+        if !done { return "进行中" }
+        return resultError == nil ? "完成" : "出错"
     }
 
     /// One-line preview shown next to the headline. For finished events we
@@ -92,7 +151,7 @@ struct ToolTraceView: View {
             }
             .padding(.leading, Theme.Metrics.gutter + 30 + 8) // align under bot avatar gutter
             .padding(.trailing, Theme.Metrics.gutter)
-            .padding(.vertical, 2)
+            .padding(.vertical, 4)
             .onAppear {
                 // Mid-stream mount → reflect pending state immediately so
                 // an in-flight search unfolds without the user tapping.
@@ -115,18 +174,21 @@ struct ToolTraceView: View {
             withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
             Haptics.tap()
         } label: {
-            HStack(spacing: 6) {
+            HStack(spacing: 8) {
                 if isLive && !events.allSatisfy(\.done) {
                     TypingDots()
                 } else {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Theme.Palette.inkMuted)
+                    Image(systemName: headerIcon)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.Palette.accent)
+                        .frame(width: 22, height: 22)
+                        .background(Theme.Palette.accentBg, in: Circle())
                 }
                 Text(summary)
-                    .font(Theme.Fonts.footnote)
-                    .foregroundStyle(Theme.Palette.inkMuted)
+                    .font(Theme.Fonts.rounded(size: 13, weight: .medium))
+                    .foregroundStyle(Theme.Palette.ink)
                     .lineLimit(1)
+                    .truncationMode(.tail)
                 Image(systemName: "chevron.right")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(Theme.Palette.inkMuted)
@@ -138,9 +200,28 @@ struct ToolTraceView: View {
         .buttonStyle(.plain)
     }
 
+    private var headerIcon: String {
+        if events.contains(where: { $0.isCodeLike }) { return "terminal" }
+        if events.contains(where: { $0.name == "read_url" }) { return "safari" }
+        if events.contains(where: { $0.name == "query_user_memory" }) { return "brain.head.profile" }
+        return "magnifyingglass"
+    }
+
     /// Header summary string — collapses by tool kind so 3 search_web + 2
     /// read_url come through as "搜索 3 · 翻网页 2", not a flat count.
     private var summary: String {
+        if events.count == 1, let ev = events.first {
+            var base = ev.headline
+            if (ev.name == "search_web" || ev.name == "search_chat_history"),
+               let input = ev.input,
+               !input.isEmpty {
+                base += "：\(input)"
+            }
+            if isLive && !ev.done { return base + "中…" }
+            if !citations.isEmpty { return base + " · \(citations.count) 条结果" }
+            if ev.done, let result = ev.resultSummary, !result.isEmpty { return base + " · \(result)" }
+            return base
+        }
         var counts: [(String, Int, Bool)] = [] // (label, count, anyPending)
         for ev in events {
             let label = ev.headline
@@ -170,42 +251,79 @@ struct ToolTraceView: View {
     /// Per-tool process rows — query string, spinner, result snippet.
     /// Toggled by the expand/collapse chevron; hidden once the turn ends.
     private var eventList: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             ForEach(events) { ev in
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text("·")
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
+                HStack(alignment: .top, spacing: 9) {
+                    Image(systemName: ev.iconName)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(ev.resultError == nil ? Theme.Palette.accent : Color(hex: 0xB14B3C))
+                        .frame(width: 24, height: 24)
+                        .background(
+                            (ev.resultError == nil ? Theme.Palette.accentBg : Color(hex: 0xF4DDD6)),
+                            in: Circle()
+                        )
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 8) {
                             Text(ev.headline)
-                                .font(Theme.Fonts.caption)
-                                .foregroundStyle(Theme.Palette.inkMuted)
+                                .font(Theme.Fonts.rounded(size: 12, weight: .semibold))
+                                .foregroundStyle(Theme.Palette.ink)
+                            Text(ev.stateText)
+                                .font(Theme.Fonts.rounded(size: 10, weight: .semibold))
+                                .foregroundStyle(ev.resultError == nil ? Theme.Palette.inkMuted : Color(hex: 0xB14B3C))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Theme.Palette.surfaceMuted.opacity(0.8), in: Capsule())
                             if !ev.done {
                                 TypingDots()
                             }
+                            Spacer(minLength: 0)
                         }
-                        if let preview = ev.preview, !preview.isEmpty {
-                            Text(preview)
-                                .font(Theme.Fonts.footnote)
-                                .foregroundStyle(Theme.Palette.ink)
-                                .lineLimit(ev.resultError == nil ? 2 : nil)
-                                .truncationMode(.tail)
-                                .multilineTextAlignment(.leading)
-                                .fixedSize(horizontal: false, vertical: true)
+                        if let input = ev.input, !input.isEmpty {
+                            labelledBlock(label: ev.inputLabel, text: input, mono: ev.isCodeLike)
+                        }
+                        if ev.done {
+                            if let error = ev.resultError, !error.isEmpty {
+                                labelledBlock(label: "结果", text: error, mono: false, isError: true)
+                            } else if let summary = ev.resultSummary, !summary.isEmpty {
+                                labelledBlock(label: "结果", text: summary, mono: ev.isCodeLike)
+                            }
                         }
                         if let detail = ev.resultDetail, !detail.isEmpty {
-                            Text(softWrapped(detail))
-                                .font(Theme.Fonts.monoSmall)
-                                .foregroundStyle(Theme.Palette.inkMuted)
-                                .textSelection(.enabled)
-                                .multilineTextAlignment(.leading)
-                                .fixedSize(horizontal: false, vertical: true)
+                            labelledBlock(label: "详情", text: softWrapped(detail), mono: true, isMuted: true)
                         }
                     }
                 }
+                .padding(10)
+                .background(Theme.Palette.surface.opacity(0.92), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Theme.Palette.hairline, lineWidth: 1)
+                )
             }
         }
-        .padding(.leading, 2)
+    }
+
+    private func labelledBlock(
+        label: String,
+        text: String,
+        mono: Bool,
+        isError: Bool = false,
+        isMuted: Bool = false
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label)
+                .font(Theme.Fonts.rounded(size: 10, weight: .semibold))
+                .foregroundStyle(Theme.Palette.inkMuted)
+            Text(softWrapped(text))
+                .font(mono ? Theme.Fonts.monoSmall : Theme.Fonts.footnote)
+                .foregroundStyle(isError ? Color(hex: 0xB14B3C) : (isMuted ? Theme.Palette.inkMuted : Theme.Palette.ink))
+                .lineLimit(mono ? 4 : 3)
+                .truncationMode(.tail)
+                .textSelection(.enabled)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// Search results — the citations the bot's `[N]` markers resolve to.

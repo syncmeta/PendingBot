@@ -1,5 +1,6 @@
 import Foundation
 import OSLog
+import Supabase
 
 // Pure data-fetch helpers used by ConversationView's .task / .onAppear
 // callbacks. Each populates one @State slice (messages, skills, lookbacks,
@@ -313,6 +314,7 @@ extension ConversationView {
                 let status: String?
                 let created_at: String
                 let citations: [MessageCitation]?
+                let metadata: AnyJSON?
             }
             // Most role='log' rows are server-only (review step entries)
             // and never render. The one exception is log_kind='recall':
@@ -323,7 +325,7 @@ extension ConversationView {
             // "我撤回了 几分钟前 的一条消息" without further look-ups.
             let rows: [Row] = try await SupabaseStack.shared
                 .from("messages")
-                .select("id, client_message_id, conversation_id, user_id, sender_bot_id, role, log_kind, log_payload, attachments, content, content_partial, status, created_at, citations")
+                .select("id, client_message_id, conversation_id, user_id, sender_bot_id, role, log_kind, log_payload, attachments, content, content_partial, status, created_at, citations, metadata")
                 .eq("conversation_id", value: conversation.id)
                 .order("created_at", ascending: true)
                 .limit(200)
@@ -334,6 +336,8 @@ extension ConversationView {
             viewMessages.reserveCapacity(rows.count)
             cacheRows.reserveCapacity(rows.count)
             var citationsLoaded: [String: [MessageCitation]] = [:]
+            var tracesLoaded: [String: [ToolTraceEvent]] = [:]
+            var traceCitationsLoaded: [String: [MessageCitation]] = [:]
             var attachmentIdsLoaded: [String: [String]] = [:]
             for r in rows {
                 let secs = ServerTimestamp.epochSeconds(r.created_at, default: 0)
@@ -360,6 +364,10 @@ extension ConversationView {
                         ))
                     }
                     continue
+                }
+                if let (events, citations) = parsePersistedToolTrace(from: r.metadata) {
+                    if !events.isEmpty { tracesLoaded[r.id] = events }
+                    if !citations.isEmpty { traceCitationsLoaded[r.id] = citations }
                 }
                 let senderType: String = r.role == "bot" ? "bot" : "user"
                 let senderId = r.role == "bot" ? (r.sender_bot_id ?? "") : (r.user_id ?? "")
@@ -398,6 +406,8 @@ extension ConversationView {
             // Merge — keep any in-flight live snapshots that the SSE turn
             // already populated; history's persisted values win on key collision.
             self.citationsByMsgId.merge(citationsLoaded) { _, new in new }
+            self.tracesByUserMsgId.merge(tracesLoaded) { _, new in new }
+            self.traceCitationsByUserMsgId.merge(traceCitationsLoaded) { _, new in new }
             self.attachmentIdsByMsgId.merge(attachmentIdsLoaded) { _, new in new }
             LocalDatabase.shared.upsertMessages(cacheRows)
         } catch {
