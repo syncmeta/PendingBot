@@ -27,11 +27,21 @@
 // provider's native vision input shape — we don't need to hand-roll
 // Anthropic-native `image` blocks.
 
-import type { ChatCompletionContentPart } from 'openai/resources/chat/completions';
+import type {
+  ChatCompletionContentPart,
+  ChatCompletionCreateParamsNonStreaming,
+} from 'openai/resources/chat/completions';
 import type { Env } from '../types';
 import type { SupabaseClient } from '../lib/supabase';
 import { patchCachedAttachment } from '../lib/attachment-cache';
-import { recordAudit, withFallback, usageFromCompletion } from './router';
+import {
+  captureModelCall,
+  FallbackError,
+  recordAudit,
+  type RawModelCall,
+  usageFromCompletion,
+  withFallback,
+} from './router';
 
 /// When the conversation's main model lacks vision and no
 /// per-conversation override is set, fall back to this slug. Picked
@@ -263,6 +273,7 @@ export async function summarizeAttachment(
     return;
   }
 
+  const rawModelCalls: RawModelCall[] = [];
   try {
     const callResult = await withFallback(
       supa,
@@ -273,7 +284,7 @@ export async function summarizeAttachment(
         maxAttempts: SUMMARY_MAX_ATTEMPTS,
       },
       async (route) => {
-        const completion = await route.client.chat.completions.create({
+        const request = {
           model: route.modelToCall,
           messages: [
             {
@@ -289,7 +300,13 @@ export async function summarizeAttachment(
           // the prompt tells them to.
           response_format: { type: 'json_object' },
           temperature: 0.2,
-        });
+        } as ChatCompletionCreateParamsNonStreaming;
+        const completion = await captureModelCall(
+          rawModelCalls,
+          route,
+          { taskType: 'attachment_summary', request },
+          () => route.client.chat.completions.create(request),
+        );
         return completion;
       },
     );
@@ -309,6 +326,7 @@ export async function summarizeAttachment(
       status: 'success',
       ...usage,
       routeTrace: callResult.routeTrace,
+      rawModelCalls,
       env,
       metadata: {
         attachment_id: attachmentId,
@@ -353,6 +371,26 @@ export async function summarizeAttachment(
     const message =
       err instanceof Error ? err.message : String(err) || 'unknown error';
     console.warn('[vision] summarize failed', attachmentId, message);
+    if (err instanceof FallbackError || rawModelCalls.length > 0) {
+      await recordAudit(supa, err instanceof FallbackError ? err.lastRoute : null, {
+        userId: deps.userId,
+        conversationId: deps.conversationId,
+        taskType: 'attachment_summary',
+        startedAt,
+        status: 'error',
+        errorClass: err instanceof FallbackError
+          ? err.routeTrace[err.routeTrace.length - 1]?.error_class ?? 'unknown'
+          : err instanceof Error ? err.name : 'unknown',
+        routeTrace: err instanceof FallbackError ? err.routeTrace : undefined,
+        rawModelCalls,
+        env,
+        metadata: {
+          attachment_id: attachmentId,
+          vision_model: picked.slug,
+          vision_reason: picked.reason,
+        },
+      });
+    }
     await supa
       .from('attachments')
       .update({
@@ -428,6 +466,7 @@ export async function readAttachmentForTool(
 
   const userQuestion = question.trim().slice(0, 500) || '请详细描述这张图片。';
 
+  const rawModelCalls: RawModelCall[] = [];
   try {
     const callResult = await withFallback(
       supa,
@@ -437,8 +476,8 @@ export async function readAttachmentForTool(
         taskType: 'attachment_read',
         maxAttempts: SUMMARY_MAX_ATTEMPTS,
       },
-      async (route) =>
-        route.client.chat.completions.create({
+      async (route) => {
+        const request = {
           model: route.modelToCall,
           messages: [
             {
@@ -450,7 +489,11 @@ export async function readAttachmentForTool(
             },
           ],
           temperature: 0.3,
-        }),
+        } as ChatCompletionCreateParamsNonStreaming;
+        return captureModelCall(rawModelCalls, route, { taskType: 'attachment_read', request }, () =>
+          route.client.chat.completions.create(request),
+        );
+      },
     );
     const completion = callResult.result;
     const text = completion.choices?.[0]?.message?.content ?? '';
@@ -465,6 +508,7 @@ export async function readAttachmentForTool(
       status: 'success',
       ...usage,
       routeTrace: callResult.routeTrace,
+      rawModelCalls,
       env,
       metadata: {
         attachment_id: attachmentId,
@@ -477,6 +521,26 @@ export async function readAttachmentForTool(
   } catch (err) {
     const message =
       err instanceof Error ? err.message : String(err) || 'unknown error';
+    if (err instanceof FallbackError || rawModelCalls.length > 0) {
+      await recordAudit(supa, err instanceof FallbackError ? err.lastRoute : null, {
+        userId: deps.userId,
+        conversationId: deps.conversationId,
+        taskType: 'attachment_read',
+        startedAt,
+        status: 'error',
+        errorClass: err instanceof FallbackError
+          ? err.routeTrace[err.routeTrace.length - 1]?.error_class ?? 'unknown'
+          : err instanceof Error ? err.name : 'unknown',
+        routeTrace: err instanceof FallbackError ? err.routeTrace : undefined,
+        rawModelCalls,
+        env,
+        metadata: {
+          attachment_id: attachmentId,
+          vision_model: picked.slug,
+          vision_reason: picked.reason,
+        },
+      });
+    }
     return { error: message };
   }
 }

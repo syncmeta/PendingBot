@@ -2,6 +2,7 @@ import type OpenAI from 'openai';
 import type {
   ChatCompletionMessageParam,
   ChatCompletionMessageToolCall,
+  ChatCompletionCreateParamsNonStreaming,
   ChatCompletionTool,
 } from 'openai/resources/chat/completions';
 import {
@@ -186,6 +187,7 @@ export interface ScrollLoopDeps {
   initialUserContent: string;
   webSearch: (query: string) => Promise<WebSearchResult[]>;
   fetchUrl: (url: string) => Promise<WebReadResult>;
+  captureModelCall?: <T>(request: unknown, run: () => Promise<T>) => Promise<T>;
   // Fires after each turn (model call + any tool calls). Use it for
   // progress persistence (worker) or stdout logging (replay script).
   onTurn?: (info: ScrollTurnInfo) => Promise<void> | void;
@@ -418,6 +420,7 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
     onTurn,
     onActivity,
     isCancelled,
+    captureModelCall,
   } = deps;
   // Heartbeat helper — sets progress.current_activity and flushes via
   // onActivity. Snapshot is a shallow copy so the runner can update its
@@ -484,13 +487,16 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
     }
 
     await setActivity(turn === 0 ? '主探索者在思考开场…' : '主探索者在想下一步…');
-    const completion = await openai.chat.completions.create({
+    const request = {
       model: modelId,
       messages,
       tools: TOOLS,
       tool_choice: 'auto',
       parallel_tool_calls: true,
-    });
+    } as ChatCompletionCreateParamsNonStreaming;
+    const completion = captureModelCall
+      ? await captureModelCall(request, () => openai.chat.completions.create(request))
+      : await openai.chat.completions.create(request);
     lastGenerationId = completion.id;
     // OpenAI / OpenRouter expose prompt-cache hits via
     // `prompt_tokens_details.cached_tokens`. Anthropic via OpenRouter

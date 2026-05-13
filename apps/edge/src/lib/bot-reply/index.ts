@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type {
   ChatCompletionContentPart,
+  ChatCompletionCreateParamsStreaming,
   ChatCompletionMessageParam,
   ChatCompletionMessageToolCall,
   ChatCompletionTool,
@@ -11,6 +12,8 @@ import { serviceClient } from '../supabase';
 import {
   FallbackError,
   recordAudit,
+  startRawModelCall,
+  type RawModelCall,
   type ResolvedRoute,
   type RouteTraceEntry,
   usageFromCompletion,
@@ -413,6 +416,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   let bubblesInserted = 0;
   const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   const providerUsage = {};
+  const rawModelCalls: RawModelCall[] = [];
   // Local heuristic estimates, summed across tool-rounds. Sanity-check
   // signal alongside provider-reported usage; persisted to audit_log.
   const est = { input: 0, output: 0 };
@@ -576,89 +580,109 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
           taskType: 'message_reply',
           preferProvider: input.providerOverride ?? undefined,
         },
-        (r) =>
-          r.client.chat.completions.create(
-            {
-              model: r.modelToCall,
-              messages,
-              tools: turnTools,
-              tool_choice: 'auto',
-              stream: true,
-              stream_options: { include_usage: true },
-            },
-            { signal: ac.signal },
-          ),
+        async (r) => {
+          const request = {
+            model: r.modelToCall,
+            messages,
+            tools: turnTools,
+            tool_choice: 'auto',
+            stream: true,
+            stream_options: { include_usage: true },
+          } as ChatCompletionCreateParamsStreaming;
+          const raw = startRawModelCall(rawModelCalls, r, {
+            taskType: 'message_reply',
+            request,
+          });
+          try {
+            const stream = await r.client.chat.completions.create(
+              request,
+              { signal: ac.signal },
+            );
+            return { stream, raw };
+          } catch (err) {
+            raw.finishError(err);
+            throw err;
+          }
+        },
       );
-      const stream = roundOpen.result;
+      const { stream, raw } = roundOpen.result;
       route = roundOpen.route;
       routeTrace.push(...roundOpen.routeTrace);
 
       // Per-call accumulators.
       let assistantContent = '';
       const toolCalls: ChatCompletionMessageToolCall[] = [];
+      const streamChunks: unknown[] = [];
 
-      for await (const chunk of stream) {
-        if (ac.signal.aborted) break;
-        const id = (chunk as { id?: string }).id;
-        if (id && !generationId) generationId = id;
+      try {
+        for await (const chunk of stream) {
+          streamChunks.push(chunk);
+          if (ac.signal.aborted) break;
+          const id = (chunk as { id?: string }).id;
+          if (id && !generationId) generationId = id;
 
-        const delta = chunk.choices?.[0]?.delta;
+          const delta = chunk.choices?.[0]?.delta;
 
-        // Visible content delta.
-        const contentDelta = delta?.content ?? '';
-        if (contentDelta) {
-          pending += contentDelta;
-          totalContent += contentDelta;
-          assistantContent += contentDelta;
+          // Visible content delta.
+          const contentDelta = delta?.content ?? '';
+          if (contentDelta) {
+            pending += contentDelta;
+            totalContent += contentDelta;
+            assistantContent += contentDelta;
 
-          // Hold token emissions while the cumulative reply could still be
-          // the [SILENT] control token. Once the prefix breaks, flush.
-          if (!couldStillBeSilent(totalContent.trimStart())) {
-            const toEmit = totalContent.slice(emittedLen);
-            if (toEmit) emit('token', { delta: toEmit });
-            emittedLen = totalContent.length;
-          }
-
-          // Drain complete bubbles from pending.
-          // eslint-disable-next-line no-constant-condition
-          while (true) {
-            const idx = pending.indexOf(BUBBLE_DELIMITER);
-            if (idx === -1) break;
-            const bubble = pending.slice(0, idx).trim();
-            pending = pending.slice(idx + BUBBLE_DELIMITER.length);
-            if (bubble) await emitBubble(bubble);
-          }
-        }
-
-        // Tool call streaming. OpenAI emits tool_calls in chunks; merge by
-        // index so we end up with one entry per call.
-        const tcDeltas = delta?.tool_calls;
-        if (tcDeltas) {
-          for (const tc of tcDeltas) {
-            const i = tc.index;
-            if (!toolCalls[i]) {
-              toolCalls[i] = {
-                id: tc.id ?? '',
-                type: 'function',
-                function: { name: '', arguments: '' },
-              };
+            // Hold token emissions while the cumulative reply could still be
+            // the [SILENT] control token. Once the prefix breaks, flush.
+            if (!couldStillBeSilent(totalContent.trimStart())) {
+              const toEmit = totalContent.slice(emittedLen);
+              if (toEmit) emit('token', { delta: toEmit });
+              emittedLen = totalContent.length;
             }
-            if (tc.id) toolCalls[i].id = tc.id;
-            if (tc.function?.name) toolCalls[i].function.name = tc.function.name;
-            if (tc.function?.arguments) {
-              toolCalls[i].function.arguments += tc.function.arguments;
+
+            // Drain complete bubbles from pending.
+            // eslint-disable-next-line no-constant-condition
+            while (true) {
+              const idx = pending.indexOf(BUBBLE_DELIMITER);
+              if (idx === -1) break;
+              const bubble = pending.slice(0, idx).trim();
+              pending = pending.slice(idx + BUBBLE_DELIMITER.length);
+              if (bubble) await emitBubble(bubble);
             }
           }
-        }
 
-        if (chunk.usage) {
-          const u = usageFromCompletion(chunk.usage, chunk);
-          usage.input += u.inputTokens ?? 0;
-          usage.output += u.outputTokens ?? 0;
-          usage.cacheRead += u.cacheReadTokens ?? 0;
-          usage.cacheWrite += u.cacheWriteTokens ?? 0;
-          mergeProviderUsageDetails(providerUsage, u);
+          // Tool call streaming. OpenAI emits tool_calls in chunks; merge by
+          // index so we end up with one entry per call.
+          const tcDeltas = delta?.tool_calls;
+          if (tcDeltas) {
+            for (const tc of tcDeltas) {
+              const i = tc.index;
+              if (!toolCalls[i]) {
+                toolCalls[i] = {
+                  id: tc.id ?? '',
+                  type: 'function',
+                  function: { name: '', arguments: '' },
+                };
+              }
+              if (tc.id) toolCalls[i].id = tc.id;
+              if (tc.function?.name) toolCalls[i].function.name = tc.function.name;
+              if (tc.function?.arguments) {
+                toolCalls[i].function.arguments += tc.function.arguments;
+              }
+            }
+          }
+
+          if (chunk.usage) {
+            const u = usageFromCompletion(chunk.usage, chunk);
+            usage.input += u.inputTokens ?? 0;
+            usage.output += u.outputTokens ?? 0;
+            usage.cacheRead += u.cacheReadTokens ?? 0;
+            usage.cacheWrite += u.cacheWriteTokens ?? 0;
+            mergeProviderUsageDetails(providerUsage, u);
+          }
         }
+        raw.finishSuccess({ stream_chunks: streamChunks });
+      } catch (err) {
+        raw.finishError(err);
+        throw err;
       }
 
       // Local estimate of what the model emitted this round — visible
@@ -739,6 +763,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       // and self-chat just ignore it.
       env,
       webTools: webMeter.snapshot(),
+      rawModelCalls,
       metadata: {
         bot_id: bot.id,
         status: finalStatus,
@@ -816,6 +841,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
         // still be billed — the upstream provider already consumed
         // those quotas regardless of how the turn ended.
         webTools: webMeter.snapshot(),
+        rawModelCalls,
         metadata: { bot_id: bot.id, status, message: message.slice(0, 200) },
       });
     } catch (auditErr) {

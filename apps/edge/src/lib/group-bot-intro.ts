@@ -1,8 +1,12 @@
-import { resolveRoute, usageFromCompletion } from '../llm/router';
-import type { ProviderUsageDetails } from '../llm/provider-usage';
+import {
+  captureModelCall,
+  recordAudit,
+  resolveRoute,
+  type RawModelCall,
+  usageFromCompletion,
+} from '../llm/router';
+import type { ChatCompletionCreateParamsNonStreaming } from 'openai/resources/chat/completions';
 import { serviceClient } from './supabase';
-import { splitAndDebit } from './group-billing';
-import { getMarkup, usdToPnd } from './billing';
 import type { Env } from '../types';
 
 // First-version "call me when..." description, generated immediately
@@ -114,9 +118,10 @@ export async function generateInitialBotDescription(input: {
   let description = '';
   let inputTokens = 0;
   let outputTokens = 0;
-  let providerUsage: ProviderUsageDetails = {};
+  let auditLogId: string | null = null;
+  const rawModelCalls: RawModelCall[] = [];
   try {
-    const completion = await route.client.chat.completions.create({
+    const request = {
       model: route.modelToCall,
       messages: [
         { role: 'system', content: systemPrompt },
@@ -124,14 +129,44 @@ export async function generateInitialBotDescription(input: {
       ],
       temperature: 0.4,
       max_tokens: MAX_DESC_TOKENS,
-    });
+    } as ChatCompletionCreateParamsNonStreaming;
+    const completion = await captureModelCall(
+      rawModelCalls,
+      route,
+      { taskType: 'group_bot_intro', request },
+      () => route.client.chat.completions.create(request),
+    );
     const usage = usageFromCompletion(completion.usage, completion);
     inputTokens = usage.inputTokens ?? 0;
     outputTokens = usage.outputTokens ?? 0;
     description = (completion.choices?.[0]?.message?.content ?? '').trim();
-    providerUsage = usage;
+    auditLogId = await recordAudit(supa, route, {
+      conversationId,
+      taskType: 'group_bot_intro',
+      startedAt,
+      generationId: completion.id,
+      status: 'success',
+      inputTokens,
+      outputTokens,
+      rawModelCalls,
+      env,
+      metadata: { bot_id: botId, valid_description: description.length >= 4 },
+      ...usage,
+    });
   } catch (err) {
     console.error('[group-bot-intro] LLM call failed', err);
+    await recordAudit(supa, route, {
+      conversationId,
+      taskType: 'group_bot_intro',
+      startedAt,
+      status: 'error',
+      errorClass: err instanceof Error ? err.name : 'unknown',
+      inputTokens,
+      outputTokens,
+      rawModelCalls,
+      env,
+      metadata: { bot_id: botId },
+    });
     return await fallbackInsert(supa, conversationId, botId, botName);
   }
 
@@ -140,40 +175,6 @@ export async function generateInitialBotDescription(input: {
   }
   // Cap the length defensively — DB CHECK is 4000 chars.
   if (description.length > 1000) description = description.slice(0, 1000);
-
-  // Persist + audit. We write the audit row first so we have an id
-  // to feed splitAndDebit (M6 hook).
-  const estimatedCost = route.alias
-    ? computeCost(route.alias, inputTokens, outputTokens)
-    : null;
-  const cost = providerUsage.providerCostUsd ?? null;
-  const markup = await getMarkup(supa);
-  const pnd = usdToPnd(cost, markup);
-
-  const { data: audit } = await supa
-    .from('audit_log')
-    .insert({
-      conversation_id: conversationId,
-      task_type: 'group_bot_intro',
-      model_id: route.modelToCall,
-      provider_id: route.provider.id,
-      model_alias_id: route.alias?.aliasId ?? null,
-      input_tokens: inputTokens,
-      output_tokens: outputTokens,
-      total_tokens: inputTokens + outputTokens,
-      cost_usd: cost,
-      estimated_cost_usd: estimatedCost,
-      reported_provider: providerUsage.reportedProvider ?? null,
-      cost_details: providerUsage.costDetails ?? null,
-      prompt_tokens_details: providerUsage.promptTokensDetails ?? null,
-      completion_tokens_details: providerUsage.completionTokensDetails ?? null,
-      cost_credits: pnd,
-      latency_ms: Date.now() - startedAt,
-      status: 'success',
-      billing_status: 'pending',
-    })
-    .select('id')
-    .single();
 
   // Insert the description row. ON CONFLICT to be idempotent on retries.
   await supa
@@ -188,17 +189,9 @@ export async function generateInitialBotDescription(input: {
       { onConflict: 'conversation_id,bot_id', ignoreDuplicates: true },
     );
 
-  // Split the bot-intro cost across active group members. Errors
-  // are swallowed so a billing failure doesn't undo the description.
-  if (audit?.id) {
-    await splitAndDebit({ env, auditLogId: audit.id as string }).catch((err) =>
-      console.warn('[group-bot-intro] splitAndDebit failed', err),
-    );
-  }
-
   return {
     description,
-    auditLogId: (audit?.id as string | undefined) ?? null,
+    auditLogId,
   };
 }
 
@@ -221,16 +214,4 @@ async function fallbackInsert(
       { onConflict: 'conversation_id,bot_id', ignoreDuplicates: true },
     );
   return { description: fallback, auditLogId: null };
-}
-
-function computeCost(
-  alias: { inputPrice: number | null; outputPrice: number | null },
-  inputTokens: number,
-  outputTokens: number,
-): number | null {
-  if (alias.inputPrice == null && alias.outputPrice == null) return null;
-  return (
-    ((alias.inputPrice ?? 0) * inputTokens) / 1_000_000 +
-    ((alias.outputPrice ?? 0) * outputTokens) / 1_000_000
-  );
 }

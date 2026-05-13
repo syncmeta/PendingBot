@@ -1,8 +1,11 @@
 import type { Env } from '../types';
+import type { ChatCompletionCreateParamsNonStreaming } from 'openai/resources/chat/completions';
 import { serviceClient } from './supabase';
 import {
+  captureModelCall,
   FallbackError,
   recordAudit,
+  type RawModelCall,
   usageFromCompletion,
   withFallback,
 } from '../llm/router';
@@ -50,19 +53,24 @@ export async function runTitle(input: RunTitleInput): Promise<void> {
     .join('\n');
   if (!transcript) return;
 
+  const rawModelCalls: RawModelCall[] = [];
   try {
     const { result: completion, route, routeTrace } = await withFallback(
       supa,
       env,
       { modelSlug: botModelId, taskType: 'title' },
-      (r) =>
-        r.client.chat.completions.create({
+      (r) => {
+        const request = {
           model: r.modelToCall,
           messages: [
             { role: 'system', content: getPrompt('title') },
             { role: 'user', content: transcript },
           ],
-        }),
+        } as ChatCompletionCreateParamsNonStreaming;
+        return captureModelCall(rawModelCalls, r, { taskType: 'title', request }, () =>
+          r.client.chat.completions.create(request),
+        );
+      },
     );
 
     const raw = (completion.choices[0]?.message?.content ?? '').trim();
@@ -81,6 +89,7 @@ export async function runTitle(input: RunTitleInput): Promise<void> {
       generationId: completion.id,
       status: 'success',
       routeTrace,
+      rawModelCalls,
       ...usageFromCompletion(completion.usage, completion),
     });
   } catch (err) {
@@ -97,6 +106,7 @@ export async function runTitle(input: RunTitleInput): Promise<void> {
         errorClass:
           err.routeTrace[err.routeTrace.length - 1]?.error_class ?? 'unknown',
         routeTrace: err.routeTrace,
+        rawModelCalls,
       });
     }
   }

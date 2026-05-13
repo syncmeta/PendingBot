@@ -1,9 +1,13 @@
-import { resolveRoute, recordAudit, usageFromCompletion } from './router';
-import type { ProviderUsageDetails } from './provider-usage';
+import {
+  captureModelCall,
+  resolveRoute,
+  recordAudit,
+  type RawModelCall,
+  usageFromCompletion,
+} from './router';
+import type { ChatCompletionCreateParamsNonStreaming } from 'openai/resources/chat/completions';
 import { serviceClient } from '../lib/supabase';
 import { estimateTokens } from './token-estimate';
-import { splitAndDebit } from '../lib/group-billing';
-import { getMarkup, usdToPnd } from '../lib/billing';
 import { loadPrompt } from '../i18n/prompts';
 import type { Env } from '../types';
 
@@ -187,8 +191,9 @@ export async function runGroupRouter(
   let inputTokens = 0;
   let outputTokens = 0;
   let auditLogId: string | null = null;
+  const rawModelCalls: RawModelCall[] = [];
   try {
-    const completion = await route.client.chat.completions.create({
+    const request = {
       model: route.modelToCall,
       messages: [
         { role: 'system', content: systemPrompt },
@@ -197,7 +202,13 @@ export async function runGroupRouter(
       response_format: { type: 'json_object' },
       temperature: 0.2,
       max_tokens: 400,
-    });
+    } as ChatCompletionCreateParamsNonStreaming;
+    const completion = await captureModelCall(
+      rawModelCalls,
+      route,
+      { taskType: 'group_router', request },
+      () => route.client.chat.completions.create(request),
+    );
     const usage = usageFromCompletion(completion.usage, completion);
     inputTokens = usage.inputTokens ?? 0;
     outputTokens = usage.outputTokens ?? 0;
@@ -209,19 +220,17 @@ export async function runGroupRouter(
       console.warn('[group-router] non-JSON response from small model', raw, err);
     }
 
-    auditLogId = await writeAuditAndGetId(supa, route, {
+    auditLogId = await recordAudit(supa, route, {
       conversationId,
+      taskType: 'group_router',
       startedAt,
       inputTokens,
       outputTokens,
-      providerUsage: usage,
       status: 'success',
+      rawModelCalls,
+      env,
+      ...usage,
     });
-    if (auditLogId) {
-      await splitAndDebit({ env, auditLogId }).catch((err) =>
-        console.warn('[group-router] splitAndDebit failed', err),
-      );
-    }
   } catch (err) {
     console.error('[group-router] LLM call failed', err);
     await recordAudit(supa, route, {
@@ -230,6 +239,8 @@ export async function runGroupRouter(
       startedAt,
       status: 'error',
       errorClass: err instanceof Error ? err.name : 'unknown',
+      rawModelCalls,
+      env,
     });
     return { wakeBots: [], rationale: 'classifier error', auditLogId: null };
   }
@@ -247,72 +258,4 @@ export async function runGroupRouter(
     typeof decision?.rationale === 'string' ? decision.rationale : '(no rationale)';
 
   return { wakeBots, rationale, auditLogId };
-}
-
-// recordAudit returns void; we need the inserted row's id for cost
-// splitting in M6. Bypass and write the row directly with the same
-// shape recordAudit produces, then return id.
-async function writeAuditAndGetId(
-  supa: ReturnType<typeof serviceClient>,
-  route: Awaited<ReturnType<typeof resolveRoute>>,
-  opts: {
-    conversationId: string;
-    startedAt: number;
-    inputTokens: number;
-    outputTokens: number;
-    providerUsage?: ProviderUsageDetails;
-    status: 'success' | 'error';
-  },
-): Promise<string | null> {
-  const total = opts.inputTokens + opts.outputTokens;
-  const estimatedCost = route.alias
-    ? computeRouterCost(route.alias, opts.inputTokens, opts.outputTokens)
-    : null;
-  const cost = opts.providerUsage?.providerCostUsd ?? null;
-  const markup = await getMarkup(supa);
-  const pnd = usdToPnd(cost, markup);
-  const { data, error } = await supa
-    .from('audit_log')
-    .insert({
-      conversation_id: opts.conversationId,
-      task_type: 'group_router',
-      model_id: route.modelToCall,
-      provider_id: route.provider.id,
-      model_alias_id: route.alias?.aliasId ?? null,
-      input_tokens: opts.inputTokens,
-      output_tokens: opts.outputTokens,
-      total_tokens: total,
-      cost_usd: cost,
-      estimated_cost_usd: estimatedCost,
-      reported_provider: opts.providerUsage?.reportedProvider ?? null,
-      cost_details: opts.providerUsage?.costDetails ?? null,
-      prompt_tokens_details: opts.providerUsage?.promptTokensDetails ?? null,
-      completion_tokens_details: opts.providerUsage?.completionTokensDetails ?? null,
-      // splitAndDebit reads cost_credits — must be filled at insert
-      // time, not after.
-      cost_credits: pnd,
-      latency_ms: Date.now() - opts.startedAt,
-      status: opts.status,
-      // Pre-billing: leave billing_status='pending'; splitAndDebit
-      // flips it to 'billed' / 'unbilled' / 'free' once split rows land.
-      billing_status: 'pending',
-    })
-    .select('id')
-    .single();
-  if (error || !data) {
-    console.error('[group-router] audit_log insert failed', error);
-    return null;
-  }
-  return data.id as string;
-}
-
-function computeRouterCost(
-  alias: { inputPrice: number | null; outputPrice: number | null },
-  inputTokens: number,
-  outputTokens: number,
-): number | null {
-  if (alias.inputPrice == null && alias.outputPrice == null) return null;
-  const inCost = (alias.inputPrice ?? 0) * inputTokens / 1_000_000;
-  const outCost = (alias.outputPrice ?? 0) * outputTokens / 1_000_000;
-  return inCost + outCost;
 }

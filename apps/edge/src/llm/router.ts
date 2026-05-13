@@ -428,9 +428,126 @@ export interface AuditCallOpts extends AuditUsage {
   /// and sum(costUsd) folds into audit_log.tool_cost_usd + cost_credits
   /// so the single billing_debit covers both LLM and tool spend.
   webTools?: WebToolUsage[];
+  /// Raw model API payloads captured at the actual provider-call sites.
+  /// One audit_log row can cover multiple model calls (tool loops,
+  /// scroll collaborator/write phases), so raw payloads are stored in a
+  /// child table with per-call sequence numbers.
+  rawModelCalls?: RawModelCall[];
 }
 
 const PER_MILLION = 1_000_000;
+
+export interface RawModelCall {
+  taskType: string;
+  providerId: string;
+  providerSlug: string;
+  modelAliasId: string | null;
+  modelId: string;
+  status: 'success' | 'error';
+  request: Json;
+  response: Json | null;
+  errorClass?: string | null;
+  errorMessage?: string | null;
+  latencyMs: number;
+}
+
+export interface RawModelCallDraft {
+  finishSuccess(response: unknown): void;
+  finishError(err: unknown): void;
+}
+
+export function startRawModelCall(
+  sink: RawModelCall[] | undefined,
+  route: ResolvedRoute,
+  opts: { taskType: string; request: unknown },
+): RawModelCallDraft {
+  const startedAt = Date.now();
+  const rawRequest = toJsonValue(opts.request);
+  let finished = false;
+
+  const finish = (
+    status: 'success' | 'error',
+    response: unknown,
+    err?: unknown,
+  ) => {
+    if (finished || !sink) return;
+    finished = true;
+    const cls = err ? classifyError(err) : null;
+    sink.push({
+      taskType: opts.taskType,
+      providerId: route.provider.id,
+      providerSlug: route.provider.slug,
+      modelAliasId: route.alias?.aliasId ?? null,
+      modelId: route.modelToCall,
+      status,
+      request: rawRequest,
+      response: response == null ? null : toJsonValue(response),
+      errorClass: cls?.errorClass ?? null,
+      errorMessage: cls?.message ? cls.message.slice(0, 2000) : null,
+      latencyMs: Date.now() - startedAt,
+    });
+  };
+
+  return {
+    finishSuccess: (response) => finish('success', response),
+    finishError: (err) => finish('error', serializeThrown(err), err),
+  };
+}
+
+export async function captureModelCall<T>(
+  sink: RawModelCall[] | undefined,
+  route: ResolvedRoute,
+  opts: { taskType: string; request: unknown },
+  runner: () => Promise<T>,
+): Promise<T> {
+  const raw = startRawModelCall(sink, route, opts);
+  try {
+    const response = await runner();
+    raw.finishSuccess(response);
+    return response;
+  } catch (err) {
+    raw.finishError(err);
+    throw err;
+  }
+}
+
+function toJsonValue(value: unknown): Json {
+  try {
+    const normalized = JSON.parse(
+      JSON.stringify(value, (_key, v) => {
+        if (typeof v === 'bigint') return v.toString();
+        if (typeof v === 'function' || typeof v === 'symbol') return undefined;
+        if (v instanceof Error) return serializeThrown(v);
+        return v;
+      }),
+    ) as Json | undefined;
+    return normalized === undefined ? null : normalized;
+  } catch {
+    return { unserializable: String(value) };
+  }
+}
+
+function serializeThrown(err: unknown): Json {
+  if (err instanceof Error) {
+    const e = err as Error & {
+      status?: number;
+      code?: string;
+      type?: string;
+      request_id?: string;
+      error?: unknown;
+    };
+    return {
+      name: e.name,
+      message: e.message,
+      status: e.status ?? null,
+      code: e.code ?? null,
+      type: e.type ?? null,
+      request_id: e.request_id ?? null,
+      error: e.error == null ? null : toJsonValue(e.error),
+    };
+  }
+  return toJsonValue(err);
+}
 
 // Cost in USD given an alias's per-1M-token prices. Returns null when
 // the alias has no pricing rows (e.g. fresh alias added without prices)
@@ -474,7 +591,7 @@ export async function recordAudit(
   // model_alias_id / cost_usd just stay null.
   route: ResolvedRoute | null,
   opts: AuditCallOpts,
-): Promise<void> {
+): Promise<string | null> {
   const estimatedCost = route?.alias ? computeCost(route.alias, opts) : null;
   const llmCost = opts.providerCostUsd ?? null;
   // Web-tool spend (Brave / Tavily / Exa / Serper / Firecrawl) accrues
@@ -500,15 +617,19 @@ export async function recordAudit(
     (opts.audioInputTokens ?? 0) +
     (opts.audioOutputTokens ?? 0);
 
+  const isGroupTarget = opts.conversationId && opts.env
+    ? await isGroupConversation(supa, opts.conversationId)
+    : false;
+
   // Billing status preview. The actual billed/unbilled flip happens in
   // billing_debit (when called below); we plant a sensible initial value
   // so audit rows that never debit (no userId, zero PND, error status)
   // settle into a final state on insert.
-  //   - 'free'    : no userId at all (system-triggered call w/o owner)
-  //   - 'skipped' : has userId but pnd == 0 (error / no usage / no
+  //   - 'free'    : no billable owner/group target at all
+  //   - 'skipped' : has billable target but pnd == 0 (error / no usage / no
   //                 alias pricing AND no tool spend)
   //   - 'pending' : will be flipped to billed/unbilled by billing_debit
-  const initialBilling: 'free' | 'skipped' | 'pending' = !opts.userId
+  const initialBilling: 'free' | 'skipped' | 'pending' = !opts.userId && !isGroupTarget
     ? 'free'
     : pnd <= 0
       ? 'skipped'
@@ -568,7 +689,7 @@ export async function recordAudit(
     .single();
   if (error) {
     console.warn('[audit_log insert]', error.message);
-    return;
+    return null;
   }
 
   // Per-call web-tool breakdown. Best-effort: an insert error here
@@ -595,6 +716,32 @@ export async function recordAudit(
     }
   }
 
+  const rawCalls = opts.rawModelCalls ?? [];
+  if (rawCalls.length > 0 && inserted?.id) {
+    const auditId = inserted.id as string;
+    const rows = rawCalls.map((c, idx) => ({
+      audit_log_id: auditId,
+      seq: idx + 1,
+      task_type: c.taskType,
+      provider_id: c.providerId,
+      provider_slug: c.providerSlug,
+      model_alias_id: c.modelAliasId,
+      model_id: c.modelId,
+      status: c.status,
+      error_class: c.errorClass ?? null,
+      error_message: c.errorMessage ?? null,
+      latency_ms: c.latencyMs,
+      raw_request: c.request,
+      raw_response: c.response,
+    }));
+    const { error: rawErr } = await supa
+      .from('audit_model_calls')
+      .insert(rows);
+    if (rawErr) {
+      console.warn('[audit_model_calls insert]', rawErr.message);
+    }
+  }
+
   // Post-insert debit. Errors are swallowed inside billingDebit /
   // splitAndDebit — never propagate billing-side failures back to the
   // LLM caller. The next pre-call gate handles consequences
@@ -604,10 +751,7 @@ export async function recordAudit(
     const auditId = inserted.id as string;
     // Branch on conv type: groups split across all participating
     // members, 1v1 / system tasks debit a single user.
-    const isGroup = opts.conversationId
-      ? await isGroupConversation(supa, opts.conversationId)
-      : false;
-    if (isGroup && opts.env) {
+    if (isGroupTarget && opts.env) {
       await splitAndDebit({ env: opts.env, auditLogId: auditId }).catch((err) =>
         console.warn('[recordAudit] splitAndDebit failed', err),
       );
@@ -621,6 +765,8 @@ export async function recordAudit(
       }
     }
   }
+
+  return (inserted?.id as string | undefined) ?? null;
 }
 
 // Cheap conv-type check used by recordAudit. We could push this into

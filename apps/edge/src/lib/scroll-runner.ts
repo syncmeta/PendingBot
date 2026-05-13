@@ -1,10 +1,15 @@
-import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
+import type {
+  ChatCompletionCreateParamsNonStreaming,
+  ChatCompletionMessageParam,
+} from 'openai/resources/chat/completions';
 import type { Env } from '../types';
 import type { Json } from '../db/schema';
 import { serviceClient } from './supabase';
 import {
+  captureModelCall as captureRawModelCall,
   recordAudit,
   resolveRoute,
+  type RawModelCall,
   type ResolvedRoute,
 } from '../llm/router';
 import {
@@ -236,6 +241,7 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
   // at the end so tool spend lands in audit_web_tool_calls and folds
   // into the billed credits.
   const webMeter = await WebToolMeter.create(supa);
+  const rawModelCalls: RawModelCall[] = [];
 
   try {
     // We pull bot first because everything else (context-window lookup,
@@ -362,6 +368,7 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
         );
       }
     }
+    const mainRoute = route;
 
     const collaboratorPrompt = getPrompt('scroll-collaborator');
     const transcript = history
@@ -373,8 +380,8 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
       : '';
 
     result = await runScrollLoop({
-      openai: route.client,
-      modelId: route.modelToCall,
+      openai: mainRoute.client,
+      modelId: mainRoute.modelToCall,
       systemPrompt: getPrompt('scroll'),
       initialUserContent: initialUser,
       webSearch: (query) =>
@@ -389,11 +396,13 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
           url,
           meter: webMeter,
         }),
+      captureModelCall: (request, run) =>
+        captureRawModelCall(rawModelCalls, mainRoute, { taskType: 'scroll', request }, run),
       hardCapTurns: settings.turnCap,
       simulateCollaboratorReply: collaboratorRoute
         ? async ({ turn, newMessages }) => {
             const turnSummary = formatTurnForCollaborator(newMessages);
-            const r = await collaboratorRoute!.client.chat.completions.create({
+            const request = {
               model: collaboratorRoute!.modelToCall,
               messages: [
                 { role: 'system', content: collaboratorPrompt },
@@ -405,7 +414,13 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
                     `请用"协作者"的身份给主探索者一个简短的回应（直接说话，不要写"协作者："开头）：`,
                 },
               ],
-            });
+            } as ChatCompletionCreateParamsNonStreaming;
+            const r = await captureRawModelCall(
+              rawModelCalls,
+              collaboratorRoute!,
+              { taskType: 'scroll_collaborator', request },
+              () => collaboratorRoute!.client.chat.completions.create(request),
+            );
             const text = r.choices[0]?.message?.content?.trim() ?? '';
             const promptDetails = (
               r.usage as { prompt_tokens_details?: { cached_tokens?: number } } | undefined
@@ -455,6 +470,18 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
         .from('scroll_runs')
         .update({ status: 'cancelled', finished_at: new Date().toISOString() })
         .eq('id', scrollRunId);
+      await auditRun(supa, route, {
+        userId,
+        conversationId,
+        scrollRunId,
+        botId,
+        usage: result.usage,
+        generationId: result.lastGenerationId,
+        startedAt,
+        action: 'cancelled',
+        webTools: webMeter.snapshot(),
+        rawModelCalls,
+      });
       return;
     }
 
@@ -498,13 +525,19 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
         .filter((s) => s.trim())
         .join('\n\n');
 
-      const writeResp = await route.client.chat.completions.create({
-        model: route.modelToCall,
+      const request = {
+        model: mainRoute.modelToCall,
         messages: [
           { role: 'system', content: getPrompt('scroll-write') },
           { role: 'user', content: writeUser },
         ],
-      });
+      } as ChatCompletionCreateParamsNonStreaming;
+      const writeResp = await captureRawModelCall(
+        rawModelCalls,
+        mainRoute,
+        { taskType: 'scroll_write', request },
+        () => mainRoute.client.chat.completions.create(request),
+      );
       writeArticle = (writeResp.choices[0]?.message?.content ?? '').trim();
       const writePromptDetails = (
         writeResp.usage as { prompt_tokens_details?: { cached_tokens?: number } } | undefined
@@ -540,6 +573,7 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
         startedAt,
         action: 'silent',
         webTools: webMeter.snapshot(),
+        rawModelCalls,
       });
       return;
     }
@@ -574,6 +608,7 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
       startedAt,
       action: 'memorial',
       webTools: webMeter.snapshot(),
+      rawModelCalls,
     });
   } catch (err) {
     console.error('[scroll-runner]', err);
@@ -614,6 +649,7 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
         status: 'error',
         errorClass: err instanceof Error ? err.name : 'unknown',
         webTools: webMeter.snapshot(),
+        rawModelCalls,
       });
     } catch (auditErr) {
       console.warn('[scroll-runner] audit on error failed:', auditErr);
@@ -678,10 +714,11 @@ interface AuditInput {
   usage: UsageStats;
   generationId?: string;
   startedAt: number;
-  action: 'memorial' | 'silent' | 'error';
+  action: 'memorial' | 'silent' | 'cancelled' | 'error';
   status?: 'success' | 'error';
   errorClass?: string | null;
   webTools?: WebToolUsage[];
+  rawModelCalls?: RawModelCall[];
 }
 
 async function auditRun(
@@ -709,6 +746,7 @@ async function auditRun(
     promptTokensDetails: i.usage.promptTokensDetails,
     completionTokensDetails: i.usage.completionTokensDetails,
     webTools: i.webTools,
+    rawModelCalls: i.rawModelCalls,
     metadata: { scroll_run_id: i.scrollRunId, bot_id: i.botId, action: i.action },
   });
 }

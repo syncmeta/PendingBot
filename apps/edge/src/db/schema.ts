@@ -313,6 +313,82 @@ export type Database = {
           },
         ]
       }
+      audit_model_calls: {
+        Row: {
+          audit_log_id: string
+          created_at: string
+          error_class: string | null
+          error_message: string | null
+          id: string
+          latency_ms: number
+          model_alias_id: string | null
+          model_id: string
+          provider_id: string | null
+          provider_slug: string
+          raw_request: Json
+          raw_response: Json | null
+          seq: number
+          status: string
+          task_type: string
+        }
+        Insert: {
+          audit_log_id: string
+          created_at?: string
+          error_class?: string | null
+          error_message?: string | null
+          id?: string
+          latency_ms: number
+          model_alias_id?: string | null
+          model_id: string
+          provider_id?: string | null
+          provider_slug: string
+          raw_request: Json
+          raw_response?: Json | null
+          seq: number
+          status: string
+          task_type: string
+        }
+        Update: {
+          audit_log_id?: string
+          created_at?: string
+          error_class?: string | null
+          error_message?: string | null
+          id?: string
+          latency_ms?: number
+          model_alias_id?: string | null
+          model_id?: string
+          provider_id?: string | null
+          provider_slug?: string
+          raw_request?: Json
+          raw_response?: Json | null
+          seq?: number
+          status?: string
+          task_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "audit_model_calls_alias_fkey"
+            columns: ["model_alias_id"]
+            isOneToOne: false
+            referencedRelation: "llm_model_aliases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "audit_model_calls_audit_fkey"
+            columns: ["audit_log_id"]
+            isOneToOne: false
+            referencedRelation: "audit_log"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "audit_model_calls_provider_fkey"
+            columns: ["provider_id"]
+            isOneToOne: false
+            referencedRelation: "llm_providers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       audit_log_splits: {
         Row: {
           audit_log_id: string
