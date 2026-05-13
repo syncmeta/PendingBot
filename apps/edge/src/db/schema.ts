@@ -190,16 +190,16 @@ export type Database = {
           billing_status: string
           cache_read_tokens: number
           cache_write_tokens: number
+          completion_tokens_details: Json | null
           conversation_id: string | null
           cost_credits: number
           cost_details: Json | null
           cost_usd: number | null
           created_at: string
           error_class: string | null
-          completion_tokens_details: Json | null
-          estimated_cost_usd: number | null
           est_input_tokens: number | null
           est_output_tokens: number | null
+          estimated_cost_usd: number | null
           generation_id: string | null
           id: string
           input_tokens: number
@@ -225,16 +225,16 @@ export type Database = {
           billing_status?: string
           cache_read_tokens?: number
           cache_write_tokens?: number
+          completion_tokens_details?: Json | null
           conversation_id?: string | null
           cost_credits?: number
           cost_details?: Json | null
           cost_usd?: number | null
           created_at?: string
           error_class?: string | null
-          completion_tokens_details?: Json | null
-          estimated_cost_usd?: number | null
           est_input_tokens?: number | null
           est_output_tokens?: number | null
+          estimated_cost_usd?: number | null
           generation_id?: string | null
           id?: string
           input_tokens?: number
@@ -260,16 +260,16 @@ export type Database = {
           billing_status?: string
           cache_read_tokens?: number
           cache_write_tokens?: number
+          completion_tokens_details?: Json | null
           conversation_id?: string | null
           cost_credits?: number
           cost_details?: Json | null
           cost_usd?: number | null
           created_at?: string
           error_class?: string | null
-          completion_tokens_details?: Json | null
-          estimated_cost_usd?: number | null
           est_input_tokens?: number | null
           est_output_tokens?: number | null
+          estimated_cost_usd?: number | null
           generation_id?: string | null
           id?: string
           input_tokens?: number
@@ -309,6 +309,41 @@ export type Database = {
             columns: ["provider_id"]
             isOneToOne: false
             referencedRelation: "llm_providers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      audit_log_splits: {
+        Row: {
+          audit_log_id: string
+          created_at: string
+          debit_status: string
+          debited_credits: number
+          share_bps: number
+          user_id: string
+        }
+        Insert: {
+          audit_log_id: string
+          created_at?: string
+          debit_status?: string
+          debited_credits?: number
+          share_bps: number
+          user_id: string
+        }
+        Update: {
+          audit_log_id?: string
+          created_at?: string
+          debit_status?: string
+          debited_credits?: number
+          share_bps?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "audit_log_splits_audit_fkey"
+            columns: ["audit_log_id"]
+            isOneToOne: false
+            referencedRelation: "audit_log"
             referencedColumns: ["id"]
           },
         ]
@@ -385,41 +420,6 @@ export type Database = {
             columns: ["provider_id"]
             isOneToOne: false
             referencedRelation: "llm_providers"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      audit_log_splits: {
-        Row: {
-          audit_log_id: string
-          created_at: string
-          debit_status: string
-          debited_credits: number
-          share_bps: number
-          user_id: string
-        }
-        Insert: {
-          audit_log_id: string
-          created_at?: string
-          debit_status?: string
-          debited_credits?: number
-          share_bps: number
-          user_id: string
-        }
-        Update: {
-          audit_log_id?: string
-          created_at?: string
-          debit_status?: string
-          debited_credits?: number
-          share_bps?: number
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "audit_log_splits_audit_fkey"
-            columns: ["audit_log_id"]
-            isOneToOne: false
-            referencedRelation: "audit_log"
             referencedColumns: ["id"]
           },
         ]
