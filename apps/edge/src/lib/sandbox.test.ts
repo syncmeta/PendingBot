@@ -49,4 +49,29 @@ describe('Daytona sandbox wrapper', () => {
     expect(isMissingDaytonaSandbox(err)).toBe(true);
     expect(isMissingDaytonaSandbox(new DaytonaApiError('bad key', 401, ''))).toBe(false);
   });
+
+  it('sends the required Python language on code-run requests', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ result: 'ok\n', exitCode: 0 }), { status: 200 }),
+    );
+
+    await expect(runPython(env, 'sandbox-1', 'print("ok")')).resolves.toEqual({
+      stdout: 'ok\n',
+      exitCode: 0,
+      truncated: false,
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith('https://daytona.test/toolbox/sandbox-1/process/code-run', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer test-key',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        code: 'print("ok")',
+        language: 'python',
+        timeout: 30_000,
+      }),
+    });
+  });
 });

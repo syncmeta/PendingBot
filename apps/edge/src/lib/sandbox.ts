@@ -91,6 +91,7 @@ export async function runPython(
 ): Promise<CodeRunResult> {
   const body = JSON.stringify({
     code,
+    language: 'python',
     timeout: opts.timeoutMs ?? CODE_RUN_TIMEOUT_MS,
   });
   const res = await daytonaFetch(
