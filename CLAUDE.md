@@ -25,11 +25,12 @@ git worktree add .claude/worktrees/<tail> -b <prefix>/<tail> main
 
 ## Merging back to main — pick by size
 
-Run from the feat worktree first to sync:
+Use local `main` as the source of truth. The user is the only developer; `origin/main` is only a backup remote, not the merge base for normal work. Do **not** run `git fetch origin` or rebase/merge against `origin/main` as part of the routine merge-back flow unless the user explicitly asks to sync with remote.
+
+Run from the feature worktree first to sync with local `main`:
 ```
-git fetch origin
-git rebase origin/main          # if branch was never pushed
-# OR: git merge origin/main     # if branch is already on remote
+git rebase main                 # if branch was never pushed
+# OR: git merge main            # if branch is already on remote
 ```
 
 Then judge size with:
@@ -141,7 +142,7 @@ git branch -d <branch>          # -d, not -D — refusal means there are unmerge
 
 ## Pushing main
 
-Pre-launch (no users yet): after merging into `main`, push it yourself with `git push origin main`. Re-add the "user pushes main themselves" gate after launch.
+Do not push `main` automatically after local merges. Remote is a backup; push only when the user asks to back up or sync.
 
 ## Deploys
 

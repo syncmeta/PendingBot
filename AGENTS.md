@@ -17,6 +17,7 @@ Use this together with `CLAUDE.md`, which is the detailed source of truth for th
   3. commit the change when appropriate,
   4. merge it back to `main` if the branch is clean and the merge is conflict-free.
 - Follow the merge sizing and check guidance in `CLAUDE.md`.
+- Treat local `main` as the source of truth. Do not fetch or rebase against `origin/main` during the normal merge flow; the remote is only a backup.
 - Do not auto-deploy after merging; deploys remain deliberate and user-initiated.
 
 ## Preserve user work
