@@ -295,7 +295,7 @@ export async function summarizeAttachment(
     );
     const completion = callResult.result;
     const text = completion.choices?.[0]?.message?.content ?? '';
-    const usage = usageFromCompletion(completion.usage);
+    const usage = usageFromCompletion(completion.usage, completion);
     const parsed = parseSummaryJson(typeof text === 'string' ? text : '');
 
     // Audit even on parse failure — we did spend tokens.
@@ -454,7 +454,7 @@ export async function readAttachmentForTool(
     );
     const completion = callResult.result;
     const text = completion.choices?.[0]?.message?.content ?? '';
-    const usage = usageFromCompletion(completion.usage);
+    const usage = usageFromCompletion(completion.usage, completion);
     await recordAudit(supa, callResult.route, {
       userId: deps.userId,
       conversationId: deps.conversationId,

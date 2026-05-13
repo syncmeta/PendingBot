@@ -4,6 +4,11 @@ import type {
   ChatCompletionMessageToolCall,
   ChatCompletionTool,
 } from 'openai/resources/chat/completions';
+import {
+  mergeProviderUsageDetails,
+  usageFromCompletion,
+  type ProviderUsageDetails,
+} from '../llm/provider-usage';
 import type { WebReadResult, WebSearchResult } from './web-types';
 
 // Pure agent-loop core for the 奏折 (scroll) feature. Lives here, not in
@@ -160,7 +165,7 @@ export type ScrollLoopExitReason =
   | 'cancelled'     // isCancelled() returned true
   | 'no_choice';    // openai returned an empty choices array
 
-export interface UsageStats {
+export interface UsageStats extends ProviderUsageDetails {
   input: number;
   output: number;
   total: number;
@@ -491,6 +496,7 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
     // `prompt_tokens_details.cached_tokens`. Anthropic via OpenRouter
     // also fills it. Cast through `unknown` because it's not in the
     // strict type for older SDK versions.
+    const providerUsage = usageFromCompletion(completion.usage, completion);
     const promptDetails = (completion.usage as { prompt_tokens_details?: { cached_tokens?: number } } | undefined)
       ?.prompt_tokens_details;
     const turnUsage: UsageStats = {
@@ -503,6 +509,7 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
     usage.output += turnUsage.output;
     usage.total += turnUsage.total;
     usage.cached += turnUsage.cached;
+    mergeProviderUsageDetails(usage, providerUsage);
 
     const msg = completion.choices[0]?.message;
     if (!msg) {
@@ -645,6 +652,7 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
           collaboratorUsage.output += out.usage.output;
           collaboratorUsage.total += out.usage.total;
           collaboratorUsage.cached += out.usage.cached;
+          mergeProviderUsageDetails(collaboratorUsage, out.usage);
         }
         const trimmed = out.text.trim();
         if (trimmed) {

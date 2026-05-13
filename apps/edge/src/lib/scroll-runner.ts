@@ -7,6 +7,10 @@ import {
   resolveRoute,
   type ResolvedRoute,
 } from '../llm/router';
+import {
+  mergeProviderUsageDetails,
+  usageFromCompletion,
+} from '../llm/provider-usage';
 import { ensurePromptOverridesLoaded, getPrompt } from '../llm/prompt-loader';
 import { estimateTokens } from '../llm/token-estimate';
 import { getBotMemory } from './memory';
@@ -406,6 +410,7 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
             const promptDetails = (
               r.usage as { prompt_tokens_details?: { cached_tokens?: number } } | undefined
             )?.prompt_tokens_details;
+            const providerUsage = usageFromCompletion(r.usage, r);
             return {
               text,
               usage: {
@@ -413,6 +418,7 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
                 output: r.usage?.completion_tokens ?? 0,
                 total: r.usage?.total_tokens ?? 0,
                 cached: promptDetails?.cached_tokens ?? 0,
+                ...providerUsage,
               },
             };
           }
@@ -450,6 +456,14 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
         .update({ status: 'cancelled', finished_at: new Date().toISOString() })
         .eq('id', scrollRunId);
       return;
+    }
+
+    if (result.collaboratorUsage) {
+      result.usage.input += result.collaboratorUsage.input;
+      result.usage.output += result.collaboratorUsage.output;
+      result.usage.total += result.collaboratorUsage.total;
+      result.usage.cached += result.collaboratorUsage.cached;
+      mergeProviderUsageDetails(result.usage, result.collaboratorUsage);
     }
 
     // Writer phase — only on a deliberate stop_exploring exit.
@@ -495,17 +509,20 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
       const writePromptDetails = (
         writeResp.usage as { prompt_tokens_details?: { cached_tokens?: number } } | undefined
       )?.prompt_tokens_details;
+      const writeProviderUsage = usageFromCompletion(writeResp.usage, writeResp);
       writeUsage = {
         input: writeResp.usage?.prompt_tokens ?? 0,
         output: writeResp.usage?.completion_tokens ?? 0,
         total: writeResp.usage?.total_tokens ?? 0,
         cached: writePromptDetails?.cached_tokens ?? 0,
+        ...writeProviderUsage,
       };
       writeGenerationId = writeResp.id;
       result.usage.input += writeUsage.input;
       result.usage.output += writeUsage.output;
       result.usage.total += writeUsage.total;
       result.usage.cached += writeUsage.cached;
+      mergeProviderUsageDetails(result.usage, writeUsage);
     }
 
     const finalProgress: ProgressState = { ...result.progress, phase: 'done' };
@@ -686,6 +703,11 @@ async function auditRun(
     outputTokens: i.usage.output,
     cacheReadTokens: cacheRead,
     cacheWriteTokens: 0,
+    providerCostUsd: i.usage.providerCostUsd,
+    reportedProvider: i.usage.reportedProvider,
+    costDetails: i.usage.costDetails,
+    promptTokensDetails: i.usage.promptTokensDetails,
+    completionTokensDetails: i.usage.completionTokensDetails,
     webTools: i.webTools,
     metadata: { scroll_run_id: i.scrollRunId, bot_id: i.botId, action: i.action },
   });

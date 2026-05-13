@@ -244,7 +244,7 @@ async function refreshBotNote(input: RefreshBotNoteInput): Promise<void> {
       status: 'success',
       routeTrace,
       metadata: { bot_id: botId, action: newBody ? 'update' : 'silent' },
-      ...usageFromCompletion(completion.usage),
+      ...usageFromCompletion(completion.usage, completion),
     });
     if (!newBody) return;
 
@@ -390,7 +390,7 @@ async function refreshChatMemo(input: RefreshChatMemoInput): Promise<void> {
       status: 'success',
       routeTrace,
       metadata: { bot_id: botId, action },
-      ...usageFromCompletion(completion.usage),
+      ...usageFromCompletion(completion.usage, completion),
     });
     if (action === 'silent') return;
 

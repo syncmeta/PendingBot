@@ -114,7 +114,7 @@ export async function runLookback(input: RunLookbackInput): Promise<void> {
     );
 
     const text = (completion.choices[0]?.message?.content ?? '').trim();
-    const usage = usageFromCompletion(completion.usage);
+    const usage = usageFromCompletion(completion.usage, completion);
     if (!text || text === SILENT_TOKEN) {
       await recordAudit(supa, route, {
         conversationId,

@@ -16,6 +16,7 @@ import {
   usageFromCompletion,
   withFallback,
 } from '../../llm/router';
+import { mergeProviderUsageDetails } from '../../llm/provider-usage';
 import { buildMessages, type BuildMessagesInput } from '../../llm/builder';
 import { resolveLocale } from '../../i18n/locale';
 import {
@@ -411,6 +412,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   let emittedLen = 0;
   let bubblesInserted = 0;
   const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  const providerUsage = {};
   // Local heuristic estimates, summed across tool-rounds. Sanity-check
   // signal alongside provider-reported usage; persisted to audit_log.
   const est = { input: 0, output: 0 };
@@ -650,11 +652,12 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
         }
 
         if (chunk.usage) {
-          const u = usageFromCompletion(chunk.usage);
+          const u = usageFromCompletion(chunk.usage, chunk);
           usage.input += u.inputTokens ?? 0;
           usage.output += u.outputTokens ?? 0;
           usage.cacheRead += u.cacheReadTokens ?? 0;
           usage.cacheWrite += u.cacheWriteTokens ?? 0;
+          mergeProviderUsageDetails(providerUsage, u);
         }
       }
 
@@ -728,6 +731,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       outputTokens: usage.output,
       cacheReadTokens: usage.cacheRead,
       cacheWriteTokens: usage.cacheWrite,
+      ...providerUsage,
       estInputTokens: est.input,
       estOutputTokens: est.output,
       // env passes through so recordAudit can route group convs into
@@ -804,6 +808,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
         outputTokens: usage.output,
         cacheReadTokens: usage.cacheRead,
         cacheWriteTokens: usage.cacheWrite,
+        ...providerUsage,
         estInputTokens: est.input,
         estOutputTokens: est.output,
         env,

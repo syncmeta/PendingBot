@@ -28,6 +28,7 @@ import { buildSystemPrompt, type BuildSystemPromptInput } from '../llm/builder';
 import { getBotMemory, getChatMemo } from '../lib/memory';
 import { resolveLocale } from '../i18n/locale';
 import { t } from '../i18n/index';
+import type { Json } from '../db/schema';
 import { UUID_RE } from '../lib/ids';
 import {
   endRealtimeSession,
@@ -473,6 +474,11 @@ const UsageBody = z.object({
   text_input_tokens: z.number().int().min(0).optional(),
   text_output_tokens: z.number().int().min(0).optional(),
   cached_input_tokens: z.number().int().min(0).optional(),
+  provider_cost_usd: z.number().min(0).optional(),
+  reported_provider: z.string().optional(),
+  cost_details: z.unknown().optional(),
+  prompt_tokens_details: z.unknown().optional(),
+  completion_tokens_details: z.unknown().optional(),
   latency_ms: z.number().int().min(0).optional(),
   turn_index: z.number().int().min(0),
 });
@@ -527,7 +533,9 @@ realtimeRoutes.post('/usage', async (c) => {
   }
 
   const startedAt = Date.now();
-  // recordAudit's computeCost pricing model:
+  // recordAudit still stores a local estimated_cost_usd using this
+  // pricing model, while billable cost_usd comes from provider_cost_usd
+  // when the client forwards a provider-reported value:
   //   audio_in  cost  = audio_input_tokens  × alias.audio_input_price /1M
   //   audio_out cost  = audio_output_tokens × alias.audio_output_price /1M
   //   text_in   cost  = text_input_tokens   × alias.input_price        /1M
@@ -556,6 +564,12 @@ realtimeRoutes.post('/usage', async (c) => {
     audioInputTokens: audioIn,
     audioOutputTokens: parsed.audio_output_tokens ?? 0,
     cacheReadTokens: parsed.cached_input_tokens ?? 0,
+    providerCostUsd: parsed.provider_cost_usd ?? null,
+    reportedProvider: parsed.reported_provider ?? null,
+    costDetails: (parsed.cost_details as Json | undefined) ?? null,
+    promptTokensDetails: (parsed.prompt_tokens_details as Json | undefined) ?? null,
+    completionTokensDetails:
+      (parsed.completion_tokens_details as Json | undefined) ?? null,
     metadata: {
       source: 'voice_call',
       session_id: parsed.session_id,

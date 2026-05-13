@@ -1,4 +1,5 @@
-import { resolveRoute } from '../llm/router';
+import { resolveRoute, usageFromCompletion } from '../llm/router';
+import type { ProviderUsageDetails } from '../llm/provider-usage';
 import { serviceClient } from './supabase';
 import { splitAndDebit } from './group-billing';
 import { getMarkup, usdToPnd } from './billing';
@@ -113,6 +114,7 @@ export async function generateInitialBotDescription(input: {
   let description = '';
   let inputTokens = 0;
   let outputTokens = 0;
+  let providerUsage: ProviderUsageDetails = {};
   try {
     const completion = await route.client.chat.completions.create({
       model: route.modelToCall,
@@ -123,9 +125,11 @@ export async function generateInitialBotDescription(input: {
       temperature: 0.4,
       max_tokens: MAX_DESC_TOKENS,
     });
-    inputTokens = completion.usage?.prompt_tokens ?? 0;
-    outputTokens = completion.usage?.completion_tokens ?? 0;
+    const usage = usageFromCompletion(completion.usage, completion);
+    inputTokens = usage.inputTokens ?? 0;
+    outputTokens = usage.outputTokens ?? 0;
     description = (completion.choices?.[0]?.message?.content ?? '').trim();
+    providerUsage = usage;
   } catch (err) {
     console.error('[group-bot-intro] LLM call failed', err);
     return await fallbackInsert(supa, conversationId, botId, botName);
@@ -139,9 +143,10 @@ export async function generateInitialBotDescription(input: {
 
   // Persist + audit. We write the audit row first so we have an id
   // to feed splitAndDebit (M6 hook).
-  const cost = route.alias
+  const estimatedCost = route.alias
     ? computeCost(route.alias, inputTokens, outputTokens)
     : null;
+  const cost = providerUsage.providerCostUsd ?? null;
   const markup = await getMarkup(supa);
   const pnd = usdToPnd(cost, markup);
 
@@ -157,6 +162,11 @@ export async function generateInitialBotDescription(input: {
       output_tokens: outputTokens,
       total_tokens: inputTokens + outputTokens,
       cost_usd: cost,
+      estimated_cost_usd: estimatedCost,
+      reported_provider: providerUsage.reportedProvider ?? null,
+      cost_details: providerUsage.costDetails ?? null,
+      prompt_tokens_details: providerUsage.promptTokensDetails ?? null,
+      completion_tokens_details: providerUsage.completionTokensDetails ?? null,
       cost_credits: pnd,
       latency_ms: Date.now() - startedAt,
       status: 'success',

@@ -62,7 +62,7 @@ export default async function AuditPage({
   let dailyQ = supa
     .from('v_audit_daily')
     .select(
-      'day, user_id, provider_id, model_id, task_type, request_count, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, avg_latency_ms, error_count, fallback_count',
+      'day, user_id, provider_id, model_id, task_type, request_count, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, tool_cost_usd, estimated_cost_usd, avg_latency_ms, error_count, fallback_count',
     )
     .gte('day', startBound)
     .lt('day', endBound);
@@ -80,7 +80,7 @@ export default async function AuditPage({
   let recentQ = supa
     .from('audit_log')
     .select(
-      'id, created_at, user_id, task_type, model_id, status, error_class, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, est_input_tokens, est_output_tokens, cost_usd, latency_ms',
+      'id, created_at, user_id, task_type, model_id, status, error_class, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, est_input_tokens, est_output_tokens, cost_usd, tool_cost_usd, estimated_cost_usd, reported_provider, cost_details, prompt_tokens_details, completion_tokens_details, latency_ms',
     )
     .order('created_at', { ascending: false })
     .limit(50);
@@ -89,6 +89,19 @@ export default async function AuditPage({
   if (filterProviderId) recentQ = recentQ.eq('provider_id', filterProviderId);
   if (filterModelId) recentQ = recentQ.eq('model_id', filterModelId);
   const { data: recent } = await recentQ;
+
+  let detailQ = supa
+    .from('audit_log')
+    .select(
+      'reported_provider, cost_details, prompt_tokens_details, completion_tokens_details',
+    )
+    .gte('created_at', startBound)
+    .lt('created_at', endBound);
+  if (filterUserId) detailQ = detailQ.eq('user_id', filterUserId);
+  if (filterTaskType) detailQ = detailQ.eq('task_type', filterTaskType);
+  if (filterProviderId) detailQ = detailQ.eq('provider_id', filterProviderId);
+  if (filterModelId) detailQ = detailQ.eq('model_id', filterModelId);
+  const { data: detailRows } = await detailQ;
 
   const rows = dailyRows ?? [];
 
@@ -101,6 +114,8 @@ export default async function AuditPage({
       acc.cache_read_tokens += r.cache_read_tokens ?? 0;
       acc.cache_write_tokens += r.cache_write_tokens ?? 0;
       acc.cost_usd += Number(r.cost_usd ?? 0);
+      acc.tool_cost_usd += Number(r.tool_cost_usd ?? 0);
+      acc.estimated_cost_usd += Number(r.estimated_cost_usd ?? 0);
       acc.errors += r.error_count ?? 0;
       acc.fallbacks += r.fallback_count ?? 0;
       if (r.avg_latency_ms != null) {
@@ -115,6 +130,8 @@ export default async function AuditPage({
       cache_read_tokens: 0,
       cache_write_tokens: 0,
       cost_usd: 0,
+      tool_cost_usd: 0,
+      estimated_cost_usd: 0,
       errors: 0,
       fallbacks: 0,
       latency_sum: 0,
@@ -131,7 +148,7 @@ export default async function AuditPage({
   for (const r of rows) {
     const day = fmtDay(r.day as unknown as string);
     const cur = byDay.get(day) ?? { day, cost_usd: 0, request_count: 0 };
-    cur.cost_usd += Number(r.cost_usd ?? 0);
+    cur.cost_usd += Number(r.cost_usd ?? 0) + Number(r.tool_cost_usd ?? 0);
     cur.request_count += r.request_count ?? 0;
     byDay.set(day, cur);
   }
@@ -143,7 +160,7 @@ export default async function AuditPage({
     for (const r of rows) {
       const k = (r[key] as string | null) ?? '(unknown)';
       const cur = m.get(k) ?? { key: k, cost_usd: 0, requests: 0 };
-      cur.cost_usd += Number(r.cost_usd ?? 0);
+      cur.cost_usd += Number(r.cost_usd ?? 0) + Number(r.tool_cost_usd ?? 0);
       cur.requests += r.request_count ?? 0;
       m.set(k, cur);
     }
@@ -153,6 +170,14 @@ export default async function AuditPage({
   const topUsers = topByDimension('user_id');
   const topTasks = topByDimension('task_type');
   const topModels = topByDimension('model_id');
+  const providerCounts = topCounts((detailRows ?? []).map((r) => r.reported_provider));
+  const costDetailStats = aggregateJsonNumbers((detailRows ?? []).map((r) => r.cost_details));
+  const promptDetailStats = aggregateJsonNumbers(
+    (detailRows ?? []).map((r) => r.prompt_tokens_details),
+  );
+  const completionDetailStats = aggregateJsonNumbers(
+    (detailRows ?? []).map((r) => r.completion_tokens_details),
+  );
 
   // Resolve user_ids → display_name for the top-users table.
   const userIds = topUsers.map((u) => u.key).filter((k) => k !== '(unknown)');
@@ -160,6 +185,7 @@ export default async function AuditPage({
     ? await supa.from('users').select('id, display_name, email').in('id', userIds)
     : { data: [] as { id: string; display_name: string; email: string | null }[] };
   const userMap = new Map((userRows ?? []).map((u) => [u.id, u]));
+  const totalCostUsd = summary.cost_usd + summary.tool_cost_usd;
 
   return (
     <main className="container py-10 space-y-10">
@@ -188,9 +214,12 @@ export default async function AuditPage({
         </p>
       )}
 
-      <section className="grid grid-cols-2 gap-4 md:grid-cols-4 lg:grid-cols-7">
+      <section className="grid grid-cols-2 gap-4 md:grid-cols-5 lg:grid-cols-10">
         <Stat label="请求数" value={fmtNumber(summary.requests)} />
-        <Stat label="花费 (USD)" value={fmtUsd(summary.cost_usd)} accent />
+        <Stat label="总花费 (USD)" value={fmtUsd(totalCostUsd)} accent />
+        <Stat label="LLM 厂商花费" value={fmtUsd(summary.cost_usd)} />
+        <Stat label="Web Tool 花费" value={fmtUsd(summary.tool_cost_usd)} />
+        <Stat label="估算花费" value={fmtUsd(summary.estimated_cost_usd)} />
         <Stat label="输入 tokens" value={fmtTokens(summary.input_tokens)} />
         <Stat label="输出 tokens" value={fmtTokens(summary.output_tokens)} />
         <Stat
@@ -248,6 +277,21 @@ export default async function AuditPage({
         />
       </section>
 
+      <section className="grid gap-4 md:grid-cols-4">
+        <DetailTable
+          title="厂商返回 provider"
+          rows={providerCounts}
+          valueKind="count"
+        />
+        <DetailTable title="cost_details" rows={costDetailStats} />
+        <DetailTable title="prompt_tokens_details" rows={promptDetailStats} valueKind="tokens" />
+        <DetailTable
+          title="completion_tokens_details"
+          rows={completionDetailStats}
+          valueKind="tokens"
+        />
+      </section>
+
       <section>
         <h2 className="text-sm font-medium">最近 50 条请求</h2>
         <div className="mt-3 overflow-x-auto rounded-lg border bg-card">
@@ -273,7 +317,11 @@ export default async function AuditPage({
                   Δout
                 </Th>
                 <Th className="text-right">cache↓</Th>
-                <Th className="text-right">cost</Th>
+                <Th>provider</Th>
+                <Th className="text-right">llm</Th>
+                <Th className="text-right">tool</Th>
+                <Th className="text-right">total</Th>
+                <Th className="text-right">est</Th>
                 <Th className="text-right">延迟</Th>
               </tr>
             </thead>
@@ -305,13 +353,23 @@ export default async function AuditPage({
                     <Ratio actual={r.output_tokens} estimate={r.est_output_tokens} />
                   </Td>
                   <Td className="text-right">{fmtTokens(r.cache_read_tokens)}</Td>
+                  <Td className="font-mono text-xs text-muted-foreground">
+                    {r.reported_provider ?? '—'}
+                  </Td>
                   <Td className="text-right">{fmtUsd(r.cost_usd)}</Td>
+                  <Td className="text-right">{fmtUsd(r.tool_cost_usd)}</Td>
+                  <Td className="text-right">
+                    {fmtUsd(Number(r.cost_usd ?? 0) + Number(r.tool_cost_usd ?? 0))}
+                  </Td>
+                  <Td className="text-right text-muted-foreground">
+                    {fmtUsd(r.estimated_cost_usd)}
+                  </Td>
                   <Td className="text-right">{fmtMs(r.latency_ms)}</Td>
                 </tr>
               ))}
               {(recent ?? []).length === 0 && (
                 <tr>
-                  <td colSpan={12} className="px-4 py-8 text-center text-muted-foreground">
+                  <td colSpan={17} className="px-4 py-8 text-center text-muted-foreground">
                     暂无 audit 记录
                   </td>
                 </tr>
@@ -381,6 +439,80 @@ function TopTable({
       )}
     </div>
   );
+}
+
+type DetailStat = { key: string; value: number };
+
+function DetailTable({
+  title,
+  rows,
+  valueKind = 'usd',
+}: {
+  title: string;
+  rows: DetailStat[];
+  valueKind?: 'usd' | 'tokens' | 'count';
+}) {
+  return (
+    <div className="rounded-lg border bg-card">
+      <h3 className="border-b px-4 py-2 text-sm font-medium">{title}</h3>
+      {rows.length === 0 ? (
+        <p className="px-4 py-6 text-sm text-muted-foreground">无数据</p>
+      ) : (
+        <table className="w-full text-sm">
+          <tbody>
+            {rows.slice(0, 12).map((r) => (
+              <tr key={r.key} className="border-b last:border-0">
+                <td className="px-4 py-2 font-mono text-xs">{r.key}</td>
+                <td className="px-4 py-2 text-right tabular-nums">
+                  {valueKind === 'usd'
+                    ? fmtUsd(r.value)
+                    : valueKind === 'tokens'
+                      ? fmtTokens(r.value)
+                      : fmtNumber(r.value)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+function topCounts(values: (string | null)[]): DetailStat[] {
+  const counts = new Map<string, number>();
+  for (const raw of values) {
+    const key = raw?.trim();
+    if (!key) continue;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([key, value]) => ({ key, value }))
+    .sort((a, b) => b.value - a.value || a.key.localeCompare(b.key));
+}
+
+function aggregateJsonNumbers(values: unknown[]): DetailStat[] {
+  const sums = new Map<string, number>();
+  const walk = (value: unknown, path: string) => {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      sums.set(path, (sums.get(path) ?? 0) + value);
+      return;
+    }
+    if (typeof value === 'string') {
+      const n = Number(value);
+      if (Number.isFinite(n)) sums.set(path, (sums.get(path) ?? 0) + n);
+      return;
+    }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      walk(v, path ? `${path}.${k}` : k);
+    }
+  };
+  for (const v of values) walk(v, '');
+  return [...sums.entries()]
+    .filter(([key]) => key)
+    .map(([key, value]) => ({ key, value }))
+    .sort((a, b) => b.value - a.value || a.key.localeCompare(b.key));
 }
 
 function Th({

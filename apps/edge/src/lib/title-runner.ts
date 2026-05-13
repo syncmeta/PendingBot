@@ -81,7 +81,7 @@ export async function runTitle(input: RunTitleInput): Promise<void> {
       generationId: completion.id,
       status: 'success',
       routeTrace,
-      ...usageFromCompletion(completion.usage),
+      ...usageFromCompletion(completion.usage, completion),
     });
   } catch (err) {
     console.warn('[title]', err);

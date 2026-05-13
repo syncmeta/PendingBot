@@ -6,6 +6,12 @@ import { billingDebit, getMarkup, usdToPnd } from '../lib/billing';
 import { putCachedBalance } from '../lib/balance-cache';
 import { splitAndDebit } from '../lib/group-billing';
 import type { WebToolUsage } from '../lib/web-meter';
+import {
+  usageFromCompletion,
+  type ProviderUsageDetails,
+} from './provider-usage';
+
+export { usageFromCompletion } from './provider-usage';
 
 // LLM router — resolves a caller-supplied model slug to a concrete
 // (provider, alias) pair, hands back an OpenAI-compatible client
@@ -379,7 +385,7 @@ export async function resolveRoute(
 // Audit recording
 // ============================================================
 
-export interface AuditUsage {
+export interface AuditUsage extends ProviderUsageDetails {
   inputTokens?: number;
   outputTokens?: number;
   cacheReadTokens?: number;
@@ -469,7 +475,8 @@ export async function recordAudit(
   route: ResolvedRoute | null,
   opts: AuditCallOpts,
 ): Promise<void> {
-  const llmCost = route?.alias ? computeCost(route.alias, opts) : null;
+  const estimatedCost = route?.alias ? computeCost(route.alias, opts) : null;
+  const llmCost = opts.providerCostUsd ?? null;
   // Web-tool spend (Brave / Tavily / Exa / Serper / Firecrawl) accrues
   // during the same LLM turn. We fold its USD sum into the parent row
   // and apply the same usdToPnd markup so a single billing_debit
@@ -530,10 +537,16 @@ export async function recordAudit(
     audio_input_tokens: audioInputTokens,
     audio_output_tokens: audioOutputTokens,
     total_tokens: total,
-    // cost_usd stays LLM-only for dashboard continuity. tool_cost_usd
-    // breaks out the web-tool spend; cost_credits below is the
-    // combined debit (LLM + tools, after markup).
+    // cost_usd is the provider-reported LLM cost. estimated_cost_usd is
+    // our local price-book estimate for audit comparison only.
+    // tool_cost_usd breaks out web-tool spend; cost_credits below is
+    // the combined debit (provider LLM + tools, after markup).
     cost_usd: llmCost,
+    estimated_cost_usd: estimatedCost,
+    reported_provider: opts.reportedProvider ?? null,
+    cost_details: (opts.costDetails as Json | null) ?? null,
+    prompt_tokens_details: (opts.promptTokensDetails as Json | null) ?? null,
+    completion_tokens_details: (opts.completionTokensDetails as Json | null) ?? null,
     tool_cost_usd: hasTools ? toolCostUsd : null,
     cost_credits: pnd,
     billing_status: initialBilling,
@@ -625,40 +638,6 @@ async function isGroupConversation(
     .eq('id', conversationId)
     .maybeSingle();
   return data?.conversation_type === 'group';
-}
-
-// Convenience: pull token usage from an OpenAI completion.usage object,
-// including Anthropic prompt-cache fields when OpenRouter passes them
-// through (cached_tokens / cache_creation_input_tokens / etc).
-export function usageFromCompletion(
-  usage:
-    | {
-        prompt_tokens?: number | null;
-        completion_tokens?: number | null;
-        // OpenAI's prompt_tokens_details surfaces cache reads
-        prompt_tokens_details?: { cached_tokens?: number | null } | null;
-        // OpenRouter / Anthropic-passthrough surface these names for
-        // the cache_creation tokens (writes).
-        cache_creation_input_tokens?: number | null;
-        cache_read_input_tokens?: number | null;
-      }
-    | null
-    | undefined,
-): AuditUsage {
-  if (!usage) return {};
-  const cacheRead =
-    usage.cache_read_input_tokens ?? usage.prompt_tokens_details?.cached_tokens ?? 0;
-  const cacheWrite = usage.cache_creation_input_tokens ?? 0;
-  // promptTokens conventionally includes cached tokens. We split them
-  // so accounting is non-overlapping: input = prompt - cache_read.
-  const promptTotal = usage.prompt_tokens ?? 0;
-  const input = Math.max(0, promptTotal - (cacheRead ?? 0));
-  return {
-    inputTokens: input,
-    outputTokens: usage.completion_tokens ?? 0,
-    cacheReadTokens: cacheRead ?? 0,
-    cacheWriteTokens: cacheWrite ?? 0,
-  };
 }
 
 // ============================================================

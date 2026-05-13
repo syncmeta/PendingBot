@@ -1,4 +1,5 @@
-import { resolveRoute, recordAudit } from './router';
+import { resolveRoute, recordAudit, usageFromCompletion } from './router';
+import type { ProviderUsageDetails } from './provider-usage';
 import { serviceClient } from '../lib/supabase';
 import { estimateTokens } from './token-estimate';
 import { splitAndDebit } from '../lib/group-billing';
@@ -197,8 +198,9 @@ export async function runGroupRouter(
       temperature: 0.2,
       max_tokens: 400,
     });
-    inputTokens = completion.usage?.prompt_tokens ?? 0;
-    outputTokens = completion.usage?.completion_tokens ?? 0;
+    const usage = usageFromCompletion(completion.usage, completion);
+    inputTokens = usage.inputTokens ?? 0;
+    outputTokens = usage.outputTokens ?? 0;
 
     const raw = completion.choices?.[0]?.message?.content ?? '';
     try {
@@ -212,6 +214,7 @@ export async function runGroupRouter(
       startedAt,
       inputTokens,
       outputTokens,
+      providerUsage: usage,
       status: 'success',
     });
     if (auditLogId) {
@@ -257,13 +260,15 @@ async function writeAuditAndGetId(
     startedAt: number;
     inputTokens: number;
     outputTokens: number;
+    providerUsage?: ProviderUsageDetails;
     status: 'success' | 'error';
   },
 ): Promise<string | null> {
   const total = opts.inputTokens + opts.outputTokens;
-  const cost = route.alias
+  const estimatedCost = route.alias
     ? computeRouterCost(route.alias, opts.inputTokens, opts.outputTokens)
     : null;
+  const cost = opts.providerUsage?.providerCostUsd ?? null;
   const markup = await getMarkup(supa);
   const pnd = usdToPnd(cost, markup);
   const { data, error } = await supa
@@ -278,6 +283,11 @@ async function writeAuditAndGetId(
       output_tokens: opts.outputTokens,
       total_tokens: total,
       cost_usd: cost,
+      estimated_cost_usd: estimatedCost,
+      reported_provider: opts.providerUsage?.reportedProvider ?? null,
+      cost_details: opts.providerUsage?.costDetails ?? null,
+      prompt_tokens_details: opts.providerUsage?.promptTokensDetails ?? null,
+      completion_tokens_details: opts.providerUsage?.completionTokensDetails ?? null,
       // splitAndDebit reads cost_credits — must be filled at insert
       // time, not after.
       cost_credits: pnd,
