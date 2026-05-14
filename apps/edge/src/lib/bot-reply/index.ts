@@ -587,8 +587,12 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
             tools: turnTools,
             tool_choice: 'auto',
             stream: true,
-            usage: { include: true },
             stream_options: { include_usage: true },
+            // OpenRouter only returns `usage.cost` in streaming when this
+            // extra body field is set. WorldRouter rejects unknown fields
+            // with HTTP 400 (fatal-classified → fallback bails after 1
+            // attempt), so gate it on the resolved provider.
+            ...(r.provider.slug === 'openrouter' ? { usage: { include: true } } : {}),
           } as ChatCompletionCreateParamsStreaming;
           const raw = startRawModelCall(rawModelCalls, r, {
             taskType: 'message_reply',
