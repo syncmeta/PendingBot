@@ -78,13 +78,10 @@ export function usageFromCompletion(
   usage: unknown | null | undefined,
   response?: unknown,
 ): CompletionUsageStats {
+  const u = asRecord(usage) as UsageLike | null;
+  if (!u) return {};
   const responseRecord = asRecord(response);
-  const responseUsage = asRecord(responseRecord?.usage) as UsageLike | null;
-  const u = ((asRecord(usage) as UsageLike | null) ?? responseUsage ?? {}) as UsageLike;
   const costDetails = asRecord(u.cost_details);
-  const responseCostDetails = asRecord(responseRecord?.cost_details);
-  const hiddenParams = asRecord(responseRecord?._hidden_params);
-  const dataRecord = asRecord(responseRecord?.data);
   const promptDetails = asRecord(u.prompt_tokens_details);
   const cacheRead =
     finiteNumber(u.cache_read_input_tokens) ??
@@ -107,12 +104,7 @@ export function usageFromCompletion(
       u.total_cost,
       responseRecord?.cost,
       responseRecord?.cost_usd,
-      responseRecord?.total_cost,
-      responseRecord?.response_cost,
-      hiddenParams?.response_cost,
-      dataRecord?.total_cost,
       costFromDetails(costDetails),
-      costFromDetails(responseCostDetails),
     ),
     reportedProvider: firstString(
       u.provider,

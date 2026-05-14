@@ -587,6 +587,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
             tools: turnTools,
             tool_choice: 'auto',
             stream: true,
+            usage: { include: true },
             stream_options: { include_usage: true },
           } as ChatCompletionCreateParamsStreaming;
           const raw = startRawModelCall(rawModelCalls, r, {
