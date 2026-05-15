@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase/admin';
+import { fmtMs, fmtTokens, fmtUsd } from '@/lib/format';
 
 // Verbose request log for is_test_account users. Populated by the
 // edge worker's testAccountLogger middleware (see
@@ -29,6 +30,61 @@ function statusClass(status: number | null): string {
   if (status >= 400) return 'text-amber-700 font-medium';
   if (status >= 300) return 'text-blue-700';
   return 'text-emerald-700';
+}
+
+type ModelCall = {
+  id: string;
+  audit_log_id: string;
+  seq: number;
+  model_id: string;
+  provider_slug: string;
+  status: string;
+  error_class: string | null;
+  error_message: string | null;
+  latency_ms: number;
+  raw_request: unknown;
+  raw_response: unknown;
+};
+
+type ToolCall = {
+  id: string;
+  audit_log_id: string;
+  created_at: string;
+  kind: string;
+  provider: string;
+  target: string;
+  status: string;
+  error_class: string | null;
+  latency_ms: number | null;
+  result_count: number | null;
+  cost_usd: number;
+};
+
+// Extract the function/tool calls (and their arguments) embedded in an
+// OpenAI-shaped raw_response so we can show "what tools did the model
+// pick this turn" without dumping the whole JSON. Defensive: any
+// unfamiliar shape just yields an empty list.
+function extractToolCalls(raw: unknown): { name: string; args: string }[] {
+  if (!raw || typeof raw !== 'object') return [];
+  const choices = (raw as { choices?: unknown[] }).choices;
+  if (!Array.isArray(choices)) return [];
+  const out: { name: string; args: string }[] = [];
+  for (const ch of choices) {
+    if (!ch || typeof ch !== 'object') continue;
+    const msg = (ch as { message?: unknown }).message;
+    if (!msg || typeof msg !== 'object') continue;
+    const tcs = (msg as { tool_calls?: unknown[] }).tool_calls;
+    if (!Array.isArray(tcs)) continue;
+    for (const tc of tcs) {
+      if (!tc || typeof tc !== 'object') continue;
+      const fn = (tc as { function?: unknown }).function;
+      if (!fn || typeof fn !== 'object') continue;
+      const name = String((fn as { name?: unknown }).name ?? 'unknown');
+      const args = String((fn as { arguments?: unknown }).arguments ?? '');
+      out.push({ name, args });
+    }
+  }
+  return out;
 }
 
 export default async function UserTestLogsPage({
@@ -69,8 +125,62 @@ export default async function UserTestLogsPage({
   const tally = new Map<string, number>();
   for (const r of rows ?? []) tally.set(r.kind, (tally.get(r.kind) ?? 0) + 1);
 
+  // Recent LLM turns (audit_log) for this user, with the per-model-call
+  // and per-web-tool-call breakdown fanned out. Same source as /audit
+  // but scoped to one user so the test-account log page is the single
+  // place to look when debugging a tester's session.
+  const RECENT_TURNS = 50;
+  const { data: turns } = await supa
+    .from('audit_log')
+    .select(
+      'id, created_at, task_type, model_id, status, error_class, input_tokens, output_tokens, cache_read_tokens, cost_usd, tool_cost_usd, provider_cost_usd, latency_ms, conversation_id, reported_provider, cost_credits, billing_status',
+    )
+    .eq('user_id', id)
+    .order('created_at', { ascending: false })
+    .limit(RECENT_TURNS);
+
+  const turnIds = (turns ?? []).map((t) => t.id);
+  const [{ data: modelCalls }, { data: toolCalls }] = await Promise.all([
+    turnIds.length
+      ? supa
+          .from('audit_model_calls')
+          .select('id, audit_log_id, seq, model_id, provider_slug, status, error_class, error_message, latency_ms, raw_request, raw_response')
+          .in('audit_log_id', turnIds)
+          .order('seq', { ascending: true })
+      : Promise.resolve({ data: [] as ModelCall[] }),
+    turnIds.length
+      ? supa
+          .from('audit_web_tool_calls')
+          .select('id, audit_log_id, created_at, kind, provider, target, status, error_class, latency_ms, result_count, cost_usd')
+          .in('audit_log_id', turnIds)
+          .order('created_at', { ascending: true })
+      : Promise.resolve({ data: [] as ToolCall[] }),
+  ]);
+
+  const modelCallsByTurn = new Map<string, ModelCall[]>();
+  for (const m of (modelCalls ?? []) as ModelCall[]) {
+    const arr = modelCallsByTurn.get(m.audit_log_id) ?? [];
+    arr.push(m);
+    modelCallsByTurn.set(m.audit_log_id, arr);
+  }
+  const toolCallsByTurn = new Map<string, ToolCall[]>();
+  for (const t of (toolCalls ?? []) as ToolCall[]) {
+    const arr = toolCallsByTurn.get(t.audit_log_id) ?? [];
+    arr.push(t);
+    toolCallsByTurn.set(t.audit_log_id, arr);
+  }
+
+  const turnsTotalCost = (turns ?? []).reduce(
+    (s, t) => s + Number(t.cost_usd ?? 0) + Number(t.tool_cost_usd ?? 0),
+    0,
+  );
+  const turnsTotalCredits = (turns ?? []).reduce(
+    (s, t) => s + Number(t.cost_credits ?? 0),
+    0,
+  );
+
   return (
-    <main className="container py-10 space-y-6">
+    <main className="container py-10 space-y-8">
       <header className="flex items-start justify-between gap-4">
         <div>
           <p className="text-xs text-muted-foreground">
@@ -78,12 +188,13 @@ export default async function UserTestLogsPage({
               ← {user.display_name || user.email || id}
             </Link>
           </p>
-          <h1 className="mt-1 text-2xl font-bold tracking-tight">详细日志（test_account_log）</h1>
+          <h1 className="mt-1 text-2xl font-bold tracking-tight">详细日志</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            edge worker 给标了 is_test_account 的用户每条 /v1 请求都会落一行。
+            上半部分是该用户最近的 LLM / 工具调用（所有用户都在记，不依赖 is_test_account），
+            下半部分是 edge worker 给标了 is_test_account 的用户每条 /v1 请求落的一行。
             {!user.is_test_account && (
               <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800">
-                当前未启用 — 新请求不会再写入
+                test 标记当前关闭 — 下方 http 日志不会再写入
               </span>
             )}
           </p>
@@ -116,6 +227,239 @@ export default async function UserTestLogsPage({
           </button>
         </form>
       </header>
+
+      <section className="space-y-3">
+        <div className="flex items-baseline justify-between">
+          <h2 className="text-sm font-medium">
+            最近 {RECENT_TURNS} 次 LLM / 工具调用
+          </h2>
+          <p className="text-xs text-muted-foreground">
+            合计 {fmtUsd(turnsTotalCost)} ·{' '}
+            {turnsTotalCredits.toFixed(2)} ∂{' '}
+            <Link href={`/audit?user_id=${id}`} className="ml-2 underline">
+              完整 audit →
+            </Link>
+          </p>
+        </div>
+        <div className="overflow-x-auto rounded-lg border bg-card">
+          <table className="w-full text-sm">
+            <thead className="border-b text-left text-xs uppercase text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2 font-medium">时间</th>
+                <th className="px-3 py-2 font-medium">task</th>
+                <th className="px-3 py-2 font-medium">model</th>
+                <th className="px-3 py-2 font-medium">status</th>
+                <th className="px-3 py-2 font-medium text-right">in / out / cache</th>
+                <th className="px-3 py-2 font-medium text-right">llm / tool / total</th>
+                <th className="px-3 py-2 font-medium text-right">∂</th>
+                <th className="px-3 py-2 font-medium text-right">延迟</th>
+                <th className="px-3 py-2 font-medium">明细</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(turns ?? []).map((t) => {
+                const mcs = modelCallsByTurn.get(t.id) ?? [];
+                const tcs = toolCallsByTurn.get(t.id) ?? [];
+                const total =
+                  Number(t.cost_usd ?? 0) + Number(t.tool_cost_usd ?? 0);
+                return (
+                  <tr key={t.id} className="border-b align-top last:border-0">
+                    <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">
+                      {new Date(t.created_at).toISOString().replace('T', ' ').slice(0, 19)}
+                      {t.conversation_id && (
+                        <div className="text-[10px] text-muted-foreground">
+                          conv {t.conversation_id.slice(0, 8)}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-xs">{t.task_type}</td>
+                    <td className="px-3 py-2 font-mono text-xs">
+                      {t.model_id}
+                      {t.reported_provider && (
+                        <div className="text-[10px] text-muted-foreground">
+                          via {t.reported_provider}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-xs">
+                      {t.status === 'error' ? (
+                        <span className="text-destructive font-medium">
+                          {t.error_class ?? 'error'}
+                        </span>
+                      ) : (
+                        <span className="text-emerald-700">{t.status ?? 'ok'}</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-xs tabular-nums">
+                      {fmtTokens(t.input_tokens)} / {fmtTokens(t.output_tokens)} /{' '}
+                      <span className="text-muted-foreground">
+                        {fmtTokens(t.cache_read_tokens)}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-xs tabular-nums">
+                      {fmtUsd(t.cost_usd)} /{' '}
+                      <span className="text-muted-foreground">
+                        {fmtUsd(t.tool_cost_usd)}
+                      </span>{' '}
+                      / <span className="font-medium">{fmtUsd(total)}</span>
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-xs tabular-nums">
+                      {Number(t.cost_credits ?? 0).toFixed(2)}
+                      {t.billing_status === 'unbilled' && (
+                        <span
+                          className="ml-1 rounded bg-amber-100 px-1 text-[10px] text-amber-800"
+                          title="尚未扣费（unbilled）"
+                        >
+                          unbilled
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-xs tabular-nums">
+                      {fmtMs(t.latency_ms)}
+                    </td>
+                    <td className="px-3 py-2 text-xs">
+                      {mcs.length === 0 && tcs.length === 0 ? (
+                        <span className="text-muted-foreground">—</span>
+                      ) : (
+                        <details>
+                          <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
+                            {mcs.length} model · {tcs.length} tool
+                          </summary>
+                          <div className="mt-2 space-y-3">
+                            {mcs.length > 0 && (
+                              <div>
+                                <div className="mb-1 text-[10px] uppercase text-muted-foreground">
+                                  model calls
+                                </div>
+                                <ul className="space-y-2">
+                                  {mcs.map((m) => {
+                                    const picked = extractToolCalls(m.raw_response);
+                                    return (
+                                      <li
+                                        key={m.id}
+                                        className="rounded border border-border/60 bg-muted/40 p-2"
+                                      >
+                                        <div className="flex items-center justify-between gap-2 text-xs">
+                                          <span className="font-mono">
+                                            #{m.seq} {m.provider_slug} · {m.model_id}
+                                          </span>
+                                          <span className="tabular-nums text-muted-foreground">
+                                            {fmtMs(m.latency_ms)}
+                                          </span>
+                                        </div>
+                                        {m.status === 'error' && (
+                                          <p className="mt-1 text-[11px] text-destructive">
+                                            {m.error_class}
+                                            {m.error_message ? `: ${m.error_message}` : ''}
+                                          </p>
+                                        )}
+                                        {picked.length > 0 && (
+                                          <ul className="mt-1 space-y-1">
+                                            {picked.map((p, i) => (
+                                              <li
+                                                key={i}
+                                                className="font-mono text-[11px]"
+                                              >
+                                                <span className="text-blue-700">
+                                                  {p.name}
+                                                </span>
+                                                <span className="text-muted-foreground">
+                                                  (
+                                                </span>
+                                                <span className="break-all">{p.args}</span>
+                                                <span className="text-muted-foreground">
+                                                  )
+                                                </span>
+                                              </li>
+                                            ))}
+                                          </ul>
+                                        )}
+                                        <details className="mt-1">
+                                          <summary className="cursor-pointer text-[10px] text-muted-foreground hover:text-foreground">
+                                            raw_request / raw_response
+                                          </summary>
+                                          <pre className="mt-1 max-h-64 overflow-auto rounded bg-background p-2 text-[10px] leading-snug">
+                                            {`// request
+${typeof m.raw_request === 'object' ? JSON.stringify(m.raw_request, null, 2) : String(m.raw_request)}
+
+// response
+${
+  m.raw_response == null
+    ? '(none)'
+    : typeof m.raw_response === 'object'
+      ? JSON.stringify(m.raw_response, null, 2)
+      : String(m.raw_response)
+}`}
+                                          </pre>
+                                        </details>
+                                      </li>
+                                    );
+                                  })}
+                                </ul>
+                              </div>
+                            )}
+                            {tcs.length > 0 && (
+                              <div>
+                                <div className="mb-1 text-[10px] uppercase text-muted-foreground">
+                                  web tool calls
+                                </div>
+                                <ul className="space-y-1">
+                                  {tcs.map((tc) => (
+                                    <li
+                                      key={tc.id}
+                                      className="rounded border border-border/60 bg-muted/40 p-2 text-[11px]"
+                                    >
+                                      <div className="flex items-center justify-between gap-2">
+                                        <span className="font-mono">
+                                          <span className="text-blue-700">{tc.kind}</span>{' '}
+                                          @ {tc.provider}
+                                        </span>
+                                        <span className="tabular-nums text-muted-foreground">
+                                          {fmtMs(tc.latency_ms)} · {fmtUsd(tc.cost_usd)}
+                                        </span>
+                                      </div>
+                                      <div className="mt-1 break-all font-mono text-[10px] text-muted-foreground">
+                                        {tc.target}
+                                      </div>
+                                      {tc.status === 'error' ? (
+                                        <p className="mt-1 text-destructive">
+                                          error · {tc.error_class ?? '—'}
+                                        </p>
+                                      ) : (
+                                        tc.result_count != null && (
+                                          <p className="mt-1 text-muted-foreground">
+                                            {tc.result_count} results
+                                          </p>
+                                        )
+                                      )}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                          </div>
+                        </details>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+              {(turns ?? []).length === 0 && (
+                <tr>
+                  <td colSpan={9} className="px-3 py-8 text-center text-muted-foreground">
+                    该用户还没有 LLM 调用记录
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-sm font-medium">
+          HTTP 请求日志（test_account_log）
+        </h2>
 
       {tally.size > 0 && (
         <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -216,11 +560,12 @@ export default async function UserTestLogsPage({
         </table>
       </div>
 
-      <p className="text-xs text-muted-foreground">
-        显示最近 {limit} 条。超过这个数说明该用户日志已经积了不少，需要的话直接
-        delete from test_account_log where user_id = '{id}' 清掉旧的（FK on
-        delete cascade 会随用户删除清空，不必担心遗留）。
-      </p>
+        <p className="text-xs text-muted-foreground">
+          显示最近 {limit} 条。超过这个数说明该用户日志已经积了不少，需要的话直接
+          delete from test_account_log where user_id = '{id}' 清掉旧的（FK on
+          delete cascade 会随用户删除清空，不必担心遗留）。
+        </p>
+      </section>
     </main>
   );
 }
