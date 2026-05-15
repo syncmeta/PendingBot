@@ -15,8 +15,8 @@ import {
   requestExecuteCodeTool,
 } from './tools/code-exec';
 
-// Truncate Firecrawl scrape results so tool replies don't blow past the
-// model's context. Plenty for a typical article.
+// Truncate scrape results so tool replies don't blow past the model's
+// context. Plenty for a typical article.
 const READ_TRUNCATE_CHARS = 6000;
 
 /// Single web-search citation. Stored on each bubble row's `citations`
@@ -113,7 +113,7 @@ export async function runTool(
       if (!url) return JSON.stringify({ error: 'empty url' });
       ctx.emit('tool_call', { name: 'read_url', url });
       const page = await runWebScrape(env, {
-        provider: 'firecrawl',
+        provider: 'tavily',
         url,
         signal: ctx.signal,
         meter: ctx.webMeter,

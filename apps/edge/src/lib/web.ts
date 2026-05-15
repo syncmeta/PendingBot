@@ -22,7 +22,7 @@ export type SearchProvider = 'brave' | 'tavily' | 'exa' | 'serper';
 export type ScrapeProvider = 'firecrawl' | 'tavily' | 'exa';
 
 export const DEFAULT_SEARCH_PROVIDER: SearchProvider = 'brave';
-export const DEFAULT_SCRAPE_PROVIDER: ScrapeProvider = 'firecrawl';
+export const DEFAULT_SCRAPE_PROVIDER: ScrapeProvider = 'tavily';
 
 // ── Per-provider fetch helpers (private) ───────────────────────────────
 // Kept module-internal so the only way to invoke them is via the
