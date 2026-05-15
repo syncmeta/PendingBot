@@ -18,70 +18,11 @@ import type { ChatCompletionTool } from 'openai/resources/chat/completions';
 //   REQUEST_EXECUTE_CODE_TOOL — always-on; gates on a per-call user tap
 //   EXECUTE_CODE_TOOL          — appended only when allowed_tools opts in
 
+// Web search/scrape tools moved out of this static list. They now come
+// from the MCP client (apps/edge/src/mcp/client.ts), which talks to Exa's
+// hosted MCP server. bot-reply merges that dynamic list with these
+// internal-only entries at turn assembly time.
 export const CHAT_TOOLS: ChatCompletionTool[] = [
-  {
-    type: 'function',
-    function: {
-      name: 'search_web',
-      // The result envelope is `{ results: [{ n, url, title, snippet }], hint }`.
-      // `n` is a 1-based index, stable across this turn (subsequent calls reuse
-      // the same n for already-seen urls). The bot is told to cite a result by
-      // dropping `[N]` inline next to whatever fact came from it; iOS reads the
-      // citations array stored alongside the message and renders tappable chips.
-      description: '搜索互联网。返回最多 8 条结果，每条带 url+标题+摘要+一个 1 基的 `n`。需要事实查证或了解最新信息时使用。\n\n**节制使用：先发 1–2 个查询，看回结果再决定要不要补**。不要一上来就并发铺开 3+ 条查询——后发的查询应该被前面的结果启发（换关键词、换语言、换站点），盲目广撒网既费钱又往往返回重复或不相关的内容。如果前两条已经够答题就停手；不够就再加 1–2 条更针对性的。\n\n在回复里引用某条结果时，请紧跟相关说法加 `[N]` 行内标记（N 对应结果的 n，可以连续如 `[1][3]`），客户端会把它渲染成可点击的小角标。不引用的话不要写 `[N]`。',
-      parameters: {
-        type: 'object',
-        properties: { query: { type: 'string' } },
-        required: ['query'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'read_url',
-      description: '抓某个网页正文，返回干净 markdown（截断在 6000 字符）。一般在 search_web 看到有钩子的链接后用。',
-      parameters: {
-        type: 'object',
-        properties: { url: { type: 'string' } },
-        required: ['url'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'tavily_research',
-      // Backed by Tavily's hosted MCP `tavily-search` tool (basic depth
-      // to match the tavily:search row in web_tool_prices). Different
-      // ranking + freshness profile than the default search_web (Brave) —
-      // good fallback when Brave didn't surface what you wanted.
-      description:
-        'Tavily 搜索（不同于 search_web 用的 Brave）。Tavily 偏向新内容、新闻和事件，对中文小站、博客类内容覆盖也更全。**默认搜索继续走 search_web**；当 search_web 拿不到满意结果，或问题明显跟时效相关（最近一周/最新动态/事件追踪）时再切到 tavily_research。比 search_web 略贵。返回最多 8 条结果，结构和 search_web 一致（{n, url, title, snippet}），n 与本轮 citations 累积复用，引用同样用 `[N]` 行内标记。',
-      parameters: {
-        type: 'object',
-        properties: { query: { type: 'string' } },
-        required: ['query'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'exa_research',
-      // Backed by Exa's hosted MCP `web_search_exa` tool. Differentiated
-      // from search_web by neural/semantic ranking — finds conceptually
-      // related content, not just keyword matches. Useful for academic
-      // and "find articles similar in idea to X" queries.
-      description:
-        'Exa 语义/神经搜索。和基于关键词的 search_web 不同，它按「概念相似度」找内容——适合学术论文、研究主题、找跟某段描述意思相近的文章。例：「找跟『用 transformer 做时间序列预测』主题相关的论文」「找批评某流派思想的文章」。日常搜索（人名、品牌、新闻）继续走 search_web；只在 search_web 关键词搜不到、需要概念检索时切到这个。返回最多 8 条结果，结构和 search_web 一致。',
-      parameters: {
-        type: 'object',
-        properties: { query: { type: 'string' } },
-        required: ['query'],
-      },
-    },
-  },
   {
     type: 'function',
     function: {

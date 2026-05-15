@@ -51,6 +51,8 @@ import {
   runTool,
   safeParseArgs,
 } from './tool-runner';
+import { dispatchMcpTool } from './mcp-dispatch';
+import { mcpClient } from '../../mcp/client';
 
 // Public re-exports — callers do
 //   import { runChatTurn, type RunChatTurnInput } from '../lib/bot-reply';
@@ -555,8 +557,15 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   // plus request_execute_code (user-approval-gated, safe by construction).
   // Skill-gated tools (currently: unsupervised execute_code) only appear
   // when at least one subscribed skill opts the user in via its
-  // frontmatter.allowed_tools.
-  const turnTools: ChatCompletionTool[] = [...CHAT_TOOLS, REQUEST_EXECUTE_CODE_TOOL];
+  // frontmatter.allowed_tools. Web search/scrape tools come from the MCP
+  // client (Exa hosted MCP) — vendor-native names with vendor descriptions
+  // so we don't carry our own copy of the surface.
+  const mcpTools = await mcpClient.getAITools(env, ac.signal);
+  const turnTools: ChatCompletionTool[] = [
+    ...CHAT_TOOLS,
+    REQUEST_EXECUTE_CODE_TOOL,
+    ...mcpTools,
+  ];
   if (allowedTools.has('execute_code')) turnTools.push(EXECUTE_CODE_TOOL);
   if (input.inGroup) turnTools.push(...GROUP_BOT_TOOLS);
 
@@ -704,9 +713,14 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
           tool_calls: toolCalls,
         });
         // Execute tools. Each result becomes a tool message in history.
+        // Tools owned by mcpClient (Exa hosted MCP) route through
+        // dispatchMcpTool; everything else flows through the internal
+        // runTool dispatcher. Both return the same JSON-string envelope.
         for (const tc of toolCalls) {
           const args = safeParseArgs(tc.function.arguments);
-          const result = await runTool(env, tc.function.name, args, toolCtx);
+          const result = mcpClient.owns(tc.function.name)
+            ? await dispatchMcpTool(env, tc.function.name, args, toolCtx)
+            : await runTool(env, tc.function.name, args, toolCtx);
           messages.push({ role: 'tool', tool_call_id: tc.id, content: result });
         }
         // Loop: the model may want to call more tools or finally produce
