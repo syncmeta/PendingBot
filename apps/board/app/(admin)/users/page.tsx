@@ -29,7 +29,7 @@ export default async function UsersPage({
   let query = supa
     .from('users')
     .select(
-      'id, display_name, email, is_admin, created_at, updated_at, pending_deletion_at',
+      'id, display_name, email, is_admin, is_test_account, created_at, updated_at, pending_deletion_at',
     );
   if (q) {
     // ilike across email and display_name for the search box. Cheap
@@ -140,6 +140,14 @@ export default async function UsersPage({
                   <td className="px-4 py-2">
                     <div className="flex items-center gap-2">
                       <span>{u.display_name || '(无名)'}</span>
+                      {u.is_test_account && (
+                        <span
+                          className="rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-medium text-sky-700"
+                          title="标记为测试账号 — 详细日志开启中"
+                        >
+                          test
+                        </span>
+                      )}
                       {pendingAt && (
                         <span
                           className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800"
