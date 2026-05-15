@@ -82,7 +82,7 @@ Concrete shell · rewrite in progress.
 - **Portrait & memory**: [Honcho](https://honcho.dev) ([plastic-labs/honcho](https://github.com/plastic-labs/honcho), Apache-2.0).
 - **Agent Skills presets** from [anthropic/skills](https://github.com/anthropics/skills) (Apache-2.0), vendored under [apps/edge/prompts/skills/anthropic/](apps/edge/prompts/skills/anthropic/) — see [NOTICE](apps/edge/prompts/skills/anthropic/NOTICE.md).
 - **Runtime**: [Cloudflare Workers](https://workers.cloudflare.com) · [Hono](https://hono.dev) (MIT) · [Supabase](https://supabase.com) · [Bun](https://bun.sh) (MIT, toolchain) · [OpenAI SDK](https://github.com/openai/openai-node) (Apache-2.0) · [Zod](https://github.com/colinhacks/zod) (MIT).
-- **External services**: [OpenRouter](https://openrouter.ai) (model routing) · [Honcho](https://honcho.dev) (portrait) · [Daytona](https://daytona.io) (sandbox) · APNS.
+- **External services**: [OpenRouter](https://openrouter.ai) (model routing) · [Honcho](https://honcho.dev) (portrait) · [Cloudflare Sandbox SDK](https://github.com/cloudflare/sandbox-sdk) (sandbox) · APNS.
 
 ## 📂 Repo layout
 

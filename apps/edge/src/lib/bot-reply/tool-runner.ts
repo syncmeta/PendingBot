@@ -1,5 +1,4 @@
 import type { Env } from '../../types';
-import { DaytonaApiError } from '../sandbox';
 import { WebToolMeter } from '../web-meter';
 import type { WebSearchResult } from '../web-types';
 import { queryUserRepresentation } from '../honcho';
@@ -160,13 +159,6 @@ export function annotateSearchHits(
 }
 
 export function formatToolError(err: unknown): { message: string; detail?: string; status?: number } {
-  if (err instanceof DaytonaApiError) {
-    return {
-      message: err.message || `Daytona API failed with HTTP ${err.status}`,
-      detail: err.responseText || undefined,
-      status: err.status,
-    };
-  }
   if (err instanceof Error) {
     return {
       message: err.message || err.name || 'Error',

@@ -671,41 +671,6 @@ export type Database = {
           },
         ]
       }
-      bot_sandbox_sessions: {
-        Row: {
-          bootstrapped: boolean
-          conversation_id: string
-          created_at: string
-          daytona_sandbox_id: string
-          id: string
-          last_used_at: string
-        }
-        Insert: {
-          bootstrapped?: boolean
-          conversation_id: string
-          created_at?: string
-          daytona_sandbox_id: string
-          id?: string
-          last_used_at?: string
-        }
-        Update: {
-          bootstrapped?: boolean
-          conversation_id?: string
-          created_at?: string
-          daytona_sandbox_id?: string
-          id?: string
-          last_used_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "bot_sandbox_sessions_conversation_id_fkey"
-            columns: ["conversation_id"]
-            isOneToOne: true
-            referencedRelation: "conversations"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       bot_user_lookback_counter: {
         Row: {
           bot_id: string

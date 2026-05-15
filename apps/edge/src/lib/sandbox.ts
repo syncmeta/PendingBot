@@ -1,180 +1,84 @@
+import { getSandbox } from '@cloudflare/sandbox';
 import type { Env } from '../types';
 
-// Thin fetch wrapper around the Daytona REST API. We talk to two hosts:
+// Thin wrapper over the Cloudflare Sandbox SDK. Each conversation gets its
+// own container-backed Durable Object instance keyed by conversation_id —
+// the SDK handles lifecycle (lazy start, idle sleep, eventual eviction)
+// so this module is pure execution glue, no bookkeeping table needed.
 //
-//   app.daytona.io/api          — sandbox lifecycle (create, delete)
-//   proxy.app.daytona.io/toolbox/{id}/...
-//                               — code execution against a running sandbox
-//
-// Auth is a single bearer token (DAYTONA_API_KEY). Free-tier limits at the
-// time of writing: 300 sandbox creations/min, 10k lifecycle ops/min, 10k
-// general requests/min — comfortable headroom for a per-conversation
-// sandbox model with idle cleanup.
-//
-// We do NOT use the official @daytonaio/sdk package because it pulls Node
-// built-ins that aren't available on the Cloudflare Workers runtime. The
-// REST surface we need is small enough that fetch is cleaner than wrestling
-// with polyfills.
+// Python data-stack (numpy/pandas/matplotlib/pillow/requests/httpx/
+// python-dateutil) is baked into apps/edge/Dockerfile, so a fresh
+// sandbox can run user code on the very first call — no cold pip
+// install. To extend the bootstrap set, edit the Dockerfile and
+// redeploy; nothing here changes.
 
-const DEFAULT_API_URL = 'https://app.daytona.io/api';
-const DEFAULT_TOOLBOX_URL = 'https://proxy.app.daytona.io/toolbox';
-
-// Sandbox creation defaults: 1 vCPU / 1 GiB RAM / 3 GiB disk.
-// We run Python source through process/code-run, so keep the language
-// explicit instead of relying on Daytona's account/API defaults.
-const CREATE_BODY = JSON.stringify({ language: 'python' });
-
-// Common Python data-stack packages installed once per sandbox at first use.
-// Kept tight so the bootstrap pip install doesn't burn too much wall time
-// (each line below buys ~5–15s of cold pip on the first run; reused after).
-const BOOTSTRAP_PACKAGES = [
-  'numpy',
-  'pandas',
-  'matplotlib',
-  'pillow',
-  'requests',
-  'httpx',
-  'python-dateutil',
-];
-
-// Hard caps for code-run output. The chat agent loops on tool results, so
-// huge stdout would balloon the prompt. 8 KiB of output per call is
-// already plenty for any reasonable interactive task.
+// Hard cap for code-run output. The chat agent loops on tool results, so
+// huge stdout would balloon the prompt. 8 KiB per call is plenty for
+// any reasonable interactive task.
 const RESULT_TRUNCATE_CHARS = 8000;
 
-// Per-call execution timeout (ms passed to Daytona's process.code-run).
-// 30s is enough for almost any pandas/numpy step and bounds runaway loops.
+// Per-call execution timeout passed to the SDK's runCode. 30s bounds
+// runaway loops while leaving headroom for typical pandas/numpy steps.
 const CODE_RUN_TIMEOUT_MS = 30_000;
 
-// pip-install timeout for the one-shot bootstrap. Generous because the
-// first install on a cold sandbox can be slow.
-const BOOTSTRAP_TIMEOUT_MS = 180_000;
+// Idle window before the container auto-sleeps. The SDK accepts a
+// duration string ("10m", "1h"). We keep things warm a bit longer
+// than the default 10m so a user mulling over results doesn't pay the
+// full container cold-start on their next message.
+const SANDBOX_SLEEP_AFTER = '30m';
 
 export interface CodeRunResult {
-  stdout: string;        // post-truncation; combined stdout+stderr per Daytona's stateless run
-  exitCode: number;
+  stdout: string;        // joined logs.stdout + logs.stderr + traceback, truncated
+  exitCode: number;      // 0 on success, 1 if result.error is present
   truncated: boolean;
 }
 
-export class DaytonaApiError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-    readonly responseText: string,
-  ) {
-    super(message);
-    this.name = 'DaytonaApiError';
-  }
-}
-
-export function isMissingDaytonaSandbox(err: unknown): boolean {
-  return err instanceof DaytonaApiError && (err.status === 404 || err.status === 410);
-}
-
-/// Create a fresh sandbox. Caller persists the returned id (and bootstraps
-/// it the first time it's used).
-export async function createSandbox(env: Env): Promise<string> {
-  const res = await daytonaFetch(env, 'mgmt', 'POST', '/sandbox', CREATE_BODY);
-  const json = (await res.json()) as { id?: string };
-  if (!json.id) throw new Error('daytona create: missing id in response');
-  return json.id;
-}
-
-/// Run Python source in a sandbox. `code` goes through Daytona's stateless
-/// code-run endpoint (`process/code-run`), which captures stdout+stderr
-/// into a single `result` field and returns an `exitCode`.
+/// Run Python in this conversation's sandbox. State does NOT persist
+/// across calls (each runCode invocation is its own interpreter session,
+/// matching the model-facing tool description). Side effects on the
+/// container filesystem do persist for the life of the sandbox.
 export async function runPython(
   env: Env,
-  sandboxId: string,
+  conversationId: string,
   code: string,
   opts: { timeoutMs?: number } = {},
 ): Promise<CodeRunResult> {
-  const body = JSON.stringify({
-    code,
+  const sandbox = getSandbox(env.Sandbox, conversationId, {
+    sleepAfter: SANDBOX_SLEEP_AFTER,
+  });
+  const result = await sandbox.runCode(code, {
     language: 'python',
     timeout: opts.timeoutMs ?? CODE_RUN_TIMEOUT_MS,
   });
-  const res = await daytonaFetch(
-    env,
-    'toolbox',
-    'POST',
-    `/${sandboxId}/process/code-run`,
-    body,
-  );
-  const json = (await res.json()) as { result?: string; exitCode?: number };
-  const raw = json.result ?? '';
+
+  // Combine stdout + stderr + traceback into one stream — Daytona's
+  // code-run returned a single `result` field and the chat agent's
+  // tool contract still speaks in those terms. Trailing newline parity
+  // with the previous wrapper.
+  const parts: string[] = [];
+  for (const line of result.logs.stdout) parts.push(line);
+  for (const line of result.logs.stderr) parts.push(line);
+  if (result.error) {
+    parts.push(`${result.error.name}: ${result.error.message}`);
+    if (result.error.traceback?.length) parts.push(result.error.traceback.join('\n'));
+  }
+  const raw = parts.join('');
   const truncated = raw.length > RESULT_TRUNCATE_CHARS;
   return {
     stdout: truncated ? raw.slice(0, RESULT_TRUNCATE_CHARS) : raw,
-    exitCode: json.exitCode ?? 0,
+    exitCode: result.error ? 1 : 0,
     truncated,
   };
 }
 
-/// One-shot pip install of the BOOTSTRAP_PACKAGES set. Called on first use
-/// of a sandbox. Errors fall through to the caller — the caller decides
-/// whether to mark `bootstrapped=true` based on success.
-export async function bootstrapPython(env: Env, sandboxId: string): Promise<CodeRunResult> {
-  // `pip install` runs as a shell command, not python code. Daytona's
-  // toolbox exposes `process/execute` for shell, but `process/code-run`
-  // only takes Python. We shell out via the Python `subprocess` module
-  // so we keep using one endpoint shape.
-  const code = [
-    'import subprocess, sys',
-    `pkgs = ${JSON.stringify(BOOTSTRAP_PACKAGES)}`,
-    'r = subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", *pkgs], capture_output=True, text=True)',
-    'print(r.stdout)',
-    'if r.returncode != 0:',
-    '    import sys',
-    '    print(r.stderr, file=sys.stderr)',
-    '    sys.exit(r.returncode)',
-  ].join('\n');
-  return runPython(env, sandboxId, code, { timeoutMs: BOOTSTRAP_TIMEOUT_MS });
-}
-
-/// Best-effort delete; cron sweep will clean up if this fails.
-export async function deleteSandbox(env: Env, sandboxId: string): Promise<void> {
+/// Best-effort destroy. Called when a conversation is torn down (e.g.
+/// the cleanup path in routes/conversations); idle sandboxes auto-sleep
+/// without us, so failures here are non-fatal.
+export async function deleteSandbox(env: Env, conversationId: string): Promise<void> {
   try {
-    await daytonaFetch(env, 'mgmt', 'DELETE', `/sandbox/${sandboxId}`);
+    const sandbox = getSandbox(env.Sandbox, conversationId);
+    await sandbox.destroy();
   } catch (err) {
-    console.warn('[sandbox] delete failed', sandboxId, err);
+    console.warn('[sandbox] destroy failed', conversationId, err);
   }
-}
-
-// ── Internal ────────────────────────────────────────────────────────────────
-
-type Host = 'mgmt' | 'toolbox';
-
-async function daytonaFetch(
-  env: Env,
-  host: Host,
-  method: 'GET' | 'POST' | 'DELETE',
-  path: string,
-  body?: string,
-): Promise<Response> {
-  const apiKey = env.DAYTONA_API_KEY;
-  if (!apiKey) throw new Error('DAYTONA_API_KEY not configured');
-
-  const base = host === 'mgmt'
-    ? (env.DAYTONA_API_URL || DEFAULT_API_URL)
-    : (env.DAYTONA_TOOLBOX_URL || DEFAULT_TOOLBOX_URL);
-  const url = `${base}${path}`;
-
-  const res = await fetch(url, {
-    method,
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      ...(body ? { 'Content-Type': 'application/json' } : {}),
-    },
-    body,
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new DaytonaApiError(
-      `daytona ${method} ${path} failed: ${res.status} ${text.slice(0, 200)}`,
-      res.status,
-      text,
-    );
-  }
-  return res;
 }

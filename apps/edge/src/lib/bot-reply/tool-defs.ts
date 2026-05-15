@@ -187,7 +187,7 @@ export const EXECUTE_CODE_TOOL: ChatCompletionTool = {
       properties: {
         code: {
           type: 'string',
-          description: 'Python source. Will be executed via Daytona\'s code-run; uses the system python with numpy/pandas/matplotlib/pillow/requests/httpx/python-dateutil pre-installed.',
+          description: 'Python source. Runs in this conversation\'s Cloudflare sandbox container; uses the system python with numpy/pandas/matplotlib/pillow/requests/httpx/python-dateutil pre-installed.',
         },
       },
       required: ['code'],

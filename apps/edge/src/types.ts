@@ -2,6 +2,8 @@
 // receives via `c.env`. Mirrors wrangler.jsonc; secrets are added at deploy
 // time via `wrangler secret put` so they aren't in source.
 
+import type { Sandbox } from '@cloudflare/sandbox';
+
 export interface Env {
   // ── Bindings declared in wrangler.jsonc ────────────────────────
   UPLOADS: R2Bucket;
@@ -11,6 +13,11 @@ export interface Env {
   /// env.GROUP_ROUTER.idFromName(conversationId)). See
   /// src/durable-objects/group-router.ts.
   GROUP_ROUTER: DurableObjectNamespace;
+  /// Cloudflare Sandbox SDK — container-backed DO used by the chat
+  /// agent's execute_code tool. Keyed by conversation_id via
+  /// `getSandbox(env.Sandbox, conversationId)`; auto-sleeps after
+  /// inactivity (no manual cleanup needed). See lib/sandbox.ts.
+  Sandbox: DurableObjectNamespace<Sandbox>;
   /// Cloudflare ratelimit binding for handle-enumeration endpoints
   /// (friend-request /lookup, group /join, friend-request POST /).
   /// Limit + period live in wrangler.jsonc — call from a route via
@@ -47,13 +54,6 @@ export interface Env {
   APNS_KEY_ID_PROD: string;
   APNS_KEY_DEV: string;        // .p8 PEM content (secret)
   APNS_KEY_PROD: string;       // .p8 PEM content (secret)
-
-  // Daytona — code-execution sandbox provider. API_URL / TOOLBOX_URL fall
-  // back to the public hosts inside lib/sandbox.ts when unset; only the
-  // API_KEY is required.
-  DAYTONA_API_KEY: string;
-  DAYTONA_API_URL?: string;
-  DAYTONA_TOOLBOX_URL?: string;
 
   // ── Voice call (M5+) ───────────────────────────────────────────
   // OpenAI Realtime — the worker mints a 60s ephemeral client_secret
