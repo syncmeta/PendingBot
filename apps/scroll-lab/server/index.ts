@@ -1,6 +1,6 @@
 // scroll-lab server — local dev panel for the 奏折 (scroll) loop.
 // Not deployed. Hono on Node. Reads keys from the same .dev.vars
-// stash the CLI harness uses; runs runScrollLoop with injected
+// stash the CLI harness uses; runs runEnvelopeLoop with injected
 // search/scrape provider; streams turns to the client over SSE.
 
 import { serve } from '@hono/node-server';
@@ -14,16 +14,16 @@ import OpenAI from 'openai';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { Agent, fetch as undiciFetch, ProxyAgent, setGlobalDispatcher } from 'undici';
 import {
-  buildScrollInitialUserContent,
+  buildEnvelopeInitialUserContent,
   extractSummary,
   extractTitle,
-  runScrollLoop,
+  runEnvelopeLoop,
   type ProgressState,
   type ResumeState,
-  type ScrollLoopResult,
-  type ScrollTurnInfo,
+  type EnvelopeLoopResult,
+  type EnvelopeTurnInfo,
   type UsageStats,
-} from '../../edge/src/lib/scroll-loop.js';
+} from '../../edge/src/lib/envelope-loop.js';
 import {
   makeScrape,
   makeSearch,
@@ -524,7 +524,7 @@ app.post('/api/run', async (c) => {
     );
   }
 
-  const initialUser = buildScrollInitialUserContent({
+  const initialUser = buildEnvelopeInitialUserContent({
     history: body.history,
     memoryRepresentation: body.memory,
     injectedPrompt: body.injectedPrompt,
@@ -541,13 +541,13 @@ app.post('/api/run', async (c) => {
   // AbortSignal fires → next iteration of the loop sees aborted=true
   // and returns reason='cancelled' cleanly.
   const reqSignal = c.req.raw.signal;
-  const collectedTurns: ScrollTurnInfo[] = [];
+  const collectedTurns: EnvelopeTurnInfo[] = [];
 
   // Resume support — when body.resumeFromRunId is set, we hydrate the
   // loop state from a previously saved run JSON and append new turns
   // back to that same file (instead of generating a fresh run id).
   let resumeState: ResumeState | undefined;
-  let priorTurns: ScrollTurnInfo[] = [];
+  let priorTurns: EnvelopeTurnInfo[] = [];
   let runId: string;
   let ts: string;
   if (body.resumeFromRunId) {
@@ -558,7 +558,7 @@ app.post('/api/run', async (c) => {
     const saved = JSON.parse(fs.readFileSync(p, 'utf8')) as {
       id: string;
       ts: string;
-      turns?: ScrollTurnInfo[];
+      turns?: EnvelopeTurnInfo[];
       messages?: ChatCompletionMessageParam[];
       result?: {
         progress?: ProgressState;
@@ -606,11 +606,11 @@ app.post('/api/run', async (c) => {
       }),
     });
 
-    let result: ScrollLoopResult | undefined;
+    let result: EnvelopeLoopResult | undefined;
     let errorMessage: string | undefined;
     const startedAt = Date.now();
     try {
-      result = await runScrollLoop({
+      result = await runEnvelopeLoop({
         openai,
         modelId: body.model,
         systemPrompt: body.systemPrompt,
@@ -628,11 +628,11 @@ app.post('/api/run', async (c) => {
         isCancelled: () => Promise.resolve(reqSignal.aborted),
         isResearchUnlocked: () => runStates.get(runId)?.researchUnlocked ?? false,
         resume: resumeState,
-        onTurn: async (info: ScrollTurnInfo) => {
+        onTurn: async (info: EnvelopeTurnInfo) => {
           // Keep turn numbering continuous across resumes — the loop's
           // internal counter restarts at 0 each invocation, so we
           // offset by the prior tail length before persisting/streaming.
-          const adjusted: ScrollTurnInfo = { ...info, turn: priorTurns.length + info.turn };
+          const adjusted: EnvelopeTurnInfo = { ...info, turn: priorTurns.length + info.turn };
           collectedTurns.push(adjusted);
           await stream.writeSSE({ event: 'turn', data: JSON.stringify(adjusted) });
         },

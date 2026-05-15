@@ -1,11 +1,11 @@
 import type { Env } from '../types';
 import { serviceClient } from '../lib/supabase';
 
-// Reap stuck scroll_runs.
+// Reap stuck envelope runs (scroll_runs table).
 //
-// Background: a scroll's wall budget is 4 minutes (MAX_WALL_MS in
-// scroll-loop.ts) plus a writer phase + audit. If the Worker is killed
-// mid-run (CF wall-time exceeded, isolate evicted), runScroll's
+// Background: an envelope's wall budget is 4 minutes (MAX_WALL_MS in
+// envelope-loop.ts) plus a writer phase + audit. If the Worker is
+// killed mid-run (CF wall-time exceeded, isolate evicted), runEnvelope's
 // try/catch never executes — the row is orphaned at status='running'
 // forever. The loop's own wall_cap check also only fires between
 // turns, so an in-flight tool call hang is not self-correcting.
@@ -14,13 +14,13 @@ import { serviceClient } from '../lib/supabase';
 // is force-flipped to 'error' so the iOS feed can render a "写信失败"
 // state and the user can retrigger.
 //
-// Threshold: scroll caps at ~4min wall + ~1min slack for writer/audit.
-// 6 minutes is therefore the earliest a healthy run could still be
-// ticking; older than that = dead.
+// Threshold: an envelope caps at ~4min wall + ~1min slack for
+// writer/audit. 6 minutes is therefore the earliest a healthy run
+// could still be ticking; older than that = dead.
 
 const STUCK_AGE_MS = 6 * 60 * 1000;
 
-export async function reapStuckScrolls(env: Env): Promise<void> {
+export async function reapStuckEnvelopes(env: Env): Promise<void> {
   const supa = serviceClient(env);
   const cutoff = new Date(Date.now() - STUCK_AGE_MS).toISOString();
 
@@ -37,11 +37,11 @@ export async function reapStuckScrolls(env: Env): Promise<void> {
     .select('id');
 
   if (error) {
-    console.error('[scroll-reaper] update failed', error.message);
+    console.error('[envelope-reaper] update failed', error.message);
     return;
   }
   const reaped = data?.length ?? 0;
   if (reaped > 0) {
-    console.log(`[scroll-reaper] flipped ${reaped} stuck scroll_runs to error`);
+    console.log(`[envelope-reaper] flipped ${reaped} stuck envelope runs to error`);
   }
 }

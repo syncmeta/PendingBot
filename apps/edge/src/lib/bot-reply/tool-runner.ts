@@ -1,9 +1,7 @@
 import type { Env } from '../../types';
 import { DaytonaApiError } from '../sandbox';
-import { runWebScrape, runWebSearch } from '../web';
-import { runTavilyMcpSearch, runExaMcpSearch } from '../web-mcp';
-import type { WebSearchResult } from '../web-types';
 import { WebToolMeter } from '../web-meter';
+import type { WebSearchResult } from '../web-types';
 import { queryUserRepresentation } from '../honcho';
 import { searchChatHistoryTool } from './tools/search-history';
 import { createSkillTool } from './tools/create-skill';
@@ -16,10 +14,6 @@ import {
   executeCodeTool,
   requestExecuteCodeTool,
 } from './tools/code-exec';
-
-// Truncate scrape results so tool replies don't blow past the model's
-// context. Plenty for a typical article.
-const READ_TRUNCATE_CHARS = 6000;
 
 /// Single web-search citation. Stored on each bubble row's `citations`
 /// jsonb so iOS can resolve inline `[N]` markers to a tappable link.
@@ -76,62 +70,6 @@ export async function runTool(
   ctx: ToolCtx,
 ): Promise<string> {
   try {
-    if (name === 'search_web') {
-      const query = String(args.query ?? '').trim();
-      if (!query) return JSON.stringify({ error: 'empty query' });
-      ctx.emit('tool_call', { name: 'search_web', query });
-      const hits = await runWebSearch(env, {
-        provider: 'brave',
-        query,
-        signal: ctx.signal,
-        meter: ctx.webMeter,
-      });
-      return annotateSearchHits(ctx, 'search_web', hits);
-    }
-    if (name === 'tavily_research') {
-      const query = String(args.query ?? '').trim();
-      if (!query) return JSON.stringify({ error: 'empty query' });
-      ctx.emit('tool_call', { name: 'tavily_research', query });
-      const hits = await runTavilyMcpSearch(env, {
-        query,
-        // Basic depth (1 credit, $0.008) to match the tavily:search row
-        // in web_tool_prices. Advanced depth (2 credits, $0.016) would
-        // require either a new price-book variant or a per-call cost
-        // override — out of scope for v1.
-        depth: 'basic',
-        signal: ctx.signal,
-        meter: ctx.webMeter,
-      });
-      return annotateSearchHits(ctx, 'tavily_research', hits);
-    }
-    if (name === 'exa_research') {
-      const query = String(args.query ?? '').trim();
-      if (!query) return JSON.stringify({ error: 'empty query' });
-      ctx.emit('tool_call', { name: 'exa_research', query });
-      const hits = await runExaMcpSearch(env, {
-        query,
-        signal: ctx.signal,
-        meter: ctx.webMeter,
-      });
-      return annotateSearchHits(ctx, 'exa_research', hits);
-    }
-    if (name === 'read_url') {
-      const url = String(args.url ?? '').trim();
-      if (!url) return JSON.stringify({ error: 'empty url' });
-      ctx.emit('tool_call', { name: 'read_url', url });
-      const page = await runWebScrape(env, {
-        provider: 'tavily',
-        url,
-        signal: ctx.signal,
-        meter: ctx.webMeter,
-      });
-      ctx.emit('tool_result', { name: 'read_url', title: page.title });
-      return JSON.stringify({
-        url: page.url,
-        title: page.title,
-        content: page.content.slice(0, READ_TRUNCATE_CHARS),
-      });
-    }
     if (name === 'query_user_memory') {
       const query = String(args.query ?? '').trim();
       if (!query) return JSON.stringify({ error: 'empty query' });
@@ -195,7 +133,7 @@ export async function runTool(
 /// calls (and across providers — a Tavily hit and a Brave hit pointing
 /// at the same article reuse the same n). Emits tool_result + citations
 /// SSE events and returns the JSON envelope the LLM consumes.
-function annotateSearchHits(
+export function annotateSearchHits(
   ctx: ToolCtx,
   toolName: string,
   hits: WebSearchResult[],
@@ -221,7 +159,7 @@ function annotateSearchHits(
   });
 }
 
-function formatToolError(err: unknown): { message: string; detail?: string; status?: number } {
+export function formatToolError(err: unknown): { message: string; detail?: string; status?: number } {
   if (err instanceof DaytonaApiError) {
     return {
       message: err.message || `Daytona API failed with HTTP ${err.status}`,

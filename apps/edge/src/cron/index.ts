@@ -2,7 +2,7 @@ import type { Env } from '../types';
 import { syncModelPricing } from './model-pricing';
 import { cleanupOrphanUploads } from './uploads-cleanup';
 import { cleanupIdleSandboxes } from './sandbox-cleanup';
-import { reapStuckScrolls } from './scroll-reaper';
+import { reapStuckEnvelopes } from './envelope-reaper';
 import { finalizeExpiredAccountDeletions } from './account-deletion-sweep';
 
 // Workers cron entrypoint. wrangler.jsonc declares `triggers.crons` with
@@ -12,8 +12,9 @@ import { finalizeExpiredAccountDeletions } from './account-deletion-sweep';
 //   "0 4 * * *"    daily 04:00 UTC — orphan upload sweep + finalize
 //                  expired account-deletion tombstones (28d cooldown)
 //   "5 * * * *"    hourly at xx:05 — idle Daytona sandbox sweep (TTL 1h)
-//   "*/5 * * * *"  every 5 min — scroll_runs watchdog (force-fail rows
-//                  stuck in 'running' past the loop's 4-min wall budget)
+//   "*/5 * * * *"  every 5 min — envelope-run watchdog (force-fail
+//                  scroll_runs rows stuck in 'running' past the loop's
+//                  4-min wall budget)
 //
 // model_pricing sync ("0 3 * * 1") was dropped to stay under the account
 // cron-trigger cap (5). syncModelPricing() stays exported as a callable
@@ -40,7 +41,7 @@ export async function handleScheduled(
   } else if (cron === '5 * * * *') {
     ctx.waitUntil(safe('sandbox-cleanup', () => cleanupIdleSandboxes(env)));
   } else if (cron === '*/5 * * * *') {
-    ctx.waitUntil(safe('scroll-reaper', () => reapStuckScrolls(env)));
+    ctx.waitUntil(safe('envelope-reaper', () => reapStuckEnvelopes(env)));
   } else {
     console.warn('[cron] unmatched schedule', cron);
   }

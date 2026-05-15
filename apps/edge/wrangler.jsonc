@@ -122,14 +122,15 @@
   //   WORLDROUTER_API_KEY    (declared but currently unread — leave unset
   //                           until the LLMRouter wires it back in)
   //
-  //   --- web tools (search + scrape) ---
-  //   BRAVE_API_KEY          (search; DEFAULT_SEARCH_PROVIDER — required)
-  //   TAVILY_API_KEY         (scrape default for read_url + the
-  //                           tavily_research tool via mcp.tavily.com)
-  //   EXA_API_KEY            (exa_research tool via mcp.exa.ai;
-  //                           also direct contents endpoint)
-  //   SERPER_API_KEY         (optional alternate search; Envelope runner)
-  //   FIRECRAWL_API_KEY      (optional scrape fallback; not default)
+  //   --- web tools (search + scrape, via MCP) ---
+  //   EXA_API_KEY            (default; bot-reply + envelope-runner both
+  //                           hit Exa's hosted MCP at mcp.exa.ai via the
+  //                           shared client in apps/edge/src/mcp/client.ts)
+  //   TAVILY_API_KEY         (declared but not wired by default — reserved
+  //                           for the future skill-based Tavily exposure)
+  //
+  //   Legacy keys to delete in CF when convenient (no code reads them):
+  //     BRAVE_API_KEY, FIRECRAWL_API_KEY, SERPER_API_KEY
   //
   //   --- push (APNs token auth, per-environment keys) ---
   //   APNS_TEAM_ID

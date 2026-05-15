@@ -811,7 +811,7 @@ async function isGroupConversation(
 // full chain ("WR 503 → OR 200" or "WR 401 → OR 503 → exhausted").
 //
 // Streaming callers (bot-reply.ts) and multi-turn agent loops
-// (scroll-runner.ts) need different handling — once bytes have started
+// (envelope-runner.ts) need different handling — once bytes have started
 // flowing to the client, fallback isn't safe. Those keep a single
 // resolveRoute() and don't call withFallback yet.
 
