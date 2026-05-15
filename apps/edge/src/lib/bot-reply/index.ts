@@ -53,6 +53,7 @@ import {
 } from './tool-runner';
 import { dispatchMcpTool } from './mcp-dispatch';
 import { mcpClient } from '../../mcp/client';
+import { loadAllowedTools } from '../tools-registry';
 
 // Public re-exports — callers do
 //   import { runChatTurn, type RunChatTurnInput } from '../lib/bot-reply';
@@ -561,13 +562,22 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   // client (Exa hosted MCP) — vendor-native names with vendor descriptions
   // so we don't carry our own copy of the surface.
   const mcpTools = await mcpClient.getAITools(env, ac.signal);
-  const turnTools: ChatCompletionTool[] = [
+  const turnToolsRaw: ChatCompletionTool[] = [
     ...CHAT_TOOLS,
     REQUEST_EXECUTE_CODE_TOOL,
     ...mcpTools,
   ];
-  if (allowedTools.has('execute_code')) turnTools.push(EXECUTE_CODE_TOOL);
-  if (input.inGroup) turnTools.push(...GROUP_BOT_TOOLS);
+  if (allowedTools.has('execute_code')) turnToolsRaw.push(EXECUTE_CODE_TOOL);
+  if (input.inGroup) turnToolsRaw.push(...GROUP_BOT_TOOLS);
+
+  // Strict allowlist from the tools registry — disabling a row in the
+  // board "Tools" page strips it here within ~1 min (60s isolate
+  // cache). `null` means the registry was unreachable; pass through
+  // unfiltered rather than serving the model an empty tool list.
+  const allowedRegistryKeys = await loadAllowedTools(env, 'chat');
+  const turnTools: ChatCompletionTool[] = allowedRegistryKeys
+    ? turnToolsRaw.filter((t) => allowedRegistryKeys.has(t.function.name))
+    : turnToolsRaw;
 
   try {
     // Outer agent loop. Each iteration is one LLM call. If the model emits
