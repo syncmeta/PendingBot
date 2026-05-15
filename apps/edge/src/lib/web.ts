@@ -147,6 +147,7 @@ async function firecrawlScrape(
   pageUrl: string,
   signal?: AbortSignal,
 ): Promise<WebReadResult> {
+  if (!env.FIRECRAWL_API_KEY) throw new Error('FIRECRAWL_API_KEY missing');
   const res = await fetch('https://api.firecrawl.dev/v1/scrape', {
     method: 'POST',
     headers: {
