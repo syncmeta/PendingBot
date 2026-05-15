@@ -33,19 +33,12 @@ export interface Env {
   WORLDROUTER_API_KEY?: string;
   HONCHO_API_KEY: string;
   HONCHO_WORKSPACE_ID: string;
-  // Web tools — Brave is the default in-chat search provider; Tavily
-  // is the default scrape provider (read_url) and also backs the
-  // tavily_research tool via the hosted MCP at mcp.tavily.com. Exa
-  // backs exa_research via mcp.exa.ai. Firecrawl is kept around as an
-  // optional scrape provider but no longer the default. Serper is an
-  // optional alternate search provider used by the Envelope runner.
-  // Any provider whose key is unset will surface a clean runtime error
-  // if the bot tries to invoke it.
-  BRAVE_API_KEY: string;
-  FIRECRAWL_API_KEY?: string;
-  TAVILY_API_KEY?: string;
+  // Web tools route through the MCP client (apps/edge/src/mcp/client.ts)
+  // to Exa's hosted MCP at mcp.exa.ai. TAVILY_API_KEY stays declared
+  // because the upcoming skill mechanism will plumb Tavily through a
+  // subscribable skill — not exposed by default on the chat surface.
   EXA_API_KEY?: string;
-  SERPER_API_KEY?: string;
+  TAVILY_API_KEY?: string;
   // APNS: token-based auth, two .p8 keys (Apple recommends per-environment).
   // Topic = the iOS app bundle id (key is restricted to it).
   APNS_TEAM_ID: string;
