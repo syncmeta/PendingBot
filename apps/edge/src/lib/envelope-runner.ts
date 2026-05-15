@@ -20,6 +20,7 @@ import { ensurePromptOverridesLoaded, getPrompt } from '../llm/prompt-loader';
 import { estimateTokens } from '../llm/token-estimate';
 import { getBotMemory } from './memory';
 import { mcpClient } from '../mcp/client';
+import { loadAllowedTools } from './tools-registry';
 import { parseExaFetchPayload, parseExaSearchPayload } from '../mcp/parsers';
 import { WebToolMeter, type WebToolUsage } from './web-meter';
 import {
@@ -31,6 +32,7 @@ import {
   runEnvelopeLoop,
   SILENT_TOKEN,
   stripLeadingTitleAndSubtitle,
+  TOOLS,
   type ProgressState,
   type EnvelopeLoopResult,
   type EnvelopeTurnInfo,
@@ -371,11 +373,21 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
       ? `## 朋友的背景\n${botMemory.representation.trim()}\n\n`
       : '';
 
+    // Strict allowlist from the tools registry — disabling a row in
+    // the board "Tools" page strips it from the envelope advertise
+    // list within ~1 min. Null = registry unreachable; default to the
+    // full TOOLS list rather than serving an empty surface.
+    const allowedEnvelopeKeys = await loadAllowedTools(env, 'envelope');
+    const envelopeTools = allowedEnvelopeKeys
+      ? TOOLS.filter((t) => allowedEnvelopeKeys.has(t.function.name))
+      : TOOLS;
+
     result = await runEnvelopeLoop({
       openai: mainRoute.client,
       modelId: mainRoute.modelToCall,
       systemPrompt: getPrompt('scroll'),
       initialUserContent: initialUser,
+      tools: envelopeTools,
       webSearch: async (query) => {
         const { text, isError } = await mcpClient.callTool(
           'web_search_exa',
