@@ -90,6 +90,24 @@ export default async function AuditPage({
   if (filterModelId) recentQ = recentQ.eq('model_id', filterModelId);
   const { data: recent } = await recentQ;
 
+  // 模型耗时 = sum(audit_model_calls.latency_ms) per audit_log row.
+  // 这是真实的 provider API 时间，audit_log.latency_ms 包含了 KV/RAG/prompt
+  // 拼装/tool loop 串行/落库等额外开销，是 turn 总耗时。
+  const recentIds = (recent ?? []).map((r) => r.id);
+  const { data: modelCalls } = recentIds.length
+    ? await supa
+        .from('audit_model_calls')
+        .select('audit_log_id, latency_ms')
+        .in('audit_log_id', recentIds)
+    : { data: [] as { audit_log_id: string; latency_ms: number }[] };
+  const modelLatencyById = new Map<string, number>();
+  for (const c of modelCalls ?? []) {
+    modelLatencyById.set(
+      c.audit_log_id,
+      (modelLatencyById.get(c.audit_log_id) ?? 0) + (c.latency_ms ?? 0),
+    );
+  }
+
   let detailQ = supa
     .from('audit_log')
     .select(
@@ -226,7 +244,11 @@ export default async function AuditPage({
           label="缓存命中率"
           value={cacheHitRate == null ? '—' : `${(cacheHitRate * 100).toFixed(1)}%`}
         />
-        <Stat label="平均延迟" value={fmtMs(avgLatency)} />
+        <Stat
+          label="平均 turn 耗时"
+          value={fmtMs(avgLatency)}
+          title="turn 总耗时（含 KV/RAG/prompt/tool loop/落库），不是纯模型 API 时间"
+        />
         <Stat
           label="错误 / Fallback"
           value={`${fmtNumber(summary.errors)} / ${fmtNumber(summary.fallbacks)}`}
@@ -327,7 +349,18 @@ export default async function AuditPage({
                 <Th className="text-right" title="厂商 / 本地 — 偏离 1.0 越多越可疑">
                   Δ
                 </Th>
-                <Th className="text-right">延迟</Th>
+                <Th
+                  className="text-right"
+                  title="provider API 调用耗时之和 (sum of audit_model_calls.latency_ms) — 真正的模型延迟"
+                >
+                  模型耗时
+                </Th>
+                <Th
+                  className="text-right"
+                  title="turn 总耗时：包含 KV/RAG/prompt 拼装、tool loop 多次模型调用串行、落库等所有开销"
+                >
+                  总耗时
+                </Th>
               </tr>
             </thead>
             <tbody>
@@ -378,12 +411,17 @@ export default async function AuditPage({
                   <Td className="text-right">
                     <CostRatio local={r.cost_usd} provider={r.provider_cost_usd} />
                   </Td>
-                  <Td className="text-right">{fmtMs(r.latency_ms)}</Td>
+                  <Td className="text-right">
+                    {modelLatencyById.has(r.id)
+                      ? fmtMs(modelLatencyById.get(r.id)!)
+                      : '—'}
+                  </Td>
+                  <Td className="text-right text-muted-foreground">{fmtMs(r.latency_ms)}</Td>
                 </tr>
               ))}
               {(recent ?? []).length === 0 && (
                 <tr>
-                  <td colSpan={18} className="px-4 py-8 text-center text-muted-foreground">
+                  <td colSpan={19} className="px-4 py-8 text-center text-muted-foreground">
                     暂无 audit 记录
                   </td>
                 </tr>
@@ -400,13 +438,15 @@ function Stat({
   label,
   value,
   accent,
+  title,
 }: {
   label: string;
   value: string;
   accent?: boolean;
+  title?: string;
 }) {
   return (
-    <div className="rounded-lg border bg-card p-4">
+    <div className="rounded-lg border bg-card p-4" title={title}>
       <div className="text-xs text-muted-foreground">{label}</div>
       <div
         className={
