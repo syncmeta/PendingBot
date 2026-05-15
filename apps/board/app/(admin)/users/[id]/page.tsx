@@ -6,11 +6,13 @@ import {
   cancelPendingDeletion,
   forceDeleteAccount,
   grantCredits,
+  setTestAccount,
   updateQuota,
 } from '../actions';
 import { QuotaForm } from './_form';
 import { GrantForm } from './_grant-form';
 import { ConfirmDeletionAction } from './_deletion-actions';
+import { ActionButton } from '@/components/action-button';
 
 const COOLDOWN_DAYS = 28;
 
@@ -28,7 +30,7 @@ export default async function UserDetailPage({
   const [{ data: user }, { data: quota }, { data: ledger }] = await Promise.all([
     supa
       .from('users')
-      .select('id, display_name, email, is_admin, created_at, updated_at, bio, balance_credits, lifetime_topup_credits, lifetime_spent_credits, pending_deletion_at, pending_deletion_sentiment')
+      .select('id, display_name, email, is_admin, is_test_account, created_at, updated_at, bio, balance_credits, lifetime_topup_credits, lifetime_spent_credits, pending_deletion_at, pending_deletion_sentiment')
       .eq('id', id)
       .maybeSingle(),
     supa.from('user_quota').select('*').eq('user_id', id).maybeSingle(),
@@ -78,8 +80,54 @@ export default async function UserDetailPage({
               admin
             </span>
           )}
+          {user.is_test_account && (
+            <span className="ml-2 rounded bg-sky-100 px-2 py-0.5 text-xs text-sky-700">
+              test account
+            </span>
+          )}
         </p>
       </div>
+
+      <section className="space-y-3">
+        <h2 className="text-sm font-medium">测试账号</h2>
+        <div className="rounded-lg border bg-card p-4 space-y-3 text-sm">
+          <p className="text-muted-foreground">
+            标记后，edge worker 会把该用户每一次 /v1 请求记到 test_account_log
+            （路由、状态、耗时、客户端版本…），用于排查"用户那边到底发生了
+            什么"。生产用户不开启时无任何额外开销。开关切换最长 60s 生效
+            （worker 那边按 60s TTL 缓存标志位）。
+          </p>
+          <div className="flex items-center gap-2">
+            {user.is_test_account ? (
+              <>
+                <ActionButton
+                  action={setTestAccount}
+                  args={[user.id, false] as const}
+                  size="sm"
+                  variant="normal"
+                  label="取消测试账号标记"
+                  pendingLabel="处理中…"
+                />
+                <Link
+                  href={`/users/${user.id}/test-logs`}
+                  className="rounded-md border border-input px-3 py-1.5 text-sm font-medium hover:bg-accent"
+                >
+                  查看详细日志 →
+                </Link>
+              </>
+            ) : (
+              <ActionButton
+                action={setTestAccount}
+                args={[user.id, true] as const}
+                size="sm"
+                variant="primary"
+                label="标记为测试账号"
+                pendingLabel="处理中…"
+              />
+            )}
+          </div>
+        </div>
+      </section>
 
       <section className="space-y-3">
         <h2 className="text-sm font-medium">注销状态</h2>
