@@ -199,7 +199,6 @@ export type Database = {
           error_class: string | null
           est_input_tokens: number | null
           est_output_tokens: number | null
-          estimated_cost_usd: number | null
           generation_id: string | null
           id: string
           input_tokens: number
@@ -209,6 +208,7 @@ export type Database = {
           model_id: string
           output_tokens: number
           prompt_tokens_details: Json | null
+          provider_cost_usd: number | null
           provider_id: string | null
           reported_provider: string | null
           route_trace: Json | null
@@ -234,7 +234,6 @@ export type Database = {
           error_class?: string | null
           est_input_tokens?: number | null
           est_output_tokens?: number | null
-          estimated_cost_usd?: number | null
           generation_id?: string | null
           id?: string
           input_tokens?: number
@@ -244,6 +243,7 @@ export type Database = {
           model_id: string
           output_tokens?: number
           prompt_tokens_details?: Json | null
+          provider_cost_usd?: number | null
           provider_id?: string | null
           reported_provider?: string | null
           route_trace?: Json | null
@@ -269,7 +269,6 @@ export type Database = {
           error_class?: string | null
           est_input_tokens?: number | null
           est_output_tokens?: number | null
-          estimated_cost_usd?: number | null
           generation_id?: string | null
           id?: string
           input_tokens?: number
@@ -279,6 +278,7 @@ export type Database = {
           model_id?: string
           output_tokens?: number
           prompt_tokens_details?: Json | null
+          provider_cost_usd?: number | null
           provider_id?: string | null
           reported_provider?: string | null
           route_trace?: Json | null
@@ -2351,12 +2351,12 @@ export type Database = {
           cost_usd: number | null
           day: string | null
           error_count: number | null
-          estimated_cost_usd: number | null
           fallback_count: number | null
           input_tokens: number | null
           model_alias_id: string | null
           model_id: string | null
           output_tokens: number | null
+          provider_cost_usd: number | null
           provider_id: string | null
           request_count: number | null
           task_type: string | null
@@ -2387,11 +2387,11 @@ export type Database = {
           cache_write_tokens: number | null
           cost_usd: number | null
           error_count: number | null
-          estimated_cost_usd: number | null
           input_tokens: number | null
           model_id: string | null
           month: string | null
           output_tokens: number | null
+          provider_cost_usd: number | null
           provider_id: string | null
           request_count: number | null
           task_type: string | null
