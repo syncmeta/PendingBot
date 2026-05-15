@@ -592,8 +592,15 @@ export async function recordAudit(
   route: ResolvedRoute | null,
   opts: AuditCallOpts,
 ): Promise<string | null> {
-  const estimatedCost = route?.alias ? computeCost(route.alias, opts) : null;
-  const llmCost = opts.providerCostUsd ?? null;
+  // Local price-book cost is authoritative for billing. We fall back to
+  // the provider-reported value only when the alias has no price rows
+  // (unregistered passthrough), so unpriced traffic still settles
+  // something instead of going to zero. The provider-reported value is
+  // also stored side-by-side in provider_cost_usd so the board can diff
+  // local-vs-provider per row and validate the calculator.
+  const localCost = route?.alias ? computeCost(route.alias, opts) : null;
+  const providerCost = opts.providerCostUsd ?? null;
+  const llmCost = localCost ?? providerCost;
   // Web-tool spend (Brave / Tavily / Exa / Serper / Firecrawl) accrues
   // during the same LLM turn. We fold its USD sum into the parent row
   // and apply the same usdToPnd markup so a single billing_debit
@@ -658,12 +665,14 @@ export async function recordAudit(
     audio_input_tokens: audioInputTokens,
     audio_output_tokens: audioOutputTokens,
     total_tokens: total,
-    // cost_usd is the provider-reported LLM cost. estimated_cost_usd is
-    // our local price-book estimate for audit comparison only.
+    // cost_usd is the LLM cost that drives billing — locally computed
+    // from the alias price-book when available, else the provider's
+    // reported value as a fallback. provider_cost_usd stores the raw
+    // provider report (when present) for audit comparison.
     // tool_cost_usd breaks out web-tool spend; cost_credits below is
-    // the combined debit (provider LLM + tools, after markup).
+    // the combined debit (LLM + tools, after markup).
     cost_usd: llmCost,
-    estimated_cost_usd: estimatedCost,
+    provider_cost_usd: providerCost,
     reported_provider: opts.reportedProvider ?? null,
     cost_details: (opts.costDetails as Json | null) ?? null,
     prompt_tokens_details: (opts.promptTokensDetails as Json | null) ?? null,
