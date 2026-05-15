@@ -348,7 +348,13 @@ export default async function AuditPage({
                     {r.est_input_tokens == null ? '—' : fmtTokens(r.est_input_tokens)}
                   </Td>
                   <Td className="text-right">
-                    <Ratio actual={r.input_tokens} estimate={r.est_input_tokens} />
+                    {/* est 估的是整个 prompt（不感知 cache）；actual input_tokens
+                        已扣掉 cache_read。对账时把 cache_read 加回来，比的是
+                        provider 上报的 prompt 全量 vs 本地估算。 */}
+                    <Ratio
+                      actual={(r.input_tokens ?? 0) + (r.cache_read_tokens ?? 0)}
+                      estimate={r.est_input_tokens}
+                    />
                   </Td>
                   <Td className="text-right">{fmtTokens(r.output_tokens)}</Td>
                   <Td className="text-right text-muted-foreground">
