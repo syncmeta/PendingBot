@@ -68,6 +68,10 @@ struct RootView: View {
     @EnvironmentObject var store: AccountStore
     @Environment(\.scenePhase) private var scenePhase
 
+    private var shouldObscure: Bool {
+        scenePhase != .active && store.current != nil
+    }
+
     var body: some View {
         Group {
             if !store.sessionHydrated {
@@ -90,22 +94,15 @@ struct RootView: View {
                     .id(store.current?.id)
             }
         }
-        // Privacy overlay for the app-switcher snapshot. iOS captures a
-        // screenshot of the frontmost frame when the user enters the
-        // multitasking switcher; without a cover, that snapshot — kept in
-        // /var/mobile/.../Snapshots and visible to anyone with brief
-        // device access — shows the last open conversation verbatim.
-        // Painting the SplashView over the content during `.inactive` (the
-        // brief transition phase before `.background`, which is when the
-        // snapshot is taken) replaces the leak with the launch logo.
-        // Only signed-in surfaces need the cover; sign-in / onboarding
-        // screens are non-sensitive.
-        .overlay {
-            if scenePhase != .active && store.current != nil {
-                SplashView()
-                    .transition(.opacity)
-            }
-        }
+        // Privacy cover for the app-switcher snapshot. iOS captures a
+        // screenshot of the frontmost frame during `.inactive` (the
+        // transition phase before `.background`); without a cover, that
+        // snapshot — kept in /var/mobile/.../Snapshots — shows the last
+        // open conversation verbatim. Blurring the content during
+        // `.inactive` redacts the snapshot while keeping the user's
+        // mental model intact (no surprise launch screen on return).
+        // Only signed-in surfaces need the cover.
+        .blur(radius: shouldObscure ? 30 : 0)
         .animation(.easeInOut(duration: 0.15), value: scenePhase)
         // One-shot recovery banner: fires the first time we sign back in
         // while a deletion tombstone was still pending. AccountStore flips
