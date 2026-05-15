@@ -533,9 +533,11 @@ realtimeRoutes.post('/usage', async (c) => {
   }
 
   const startedAt = Date.now();
-  // recordAudit still stores a local estimated_cost_usd using this
-  // pricing model, while billable cost_usd comes from provider_cost_usd
-  // when the client forwards a provider-reported value:
+  // recordAudit computes cost_usd locally from this pricing model
+  // (it drives billing). provider_cost_usd captures whatever the
+  // upstream reports, when it reports one; the Realtime API does not
+  // currently emit a per-turn cost, so provider_cost_usd stays null
+  // for voice calls.
   //   audio_in  cost  = audio_input_tokens  × alias.audio_input_price /1M
   //   audio_out cost  = audio_output_tokens × alias.audio_output_price /1M
   //   text_in   cost  = text_input_tokens   × alias.input_price        /1M
