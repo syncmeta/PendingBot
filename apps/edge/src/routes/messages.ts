@@ -464,14 +464,15 @@ messageRoutes.post('/', async (c) => {
             }
 
             // Per-bot opt-in lookback cadence; defaults below mirror the old
-            // auto-review knobs (every 10 rounds).
+            // auto-review knobs (every 10 rounds). Counter is per (bot, user)
+            // so accumulation crosses individual conversations.
             maybeAutoLookback({
               env: c.env,
               ctx: c.executionCtx,
               conversationId: parsed.conversationId,
               botId: bot.id,
+              userId,
               botConfig: bot.config as LookbackConfigEnvelope | null,
-              roundCount: updatedConv?.round_count ?? 0,
             });
 
             // Auto-rename: round 1 replaces the random place-name fallback
@@ -1016,33 +1017,99 @@ messageRoutes.delete('/:id', async (c) => {
   return c.json({ ok: true });
 });
 
+// POST /v1/messages/:id/lookback — manual lookback trigger.
+//
+// `:id` is a conversation id (mirroring the recall + delete shape). User
+// must be a participant of the conv, and the conv must have a bot. The
+// runner fires detached via waitUntil; we also reset the (bot, user)
+// counter so manual triggers don't double up with the auto cadence right
+// after.
+messageRoutes.post('/:id/lookback', async (c) => {
+  const userId = c.var.userId!;
+  const userJwt = c.var.userJwt!;
+  const convId = c.req.param('id');
+  if (!UUID_RE.test(convId)) {
+    return jsonError(c, 400, 'invalid_id');
+  }
+
+  const supaUser = userClient(c.env, userJwt);
+  const supaService = serviceClient(c.env);
+
+  // Visibility + bot lookup in one trip. resolveConv enforces participant
+  // access via the user-JWT client.
+  let conv: { id: string; bot_id: string | null } | null;
+  try {
+    const resolved = await resolveConv(c.env, supaUser, convId, userId, (p) =>
+      safeWaitUntil(c, p),
+    );
+    conv = resolved as { id: string; bot_id: string | null } | null;
+  } catch (err) {
+    return jsonError(c, 500, 'database_error', {
+      detail: (err as { message?: string }).message ?? 'resolveConv failed',
+    });
+  }
+  if (!conv) return jsonError(c, 404, 'conversation_no_access');
+  if (!conv.bot_id) return jsonError(c, 400, 'conversation_has_no_bot');
+  const botId = conv.bot_id;
+
+  // Reset the per-(bot,user) counter so a manual trigger doesn't double up
+  // with the auto cadence on the very next turn. Best-effort — the runner
+  // still fires even if this update fails.
+  await supaService
+    .from('bot_user_lookback_counter')
+    .upsert(
+      { bot_id: botId, user_id: userId, rounds_since_last: 0, updated_at: new Date().toISOString() },
+      { onConflict: 'bot_id,user_id' },
+    );
+
+  c.executionCtx.waitUntil(
+    runLookback({ env: c.env, conversationId: convId, botId }),
+  );
+
+  return c.json({ ok: true });
+});
+
 // Per-bot lookback config. Lives in `bots.config` jsonb. Defaults:
 // enabled, every 10 rounds.
 interface LookbackConfigEnvelope {
   lookback?: { enabled?: boolean; roundInterval?: number };
 }
 
+// Lookback cadence is keyed off a per (bot, user) counter that crosses
+// conversations — `bump_lookback_counter` returns true when the running
+// tally reaches `interval`, and atomically resets it to 0. The fired
+// runLookback still scopes to the current conv (that's where the freshest
+// transcript lives).
 function maybeAutoLookback(input: {
   env: AppBindings['Bindings'];
   ctx: ExecutionContext;
   conversationId: string;
   botId: string;
+  userId: string;
   botConfig: LookbackConfigEnvelope | null;
-  roundCount: number;
 }) {
   const cfg = input.botConfig?.lookback ?? {};
   if (cfg.enabled === false) return;
   const interval = Math.max(1, cfg.roundInterval ?? 10);
-  if (input.roundCount === 0) return;
-  if (input.roundCount % interval !== 0) return;
 
-  input.ctx.waitUntil(
-    runLookback({
+  input.ctx.waitUntil((async () => {
+    const supa = serviceClient(input.env);
+    const { data: shouldFire, error } = await supa.rpc('bump_lookback_counter', {
+      p_bot: input.botId,
+      p_user: input.userId,
+      p_interval: interval,
+    });
+    if (error) {
+      console.warn('[lookback] bump_lookback_counter failed', error);
+      return;
+    }
+    if (!shouldFire) return;
+    await runLookback({
       env: input.env,
       conversationId: input.conversationId,
       botId: input.botId,
-    }),
-  );
+    });
+  })());
 }
 
 // Resolves the conversation's main model (bot.model_id, falling back to
