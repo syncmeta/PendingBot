@@ -123,14 +123,13 @@
   //                           until the LLMRouter wires it back in)
   //
   //   --- web tools (search + scrape) ---
-  //   Each provider is optional. The runner reads only the keys for
-  //   providers actually selected by task_routing_rules / default. Setting
-  //   none leaves search/scrape disabled; setting one or more enables those.
-  //   BRAVE_API_KEY          (search; current DEFAULT_SEARCH_PROVIDER)
-  //   TAVILY_API_KEY         (search + scrape)
-  //   EXA_API_KEY            (search + scrape)
-  //   SERPER_API_KEY         (search)
-  //   FIRECRAWL_API_KEY      (scrape; current DEFAULT_SCRAPE_PROVIDER)
+  //   BRAVE_API_KEY          (search; DEFAULT_SEARCH_PROVIDER — required)
+  //   TAVILY_API_KEY         (scrape default for read_url + the
+  //                           tavily_research tool via mcp.tavily.com)
+  //   EXA_API_KEY            (exa_research tool via mcp.exa.ai;
+  //                           also direct contents endpoint)
+  //   SERPER_API_KEY         (optional alternate search; Envelope runner)
+  //   FIRECRAWL_API_KEY      (optional scrape fallback; not default)
   //
   //   --- push (APNs token auth, per-environment keys) ---
   //   APNS_TEAM_ID
