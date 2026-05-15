@@ -21,7 +21,11 @@ import { serviceClient } from './supabase';
 import { safeWaitUntil } from './safe-wait-until';
 
 const FLAG_PREFIX = 'test-account:';
-const FLAG_TTL_SEC = 300;
+// Short TTL: the board flips this flag for live debugging and there's
+// no cross-system invalidation path. 60s keeps the per-request cost
+// down (1 DB round-trip per user per minute) while staying responsive
+// to admins watching test-account_log fill in.
+const FLAG_TTL_SEC = 60;
 
 type FlagCache = { is_test_account: boolean };
 
