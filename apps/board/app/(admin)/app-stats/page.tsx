@@ -49,7 +49,6 @@ export default async function AppStatsPage() {
     surfRunsR,
     skillsR,
     skillSubsR,
-    sandboxR,
     deletionSentimentR,
   ] = await Promise.all([
     supa.from('users').select('*', { count: 'exact', head: true }),
@@ -105,8 +104,6 @@ export default async function AppStatsPage() {
     supa.from('skills').select('id, visibility, frontmatter, forked_from'),
     // Skill subscriptions — counts per skill across all (user, conv) pairs.
     supa.from('skill_subscriptions').select('skill_id'),
-    // Sandbox sessions: bootstrapped + idle status.
-    supa.from('bot_sandbox_sessions').select('bootstrapped, last_used_at, created_at'),
     // Account-deletion sentiment — anonymous tally of which farewell
     // button users picked. No user_id stored, so the row outlives the
     // cascading account wipe by design.
@@ -260,16 +257,6 @@ export default async function AppStatsPage() {
     }))
     .sort((a, b) => b.subs - a.subs)
     .slice(0, 10);
-
-  // ── Sandbox sessions ───────────────────────────────────────────
-  const sandbox = sandboxR.data ?? [];
-  const sandboxTotal = sandbox.length;
-  const sandboxBootstrapped = sandbox.filter((s) => s.bootstrapped).length;
-  const idleThreshold = Date.now() - 60 * 60 * 1000; // 1h matches cron sweep
-  const sandboxActive = sandbox.filter(
-    (s) => new Date(s.last_used_at).getTime() >= idleThreshold,
-  ).length;
-  const sandboxIdle = sandboxTotal - sandboxActive;
 
   // ── Account-deletion sentiment ─────────────────────────────────
   const deletionRows = deletionSentimentR.data ?? [];
@@ -486,25 +473,6 @@ export default async function AppStatsPage() {
           </p>
         </Card>
 
-        <Card title="Sandbox sessions">
-          <div className="px-4 py-3 space-y-2 text-sm">
-            <Row label="活动 session" value={fmtNumber(sandboxTotal)} />
-            <Row label="已 bootstrap" value={fmtNumber(sandboxBootstrapped)} />
-            <Row
-              label="近 1h 活跃"
-              value={fmtNumber(sandboxActive)}
-              tone={sandboxActive > 0 ? 'text-emerald-700' : undefined}
-            />
-            <Row
-              label="空闲（>1h）"
-              value={fmtNumber(sandboxIdle)}
-              tone={sandboxIdle > 0 ? 'text-muted-foreground' : undefined}
-            />
-          </div>
-          <p className="border-t px-4 py-2 text-xs text-muted-foreground">
-            空闲超过 1 小时的会被 cron sweep 在 Daytona 上销毁；本表只反映此刻 DB 行。
-          </p>
-        </Card>
       </section>
     </main>
   );

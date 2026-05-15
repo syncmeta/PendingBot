@@ -671,41 +671,6 @@ export type Database = {
           },
         ]
       }
-      bot_sandbox_sessions: {
-        Row: {
-          bootstrapped: boolean
-          conversation_id: string
-          created_at: string
-          daytona_sandbox_id: string
-          id: string
-          last_used_at: string
-        }
-        Insert: {
-          bootstrapped?: boolean
-          conversation_id: string
-          created_at?: string
-          daytona_sandbox_id: string
-          id?: string
-          last_used_at?: string
-        }
-        Update: {
-          bootstrapped?: boolean
-          conversation_id?: string
-          created_at?: string
-          daytona_sandbox_id?: string
-          id?: string
-          last_used_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "bot_sandbox_sessions_conversation_id_fkey"
-            columns: ["conversation_id"]
-            isOneToOne: true
-            referencedRelation: "conversations"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       bot_user_lookback_counter: {
         Row: {
           bot_id: string
@@ -1466,6 +1431,7 @@ export type Database = {
           id: string
           max_output_tokens: number | null
           notes: string | null
+          openrouter_canonical_slug: string | null
           slug: string
           updated_at: string
         }
@@ -1480,6 +1446,7 @@ export type Database = {
           id?: string
           max_output_tokens?: number | null
           notes?: string | null
+          openrouter_canonical_slug?: string | null
           slug: string
           updated_at?: string
         }
@@ -1494,6 +1461,7 @@ export type Database = {
           id?: string
           max_output_tokens?: number | null
           notes?: string | null
+          openrouter_canonical_slug?: string | null
           slug?: string
           updated_at?: string
         }

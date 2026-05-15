@@ -86,7 +86,7 @@ open apps/ios/PendingBot.xcodeproj
 - **画像与记忆**：[Honcho](https://honcho.dev) ([plastic-labs/honcho](https://github.com/plastic-labs/honcho), Apache-2.0)。
 - **Agent Skills 预设** 来自 [anthropic/skills](https://github.com/anthropics/skills)（Apache-2.0），vendored 在 [apps/edge/prompts/skills/anthropic/](apps/edge/prompts/skills/anthropic/)，详见 [NOTICE](apps/edge/prompts/skills/anthropic/NOTICE.md)。
 - **运行时**：[Cloudflare Workers](https://workers.cloudflare.com) · [Hono](https://hono.dev) (MIT) · [Supabase](https://supabase.com) · [Bun](https://bun.sh) (MIT, 工具链) · [OpenAI SDK](https://github.com/openai/openai-node) (Apache-2.0) · [Zod](https://github.com/colinhacks/zod) (MIT)。
-- **外部服务**：[OpenRouter](https://openrouter.ai)（模型路由）· [Honcho](https://honcho.dev)（画像）· [Daytona](https://daytona.io)（沙箱）· APNS。
+- **外部服务**：[OpenRouter](https://openrouter.ai)（模型路由）· [Honcho](https://honcho.dev)（画像）· [Cloudflare Sandbox SDK](https://github.com/cloudflare/sandbox-sdk)（沙箱）· APNS。
 
 ## 📂 仓库结构
 
