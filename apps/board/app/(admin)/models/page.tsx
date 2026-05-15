@@ -31,12 +31,20 @@ export default async function ModelsPage() {
             Canonical 模型注册表。bots.model_id 用 slug 引用。
           </p>
         </div>
-        <Link
-          href="/models/new"
-          className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground"
-        >
-          新增 model
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/models/sync"
+            className="rounded-md border border-input px-3 py-1.5 text-sm hover:bg-accent"
+          >
+            从 OpenRouter 同步
+          </Link>
+          <Link
+            href="/models/new"
+            className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground"
+          >
+            新增 model
+          </Link>
+        </div>
       </header>
 
       <div className="overflow-x-auto rounded-lg border bg-card">

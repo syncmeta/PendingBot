@@ -24,6 +24,8 @@ function parseForm(formData: FormData) {
   const enabled = formData.get('enabled') === 'on';
   const deprecated = formData.get('deprecated') === 'on';
   const notes = String(formData.get('notes') ?? '').trim() || null;
+  const openrouter_canonical_slug =
+    String(formData.get('openrouter_canonical_slug') ?? '').trim() || null;
 
   if (!slug) return { error: 'slug 必填' };
   if (!display_name) return { error: 'display_name 必填' };
@@ -47,6 +49,7 @@ function parseForm(formData: FormData) {
       context_window,
       max_output_tokens,
       capabilities,
+      openrouter_canonical_slug,
       enabled,
       deprecated_at: deprecated ? new Date().toISOString() : null,
       notes,

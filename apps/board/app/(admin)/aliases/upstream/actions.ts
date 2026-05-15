@@ -33,8 +33,8 @@ export async function pullUpstreamPrices(
   await requireAdmin();
   try {
     const supa = supabaseAdmin();
-    const { rows, openRouterFetchedAt } = await buildUpstreamDiff(supa);
-    return { ok: true, rows, fetchedAt: openRouterFetchedAt };
+    const { rows, fetchedAt } = await buildUpstreamDiff(supa);
+    return { ok: true, rows, fetchedAt };
   } catch (err) {
     return {
       ok: false,
