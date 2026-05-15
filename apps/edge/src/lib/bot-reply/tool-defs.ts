@@ -51,6 +51,40 @@ export const CHAT_TOOLS: ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
+      name: 'tavily_research',
+      // Backed by Tavily's hosted MCP `tavily-search` tool (basic depth
+      // to match the tavily:search row in web_tool_prices). Different
+      // ranking + freshness profile than the default search_web (Brave) —
+      // good fallback when Brave didn't surface what you wanted.
+      description:
+        'Tavily 搜索（不同于 search_web 用的 Brave）。Tavily 偏向新内容、新闻和事件，对中文小站、博客类内容覆盖也更全。**默认搜索继续走 search_web**；当 search_web 拿不到满意结果，或问题明显跟时效相关（最近一周/最新动态/事件追踪）时再切到 tavily_research。比 search_web 略贵。返回最多 8 条结果，结构和 search_web 一致（{n, url, title, snippet}），n 与本轮 citations 累积复用，引用同样用 `[N]` 行内标记。',
+      parameters: {
+        type: 'object',
+        properties: { query: { type: 'string' } },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'exa_research',
+      // Backed by Exa's hosted MCP `web_search_exa` tool. Differentiated
+      // from search_web by neural/semantic ranking — finds conceptually
+      // related content, not just keyword matches. Useful for academic
+      // and "find articles similar in idea to X" queries.
+      description:
+        'Exa 语义/神经搜索。和基于关键词的 search_web 不同，它按「概念相似度」找内容——适合学术论文、研究主题、找跟某段描述意思相近的文章。例：「找跟『用 transformer 做时间序列预测』主题相关的论文」「找批评某流派思想的文章」。日常搜索（人名、品牌、新闻）继续走 search_web；只在 search_web 关键词搜不到、需要概念检索时切到这个。返回最多 8 条结果，结构和 search_web 一致。',
+      parameters: {
+        type: 'object',
+        properties: { query: { type: 'string' } },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'query_user_memory',
       // Honcho dialectic endpoint as a tool. The bot phrases a natural-
       // language question; Honcho's reasoning agent searches everything it's

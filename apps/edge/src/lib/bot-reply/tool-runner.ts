@@ -1,6 +1,8 @@
 import type { Env } from '../../types';
 import { DaytonaApiError } from '../sandbox';
 import { runWebScrape, runWebSearch } from '../web';
+import { runTavilyMcpSearch, runExaMcpSearch } from '../web-mcp';
+import type { WebSearchResult } from '../web-types';
 import { WebToolMeter } from '../web-meter';
 import { queryUserRepresentation } from '../honcho';
 import { searchChatHistoryTool } from './tools/search-history';
@@ -84,29 +86,34 @@ export async function runTool(
         signal: ctx.signal,
         meter: ctx.webMeter,
       });
-      // Dedupe by url against prior search calls in this same turn so the
-      // model sees stable `n`s — once it learned the New York Times piece is
-      // [3], that mapping survives a follow-up search that re-surfaces the
-      // same article.
-      const annotated = hits.slice(0, 8).map((h) => {
-        const existing = ctx.citations.findIndex((c) => c.url === h.url);
-        let n: number;
-        if (existing >= 0) {
-          n = existing + 1;
-        } else {
-          ctx.citations.push({ url: h.url, title: h.title, snippet: h.snippet });
-          n = ctx.citations.length;
-        }
-        return { n, url: h.url, title: h.title, snippet: h.snippet };
+      return annotateSearchHits(ctx, 'search_web', hits);
+    }
+    if (name === 'tavily_research') {
+      const query = String(args.query ?? '').trim();
+      if (!query) return JSON.stringify({ error: 'empty query' });
+      ctx.emit('tool_call', { name: 'tavily_research', query });
+      const hits = await runTavilyMcpSearch(env, {
+        query,
+        // Basic depth (1 credit, $0.008) to match the tavily:search row
+        // in web_tool_prices. Advanced depth (2 credits, $0.016) would
+        // require either a new price-book variant or a per-call cost
+        // override — out of scope for v1.
+        depth: 'basic',
+        signal: ctx.signal,
+        meter: ctx.webMeter,
       });
-      ctx.emit('tool_result', { name: 'search_web', count: annotated.length });
-      // Push the cumulative citations list so iOS can resolve `[N]` taps in
-      // the live preview before the bubble row hits Realtime.
-      ctx.emit('citations', { items: ctx.citations });
-      return JSON.stringify({
-        results: annotated,
-        hint: '若回复里要引用上面某条结果，请在相关说法后跟上 `[N]`（N 对应该条结果的 n）。多个引用可以连写如 `[1][3]`。无须引用就不要写。',
+      return annotateSearchHits(ctx, 'tavily_research', hits);
+    }
+    if (name === 'exa_research') {
+      const query = String(args.query ?? '').trim();
+      if (!query) return JSON.stringify({ error: 'empty query' });
+      ctx.emit('tool_call', { name: 'exa_research', query });
+      const hits = await runExaMcpSearch(env, {
+        query,
+        signal: ctx.signal,
+        meter: ctx.webMeter,
       });
+      return annotateSearchHits(ctx, 'exa_research', hits);
     }
     if (name === 'read_url') {
       const url = String(args.url ?? '').trim();
@@ -181,6 +188,37 @@ export async function runTool(
       status: formatted.status,
     });
   }
+}
+
+/// Shared post-processing for any search tool: dedupe hits against prior
+/// citations in this turn so `n` numbering stays stable across multiple
+/// calls (and across providers — a Tavily hit and a Brave hit pointing
+/// at the same article reuse the same n). Emits tool_result + citations
+/// SSE events and returns the JSON envelope the LLM consumes.
+function annotateSearchHits(
+  ctx: ToolCtx,
+  toolName: string,
+  hits: WebSearchResult[],
+): string {
+  const annotated = hits.slice(0, 8).map((h) => {
+    const existing = ctx.citations.findIndex((c) => c.url === h.url);
+    let n: number;
+    if (existing >= 0) {
+      n = existing + 1;
+    } else {
+      ctx.citations.push({ url: h.url, title: h.title, snippet: h.snippet });
+      n = ctx.citations.length;
+    }
+    return { n, url: h.url, title: h.title, snippet: h.snippet };
+  });
+  ctx.emit('tool_result', { name: toolName, count: annotated.length });
+  // Push the cumulative citations list so iOS can resolve `[N]` taps in
+  // the live preview before the bubble row hits Realtime.
+  ctx.emit('citations', { items: ctx.citations });
+  return JSON.stringify({
+    results: annotated,
+    hint: '若回复里要引用上面某条结果，请在相关说法后跟上 `[N]`（N 对应该条结果的 n）。多个引用可以连写如 `[1][3]`。无须引用就不要写。',
+  });
 }
 
 function formatToolError(err: unknown): { message: string; detail?: string; status?: number } {
