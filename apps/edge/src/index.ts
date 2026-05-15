@@ -18,6 +18,7 @@ import { codeExecRoutes } from './routes/code-exec';
 import { openrouterRoutes } from './routes/openrouter';
 import { realtimeRoutes } from './routes/realtime';
 import { wellKnownRoutes } from './routes/well-known';
+import { testAccountLogger } from './lib/test-account-log';
 import { handleScheduled } from './cron';
 
 // Re-export the Durable Object class so the runtime can find it via
@@ -50,6 +51,12 @@ app.use('*', async (c, next) => {
     maxAge: 600,
   })(c, next);
 });
+
+// Verbose per-request logging for accounts flagged is_test_account.
+// Runs after route middleware sets c.var.userId; the actual DB write is
+// scheduled via waitUntil so it never blocks the response. Non-test
+// accounts pay one KV read per authenticated request and nothing else.
+app.use('*', testAccountLogger());
 
 app.notFound((c) => jsonError(c, 404, 'not_found', { detail: { path: c.req.path } }));
 
