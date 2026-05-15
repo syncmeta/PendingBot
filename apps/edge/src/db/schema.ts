@@ -1466,6 +1466,7 @@ export type Database = {
           id: string
           max_output_tokens: number | null
           notes: string | null
+          openrouter_canonical_slug: string | null
           slug: string
           updated_at: string
         }
@@ -1480,6 +1481,7 @@ export type Database = {
           id?: string
           max_output_tokens?: number | null
           notes?: string | null
+          openrouter_canonical_slug?: string | null
           slug: string
           updated_at?: string
         }
@@ -1494,6 +1496,7 @@ export type Database = {
           id?: string
           max_output_tokens?: number | null
           notes?: string | null
+          openrouter_canonical_slug?: string | null
           slug?: string
           updated_at?: string
         }
