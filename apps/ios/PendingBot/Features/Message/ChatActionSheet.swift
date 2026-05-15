@@ -20,6 +20,10 @@ struct ChatActionSheet: View {
     /// runs the same upload pipeline as for library picks.
     @Binding var cameraImage: UIImage?
     var onDismiss: () -> Void = {}
+    /// When non-nil, renders a "检查" tile that manually fires a lookback
+    /// on the current conv. Nil for conv types without a single bot (group,
+    /// user_user) — those skip the tile entirely.
+    var onLookback: (() -> Void)? = nil
 
     @State private var showCamera = false
 
@@ -41,6 +45,17 @@ struct ChatActionSheet: View {
                     actionTileLabel(icon: "camera", label: "拍照")
                 }
                 .buttonStyle(.plain)
+
+                if let onLookback {
+                    Button {
+                        Haptics.tap()
+                        onLookback()
+                        onDismiss()
+                    } label: {
+                        actionTileLabel(icon: "checkmark.seal", label: "检查")
+                    }
+                    .buttonStyle(.plain)
+                }
 
                 Spacer(minLength: 0)
             }

@@ -104,6 +104,20 @@ extension ConversationView {
         }
     }
 
+    /// Manual "检查" — user-fired lookback. Hits the worker which runs
+    /// the same runLookback as the auto cadence (and resets the per
+    /// (bot, user) counter so we don't double-fire on the next turn).
+    /// New notes arrive via Realtime onLookback just like the auto path.
+    func triggerManualLookback() async {
+        guard let api else { return }
+        do {
+            try await api.postVoid("v1/messages/\(conversation.id)/lookback")
+            Haptics.success()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
     func scheduleLookbackAutoFire() {
         lookbackAutoFireTask?.cancel()
         lookbackAutoFireTask = Task { @MainActor in

@@ -24,6 +24,10 @@ struct ComposerView: View {
     /// button — tapping it calls `onStop` which cancels the SSE turn task.
     var isStreaming: Bool = false
     var onStop: () -> Void = {}
+    /// Optional manual lookback trigger. ConversationView passes a closure
+    /// when the conv has a single bot (user_bot / self); group + user_user
+    /// pass nil and the action sheet hides the tile.
+    var onLookback: (() -> Void)? = nil
 
     @State private var showActions = false
     @FocusState private var isFocused: Bool
@@ -113,7 +117,8 @@ struct ComposerView: View {
                 ChatActionSheet(
                     photoItems: $photoItems,
                     cameraImage: $cameraImage,
-                    onDismiss: { showActions = false }
+                    onDismiss: { showActions = false },
+                    onLookback: onLookback
                 )
                 .frame(height: 240)
                 .background(Theme.Palette.canvas)

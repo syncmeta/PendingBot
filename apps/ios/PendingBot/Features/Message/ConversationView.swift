@@ -450,7 +450,13 @@ struct ConversationView: View {
                     onStop: {
                         chatTurnTask?.cancel()
                         flushRevealImmediately()
-                    }
+                    },
+                    // Show 检查 only when the conv has a single bot — group
+                    // dispatches across multiple bots and user_user has none.
+                    onLookback: (conversation.conversation_type == "user_bot"
+                                 || conversation.conversation_type == "self")
+                        ? { Task { await triggerManualLookback() } }
+                        : nil
                 )
                 .readableColumnWidth()
             }
