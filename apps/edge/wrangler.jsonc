@@ -105,6 +105,7 @@
       // or max_instances if real traffic justifies it.
       "containers": [
         {
+          "name": "pendingbot-edge-sandbox",
           "class_name": "Sandbox",
           "image": "./Dockerfile",
           "instance_type": "lite",
