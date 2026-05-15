@@ -960,9 +960,9 @@ struct ConversationView: View {
             if !attachmentSnapshot.isEmpty {
                 attachmentIdsByMsgId[localId] = attachmentSnapshot.map { $0.id }
             }
-            // Light the typing indicator now so the gap between bubble +
-            // first bot token reads as "working" instead of "stuck".
-            pending = true
+            // Don't light the typing indicator here — TypingDots is gated
+            // on the first bot token now, and the "sending" (light green)
+            // bubble already signals that the request is in flight.
 
             // Lazy-cloud-conv: a fresh user_bot conv with no cloud row yet
             // skips the materialise round-trip entirely. /v1/messages/start
@@ -975,10 +975,10 @@ struct ConversationView: View {
                 if botId.isEmpty {
                     self.error = "未知机器人"
                     markUserMessageFailed(localId)
-                    pending = false
                     return
                 }
-                clearUserMessageStatus(localId)
+                // Bubble stays as "sending" (light green) — sendViaSSE
+                // flips it to "sent" (full green) on the .connected event.
                 sendViaSSE(text: text, attachmentIds: attachIds,
                            userMsgId: localId, clientMessageId: cmid,
                            startBotId: botId)
@@ -989,7 +989,6 @@ struct ConversationView: View {
                 let ok = await materializeIfPending()
                 guard ok else {
                     markUserMessageFailed(localId)
-                    pending = false
                     return
                 }
                 // Bubble was inserted with conversation_id="" — refresh it
@@ -1009,10 +1008,10 @@ struct ConversationView: View {
                 }
             }
 
-            // Conv exists now — clear the optimistic-sending tint and
-            // hand off to the SSE turn. SSE failures repaint the bubble
-            // red from inside sendViaSSE's catch.
-            clearUserMessageStatus(localId)
+            // Conv exists now — hand off to the SSE turn. The bubble
+            // stays "sending" (light green) until the .connected event
+            // flips it to "sent"; SSE failures repaint it red from
+            // inside sendViaSSE's catch.
             sendViaSSE(text: text, attachmentIds: attachIds, userMsgId: localId, clientMessageId: cmid)
             return
         }
@@ -1061,7 +1060,10 @@ struct ConversationView: View {
                     )
                 }
             }
-            clearUserMessageStatus(localId)
+            // Bubble stays "sending" (light green) until the Supabase
+            // insert returns; sendUserUserMessage flips it to "sent" on
+            // success or "failed" on error. The canonical Realtime echo
+            // replaces the row shortly after.
             await sendUserUserMessage(text, localId: localId, clientMessageId: cmid)
             return
         }
@@ -1097,19 +1099,21 @@ struct ConversationView: View {
         Haptics.error()
     }
 
-    /// Drop the .sending tint once the conv exists / SSE has begun. The
-    /// canonical row that arrives via Realtime will replace this row
-    /// outright (with status=nil), so this is just a brief pre-replace
-    /// state where the bubble looks "sent" without yet being persisted.
-    private func clearUserMessageStatus(_ localId: String) {
+    /// Flip the optimistic user row from "sending" (light green) to
+    /// "sent" (full green) once the server has acknowledged the request
+    /// — HTTP 200 on the SSE call, or a successful Supabase insert. The
+    /// canonical row arriving via Realtime will subsequently replace
+    /// this row outright (with status=nil), which renders the same
+    /// shade so the transition is seamless.
+    func markUserMessageSent(_ localId: String) {
         guard let idx = messages.firstIndex(where: { $0.id == localId }),
-              messages[idx].status != nil else { return }
+              messages[idx].status == "sending" else { return }
         let prev = messages[idx]
         messages[idx] = ChatMessage(
             id: prev.id, conversation_id: prev.conversation_id,
             sender_type: prev.sender_type, sender_id: prev.sender_id,
             content: prev.content, created_at: prev.created_at,
-            attachments: prev.attachments, status: nil
+            attachments: prev.attachments, status: "sent"
         )
     }
 
@@ -1136,6 +1140,7 @@ struct ConversationView: View {
                     content: text
                 ))
                 .execute()
+            markUserMessageSent(localId)
         } catch {
             self.error = "发送失败: \(error.localizedDescription)"
             markUserMessageFailed(localId)
@@ -1197,7 +1202,9 @@ struct ConversationView: View {
         // 30s lookback grace timer either way.
         lookbackAutoFireTask?.cancel()
         lookbackAutoFireTask = nil
-        pending = true
+        // pending (= TypingDots in the header) is now gated on the first
+        // bot token, not on send-time. The optimistic user bubble already
+        // signals "request in flight" via its lighter-green tint.
         // Bind the upcoming tool-trace bucket to the user message that
         // triggered this turn. Auto-fire turns (no user msg) skip this —
         // their tool calls have nowhere natural to attach in the list.
@@ -1270,6 +1277,12 @@ struct ConversationView: View {
                 for try await event in stream {
                     if Task.isCancelled { break }
                     switch event {
+                    case .connected:
+                        // Server returned 200 — flip the optimistic user
+                        // bubble from "sending" (light green) to "sent"
+                        // (full green). TypingDots stays off until the
+                        // first token actually arrives.
+                        if let userMsgId { markUserMessageSent(userMsgId) }
                     case .meta(let convId, let userMsgServerId):
                         // Lazy-cloud-conv first turn: rekey the optimistic
                         // local row to the canonical user-message id and
@@ -1322,8 +1335,13 @@ struct ConversationView: View {
                             }
                         }
                     case .typing:
-                        break // pending state already true
+                        // Worker's typing pulse — we ignore it and gate
+                        // the indicator on the first token instead, so
+                        // the dots only appear once content is actually
+                        // on the way.
+                        break
                     case .token(let delta):
+                        if !pending { pending = true }
                         splitter.accept(token: delta)
                     case .bubble(let id, _, _, _):
                         // Server has persisted a bubble row with this id.

@@ -47,6 +47,11 @@ enum Theme {
 
         /// User-message bubble — same as accentBg, named for clarity.
         static let userBubble = accentBg
+        /// Optimistic user bubble while the send request is in flight (no
+        /// HTTP response yet). Washed further toward canvas so the bubble
+        /// reads as "not yet acknowledged"; flips to `userBubble` the
+        /// moment the server returns 200.
+        static let userBubbleSending = Color(hex: 0xF1F6F3)
     }
 
     // ── Typography ──────────────────────────────────────────────────────────

@@ -91,9 +91,11 @@ struct ChatMessage: Codable, Identifiable, Hashable {
     let attachments: [Attachment]?
     /// Optimistic-send state for locally-inserted user rows. nil for any
     /// canonical row (loaded from server / Realtime / cache) and for bot
-    /// bubbles. "sending" while the conv materialise + SSE turn is in
-    /// flight, "failed" if either step errored before the canonical row
-    /// arrived. Drives the red/dimmed treatment in BubbleView.
+    /// bubbles. "sending" while the HTTP request is in flight (lighter
+    /// green bubble), "sent" once the server returned 200 but before the
+    /// canonical row arrives (full green, same as nil), "failed" if a
+    /// step errored before the canonical row arrived (red bubble + alert).
+    /// Drives the bubble background tint in BubbleView.
     let status: String?
 
     /// True only for messages I sent. For user_bot, every sender_type=="user"
@@ -109,6 +111,7 @@ struct ChatMessage: Codable, Identifiable, Hashable {
     }
     var isFailed: Bool { status == "failed" }
     var isSending: Bool { status == "sending" }
+    var isSent: Bool { status == "sent" }
 
     init(id: String,
          conversation_id: String,

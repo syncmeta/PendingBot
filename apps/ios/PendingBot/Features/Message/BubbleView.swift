@@ -53,6 +53,16 @@ struct BubbleView: View {
 
     private var hasText: Bool { !message.content.isEmpty }
 
+    /// User bubble background — switches on the optimistic-send state:
+    ///   • failed   → red wash
+    ///   • sending  → lighter green (request in flight, no HTTP ack yet)
+    ///   • sent / nil → standard green (server returned 200 or canonical row)
+    private var userBubbleFill: Color {
+        if message.isFailed { return Color.red.opacity(0.12) }
+        if message.isSending { return Theme.Palette.userBubbleSending }
+        return Theme.Palette.userBubble
+    }
+
     var body: some View {
         if message.isMine(currentUserId: currentUserId) {
             userLayout
@@ -171,9 +181,7 @@ struct BubbleView: View {
                             .background(
                                 RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius,
                                                  style: .continuous)
-                                    .fill(message.isFailed
-                                          ? Color.red.opacity(0.12)
-                                          : Theme.Palette.userBubble)
+                                    .fill(userBubbleFill)
                             )
                             .overlay(
                                 RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius,
@@ -183,7 +191,7 @@ struct BubbleView: View {
                                         lineWidth: 1
                                     )
                             )
-                            .opacity(message.isSending ? 0.55 : 1)
+                            .animation(.easeInOut(duration: 0.22), value: message.status)
                     }
                 }
             }

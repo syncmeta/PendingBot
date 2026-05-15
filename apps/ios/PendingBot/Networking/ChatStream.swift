@@ -3,6 +3,13 @@ import Foundation
 /// Server-sent event from POST /v1/messages. Mirrors the events Worker
 /// emits in `runChatTurn` — keep names in lockstep with apps/edge/src/lib/bot-reply.ts.
 enum ChatEvent: Sendable {
+    /// Synthetic — not a real SSE frame. Fired the instant the HTTP
+    /// response headers come back with a 2xx status, before any wire
+    /// event has been parsed. The UI uses this to flip the optimistic
+    /// user bubble from "sending" (light green) to "sent" (full green),
+    /// so the user sees a distinct ack between "still uploading" and
+    /// "server accepted, generating reply".
+    case connected
     /// First frame of a /v1/messages/start turn — carries the canonical
     /// conv id and user-message id so the client can rekey its optimistic
     /// local row before any token arrives. Not emitted by the regular
@@ -74,6 +81,9 @@ struct ChatStream {
                     let (bytes, response) = try await session.bytes(for: req)
                     guard let http = response as? HTTPURLResponse else {
                         throw URLError(.badServerResponse)
+                    }
+                    if (200..<300).contains(http.statusCode) {
+                        continuation.yield(.connected)
                     }
                     guard (200..<300).contains(http.statusCode) else {
                         // Read enough error body for diagnosis; server-side
