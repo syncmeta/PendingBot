@@ -122,6 +122,13 @@ struct ConversationView: View {
     @State private var showingSkills = false
     @State private var showingSettings = false
     @State private var saveAsSkillBody: String?
+    /// Body of a message the user wants to partial-copy. The bubble's
+    /// own `.textSelection(.enabled)` is shadowed by SwiftUI's
+    /// `.contextMenu`, so long-press only offers a whole-message copy.
+    /// Presenting the body in a sheet gives us a surface with no
+    /// competing long-press gesture, where the system's selection
+    /// handles work normally.
+    @State private var selectableTextBody: String?
     /// Active voice call session, present while CallView is on screen.
     /// Created on phone-button tap and torn down when CallView dismisses.
     @State var callSession: CallSession?
@@ -353,6 +360,10 @@ struct ConversationView: View {
                                         UIPasteboard.general.string = msg.content
                                         Haptics.tap()
                                     } label: { Label("复制", systemImage: "doc.on.doc") }
+                                    Button {
+                                        selectableTextBody = msg.content
+                                        Haptics.tap()
+                                    } label: { Label("选择文本", systemImage: "selection.pin.in.out") }
                                     if !msg.isMine(currentUserId: AccountStore.shared.current?.id) {
                                         ShareLink(item: msg.content) {
                                             Label("分享", systemImage: "square.and.arrow.up")
@@ -554,6 +565,15 @@ struct ConversationView: View {
             }
             .tint(Theme.Palette.accent)
             .presentationDragIndicator(.visible)
+        }
+        .sheet(item: Binding(
+            get: { selectableTextBody.map { SelectableTextBody(body: $0) } },
+            set: { selectableTextBody = $0?.body }
+        )) { body in
+            SelectableTextSheet(text: body.body)
+                .tint(Theme.Palette.accent)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
         }
         .onChange(of: photoPickerItems) { _, items in
             Task { await ingestPhotos(items) }
@@ -1455,6 +1475,55 @@ struct PendingAttachment: Identifiable, Hashable {
 private struct SkillDraft: Identifiable {
     let body: String
     var id: String { String(body.hashValue) }
+}
+
+/// Identifiable wrapper for the "选择文本" sheet's body — same role as
+/// `SkillDraft` above, separate type so two different bodies can't
+/// race onto the same sheet binding.
+private struct SelectableTextBody: Identifiable {
+    let body: String
+    var id: String { String(body.hashValue) }
+}
+
+/// Standalone selectable-text presentation. The bubble itself has
+/// `.contextMenu`, which on iOS pre-empts the long-press selection
+/// gesture — so partial copy from inside the bubble doesn't work.
+/// This sheet renders the same content in a surface with no
+/// competing gesture, where standard selection handles + the system
+/// "Copy" / "Look Up" menu behave normally.
+private struct SelectableTextSheet: View {
+    let text: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                Text(text)
+                    .font(Theme.Fonts.body)
+                    .foregroundStyle(Theme.Palette.ink)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 16)
+            }
+            .background(Theme.Palette.canvas)
+            .navigationTitle("选择文本")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成") { dismiss() }
+                        .tint(Theme.Palette.accent)
+                }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        UIPasteboard.general.string = text
+                        Haptics.tap()
+                    } label: { Label("全部复制", systemImage: "doc.on.doc") }
+                        .tint(Theme.Palette.accent)
+                }
+            }
+        }
+    }
 }
 
 /// Decoded shape of a `log_kind='recall'` row's `log_payload` jsonb.

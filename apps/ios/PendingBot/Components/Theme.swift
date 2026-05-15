@@ -58,6 +58,14 @@ enum Theme {
         private static let scale: CGFloat = Platform.isMac ? Platform.macFontScale : 1.0
         private static func sized(_ pt: CGFloat) -> CGFloat { pt * scale }
 
+        /// Exposed for callers that need a raw scaled point size — e.g.
+        /// MarkdownUI's `FontSize(...)` which takes a CGFloat, so the
+        /// bot's markdown body can match the user bubble's
+        /// `Theme.Fonts.body` size on Mac Catalyst (otherwise the bot
+        /// reads at 16pt while the user reads at ~14pt and the two
+        /// sides look mismatched).
+        static func scaled(_ pt: CGFloat) -> CGFloat { sized(pt) }
+
         /// Serif display (system New York). Used for titles, header marks,
         /// avatar initials. Feels editorial vs the regular SF Pro UI.
         static func serif(size: CGFloat, weight: Font.Weight = .semibold) -> Font {

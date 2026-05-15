@@ -76,7 +76,12 @@ struct MarkdownText: View {
     fileprivate static let chatTheme: MDTheme = MDTheme()
         .text {
             ForegroundColor(AppTheme.Palette.ink)
-            FontSize(16)
+            // Matches `Theme.Fonts.body` exactly — both sides of the chat
+            // need the same point size or the bot bubble reads larger
+            // than the user bubble on Mac Catalyst (Theme.Fonts applies a
+            // platform scale; FontSize takes raw points and won't pick
+            // it up on its own).
+            FontSize(AppTheme.Fonts.scaled(16))
         }
         .link {
             // Citations land here too — see CitationScheme.rewrite, which
