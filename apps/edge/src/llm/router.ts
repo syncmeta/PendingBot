@@ -86,8 +86,10 @@ export class NoRouteError extends Error {
   }
 }
 
-// Internal: shape of the alias join result from supabase-js.
-type AliasJoinRow = {
+// Internal: shape of the alias join result from supabase-js. Exported
+// only so the pickAlias unit test can construct rows without going
+// through the DB.
+export type AliasJoinRow = {
   id: string;
   provider_id: string;
   provider_model_id: string;
@@ -112,7 +114,44 @@ type AliasJoinRow = {
     | null;
 };
 
-function pickAlias(
+// Blended USD-per-1M-token reference price for routing and UI display.
+// Weighted 7:2:1 over (cache_hit, input, output), reflecting the
+// observed token mix on chat traffic where most input is replay against
+// a cached prefix and output is the smallest slice. When an alias has
+// no cached_input_price set, cache_hit falls back to input_price (no
+// discount applied) so providers without explicit cache pricing aren't
+// implicitly considered cheaper than they are. Returns null when
+// either input or output is missing — those aliases can't be ordered
+// against priced ones and fall to the end of the routing list.
+const BLEND_WEIGHT_CACHE_HIT = 0.7;
+const BLEND_WEIGHT_INPUT = 0.2;
+const BLEND_WEIGHT_OUTPUT = 0.1;
+
+export interface BlendablePrices {
+  inputPrice: number | null;
+  cachedInputPrice: number | null;
+  outputPrice: number | null;
+}
+
+export function blendedUsdPerMillion(p: BlendablePrices): number | null {
+  if (p.inputPrice == null || p.outputPrice == null) return null;
+  const cacheHit = p.cachedInputPrice ?? p.inputPrice;
+  return (
+    BLEND_WEIGHT_CACHE_HIT * cacheHit +
+    BLEND_WEIGHT_INPUT * p.inputPrice +
+    BLEND_WEIGHT_OUTPUT * p.outputPrice
+  );
+}
+
+function rowBlendedPrice(r: AliasJoinRow): number | null {
+  return blendedUsdPerMillion({
+    inputPrice: r.input_price,
+    cachedInputPrice: r.cached_input_price,
+    outputPrice: r.output_price,
+  });
+}
+
+export function pickAlias(
   rows: AliasJoinRow[],
   opts: { preferProvider?: string; excludeProviders?: string[] },
 ): AliasJoinRow | null {
@@ -121,19 +160,34 @@ function pickAlias(
     if (!p || !p.enabled) return false;
     if (opts.preferProvider && p.slug !== opts.preferProvider) return false;
     if (opts.excludeProviders?.includes(p.slug)) return false;
+    // weight=0 marks an alias as standby — admin disabled it without
+    // unsetting `enabled` (which is reserved for hard-off). Skip these
+    // unless they're the only candidate left after filtering.
     return true;
   });
   if (candidates.length === 0) return null;
-  // Highest weight wins; ties broken by provider.priority asc (lower =
-  // preferred), then by alias id for stability.
-  candidates.sort((a, b) => {
+  // Primary ordering: cheapest blended price wins. Aliases with no
+  // priced columns are unorderable and sink to the end (we'd rather pay
+  // a priced alias than blindly route through one we can't bill). Ties
+  // and unpriced groups fall back to weight DESC (manual operator
+  // preference) → provider.priority ASC (registry tiebreaker) → alias
+  // id for stable output. If the only candidates are weight=0, they
+  // still get picked — the standby tier is a soft signal, not a veto.
+  const live = candidates.filter((r) => r.weight > 0);
+  const pool = live.length > 0 ? live : candidates;
+  pool.sort((a, b) => {
+    const ap = rowBlendedPrice(a);
+    const bp = rowBlendedPrice(b);
+    if (ap == null && bp != null) return 1;
+    if (bp == null && ap != null) return -1;
+    if (ap != null && bp != null && ap !== bp) return ap - bp;
     if (b.weight !== a.weight) return b.weight - a.weight;
     const pa = a.llm_providers!.priority;
     const pb = b.llm_providers!.priority;
     if (pa !== pb) return pa - pb;
     return a.id.localeCompare(b.id);
   });
-  return candidates[0]!;
+  return pool[0]!;
 }
 
 function buildClient(
