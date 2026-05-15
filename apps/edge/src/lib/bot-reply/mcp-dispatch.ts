@@ -1,7 +1,7 @@
 import type { Env } from '../../types';
 import { mcpClient } from '../../mcp/client';
+import { parseExaFetchPayload, parseExaSearchPayload } from '../../mcp/parsers';
 import { annotateSearchHits, formatToolError, type ToolCtx } from './tool-runner';
-import type { WebSearchResult } from '../web-types';
 
 // Tool reply truncation — matches the old read_url path so the model
 // doesn't see bigger fetches via the MCP route than it used to via the
@@ -79,52 +79,3 @@ export async function dispatchMcpTool(
   }
 }
 
-// ── payload parsers ─────────────────────────────────────────────────
-// Exa's hosted MCP returns the upstream JSON verbatim in content[0].text.
-// We keep parsers tolerant: a server-side formatting drift should
-// degrade gracefully rather than break the LLM turn.
-
-function parseExaSearchPayload(text: string): WebSearchResult[] {
-  const json = safeJson(text) as {
-    results?: Array<{ url?: string; title?: string; text?: string }>;
-  } | null;
-  if (!json?.results) return [];
-  return json.results
-    .filter((r): r is { url: string; title?: string; text?: string } => !!r.url)
-    .map((r) => ({
-      url: r.url,
-      title: r.title ?? '',
-      snippet: (r.text ?? '').slice(0, 500),
-    }));
-}
-
-function parseExaFetchPayload(
-  reqUrl: string,
-  text: string,
-): { url: string; title: string; content: string } {
-  // Exa's web_fetch_exa returns either a single result object or a
-  // results[] array depending on call shape. Handle both.
-  const json = safeJson(text) as
-    | { url?: string; title?: string; text?: string }
-    | { results?: Array<{ url?: string; title?: string; text?: string }> }
-    | null;
-  if (!json) return { url: reqUrl, title: '', content: '' };
-  const single = 'text' in json && json.text !== undefined ? json : null;
-  const first = single ?? ((json as { results?: Array<unknown> }).results?.[0] as
-    | { url?: string; title?: string; text?: string }
-    | undefined);
-  return {
-    url: first?.url ?? reqUrl,
-    title: first?.title ?? '',
-    content: first?.text ?? '',
-  };
-}
-
-function safeJson(text: string): unknown {
-  if (!text) return null;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
-}

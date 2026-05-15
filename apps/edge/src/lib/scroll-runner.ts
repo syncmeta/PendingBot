@@ -19,14 +19,8 @@ import {
 import { ensurePromptOverridesLoaded, getPrompt } from '../llm/prompt-loader';
 import { estimateTokens } from '../llm/token-estimate';
 import { getBotMemory } from './memory';
-import {
-  DEFAULT_SEARCH_PROVIDER,
-  DEFAULT_SCRAPE_PROVIDER,
-  runWebScrape,
-  runWebSearch,
-  type SearchProvider,
-  type ScrapeProvider,
-} from './web';
+import { mcpClient } from '../mcp/client';
+import { parseExaFetchPayload, parseExaSearchPayload } from '../mcp/parsers';
 import { WebToolMeter, type WebToolUsage } from './web-meter';
 import {
   buildScrollInitialUserContent,
@@ -97,19 +91,18 @@ const HISTORY_ROW_CAP = 2000;
 export interface EnvelopeSettings {
   explorerModel: string;
   collaboratorModel: string | null;
-  searchProvider: SearchProvider;
-  scrapeProvider: ScrapeProvider;
   turnCap: number;
   historyTokenBudgetPct: number;
 }
-
-const VALID_SEARCH: SearchProvider[] = ['brave', 'tavily', 'exa', 'serper'];
-const VALID_SCRAPE: ScrapeProvider[] = ['firecrawl', 'tavily', 'exa'];
 
 // Normalize a partial input (from the trigger body or persisted on
 // the conversation) into a full settings object with defaults filled.
 // Caps turnCap into [1, HARD_CAP_TURNS] so a stray UI value can't
 // runaway-spend.
+//
+// Search/scrape providers are no longer configurable — both tools route
+// through the MCP client to Exa's hosted MCP. Legacy `searchProvider` /
+// `scrapeProvider` keys on persisted rows are ignored on read.
 export function resolveEnvelopeSettings(
   input: Partial<EnvelopeSettings> | null | undefined,
 ): EnvelopeSettings {
@@ -118,12 +111,6 @@ export function resolveEnvelopeSettings(
     1,
     Math.min(HARD_CAP_TURNS, Math.floor(i.turnCap ?? DEFAULT_TURN_CAP)),
   );
-  const search = (VALID_SEARCH as string[]).includes(i.searchProvider as string)
-    ? (i.searchProvider as SearchProvider)
-    : DEFAULT_SEARCH_PROVIDER;
-  const scrape = (VALID_SCRAPE as string[]).includes(i.scrapeProvider as string)
-    ? (i.scrapeProvider as ScrapeProvider)
-    : DEFAULT_SCRAPE_PROVIDER;
   const explorerModel =
     typeof i.explorerModel === 'string' && i.explorerModel.trim()
       ? i.explorerModel.trim()
@@ -142,8 +129,6 @@ export function resolveEnvelopeSettings(
   return {
     explorerModel,
     collaboratorModel,
-    searchProvider: search,
-    scrapeProvider: scrape,
     turnCap,
     historyTokenBudgetPct,
   };
@@ -384,18 +369,24 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
       modelId: mainRoute.modelToCall,
       systemPrompt: getPrompt('scroll'),
       initialUserContent: initialUser,
-      webSearch: (query) =>
-        runWebSearch(env, {
-          provider: settings.searchProvider,
-          query,
-          meter: webMeter,
-        }),
-      fetchUrl: (url) =>
-        runWebScrape(env, {
-          provider: settings.scrapeProvider,
-          url,
-          meter: webMeter,
-        }),
+      webSearch: async (query) => {
+        const { text, isError } = await mcpClient.callTool(
+          'web_search_exa',
+          { query },
+          { env, meter: webMeter },
+        );
+        if (isError) return [];
+        return parseExaSearchPayload(text);
+      },
+      fetchUrl: async (url) => {
+        const { text, isError } = await mcpClient.callTool(
+          'web_fetch_exa',
+          { url },
+          { env, meter: webMeter },
+        );
+        if (isError) return { url, title: '', content: '' };
+        return parseExaFetchPayload(url, text);
+      },
       captureModelCall: (request, run) =>
         captureRawModelCall(rawModelCalls, mainRoute, { taskType: 'scroll', request }, run),
       hardCapTurns: settings.turnCap,

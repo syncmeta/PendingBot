@@ -9,10 +9,10 @@ import type { AppBindings } from '../types';
 import type { Json } from '../db/schema';
 
 // 奏折/Scroll routes — surfaced to users as 来信/Envelopes. The trigger
-// body now carries the per-run config the user picked in conversation
-// settings (explorer/collaborator models, search/scrape providers,
-// turn cap). Caller-supplied settings win; otherwise we read whatever
-// the conversation has saved; otherwise defaults.
+// body carries the per-run config the user picked in conversation
+// settings (explorer/collaborator models, turn cap). Caller-supplied
+// settings win; otherwise we read whatever the conversation has saved;
+// otherwise defaults.
 
 export const scrollRoutes = new Hono<AppBindings>();
 scrollRoutes.use('*', requireSession());
@@ -20,17 +20,16 @@ scrollRoutes.use('*', requireSession());
 // All settings are optional — server fills in defaults via
 // resolveEnvelopeSettings. Empty string for collaboratorModel means
 // "no collaborator" (vs. unset which means "use default"). turnCap
-// is clamped to [1, HARD_CAP_TURNS].
+// is clamped to [1, HARD_CAP_TURNS]. Legacy `searchProvider` /
+// `scrapeProvider` keys on inbound bodies / saved rows are silently
+// ignored (web tools now route through MCP → Exa).
 const SettingsBody = z
   .object({
     explorerModel: z.string().optional(),
     collaboratorModel: z.string().nullable().optional(),
-    searchProvider: z.enum(['brave', 'tavily', 'exa', 'serper']).optional(),
-    scrapeProvider: z.enum(['firecrawl', 'tavily', 'exa']).optional(),
     turnCap: z.number().int().min(1).max(HARD_CAP_TURNS).optional(),
     historyTokenBudgetPct: z.number().int().min(1).max(100).optional(),
   })
-  .strict()
   .optional();
 
 const TriggerBody = z.object({
