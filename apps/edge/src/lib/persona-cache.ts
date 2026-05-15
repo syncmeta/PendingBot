@@ -141,37 +141,98 @@ export async function resolveBotNote(
 
 // ─────────────────────────────────────────────────────────────────────
 // Subscribed skills (per user × conv — joins global subs + conv subs)
+//
+// Two-tier KV to make popular skills cheap when many users subscribe:
+//   subs:<userId>:<conversationId>   small refs list ({id, updated_at}) + aggregated allowed_tools
+//   skill:<skill_id>:<updated_at>    shared body+frontmatter, reused across every subscriber
+// Same skill body subscribed by N users => one copy in KV, not N.
 // ─────────────────────────────────────────────────────────────────────
 
-interface CachedSubsBundle {
-  skills: CachedSkill[];
+const SKILL_PREFIX = 'skill:';
+
+// Body keys are versioned by updated_at, so editing a skill mints a new
+// key and the old one ages out naturally. Long TTL is safe.
+const SKILL_BODY_TTL_SEC = 24 * 60 * 60; // 24 h
+
+interface SkillRef {
+  id: string;
+  updated_at: string;
+}
+
+interface CachedSubsRefs {
+  refs: SkillRef[];
   /// Aggregated allowed_tools across all subscribed skills (used to
   /// gate sensitive tools like execute_code on the turn's tool list).
+  /// Bounded by the same 5-min TTL as the refs list itself.
   allowedTools: string[];
 }
 
-export async function getCachedSubscriptions(
+interface CachedSubsBundle {
+  skills: CachedSkill[];
+  allowedTools: string[];
+}
+
+interface SkillFrontmatter {
+  name?: string;
+  description?: string;
+  allowed_tools?: unknown;
+}
+
+function skillBodyKey(id: string, updatedAt: string): string {
+  return `${SKILL_PREFIX}${id}:${updatedAt}`;
+}
+
+function extractAllowedTools(fm: SkillFrontmatter | null | undefined): string[] {
+  const out: string[] = [];
+  const tools = fm?.allowed_tools;
+  if (Array.isArray(tools)) {
+    for (const t of tools) if (typeof t === 'string') out.push(t);
+  }
+  return out;
+}
+
+function toCachedSkill(fm: SkillFrontmatter | null | undefined, body: string): CachedSkill {
+  return {
+    name: fm?.name ?? 'unnamed',
+    description: fm?.description ?? '',
+    body,
+    allowedTools: extractAllowedTools(fm),
+  };
+}
+
+async function getCachedSubsRefs(
   env: Env,
   userId: string,
   conversationId: string,
-): Promise<CachedSubsBundle | null> {
-  return env.MEMORY.get<CachedSubsBundle>(
+): Promise<CachedSubsRefs | null> {
+  return env.MEMORY.get<CachedSubsRefs>(
     `${SUBS_PREFIX}${userId}:${conversationId}`,
     'json',
   );
 }
 
-export async function putCachedSubscriptions(
+async function putCachedSubsRefs(
   env: Env,
   userId: string,
   conversationId: string,
-  bundle: CachedSubsBundle,
+  refs: CachedSubsRefs,
 ): Promise<void> {
   await env.MEMORY.put(
     `${SUBS_PREFIX}${userId}:${conversationId}`,
-    JSON.stringify(bundle),
+    JSON.stringify(refs),
     { expirationTtl: SUBS_TTL_SEC },
   );
+}
+
+async function putCachedSkillBody(
+  env: Env,
+  id: string,
+  updatedAt: string,
+  skill: CachedSkill,
+): Promise<void> {
+  await env.MEMORY.put(skillBodyKey(id, updatedAt), JSON.stringify(skill), {
+    expirationTtl: SKILL_BODY_TTL_SEC,
+  });
 }
 
 /// Read the user's subscribed skills (global + this conv) via KV with
@@ -185,50 +246,84 @@ export async function resolveSubscriptions(
   conversationId: string,
   waitUntil: (p: Promise<unknown>) => void,
 ): Promise<CachedSubsBundle> {
-  const cached = await getCachedSubscriptions(env, userId, conversationId);
-  if (cached) return cached;
-  const { data } = await supa
-    .from('skill_subscriptions')
-    .select('skills(frontmatter, body_md)')
-    .eq('user_id', userId)
-    .or(`conversation_id.eq.${conversationId},conversation_id.is.null`);
+  let refsBundle = await getCachedSubsRefs(env, userId, conversationId);
+  // Frontmatter we already fetched alongside refs — lets us skip the
+  // bodies query for nothing-cached-but-just-fetched-meta rows.
+  const freshMeta = new Map<string, SkillFrontmatter>();
 
-  type SkillRow = {
-    frontmatter: {
-      name?: string;
-      description?: string;
-      allowed_tools?: unknown;
+  if (!refsBundle) {
+    type SkillMetaRow = {
+      id: string;
+      updated_at: string;
+      frontmatter: SkillFrontmatter;
     };
-    body_md: string;
-  };
-  const skills: CachedSkill[] = [];
-  const allowedToolSet = new Set<string>();
-  for (const row of data ?? []) {
-    const joined = (row as { skills: SkillRow | SkillRow[] | null }).skills;
-    const arr = Array.isArray(joined) ? joined : joined ? [joined] : [];
-    for (const s of arr) {
-      const tools = s.frontmatter?.allowed_tools;
-      const skillTools: string[] = [];
-      if (Array.isArray(tools)) {
-        for (const t of tools) {
-          if (typeof t === 'string') {
-            skillTools.push(t);
-            allowedToolSet.add(t);
-          }
-        }
+    const { data } = await supa
+      .from('skill_subscriptions')
+      .select('skills(id, updated_at, frontmatter)')
+      .eq('user_id', userId)
+      .or(`conversation_id.eq.${conversationId},conversation_id.is.null`);
+
+    const refs: SkillRef[] = [];
+    const allowedToolSet = new Set<string>();
+    for (const row of data ?? []) {
+      const joined = (row as { skills: SkillMetaRow | SkillMetaRow[] | null }).skills;
+      const arr = Array.isArray(joined) ? joined : joined ? [joined] : [];
+      for (const s of arr) {
+        refs.push({ id: s.id, updated_at: s.updated_at });
+        freshMeta.set(s.id, s.frontmatter);
+        for (const t of extractAllowedTools(s.frontmatter)) allowedToolSet.add(t);
       }
-      skills.push({
-        name: s.frontmatter?.name ?? 'unnamed',
-        description: s.frontmatter?.description ?? '',
-        body: s.body_md,
-        allowedTools: skillTools,
-      });
+    }
+    refsBundle = { refs, allowedTools: Array.from(allowedToolSet) };
+    waitUntil(putCachedSubsRefs(env, userId, conversationId, refsBundle));
+  }
+
+  const bodyResults = await Promise.all(
+    refsBundle.refs.map((r) =>
+      env.MEMORY.get<CachedSkill>(skillBodyKey(r.id, r.updated_at), 'json'),
+    ),
+  );
+
+  const skills: CachedSkill[] = new Array(refsBundle.refs.length);
+  const missingIdxs: number[] = [];
+  for (let i = 0; i < refsBundle.refs.length; i++) {
+    const cached = bodyResults[i];
+    if (cached) skills[i] = cached;
+    else missingIdxs.push(i);
+  }
+
+  if (missingIdxs.length > 0) {
+    const missingIds = missingIdxs.map((i) => refsBundle.refs[i].id);
+    type SkillBodyRow = {
+      id: string;
+      frontmatter: SkillFrontmatter;
+      body_md: string;
+    };
+    const { data: rows } = await supa
+      .from('skills')
+      .select('id, frontmatter, body_md')
+      .in('id', missingIds);
+    const byId = new Map<string, SkillBodyRow>();
+    for (const r of (rows ?? []) as SkillBodyRow[]) byId.set(r.id, r);
+
+    for (const i of missingIdxs) {
+      const ref = refsBundle.refs[i];
+      const row = byId.get(ref.id);
+      if (!row) {
+        // Skill row vanished between refs-fetch and bodies-fetch. Don't
+        // cache; serve a placeholder so the caller sees a stable shape.
+        skills[i] = { name: 'unavailable', description: '', body: '', allowedTools: [] };
+        continue;
+      }
+      // Prefer fresh frontmatter from the refs-fetch when we have it
+      // (it's the same row we'd be reading anyway, and avoids a tiny
+      // race where updated_at advances mid-flight).
+      const fm = freshMeta.get(ref.id) ?? row.frontmatter;
+      const skill = toCachedSkill(fm, row.body_md);
+      skills[i] = skill;
+      waitUntil(putCachedSkillBody(env, ref.id, ref.updated_at, skill));
     }
   }
-  const bundle: CachedSubsBundle = {
-    skills,
-    allowedTools: Array.from(allowedToolSet),
-  };
-  waitUntil(putCachedSubscriptions(env, userId, conversationId, bundle));
-  return bundle;
+
+  return { skills, allowedTools: refsBundle.allowedTools };
 }
