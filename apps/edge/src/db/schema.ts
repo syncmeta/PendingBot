@@ -1512,6 +1512,54 @@ export type Database = {
         }
         Relationships: []
       }
+      mcp_servers: {
+        Row: {
+          auth_header_name: string | null
+          auth_kind: string
+          created_at: string
+          enabled: boolean
+          id: string
+          last_health_check_at: string | null
+          last_health_error: string | null
+          name: string
+          notes: string | null
+          secret_ref: string | null
+          transport: string
+          updated_at: string
+          url: string
+        }
+        Insert: {
+          auth_header_name?: string | null
+          auth_kind?: string
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          last_health_check_at?: string | null
+          last_health_error?: string | null
+          name: string
+          notes?: string | null
+          secret_ref?: string | null
+          transport?: string
+          updated_at?: string
+          url: string
+        }
+        Update: {
+          auth_header_name?: string | null
+          auth_kind?: string
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          last_health_check_at?: string | null
+          last_health_error?: string | null
+          name?: string
+          notes?: string | null
+          secret_ref?: string | null
+          transport?: string
+          updated_at?: string
+          url?: string
+        }
+        Relationships: []
+      }
       messages: {
         Row: {
           attachments: Json | null
