@@ -62,7 +62,7 @@ export default async function AuditPage({
   let dailyQ = supa
     .from('v_audit_daily')
     .select(
-      'day, user_id, provider_id, model_id, task_type, request_count, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, tool_cost_usd, estimated_cost_usd, avg_latency_ms, error_count, fallback_count',
+      'day, user_id, provider_id, model_id, task_type, request_count, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, tool_cost_usd, provider_cost_usd, avg_latency_ms, error_count, fallback_count',
     )
     .gte('day', startBound)
     .lt('day', endBound);
@@ -80,7 +80,7 @@ export default async function AuditPage({
   let recentQ = supa
     .from('audit_log')
     .select(
-      'id, created_at, user_id, task_type, model_id, status, error_class, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, est_input_tokens, est_output_tokens, cost_usd, tool_cost_usd, estimated_cost_usd, reported_provider, cost_details, prompt_tokens_details, completion_tokens_details, latency_ms',
+      'id, created_at, user_id, task_type, model_id, status, error_class, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, est_input_tokens, est_output_tokens, cost_usd, tool_cost_usd, provider_cost_usd, reported_provider, cost_details, prompt_tokens_details, completion_tokens_details, latency_ms',
     )
     .order('created_at', { ascending: false })
     .limit(50);
@@ -115,7 +115,7 @@ export default async function AuditPage({
       acc.cache_write_tokens += r.cache_write_tokens ?? 0;
       acc.cost_usd += Number(r.cost_usd ?? 0);
       acc.tool_cost_usd += Number(r.tool_cost_usd ?? 0);
-      acc.estimated_cost_usd += Number(r.estimated_cost_usd ?? 0);
+      acc.provider_cost_usd += Number(r.provider_cost_usd ?? 0);
       acc.errors += r.error_count ?? 0;
       acc.fallbacks += r.fallback_count ?? 0;
       if (r.avg_latency_ms != null) {
@@ -131,7 +131,7 @@ export default async function AuditPage({
       cache_write_tokens: 0,
       cost_usd: 0,
       tool_cost_usd: 0,
-      estimated_cost_usd: 0,
+      provider_cost_usd: 0,
       errors: 0,
       fallbacks: 0,
       latency_sum: 0,
@@ -217,9 +217,9 @@ export default async function AuditPage({
       <section className="grid grid-cols-2 gap-4 md:grid-cols-5 lg:grid-cols-10">
         <Stat label="请求数" value={fmtNumber(summary.requests)} />
         <Stat label="总花费 (USD)" value={fmtUsd(totalCostUsd)} accent />
-        <Stat label="LLM 厂商花费" value={fmtUsd(summary.cost_usd)} />
+        <Stat label="LLM 计费 (本地)" value={fmtUsd(summary.cost_usd)} />
         <Stat label="Web Tool 花费" value={fmtUsd(summary.tool_cost_usd)} />
-        <Stat label="估算花费" value={fmtUsd(summary.estimated_cost_usd)} />
+        <Stat label="厂商上报价" value={fmtUsd(summary.provider_cost_usd)} />
         <Stat label="输入 tokens" value={fmtTokens(summary.input_tokens)} />
         <Stat label="输出 tokens" value={fmtTokens(summary.output_tokens)} />
         <Stat
@@ -321,7 +321,12 @@ export default async function AuditPage({
                 <Th className="text-right">llm</Th>
                 <Th className="text-right">tool</Th>
                 <Th className="text-right">total</Th>
-                <Th className="text-right">est</Th>
+                <Th className="text-right" title="厂商上报价 (provider_cost_usd) — 用来和本地计费对账">
+                  厂商
+                </Th>
+                <Th className="text-right" title="厂商 / 本地 — 偏离 1.0 越多越可疑">
+                  Δ
+                </Th>
                 <Th className="text-right">延迟</Th>
               </tr>
             </thead>
@@ -362,14 +367,17 @@ export default async function AuditPage({
                     {fmtUsd(Number(r.cost_usd ?? 0) + Number(r.tool_cost_usd ?? 0))}
                   </Td>
                   <Td className="text-right text-muted-foreground">
-                    {fmtUsd(r.estimated_cost_usd)}
+                    {fmtUsd(r.provider_cost_usd)}
+                  </Td>
+                  <Td className="text-right">
+                    <CostRatio local={r.cost_usd} provider={r.provider_cost_usd} />
                   </Td>
                   <Td className="text-right">{fmtMs(r.latency_ms)}</Td>
                 </tr>
               ))}
               {(recent ?? []).length === 0 && (
                 <tr>
-                  <td colSpan={17} className="px-4 py-8 text-center text-muted-foreground">
+                  <td colSpan={18} className="px-4 py-8 text-center text-muted-foreground">
                     暂无 audit 记录
                   </td>
                 </tr>
@@ -544,6 +552,33 @@ function Ratio({ actual, estimate }: { actual: number; estimate: number | null }
     return <span className="text-muted-foreground">—</span>;
   }
   const r = actual / estimate;
+  const color =
+    r > 1.6 || r < 0.5
+      ? 'text-destructive'
+      : r > 1.3 || r < 0.7
+        ? 'text-amber-600 dark:text-amber-400'
+        : 'text-muted-foreground';
+  return <span className={`tabular-nums ${color}`}>{r.toFixed(2)}×</span>;
+}
+
+// Provider-reported vs locally-computed cost ratio. Used to validate the
+// local calculator against gateways that return cost (OpenRouter). Same
+// color thresholds as the token ratio above. Null on either side renders
+// '—' — WorldRouter does not return cost so this column is intentionally
+// blank for rows routed through it.
+function CostRatio({
+  local,
+  provider,
+}: {
+  local: number | string | null;
+  provider: number | string | null;
+}) {
+  const l = local == null ? null : Number(local);
+  const p = provider == null ? null : Number(provider);
+  if (l == null || p == null || !Number.isFinite(l) || !Number.isFinite(p) || l === 0) {
+    return <span className="text-muted-foreground">—</span>;
+  }
+  const r = p / l;
   const color =
     r > 1.6 || r < 0.5
       ? 'text-destructive'
