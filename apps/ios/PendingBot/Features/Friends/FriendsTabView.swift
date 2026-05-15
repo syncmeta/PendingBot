@@ -383,7 +383,7 @@ struct FriendsTabView: View {
                     BotPick(id: $0.id, display_name: $0.display_name,
                             model_id: $0.model_id, visibility: $0.visibility,
                             creator_id: $0.creator_id,
-                            voice_call_enabled: nil)
+                            voice_call_enabled: $0.voice_call_enabled)
                 }
             }
             if !cachedContacts.isEmpty {
@@ -428,7 +428,8 @@ struct FriendsTabView: View {
                 LocalDatabase.BotRow(
                     id: $0.id, display_name: $0.display_name,
                     model_id: $0.model_id, visibility: $0.visibility,
-                    creator_id: $0.creator_id
+                    creator_id: $0.creator_id,
+                    voice_call_enabled: $0.voice_call_enabled
                 )
             })
 

@@ -190,6 +190,7 @@ struct ManageBotSheet: View {
     @State private var displayName: String = ""
     @State private var modelSlug: String = ""
     @State private var visibility: String = "private"
+    @State private var voiceCallEnabled: Bool = false
     @State private var saving = false
     @State private var deleting = false
     @State private var confirmingDelete = false
@@ -222,6 +223,15 @@ struct ManageBotSheet: View {
                 } footer: {
                     if !isPrivate {
                         Text("公有机器人创建后,改名/改型号都被锁定。只能切换下面的公开程度。")
+                            .font(Theme.Fonts.caption)
+                    }
+                }
+
+                if isPrivate {
+                    Section {
+                        Toggle("语音通话", isOn: $voiceCallEnabled)
+                    } footer: {
+                        Text("打开后,聊天页顶部会出现电话按钮,可以和这个机器人语音通话。计费走实时音频用量。")
                             .font(Theme.Fonts.caption)
                     }
                 }
@@ -318,6 +328,7 @@ struct ManageBotSheet: View {
             displayName = initial.display_name
             modelSlug = initial.model_id ?? ""
             visibility = initial.visibility ?? "public_open"
+            voiceCallEnabled = initial.voice_call_enabled ?? false
         }
     }
 
@@ -327,6 +338,7 @@ struct ManageBotSheet: View {
         if isPrivate {
             if trimmed != initial.display_name { return true }
             if modelSlug != (initial.model_id ?? "") { return true }
+            if voiceCallEnabled != (initial.voice_call_enabled ?? false) { return true }
         }
         if visibility != (initial.visibility ?? "public_open") { return true }
         return false
@@ -351,6 +363,7 @@ struct ManageBotSheet: View {
                 let display_name: String?
                 let model_id: String?
                 let visibility: String?
+                let voice_call_enabled: Bool?
             }
             // For public bots the trigger blocks anything except visibility,
             // so we only send the changed columns.
@@ -360,18 +373,27 @@ struct ManageBotSheet: View {
                 payload = Update(
                     display_name: displayName.trimmingCharacters(in: .whitespaces),
                     model_id: modelSlug,
-                    visibility: visibility
+                    visibility: visibility,
+                    voice_call_enabled: voiceCallEnabled
                 )
             } else if isPrivate {
                 // Promotion: snapshot identity + flip visibility in one UPDATE.
+                // voice_call_enabled is private-only (edge route gates on it),
+                // so freeze it to its pre-promotion value here.
                 payload = Update(
                     display_name: displayName.trimmingCharacters(in: .whitespaces),
                     model_id: modelSlug,
-                    visibility: visibility
+                    visibility: visibility,
+                    voice_call_enabled: voiceCallEnabled
                 )
             } else {
                 // Public → public visibility flip; identity is frozen.
-                payload = Update(display_name: nil, model_id: nil, visibility: visibility)
+                payload = Update(
+                    display_name: nil,
+                    model_id: nil,
+                    visibility: visibility,
+                    voice_call_enabled: nil
+                )
             }
             try await SupabaseStack.shared
                 .from("bots")

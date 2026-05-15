@@ -215,6 +215,11 @@ final class LocalDatabase {
                 t.add(column: "avatar_seed", .text)
             }
         }
+        m.registerMigration("v5_bots_voice_call_enabled") { db in
+            try db.alter(table: "bots") { t in
+                t.add(column: "voice_call_enabled", .boolean)
+            }
+        }
         return m
     }
 
@@ -313,6 +318,10 @@ final class LocalDatabase {
         var model_id: String?
         var visibility: String?
         var creator_id: String?
+        /// Optional only because the column was added in v5; rows persisted
+        /// before that migration will have null. nil reads as "off" at the
+        /// call site.
+        var voice_call_enabled: Bool?
 
         static let databaseTableName = "bots"
     }
