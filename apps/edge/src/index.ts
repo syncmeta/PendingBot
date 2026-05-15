@@ -25,6 +25,9 @@ import { handleScheduled } from './cron';
 // the `class_name` field in wrangler.jsonc → durable_objects.bindings.
 // The export *name* must match `class_name` (case-sensitive).
 export { GroupRouterDO } from './durable-objects/group-router';
+// Container-backed DO from @cloudflare/sandbox. Required export for
+// the `Sandbox` binding declared in wrangler.jsonc.
+export { Sandbox } from '@cloudflare/sandbox';
 
 // Top-level Hono app. Routes mount under /v1/ to leave room for a future v2
 // (URL path = major-era versioning). Within v1, schema-driven compatibility

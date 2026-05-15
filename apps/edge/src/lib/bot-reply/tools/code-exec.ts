@@ -1,12 +1,6 @@
 import type { Env } from '../../../types';
 import { serviceClient } from '../../supabase';
-import {
-  bootstrapPython,
-  createSandbox,
-  isMissingDaytonaSandbox,
-  runPython,
-} from '../../sandbox';
-import type { CodeRunResult } from '../../sandbox';
+import { runPython } from '../../sandbox';
 import type { ToolCtx } from '../tool-runner';
 
 // How often the request_execute_code tool re-checks the DB for an iOS
@@ -15,120 +9,12 @@ import type { ToolCtx } from '../tool-runner';
 const CODE_EXEC_POLL_INTERVAL_MS = 500;
 const CODE_EXEC_DECISION_TIMEOUT_MS = 120_000;
 
-// Get-or-create a bootstrapped Daytona sandbox for this conversation.
-// First call lazily provisions + pip-installs the common data-stack;
-// subsequent calls reuse the same VM/filesystem. The cron sweep retires
-// idle sandboxes, but bootstrap is idempotent so the next call just
-// re-provisions.
-//
-// Returns either { sandboxId } once the sandbox is ready, or
-// { error, stderr } if bootstrap blew up (caller turns that into a tool
-// error envelope so the model can recover).
-async function getOrBootstrapSandbox(
-  env: Env,
-  conversationId: string,
-): Promise<
-  | { sandboxId: string }
-  | { error: 'bootstrap_failed'; exitCode: number; stderr: string }
-> {
-  const supa = serviceClient(env);
-
-  for (let attempt = 0; attempt < 2; attempt++) {
-    // bot_sandbox_sessions has a UNIQUE on conversation_id so the
-    // get-or-create race resolves to a single row.
-    const existing = await supa
-      .from('bot_sandbox_sessions')
-      .select('daytona_sandbox_id, bootstrapped')
-      .eq('conversation_id', conversationId)
-      .maybeSingle();
-
-    let sandboxId: string;
-    let bootstrapped: boolean;
-    if (existing.data) {
-      sandboxId = existing.data.daytona_sandbox_id;
-      bootstrapped = existing.data.bootstrapped;
-    } else {
-      sandboxId = await createSandbox(env);
-      await supa.from('bot_sandbox_sessions').insert({
-        conversation_id: conversationId,
-        daytona_sandbox_id: sandboxId,
-        bootstrapped: false,
-      });
-      bootstrapped = false;
-    }
-
-    if (!bootstrapped) {
-      try {
-        const boot = await bootstrapPython(env, sandboxId);
-        if (boot.exitCode === 0) {
-          await supa
-            .from('bot_sandbox_sessions')
-            .update({ bootstrapped: true, last_used_at: new Date().toISOString() })
-            .eq('conversation_id', conversationId);
-        } else {
-          // Keep the sandbox row so we don't churn through creates on every
-          // retry; let the caller surface the failure to the model.
-          return {
-            error: 'bootstrap_failed',
-            exitCode: boot.exitCode,
-            stderr: boot.stdout.slice(-1000),
-          };
-        }
-      } catch (err) {
-        if (isMissingDaytonaSandbox(err) && attempt === 0) {
-          await clearSandboxSession(env, conversationId);
-          continue;
-        }
-        throw err;
-      }
-    }
-
-    return { sandboxId };
-  }
-
-  throw new Error('failed to recreate Daytona sandbox');
-}
-
-async function clearSandboxSession(env: Env, conversationId: string): Promise<void> {
-  await serviceClient(env)
-    .from('bot_sandbox_sessions')
-    .delete()
-    .eq('conversation_id', conversationId);
-}
-
-async function runPythonInConversationSandbox(
-  env: Env,
-  conversationId: string,
-  code: string,
-): Promise<
-  | { result: CodeRunResult }
-  | { error: 'bootstrap_failed'; exitCode: number; stderr: string }
-> {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const sandbox = await getOrBootstrapSandbox(env, conversationId);
-    if ('error' in sandbox) return sandbox;
-
-    try {
-      const result = await runPython(env, sandbox.sandboxId, code);
-      await serviceClient(env)
-        .from('bot_sandbox_sessions')
-        .update({ last_used_at: new Date().toISOString() })
-        .eq('conversation_id', conversationId);
-      return { result };
-    } catch (err) {
-      if (isMissingDaytonaSandbox(err) && attempt === 0) {
-        await clearSandboxSession(env, conversationId);
-        continue;
-      }
-      throw err;
-    }
-  }
-
-  throw new Error('failed to execute code after Daytona sandbox recreation');
-}
-
 // Run Python in this conversation's sandbox without user approval. Only
 // reachable when a subscribed skill has opted in via allowed_tools.
+//
+// The Cloudflare Sandbox SDK keys sandboxes by name (we use the
+// conversation_id), so there's no DB lookup here — `getSandbox` is
+// idempotent and lazily provisions on first use.
 export async function executeCodeTool(
   env: Env,
   args: Record<string, unknown>,
@@ -151,39 +37,27 @@ export async function executeCodeTool(
     code_preview: codePreview,
   });
 
-  const run = await runPythonInConversationSandbox(env, ctx.conversationId, code);
-  if ('error' in run) {
-    ctx.emit('tool_result', {
-      name: 'execute_code',
-      error: 'sandbox bootstrap failed',
-      exit_code: run.exitCode,
-      detail: run.stderr,
-    });
-    return JSON.stringify({
-      error: 'sandbox bootstrap failed',
-      stderr: run.stderr,
-    });
-  }
+  const result = await runPython(env, ctx.conversationId, code);
 
   // Tail of stdout (last ~160 chars, single-lined) so the expanded trace
   // shows what actually printed. Full stdout still goes back to the model
   // via the JSON return — this is purely a UI summary.
-  const stdoutTail = run.result.stdout
+  const stdoutTail = result.stdout
     .slice(-160)
     .replace(/\s+/g, ' ')
     .trim();
   ctx.emit('tool_result', {
     name: 'execute_code',
-    exit_code: run.result.exitCode,
-    error: run.result.exitCode === 0 ? undefined : `code exited with status ${run.result.exitCode}`,
-    truncated: run.result.truncated,
+    exit_code: result.exitCode,
+    error: result.exitCode === 0 ? undefined : `code exited with status ${result.exitCode}`,
+    truncated: result.truncated,
     stdout_tail: stdoutTail,
-    detail: run.result.exitCode === 0 ? undefined : run.result.stdout,
+    detail: result.exitCode === 0 ? undefined : result.stdout,
   });
   return JSON.stringify({
-    stdout: run.result.stdout,
-    exit_code: run.result.exitCode,
-    truncated: run.result.truncated,
+    stdout: result.stdout,
+    exit_code: result.exitCode,
+    truncated: result.truncated,
   });
 }
 
@@ -292,25 +166,9 @@ export async function requestExecuteCodeTool(
   }
 
   // approved → run the code.
-  const run = await runPythonInConversationSandbox(env, ctx.conversationId, code);
-  if ('error' in run) {
-    ctx.emit('tool_result', {
-      name: 'request_execute_code',
-      request_id: requestId,
-      decision: 'approved',
-      error: 'sandbox bootstrap failed',
-      exit_code: run.exitCode,
-      detail: run.stderr,
-    });
-    return JSON.stringify({
-      approved: true,
-      decision: 'approved',
-      error: 'sandbox bootstrap failed',
-      stderr: run.stderr,
-    });
-  }
+  const result = await runPython(env, ctx.conversationId, code);
 
-  const stdoutTail = run.result.stdout
+  const stdoutTail = result.stdout
     .slice(-160)
     .replace(/\s+/g, ' ')
     .trim();
@@ -318,18 +176,18 @@ export async function requestExecuteCodeTool(
     name: 'request_execute_code',
     request_id: requestId,
     decision: 'approved',
-    exit_code: run.result.exitCode,
-    error: run.result.exitCode === 0 ? undefined : `code exited with status ${run.result.exitCode}`,
-    truncated: run.result.truncated,
+    exit_code: result.exitCode,
+    error: result.exitCode === 0 ? undefined : `code exited with status ${result.exitCode}`,
+    truncated: result.truncated,
     stdout_tail: stdoutTail,
-    detail: run.result.exitCode === 0 ? undefined : run.result.stdout,
+    detail: result.exitCode === 0 ? undefined : result.stdout,
   });
   return JSON.stringify({
     approved: true,
     decision: 'approved',
-    stdout: run.result.stdout,
-    exit_code: run.result.exitCode,
-    truncated: run.result.truncated,
+    stdout: result.stdout,
+    exit_code: result.exitCode,
+    truncated: result.truncated,
   });
 }
 

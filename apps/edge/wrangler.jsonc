@@ -31,10 +31,12 @@
   // account cron-trigger cap (5). model_pricing now syncs manually
   // from the board admin or via a one-shot wrangler invocation —
   // pricing changes are rare enough to not need a recurring trigger.
+  // Dropped "5 * * * *" (idle sandbox sweep) when the code-exec
+  // tool moved off Daytona — Cloudflare's Sandbox container handles
+  // idle cleanup natively via `sleepAfter`.
   "triggers": {
     "crons": [
       "0 4 * * *",
-      "5 * * * *",
       "*/5 * * * *"
     ]
   },
@@ -85,11 +87,30 @@
       // One DO instance per conversation_id; state is recentMessages
       // timestamps + a single pending alarmAt. See
       // src/durable-objects/group-router.ts for the full state model.
+      //
+      // SANDBOX is Cloudflare Sandbox SDK's container-backed DO — one
+      // instance per conversation_id, used by the chat agent's
+      // execute_code / request_execute_code tools. Auto-sleeps after
+      // ~10 min of inactivity (configured per-call in lib/sandbox.ts).
       "durable_objects": {
         "bindings": [
-          { "name": "GROUP_ROUTER", "class_name": "GroupRouterDO" }
+          { "name": "GROUP_ROUTER", "class_name": "GroupRouterDO" },
+          { "name": "Sandbox", "class_name": "Sandbox" }
         ]
       },
+      // Cloudflare Sandbox SDK container. The DO above wraps a real
+      // Linux container built from ./Dockerfile — Python data-stack
+      // baked in there, not pip-installed at first use. `lite` is the
+      // smallest profile (1 vCPU / 2 GiB RAM-ish); raise instance_type
+      // or max_instances if real traffic justifies it.
+      "containers": [
+        {
+          "class_name": "Sandbox",
+          "image": "./Dockerfile",
+          "instance_type": "lite",
+          "max_instances": 10
+        }
+      ],
       // Cloudflare native rate limiting. Per-namespace_id counters shared
       // across worker instances; key chosen by caller (we use userId, or
       // CF-Connecting-IP when auth is missing). 30 req / 60s is generous
@@ -107,6 +128,10 @@
         {
           "tag": "v1",
           "new_sqlite_classes": ["GroupRouterDO"]
+        },
+        {
+          "tag": "v2",
+          "new_sqlite_classes": ["Sandbox"]
         }
       ]
     }
@@ -140,12 +165,14 @@
   //   APNS_KEY_DEV   (.p8 PEM content, multi-line)
   //   APNS_KEY_PROD  (.p8 PEM content, multi-line)
   //
-  //   --- memory + sandbox ---
+  //   --- memory ---
   //   HONCHO_API_KEY
   //   HONCHO_WORKSPACE_ID
-  //   DAYTONA_API_KEY        (code-exec sandbox; free tier)
-  //   DAYTONA_API_URL        (optional — defaults to https://app.daytona.io/api)
-  //   DAYTONA_TOOLBOX_URL    (optional — defaults to https://proxy.app.daytona.io/toolbox)
+  //
+  //   (Code-exec sandbox now runs on the Cloudflare Sandbox SDK
+  //   container declared above — no API key. Legacy Daytona keys
+  //   to delete from CF when convenient: DAYTONA_API_KEY,
+  //   DAYTONA_API_URL, DAYTONA_TOOLBOX_URL.)
   //
   //   --- voice call (optional; per-bot opt-in via bots.voice_call_enabled) ---
   //   OPENAI_API_KEY        (mint Realtime ephemeral client_secret)
