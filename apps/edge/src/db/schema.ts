@@ -706,6 +706,35 @@ export type Database = {
           },
         ]
       }
+      bot_user_lookback_counter: {
+        Row: {
+          bot_id: string
+          rounds_since_last: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          bot_id: string
+          rounds_since_last?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          bot_id?: string
+          rounds_since_last?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bot_user_lookback_counter_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "bots"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       bots: {
         Row: {
           config: Json
@@ -2464,6 +2493,10 @@ export type Database = {
       bot_invites_add: {
         Args: { p_bot_id: string; p_handle: string }
         Returns: string
+      }
+      bump_lookback_counter: {
+        Args: { p_bot: string; p_interval: number; p_user: string }
+        Returns: boolean
       }
       cancel_account_deletion: { Args: never; Returns: boolean }
       ensure_preset_handle: { Args: { p_uid: string }; Returns: undefined }
