@@ -15,7 +15,7 @@ export default async function EditModelPage({
   const { data: row } = await supa
     .from('llm_models')
     .select(
-      'id, slug, family, display_name, context_window, max_output_tokens, capabilities, enabled, deprecated_at, notes',
+      'id, slug, family, display_name, context_window, max_output_tokens, capabilities, openrouter_canonical_slug, enabled, deprecated_at, notes',
     )
     .eq('id', id)
     .maybeSingle();
@@ -38,6 +38,7 @@ export default async function EditModelPage({
           context_window: row.context_window,
           max_output_tokens: row.max_output_tokens,
           capabilities: row.capabilities as Record<string, unknown>,
+          openrouter_canonical_slug: row.openrouter_canonical_slug,
           enabled: row.enabled,
           deprecated_at: row.deprecated_at,
           notes: row.notes,

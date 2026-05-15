@@ -11,6 +11,7 @@ export type ModelFormValues = {
   context_window?: number | null;
   max_output_tokens?: number | null;
   capabilities?: Record<string, unknown> | null;
+  openrouter_canonical_slug?: string | null;
   enabled?: boolean;
   deprecated_at?: string | null;
   notes?: string | null;
@@ -63,6 +64,17 @@ export function ModelForm({
           name="family"
           defaultValue={initial?.family ?? ''}
           className="block w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+        />
+      </Field>
+      <Field
+        label="OpenRouter canonical slug（可选）"
+        hint="OpenRouter catalog 上的 id，例如 anthropic/claude-haiku-4.5。设了之后 /models/sync 会按这个 id 从 OpenRouter 拉 context_window / max_output / capabilities 覆盖到本表。留空表示这条模型不走 OpenRouter sync。"
+      >
+        <input
+          name="openrouter_canonical_slug"
+          defaultValue={initial?.openrouter_canonical_slug ?? ''}
+          placeholder="anthropic/claude-haiku-4.5"
+          className="block w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm"
         />
       </Field>
       <div className="grid gap-4 sm:grid-cols-2">
