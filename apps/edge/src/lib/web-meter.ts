@@ -6,7 +6,7 @@ import type { SupabaseClient } from './supabase';
 //
 // Shape:
 //   - WebToolMeter is owned by the caller that runs an LLM turn
-//     (bot-reply for chat replies, scroll-runner for letters). One meter
+//     (bot-reply for chat replies, envelope-runner for letters). One meter
 //     per turn; the same instance is passed into every web.ts call made
 //     during that turn.
 //   - runWebSearch / runWebScrape in web.ts ALWAYS call meter.record on
@@ -82,7 +82,7 @@ async function loadPrices(supa: SupabaseClient): Promise<Record<string, number>>
 
 /**
  * Per-turn accumulator. Owned by the LLM-turn driver
- * (bot-reply.runChatTurn, scroll-runner.runScroll). All web-tool calls
+ * (bot-reply.runChatTurn, envelope-runner.runEnvelope). All web-tool calls
  * made during that turn route through `record`; the final snapshot is
  * passed to recordAudit.
  *

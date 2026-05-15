@@ -12,10 +12,11 @@ import {
 } from '../llm/provider-usage';
 import type { WebReadResult, WebSearchResult } from './web-types';
 
-// Pure agent-loop core for the 奏折 (scroll) feature. Lives here, not in
-// scroll-runner.ts, so the offline replay harness can import it from
-// plain Node/Bun without dragging in `prompt-loader` (which uses
-// wrangler's `.md`-as-text loader) or the `Env`-typed worker bindings.
+// Pure agent-loop core for the envelope feature (来信; formerly 奏折/
+// "scroll"). Lives here, not in envelope-runner.ts, so the offline
+// replay harness can import it from plain Node/Bun without dragging in
+// `prompt-loader` (which uses wrangler's `.md`-as-text loader) or the
+// `Env`-typed worker bindings.
 
 export const HISTORY_LIMIT = 30;
 export const HARD_CAP_TURNS = 30;            // safety net against runaway loops
@@ -158,7 +159,7 @@ export interface ProgressState {
   current_activity?: string | null;
 }
 
-export type ScrollLoopExitReason =
+export type EnvelopeLoopExitReason =
   | 'stopped'       // model called stop_exploring — caller runs the writer phase next
   | 'no_tool_call'  // model returned no tool calls (anomaly; only stop_exploring can end exploration)
   | 'turn_cap'      // hit hardCapTurns without ever calling stop_exploring
@@ -180,7 +181,7 @@ export interface ResumeState {
   collaboratorUsage?: UsageStats;
 }
 
-export interface ScrollLoopDeps {
+export interface EnvelopeLoopDeps {
   openai: OpenAI;
   modelId: string;
   systemPrompt: string;
@@ -190,7 +191,7 @@ export interface ScrollLoopDeps {
   captureModelCall?: <T>(request: unknown, run: () => Promise<T>) => Promise<T>;
   // Fires after each turn (model call + any tool calls). Use it for
   // progress persistence (worker) or stdout logging (replay script).
-  onTurn?: (info: ScrollTurnInfo) => Promise<void> | void;
+  onTurn?: (info: EnvelopeTurnInfo) => Promise<void> | void;
   // Fires between awaits inside a turn so the UI can show a live
   // "current_activity" line — "主探索者在思考…", "正在搜索 X", "协作者
   // 在评议…". The runner persists each snapshot to scroll_runs.progress
@@ -238,7 +239,7 @@ export interface ScrollLoopDeps {
   resume?: ResumeState;
 }
 
-export interface ScrollTurnInfo {
+export interface EnvelopeTurnInfo {
   turn: number;
   progress: ProgressState;
   // Newly appended to the running messages array on this turn — typically
@@ -256,7 +257,7 @@ export interface ScrollTurnInfo {
   generationId?: string;
 }
 
-export interface ScrollLoopResult {
+export interface EnvelopeLoopResult {
   // The loop itself never produces an article — the writer phase
   // (caller-side, after reason==='stopped') is what fills body_md.
   // Kept for compatibility with telemetry; left empty by the loop.
@@ -265,7 +266,7 @@ export interface ScrollLoopResult {
   usage: UsageStats;
   collaboratorUsage?: UsageStats;
   lastGenerationId?: string;
-  reason: ScrollLoopExitReason;
+  reason: EnvelopeLoopExitReason;
   // Set whenever the model called stop_exploring — the reason it
   // gave. Useful for audit / panel display.
   stopReason?: string;
@@ -279,9 +280,9 @@ export interface ScrollLoopResult {
   turns: number;
 }
 
-export interface ScrollToolDeps {
-  webSearch: ScrollLoopDeps['webSearch'];
-  fetchUrl: ScrollLoopDeps['fetchUrl'];
+export interface EnvelopeToolDeps {
+  webSearch: EnvelopeLoopDeps['webSearch'];
+  fetchUrl: EnvelopeLoopDeps['fetchUrl'];
 }
 
 function safeParse(s: string): Record<string, unknown> {
@@ -390,7 +391,7 @@ export function stripLeadingTitleAndSubtitle(body: string): string {
 // Build the user-side opener that frames the conversation: bot's long-term
 // observation (if any) + recent transcript + the injected directive prompt.
 // Same shape used by the worker and the replay harness so they stay aligned.
-export function buildScrollInitialUserContent(input: {
+export function buildEnvelopeInitialUserContent(input: {
   history: Array<{ role: 'user' | 'bot' | 'human'; content: string | null }>;
   memoryRepresentation?: string | null;
   injectedPrompt: string;
@@ -409,9 +410,10 @@ export function buildScrollInitialUserContent(input: {
 }
 
 // Pure agent loop — no Supabase, no audit, no row mutation. Both the
-// production worker (runScroll in scroll-runner.ts) and the offline
-// replay harness (scripts/scroll-replay.ts) call this with their own deps.
-export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopResult> {
+// production worker (runEnvelope in envelope-runner.ts) and the
+// offline replay harness in apps/scroll-lab call this with their own
+// deps.
+export async function runEnvelopeLoop(deps: EnvelopeLoopDeps): Promise<EnvelopeLoopResult> {
   const {
     openai,
     modelId,
@@ -464,7 +466,7 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
         { role: 'user', content: initialUserContent },
       ];
 
-  let reason: ScrollLoopExitReason = 'turn_cap';
+  let reason: EnvelopeLoopExitReason = 'turn_cap';
   let turn = 0;
   let lastAssistantText = '';
   // Research gate is now externally controlled via deps.isResearchUnlocked
@@ -671,7 +673,7 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
         }
       } catch (err) {
         const msg = String((err as Error)?.message ?? err);
-        console.warn('[scroll-loop] collaborator failed:', msg);
+        console.warn('[envelope-loop] collaborator failed:', msg);
         // Surface as an inline note so the panel trace shows the failure.
         const note: ChatCompletionMessageParam = {
           role: 'user',
@@ -717,7 +719,7 @@ export async function runScrollLoop(deps: ScrollLoopDeps): Promise<ScrollLoopRes
     // can run the writer phase. The tool replies and onTurn for this
     // final exploration turn have already been emitted above; the
     // writer phase is owned by the caller (production runner reads
-    // scroll-write.md; lab uses its own writePhasePrompt).
+    // the 'scroll-write' prompt; lab uses its own writePhasePrompt).
     if (decision.stopped) {
       reason = 'stopped';
       break;
@@ -782,7 +784,7 @@ function summarizeToolActivity(toolCalls: ChatCompletionMessageToolCall[]): stri
 // recorded onto `progress` so the runner can persist them. The return
 // value is the string content the model sees back.
 async function execTool(
-  tools: ScrollToolDeps,
+  tools: EnvelopeToolDeps,
   tc: ChatCompletionMessageToolCall,
   progress: ProgressState,
   decision?: { stopped?: boolean; reason?: string },

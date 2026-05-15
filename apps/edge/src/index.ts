@@ -8,7 +8,7 @@ import { messageRoutes } from './routes/messages';
 import { conversationRoutes } from './routes/conversations';
 import { botRoutes } from './routes/bots';
 import { uploadRoutes } from './routes/upload';
-import { scrollRoutes } from './routes/scroll';
+import { envelopeRoutes } from './routes/envelope';
 import { meRoutes } from './routes/me';
 import { contactRoutes } from './routes/contacts';
 import { friendRequestRoutes } from './routes/friend-requests';
@@ -75,7 +75,7 @@ v1.route('/conversations', conversationRoutes);
 v1.route('/bots', botRoutes);
 v1.route('/upload', uploadRoutes);
 v1.route('/uploads', uploadRoutes);   // GET /v1/uploads/:id
-v1.route('/scroll', scrollRoutes);
+v1.route('/scroll', envelopeRoutes);   // legacy URL prefix; iOS still calls /v1/scroll/*
 v1.route('/me', meRoutes);
 v1.route('/contacts', contactRoutes);
 v1.route('/friend-requests', friendRequestRoutes);

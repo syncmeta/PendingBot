@@ -23,33 +23,40 @@ import { mcpClient } from '../mcp/client';
 import { parseExaFetchPayload, parseExaSearchPayload } from '../mcp/parsers';
 import { WebToolMeter, type WebToolUsage } from './web-meter';
 import {
-  buildScrollInitialUserContent,
+  buildEnvelopeInitialUserContent,
   extractSummary,
   extractTitle,
   HARD_CAP_TURNS,
   HISTORY_LIMIT,
-  runScrollLoop,
+  runEnvelopeLoop,
   SILENT_TOKEN,
   stripLeadingTitleAndSubtitle,
   type ProgressState,
-  type ScrollLoopResult,
-  type ScrollTurnInfo,
+  type EnvelopeLoopResult,
+  type EnvelopeTurnInfo,
   type UsageStats,
-} from './scroll-loop';
+} from './envelope-loop';
 
 // Worker-side orchestration shell around the pure agent loop in
-// scroll-loop.ts. Owns the scroll_runs row lifecycle, history/memory
+// envelope-loop.ts. Owns the scroll_runs row lifecycle, history/memory
 // loading, audit logging — i.e. everything the offline replay harness
-// (scripts/scroll-replay.ts) does NOT want to do.
+// in apps/scroll-lab does NOT want to do.
 //
 // Surfaced to users as 来信/Envelopes — config (explorer model,
-// collaborator model, search/scrape providers, turn cap) lives on the
-// trigger body and is frozen onto the row at INSERT time. Per-turn
-// trace lands in scroll_runs.turns as the loop progresses so the iOS
-// detail page can render the thinking process.
+// collaborator model, turn cap) lives on the trigger body and is frozen
+// onto the row at INSERT time. Per-turn trace lands in scroll_runs.turns
+// as the loop progresses so the iOS detail page can render the thinking
+// process.
+//
+// Naming note: the DB table is still `scroll_runs`, the prompt IDs are
+// still `scroll`/`scroll-injected`/`scroll-write`/`scroll-collaborator`,
+// and the taskType in audit_log is still `scroll`. Renaming those
+// would need a coordinated DB migration plus iOS update; the wire
+// shapes / DB schema kept the old name on purpose. Code-side
+// identifiers all moved to envelope.
 
 export {
-  buildScrollInitialUserContent,
+  buildEnvelopeInitialUserContent,
   extractSummary,
   extractTitle,
   formatTranscript,
@@ -57,16 +64,16 @@ export {
   HISTORY_LIMIT,
   MAX_WALL_MS,
   READ_TRUNCATE_CHARS,
-  runScrollLoop,
+  runEnvelopeLoop,
   SILENT_TOKEN,
   type NoteEntry,
   type ProgressState,
-  type ScrollLoopDeps,
-  type ScrollLoopExitReason,
-  type ScrollLoopResult,
-  type ScrollToolDeps,
-  type ScrollTurnInfo,
-} from './scroll-loop';
+  type EnvelopeLoopDeps,
+  type EnvelopeLoopExitReason,
+  type EnvelopeLoopResult,
+  type EnvelopeToolDeps,
+  type EnvelopeTurnInfo,
+} from './envelope-loop';
 
 // Defaults baked at trigger time so a config schema change doesn't
 // retroactively rewrite already-recorded runs. Mirrors what scroll-lab
@@ -134,9 +141,9 @@ export function resolveEnvelopeSettings(
   };
 }
 
-export interface RunScrollInput {
+export interface RunEnvelopeInput {
   env: Env;
-  scrollRunId: string;
+  envelopeRunId: string;
   conversationId: string;
   userId: string;
   botId: string;
@@ -203,8 +210,8 @@ function summarizeTurn(i: number, newMessages: ChatCompletionMessageParam[]): Tu
   return entry;
 }
 
-export async function runScroll(input: RunScrollInput): Promise<void> {
-  const { env, scrollRunId, conversationId, userId, botId, settings } = input;
+export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
+  const { env, envelopeRunId, conversationId, userId, botId, settings } = input;
   const supa = serviceClient(env);
   await ensurePromptOverridesLoaded(supa);
   const startedAt = Date.now();
@@ -216,10 +223,10 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
       status: 'running',
       settings: settings as unknown as Json,
     })
-    .eq('id', scrollRunId);
+    .eq('id', envelopeRunId);
 
   let route: ResolvedRoute | null = null;
-  let result: ScrollLoopResult | null = null;
+  let result: EnvelopeLoopResult | null = null;
   const turnTrace: TurnTraceEntry[] = [];
   // Web-tool meter for this scroll run. Covers every search_web /
   // fetch_url call the explorer fires; snapshot is handed to recordAudit
@@ -309,11 +316,11 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
     }>;
     if (history.filter((m) => m.content && m.content.trim()).length < 2) {
       // Not enough material to write an envelope. Per "空奏折不落库": delete.
-      await supa.from('scroll_runs').delete().eq('id', scrollRunId);
+      await supa.from('scroll_runs').delete().eq('id', envelopeRunId);
       return;
     }
 
-    const initialUser = buildScrollInitialUserContent({
+    const initialUser = buildEnvelopeInitialUserContent({
       history,
       memoryRepresentation: botMemory?.representation,
       injectedPrompt: getPrompt('scroll-injected'),
@@ -328,7 +335,7 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
     await supa
       .from('scroll_runs')
       .update({ progress: initialProgress as unknown as Json, updated_at: new Date().toISOString() })
-      .eq('id', scrollRunId);
+      .eq('id', envelopeRunId);
 
     // Resolve explorer + (optional) collaborator routes in parallel.
     // A failed collaborator resolve falls back to no-collaborator —
@@ -348,7 +355,7 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
         });
       } catch (err) {
         console.warn(
-          '[scroll-runner] collaborator route failed; running without collaborator:',
+          '[envelope-runner] collaborator route failed; running without collaborator:',
           (err as Error).message,
         );
       }
@@ -364,7 +371,7 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
       ? `## 朋友的背景\n${botMemory.representation.trim()}\n\n`
       : '';
 
-    result = await runScrollLoop({
+    result = await runEnvelopeLoop({
       openai: mainRoute.client,
       modelId: mainRoute.modelToCall,
       systemPrompt: getPrompt('scroll'),
@@ -438,7 +445,7 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
             turns: turnTrace as unknown as Json,
             updated_at: new Date().toISOString(),
           })
-          .eq('id', scrollRunId);
+          .eq('id', envelopeRunId);
       },
       // Heartbeat between awaits within a turn — keeps the iOS detail
       // page ticking so a slow model + slow scrape doesn't look frozen.
@@ -451,20 +458,20 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
             progress: snapshot as unknown as Json,
             updated_at: new Date().toISOString(),
           })
-          .eq('id', scrollRunId);
+          .eq('id', envelopeRunId);
       },
-      isCancelled: () => isRunCancelled(supa, scrollRunId),
+      isCancelled: () => isRunCancelled(supa, envelopeRunId),
     });
 
     if (result.reason === 'cancelled') {
       await supa
         .from('scroll_runs')
         .update({ status: 'cancelled', finished_at: new Date().toISOString() })
-        .eq('id', scrollRunId);
+        .eq('id', envelopeRunId);
       await auditRun(supa, route, {
         userId,
         conversationId,
-        scrollRunId,
+        envelopeRunId,
         botId,
         usage: result.usage,
         generationId: result.lastGenerationId,
@@ -553,11 +560,11 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
     const stripped = writeArticle.trim();
     const isEmpty = !stripped || stripped === SILENT_TOKEN || stripped.length < 20;
     if (isEmpty) {
-      await supa.from('scroll_runs').delete().eq('id', scrollRunId);
+      await supa.from('scroll_runs').delete().eq('id', envelopeRunId);
       await auditRun(supa, route, {
         userId,
         conversationId,
-        scrollRunId,
+        envelopeRunId,
         botId,
         usage: result.usage,
         generationId: writeGenerationId ?? result.lastGenerationId,
@@ -587,12 +594,12 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
         finished_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
-      .eq('id', scrollRunId);
+      .eq('id', envelopeRunId);
 
     await auditRun(supa, route, {
       userId,
       conversationId,
-      scrollRunId,
+      envelopeRunId,
       botId,
       usage: result.usage,
       generationId: result.lastGenerationId,
@@ -602,7 +609,7 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
       rawModelCalls,
     });
   } catch (err) {
-    console.error('[scroll-runner]', err);
+    console.error('[envelope-runner]', err);
     const errProgress: ProgressState = {
       ...(result?.progress ?? {
         phase: 'plan',
@@ -620,7 +627,7 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
         progress: errProgress as unknown as Json,
         updated_at: new Date().toISOString(),
       })
-      .eq('id', scrollRunId);
+      .eq('id', envelopeRunId);
 
     // Bill any web tool calls that landed before the failure (upstream
     // providers already consumed those quotas) plus any LLM tokens the
@@ -631,7 +638,7 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
       await auditRun(supa, route, {
         userId,
         conversationId,
-        scrollRunId,
+        envelopeRunId,
         botId,
         usage: result?.usage ?? { input: 0, output: 0, total: 0, cached: 0 },
         generationId: result?.lastGenerationId,
@@ -643,7 +650,7 @@ export async function runScroll(input: RunScrollInput): Promise<void> {
         rawModelCalls,
       });
     } catch (auditErr) {
-      console.warn('[scroll-runner] audit on error failed:', auditErr);
+      console.warn('[envelope-runner] audit on error failed:', auditErr);
     }
   }
 }
@@ -687,12 +694,12 @@ function formatTurnForCollaborator(newMessages: ChatCompletionMessageParam[]): s
 
 async function isRunCancelled(
   supa: ReturnType<typeof serviceClient>,
-  scrollRunId: string,
+  envelopeRunId: string,
 ): Promise<boolean> {
   const { data } = await supa
     .from('scroll_runs')
     .select('status')
-    .eq('id', scrollRunId)
+    .eq('id', envelopeRunId)
     .maybeSingle();
   return data?.status === 'cancelled';
 }
@@ -700,7 +707,7 @@ async function isRunCancelled(
 interface AuditInput {
   userId: string;
   conversationId: string;
-  scrollRunId: string;
+  envelopeRunId: string;
   botId: string;
   usage: UsageStats;
   generationId?: string;
@@ -738,6 +745,6 @@ async function auditRun(
     completionTokensDetails: i.usage.completionTokensDetails,
     webTools: i.webTools,
     rawModelCalls: i.rawModelCalls,
-    metadata: { scroll_run_id: i.scrollRunId, bot_id: i.botId, action: i.action },
+    metadata: { scroll_run_id: i.envelopeRunId, bot_id: i.botId, action: i.action },
   });
 }

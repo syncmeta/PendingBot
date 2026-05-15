@@ -2,20 +2,24 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
 import { serviceClient, userClient } from '../lib/supabase';
-import { runScroll, resolveEnvelopeSettings, HARD_CAP_TURNS } from '../lib/scroll-runner';
+import { runEnvelope, resolveEnvelopeSettings, HARD_CAP_TURNS } from '../lib/envelope-runner';
 import { requireBalance, InsufficientBalanceError } from '../lib/billing';
 import { jsonError } from '../lib/http-error';
 import type { AppBindings } from '../types';
 import type { Json } from '../db/schema';
 
-// 奏折/Scroll routes — surfaced to users as 来信/Envelopes. The trigger
-// body carries the per-run config the user picked in conversation
-// settings (explorer/collaborator models, turn cap). Caller-supplied
-// settings win; otherwise we read whatever the conversation has saved;
-// otherwise defaults.
+// Envelope (来信) routes. The HTTP path stays at /v1/scroll/* and the
+// JSON wire fields keep their `scrollRunId` name — iOS depends on
+// those — but internal code uses envelope-flavoured names. The DB
+// table is still `scroll_runs`.
+//
+// The trigger body carries the per-run config the user picked in
+// conversation settings (explorer/collaborator models, turn cap).
+// Caller-supplied settings win; otherwise we read whatever the
+// conversation has saved; otherwise defaults.
 
-export const scrollRoutes = new Hono<AppBindings>();
-scrollRoutes.use('*', requireSession());
+export const envelopeRoutes = new Hono<AppBindings>();
+envelopeRoutes.use('*', requireSession());
 
 // All settings are optional — server fills in defaults via
 // resolveEnvelopeSettings. Empty string for collaboratorModel means
@@ -43,7 +47,7 @@ const TriggerBody = z.object({
 //   reads its own history with the user, optionally surfs the web, and
 //   writes an article. Returns 202 with the run id; the iOS client
 //   subscribes to scroll_runs Realtime to watch progress.
-scrollRoutes.post('/trigger', async (c) => {
+envelopeRoutes.post('/trigger', async (c) => {
   const userId = c.var.userId!;
   const userJwt = c.var.userJwt!;
 
@@ -129,9 +133,9 @@ scrollRoutes.post('/trigger', async (c) => {
   }
 
   c.executionCtx.waitUntil(
-    runScroll({
+    runEnvelope({
       env: c.env,
-      scrollRunId: run.id as string,
+      envelopeRunId: run.id as string,
       conversationId: parsed.conversationId,
       userId,
       botId: conv.bot_id as string,
@@ -139,6 +143,8 @@ scrollRoutes.post('/trigger', async (c) => {
     }),
   );
 
+  // JSON response field keeps the legacy `scrollRunId` name because iOS
+  // decodes it that way. Internal code uses envelopeRunId.
   return c.json({ scrollRunId: run.id }, 202);
 });
 
@@ -146,7 +152,7 @@ scrollRoutes.post('/trigger', async (c) => {
 //   Paginated feed of this user's scrolls (newest first). Only completed
 //   articles surface — running rows are picked up via Realtime, not list.
 //   `before` is an ISO timestamp from the previous page's tail.
-scrollRoutes.get('/list', async (c) => {
+envelopeRoutes.get('/list', async (c) => {
   const userId = c.var.userId!;
   const userJwt = c.var.userJwt!;
   const limit = Math.min(50, Math.max(1, Number(c.req.query('limit') ?? 20)));
@@ -174,7 +180,7 @@ scrollRoutes.get('/list', async (c) => {
 });
 
 // GET /v1/scroll/:id — full article (body_md included).
-scrollRoutes.get('/:id', async (c) => {
+envelopeRoutes.get('/:id', async (c) => {
   const id = c.req.param('id');
   const userJwt = c.var.userJwt!;
   const supa = userClient(c.env, userJwt);
@@ -203,7 +209,7 @@ const LetterBody = z.object({
   bodyMd: z.string().min(1).max(50_000),
 });
 
-scrollRoutes.post('/letter', async (c) => {
+envelopeRoutes.post('/letter', async (c) => {
   const userId = c.var.userId!;
   const userJwt = c.var.userJwt!;
 
@@ -291,7 +297,7 @@ scrollRoutes.post('/letter', async (c) => {
 
 // POST /v1/scroll/:id/cancel — flip status='cancelled'. The runner
 // checks this between turns and exits cleanly.
-scrollRoutes.post('/:id/cancel', async (c) => {
+envelopeRoutes.post('/:id/cancel', async (c) => {
   const id = c.req.param('id');
   const userJwt = c.var.userJwt!;
   const supa = userClient(c.env, userJwt);
