@@ -2116,39 +2116,50 @@ export type Database = {
       }
       tools: {
         Row: {
-          config_json: Json | null
           created_at: string
           description: string | null
+          enabled: boolean
           id: string
-          is_active: boolean
-          name: string
-          owner_id: string | null
-          schema_json: Json
-          source_type: string
+          key: string
+          kind: string
+          mcp_server_id: string | null
+          notes: string | null
+          scopes: Json
+          updated_at: string
         }
         Insert: {
-          config_json?: Json | null
           created_at?: string
           description?: string | null
+          enabled?: boolean
           id?: string
-          is_active?: boolean
-          name: string
-          owner_id?: string | null
-          schema_json: Json
-          source_type: string
+          key: string
+          kind: string
+          mcp_server_id?: string | null
+          notes?: string | null
+          scopes?: Json
+          updated_at?: string
         }
         Update: {
-          config_json?: Json | null
           created_at?: string
           description?: string | null
+          enabled?: boolean
           id?: string
-          is_active?: boolean
-          name?: string
-          owner_id?: string | null
-          schema_json?: Json
-          source_type?: string
+          key?: string
+          kind?: string
+          mcp_server_id?: string | null
+          notes?: string | null
+          scopes?: Json
+          updated_at?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "tools_mcp_fkey"
+            columns: ["mcp_server_id"]
+            isOneToOne: false
+            referencedRelation: "mcp_servers"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       topups: {
         Row: {
