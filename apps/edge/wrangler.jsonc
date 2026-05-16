@@ -195,10 +195,6 @@
   //   --- supabase + LLM gateway ---
   //   SUPABASE_ANON_KEY
   //   SUPABASE_SERVICE_ROLE_KEY
-  //   OPENROUTER_API_KEY     (only the OpenRouter catalog/pricing fetches
-  //                           use this now — routes/openrouter.ts +
-  //                           cron/model-pricing.ts. LLM inference is
-  //                           BYOK-on-gateway, no provider key in env.)
   //   CF_AIG_RUN_TOKEN       (AI Gateway "Authenticated Gateway" run token,
   //                           created in the gateway Settings. Sent as the
   //                           cf-aig-authorization header on every LLM

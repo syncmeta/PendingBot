@@ -48,12 +48,6 @@ export interface Env {
   // ── Secrets (set via `wrangler secret put --env <env>`) ────────
   SUPABASE_ANON_KEY: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
-  // LLM inference no longer reads this — provider traffic is
-  // BYOK-on-gateway (keys stored in the AI Gateway dashboard). Still
-  // needed by the OpenRouter catalog/pricing fetches (routes/
-  // openrouter.ts, cron/model-pricing.ts) which call OpenRouter's API
-  // directly, not through the gateway.
-  OPENROUTER_API_KEY: string;
   /// Cloudflare API token (AI Gateway Read). persistAuditMessage uses it
   /// to read the gateway's computed per-request cost from the Logs API
   /// when a provider doesn't report its own. Optional — unset means
