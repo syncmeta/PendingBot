@@ -1,8 +1,6 @@
 import {
-  captureModelCall,
   enqueueAudit,
   resolveRoute,
-  type RawModelCall,
   usageFromCompletion,
 } from '../llm/router';
 import type { ChatCompletionCreateParamsNonStreaming } from 'openai/resources/chat/completions';
@@ -119,7 +117,6 @@ export async function generateInitialBotDescription(input: {
   let inputTokens = 0;
   let outputTokens = 0;
   let auditLogId: string | null = null;
-  const rawModelCalls: RawModelCall[] = [];
   try {
     const request = {
       model: route.modelToCall,
@@ -130,12 +127,7 @@ export async function generateInitialBotDescription(input: {
       temperature: 0.4,
       max_tokens: MAX_DESC_TOKENS,
     } as ChatCompletionCreateParamsNonStreaming;
-    const completion = await captureModelCall(
-      rawModelCalls,
-      route,
-      { taskType: 'group_bot_intro', request },
-      () => route.client.chat.completions.create(request),
-    );
+    const completion = await route.client.chat.completions.create(request);
     const usage = usageFromCompletion(completion.usage, completion);
     inputTokens = usage.inputTokens ?? 0;
     outputTokens = usage.outputTokens ?? 0;
@@ -148,7 +140,6 @@ export async function generateInitialBotDescription(input: {
       status: 'success',
       inputTokens,
       outputTokens,
-      rawModelCalls,
       metadata: { bot_id: botId, valid_description: description.length >= 4 },
       ...usage,
     });
@@ -162,7 +153,6 @@ export async function generateInitialBotDescription(input: {
       errorClass: err instanceof Error ? err.name : 'unknown',
       inputTokens,
       outputTokens,
-      rawModelCalls,
       metadata: { bot_id: botId },
     });
     return await fallbackInsert(supa, conversationId, botId, botName);

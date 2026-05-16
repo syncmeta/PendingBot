@@ -12,8 +12,6 @@ import { serviceClient } from '../supabase';
 import {
   enqueueAudit,
   FallbackError,
-  startRawModelCall,
-  type RawModelCall,
   type ResolvedRoute,
   type RouteTraceEntry,
   usageFromCompletion,
@@ -22,10 +20,6 @@ import {
 import { mergeProviderUsageDetails } from '../../llm/provider-usage';
 import { buildMessages, type BuildMessagesInput } from '../../llm/builder';
 import { resolveLocale } from '../../i18n/locale';
-import {
-  estimateAssistantOutputTokens,
-  estimateRequestInputTokens,
-} from '../../llm/token-estimate';
 import {
   loadAttachmentAsImagePart,
   modelSupportsVision,
@@ -428,10 +422,6 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   let bubblesInserted = 0;
   const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   const providerUsage = {};
-  const rawModelCalls: RawModelCall[] = [];
-  // Local heuristic estimates, summed across tool-rounds. Sanity-check
-  // signal alongside provider-reported usage; persisted to audit_log.
-  const est = { input: 0, output: 0 };
   let generationId: string | undefined;
 
   // Per-turn web-search citations. Every search_web call appends new urls
@@ -594,12 +584,6 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       if (ac.signal.aborted) break;
 
-      // Estimate input tokens for this round before sending. messages
-      // grows across rounds (we push assistant + tool results onto it),
-      // so summing per round mirrors how providers bill cumulative
-      // usage across the agentic loop.
-      est.input += estimateRequestInputTokens({ messages, tools: turnTools });
-
       const roundOpen = await withFallback(
         supa,
         env,
@@ -622,106 +606,84 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
             // attempt), so gate it on the resolved provider.
             ...(r.provider.slug === 'openrouter' ? { usage: { include: true } } : {}),
           } as ChatCompletionCreateParamsStreaming;
-          const raw = startRawModelCall(rawModelCalls, r, {
-            taskType: 'message_reply',
+          const stream = await r.client.chat.completions.create(
             request,
-          });
-          try {
-            const stream = await r.client.chat.completions.create(
-              request,
-              { signal: ac.signal },
-            );
-            return { stream, raw };
-          } catch (err) {
-            raw.finishError(err);
-            throw err;
-          }
+            { signal: ac.signal },
+          );
+          return { stream };
         },
       );
-      const { stream, raw } = roundOpen.result;
+      const { stream } = roundOpen.result;
       route = roundOpen.route;
       routeTrace.push(...roundOpen.routeTrace);
 
       // Per-call accumulators.
       let assistantContent = '';
       const toolCalls: ChatCompletionMessageToolCall[] = [];
-      const streamChunks: unknown[] = [];
 
-      try {
-        for await (const chunk of stream) {
-          streamChunks.push(chunk);
-          if (ac.signal.aborted) break;
-          const id = (chunk as { id?: string }).id;
-          if (id && !generationId) generationId = id;
+      for await (const chunk of stream) {
+        if (ac.signal.aborted) break;
+        const id = (chunk as { id?: string }).id;
+        if (id && !generationId) generationId = id;
 
-          const delta = chunk.choices?.[0]?.delta;
+        const delta = chunk.choices?.[0]?.delta;
 
-          // Visible content delta.
-          const contentDelta = delta?.content ?? '';
-          if (contentDelta) {
-            pending += contentDelta;
-            totalContent += contentDelta;
-            assistantContent += contentDelta;
+        // Visible content delta.
+        const contentDelta = delta?.content ?? '';
+        if (contentDelta) {
+          pending += contentDelta;
+          totalContent += contentDelta;
+          assistantContent += contentDelta;
 
-            // Hold token emissions while the cumulative reply could still be
-            // the [SILENT] control token. Once the prefix breaks, flush.
-            if (!couldStillBeSilent(totalContent.trimStart())) {
-              const toEmit = totalContent.slice(emittedLen);
-              if (toEmit) emit('token', { delta: toEmit });
-              emittedLen = totalContent.length;
-            }
-
-            // Drain complete bubbles from pending.
-            // eslint-disable-next-line no-constant-condition
-            while (true) {
-              const idx = pending.indexOf(BUBBLE_DELIMITER);
-              if (idx === -1) break;
-              const bubble = pending.slice(0, idx).trim();
-              pending = pending.slice(idx + BUBBLE_DELIMITER.length);
-              if (bubble) await emitBubble(bubble);
-            }
+          // Hold token emissions while the cumulative reply could still be
+          // the [SILENT] control token. Once the prefix breaks, flush.
+          if (!couldStillBeSilent(totalContent.trimStart())) {
+            const toEmit = totalContent.slice(emittedLen);
+            if (toEmit) emit('token', { delta: toEmit });
+            emittedLen = totalContent.length;
           }
 
-          // Tool call streaming. OpenAI emits tool_calls in chunks; merge by
-          // index so we end up with one entry per call.
-          const tcDeltas = delta?.tool_calls;
-          if (tcDeltas) {
-            for (const tc of tcDeltas) {
-              const i = tc.index;
-              if (!toolCalls[i]) {
-                toolCalls[i] = {
-                  id: tc.id ?? '',
-                  type: 'function',
-                  function: { name: '', arguments: '' },
-                };
-              }
-              if (tc.id) toolCalls[i].id = tc.id;
-              if (tc.function?.name) toolCalls[i].function.name = tc.function.name;
-              if (tc.function?.arguments) {
-                toolCalls[i].function.arguments += tc.function.arguments;
-              }
-            }
-          }
-
-          if (chunk.usage) {
-            const u = usageFromCompletion(chunk.usage, chunk);
-            usage.input += u.inputTokens ?? 0;
-            usage.output += u.outputTokens ?? 0;
-            usage.cacheRead += u.cacheReadTokens ?? 0;
-            usage.cacheWrite += u.cacheWriteTokens ?? 0;
-            mergeProviderUsageDetails(providerUsage, u);
+          // Drain complete bubbles from pending.
+          // eslint-disable-next-line no-constant-condition
+          while (true) {
+            const idx = pending.indexOf(BUBBLE_DELIMITER);
+            if (idx === -1) break;
+            const bubble = pending.slice(0, idx).trim();
+            pending = pending.slice(idx + BUBBLE_DELIMITER.length);
+            if (bubble) await emitBubble(bubble);
           }
         }
-        raw.finishSuccess({ stream_chunks: streamChunks });
-      } catch (err) {
-        raw.finishError(err);
-        throw err;
-      }
 
-      // Local estimate of what the model emitted this round — visible
-      // assistant text plus any tool_call name/arguments JSON it
-      // produced. Mirrors the provider-reported completion_tokens.
-      est.output += estimateAssistantOutputTokens(assistantContent, toolCalls);
+        // Tool call streaming. OpenAI emits tool_calls in chunks; merge by
+        // index so we end up with one entry per call.
+        const tcDeltas = delta?.tool_calls;
+        if (tcDeltas) {
+          for (const tc of tcDeltas) {
+            const i = tc.index;
+            if (!toolCalls[i]) {
+              toolCalls[i] = {
+                id: tc.id ?? '',
+                type: 'function',
+                function: { name: '', arguments: '' },
+              };
+            }
+            if (tc.id) toolCalls[i].id = tc.id;
+            if (tc.function?.name) toolCalls[i].function.name = tc.function.name;
+            if (tc.function?.arguments) {
+              toolCalls[i].function.arguments += tc.function.arguments;
+            }
+          }
+        }
+
+        if (chunk.usage) {
+          const u = usageFromCompletion(chunk.usage, chunk);
+          usage.input += u.inputTokens ?? 0;
+          usage.output += u.outputTokens ?? 0;
+          usage.cacheRead += u.cacheReadTokens ?? 0;
+          usage.cacheWrite += u.cacheWriteTokens ?? 0;
+          mergeProviderUsageDetails(providerUsage, u);
+        }
+      }
 
       // Push the assistant turn (with any tool_calls) into running history
       // so the next iteration sees its own decision.
@@ -794,10 +756,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       cacheReadTokens: usage.cacheRead,
       cacheWriteTokens: usage.cacheWrite,
       ...providerUsage,
-      estInputTokens: est.input,
-      estOutputTokens: est.output,
       webTools: webMeter.snapshot(),
-      rawModelCalls,
       metadata: {
         bot_id: bot.id,
         status: finalStatus,
@@ -868,13 +827,10 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
         cacheReadTokens: usage.cacheRead,
         cacheWriteTokens: usage.cacheWrite,
         ...providerUsage,
-        estInputTokens: est.input,
-        estOutputTokens: est.output,
         // Tool calls that landed before the LLM stream errored should
         // still be billed — the upstream provider already consumed
         // those quotas regardless of how the turn ended.
         webTools: webMeter.snapshot(),
-        rawModelCalls,
         metadata: { bot_id: bot.id, status, message: message.slice(0, 200) },
       });
     } catch (auditErr) {

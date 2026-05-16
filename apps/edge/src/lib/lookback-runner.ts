@@ -2,10 +2,8 @@ import type { Env } from '../types';
 import type { ChatCompletionCreateParamsNonStreaming } from 'openai/resources/chat/completions';
 import { serviceClient } from './supabase';
 import {
-  captureModelCall,
   enqueueAudit,
   FallbackError,
-  type RawModelCall,
   usageFromCompletion,
   withFallback,
 } from '../llm/router';
@@ -56,7 +54,6 @@ export async function runLookback(input: RunLookbackInput): Promise<void> {
   const supa = serviceClient(env);
   await ensurePromptOverridesLoaded(supa);
   const startedAt = Date.now();
-  const rawModelCalls: RawModelCall[] = [];
 
   try {
     // Pull bot config + recent transcript in parallel.
@@ -115,9 +112,7 @@ export async function runLookback(input: RunLookbackInput): Promise<void> {
             { role: 'user', content: userMsg },
           ],
         } as ChatCompletionCreateParamsNonStreaming;
-        return captureModelCall(rawModelCalls, rt, { taskType: 'lookback', request }, () =>
-          rt.client.chat.completions.create(request),
-        );
+        return rt.client.chat.completions.create(request);
       },
     );
 
@@ -131,7 +126,6 @@ export async function runLookback(input: RunLookbackInput): Promise<void> {
         generationId: completion.id,
         status: 'success',
         routeTrace,
-        rawModelCalls,
         metadata: { bot_id: botId, action: 'silent' },
         ...usage,
       });
@@ -152,7 +146,6 @@ export async function runLookback(input: RunLookbackInput): Promise<void> {
       generationId: completion.id,
       status: 'success',
       routeTrace,
-      rawModelCalls,
       metadata: { bot_id: botId, action: 'note' },
       ...usage,
     });
@@ -167,7 +160,6 @@ export async function runLookback(input: RunLookbackInput): Promise<void> {
         errorClass:
           err.routeTrace[err.routeTrace.length - 1]?.error_class ?? 'unknown',
         routeTrace: err.routeTrace,
-        rawModelCalls,
         metadata: { bot_id: botId },
       });
     }

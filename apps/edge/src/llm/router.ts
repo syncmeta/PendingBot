@@ -473,12 +473,6 @@ export interface AuditUsage extends ProviderUsageDetails {
   outputTokens?: number;
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
-  // Local heuristic estimates (token-estimate.ts). Optional — callers
-  // that don't bother estimating leave them undefined and the audit row
-  // stores null. Written to audit_log.est_input_tokens / est_output_tokens
-  // so the panel can show a provider-vs-local ratio per row.
-  estInputTokens?: number;
-  estOutputTokens?: number;
   // Voice call dims. Per-turn deltas pulled from OpenAI Realtime's
   // response.done.usage. text_input/output_tokens for realtime sessions
   // ride along on the existing inputTokens / outputTokens fields.
@@ -505,123 +499,6 @@ export interface AuditCallOpts extends AuditUsage {
   /// and sum(costUsd) folds into audit_log.tool_cost_usd + cost_credits
   /// so the single billing_debit covers both LLM and tool spend.
   webTools?: WebToolUsage[];
-  /// Raw model API payloads captured at the actual provider-call sites.
-  /// One audit_log row can cover multiple model calls (tool loops,
-  /// scroll collaborator/write phases), so raw payloads are stored in a
-  /// child table with per-call sequence numbers.
-  rawModelCalls?: RawModelCall[];
-}
-
-export interface RawModelCall {
-  taskType: string;
-  providerId: string;
-  providerSlug: string;
-  modelAliasId: string | null;
-  modelId: string;
-  status: 'success' | 'error';
-  request: Json;
-  response: Json | null;
-  errorClass?: string | null;
-  errorMessage?: string | null;
-  latencyMs: number;
-}
-
-export interface RawModelCallDraft {
-  finishSuccess(response: unknown): void;
-  finishError(err: unknown): void;
-}
-
-export function startRawModelCall(
-  sink: RawModelCall[] | undefined,
-  route: ResolvedRoute,
-  opts: { taskType: string; request: unknown },
-): RawModelCallDraft {
-  const startedAt = Date.now();
-  const rawRequest = toJsonValue(opts.request);
-  let finished = false;
-
-  const finish = (
-    status: 'success' | 'error',
-    response: unknown,
-    err?: unknown,
-  ) => {
-    if (finished || !sink) return;
-    finished = true;
-    const cls = err ? classifyError(err) : null;
-    sink.push({
-      taskType: opts.taskType,
-      providerId: route.provider.id,
-      providerSlug: route.provider.slug,
-      modelAliasId: route.alias?.aliasId ?? null,
-      modelId: route.modelToCall,
-      status,
-      request: rawRequest,
-      response: response == null ? null : toJsonValue(response),
-      errorClass: cls?.errorClass ?? null,
-      errorMessage: cls?.message ? cls.message.slice(0, 2000) : null,
-      latencyMs: Date.now() - startedAt,
-    });
-  };
-
-  return {
-    finishSuccess: (response) => finish('success', response),
-    finishError: (err) => finish('error', serializeThrown(err), err),
-  };
-}
-
-export async function captureModelCall<T>(
-  sink: RawModelCall[] | undefined,
-  route: ResolvedRoute,
-  opts: { taskType: string; request: unknown },
-  runner: () => Promise<T>,
-): Promise<T> {
-  const raw = startRawModelCall(sink, route, opts);
-  try {
-    const response = await runner();
-    raw.finishSuccess(response);
-    return response;
-  } catch (err) {
-    raw.finishError(err);
-    throw err;
-  }
-}
-
-function toJsonValue(value: unknown): Json {
-  try {
-    const normalized = JSON.parse(
-      JSON.stringify(value, (_key, v) => {
-        if (typeof v === 'bigint') return v.toString();
-        if (typeof v === 'function' || typeof v === 'symbol') return undefined;
-        if (v instanceof Error) return serializeThrown(v);
-        return v;
-      }),
-    ) as Json | undefined;
-    return normalized === undefined ? null : normalized;
-  } catch {
-    return { unserializable: String(value) };
-  }
-}
-
-function serializeThrown(err: unknown): Json {
-  if (err instanceof Error) {
-    const e = err as Error & {
-      status?: number;
-      code?: string;
-      type?: string;
-      request_id?: string;
-      error?: unknown;
-    };
-    return {
-      name: e.name,
-      message: e.message,
-      status: e.status ?? null,
-      code: e.code ?? null,
-      type: e.type ?? null,
-      request_id: e.request_id ?? null,
-      error: e.error == null ? null : toJsonValue(e.error),
-    };
-  }
-  return toJsonValue(err);
 }
 
 // Billing cost is the provider-reported figure (see persistAuditMessage).
@@ -771,8 +648,6 @@ export async function persistAuditMessage(
     output_tokens: opts.outputTokens ?? 0,
     cache_read_tokens: opts.cacheReadTokens ?? 0,
     cache_write_tokens: opts.cacheWriteTokens ?? 0,
-    est_input_tokens: opts.estInputTokens ?? null,
-    est_output_tokens: opts.estOutputTokens ?? null,
     audio_input_tokens: audioInputTokens,
     audio_output_tokens: audioOutputTokens,
     total_tokens: total,
@@ -842,31 +717,6 @@ export async function persistAuditMessage(
       .insert(childRows);
     if (childErr) {
       console.warn('[audit_web_tool_calls insert]', childErr.message);
-    }
-  }
-
-  const rawCalls = opts.rawModelCalls ?? [];
-  if (rawCalls.length > 0) {
-    const rows = rawCalls.map((c, idx) => ({
-      audit_log_id: auditId,
-      seq: idx + 1,
-      task_type: c.taskType,
-      provider_id: c.providerId,
-      provider_slug: c.providerSlug,
-      model_alias_id: c.modelAliasId,
-      model_id: c.modelId,
-      status: c.status,
-      error_class: c.errorClass ?? null,
-      error_message: c.errorMessage ?? null,
-      latency_ms: c.latencyMs,
-      raw_request: c.request,
-      raw_response: c.response,
-    }));
-    const { error: rawErr } = await supa
-      .from('audit_model_calls')
-      .insert(rows);
-    if (rawErr) {
-      console.warn('[audit_model_calls insert]', rawErr.message);
     }
   }
 

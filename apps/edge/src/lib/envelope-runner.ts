@@ -6,10 +6,8 @@ import type { Env } from '../types';
 import type { Json } from '../db/schema';
 import { serviceClient } from './supabase';
 import {
-  captureModelCall as captureRawModelCall,
   enqueueAudit,
   resolveRoute,
-  type RawModelCall,
   type ResolvedRoute,
 } from '../llm/router';
 import {
@@ -235,7 +233,6 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
   // at the end so tool spend lands in audit_web_tool_calls and folds
   // into the billed credits.
   const webMeter = await WebToolMeter.create(supa);
-  const rawModelCalls: RawModelCall[] = [];
 
   try {
     // We pull bot first because everything else (context-window lookup,
@@ -406,8 +403,6 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
         if (isError) return { url, title: '', content: '' };
         return parseExaFetchPayload(url, text);
       },
-      captureModelCall: (request, run) =>
-        captureRawModelCall(rawModelCalls, mainRoute, { taskType: 'scroll', request }, run),
       hardCapTurns: settings.turnCap,
       simulateCollaboratorReply: collaboratorRoute
         ? async ({ turn, newMessages }) => {
@@ -425,12 +420,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
                 },
               ],
             } as ChatCompletionCreateParamsNonStreaming;
-            const r = await captureRawModelCall(
-              rawModelCalls,
-              collaboratorRoute!,
-              { taskType: 'scroll_collaborator', request },
-              () => collaboratorRoute!.client.chat.completions.create(request),
-            );
+            const r = await collaboratorRoute!.client.chat.completions.create(request);
             const text = r.choices[0]?.message?.content?.trim() ?? '';
             const promptDetails = (
               r.usage as { prompt_tokens_details?: { cached_tokens?: number } } | undefined
@@ -490,7 +480,6 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
         startedAt,
         action: 'cancelled',
         webTools: webMeter.snapshot(),
-        rawModelCalls,
       });
       return;
     }
@@ -542,12 +531,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
           { role: 'user', content: writeUser },
         ],
       } as ChatCompletionCreateParamsNonStreaming;
-      const writeResp = await captureRawModelCall(
-        rawModelCalls,
-        mainRoute,
-        { taskType: 'scroll_write', request },
-        () => mainRoute.client.chat.completions.create(request),
-      );
+      const writeResp = await mainRoute.client.chat.completions.create(request);
       writeArticle = (writeResp.choices[0]?.message?.content ?? '').trim();
       const writePromptDetails = (
         writeResp.usage as { prompt_tokens_details?: { cached_tokens?: number } } | undefined
@@ -583,7 +567,6 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
         startedAt,
         action: 'silent',
         webTools: webMeter.snapshot(),
-        rawModelCalls,
       });
       return;
     }
@@ -618,7 +601,6 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
       startedAt,
       action: 'memorial',
       webTools: webMeter.snapshot(),
-      rawModelCalls,
     });
   } catch (err) {
     console.error('[envelope-runner]', err);
@@ -659,7 +641,6 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
         status: 'error',
         errorClass: err instanceof Error ? err.name : 'unknown',
         webTools: webMeter.snapshot(),
-        rawModelCalls,
       });
     } catch (auditErr) {
       console.warn('[envelope-runner] audit on error failed:', auditErr);
@@ -728,7 +709,6 @@ interface AuditInput {
   status?: 'success' | 'error';
   errorClass?: string | null;
   webTools?: WebToolUsage[];
-  rawModelCalls?: RawModelCall[];
 }
 
 async function auditRun(
@@ -756,7 +736,6 @@ async function auditRun(
     promptTokensDetails: i.usage.promptTokensDetails,
     completionTokensDetails: i.usage.completionTokensDetails,
     webTools: i.webTools,
-    rawModelCalls: i.rawModelCalls,
     metadata: { scroll_run_id: i.envelopeRunId, bot_id: i.botId, action: i.action },
   });
 }

@@ -1,8 +1,6 @@
 import {
-  captureModelCall,
   resolveRoute,
   enqueueAudit,
-  type RawModelCall,
   usageFromCompletion,
 } from './router';
 import type { ChatCompletionCreateParamsNonStreaming } from 'openai/resources/chat/completions';
@@ -191,7 +189,6 @@ export async function runGroupRouter(
   let inputTokens = 0;
   let outputTokens = 0;
   let auditLogId: string | null = null;
-  const rawModelCalls: RawModelCall[] = [];
   try {
     const request = {
       model: route.modelToCall,
@@ -203,12 +200,7 @@ export async function runGroupRouter(
       temperature: 0.2,
       max_tokens: 400,
     } as ChatCompletionCreateParamsNonStreaming;
-    const completion = await captureModelCall(
-      rawModelCalls,
-      route,
-      { taskType: 'group_router', request },
-      () => route.client.chat.completions.create(request),
-    );
+    const completion = await route.client.chat.completions.create(request);
     const usage = usageFromCompletion(completion.usage, completion);
     inputTokens = usage.inputTokens ?? 0;
     outputTokens = usage.outputTokens ?? 0;
@@ -227,7 +219,6 @@ export async function runGroupRouter(
       inputTokens,
       outputTokens,
       status: 'success',
-      rawModelCalls,
       ...usage,
     });
   } catch (err) {
@@ -238,7 +229,6 @@ export async function runGroupRouter(
       startedAt,
       status: 'error',
       errorClass: err instanceof Error ? err.name : 'unknown',
-      rawModelCalls,
     });
     return { wakeBots: [], rationale: 'classifier error', auditLogId: null };
   }

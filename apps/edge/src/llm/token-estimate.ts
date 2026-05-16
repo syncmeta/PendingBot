@@ -1,9 +1,3 @@
-import type {
-  ChatCompletionMessageParam,
-  ChatCompletionMessageToolCall,
-  ChatCompletionTool,
-} from 'openai/resources/chat/completions';
-
 // Heuristic token counter — char-based, no tokenizer dependency. We're
 // not trying to match any single provider's BPE exactly; we want a
 // *sanity-check* number so the audit panel can show a provider-vs-local
@@ -36,57 +30,4 @@ export function estimateTokens(s: string | null | undefined): number {
     else other++;
   }
   return Math.ceil(cjk / 1.5 + other / 4);
-}
-
-// Estimate the input side of one chat.completions request: messages +
-// tool schemas. Adds a small per-message framing constant (~4) to
-// approximate the role / separator overhead BPE tokenizers see in
-// chat-templated input.
-export function estimateRequestInputTokens(req: {
-  messages: readonly ChatCompletionMessageParam[];
-  tools?: readonly ChatCompletionTool[] | null;
-}): number {
-  let total = 0;
-  for (const m of req.messages) {
-    const content = (m as { content?: unknown }).content;
-    if (typeof content === 'string') {
-      total += estimateTokens(content);
-    } else if (Array.isArray(content)) {
-      for (const part of content as Array<{ type?: string; text?: unknown }>) {
-        if (part?.type === 'text' && typeof part.text === 'string') {
-          total += estimateTokens(part.text);
-        }
-      }
-    }
-    // Assistant turns retained in history may carry tool_calls — those
-    // bytes are billed as input on the *next* round.
-    const tcs = (m as { tool_calls?: unknown }).tool_calls;
-    if (Array.isArray(tcs)) {
-      for (const tc of tcs as Array<{ function?: { name?: string; arguments?: string } }>) {
-        total += estimateTokens(tc.function?.name ?? '');
-        total += estimateTokens(tc.function?.arguments ?? '');
-      }
-    }
-    total += 4;
-  }
-  if (req.tools && req.tools.length > 0) {
-    // Tool schemas get serialized into the prompt by the provider —
-    // JSON.stringify is a decent proxy for what gets tokenized.
-    total += estimateTokens(JSON.stringify(req.tools));
-  }
-  return total;
-}
-
-// Estimate the output side: visible assistant text + any emitted
-// tool_calls (the model's BPE-tokenized JSON output).
-export function estimateAssistantOutputTokens(
-  text: string,
-  toolCalls: readonly ChatCompletionMessageToolCall[],
-): number {
-  let total = estimateTokens(text);
-  for (const tc of toolCalls) {
-    total += estimateTokens(tc.function?.name ?? '');
-    total += estimateTokens(tc.function?.arguments ?? '');
-  }
-  return total;
 }

@@ -4,10 +4,8 @@ import { honchoClient, userPeerId, botPeerId, conversationSessionId } from './ho
 import { serviceClient } from './supabase';
 import { putCachedBotNote, putCachedChatMemo } from './persona-cache';
 import {
-  captureModelCall,
   enqueueAudit,
   FallbackError,
-  type RawModelCall,
   usageFromCompletion,
   withFallback,
 } from '../llm/router';
@@ -171,7 +169,6 @@ interface RefreshBotNoteInput {
 async function refreshBotNote(input: RefreshBotNoteInput): Promise<void> {
   const { env, botId, userId, conversationId } = input;
   const startedAt = Date.now();
-  const rawModelCalls: RawModelCall[] = [];
   try {
     const supa = serviceClient(env);
     const { data: existing } = await supa
@@ -237,9 +234,7 @@ async function refreshBotNote(input: RefreshBotNoteInput): Promise<void> {
           model: r.modelToCall,
           messages: [{ role: 'user', content: prompt }],
         } as ChatCompletionCreateParamsNonStreaming;
-        return captureModelCall(rawModelCalls, r, { taskType: 'bot_note', request }, () =>
-          r.client.chat.completions.create(request),
-        );
+        return r.client.chat.completions.create(request);
       },
     );
     const newBody = completion.choices[0]?.message?.content?.trim();
@@ -251,7 +246,6 @@ async function refreshBotNote(input: RefreshBotNoteInput): Promise<void> {
       generationId: completion.id,
       status: 'success',
       routeTrace,
-      rawModelCalls,
       metadata: { bot_id: botId, action: newBody ? 'update' : 'silent' },
       ...usageFromCompletion(completion.usage, completion),
     });
@@ -291,7 +285,6 @@ async function refreshBotNote(input: RefreshBotNoteInput): Promise<void> {
         errorClass:
           err.routeTrace[err.routeTrace.length - 1]?.error_class ?? 'unknown',
         routeTrace: err.routeTrace,
-        rawModelCalls,
         metadata: { bot_id: botId, action: 'error' },
       });
     }
@@ -316,7 +309,6 @@ interface RefreshChatMemoInput {
 async function refreshChatMemo(input: RefreshChatMemoInput): Promise<void> {
   const { env, botId, conversationId } = input;
   const startedAt = Date.now();
-  const rawModelCalls: RawModelCall[] = [];
   try {
     const supa = serviceClient(env);
     const { data: existing } = await supa
@@ -390,9 +382,7 @@ async function refreshChatMemo(input: RefreshChatMemoInput): Promise<void> {
           model: r.modelToCall,
           messages: [{ role: 'user', content: prompt }],
         } as ChatCompletionCreateParamsNonStreaming;
-        return captureModelCall(rawModelCalls, r, { taskType: 'chat_memo', request }, () =>
-          r.client.chat.completions.create(request),
-        );
+        return r.client.chat.completions.create(request);
       },
     );
     const raw = completion.choices[0]?.message?.content?.trim() ?? '';
@@ -404,7 +394,6 @@ async function refreshChatMemo(input: RefreshChatMemoInput): Promise<void> {
       generationId: completion.id,
       status: 'success',
       routeTrace,
-      rawModelCalls,
       metadata: { bot_id: botId, action },
       ...usageFromCompletion(completion.usage, completion),
     });
@@ -444,7 +433,6 @@ async function refreshChatMemo(input: RefreshChatMemoInput): Promise<void> {
         errorClass:
           err.routeTrace[err.routeTrace.length - 1]?.error_class ?? 'unknown',
         routeTrace: err.routeTrace,
-        rawModelCalls,
         metadata: { bot_id: botId, action: 'error' },
       });
     }

@@ -35,10 +35,8 @@ import type { Env } from '../types';
 import type { SupabaseClient } from '../lib/supabase';
 import { patchCachedAttachment } from '../lib/attachment-cache';
 import {
-  captureModelCall,
   enqueueAudit,
   FallbackError,
-  type RawModelCall,
   usageFromCompletion,
   withFallback,
 } from './router';
@@ -273,7 +271,6 @@ export async function summarizeAttachment(
     return;
   }
 
-  const rawModelCalls: RawModelCall[] = [];
   try {
     const callResult = await withFallback(
       supa,
@@ -301,12 +298,7 @@ export async function summarizeAttachment(
           response_format: { type: 'json_object' },
           temperature: 0.2,
         } as ChatCompletionCreateParamsNonStreaming;
-        const completion = await captureModelCall(
-          rawModelCalls,
-          route,
-          { taskType: 'attachment_summary', request },
-          () => route.client.chat.completions.create(request),
-        );
+        const completion = await route.client.chat.completions.create(request);
         return completion;
       },
     );
@@ -326,7 +318,6 @@ export async function summarizeAttachment(
       status: 'success',
       ...usage,
       routeTrace: callResult.routeTrace,
-      rawModelCalls,
       metadata: {
         attachment_id: attachmentId,
         vision_model: picked.slug,
@@ -370,18 +361,16 @@ export async function summarizeAttachment(
     const message =
       err instanceof Error ? err.message : String(err) || 'unknown error';
     console.warn('[vision] summarize failed', attachmentId, message);
-    if (err instanceof FallbackError || rawModelCalls.length > 0) {
-      await enqueueAudit(env, err instanceof FallbackError ? err.lastRoute : null, {
+    if (err instanceof FallbackError) {
+      await enqueueAudit(env, err.lastRoute, {
         userId: deps.userId,
         conversationId: deps.conversationId,
         taskType: 'attachment_summary',
         startedAt,
         status: 'error',
-        errorClass: err instanceof FallbackError
-          ? err.routeTrace[err.routeTrace.length - 1]?.error_class ?? 'unknown'
-          : err instanceof Error ? err.name : 'unknown',
-        routeTrace: err instanceof FallbackError ? err.routeTrace : undefined,
-        rawModelCalls,
+        errorClass:
+          err.routeTrace[err.routeTrace.length - 1]?.error_class ?? 'unknown',
+        routeTrace: err.routeTrace,
         metadata: {
           attachment_id: attachmentId,
           vision_model: picked.slug,
@@ -464,7 +453,6 @@ export async function readAttachmentForTool(
 
   const userQuestion = question.trim().slice(0, 500) || '请详细描述这张图片。';
 
-  const rawModelCalls: RawModelCall[] = [];
   try {
     const callResult = await withFallback(
       supa,
@@ -488,9 +476,7 @@ export async function readAttachmentForTool(
           ],
           temperature: 0.3,
         } as ChatCompletionCreateParamsNonStreaming;
-        return captureModelCall(rawModelCalls, route, { taskType: 'attachment_read', request }, () =>
-          route.client.chat.completions.create(request),
-        );
+        return route.client.chat.completions.create(request);
       },
     );
     const completion = callResult.result;
@@ -506,7 +492,6 @@ export async function readAttachmentForTool(
       status: 'success',
       ...usage,
       routeTrace: callResult.routeTrace,
-      rawModelCalls,
       metadata: {
         attachment_id: attachmentId,
         vision_model: picked.slug,
@@ -518,18 +503,16 @@ export async function readAttachmentForTool(
   } catch (err) {
     const message =
       err instanceof Error ? err.message : String(err) || 'unknown error';
-    if (err instanceof FallbackError || rawModelCalls.length > 0) {
-      await enqueueAudit(env, err instanceof FallbackError ? err.lastRoute : null, {
+    if (err instanceof FallbackError) {
+      await enqueueAudit(env, err.lastRoute, {
         userId: deps.userId,
         conversationId: deps.conversationId,
         taskType: 'attachment_read',
         startedAt,
         status: 'error',
-        errorClass: err instanceof FallbackError
-          ? err.routeTrace[err.routeTrace.length - 1]?.error_class ?? 'unknown'
-          : err instanceof Error ? err.name : 'unknown',
-        routeTrace: err instanceof FallbackError ? err.routeTrace : undefined,
-        rawModelCalls,
+        errorClass:
+          err.routeTrace[err.routeTrace.length - 1]?.error_class ?? 'unknown',
+        routeTrace: err.routeTrace,
         metadata: {
           attachment_id: attachmentId,
           vision_model: picked.slug,
