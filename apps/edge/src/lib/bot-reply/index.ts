@@ -245,6 +245,15 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   const activeLookbacks = input.activeLookbacks ?? [];
   const supa = serviceClient(env);
   const startedAt = Date.now();
+
+  // Kick off the tool-list lookups immediately — neither the MCP tool
+  // advertise (KV-cached schemas) nor the tools-registry allowlist
+  // depends on the prompt, so they overlap with locale + memory
+  // resolution + prompt assembly instead of sitting serially in front
+  // of the LLM call.
+  const mcpToolsPromise = mcpClient.getAITools(env);
+  const allowedRegistryPromise = loadAllowedTools(env, 'chat');
+
   const locale = await resolveLocale(null, supa, userId, env);
 
   // 1. Look up self section + skills + bot-authored note + chat memo in
@@ -561,7 +570,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   // frontmatter.allowed_tools. Web search/scrape tools come from the MCP
   // client (Exa hosted MCP) — vendor-native names with vendor descriptions
   // so we don't carry our own copy of the surface.
-  const mcpTools = await mcpClient.getAITools(env, ac.signal);
+  const mcpTools = await mcpToolsPromise;
   const turnToolsRaw: ChatCompletionTool[] = [
     ...CHAT_TOOLS,
     REQUEST_EXECUTE_CODE_TOOL,
@@ -574,7 +583,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   // board "Tools" page strips it here within ~1 min (60s isolate
   // cache). `null` means the registry was unreachable; pass through
   // unfiltered rather than serving the model an empty tool list.
-  const allowedRegistryKeys = await loadAllowedTools(env, 'chat');
+  const allowedRegistryKeys = await allowedRegistryPromise;
   const turnTools: ChatCompletionTool[] = allowedRegistryKeys
     ? turnToolsRaw.filter((t) => allowedRegistryKeys.has(t.function.name))
     : turnToolsRaw;
