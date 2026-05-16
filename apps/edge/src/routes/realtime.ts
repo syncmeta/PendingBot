@@ -23,7 +23,7 @@ import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
 import { userClient, serviceClient } from '../lib/supabase';
 import { getBalance, getConfigInt } from '../lib/billing';
-import { resolveRoute, enqueueAudit } from '../llm/router';
+import { resolveRoute } from '../llm/router';
 import { buildSystemPrompt, type BuildSystemPromptInput } from '../llm/builder';
 import { getBotMemory, getChatMemo } from '../lib/memory';
 import { resolveLocale } from '../i18n/locale';
@@ -458,159 +458,59 @@ function jsonError(status: number, code: ApiErrorCode, message?: string) {
 }
 
 // =============================================================================
-// POST /v1/realtime/usage — per-turn audit + debit + balance gate
+// POST /v1/realtime/attach — hand the call_id to the server-side meter
 // =============================================================================
+//
+// iOS calls this once, right after the WebRTC SDP exchange with OpenAI
+// hands it a `call_id` (the Location header of POST /v1/realtime/calls).
+// The worker spins up the per-session RealtimeMeterDO, which opens a
+// sideband control connection to the same call and meters usage
+// server-side from OpenAI's `response.done` events. There is no longer
+// a client-reported /usage endpoint — usage iOS sends could be forged.
 
-const UsageBody = z.object({
+const AttachBody = z.object({
   session_id: z.string(),
   conversation_id: z.string(),
-  alias_id: z.string().nullable().optional(),
-  provider_id: z.string(),
-  // Per-turn deltas pulled from response.done.usage on the iOS side.
-  // cached_input_tokens is a subset of audio_input_tokens + text_input_tokens
-  // (cached portion already counted in those), discounted via the alias
-  // cached_input_price (GA cached-audio rate is ~80× cheaper than full).
-  audio_input_tokens: z.number().int().min(0).optional(),
-  audio_output_tokens: z.number().int().min(0).optional(),
-  text_input_tokens: z.number().int().min(0).optional(),
-  text_output_tokens: z.number().int().min(0).optional(),
-  cached_input_tokens: z.number().int().min(0).optional(),
-  provider_cost_usd: z.number().min(0).optional(),
-  reported_provider: z.string().optional(),
-  cost_details: z.unknown().optional(),
-  prompt_tokens_details: z.unknown().optional(),
-  completion_tokens_details: z.unknown().optional(),
-  latency_ms: z.number().int().min(0).optional(),
-  turn_index: z.number().int().min(0),
+  call_id: z.string().min(1),
 });
 
-realtimeRoutes.post('/usage', async (c) => {
+realtimeRoutes.post('/attach', async (c) => {
   const userId = c.var.userId!;
-  const userJwt = c.var.userJwt!;
-  const supaUser = userClient(c.env, userJwt);
-  const locale = await resolveLocale(c.req.raw, supaUser, userId);
 
-  let parsed: z.infer<typeof UsageBody>;
+  let parsed: z.infer<typeof AttachBody>;
   try {
-    parsed = UsageBody.parse(await c.req.json());
+    parsed = AttachBody.parse(await c.req.json());
   } catch (err) {
     return routeJsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
-  // Replay protection. The session_id MUST map to a row in
-  // realtime_sessions, owned by the caller, not closed, not aged out.
-  // We then trust the conversation_id from that row, not from the
-  // request body — guards against a caller forging a body that names
-  // a different conversation than the session was minted for.
+  // Same replay gate as /transcripts: the session must exist, belong to
+  // the caller, and still be active. conversation_id / bot_id below come
+  // from the session row, never the request body.
   const sessGate = await requireActiveSession(c.env, parsed.session_id, userId);
   if (!sessGate.ok) return c.json(sessGate.body, sessGate.status);
   if (sessGate.session.conversation_id !== parsed.conversation_id) {
     return routeJsonError(c, 403, 'session_conversation_mismatch');
   }
 
-  const loaded = await loadSessionContext(
-    c.env,
-    userId,
-    userJwt,
-    parsed.conversation_id,
-    locale,
-  );
-  if (!loaded.ok) return c.json(loaded.body, loaded.status);
-
-  // Re-resolve the route so recordAudit gets fresh pricing — admin may
-  // have tweaked audio_*_price between session start and this tick. The
-  // mid-call price edit takes effect on the next turn, which is the
-  // propagation window admins expect from the board.
-  let route;
-  try {
-    route = await resolveRoute(supaUser, c.env, {
-      modelSlug: OPENAI_MODEL_SLUG,
-      taskType: 'voice_call',
-      preferProvider: 'openai',
-      metadata: { userId, conversationId: parsed.conversation_id },
-    });
-  } catch (err) {
-    console.warn('[realtime/usage] resolveRoute failed', err);
-    return routeJsonError(c, 503, 'upstream_unavailable');
+  const meterId = c.env.REALTIME_METER.idFromName(parsed.session_id);
+  const meter = c.env.REALTIME_METER.get(meterId);
+  const resp = await meter.fetch('https://meter.internal/start', {
+    method: 'POST',
+    body: JSON.stringify({
+      callId: parsed.call_id,
+      sessionId: parsed.session_id,
+      userId,
+      conversationId: parsed.conversation_id,
+      botId: sessGate.session.bot_id,
+      startedAt: Date.now(),
+    }),
+  });
+  if (!resp.ok) {
+    console.warn('[realtime/attach] meter start failed', resp.status);
+    return routeJsonError(c, 502, 'voice_upstream_failed');
   }
-
-  const startedAt = Date.now();
-  // recordAudit computes cost_usd locally from this pricing model
-  // (it drives billing). provider_cost_usd captures whatever the
-  // upstream reports, when it reports one; the Realtime API does not
-  // currently emit a per-turn cost, so provider_cost_usd stays null
-  // for voice calls.
-  //   audio_in  cost  = audio_input_tokens  × alias.audio_input_price /1M
-  //   audio_out cost  = audio_output_tokens × alias.audio_output_price /1M
-  //   text_in   cost  = text_input_tokens   × alias.input_price        /1M
-  //   text_out  cost  = text_output_tokens  × alias.output_price       /1M
-  //   cached_in cost  = cache_read_tokens   × alias.cached_input_price /1M
-  // The cached_input_tokens forwarded from iOS is a SUBSET of the audio
-  // and text input tokens above — recordAudit ends up double-counting
-  // them (full price + cached price), which is exactly wrong: it
-  // OVERcharges. Per the GA pricing model, cached tokens replace the
-  // full-rate input charge for that portion. We compensate by
-  // subtracting cached_input_tokens from audio_input_tokens before
-  // passing it to recordAudit (assume cached tokens are predominantly
-  // audio in a voice call — the text-instruction cache is tiny).
-  const audioIn = Math.max(
-    0,
-    (parsed.audio_input_tokens ?? 0) - (parsed.cached_input_tokens ?? 0),
-  );
-  await enqueueAudit(c.env, route, {
-    userId,
-    conversationId: parsed.conversation_id,
-    taskType: 'voice_call',
-    startedAt,
-    status: 'success',
-    inputTokens: parsed.text_input_tokens ?? 0,
-    outputTokens: parsed.text_output_tokens ?? 0,
-    audioInputTokens: audioIn,
-    audioOutputTokens: parsed.audio_output_tokens ?? 0,
-    cacheReadTokens: parsed.cached_input_tokens ?? 0,
-    providerCostUsd: parsed.provider_cost_usd ?? null,
-    metadata: {
-      source: 'voice_call',
-      session_id: parsed.session_id,
-      turn_index: parsed.turn_index,
-      ...(parsed.latency_ms != null ? { latency_ms: parsed.latency_ms } : {}),
-    },
-  });
-
-  // Re-read balance + session cumulative cost. recordAudit handled the
-  // debit on the same supa client; the row is now visible.
-  const [balanceAfter, threshold, sessionAggRes] = await Promise.all([
-    getBalance(supaUser, userId),
-    getConfigInt(supaUser, 'min_balance_threshold'),
-    supaUser
-      .from('audit_log')
-      .select('cost_credits, metadata')
-      .eq('task_type', 'voice_call')
-      .eq('user_id', userId)
-      .filter('metadata->>session_id', 'eq', parsed.session_id),
-  ]);
-
-  const balanceCredits = balanceAfter?.balance_credits ?? 0;
-  const minThreshold = threshold ?? 0;
-  const sessionRows = (sessionAggRes.data ?? []) as Array<{
-    cost_credits: number | null;
-  }>;
-  const sessionCostCredits = sessionRows.reduce(
-    (s, r) => s + (Number(r.cost_credits) || 0),
-    0,
-  );
-  // Approximate turn cost as the most recent row's cost — we don't ledger
-  // by-turn separately. Falls back to 0 on an alias without audio pricing.
-  const turnCost = sessionRows.length > 0
-    ? Number(sessionRows[sessionRows.length - 1]?.cost_credits) || 0
-    : 0;
-
-  return c.json({
-    balance_credits: balanceCredits,
-    turn_cost_credits: turnCost,
-    session_cost_credits: sessionCostCredits,
-    can_continue: minThreshold === 0 || balanceCredits >= minThreshold,
-  });
+  return c.json({ ok: true });
 });
 
 // =============================================================================
@@ -729,6 +629,17 @@ realtimeRoutes.post('/end', async (c) => {
   }
   if (sessGate.ok && sessGate.session.conversation_id !== parsed.conversation_id) {
     return routeJsonError(c, 403, 'session_conversation_mismatch');
+  }
+  // Stop the server-side meter: close its sideband socket and finalize.
+  // No-op if no meter was ever attached for this session.
+  try {
+    const meterId = c.env.REALTIME_METER.idFromName(parsed.session_id);
+    await c.env.REALTIME_METER.get(meterId).fetch(
+      'https://meter.internal/stop',
+      { method: 'POST' },
+    );
+  } catch (err) {
+    console.warn('[realtime/end] meter stop failed', err);
   }
   await endRealtimeSession(c.env, parsed.session_id);
   return c.json({ ok: true });

@@ -110,6 +110,7 @@
         "bindings": [
           { "name": "GROUP_ROUTER", "class_name": "GroupRouterDO" },
           { "name": "REALTIME_HUB", "class_name": "RealtimeHubDO" },
+          { "name": "REALTIME_METER", "class_name": "RealtimeMeterDO" },
           { "name": "Sandbox", "class_name": "Sandbox" }
         ]
       },
@@ -152,6 +153,10 @@
         {
           "tag": "v3",
           "new_sqlite_classes": ["RealtimeHubDO"]
+        },
+        {
+          "tag": "v4",
+          "new_sqlite_classes": ["RealtimeMeterDO"]
         }
       ],
       // Audit + billing offload. recordAudit used to insert audit_log

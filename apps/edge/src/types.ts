@@ -26,6 +26,12 @@ export interface Env {
   /// env.REALTIME_HUB.get(env.REALTIME_HUB.idFromName(key)). See
   /// src/durable-objects/hub.ts.
   REALTIME_HUB: DurableObjectNamespace;
+  /// Per-voice-call server-side metering DO. One instance per realtime
+  /// session_id. Holds a "sideband" WebSocket to OpenAI — a control
+  /// connection to the same call the iOS WebRTC client is on — so token
+  /// usage is metered server-side instead of self-reported by the
+  /// client. See src/durable-objects/realtime-meter.ts.
+  REALTIME_METER: DurableObjectNamespace;
   /// Cloudflare ratelimit binding for handle-enumeration endpoints
   /// (friend-request /lookup, group /join, friend-request POST /).
   /// Limit + period live in wrangler.jsonc — call from a route via
