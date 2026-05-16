@@ -149,6 +149,50 @@ migration.
 
 ---
 
+## Realtime cutover (Supabase Realtime → CF hub)
+
+Realtime delivery runs over Cloudflare: clients hold WebSockets to the
+`RealtimeHubDO` (`apps/edge/src/durable-objects/hub.ts`); the database
+fans row changes in via pg_net webhooks → `POST /v1/realtime-internal/
+notify` → the DO. Supabase Realtime is no longer used by the iOS app.
+
+The pieces span three deploys that **must go together** — the webhook
+migration POSTs into the Worker, so the Worker must carry the notify
+route before the triggers exist.
+
+1. **Pick a shared secret** (any long random string), then:
+   - Worker: `wrangler secret put REALTIME_WEBHOOK_SECRET --env production`
+   - Supabase Vault (so the pg_net trigger can read it):
+     ```sh
+     supabase db query --linked \
+       "select vault.create_secret('<value>', 'realtime_webhook_secret');"
+     ```
+     The names must match: trigger looks up `realtime_webhook_secret`,
+     Worker compares against `REALTIME_WEBHOOK_SECRET`.
+2. **Deploy the Worker** — `bun --filter='@pendingbot/edge' run deploy`.
+   This publishes the `REALTIME_HUB` DO (migration tag `v3`), the
+   `/v1/realtime-hub/*` WebSocket routes, and the notify route.
+3. **Push the migration** — `supabase db push --linked` applies
+   `..._realtime_webhooks.sql`, which installs the pg_net triggers on
+   the six realtime tables. From this point row changes fan out to the
+   hub.
+4. **iOS** already cuts over on the next build — `RealtimeManager` /
+   `ScrollFeedChannel` connect to the hub, no flag.
+
+Verify on-device: messages, unread badges, scroll-feed and group
+continue-requests all update live; check `net._http_response` in
+Postgres for failed webhook POSTs.
+
+Rollback is `git revert` of the realtime commits + redeploy — the
+Supabase Realtime publication is intentionally left intact, so the old
+client path still works until it's deliberately removed.
+
+Only **after** verification: drop the now-dead `supabase_realtime`
+publication membership and the unused `messages.content_partial`
+column (it backed a streaming design that was never wired).
+
+---
+
 ## Common gotchas
 
 - **Port 4000 EADDRINUSE on `bun run dev:board`** → an old `next dev`
