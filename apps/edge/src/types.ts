@@ -19,12 +19,13 @@ export interface Env {
   /// `getSandbox(env.Sandbox, conversationId)`; auto-sleeps after
   /// inactivity (no manual cleanup needed). See lib/sandbox.ts.
   Sandbox: DurableObjectNamespace<Sandbox>;
-  /// Per-conversation realtime fan-out DO. One instance per
-  /// conversation_id; holds the live WebSocket connections of every
-  /// client viewing that conversation. Reached via
-  /// env.CONV_HUB.get(env.CONV_HUB.idFromName(conversationId)). See
-  /// src/durable-objects/conv-hub.ts.
-  CONV_HUB: DurableObjectNamespace;
+  /// Realtime fan-out DO. One instance per topic — `conv:<id>` for a
+  /// conversation, `user:<id>` for a user's resident connection.
+  /// Holds clients' hibernatable WebSocket connections and broadcasts
+  /// row changes pushed in by the webhook-notify path. Reached via
+  /// env.REALTIME_HUB.get(env.REALTIME_HUB.idFromName(key)). See
+  /// src/durable-objects/hub.ts.
+  REALTIME_HUB: DurableObjectNamespace;
   /// Cloudflare ratelimit binding for handle-enumeration endpoints
   /// (friend-request /lookup, group /join, friend-request POST /).
   /// Limit + period live in wrangler.jsonc — call from a route via
@@ -81,6 +82,14 @@ export interface Env {
   // worker. Also referenced by llm_providers row slug 'openai' via
   // secret_ref.
   OPENAI_API_KEY?: string;
+
+  // ── Realtime fan-in ────────────────────────────────────────────
+  // Shared secret the Supabase Database Webhooks send in the
+  // X-Webhook-Secret header on every POST to /v1/realtime-internal/
+  // notify. The notify route rejects any request that doesn't match.
+  // Optional at typecheck time (a secret); must be set in prod and
+  // mirrored into Supabase Vault as `realtime_webhook_secret`.
+  REALTIME_WEBHOOK_SECRET?: string;
 }
 
 // Hono's c.var slot — populated by middleware (auth, version, etc.)

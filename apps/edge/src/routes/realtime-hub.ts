@@ -1,17 +1,16 @@
-// CF-native realtime hub — WebSocket fan-out, step 1.
+// CF-native realtime hub — WebSocket fan-out, replacing Supabase Realtime.
 //
-//   GET /v1/realtime-hub/conv/:conversationId   — WebSocket upgrade
+//   GET /v1/realtime-hub/conv/:conversationId   — WebSocket, conv topic
+//   GET /v1/realtime-hub/user                   — WebSocket, user topic
 //
-// The client opens one WebSocket per conversation it is viewing. The
-// Worker verifies the Supabase JWT (requireSession) and conversation
-// membership (resolveConv — RLS-gated), then hands the upgrade off to
-// the per-conversation ConvHubDO, which holds the socket and fans
-// realtime events out to it.
+// A client opens one conv WebSocket per conversation it is viewing and
+// one resident user WebSocket. The Worker verifies the Supabase JWT
+// (requireSession); for conv topics it also verifies membership
+// (resolveConv — RLS-gated). The user topic is keyed by the caller's own
+// JWT subject, so a client can only ever reach its own user hub.
 //
-// This route is receive-only for now: the DO does not yet have anything
-// pushed into it (Edge fan-in is a later step). It exists so the DO,
-// the binding, and the auth path can be stood up and exercised
-// independently before the fan-in and the iOS client are wired.
+// Events are pushed into the hubs by the DB-webhook path — see
+// routes/realtime-internal.ts. This file is the read side only.
 
 import { Hono } from 'hono';
 import { requireSession } from '@pendingbot/identity';
@@ -25,6 +24,19 @@ import type { AppBindings } from '../types';
 export const realtimeHubRoutes = new Hono<AppBindings>();
 
 realtimeHubRoutes.use('*', requireSession());
+
+// Forward an already-authorized upgrade request to the hub DO for `key`.
+function handoffToHub(
+  env: AppBindings['Bindings'],
+  rawRequest: Request,
+  key: string,
+  userId: string,
+): Promise<Response> {
+  const stub = env.REALTIME_HUB.get(env.REALTIME_HUB.idFromName(key));
+  const headers = new Headers(rawRequest.headers);
+  headers.set('X-Hub-User-Id', userId);
+  return stub.fetch(new Request(rawRequest, { headers }));
+}
 
 realtimeHubRoutes.get('/conv/:conversationId', async (c) => {
   if (c.req.header('Upgrade')?.toLowerCase() !== 'websocket') {
@@ -49,11 +61,15 @@ realtimeHubRoutes.get('/conv/:conversationId', async (c) => {
     });
   }
 
-  // Hand the upgrade off to the per-conversation DO. X-Hub-User-Id is
-  // trusted by the DO because the DO is only reachable through this
-  // verified path.
-  const stub = c.env.CONV_HUB.get(c.env.CONV_HUB.idFromName(conversationId));
-  const headers = new Headers(c.req.raw.headers);
-  headers.set('X-Hub-User-Id', userId);
-  return stub.fetch(new Request(c.req.raw, { headers }));
+  return handoffToHub(c.env, c.req.raw, `conv:${conversationId}`, userId);
+});
+
+realtimeHubRoutes.get('/user', async (c) => {
+  if (c.req.header('Upgrade')?.toLowerCase() !== 'websocket') {
+    return jsonError(c, 426, 'upgrade_required', {
+      message: 'WebSocket upgrade required',
+    });
+  }
+  const userId = c.var.userId!;
+  return handoffToHub(c.env, c.req.raw, `user:${userId}`, userId);
 });

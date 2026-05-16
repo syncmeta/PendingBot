@@ -1,28 +1,33 @@
 import type { Env } from '../types';
 
-// One ConvHubDO instance per conversation_id. Holds the live WebSocket
-// connections of every client currently viewing that conversation and
-// fans realtime events out to them.
+// RealtimeHubDO — the per-topic realtime fan-out Durable Object that
+// replaces Supabase Realtime as PendingBot's delivery pipe.
 //
-// This is step 1 of moving the realtime layer off Supabase Realtime onto
-// Cloudflare: connection lifecycle only. The DO accepts *hibernatable*
-// WebSockets — the runtime can evict the DO from memory between events
-// while the sockets stay open, so idle connections cost ~nothing — and
-// exposes an internal POST /publish endpoint to broadcast one event to
-// all sockets. The fan-in (Edge pushing an event here on every write)
-// lands in a later step; /publish is the seam that wiring will use.
+// One instance per topic. Topics are namespaced by key prefix so a
+// single DO class / binding serves both layers:
+//   conv:<conversation_id>  — message / lookback / continue-request /
+//                             participant changes for one conversation
+//   user:<user_id>          — unread-count / scroll-run changes for one
+//                             user (their resident connection)
 //
-// Reached via env.CONV_HUB.get(env.CONV_HUB.idFromName(conversationId)).
+// The DO holds every client's *hibernatable* WebSocket — the runtime can
+// evict the DO from memory between events while the sockets stay open, so
+// idle connections cost ~nothing — and fans an event out to all of them
+// via the internal POST /publish seam.
+//
+// Reached via env.REALTIME_HUB.get(env.REALTIME_HUB.idFromName(key)).
 // DO namespaces aren't publicly addressable, so the DO trusts the
 // X-Hub-User-Id header the Worker sets — the Worker has already verified
-// the caller's Supabase JWT and conversation membership before forwarding.
+// the caller's Supabase JWT (and, for conv topics, membership) before
+// forwarding the upgrade. /publish is likewise only reachable from the
+// Worker's webhook-notify path.
 
 interface SocketMeta {
   userId: string;
   since: number;
 }
 
-export class ConvHubDO {
+export class RealtimeHubDO {
   state: DurableObjectState;
   env: Env;
 
@@ -87,7 +92,7 @@ export class ConvHubDO {
   // was evicted. The "ping" keepalive is served by the auto-response
   // pair set in the constructor and never reaches webSocketMessage.
   webSocketMessage(_ws: WebSocket, _message: string | ArrayBuffer): void {
-    // Step 1: clients are receive-only; inbound frames are ignored.
+    // Clients are receive-only; inbound frames other than ping are ignored.
   }
 
   webSocketClose(_ws: WebSocket, _code: number, _reason: string, _wasClean: boolean): void {
@@ -95,6 +100,6 @@ export class ConvHubDO {
   }
 
   webSocketError(_ws: WebSocket, error: unknown): void {
-    console.error('[ConvHubDO] websocket error', error);
+    console.error('[RealtimeHubDO] websocket error', error);
   }
 }

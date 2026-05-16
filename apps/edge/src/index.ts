@@ -18,6 +18,7 @@ import { codeExecRoutes } from './routes/code-exec';
 import { openrouterRoutes } from './routes/openrouter';
 import { realtimeRoutes } from './routes/realtime';
 import { realtimeHubRoutes } from './routes/realtime-hub';
+import { realtimeInternalRoutes } from './routes/realtime-internal';
 import { wellKnownRoutes } from './routes/well-known';
 import { testAccountLogger } from './lib/test-account-log';
 import { handleScheduled } from './cron';
@@ -28,7 +29,7 @@ import type { AuditMessage } from './queue/audit-types';
 // the `class_name` field in wrangler.jsonc → durable_objects.bindings.
 // The export *name* must match `class_name` (case-sensitive).
 export { GroupRouterDO } from './durable-objects/group-router';
-export { ConvHubDO } from './durable-objects/conv-hub';
+export { RealtimeHubDO } from './durable-objects/hub';
 // Container-backed DO from @cloudflare/sandbox. Required export for
 // the `Sandbox` binding declared in wrangler.jsonc.
 export { Sandbox } from '@cloudflare/sandbox';
@@ -92,6 +93,7 @@ v1.route('/code-exec-requests', codeExecRoutes);
 v1.route('/openrouter', openrouterRoutes);
 v1.route('/realtime', realtimeRoutes);
 v1.route('/realtime-hub', realtimeHubRoutes);
+v1.route('/realtime-internal', realtimeInternalRoutes);
 
 app.route('/v1', v1);
 
