@@ -1,6 +1,6 @@
 import {
   captureModelCall,
-  recordAudit,
+  enqueueAudit,
   resolveRoute,
   type RawModelCall,
   usageFromCompletion,
@@ -140,7 +140,7 @@ export async function generateInitialBotDescription(input: {
     inputTokens = usage.inputTokens ?? 0;
     outputTokens = usage.outputTokens ?? 0;
     description = (completion.choices?.[0]?.message?.content ?? '').trim();
-    auditLogId = await recordAudit(supa, route, {
+    auditLogId = await enqueueAudit(env, route, {
       conversationId,
       taskType: 'group_bot_intro',
       startedAt,
@@ -149,13 +149,12 @@ export async function generateInitialBotDescription(input: {
       inputTokens,
       outputTokens,
       rawModelCalls,
-      env,
       metadata: { bot_id: botId, valid_description: description.length >= 4 },
       ...usage,
     });
   } catch (err) {
     console.error('[group-bot-intro] LLM call failed', err);
-    await recordAudit(supa, route, {
+    await enqueueAudit(env, route, {
       conversationId,
       taskType: 'group_bot_intro',
       startedAt,
@@ -164,7 +163,6 @@ export async function generateInitialBotDescription(input: {
       inputTokens,
       outputTokens,
       rawModelCalls,
-      env,
       metadata: { bot_id: botId },
     });
     return await fallbackInsert(supa, conversationId, botId, botName);

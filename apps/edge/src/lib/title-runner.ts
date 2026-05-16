@@ -3,8 +3,8 @@ import type { ChatCompletionCreateParamsNonStreaming } from 'openai/resources/ch
 import { serviceClient } from './supabase';
 import {
   captureModelCall,
+  enqueueAudit,
   FallbackError,
-  recordAudit,
   type RawModelCall,
   usageFromCompletion,
   withFallback,
@@ -82,7 +82,7 @@ export async function runTitle(input: RunTitleInput): Promise<void> {
         .eq('id', conversationId);
     }
 
-    await recordAudit(supa, route, {
+    await enqueueAudit(env, route, {
       conversationId,
       taskType: 'title',
       startedAt,
@@ -98,7 +98,7 @@ export async function runTitle(input: RunTitleInput): Promise<void> {
       // Every attempt failed — record the trace so /audit knows what
       // we tried. lastRoute may be null if even the first resolveRoute
       // couldn't pick a provider.
-      await recordAudit(supa, err.lastRoute, {
+      await enqueueAudit(env, err.lastRoute, {
         conversationId,
         taskType: 'title',
         startedAt,

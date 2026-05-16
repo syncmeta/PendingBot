@@ -7,7 +7,7 @@ import type { Json } from '../db/schema';
 import { serviceClient } from './supabase';
 import {
   captureModelCall as captureRawModelCall,
-  recordAudit,
+  enqueueAudit,
   resolveRoute,
   type RawModelCall,
   type ResolvedRoute,
@@ -480,7 +480,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
         .from('scroll_runs')
         .update({ status: 'cancelled', finished_at: new Date().toISOString() })
         .eq('id', envelopeRunId);
-      await auditRun(supa, route, {
+      await auditRun(env, route, {
         userId,
         conversationId,
         envelopeRunId,
@@ -573,7 +573,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
     const isEmpty = !stripped || stripped === SILENT_TOKEN || stripped.length < 20;
     if (isEmpty) {
       await supa.from('scroll_runs').delete().eq('id', envelopeRunId);
-      await auditRun(supa, route, {
+      await auditRun(env, route, {
         userId,
         conversationId,
         envelopeRunId,
@@ -608,7 +608,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
       })
       .eq('id', envelopeRunId);
 
-    await auditRun(supa, route, {
+    await auditRun(env, route, {
       userId,
       conversationId,
       envelopeRunId,
@@ -647,7 +647,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
     // tool calls nor LLM tokens accrued, recordAudit settles into
     // 'skipped'/'free' and no debit fires.
     try {
-      await auditRun(supa, route, {
+      await auditRun(env, route, {
         userId,
         conversationId,
         envelopeRunId,
@@ -732,13 +732,13 @@ interface AuditInput {
 }
 
 async function auditRun(
-  supa: ReturnType<typeof serviceClient>,
+  env: Env,
   route: ResolvedRoute | null,
   i: AuditInput,
 ): Promise<void> {
   const cacheRead = i.usage.cached;
   const freshInput = Math.max(0, i.usage.input - cacheRead);
-  await recordAudit(supa, route, {
+  await enqueueAudit(env, route, {
     userId: i.userId,
     conversationId: i.conversationId,
     taskType: 'scroll',

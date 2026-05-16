@@ -1,7 +1,7 @@
 import {
   captureModelCall,
   resolveRoute,
-  recordAudit,
+  enqueueAudit,
   type RawModelCall,
   usageFromCompletion,
 } from './router';
@@ -220,7 +220,7 @@ export async function runGroupRouter(
       console.warn('[group-router] non-JSON response from small model', raw, err);
     }
 
-    auditLogId = await recordAudit(supa, route, {
+    auditLogId = await enqueueAudit(env, route, {
       conversationId,
       taskType: 'group_router',
       startedAt,
@@ -228,19 +228,17 @@ export async function runGroupRouter(
       outputTokens,
       status: 'success',
       rawModelCalls,
-      env,
       ...usage,
     });
   } catch (err) {
     console.error('[group-router] LLM call failed', err);
-    await recordAudit(supa, route, {
+    await enqueueAudit(env, route, {
       conversationId,
       taskType: 'group_router',
       startedAt,
       status: 'error',
       errorClass: err instanceof Error ? err.name : 'unknown',
       rawModelCalls,
-      env,
     });
     return { wakeBots: [], rationale: 'classifier error', auditLogId: null };
   }
