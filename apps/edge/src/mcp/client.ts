@@ -46,6 +46,31 @@ interface McpServerConfig {
 const SERVER_REGISTRY_TTL_MS = 60_000;
 let serverRegistryCache: { at: number; servers: McpServerConfig[] } | null = null;
 
+// Edge-cached MCP tool *schemas* (KV). The tool list an upstream server
+// advertises is effectively static — Exa's web_search_exa / web_fetch_exa
+// schemas don't change between requests. Caching them in KV lets a cold
+// worker isolate advertise the tools to the model WITHOUT paying the
+// 2-RTT upstream handshake (`client.connect` + `listTools`) on the first
+// chat turn — that handshake was the dominant first-message latency.
+// The live MCP connection is still established lazily, on the first
+// callTool of the isolate. 1h TTL bounds staleness if a server's tool
+// surface ever changes; a registry edit invalidates immediately via the
+// signature check.
+const ADVERTISED_KV_KEY = 'mcp:advertised-tools:v1';
+const ADVERTISED_TTL_SEC = 3600;
+interface AdvertisedToolsCache {
+  /** Fingerprint of the server registry — a mismatch invalidates the entry. */
+  sig: string;
+  servers: Array<{ server: string; tools: ChatCompletionTool[] }>;
+}
+
+function registrySignature(registry: McpServerConfig[]): string {
+  return registry
+    .map((s) => `${s.name}@${s.url}`)
+    .sort()
+    .join('|');
+}
+
 async function loadServerRegistry(env: Env): Promise<McpServerConfig[]> {
   const now = Date.now();
   if (serverRegistryCache && now - serverRegistryCache.at < SERVER_REGISTRY_TTL_MS) {
@@ -112,18 +137,79 @@ class McpClientManager {
   async getAITools(env: Env, signal?: AbortSignal): Promise<ChatCompletionTool[]> {
     const registry = await loadServerRegistry(env);
     if (registry.length === 0) return [];
+    const sig = registrySignature(registry);
+
+    // Fast path: every server already handshaken on this isolate.
+    if (registry.every((cfg) => this.servers.get(cfg.name)?.stage === 'ready')) {
+      return registry.flatMap((cfg) => {
+        const s = this.servers.get(cfg.name);
+        return s && s.stage === 'ready' ? s.tools : [];
+      });
+    }
+
+    // Edge-cached schemas: advertise the tool list with no upstream
+    // handshake. The connection is opened lazily on the first callTool.
+    const cached = await this.loadAdvertised(env, sig);
+    if (cached) return cached;
+
+    // Cold globally (or registry changed): real handshake, then write
+    // the schemas to KV so the next cold isolate skips it.
     const results = await Promise.all(
       registry.map(async (cfg) => {
         try {
           const ready = await this.ensureServer(cfg, env, signal);
-          return ready.tools;
+          return { server: cfg.name, tools: ready.tools };
         } catch (err) {
           console.warn(`[mcp] ${cfg.name} listTools failed:`, errorMessage(err));
-          return [] as ChatCompletionTool[];
+          return { server: cfg.name, tools: [] as ChatCompletionTool[] };
         }
       }),
     );
-    return results.flat();
+    await this.saveAdvertised(env, sig, results);
+    return results.flatMap((r) => r.tools);
+  }
+
+  /**
+   * Reads the KV-cached tool schemas. On a hit, populates the
+   * tool→server routing map (so callTool can find + lazily connect the
+   * owning server) and returns the advertised tools — without any
+   * upstream handshake. Returns null on miss / stale signature / KV error.
+   */
+  private async loadAdvertised(
+    env: Env,
+    sig: string,
+  ): Promise<ChatCompletionTool[] | null> {
+    let entry: AdvertisedToolsCache | null = null;
+    try {
+      entry = await env.MEMORY.get<AdvertisedToolsCache>(ADVERTISED_KV_KEY, 'json');
+    } catch (err) {
+      console.warn('[mcp] advertised-tools KV read failed:', errorMessage(err));
+      return null;
+    }
+    if (!entry || entry.sig !== sig) return null;
+    for (const s of entry.servers) {
+      for (const t of s.tools) this.toolToServer.set(t.function.name, s.server);
+    }
+    return entry.servers.flatMap((s) => s.tools);
+  }
+
+  private async saveAdvertised(
+    env: Env,
+    sig: string,
+    servers: Array<{ server: string; tools: ChatCompletionTool[] }>,
+  ): Promise<void> {
+    // Don't cache an all-empty result — that's usually a transient
+    // upstream failure; the next cold isolate should retry the handshake.
+    if (servers.every((s) => s.tools.length === 0)) return;
+    try {
+      await env.MEMORY.put(
+        ADVERTISED_KV_KEY,
+        JSON.stringify({ sig, servers } satisfies AdvertisedToolsCache),
+        { expirationTtl: ADVERTISED_TTL_SEC },
+      );
+    } catch (err) {
+      console.warn('[mcp] advertised-tools KV write failed:', errorMessage(err));
+    }
   }
 
   /** True iff this tool name routes to an MCP upstream owned by this manager. */
