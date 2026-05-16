@@ -7,11 +7,6 @@ export default function HomePage() {
 
       <section className="mt-10 grid gap-4 sm:grid-cols-2">
         <Card
-          href="/audit"
-          title="Audit Explorer"
-          desc="按 user / bot / task / provider / model 看 token 用量与花费"
-        />
-        <Card
           href="/savings"
           title="Savings"
           desc="实际花费 vs 若全走 OpenRouter — 看七折省了多少"

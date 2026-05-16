@@ -32,20 +32,6 @@ function statusClass(status: number | null): string {
   return 'text-emerald-700';
 }
 
-type ModelCall = {
-  id: string;
-  audit_log_id: string;
-  seq: number;
-  model_id: string;
-  provider_slug: string;
-  status: string;
-  error_class: string | null;
-  error_message: string | null;
-  latency_ms: number;
-  raw_request: unknown;
-  raw_response: unknown;
-};
-
 type ToolCall = {
   id: string;
   audit_log_id: string;
@@ -59,33 +45,6 @@ type ToolCall = {
   result_count: number | null;
   cost_usd: number;
 };
-
-// Extract the function/tool calls (and their arguments) embedded in an
-// OpenAI-shaped raw_response so we can show "what tools did the model
-// pick this turn" without dumping the whole JSON. Defensive: any
-// unfamiliar shape just yields an empty list.
-function extractToolCalls(raw: unknown): { name: string; args: string }[] {
-  if (!raw || typeof raw !== 'object') return [];
-  const choices = (raw as { choices?: unknown[] }).choices;
-  if (!Array.isArray(choices)) return [];
-  const out: { name: string; args: string }[] = [];
-  for (const ch of choices) {
-    if (!ch || typeof ch !== 'object') continue;
-    const msg = (ch as { message?: unknown }).message;
-    if (!msg || typeof msg !== 'object') continue;
-    const tcs = (msg as { tool_calls?: unknown[] }).tool_calls;
-    if (!Array.isArray(tcs)) continue;
-    for (const tc of tcs) {
-      if (!tc || typeof tc !== 'object') continue;
-      const fn = (tc as { function?: unknown }).function;
-      if (!fn || typeof fn !== 'object') continue;
-      const name = String((fn as { name?: unknown }).name ?? 'unknown');
-      const args = String((fn as { arguments?: unknown }).arguments ?? '');
-      out.push({ name, args });
-    }
-  }
-  return out;
-}
 
 export default async function UserTestLogsPage({
   params,
@@ -125,29 +84,21 @@ export default async function UserTestLogsPage({
   const tally = new Map<string, number>();
   for (const r of rows ?? []) tally.set(r.kind, (tally.get(r.kind) ?? 0) + 1);
 
-  // Recent LLM turns (audit_log) for this user, with the per-model-call
-  // and per-web-tool-call breakdown fanned out. Same source as /audit
-  // but scoped to one user so the test-account log page is the single
-  // place to look when debugging a tester's session.
+  // Recent LLM turns (audit_log) for this user, with the per-web-tool-call
+  // breakdown fanned out, scoped to one user so the test-account log page
+  // is the single place to look when debugging a tester's session.
   const RECENT_TURNS = 50;
   const { data: turns } = await supa
     .from('audit_log')
     .select(
-      'id, created_at, task_type, model_id, status, error_class, input_tokens, output_tokens, cache_read_tokens, cost_usd, tool_cost_usd, provider_cost_usd, latency_ms, conversation_id, reported_provider, cost_credits, billing_status',
+      'id, created_at, task_type, model_id, status, error_class, input_tokens, output_tokens, cache_read_tokens, cost_usd, tool_cost_usd, latency_ms, conversation_id, cost_credits, billing_status',
     )
     .eq('user_id', id)
     .order('created_at', { ascending: false })
     .limit(RECENT_TURNS);
 
   const turnIds = (turns ?? []).map((t) => t.id);
-  const [{ data: modelCalls }, { data: toolCalls }] = await Promise.all([
-    turnIds.length
-      ? supa
-          .from('audit_model_calls')
-          .select('id, audit_log_id, seq, model_id, provider_slug, status, error_class, error_message, latency_ms, raw_request, raw_response')
-          .in('audit_log_id', turnIds)
-          .order('seq', { ascending: true })
-      : Promise.resolve({ data: [] as ModelCall[] }),
+  const [{ data: toolCalls }] = await Promise.all([
     turnIds.length
       ? supa
           .from('audit_web_tool_calls')
@@ -157,12 +108,6 @@ export default async function UserTestLogsPage({
       : Promise.resolve({ data: [] as ToolCall[] }),
   ]);
 
-  const modelCallsByTurn = new Map<string, ModelCall[]>();
-  for (const m of (modelCalls ?? []) as ModelCall[]) {
-    const arr = modelCallsByTurn.get(m.audit_log_id) ?? [];
-    arr.push(m);
-    modelCallsByTurn.set(m.audit_log_id, arr);
-  }
   const toolCallsByTurn = new Map<string, ToolCall[]>();
   for (const t of (toolCalls ?? []) as ToolCall[]) {
     const arr = toolCallsByTurn.get(t.audit_log_id) ?? [];
@@ -258,7 +203,6 @@ export default async function UserTestLogsPage({
             </thead>
             <tbody>
               {(turns ?? []).map((t) => {
-                const mcs = modelCallsByTurn.get(t.id) ?? [];
                 const tcs = toolCallsByTurn.get(t.id) ?? [];
                 const total =
                   Number(t.cost_usd ?? 0) + Number(t.tool_cost_usd ?? 0);
@@ -275,11 +219,6 @@ export default async function UserTestLogsPage({
                     <td className="px-3 py-2 text-xs">{t.task_type}</td>
                     <td className="px-3 py-2 font-mono text-xs">
                       {t.model_id}
-                      {t.reported_provider && (
-                        <div className="text-[10px] text-muted-foreground">
-                          via {t.reported_provider}
-                        </div>
-                      )}
                     </td>
                     <td className="px-3 py-2 text-xs">
                       {t.status === 'error' ? (
@@ -318,86 +257,14 @@ export default async function UserTestLogsPage({
                       {fmtMs(t.latency_ms)}
                     </td>
                     <td className="px-3 py-2 text-xs">
-                      {mcs.length === 0 && tcs.length === 0 ? (
+                      {tcs.length === 0 ? (
                         <span className="text-muted-foreground">—</span>
                       ) : (
                         <details>
                           <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
-                            {mcs.length} model · {tcs.length} tool
+                            {tcs.length} tool
                           </summary>
                           <div className="mt-2 space-y-3">
-                            {mcs.length > 0 && (
-                              <div>
-                                <div className="mb-1 text-[10px] uppercase text-muted-foreground">
-                                  model calls
-                                </div>
-                                <ul className="space-y-2">
-                                  {mcs.map((m) => {
-                                    const picked = extractToolCalls(m.raw_response);
-                                    return (
-                                      <li
-                                        key={m.id}
-                                        className="rounded border border-border/60 bg-muted/40 p-2"
-                                      >
-                                        <div className="flex items-center justify-between gap-2 text-xs">
-                                          <span className="font-mono">
-                                            #{m.seq} {m.provider_slug} · {m.model_id}
-                                          </span>
-                                          <span className="tabular-nums text-muted-foreground">
-                                            {fmtMs(m.latency_ms)}
-                                          </span>
-                                        </div>
-                                        {m.status === 'error' && (
-                                          <p className="mt-1 text-[11px] text-destructive">
-                                            {m.error_class}
-                                            {m.error_message ? `: ${m.error_message}` : ''}
-                                          </p>
-                                        )}
-                                        {picked.length > 0 && (
-                                          <ul className="mt-1 space-y-1">
-                                            {picked.map((p, i) => (
-                                              <li
-                                                key={i}
-                                                className="font-mono text-[11px]"
-                                              >
-                                                <span className="text-blue-700">
-                                                  {p.name}
-                                                </span>
-                                                <span className="text-muted-foreground">
-                                                  (
-                                                </span>
-                                                <span className="break-all">{p.args}</span>
-                                                <span className="text-muted-foreground">
-                                                  )
-                                                </span>
-                                              </li>
-                                            ))}
-                                          </ul>
-                                        )}
-                                        <details className="mt-1">
-                                          <summary className="cursor-pointer text-[10px] text-muted-foreground hover:text-foreground">
-                                            raw_request / raw_response
-                                          </summary>
-                                          <pre className="mt-1 max-h-64 overflow-auto rounded bg-background p-2 text-[10px] leading-snug">
-                                            {`// request
-${typeof m.raw_request === 'object' ? JSON.stringify(m.raw_request, null, 2) : String(m.raw_request)}
-
-// response
-${
-  m.raw_response == null
-    ? '(none)'
-    : typeof m.raw_response === 'object'
-      ? JSON.stringify(m.raw_response, null, 2)
-      : String(m.raw_response)
-}`}
-                                          </pre>
-                                        </details>
-                                      </li>
-                                    );
-                                  })}
-                                </ul>
-                              </div>
-                            )}
                             {tcs.length > 0 && (
                               <div>
                                 <div className="mb-1 text-[10px] uppercase text-muted-foreground">
