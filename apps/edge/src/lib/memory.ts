@@ -9,6 +9,7 @@ import {
   usageFromCompletion,
   withFallback,
 } from '../llm/router';
+import { uuidv7 } from './ids';
 
 // Long-term memory cache backed by CF Workers KV. Two key namespaces:
 //   user:${userId}  — derived "what bots see in this user" (transparency UI only)
@@ -169,6 +170,7 @@ interface RefreshBotNoteInput {
 async function refreshBotNote(input: RefreshBotNoteInput): Promise<void> {
   const { env, botId, userId, conversationId } = input;
   const startedAt = Date.now();
+  const turnId = uuidv7();
   try {
     const supa = serviceClient(env);
     const { data: existing } = await supa
@@ -228,7 +230,7 @@ async function refreshBotNote(input: RefreshBotNoteInput): Promise<void> {
     const { result: completion, route, routeTrace } = await withFallback(
       supa,
       env,
-      { modelSlug: bot.model_id as string, taskType: 'bot_note' },
+      { modelSlug: bot.model_id as string, taskType: 'bot_note', metadata: { turnId } },
       (r) => {
         const request = {
           model: r.modelToCall,
@@ -239,6 +241,7 @@ async function refreshBotNote(input: RefreshBotNoteInput): Promise<void> {
     );
     const newBody = completion.choices[0]?.message?.content?.trim();
     await enqueueAudit(env, route, {
+      auditId: turnId,
       userId,
       conversationId,
       taskType: 'bot_note',
@@ -277,6 +280,7 @@ async function refreshBotNote(input: RefreshBotNoteInput): Promise<void> {
     if (err instanceof FallbackError) {
       const supa = serviceClient(env);
       await enqueueAudit(env, err.lastRoute, {
+        auditId: turnId,
         userId,
         conversationId,
         taskType: 'bot_note',
@@ -309,6 +313,7 @@ interface RefreshChatMemoInput {
 async function refreshChatMemo(input: RefreshChatMemoInput): Promise<void> {
   const { env, botId, conversationId } = input;
   const startedAt = Date.now();
+  const turnId = uuidv7();
   try {
     const supa = serviceClient(env);
     const { data: existing } = await supa
@@ -376,7 +381,7 @@ async function refreshChatMemo(input: RefreshChatMemoInput): Promise<void> {
     const { result: completion, route, routeTrace } = await withFallback(
       supa,
       env,
-      { modelSlug: bot.model_id as string, taskType: 'chat_memo' },
+      { modelSlug: bot.model_id as string, taskType: 'chat_memo', metadata: { turnId } },
       (r) => {
         const request = {
           model: r.modelToCall,
@@ -388,6 +393,7 @@ async function refreshChatMemo(input: RefreshChatMemoInput): Promise<void> {
     const raw = completion.choices[0]?.message?.content?.trim() ?? '';
     const action: 'silent' | 'update' = raw && raw !== '[SILENT]' ? 'update' : 'silent';
     await enqueueAudit(env, route, {
+      auditId: turnId,
       conversationId,
       taskType: 'chat_memo',
       startedAt,
@@ -426,6 +432,7 @@ async function refreshChatMemo(input: RefreshChatMemoInput): Promise<void> {
     if (err instanceof FallbackError) {
       const supa = serviceClient(env);
       await enqueueAudit(env, err.lastRoute, {
+        auditId: turnId,
         conversationId,
         taskType: 'chat_memo',
         startedAt,

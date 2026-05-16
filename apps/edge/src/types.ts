@@ -33,6 +33,10 @@ export interface Env {
   ENVIRONMENT: 'dev' | 'production';
   SUPABASE_URL: string;
   ALLOWED_ORIGIN: string;
+  /// AI Gateway coordinates for the Logs API cost lookup (lib/ai-gateway.ts).
+  /// Optional so `wrangler dev` without these set still typechecks/runs.
+  CF_ACCOUNT_ID?: string;
+  CF_AIG_GATEWAY?: string;
 
   // ── Secrets (set via `wrangler secret put --env <env>`) ────────
   SUPABASE_ANON_KEY: string;
@@ -43,6 +47,11 @@ export interface Env {
   // doesn't need to be present at typecheck time — declaring it here
   // gives editor autocomplete and catches typos in admin UI input.
   WORLDROUTER_API_KEY?: string;
+  /// Cloudflare API token (AI Gateway Read). persistAuditMessage uses it
+  /// to read the gateway's computed per-request cost from the Logs API
+  /// when a provider doesn't report its own. Optional — unset means
+  /// those turns record no LLM cost.
+  CF_AIG_TOKEN?: string;
   HONCHO_API_KEY: string;
   HONCHO_WORKSPACE_ID: string;
   // Web tools route through the MCP client (apps/edge/src/mcp/client.ts)

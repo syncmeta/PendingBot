@@ -48,6 +48,7 @@ import {
 import { dispatchMcpTool } from './mcp-dispatch';
 import { mcpClient } from '../../mcp/client';
 import { loadAllowedTools } from '../tools-registry';
+import { uuidv7 } from '../ids';
 
 // Public re-exports — callers do
 //   import { runChatTurn, type RunChatTurnInput } from '../lib/bot-reply';
@@ -239,6 +240,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   const activeLookbacks = input.activeLookbacks ?? [];
   const supa = serviceClient(env);
   const startedAt = Date.now();
+  const turnId = uuidv7();
 
   // Kick off the tool-list lookups immediately — neither the MCP tool
   // advertise (KV-cached schemas) nor the tools-registry allowlist
@@ -591,7 +593,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
           modelSlug: bot.model_id,
           taskType: 'message_reply',
           preferProvider: input.providerOverride ?? undefined,
-          metadata: { userId, conversationId },
+          metadata: { userId, conversationId, turnId },
         },
         async (r) => {
           const request = {
@@ -745,6 +747,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     await toolTracePersist;
 
     await enqueueAudit(env, route, {
+      auditId: turnId,
       userId,
       conversationId,
       taskType: 'message_reply',
@@ -815,6 +818,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
             ? err.name
             : 'unknown';
       await enqueueAudit(env, auditRoute, {
+        auditId: turnId,
         userId,
         conversationId,
         taskType: 'message_reply',

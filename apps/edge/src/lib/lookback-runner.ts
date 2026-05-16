@@ -8,6 +8,7 @@ import {
   withFallback,
 } from '../llm/router';
 import { ensurePromptOverridesLoaded, getPrompt } from '../llm/prompt-loader';
+import { uuidv7 } from './ids';
 
 // Lookback runner — invisible to the user, written by the bot for its
 // future self.
@@ -54,6 +55,7 @@ export async function runLookback(input: RunLookbackInput): Promise<void> {
   const supa = serviceClient(env);
   await ensurePromptOverridesLoaded(supa);
   const startedAt = Date.now();
+  const turnId = uuidv7();
 
   try {
     // Pull bot config + recent transcript in parallel.
@@ -103,7 +105,7 @@ export async function runLookback(input: RunLookbackInput): Promise<void> {
     const { result: completion, route, routeTrace } = await withFallback(
       supa,
       env,
-      { modelSlug: botRes.data.model_id as string, taskType: 'lookback' },
+      { modelSlug: botRes.data.model_id as string, taskType: 'lookback', metadata: { turnId } },
       (rt) => {
         const request = {
           model: rt.modelToCall,
@@ -120,6 +122,7 @@ export async function runLookback(input: RunLookbackInput): Promise<void> {
     const usage = usageFromCompletion(completion.usage, completion);
     if (!text || text === SILENT_TOKEN) {
       await enqueueAudit(env, route, {
+        auditId: turnId,
         conversationId,
         taskType: 'lookback',
         startedAt,
@@ -140,6 +143,7 @@ export async function runLookback(input: RunLookbackInput): Promise<void> {
     });
 
     await enqueueAudit(env, route, {
+      auditId: turnId,
       conversationId,
       taskType: 'lookback',
       startedAt,
@@ -153,6 +157,7 @@ export async function runLookback(input: RunLookbackInput): Promise<void> {
     console.warn('[lookback]', err);
     if (err instanceof FallbackError) {
       await enqueueAudit(env, err.lastRoute, {
+        auditId: turnId,
         conversationId,
         taskType: 'lookback',
         startedAt,

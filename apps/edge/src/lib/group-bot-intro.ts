@@ -5,6 +5,7 @@ import {
 } from '../llm/router';
 import type { ChatCompletionCreateParamsNonStreaming } from 'openai/resources/chat/completions';
 import { serviceClient } from './supabase';
+import { uuidv7 } from './ids';
 import type { Env } from '../types';
 
 // First-version "call me when..." description, generated immediately
@@ -102,11 +103,13 @@ export async function generateInitialBotDescription(input: {
 请代它写说明。`;
 
   const startedAt = Date.now();
+  const turnId = uuidv7();
   let route;
   try {
     route = await resolveRoute(supa, env, {
       modelSlug,
       taskType: 'group_bot_intro',
+      metadata: { turnId },
     });
   } catch (err) {
     console.error('[group-bot-intro] resolveRoute failed', err);
@@ -133,6 +136,7 @@ export async function generateInitialBotDescription(input: {
     outputTokens = usage.outputTokens ?? 0;
     description = (completion.choices?.[0]?.message?.content ?? '').trim();
     auditLogId = await enqueueAudit(env, route, {
+      auditId: turnId,
       conversationId,
       taskType: 'group_bot_intro',
       startedAt,
@@ -146,6 +150,7 @@ export async function generateInitialBotDescription(input: {
   } catch (err) {
     console.error('[group-bot-intro] LLM call failed', err);
     await enqueueAudit(env, route, {
+      auditId: turnId,
       conversationId,
       taskType: 'group_bot_intro',
       startedAt,

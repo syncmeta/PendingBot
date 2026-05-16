@@ -7,6 +7,7 @@ import type { ChatCompletionCreateParamsNonStreaming } from 'openai/resources/ch
 import { serviceClient } from '../lib/supabase';
 import { estimateTokens } from './token-estimate';
 import { loadPrompt } from '../i18n/prompts';
+import { uuidv7 } from '../lib/ids';
 import type { Env } from '../types';
 
 // Small-model classifier that decides which bots to wake on a group
@@ -174,12 +175,13 @@ export async function runGroupRouter(
   // 4. Call the LLM. We use the same router pipeline as bot-reply so
   //    audit_log + cost get computed identically.
   const startedAt = Date.now();
+  const turnId = uuidv7();
   let route;
   try {
     route = await resolveRoute(supa, env, {
       modelSlug,
       taskType: 'group_router',
-      metadata: { conversationId },
+      metadata: { conversationId, turnId },
     });
   } catch (err) {
     console.error('[group-router] resolveRoute failed', err);
@@ -214,6 +216,7 @@ export async function runGroupRouter(
     }
 
     auditLogId = await enqueueAudit(env, route, {
+      auditId: turnId,
       conversationId,
       taskType: 'group_router',
       startedAt,
@@ -225,6 +228,7 @@ export async function runGroupRouter(
   } catch (err) {
     console.error('[group-router] LLM call failed', err);
     await enqueueAudit(env, route, {
+      auditId: turnId,
       conversationId,
       taskType: 'group_router',
       startedAt,

@@ -34,6 +34,7 @@ import type {
 import type { Env } from '../types';
 import type { SupabaseClient } from '../lib/supabase';
 import { patchCachedAttachment } from '../lib/attachment-cache';
+import { uuidv7 } from '../lib/ids';
 import {
   enqueueAudit,
   FallbackError,
@@ -227,6 +228,7 @@ export async function summarizeAttachment(
 ): Promise<void> {
   const { supa, env } = deps;
   const startedAt = Date.now();
+  const turnId = uuidv7();
 
   // Cast through unknown — schema.ts is regenerated lazily after each
   // migration; the new summary_* columns lift in 0064 but the typed
@@ -279,7 +281,7 @@ export async function summarizeAttachment(
         modelSlug: picked.slug,
         taskType: 'attachment_summary',
         maxAttempts: SUMMARY_MAX_ATTEMPTS,
-        metadata: { userId: deps.userId, conversationId: deps.conversationId },
+        metadata: { userId: deps.userId, conversationId: deps.conversationId, turnId },
       },
       async (route) => {
         const request = {
@@ -310,6 +312,7 @@ export async function summarizeAttachment(
 
     // Audit even on parse failure — we did spend tokens.
     await enqueueAudit(env, callResult.route, {
+      auditId: turnId,
       userId: deps.userId,
       conversationId: deps.conversationId,
       taskType: 'attachment_summary',
@@ -364,6 +367,7 @@ export async function summarizeAttachment(
     console.warn('[vision] summarize failed', attachmentId, message);
     if (err instanceof FallbackError) {
       await enqueueAudit(env, err.lastRoute, {
+        auditId: turnId,
         userId: deps.userId,
         conversationId: deps.conversationId,
         taskType: 'attachment_summary',
@@ -421,6 +425,7 @@ export async function readAttachmentForTool(
 ): Promise<{ answer: string } | { error: string }> {
   const { supa, env } = deps;
   const startedAt = Date.now();
+  const turnId = uuidv7();
 
   const { data: row, error } = await supa
     .from('attachments')
@@ -462,7 +467,7 @@ export async function readAttachmentForTool(
         modelSlug: picked.slug,
         taskType: 'attachment_read',
         maxAttempts: SUMMARY_MAX_ATTEMPTS,
-        metadata: { userId: deps.userId, conversationId: deps.conversationId },
+        metadata: { userId: deps.userId, conversationId: deps.conversationId, turnId },
       },
       async (route) => {
         const request = {
@@ -485,6 +490,7 @@ export async function readAttachmentForTool(
     const text = completion.choices?.[0]?.message?.content ?? '';
     const usage = usageFromCompletion(completion.usage, completion);
     await enqueueAudit(env, callResult.route, {
+      auditId: turnId,
       userId: deps.userId,
       conversationId: deps.conversationId,
       taskType: 'attachment_read',
@@ -507,6 +513,7 @@ export async function readAttachmentForTool(
       err instanceof Error ? err.message : String(err) || 'unknown error';
     if (err instanceof FallbackError) {
       await enqueueAudit(env, err.lastRoute, {
+        auditId: turnId,
         userId: deps.userId,
         conversationId: deps.conversationId,
         taskType: 'attachment_read',

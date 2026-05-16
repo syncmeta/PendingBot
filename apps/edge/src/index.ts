@@ -20,7 +20,7 @@ import { realtimeRoutes } from './routes/realtime';
 import { wellKnownRoutes } from './routes/well-known';
 import { testAccountLogger } from './lib/test-account-log';
 import { handleScheduled } from './cron';
-import { persistAuditMessage } from './llm/router';
+import { persistAuditMessage, GatewayCostPendingError } from './llm/router';
 import type { AuditMessage } from './queue/audit-types';
 
 // Re-export the Durable Object class so the runtime can find it via
@@ -121,8 +121,15 @@ export default {
         await persistAuditMessage(env, msg.body);
         msg.ack();
       } catch (err) {
-        console.error('[queue:audit] persist failed, will retry', err);
-        msg.retry();
+        if (err instanceof GatewayCostPendingError) {
+          // The turn's AI Gateway cost log hasn't been ingested yet —
+          // re-queue with a delay rather than spinning. After
+          // wrangler.jsonc's max_retries the message lands in the DLQ.
+          msg.retry({ delaySeconds: 60 });
+        } else {
+          console.error('[queue:audit] persist failed, will retry', err);
+          msg.retry();
+        }
       }
     }
   },

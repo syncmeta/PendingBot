@@ -16,6 +16,7 @@ import {
 } from '../llm/provider-usage';
 import { ensurePromptOverridesLoaded, getPrompt } from '../llm/prompt-loader';
 import { estimateTokens } from '../llm/token-estimate';
+import { uuidv7 } from './ids';
 import { getBotMemory } from './memory';
 import { mcpClient } from '../mcp/client';
 import { loadAllowedTools } from './tools-registry';
@@ -215,6 +216,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
   const supa = serviceClient(env);
   await ensurePromptOverridesLoaded(supa);
   const startedAt = Date.now();
+  const turnId = uuidv7();
 
   await supa
     .from('scroll_runs')
@@ -343,6 +345,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
     route = await resolveRoute(supa, env, {
       modelSlug: settings.explorerModel,
       taskType: 'scroll',
+      metadata: { turnId },
     });
 
     let collaboratorRoute: ResolvedRoute | null = null;
@@ -351,6 +354,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
         collaboratorRoute = await resolveRoute(supa, env, {
           modelSlug: settings.collaboratorModel,
           taskType: 'scroll',
+          metadata: { turnId },
         });
       } catch (err) {
         console.warn(
@@ -471,6 +475,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
         .update({ status: 'cancelled', finished_at: new Date().toISOString() })
         .eq('id', envelopeRunId);
       await auditRun(env, route, {
+        auditId: turnId,
         userId,
         conversationId,
         envelopeRunId,
@@ -558,6 +563,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
     if (isEmpty) {
       await supa.from('scroll_runs').delete().eq('id', envelopeRunId);
       await auditRun(env, route, {
+        auditId: turnId,
         userId,
         conversationId,
         envelopeRunId,
@@ -592,6 +598,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
       .eq('id', envelopeRunId);
 
     await auditRun(env, route, {
+      auditId: turnId,
       userId,
       conversationId,
       envelopeRunId,
@@ -630,6 +637,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
     // 'skipped'/'free' and no debit fires.
     try {
       await auditRun(env, route, {
+        auditId: turnId,
         userId,
         conversationId,
         envelopeRunId,
@@ -698,6 +706,7 @@ async function isRunCancelled(
 }
 
 interface AuditInput {
+  auditId?: string;
   userId: string;
   conversationId: string;
   envelopeRunId: string;
@@ -719,6 +728,7 @@ async function auditRun(
   const cacheRead = i.usage.cached;
   const freshInput = Math.max(0, i.usage.input - cacheRead);
   await enqueueAudit(env, route, {
+    auditId: i.auditId,
     userId: i.userId,
     conversationId: i.conversationId,
     taskType: 'scroll',

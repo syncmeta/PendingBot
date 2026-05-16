@@ -8,6 +8,7 @@ import {
   withFallback,
 } from '../llm/router';
 import { ensurePromptOverridesLoaded, getPrompt } from '../llm/prompt-loader';
+import { uuidv7 } from './ids';
 
 // Title runner — auto-generates a short conversation name by summarizing
 // the first few turns. Fire-and-forget via waitUntil; failure leaves the
@@ -32,6 +33,7 @@ export async function runTitle(input: RunTitleInput): Promise<void> {
   const supa = serviceClient(env);
   await ensurePromptOverridesLoaded(supa);
   const startedAt = Date.now();
+  const turnId = uuidv7();
 
   // Pull the most recent turns (descending) and flip back to chronological
   // order. Round 1 only has 1-2 messages anyway; on later refreshes (round
@@ -55,7 +57,7 @@ export async function runTitle(input: RunTitleInput): Promise<void> {
     const { result: completion, route, routeTrace } = await withFallback(
       supa,
       env,
-      { modelSlug: botModelId, taskType: 'title' },
+      { modelSlug: botModelId, taskType: 'title', metadata: { turnId } },
       (r) => {
         const request = {
           model: r.modelToCall,
@@ -78,6 +80,7 @@ export async function runTitle(input: RunTitleInput): Promise<void> {
     }
 
     await enqueueAudit(env, route, {
+      auditId: turnId,
       conversationId,
       taskType: 'title',
       startedAt,
@@ -93,6 +96,7 @@ export async function runTitle(input: RunTitleInput): Promise<void> {
       // we tried. lastRoute may be null if even the first resolveRoute
       // couldn't pick a provider.
       await enqueueAudit(env, err.lastRoute, {
+        auditId: turnId,
         conversationId,
         taskType: 'title',
         startedAt,

@@ -54,7 +54,14 @@
       "vars": {
         "ENVIRONMENT": "production",
         "SUPABASE_URL": "https://sslzhblojwkxfdyisity.supabase.co",
-        "ALLOWED_ORIGIN": "https://bot.pendingname.com"
+        "ALLOWED_ORIGIN": "https://bot.pendingname.com",
+        // AI Gateway coordinates — the worker reads the gateway's
+        // computed per-request cost from the Logs API when a provider
+        // doesn't report its own (see lib/ai-gateway.ts). Account id +
+        // gateway name match the base_url the llm_providers rows point
+        // at; the Logs API auth token is the CF_AIG_TOKEN secret below.
+        "CF_ACCOUNT_ID": "4c303754167f1f225e6761b5128c0d9f",
+        "CF_AIG_GATEWAY": "pendingbot"
       },
       "routes": [
         { "pattern": "api.pendingname.com", "custom_domain": true },
@@ -159,7 +166,11 @@
             "queue": "pendingbot-audit",
             "max_batch_size": 100,
             "max_batch_timeout": 5,
-            "max_retries": 3,
+            // 5 (was 3) — persistAuditMessage may retry a message while
+            // it waits for the AI Gateway log to become queryable
+            // (ingestion lag); the consumer re-queues those with a
+            // delay, so a few extra attempts buys headroom.
+            "max_retries": 5,
             "dead_letter_queue": "pendingbot-audit-dlq"
           }
         ]
@@ -176,6 +187,12 @@
   //   OPENROUTER_API_KEY
   //   WORLDROUTER_API_KEY    (declared but currently unread — leave unset
   //                           until the LLMRouter wires it back in)
+  //   CF_AIG_TOKEN           (Cloudflare API token with "AI Gateway Read"
+  //                           permission — persistAuditMessage reads the
+  //                           gateway's computed per-request cost from
+  //                           the Logs API for providers that don't
+  //                           report their own. Unset → those turns
+  //                           record no LLM cost / settle as 'skipped'.)
   //
   //   --- web tools (search + scrape, via MCP) ---
   //   EXA_API_KEY            (default; bot-reply + envelope-runner both
