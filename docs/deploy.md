@@ -172,10 +172,14 @@ route before the triggers exist.
 2. **Deploy the Worker** — `bun --filter='@pendingbot/edge' run deploy`.
    This publishes the `REALTIME_HUB` DO (migration tag `v3`), the
    `/v1/realtime-hub/*` WebSocket routes, and the notify route.
-3. **Push the migration** — `supabase db push --linked` applies
-   `..._realtime_webhooks.sql`, which installs the pg_net triggers on
-   the six realtime tables. From this point row changes fan out to the
-   hub.
+3. **Push the migrations** — `supabase db push --linked` applies, in
+   order:
+   - `..._realtime_webhooks.sql` — installs the pg_net triggers on the
+     six realtime tables. From here row changes fan out to the hub.
+   - `..._drop_supabase_realtime.sql` — drops every pendingbot table
+     from the `supabase_realtime` publication and drops the dead
+     `messages.content_partial` column. (The iOS client no longer uses
+     Supabase Realtime, so this is a clean teardown, not a staged one.)
 4. **iOS** already cuts over on the next build — `RealtimeManager` /
    `ScrollFeedChannel` connect to the hub, no flag.
 
@@ -183,13 +187,10 @@ Verify on-device: messages, unread badges, scroll-feed and group
 continue-requests all update live; check `net._http_response` in
 Postgres for failed webhook POSTs.
 
-Rollback is `git revert` of the realtime commits + redeploy — the
-Supabase Realtime publication is intentionally left intact, so the old
-client path still works until it's deliberately removed.
-
-Only **after** verification: drop the now-dead `supabase_realtime`
-publication membership and the unused `messages.content_partial`
-column (it backed a streaming design that was never wired).
+Rollback is `git revert` of the realtime commits + redeploy the Worker;
+re-add the publication membership by hand if needed (the teardown
+migration removed it). There is no shadow-run — the cutover replaces
+Supabase Realtime outright.
 
 ---
 
