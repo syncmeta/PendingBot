@@ -8,6 +8,7 @@ import { putCachedBalance } from '../lib/balance-cache';
 import { splitAndDebit } from '../lib/group-billing';
 import type { WebToolUsage } from '../lib/web-meter';
 import { uuidv7 } from '../lib/ids';
+import { kvConfig } from '../lib/kv-config';
 import type { AuditMessage } from '../queue/audit-types';
 import {
   usageFromCompletion,
@@ -233,6 +234,7 @@ function buildClient(
 // price edit propagates within ~TTL across all isolates.
 // ─────────────────────────────────────────────────────────────────────
 const ROUTE_CACHE_TTL_MS = 5 * 60_000;
+const ROUTE_CACHE_TTL_S = ROUTE_CACHE_TTL_MS / 1000;
 
 interface CachedRule {
   overrideSlug: string | null;
@@ -267,88 +269,112 @@ export function _resetRouteCaches(): void {
 
 async function getTaskRule(
   supa: SupabaseClient,
+  env: Env,
   taskType: string,
 ): Promise<CachedRule | null> {
   const now = Date.now();
   const hit = taskRuleCache.get(taskType);
   if (hit && now - hit.at < ROUTE_CACHE_TTL_MS) return hit.value;
-  const { data: rule } = await supa
-    .from('task_routing_rules')
-    .select(
-      `match_priority, override_model_id, prefer_provider_id,
-       override_model:llm_models!task_routing_rules_override_model_fkey ( slug ),
-       prefer_provider:llm_providers!task_routing_rules_prefer_provider_fkey ( slug )`,
-    )
-    .eq('task_type', taskType)
-    .eq('enabled', true)
-    .order('match_priority', { ascending: true })
-    .limit(1)
-    .maybeSingle();
-  const value: CachedRule | null = rule
-    ? {
-        overrideSlug: (rule.override_model as { slug?: string } | null)?.slug ?? null,
-        preferProvider: (rule.prefer_provider as { slug?: string } | null)?.slug ?? null,
-      }
-    : null;
+  const value = await kvConfig(
+    env,
+    `cfg:route-rule:${taskType}`,
+    ROUTE_CACHE_TTL_S,
+    async (): Promise<CachedRule | null> => {
+      const { data: rule } = await supa
+        .from('task_routing_rules')
+        .select(
+          `match_priority, override_model_id, prefer_provider_id,
+           override_model:llm_models!task_routing_rules_override_model_fkey ( slug ),
+           prefer_provider:llm_providers!task_routing_rules_prefer_provider_fkey ( slug )`,
+        )
+        .eq('task_type', taskType)
+        .eq('enabled', true)
+        .order('match_priority', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      return rule
+        ? {
+            overrideSlug: (rule.override_model as { slug?: string } | null)?.slug ?? null,
+            preferProvider: (rule.prefer_provider as { slug?: string } | null)?.slug ?? null,
+          }
+        : null;
+    },
+  );
   taskRuleCache.set(taskType, { at: now, value });
   return value;
 }
 
 async function getAliasSet(
   supa: SupabaseClient,
+  env: Env,
   slug: string,
 ): Promise<CachedAliasSet> {
   const now = Date.now();
   const hit = aliasCache.get(slug);
   if (hit && now - hit.at < ROUTE_CACHE_TTL_MS) return hit.value;
-  const ALIAS_COLS =
-    `id, provider_id, provider_model_id, weight,
-     input_price, cached_input_price, output_price, cache_write_price,
-     audio_input_price, audio_output_price`;
-  const [{ data: byCanonical, error: e1 }, { data: byPassthrough, error: e2 }] =
-    await Promise.all([
-      supa
-        .from('llm_model_aliases')
-        .select(
-          `${ALIAS_COLS},
-           llm_providers ( id, slug, base_url, auth_type, secret_ref, priority, enabled, config ),
-           llm_models!inner ( slug, enabled )`,
-        )
-        .eq('enabled', true)
-        .eq('llm_models.slug', slug),
-      supa
-        .from('llm_model_aliases')
-        .select(
-          `${ALIAS_COLS},
-           llm_providers ( id, slug, base_url, auth_type, secret_ref, priority, enabled, config )`,
-        )
-        .eq('enabled', true)
-        .eq('provider_model_id', slug),
-    ]);
-  if (e1) throw new NoRouteError(`alias canonical lookup failed: ${e1.message}`);
-  if (e2) throw new NoRouteError(`alias passthrough lookup failed: ${e2.message}`);
-  const value: CachedAliasSet = {
-    byCanonical: (byCanonical as AliasJoinRow[] | null) ?? [],
-    byPassthrough: (byPassthrough as AliasJoinRow[] | null) ?? [],
-  };
+  const value = await kvConfig(
+    env,
+    `cfg:route-alias:${slug}`,
+    ROUTE_CACHE_TTL_S,
+    async (): Promise<CachedAliasSet> => {
+      const ALIAS_COLS =
+        `id, provider_id, provider_model_id, weight,
+         input_price, cached_input_price, output_price, cache_write_price,
+         audio_input_price, audio_output_price`;
+      const [{ data: byCanonical, error: e1 }, { data: byPassthrough, error: e2 }] =
+        await Promise.all([
+          supa
+            .from('llm_model_aliases')
+            .select(
+              `${ALIAS_COLS},
+               llm_providers ( id, slug, base_url, auth_type, secret_ref, priority, enabled, config ),
+               llm_models!inner ( slug, enabled )`,
+            )
+            .eq('enabled', true)
+            .eq('llm_models.slug', slug),
+          supa
+            .from('llm_model_aliases')
+            .select(
+              `${ALIAS_COLS},
+               llm_providers ( id, slug, base_url, auth_type, secret_ref, priority, enabled, config )`,
+            )
+            .eq('enabled', true)
+            .eq('provider_model_id', slug),
+        ]);
+      if (e1) throw new NoRouteError(`alias canonical lookup failed: ${e1.message}`);
+      if (e2) throw new NoRouteError(`alias passthrough lookup failed: ${e2.message}`);
+      return {
+        byCanonical: (byCanonical as AliasJoinRow[] | null) ?? [],
+        byPassthrough: (byPassthrough as AliasJoinRow[] | null) ?? [],
+      };
+    },
+  );
   aliasCache.set(slug, { at: now, value });
   return value;
 }
 
 async function getProvider(
   supa: SupabaseClient,
+  env: Env,
   slug: string,
 ): Promise<CachedProvider | null> {
   const now = Date.now();
   const hit = providerCache.get(slug);
   if (hit && now - hit.at < ROUTE_CACHE_TTL_MS) return hit.value;
-  const { data } = await supa
-    .from('llm_providers')
-    .select('id, slug, base_url, auth_type, secret_ref, priority, enabled, config')
-    .eq('slug', slug)
-    .eq('enabled', true)
-    .maybeSingle();
-  const value = (data as CachedProvider | null) ?? null;
+  const value = await kvConfig(
+    env,
+    `cfg:route-provider:${slug}`,
+    ROUTE_CACHE_TTL_S,
+    async (): Promise<CachedProvider | null> => {
+      const { data } = await supa
+        .from('llm_providers')
+        .select('id, slug, base_url, auth_type, secret_ref, priority, enabled, config')
+        .eq('slug', slug)
+        .eq('enabled', true)
+        .maybeSingle();
+      return (data as CachedProvider | null) ?? null;
+    },
+  );
   providerCache.set(slug, { at: now, value });
   return value;
 }
@@ -366,7 +392,7 @@ export async function resolveRoute(
   // supplied preferProvider overrides the rule's. Cached on the worker
   // isolate per task_type for 5 min.
   if (opts.taskType) {
-    const rule = await getTaskRule(supa, opts.taskType);
+    const rule = await getTaskRule(supa, env, opts.taskType);
     if (rule) {
       if (rule.overrideSlug) slug = rule.overrideSlug;
       if (!preferProvider && rule.preferProvider) preferProvider = rule.preferProvider;
@@ -375,7 +401,7 @@ export async function resolveRoute(
 
   // Pull all aliases that match by canonical slug OR by passthrough
   // provider_model_id, then partition in JS. Cached per slug.
-  const { byCanonical, byPassthrough } = await getAliasSet(supa, slug);
+  const { byCanonical, byPassthrough } = await getAliasSet(supa, env, slug);
 
   // Canonical hits take precedence over passthrough hits — once a slug
   // is registered as a canonical model, "the same string also happens
@@ -424,7 +450,7 @@ export async function resolveRoute(
       `no enabled alias for ${slug} and OpenRouter passthrough is excluded`,
     );
   }
-  const openrouter = await getProvider(supa, 'openrouter');
+  const openrouter = await getProvider(supa, env, 'openrouter');
   if (!openrouter) {
     throw new NoRouteError(
       `no alias for ${slug} and OpenRouter passthrough provider is not configured`,

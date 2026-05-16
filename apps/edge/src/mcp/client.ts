@@ -18,6 +18,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { ChatCompletionTool } from 'openai/resources/chat/completions';
 import type { Env } from '../types';
 import { serviceClient, type SupabaseClient } from '../lib/supabase';
+import { kvConfig } from '../lib/kv-config';
 import { WebToolMeter, type WebToolProvider, type WebToolKind } from '../lib/web-meter';
 
 // Vendor MCP tool name → billing dimensions for WebToolMeter. New entries
@@ -44,6 +45,7 @@ interface McpServerConfig {
 // enough to amortize the DB hit across a chat session, short enough
 // that toggling a server in board takes effect within a minute.
 const SERVER_REGISTRY_TTL_MS = 60_000;
+const SERVER_REGISTRY_TTL_S = SERVER_REGISTRY_TTL_MS / 1000;
 let serverRegistryCache: { at: number; servers: McpServerConfig[] } | null = null;
 
 // Edge-cached MCP tool *schemas* (KV). The tool list an upstream server
@@ -76,26 +78,34 @@ async function loadServerRegistry(env: Env): Promise<McpServerConfig[]> {
   if (serverRegistryCache && now - serverRegistryCache.at < SERVER_REGISTRY_TTL_MS) {
     return serverRegistryCache.servers;
   }
-  const supa: SupabaseClient = serviceClient(env);
-  const { data, error } = await supa
-    .from('mcp_servers')
-    .select('name, url, transport, auth_kind, auth_header_name, secret_ref')
-    .eq('enabled', true);
-  if (error || !data) {
-    console.warn('[mcp] registry load failed:', error?.message ?? 'no data');
+  let servers: McpServerConfig[];
+  try {
+    // KV read-through (shared L2) in front of the isolate Map. The
+    // loader throws on a DB error so the failure isn't cached in KV —
+    // the brief empty-list fallback below still kicks in per isolate.
+    servers = await kvConfig(env, 'cfg:mcp-servers', SERVER_REGISTRY_TTL_S, async () => {
+      const supa: SupabaseClient = serviceClient(env);
+      const { data, error } = await supa
+        .from('mcp_servers')
+        .select('name, url, transport, auth_kind, auth_header_name, secret_ref')
+        .eq('enabled', true);
+      if (error || !data) throw new Error(error?.message ?? 'no data');
+      return data.map<McpServerConfig>((r) => ({
+        name: r.name,
+        url: r.url,
+        transport: r.transport as 'http' | 'sse',
+        auth_kind: r.auth_kind as 'none' | 'header',
+        auth_header_name: r.auth_header_name,
+        secret_ref: r.secret_ref,
+      }));
+    });
+  } catch (err) {
+    console.warn('[mcp] registry load failed:', errorMessage(err));
     // Cache an empty list briefly so we don't pound the DB on every
     // request while the table is misconfigured.
     serverRegistryCache = { at: now, servers: [] };
     return [];
   }
-  const servers: McpServerConfig[] = data.map((r) => ({
-    name: r.name,
-    url: r.url,
-    transport: r.transport as 'http' | 'sse',
-    auth_kind: r.auth_kind as 'none' | 'header',
-    auth_header_name: r.auth_header_name,
-    secret_ref: r.secret_ref,
-  }));
   serverRegistryCache = { at: now, servers };
   return servers;
 }

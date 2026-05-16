@@ -1,4 +1,5 @@
 import { serviceClient, type SupabaseClient } from './supabase';
+import { kvConfig } from './kv-config';
 import type { Env } from '../types';
 
 // Tools-registry cache — the runtime side of pendingbot.tools. Edge
@@ -19,29 +20,38 @@ interface ToolRow {
 }
 
 const REGISTRY_TTL_MS = 60_000;
+const REGISTRY_TTL_S = REGISTRY_TTL_MS / 1000;
 let cache: { at: number; rows: ToolRow[] } | null = null;
 
 async function loadRows(env: Env): Promise<ToolRow[] | null> {
   const now = Date.now();
   if (cache && now - cache.at < REGISTRY_TTL_MS) return cache.rows;
-  const supa: SupabaseClient = serviceClient(env);
-  const { data, error } = await supa
-    .from('tools')
-    .select('key, scopes')
-    .eq('enabled', true);
-  if (error || !data) {
+  let rows: ToolRow[];
+  try {
+    // KV read-through (shared L2) in front of the isolate Map. The
+    // loader throws on a DB error so the failure is NOT cached — that
+    // keeps the fail-open behaviour below.
+    rows = await kvConfig(env, 'cfg:tools-registry', REGISTRY_TTL_S, async () => {
+      const supa: SupabaseClient = serviceClient(env);
+      const { data, error } = await supa
+        .from('tools')
+        .select('key, scopes')
+        .eq('enabled', true);
+      if (error || !data) throw new Error(error?.message ?? 'no data');
+      return data.map<ToolRow>((r) => ({
+        key: r.key,
+        scopes: Array.isArray(r.scopes)
+          ? (r.scopes as unknown[]).filter((s): s is string => typeof s === 'string')
+          : [],
+      }));
+    });
+  } catch (err) {
     // Fail-open: callers receive `null` and skip filtering. A flaky
     // DB connection should not silently strip every tool from the
     // model — that's worse than the kill-switch being slow.
-    console.warn('[tools-registry] load failed:', error?.message ?? 'no data');
+    console.warn('[tools-registry] load failed:', err instanceof Error ? err.message : String(err));
     return null;
   }
-  const rows: ToolRow[] = data.map((r) => ({
-    key: r.key,
-    scopes: Array.isArray(r.scopes)
-      ? (r.scopes as unknown[]).filter((s): s is string => typeof s === 'string')
-      : [],
-  }));
   cache = { at: now, rows };
   return rows;
 }

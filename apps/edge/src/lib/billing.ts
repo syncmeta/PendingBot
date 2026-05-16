@@ -1,6 +1,7 @@
 import type { SupabaseClient } from './supabase';
 import type { Env } from '../types';
 import { getCachedBalance, putCachedBalance } from './balance-cache';
+import { kvConfig } from './kv-config';
 
 // Billing layer (P0). All schema changes ship in 0033_billing.sql /
 // 0034_billing_admin_rpcs.sql. This module is the single point that knows
@@ -60,13 +61,21 @@ export function _resetMarkupCache(): void {
 // caching it on the worker isolate avoids a KV round-trip in
 // requireBalance and survives across requests within a single isolate.
 const THRESHOLD_TTL_MS = 60_000;
+const THRESHOLD_TTL_S = THRESHOLD_TTL_MS / 1000;
 let thresholdCache: { at: number; value: number } | null = null;
 
-export async function getThreshold(supa: SupabaseClient): Promise<number> {
+// getThreshold sits on the message-send critical path (requireBalance).
+// The KV read-through (shared L2 in front of the isolate Map) keeps a
+// cold isolate off the cross-region Supabase round-trip.
+export async function getThreshold(supa: SupabaseClient, env: Env): Promise<number> {
   const now = Date.now();
   if (thresholdCache && now - thresholdCache.at < THRESHOLD_TTL_MS) return thresholdCache.value;
-  const v = await getConfigInt(supa, 'min_balance_threshold');
-  const value = v ?? DEFAULT_MIN_THRESHOLD;
+  const value = await kvConfig(
+    env,
+    'cfg:billing:min_balance_threshold',
+    THRESHOLD_TTL_S,
+    async () => (await getConfigInt(supa, 'min_balance_threshold')) ?? DEFAULT_MIN_THRESHOLD,
+  );
   thresholdCache = { at: now, value };
   return value;
 }
@@ -188,7 +197,7 @@ export async function requireBalance(
 ): Promise<void> {
   const [cached, threshold] = await Promise.all([
     getCachedBalance(env, userId),
-    getThreshold(supa),
+    getThreshold(supa, env),
   ]);
   if (threshold <= 0) return; // gate disabled globally — short-circuit
 
