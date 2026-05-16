@@ -100,9 +100,16 @@
       // execute_code / request_execute_code tools. Auto-sleeps after a
       // short idle window (sleepAfter in lib/sandbox.ts) so we don't pay
       // memory+disk for abandoned conversations.
+      //
+      // REALTIME_HUB is the realtime fan-out DO — one instance per
+      // topic (`conv:<id>` / `user:<id>`), holds clients' hibernatable
+      // WebSocket connections and broadcasts row changes pushed in by
+      // the DB-webhook notify path. Hibernatable WebSockets keep idle
+      // connections near-free. See src/durable-objects/hub.ts.
       "durable_objects": {
         "bindings": [
           { "name": "GROUP_ROUTER", "class_name": "GroupRouterDO" },
+          { "name": "REALTIME_HUB", "class_name": "RealtimeHubDO" },
           { "name": "Sandbox", "class_name": "Sandbox" }
         ]
       },
@@ -141,6 +148,10 @@
         {
           "tag": "v2",
           "new_sqlite_classes": ["Sandbox"]
+        },
+        {
+          "tag": "v3",
+          "new_sqlite_classes": ["RealtimeHubDO"]
         }
       ],
       // Audit + billing offload. recordAudit used to insert audit_log
@@ -223,4 +234,12 @@
   //
   //   --- voice call (optional; per-bot opt-in via bots.voice_call_enabled) ---
   //   OPENAI_API_KEY        (mint Realtime ephemeral client_secret)
+  //
+  //   --- realtime fan-in ---
+  //   REALTIME_WEBHOOK_SECRET  shared secret the Supabase Database
+  //                            Webhooks send in X-Webhook-Secret to
+  //                            /v1/realtime-internal/notify. Mirror the
+  //                            same value into Supabase Vault as
+  //                            `realtime_webhook_secret` (the pg_net
+  //                            trigger reads it from there).
 }

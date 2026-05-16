@@ -30,6 +30,7 @@ export type ApiErrorCode =
   | 'internal_error'
   | 'upstream_error'
   | 'upstream_unavailable'
+  | 'upgrade_required'
 
   // ── Auth / session ────────────────────────────────────────
   | 'session_not_found'

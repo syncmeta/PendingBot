@@ -2,7 +2,7 @@ import Foundation
 import SwiftUI
 
 // Realtime + voice-call surfaces of ConversationView. Two cohesive
-// blocks that all live off the supabase Realtime subscription bound to
+// blocks that all live off the realtime-hub subscription bound to
 // this conv's row stream:
 //
 //   • Subscription wiring — subscribeRealtime opens a channel via the
@@ -129,7 +129,7 @@ extension ConversationView {
         }
     }
 
-    /// Realtime postgres_changes payload → ChatMessage in the local list.
+    /// Realtime-hub change payload → ChatMessage in the local list.
     /// Dedupe by canonical row id so this device's own SSE-emitted bubbles
     /// (which carry "live-<uuid>" ids until reconciled) get either skipped
     /// or replaced cleanly. role='log' rows are filtered out (rendered via
@@ -237,7 +237,28 @@ extension ConversationView {
             // We deliberately don't compare content for live-* bot bubbles:
             // they're still being revealed by the typewriter when the
             // canonical INSERT lands, so their displayed content is partial.
-            let isOurBotEcho = role == "bot" && pendingCanonicalBotIds.contains(id)
+            // `isOurBotEcho` — this canonical bot row belongs to our own
+            // in-flight SSE turn, so it must replace the optimistic
+            // `live-*` bubble, not append alongside it.
+            //
+            // Normally the SSE `bubble` event announces the id first
+            // (→ pendingCanonicalBotIds). But the realtime INSERT can
+            // race ahead of that event, and then the id isn't in the set
+            // yet — the old code appended, producing a duplicate bubble.
+            // A 1v1 bot conv has exactly one bot, so any bot row arriving
+            // while our turn is still in flight is unambiguously ours:
+            // fall back to "turn in flight AND an unreconciled live-* bot
+            // bubble exists". Groups keep the precise id-set path (they
+            // can have concurrent bots — and group sends don't use SSE,
+            // so they have no SSE/realtime duplicate to begin with).
+            let isOurBotEcho = role == "bot" && (
+                pendingCanonicalBotIds.contains(id)
+                || (conversation.conversation_type == "user_bot"
+                    && chatTurnTask != nil
+                    && messages.contains {
+                        $0.id.hasPrefix("live-") && $0.sender_type == "bot"
+                    })
+            )
             let serverCmid = r["client_message_id"]?.stringValue
             let now = Int(Date().timeIntervalSince1970)
             let staleIndex: Int? = {
