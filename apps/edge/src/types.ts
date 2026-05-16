@@ -19,6 +19,12 @@ export interface Env {
   /// `getSandbox(env.Sandbox, conversationId)`; auto-sleeps after
   /// inactivity (no manual cleanup needed). See lib/sandbox.ts.
   Sandbox: DurableObjectNamespace<Sandbox>;
+  /// Per-conversation realtime fan-out DO. One instance per
+  /// conversation_id; holds the live WebSocket connections of every
+  /// client viewing that conversation. Reached via
+  /// env.CONV_HUB.get(env.CONV_HUB.idFromName(conversationId)). See
+  /// src/durable-objects/conv-hub.ts.
+  CONV_HUB: DurableObjectNamespace;
   /// Cloudflare ratelimit binding for handle-enumeration endpoints
   /// (friend-request /lookup, group /join, friend-request POST /).
   /// Limit + period live in wrangler.jsonc — call from a route via
