@@ -22,10 +22,14 @@ const RESULT_TRUNCATE_CHARS = 8000;
 const CODE_RUN_TIMEOUT_MS = 30_000;
 
 // Idle window before the container auto-sleeps. The SDK accepts a
-// duration string ("10m", "1h"). We keep things warm a bit longer
-// than the default 10m so a user mulling over results doesn't pay the
-// full container cold-start on their next message.
-const SANDBOX_SLEEP_AFTER = '30m';
+// duration string ("3m", "1h"). Billing matters here: a container is
+// charged for memory+disk (provisioned) the whole time it stays in the
+// *running* state — sleepAfter only delays the transition to *sleep*,
+// during which there is no charge. A long window therefore means we pay
+// for idle, abandoned conversations. code-exec is a rare tool, so we
+// keep this short: 3m covers an agent loop's back-to-back execute_code
+// calls and a quick follow-up turn, then lets the container sleep.
+const SANDBOX_SLEEP_AFTER = '3m';
 
 export interface CodeRunResult {
   stdout: string;        // joined logs.stdout + logs.stderr + traceback, truncated

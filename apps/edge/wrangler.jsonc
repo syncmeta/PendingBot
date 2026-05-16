@@ -90,8 +90,9 @@
       //
       // SANDBOX is Cloudflare Sandbox SDK's container-backed DO — one
       // instance per conversation_id, used by the chat agent's
-      // execute_code / request_execute_code tools. Auto-sleeps after
-      // ~10 min of inactivity (configured per-call in lib/sandbox.ts).
+      // execute_code / request_execute_code tools. Auto-sleeps after a
+      // short idle window (sleepAfter in lib/sandbox.ts) so we don't pay
+      // memory+disk for abandoned conversations.
       "durable_objects": {
         "bindings": [
           { "name": "GROUP_ROUTER", "class_name": "GroupRouterDO" },
