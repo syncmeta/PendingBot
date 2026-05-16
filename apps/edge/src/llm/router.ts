@@ -1,11 +1,14 @@
 import OpenAI from 'openai';
 import type { Env } from '../types';
 import type { SupabaseClient } from '../lib/supabase';
+import { serviceClient } from '../lib/supabase';
 import type { Json } from '../db/schema';
 import { billingDebit, getMarkup, usdToPnd } from '../lib/billing';
 import { putCachedBalance } from '../lib/balance-cache';
 import { splitAndDebit } from '../lib/group-billing';
 import type { WebToolUsage } from '../lib/web-meter';
+import { uuidv7 } from '../lib/ids';
+import type { AuditMessage } from '../queue/audit-types';
 import {
   usageFromCompletion,
   type ProviderUsageDetails,
@@ -471,12 +474,6 @@ export interface AuditCallOpts extends AuditUsage {
   // Surfaced in audit_log.metadata jsonb so downstream queries can
   // group by these without bloating the column list.
   metadata?: Record<string, unknown> | null;
-  /// Worker env, only needed when conversationId points at a group —
-  /// recordAudit then dispatches to splitAndDebit instead of single-
-  /// user billingDebit. 1v1 callers can omit. (We pass env rather
-  /// than a SupabaseClient so the group-billing module can run with
-  /// service-role rights regardless of the caller's client kind.)
-  env?: Env;
   /// External web search / scrape calls fired during this LLM turn,
   /// captured by WebToolMeter. Each entry lands in audit_web_tool_calls
   /// and sum(costUsd) folds into audit_log.tool_cost_usd + cost_credits
@@ -637,15 +634,77 @@ export function computeCost(alias: RouteAlias, usage: AuditUsage): number | null
   return known ? cost : null;
 }
 
-export async function recordAudit(
-  supa: SupabaseClient,
+// ─────────────────────────────────────────────────────────────────────
+// Audit is offloaded onto AUDIT_QUEUE: the LLM response path calls
+// enqueueAudit (fast — one queue send), and the worker's own `queue`
+// handler (src/index.ts) calls persistAuditMessage to do the audit_log
+// insert + child rows + billing debit off the response path.
+//
+// enqueueAudit returns the audit_log id synchronously because it's
+// generated up-front (uuidv7) — callers that need the id don't wait on
+// the DB, and the same id is the consumer's idempotency key.
+// ─────────────────────────────────────────────────────────────────────
+
+// Produce the serializable queue message. Latency is measured here, at
+// enqueue time — the consumer runs later and can't derive it.
+function buildAuditMessage(
+  route: ResolvedRoute | null,
+  opts: AuditCallOpts,
+): AuditMessage {
+  return {
+    auditId: uuidv7(),
+    latencyMs: Date.now() - opts.startedAt,
+    route: route
+      ? { modelToCall: route.modelToCall, alias: route.alias, provider: route.provider }
+      : null,
+    opts,
+  };
+}
+
+// Enqueue audit + billing for this LLM turn. Returns the audit_log id
+// (pre-generated) so callers can reference the row without awaiting the
+// insert. Never throws — a queue-send failure falls back to an inline
+// persist so an audit/debit is never silently dropped.
+export async function enqueueAudit(
+  env: Env,
   // null when no alias was ever successfully resolved (every fallback
   // attempt errored out before getting an OK from any provider). The
   // route_trace + status='error' still get persisted; provider_id /
   // model_alias_id / cost_usd just stay null.
   route: ResolvedRoute | null,
   opts: AuditCallOpts,
-): Promise<string | null> {
+): Promise<string> {
+  const msg = buildAuditMessage(route, opts);
+  try {
+    await env.AUDIT_QUEUE.send(msg);
+  } catch (err) {
+    // Queue unavailable — persist inline rather than lose the row. The
+    // inline persist must not throw back to the LLM caller either.
+    console.warn('[enqueueAudit] queue send failed, persisting inline', err);
+    try {
+      await persistAuditMessage(env, msg);
+    } catch (err2) {
+      console.error('[enqueueAudit] inline persist also failed', err2);
+    }
+  }
+  return msg.auditId;
+}
+
+// Consumer side: do the actual audit_log insert + child rows + billing.
+// Idempotent on msg.auditId — at-least-once delivery means this can run
+// twice for the same message, so the audit_log insert is an
+// upsert/ignoreDuplicates and a duplicate delivery returns early before
+// re-running billing.
+//
+// Throws on a transient audit_log insert failure so the queue retries;
+// child-row inserts and billing are best-effort (logged, never thrown)
+// exactly as the old inline recordAudit treated them.
+export async function persistAuditMessage(
+  env: Env,
+  msg: AuditMessage,
+): Promise<void> {
+  const supa = serviceClient(env);
+  const { auditId, latencyMs, route, opts } = msg;
   // Local price-book cost is authoritative for billing. We fall back to
   // the provider-reported value only when the alias has no price rows
   // (unregistered passthrough), so unpriced traffic still settles
@@ -678,7 +737,7 @@ export async function recordAudit(
     (opts.audioInputTokens ?? 0) +
     (opts.audioOutputTokens ?? 0);
 
-  const isGroupTarget = opts.conversationId && opts.env
+  const isGroupTarget = opts.conversationId
     ? await isGroupConversation(supa, opts.conversationId)
     : false;
 
@@ -703,12 +762,14 @@ export async function recordAudit(
   const audioOutputTokens = opts.audioOutputTokens ?? 0;
 
   const insertRow = {
+    // Producer-generated uuidv7. Explicit (not DB-defaulted) so it
+    // doubles as the consumer's idempotency key below.
+    id: auditId,
     user_id: opts.userId ?? null,
     conversation_id: opts.conversationId ?? null,
     task_type: opts.taskType,
     // Use the last-attempted model id when a route was eventually
-    // found, otherwise the caller-supplied slug recorded in opts via
-    // recordAuditFailure (we expose modelSlug for that path below).
+    // found, otherwise the caller-supplied tag.
     model_id: route?.modelToCall ?? opts.tag ?? '<unrouted>',
     input_tokens: opts.inputTokens ?? 0,
     output_tokens: opts.outputTokens ?? 0,
@@ -735,7 +796,7 @@ export async function recordAudit(
     cost_credits: pnd,
     billing_status: initialBilling,
     generation_id: opts.generationId ?? null,
-    latency_ms: Date.now() - opts.startedAt,
+    latency_ms: latencyMs,
     status: opts.status,
     error_class: opts.errorClass ?? null,
     provider_id: route?.provider.id ?? null,
@@ -745,21 +806,30 @@ export async function recordAudit(
     ...(opts.metadata ? { metadata: opts.metadata as Json } : {}),
   };
 
-  const { data: inserted, error } = await supa
+  // Upsert (not plain insert) so a duplicate queue delivery — the
+  // consumer can run any message more than once — is a no-op rather
+  // than a primary-key error. ignoreDuplicates means a conflicting row
+  // is left untouched and NOT returned, so an empty result set is the
+  // signal "already persisted on an earlier delivery".
+  const { data: insertedRows, error } = await supa
     .from('audit_log')
-    .insert(insertRow)
-    .select('id')
-    .single();
+    .upsert(insertRow, { onConflict: 'id', ignoreDuplicates: true })
+    .select('id');
   if (error) {
-    console.warn('[audit_log insert]', error.message);
-    return null;
+    // Transient — throw so the queue retries this message.
+    console.warn('[audit_log upsert]', error.message);
+    throw new Error(`audit_log upsert failed: ${error.message}`);
+  }
+  if (!insertedRows || insertedRows.length === 0) {
+    // Duplicate delivery — the row (and its children + debit) already
+    // landed on an earlier attempt. Nothing more to do.
+    return;
   }
 
   // Per-call web-tool breakdown. Best-effort: an insert error here
   // leaves the parent row + debit intact but loses the detail row(s)
-  // for ops. We log and move on — never propagate to the LLM caller.
-  if (hasTools && inserted?.id) {
-    const auditId = inserted.id as string;
+  // for ops. We log and move on — never propagate / never retry.
+  if (hasTools) {
     const childRows = toolCalls.map((c) => ({
       audit_log_id: auditId,
       provider: c.provider,
@@ -780,8 +850,7 @@ export async function recordAudit(
   }
 
   const rawCalls = opts.rawModelCalls ?? [];
-  if (rawCalls.length > 0 && inserted?.id) {
-    const auditId = inserted.id as string;
+  if (rawCalls.length > 0) {
     const rows = rawCalls.map((c, idx) => ({
       audit_log_id: auditId,
       seq: idx + 1,
@@ -806,34 +875,32 @@ export async function recordAudit(
   }
 
   // Post-insert debit. Errors are swallowed inside billingDebit /
-  // splitAndDebit — never propagate billing-side failures back to the
-  // LLM caller. The next pre-call gate handles consequences
-  // (insufficient balance blocks further requests in 1v1; group
-  // members are flagged overdrawn for next-turn exclusion).
-  if (initialBilling === 'pending' && inserted?.id) {
-    const auditId = inserted.id as string;
+  // splitAndDebit — never propagate billing-side failures. The next
+  // pre-call gate handles consequences (insufficient balance blocks
+  // further requests in 1v1; group members are flagged overdrawn for
+  // next-turn exclusion). Runs only on the fresh-insert path above, so
+  // a duplicate delivery never double-debits.
+  if (initialBilling === 'pending') {
     // Branch on conv type: groups split across all participating
     // members, 1v1 / system tasks debit a single user.
-    if (isGroupTarget && opts.env) {
-      await splitAndDebit({ env: opts.env, auditLogId: auditId }).catch((err) =>
-        console.warn('[recordAudit] splitAndDebit failed', err),
+    if (isGroupTarget) {
+      await splitAndDebit({ env, auditLogId: auditId }).catch((err) =>
+        console.warn('[persistAuditMessage] splitAndDebit failed', err),
       );
     } else if (opts.userId) {
       const newBalance = await billingDebit(supa, opts.userId, auditId, pnd);
       // Keep the per-user KV balance cache in sync so the next
       // requireBalance call skips Supabase. RPC returned null = swallowed
       // error; leave the cache alone so the next miss re-reads.
-      if (newBalance != null && opts.env) {
-        await putCachedBalance(opts.env, opts.userId, newBalance).catch(() => undefined);
+      if (newBalance != null) {
+        await putCachedBalance(env, opts.userId, newBalance).catch(() => undefined);
       }
     }
   }
-
-  return (inserted?.id as string | undefined) ?? null;
 }
 
-// Cheap conv-type check used by recordAudit. We could push this into
-// recordAudit's caller (let them pass `isGroup`) but the conv type
+// Cheap conv-type check used by persistAuditMessage. We could push this
+// into the caller (let them pass `isGroup`) but the conv type
 // branch is genuinely the audit layer's concern: 1v1 means a single
 // debit, group means a multi-user split, and the right place to
 // decide is right where the audit row gets inserted.

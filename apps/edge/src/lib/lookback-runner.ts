@@ -3,8 +3,8 @@ import type { ChatCompletionCreateParamsNonStreaming } from 'openai/resources/ch
 import { serviceClient } from './supabase';
 import {
   captureModelCall,
+  enqueueAudit,
   FallbackError,
-  recordAudit,
   type RawModelCall,
   usageFromCompletion,
   withFallback,
@@ -124,7 +124,7 @@ export async function runLookback(input: RunLookbackInput): Promise<void> {
     const text = (completion.choices[0]?.message?.content ?? '').trim();
     const usage = usageFromCompletion(completion.usage, completion);
     if (!text || text === SILENT_TOKEN) {
-      await recordAudit(supa, route, {
+      await enqueueAudit(env, route, {
         conversationId,
         taskType: 'lookback',
         startedAt,
@@ -145,7 +145,7 @@ export async function runLookback(input: RunLookbackInput): Promise<void> {
       active: true,
     });
 
-    await recordAudit(supa, route, {
+    await enqueueAudit(env, route, {
       conversationId,
       taskType: 'lookback',
       startedAt,
@@ -159,7 +159,7 @@ export async function runLookback(input: RunLookbackInput): Promise<void> {
   } catch (err) {
     console.warn('[lookback]', err);
     if (err instanceof FallbackError) {
-      await recordAudit(supa, err.lastRoute, {
+      await enqueueAudit(env, err.lastRoute, {
         conversationId,
         taskType: 'lookback',
         startedAt,

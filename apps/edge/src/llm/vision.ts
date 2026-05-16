@@ -36,8 +36,8 @@ import type { SupabaseClient } from '../lib/supabase';
 import { patchCachedAttachment } from '../lib/attachment-cache';
 import {
   captureModelCall,
+  enqueueAudit,
   FallbackError,
-  recordAudit,
   type RawModelCall,
   usageFromCompletion,
   withFallback,
@@ -316,7 +316,7 @@ export async function summarizeAttachment(
     const parsed = parseSummaryJson(typeof text === 'string' ? text : '');
 
     // Audit even on parse failure — we did spend tokens.
-    await recordAudit(supa, callResult.route, {
+    await enqueueAudit(env, callResult.route, {
       userId: deps.userId,
       conversationId: deps.conversationId,
       taskType: 'attachment_summary',
@@ -327,7 +327,6 @@ export async function summarizeAttachment(
       ...usage,
       routeTrace: callResult.routeTrace,
       rawModelCalls,
-      env,
       metadata: {
         attachment_id: attachmentId,
         vision_model: picked.slug,
@@ -372,7 +371,7 @@ export async function summarizeAttachment(
       err instanceof Error ? err.message : String(err) || 'unknown error';
     console.warn('[vision] summarize failed', attachmentId, message);
     if (err instanceof FallbackError || rawModelCalls.length > 0) {
-      await recordAudit(supa, err instanceof FallbackError ? err.lastRoute : null, {
+      await enqueueAudit(env, err instanceof FallbackError ? err.lastRoute : null, {
         userId: deps.userId,
         conversationId: deps.conversationId,
         taskType: 'attachment_summary',
@@ -383,7 +382,6 @@ export async function summarizeAttachment(
           : err instanceof Error ? err.name : 'unknown',
         routeTrace: err instanceof FallbackError ? err.routeTrace : undefined,
         rawModelCalls,
-        env,
         metadata: {
           attachment_id: attachmentId,
           vision_model: picked.slug,
@@ -498,7 +496,7 @@ export async function readAttachmentForTool(
     const completion = callResult.result;
     const text = completion.choices?.[0]?.message?.content ?? '';
     const usage = usageFromCompletion(completion.usage, completion);
-    await recordAudit(supa, callResult.route, {
+    await enqueueAudit(env, callResult.route, {
       userId: deps.userId,
       conversationId: deps.conversationId,
       taskType: 'attachment_read',
@@ -509,7 +507,6 @@ export async function readAttachmentForTool(
       ...usage,
       routeTrace: callResult.routeTrace,
       rawModelCalls,
-      env,
       metadata: {
         attachment_id: attachmentId,
         vision_model: picked.slug,
@@ -522,7 +519,7 @@ export async function readAttachmentForTool(
     const message =
       err instanceof Error ? err.message : String(err) || 'unknown error';
     if (err instanceof FallbackError || rawModelCalls.length > 0) {
-      await recordAudit(supa, err instanceof FallbackError ? err.lastRoute : null, {
+      await enqueueAudit(env, err instanceof FallbackError ? err.lastRoute : null, {
         userId: deps.userId,
         conversationId: deps.conversationId,
         taskType: 'attachment_read',
@@ -533,7 +530,6 @@ export async function readAttachmentForTool(
           : err instanceof Error ? err.name : 'unknown',
         routeTrace: err instanceof FallbackError ? err.routeTrace : undefined,
         rawModelCalls,
-        env,
         metadata: {
           attachment_id: attachmentId,
           vision_model: picked.slug,

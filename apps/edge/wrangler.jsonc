@@ -134,7 +134,35 @@
           "tag": "v2",
           "new_sqlite_classes": ["Sandbox"]
         }
-      ]
+      ],
+      // Audit + billing offload. recordAudit used to insert audit_log
+      // (+ child rows) and run the billing debit inline on the LLM
+      // response path. enqueueAudit (src/llm/router.ts) now drops a
+      // serialized AuditMessage onto AUDIT_QUEUE and the worker's own
+      // `queue` handler (src/index.ts → persistAuditMessage) does the
+      // DB work off the response path.
+      //
+      // Same worker is both producer and consumer. Delivery is
+      // at-least-once: the consumer is idempotent because audit_log is
+      // inserted with a producer-generated uuidv7 id under
+      // upsert/ignoreDuplicates, and the billing path is skipped on a
+      // duplicate. After max_retries a message lands in
+      // pendingbot-audit-dlq (left unconsumed — ops inspects it; a
+      // stuck message there means a lost debit worth chasing).
+      "queues": {
+        "producers": [
+          { "binding": "AUDIT_QUEUE", "queue": "pendingbot-audit" }
+        ],
+        "consumers": [
+          {
+            "queue": "pendingbot-audit",
+            "max_batch_size": 100,
+            "max_batch_timeout": 5,
+            "max_retries": 3,
+            "dead_letter_queue": "pendingbot-audit-dlq"
+          }
+        ]
+      }
     }
   }
 

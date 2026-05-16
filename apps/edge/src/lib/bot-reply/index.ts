@@ -10,8 +10,8 @@ import type { Env } from '../../types';
 import type { Json } from '../../db/schema';
 import { serviceClient } from '../supabase';
 import {
+  enqueueAudit,
   FallbackError,
-  recordAudit,
   startRawModelCall,
   type RawModelCall,
   type ResolvedRoute,
@@ -772,7 +772,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     }
     await toolTracePersist;
 
-    await recordAudit(supa, route, {
+    await enqueueAudit(env, route, {
       userId,
       conversationId,
       taskType: 'message_reply',
@@ -787,10 +787,6 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       ...providerUsage,
       estInputTokens: est.input,
       estOutputTokens: est.output,
-      // env passes through so recordAudit can route group convs into
-      // splitAndDebit (M6) instead of single-user billingDebit. 1v1
-      // and self-chat just ignore it.
-      env,
       webTools: webMeter.snapshot(),
       rawModelCalls,
       metadata: {
@@ -849,7 +845,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
           : err instanceof Error
             ? err.name
             : 'unknown';
-      await recordAudit(supa, auditRoute, {
+      await enqueueAudit(env, auditRoute, {
         userId,
         conversationId,
         taskType: 'message_reply',
@@ -865,7 +861,6 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
         ...providerUsage,
         estInputTokens: est.input,
         estOutputTokens: est.output,
-        env,
         // Tool calls that landed before the LLM stream errored should
         // still be billed — the upstream provider already consumed
         // those quotas regardless of how the turn ended.

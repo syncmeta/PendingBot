@@ -3,6 +3,7 @@
 // time via `wrangler secret put` so they aren't in source.
 
 import type { Sandbox } from '@cloudflare/sandbox';
+import type { AuditMessage } from './queue/audit-types';
 
 export interface Env {
   // ── Bindings declared in wrangler.jsonc ────────────────────────
@@ -23,6 +24,10 @@ export interface Env {
   /// Limit + period live in wrangler.jsonc — call from a route via
   /// `withRateLimit(env.HANDLE_LOOKUP_RL, key)` in lib/rate-limit.ts.
   HANDLE_LOOKUP_RL: RateLimit;
+  /// Audit + billing offload queue. enqueueAudit (src/llm/router.ts)
+  /// is the only producer; the worker's own `queue` handler in
+  /// src/index.ts is the consumer. See wrangler.jsonc → queues.
+  AUDIT_QUEUE: Queue<AuditMessage>;
 
   // ── Vars (per env in wrangler.jsonc) ───────────────────────────
   ENVIRONMENT: 'dev' | 'production';

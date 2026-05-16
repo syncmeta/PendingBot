@@ -5,8 +5,8 @@ import { serviceClient } from './supabase';
 import { putCachedBotNote, putCachedChatMemo } from './persona-cache';
 import {
   captureModelCall,
+  enqueueAudit,
   FallbackError,
-  recordAudit,
   type RawModelCall,
   usageFromCompletion,
   withFallback,
@@ -243,7 +243,7 @@ async function refreshBotNote(input: RefreshBotNoteInput): Promise<void> {
       },
     );
     const newBody = completion.choices[0]?.message?.content?.trim();
-    await recordAudit(supa, route, {
+    await enqueueAudit(env, route, {
       userId,
       conversationId,
       taskType: 'bot_note',
@@ -282,7 +282,7 @@ async function refreshBotNote(input: RefreshBotNoteInput): Promise<void> {
     console.warn('[memory] refreshBotNote failed', err);
     if (err instanceof FallbackError) {
       const supa = serviceClient(env);
-      await recordAudit(supa, err.lastRoute, {
+      await enqueueAudit(env, err.lastRoute, {
         userId,
         conversationId,
         taskType: 'bot_note',
@@ -397,7 +397,7 @@ async function refreshChatMemo(input: RefreshChatMemoInput): Promise<void> {
     );
     const raw = completion.choices[0]?.message?.content?.trim() ?? '';
     const action: 'silent' | 'update' = raw && raw !== '[SILENT]' ? 'update' : 'silent';
-    await recordAudit(supa, route, {
+    await enqueueAudit(env, route, {
       conversationId,
       taskType: 'chat_memo',
       startedAt,
@@ -436,7 +436,7 @@ async function refreshChatMemo(input: RefreshChatMemoInput): Promise<void> {
     console.warn('[memory] refreshChatMemo failed', err);
     if (err instanceof FallbackError) {
       const supa = serviceClient(env);
-      await recordAudit(supa, err.lastRoute, {
+      await enqueueAudit(env, err.lastRoute, {
         conversationId,
         taskType: 'chat_memo',
         startedAt,

@@ -20,6 +20,8 @@ import { realtimeRoutes } from './routes/realtime';
 import { wellKnownRoutes } from './routes/well-known';
 import { testAccountLogger } from './lib/test-account-log';
 import { handleScheduled } from './cron';
+import { persistAuditMessage } from './llm/router';
+import type { AuditMessage } from './queue/audit-types';
 
 // Re-export the Durable Object class so the runtime can find it via
 // the `class_name` field in wrangler.jsonc → durable_objects.bindings.
@@ -99,13 +101,29 @@ app.route('/health', healthRoutes);
 // Apple fetches the well-known path verbatim.
 app.route('/.well-known', wellKnownRoutes);
 
-// Workers entry point: HTTP via Hono, scheduled (cron) via handleScheduled.
-// Hono's default export is `{ fetch }`, so we wrap it to add the scheduled
-// hook. wrangler.jsonc declares triggers.crons; controller.cron tells us
-// which schedule fired.
+// Workers entry point: HTTP via Hono, scheduled (cron) via handleScheduled,
+// and the AUDIT_QUEUE consumer via `queue`. Hono's default export is
+// `{ fetch }`, so we wrap it to add the scheduled + queue hooks.
 export default {
   fetch: app.fetch,
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     await handleScheduled(controller, env, ctx);
+  },
+  // AUDIT_QUEUE consumer. Each message is one LLM turn's audit + billing
+  // work (see enqueueAudit / persistAuditMessage in src/llm/router.ts).
+  // persistAuditMessage is idempotent on the message's auditId, so a
+  // retried delivery is safe. ack on success; retry on a thrown error
+  // (transient audit_log insert failure) — after wrangler.jsonc's
+  // max_retries the message lands in pendingbot-audit-dlq.
+  async queue(batch: MessageBatch<AuditMessage>, env: Env) {
+    for (const msg of batch.messages) {
+      try {
+        await persistAuditMessage(env, msg.body);
+        msg.ack();
+      } catch (err) {
+        console.error('[queue:audit] persist failed, will retry', err);
+        msg.retry();
+      }
+    }
   },
 };

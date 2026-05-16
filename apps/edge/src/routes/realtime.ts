@@ -23,7 +23,7 @@ import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
 import { userClient, serviceClient } from '../lib/supabase';
 import { getBalance, getConfigInt } from '../lib/billing';
-import { resolveRoute, recordAudit } from '../llm/router';
+import { resolveRoute, enqueueAudit } from '../llm/router';
 import { buildSystemPrompt, type BuildSystemPromptInput } from '../llm/builder';
 import { getBotMemory, getChatMemo } from '../lib/memory';
 import { resolveLocale } from '../i18n/locale';
@@ -555,7 +555,7 @@ realtimeRoutes.post('/usage', async (c) => {
     0,
     (parsed.audio_input_tokens ?? 0) - (parsed.cached_input_tokens ?? 0),
   );
-  await recordAudit(supaUser, route, {
+  await enqueueAudit(c.env, route, {
     userId,
     conversationId: parsed.conversation_id,
     taskType: 'voice_call',
@@ -578,7 +578,6 @@ realtimeRoutes.post('/usage', async (c) => {
       turn_index: parsed.turn_index,
       ...(parsed.latency_ms != null ? { latency_ms: parsed.latency_ms } : {}),
     },
-    env: c.env,
   });
 
   // Re-read balance + session cumulative cost. recordAudit handled the
