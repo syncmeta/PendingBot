@@ -37,12 +37,12 @@ export { usageFromCompletion } from './provider-usage';
 //      working in the gap between deploying the router and curating
 //      every model in the admin UI.
 //
-// Secret access is dynamic: each provider names an env var via
-// secret_ref (e.g. 'OPENROUTER_API_KEY'). We index env at runtime, which
-// requires the Env interface in types.ts to declare every secret name a
-// real provider row references — otherwise the worker will fail to read
-// it. New providers added via the admin UI must be paired with a secret
-// declared in wrangler.jsonc + Env type.
+// Auth is BYOK-on-gateway: provider API keys live in the AI Gateway
+// dashboard, never in worker env. Every LLM request carries the
+// cf-aig-authorization header (env.CF_AIG_RUN_TOKEN) to authenticate
+// to the gateway itself; the gateway then injects the stored upstream
+// provider key. No per-provider secret_ref — adding a provider in the
+// admin UI just needs its key stored in the gateway dashboard.
 
 export interface RouteResolveOpts {
   modelSlug: string;
@@ -121,8 +121,6 @@ export type AliasJoinRow = {
         id: string;
         slug: string;
         base_url: string;
-        auth_type: string;
-        secret_ref: string;
         priority: number;
         enabled: boolean;
         config: unknown;
@@ -208,15 +206,14 @@ export function pickAlias(
 
 function buildClient(
   env: Env,
-  provider: { base_url: string; auth_type: string; secret_ref: string; config: unknown },
+  provider: { base_url: string; config: unknown },
   aigMetadata?: Record<string, string>,
 ): OpenAI {
-  const envBag = env as unknown as Record<string, string | undefined>;
-  const apiKey = envBag[provider.secret_ref];
-  if (!apiKey) {
+  const token = env.CF_AIG_RUN_TOKEN;
+  if (!token) {
     throw new NoRouteError(
-      `provider secret_ref ${provider.secret_ref} is not bound on the worker — ` +
-        `add it to wrangler.jsonc and Env type, or disable the provider in admin`,
+      'CF_AIG_RUN_TOKEN is not bound on the worker — set the AI Gateway ' +
+        'run token secret (gateway Settings → Authenticated Gateway)',
     );
   }
   const cfg =
@@ -226,11 +223,21 @@ function buildClient(
   const extraHeaders =
     (cfg.extra_headers as Record<string, string> | undefined) ?? {};
   return new OpenAI({
-    apiKey,
+    // BYOK-on-gateway: the real upstream key is stored in the AI Gateway
+    // dashboard and injected by the gateway. The OpenAI SDK constructor
+    // requires a non-empty apiKey, so this placeholder just satisfies it
+    // — the provider Authorization header is deleted below (null) so the
+    // gateway's stored BYOK key is what reaches the upstream.
+    apiKey: 'cf-aig-byok',
     baseURL: provider.base_url,
     defaultHeaders: {
       'HTTP-Referer': 'https://pendingname.com',
       'X-Title': 'PendingBot',
+      // Authenticate to the gateway itself; it injects the BYOK key.
+      'cf-aig-authorization': `Bearer ${token}`,
+      // Drop the SDK's Authorization header — BYOK requires no upstream
+      // provider auth header on the request.
+      Authorization: null,
       // cf-aig-metadata rides on every request the AI Gateway proxies,
       // tagging the gateway log so it's sliceable by task / user / conv.
       ...(aigMetadata ? { 'cf-aig-metadata': JSON.stringify(aigMetadata) } : {}),
@@ -279,8 +286,6 @@ interface CachedProvider {
   id: string;
   slug: string;
   base_url: string;
-  auth_type: string;
-  secret_ref: string;
   priority: number;
   enabled: boolean;
   config: unknown;
@@ -354,7 +359,7 @@ async function getAliasSet(
             .from('llm_model_aliases')
             .select(
               `${ALIAS_COLS},
-               llm_providers ( id, slug, base_url, auth_type, secret_ref, priority, enabled, config ),
+               llm_providers ( id, slug, base_url, priority, enabled, config ),
                llm_models!inner ( slug, enabled )`,
             )
             .eq('enabled', true)
@@ -363,7 +368,7 @@ async function getAliasSet(
             .from('llm_model_aliases')
             .select(
               `${ALIAS_COLS},
-               llm_providers ( id, slug, base_url, auth_type, secret_ref, priority, enabled, config )`,
+               llm_providers ( id, slug, base_url, priority, enabled, config )`,
             )
             .eq('enabled', true)
             .eq('provider_model_id', slug),
@@ -395,7 +400,7 @@ async function getProvider(
     async (): Promise<CachedProvider | null> => {
       const { data } = await supa
         .from('llm_providers')
-        .select('id, slug, base_url, auth_type, secret_ref, priority, enabled, config')
+        .select('id, slug, base_url, priority, enabled, config')
         .eq('slug', slug)
         .eq('enabled', true)
         .maybeSingle();

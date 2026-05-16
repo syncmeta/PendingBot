@@ -32,8 +32,6 @@ function row(
       id: opts.providerSlug + '-id',
       slug: opts.providerSlug,
       base_url: 'https://example.test/v1',
-      auth_type: 'bearer',
-      secret_ref: 'X_KEY',
       priority: opts.providerPriority ?? 100,
       enabled: opts.providerEnabled ?? true,
       config: null,
