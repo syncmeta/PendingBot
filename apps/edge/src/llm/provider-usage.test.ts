@@ -33,7 +33,6 @@ describe('usageFromCompletion', () => {
     expect(usage.providerCostUsd).toBe(0.00010355);
     expect(usage.inputTokens).toBe(1099);
     expect(usage.outputTokens).toBe(108);
-    expect(usage.reportedProvider).toBe('SiliconFlow');
   });
 
   it('reads WorldRouter cost from usage.cost', () => {

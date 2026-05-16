@@ -603,8 +603,7 @@ export async function persistAuditMessage(
   // was removed: a hand-curated alias price table drifts and mis-bills.
   // A turn whose provider reports no cost (e.g. OpenAI direct) settles
   // as 'skipped' for now — the AI Gateway cost fallback fills that gap.
-  const providerCost = opts.providerCostUsd ?? null;
-  const llmCost = providerCost;
+  const llmCost = opts.providerCostUsd ?? null;
   // Web-tool spend (Brave / Tavily / Exa / Serper / Firecrawl) accrues
   // during the same LLM turn. We fold its USD sum into the parent row
   // and apply the same usdToPnd markup so a single billing_debit
@@ -669,18 +668,10 @@ export async function persistAuditMessage(
     audio_input_tokens: audioInputTokens,
     audio_output_tokens: audioOutputTokens,
     total_tokens: total,
-    // cost_usd is the LLM cost that drives billing — locally computed
-    // from the alias price-book when available, else the provider's
-    // reported value as a fallback. provider_cost_usd stores the raw
-    // provider report (when present) for audit comparison.
-    // tool_cost_usd breaks out web-tool spend; cost_credits below is
-    // the combined debit (LLM + tools, after markup).
+    // cost_usd is the LLM cost that drives billing — the provider-reported
+    // figure for this turn. tool_cost_usd breaks out web-tool spend;
+    // cost_credits below is the combined debit (LLM + tools, after markup).
     cost_usd: llmCost,
-    provider_cost_usd: providerCost,
-    reported_provider: opts.reportedProvider ?? null,
-    cost_details: (opts.costDetails as Json | null) ?? null,
-    prompt_tokens_details: (opts.promptTokensDetails as Json | null) ?? null,
-    completion_tokens_details: (opts.completionTokensDetails as Json | null) ?? null,
     tool_cost_usd: hasTools ? toolCostUsd : null,
     cost_credits: pnd,
     billing_status: initialBilling,

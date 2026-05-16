@@ -1,11 +1,5 @@
-import type { Json } from '../db/schema';
-
 export interface ProviderUsageDetails {
   providerCostUsd?: number | null;
-  reportedProvider?: string | null;
-  costDetails?: Json | null;
-  promptTokensDetails?: Json | null;
-  completionTokensDetails?: Json | null;
 }
 
 export interface CompletionUsageStats extends ProviderUsageDetails {
@@ -20,7 +14,6 @@ type UsageLike = {
   completion_tokens?: number | null;
   total_tokens?: number | null;
   prompt_tokens_details?: unknown;
-  completion_tokens_details?: unknown;
   cost_details?: unknown;
   cache_creation_input_tokens?: number | null;
   cache_read_input_tokens?: number | null;
@@ -40,26 +33,10 @@ function firstNumber(...values: unknown[]): number | null {
   return null;
 }
 
-function firstString(...values: unknown[]): string | null {
-  for (const v of values) {
-    if (typeof v === 'string' && v.trim()) return v.trim();
-  }
-  return null;
-}
-
 function asRecord(v: unknown): Record<string, unknown> | null {
   return v && typeof v === 'object' && !Array.isArray(v)
     ? (v as Record<string, unknown>)
     : null;
-}
-
-function toJson(v: unknown): Json | null {
-  if (v === undefined || v === null) return null;
-  try {
-    return JSON.parse(JSON.stringify(v)) as Json;
-  } catch {
-    return null;
-  }
 }
 
 function costFromDetails(details: Record<string, unknown> | null): number | null {
@@ -98,6 +75,9 @@ export function usageFromCompletion(
     outputTokens: finiteNumber(u.completion_tokens) ?? 0,
     cacheReadTokens: cacheRead ?? 0,
     cacheWriteTokens: cacheWrite,
+    // The provider-reported cost — the exact amount the upstream charged.
+    // Drives billing (see persistAuditMessage). Found under a few field
+    // names across providers, or nested in cost_details.
     providerCostUsd: firstNumber(
       u.cost,
       u.cost_usd,
@@ -106,37 +86,11 @@ export function usageFromCompletion(
       responseRecord?.cost_usd,
       costFromDetails(costDetails),
     ),
-    reportedProvider: firstString(
-      u.provider,
-      u.provider_name,
-      responseRecord?.provider,
-      responseRecord?.provider_name,
-    ),
-    costDetails: toJson(u.cost_details),
-    promptTokensDetails: toJson(u.prompt_tokens_details),
-    completionTokensDetails: toJson(u.completion_tokens_details),
   };
 }
 
-function mergeJsonObjects(a: Json | null | undefined, b: Json | null | undefined): Json | null {
-  const ar = asRecord(a);
-  const br = asRecord(b);
-  if (!ar) return b ?? null;
-  if (!br) return a ?? null;
-  const out: Record<string, Json> = {};
-  for (const [k, v] of Object.entries(ar)) {
-    if (v !== undefined) out[k] = v as Json;
-  }
-  for (const [k, v] of Object.entries(br)) {
-    if (v === undefined) continue;
-    const av = out[k];
-    const an = finiteNumber(av);
-    const bn = finiteNumber(v);
-    out[k] = an != null && bn != null ? an + bn : (v as Json);
-  }
-  return out;
-}
-
+// Sum providerCostUsd across a turn's LLM calls (tool loops, fallback
+// retries) so a multi-call turn bills the total.
 export function mergeProviderUsageDetails<T extends ProviderUsageDetails>(
   target: T,
   source: ProviderUsageDetails,
@@ -144,23 +98,5 @@ export function mergeProviderUsageDetails<T extends ProviderUsageDetails>(
   if (source.providerCostUsd != null) {
     target.providerCostUsd = (target.providerCostUsd ?? 0) + source.providerCostUsd;
   }
-  if (!target.reportedProvider && source.reportedProvider) {
-    target.reportedProvider = source.reportedProvider;
-  } else if (
-    target.reportedProvider &&
-    source.reportedProvider &&
-    target.reportedProvider !== source.reportedProvider
-  ) {
-    target.reportedProvider = 'multiple';
-  }
-  target.costDetails = mergeJsonObjects(target.costDetails, source.costDetails);
-  target.promptTokensDetails = mergeJsonObjects(
-    target.promptTokensDetails,
-    source.promptTokensDetails,
-  );
-  target.completionTokensDetails = mergeJsonObjects(
-    target.completionTokensDetails,
-    source.completionTokensDetails,
-  );
   return target;
 }

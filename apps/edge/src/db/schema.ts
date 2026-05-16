@@ -190,15 +190,11 @@ export type Database = {
           billing_status: string
           cache_read_tokens: number
           cache_write_tokens: number
-          completion_tokens_details: Json | null
           conversation_id: string | null
           cost_credits: number
-          cost_details: Json | null
           cost_usd: number | null
           created_at: string
           error_class: string | null
-          est_input_tokens: number | null
-          est_output_tokens: number | null
           generation_id: string | null
           id: string
           input_tokens: number
@@ -207,10 +203,7 @@ export type Database = {
           model_alias_id: string | null
           model_id: string
           output_tokens: number
-          prompt_tokens_details: Json | null
-          provider_cost_usd: number | null
           provider_id: string | null
-          reported_provider: string | null
           route_trace: Json | null
           status: string | null
           tag: string | null
@@ -225,15 +218,11 @@ export type Database = {
           billing_status?: string
           cache_read_tokens?: number
           cache_write_tokens?: number
-          completion_tokens_details?: Json | null
           conversation_id?: string | null
           cost_credits?: number
-          cost_details?: Json | null
           cost_usd?: number | null
           created_at?: string
           error_class?: string | null
-          est_input_tokens?: number | null
-          est_output_tokens?: number | null
           generation_id?: string | null
           id?: string
           input_tokens?: number
@@ -242,10 +231,7 @@ export type Database = {
           model_alias_id?: string | null
           model_id: string
           output_tokens?: number
-          prompt_tokens_details?: Json | null
-          provider_cost_usd?: number | null
           provider_id?: string | null
-          reported_provider?: string | null
           route_trace?: Json | null
           status?: string | null
           tag?: string | null
@@ -260,15 +246,11 @@ export type Database = {
           billing_status?: string
           cache_read_tokens?: number
           cache_write_tokens?: number
-          completion_tokens_details?: Json | null
           conversation_id?: string | null
           cost_credits?: number
-          cost_details?: Json | null
           cost_usd?: number | null
           created_at?: string
           error_class?: string | null
-          est_input_tokens?: number | null
-          est_output_tokens?: number | null
           generation_id?: string | null
           id?: string
           input_tokens?: number
@@ -277,10 +259,7 @@ export type Database = {
           model_alias_id?: string | null
           model_id?: string
           output_tokens?: number
-          prompt_tokens_details?: Json | null
-          provider_cost_usd?: number | null
           provider_id?: string | null
-          reported_provider?: string | null
           route_trace?: Json | null
           status?: string | null
           tag?: string | null
@@ -344,82 +323,6 @@ export type Database = {
             columns: ["audit_log_id"]
             isOneToOne: false
             referencedRelation: "audit_log"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      audit_model_calls: {
-        Row: {
-          audit_log_id: string
-          created_at: string
-          error_class: string | null
-          error_message: string | null
-          id: string
-          latency_ms: number
-          model_alias_id: string | null
-          model_id: string
-          provider_id: string | null
-          provider_slug: string
-          raw_request: Json
-          raw_response: Json | null
-          seq: number
-          status: string
-          task_type: string
-        }
-        Insert: {
-          audit_log_id: string
-          created_at?: string
-          error_class?: string | null
-          error_message?: string | null
-          id?: string
-          latency_ms: number
-          model_alias_id?: string | null
-          model_id: string
-          provider_id?: string | null
-          provider_slug: string
-          raw_request: Json
-          raw_response?: Json | null
-          seq: number
-          status: string
-          task_type: string
-        }
-        Update: {
-          audit_log_id?: string
-          created_at?: string
-          error_class?: string | null
-          error_message?: string | null
-          id?: string
-          latency_ms?: number
-          model_alias_id?: string | null
-          model_id?: string
-          provider_id?: string | null
-          provider_slug?: string
-          raw_request?: Json
-          raw_response?: Json | null
-          seq?: number
-          status?: string
-          task_type?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "audit_model_calls_alias_fkey"
-            columns: ["model_alias_id"]
-            isOneToOne: false
-            referencedRelation: "llm_model_aliases"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "audit_model_calls_audit_fkey"
-            columns: ["audit_log_id"]
-            isOneToOne: false
-            referencedRelation: "audit_log"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "audit_model_calls_provider_fkey"
-            columns: ["provider_id"]
-            isOneToOne: false
-            referencedRelation: "llm_providers"
             referencedColumns: ["id"]
           },
         ]
@@ -2465,7 +2368,6 @@ export type Database = {
           model_alias_id: string | null
           model_id: string | null
           output_tokens: number | null
-          provider_cost_usd: number | null
           provider_id: string | null
           request_count: number | null
           task_type: string | null
@@ -2500,7 +2402,6 @@ export type Database = {
           model_id: string | null
           month: string | null
           output_tokens: number | null
-          provider_cost_usd: number | null
           provider_id: string | null
           request_count: number | null
           task_type: string | null

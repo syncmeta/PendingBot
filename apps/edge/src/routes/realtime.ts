@@ -569,11 +569,6 @@ realtimeRoutes.post('/usage', async (c) => {
     audioOutputTokens: parsed.audio_output_tokens ?? 0,
     cacheReadTokens: parsed.cached_input_tokens ?? 0,
     providerCostUsd: parsed.provider_cost_usd ?? null,
-    reportedProvider: parsed.reported_provider ?? null,
-    costDetails: (parsed.cost_details as Json | undefined) ?? null,
-    promptTokensDetails: (parsed.prompt_tokens_details as Json | undefined) ?? null,
-    completionTokensDetails:
-      (parsed.completion_tokens_details as Json | undefined) ?? null,
     metadata: {
       source: 'voice_call',
       session_id: parsed.session_id,

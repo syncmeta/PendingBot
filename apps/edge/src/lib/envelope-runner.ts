@@ -731,10 +731,6 @@ async function auditRun(
     cacheReadTokens: cacheRead,
     cacheWriteTokens: 0,
     providerCostUsd: i.usage.providerCostUsd,
-    reportedProvider: i.usage.reportedProvider,
-    costDetails: i.usage.costDetails,
-    promptTokensDetails: i.usage.promptTokensDetails,
-    completionTokensDetails: i.usage.completionTokensDetails,
     webTools: i.webTools,
     metadata: { scroll_run_id: i.envelopeRunId, bot_id: i.botId, action: i.action },
   });
