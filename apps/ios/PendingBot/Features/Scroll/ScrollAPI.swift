@@ -1,6 +1,5 @@
 import Foundation
 import Supabase
-import Realtime
 
 // 奏折/Scroll networking layer — REST writes go through APIClient
 // (POST /v1/scroll/...), reads pull from Supabase directly the same way
@@ -197,13 +196,15 @@ struct EnvelopeSettings: Codable, Hashable {
 
 // ── Realtime feed channel ────────────────────────────────────────────────
 //
-// One channel per signed-in user, opened when the Scroll tab appears,
-// closed when it disappears. The channel watches scroll_runs filtered
-// by user_id; iOS callers receive INSERT / UPDATE / DELETE events as
-// raw records and decode them locally.
+// One WebSocket per signed-in user to the user-level realtime hub
+// (/v1/realtime-hub/user), opened when the Scroll tab appears, closed
+// when it disappears. The user topic carries scroll_runs changes
+// (alongside user_unread_counts, which RealtimeManager consumes on its
+// own socket) — this channel keeps only the scroll_runs rows. iOS
+// callers receive INSERT / UPDATE / DELETE as raw records and decode
+// them locally.
 
-/// Token returned by `startScrollFeedChannel`; pass it back to
-/// `stopScrollFeedChannel` to detach.
+/// Token returned by `start`; pass it back to `stop` to detach.
 struct ScrollFeedToken: Hashable, Sendable {
     let id: UUID
     let userId: String
@@ -214,8 +215,7 @@ final class ScrollFeedChannel {
     static let shared = ScrollFeedChannel()
     private init() {}
 
-    private var channel: RealtimeChannelV2?
-    private var subs: [RealtimeSubscription] = []
+    private var socket: RealtimeSocket?
     private var observers: [UUID: ObserverFns] = [:]
     private var currentUserId: String?
 
@@ -234,69 +234,43 @@ final class ScrollFeedChannel {
         let token = ScrollFeedToken(id: UUID(), userId: userId)
         observers[token.id] = ObserverFns(upsert: onUpsert, delete: onDelete)
 
-        // Already subscribed for this user — just hook in the new observers.
-        if channel != nil, currentUserId == userId {
+        // Already connected for this user — just hook in the new observers.
+        if socket != nil, currentUserId == userId {
             return token
         }
         // Different user (sign-out + sign-in flow) — drop the old socket.
-        if channel != nil { await tearDown() }
+        if socket != nil { tearDown() }
 
         currentUserId = userId
-        let ch = SupabaseStack.shared.realtimeV2.channel("scroll-feed:\(userId)")
-        let observersRef: () -> [UUID: ObserverFns] = { [weak self] in
-            self?.observers ?? [:]
+        let sock = RealtimeSocket(path: "v1/realtime-hub/user") { [weak self] change in
+            // The user topic also carries user_unread_counts; keep only
+            // scroll feed rows.
+            guard change.table == "scroll_runs", let self else { return }
+            for (_, obs) in self.observers {
+                // DELETE carries the row from the webhook's old_record —
+                // the id is what feed state keys off.
+                if change.op == .delete {
+                    obs.delete(change.record)
+                } else {
+                    obs.upsert(change.record)
+                }
+            }
         }
-        subs.append(ch.onPostgresChange(
-            InsertAction.self,
-            schema: "pendingbot",
-            table: "scroll_runs",
-            filter: "user_id=eq.\(userId)"
-        ) { action in
-            for (_, obs) in observersRef() { obs.upsert(action.record) }
-        })
-        subs.append(ch.onPostgresChange(
-            UpdateAction.self,
-            schema: "pendingbot",
-            table: "scroll_runs",
-            filter: "user_id=eq.\(userId)"
-        ) { action in
-            for (_, obs) in observersRef() { obs.upsert(action.record) }
-        })
-        subs.append(ch.onPostgresChange(
-            DeleteAction.self,
-            schema: "pendingbot",
-            table: "scroll_runs",
-            filter: "user_id=eq.\(userId)"
-        ) { action in
-            // DELETE only carries the primary key by default; that's fine
-            // for the UI — the row id is what feed state keys off.
-            for (_, obs) in observersRef() { obs.delete(action.oldRecord) }
-        })
-        do {
-            try await ch.subscribeWithError()
-        } catch {
-            // If the websocket can't come up we still hand back the token —
-            // observers fall back to manual refresh; keeping start() non-
-            // throwing avoids a churn of `try await` at every UI call site.
-        }
-        channel = ch
+        sock.start()
+        socket = sock
         return token
     }
 
     func stop(_ token: ScrollFeedToken) async {
         observers.removeValue(forKey: token.id)
         if observers.isEmpty {
-            await tearDown()
+            tearDown()
         }
     }
 
-    private func tearDown() async {
-        subs.forEach { $0.cancel() }
-        subs.removeAll()
-        if let ch = channel {
-            await ch.unsubscribe()
-            channel = nil
-        }
+    private func tearDown() {
+        socket?.stop()
+        socket = nil
         currentUserId = nil
     }
 }

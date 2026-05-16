@@ -93,6 +93,7 @@
 		C9E3C5E3131CA2014728F4BE /* APIModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F22DAAC2BF897900CBB54FCD /* APIModels.swift */; };
 		CE91460C584ECAAB5C8F28B2 /* ScrollAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F8977E1E361EFE65810D4F1 /* ScrollAPI.swift */; };
 		D0314CD060D5368E739CFDEF /* RealtimeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07DE2357BDB2124C1A2ED08F /* RealtimeManager.swift */; };
+		0FE17A0150C7EA17B1000002 /* RealtimeSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FE17A0150C7EA17B1000001 /* RealtimeSocket.swift */; };
 		D31D6EA2ABD911114EE41661 /* WalletView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA76A59CB9DB38987FE36E33 /* WalletView.swift */; };
 		DE00C4B1C0C0AAB4F6B05B01 /* UnreadStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 942CC4F48E3DD6424C534120 /* UnreadStore.swift */; };
 		DF50F5D82CD71AB450ADDB8B /* ScrollTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34F50A849643083228506129 /* ScrollTabView.swift */; };
@@ -107,6 +108,7 @@
 /* Begin PBXFileReference section */
 		0424B09389C21A9BB73F1069 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		07DE2357BDB2124C1A2ED08F /* RealtimeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeManager.swift; sourceTree = "<group>"; };
+		0FE17A0150C7EA17B1000001 /* RealtimeSocket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeSocket.swift; sourceTree = "<group>"; };
 		0CBFA801BAAC04285872D2ED /* AddMeMethodsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddMeMethodsView.swift; sourceTree = "<group>"; };
 		0F27E0F931ABFA8CDAE1ADD7 /* BlinkingCursor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlinkingCursor.swift; sourceTree = "<group>"; };
 		14244B4958F792B2FE2FDE5A /* AccountsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountsView.swift; sourceTree = "<group>"; };
@@ -361,6 +363,7 @@
 				C608CB73D14B114D2399FE59 /* HostedConfig.swift */,
 				BC94DFE7E01003DB9976ADA0 /* PushService.swift */,
 				07DE2357BDB2124C1A2ED08F /* RealtimeManager.swift */,
+				0FE17A0150C7EA17B1000001 /* RealtimeSocket.swift */,
 				75FB644111BD8AF1F7D62533 /* ServerTimestamp.swift */,
 				2A461F1DD0D7D01B3BE81A18 /* SupabaseStack.swift */,
 				E1EE5159E66202C9655580D7 /* VoiceCallAPI.swift */,
@@ -599,6 +602,7 @@
 				88D54B9282C1CF40B1EC79E5 /* PushService.swift in Sources */,
 				0E293F1B0321CB4CB0FDBB51 /* QRScannerView.swift in Sources */,
 				D0314CD060D5368E739CFDEF /* RealtimeManager.swift in Sources */,
+				0FE17A0150C7EA17B1000002 /* RealtimeSocket.swift in Sources */,
 				CE91460C584ECAAB5C8F28B2 /* ScrollAPI.swift in Sources */,
 				EDDC0F0C64844A46536D2ED4 /* ScrollArticleView.swift in Sources */,
 				9C2D6876ED3285CA4508D130 /* ScrollFeedRow.swift in Sources */,

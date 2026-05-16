@@ -1,18 +1,23 @@
 import Foundation
 import Supabase
-import Realtime
 
-/// Centralized Supabase Realtime subscription manager.
+/// Centralized realtime subscription manager.
 ///
-/// Two channel layers per plan/03:
-///   user-level (resident) — subscribes to `pendingbot.user_unread_counts`
-///       filtered by user_id; powers the message list / badge UI. One per
-///       signed-in user, opened on launch and closed on sign-out.
-///   conv-level (lazy)     — subscribes to `pendingbot.messages` filtered
-///       by conversation_id; opened when a conv view appears, closed when
-///       it disappears. INSERT + UPDATE both bubble up so streaming bot
-///       replies (UPDATE on content_partial) and review log entries
-///       (INSERT role='log') flow through the same handler.
+/// Realtime delivery runs over Cloudflare — each layer is a WebSocket to
+/// a RealtimeHubDO topic (see RealtimeSocket), not a Supabase Realtime
+/// channel. The edge fans DB row changes into the hubs via webhooks.
+///
+/// Two channel layers:
+///   user-level (resident) — one socket to `/v1/realtime-hub/user`,
+///       carrying `user_unread_counts` changes for the message list /
+///       badge UI. One per signed-in user, opened on launch, closed on
+///       sign-out. (The same user topic also carries `scroll_runs`;
+///       ScrollAPI opens its own socket for that — see ScrollAPI.swift.)
+///   conv-level (lazy)     — one socket per conversation to
+///       `/v1/realtime-hub/conv/<id>`, carrying `messages`,
+///       `bot_lookbacks`, `group_continue_requests` and
+///       `conversation_participants` changes. Opened when a conv view
+///       appears, closed when it disappears.
 @MainActor
 final class RealtimeManager {
     static let shared = RealtimeManager()
@@ -20,62 +25,39 @@ final class RealtimeManager {
 
     // MARK: - User-level channel
 
-    private var userChannel: RealtimeChannelV2?
-    private var userSubs: [RealtimeSubscription] = []
+    private var userSocket: RealtimeSocket?
 
-    /// Open the user-level channel for `userId`. Idempotent — calling twice
-    /// with the same id is a no-op.
+    /// Open the user-level socket for `userId`. Idempotent — calling
+    /// twice is a no-op. (`userId` is implied by the JWT the socket
+    /// authenticates with; the parameter is kept for call-site clarity
+    /// and idempotency bookkeeping.)
     func startUserChannel(userId: String,
                           onUnreadEvent: @escaping @Sendable (UnreadEvent) -> Void) async {
-        if userChannel != nil { return }
-        let ch = SupabaseStack.shared.realtimeV2.channel("user:\(userId)")
-
-        userSubs.append(ch.onPostgresChange(
-            UpdateAction.self,
-            schema: "pendingbot",
-            table: "user_unread_counts",
-            filter: "user_id=eq.\(userId)"
-        ) { action in
-            onUnreadEvent(.init(record: action.record))
-        })
-        userSubs.append(ch.onPostgresChange(
-            InsertAction.self,
-            schema: "pendingbot",
-            table: "user_unread_counts",
-            filter: "user_id=eq.\(userId)"
-        ) { action in
-            onUnreadEvent(.init(record: action.record))
-        })
-        do {
-            try await ch.subscribeWithError()
-        } catch {
-            // Best-effort — observers fall back to polling if the socket is
-            // unhealthy, keeping the public surface non-throwing.
+        if userSocket != nil { return }
+        let socket = RealtimeSocket(path: "v1/realtime-hub/user") { change in
+            // The user topic also carries scroll_runs; only unread
+            // changes belong to this consumer.
+            guard change.table == "user_unread_counts" else { return }
+            onUnreadEvent(UnreadEvent(record: change.record))
         }
-        userChannel = ch
+        socket.start()
+        userSocket = socket
     }
 
     func stopUserChannel() async {
-        userSubs.forEach { $0.cancel() }
-        userSubs.removeAll()
-        if let ch = userChannel {
-            // removeChannel — not just unsubscribe — so the SDK drops its
-            // cached entry; next `channel(topic)` returns a fresh instance
-            // instead of a stale one whose postgres_changes buffer is full.
-            await SupabaseStack.shared.realtimeV2.removeChannel(ch)
-            userChannel = nil
-        }
+        userSocket?.stop()
+        userSocket = nil
     }
 
     // MARK: - Conv-level channels
 
     private var convChannels: [String: ConvChannelHandle] = [:]
 
-    /// Open or reuse a conv-level channel. Multiple observers share one
-    /// underlying socket subscription — each gets a token to drop later.
-    /// One channel covers both `messages` (visible turns + log entries)
-    /// and `bot_lookbacks` (invisible context-edit notes); callers
-    /// register one closure per category.
+    /// Open or reuse a conv-level socket. Multiple observers share one
+    /// underlying socket — each gets a token to drop later. One socket
+    /// covers `messages`, `bot_lookbacks`, `group_continue_requests` and
+    /// `conversation_participants`; callers register one closure per
+    /// category.
     func startConvChannel(
         conversationId: String,
         onMessage: @escaping @Sendable (MessageEvent) -> Void,
@@ -90,120 +72,55 @@ final class RealtimeManager {
             return token
         }
 
-        let ch = SupabaseStack.shared.realtimeV2.channel("conv:\(conversationId)")
-        let handle = ConvChannelHandle(channel: ch)
+        let handle = ConvChannelHandle()
         handle.observers[token.id] = (onMessage, onLookback, onContinueRequest, onParticipants)
 
-        // Capture the handle weakly inside the callbacks so the channel can
-        // be torn down without dangling observer references.
-        let observersRef: () -> [UUID: ConvChannelHandle.Observers] = { [weak handle] in
-            handle?.observers ?? [:]
+        let socket = RealtimeSocket(
+            path: "v1/realtime-hub/conv/\(conversationId)"
+        ) { [weak handle] change in
+            guard let handle else { return }
+            switch change.table {
+            case "messages":
+                // The conv topic only ever emits message INSERT/UPDATE
+                // (rows are soft-deleted via a status UPDATE, never a
+                // row DELETE) — ignore any stray delete.
+                guard change.op != .delete else { return }
+                let evt = MessageEvent(kind: change.op == .insert ? .insert : .update,
+                                       record: change.record)
+                for (_, obs) in handle.observers { obs.message(evt) }
+            case "bot_lookbacks":
+                guard change.op != .delete else { return }
+                let evt = LookbackEvent(kind: change.op == .insert ? .insert : .update,
+                                        record: change.record)
+                for (_, obs) in handle.observers { obs.lookback(evt) }
+            case "group_continue_requests":
+                guard change.op != .delete else { return }
+                let evt = ContinueRequestEvent(kind: change.op == .insert ? .insert : .update,
+                                               record: change.record)
+                for (_, obs) in handle.observers { obs.continueReq(evt) }
+            case "conversation_participants":
+                let kind: ParticipantsEvent.Kind = switch change.op {
+                case .insert: .insert
+                case .update: .update
+                case .delete: .delete
+                }
+                for (_, obs) in handle.observers { obs.participants(ParticipantsEvent(kind: kind)) }
+            default:
+                break
+            }
         }
-
-        handle.subs.append(ch.onPostgresChange(
-            InsertAction.self,
-            schema: "pendingbot",
-            table: "messages",
-            filter: "conversation_id=eq.\(conversationId)"
-        ) { action in
-            let evt = MessageEvent(kind: .insert, record: action.record)
-            for (_, obs) in observersRef() { obs.message(evt) }
-        })
-        handle.subs.append(ch.onPostgresChange(
-            UpdateAction.self,
-            schema: "pendingbot",
-            table: "messages",
-            filter: "conversation_id=eq.\(conversationId)"
-        ) { action in
-            let evt = MessageEvent(kind: .update, record: action.record)
-            for (_, obs) in observersRef() { obs.message(evt) }
-        })
-        handle.subs.append(ch.onPostgresChange(
-            InsertAction.self,
-            schema: "pendingbot",
-            table: "bot_lookbacks",
-            filter: "conversation_id=eq.\(conversationId)"
-        ) { action in
-            let evt = LookbackEvent(kind: .insert, record: action.record)
-            for (_, obs) in observersRef() { obs.lookback(evt) }
-        })
-        handle.subs.append(ch.onPostgresChange(
-            UpdateAction.self,
-            schema: "pendingbot",
-            table: "bot_lookbacks",
-            filter: "conversation_id=eq.\(conversationId)"
-        ) { action in
-            let evt = LookbackEvent(kind: .update, record: action.record)
-            for (_, obs) in observersRef() { obs.lookback(evt) }
-        })
-        // Group-only tables. Subscriptions fire on every conv channel
-        // regardless of conv type — that's fine; non-group convs simply
-        // never produce rows in these tables, so the closures are
-        // never invoked. Each must be in `supabase_realtime` publication
-        // — Realtime accepts the channel join when one isn't, but silently
-        // drops events for *every* postgres_changes filter on the same
-        // channel (incl. messages), surfacing as user_user real-time
-        // delivery silently breaking. See migration 0060.
-        handle.subs.append(ch.onPostgresChange(
-            InsertAction.self,
-            schema: "pendingbot",
-            table: "group_continue_requests",
-            filter: "conversation_id=eq.\(conversationId)"
-        ) { action in
-            let evt = ContinueRequestEvent(kind: .insert, record: action.record)
-            for (_, obs) in observersRef() { obs.continueReq(evt) }
-        })
-        handle.subs.append(ch.onPostgresChange(
-            UpdateAction.self,
-            schema: "pendingbot",
-            table: "group_continue_requests",
-            filter: "conversation_id=eq.\(conversationId)"
-        ) { action in
-            let evt = ContinueRequestEvent(kind: .update, record: action.record)
-            for (_, obs) in observersRef() { obs.continueReq(evt) }
-        })
-        handle.subs.append(ch.onPostgresChange(
-            InsertAction.self,
-            schema: "pendingbot",
-            table: "conversation_participants",
-            filter: "conversation_id=eq.\(conversationId)"
-        ) { _ in
-            for (_, obs) in observersRef() { obs.participants(ParticipantsEvent(kind: .insert)) }
-        })
-        handle.subs.append(ch.onPostgresChange(
-            UpdateAction.self,
-            schema: "pendingbot",
-            table: "conversation_participants",
-            filter: "conversation_id=eq.\(conversationId)"
-        ) { _ in
-            for (_, obs) in observersRef() { obs.participants(ParticipantsEvent(kind: .update)) }
-        })
-        handle.subs.append(ch.onPostgresChange(
-            DeleteAction.self,
-            schema: "pendingbot",
-            table: "conversation_participants",
-            filter: "conversation_id=eq.\(conversationId)"
-        ) { _ in
-            for (_, obs) in observersRef() { obs.participants(ParticipantsEvent(kind: .delete)) }
-        })
-        do {
-            try await ch.subscribeWithError()
-        } catch {
-            // Best-effort subscribe — caller still gets a token; loss of
-            // realtime degrades to refresh-on-foreground until reconnect.
-        }
+        handle.socket = socket
+        socket.start()
         convChannels[conversationId] = handle
         return token
     }
 
-    /// Drop one observer. Last observer out closes the underlying channel.
+    /// Drop one observer. Last observer out closes the underlying socket.
     func stopConvChannel(_ token: ConvSubscriptionToken) async {
         guard let handle = convChannels[token.conversationId] else { return }
         handle.observers.removeValue(forKey: token.id)
         if handle.observers.isEmpty {
-            handle.subs.forEach { $0.cancel() }
-            // See `stopUserChannel`.
-            await SupabaseStack.shared.realtimeV2.removeChannel(handle.channel)
+            handle.socket?.stop()
             convChannels.removeValue(forKey: token.conversationId)
         }
     }
@@ -212,8 +129,7 @@ final class RealtimeManager {
     func stopAll() async {
         await stopUserChannel()
         for (_, handle) in convChannels {
-            handle.subs.forEach { $0.cancel() }
-            await SupabaseStack.shared.realtimeV2.removeChannel(handle.channel)
+            handle.socket?.stop()
         }
         convChannels.removeAll()
     }
@@ -238,9 +154,9 @@ struct LookbackEvent: Sendable {
     let record: [String: AnyJSON]
 }
 
-/// Group-only — fires on group_continue_requests INSERT/UPDATE for
-/// the subscribed conv. Used to surface / dismiss the continue-vote
-/// banner above the composer without the poll-on-open delay.
+/// Group-only — fires on group_continue_requests INSERT/UPDATE for the
+/// subscribed conv. Used to surface / dismiss the continue-vote banner
+/// above the composer without the poll-on-open delay.
 struct ContinueRequestEvent: Sendable {
     enum Kind: Sendable { case insert, update }
     let kind: Kind
@@ -248,8 +164,8 @@ struct ContinueRequestEvent: Sendable {
 }
 
 /// Group-only — fires on conversation_participants delta for the
-/// subscribed conv. Carries no body; observer reloads the senders
-/// map (small, infrequent).
+/// subscribed conv. Carries no body; observer reloads the senders map
+/// (small, infrequent).
 struct ParticipantsEvent: Sendable {
     enum Kind: Sendable { case insert, update, delete }
     let kind: Kind
@@ -274,8 +190,6 @@ private final class ConvChannelHandle {
         continueReq: ContinueHandler,
         participants: ParticipantsHandler
     )
-    let channel: RealtimeChannelV2
+    var socket: RealtimeSocket?
     var observers: [UUID: Observers] = [:]
-    var subs: [RealtimeSubscription] = []
-    init(channel: RealtimeChannelV2) { self.channel = channel }
 }
