@@ -512,8 +512,6 @@ export interface AuditCallOpts extends AuditUsage {
   rawModelCalls?: RawModelCall[];
 }
 
-const PER_MILLION = 1_000_000;
-
 export interface RawModelCall {
   taskType: string;
   providerId: string;
@@ -626,39 +624,12 @@ function serializeThrown(err: unknown): Json {
   return toJsonValue(err);
 }
 
-// Cost in USD given an alias's per-1M-token prices. Returns null when
-// the alias has no pricing rows (e.g. fresh alias added without prices)
-// rather than 0 — the panel renders null as '—' which is the honest
-// signal that we don't know the cost, vs '0' which would mislead.
-export function computeCost(alias: RouteAlias, usage: AuditUsage): number | null {
-  let known = false;
-  let cost = 0;
-  if (alias.inputPrice != null && usage.inputTokens) {
-    cost += (usage.inputTokens * alias.inputPrice) / PER_MILLION;
-    known = true;
-  }
-  if (alias.outputPrice != null && usage.outputTokens) {
-    cost += (usage.outputTokens * alias.outputPrice) / PER_MILLION;
-    known = true;
-  }
-  if (alias.cachedInputPrice != null && usage.cacheReadTokens) {
-    cost += (usage.cacheReadTokens * alias.cachedInputPrice) / PER_MILLION;
-    known = true;
-  }
-  if (alias.cacheWritePrice != null && usage.cacheWriteTokens) {
-    cost += (usage.cacheWriteTokens * alias.cacheWritePrice) / PER_MILLION;
-    known = true;
-  }
-  if (alias.audioInputPrice != null && usage.audioInputTokens) {
-    cost += (usage.audioInputTokens * alias.audioInputPrice) / PER_MILLION;
-    known = true;
-  }
-  if (alias.audioOutputPrice != null && usage.audioOutputTokens) {
-    cost += (usage.audioOutputTokens * alias.audioOutputPrice) / PER_MILLION;
-    known = true;
-  }
-  return known ? cost : null;
-}
+// Billing cost is the provider-reported figure (see persistAuditMessage).
+// The former local price-book computeCost() was removed: a hand-curated
+// alias price table drifts and mis-bills. The llm_model_aliases price
+// columns stay — pickAlias still uses blendedUsdPerMillion to prefer the
+// cheaper provider, and that routing preference tolerates staleness in a
+// way billing does not.
 
 // ─────────────────────────────────────────────────────────────────────
 // Audit is offloaded onto AUDIT_QUEUE: the LLM response path calls
@@ -731,15 +702,14 @@ export async function persistAuditMessage(
 ): Promise<void> {
   const supa = serviceClient(env);
   const { auditId, latencyMs, route, opts } = msg;
-  // Local price-book cost is authoritative for billing. We fall back to
-  // the provider-reported value only when the alias has no price rows
-  // (unregistered passthrough), so unpriced traffic still settles
-  // something instead of going to zero. The provider-reported value is
-  // also stored side-by-side in provider_cost_usd so the board can diff
-  // local-vs-provider per row and validate the calculator.
-  const localCost = route?.alias ? computeCost(route.alias, opts) : null;
+  // Billing cost is the provider-reported figure — the exact amount the
+  // upstream charged, summed across the turn's LLM calls by
+  // mergeProviderUsageDetails. The former local price-book computation
+  // was removed: a hand-curated alias price table drifts and mis-bills.
+  // A turn whose provider reports no cost (e.g. OpenAI direct) settles
+  // as 'skipped' for now — the AI Gateway cost fallback fills that gap.
   const providerCost = opts.providerCostUsd ?? null;
-  const llmCost = localCost ?? providerCost;
+  const llmCost = providerCost;
   // Web-tool spend (Brave / Tavily / Exa / Serper / Firecrawl) accrues
   // during the same LLM turn. We fold its USD sum into the parent row
   // and apply the same usdToPnd markup so a single billing_debit
