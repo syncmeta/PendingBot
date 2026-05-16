@@ -279,6 +279,7 @@ export async function summarizeAttachment(
         modelSlug: picked.slug,
         taskType: 'attachment_summary',
         maxAttempts: SUMMARY_MAX_ATTEMPTS,
+        metadata: { userId: deps.userId, conversationId: deps.conversationId },
       },
       async (route) => {
         const request = {
@@ -461,6 +462,7 @@ export async function readAttachmentForTool(
         modelSlug: picked.slug,
         taskType: 'attachment_read',
         maxAttempts: SUMMARY_MAX_ATTEMPTS,
+        metadata: { userId: deps.userId, conversationId: deps.conversationId },
       },
       async (route) => {
         const request = {

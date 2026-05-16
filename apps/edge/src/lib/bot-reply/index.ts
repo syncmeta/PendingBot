@@ -591,6 +591,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
           modelSlug: bot.model_id,
           taskType: 'message_reply',
           preferProvider: input.providerOverride ?? undefined,
+          metadata: { userId, conversationId },
         },
         async (r) => {
           const request = {

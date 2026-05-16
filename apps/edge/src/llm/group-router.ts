@@ -179,6 +179,7 @@ export async function runGroupRouter(
     route = await resolveRoute(supa, env, {
       modelSlug,
       taskType: 'group_router',
+      metadata: { conversationId },
     });
   } catch (err) {
     console.error('[group-router] resolveRoute failed', err);

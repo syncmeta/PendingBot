@@ -56,6 +56,10 @@ export interface RouteResolveOpts {
   preferProvider?: string;
   // Used by fallback retries: skip these provider slugs.
   excludeProviders?: string[];
+  // Caller context tagged onto each LLM request as the cf-aig-metadata
+  // header, so the AI Gateway dashboard / logs are sliceable by user and
+  // conversation. task_type is always tagged from `taskType` above.
+  metadata?: { userId?: string | null; conversationId?: string | null };
 }
 
 export interface RouteAlias {
@@ -197,6 +201,7 @@ export function pickAlias(
 function buildClient(
   env: Env,
   provider: { base_url: string; auth_type: string; secret_ref: string; config: unknown },
+  aigMetadata?: Record<string, string>,
 ): OpenAI {
   const envBag = env as unknown as Record<string, string | undefined>;
   const apiKey = envBag[provider.secret_ref];
@@ -218,9 +223,22 @@ function buildClient(
     defaultHeaders: {
       'HTTP-Referer': 'https://pendingname.com',
       'X-Title': 'PendingBot',
+      // cf-aig-metadata rides on every request the AI Gateway proxies,
+      // tagging the gateway log so it's sliceable by task / user / conv.
+      ...(aigMetadata ? { 'cf-aig-metadata': JSON.stringify(aigMetadata) } : {}),
       ...extraHeaders,
     },
   });
+}
+
+// Assemble the cf-aig-metadata payload from the route opts. AI Gateway
+// caps custom metadata at 5 entries; we send at most 3.
+function aigMetadataFrom(opts: RouteResolveOpts): Record<string, string> | undefined {
+  const m: Record<string, string> = {};
+  if (opts.taskType) m.task_type = opts.taskType;
+  if (opts.metadata?.userId) m.user_id = opts.metadata.userId;
+  if (opts.metadata?.conversationId) m.conversation_id = opts.metadata.conversationId;
+  return Object.keys(m).length > 0 ? m : undefined;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -419,7 +437,7 @@ export async function resolveRoute(
   if (picked && picked.llm_providers) {
     const provider = picked.llm_providers;
     return {
-      client: buildClient(env, provider),
+      client: buildClient(env, provider, aigMetadataFrom(opts)),
       modelToCall: picked.provider_model_id,
       alias: {
         aliasId: picked.id,
@@ -457,7 +475,7 @@ export async function resolveRoute(
     );
   }
   return {
-    client: buildClient(env, openrouter),
+    client: buildClient(env, openrouter, aigMetadataFrom(opts)),
     modelToCall: slug,
     alias: null,
     provider: { id: openrouter.id, slug: openrouter.slug },

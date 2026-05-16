@@ -296,6 +296,7 @@ realtimeRoutes.post('/session', async (c) => {
     route = await resolveRoute(supaUser, c.env, {
       modelSlug: OPENAI_MODEL_SLUG,
       taskType: 'voice_call',
+      metadata: { userId, conversationId: parsed.conversation_id },
     });
   } catch (err) {
     console.warn('[realtime/session] resolveRoute failed', err);
@@ -526,6 +527,7 @@ realtimeRoutes.post('/usage', async (c) => {
       modelSlug: OPENAI_MODEL_SLUG,
       taskType: 'voice_call',
       preferProvider: 'openai',
+      metadata: { userId, conversationId: parsed.conversation_id },
     });
   } catch (err) {
     console.warn('[realtime/usage] resolveRoute failed', err);
