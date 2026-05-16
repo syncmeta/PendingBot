@@ -100,18 +100,40 @@ export class RealtimeMeterDO {
     this.ctx = ctx;
     await this.state.storage.put('ctx', ctx);
 
+    // Sideband endpoint. When the AI Gateway is configured we route the
+    // sideband through it (provider-native OpenAI passthrough), so the
+    // voice call's token usage also shows up in the gateway dashboard.
+    //
+    // The OpenAI key is ALWAYS sent inline as Authorization — that pins
+    // the sideband to OpenAI's own billing (BYOK-style), NOT Unified
+    // Billing. The WebRTC call already bills this OpenAI account once
+    // for the session; an inline-key sideband makes the gateway a pure
+    // observer that never charges CF credits, so there is no double
+    // charge. (If the gateway turns out not to forward `call_id`, revert
+    // to the api.openai.com branch — billing then still works direct.)
+    const headers: Record<string, string> = {
+      Upgrade: 'websocket',
+      Authorization: `Bearer ${key}`,
+      'OpenAI-Beta': 'realtime=v1',
+    };
+    let url: string;
+    if (
+      this.env.CF_ACCOUNT_ID &&
+      this.env.CF_AIG_GATEWAY &&
+      this.env.CF_AIG_RUN_TOKEN
+    ) {
+      url =
+        `https://gateway.ai.cloudflare.com/v1/${this.env.CF_ACCOUNT_ID}` +
+        `/${this.env.CF_AIG_GATEWAY}/openai` +
+        `?call_id=${encodeURIComponent(ctx.callId)}`;
+      headers['cf-aig-authorization'] = `Bearer ${this.env.CF_AIG_RUN_TOKEN}`;
+    } else {
+      url = `https://api.openai.com/v1/realtime?call_id=${encodeURIComponent(ctx.callId)}`;
+    }
+
     let resp: Response;
     try {
-      resp = await fetch(
-        `https://api.openai.com/v1/realtime?call_id=${encodeURIComponent(ctx.callId)}`,
-        {
-          headers: {
-            Upgrade: 'websocket',
-            Authorization: `Bearer ${key}`,
-            'OpenAI-Beta': 'realtime=v1',
-          },
-        },
-      );
+      resp = await fetch(url, { headers });
     } catch (err) {
       console.warn('[realtime-meter] sideband connect failed', err);
       return new Response('sideband connect failed', { status: 502 });
