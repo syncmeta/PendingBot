@@ -48,6 +48,9 @@ extension ConversationView {
                 created_at: Int(Date().timeIntervalSince1970),
                 attachments: nil
             ))
+            // Record the bubble in turn order so the SSE `bubble` event
+            // can rekey it to its server-canonical id (see rekeyBotBubble).
+            turnBubbleIds.append(key)
             // Inherit the turn's accumulated citations so any [N] in the
             // bubble's content lands tappable from the first frame. The
             // canonical row's Realtime UPDATE later refreshes the same key
@@ -106,6 +109,41 @@ extension ConversationView {
             streamingLog.error("worker error event: \(m, privacy: .public)")
             if let key = liveTraceUserMsgId { markUserMessageFailed(key) }
         }
+    }
+
+    /// Rekey the optimistic `live-*` bot bubble at `turnBubbleIds[idx]` to
+    /// its server-canonical `id`, announced by the SSE `bubble` event.
+    /// After this the bubble carries the same id the realtime INSERT will
+    /// carry, so `applyRealtimeEvent` resolves that INSERT as an in-place
+    /// upsert rather than appending a duplicate. Idempotent; a no-op if the
+    /// entry is already canonical or the row has since gone.
+    ///
+    /// Safe to run mid-turn: a bubble's `bubble` event trails all of its
+    /// tokens, so no further `.append` targets the old `live-*` key.
+    func rekeyBotBubble(at idx: Int, to id: String) {
+        guard idx >= 0, idx < turnBubbleIds.count else { return }
+        let oldId = turnBubbleIds[idx]
+        guard oldId != id else { return }
+        turnBubbleIds[idx] = id
+        guard let mIdx = messages.firstIndex(where: { $0.id == oldId }) else { return }
+        let m = messages[mIdx]
+        messages[mIdx] = ChatMessage(
+            id: id,
+            conversation_id: m.conversation_id,
+            sender_type: m.sender_type,
+            sender_id: m.sender_id,
+            content: m.content,
+            created_at: m.created_at,
+            attachments: m.attachments
+        )
+        // Carry id-keyed sidecars across the rekey.
+        if let cites = citationsByMsgId.removeValue(forKey: oldId) {
+            citationsByMsgId[id] = cites
+        }
+        if let aids = attachmentIdsByMsgId.removeValue(forKey: oldId) {
+            attachmentIdsByMsgId[id] = aids
+        }
+        if revealTargetId == oldId { revealTargetId = id }
     }
 
     /// Restart the idle debounce — after `cursorBlinkAfterIdle` with no

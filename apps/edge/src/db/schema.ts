@@ -1470,7 +1470,6 @@ export type Database = {
           citations: Json | null
           client_message_id: string
           content: string | null
-          content_partial: string | null
           content_tsv: unknown
           conversation_id: string
           created_at: string
@@ -1494,7 +1493,6 @@ export type Database = {
           citations?: Json | null
           client_message_id: string
           content?: string | null
-          content_partial?: string | null
           content_tsv?: unknown
           conversation_id: string
           created_at?: string
@@ -1518,7 +1516,6 @@ export type Database = {
           citations?: Json | null
           client_message_id?: string
           content?: string | null
-          content_partial?: string | null
           content_tsv?: unknown
           conversation_id?: string
           created_at?: string

@@ -191,13 +191,10 @@ extension ConversationView {
         if let attValue = r["attachments"], let aids = decodeAttachmentIds(attValue), !aids.isEmpty {
             attachmentIdsByMsgId[id] = aids
         }
-        // Prefer content_partial while a bot turn is mid-stream — content
-        // stays null until the worker writes the final string at done. This
-        // is what lets a user re-enter a conv whose SSE they dropped and
-        // still see the bubble fill in via Realtime UPDATEs.
-        let finalContent = r["content"]?.stringValue ?? ""
-        let partialContent = r["content_partial"]?.stringValue ?? ""
-        let content = finalContent.isEmpty ? partialContent : finalContent
+        // Bubbles are persisted whole — the worker emits each finished
+        // bubble as its own row, so `content` is always the authoritative
+        // text for the row.
+        let content = r["content"]?.stringValue ?? ""
         let createdRaw = r["created_at"]?.stringValue ?? ""
         // Default to "now" so live messages don't collapse to 1970 if the
         // timestamp format ever drifts.
@@ -222,43 +219,25 @@ extension ConversationView {
         } else {
             // Drop our own optimistic local/live row if we can match it.
             //
-            // For bot rows, the SSE `bubble` event told us this canonical
-            // id ahead of time → match by membership in
-            // `pendingCanonicalBotIds`, then FIFO-replace the first
-            // `live-*` bot bubble. This is timing-independent and handles
-            // slow streams where the optimistic bubble is older than any
-            // sensible recency window.
+            // Bot rows: the SSE `bubble` event normally rekeys our live-*
+            // bubble to its canonical id before this INSERT arrives (the
+            // webhook path is slower than SSE), so the INSERT resolves
+            // above as an in-place upsert and never reaches here. This
+            // branch only catches the rare reverse race — INSERT before
+            // the `bubble` event: in a 1v1 bot conv the single bot means
+            // any bot row arriving mid-turn is unambiguously ours, so
+            // FIFO-replace the first unreconciled live-* bot bubble.
             //
-            // For user rows we don't have a server-announced id (the user
-            // message is materialized server-side without acking back),
-            // so fall back to (prefix + role + recency) — same heuristic
-            // as before, just bounded to user rows where it's accurate.
-            //
-            // We deliberately don't compare content for live-* bot bubbles:
-            // they're still being revealed by the typewriter when the
-            // canonical INSERT lands, so their displayed content is partial.
-            // `isOurBotEcho` — this canonical bot row belongs to our own
-            // in-flight SSE turn, so it must replace the optimistic
-            // `live-*` bubble, not append alongside it.
-            //
-            // Normally the SSE `bubble` event announces the id first
-            // (→ pendingCanonicalBotIds). But the realtime INSERT can
-            // race ahead of that event, and then the id isn't in the set
-            // yet — the old code appended, producing a duplicate bubble.
-            // A 1v1 bot conv has exactly one bot, so any bot row arriving
-            // while our turn is still in flight is unambiguously ours:
-            // fall back to "turn in flight AND an unreconciled live-* bot
-            // bubble exists". Groups keep the precise id-set path (they
-            // can have concurrent bots — and group sends don't use SSE,
-            // so they have no SSE/realtime duplicate to begin with).
-            let isOurBotEcho = role == "bot" && (
-                pendingCanonicalBotIds.contains(id)
-                || (conversation.conversation_type == "user_bot"
-                    && chatTurnTask != nil
-                    && messages.contains {
-                        $0.id.hasPrefix("live-") && $0.sender_type == "bot"
-                    })
-            )
+            // User rows have no server-announced id (the user message is
+            // materialized server-side without acking back), so match on
+            // exact client_message_id, falling back to (prefix + role +
+            // recency) for cross-device echoes.
+            let isOurBotEcho = role == "bot"
+                && conversation.conversation_type == "user_bot"
+                && chatTurnTask != nil
+                && messages.contains {
+                    $0.id.hasPrefix("live-") && $0.sender_type == "bot"
+                }
             let serverCmid = r["client_message_id"]?.stringValue
             let now = Int(Date().timeIntervalSince1970)
             let staleIndex: Int? = {
@@ -286,7 +265,6 @@ extension ConversationView {
                 }
                 return nil
             }()
-            if isOurBotEcho { pendingCanonicalBotIds.remove(id) }
             if let stale = staleIndex {
                 let oldId = messages[stale].id
                 localMsgClientIds.removeValue(forKey: oldId)

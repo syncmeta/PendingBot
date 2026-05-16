@@ -310,7 +310,6 @@ extension ConversationView {
                 /// recall can scrub URLCache for the right ids.
                 let attachments: AttachmentRef?
                 let content: String?
-                let content_partial: String?
                 let status: String?
                 let created_at: String
                 let citations: [MessageCitation]?
@@ -325,7 +324,7 @@ extension ConversationView {
             // "我撤回了 几分钟前 的一条消息" without further look-ups.
             let rows: [Row] = try await SupabaseStack.shared
                 .from("messages")
-                .select("id, client_message_id, conversation_id, user_id, sender_bot_id, role, log_kind, log_payload, attachments, content, content_partial, status, created_at, citations, metadata")
+                .select("id, client_message_id, conversation_id, user_id, sender_bot_id, role, log_kind, log_payload, attachments, content, status, created_at, citations, metadata")
                 .eq("conversation_id", value: conversation.id)
                 .order("created_at", ascending: true)
                 .limit(200)
@@ -371,10 +370,9 @@ extension ConversationView {
                 }
                 let senderType: String = r.role == "bot" ? "bot" : "user"
                 let senderId = r.role == "bot" ? (r.sender_bot_id ?? "") : (r.user_id ?? "")
-                // Mid-stream bot rows have content=null and only content_partial set;
-                // fall back so a re-enter shows the in-flight bubble at its current
-                // length, not blank.
-                let renderContent = (r.content?.isEmpty == false ? r.content : r.content_partial) ?? ""
+                // Bubbles are persisted whole (status='done'); the worker
+                // never writes partial rows, so `content` is authoritative.
+                let renderContent = r.content ?? ""
                 viewMessages.append(ChatMessage(
                     id: r.id,
                     conversation_id: r.conversation_id,

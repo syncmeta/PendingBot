@@ -81,9 +81,9 @@ const PostBody = z.object({
 //   event: error        data: { message }
 //
 // Client closing the connection no longer aborts the LLM — the turn keeps
-// running (writing content_partial / final content to messages) so a flaky
-// network or a backgrounded app can pick up where it left off via Realtime
-// UPDATEs when the user re-opens the conv. Explicit stop is a separate POST
+// running (persisting finished bubbles to messages) so a flaky network or a
+// backgrounded app can pick up where it left off via the realtime hub when
+// the user re-opens the conv. Explicit stop is a separate POST
 // (set messages.stop_requested) — TODO when that endpoint lands.
 messageRoutes.post('/', async (c) => {
   const userId = c.var.userId!;
@@ -867,7 +867,6 @@ messageRoutes.post('/:id/recall', async (c) => {
     .update({
       status: 'deleted',
       content: null,
-      content_partial: null,
       attachments: null,
     })
     .eq('id', id);

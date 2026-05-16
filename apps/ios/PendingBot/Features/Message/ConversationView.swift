@@ -144,14 +144,17 @@ struct ConversationView: View {
     @State var revealTask: Task<Void, Never>?
     @State var streamPaused: Bool = false
 
-    /// Canonical bot-row ids announced by the SSE `bubble` event but not yet
-    /// reconciled with a Realtime INSERT. When the INSERT lands with one of
-    /// these ids, we know it's *our own* turn echoing back and should
-    /// replace the matching `live-*` optimistic bubble — regardless of how
-    /// long the round-trip took. Without this, slow streams (>5s) used to
-    /// blow past the recency-window dedup and the canonical row would
-    /// append as a duplicate bubble.
-    @State var pendingCanonicalBotIds: Set<String> = []
+    /// This turn's bot-bubble message ids, in creation order. A bubble is
+    /// born under a `live-<uuid>` id (the client splitter has no canonical
+    /// id yet); when the SSE `bubble` event announces the server's
+    /// canonical id for bubble N, entry N-1 is rekeyed to it (see
+    /// `case .bubble` → `rekeyBotBubble`). Reset at the start of each turn.
+    ///
+    /// This is what makes SSE/realtime dedup order-independent: by the time
+    /// the realtime INSERT for a bubble arrives, the live-* bubble already
+    /// carries its canonical id, so the INSERT is a plain id-keyed in-place
+    /// upsert in `applyRealtimeEvent` — never a duplicate.
+    @State var turnBubbleIds: [String] = []
 
     /// Maps `local-<uuid>` → `client_message_id` so a Realtime INSERT echo
     /// can dedupe against our optimistic row by matching the server's
@@ -1215,6 +1218,8 @@ struct ConversationView: View {
         // Fresh citation slate for the new turn — last turn's snapshot
         // shouldn't leak into [N] resolutions for this turn's first bubble.
         liveCitations = []
+        // Fresh bubble-id slate — `bubble` events rekey entries in here.
+        turnBubbleIds = []
 
         let body: [String: Any] = {
             // Reuse the cmid bound to the optimistic row when there is one
@@ -1343,15 +1348,19 @@ struct ConversationView: View {
                     case .token(let delta):
                         if !pending { pending = true }
                         splitter.accept(token: delta)
-                    case .bubble(let id, _, _, _):
-                        // Server has persisted a bubble row with this id.
-                        // Record it so when the corresponding Realtime
-                        // INSERT lands we can FIFO-replace the matching
-                        // `live-*` optimistic bubble cleanly — instead of
-                        // relying on a recency window that fails for slow
-                        // streams. The local `live-*` id remains the
-                        // source of truth for the UI until then.
-                        if !id.isEmpty { pendingCanonicalBotIds.insert(id) }
+                    case .bubble(let id, let index, _, _):
+                        // The server persisted this bubble under canonical
+                        // `id`. Rekey our optimistic live-* bubble (bubble
+                        // `index`, 1-based) to that id NOW — so the realtime
+                        // INSERT that follows resolves as a plain id-keyed
+                        // upsert, never a duplicate, regardless of which
+                        // path arrives first. `.begin` for a bubble always
+                        // precedes its `bubble` event (the event trails all
+                        // of the bubble's tokens), so the live-* row is
+                        // already in `turnBubbleIds` here.
+                        if !id.isEmpty, index >= 1, index <= turnBubbleIds.count {
+                            rekeyBotBubble(at: index - 1, to: id)
+                        }
                     case .done(_, let total):
                         splitter.flushTail()
                         splitter.turnDone(totalContent: total)
