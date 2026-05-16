@@ -227,6 +227,11 @@ async function assembleInstructions(
 
 const SessionBody = z.object({
   conversation_id: z.string(),
+  // 'webrtc' (default) — direct iOS<->OpenAI WebRTC, lowest latency,
+  // region-gated. 'websocket' — audio relayed iOS<->worker<->OpenAI,
+  // egresses from Cloudflare so it works from regions OpenAI geo-blocks.
+  // The client picks.
+  transport: z.enum(['webrtc', 'websocket']).default('webrtc'),
 });
 
 realtimeRoutes.post('/session', async (c) => {
@@ -270,23 +275,9 @@ realtimeRoutes.post('/session', async (c) => {
     });
   }
 
-  // Region gate. cf.country is what Cloudflare's edge GeoIP reports for
-  // the request's egress IP; blocked list lives in lib/openai-regions.ts.
-  const cfCountry = (c.req.raw as unknown as { cf?: { country?: string } }).cf
-    ?.country;
-  const region = checkOpenAIRegion(cfCountry ?? null);
-  if (!region.allowed) {
-    return routeJsonError(c, 451, 'voice_region_unsupported', {
-      message: t('voice.region_unsupported', locale),
-      detail: {
-        country: region.country,
-        supported_url: OPENAI_SUPPORTED_URL,
-      },
-    });
-  }
-
-  // Persona assembled server-side. Goes into the upstream mint body —
-  // never touches the iOS device.
+  // Persona assembled server-side. For WebRTC it's baked into the
+  // ephemeral mint body; for WebSocket the meter DO sends it via
+  // session.update. Either way it never touches the iOS device.
   const instructions = await assembleInstructions(c.env, ctx);
 
   // Route resolution. task_routing_rules can still override at admin
@@ -307,6 +298,67 @@ realtimeRoutes.post('/session', async (c) => {
   }
 
   const sessionId = crypto.randomUUID();
+
+  if (parsed.transport === 'websocket') {
+    // WebSocket transport: audio is relayed iOS<->worker<->OpenAI by
+    // RealtimeMeterDO. The connection egresses from Cloudflare, not the
+    // user's device, so the OpenAI region gate does NOT apply — skip it.
+    await recordRealtimeSession(c.env, {
+      session_id: sessionId,
+      user_id: userId,
+      conversation_id: parsed.conversation_id,
+      bot_id: ctx.bot.id,
+      openai_session_id: null,
+    });
+    const meterId = c.env.REALTIME_METER.idFromName(sessionId);
+    const prep = await c.env.REALTIME_METER.get(meterId).fetch(
+      'https://meter.internal/prepare',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          transport: 'proxy',
+          sessionId,
+          userId,
+          conversationId: parsed.conversation_id,
+          botId: ctx.bot.id,
+          startedAt: Date.now(),
+          model: route.modelToCall,
+          instructions,
+        }),
+      },
+    );
+    if (!prep.ok) {
+      console.warn('[realtime/session] meter prepare failed', prep.status);
+      return routeJsonError(c, 503, 'voice_upstream_failed');
+    }
+    return c.json({
+      session_id: sessionId,
+      transport: 'websocket',
+      ws_path: `/v1/realtime/ws?session_id=${sessionId}`,
+      model: route.modelToCall,
+      alias_id: route.alias?.aliasId ?? null,
+      provider_id: route.provider.id,
+      min_threshold: minThreshold,
+      balance_credits: balanceCredits,
+    });
+  }
+
+  // WebRTC transport (default). Region gate applies — iOS connects to
+  // OpenAI directly, so a geo-blocked egress IP must be rejected here.
+  // cf.country is Cloudflare's edge GeoIP for the request's egress IP;
+  // the blocked list lives in lib/openai-regions.ts.
+  const cfCountry = (c.req.raw as unknown as { cf?: { country?: string } }).cf
+    ?.country;
+  const region = checkOpenAIRegion(cfCountry ?? null);
+  if (!region.allowed) {
+    return routeJsonError(c, 451, 'voice_region_unsupported', {
+      message: t('voice.region_unsupported', locale),
+      detail: {
+        country: region.country,
+        supported_url: OPENAI_SUPPORTED_URL,
+      },
+    });
+  }
   return await mintOpenAISession(c.env, locale, {
     sessionId,
     userId,
@@ -495,9 +547,10 @@ realtimeRoutes.post('/attach', async (c) => {
 
   const meterId = c.env.REALTIME_METER.idFromName(parsed.session_id);
   const meter = c.env.REALTIME_METER.get(meterId);
-  const resp = await meter.fetch('https://meter.internal/start', {
+  const resp = await meter.fetch('https://meter.internal/sideband', {
     method: 'POST',
     body: JSON.stringify({
+      transport: 'sideband',
       callId: parsed.call_id,
       sessionId: parsed.session_id,
       userId,
@@ -511,6 +564,36 @@ realtimeRoutes.post('/attach', async (c) => {
     return routeJsonError(c, 502, 'voice_upstream_failed');
   }
   return c.json({ ok: true });
+});
+
+// =============================================================================
+// GET /v1/realtime/ws — WebSocket transport: relay through the meter DO
+// =============================================================================
+//
+// For transport:'websocket' sessions. iOS opens a WebSocket here (the
+// Supabase JWT rides in the Authorization header — same requireSession
+// gate as every other realtime route). The worker forwards the upgrade
+// to the session's RealtimeMeterDO, which bridges it to OpenAI's
+// realtime WebSocket and meters every turn server-side.
+
+realtimeRoutes.get('/ws', async (c) => {
+  if (c.req.header('Upgrade')?.toLowerCase() !== 'websocket') {
+    return routeJsonError(c, 400, 'invalid_body', {
+      detail: 'expected a websocket upgrade',
+    });
+  }
+  const userId = c.var.userId!;
+  const sessionId = c.req.query('session_id');
+  if (!sessionId) {
+    return routeJsonError(c, 400, 'invalid_body', {
+      detail: 'session_id query param required',
+    });
+  }
+  const sessGate = await requireActiveSession(c.env, sessionId, userId);
+  if (!sessGate.ok) return c.json(sessGate.body, sessGate.status);
+
+  const meterId = c.env.REALTIME_METER.idFromName(sessionId);
+  return c.env.REALTIME_METER.get(meterId).fetch(c.req.raw);
 });
 
 // =============================================================================

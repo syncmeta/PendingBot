@@ -6,48 +6,53 @@ import { endRealtimeSession } from '../lib/realtime-sessions';
 
 // RealtimeMeterDO — server-side, tamper-proof metering for a voice call.
 //
-// Voice audio stays on a direct iOS↔OpenAI WebRTC connection (best
-// mobile latency). But the audio path doesn't reach our server, so the
-// token usage in OpenAI's `response.done` events would only be visible
-// to the client — and a modified client could under-report to dodge
-// billing.
+// One instance per realtime session (keyed by session_id). It meters a
+// voice call from OpenAI's authoritative `response.done` events so the
+// client can't under-report usage to dodge billing. Two transports:
 //
-// OpenAI's fix is the "sideband": the WebRTC call has a `call_id`
-// (returned in the Location header of POST /v1/realtime/calls). A
-// server can open a SECOND connection to the same session —
-//   GET wss://api.openai.com/v1/realtime?call_id=<call_id>
-// — which is a control channel (NOT in the audio path) that receives
-// the same server events, including `response.done.usage`.
+//   sideband (WebRTC) — audio is a direct iOS<->OpenAI WebRTC link
+//     (best mobile latency). The worker isn't on that path, so the DO
+//     opens a SECOND, control-only connection to the same call via its
+//     call_id: GET wss://api.openai.com/v1/realtime?call_id=<id>. It
+//     receives the same response.done events without touching audio.
 //
-// This DO holds that sideband socket for one voice session. It reads
-// the authoritative usage straight from OpenAI, settles each turn
-// through the normal audit/billing path, and can hang the call up when
-// the balance runs out. The client never reports usage.
+//   proxy (WebSocket) — audio is JSON-framed over a WebSocket. iOS
+//     connects to the worker (Supabase-JWT auth, no provider/CF
+//     credential ever reaches the device); this DO bridges that socket
+//     to OpenAI's realtime WebSocket and relays every frame. Because
+//     the DO is on the path it meters directly, and because the hop is
+//     iOS->Cloudflare->OpenAI it also works from regions where a direct
+//     OpenAI connection is geo-blocked.
 //
-// One instance per realtime session — keyed by session_id via
-// env.REALTIME_METER.idFromName(sessionId). Reached only from the
-// Worker's /v1/realtime/attach + /end routes.
+// Either way usage is read server-side and settled through the normal
+// audit/billing path; the DO can also end the call on balance
+// exhaustion or the 30-minute cap.
 
 // Hard wall-clock cap, mirrors REALTIME_SESSION_MAX_AGE_MS in
-// lib/realtime-sessions.ts — past this we hang up and finalize even if
-// the sideband never closed cleanly.
+// lib/realtime-sessions.ts.
 const MAX_CALL_MS = 30 * 60 * 1000;
 
 // Canonical voice model slug — resolveRoute keys task_routing_rules and
 // the alias price lookup off this (same value as routes/realtime.ts).
 const OPENAI_MODEL_SLUG = 'gpt-realtime';
 
+type Transport = 'sideband' | 'proxy';
+
 interface MeterContext {
-  callId: string;
+  transport: Transport;
   sessionId: string;
   userId: string;
   conversationId: string;
   botId: string;
   startedAt: number;
+  // sideband (WebRTC) only — the call_id from POST /v1/realtime/calls.
+  callId?: string;
+  // proxy (WebSocket) only — model id + baked persona for session.update.
+  model?: string;
+  instructions?: string;
 }
 
-// Shape of the usage object inside an OpenAI realtime `response.done`
-// event. All fields optional — we default missing counts to 0.
+// Usage object inside an OpenAI realtime `response.done` event.
 interface RealtimeUsage {
   input_token_details?: {
     text_tokens?: number;
@@ -63,7 +68,10 @@ interface RealtimeUsage {
 export class RealtimeMeterDO {
   private state: DurableObjectState;
   private env: Env;
-  private ws: WebSocket | null = null;
+  // sideband mode: the control connection. proxy mode: the OpenAI leg.
+  private upstreamWs: WebSocket | null = null;
+  // proxy mode only: the iOS-facing leg.
+  private clientWs: WebSocket | null = null;
   private ctx: MeterContext | null = null;
   private turnIndex = 0;
   private closed = false;
@@ -75,9 +83,22 @@ export class RealtimeMeterDO {
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    if (url.pathname === '/start' && request.method === 'POST') {
-      const body = (await request.json()) as MeterContext;
-      return this.start(body);
+
+    // proxy mode: iOS opens a WebSocket to the worker, the worker
+    // forwards the upgrade here.
+    if (request.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
+      return this.handleProxyUpgrade();
+    }
+    // sideband mode: open the WebRTC control connection.
+    if (url.pathname === '/sideband' && request.method === 'POST') {
+      return this.startSideband((await request.json()) as MeterContext);
+    }
+    // proxy mode: stash the call context before iOS upgrades.
+    if (url.pathname === '/prepare' && request.method === 'POST') {
+      const ctx = (await request.json()) as MeterContext;
+      this.ctx = ctx;
+      await this.state.storage.put('ctx', ctx);
+      return Response.json({ ok: true });
     }
     if (url.pathname === '/stop' && request.method === 'POST') {
       await this.finalize();
@@ -86,10 +107,9 @@ export class RealtimeMeterDO {
     return new Response('not found', { status: 404 });
   }
 
-  // Open the sideband socket for a freshly-attached call. Idempotent:
-  // a second /start for the same session (retry, or after a DO restart
-  // where storage still holds the context) is a no-op.
-  private async start(ctx: MeterContext): Promise<Response> {
+  // ── sideband (WebRTC) ────────────────────────────────────────────
+
+  private async startSideband(ctx: MeterContext): Promise<Response> {
     const existing =
       this.ctx ?? (await this.state.storage.get<MeterContext>('ctx'));
     if (existing) return Response.json({ ok: true });
@@ -100,40 +120,11 @@ export class RealtimeMeterDO {
     this.ctx = ctx;
     await this.state.storage.put('ctx', ctx);
 
-    // Sideband endpoint. When the AI Gateway is configured we route the
-    // sideband through it (provider-native OpenAI passthrough), so the
-    // voice call's token usage also shows up in the gateway dashboard.
-    //
-    // The OpenAI key is ALWAYS sent inline as Authorization — that pins
-    // the sideband to OpenAI's own billing (BYOK-style), NOT Unified
-    // Billing. The WebRTC call already bills this OpenAI account once
-    // for the session; an inline-key sideband makes the gateway a pure
-    // observer that never charges CF credits, so there is no double
-    // charge. (If the gateway turns out not to forward `call_id`, revert
-    // to the api.openai.com branch — billing then still works direct.)
-    const headers: Record<string, string> = {
-      Upgrade: 'websocket',
-      Authorization: `Bearer ${key}`,
-      'OpenAI-Beta': 'realtime=v1',
-    };
-    let url: string;
-    if (
-      this.env.CF_ACCOUNT_ID &&
-      this.env.CF_AIG_GATEWAY &&
-      this.env.CF_AIG_RUN_TOKEN
-    ) {
-      url =
-        `https://gateway.ai.cloudflare.com/v1/${this.env.CF_ACCOUNT_ID}` +
-        `/${this.env.CF_AIG_GATEWAY}/openai` +
-        `?call_id=${encodeURIComponent(ctx.callId)}`;
-      headers['cf-aig-authorization'] = `Bearer ${this.env.CF_AIG_RUN_TOKEN}`;
-    } else {
-      url = `https://api.openai.com/v1/realtime?call_id=${encodeURIComponent(ctx.callId)}`;
-    }
-
     let resp: Response;
     try {
-      resp = await fetch(url, { headers });
+      resp = await fetch(this.realtimeUrl(`call_id=${encodeURIComponent(ctx.callId!)}`), {
+        headers: this.upstreamHeaders(key),
+      });
     } catch (err) {
       console.warn('[realtime-meter] sideband connect failed', err);
       return new Response('sideband connect failed', { status: 502 });
@@ -144,24 +135,139 @@ export class RealtimeMeterDO {
       return new Response('sideband upgrade failed', { status: 502 });
     }
     ws.accept();
-    this.ws = ws;
+    this.upstreamWs = ws;
     ws.addEventListener('message', (ev) => {
-      this.onMessage(ev).catch((err) =>
+      this.onUpstreamMessage(ev).catch((err) =>
         console.warn('[realtime-meter] settle failed', err),
       );
     });
-    ws.addEventListener('close', () => {
-      this.finalize().catch(() => undefined);
-    });
-    ws.addEventListener('error', () => {
-      this.finalize().catch(() => undefined);
-    });
+    ws.addEventListener('close', () => this.finalize().catch(() => undefined));
+    ws.addEventListener('error', () => this.finalize().catch(() => undefined));
 
     await this.state.storage.setAlarm(Date.now() + MAX_CALL_MS);
     return Response.json({ ok: true });
   }
 
-  private async onMessage(ev: MessageEvent): Promise<void> {
+  // ── proxy (WebSocket) ────────────────────────────────────────────
+
+  private async handleProxyUpgrade(): Promise<Response> {
+    const ctx = this.ctx ?? (await this.state.storage.get<MeterContext>('ctx'));
+    if (!ctx || ctx.transport !== 'proxy') {
+      return new Response('session not prepared', { status: 400 });
+    }
+    this.ctx = ctx;
+    const key = this.env.OPENAI_API_KEY;
+    if (!key) return new Response('openai key not configured', { status: 503 });
+
+    let resp: Response;
+    try {
+      resp = await fetch(
+        this.realtimeUrl(`model=${encodeURIComponent(ctx.model ?? OPENAI_MODEL_SLUG)}`),
+        { headers: this.upstreamHeaders(key) },
+      );
+    } catch (err) {
+      console.warn('[realtime-meter] proxy upstream connect failed', err);
+      return new Response('upstream connect failed', { status: 502 });
+    }
+    const upstream = resp.webSocket;
+    if (!upstream) {
+      return new Response('upstream upgrade failed', { status: 502 });
+    }
+    upstream.accept();
+    this.upstreamWs = upstream;
+
+    // iOS-facing leg.
+    const pair = new WebSocketPair();
+    const client = pair[0];
+    const server = pair[1];
+    server.accept();
+    this.clientWs = server;
+
+    // Relay. The realtime WebSocket protocol is JSON-framed both ways
+    // (audio rides as base64 inside input_audio_buffer.append /
+    // response.audio.delta), so a plain frame relay covers audio too.
+    server.addEventListener('message', (ev) => {
+      try {
+        upstream.send(ev.data);
+      } catch {
+        // upstream gone
+      }
+    });
+    upstream.addEventListener('message', (ev) => {
+      try {
+        server.send(ev.data);
+      } catch {
+        // client gone
+      }
+      this.onUpstreamMessage(ev).catch((err) =>
+        console.warn('[realtime-meter] settle failed', err),
+      );
+    });
+    server.addEventListener('close', () => this.finalize().catch(() => undefined));
+    server.addEventListener('error', () => this.finalize().catch(() => undefined));
+    upstream.addEventListener('close', () => this.finalize().catch(() => undefined));
+    upstream.addEventListener('error', () => this.finalize().catch(() => undefined));
+
+    // Configure the session server-side. iOS never sends instructions —
+    // the persona is assembled by the worker and baked here.
+    upstream.send(
+      JSON.stringify({
+        type: 'session.update',
+        session: {
+          instructions: ctx.instructions ?? '',
+          output_modalities: ['audio'],
+          audio: {
+            input: {
+              format: { type: 'audio/pcm', rate: 24000 },
+              transcription: { model: 'whisper-1' },
+            },
+            output: { format: { type: 'audio/pcm', rate: 24000 }, voice: 'marin' },
+          },
+        },
+      }),
+    );
+
+    await this.state.storage.setAlarm(Date.now() + MAX_CALL_MS);
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  // ── shared ───────────────────────────────────────────────────────
+
+  // Build the realtime endpoint URL. When the AI Gateway is configured
+  // the connection routes through it (so usage shows in the gateway
+  // dashboard); the OpenAI key still rides inline as Authorization
+  // (see upstreamHeaders) which keeps it off Unified Billing — the
+  // gateway only observes, never charges CF credits.
+  private realtimeUrl(query: string): string {
+    if (
+      this.env.CF_ACCOUNT_ID &&
+      this.env.CF_AIG_GATEWAY &&
+      this.env.CF_AIG_RUN_TOKEN
+    ) {
+      return (
+        `https://gateway.ai.cloudflare.com/v1/${this.env.CF_ACCOUNT_ID}` +
+        `/${this.env.CF_AIG_GATEWAY}/openai?${query}`
+      );
+    }
+    return `https://api.openai.com/v1/realtime?${query}`;
+  }
+
+  private upstreamHeaders(openaiKey: string): Record<string, string> {
+    const headers: Record<string, string> = {
+      Upgrade: 'websocket',
+      // Inline OpenAI key — keeps the connection on OpenAI's own billing
+      // (BYOK-style), NOT Unified Billing, so routing through the
+      // gateway never double-charges CF credits.
+      Authorization: `Bearer ${openaiKey}`,
+      'OpenAI-Beta': 'realtime=v1',
+    };
+    if (this.env.CF_AIG_RUN_TOKEN && this.env.CF_ACCOUNT_ID && this.env.CF_AIG_GATEWAY) {
+      headers['cf-aig-authorization'] = `Bearer ${this.env.CF_AIG_RUN_TOKEN}`;
+    }
+    return headers;
+  }
+
+  private async onUpstreamMessage(ev: MessageEvent): Promise<void> {
     if (typeof ev.data !== 'string') return;
     let msg: { type?: string; response?: { usage?: RealtimeUsage } };
     try {
@@ -169,10 +275,8 @@ export class RealtimeMeterDO {
     } catch {
       return;
     }
-    // Every completed model response carries a usage block. That's the
-    // unit we bill — one audit row per turn, same granularity as the
-    // old client-reported /usage endpoint, but the numbers now come
-    // straight from OpenAI over the sideband.
+    // Every completed model response carries a usage block — one audit
+    // row per turn, billed from OpenAI's own numbers over this socket.
     if (msg.type !== 'response.done' || !msg.response?.usage) return;
     await this.settleTurn(msg.response.usage);
   }
@@ -186,8 +290,7 @@ export class RealtimeMeterDO {
     // cached_tokens is a subset of the input tokens already counted in
     // audio/text. computeCost charges full price for audioInputTokens
     // AND cached price for cacheReadTokens, so leaving cached inside
-    // audioInputTokens double-charges that slice. Subtract it out
-    // (cached tokens in a voice call are predominantly audio).
+    // audioInputTokens double-charges that slice. Subtract it out.
     const audioInputTokens = Math.max(0, inAudio - inCached);
 
     const supa = serviceClient(this.env);
@@ -225,10 +328,9 @@ export class RealtimeMeterDO {
     await this.enforceBalance(ctx);
   }
 
-  // After a turn is billed, drop the call if the user can no longer
-  // afford it. The debit runs through AUDIT_QUEUE so the balance read
-  // here can lag one turn — acceptable, the old /usage gate lagged the
-  // same way. A 0/null threshold disables the gate.
+  // After a turn is billed, drop the call if the user can't afford it.
+  // The debit runs through AUDIT_QUEUE so the balance read can lag one
+  // turn — acceptable. 0/null threshold disables the gate.
   private async enforceBalance(ctx: MeterContext): Promise<void> {
     const supa = serviceClient(this.env);
     const [balance, threshold] = await Promise.all([
@@ -237,35 +339,40 @@ export class RealtimeMeterDO {
     ]);
     const minThreshold = threshold ?? 0;
     if (minThreshold > 0 && (balance?.balance_credits ?? 0) < minThreshold) {
-      await this.hangup();
+      await this.endCall();
     }
   }
 
-  // Tell OpenAI to terminate the call. Used by the balance gate and the
-  // max-age alarm. The sideband's close event then drives finalize().
-  private async hangup(): Promise<void> {
+  // End the call. proxy mode: closing the sockets tears it down. sideband
+  // mode: the audio is a separate WebRTC link, so we ask OpenAI to hang
+  // up the call by id; the sideband's close event then drives finalize.
+  private async endCall(): Promise<void> {
     const ctx = this.ctx;
-    const key = this.env.OPENAI_API_KEY;
-    if (!ctx || !key) return;
-    try {
-      await fetch(
-        `https://api.openai.com/v1/realtime/calls/${encodeURIComponent(ctx.callId)}/hangup`,
-        { method: 'POST', headers: { Authorization: `Bearer ${key}` } },
-      );
-    } catch (err) {
-      console.warn('[realtime-meter] hangup failed', err);
+    if (ctx?.transport === 'sideband' && ctx.callId && this.env.OPENAI_API_KEY) {
+      try {
+        await fetch(
+          `https://api.openai.com/v1/realtime/calls/${encodeURIComponent(ctx.callId)}/hangup`,
+          { method: 'POST', headers: { Authorization: `Bearer ${this.env.OPENAI_API_KEY}` } },
+        );
+      } catch (err) {
+        console.warn('[realtime-meter] hangup failed', err);
+      }
     }
+    await this.finalize();
   }
 
   private async finalize(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    try {
-      this.ws?.close();
-    } catch {
-      // already closing
+    for (const ws of [this.clientWs, this.upstreamWs]) {
+      try {
+        ws?.close();
+      } catch {
+        // already closing
+      }
     }
-    this.ws = null;
+    this.clientWs = null;
+    this.upstreamWs = null;
     const ctx = this.ctx ?? (await this.state.storage.get<MeterContext>('ctx'));
     if (ctx) {
       await endRealtimeSession(this.env, ctx.sessionId).catch(() => undefined);
@@ -274,11 +381,9 @@ export class RealtimeMeterDO {
     await this.state.storage.deleteAll().catch(() => undefined);
   }
 
-  // Wall-clock cap reached — hang up and finalize. Covers the case
-  // where the sideband never closed cleanly (client vanished, network
-  // dropped) so the DO doesn't leak an open socket.
+  // Wall-clock cap — end the call and finalize even if no socket closed
+  // cleanly (client vanished, network dropped).
   async alarm(): Promise<void> {
-    await this.hangup();
-    await this.finalize();
+    await this.endCall();
   }
 }
