@@ -251,35 +251,23 @@ export class RealtimeMeterDO {
 
   // ── shared ───────────────────────────────────────────────────────
 
-  // Route the realtime socket through the AI Gateway when it's
-  // configured, so voice usage lands in the gateway dashboard. The
-  // earlier HTTP 500 on the WS upgrade was caused by the OpenAI-Beta
-  // header (the GA endpoint rejects it) — not by the gateway; with that
-  // header gone the gateway proxies the realtime WS fine.
+  // Connect straight to OpenAI. Routing the realtime socket through the
+  // AI Gateway was tried (584310d) but the gateway returns HTTP 500 on
+  // the realtime WebSocket upgrade — for the sideband's ?call_id= attach
+  // and the proxy's ?model= alike. Direct works; metering still happens
+  // here in the DO, it just won't show in the gateway dashboard.
   private realtimeUrl(query: string): string {
-    if (this.env.CF_ACCOUNT_ID && this.env.CF_AIG_GATEWAY) {
-      return (
-        `https://gateway.ai.cloudflare.com/v1/${this.env.CF_ACCOUNT_ID}` +
-        `/${this.env.CF_AIG_GATEWAY}/openai?${query}`
-      );
-    }
     return `https://api.openai.com/v1/realtime?${query}`;
   }
 
   private upstreamHeaders(openaiKey: string): Record<string, string> {
     // No `OpenAI-Beta: realtime=v1` — that header marks the retired beta
-    // realtime API; the GA endpoint rejects it ("the realtime beta api
-    // is no longer supported"). The OpenAI key rides inline as
-    // Authorization (BYOK-style — not Unified Billing), and
-    // cf-aig-authorization authenticates to the gateway.
-    const headers: Record<string, string> = {
+    // realtime API; the GA endpoint (/v1/realtime) rejects it with
+    // "the realtime beta api is no longer supported".
+    return {
       Upgrade: 'websocket',
       Authorization: `Bearer ${openaiKey}`,
     };
-    if (this.env.CF_AIG_RUN_TOKEN) {
-      headers['cf-aig-authorization'] = `Bearer ${this.env.CF_AIG_RUN_TOKEN}`;
-    }
-    return headers;
   }
 
   private async onUpstreamMessage(ev: MessageEvent): Promise<void> {
