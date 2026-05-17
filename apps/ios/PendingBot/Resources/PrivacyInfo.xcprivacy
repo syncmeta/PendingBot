@@ -25,7 +25,7 @@
 
 	<key>NSPrivacyCollectedDataTypes</key>
 	<array>
-		<!-- Chat content (messages, voice transcripts). Linked to the
+		<!-- Chat content (messages, voice-call recaps). Linked to the
 		     user via auth.users.id; not used for tracking. -->
 		<dict>
 			<key>NSPrivacyCollectedDataType</key>
@@ -89,8 +89,9 @@
 
 		<!-- Voice-call audio — streamed peer-to-peer via WebRTC to
 		     OpenAI Realtime. Pendingbot does not record or retain the
-		     audio; the worker only sees transcripts written back via
-		     POST /v1/realtime/transcripts. Declared for completeness. -->
+		     audio; the worker only sees a short text recap the model
+		     writes at the end of the call (POST /v1/realtime/summary).
+		     Declared for completeness. -->
 		<dict>
 			<key>NSPrivacyCollectedDataType</key>
 			<string>NSPrivacyCollectedDataTypeAudioData</string>
