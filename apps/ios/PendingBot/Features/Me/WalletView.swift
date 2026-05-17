@@ -1,10 +1,13 @@
 import SwiftUI
+import Charts
 
-/// 钱包 — PND 余额、兑换码、最近账目。Pull-to-refresh 重拉余额 +
-/// history 两个端点。Redeem 成功后乐观更新余额并把新条目并入列表头部。
+/// 钱包 — PND 余额、兑换码、消费审计图表。Pull-to-refresh 重拉余额 +
+/// summary 两个端点。详细的逐条调用日志不再在客户端展示（迁到了 board
+/// 的 /audit 页），这里只看「在哪个机器人 / 任务 / 模型上、哪天花了多少」。
 struct WalletView: View {
     @State private var balance: BillingService.Balance?
-    @State private var history: [BillingService.HistoryItem] = []
+    @State private var summary: BillingService.Summary?
+    @State private var range: BillingService.SummaryRange = .month
     @State private var loading = false
     @State private var loadError: String?
 
@@ -23,7 +26,10 @@ struct WalletView: View {
         List {
             balanceSection
             redeemSection
-            historySection
+            spendSection
+            breakdownSection(title: "按机器人", rows: botRows, emptyHint: "还没有机器人消费")
+            breakdownSection(title: "按任务", rows: taskRows, emptyHint: "还没有任务消费")
+            breakdownSection(title: "按模型", rows: modelRows, emptyHint: "还没有模型消费")
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
@@ -153,8 +159,6 @@ struct WalletView: View {
                 )
             }
             Haptics.success()
-            // Pull fresh history so the redemption row appears.
-            await reloadHistoryOnly()
         } catch {
             redeemFlash = .init(kind: .failure,
                                 message: error.localizedDescription)
@@ -162,99 +166,159 @@ struct WalletView: View {
         }
     }
 
-    // MARK: - History
+    // MARK: - Spend (daily chart)
 
     @ViewBuilder
-    private var historySection: some View {
+    private var spendSection: some View {
         Section {
-            if history.isEmpty {
-                if loading {
-                    HStack { ProgressView(); Text("加载中…") }
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                } else {
-                    Text("还没有账目记录。")
+            Picker("时间范围", selection: $range) {
+                ForEach(BillingService.SummaryRange.allCases) { r in
+                    Text(r.label).tag(r)
+                }
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: range) { Task { await reloadSummary() } }
+
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(formatPnd(summary?.totalCredits ?? 0))
+                        .font(Theme.Fonts.serif(size: 28, weight: .bold))
+                        .foregroundStyle(Theme.Palette.ink)
+                        .monospacedDigit()
+                    Text("PND · 近 \(summary?.rangeDays ?? range.days) 天")
                         .font(Theme.Fonts.monoSmall)
                         .foregroundStyle(Theme.Palette.inkMuted)
                 }
-            } else {
-                ForEach(history) { item in
-                    HistoryRow(item: item)
+
+                if loading && summary == nil {
+                    HStack { ProgressView(); Text("加载中…") }
+                        .font(Theme.Fonts.monoSmall)
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                } else if dailyPoints.isEmpty {
+                    Text("这段时间还没有消费。")
+                        .font(Theme.Fonts.monoSmall)
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                } else {
+                    Chart(dailyPoints) { p in
+                        BarMark(
+                            x: .value("日期", p.date, unit: .day),
+                            y: .value("PND", p.credits)
+                        )
+                        .foregroundStyle(Theme.Palette.ink)
+                    }
+                    .chartXAxis {
+                        AxisMarks(values: .stride(by: .day, count: range == .week ? 1 : 7)) {
+                            AxisValueLabel(format: .dateTime.month(.defaultDigits).day())
+                        }
+                    }
+                    .frame(height: 140)
                 }
             }
+            .padding(.vertical, 4)
+            .listRowBackground(Theme.Palette.surface)
         } header: {
-            Text("最近账目")
+            Text("消费趋势")
         }
     }
 
-    private struct HistoryRow: View {
-        let item: BillingService.HistoryItem
+    // MARK: - Breakdown (by bot / task / model)
 
-        var body: some View {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(Theme.Fonts.body)
-                        .foregroundStyle(Theme.Palette.ink)
-                    if let sub = subtitle {
-                        Text(sub)
+    private struct BreakdownRow: Identifiable {
+        let id: String
+        let label: String
+        let credits: Int
+    }
+
+    @ViewBuilder
+    private func breakdownSection(
+        title: String,
+        rows: [BreakdownRow],
+        emptyHint: String
+    ) -> some View {
+        Section {
+            if rows.isEmpty {
+                Text(emptyHint)
+                    .font(Theme.Fonts.monoSmall)
+                    .foregroundStyle(Theme.Palette.inkMuted)
+            } else {
+                Chart(rows) { row in
+                    BarMark(
+                        x: .value("PND", row.credits),
+                        y: .value("项", row.label)
+                    )
+                    .foregroundStyle(Theme.Palette.ink)
+                    .annotation(position: .trailing) {
+                        Text(formatPnd(row.credits))
                             .font(Theme.Fonts.monoSmall)
                             .foregroundStyle(Theme.Palette.inkMuted)
                     }
                 }
-                Spacer(minLength: 8)
-                Text(amountText)
-                    .font(Theme.Fonts.body)
-                    .monospacedDigit()
-                    .foregroundStyle(item.deltaCredits >= 0
-                                     ? Color(hex: 0x2E7D5B)
-                                     : Theme.Palette.ink)
-            }
-            .padding(.vertical, 2)
-        }
-
-        private var title: String {
-            switch item.kind {
-            case .consume:
-                return item.modelId ?? item.taskType ?? "调用"
-            case .movement:
-                switch item.entryType {
-                case "redemption":   return "兑换码"
-                case "grant":        return "管理员发放"
-                case "signup_bonus": return "注册奖励"
-                case "topup":        return "充值"
-                case "refund":       return "退款"
-                case "adjust":       return "调整"
-                default:             return item.entryType ?? "账目"
+                .chartXAxis(.hidden)
+                .chartYAxis {
+                    AxisMarks(preset: .aligned, position: .leading) { _ in
+                        AxisValueLabel()
+                    }
                 }
+                .frame(height: CGFloat(rows.count) * 34 + 12)
+                .padding(.vertical, 4)
+                .listRowBackground(Theme.Palette.surface)
             }
+        } header: {
+            Text(title)
         }
+    }
 
-        private var subtitle: String? {
-            let date = ServerTimestamp.parse(item.createdAt).map(formatDate) ?? ""
-            switch item.kind {
-            case .consume:
-                let task = item.taskType ?? ""
-                let unbilled = item.billingStatus == "unbilled" ? " · 欠费" : ""
-                let parts = [task, date].filter { !$0.isEmpty }
-                return parts.joined(separator: " · ") + unbilled
-            case .movement:
-                if let r = item.reason, !r.isEmpty {
-                    return [r, date].filter { !$0.isEmpty }.joined(separator: " · ")
-                }
-                return date.isEmpty ? nil : date
-            }
+    // MARK: - Derived data
+
+    private struct DailyPoint: Identifiable {
+        let id: String
+        let date: Date
+        let credits: Int
+    }
+
+    private var dailyPoints: [DailyPoint] {
+        (summary?.byDay ?? []).compactMap { p in
+            guard let date = Self.dayFormatter.date(from: p.day) else { return nil }
+            return DailyPoint(id: p.day, date: date, credits: p.credits)
         }
+    }
 
-        private var amountText: String {
-            let v = item.deltaCredits
-            let sign = v > 0 ? "+" : (v < 0 ? "-" : "")
-            return "\(sign)\(formatPnd(abs(v)))"
+    private var botRows: [BreakdownRow] {
+        (summary?.byBot ?? []).prefix(8).map {
+            BreakdownRow(id: $0.key, label: $0.label, credits: $0.credits)
         }
+    }
 
-        private func formatDate(_ d: Date) -> String {
-            let f = DateFormatter()
-            f.dateFormat = "MM-dd HH:mm"
-            return f.string(from: d)
+    private var taskRows: [BreakdownRow] {
+        (summary?.byTask ?? []).prefix(8).map {
+            BreakdownRow(id: $0.key, label: Self.taskLabel($0.key), credits: $0.credits)
+        }
+    }
+
+    private var modelRows: [BreakdownRow] {
+        (summary?.byModel ?? []).prefix(8).map {
+            BreakdownRow(id: $0.key, label: $0.key, credits: $0.credits)
+        }
+    }
+
+    private static let dayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.timeZone = TimeZone(identifier: "UTC")
+        return f
+    }()
+
+    /// Human label for an audit task_type; falls back to the raw value.
+    private static func taskLabel(_ key: String) -> String {
+        switch key {
+        case "message_reply": return "聊天回复"
+        case "group_router":  return "群聊路由"
+        case "title":         return "起标题"
+        case "voice_call":    return "语音通话"
+        case "scroll":        return "Scroll"
+        case "chat_memo":     return "聊天备忘"
+        case "bot_note":      return "机器人笔记"
+        default:              return key
         }
     }
 
@@ -264,23 +328,34 @@ struct WalletView: View {
         loading = true
         defer { loading = false }
         async let bal: BillingService.Balance? = try? BillingService.fetchBalance()
-        async let hist: [BillingService.HistoryItem] = (try? BillingService.fetchHistory(limit: 50)) ?? []
-        let (b, h) = await (bal, hist)
+        async let sum: BillingService.Summary? = try? BillingService.fetchSummary(range: range)
+        let (b, s) = await (bal, sum)
         balance = b ?? balance
-        history = h
+        summary = s ?? summary
         loadError = (b == nil) ? "加载余额失败，下拉重试。" : nil
     }
 
-    private func reloadHistoryOnly() async {
-        if let h = try? await BillingService.fetchHistory(limit: 50) {
-            history = h
+    private func reloadSummary() async {
+        if let s = try? await BillingService.fetchSummary(range: range) {
+            summary = s
         }
     }
-
 }
 
-/// File-scope helper so both `WalletView` and its nested `HistoryRow`
-/// can format PND counts without crossing instance boundaries.
+private extension BillingService.SummaryRange {
+    /// Day count, used only as a pre-fetch placeholder before the
+    /// server echoes `range_days` back.
+    var days: Int {
+        switch self {
+        case .week:    return 7
+        case .month:   return 30
+        case .quarter: return 90
+        }
+    }
+}
+
+/// File-scope helper so `WalletView` and its nested views can format
+/// PND counts without crossing instance boundaries.
 private func formatPnd(_ n: Int) -> String {
     pndFormatter.string(from: NSNumber(value: n)) ?? "\(n)"
 }
