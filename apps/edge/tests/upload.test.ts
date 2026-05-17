@@ -260,11 +260,11 @@ describe('POST /v1/upload — quota gate', () => {
     expect(((r.body.error as { detail?: { quota_bytes: number } }).detail)?.quota_bytes).toBe(50);
   });
 
-  it('uses the 5 GiB default when billing_config has no row', async () => {
+  it('uses the 1 GiB default when billing_config has no row', async () => {
     // No billing_config row → fallback to DEFAULT_ATTACHMENT_QUOTA_BYTES.
-    // 4 GiB used + 100 byte file → well under 5 GiB, should succeed.
+    // 512 MiB used + a tiny file → well under 1 GiB, should succeed.
     const seed: Row[] = [
-      { id: 'att-old', user_id: 'alice', byte_size: 4 * 1024 * 1024 * 1024, content_sha256: 'xx', r2_key: 'k', mime_type: 'image/png' },
+      { id: 'att-old', user_id: 'alice', byte_size: 512 * 1024 * 1024, content_sha256: 'xx', r2_key: 'k', mime_type: 'image/png' },
     ];
     const env = makeFakeEnv(makeFakeDb({ attachments: seed, billing_config: [] }));
     bindR2(env as unknown as Record<string, unknown>, makeR2Mock());

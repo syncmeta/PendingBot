@@ -1,16 +1,11 @@
--- Content-addressable attachment dedup + bigger default quota.
+-- Content-addressable per-user attachment dedup.
 --
--- Content-addressable per-user attachment dedup + larger default quota.
---
---   1. Re-uploading the same image (re-pick from Photos, forward
---      from another conv, screenshot copies, etc) used to create a
---      fresh R2 object and a fresh `attachments` row, doubling
---      storage and double-counting against the user's quota.
---      Adding SHA-256 content addressing collapses identical-bytes
---      uploads from the same user into one row.
---
---   2. Default per-user quota was 1 GiB which lands around ~400
---      photos — short of a multi-year chat history. Bumped to 5 GiB.
+-- Re-uploading the same image (re-pick from Photos, forward from
+-- another conv, screenshot copies, etc) used to create a fresh R2
+-- object and a fresh `attachments` row, doubling storage and
+-- double-counting against the user's quota. Adding SHA-256 content
+-- addressing collapses identical-bytes uploads from the same user
+-- into one row.
 --
 -- Strategy: tag every attachment row with the SHA-256 of its body
 -- (hex, 64 chars). UNIQUE on (user_id, content_sha256) — so a second
@@ -21,17 +16,10 @@
 -- ownership / quota accounting per-user — full cross-user dedup
 -- would need a separate `attachment_blobs` table and a reference
 -- count, which is out of scope for this pass.
---
--- Bump default quota 1 GiB → 5 GiB. R2 at ~$0.015/GB/mo means
--- 5 GiB is $0.075/user/mo — negligible at this scale, and gives
--- users plenty of headroom. Per-user override path stays open via
--- a hypothetical users.attachment_quota_bytes (not added here).
 
 BEGIN;
 
--- ============================================================
--- 1. Add content_sha256 column + dedup index
--- ============================================================
+-- Add content_sha256 column + dedup index.
 
 ALTER TABLE pendingbot.attachments
   ADD COLUMN IF NOT EXISTS content_sha256 text;
@@ -43,14 +31,5 @@ ALTER TABLE pendingbot.attachments
 CREATE UNIQUE INDEX IF NOT EXISTS idx_attachments_user_sha256
   ON pendingbot.attachments (user_id, content_sha256)
   WHERE content_sha256 IS NOT NULL;
-
--- ============================================================
--- 2. Bump default quota 1 GiB → 5 GiB
--- ============================================================
-
-UPDATE pendingbot.billing_config
-   SET value = to_jsonb(5368709120::bigint)        -- 5 * 1024^3
- WHERE key = 'default_attachment_quota_bytes'
-   AND (value)::text::bigint = 1073741824;          -- only if still on the seed value
 
 COMMIT;

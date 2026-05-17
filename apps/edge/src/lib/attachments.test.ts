@@ -129,10 +129,10 @@ describe('exported constants', () => {
     expect(MAX_UPLOAD_BYTES).toBe(10 * 1024 * 1024);
   });
 
-  it('DEFAULT_ATTACHMENT_QUOTA_BYTES matches the 5 GiB migration seed', () => {
+  it('DEFAULT_ATTACHMENT_QUOTA_BYTES matches the 1 GiB migration seed', () => {
     // billing_config.default_attachment_quota_bytes seed in migration
-    // 20260512052048 must match this fallback, or a fresh prod with no
+    // 20260512043115 must match this fallback, or a fresh prod with no
     // seed row will diverge from a seeded one.
-    expect(DEFAULT_ATTACHMENT_QUOTA_BYTES).toBe(5 * 1024 * 1024 * 1024);
+    expect(DEFAULT_ATTACHMENT_QUOTA_BYTES).toBe(1 * 1024 * 1024 * 1024);
   });
 });
