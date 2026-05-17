@@ -395,11 +395,16 @@ final class OpenAIWebSocketTransport: NSObject, CallTransport {
 
     func start() async {
         do {
+            print("[ws-voice] start: configuring audio session")
             try configureAudioSession()
+            print("[ws-voice] start: opening socket", wsURL.absoluteString)
             openSocket()
             receiveNext()
+            print("[ws-voice] start: starting audio engine")
             try startAudio()
+            print("[ws-voice] start: done")
         } catch {
+            print("[ws-voice] start FAILED:", error)
             await delegate?.transport(
                 self, didFailWith: .startupError(error.localizedDescription))
         }
@@ -429,6 +434,9 @@ final class OpenAIWebSocketTransport: NSObject, CallTransport {
             options: [.allowBluetooth, .allowBluetoothA2DP, .defaultToSpeaker],
         )
         try session.setActive(true, options: [])
+        print("[ws-voice] audio session active; inputAvailable=",
+              session.isInputAvailable,
+              "recordPermission=", AVAudioApplication.shared.recordPermission.rawValue)
     }
 
     // MARK: WebSocket
@@ -489,10 +497,11 @@ final class OpenAIWebSocketTransport: NSObject, CallTransport {
         let outFmt = openAIFormat
         input.installTap(onBus: 0, bufferSize: 4_096, format: nil) {
             [weak self] buffer, _ in
-            guard
-                let conv = AVAudioConverter(from: buffer.format, to: outFmt),
-                let base64 = Self.encodeForOpenAI(buffer, using: conv)
-            else { return }
+            let conv = AVAudioConverter(from: buffer.format, to: outFmt)
+            let base64 = conv.flatMap { Self.encodeForOpenAI(buffer, using: $0) }
+            print("[ws-voice] tap fired: frames=\(buffer.frameLength)",
+                  "conv=\(conv != nil) encoded=\(base64 != nil)")
+            guard let base64 else { return }
             Task { @MainActor [weak self] in
                 self?.sendAudioFrame(base64)
             }
@@ -536,10 +545,21 @@ final class OpenAIWebSocketTransport: NSObject, CallTransport {
         return Data(bytes: channel[0], count: byteCount).base64EncodedString()
     }
 
+    private var sentFrameCount = 0
+
     private func sendAudioFrame(_ base64: String) {
-        guard let task, !stopped else { return }
+        guard let task, !stopped else {
+            print("[ws-voice] sendAudioFrame SKIPPED task=\(self.task != nil) stopped=\(stopped)")
+            return
+        }
         let payload = #"{"type":"input_audio_buffer.append","audio":""# + base64 + #""}"#
-        task.send(.string(payload)) { _ in /* dead socket surfaces on the receive loop */ }
+        task.send(.string(payload)) { err in
+            if let err { print("[ws-voice] WS send error:", err) }
+        }
+        sentFrameCount += 1
+        if sentFrameCount == 1 || sentFrameCount % 50 == 0 {
+            print("[ws-voice] audio frames sent:", sentFrameCount)
+        }
     }
 
     // MARK: Server events
