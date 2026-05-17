@@ -21,10 +21,20 @@ struct TabRoot: View {
     // matches Catalyst multi-window expectations.
     @SceneStorage("topTab") private var selectedRaw: String = TopTab.message.rawValue
 
+    // Live selection source for the TabView. @State commits synchronously,
+    // so the TabView never re-reads a stale value mid-transition — reading
+    // @SceneStorage directly in the binding's getter caused a one-frame
+    // flash back to the previous tab. Stays nil until the first switch so
+    // the initial render still honours the persisted tab without a flash.
+    @State private var liveTab: TopTab?
+
     private var selected: Binding<TopTab> {
         Binding(
-            get: { TopTab(rawValue: selectedRaw) ?? .message },
-            set: { selectedRaw = $0.rawValue }
+            get: { liveTab ?? TopTab(rawValue: selectedRaw) ?? .message },
+            set: { newValue in
+                liveTab = newValue
+                selectedRaw = newValue.rawValue
+            }
         )
     }
 
