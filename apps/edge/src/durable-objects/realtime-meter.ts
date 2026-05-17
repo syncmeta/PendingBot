@@ -366,6 +366,7 @@ export class RealtimeMeterDO {
         source: 'voice_call',
         session_id: ctx.sessionId,
         turn_index: this.turnIndex++,
+        bot_id: ctx.botId,
       },
     });
 
