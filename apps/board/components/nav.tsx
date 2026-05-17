@@ -18,6 +18,7 @@ const LINKS: { href: string; label: string }[] = [
   { href: '/prompts', label: 'Prompts' },
   { href: '/letters', label: 'Letters' },
   { href: '/users', label: 'Users' },
+  { href: '/audit', label: 'Audit' },
   { href: '/admin-audit', label: 'Admin audit' },
 ];
 

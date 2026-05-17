@@ -111,46 +111,75 @@ enum BillingService {
         }
     }
 
-    // MARK: - History
+    // MARK: - Summary
 
-    struct HistoryItem: Decodable, Identifiable {
-        let id: String
-        let kind: Kind
-        /// Postgres-flavoured timestamp string. Parse with
-        /// `ServerTimestamp.parse(_:)` for display.
-        let createdAt: String
-        let deltaCredits: Int
-        let taskType: String?
-        let modelId: String?
-        let entryType: String?
-        let reason: String?
-        let billingStatus: String?
+    /// Aggregated spend for the wallet's audit charts. The wallet no
+    /// longer shows a per-call list — the detailed log lives in the
+    /// board's /audit page. All `*Credits` values are PND (∂).
+    struct Summary: Decodable {
+        let rangeDays: Int
+        let totalCredits: Int
+        let byDay: [DayPoint]
+        let byModel: [Slice]
+        let byTask: [Slice]
+        let byBot: [BotSlice]
 
-        enum Kind: String, Decodable {
-            case consume, movement
+        /// One UTC day's total spend. `day` is "YYYY-MM-DD".
+        struct DayPoint: Decodable, Identifiable {
+            let day: String
+            let credits: Int
+            var id: String { day }
+        }
+
+        /// A ranked breakdown row keyed by model id or task type.
+        struct Slice: Decodable, Identifiable {
+            let key: String
+            let credits: Int
+            var id: String { key }
+        }
+
+        /// A ranked breakdown row for a bot — `label` is the resolved
+        /// display name, `key` the bot id.
+        struct BotSlice: Decodable, Identifiable {
+            let key: String
+            let label: String
+            let credits: Int
+            var id: String { key }
         }
 
         enum CodingKeys: String, CodingKey {
-            case id, kind
-            case createdAt = "created_at"
-            case deltaCredits = "delta_credits"
-            case taskType = "task_type"
-            case modelId = "model_id"
-            case entryType = "entry_type"
-            case reason
-            case billingStatus = "billing_status"
+            case rangeDays = "range_days"
+            case totalCredits = "total_credits"
+            case byDay = "by_day"
+            case byModel = "by_model"
+            case byTask = "by_task"
+            case byBot = "by_bot"
         }
     }
 
-    private struct HistoryResponse: Decodable {
-        let items: [HistoryItem]
+    /// Supported aggregation windows for `fetchSummary`.
+    enum SummaryRange: String, CaseIterable, Identifiable {
+        case week = "7d"
+        case month = "30d"
+        case quarter = "90d"
+
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .week:    return "7 天"
+            case .month:   return "30 天"
+            case .quarter: return "90 天"
+            }
+        }
     }
 
-    static func fetchHistory(limit: Int = 50, api: APIClient = APIClient()) async throws -> [HistoryItem] {
-        let res: HistoryResponse = try await api.get(
-            "/v1/me/billing/history",
-            query: [URLQueryItem(name: "limit", value: String(limit))]
+    static func fetchSummary(
+        range: SummaryRange = .month,
+        api: APIClient = APIClient()
+    ) async throws -> Summary {
+        try await api.get(
+            "/v1/me/billing/summary",
+            query: [URLQueryItem(name: "range", value: range.rawValue)]
         )
-        return res.items
     }
 }

@@ -433,8 +433,8 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   // their snapshot's bounds.
   const citations: Citation[] = [];
 
-  // Per-turn web-tool meter. Every runWebSearch / runWebScrape call below
-  // records into this; the snapshot is passed to recordAudit so the
+  // Per-turn web-tool meter. Every MCP tool call below records into
+  // this; the snapshot is passed to enqueueAudit as `webTools` so the
   // tool spend folds into audit_log.tool_cost_usd + cost_credits and
   // each call lands in audit_web_tool_calls.
   const webMeter = await WebToolMeter.create(supa);

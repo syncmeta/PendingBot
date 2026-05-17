@@ -1,22 +1,23 @@
 import type { SupabaseClient } from './supabase';
 
 // Web-tool metering — the single chokepoint that records every external
-// search / crawl HTTP call so it lands in audit_web_tool_calls and folds
+// search / scrape call so it lands in audit_web_tool_calls and folds
 // into the parent audit_log row's billable credits.
 //
 // Shape:
 //   - WebToolMeter is owned by the caller that runs an LLM turn
 //     (bot-reply for chat replies, envelope-runner for letters). One meter
-//     per turn; the same instance is passed into every web.ts call made
+//     per turn; the same instance is threaded into every tool call made
 //     during that turn.
-//   - runWebSearch / runWebScrape in web.ts ALWAYS call meter.record on
-//     both success and error. There is no path for a web call to bypass
-//     metering — every public web function takes a meter in its opts.
+//   - Web tools are MCP tools (see mcp/client.ts). mcpClient.callTool
+//     ALWAYS calls meter.record — on both success and error — for any
+//     tool in its TOOL_BILLING map, so a billable web call can't bypass
+//     metering.
 //   - At the end of the turn, the caller hands meter.snapshot() to
-//     recordAudit (router.ts). recordAudit writes the rollup onto
-//     audit_log.tool_cost_usd, sums it into cost_credits for the single
-//     billing_debit, and inserts a child row per call into
-//     audit_web_tool_calls.
+//     enqueueAudit (router.ts) as `webTools`. persistAuditMessage writes
+//     the rollup onto audit_log.tool_cost_usd, sums it into cost_credits
+//     for the single billing_debit, and inserts a child row per call
+//     into audit_web_tool_calls.
 //
 // Pricing is loaded lazily from web_tool_prices on first use; recently
 // resolved prices are cached in module scope so repeated calls within

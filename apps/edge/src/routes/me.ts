@@ -94,57 +94,72 @@ meRoutes.post('/redeem', async (c) => {
   }
 });
 
-// GET /v1/me/billing/history — recent billable activity. Combines two
-// sources:
-//   - audit_log rows (LLM consumes) where billing_status in ('billed','unbilled')
-//   - billing_ledger rows (topups, grants, redemptions, refunds, adjusts)
-// Both are filtered to the calling user via RLS (audit_log_self_read +
-// billing_ledger_self_read policies in 0033). We merge and sort
-// client-side here for v1; if volume grows we'll move to a DB view.
-meRoutes.get('/billing/history', async (c) => {
+// GET /v1/me/billing/summary?range=7d|30d|90d — aggregated spend for
+// the iOS wallet's audit charts (the wallet no longer shows a per-call
+// list; the detailed log lives in the board's /audit page). Breaks the
+// caller's billed/unbilled spend (cost_credits — LLM + folded tool
+// spend) down by day, model, task type and bot. RLS scopes audit_log
+// to the calling user (audit_log_self_read in 0033); volume per user is
+// small enough to aggregate in the worker rather than in SQL.
+meRoutes.get('/billing/summary', async (c) => {
   const userJwt = c.var.userJwt!;
-  const limitParam = parseInt(c.req.query('limit') ?? '50', 10);
-  const limit = Number.isFinite(limitParam)
-    ? Math.min(Math.max(limitParam, 1), 200)
-    : 50;
   const supa = userClient(c.env, userJwt);
+  const rangeParam = c.req.query('range') ?? '30d';
+  const days = rangeParam === '7d' ? 7 : rangeParam === '90d' ? 90 : 30;
+  const since = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
 
-  const [auditRes, ledgerRes] = await Promise.all([
-    supa
-      .from('audit_log')
-      .select(
-        'id, created_at, task_type, model_id, cost_credits, billing_status, conversation_id',
-      )
-      .in('billing_status', ['billed', 'unbilled'])
-      .order('created_at', { ascending: false })
-      .limit(limit),
-    supa
-      .from('billing_ledger')
-      .select('id, created_at, entry_type, delta_credits, reason')
-      .order('created_at', { ascending: false })
-      .limit(limit),
-  ]);
+  const { data: rows } = await supa
+    .from('audit_log')
+    .select('created_at, task_type, model_id, cost_credits, metadata')
+    .in('billing_status', ['billed', 'unbilled'])
+    .gte('created_at', since)
+    .limit(5000);
 
-  const consumes = (auditRes.data ?? []).map((r) => ({
-    kind: 'consume' as const,
-    id: r.id,
-    created_at: r.created_at,
-    delta_credits: -Number(r.cost_credits),
-    task_type: r.task_type,
-    model_id: r.model_id,
-    conversation_id: r.conversation_id,
-    billing_status: r.billing_status,
-  }));
-  const movements = (ledgerRes.data ?? []).map((r) => ({
-    kind: 'movement' as const,
-    id: r.id,
-    created_at: r.created_at,
-    delta_credits: Number(r.delta_credits),
-    entry_type: r.entry_type,
-    reason: r.reason,
-  }));
-  const merged = [...consumes, ...movements].sort((a, b) =>
-    a.created_at < b.created_at ? 1 : -1,
-  );
-  return c.json({ items: merged.slice(0, limit) });
+  let total = 0;
+  const byDay = new Map<string, number>();
+  const byModel = new Map<string, number>();
+  const byTask = new Map<string, number>();
+  const byBot = new Map<string, number>();
+  for (const r of rows ?? []) {
+    const credits = Number(r.cost_credits) || 0;
+    total += credits;
+    byDay.set(r.created_at.slice(0, 10), (byDay.get(r.created_at.slice(0, 10)) ?? 0) + credits);
+    const model = r.model_id || '(未知)';
+    byModel.set(model, (byModel.get(model) ?? 0) + credits);
+    byTask.set(r.task_type, (byTask.get(r.task_type) ?? 0) + credits);
+    const botId =
+      r.metadata && typeof r.metadata === 'object'
+        ? (r.metadata as Record<string, unknown>).bot_id
+        : null;
+    if (typeof botId === 'string') {
+      byBot.set(botId, (byBot.get(botId) ?? 0) + credits);
+    }
+  }
+
+  // Resolve bot display names so the chart shows names, not uuids.
+  const botIds = [...byBot.keys()];
+  const { data: bots } = botIds.length
+    ? await supa.from('bots').select('id, display_name').in('id', botIds)
+    : { data: [] as { id: string; display_name: string }[] };
+  const botName = new Map((bots ?? []).map((b) => [b.id, b.display_name]));
+
+  const ranked = (m: Map<string, number>) =>
+    [...m.entries()]
+      .map(([key, credits]) => ({ key, credits }))
+      .sort((a, b) => b.credits - a.credits);
+
+  return c.json({
+    range_days: days,
+    total_credits: total,
+    by_day: [...byDay.entries()]
+      .map(([day, credits]) => ({ day, credits }))
+      .sort((a, b) => (a.day < b.day ? -1 : 1)),
+    by_model: ranked(byModel),
+    by_task: ranked(byTask),
+    by_bot: ranked(byBot).map((e) => ({
+      key: e.key,
+      label: botName.get(e.key) ?? e.key.slice(0, 8),
+      credits: e.credits,
+    })),
+  });
 });
