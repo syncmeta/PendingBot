@@ -50,6 +50,9 @@ struct BubbleView<Menu: View>: View {
     /// True while we're streaming but the reveal buffer is empty (no new
     /// token yet). Switches the cursor from solid to TTY-style blink.
     var streamPaused: Bool = false
+    /// Tapping the failure indicator on a failed outgoing message
+    /// re-sends it. nil leaves the indicator non-interactive.
+    var onRetry: (() -> Void)? = nil
     /// Long-press context-menu items. Attached to just the avatar+bubble
     /// region (see `botLayout` / `userLayout`) — NOT the full-width row —
     /// so the system highlight platter hugs the bubble instead of
@@ -175,9 +178,16 @@ struct BubbleView<Menu: View>: View {
                 if hasText {
                     HStack(alignment: .center, spacing: 6) {
                         if message.isFailed {
-                            Image(systemName: "exclamationmark.circle.fill")
-                                .font(.system(size: 18))
-                                .foregroundStyle(Color.red.opacity(0.85))
+                            Button {
+                                onRetry?()
+                            } label: {
+                                Image(systemName: "exclamationmark.circle.fill")
+                                    .font(.system(size: 18))
+                                    .foregroundStyle(Color.red.opacity(0.85))
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(onRetry == nil)
+                            .accessibilityLabel("重新发送")
                         }
                         Text(message.content)
                             .textSelection(.enabled)

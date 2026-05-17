@@ -356,7 +356,8 @@ struct ConversationView: View {
                                        serverURL: account?.workerURL,
                                        citations: citationsByMsgId[msg.id] ?? [],
                                        isStreaming: revealTargetId == msg.id,
-                                       streamPaused: revealTargetId == msg.id && streamPaused) {
+                                       streamPaused: revealTargetId == msg.id && streamPaused,
+                                       onRetry: { retryFailedMessage(msg) }) {
                                     Button {
                                         UIPasteboard.general.string = msg.content
                                         Haptics.tap()
@@ -381,16 +382,26 @@ struct ConversationView: View {
                                         }
                                     }
                                     if msg.isMine(currentUserId: AccountStore.shared.current?.id) {
-                                        // 撤回: WeChat-style sender-only retract.
-                                        // In user_user convs this leaves a
-                                        // tombstone log row visible to both
-                                        // parties; in user_bot / group convs
-                                        // it's a hard purge (bot's future
-                                        // context won't see it either).
-                                        // Server side: POST /v1/messages/:id/recall.
-                                        Button {
-                                            Task { await recallMessage(msg) }
-                                        } label: { Label("撤回", systemImage: "arrow.uturn.backward") }
+                                        if msg.isFailed {
+                                            // Failed sends never reached the
+                                            // server — offer a re-send instead
+                                            // of 撤回 (which would 404 on the
+                                            // local-only id).
+                                            Button {
+                                                retryFailedMessage(msg)
+                                            } label: { Label("重新发送", systemImage: "arrow.clockwise") }
+                                        } else {
+                                            // 撤回: WeChat-style sender-only retract.
+                                            // In user_user convs this leaves a
+                                            // tombstone log row visible to both
+                                            // parties; in user_bot / group convs
+                                            // it's a hard purge (bot's future
+                                            // context won't see it either).
+                                            // Server side: POST /v1/messages/:id/recall.
+                                            Button {
+                                                Task { await recallMessage(msg) }
+                                            } label: { Label("撤回", systemImage: "arrow.uturn.backward") }
+                                        }
                                     }
                                     Button(role: .destructive) {
                                         Task { await deleteMessage(msg) }
@@ -1117,6 +1128,93 @@ struct ConversationView: View {
             content: prev.content, created_at: prev.created_at,
             attachments: prev.attachments, status: "sent"
         )
+    }
+
+    /// Re-stamp the canonical conversation id onto an optimistic row
+    /// after a late materialise, leaving its status untouched.
+    private func restampConversationId(on localId: String) {
+        guard let idx = messages.firstIndex(where: { $0.id == localId }) else { return }
+        let prev = messages[idx]
+        messages[idx] = ChatMessage(
+            id: prev.id, conversation_id: conversation.id,
+            sender_type: prev.sender_type, sender_id: prev.sender_id,
+            content: prev.content, created_at: prev.created_at,
+            attachments: prev.attachments, status: prev.status
+        )
+    }
+
+    /// Re-send a message that failed to deliver. Reuses the failed
+    /// bubble's localId + client_message_id, so the worker / Postgres
+    /// dedupe on client_message_id and a retry can't double-post even if
+    /// the original request actually landed. The red bubble flips back
+    /// to "sending" (light green) in place — no new row is inserted.
+    func retryFailedMessage(_ msg: ChatMessage) {
+        guard msg.isFailed,
+              let idx = messages.firstIndex(where: { $0.id == msg.id })
+        else { return }
+        let localId = msg.id
+        let cmid = localMsgClientIds[localId] ?? UUID().uuidString.lowercased()
+        localMsgClientIds[localId] = cmid
+        let text = msg.content
+        let attachIds = attachmentIdsByMsgId[localId]
+            ?? (msg.attachments?.map(\.id) ?? [])
+
+        // Repaint the red bubble light-green ("sending") in place.
+        let prev = messages[idx]
+        messages[idx] = ChatMessage(
+            id: prev.id, conversation_id: prev.conversation_id,
+            sender_type: prev.sender_type, sender_id: prev.sender_id,
+            content: prev.content, created_at: prev.created_at,
+            attachments: prev.attachments, status: "sending"
+        )
+        error = nil
+        Haptics.send()
+
+        let isUserBot = conversation.conversation_type != "user_user"
+                     && conversation.conversation_type != "group"
+        if isUserBot {
+            // Lazy-cloud-conv: still no cloud row → re-run the start flow.
+            if conversation.id.isEmpty
+                && conversation.conversation_type == "user_bot" {
+                let botId = pendingPeer?.peerId ?? conversation.bot_id
+                guard !botId.isEmpty else {
+                    markUserMessageFailed(localId)
+                    return
+                }
+                sendViaSSE(text: text, attachmentIds: attachIds,
+                           userMsgId: localId, clientMessageId: cmid,
+                           startBotId: botId)
+                return
+            }
+            // Pending non-cloud conv whose materialise never landed.
+            if conversation.id.isEmpty {
+                Task {
+                    guard await materializeIfPending() else {
+                        markUserMessageFailed(localId)
+                        return
+                    }
+                    restampConversationId(on: localId)
+                    sendViaSSE(text: text, attachmentIds: attachIds,
+                               userMsgId: localId, clientMessageId: cmid)
+                }
+                return
+            }
+            sendViaSSE(text: text, attachmentIds: attachIds,
+                       userMsgId: localId, clientMessageId: cmid)
+            return
+        }
+
+        // user_user — Supabase insert path.
+        Task {
+            if conversation.id.isEmpty {
+                guard await materializeIfPending() else {
+                    markUserMessageFailed(localId)
+                    return
+                }
+                restampConversationId(on: localId)
+            }
+            await sendUserUserMessage(text, localId: localId, clientMessageId: cmid)
+        }
     }
 
     private func sendUserUserMessage(_ text: String, localId: String, clientMessageId: String) async {
