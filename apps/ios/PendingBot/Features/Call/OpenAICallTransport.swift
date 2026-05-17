@@ -383,12 +383,24 @@ final class OpenAIWebSocketTransport: NSObject, CallTransport {
     private var didSignalConnected = false
     private var stopped = false
 
-    /// OpenAI realtime PCM: 24 kHz, mono, signed 16-bit little-endian.
+    /// OpenAI realtime wire PCM: 24 kHz, mono, signed 16-bit LE. Used only
+    /// to encode/decode the base64 audio on the WebSocket — NOT as an
+    /// AVAudioEngine connection format (the engine wants Float32).
     private let openAIFormat = AVAudioFormat(
         commonFormat: .pcmFormatInt16,
         sampleRate: 24_000,
         channels: 1,
         interleaved: true,
+    )!
+
+    /// Internal AVAudioEngine format — 24 kHz mono Float32. The engine's
+    /// node graph must be Float32; an Int16 connection breaks rendering
+    /// (and, under voice-chat VPIO, that stalls mic capture too).
+    private let engineFormat = AVAudioFormat(
+        commonFormat: .pcmFormatFloat32,
+        sampleRate: 24_000,
+        channels: 1,
+        interleaved: false,
     )!
 
     // MARK: CallTransport
@@ -482,12 +494,14 @@ final class OpenAIWebSocketTransport: NSObject, CallTransport {
 
     private func startAudio() throws {
         let input = engine.inputNode
-        // Built-in voice processing (AEC/AGC) — the bot must not hear its
-        // own playback looped back through the mic.
-        try? input.setVoiceProcessingEnabled(true)
+        // AEC comes from the AVAudioSession `.voiceChat` mode (it routes
+        // I/O through the system voice-processing unit). We do NOT also
+        // call inputNode.setVoiceProcessingEnabled(true) — doubling it up
+        // was coupling input rendering to a (then-broken) output graph,
+        // which stalled the capture tap entirely.
 
         engine.attach(playerNode)
-        engine.connect(playerNode, to: engine.mainMixerNode, format: openAIFormat)
+        engine.connect(playerNode, to: engine.mainMixerNode, format: engineFormat)
 
         // Tap with format: nil — the engine delivers buffers in the input
         // node's real native format. Building one converter up-front from
@@ -600,12 +614,15 @@ final class OpenAIWebSocketTransport: NSObject, CallTransport {
     private func enqueuePlayback(_ base64: String) {
         guard
             let pcm = Data(base64Encoded: base64), !pcm.isEmpty,
-            let buffer = Self.makeBuffer(pcm, format: openAIFormat)
+            let buffer = Self.makeBuffer(pcm, format: engineFormat)
         else { return }
         playerNode.scheduleBuffer(buffer, completionHandler: nil)
         if !playerNode.isPlaying { playerNode.play() }
     }
 
+    /// Decode OpenAI's 16-bit LE PCM into a Float32 engine buffer.
+    /// `format` must be Float32 (the engine graph format) — scheduling a
+    /// raw Int16 buffer on a Float32-connected player node won't play.
     private nonisolated static func makeBuffer(
         _ pcm: Data,
         format: AVAudioFormat,
@@ -614,14 +631,14 @@ final class OpenAIWebSocketTransport: NSObject, CallTransport {
         guard
             frames > 0,
             let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames),
-            let channel = buffer.int16ChannelData
+            let dst = buffer.floatChannelData
         else { return nil }
         buffer.frameLength = frames
         pcm.withUnsafeBytes { raw in
-            if let base = raw.baseAddress {
-                channel[0].update(
-                    from: base.assumingMemoryBound(to: Int16.self),
-                    count: Int(frames))
+            let src = raw.bindMemory(to: Int16.self)
+            let out = dst[0]
+            for i in 0..<Int(frames) {
+                out[i] = Float(Int16(littleEndian: src[i])) / 32_768.0
             }
         }
         return buffer
