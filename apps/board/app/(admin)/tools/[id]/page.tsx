@@ -18,7 +18,7 @@ export default async function EditToolPage({
   const [{ data: row }, { data: servers }] = await Promise.all([
     supa
       .from('tools')
-      .select('id, key, kind, mcp_server_id, scopes, description, enabled, notes')
+      .select('id, key, kind, mcp_server_id, scopes, description, model_description, enabled, notes')
       .eq('id', id)
       .maybeSingle(),
     supa.from('mcp_servers').select('id, name').order('name', { ascending: true }),

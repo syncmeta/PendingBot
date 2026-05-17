@@ -27,6 +27,7 @@ interface ParsedRow {
   mcp_server_id: string | null;
   scopes: Scope[];
   description: string | null;
+  model_description: string | null;
   enabled: boolean;
   notes: string | null;
 }
@@ -40,6 +41,9 @@ function parseForm(formData: FormData): { row: ParsedRow } | { error: string } {
     .map((s) => String(s))
     .filter((s): s is Scope => (ALLOWED_SCOPE as readonly string[]).includes(s));
   const description = String(formData.get('description') ?? '').trim() || null;
+  // model_description is the override the LLM actually sees. Only the
+  // ends are trimmed — interior whitespace/newlines are meaningful.
+  const model_description = String(formData.get('model_description') ?? '').trim() || null;
   const notes = String(formData.get('notes') ?? '').trim() || null;
   const enabled = formData.get('enabled') === 'on';
 
@@ -65,6 +69,7 @@ function parseForm(formData: FormData): { row: ParsedRow } | { error: string } {
       mcp_server_id: kind === 'mcp' ? mcp_server_id_raw : null,
       scopes,
       description,
+      model_description,
       enabled,
       notes,
     },
@@ -158,6 +163,48 @@ export async function updateTool(
 
   revalidatePath('/tools');
   redirect(withFlash('/tools', `已保存工具 ${parsed.row.key}`));
+}
+
+/**
+ * Inline save for just the model-facing description, used by the Tools
+ * list page so each tool's description can be browsed + edited without
+ * opening the full edit form. Empty string clears the override (the
+ * edge runtime then falls back to the code/upstream default).
+ */
+export async function updateToolModelDescription(
+  id: string,
+  value: string,
+): Promise<ActionResult> {
+  const admin = await requireAdmin();
+  const next = value.trim() || null;
+
+  const supa = supabaseAdmin();
+  const { data: before } = await supa
+    .from('tools')
+    .select('id, key, model_description')
+    .eq('id', id)
+    .maybeSingle();
+  if (!before) return { error: '工具不存在' };
+
+  const { error } = await supa
+    .from('tools')
+    .update({ model_description: next, updated_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) return { error: error.message };
+
+  await audit({
+    action: 'tool.update',
+    targetId: id,
+    before: { model_description: before.model_description },
+    after: { model_description: next },
+    actorId: admin.id,
+  });
+
+  revalidatePath('/tools');
+  return {
+    ok: true,
+    message: next ? `已保存 ${before.key} 的模型描述` : `已清空 ${before.key} 的模型描述`,
+  };
 }
 
 export async function toggleToolEnabled(id: string): Promise<ActionResult> {

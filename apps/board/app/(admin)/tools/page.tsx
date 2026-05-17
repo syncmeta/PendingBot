@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { ActionButton } from '@/components/action-button';
 import { toggleToolEnabled, deleteTool } from './actions';
+import { ModelDescriptionCell } from './_model-description-cell';
 
 // Tools registry — every LLM tool the bot can be advertised, native
 // + MCP, in one place. Edge filters its advertised tool list against
@@ -13,6 +14,10 @@ import { toggleToolEnabled, deleteTool } from './actions';
 // native tools the runtime implementation still lives in edge code
 // (apps/edge/src/lib/bot-reply/tools/*) — this table is the filter +
 // metadata layer, not a dispatcher.
+//
+// The model-facing description (model_description) is editable inline
+// here so every tool's description can be browsed + tuned in one
+// place — empty = fall back to the code / upstream default.
 
 interface ToolRow {
   id: string;
@@ -21,6 +26,7 @@ interface ToolRow {
   mcp_server_id: string | null;
   scopes: unknown;
   description: string | null;
+  model_description: string | null;
   enabled: boolean;
   notes: string | null;
 }
@@ -34,7 +40,7 @@ export default async function ToolsPage() {
   const [toolsRes, serversRes] = await Promise.all([
     supa
       .from('tools')
-      .select('id, key, kind, mcp_server_id, scopes, description, enabled, notes')
+      .select('id, key, kind, mcp_server_id, scopes, description, model_description, enabled, notes')
       .order('kind', { ascending: true })
       .order('key', { ascending: true }),
     supa.from('mcp_servers').select('id, name'),
@@ -59,8 +65,9 @@ export default async function ToolsPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Tools</h1>
           <p className="text-sm text-muted-foreground">
-            模型能用的全部工具——内部代码工具 + 来自 MCP server 的工具。停用一行 = 模型不再
-            被告知有这个工具（worker 60s isolate 缓存生效），不需要部署。
+            模型能用的全部工具——内部代码工具 + 来自 MCP server 的工具。「模型描述」栏就是 LLM
+            实际看到的 function.description，可以直接在这里改、改完 ~1 分钟内生效，不需要部署。
+            停用一行 = 模型不再被告知有这个工具。
           </p>
         </div>
         <Link
@@ -85,6 +92,7 @@ export default async function ToolsPage() {
         新加 native 工具：代码里写实现，再点右上"新增工具"登记一行。新加 MCP 工具：先去
         MCP servers 页接好上游，再来这里"新增工具"挑暴露哪个 upstream tool。
         <code className="font-mono">scopes</code> 决定工具出现在 chat / envelope / 二者皆有。
+        「模型描述」留空时，native 工具回落到 edge 代码里的默认值，MCP 工具回落到上游 server 的描述。
       </p>
     </main>
   );
@@ -99,50 +107,59 @@ function Section({ title, rows }: { title: string; rows: ToolRow[] }) {
         <table className="w-full text-sm">
           <thead className="border-b text-left text-xs uppercase text-muted-foreground">
             <tr>
-              <th className="px-4 py-2 font-medium">key</th>
-              <th className="px-4 py-2 font-medium">scope</th>
-              <th className="px-4 py-2 font-medium">说明</th>
-              <th className="px-4 py-2 font-medium">状态</th>
-              <th className="px-4 py-2 font-medium" />
+              <th className="w-64 px-4 py-2 font-medium">工具</th>
+              <th className="px-4 py-2 font-medium">模型描述（LLM 实际看到的）</th>
+              <th className="w-28 px-4 py-2 font-medium" />
             </tr>
           </thead>
           <tbody>
             {rows.map((t) => {
               const scopes = asScopes(t.scopes);
+              const placeholder =
+                t.kind === 'mcp'
+                  ? '留空 = 用上游 MCP server 的默认描述'
+                  : '留空 = 用 edge 代码里的默认描述';
               return (
                 <tr key={t.id} className="border-b align-top last:border-0">
-                  <td className="px-4 py-3 font-mono text-xs">{t.key}</td>
                   <td className="px-4 py-3">
-                    <div className="flex flex-wrap gap-1">
-                      {scopes.map((s) => (
-                        <span
-                          key={s}
-                          className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]"
-                        >
-                          {s}
-                        </span>
-                      ))}
+                    <div className="space-y-1.5">
+                      <div className="font-mono text-xs">{t.key}</div>
+                      <div className="flex flex-wrap gap-1">
+                        {scopes.map((s) => (
+                          <span
+                            key={s}
+                            className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]"
+                          >
+                            {s}
+                          </span>
+                        ))}
+                        {t.enabled ? (
+                          <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] text-emerald-700">
+                            enabled
+                          </span>
+                        ) : (
+                          <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                            disabled
+                          </span>
+                        )}
+                      </div>
+                      {t.description && (
+                        <div className="text-xs text-muted-foreground">{t.description}</div>
+                      )}
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-xs text-muted-foreground">
-                    {t.description ?? '—'}
+                  <td className="px-4 py-3">
+                    <ModelDescriptionCell
+                      id={t.id}
+                      initial={t.model_description}
+                      placeholder={placeholder}
+                    />
                   </td>
                   <td className="px-4 py-3">
-                    {t.enabled ? (
-                      <span className="rounded bg-emerald-100 px-2 py-0.5 text-xs text-emerald-700">
-                        enabled
-                      </span>
-                    ) : (
-                      <span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                        disabled
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center justify-end gap-2">
+                    <div className="flex flex-col items-stretch gap-2">
                       <Link
                         href={`/tools/${t.id}`}
-                        className="rounded border border-input px-2 py-1 text-xs hover:bg-accent"
+                        className="rounded border border-input px-2 py-1 text-center text-xs hover:bg-accent"
                       >
                         编辑
                       </Link>
