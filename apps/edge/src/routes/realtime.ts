@@ -281,10 +281,12 @@ realtimeRoutes.post('/session', async (c) => {
   const instructions = await assembleInstructions(c.env, ctx);
 
   // Route resolution. task_routing_rules can still override at admin
-  // discretion via taskType='voice_call'.
+  // discretion via taskType='voice_call'. Uses the service client, not
+  // supaUser — the llm_* config tables are RLS-locked (RLS on, no
+  // policy = deny for authenticated), so a user JWT reads zero rows.
   let route;
   try {
-    route = await resolveRoute(supaUser, c.env, {
+    route = await resolveRoute(serviceClient(c.env), c.env, {
       modelSlug: OPENAI_MODEL_SLUG,
       taskType: 'voice_call',
       metadata: { userId, conversationId: parsed.conversation_id },
