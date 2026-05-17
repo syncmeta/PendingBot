@@ -232,6 +232,10 @@ const SessionBody = z.object({
   // egresses from Cloudflare so it works from regions OpenAI geo-blocks.
   // The client picks.
   transport: z.enum(['webrtc', 'websocket']).default('webrtc'),
+  // Optional voice model override (client picker). When set it's sent
+  // straight to OpenAI's mint as the realtime `model`; when absent the
+  // resolved route's model id is used.
+  model: z.string().min(1).optional(),
 });
 
 realtimeRoutes.post('/session', async (c) => {
@@ -370,6 +374,7 @@ realtimeRoutes.post('/session', async (c) => {
     instructions,
     balanceCredits,
     minThreshold,
+    modelOverride: parsed.model,
   });
 });
 
@@ -382,6 +387,9 @@ interface MintArgs {
   instructions: string;
   balanceCredits: number;
   minThreshold: number;
+  /// Client-picked realtime model id. Overrides route.modelToCall in the
+  /// mint body when set.
+  modelOverride?: string;
 }
 
 async function mintOpenAISession(
@@ -428,7 +436,7 @@ async function mintOpenAISession(
       body: JSON.stringify({
         session: {
           type: 'realtime',
-          model: args.route.modelToCall,
+          model: args.modelOverride ?? args.route.modelToCall,
           instructions: args.instructions,
           output_modalities: ['audio'],
           audio: {
