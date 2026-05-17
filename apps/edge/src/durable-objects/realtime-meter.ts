@@ -48,6 +48,11 @@ interface MeterContext {
   startedAt: number;
   // sideband (WebRTC) only — the call_id from POST /v1/realtime/calls.
   callId?: string;
+  // sideband (WebRTC) only — the ephemeral client_secret the call was
+  // created with. The sideband WebSocket MUST authenticate with this,
+  // not the standard API key: the WebRTC call belongs to the ephemeral
+  // session, so a standard-key attach gets call_id_not_found / 404.
+  clientSecret?: string;
   // proxy (WebSocket) only — model id + baked persona for session.update.
   model?: string;
   instructions?: string;
@@ -121,8 +126,12 @@ export class RealtimeMeterDO {
       this.ctx ?? (await this.state.storage.get<MeterContext>('ctx'));
     if (existing) return Response.json({ ok: true });
 
-    const key = this.env.OPENAI_API_KEY;
-    if (!key) return new Response('openai key not configured', { status: 503 });
+    // The sideband authenticates with the ephemeral client_secret the
+    // WebRTC call was created with — NOT the standard API key. The call
+    // belongs to that ephemeral session; a standard-key attach yields
+    // call_id_not_found / 404.
+    const key = ctx.clientSecret;
+    if (!key) return new Response('client secret not provided', { status: 503 });
 
     this.ctx = ctx;
     await this.state.storage.put('ctx', ctx);
@@ -133,9 +142,8 @@ export class RealtimeMeterDO {
     console.log('[realtime-meter] sideband attaching call_id=', ctx.callId);
 
     // iOS calls /attach right after the SDP exchange, before the WebRTC
-    // connection is fully up — so the call_id isn't attachable yet and
-    // OpenAI returns 404 call_id_not_found. Retry for a few seconds
-    // until the session exists.
+    // connection is fully up — the call may not be attachable for a
+    // beat. Retry for a few seconds until the session exists.
     let ws: WebSocket | null = null;
     for (let attempt = 1; attempt <= 8 && !ws; attempt++) {
       if (attempt > 1) {

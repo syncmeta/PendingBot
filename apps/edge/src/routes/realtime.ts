@@ -536,6 +536,9 @@ const AttachBody = z.object({
   session_id: z.string(),
   conversation_id: z.string(),
   call_id: z.string().min(1),
+  // The ephemeral client_secret the WebRTC call was created with — the
+  // sideband WebSocket must authenticate with it (see RealtimeMeterDO).
+  client_secret: z.string().min(1),
 });
 
 realtimeRoutes.post('/attach', async (c) => {
@@ -564,6 +567,7 @@ realtimeRoutes.post('/attach', async (c) => {
     body: JSON.stringify({
       transport: 'sideband',
       callId: parsed.call_id,
+      clientSecret: parsed.client_secret,
       sessionId: parsed.session_id,
       userId,
       conversationId: parsed.conversation_id,
