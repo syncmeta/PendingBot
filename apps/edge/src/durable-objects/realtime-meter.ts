@@ -185,14 +185,11 @@ export class RealtimeMeterDO {
     if (!key) return new Response('openai key not configured', { status: 503 });
 
     let resp: Response;
-    const proxyReq = this.proxyUpstreamRequest(
-      ctx.model ?? OPENAI_MODEL_SLUG,
-      key,
-      ctx.sessionId,
-    );
-    console.log('[realtime-meter] proxy upstream', proxyReq.viaGateway ? 'via gateway' : 'direct');
     try {
-      resp = await fetch(proxyReq.url, { headers: proxyReq.headers });
+      resp = await fetch(
+        this.realtimeUrl(`model=${encodeURIComponent(ctx.model ?? OPENAI_MODEL_SLUG)}`),
+        { headers: this.upstreamHeaders(key) },
+      );
     } catch (err) {
       console.warn('[realtime-meter] proxy upstream connect failed', err);
       return new Response('upstream connect failed', { status: 502 });
@@ -279,52 +276,13 @@ export class RealtimeMeterDO {
 
   // ── shared ───────────────────────────────────────────────────────
 
-  // Direct OpenAI realtime endpoint. Used by the sideband control
-  // connection (?call_id= attach) and as the proxy fallback when the AI
-  // Gateway isn't configured.
+  // Connect straight to OpenAI. Routing the realtime socket through the
+  // AI Gateway was tried (584310d) but the gateway returns HTTP 500 on
+  // the realtime WebSocket upgrade — for the sideband's ?call_id= attach
+  // and the proxy's ?model= alike. Direct works; metering still happens
+  // here in the DO, it just won't show in the gateway dashboard.
   private realtimeUrl(query: string): string {
     return `https://api.openai.com/v1/realtime?${query}`;
-  }
-
-  // Proxy-mode upstream. Routes the realtime socket through the AI
-  // Gateway when it's configured, so the session is cost-tracked there
-  // like every other LLM call (and Unified-Billing-eligible). An earlier
-  // attempt (584310d) hit HTTP 500 on the gateway realtime upgrade, but
-  // CF fixed realtime websocket auth on 2025-10-29 — this re-tries it.
-  // Falls back to a direct OpenAI connection if the gateway env vars
-  // aren't bound. cf-aig-authorization carries the gateway run token;
-  // Authorization carries the OpenAI key; cf-aig-metadata tags the log
-  // with the session id so the cost can be correlated afterward.
-  private proxyUpstreamRequest(
-    model: string,
-    openaiKey: string,
-    sessionId: string,
-  ): { url: string; headers: Record<string, string>; viaGateway: boolean } {
-    const account = this.env.CF_ACCOUNT_ID;
-    const gateway = this.env.CF_AIG_GATEWAY;
-    const runToken = this.env.CF_AIG_RUN_TOKEN;
-    if (account && gateway && runToken) {
-      return {
-        url:
-          `https://gateway.ai.cloudflare.com/v1/${account}/${gateway}` +
-          `/openai?model=${encodeURIComponent(model)}`,
-        headers: {
-          Upgrade: 'websocket',
-          Authorization: `Bearer ${openaiKey}`,
-          'cf-aig-authorization': `Bearer ${runToken}`,
-          'cf-aig-metadata': JSON.stringify({
-            session_id: sessionId,
-            source: 'voice_call',
-          }),
-        },
-        viaGateway: true,
-      };
-    }
-    return {
-      url: this.realtimeUrl(`model=${encodeURIComponent(model)}`),
-      headers: this.upstreamHeaders(openaiKey),
-      viaGateway: false,
-    };
   }
 
   private upstreamHeaders(openaiKey: string): Record<string, string> {
