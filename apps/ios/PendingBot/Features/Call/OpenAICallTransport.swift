@@ -591,7 +591,9 @@ final class OpenAIWebSocketTransport: NSObject, CallTransport {
                 didSignalConnected = true
                 delegate?.transportDidConnect(self)
             }
-        case "response.audio.delta":
+        case "response.output_audio.delta":
+            // GA /v1/realtime renamed the beta `response.audio.delta` event;
+            // the audio chunk still rides base64 in `delta`.
             if let b64 = obj["delta"] as? String { enqueuePlayback(b64) }
         case "response.done":
             handleWSResponseDone(obj)
