@@ -32,9 +32,10 @@ import { endRealtimeSession } from '../lib/realtime-sessions';
 // lib/realtime-sessions.ts.
 const MAX_CALL_MS = 30 * 60 * 1000;
 
-// Canonical voice model slug — resolveRoute keys task_routing_rules and
-// the alias price lookup off this (same value as routes/realtime.ts).
-const OPENAI_MODEL_SLUG = 'gpt-realtime';
+// Default voice model slug — fallback when the session carries no
+// picked model. Per-turn billing resolves the alias off the model the
+// call actually used (ctx.model), so a mini call is priced as mini.
+const DEFAULT_VOICE_MODEL_SLUG = 'gpt-realtime-2';
 
 type Transport = 'sideband' | 'proxy';
 
@@ -185,7 +186,7 @@ export class RealtimeMeterDO {
     if (!key) return new Response('openai key not configured', { status: 503 });
 
     let resp: Response;
-    const proxyReq = this.proxyUpstreamRequest(ctx.model ?? OPENAI_MODEL_SLUG, key);
+    const proxyReq = this.proxyUpstreamRequest(ctx.model ?? DEFAULT_VOICE_MODEL_SLUG, key);
     try {
       resp = await fetch(proxyReq.url, { headers: proxyReq.headers });
     } catch (err) {
@@ -381,9 +382,10 @@ export class RealtimeMeterDO {
     const supa = serviceClient(this.env);
     let route;
     try {
+      // Price the model the call actually used — no taskType, so a
+      // task_routing_rule can't redirect billing away from what ran.
       route = await resolveRoute(supa, this.env, {
-        modelSlug: OPENAI_MODEL_SLUG,
-        taskType: 'voice_call',
+        modelSlug: ctx.model ?? DEFAULT_VOICE_MODEL_SLUG,
         preferProvider: 'openai',
         metadata: { userId: ctx.userId, conversationId: ctx.conversationId },
       });

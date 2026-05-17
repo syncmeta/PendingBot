@@ -49,10 +49,11 @@ realtimeRoutes.use('*', requireSession());
 // shared helpers
 // =============================================================================
 
-// Canonical model slug. task_routing_rules lookup is keyed off this in
-// resolveRoute(..., taskType: 'voice_call') so admins can override per
-// task/user without touching the route handler.
-const OPENAI_MODEL_SLUG = 'gpt-realtime';
+// Default voice model slug — used when the client sends no `model`.
+// The iOS picker's values double as model slugs (gpt-realtime-2 /
+// gpt-realtime-mini-2025-12-15), so a picked model resolves and prices
+// directly; this is just the fallback for an absent pick.
+const DEFAULT_VOICE_MODEL_SLUG = 'gpt-realtime-2';
 
 interface SessionContext {
   userId: string;
@@ -284,14 +285,15 @@ realtimeRoutes.post('/session', async (c) => {
   // session.update. Either way it never touches the iOS device.
   const instructions = await assembleInstructions(c.env, ctx);
 
-  // Route resolution. task_routing_rules can still override at admin
-  // discretion via taskType='voice_call'. Uses the service client, not
-  // supaUser — the llm_* config tables are RLS-locked (RLS on, no
+  // Route resolution keyed on the client-picked voice model (its picker
+  // value is the model slug); task_routing_rules can still override at
+  // admin discretion via taskType='voice_call'. Uses the service client,
+  // not supaUser — the llm_* config tables are RLS-locked (RLS on, no
   // policy = deny for authenticated), so a user JWT reads zero rows.
   let route;
   try {
     route = await resolveRoute(serviceClient(c.env), c.env, {
-      modelSlug: OPENAI_MODEL_SLUG,
+      modelSlug: parsed.model ?? DEFAULT_VOICE_MODEL_SLUG,
       taskType: 'voice_call',
       metadata: { userId, conversationId: parsed.conversation_id },
     });
