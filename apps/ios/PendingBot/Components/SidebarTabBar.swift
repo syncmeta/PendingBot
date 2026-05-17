@@ -66,7 +66,7 @@ struct SidebarTabBar: View {
                             .overlay(alignment: .topTrailing) {
                                 if tab == .message, unread.hasUnread {
                                     Circle()
-                                        .fill(Color.red)
+                                        .fill(Theme.Palette.accent)
                                         .frame(width: 7, height: 7)
                                         .offset(x: 7, y: -2)
                                 }

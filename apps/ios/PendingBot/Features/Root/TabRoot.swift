@@ -61,28 +61,44 @@ struct TabRoot: View {
     // ── Compact (iPhone) ────────────────────────────────────────────────────
 
     private var compactBody: some View {
-        TabView(selection: selected) {
-            MessageTabView()
-                .tabItem { Label(TopTab.message.label, systemImage: TopTab.message.systemImage) }
-                .tag(TopTab.message)
+        // Root GeometryReader so the 消息 tab dot can be positioned over
+        // the system tab bar — its `proxy` reliably reports the window
+        // size and the bottom edge coincides with the tab bar's icon band.
+        GeometryReader { proxy in
+            ZStack(alignment: .topLeading) {
+                TabView(selection: selected) {
+                    MessageTabView()
+                        .tabItem { Label(TopTab.message.label, systemImage: TopTab.message.systemImage) }
+                        .tag(TopTab.message)
 
-            FriendsTabView()
-                .tabItem { Label(TopTab.friends.label, systemImage: TopTab.friends.systemImage) }
-                .tag(TopTab.friends)
+                    FriendsTabView()
+                        .tabItem { Label(TopTab.friends.label, systemImage: TopTab.friends.systemImage) }
+                        .tag(TopTab.friends)
 
-            ScrollTabView()
-                .tabItem { Label(TopTab.scroll.label, systemImage: TopTab.scroll.systemImage) }
-                .tag(TopTab.scroll)
+                    ScrollTabView()
+                        .tabItem { Label(TopTab.scroll.label, systemImage: TopTab.scroll.systemImage) }
+                        .tag(TopTab.scroll)
 
-            MeTabView()
-                .tabItem { Label(TopTab.me.label, systemImage: TopTab.me.systemImage) }
-                .tag(TopTab.me)
-        }
-        // The system `.badge` modifier only renders a number; the spec
-        // calls for a plain dot on 消息, so it's drawn as a manual overlay.
-        .overlay(alignment: .bottom) {
-            if unread.hasUnread {
-                MessageTabDot()
+                    MeTabView()
+                        .tabItem { Label(TopTab.me.label, systemImage: TopTab.me.systemImage) }
+                        .tag(TopTab.me)
+                }
+                // 消息 tab dot. SwiftUI's `.badge` only renders numbers,
+                // so the dot-only indicator is placed by hand over the
+                // first of four equal-width tab slots. The 49pt icon band
+                // sits flush above the bottom safe area, which in this
+                // root GeometryReader's space is the bottom edge — so the
+                // band top is `height − 49`.
+                if unread.hasUnread {
+                    Circle()
+                        .fill(Theme.Palette.accent)
+                        .frame(width: 9, height: 9)
+                        .position(
+                            x: proxy.size.width / 8 + 12,
+                            y: proxy.size.height - 49 + 8
+                        )
+                        .allowsHitTesting(false)
+                }
             }
         }
     }
@@ -97,26 +113,6 @@ struct TabRoot: View {
         case .scroll:  ScrollTabView()
         case .me:      MeTabView()
         }
-    }
-}
-
-/// A plain red dot pinned over the 消息 tab's icon in the system tab bar.
-/// SwiftUI's `.badge` only draws numeric badges, so the dot-only unread
-/// indicator is a manual overlay. Positioned for the first of four
-/// equal-width tabs; the icon sits in the ~49pt band just above the home
-/// indicator safe area.
-private struct MessageTabDot: View {
-    var body: some View {
-        GeometryReader { geo in
-            Circle()
-                .fill(Color.red)
-                .frame(width: 9, height: 9)
-                .position(
-                    x: geo.size.width / 8 + 12,
-                    y: geo.size.height - geo.safeAreaInsets.bottom - 49 + 8
-                )
-        }
-        .allowsHitTesting(false)
     }
 }
 

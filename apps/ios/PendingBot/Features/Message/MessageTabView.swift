@@ -453,11 +453,17 @@ struct MessageTabView: View {
 
             // Push server-truth unread counts into the shared store so the
             // per-row badge, the tab dot, and the app icon badge all read
-            // from one place. Convs without a user_unread_counts row map
-            // to 0 (never received a message).
+            // from one place. Preset conversations (epoch-year timestamp,
+            // see migration 0024) default to read — their preseeded
+            // messages never count as unread.
+            let convById = Dictionary(uniqueKeysWithValues: fresh.map { ($0.id, $0) })
             var counts: [String: Int] = [:]
             for row in convFetched {
-                counts[row.id] = row.unread?.first?.unread_count ?? 0
+                let serverCount = row.unread?.first?.unread_count ?? 0
+                let ts = convById[row.id]?.last_activity_at ?? 0
+                let year = Calendar.current.component(
+                    .year, from: Date(timeIntervalSince1970: TimeInterval(ts)))
+                counts[row.id] = year == 1970 ? 0 : serverCount
             }
             unread.setServerCounts(counts)
 
@@ -757,19 +763,12 @@ private struct ConversationListRow: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
                     Spacer(minLength: 8)
-                    if isGroupConv {
-                        GroupChatTag()
-                            .layoutPriority(1)
-                    } else {
-                        Text(primaryName)
-                            .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
-                            .foregroundStyle(nameTagColors.fg)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Capsule().fill(nameTagColors.bg))
-                            .lineLimit(1)
-                            .layoutPriority(1)
+                    // Unread badge sits immediately left of the name tag.
+                    HStack(spacing: 6) {
+                        unreadBadge
+                        nameTag
                     }
+                    .layoutPriority(1)
                 }
             }
         }
@@ -787,19 +786,28 @@ private struct ConversationListRow: View {
                 )
         )
         .contentShape(RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous))
-        // Unread badge pinned to the card's top-right corner — numeric
-        // when the server reports unread messages, a plain dot when the
-        // user only manually flagged the row unread.
-        .overlay(alignment: .topTrailing) {
-            unreadBadge
-                .offset(x: 5, y: -6)
+    }
+
+    /// The 公/私 / 群 name pill on the right of the second row.
+    @ViewBuilder
+    private var nameTag: some View {
+        if isGroupConv {
+            GroupChatTag()
+        } else {
+            Text(primaryName)
+                .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
+                .foregroundStyle(nameTagColors.fg)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Capsule().fill(nameTagColors.bg))
+                .lineLimit(1)
         }
     }
 
-    /// iOS-notification-style red badge. A capsule with a white count
-    /// when there are unread messages; falls back to a small dot for the
-    /// manual "标未读" flag. The surface-colored stroke lifts it off the
-    /// card edge it overlaps.
+    /// Unread indicator shown just left of the name tag — a green capsule
+    /// with the message count when the server reports unread messages,
+    /// or a small green dot for the manual "标未读" flag. Green matches
+    /// the app's brand accent.
     @ViewBuilder
     private var unreadBadge: some View {
         if unreadCount > 0 {
@@ -809,13 +817,11 @@ private struct ConversationListRow: View {
                 .padding(.horizontal, 5)
                 .frame(minWidth: 18)
                 .frame(height: 18)
-                .background(Capsule().fill(Color.red))
-                .overlay(Capsule().strokeBorder(Theme.Palette.surface, lineWidth: 1.5))
+                .background(Capsule().fill(Theme.Palette.accent))
         } else if isUnread {
             Circle()
-                .fill(Color.red)
-                .frame(width: 11, height: 11)
-                .overlay(Circle().strokeBorder(Theme.Palette.surface, lineWidth: 2))
+                .fill(Theme.Palette.accent)
+                .frame(width: 8, height: 8)
         }
     }
 }
