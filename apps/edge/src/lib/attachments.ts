@@ -10,7 +10,9 @@ export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
 
 // Fallback per-user cloud cap when billing_config.default_attachment_quota_bytes
 // is missing, so a wiped config never silently disables the quota gate.
-export const DEFAULT_ATTACHMENT_QUOTA_BYTES = 1 * 1024 * 1024 * 1024; // 1 GiB
+// Must match the seeded value after migration 20260512052048 (1 GiB → 5 GiB),
+// so a fresh prod DB and a wiped config agree on the cap.
+export const DEFAULT_ATTACHMENT_QUOTA_BYTES = 5 * 1024 * 1024 * 1024; // 5 GiB
 
 /// SHA-256 hex of the given bytes — used as the content address for
 /// per-user dedup on upload. WebCrypto is available in Workers; no
