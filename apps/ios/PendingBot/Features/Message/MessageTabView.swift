@@ -346,6 +346,7 @@ struct MessageTabView: View {
             conv: conv,
             bot: bot(for: conv),
             userPeer: userPeers[conv.id],
+            unreadCount: unread.unreadCount(conv.id),
             isUnread: unread.isUnread(conv.id),
             isSelected: isSelected
         )
@@ -449,6 +450,16 @@ struct MessageTabView: View {
                 return l.id < r.id
             }
             self.conversations = fresh
+
+            // Push server-truth unread counts into the shared store so the
+            // per-row badge, the tab dot, and the app icon badge all read
+            // from one place. Convs without a user_unread_counts row map
+            // to 0 (never received a message).
+            var counts: [String: Int] = [:]
+            for row in convFetched {
+                counts[row.id] = row.unread?.first?.unread_count ?? 0
+            }
+            unread.setServerCounts(counts)
 
             // Build the user_user peer map. Only convs of that type carry
             // a meaningful peer; bot/group/self rows skip the lookup.
@@ -644,6 +655,10 @@ private struct ConversationListRow: View {
     let bot: Bot?
     /// Resolved peer for user_user rows; nil for bot / group / self.
     let userPeer: UserUserPeer?
+    /// Server-truth unread message count for this conversation.
+    let unreadCount: Int
+    /// True when the user manually swiped this row to "标未读" — a
+    /// local-only flag with no server count behind it.
     let isUnread: Bool
     /// True only in the regular-size sidebar layout when this row's
     /// conversation is the one currently shown in the detail pane.
@@ -708,9 +723,6 @@ private struct ConversationListRow: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    if isUnread {
-                        Circle().fill(Theme.Palette.accent).frame(width: 7, height: 7)
-                    }
                     Text(rowTitle)
                         .font(Theme.Fonts.serif(size: 16, weight: .semibold))
                         .foregroundStyle(
@@ -775,6 +787,36 @@ private struct ConversationListRow: View {
                 )
         )
         .contentShape(RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous))
+        // Unread badge pinned to the card's top-right corner — numeric
+        // when the server reports unread messages, a plain dot when the
+        // user only manually flagged the row unread.
+        .overlay(alignment: .topTrailing) {
+            unreadBadge
+                .offset(x: 5, y: -6)
+        }
+    }
+
+    /// iOS-notification-style red badge. A capsule with a white count
+    /// when there are unread messages; falls back to a small dot for the
+    /// manual "标未读" flag. The surface-colored stroke lifts it off the
+    /// card edge it overlaps.
+    @ViewBuilder
+    private var unreadBadge: some View {
+        if unreadCount > 0 {
+            Text(unreadCount > 99 ? "99+" : "\(unreadCount)")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 5)
+                .frame(minWidth: 18)
+                .frame(height: 18)
+                .background(Capsule().fill(Color.red))
+                .overlay(Capsule().strokeBorder(Theme.Palette.surface, lineWidth: 1.5))
+        } else if isUnread {
+            Circle()
+                .fill(Color.red)
+                .frame(width: 11, height: 11)
+                .overlay(Circle().strokeBorder(Theme.Palette.surface, lineWidth: 2))
+        }
     }
 }
 

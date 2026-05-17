@@ -14,6 +14,7 @@ import SwiftUI
 ///     WeChat / QQ iPad placement.
 struct TabRoot: View {
     @EnvironmentObject var store: AccountStore
+    @EnvironmentObject private var unread: UnreadStore
     @Environment(\.useSidebarLayout) private var sidebarLayout
 
     // Persisted across launches so reopening the app on iPad puts the
@@ -77,6 +78,13 @@ struct TabRoot: View {
                 .tabItem { Label(TopTab.me.label, systemImage: TopTab.me.systemImage) }
                 .tag(TopTab.me)
         }
+        // The system `.badge` modifier only renders a number; the spec
+        // calls for a plain dot on 消息, so it's drawn as a manual overlay.
+        .overlay(alignment: .bottom) {
+            if unread.hasUnread {
+                MessageTabDot()
+            }
+        }
     }
 
     // ── Regular (iPad landscape, Mac Catalyst) ──────────────────────────────
@@ -89,6 +97,26 @@ struct TabRoot: View {
         case .scroll:  ScrollTabView()
         case .me:      MeTabView()
         }
+    }
+}
+
+/// A plain red dot pinned over the 消息 tab's icon in the system tab bar.
+/// SwiftUI's `.badge` only draws numeric badges, so the dot-only unread
+/// indicator is a manual overlay. Positioned for the first of four
+/// equal-width tabs; the icon sits in the ~49pt band just above the home
+/// indicator safe area.
+private struct MessageTabDot: View {
+    var body: some View {
+        GeometryReader { geo in
+            Circle()
+                .fill(Color.red)
+                .frame(width: 9, height: 9)
+                .position(
+                    x: geo.size.width / 8 + 12,
+                    y: geo.size.height - geo.safeAreaInsets.bottom - 49 + 8
+                )
+        }
+        .allowsHitTesting(false)
     }
 }
 

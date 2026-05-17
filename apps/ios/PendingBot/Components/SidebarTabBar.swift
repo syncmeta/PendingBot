@@ -51,6 +51,7 @@ extension EnvironmentValues {
 /// the last child of the sidebar's VStack.
 struct SidebarTabBar: View {
     @Binding var selection: TopTab
+    @EnvironmentObject private var unread: UnreadStore
 
     var body: some View {
         HStack(spacing: 0) {
@@ -62,6 +63,14 @@ struct SidebarTabBar: View {
                     VStack(spacing: 3) {
                         Image(systemName: tab.systemImage)
                             .font(.system(size: 20, weight: .regular))
+                            .overlay(alignment: .topTrailing) {
+                                if tab == .message, unread.hasUnread {
+                                    Circle()
+                                        .fill(Color.red)
+                                        .frame(width: 7, height: 7)
+                                        .offset(x: 7, y: -2)
+                                }
+                            }
                         Text(tab.label)
                             .font(.system(size: 10, weight: .medium))
                     }
