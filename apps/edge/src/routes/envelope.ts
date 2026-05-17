@@ -74,13 +74,31 @@ envelopeRoutes.post('/trigger', async (c) => {
     return jsonError(c, 400, 'conversation_has_no_bot', { message: 'conversation has no bot to write the scroll' });
   }
 
-  // Caller-supplied settings win; fall through to whatever the
-  // conversation saved last; resolveEnvelopeSettings fills the rest.
+  // Bot-level envelope defaults (bots.config.envelope) sit underneath
+  // the conversation's saved settings — a bot configured once applies
+  // to every conv with it that hasn't overridden anything itself.
+  const { data: botRow } = await supaUser
+    .from('bots')
+    .select('config')
+    .eq('id', conv.bot_id)
+    .maybeSingle();
+  const botEnvelopeDefaults =
+    botRow?.config &&
+    typeof botRow.config === 'object' &&
+    !Array.isArray(botRow.config) &&
+    typeof (botRow.config as Record<string, unknown>).envelope === 'object'
+      ? ((botRow.config as Record<string, unknown>).envelope as Record<string, unknown>)
+      : null;
+
+  // Caller-supplied settings win; then the conversation's saved
+  // settings; then the bot's defaults; resolveEnvelopeSettings fills
+  // any remaining gaps with hard defaults.
   const savedSettings =
     conv.envelope_settings && typeof conv.envelope_settings === 'object'
       ? (conv.envelope_settings as Record<string, unknown>)
       : null;
   const settings = resolveEnvelopeSettings({
+    ...(botEnvelopeDefaults ?? {}),
     ...(savedSettings ?? {}),
     ...(parsed.settings ?? {}),
   });

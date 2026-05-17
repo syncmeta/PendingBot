@@ -718,3 +718,435 @@ struct InviteContactPickerSheet: View {
         }
     }
 }
+
+// MARK: - Bot config
+
+/// Bot-level configuration page — pushed from the pre-chat 设置 button.
+/// Houses everything that belongs to *the bot* rather than a single
+/// conversation: default model, voice-call gate + voice model, vision
+/// model, the 来信 (envelope) defaults, the lookback cadence, and a link
+/// into 技能. Persisted into `bots.config` jsonb (+ the `model_id` /
+/// `voice_call_enabled` columns) via PATCH /v1/bots/:id so the worker
+/// merges and drops the bot KV cache in one trip.
+///
+/// Read-only for bots the caller didn't create, or any public/preset bot
+/// (the worker enforces the same gate). The settings still render so the
+/// user can *see* how the bot is set up.
+struct BotConfigView: View {
+    let bot: Bot
+    let currentUserId: String?
+
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var model: String = ""
+    @State private var voiceEnabled: Bool = false
+    @State private var voiceModel: String = ""    // "" = auto
+    @State private var visionModel: String = ""   // "" = auto
+    @State private var envelope: EnvelopeSettings = .defaults
+    @State private var lookbackEnabled: Bool = true
+    @State private var lookbackInterval: Int = 10
+
+    @State private var initial: Snapshot?
+    @State private var loaded = false
+    @State private var saving = false
+    @State private var error: String?
+    @State private var pickerTarget: PickerTarget?
+
+    /// Editable knobs snapshot — drives the dirty check so 保存 only
+    /// lights up once the form actually diverges from what we loaded.
+    private struct Snapshot: Equatable {
+        let model: String
+        let voiceEnabled: Bool
+        let voiceModel: String
+        let visionModel: String
+        let envelope: EnvelopeSettings
+        let lookbackEnabled: Bool
+        let lookbackInterval: Int
+    }
+
+    private enum PickerTarget: Identifiable {
+        case main, vision, voice, explorer, collaborator
+        var id: Int {
+            switch self {
+            case .main: return 0
+            case .vision: return 1
+            case .voice: return 2
+            case .explorer: return 3
+            case .collaborator: return 4
+            }
+        }
+    }
+
+    /// Only the creator of a *private* bot may edit. Public/preset bots
+    /// are frozen — the worker rejects the PATCH anyway.
+    private var canEdit: Bool {
+        guard let me = currentUserId, let owner = bot.creator_id else { return false }
+        return bot.visibility == "private" && owner == me
+    }
+
+    private var snapshot: Snapshot {
+        Snapshot(
+            model: model, voiceEnabled: voiceEnabled, voiceModel: voiceModel,
+            visionModel: visionModel, envelope: envelope,
+            lookbackEnabled: lookbackEnabled, lookbackInterval: lookbackInterval
+        )
+    }
+
+    private var dirty: Bool {
+        guard let initial else { return false }
+        return snapshot != initial
+    }
+
+    var body: some View {
+        Form {
+            if !canEdit {
+                Section {
+                    Text("这是「\(bot.display_name)」的配置。只有创建者能修改自己的私有机器人；公有 / 预置机器人不可改。")
+                        .font(Theme.Fonts.caption)
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                }
+            }
+
+            modelSection
+            voiceSection
+            visionSection
+            envelopeSection
+            lookbackSection
+
+            Section("技能") {
+                NavigationLink {
+                    SkillsView()
+                } label: {
+                    HStack {
+                        Image(systemName: "puzzlepiece.extension")
+                        Text("管理技能")
+                    }
+                }
+                .foregroundStyle(Theme.Palette.ink)
+            }
+
+            if let error {
+                Section { Text(error).foregroundStyle(.red).font(.footnote) }
+            }
+        }
+        .disabled(!loaded)
+        .navigationTitle("机器人设置")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await load() }
+        .toolbar {
+            if canEdit {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(saving ? "保存中…" : "保存") {
+                        Task { await save() }
+                    }
+                    .disabled(saving || !dirty || !loaded)
+                }
+            }
+        }
+        .sheet(item: $pickerTarget) { target in
+            modelPicker(for: target)
+                .presentationDragIndicator(.visible)
+                .tint(Theme.Palette.accent)
+        }
+        .tint(Theme.Palette.accent)
+    }
+
+    // ── Sections ────────────────────────────────────────────────────────────
+
+    @ViewBuilder
+    private var modelSection: some View {
+        Section {
+            pickerRow(icon: "cube.transparent", title: "默认模型",
+                      value: shortSlug(model), enabled: canEdit) {
+                pickerTarget = .main
+            }
+        } header: {
+            Text("模型")
+        } footer: {
+            Text("这个机器人聊天时用的主模型。每个对话可以再单独覆盖。")
+        }
+    }
+
+    @ViewBuilder
+    private var voiceSection: some View {
+        Section {
+            Toggle("语音通话", isOn: $voiceEnabled)
+                .disabled(!canEdit)
+            if voiceEnabled {
+                pickerRow(icon: "waveform", title: "语音模型",
+                          value: voiceModel.isEmpty ? "自动" : shortSlug(voiceModel),
+                          enabled: canEdit) {
+                    pickerTarget = .voice
+                }
+            }
+        } header: {
+            Text("语音")
+        } footer: {
+            Text("打开后，聊天页顶部会出现电话按钮。「语音模型」留空时用系统默认的实时语音模型。")
+        }
+    }
+
+    @ViewBuilder
+    private var visionSection: some View {
+        Section {
+            pickerRow(icon: "eye", title: "识图模型",
+                      value: visionModel.isEmpty ? "自动" : shortSlug(visionModel),
+                      enabled: canEdit) {
+                pickerTarget = .vision
+            }
+        } header: {
+            Text("视觉")
+        } footer: {
+            Text("看图、给图片写摘要、回答关于图片的问题时用这个模型。「自动」时：主模型若支持识图就直接用，否则回落到服务端默认。")
+        }
+    }
+
+    @ViewBuilder
+    private var envelopeSection: some View {
+        Section {
+            pickerRow(icon: "person.crop.square", title: "探索模型",
+                      value: shortSlug(envelope.explorerModel), enabled: canEdit) {
+                pickerTarget = .explorer
+            }
+            pickerRow(icon: "person.2.crop.square.stack", title: "协作模型",
+                      value: envelope.collaboratorModel.map(shortSlug) ?? "无",
+                      enabled: canEdit) {
+                pickerTarget = .collaborator
+            }
+            Stepper(value: $envelope.turnCap, in: 1...30) {
+                HStack {
+                    Image(systemName: "repeat")
+                    Text("轮数上限")
+                    Spacer()
+                    Text("\(envelope.turnCap)")
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+            }
+            .disabled(!canEdit)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Image(systemName: "tray.full")
+                    Text("聊天记录占用")
+                    Spacer()
+                    Text("\(envelope.historyTokenBudgetPct)%")
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+                Slider(
+                    value: Binding(
+                        get: { Double(envelope.historyTokenBudgetPct) },
+                        set: { envelope.historyTokenBudgetPct = Int($0.rounded()) }
+                    ),
+                    in: 5...90, step: 5
+                )
+                .tint(Theme.Palette.accent)
+                .disabled(!canEdit)
+            }
+            .foregroundStyle(Theme.Palette.ink)
+        } header: {
+            Text("写信 / Envelopes")
+        } footer: {
+            Text("这个机器人写信（来信）时的默认设置。在具体对话里可以临时覆盖。")
+        }
+    }
+
+    @ViewBuilder
+    private var lookbackSection: some View {
+        Section {
+            Toggle("自动回看", isOn: $lookbackEnabled)
+                .disabled(!canEdit)
+            if lookbackEnabled {
+                Stepper(value: $lookbackInterval, in: 1...100) {
+                    HStack {
+                        Image(systemName: "arrow.uturn.backward")
+                        Text("回看间隔")
+                        Spacer()
+                        Text("每 \(lookbackInterval) 轮")
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                }
+                .disabled(!canEdit)
+            }
+        } header: {
+            Text("回看 / Lookback")
+        } footer: {
+            Text("打开后，机器人每隔若干轮会自我复盘一次，检查你或它说过的内容是否需要更正、补充。")
+        }
+    }
+
+    // ── Reusable picker row ─────────────────────────────────────────────────
+
+    @ViewBuilder
+    private func pickerRow(icon: String, title: String, value: String,
+                           enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Image(systemName: icon)
+                Text(title)
+                Spacer()
+                Text(value)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if enabled {
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+        .foregroundStyle(Theme.Palette.ink)
+        .disabled(!enabled)
+    }
+
+    @ViewBuilder
+    private func modelPicker(for target: PickerTarget) -> some View {
+        switch target {
+        case .main:
+            ModelPickerSheet(initial: model, allowsClear: false) { picked in
+                if let picked, !picked.isEmpty { model = picked }
+                pickerTarget = nil
+            }
+        case .vision:
+            ModelPickerSheet(initial: visionModel, allowsClear: true,
+                             clearLabel: "自动（跟随主模型 / 服务端默认）",
+                             visionOnly: true) { picked in
+                visionModel = picked.flatMap { $0.isEmpty ? nil : $0 } ?? ""
+                pickerTarget = nil
+            }
+        case .voice:
+            ModelPickerSheet(initial: voiceModel, allowsClear: true,
+                             clearLabel: "自动（系统默认语音模型）") { picked in
+                voiceModel = picked.flatMap { $0.isEmpty ? nil : $0 } ?? ""
+                pickerTarget = nil
+            }
+        case .explorer:
+            ModelPickerSheet(initial: envelope.explorerModel, allowsClear: false) { picked in
+                if let picked, !picked.isEmpty { envelope.explorerModel = picked }
+                pickerTarget = nil
+            }
+        case .collaborator:
+            ModelPickerSheet(initial: envelope.collaboratorModel ?? "",
+                             allowsClear: true, clearLabel: "无协作者") { picked in
+                envelope.collaboratorModel = picked.flatMap { $0.isEmpty ? nil : $0 }
+                pickerTarget = nil
+            }
+        }
+    }
+
+    private func shortSlug(_ slug: String) -> String {
+        guard !slug.isEmpty else { return "—" }
+        return slug.split(separator: "/").last.map(String.init) ?? slug
+    }
+
+    // ── Load / save ─────────────────────────────────────────────────────────
+
+    private func load() async {
+        struct Row: Decodable {
+            let model_id: String?
+            let voice_call_enabled: Bool?
+            let config: AnyJSON?
+        }
+        do {
+            let row: Row = try await SupabaseStack.shared
+                .from("bots")
+                .select("model_id, voice_call_enabled, config")
+                .eq("id", value: bot.id)
+                .single()
+                .execute()
+                .value
+            model = row.model_id ?? bot.model ?? ""
+            voiceEnabled = row.voice_call_enabled ?? bot.voice_call_enabled ?? false
+            applyConfig(row.config)
+        } catch {
+            // Fall back to whatever the Bot row already carried so the
+            // page still renders something usable.
+            model = bot.model ?? ""
+            voiceEnabled = bot.voice_call_enabled ?? false
+        }
+        initial = snapshot
+        loaded = true
+    }
+
+    /// Parse the `bots.config` jsonb blob into the editable fields. Every
+    /// key is optional — a bot that's never been configured decodes to
+    /// the same defaults the worker resolvers use.
+    private func applyConfig(_ json: AnyJSON?) {
+        guard let json, case let .object(dict) = json else { return }
+        if case let .string(s)? = dict["voiceModel"], !s.isEmpty { voiceModel = s }
+        if case let .string(s)? = dict["visionModel"], !s.isEmpty { visionModel = s }
+        envelope = EnvelopeSettings.from(dict["envelope"])
+        if case let .object(lb)? = dict["lookback"] {
+            if case let .bool(b)? = lb["enabled"] { lookbackEnabled = b }
+            if case let .integer(i)? = lb["roundInterval"], i > 0 {
+                lookbackInterval = i
+            } else if case let .double(d)? = lb["roundInterval"], d > 0 {
+                lookbackInterval = Int(d)
+            }
+        }
+    }
+
+    private func save() async {
+        guard canEdit, dirty else { return }
+        saving = true; defer { saving = false }
+        error = nil
+        do {
+            // Raw PATCH so cleared model picks can send an explicit JSON
+            // `null` (NSNull) — the worker schema treats null as "clear",
+            // an absent key as "leave untouched".
+            let collabVal: Any = envelope.collaboratorModel ?? NSNull()
+            let visionVal: Any = visionModel.isEmpty ? NSNull() : visionModel
+            let voiceVal: Any = voiceModel.isEmpty ? NSNull() : voiceModel
+            let envelopeCfg: [String: Any] = [
+                "explorerModel": envelope.explorerModel,
+                "collaboratorModel": collabVal,
+                "turnCap": envelope.turnCap,
+                "historyTokenBudgetPct": envelope.historyTokenBudgetPct,
+            ]
+            let lookbackCfg: [String: Any] = [
+                "enabled": lookbackEnabled,
+                "roundInterval": lookbackInterval,
+            ]
+            let cfg: [String: Any] = [
+                "lookback": lookbackCfg,
+                "envelope": envelopeCfg,
+                "visionModel": visionVal,
+                "voiceModel": voiceVal,
+            ]
+            let body: [String: Any] = [
+                "model_id": model,
+                "voice_call_enabled": voiceEnabled,
+                "config": cfg,
+            ]
+            let url = HostedConfig.environment.workerURL
+                .appendingPathComponent("v1/bots/")
+                .appendingPathComponent(bot.id)
+            var req = URLRequest(url: url)
+            req.httpMethod = "PATCH"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            let token = try await SupabaseStack.shared.auth.session.accessToken
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            req.httpBody = try JSONSerialization.data(withJSONObject: body)
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard let http = resp as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+            if !(200..<300).contains(http.statusCode) {
+                let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                let errObj = payload?["error"] as? [String: Any]
+                let msg = (errObj?["message"] as? String)
+                    ?? (errObj?["code"] as? String)
+                    ?? "HTTP \(http.statusCode)"
+                self.error = msg
+                Haptics.error()
+                return
+            }
+            initial = snapshot
+            Haptics.success()
+            dismiss()
+        } catch {
+            self.error = error.localizedDescription
+            Haptics.error()
+        }
+    }
+}

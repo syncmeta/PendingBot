@@ -10,6 +10,32 @@ import type { AppBindings } from '../types';
 export const botRoutes = new Hono<AppBindings>();
 botRoutes.use('*', requireSession());
 
+// Bot-level config blob — stored in `bots.config` jsonb. Drives the
+// per-bot defaults the conversation resolvers fall back to when a
+// conversation carries no override of its own (lookback cadence is
+// already consumed by maybeAutoLookback; envelope / vision wired in
+// their respective resolvers).
+const ConfigPatch = z
+  .object({
+    lookback: z
+      .object({
+        enabled: z.boolean().optional(),
+        roundInterval: z.number().int().min(1).max(100).optional(),
+      })
+      .optional(),
+    envelope: z
+      .object({
+        explorerModel: z.string().max(200).optional(),
+        collaboratorModel: z.string().max(200).nullable().optional(),
+        turnCap: z.number().int().min(1).max(60).optional(),
+        historyTokenBudgetPct: z.number().int().min(1).max(100).optional(),
+      })
+      .optional(),
+    visionModel: z.string().max(200).nullable().optional(),
+    voiceModel: z.string().max(200).nullable().optional(),
+  })
+  .strict();
+
 const PatchBody = z
   .object({
     // OpenRouter slug. Becomes the bot's new default — applies to every conv
@@ -18,11 +44,16 @@ const PatchBody = z
     // Voice-call gate. When true the iOS conversation header shows the
     // phone button. Bot owner-only — public/preset bots stay locked.
     voice_call_enabled: z.boolean().optional(),
+    // Partial bot-config patch. Top-level keys present here replace the
+    // matching key in the stored `config` jsonb wholesale; absent keys
+    // are left untouched.
+    config: ConfigPatch.optional(),
   })
   .refine(
     (v) =>
       v.model_id !== undefined ||
-      v.voice_call_enabled !== undefined,
+      v.voice_call_enabled !== undefined ||
+      v.config !== undefined,
     { message: 'no fields to update' },
   );
 
@@ -46,7 +77,7 @@ botRoutes.patch('/:id', async (c) => {
   const supa = serviceClient(c.env);
   const { data: bot, error: botErr } = await supa
     .from('bots')
-    .select('id, visibility, creator_id')
+    .select('id, visibility, creator_id, config')
     .eq('id', id)
     .maybeSingle();
   if (botErr) return jsonError(c, 500, 'database_error', { detail: botErr.message });
@@ -65,6 +96,16 @@ botRoutes.patch('/:id', async (c) => {
   if (parsed.model_id !== undefined) update.model_id = parsed.model_id;
   if (parsed.voice_call_enabled !== undefined)
     update.voice_call_enabled = parsed.voice_call_enabled;
+  if (parsed.config !== undefined) {
+    // Shallow-merge at the top level: the client always sends a
+    // complete sub-object for each key it touches, so replacing
+    // whole keys (rather than deep-merging) is the intended shape.
+    const existing =
+      bot.config && typeof bot.config === 'object' && !Array.isArray(bot.config)
+        ? (bot.config as Record<string, unknown>)
+        : {};
+    update.config = { ...existing, ...parsed.config };
+  }
   const { error: updErr } = await supa
     .from('bots')
     .update(update as never)

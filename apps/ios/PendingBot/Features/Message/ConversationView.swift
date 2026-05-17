@@ -132,6 +132,11 @@ struct ConversationView: View {
     @State var skills: [SkillSummary] = []
     @State private var showingSkills = false
     @State private var showingSettings = false
+    /// Drives the push into BotConfigView from the pre-chat 设置 button.
+    @State private var showingBotConfig = false
+    /// In-flight / done state for the pre-chat 请它写信 action.
+    @State private var triggeringLetter = false
+    @State private var letterTriggered = false
     @State private var saveAsSkillBody: String?
     /// Body of a message the user wants to partial-copy. The bubble's
     /// own `.textSelection(.enabled)` is shadowed by SwiftUI's
@@ -637,6 +642,13 @@ struct ConversationView: View {
                 )
             }
         }
+        .navigationDestination(isPresented: $showingBotConfig) {
+            // Bot-level config (model / voice / vision / envelope /
+            // lookback / skills). Reached from the pre-chat action bar.
+            if let bot {
+                BotConfigView(bot: bot, currentUserId: AccountStore.shared.current?.id)
+            }
+        }
         .sheet(item: Binding(
             get: { saveAsSkillBody.map { SkillDraft(body: $0) } },
             set: { saveAsSkillBody = $0?.body }
@@ -760,10 +772,85 @@ struct ConversationView: View {
             Text(conversation.conversation_type == "user_user" ? headerTitle : botName)
                 .font(Theme.Fonts.serif(size: 22, weight: .semibold))
                 .foregroundStyle(Theme.Palette.ink)
+            if showsBotPreChatActions {
+                botPreChatActions
+                    .padding(.top, 10)
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 64)
         .padding(.bottom, 24)
+    }
+
+    /// The pre-chat action bar (请它写信 / 致电 / 设置) sits under the
+    /// empty-state avatar for a fresh bot chat. Once a message is sent
+    /// the conversation is no longer empty, so the bar disappears on its
+    /// own — no extra dismissal logic needed.
+    private var showsBotPreChatActions: Bool {
+        conversation.conversation_type == "user_bot" && bot != nil
+    }
+
+    @ViewBuilder
+    private var botPreChatActions: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                PreChatActionButton(
+                    title: triggeringLetter ? "派出中…" : "请它写信",
+                    systemImage: "envelope.open",
+                    busy: triggeringLetter
+                ) { Task { await requestBotLetter() } }
+                .disabled(triggeringLetter)
+
+                PreChatActionButton(title: "致电", systemImage: "phone.fill") {
+                    Task { await startPreChatCall() }
+                }
+
+                PreChatActionButton(title: "设置", systemImage: "gearshape") {
+                    Haptics.tap()
+                    showingBotConfig = true
+                }
+            }
+            if letterTriggered {
+                Text("已请它写信 — 去「来信」看进度")
+                    .font(Theme.Fonts.caption)
+                    .foregroundStyle(Theme.Palette.inkMuted)
+                    .transition(.opacity)
+            }
+        }
+        .padding(.horizontal, 32)
+    }
+
+    /// Materialize the pending conv (if needed), then kick off an
+    /// envelope with the bot's saved defaults. The letter surfaces on
+    /// the 来信 tab; the chat itself stays empty so the action bar
+    /// remains for the user to keep going.
+    private func requestBotLetter() async {
+        guard !triggeringLetter, let api else { return }
+        guard await materializeIfPending() else { return }
+        triggeringLetter = true
+        defer { triggeringLetter = false }
+        do {
+            _ = try await api.scrollTrigger(conversationId: conversation.id, settings: nil)
+            withAnimation { letterTriggered = true }
+            Haptics.success()
+        } catch is CancellationError {
+        } catch {
+            self.error = error.localizedDescription
+            Haptics.error()
+        }
+    }
+
+    /// Voice-call entry from the pre-chat bar. Voice is an opt-in per-bot
+    /// gate, so a bot that hasn't enabled it sends the user to 设置
+    /// instead of failing silently.
+    private func startPreChatCall() async {
+        guard bot?.voice_call_enabled == true else {
+            self.error = "这个机器人还没开启语音通话,可以在「设置」里打开。"
+            return
+        }
+        guard await materializeIfPending() else { return }
+        Haptics.tap()
+        startVoiceCall()
     }
 
     /// Custom in-body chat header — replaces the system nav bar so we have
@@ -1813,5 +1900,45 @@ struct RecallTombstoneView: View {
         return wasMine
             ? "你撤回了 \(timePhrase) 的一条消息"
             : "对方撤回了 \(timePhrase) 的一条消息"
+    }
+}
+
+// MARK: - Pre-chat action button
+
+/// One pill in the pre-chat action bar shown under a fresh bot chat's
+/// empty state. Surface-muted capsule with an icon over a label, sized
+/// so the three actions sit evenly across the row.
+private struct PreChatActionButton: View {
+    let title: String
+    let systemImage: String
+    var busy: Bool = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 6) {
+                ZStack {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 18, weight: .regular))
+                        .opacity(busy ? 0 : 1)
+                    if busy {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
+                .frame(height: 22)
+                Text(title)
+                    .font(Theme.Fonts.rounded(size: 12, weight: .medium))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(Theme.Palette.ink)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Theme.Palette.surfaceMuted)
+            )
+        }
+        .buttonStyle(.plain)
     }
 }

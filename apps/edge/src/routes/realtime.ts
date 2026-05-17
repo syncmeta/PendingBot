@@ -64,6 +64,9 @@ interface SessionContext {
     display_name: string;
     output_mode: 'single' | 'bubble';
     voice_call_enabled: boolean;
+    /// Bot-level default realtime model (bots.config.voiceModel). Used
+    /// as the mint `model` when the client picker didn't send one.
+    voice_model: string | null;
   };
 }
 
@@ -113,7 +116,7 @@ async function loadSessionContext(
   const supaService = serviceClient(env);
   const { data: bot } = await supaService
     .from('bots')
-    .select('id, display_name, output_mode, voice_call_enabled')
+    .select('id, display_name, output_mode, voice_call_enabled, config')
     .eq('id', conv.bot_id)
     .maybeSingle();
   if (!bot) {
@@ -144,6 +147,12 @@ async function loadSessionContext(
         // schema.ts types the column as plain `string` so we narrow here.
         output_mode: bot.output_mode === 'bubble' ? 'bubble' : 'single',
         voice_call_enabled: true,
+        voice_model: ((): string | null => {
+          const cfg = bot.config;
+          if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) return null;
+          const v = (cfg as Record<string, unknown>).voiceModel;
+          return typeof v === 'string' && v.length > 0 ? v : null;
+        })(),
       },
     },
   };
@@ -374,7 +383,9 @@ realtimeRoutes.post('/session', async (c) => {
     instructions,
     balanceCredits,
     minThreshold,
-    modelOverride: parsed.model,
+    // Client picker wins; otherwise the bot's configured default
+    // realtime model (bots.config.voiceModel), else the resolved route.
+    modelOverride: parsed.model ?? ctx.bot.voice_model ?? undefined,
   });
 });
 
