@@ -46,12 +46,6 @@ final class CallSession {
     /// formats this for the "通话 02:34" line). nil while connecting.
     var connectedAt: Date?
 
-    /// Buffered transcript turns. Flushed to /transcripts on hangUp.
-    /// Voice-call writes them as normal `messages` rows (metadata.source
-    /// = 'voice_call'), so they participate in next-turn LLM context
-    /// and Honcho sync via maybeRefreshMemory.
-    var transcriptBuffer: [VoiceCallAPI.TranscriptTurn] = []
-
     // MARK: - Inputs
 
     let conversationId: String
@@ -65,8 +59,8 @@ final class CallSession {
     /// Concrete transport, picked by provider on `start()`.
     private var transport: CallTransport?
 
-    /// Returned by the worker on /session. Stored so /usage and
-    /// /transcripts can correlate against the same call.
+    /// Returned by the worker on /session. Stored so /attach and
+    /// /summary can correlate against the same call.
     private(set) var sessionId: String?
     private(set) var providerId: String?
     private(set) var aliasId: String?
@@ -182,26 +176,40 @@ final class CallSession {
 
     private func terminate(reason: TerminateReason) async {
         guard !isTerminal(phase) else { return }
+        let wasConnected = connectedAt != nil
         phase = .hangingUp
-        await transport?.hangUp()
-        // Flush transcripts + audit end marker — fire-and-forget.
-        if let sid = sessionId, !transcriptBuffer.isEmpty {
-            let buffered = transcriptBuffer
-            Task.detached { [api, conversationId] in
-                _ = try? await api.uploadTranscripts(
+
+        // Closing-summary + teardown run in a background task so the UI
+        // dismisses immediately. The task keeps `self` alive past the
+        // CallView dismissal until the teardown finishes.
+        let transport = self.transport
+        let sid = sessionId
+        Task { @MainActor in
+            // Ask the realtime model for a short recap while the transport
+            // is still open and the session still active. Only for a
+            // voluntary hang up of a call that actually connected — a
+            // failed/dead transport would just time out.
+            var summary: String?
+            if wasConnected, reason == .user, let transport {
+                summary = await transport.requestSummary()
+            }
+            // Upload the recap before tearing down: closing the transport
+            // can trip the server-side meter into ending the session,
+            // which would 410 a later /summary.
+            if let sid, let summary, !summary.isEmpty {
+                _ = try? await self.api.uploadSummary(
                     .init(
                         session_id: sid,
-                        conversation_id: conversationId,
-                        turns: buffered,
+                        conversation_id: self.conversationId,
+                        summary: summary,
                     ),
                 )
             }
-        }
-        if let sid = sessionId {
-            Task.detached { [api, conversationId] in
-                try? await api.endSession(
+            await transport?.hangUp()
+            if let sid {
+                try? await self.api.endSession(
                     sessionId: sid,
-                    conversationId: conversationId,
+                    conversationId: self.conversationId,
                 )
             }
         }
@@ -240,6 +248,11 @@ final class CallSession {
 @MainActor
 protocol CallTransport: AnyObject {
     func start() async
+    /// Ask the realtime model for a short text recap of the call, then
+    /// return it. Sends a final text-only `response.create` and waits
+    /// (bounded) for the model's reply. nil if the transport isn't in a
+    /// state to produce one. Call before `hangUp()`.
+    func requestSummary() async -> String?
     func hangUp() async
 }
 
@@ -253,8 +266,6 @@ protocol CallTransportDelegate: AnyObject {
     /// CallSession forwards it to the worker (POST /v1/realtime/attach) so
     /// the server-side meter (RealtimeMeterDO) can open its sideband.
     func transport(_ t: CallTransport, didObtainCallId callId: String) async
-    /// Append a transcript turn to the post-call upload buffer.
-    func transport(_ t: CallTransport, didAppendTranscript turn: VoiceCallAPI.TranscriptTurn)
     /// Transport says we're done — either an error, remote close, or the
     /// upstream telling us the session is over.
     func transport(_ t: CallTransport, didFailWith reason: CallSession.TerminateReason) async
@@ -281,10 +292,6 @@ extension CallSession: CallTransportDelegate {
             // is lost for this call. The worker's 30-minute session cap
             // still bounds it. Nothing the user can act on, so swallow.
         }
-    }
-
-    func transport(_ t: CallTransport, didAppendTranscript turn: VoiceCallAPI.TranscriptTurn) {
-        transcriptBuffer.append(turn)
     }
 
     func transport(_ t: CallTransport, didFailWith reason: CallSession.TerminateReason) async {

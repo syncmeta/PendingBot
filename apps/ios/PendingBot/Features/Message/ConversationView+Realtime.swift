@@ -138,6 +138,13 @@ extension ConversationView {
         let r = event.record
         guard let id = r["id"]?.stringValue,
               r["conversation_id"]?.stringValue == conversation.id else { return }
+        // Voice-call recap rows are memory-only: the bot's closing summary
+        // of a call (metadata.source='voice_call_summary'). They feed the
+        // long-term memory pipeline server-side but never render in the
+        // timeline, so drop them here before they reach the message list.
+        if r["metadata"]?.objectValue?["source"]?.stringValue == "voice_call_summary" {
+            return
+        }
         let role = r["role"]?.stringValue ?? "user"
         let status = r["status"]?.stringValue ?? ""
         // Recall: when a message flips to status='deleted' (via the
