@@ -30,7 +30,13 @@ struct ComposerView: View {
     var onLookback: (() -> Void)? = nil
 
     @State private var showActions = false
-    @FocusState private var isFocused: Bool
+    // Plain Bool, not @FocusState: the actual first responder is the
+    // UIKit UITextView inside ComposerTextField, and nothing here is
+    // bound via `.focused()`. SwiftUI's focus engine would reset a
+    // @FocusState back to false on every parent re-render (which fires
+    // on every keystroke, since `input` is host @State), causing
+    // updateUIView to resign the text view — keyboard drops per char.
+    @State private var isFocused: Bool = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -185,7 +191,7 @@ struct ComposerView: View {
 struct ComposerTextField: UIViewRepresentable {
     @Binding var text: String
     let placeholder: String
-    @FocusState.Binding var isFocused: Bool
+    @Binding var isFocused: Bool
     let onHardwareReturn: () -> Void
 
     /// Cap on auto-grown height — matches the old `lineLimit(1...6)`.
