@@ -14,6 +14,10 @@ struct MeTabView: View {
     @State private var error: String?
     @State private var showRandomize = false
 
+    /// Voice-call transport preference, read by CallSession.start() —
+    /// the key matches CallSession.transportDefaultsKey.
+    @AppStorage("voice_transport") private var voiceTransport = "webrtc"
+
     /// Two `.confirmationDialog`s attached to the same view collide on
     /// SwiftUI — one gets shadowed and its `isPresented` flag flips
     /// without the sheet ever appearing (most visible on Mac Catalyst).
@@ -133,6 +137,33 @@ struct MeTabView: View {
                                 GlassOptionRow(title: "技能管理")
                             }
                             .buttonStyle(.plain)
+                        }
+
+                        VStack(spacing: 6) {
+                            HStack(spacing: 8) {
+                                Text("通话连接")
+                                    .font(Theme.Fonts.bodyEmphasized)
+                                    .foregroundStyle(Theme.Palette.ink)
+                                Spacer(minLength: 0)
+                                Picker("", selection: $voiceTransport) {
+                                    Text("WebRTC").tag("webrtc")
+                                    Text("WebSocket").tag("websocket")
+                                }
+                                .labelsHidden()
+                                .pickerStyle(.menu)
+                                .tint(Theme.Palette.inkMuted)
+                            }
+                            .padding(.horizontal, 20)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .frame(height: 52)
+                            .meGlassCapsule()
+                            .shadow(color: .black.opacity(0.08), radius: 10, x: 0, y: 4)
+
+                            Text("WebRTC 延迟最低；网络受限地区可改用 WebSocket")
+                                .font(Theme.Fonts.monoSmall)
+                                .foregroundStyle(Theme.Palette.inkMuted)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 8)
                         }
 
                         VStack(spacing: 12) {

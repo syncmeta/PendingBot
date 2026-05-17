@@ -339,3 +339,304 @@ final class OpenAICallTransport: CallTransport {
 }
 
 #endif
+
+// =============================================================================
+// MARK: - WebSocket transport
+// =============================================================================
+
+/// WebSocket transport for OpenAI Realtime, relayed through the worker.
+///
+/// Picked when the user chooses the "websocket" transport — the
+/// geo-fallback. It egresses from Cloudflare rather than the device, so
+/// it works from regions where a direct iOS<->OpenAI WebRTC connection is
+/// geo-blocked. iOS holds a WebSocket to the worker's `/v1/realtime/ws`;
+/// `RealtimeMeterDO` bridges it to OpenAI and meters the call server-side.
+///
+/// Unlike `OpenAICallTransport`, the OS media stack does NOT carry the
+/// audio here — this class captures the mic with `AVAudioEngine`, frames
+/// PCM16 as base64 inside `input_audio_buffer.append` events, and plays
+/// the `response.audio.delta` events it receives. The realtime audio
+/// format is fixed at 24 kHz mono signed-16-bit (the worker's
+/// `session.update` pins it). No WebRTC dependency — lives outside the
+/// `#if canImport(WebRTC)` guard above.
+///
+/// NOTE: the audio capture/playback path needs on-device verification —
+/// sample-rate conversion and engine wiring are easy to get subtly wrong
+/// without a real device in the loop.
+@MainActor
+final class OpenAIWebSocketTransport: NSObject, CallTransport {
+
+    private let wsURL: URL
+    private let jwt: String
+    weak var delegate: CallTransportDelegate?
+
+    init(wsURL: URL, jwt: String, delegate: CallTransportDelegate) {
+        self.wsURL = wsURL
+        self.jwt = jwt
+        self.delegate = delegate
+        super.init()
+    }
+
+    private var task: URLSessionWebSocketTask?
+    private let engine = AVAudioEngine()
+    private let playerNode = AVAudioPlayerNode()
+    private var didSignalConnected = false
+    private var stopped = false
+
+    /// OpenAI realtime PCM: 24 kHz, mono, signed 16-bit little-endian.
+    private let openAIFormat = AVAudioFormat(
+        commonFormat: .pcmFormatInt16,
+        sampleRate: 24_000,
+        channels: 1,
+        interleaved: true,
+    )!
+
+    // MARK: CallTransport
+
+    func start() async {
+        do {
+            try configureAudioSession()
+            openSocket()
+            receiveNext()
+            try startAudio()
+        } catch {
+            await delegate?.transport(
+                self, didFailWith: .startupError(error.localizedDescription))
+        }
+    }
+
+    func hangUp() async {
+        stopped = true
+        task?.cancel(with: .goingAway, reason: nil)
+        task = nil
+        if engine.isRunning { engine.stop() }
+        engine.inputNode.removeTap(onBus: 0)
+        do {
+            try AVAudioSession.sharedInstance().setActive(
+                false, options: [.notifyOthersOnDeactivation])
+        } catch {
+            // Non-fatal — usually deactivates once the engine stops.
+        }
+    }
+
+    // MARK: Audio session
+
+    private func configureAudioSession() throws {
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(
+            .playAndRecord,
+            mode: .voiceChat,            // built-in AEC + noise suppression
+            options: [.allowBluetooth, .allowBluetoothA2DP, .defaultToSpeaker],
+        )
+        try session.setActive(true, options: [])
+    }
+
+    // MARK: WebSocket
+
+    private func openSocket() {
+        var req = URLRequest(url: wsURL)
+        // The worker's requireSession middleware validates this JWT — same
+        // gate as every other realtime route. No provider/CF credential
+        // ever reaches the device.
+        req.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
+        let t = URLSession.shared.webSocketTask(with: req)
+        task = t
+        t.resume()
+    }
+
+    /// One-shot receive that re-arms itself — URLSessionWebSocketTask has
+    /// no streaming API, you call `receive` again after each message.
+    private func receiveNext() {
+        task?.receive { [weak self] result in
+            switch result {
+            case .failure:
+                Task { @MainActor [weak self] in
+                    await self?.handleSocketClosed()
+                }
+            case .success(let message):
+                Task { @MainActor [weak self] in
+                    guard let self, !self.stopped else { return }
+                    if case .string(let text) = message {
+                        self.handleServerEvent(text)
+                    }
+                    self.receiveNext()
+                }
+            }
+        }
+    }
+
+    private func handleSocketClosed() async {
+        guard !stopped else { return }
+        await delegate?.transport(self, didFailWith: .network)
+    }
+
+    // MARK: Audio capture (mic -> OpenAI)
+
+    private func startAudio() throws {
+        let input = engine.inputNode
+        // Built-in voice processing (AEC/AGC) — the bot must not hear its
+        // own playback looped back through the mic.
+        try? input.setVoiceProcessingEnabled(true)
+
+        engine.attach(playerNode)
+        engine.connect(playerNode, to: engine.mainMixerNode, format: openAIFormat)
+
+        let hwFormat = input.outputFormat(forBus: 0)
+        let toOpenAI = AVAudioConverter(from: hwFormat, to: openAIFormat)
+        input.installTap(onBus: 0, bufferSize: 4_096, format: hwFormat) {
+            [weak self] buffer, _ in
+            guard let self, let toOpenAI else { return }
+            guard let base64 = Self.encodeForOpenAI(buffer, using: toOpenAI) else {
+                return
+            }
+            Task { @MainActor [weak self] in
+                self?.sendAudioFrame(base64)
+            }
+        }
+
+        engine.prepare()
+        try engine.start()
+        playerNode.play()
+    }
+
+    /// Resample one mic buffer to 24 kHz mono PCM16, base64-encode it.
+    /// `nonisolated static` so it runs on the audio tap thread without
+    /// touching actor-isolated state.
+    private nonisolated static func encodeForOpenAI(
+        _ source: AVAudioPCMBuffer,
+        using converter: AVAudioConverter,
+    ) -> String? {
+        let outFormat = converter.outputFormat
+        let ratio = outFormat.sampleRate / source.format.sampleRate
+        let capacity = AVAudioFrameCount(Double(source.frameLength) * ratio) + 1
+        guard
+            let out = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: capacity)
+        else { return nil }
+
+        var fed = false
+        var err: NSError?
+        converter.convert(to: out, error: &err) { _, status in
+            if fed {
+                status.pointee = .noDataNow
+                return nil
+            }
+            fed = true
+            status.pointee = .haveData
+            return source
+        }
+        guard err == nil, out.frameLength > 0, let channel = out.int16ChannelData
+        else { return nil }
+        let byteCount = Int(out.frameLength) * MemoryLayout<Int16>.size
+        return Data(bytes: channel[0], count: byteCount).base64EncodedString()
+    }
+
+    private func sendAudioFrame(_ base64: String) {
+        guard let task, !stopped else { return }
+        let payload = #"{"type":"input_audio_buffer.append","audio":""# + base64 + #""}"#
+        task.send(.string(payload)) { _ in /* dead socket surfaces on the receive loop */ }
+    }
+
+    // MARK: Server events
+
+    private func handleServerEvent(_ text: String) {
+        guard
+            let data = text.data(using: .utf8),
+            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let type = obj["type"] as? String
+        else { return }
+
+        switch type {
+        case "session.created", "session.updated":
+            if !didSignalConnected {
+                didSignalConnected = true
+                delegate?.transportDidConnect(self)
+            }
+        case "response.audio.delta":
+            if let b64 = obj["delta"] as? String { enqueuePlayback(b64) }
+        case "response.done":
+            handleWSResponseDone(obj)
+        case "conversation.item.input_audio_transcription.completed":
+            handleWSUserTranscript(obj)
+        case "error":
+            let msg = ((obj["error"] as? [String: Any])?["message"] as? String)
+                ?? "realtime error"
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                await self.delegate?.transport(self, didFailWith: .remoteError(msg))
+            }
+        default:
+            break
+        }
+    }
+
+    // MARK: Audio playback (OpenAI -> speaker)
+
+    private func enqueuePlayback(_ base64: String) {
+        guard
+            let pcm = Data(base64Encoded: base64), !pcm.isEmpty,
+            let buffer = Self.makeBuffer(pcm, format: openAIFormat)
+        else { return }
+        playerNode.scheduleBuffer(buffer, completionHandler: nil)
+        if !playerNode.isPlaying { playerNode.play() }
+    }
+
+    private nonisolated static func makeBuffer(
+        _ pcm: Data,
+        format: AVAudioFormat,
+    ) -> AVAudioPCMBuffer? {
+        let frames = AVAudioFrameCount(pcm.count / MemoryLayout<Int16>.size)
+        guard
+            frames > 0,
+            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames),
+            let channel = buffer.int16ChannelData
+        else { return nil }
+        buffer.frameLength = frames
+        pcm.withUnsafeBytes { raw in
+            if let base = raw.baseAddress {
+                channel[0].update(
+                    from: base.assumingMemoryBound(to: Int16.self),
+                    count: Int(frames))
+            }
+        }
+        return buffer
+    }
+
+    // MARK: Transcript parsing
+
+    private func handleWSResponseDone(_ obj: [String: Any]) {
+        let response = (obj["response"] as? [String: Any]) ?? [:]
+        var botTranscript = ""
+        if let outputs = response["output"] as? [[String: Any]] {
+            for item in outputs {
+                if let contents = item["content"] as? [[String: Any]] {
+                    for c in contents {
+                        if let t = c["transcript"] as? String { botTranscript += t }
+                    }
+                }
+            }
+        }
+        guard !botTranscript.isEmpty else { return }
+        delegate?.transport(
+            self,
+            didAppendTranscript: VoiceCallAPI.TranscriptTurn(
+                role: "bot",
+                content: botTranscript,
+                ts: ISO8601DateFormatter().string(from: Date()),
+            ),
+        )
+    }
+
+    private func handleWSUserTranscript(_ obj: [String: Any]) {
+        guard let transcript = obj["transcript"] as? String, !transcript.isEmpty else {
+            return
+        }
+        delegate?.transport(
+            self,
+            didAppendTranscript: VoiceCallAPI.TranscriptTurn(
+                role: "user",
+                content: transcript,
+                ts: ISO8601DateFormatter().string(from: Date()),
+            ),
+        )
+    }
+}

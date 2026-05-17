@@ -11,6 +11,7 @@ import Foundation
 /// on the class itself so the compiler enforces it.
 
 import Combine
+import Supabase
 
 @MainActor
 @Observable
@@ -92,11 +93,16 @@ final class CallSession {
         guard phase == .idle else { return }
         phase = .connecting
 
+        // User-selected transport. "webrtc" (default) is lowest-latency;
+        // "websocket" is the fallback for regions OpenAI geo-blocks.
+        let transportPref =
+            UserDefaults.standard.string(forKey: Self.transportDefaultsKey) ?? "webrtc"
+
         let resp: VoiceCallAPI.SessionResponse
         do {
             resp = try await api.createSession(
                 conversationId: conversationId,
-                transport: "webrtc",
+                transport: transportPref,
             )
         } catch let err as VoiceCallError {
             phase = .terminated(translate(err))
@@ -109,17 +115,56 @@ final class CallSession {
         providerId = resp.provider_id
         aliasId = resp.alias_id
 
-        guard let clientSecret = resp.client_secret?.value else {
-            phase = .terminated(.startupError("session response missing client_secret"))
-            return
+        let transport: CallTransport
+        if resp.transport == "websocket" {
+            guard let wsURL = Self.websocketURL(path: resp.ws_path) else {
+                phase = .terminated(.startupError("session response missing ws_path"))
+                return
+            }
+            let jwt: String
+            do {
+                jwt = try await SupabaseStack.shared.auth.session.accessToken
+            } catch {
+                phase = .terminated(.startupError("auth token unavailable"))
+                return
+            }
+            transport = OpenAIWebSocketTransport(wsURL: wsURL, jwt: jwt, delegate: self)
+        } else {
+            guard let clientSecret = resp.client_secret?.value else {
+                phase = .terminated(.startupError("session response missing client_secret"))
+                return
+            }
+            transport = OpenAICallTransport(
+                clientSecret: clientSecret,
+                model: resp.model,
+                delegate: self,
+            )
         }
-        let transport = OpenAICallTransport(
-            clientSecret: clientSecret,
-            model: resp.model,
-            delegate: self,
-        )
         self.transport = transport
         await transport.start()
+    }
+
+    /// UserDefaults key for the user's voice-transport preference.
+    /// "webrtc" | "websocket"; absent → "webrtc".
+    static let transportDefaultsKey = "voice_transport"
+
+    /// Build the wss:// URL for the WebSocket transport from the worker
+    /// base + the relative ws_path the /session response handed back.
+    private static func websocketURL(path: String?) -> URL? {
+        guard
+            let path,
+            var comps = URLComponents(
+                url: HostedConfig.environment.workerURL,
+                resolvingAgainstBaseURL: false)
+        else { return nil }
+        comps.scheme = comps.scheme == "http" ? "ws" : "wss"
+        if let q = path.firstIndex(of: "?") {
+            comps.path = String(path[..<q])
+            comps.percentEncodedQuery = String(path[path.index(after: q)...])
+        } else {
+            comps.path = path
+        }
+        return comps.url
     }
 
     func hangUp() async {
