@@ -1,17 +1,75 @@
 'use server';
 
 import { headers } from 'next/headers';
+import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { requireAdmin } from '@/lib/auth';
 import { supabaseAdmin } from '@/lib/supabase/admin';
+import { withFlash } from '@/components/toast-redirect';
 
 // Server actions for the Tools admin page. Edge worker reads
 // pendingbot.tools on a 60s isolate cache and intersects its
 // advertised tool list with enabled=true rows (see
-// apps/edge/src/lib/tools-registry.ts). A toggle here strips the
-// tool from the model surface within ~1 min, no deploy.
+// apps/edge/src/lib/tools-registry.ts). Saved changes take effect on
+// the model surface within ~1 min, no deploy.
 
 export type ActionResult = { ok?: true; error?: string; message?: string };
+export type ToolFormState = { error?: string };
+
+const ALLOWED_KIND = ['native', 'mcp'] as const;
+const ALLOWED_SCOPE = ['chat', 'envelope'] as const;
+type Kind = (typeof ALLOWED_KIND)[number];
+type Scope = (typeof ALLOWED_SCOPE)[number];
+
+interface ParsedRow {
+  key: string;
+  kind: Kind;
+  mcp_server_id: string | null;
+  scopes: Scope[];
+  description: string | null;
+  enabled: boolean;
+  notes: string | null;
+}
+
+function parseForm(formData: FormData): { row: ParsedRow } | { error: string } {
+  const key = String(formData.get('key') ?? '').trim();
+  const kind = String(formData.get('kind') ?? 'native') as Kind;
+  const mcp_server_id_raw = String(formData.get('mcp_server_id') ?? '').trim();
+  const scopes = formData
+    .getAll('scopes')
+    .map((s) => String(s))
+    .filter((s): s is Scope => (ALLOWED_SCOPE as readonly string[]).includes(s));
+  const description = String(formData.get('description') ?? '').trim() || null;
+  const notes = String(formData.get('notes') ?? '').trim() || null;
+  const enabled = formData.get('enabled') === 'on';
+
+  if (!key) return { error: 'key 必填' };
+  // Tool keys are the function.name the LLM sees — snake_case identifiers.
+  if (!/^[a-z0-9_]+$/.test(key)) return { error: 'key 只能小写字母 / 数字 / 下划线' };
+  if (!ALLOWED_KIND.includes(kind)) return { error: 'kind 不合法' };
+  if (scopes.length === 0) return { error: '至少选一个 scope（chat / envelope）' };
+
+  // Match the DB consistency constraint (tools_kind_consistency_chk) so a
+  // bad submit surfaces a friendly error instead of a Postgres message.
+  if (kind === 'native' && mcp_server_id_raw) {
+    return { error: "kind='native' 时不要选 MCP server" };
+  }
+  if (kind === 'mcp' && !mcp_server_id_raw) {
+    return { error: "kind='mcp' 时必须选一个 MCP server" };
+  }
+
+  return {
+    row: {
+      key,
+      kind,
+      mcp_server_id: kind === 'mcp' ? mcp_server_id_raw : null,
+      scopes,
+      description,
+      enabled,
+      notes,
+    },
+  };
+}
 
 async function audit(args: {
   action: string;
@@ -32,6 +90,74 @@ async function audit(args: {
     ip: h.get('x-forwarded-for') ?? null,
     user_agent: h.get('user-agent') ?? null,
   });
+}
+
+export async function createTool(
+  _prev: ToolFormState,
+  formData: FormData,
+): Promise<ToolFormState> {
+  const admin = await requireAdmin();
+  const parsed = parseForm(formData);
+  if ('error' in parsed) return parsed;
+
+  const supa = supabaseAdmin();
+  const { data, error } = await supa
+    .from('tools')
+    .insert(parsed.row)
+    .select('id')
+    .single();
+  if (error) {
+    if (error.code === '23505') return { error: `工具 key "${parsed.row.key}" 已存在` };
+    return { error: error.message };
+  }
+
+  await audit({
+    action: 'tool.create',
+    targetId: data.id,
+    before: null,
+    after: parsed.row,
+    actorId: admin.id,
+  });
+
+  revalidatePath('/tools');
+  redirect(withFlash('/tools', `已新增工具 ${parsed.row.key}`));
+}
+
+export async function updateTool(
+  id: string,
+  _prev: ToolFormState,
+  formData: FormData,
+): Promise<ToolFormState> {
+  const admin = await requireAdmin();
+  const parsed = parseForm(formData);
+  if ('error' in parsed) return parsed;
+
+  const supa = supabaseAdmin();
+  const { data: before } = await supa
+    .from('tools')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle();
+
+  const { error } = await supa
+    .from('tools')
+    .update({ ...parsed.row, updated_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) {
+    if (error.code === '23505') return { error: `工具 key "${parsed.row.key}" 已存在` };
+    return { error: error.message };
+  }
+
+  await audit({
+    action: 'tool.update',
+    targetId: id,
+    before,
+    after: parsed.row,
+    actorId: admin.id,
+  });
+
+  revalidatePath('/tools');
+  redirect(withFlash('/tools', `已保存工具 ${parsed.row.key}`));
 }
 
 export async function toggleToolEnabled(id: string): Promise<ActionResult> {
@@ -61,4 +187,29 @@ export async function toggleToolEnabled(id: string): Promise<ActionResult> {
 
   revalidatePath('/tools');
   return { ok: true, message: next ? `已启用 ${before.key}` : `已停用 ${before.key}` };
+}
+
+export async function deleteTool(id: string): Promise<ActionResult> {
+  const admin = await requireAdmin();
+  const supa = supabaseAdmin();
+  const { data: before } = await supa
+    .from('tools')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle();
+  if (!before) return { error: '工具不存在' };
+
+  const { error } = await supa.from('tools').delete().eq('id', id);
+  if (error) return { error: error.message };
+
+  await audit({
+    action: 'tool.delete',
+    targetId: id,
+    before,
+    after: null,
+    actorId: admin.id,
+  });
+
+  revalidatePath('/tools');
+  return { ok: true, message: `已删除 ${before.key}` };
 }

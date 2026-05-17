@@ -1,6 +1,7 @@
+import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { ActionButton } from '@/components/action-button';
-import { toggleToolEnabled } from './actions';
+import { toggleToolEnabled, deleteTool } from './actions';
 
 // Tools registry — every LLM tool the bot can be advertised, native
 // + MCP, in one place. Edge filters its advertised tool list against
@@ -8,10 +9,10 @@ import { toggleToolEnabled } from './actions';
 // Toggling a row off pulls the tool out of the model surface within
 // ~1 min, no deploy.
 //
-// v1 is read-only + toggle. The seed migration covers every tool the
-// runtime currently has. Adding a new native tool = code change + a
-// row insert via SQL; for MCP upstreams the future "refresh from
-// server" button will sync `tools/list` results into this table.
+// Rows are CRUD-managed from this page (new / edit / delete). For
+// native tools the runtime implementation still lives in edge code
+// (apps/edge/src/lib/bot-reply/tools/*) — this table is the filter +
+// metadata layer, not a dispatcher.
 
 interface ToolRow {
   id: string;
@@ -54,12 +55,20 @@ export default async function ToolsPage() {
 
   return (
     <main className="container py-10 space-y-8">
-      <header>
-        <h1 className="text-2xl font-bold tracking-tight">Tools</h1>
-        <p className="text-sm text-muted-foreground">
-          模型能用的全部工具——内部代码工具 + 来自 MCP server 的工具。停用一行 = 模型不再
-          被告知有这个工具（worker 60s isolate 缓存生效），不需要部署。
-        </p>
+      <header className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Tools</h1>
+          <p className="text-sm text-muted-foreground">
+            模型能用的全部工具——内部代码工具 + 来自 MCP server 的工具。停用一行 = 模型不再
+            被告知有这个工具（worker 60s isolate 缓存生效），不需要部署。
+          </p>
+        </div>
+        <Link
+          href="/tools/new"
+          className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground"
+        >
+          新增工具
+        </Link>
       </header>
 
       <Section title="Native (代码实现)" rows={nativeRows} />
@@ -73,10 +82,9 @@ export default async function ToolsPage() {
       ))}
 
       <p className="text-xs text-muted-foreground">
-        新加 native 工具：代码里写实现 + 这张表插一行 + 加 scope。新加 MCP 工具：先去
-        MCP servers 页接好上游，再来这里挑暴露哪些（v2 会加 "从 server 拉取" 按钮，
-        现在先手动 SQL 插）。<code className="font-mono">scopes</code> 决定工具出现在
-        chat / envelope / 二者皆有。
+        新加 native 工具：代码里写实现，再点右上"新增工具"登记一行。新加 MCP 工具：先去
+        MCP servers 页接好上游，再来这里"新增工具"挑暴露哪个 upstream tool。
+        <code className="font-mono">scopes</code> 决定工具出现在 chat / envelope / 二者皆有。
       </p>
     </main>
   );
@@ -130,14 +138,31 @@ function Section({ title, rows }: { title: string; rows: ToolRow[] }) {
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-right">
-                    <ActionButton
-                      action={toggleToolEnabled}
-                      args={[t.id]}
-                      size="sm"
-                      label={t.enabled ? '停用' : '启用'}
-                      pendingLabel={t.enabled ? '停用中…' : '启用中…'}
-                    />
+                  <td className="px-4 py-3">
+                    <div className="flex items-center justify-end gap-2">
+                      <Link
+                        href={`/tools/${t.id}`}
+                        className="rounded border border-input px-2 py-1 text-xs hover:bg-accent"
+                      >
+                        编辑
+                      </Link>
+                      <ActionButton
+                        action={toggleToolEnabled}
+                        args={[t.id]}
+                        size="sm"
+                        label={t.enabled ? '停用' : '启用'}
+                        pendingLabel={t.enabled ? '停用中…' : '启用中…'}
+                      />
+                      <ActionButton
+                        action={deleteTool}
+                        args={[t.id]}
+                        size="sm"
+                        variant="destructive"
+                        label="删除"
+                        pendingLabel="删除中…"
+                        confirmText={`确定删除工具 ${t.key}？删掉后模型不再被告知有这个工具（下个 isolate 周期生效）。`}
+                      />
+                    </div>
                   </td>
                 </tr>
               );
