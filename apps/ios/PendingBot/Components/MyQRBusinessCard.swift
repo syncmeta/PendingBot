@@ -11,16 +11,22 @@ import UIKit
 /// Renders the user's currently-active QR-kind handle as a deep-green
 /// QR (Liquid Glass card on iOS 26+, plain rounded surface as
 /// fallback) with the brand mark in the centre, then avatar + name
-/// directly below, then a light-green "refresh" pill. Long-press the
-/// QR to save the card as an image.
+/// directly below, then a circular "refresh" button and the user's
+/// preset ID row. Long-press the QR to save the card as an image.
 ///
 /// Owns its own load / mint / refresh lifecycle — drop it in and it
-/// will fetch (or mint) the active handle on first appear.
+/// will fetch (or mint) the active handle on first appear. The active
+/// QR token is mirrored to UserDefaults so the card renders instantly
+/// on the next open while the network fetch confirms it.
 struct MyQRBusinessCard: View {
     @State private var currentValue: String?
+    @State private var presetId: String?
     @State private var loading = false
     @State private var error: String?
     @State private var saveStatus: String?
+    @State private var qrUIImage: UIImage?
+    @State private var idCopied = false
+    @State private var confirmRefresh = false
 
     private let context = CIContext()
 
@@ -36,7 +42,10 @@ struct MyQRBusinessCard: View {
                     .disabled(currentValue == nil)
                 }
             identityBlock
-            refreshButton
+            VStack(spacing: 14) {
+                refreshButton
+                idRow
+            }
             if let saveStatus {
                 Text(saveStatus)
                     .font(.footnote)
@@ -61,9 +70,9 @@ struct MyQRBusinessCard: View {
         ZStack {
             qrBackground(size: size, forSnapshot: forSnapshot)
 
-            if loading {
+            if loading && qrUIImage == nil {
                 ProgressView().controlSize(.large)
-            } else if let value = currentValue, let qr = qrImage(for: PendingBotQR.url(forToken: value)) {
+            } else if let qr = qrUIImage {
                 // Solid white card behind the QR provides the quiet zone
                 // scanners need — the surrounding glass background is
                 // translucent and unreliable as a "white" baseline.
@@ -85,11 +94,11 @@ struct MyQRBusinessCard: View {
                 Image("BrandMark")
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(width: 40, height: 40)
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .padding(6)
+                    .frame(width: 28, height: 28)
+                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .padding(5)
                     .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        RoundedRectangle(cornerRadius: 11, style: .continuous)
                             .fill(Theme.Palette.canvas)
                     )
             } else {
@@ -145,23 +154,88 @@ struct MyQRBusinessCard: View {
 
     private var refreshButton: some View {
         Button {
-            Task { await refresh() }
+            confirmRefresh = true
         } label: {
-            Label("刷新（旧码作废）", systemImage: "arrow.clockwise")
-                .font(.system(size: 14, weight: .semibold))
+            Image(systemName: "arrow.clockwise")
+                .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(Theme.Palette.accent)
-                .padding(.horizontal, 18)
-                .padding(.vertical, 10)
-                .background(Capsule().fill(Theme.Palette.accentBg))
+                .frame(width: 44, height: 44)
+                .background(Circle().fill(Theme.Palette.accentBg))
         }
         .buttonStyle(.plain)
+        .confirmationDialog(
+            "刷新二维码后，旧码作废",
+            isPresented: $confirmRefresh,
+            titleVisibility: .visible
+        ) {
+            Button("刷新", role: .destructive) {
+                Task { await refresh() }
+            }
+            Button("取消", role: .cancel) {}
+        }
+    }
+
+    // MARK: - Preset ID
+
+    @ViewBuilder
+    private var idRow: some View {
+        if let presetId {
+            HStack(spacing: 6) {
+                Text(presetId)
+                    .font(Theme.Fonts.monoSmall)
+                    .foregroundStyle(Theme.Palette.inkMuted)
+                    .lineLimit(1)
+                    .onLongPressGesture { copyId(presetId) }
+                Button {
+                    copyId(presetId)
+                } label: {
+                    Image(systemName: idCopied ? "checkmark" : "doc.on.doc")
+                        .font(.footnote)
+                        .foregroundStyle(idCopied ? Theme.Palette.accent : Theme.Palette.inkMuted)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func copyId(_ value: String) {
+        UIPasteboard.general.string = value
+        Haptics.tap()
+        idCopied = true
+        Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            await MainActor.run { idCopied = false }
+        }
     }
 
     // MARK: - Data
 
+    private var tokenCacheKey: String? {
+        guard let uid = AccountStore.shared.current?.id else { return nil }
+        return "MyQRToken.\(uid)"
+    }
+
+    /// Applies a QR token: regenerates the rendered image only when the
+    /// token actually changed, and mirrors it to UserDefaults so the
+    /// next open can paint instantly before the network confirms.
+    private func setToken(_ token: String) {
+        if currentValue != token {
+            qrUIImage = qrImage(for: PendingBotQR.url(forToken: token))
+        }
+        currentValue = token
+        if let key = tokenCacheKey {
+            UserDefaults.standard.set(token, forKey: key)
+        }
+    }
+
     private func ensureActive() async {
-        loading = true; defer { loading = false }
         struct Row: Decodable { let id: String; let value: String }
+        if currentValue == nil, let key = tokenCacheKey,
+           let cached = UserDefaults.standard.string(forKey: key) {
+            setToken(cached)
+        }
+        if currentValue == nil { loading = true }
+        defer { loading = false }
         do {
             let rows: [Row] = try await SupabaseStack.shared
                 .from("user_handles")
@@ -173,10 +247,18 @@ struct MyQRBusinessCard: View {
                 .execute()
                 .value
             if let row = rows.first {
-                self.currentValue = row.value
+                setToken(row.value)
             } else {
                 try await mintNew()
             }
+            let idRows: [Row] = try await SupabaseStack.shared
+                .from("user_handles")
+                .select("id, value")
+                .eq("kind", value: "id")
+                .limit(1)
+                .execute()
+                .value
+            self.presetId = idRows.first?.value
         } catch {
             self.error = error.localizedDescription
         }
@@ -214,7 +296,7 @@ struct MyQRBusinessCard: View {
             .from("user_handles")
             .insert(Insert(user_id: userId, value: token, kind: "qr", label: "QR"))
             .execute()
-        self.currentValue = token
+        setToken(token)
     }
 
     // MARK: - QR image
