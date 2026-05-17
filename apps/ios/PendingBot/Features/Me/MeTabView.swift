@@ -18,6 +18,10 @@ struct MeTabView: View {
     /// the key matches CallSession.transportDefaultsKey.
     @AppStorage("voice_transport") private var voiceTransport = "webrtc"
 
+    /// Voice-call model preference, read by CallSession.start() — the key
+    /// matches CallSession.modelDefaultsKey.
+    @AppStorage("voice_model") private var voiceModel = "gpt-realtime-2"
+
     /// Two `.confirmationDialog`s attached to the same view collide on
     /// SwiftUI — one gets shadowed and its `isPresented` flag flips
     /// without the sheet ever appearing (most visible on Mac Catalyst).
@@ -166,6 +170,34 @@ struct MeTabView: View {
                             .shadow(color: .black.opacity(0.08), radius: 10, x: 0, y: 4)
 
                             Text("WebRTC 延迟最低；网络受限地区可改用 WebSocket")
+                                .font(Theme.Fonts.monoSmall)
+                                .foregroundStyle(Theme.Palette.inkMuted)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 8)
+                        }
+
+                        VStack(spacing: 6) {
+                            HStack(spacing: 8) {
+                                Text("语音模型")
+                                    .font(Theme.Fonts.bodyEmphasized)
+                                    .foregroundStyle(Theme.Palette.ink)
+                                Spacer(minLength: 0)
+                                Picker("", selection: $voiceModel) {
+                                    Text("gpt-realtime-2").tag("gpt-realtime-2")
+                                    Text("gpt-realtime-mini")
+                                        .tag("gpt-realtime-mini-2025-12-15")
+                                }
+                                .labelsHidden()
+                                .pickerStyle(.menu)
+                                .tint(Theme.Palette.inkMuted)
+                            }
+                            .padding(.horizontal, 20)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .frame(height: 52)
+                            .meGlassGroup()
+                            .shadow(color: .black.opacity(0.08), radius: 10, x: 0, y: 4)
+
+                            Text("gpt-realtime-2 质量更好但更贵；mini 便宜,适合测试")
                                 .font(Theme.Fonts.monoSmall)
                                 .foregroundStyle(Theme.Palette.inkMuted)
                                 .frame(maxWidth: .infinity, alignment: .leading)

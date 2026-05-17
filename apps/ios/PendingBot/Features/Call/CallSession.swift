@@ -97,12 +97,17 @@ final class CallSession {
         // "websocket" is the fallback for regions OpenAI geo-blocks.
         let transportPref =
             UserDefaults.standard.string(forKey: Self.transportDefaultsKey) ?? "webrtc"
+        // User-selected voice model (cost vs quality).
+        let modelPref =
+            UserDefaults.standard.string(forKey: Self.modelDefaultsKey)
+            ?? "gpt-realtime-2"
 
         let resp: VoiceCallAPI.SessionResponse
         do {
             resp = try await api.createSession(
                 conversationId: conversationId,
                 transport: transportPref,
+                model: modelPref,
             )
         } catch let err as VoiceCallError {
             phase = .terminated(translate(err))
@@ -147,6 +152,10 @@ final class CallSession {
     /// UserDefaults key for the user's voice-transport preference.
     /// "webrtc" | "websocket"; absent → "webrtc".
     static let transportDefaultsKey = "voice_transport"
+
+    /// UserDefaults key for the user's voice-model preference.
+    /// An OpenAI realtime model id; absent → "gpt-realtime-2".
+    static let modelDefaultsKey = "voice_model"
 
     /// Build the wss:// URL for the WebSocket transport from the worker
     /// base + the relative ws_path the /session response handed back.
