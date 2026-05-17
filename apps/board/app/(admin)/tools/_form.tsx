@@ -103,12 +103,17 @@ export function ToolForm({
         />
       </Field>
       <Field
-        label="模型描述（可选）"
-        hint="LLM 实际看到的 function.description。留空 = 用代码 / 上游 MCP 的默认描述。改动 ~1 分钟内对模型生效，不需部署。"
+        label={kind === 'native' ? '模型描述（必填）' : '模型描述（可选）'}
+        hint={
+          kind === 'native'
+            ? 'LLM 实际看到的 function.description —— native 工具没有代码默认值，这一栏就是描述本身。改动 ~1 分钟内对模型生效，不需部署。'
+            : 'LLM 实际看到的 function.description。留空 = 用上游 MCP server 的描述。改动 ~1 分钟内生效，不需部署。'
+        }
       >
         <textarea
           name="model_description"
           rows={6}
+          required={kind === 'native'}
           defaultValue={initial?.model_description ?? ''}
           className="block w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
         />

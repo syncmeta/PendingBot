@@ -7,14 +7,17 @@ import { updateToolModelDescription } from './actions';
 // Inline editor for tools.model_description on the Tools list page.
 // Lets every tool's model-facing description be browsed AND edited in
 // place — no need to open the per-tool edit form. Save is gated on the
-// textarea being dirty; an empty save clears the override so the edge
-// runtime falls back to the code / upstream default.
+// textarea being dirty. For native tools the description is the single
+// source of truth (no code default), so an empty save is blocked; MCP
+// tools may be cleared to fall back to the upstream server's description.
 export function ModelDescriptionCell({
   id,
+  kind,
   initial,
   placeholder,
 }: {
   id: string;
+  kind: 'native' | 'mcp' | string;
   initial: string | null;
   placeholder: string;
 }) {
@@ -24,6 +27,9 @@ export function ModelDescriptionCell({
   const { push } = useToast();
 
   const dirty = value !== saved;
+  // Native tools must keep a non-empty description — the DB CHECK and the
+  // server action both reject an empty value, so block the save up front.
+  const emptyNative = kind === 'native' && !value.trim();
 
   const save = () => {
     startTransition(async () => {
@@ -50,7 +56,7 @@ export function ModelDescriptionCell({
         <button
           type="button"
           onClick={save}
-          disabled={!dirty || pending}
+          disabled={!dirty || pending || emptyNative}
           className="rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground disabled:opacity-40"
         >
           {pending ? '保存中…' : '保存'}
@@ -64,9 +70,12 @@ export function ModelDescriptionCell({
             还原
           </button>
         )}
-        {dirty && <span className="text-xs text-amber-600">未保存</span>}
-        {!value.trim() && !dirty && (
-          <span className="text-xs text-muted-foreground">用默认描述</span>
+        {dirty && !emptyNative && <span className="text-xs text-amber-600">未保存</span>}
+        {emptyNative && (
+          <span className="text-xs text-destructive">native 工具必须有描述</span>
+        )}
+        {kind === 'mcp' && !value.trim() && !dirty && (
+          <span className="text-xs text-muted-foreground">用上游描述</span>
         )}
       </div>
     </div>

@@ -41,8 +41,10 @@ function parseForm(formData: FormData): { row: ParsedRow } | { error: string } {
     .map((s) => String(s))
     .filter((s): s is Scope => (ALLOWED_SCOPE as readonly string[]).includes(s));
   const description = String(formData.get('description') ?? '').trim() || null;
-  // model_description is the override the LLM actually sees. Only the
-  // ends are trimmed — interior whitespace/newlines are meaningful.
+  // model_description is the description the LLM actually sees. Required
+  // for native tools (no code default); optional for MCP (NULL = upstream
+  // server's own description). Only the ends are trimmed — interior
+  // whitespace/newlines are meaningful.
   const model_description = String(formData.get('model_description') ?? '').trim() || null;
   const notes = String(formData.get('notes') ?? '').trim() || null;
   const enabled = formData.get('enabled') === 'on';
@@ -60,6 +62,11 @@ function parseForm(formData: FormData): { row: ParsedRow } | { error: string } {
   }
   if (kind === 'mcp' && !mcp_server_id_raw) {
     return { error: "kind='mcp' 时必须选一个 MCP server" };
+  }
+  // Native tools have no code-side default — the registry row IS the
+  // model-facing description. Mirrors tools_native_model_description_chk.
+  if (kind === 'native' && !model_description) {
+    return { error: "kind='native' 时必须填模型描述" };
   }
 
   return {
@@ -168,8 +175,10 @@ export async function updateTool(
 /**
  * Inline save for just the model-facing description, used by the Tools
  * list page so each tool's description can be browsed + edited without
- * opening the full edit form. Empty string clears the override (the
- * edge runtime then falls back to the code/upstream default).
+ * opening the full edit form. For MCP tools an empty string clears the
+ * value so the edge runtime falls back to the upstream server's
+ * description; native tools reject an empty value — the registry row is
+ * their single source of truth.
  */
 export async function updateToolModelDescription(
   id: string,
@@ -181,10 +190,13 @@ export async function updateToolModelDescription(
   const supa = supabaseAdmin();
   const { data: before } = await supa
     .from('tools')
-    .select('id, key, model_description')
+    .select('id, key, kind, model_description')
     .eq('id', id)
     .maybeSingle();
   if (!before) return { error: '工具不存在' };
+  if (next === null && before.kind === 'native') {
+    return { error: `${before.key} 是 native 工具，模型描述不能清空` };
+  }
 
   const { error } = await supa
     .from('tools')
