@@ -243,10 +243,12 @@ export class RealtimeMeterDO {
   }
 
   private upstreamHeaders(openaiKey: string): Record<string, string> {
+    // No `OpenAI-Beta: realtime=v1` — that header marks the retired beta
+    // realtime API; the GA endpoint (/v1/realtime) rejects it with
+    // "the realtime beta api is no longer supported".
     return {
       Upgrade: 'websocket',
       Authorization: `Bearer ${openaiKey}`,
-      'OpenAI-Beta': 'realtime=v1',
     };
   }
 
