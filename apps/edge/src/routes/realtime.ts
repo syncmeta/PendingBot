@@ -417,14 +417,29 @@ async function mintOpenAISession(
   //
   // audio.input.format / audio.output.format are WebSocket-only —
   // WebRTC negotiates Opus via the SDP, so we don't set them.
+  //
+  // The mint is routed through the AI Gateway when it's configured —
+  // OpenAI's key still rides inline as Authorization (BYOK-style, not
+  // Unified Billing), and cf-aig-authorization authenticates to the
+  // gateway. The gateway passes the request through to OpenAI and logs
+  // it; the WebRTC audio still goes iOS<->OpenAI direct afterward.
+  const mintUrl =
+    env.CF_ACCOUNT_ID && env.CF_AIG_GATEWAY
+      ? `https://gateway.ai.cloudflare.com/v1/${env.CF_ACCOUNT_ID}` +
+        `/${env.CF_AIG_GATEWAY}/openai/v1/realtime/client_secrets`
+      : 'https://api.openai.com/v1/realtime/client_secrets';
+  const mintHeaders: Record<string, string> = {
+    Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+    'Content-Type': 'application/json',
+  };
+  if (env.CF_AIG_RUN_TOKEN) {
+    mintHeaders['cf-aig-authorization'] = `Bearer ${env.CF_AIG_RUN_TOKEN}`;
+  }
   let upstream: Response;
   try {
-    upstream = await fetch('https://api.openai.com/v1/realtime/client_secrets', {
+    upstream = await fetch(mintUrl, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${env.OPENAI_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
+      headers: mintHeaders,
       body: JSON.stringify({
         session: {
           type: 'realtime',
