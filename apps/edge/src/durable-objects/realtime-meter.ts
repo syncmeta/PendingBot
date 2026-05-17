@@ -54,11 +54,17 @@ interface MeterContext {
 }
 
 // Usage object inside an OpenAI realtime `response.done` event.
+// input_token_details.{text,audio}_tokens are TOTALS (cached included);
+// cached_tokens_details breaks the cached slice into text vs audio.
 interface RealtimeUsage {
   input_token_details?: {
     text_tokens?: number;
     audio_tokens?: number;
     cached_tokens?: number;
+    cached_tokens_details?: {
+      text_tokens?: number;
+      audio_tokens?: number;
+    };
   };
   output_token_details?: {
     text_tokens?: number;
@@ -371,17 +377,18 @@ export class RealtimeMeterDO {
     const ctx = this.ctx;
     if (!ctx || this.closed) return;
 
-    // Diagnostic — capture OpenAI's exact usage object so the cached /
-    // audio / text token split can be billed correctly.
-    console.log('[realtime-meter] usage', JSON.stringify(usage));
-
-    const inAudio = usage.input_token_details?.audio_tokens ?? 0;
-    const inCached = usage.input_token_details?.cached_tokens ?? 0;
-    // cached_tokens is a subset of the input tokens already counted in
-    // audio/text. computeCost charges full price for audioInputTokens
-    // AND cached price for cacheReadTokens, so leaving cached inside
-    // audioInputTokens double-charges that slice. Subtract it out.
-    const audioInputTokens = Math.max(0, inAudio - inCached);
+    // Split the input usage into the three billable buckets. text_tokens
+    // and audio_tokens are TOTALS (cached included); cached_tokens_details
+    // says how much of the cache hit was text vs audio. computeCost
+    // charges cacheReadTokens at the cached rate and inputTokens /
+    // audioInputTokens at full rate, so the full-rate buckets must be the
+    // NON-cached remainder — otherwise the cached slice is billed twice.
+    const inDetails = usage.input_token_details;
+    const cachedText = inDetails?.cached_tokens_details?.text_tokens ?? 0;
+    const cachedAudio = inDetails?.cached_tokens_details?.audio_tokens ?? 0;
+    const cacheReadTokens = inDetails?.cached_tokens ?? 0;
+    const inputTokens = Math.max(0, (inDetails?.text_tokens ?? 0) - cachedText);
+    const audioInputTokens = Math.max(0, (inDetails?.audio_tokens ?? 0) - cachedAudio);
 
     const supa = serviceClient(this.env);
     let route;
@@ -404,11 +411,11 @@ export class RealtimeMeterDO {
       taskType: 'voice_call',
       startedAt: Date.now(),
       status: 'success',
-      inputTokens: usage.input_token_details?.text_tokens ?? 0,
+      inputTokens,
       outputTokens: usage.output_token_details?.text_tokens ?? 0,
       audioInputTokens,
       audioOutputTokens: usage.output_token_details?.audio_tokens ?? 0,
-      cacheReadTokens: inCached,
+      cacheReadTokens,
       metadata: {
         source: 'voice_call',
         session_id: ctx.sessionId,
