@@ -214,6 +214,7 @@ export class RealtimeMeterDO {
       JSON.stringify({
         type: 'session.update',
         session: {
+          type: 'realtime',
           instructions: ctx.instructions ?? '',
           output_modalities: ['audio'],
           audio: {
