@@ -1,3 +1,4 @@
+import type { ChatCompletionTool } from 'openai/resources/chat/completions';
 import { serviceClient, type SupabaseClient } from './supabase';
 import { kvConfig } from './kv-config';
 import type { Env } from '../types';
@@ -11,12 +12,18 @@ import type { Env } from '../types';
 // Two scopes: 'chat' for bot-reply, 'envelope' for envelope-runner.
 // A tool can live on either or both — the column is JSON so a single
 // row covers both surfaces.
+//
+// The registry also carries `model_description`: a board-editable
+// override for the description the model actually sees. When set it
+// replaces the tool's own description at turn-assembly time; NULL
+// leaves the code/upstream default untouched.
 
 export type ToolScope = 'chat' | 'envelope';
 
 interface ToolRow {
   key: string;
   scopes: string[];
+  modelDescription: string | null;
 }
 
 const REGISTRY_TTL_MS = 60_000;
@@ -35,7 +42,7 @@ async function loadRows(env: Env): Promise<ToolRow[] | null> {
       const supa: SupabaseClient = serviceClient(env);
       const { data, error } = await supa
         .from('tools')
-        .select('key, scopes')
+        .select('key, scopes, model_description')
         .eq('enabled', true);
       if (error || !data) throw new Error(error?.message ?? 'no data');
       return data.map<ToolRow>((r) => ({
@@ -43,6 +50,10 @@ async function loadRows(env: Env): Promise<ToolRow[] | null> {
         scopes: Array.isArray(r.scopes)
           ? (r.scopes as unknown[]).filter((s): s is string => typeof s === 'string')
           : [],
+        modelDescription:
+          typeof r.model_description === 'string' && r.model_description.trim()
+            ? r.model_description
+            : null,
       }));
     });
   } catch (err) {
@@ -57,17 +68,52 @@ async function loadRows(env: Env): Promise<ToolRow[] | null> {
 }
 
 /**
- * Returns the set of tool keys that are enabled AND tagged with the
- * given scope. `null` means "registry unreachable, do not filter" so
- * the caller passes through its original tool list unchanged.
+ * A resolved view of the registry for one scope: the set of tool keys
+ * the model is allowed to see, each mapped to its `model_description`
+ * override (`null` = keep the tool's own description).
  */
-export async function loadAllowedTools(
+export interface ToolRegistryView {
+  allowed: Map<string, string | null>;
+}
+
+/**
+ * Loads the registry for a scope. `null` means "registry unreachable,
+ * do not filter" so the caller passes through its original tool list
+ * unchanged (see applyToolRegistry). Safe to call early and await
+ * later — `loadRows` is cached on a 60s isolate TTL.
+ */
+export async function loadToolRegistry(
   env: Env,
   scope: ToolScope,
-): Promise<Set<string> | null> {
+): Promise<ToolRegistryView | null> {
   const rows = await loadRows(env);
   if (rows === null) return null;
-  const out = new Set<string>();
-  for (const r of rows) if (r.scopes.includes(scope)) out.add(r.key);
+  const allowed = new Map<string, string | null>();
+  for (const r of rows) {
+    if (r.scopes.includes(scope)) allowed.set(r.key, r.modelDescription);
+  }
+  return { allowed };
+}
+
+/**
+ * Filters `tools` to the registry's allowlist and swaps in any
+ * `model_description` override. `registry === null` (registry
+ * unreachable) passes the list through untouched — fail-open.
+ */
+export function applyToolRegistry(
+  tools: ChatCompletionTool[],
+  registry: ToolRegistryView | null,
+): ChatCompletionTool[] {
+  if (registry === null) return tools;
+  const out: ChatCompletionTool[] = [];
+  for (const t of tools) {
+    if (!registry.allowed.has(t.function.name)) continue;
+    const override = registry.allowed.get(t.function.name);
+    out.push(
+      override
+        ? { ...t, function: { ...t.function, description: override } }
+        : t,
+    );
+  }
   return out;
 }

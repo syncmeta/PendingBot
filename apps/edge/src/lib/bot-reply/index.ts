@@ -47,7 +47,7 @@ import {
 } from './tool-runner';
 import { dispatchMcpTool } from './mcp-dispatch';
 import { mcpClient } from '../../mcp/client';
-import { loadAllowedTools } from '../tools-registry';
+import { loadToolRegistry, applyToolRegistry } from '../tools-registry';
 import { uuidv7 } from '../ids';
 
 // Public re-exports — callers do
@@ -248,7 +248,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   // resolution + prompt assembly instead of sitting serially in front
   // of the LLM call.
   const mcpToolsPromise = mcpClient.getAITools(env);
-  const allowedRegistryPromise = loadAllowedTools(env, 'chat');
+  const allowedRegistryPromise = loadToolRegistry(env, 'chat');
 
   const locale = await resolveLocale(null, supa, userId, env);
 
@@ -573,12 +573,14 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
 
   // Strict allowlist from the tools registry — disabling a row in the
   // board "Tools" page strips it here within ~1 min (60s isolate
-  // cache). `null` means the registry was unreachable; pass through
-  // unfiltered rather than serving the model an empty tool list.
-  const allowedRegistryKeys = await allowedRegistryPromise;
-  const turnTools: ChatCompletionTool[] = allowedRegistryKeys
-    ? turnToolsRaw.filter((t) => allowedRegistryKeys.has(t.function.name))
-    : turnToolsRaw;
+  // cache). The registry also swaps in any board-edited
+  // model_description override. `null` means the registry was
+  // unreachable; pass through unfiltered rather than serving the model
+  // an empty tool list.
+  const turnTools: ChatCompletionTool[] = applyToolRegistry(
+    turnToolsRaw,
+    await allowedRegistryPromise,
+  );
 
   try {
     // Outer agent loop. Each iteration is one LLM call. If the model emits

@@ -204,8 +204,8 @@ export interface EnvelopeLoopDeps {
   maxWallMs?: number;
   /// Override the advertised tool list. Defaults to `TOOLS` (every
   /// envelope-stage tool). The runner-side filter from
-  /// `loadAllowedTools(env, 'envelope')` passes a pruned subset so
-  /// disabling a row in the board "Tools" page strips it here.
+  /// `applyToolRegistry` passes a pruned subset so disabling a row in
+  /// the board "Tools" page strips it here.
   tools?: ChatCompletionTool[];
   // Polled before every web_search / fetch_url call. When provided
   // and returns falsy, the tool returns a "暂停" message instead of
