@@ -185,19 +185,38 @@ export class RealtimeMeterDO {
     if (!key) return new Response('openai key not configured', { status: 503 });
 
     let resp: Response;
+    const proxyReq = this.proxyUpstreamRequest(
+      ctx.model ?? OPENAI_MODEL_SLUG,
+      key,
+      ctx.sessionId,
+    );
+    console.log(
+      '[realtime-meter] proxy upstream',
+      proxyReq.viaGateway ? 'via gateway' : 'direct',
+      proxyReq.url,
+    );
     try {
-      resp = await fetch(
-        this.realtimeUrl(`model=${encodeURIComponent(ctx.model ?? OPENAI_MODEL_SLUG)}`),
-        { headers: this.upstreamHeaders(key) },
-      );
+      resp = await fetch(proxyReq.url, { headers: proxyReq.headers });
     } catch (err) {
       console.warn('[realtime-meter] proxy upstream connect failed', err);
       return new Response('upstream connect failed', { status: 502 });
     }
     const upstream = resp.webSocket;
     if (!upstream) {
+      let body = '';
+      try {
+        body = (await resp.text()).slice(0, 400);
+      } catch {
+        // no body
+      }
+      console.warn(
+        '[realtime-meter] proxy upstream upgrade failed — status',
+        resp.status,
+        body,
+      );
       return new Response('upstream upgrade failed', { status: 502 });
     }
+    console.log('[realtime-meter] proxy upstream connected, status', resp.status);
     upstream.accept();
     this.upstreamWs = upstream;
 
@@ -247,28 +266,43 @@ export class RealtimeMeterDO {
     });
     server.addEventListener('close', () => this.finalize().catch(() => undefined));
     server.addEventListener('error', () => this.finalize().catch(() => undefined));
-    upstream.addEventListener('close', () => this.finalize().catch(() => undefined));
-    upstream.addEventListener('error', () => this.finalize().catch(() => undefined));
+    upstream.addEventListener('close', (ev) => {
+      console.log(
+        '[realtime-meter] upstream closed — code',
+        (ev as CloseEvent).code,
+        'reason',
+        (ev as CloseEvent).reason,
+      );
+      this.finalize().catch(() => undefined);
+    });
+    upstream.addEventListener('error', () => {
+      console.warn('[realtime-meter] upstream socket error');
+      this.finalize().catch(() => undefined);
+    });
 
     // Configure the session server-side. iOS never sends instructions —
     // the persona is assembled by the worker and baked here.
-    upstream.send(
-      JSON.stringify({
-        type: 'session.update',
-        session: {
-          type: 'realtime',
-          instructions: ctx.instructions ?? '',
-          output_modalities: ['audio'],
-          audio: {
-            input: {
-              format: { type: 'audio/pcm', rate: 24000 },
-              transcription: { model: 'whisper-1' },
+    try {
+      upstream.send(
+        JSON.stringify({
+          type: 'session.update',
+          session: {
+            type: 'realtime',
+            instructions: ctx.instructions ?? '',
+            output_modalities: ['audio'],
+            audio: {
+              input: {
+                format: { type: 'audio/pcm', rate: 24000 },
+                transcription: { model: 'whisper-1' },
+              },
+              output: { format: { type: 'audio/pcm', rate: 24000 }, voice: 'marin' },
             },
-            output: { format: { type: 'audio/pcm', rate: 24000 }, voice: 'marin' },
           },
-        },
-      }),
-    );
+        }),
+      );
+    } catch (err) {
+      console.warn('[realtime-meter] session.update send failed', err);
+    }
 
     await this.state.storage.setAlarm(Date.now() + MAX_CALL_MS);
     return new Response(null, { status: 101, webSocket: client });
@@ -276,11 +310,8 @@ export class RealtimeMeterDO {
 
   // ── shared ───────────────────────────────────────────────────────
 
-  // Connect straight to OpenAI. Routing the realtime socket through the
-  // AI Gateway was tried (584310d) but the gateway returns HTTP 500 on
-  // the realtime WebSocket upgrade — for the sideband's ?call_id= attach
-  // and the proxy's ?model= alike. Direct works; metering still happens
-  // here in the DO, it just won't show in the gateway dashboard.
+  // Direct OpenAI realtime endpoint — used by the sideband control
+  // connection and as the proxy fallback when the AI Gateway isn't bound.
   private realtimeUrl(query: string): string {
     return `https://api.openai.com/v1/realtime?${query}`;
   }
@@ -292,6 +323,43 @@ export class RealtimeMeterDO {
     return {
       Upgrade: 'websocket',
       Authorization: `Bearer ${openaiKey}`,
+    };
+  }
+
+  // Proxy-mode upstream. Routes the realtime socket through the AI
+  // Gateway when it's configured so the session can be cost-tracked
+  // there; falls back to a direct OpenAI connection otherwise. Logging
+  // around the connection is deliberately verbose — this path is being
+  // brought up and every failure mode needs to be visible in the tail.
+  private proxyUpstreamRequest(
+    model: string,
+    openaiKey: string,
+    sessionId: string,
+  ): { url: string; headers: Record<string, string>; viaGateway: boolean } {
+    const account = this.env.CF_ACCOUNT_ID;
+    const gateway = this.env.CF_AIG_GATEWAY;
+    const runToken = this.env.CF_AIG_RUN_TOKEN;
+    if (account && gateway && runToken) {
+      return {
+        url:
+          `https://gateway.ai.cloudflare.com/v1/${account}/${gateway}` +
+          `/openai?model=${encodeURIComponent(model)}`,
+        headers: {
+          Upgrade: 'websocket',
+          Authorization: `Bearer ${openaiKey}`,
+          'cf-aig-authorization': `Bearer ${runToken}`,
+          'cf-aig-metadata': JSON.stringify({
+            session_id: sessionId,
+            source: 'voice_call',
+          }),
+        },
+        viaGateway: true,
+      };
+    }
+    return {
+      url: this.realtimeUrl(`model=${encodeURIComponent(model)}`),
+      headers: this.upstreamHeaders(openaiKey),
+      viaGateway: false,
     };
   }
 
