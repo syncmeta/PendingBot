@@ -27,6 +27,17 @@ struct PendingPeer: Hashable {
     var existingConvId: String? = nil
 }
 
+/// Reports the bottom marker's Y offset within the scroll viewport so
+/// ConversationView can tell whether the user is parked at the latest
+/// message. A value larger than the viewport height means they've
+/// scrolled up into history.
+private struct ScrollBottomOffsetKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
 struct ConversationView: View {
     @State var conversation: Conversation
     let bot: Bot?
@@ -132,6 +143,15 @@ struct ConversationView: View {
     /// Active voice call session, present while CallView is on screen.
     /// Created on phone-button tap and torn down when CallView dismisses.
     @State var callSession: CallSession?
+
+    // Jump-to-latest pill state. `isAtBottom` is recomputed from a
+    // geometry preference on the bottom marker; while it's false, new
+    // messages don't auto-scroll — they bump `unreadCount` and surface
+    // the bottom-right pill instead. The user's own sends always scroll
+    // regardless (see the messages.count onChange).
+    @State private var isAtBottom = true
+    @State private var unreadCount = 0
+    @State private var scrollViewportHeight: CGFloat = 0
 
     // Streaming bubble state — see applyBubbleEmissions. The splitter
     // (BubbleSplitter.swift) decides whether a bubble pops in whole or
@@ -429,13 +449,61 @@ struct ConversationView: View {
                         }
 
                         Color.clear.frame(height: 8).id("bottom")
+                            .background(
+                                GeometryReader { geo in
+                                    Color.clear.preference(
+                                        key: ScrollBottomOffsetKey.self,
+                                        value: geo.frame(in: .named("convScroll")).minY
+                                    )
+                                }
+                            )
                     }
                     .padding(.top, 4)
                     .readableColumnWidth()
                 }
+                .coordinateSpace(.named("convScroll"))
+                .background(
+                    GeometryReader { geo in
+                        Color.clear
+                            .onAppear { scrollViewportHeight = geo.size.height }
+                            .onChange(of: geo.size.height) { _, h in
+                                scrollViewportHeight = h
+                            }
+                    }
+                )
+                .onPreferenceChange(ScrollBottomOffsetKey.self) { offset in
+                    // The bottom marker sits at the viewport's bottom edge
+                    // when the user is parked at the latest message; a
+                    // larger offset means they've scrolled up. The 80pt
+                    // slack keeps "almost at the bottom" counting as at-bottom.
+                    guard scrollViewportHeight > 0 else { return }
+                    let atBottom = offset - scrollViewportHeight <= 80
+                    if atBottom != isAtBottom {
+                        withAnimation(.easeOut(duration: 0.2)) { isAtBottom = atBottom }
+                    }
+                    if atBottom && unreadCount != 0 { unreadCount = 0 }
+                }
                 .scrollDismissesKeyboard(.interactively)
-                .onChange(of: messages.count) { _, _ in
-                    scrollToBottom(proxy: proxy)
+                .onChange(of: messages.count) { oldCount, newCount in
+                    // The user's own send always scrolls into view; incoming
+                    // messages only auto-scroll when already at the bottom.
+                    // Otherwise they bump the unread pill instead of yanking
+                    // the user away from the history they're reading.
+                    let mine = messages.last?
+                        .isMine(currentUserId: AccountStore.shared.current?.id) ?? false
+                    if isAtBottom || mine {
+                        unreadCount = 0
+                        scrollToBottom(proxy: proxy)
+                    } else if newCount > oldCount {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            unreadCount += newCount - oldCount
+                        }
+                    }
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    if unreadCount > 0 && !isAtBottom {
+                        unreadJumpButton(proxy: proxy)
+                    }
                 }
             }
         }
@@ -657,6 +725,33 @@ struct ConversationView: View {
                 }
             }
         }
+    }
+
+    /// Bottom-right pill shown when new messages land while the user is
+    /// scrolled up. Tapping it clears the count and jumps to the latest.
+    private func unreadJumpButton(proxy: ScrollViewProxy) -> some View {
+        Button {
+            Haptics.tap()
+            unreadCount = 0
+            scrollToBottom(proxy: proxy)
+        } label: {
+            HStack(spacing: 5) {
+                Text(unreadCount > 99 ? "99+" : "\(unreadCount)")
+                    .font(Theme.Fonts.rounded(size: 13, weight: .semibold))
+                    .monospacedDigit()
+                Image(systemName: "arrow.down")
+                    .font(.system(size: 11, weight: .bold))
+            }
+            .foregroundStyle(Theme.Palette.surface)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 8)
+            .background(Capsule().fill(Theme.Palette.accent))
+            .overlay(Capsule().stroke(Theme.Palette.surface.opacity(0.5), lineWidth: 0.5))
+            .shadow(color: Theme.Palette.ink.opacity(0.18), radius: 6, y: 2)
+        }
+        .padding(.trailing, 14)
+        .padding(.bottom, 14)
+        .transition(.scale(scale: 0.6, anchor: .bottomTrailing).combined(with: .opacity))
     }
 
     private var emptyConversation: some View {
