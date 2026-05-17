@@ -366,7 +366,7 @@ struct ConversationView: View {
                                     Button {
                                         selectableTextBody = msg.content
                                         Haptics.tap()
-                                    } label: { Label("选择文本", systemImage: "selection.pin.in.out") }
+                                    } label: { Label("复制部分文字", systemImage: "selection.pin.in.out") }
                                     if !msg.isMine(currentUserId: AccountStore.shared.current?.id) {
                                         ShareLink(item: msg.content) {
                                             Label("分享", systemImage: "square.and.arrow.up")
@@ -1504,12 +1504,41 @@ private struct SkillDraft: Identifiable {
     var id: String { String(body.hashValue) }
 }
 
-/// Identifiable wrapper for the "选择文本" sheet's body — same role as
+/// Identifiable wrapper for the "复制部分文字" sheet's body — same role as
 /// `SkillDraft` above, separate type so two different bodies can't
 /// race onto the same sheet binding.
 private struct SelectableTextBody: Identifiable {
     let body: String
     var id: String { String(body.hashValue) }
+}
+
+/// Read-only `UITextView` that allows native selection + copy.
+/// SwiftUI's `Text(...).textSelection(.enabled)` is unreliable inside
+/// a `ScrollView` in a sheet — the scroll gesture pre-empts the
+/// selection handles, so partial copy silently fails. A `UITextView`
+/// with `isEditable = false`, `isSelectable = true` gets the real
+/// UIKit selection + "Copy" / "Look Up" menu, and scrolls itself.
+private struct SelectableTextUIView: UIViewRepresentable {
+    let text: String
+
+    func makeUIView(context: Context) -> UITextView {
+        let tv = UITextView()
+        tv.isEditable = false
+        tv.isSelectable = true
+        tv.isScrollEnabled = true
+        tv.alwaysBounceVertical = true
+        tv.backgroundColor = .clear
+        tv.font = .systemFont(ofSize: Theme.Fonts.scaled(16))
+        tv.textColor = UIColor(Theme.Palette.ink)
+        tv.tintColor = UIColor(Theme.Palette.accent)
+        tv.textContainerInset = UIEdgeInsets(top: 16, left: 20, bottom: 16, right: 20)
+        tv.textContainer.lineFragmentPadding = 0
+        return tv
+    }
+
+    func updateUIView(_ uiView: UITextView, context: Context) {
+        if uiView.text != text { uiView.text = text }
+    }
 }
 
 /// Standalone selectable-text presentation. The bubble itself has
@@ -1524,31 +1553,23 @@ private struct SelectableTextSheet: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                Text(text)
-                    .font(Theme.Fonts.body)
-                    .foregroundStyle(Theme.Palette.ink)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 16)
-            }
-            .background(Theme.Palette.canvas)
-            .navigationTitle("选择文本")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("完成") { dismiss() }
-                        .tint(Theme.Palette.accent)
+            SelectableTextUIView(text: text)
+                .background(Theme.Palette.canvas)
+                .navigationTitle("复制部分文字")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("完成") { dismiss() }
+                            .tint(Theme.Palette.accent)
+                    }
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button {
+                            UIPasteboard.general.string = text
+                            Haptics.tap()
+                        } label: { Label("全部复制", systemImage: "doc.on.doc") }
+                            .tint(Theme.Palette.accent)
+                    }
                 }
-                ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        UIPasteboard.general.string = text
-                        Haptics.tap()
-                    } label: { Label("全部复制", systemImage: "doc.on.doc") }
-                        .tint(Theme.Palette.accent)
-                }
-            }
         }
     }
 }
