@@ -186,11 +186,6 @@ export class RealtimeMeterDO {
 
     let resp: Response;
     const proxyReq = this.proxyUpstreamRequest(ctx.model ?? OPENAI_MODEL_SLUG, key);
-    console.log(
-      '[realtime-meter] proxy upstream',
-      proxyReq.viaGateway ? 'via gateway passthrough' : 'direct',
-      proxyReq.url,
-    );
     try {
       resp = await fetch(proxyReq.url, { headers: proxyReq.headers });
     } catch (err) {
@@ -322,39 +317,22 @@ export class RealtimeMeterDO {
     };
   }
 
-  // Proxy-mode upstream. When the AI Gateway is configured, connect via
-  // its *passthrough* — the gateway's dedicated /openai?model= realtime
-  // route is beta-era and 1006s GA sessions (tested 584310d, fa20d35),
-  // so instead we hit the gateway's verbatim OpenAI path proxy:
-  //   gateway.ai.cloudflare.com/v1/<acct>/<gw>/openai/realtime
-  //     ⇒ api.openai.com/v1/realtime
-  // i.e. the GA endpoint, transparently, so the session can still be
-  // gateway-logged / cost-tracked. Falls back to direct OpenAI when the
-  // gateway env vars aren't bound.
+  // Proxy-mode upstream — connects straight to OpenAI's GA realtime
+  // endpoint. Routing this through the AI Gateway was tested three ways
+  // (584310d direct attempt, the gateway's dedicated /openai?model=
+  // realtime route, and the /openai/realtime path passthrough): all
+  // three accept the WebSocket upgrade (101) then immediately drop it
+  // with code 1006 and no frames. A Cloudflare Worker can't sustain a
+  // WebSocket subrequest to the AI Gateway — text LLM traffic works
+  // because it's plain HTTP. Voice metering therefore stays local: the
+  // DO reads response.done usage and computeCost prices it.
   private proxyUpstreamRequest(
     model: string,
     openaiKey: string,
-  ): { url: string; headers: Record<string, string>; viaGateway: boolean } {
-    const account = this.env.CF_ACCOUNT_ID;
-    const gateway = this.env.CF_AIG_GATEWAY;
-    const runToken = this.env.CF_AIG_RUN_TOKEN;
-    if (account && gateway && runToken) {
-      return {
-        url:
-          `https://gateway.ai.cloudflare.com/v1/${account}/${gateway}` +
-          `/openai/realtime?model=${encodeURIComponent(model)}`,
-        headers: {
-          Upgrade: 'websocket',
-          Authorization: `Bearer ${openaiKey}`,
-          'cf-aig-authorization': `Bearer ${runToken}`,
-        },
-        viaGateway: true,
-      };
-    }
+  ): { url: string; headers: Record<string, string> } {
     return {
       url: this.realtimeUrl(`model=${encodeURIComponent(model)}`),
       headers: this.upstreamHeaders(openaiKey),
-      viaGateway: false,
     };
   }
 
