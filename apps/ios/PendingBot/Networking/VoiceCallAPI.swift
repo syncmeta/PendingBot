@@ -148,18 +148,22 @@ struct VoiceCallAPI {
     }
 
     /// WebRTC transport only. After the iOS<->OpenAI SDP exchange yields a
-    /// call_id, hand it to the worker so RealtimeMeterDO can open its
-    /// server-side sideband and meter the call. Usage is no longer
-    /// self-reported by the client.
+    /// call_id, hand it — plus the ephemeral client_secret the call was
+    /// created with — to the worker so RealtimeMeterDO can open its
+    /// server-side sideband and meter the call. The sideband must auth
+    /// with the ephemeral secret, not the standard key, or OpenAI returns
+    /// call_id_not_found. Usage is no longer self-reported by the client.
     func attach(
         sessionId: String,
         conversationId: String,
         callId: String,
+        clientSecret: String,
     ) async throws {
         struct Body: Encodable {
             let session_id: String
             let conversation_id: String
             let call_id: String
+            let client_secret: String
         }
         struct OK: Decodable { let ok: Bool }
         _ = try await callDecoding(
@@ -168,6 +172,7 @@ struct VoiceCallAPI {
                 session_id: sessionId,
                 conversation_id: conversationId,
                 call_id: callId,
+                client_secret: clientSecret,
             ),
         ) as OK
     }
