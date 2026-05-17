@@ -116,28 +116,34 @@ struct MeTabView: View {
                                 Haptics.tap()
                             }
 
-                        VStack(spacing: 12) {
+                        VStack(spacing: 0) {
                             NavigationLink {
                                 AddMeMethodsView().toolbar(.hidden, for: .tabBar)
                             } label: {
-                                GlassOptionRow(title: "加我为好友的方式")
+                                OptionRow(title: "加我为好友的方式")
                             }
                             .buttonStyle(.plain)
+
+                            optionDivider
 
                             NavigationLink {
                                 WalletView().toolbar(.hidden, for: .tabBar)
                             } label: {
-                                GlassOptionRow(title: "钱包")
+                                OptionRow(title: "钱包")
                             }
                             .buttonStyle(.plain)
+
+                            optionDivider
 
                             NavigationLink {
                                 SkillsView().toolbar(.hidden, for: .tabBar)
                             } label: {
-                                GlassOptionRow(title: "技能管理")
+                                OptionRow(title: "技能管理")
                             }
                             .buttonStyle(.plain)
                         }
+                        .meGlassGroup()
+                        .shadow(color: .black.opacity(0.08), radius: 10, x: 0, y: 4)
 
                         VStack(spacing: 6) {
                             HStack(spacing: 8) {
@@ -156,7 +162,7 @@ struct MeTabView: View {
                             .padding(.horizontal, 20)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .frame(height: 52)
-                            .meGlassCapsule()
+                            .meGlassGroup()
                             .shadow(color: .black.opacity(0.08), radius: 10, x: 0, y: 4)
 
                             Text("WebRTC 延迟最低；网络受限地区可改用 WebSocket")
@@ -166,21 +172,23 @@ struct MeTabView: View {
                                 .padding(.horizontal, 8)
                         }
 
-                        VStack(spacing: 12) {
+                        VStack(spacing: 0) {
                             Button {
                                 pendingConfirm = .signOut
                                 Haptics.tap()
                             } label: {
-                                GlassOptionRow(title: "退出登录", role: .destructive, showsChevron: false)
+                                OptionRow(title: "退出登录", role: .destructive, showsChevron: false)
                             }
                             .buttonStyle(.plain)
                             .disabled(store.current == nil)
+
+                            optionDivider
 
                             Button {
                                 pendingConfirm = .delete
                                 Haptics.tap()
                             } label: {
-                                GlassOptionRow(
+                                OptionRow(
                                     title: deleting ? "提交中…" : "注销账号",
                                     role: .destructive,
                                     showsChevron: false
@@ -189,6 +197,8 @@ struct MeTabView: View {
                             .buttonStyle(.plain)
                             .disabled(deleting || store.current == nil)
                         }
+                        .meGlassGroup()
+                        .shadow(color: .black.opacity(0.08), radius: 10, x: 0, y: 4)
 
                         Text("很多功能还没做好 不可用")
                             .font(Theme.Fonts.monoSmall)
@@ -203,6 +213,15 @@ struct MeTabView: View {
             .background(Theme.Palette.canvas.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
         }
+    }
+
+    /// Hairline separating two rows inside one glass group, inset to
+    /// align with the row text.
+    private var optionDivider: some View {
+        Rectangle()
+            .fill(Theme.Palette.inkMuted.opacity(0.18))
+            .frame(height: 0.5)
+            .padding(.leading, 20)
     }
 
     // ── Header ─────────────────────────────────────────────────────────────
@@ -277,9 +296,9 @@ struct MeTabView: View {
     }
 }
 
-/// One glass capsule option row, matching the welcome screen's Google
-/// sign-in pill treatment.
-private struct GlassOptionRow: View {
+/// One option row — no background of its own; it lives inside a
+/// `meGlassGroup()` container so several rows read as one connected card.
+private struct OptionRow: View {
     enum Role { case normal, destructive }
 
     let title: String
@@ -303,23 +322,26 @@ private struct GlassOptionRow: View {
         .padding(.horizontal, 20)
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: 52)
-        .meGlassCapsule()
-        .shadow(color: .black.opacity(0.08), radius: 10, x: 0, y: 4)
-        .contentShape(Capsule())
+        .contentShape(Rectangle())
     }
 }
 
-/// Local copy of the welcome screen's glass capsule so the Me tab can use
-/// the same iOS 26 Liquid Glass path and the same material fallback.
+/// Glass background for a whole group of option rows — a single rounded
+/// rectangle so the rows inside read as one connected card. Uses the
+/// iOS 26 Liquid Glass path with a material fallback.
 private extension View {
     @ViewBuilder
-    func meGlassCapsule() -> some View {
+    func meGlassGroup() -> some View {
+        let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
         if #available(iOS 26.0, *) {
-            self.glassEffect(.regular, in: Capsule())
+            self
+                .glassEffect(.regular, in: shape)
+                .clipShape(shape)
         } else {
             self
-                .background(Capsule().fill(.regularMaterial))
-                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
+                .background(shape.fill(.regularMaterial))
+                .overlay(shape.strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
+                .clipShape(shape)
         }
     }
 }
