@@ -45,6 +45,16 @@ struct MarkdownText: View {
                     variant: variant
                 )
             }
+            // LaTeX math support — see MathRendering.swift. The rewrite turns
+            // `\(…\)` / `$$…$$` etc. into `pendingbot-math://` image refs,
+            // and these providers typeset them; non-math images fall through
+            // to MarkdownUI's defaults.
+            .markdownImageProvider(
+                MathBlockImageProvider(textColor: AppTheme.Palette.ink, fontSize: mathFontSize)
+            )
+            .markdownInlineImageProvider(
+                MathInlineImageProvider(textColor: AppTheme.Palette.ink, fontSize: mathFontSize)
+            )
             .textSelection(.enabled)
             .environment(\.openURL, OpenURLAction { url in
                 // Citation taps go through a fake `pendingbot-cite://N`
@@ -65,8 +75,23 @@ struct MarkdownText: View {
     }
 
     private var rewrittenText: String {
-        guard !citations.isEmpty else { return text }
-        return CitationScheme.rewrite(text, citations: citations)
+        var t = text
+        // Math first: turns LaTeX spans into `![](pendingbot-math://…)` image
+        // refs. Citation rewrite only touches `[N]` markers, so the two
+        // passes don't collide.
+        if MathMarkup.containsMath(t) {
+            t = MathMarkup.rewrite(t)
+        }
+        if !citations.isEmpty {
+            t = CitationScheme.rewrite(t, citations: citations)
+        }
+        return t
+    }
+
+    /// Point size for typeset math — matched to each variant's body text so
+    /// a formula sits at the same visual weight as the prose around it.
+    private var mathFontSize: CGFloat {
+        variant == .article ? 17 : AppTheme.Fonts.scaled(16)
     }
 
     // ── Themes ─────────────────────────────────────────────────────────────

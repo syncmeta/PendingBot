@@ -45,6 +45,7 @@
 		48F89A47F914E0463C91D6BB /* BotAvatar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 279FB8EA2B3130084E4F8C44 /* BotAvatar.swift */; };
 		4979F0D379FC22722B743958 /* GroupQRCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33E761E1099E8B059DB355AB /* GroupQRCard.swift */; };
 		4B188C25211FC2C93428265C /* MarkdownText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 296C608D9B4B9E5870149CD4 /* MarkdownText.swift */; };
+		5A7D1E0066F40000A0000005 /* MathRendering.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A7D1E0066F40000A0000004 /* MathRendering.swift */; };
 		4B8F775758566FA94BB05F1B /* ColorHash.swift in Sources */ = {isa = PBXBuildFile; fileRef = A556C3B2E5456D4E589468E3 /* ColorHash.swift */; };
 		F58AFBD54F00280FA78236C3 /* RelativeMessageTime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C1877AA2114179CA7F9352A /* RelativeMessageTime.swift */; };
 		4E8CCB60EABEF69A1C9ED4E7 /* LetterComposeSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD3D7FCD8843347E31304809 /* LetterComposeSheet.swift */; };
@@ -74,6 +75,7 @@
 		8976BCF1EBE9386E8E2C6C9C /* GroupJoinView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3B6EA75EA86539059BB4D37 /* GroupJoinView.swift */; };
 		8B80AC700CD7C1A02596F202 /* TurnstileChallenge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18612B9B224C6DCBEA7D67F1 /* TurnstileChallenge.swift */; };
 		93195F559ABAEBD132E64F17 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = 23AC5D1A6CD4C748003E6936 /* MarkdownUI */; };
+		5A7D1E0066F40000A0000001 /* SwiftMath in Frameworks */ = {isa = PBXBuildFile; productRef = 5A7D1E0066F40000A0000003 /* SwiftMath */; };
 		94657E0860679B913AE1A78D /* SkillsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47CBECD15BE9204330CB00AD /* SkillsView.swift */; };
 		96C09BE5D54583A8016A5E8B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2CE994684E5E6189CC090363 /* Assets.xcassets */; };
 		9C2D6876ED3285CA4508D130 /* ScrollFeedRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A32CFD03CE72A90611766007 /* ScrollFeedRow.swift */; };
@@ -118,6 +120,7 @@
 		279FB8EA2B3130084E4F8C44 /* BotAvatar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotAvatar.swift; sourceTree = "<group>"; };
 		288EC6D8680B326A27B8A731 /* TabHeaderBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabHeaderBar.swift; sourceTree = "<group>"; };
 		296C608D9B4B9E5870149CD4 /* MarkdownText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownText.swift; sourceTree = "<group>"; };
+		5A7D1E0066F40000A0000004 /* MathRendering.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MathRendering.swift; sourceTree = "<group>"; };
 		2A461F1DD0D7D01B3BE81A18 /* SupabaseStack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseStack.swift; sourceTree = "<group>"; };
 		2CE994684E5E6189CC090363 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		2E174BB4FB1A3D5B98F49582 /* MyQRBusinessCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyQRBusinessCard.swift; sourceTree = "<group>"; };
@@ -207,6 +210,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				93195F559ABAEBD132E64F17 /* MarkdownUI in Frameworks */,
+				5A7D1E0066F40000A0000001 /* SwiftMath in Frameworks */,
 				68CC7CE5D41AC8BE5940E886 /* Supabase in Frameworks */,
 				A2E9CBC1BBEC585F2594DFAC /* GRDB in Frameworks */,
 				AE2E39CEFC00A4D6517ABAE9 /* GoogleSignIn in Frameworks */,
@@ -423,6 +427,7 @@
 				A563EB410131F35E9F173495 /* GroupAvatar.swift */,
 				54274B6144493F79AB8DC3D1 /* Haptics.swift */,
 				296C608D9B4B9E5870149CD4 /* MarkdownText.swift */,
+				5A7D1E0066F40000A0000004 /* MathRendering.swift */,
 				7CA54E69A2AB50E902FF3E4E /* ModelPicker.swift */,
 				2E174BB4FB1A3D5B98F49582 /* MyQRBusinessCard.swift */,
 				DCBCA687802479661EFD55C2 /* Platform.swift */,
@@ -470,6 +475,7 @@
 			name = PendingBot;
 			packageProductDependencies = (
 				23AC5D1A6CD4C748003E6936 /* MarkdownUI */,
+				5A7D1E0066F40000A0000003 /* SwiftMath */,
 				42AEEDC8DF7B9FD796EE879D /* Supabase */,
 				11A77E911EA1D815E90E7BFD /* GRDB */,
 				58587B83E149045A770D0833 /* GoogleSignIn */,
@@ -507,6 +513,7 @@
 				39ED438D5E50F60066F19A94 /* XCRemoteSwiftPackageReference "GRDB.swift" */,
 				27FF4C03EE683C1EF818DA87 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
 				96B306B367BFCB52C99F8552 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */,
+				5A7D1E0066F40000A0000002 /* XCRemoteSwiftPackageReference "SwiftMath" */,
 				E22BFBEF3FFC995818D5FAF3 /* XCRemoteSwiftPackageReference "supabase-swift" */,
 				29D657BB797271F924E65A03 /* XCRemoteSwiftPackageReference "WebRTC" */,
 			);
@@ -591,6 +598,7 @@
 				359C376EAADF988A6CE84F77 /* ProtectedURLCache.swift in Sources */,
 				395FA3FAA3835D1C25EB65BF /* Log.swift in Sources */,
 				4B188C25211FC2C93428265C /* MarkdownText.swift in Sources */,
+				5A7D1E0066F40000A0000005 /* MathRendering.swift in Sources */,
 				624542244CE3957C2DAD747E /* MeTabView.swift in Sources */,
 				756AB114C3C20E0E06623B83 /* MessageTabView.swift in Sources */,
 				61B9F7BF2AE1D63124CD6B5E /* ModelPicker.swift in Sources */,
@@ -869,6 +877,14 @@
 				minimumVersion = 2.4.0;
 			};
 		};
+		5A7D1E0066F40000A0000002 /* XCRemoteSwiftPackageReference "SwiftMath" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/mgriebling/SwiftMath";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.0.0;
+			};
+		};
 		E22BFBEF3FFC995818D5FAF3 /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/supabase/supabase-swift";
@@ -889,6 +905,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 96B306B367BFCB52C99F8552 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */;
 			productName = MarkdownUI;
+		};
+		5A7D1E0066F40000A0000003 /* SwiftMath */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5A7D1E0066F40000A0000002 /* XCRemoteSwiftPackageReference "SwiftMath" */;
+			productName = SwiftMath;
 		};
 		42AEEDC8DF7B9FD796EE879D /* Supabase */ = {
 			isa = XCSwiftPackageProductDependency;
