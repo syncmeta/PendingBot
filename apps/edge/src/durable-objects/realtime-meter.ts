@@ -186,11 +186,28 @@ export class RealtimeMeterDO {
     // Relay. The realtime WebSocket protocol is JSON-framed both ways
     // (audio rides as base64 inside input_audio_buffer.append /
     // response.audio.delta), so a plain frame relay covers audio too.
+    let clientAudioFrames = 0;
     server.addEventListener('message', (ev) => {
       try {
         upstream.send(ev.data);
       } catch {
         // upstream gone
+      }
+      // Diagnostic: is iOS actually streaming mic audio upstream?
+      if (typeof ev.data !== 'string') return;
+      let t: string | undefined;
+      try {
+        t = (JSON.parse(ev.data) as { type?: string }).type;
+      } catch {
+        return;
+      }
+      if (t === 'input_audio_buffer.append') {
+        clientAudioFrames++;
+        if (clientAudioFrames === 1 || clientAudioFrames % 100 === 0) {
+          console.log('[realtime-meter] client audio frames', clientAudioFrames);
+        }
+      } else if (t) {
+        console.log('[realtime-meter] client event', t);
       }
     });
     upstream.addEventListener('message', (ev) => {
@@ -264,6 +281,13 @@ export class RealtimeMeterDO {
     // Diagnostic — surface the realtime event stream server-side via the
     // sideband so `wrangler tail` shows what the session is doing.
     console.log('[realtime-meter] event', msg.type ?? '(no type)');
+    if (msg.type === 'session.created' || msg.type === 'session.updated') {
+      console.log(
+        '[realtime-meter]',
+        msg.type,
+        JSON.stringify(msg).slice(0, 900),
+      );
+    }
     if (msg.type === 'error') {
       console.warn(
         '[realtime-meter] realtime error event',
