@@ -185,16 +185,7 @@ export class RealtimeMeterDO {
     if (!key) return new Response('openai key not configured', { status: 503 });
 
     let resp: Response;
-    const proxyReq = this.proxyUpstreamRequest(
-      ctx.model ?? OPENAI_MODEL_SLUG,
-      key,
-      ctx.sessionId,
-    );
-    console.log(
-      '[realtime-meter] proxy upstream',
-      proxyReq.viaGateway ? 'via gateway' : 'direct',
-      proxyReq.url,
-    );
+    const proxyReq = this.proxyUpstreamRequest(ctx.model ?? OPENAI_MODEL_SLUG, key);
     try {
       resp = await fetch(proxyReq.url, { headers: proxyReq.headers });
     } catch (err) {
@@ -326,40 +317,21 @@ export class RealtimeMeterDO {
     };
   }
 
-  // Proxy-mode upstream. Routes the realtime socket through the AI
-  // Gateway when it's configured so the session can be cost-tracked
-  // there; falls back to a direct OpenAI connection otherwise. Logging
-  // around the connection is deliberately verbose — this path is being
-  // brought up and every failure mode needs to be visible in the tail.
+  // Proxy-mode upstream — connects straight to OpenAI's GA realtime
+  // endpoint. Routing this through the AI Gateway was tested twice
+  // (584310d, fa20d35): the gateway accepts the WebSocket upgrade (101)
+  // then immediately drops it with code 1006 and no frames — its
+  // realtime proxy targets OpenAI's retired beta realtime API, not the
+  // GA endpoint we use. Until CF updates the gateway for GA realtime,
+  // voice can't be gateway-cost-tracked; metering stays local (the DO
+  // reads response.done usage and computeCost prices it).
   private proxyUpstreamRequest(
     model: string,
     openaiKey: string,
-    sessionId: string,
-  ): { url: string; headers: Record<string, string>; viaGateway: boolean } {
-    const account = this.env.CF_ACCOUNT_ID;
-    const gateway = this.env.CF_AIG_GATEWAY;
-    const runToken = this.env.CF_AIG_RUN_TOKEN;
-    if (account && gateway && runToken) {
-      return {
-        url:
-          `https://gateway.ai.cloudflare.com/v1/${account}/${gateway}` +
-          `/openai?model=${encodeURIComponent(model)}`,
-        headers: {
-          Upgrade: 'websocket',
-          Authorization: `Bearer ${openaiKey}`,
-          'cf-aig-authorization': `Bearer ${runToken}`,
-          'cf-aig-metadata': JSON.stringify({
-            session_id: sessionId,
-            source: 'voice_call',
-          }),
-        },
-        viaGateway: true,
-      };
-    }
+  ): { url: string; headers: Record<string, string> } {
     return {
       url: this.realtimeUrl(`model=${encodeURIComponent(model)}`),
       headers: this.upstreamHeaders(openaiKey),
-      viaGateway: false,
     };
   }
 
