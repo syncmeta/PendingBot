@@ -1604,6 +1604,36 @@ export type Database = {
         }
         Relationships: []
       }
+      preset_letters: {
+        Row: {
+          body_md: string
+          slug: string
+          summary: string
+          title: string
+          updated_at: string
+          updated_by: string | null
+          version: number
+        }
+        Insert: {
+          body_md: string
+          slug: string
+          summary: string
+          title: string
+          updated_at?: string
+          updated_by?: string | null
+          version?: number
+        }
+        Update: {
+          body_md?: string
+          slug?: string
+          summary?: string
+          title?: string
+          updated_at?: string
+          updated_by?: string | null
+          version?: number
+        }
+        Relationships: []
+      }
       realtime_sessions: {
         Row: {
           bot_id: string
