@@ -32,8 +32,6 @@ function row(
       id: opts.providerSlug + '-id',
       slug: opts.providerSlug,
       base_url: 'https://example.test/v1',
-      auth_type: 'bearer',
-      secret_ref: 'X_KEY',
       priority: opts.providerPriority ?? 100,
       enabled: opts.providerEnabled ?? true,
       config: null,
@@ -75,137 +73,68 @@ describe('blendedUsdPerMillion', () => {
 });
 
 describe('pickAlias', () => {
-  it('picks the cheapest blended price across providers', () => {
-    // openrouter:  blended = 0.7*0.1 + 0.2*1 + 0.1*5 = 0.77
-    // worldrouter: blended = 0.7*0.07 + 0.2*0.7 + 0.1*3.5 = 0.539
-    const or = row({
-      id: 'or',
-      providerSlug: 'openrouter',
-      input: 1,
-      cachedInput: 0.1,
-      output: 5,
-      weight: 0,
-    });
-    const wr = row({
-      id: 'wr',
-      providerSlug: 'worldrouter',
-      input: 0.7,
-      cachedInput: 0.07,
-      output: 3.5,
-      weight: 100,
-    });
-    expect(pickAlias([or, wr], {})?.id).toBe('wr');
+  it('returns null when there are no candidates', () => {
+    expect(pickAlias([], {})).toBeNull();
   });
 
-  it('routes around the cheaper provider when it is excluded', () => {
-    const or = row({ id: 'or', providerSlug: 'openrouter', input: 1, output: 5 });
-    const wr = row({
-      id: 'wr',
-      providerSlug: 'worldrouter',
-      input: 0.7,
-      output: 3.5,
-    });
-    expect(
-      pickAlias([or, wr], { excludeProviders: ['worldrouter'] })?.id,
-    ).toBe('or');
+  it('picks the highest-weight alias', () => {
+    const lo = row({ id: 'lo', providerSlug: 'openai', weight: 1 });
+    const hi = row({ id: 'hi', providerSlug: 'openrouter', weight: 100 });
+    expect(pickAlias([lo, hi], {})?.id).toBe('hi');
   });
 
-  it('prefers priced aliases over unpriced ones even when unpriced has higher weight', () => {
-    const priced = row({
-      id: 'priced',
-      providerSlug: 'openrouter',
-      input: 1,
-      output: 5,
-      weight: 1,
-    });
-    const unpriced = row({
-      id: 'unpriced',
-      providerSlug: 'worldrouter',
-      input: null,
-      output: null,
-      weight: 100,
-    });
-    expect(pickAlias([priced, unpriced], {})?.id).toBe('priced');
+  it('breaks weight ties by provider.priority ASC', () => {
+    const a = row({ id: 'a', providerSlug: 'openai', providerPriority: 200, weight: 5 });
+    const b = row({ id: 'b', providerSlug: 'openrouter', providerPriority: 100, weight: 5 });
+    expect(pickAlias([a, b], {})?.id).toBe('b');
   });
 
-  it('falls back to weight DESC then provider.priority ASC on equal blended price', () => {
-    const cheaper = row({
-      id: 'a',
-      providerSlug: 'openrouter',
-      providerPriority: 200,
-      input: 1,
-      output: 5,
-      weight: 1,
-    });
-    const sameButPreferred = row({
-      id: 'b',
-      providerSlug: 'worldrouter',
-      providerPriority: 100,
-      input: 1,
-      output: 5,
-      weight: 1,
-    });
-    // Equal blended, equal weight → provider.priority breaks tie
-    expect(pickAlias([cheaper, sameButPreferred], {})?.id).toBe('b');
+  it('breaks weight + priority ties by alias id', () => {
+    const a = row({ id: 'aaa', providerSlug: 'openai', providerPriority: 100, weight: 5 });
+    const b = row({ id: 'bbb', providerSlug: 'openrouter', providerPriority: 100, weight: 5 });
+    expect(pickAlias([b, a], {})?.id).toBe('aaa');
   });
 
   it('skips disabled providers entirely', () => {
     const disabled = row({
       id: 'a',
-      providerSlug: 'openrouter',
+      providerSlug: 'openai',
       providerEnabled: false,
-      input: 0.5,
-      output: 1,
+      weight: 100,
     });
-    const enabled = row({
-      id: 'b',
-      providerSlug: 'worldrouter',
-      input: 1,
-      output: 5,
-    });
+    const enabled = row({ id: 'b', providerSlug: 'openrouter', weight: 1 });
     expect(pickAlias([disabled, enabled], {})?.id).toBe('b');
   });
 
-  it('honours preferProvider hard-pin', () => {
-    const cheap = row({
-      id: 'cheap',
-      providerSlug: 'worldrouter',
-      input: 0.5,
-      output: 1,
-    });
-    const preferred = row({
-      id: 'pref',
-      providerSlug: 'openrouter',
-      input: 1,
-      output: 5,
-    });
+  it('honours preferProvider hard-pin over weight', () => {
+    const heavy = row({ id: 'heavy', providerSlug: 'openrouter', weight: 100 });
+    const pinned = row({ id: 'pinned', providerSlug: 'openai', weight: 1 });
     expect(
-      pickAlias([cheap, preferred], { preferProvider: 'openrouter' })?.id,
-    ).toBe('pref');
+      pickAlias([heavy, pinned], { preferProvider: 'openai' })?.id,
+    ).toBe('pinned');
+  });
+
+  it('returns null when preferProvider matches no candidate', () => {
+    const r = row({ id: 'r', providerSlug: 'openai', weight: 1 });
+    expect(pickAlias([r], { preferProvider: 'openrouter' })).toBeNull();
+  });
+
+  it('routes around an excluded provider', () => {
+    const excluded = row({ id: 'ex', providerSlug: 'openrouter', weight: 100 });
+    const ok = row({ id: 'ok', providerSlug: 'openai', weight: 1 });
+    expect(
+      pickAlias([excluded, ok], { excludeProviders: ['openrouter'] })?.id,
+    ).toBe('ok');
   });
 
   it('respects weight=0 standby — only picks it when no live alternative remains', () => {
-    const standby = row({
-      id: 'standby',
-      providerSlug: 'openrouter',
-      input: 0.5,
-      output: 1,
-      weight: 0,
-    });
-    const live = row({
-      id: 'live',
-      providerSlug: 'worldrouter',
-      input: 1,
-      output: 5,
-      weight: 100,
-    });
-    // Standby has lower blended price, but weight=0 takes it out of the
-    // live pool — the higher-priced live alias still wins.
+    const standby = row({ id: 'standby', providerSlug: 'openai', weight: 0 });
+    const live = row({ id: 'live', providerSlug: 'openrouter', weight: 100 });
+    // weight=0 keeps standby out of the live pool — the live alias wins.
     expect(pickAlias([standby, live], {})?.id).toBe('live');
-    // With the live alias excluded, the standby becomes the only
-    // candidate and is picked.
+    // With the live alias excluded, standby is the only candidate left.
     expect(
-      pickAlias([standby, live], { excludeProviders: ['worldrouter'] })?.id,
+      pickAlias([standby, live], { excludeProviders: ['openrouter'] })?.id,
     ).toBe('standby');
   });
 });

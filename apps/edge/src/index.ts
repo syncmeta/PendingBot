@@ -30,6 +30,7 @@ import type { AuditMessage } from './queue/audit-types';
 // The export *name* must match `class_name` (case-sensitive).
 export { GroupRouterDO } from './durable-objects/group-router';
 export { RealtimeHubDO } from './durable-objects/hub';
+export { RealtimeMeterDO } from './durable-objects/realtime-meter';
 // Container-backed DO from @cloudflare/sandbox. Required export for
 // the `Sandbox` binding declared in wrangler.jsonc.
 export { Sandbox } from '@cloudflare/sandbox';

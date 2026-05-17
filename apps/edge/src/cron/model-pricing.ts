@@ -24,9 +24,8 @@ interface OpenRouterModel {
 }
 
 export async function syncModelPricing(env: Env): Promise<void> {
-  const res = await fetch('https://openrouter.ai/api/v1/models', {
-    headers: { Authorization: `Bearer ${env.OPENROUTER_API_KEY}` },
-  });
+  // OpenRouter's model catalog is a public endpoint — no auth header.
+  const res = await fetch('https://openrouter.ai/api/v1/models');
   if (!res.ok) {
     throw new Error(`openrouter models ${res.status}: ${(await res.text()).slice(0, 300)}`);
   }

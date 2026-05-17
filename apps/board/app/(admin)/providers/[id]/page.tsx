@@ -13,7 +13,7 @@ export default async function EditProviderPage({
   const supa = supabaseAdmin();
   const { data: row } = await supa
     .from('llm_providers')
-    .select('id, slug, display_name, base_url, auth_type, secret_ref, enabled, priority, notes')
+    .select('id, slug, display_name, base_url, enabled, priority, notes')
     .eq('id', id)
     .maybeSingle();
   if (!row) notFound();

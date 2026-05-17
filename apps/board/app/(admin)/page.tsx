@@ -7,11 +7,6 @@ export default function HomePage() {
 
       <section className="mt-10 grid gap-4 sm:grid-cols-2">
         <Card
-          href="/savings"
-          title="Savings"
-          desc="实际花费 vs 若全走 OpenRouter — 看七折省了多少"
-        />
-        <Card
           href="/app-stats"
           title="App Stats"
           desc="DAU / 留存 / Bot 排行 / 对话与消息分布（产品侧）"

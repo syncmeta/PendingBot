@@ -9,7 +9,7 @@ export default async function ProvidersPage() {
 
   const { data: providers } = await supa
     .from('llm_providers')
-    .select('id, slug, display_name, base_url, auth_type, secret_ref, enabled, priority, notes')
+    .select('id, slug, display_name, base_url, enabled, priority, notes')
     .order('priority', { ascending: true });
 
   // Per-provider alias count for quick at-a-glance signal of "is this
@@ -47,7 +47,6 @@ export default async function ProvidersPage() {
               <th className="px-4 py-2 font-medium">slug</th>
               <th className="px-4 py-2 font-medium">name</th>
               <th className="px-4 py-2 font-medium">base_url</th>
-              <th className="px-4 py-2 font-medium">secret_ref</th>
               <th className="px-4 py-2 font-medium text-right">priority</th>
               <th className="px-4 py-2 font-medium text-right">aliases</th>
               <th className="px-4 py-2 font-medium">状态</th>
@@ -62,7 +61,6 @@ export default async function ProvidersPage() {
                 <td className="px-4 py-2 font-mono text-xs text-muted-foreground">
                   {p.base_url}
                 </td>
-                <td className="px-4 py-2 font-mono text-xs">{p.secret_ref}</td>
                 <td className="px-4 py-2 text-right tabular-nums">{p.priority}</td>
                 <td className="px-4 py-2 text-right tabular-nums">
                   {fmtNumber(aliasCountByProvider.get(p.id) ?? 0)}
@@ -110,7 +108,7 @@ export default async function ProvidersPage() {
             ))}
             {(providers ?? []).length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
+                <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
                   还没有 provider。点右上方"新增"开始。
                 </td>
               </tr>
@@ -120,7 +118,7 @@ export default async function ProvidersPage() {
       </div>
 
       <p className="text-xs text-muted-foreground">
-        删除会级联删除该 provider 下的所有 model alias。OpenRouter 是 fallback 锚点，不允许删（可停用）。secret_ref 是 Wrangler 上的 env var 名，密钥本体不入库——添加新 provider 前先 `wrangler secret put 该名字` 把 key 推上去，否则 worker 跑到该 provider 时会抛错。
+        删除会级联删除该 provider 下的所有 model alias。OpenRouter 是 fallback 锚点，不允许删（可停用）。认证走 BYOK-on-gateway——provider 的 key 存在 AI Gateway 后台（Store Keys），worker 不持有任何 provider key，所以加新 provider 前先把它的 key 存进 AI Gateway。
       </p>
     </main>
   );

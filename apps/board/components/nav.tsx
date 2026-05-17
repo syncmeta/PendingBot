@@ -6,7 +6,6 @@ import { logoutAction } from '@/app/login/actions';
 import { ActionButton } from '@/components/action-button';
 
 const LINKS: { href: string; label: string }[] = [
-  { href: '/savings', label: 'Savings' },
   { href: '/app-stats', label: 'App stats' },
   { href: '/billing', label: 'Billing' },
   { href: '/providers', label: 'Providers' },

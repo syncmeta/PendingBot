@@ -11,6 +11,7 @@ import Foundation
 /// on the class itself so the compiler enforces it.
 
 import Combine
+import Supabase
 
 @MainActor
 @Observable
@@ -31,7 +32,7 @@ final class CallSession {
 
     enum TerminateReason: Equatable, Sendable {
         case user              // user tapped hang up
-        case noBalance         // worker /usage returned can_continue=false
+        case noBalance         // pre-call balance gate (402 on /session)
         case network           // transport-level failure mid-call
         case remoteError(String)
         case regionUnsupported(country: String?, supportedURL: URL?)
@@ -39,11 +40,6 @@ final class CallSession {
     }
 
     var phase: Phase = .idle
-
-    /// Cumulative PND drained from the user's balance for this call.
-    /// Updated optimistically by the transport on each turn, then
-    /// reconciled with worker authoritative value on the /usage response.
-    var sessionCostPND: Int = 0
 
     /// Wall-clock seconds since the call connected (transport sets
     /// `connectedAt` when it sees first remote audio, CallView's timer
@@ -97,9 +93,17 @@ final class CallSession {
         guard phase == .idle else { return }
         phase = .connecting
 
+        // User-selected transport. "webrtc" (default) is lowest-latency;
+        // "websocket" is the fallback for regions OpenAI geo-blocks.
+        let transportPref =
+            UserDefaults.standard.string(forKey: Self.transportDefaultsKey) ?? "webrtc"
+
         let resp: VoiceCallAPI.SessionResponse
         do {
-            resp = try await api.createSession(conversationId: conversationId)
+            resp = try await api.createSession(
+                conversationId: conversationId,
+                transport: transportPref,
+            )
         } catch let err as VoiceCallError {
             phase = .terminated(translate(err))
             return
@@ -111,13 +115,56 @@ final class CallSession {
         providerId = resp.provider_id
         aliasId = resp.alias_id
 
-        let transport = OpenAICallTransport(
-            clientSecret: resp.client_secret.value,
-            model: resp.model,
-            delegate: self,
-        )
+        let transport: CallTransport
+        if resp.transport == "websocket" {
+            guard let wsURL = Self.websocketURL(path: resp.ws_path) else {
+                phase = .terminated(.startupError("session response missing ws_path"))
+                return
+            }
+            let jwt: String
+            do {
+                jwt = try await SupabaseStack.shared.auth.session.accessToken
+            } catch {
+                phase = .terminated(.startupError("auth token unavailable"))
+                return
+            }
+            transport = OpenAIWebSocketTransport(wsURL: wsURL, jwt: jwt, delegate: self)
+        } else {
+            guard let clientSecret = resp.client_secret?.value else {
+                phase = .terminated(.startupError("session response missing client_secret"))
+                return
+            }
+            transport = OpenAICallTransport(
+                clientSecret: clientSecret,
+                model: resp.model,
+                delegate: self,
+            )
+        }
         self.transport = transport
         await transport.start()
+    }
+
+    /// UserDefaults key for the user's voice-transport preference.
+    /// "webrtc" | "websocket"; absent → "webrtc".
+    static let transportDefaultsKey = "voice_transport"
+
+    /// Build the wss:// URL for the WebSocket transport from the worker
+    /// base + the relative ws_path the /session response handed back.
+    private static func websocketURL(path: String?) -> URL? {
+        guard
+            let path,
+            var comps = URLComponents(
+                url: HostedConfig.environment.workerURL,
+                resolvingAgainstBaseURL: false)
+        else { return nil }
+        comps.scheme = comps.scheme == "http" ? "ws" : "wss"
+        if let q = path.firstIndex(of: "?") {
+            comps.path = String(path[..<q])
+            comps.percentEncodedQuery = String(path[path.index(after: q)...])
+        } else {
+            comps.path = path
+        }
+        return comps.url
     }
 
     func hangUp() async {
@@ -193,32 +240,15 @@ protocol CallTransport: AnyObject {
 protocol CallTransportDelegate: AnyObject {
     /// Transport connected and remote audio is flowing.
     func transportDidConnect(_ t: CallTransport)
-    /// One turn's usage delta is ready to report. Transport builds the
-    /// per-turn UsageDelta from the response.done.usage event; CallSession
-    /// fills in session_id / conversation_id / alias_id / provider_id
-    /// and POSTs to /v1/realtime/usage.
-    func transport(_ t: CallTransport, didProduceUsageDelta delta: UsageDelta) async
+    /// WebRTC transport: the iOS<->OpenAI SDP exchange produced a call_id.
+    /// CallSession forwards it to the worker (POST /v1/realtime/attach) so
+    /// the server-side meter (RealtimeMeterDO) can open its sideband.
+    func transport(_ t: CallTransport, didObtainCallId callId: String) async
     /// Append a transcript turn to the post-call upload buffer.
     func transport(_ t: CallTransport, didAppendTranscript turn: VoiceCallAPI.TranscriptTurn)
     /// Transport says we're done — either an error, remote close, or the
     /// upstream telling us the session is over.
     func transport(_ t: CallTransport, didFailWith reason: CallSession.TerminateReason) async
-}
-
-/// Slice of a UsageRequest the transport knows about. CallSession adds
-/// the identifiers before POSTing.
-struct UsageDelta: Sendable {
-    let audioInputTokens: Int?
-    let audioOutputTokens: Int?
-    let textInputTokens: Int?
-    let textOutputTokens: Int?
-    /// Subset of the input tokens that came from a cache hit. Worker
-    /// prices them via alias.cached_input_price (GA cached-audio rate
-    /// is ~80× cheaper than full input). Sum of cached_text +
-    /// cached_audio per response.done.usage.input_token_details.cached_tokens.
-    let cachedInputTokens: Int?
-    let latencyMs: Int?
-    let turnIndex: Int
 }
 
 // MARK: - CallSession as delegate
@@ -229,36 +259,18 @@ extension CallSession: CallTransportDelegate {
         phase = .connected
     }
 
-    func transport(_ t: CallTransport, didProduceUsageDelta delta: UsageDelta) async {
-        guard let sid = sessionId, let pid = providerId else { return }
+    func transport(_ t: CallTransport, didObtainCallId callId: String) async {
+        guard let sid = sessionId else { return }
         do {
-            let resp = try await api.reportUsage(
-                .init(
-                    session_id: sid,
-                    conversation_id: conversationId,
-                    alias_id: aliasId,
-                    provider_id: pid,
-                    audio_input_tokens: delta.audioInputTokens,
-                    audio_output_tokens: delta.audioOutputTokens,
-                    text_input_tokens: delta.textInputTokens,
-                    text_output_tokens: delta.textOutputTokens,
-                    cached_input_tokens: delta.cachedInputTokens,
-                    latency_ms: delta.latencyMs,
-                    turn_index: delta.turnIndex,
-                ),
+            try await api.attach(
+                sessionId: sid,
+                conversationId: conversationId,
+                callId: callId,
             )
-            sessionCostPND = resp.session_cost_credits
-            // Silent balance refresh so the user sees the new value as
-            // soon as they leave the call screen — without flashing it
-            // on the call UI itself.
-            await BillingService.applySilentUpdate(balance: resp.balance_credits)
-            if !resp.can_continue {
-                await terminate(reason: .noBalance)
-            }
         } catch {
-            // Usage report failure is non-fatal — the call keeps going.
-            // We accept the small accounting drift; the next tick will
-            // try again, and the user can hang up manually.
+            // Non-fatal — the call still works; only server-side metering
+            // is lost for this call. The worker's 30-minute session cap
+            // still bounds it. Nothing the user can act on, so swallow.
         }
     }
 

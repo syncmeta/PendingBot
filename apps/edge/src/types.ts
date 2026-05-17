@@ -26,6 +26,12 @@ export interface Env {
   /// env.REALTIME_HUB.get(env.REALTIME_HUB.idFromName(key)). See
   /// src/durable-objects/hub.ts.
   REALTIME_HUB: DurableObjectNamespace;
+  /// Per-voice-call server-side metering DO. One instance per realtime
+  /// session_id. Holds a "sideband" WebSocket to OpenAI — a control
+  /// connection to the same call the iOS WebRTC client is on — so token
+  /// usage is metered server-side instead of self-reported by the
+  /// client. See src/durable-objects/realtime-meter.ts.
+  REALTIME_METER: DurableObjectNamespace;
   /// Cloudflare ratelimit binding for handle-enumeration endpoints
   /// (friend-request /lookup, group /join, friend-request POST /).
   /// Limit + period live in wrangler.jsonc — call from a route via
@@ -48,17 +54,16 @@ export interface Env {
   // ── Secrets (set via `wrangler secret put --env <env>`) ────────
   SUPABASE_ANON_KEY: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
-  OPENROUTER_API_KEY: string;
-  // Optional alternative LLM gateway. The router resolves a provider's
-  // env var name dynamically via llm_providers.secret_ref, so the key
-  // doesn't need to be present at typecheck time — declaring it here
-  // gives editor autocomplete and catches typos in admin UI input.
-  WORLDROUTER_API_KEY?: string;
   /// Cloudflare API token (AI Gateway Read). persistAuditMessage uses it
   /// to read the gateway's computed per-request cost from the Logs API
   /// when a provider doesn't report its own. Optional — unset means
   /// those turns record no LLM cost.
   CF_AIG_TOKEN?: string;
+  /// AI Gateway "Authenticated Gateway" run token (created in the gateway
+  /// Settings with Run permission). buildClient sends it as the
+  /// cf-aig-authorization header on every LLM request; the gateway then
+  /// injects the BYOK provider key stored in its dashboard.
+  CF_AIG_RUN_TOKEN?: string;
   HONCHO_API_KEY: string;
   HONCHO_WORKSPACE_ID: string;
   // Web tools route through the MCP client (apps/edge/src/mcp/client.ts)
@@ -78,9 +83,7 @@ export interface Env {
 
   // ── Voice call (M5+) ───────────────────────────────────────────
   // OpenAI Realtime — the worker mints a 60s ephemeral client_secret
-  // for the iOS WebRTC handshake; the API key never leaves the
-  // worker. Also referenced by llm_providers row slug 'openai' via
-  // secret_ref.
+  // for the iOS WebRTC handshake; the API key never leaves the worker.
   OPENAI_API_KEY?: string;
 
   // ── Realtime fan-in ────────────────────────────────────────────

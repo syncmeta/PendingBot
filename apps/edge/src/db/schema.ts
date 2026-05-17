@@ -1372,7 +1372,6 @@ export type Database = {
       }
       llm_providers: {
         Row: {
-          auth_type: string
           base_url: string
           config: Json
           created_at: string
@@ -1381,12 +1380,10 @@ export type Database = {
           id: string
           notes: string | null
           priority: number
-          secret_ref: string
           slug: string
           updated_at: string
         }
         Insert: {
-          auth_type?: string
           base_url: string
           config?: Json
           created_at?: string
@@ -1395,12 +1392,10 @@ export type Database = {
           id?: string
           notes?: string | null
           priority?: number
-          secret_ref: string
           slug: string
           updated_at?: string
         }
         Update: {
-          auth_type?: string
           base_url?: string
           config?: Json
           created_at?: string
@@ -1409,7 +1404,6 @@ export type Database = {
           id?: string
           notes?: string | null
           priority?: number
-          secret_ref?: string
           slug?: string
           updated_at?: string
         }

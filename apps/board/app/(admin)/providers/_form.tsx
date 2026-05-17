@@ -8,8 +8,6 @@ export type ProviderFormValues = {
   slug?: string;
   display_name?: string;
   base_url?: string;
-  auth_type?: string;
-  secret_ref?: string;
   enabled?: boolean;
   priority?: number;
   notes?: string | null;
@@ -34,7 +32,7 @@ export function ProviderForm({
 
   return (
     <form action={formAction} className="space-y-4">
-      <Field label="slug" hint="路由器代码里用的稳定标识，如 openrouter / worldrouter">
+      <Field label="slug" hint="路由器代码里用的稳定标识，如 openrouter / openai">
         <input
           name="slug"
           required
@@ -51,7 +49,10 @@ export function ProviderForm({
           className="block w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
         />
       </Field>
-      <Field label="base_url" hint="OpenAI 兼容端点根路径，如 https://openrouter.ai/api/v1">
+      <Field
+        label="base_url"
+        hint="AI Gateway 端点根路径，如 https://gateway.ai.cloudflare.com/v1/<account>/pendingbot/openrouter"
+      >
         <input
           name="base_url"
           required
@@ -60,35 +61,12 @@ export function ProviderForm({
           className="block w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm"
         />
       </Field>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="auth_type">
-          <select
-            name="auth_type"
-            defaultValue={initial?.auth_type ?? 'bearer'}
-            className="block w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-          >
-            <option value="bearer">bearer</option>
-            <option value="header-x-api-key">header-x-api-key</option>
-          </select>
-        </Field>
-        <Field label="priority" hint="数字越小越优先（同 weight 时 tiebreaker）">
-          <input
-            name="priority"
-            type="number"
-            defaultValue={initial?.priority ?? 100}
-            className="block w-full rounded-md border border-input bg-background px-3 py-2 tabular-nums"
-          />
-        </Field>
-      </div>
-      <Field
-        label="secret_ref"
-        hint="Wrangler env var 名，例 OPENROUTER_API_KEY 或 WORLDROUTER_API_KEY；密钥本体不入库"
-      >
+      <Field label="priority" hint="数字越小越优先（同 weight 时 tiebreaker）">
         <input
-          name="secret_ref"
-          required
-          defaultValue={initial?.secret_ref ?? ''}
-          className="block w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm"
+          name="priority"
+          type="number"
+          defaultValue={initial?.priority ?? 100}
+          className="block w-full rounded-md border border-input bg-background px-3 py-2 tabular-nums"
         />
       </Field>
       <Field label="备注（可选）">

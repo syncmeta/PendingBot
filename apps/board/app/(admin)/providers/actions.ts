@@ -9,15 +9,10 @@ import { withFlash } from '@/components/toast-redirect';
 
 export type ProviderFormState = { error?: string };
 
-const ALLOWED_AUTH = ['bearer', 'header-x-api-key'] as const;
-type AuthType = (typeof ALLOWED_AUTH)[number];
-
 function parseForm(formData: FormData) {
   const slug = String(formData.get('slug') ?? '').trim();
   const display_name = String(formData.get('display_name') ?? '').trim();
   const base_url = String(formData.get('base_url') ?? '').trim();
-  const auth_type = String(formData.get('auth_type') ?? 'bearer') as AuthType;
-  const secret_ref = String(formData.get('secret_ref') ?? '').trim();
   const enabled = formData.get('enabled') === 'on';
   const priorityRaw = String(formData.get('priority') ?? '100');
   const priority = Number.parseInt(priorityRaw, 10);
@@ -26,11 +21,9 @@ function parseForm(formData: FormData) {
   if (!slug) return { error: 'slug 必填' };
   if (!display_name) return { error: 'display_name 必填' };
   if (!base_url) return { error: 'base_url 必填' };
-  if (!secret_ref) return { error: 'secret_ref 必填（Wrangler env var 名）' };
-  if (!ALLOWED_AUTH.includes(auth_type)) return { error: 'auth_type 不合法' };
   if (!Number.isFinite(priority)) return { error: 'priority 必须是数字' };
   return {
-    row: { slug, display_name, base_url, auth_type, secret_ref, enabled, priority, notes },
+    row: { slug, display_name, base_url, enabled, priority, notes },
   };
 }
 

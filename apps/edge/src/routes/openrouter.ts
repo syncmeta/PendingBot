@@ -98,9 +98,7 @@ async function loadLocalAugments(
 
 openrouterRoutes.get('/models', async (c) => {
   const [res, augments] = await Promise.all([
-    fetch('https://openrouter.ai/api/v1/models', {
-      headers: { Authorization: `Bearer ${c.env.OPENROUTER_API_KEY}` },
-    }),
+    fetch('https://openrouter.ai/api/v1/models'),
     loadLocalAugments(c),
   ]);
   if (!res.ok) {

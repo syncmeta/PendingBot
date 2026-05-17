@@ -96,15 +96,12 @@ struct CallView: View {
     }
 
     private var metrics: some View {
-        VStack(spacing: 12) {
-            Text("通话 \(elapsedDisplay)")
-                .monospacedDigit()
-                .font(.title3)
-            Text("本次 \(session.sessionCostPND) PND")
-                .monospacedDigit()
-                .font(.title2.weight(.semibold))
-                .contentTransition(.numericText())
-        }
+        // Running cost is no longer shown live — metering moved
+        // server-side (RealtimeMeterDO), so the device doesn't see
+        // per-turn spend. The call's cost settles into audit_log.
+        Text("通话 \(elapsedDisplay)")
+            .monospacedDigit()
+            .font(.title3)
     }
 
     private var hangUpButton: some View {

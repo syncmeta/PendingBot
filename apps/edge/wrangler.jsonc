@@ -110,6 +110,7 @@
         "bindings": [
           { "name": "GROUP_ROUTER", "class_name": "GroupRouterDO" },
           { "name": "REALTIME_HUB", "class_name": "RealtimeHubDO" },
+          { "name": "REALTIME_METER", "class_name": "RealtimeMeterDO" },
           { "name": "Sandbox", "class_name": "Sandbox" }
         ]
       },
@@ -152,6 +153,10 @@
         {
           "tag": "v3",
           "new_sqlite_classes": ["RealtimeHubDO"]
+        },
+        {
+          "tag": "v4",
+          "new_sqlite_classes": ["RealtimeMeterDO"]
         }
       ],
       // Audit + billing offload. recordAudit used to insert audit_log
@@ -195,9 +200,11 @@
   //   --- supabase + LLM gateway ---
   //   SUPABASE_ANON_KEY
   //   SUPABASE_SERVICE_ROLE_KEY
-  //   OPENROUTER_API_KEY
-  //   WORLDROUTER_API_KEY    (declared but currently unread — leave unset
-  //                           until the LLMRouter wires it back in)
+  //   CF_AIG_RUN_TOKEN       (AI Gateway "Authenticated Gateway" run token,
+  //                           created in the gateway Settings. Sent as the
+  //                           cf-aig-authorization header on every LLM
+  //                           request; the gateway injects the BYOK
+  //                           provider key. Required for LLM routing.)
   //   CF_AIG_TOKEN           (Cloudflare API token with "AI Gateway Read"
   //                           permission — persistAuditMessage reads the
   //                           gateway's computed per-request cost from
