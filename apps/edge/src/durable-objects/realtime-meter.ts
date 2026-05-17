@@ -120,18 +120,28 @@ export class RealtimeMeterDO {
     this.ctx = ctx;
     await this.state.storage.put('ctx', ctx);
 
+    const sidebandUrl = this.realtimeUrl(
+      `call_id=${encodeURIComponent(ctx.callId ?? '')}`,
+    );
+    console.log('[realtime-meter] sideband attaching call_id=', ctx.callId,
+      'url=', sidebandUrl);
     let resp: Response;
     try {
-      resp = await fetch(this.realtimeUrl(`call_id=${encodeURIComponent(ctx.callId!)}`), {
-        headers: this.upstreamHeaders(key),
-      });
+      resp = await fetch(sidebandUrl, { headers: this.upstreamHeaders(key) });
     } catch (err) {
       console.warn('[realtime-meter] sideband connect failed', err);
       return new Response('sideband connect failed', { status: 502 });
     }
     const ws = resp.webSocket;
     if (!ws) {
-      console.warn('[realtime-meter] no webSocket on response', resp.status);
+      let body = '';
+      try {
+        body = (await resp.text()).slice(0, 400);
+      } catch {
+        // no body
+      }
+      console.warn('[realtime-meter] no webSocket on response',
+        resp.status, body);
       return new Response('sideband upgrade failed', { status: 502 });
     }
     ws.accept();
