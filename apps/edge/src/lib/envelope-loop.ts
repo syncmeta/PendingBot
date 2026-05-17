@@ -50,13 +50,16 @@ async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise
   }
 }
 
+// Envelope-stage tools. As with bot-reply/tool-defs.ts, the model-facing
+// `function.description` is NOT defined here — it's the single source of
+// truth in pendingbot.tools.model_description and gets swapped in by
+// applyToolRegistry at runner-assembly time. Only name + parameter schema
+// live in code.
 export const TOOLS: ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
       name: 'propose_plan',
-      description:
-        '说明你的思考、想搜的关键词、想直接抓取的网页。协作者会回应——这是和协作者来回讨论方案的工具。如果 web_search / fetch_url 此刻被锁着（系统会暂停它们），就先用 propose_plan 把方向打磨清楚。',
       parameters: {
         type: 'object',
         properties: {
@@ -86,7 +89,6 @@ export const TOOLS: ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'web_search',
-      description: '用配置好的搜索服务商搜索 query，返回若干结果（标题/URL/摘要）。**搜索结果只在本轮可见——下一轮会被精简成占位符，值得记的请立刻用 take_note 记下，否则就忘了。**',
       parameters: {
         type: 'object',
         properties: { query: { type: 'string' } },
@@ -98,7 +100,6 @@ export const TOOLS: ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'fetch_url',
-      description: '用配置好的爬虫服务商抓取一个网页的正文。**抓回的页面正文只在本轮可见——下一轮会被精简成占位符，值得记的请立刻用 take_note 记下，否则就忘了。**',
       parameters: {
         type: 'object',
         properties: { url: { type: 'string' } },
@@ -110,7 +111,6 @@ export const TOOLS: ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'take_note',
-      description: '记录一条对朋友真正有冲击力的笔记。平庸常识不要记。**这是把短期信息搬到长期记忆的唯一方式：本轮的搜索/抓取结果下一轮就被精简了，note 不会丢。**',
       parameters: {
         type: 'object',
         properties: {
@@ -125,8 +125,6 @@ export const TOOLS: ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'stop_exploring',
-      description:
-        '当你判断已经探索得足够、可以收笔时调用——这是结束探索阶段、立刻进入写作的唯一方式。调用后这一轮就是探索的最后一轮，写作模型会基于你目前的笔记和访问过的链接直接出文。只决定"是否停止探索"，不决定"写不写"——觉得不值得写就别停。',
       parameters: {
         type: 'object',
         properties: {

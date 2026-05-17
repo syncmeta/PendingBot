@@ -13,10 +13,12 @@ import type { Env } from '../types';
 // A tool can live on either or both — the column is JSON so a single
 // row covers both surfaces.
 //
-// The registry also carries `model_description`: a board-editable
-// override for the description the model actually sees. When set it
-// replaces the tool's own description at turn-assembly time; NULL
-// leaves the code/upstream default untouched.
+// The registry also carries `model_description`: the board-editable
+// description the model actually sees. For native tools it's the single
+// source of truth — the edge tool defs (tool-defs.ts, envelope-loop.ts)
+// carry no `function.description` at all, so the registry value is
+// swapped in at turn-assembly time. For MCP tools it's optional: NULL
+// means use the upstream MCP server's own description.
 
 export type ToolScope = 'chat' | 'envelope';
 
@@ -70,7 +72,8 @@ async function loadRows(env: Env): Promise<ToolRow[] | null> {
 /**
  * A resolved view of the registry for one scope: the set of tool keys
  * the model is allowed to see, each mapped to its `model_description`
- * override (`null` = keep the tool's own description).
+ * (`null` = keep the tool's own description, used for MCP tools that
+ * defer to the upstream server).
  */
 export interface ToolRegistryView {
   allowed: Map<string, string | null>;
@@ -96,9 +99,11 @@ export async function loadToolRegistry(
 }
 
 /**
- * Filters `tools` to the registry's allowlist and swaps in any
- * `model_description` override. `registry === null` (registry
- * unreachable) passes the list through untouched — fail-open.
+ * Filters `tools` to the registry's allowlist and swaps in each tool's
+ * `model_description`. Native tools always carry one (DB CHECK enforces
+ * it); MCP tools may be `null`, in which case the upstream description
+ * is kept. `registry === null` (registry unreachable) passes the list
+ * through untouched — fail-open.
  */
 export function applyToolRegistry(
   tools: ChatCompletionTool[],

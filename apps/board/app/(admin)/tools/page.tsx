@@ -17,7 +17,9 @@ import { ModelDescriptionCell } from './_model-description-cell';
 //
 // The model-facing description (model_description) is editable inline
 // here so every tool's description can be browsed + tuned in one
-// place — empty = fall back to the code / upstream default.
+// place. For native tools it's the single source of truth (required —
+// the edge code carries no default); for MCP tools empty = fall back
+// to the upstream server's own description.
 
 interface ToolRow {
   id: string;
@@ -92,7 +94,7 @@ export default async function ToolsPage() {
         新加 native 工具：代码里写实现，再点右上"新增工具"登记一行。新加 MCP 工具：先去
         MCP servers 页接好上游，再来这里"新增工具"挑暴露哪个 upstream tool。
         <code className="font-mono">scopes</code> 决定工具出现在 chat / envelope / 二者皆有。
-        「模型描述」留空时，native 工具回落到 edge 代码里的默认值，MCP 工具回落到上游 server 的描述。
+        「模型描述」是 native 工具描述的唯一来源（必填，edge 代码里不留默认值）；MCP 工具留空则用上游 server 的描述。
       </p>
     </main>
   );
@@ -118,7 +120,7 @@ function Section({ title, rows }: { title: string; rows: ToolRow[] }) {
               const placeholder =
                 t.kind === 'mcp'
                   ? '留空 = 用上游 MCP server 的默认描述'
-                  : '留空 = 用 edge 代码里的默认描述';
+                  : 'native 工具必填 —— 这就是 LLM 看到的 function.description';
               return (
                 <tr key={t.id} className="border-b align-top last:border-0">
                   <td className="px-4 py-3">
@@ -151,6 +153,7 @@ function Section({ title, rows }: { title: string; rows: ToolRow[] }) {
                   <td className="px-4 py-3">
                     <ModelDescriptionCell
                       id={t.id}
+                      kind={t.kind}
                       initial={t.model_description}
                       placeholder={placeholder}
                     />
