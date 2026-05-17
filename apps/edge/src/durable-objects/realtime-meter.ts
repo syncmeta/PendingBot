@@ -123,27 +123,42 @@ export class RealtimeMeterDO {
     const sidebandUrl = this.realtimeUrl(
       `call_id=${encodeURIComponent(ctx.callId ?? '')}`,
     );
-    console.log('[realtime-meter] sideband attaching call_id=', ctx.callId,
-      'url=', sidebandUrl);
-    let resp: Response;
-    try {
-      resp = await fetch(sidebandUrl, { headers: this.upstreamHeaders(key) });
-    } catch (err) {
-      console.warn('[realtime-meter] sideband connect failed', err);
-      return new Response('sideband connect failed', { status: 502 });
-    }
-    const ws = resp.webSocket;
-    if (!ws) {
-      let body = '';
-      try {
-        body = (await resp.text()).slice(0, 400);
-      } catch {
-        // no body
+    console.log('[realtime-meter] sideband attaching call_id=', ctx.callId);
+
+    // iOS calls /attach right after the SDP exchange, before the WebRTC
+    // connection is fully up — so the call_id isn't attachable yet and
+    // OpenAI returns 404 call_id_not_found. Retry for a few seconds
+    // until the session exists.
+    let ws: WebSocket | null = null;
+    for (let attempt = 1; attempt <= 8 && !ws; attempt++) {
+      if (attempt > 1) {
+        await new Promise((r) => setTimeout(r, 1_000));
       }
-      console.warn('[realtime-meter] no webSocket on response',
-        resp.status, body);
+      try {
+        const resp = await fetch(sidebandUrl, {
+          headers: this.upstreamHeaders(key),
+        });
+        if (resp.webSocket) {
+          ws = resp.webSocket;
+          break;
+        }
+        let body = '';
+        try {
+          body = (await resp.text()).slice(0, 200);
+        } catch {
+          // no body
+        }
+        console.warn('[realtime-meter] sideband attempt', attempt,
+          'status', resp.status, body);
+      } catch (err) {
+        console.warn('[realtime-meter] sideband attempt', attempt, 'threw', err);
+      }
+    }
+    if (!ws) {
+      console.warn('[realtime-meter] sideband gave up after retries');
       return new Response('sideband upgrade failed', { status: 502 });
     }
+    console.log('[realtime-meter] sideband connected');
     ws.accept();
     this.upstreamWs = ws;
     ws.addEventListener('message', (ev) => {
