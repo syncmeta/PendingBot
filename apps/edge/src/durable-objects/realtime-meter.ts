@@ -371,6 +371,10 @@ export class RealtimeMeterDO {
     const ctx = this.ctx;
     if (!ctx || this.closed) return;
 
+    // Diagnostic — capture OpenAI's exact usage object so the cached /
+    // audio / text token split can be billed correctly.
+    console.log('[realtime-meter] usage', JSON.stringify(usage));
+
     const inAudio = usage.input_token_details?.audio_tokens ?? 0;
     const inCached = usage.input_token_details?.cached_tokens ?? 0;
     // cached_tokens is a subset of the input tokens already counted in
