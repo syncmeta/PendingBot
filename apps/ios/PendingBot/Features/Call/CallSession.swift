@@ -65,6 +65,10 @@ final class CallSession {
     private(set) var providerId: String?
     private(set) var aliasId: String?
 
+    /// WebRTC only — the ephemeral client_secret from /session. Forwarded
+    /// to /attach so the server-side sideband can authenticate with it.
+    private var webrtcClientSecret: String?
+
     init(
         conversationId: String,
         botId: String,
@@ -133,6 +137,7 @@ final class CallSession {
                 phase = .terminated(.startupError("session response missing client_secret"))
                 return
             }
+            webrtcClientSecret = clientSecret
             transport = OpenAICallTransport(
                 clientSecret: clientSecret,
                 model: resp.model,
@@ -280,12 +285,13 @@ extension CallSession: CallTransportDelegate {
     }
 
     func transport(_ t: CallTransport, didObtainCallId callId: String) async {
-        guard let sid = sessionId else { return }
+        guard let sid = sessionId, let secret = webrtcClientSecret else { return }
         do {
             try await api.attach(
                 sessionId: sid,
                 conversationId: conversationId,
                 callId: callId,
+                clientSecret: secret,
             )
         } catch {
             // Non-fatal — the call still works; only server-side metering
