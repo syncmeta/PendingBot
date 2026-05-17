@@ -19,7 +19,7 @@ import { estimateTokens } from '../llm/token-estimate';
 import { uuidv7 } from './ids';
 import { getBotMemory } from './memory';
 import { mcpClient } from '../mcp/client';
-import { loadAllowedTools } from './tools-registry';
+import { loadToolRegistry, applyToolRegistry } from './tools-registry';
 import { parseExaFetchPayload, parseExaSearchPayload } from '../mcp/parsers';
 import { WebToolMeter, type WebToolUsage } from './web-meter';
 import {
@@ -376,12 +376,14 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
 
     // Strict allowlist from the tools registry — disabling a row in
     // the board "Tools" page strips it from the envelope advertise
-    // list within ~1 min. Null = registry unreachable; default to the
-    // full TOOLS list rather than serving an empty surface.
-    const allowedEnvelopeKeys = await loadAllowedTools(env, 'envelope');
-    const envelopeTools = allowedEnvelopeKeys
-      ? TOOLS.filter((t) => allowedEnvelopeKeys.has(t.function.name))
-      : TOOLS;
+    // list within ~1 min, and any board-edited model_description
+    // override is swapped in here. Null = registry unreachable;
+    // default to the full TOOLS list rather than serving an empty
+    // surface.
+    const envelopeTools = applyToolRegistry(
+      TOOLS,
+      await loadToolRegistry(env, 'envelope'),
+    );
 
     result = await runEnvelopeLoop({
       openai: mainRoute.client,

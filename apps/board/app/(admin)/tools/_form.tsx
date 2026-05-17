@@ -10,6 +10,7 @@ export type ToolFormValues = {
   mcp_server_id?: string | null;
   scopes?: string[];
   description?: string | null;
+  model_description?: string | null;
   enabled?: boolean;
   notes?: string | null;
 };
@@ -98,6 +99,17 @@ export function ToolForm({
         <input
           name="description"
           defaultValue={initial?.description ?? ''}
+          className="block w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+        />
+      </Field>
+      <Field
+        label="模型描述（可选）"
+        hint="LLM 实际看到的 function.description。留空 = 用代码 / 上游 MCP 的默认描述。改动 ~1 分钟内对模型生效，不需部署。"
+      >
+        <textarea
+          name="model_description"
+          rows={6}
+          defaultValue={initial?.model_description ?? ''}
           className="block w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
         />
       </Field>

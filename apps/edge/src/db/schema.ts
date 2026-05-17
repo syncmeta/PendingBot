@@ -2047,6 +2047,7 @@ export type Database = {
           key: string
           kind: string
           mcp_server_id: string | null
+          model_description: string | null
           notes: string | null
           scopes: Json
           updated_at: string
@@ -2059,6 +2060,7 @@ export type Database = {
           key: string
           kind: string
           mcp_server_id?: string | null
+          model_description?: string | null
           notes?: string | null
           scopes?: Json
           updated_at?: string
@@ -2071,6 +2073,7 @@ export type Database = {
           key?: string
           kind?: string
           mcp_server_id?: string | null
+          model_description?: string | null
           notes?: string | null
           scopes?: Json
           updated_at?: string
