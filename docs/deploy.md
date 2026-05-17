@@ -32,7 +32,7 @@ misses.
 
 ```sh
 cd apps/edge
-bunx wrangler secret put WORLDROUTER_API_KEY --env production
+bunx wrangler secret put CF_AIG_RUN_TOKEN --env production
 ```
 
 Verify what's bound:
@@ -191,6 +191,79 @@ Rollback is `git revert` of the realtime commits + redeploy the Worker;
 re-add the publication membership by hand if needed (the teardown
 migration removed it). There is no shadow-run — the cutover replaces
 Supabase Realtime outright.
+
+---
+
+## AI Gateway cutover (BYOK-on-gateway + voice metering)
+
+Branch `feat/ai-gateway-cutover`. Moves LLM provider auth onto the
+Cloudflare AI Gateway (BYOK — provider keys live in the gateway
+dashboard, not worker env) and replaces client-reported voice billing
+with server-side metering.
+
+### Dashboard prereqs (one-time, outside code — already done)
+
+- A CF API token with **AI Gateway Read + Edit** is set as the worker
+  secret `CF_AIG_RUN_TOKEN`. The worker sends it as `cf-aig-authorization`
+  on every LLM request and on the voice sideband.
+- **OpenRouter** key stored in the AI Gateway dashboard (BYOK / Store
+  Keys, `default` alias). The worker no longer holds `OPENROUTER_API_KEY`
+  for inference — that secret was deleted.
+- **OpenAI** left OUT of BYOK Store Keys, so OpenAI inference falls to
+  Unified Billing (CF credits). Voice realtime still uses the worker's
+  `OPENAI_API_KEY` — that path is OpenAI-direct, not Unified Billing.
+
+### Deploy order — Worker BEFORE the migration
+
+The migration drops `llm_providers.secret_ref` / `auth_type`. The new
+worker doesn't select those columns so it runs fine against the old
+schema; the *old* worker breaks once they're gone. So:
+
+1. **Deploy the Worker** — `bun --filter='@pendingbot/edge' run deploy`.
+   Publishes BYOK `buildClient`, the new `RealtimeMeterDO` (DO migration
+   tag `v4`), and the reworked `/v1/realtime/*` routes (`/usage` removed,
+   `/attach` + `/ws` added).
+2. **Apply the migration** — `supabase db push --linked` applies
+   `20260516142651_byok_on_gateway.sql` (drops `secret_ref`/`auth_type`,
+   removes the never-wired worldrouter provider + its aliases).
+   `apps/edge/src/db/schema.ts` was already hand-edited to the
+   post-migration shape (committed) — no regen needed; just re-typecheck.
+3. **Board** — not deployed (local dev only); the local server picks up
+   the provider-form changes after the branch merges.
+
+### iOS — must ship a matching build
+
+The worker removed `/v1/realtime/usage`; an old iOS build calling it
+gets a 404 and voice turns stop being billed. The iOS build must:
+- send `transport` (`webrtc` | `websocket`) on `POST /v1/realtime/session`;
+- webrtc: after the WebRTC SDP exchange, `POST /v1/realtime/attach` with
+  the `call_id`;
+- websocket: open `wss://api.pendingname.com/v1/realtime/ws?session_id=…`
+  and speak the realtime JSON protocol (audio as base64-in-JSON);
+- stop calling `/v1/realtime/usage`.
+
+### After cutover
+
+Retune `billing_config.markup` from the Board — the old value was set
+for WorldRouter (~0.7× OpenRouter) pricing, which no longer applies.
+
+### Verify
+
+- Text chat still routes (BYOK OpenRouter + Unified Billing OpenAI);
+  `audit_log.cost_credits` is non-zero.
+- A voice call on each transport writes per-turn `audit_log` rows with
+  `task_type='voice_call'` and audio token counts.
+- **Open question** — whether the AI Gateway forwards the `?call_id=`
+  query param on the sideband WS. If webrtc voice turns aren't metered,
+  the gateway isn't passing it through: in `realtime-meter.ts`
+  `realtimeUrl()`, drop the gateway branch so the sideband connects
+  straight to `api.openai.com` (billing still works direct).
+
+### Rollback
+
+`git revert` the branch + redeploy the worker. The migration's DROP
+COLUMN is not cleanly reversible — re-add `secret_ref`/`auth_type` by
+hand if a real rollback is needed (pre-launch, low stakes).
 
 ---
 
