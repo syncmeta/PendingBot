@@ -330,9 +330,10 @@ struct MessageTabView: View {
                                             Task { await delete(conv) }
                                         },
                                     ],
-                                    leadingTrigger: leadingTrigger(for: conv)
+                                    leadingTrigger: leadingTrigger(for: conv),
+                                    onTap: { openConversation(conv) }
                                 ) {
-                                    rowTap(conv)
+                                    rowVisual(conv)
                                 }
                             }
                         }
@@ -385,12 +386,15 @@ struct MessageTabView: View {
     }
 
     @ViewBuilder
-    private func rowTap(_ conv: Conversation) -> some View {
+    /// Purely-visual conversation row. Navigation is driven by
+    /// SwipeRevealRow's `onTap` (see openConversation) — never embed a
+    /// NavigationLink/Button here, or a sideways swipe will trigger it.
+    private func rowVisual(_ conv: Conversation) -> some View {
         let isSelected: Bool = {
             guard sidebarLayout, case .existing(let s) = selected else { return false }
             return s.id == conv.id
         }()
-        let row = ConversationListRow(
+        return ConversationListRow(
             conv: conv,
             bot: bot(for: conv),
             userPeer: userPeers[conv.id],
@@ -398,15 +402,14 @@ struct MessageTabView: View {
             isUnread: unread.isUnread(conv.id),
             isSelected: isSelected
         )
+    }
+
+    private func openConversation(_ conv: Conversation) {
+        Haptics.tap()
         if sidebarLayout {
-            Button {
-                selected = .existing(conv)
-                Haptics.tap()
-            } label: { row }
-            .buttonStyle(StaticButtonStyle())
+            selected = .existing(conv)
         } else {
-            NavigationLink(value: ChatDest.existing(conv)) { row }
-                .buttonStyle(StaticButtonStyle())
+            path.append(.existing(conv))
         }
     }
 

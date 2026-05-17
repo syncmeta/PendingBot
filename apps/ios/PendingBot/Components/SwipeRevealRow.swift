@@ -37,15 +37,26 @@ struct SwipeLeadingTrigger {
 struct SwipeRevealRow<Content: View>: View {
     let actions: [SwipeRevealAction]
     let leadingTrigger: SwipeLeadingTrigger?
+    /// Fired by a genuine tap on the card (row not swiped open). The row
+    /// content is purely visual — navigation MUST go through here, never
+    /// through a NavigationLink/Button embedded in `content`: those fire
+    /// on touch-up even when the touch travelled sideways (a swipe stays
+    /// inside the row's bounds so the button never cancels itself), which
+    /// is exactly the "swiping opens the conversation" bug. A TapGesture
+    /// is cancelled by the drag, so routing the tap here keeps the two
+    /// interactions cleanly separate.
+    let onTap: (() -> Void)?
     let content: () -> Content
 
     init(
         actions: [SwipeRevealAction],
         leadingTrigger: SwipeLeadingTrigger? = nil,
+        onTap: (() -> Void)? = nil,
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.actions = actions
         self.leadingTrigger = leadingTrigger
+        self.onTap = onTap
         self.content = content
     }
 
@@ -71,13 +82,6 @@ struct SwipeRevealRow<Content: View>: View {
     @State private var lockedToHorizontal = false
     @State private var lastTickDX: CGFloat = 0
     @State private var didArm: Bool = false
-    /// True from the moment a horizontal drag locks in until the tap that
-    /// accompanies the touch-up has been swallowed. Without this, dragging
-    /// the row sideways and then snapping it back to rest would still let
-    /// the underlying NavigationLink / Button fire on release — because
-    /// `simultaneousGesture` lets both recognizers win — and the user
-    /// would land inside the conversation they were trying to *not* open.
-    @State private var swallowTap = false
 
     private var rawOffset: CGFloat { settled + dragDX }
     /// Card offset including the leading-trigger rubber band. Past the
@@ -115,15 +119,16 @@ struct SwipeRevealRow<Content: View>: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             content()
-                .allowsHitTesting(!swallowTap)
                 .offset(x: clampedOffset)
-                .overlay {
-                    // While open, intercept taps on the visible card so the
-                    // user dismisses the swipe instead of triggering the row.
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    // A tap with no meaningful travel. A swipe never reaches
+                    // here — the DragGesture eats it and TapGesture fails.
+                    // While open, a tap just dismisses the revealed actions.
                     if isOpen {
-                        Color.clear
-                            .contentShape(Rectangle())
-                            .onTapGesture { close() }
+                        close()
+                    } else {
+                        onTap?()
                     }
                 }
         }
@@ -142,7 +147,6 @@ struct SwipeRevealRow<Content: View>: View {
                     if !lockedToHorizontal {
                         guard abs(dx) > abs(dy) else { return }
                         lockedToHorizontal = true
-                        swallowTap = true
                         lastTickDX = 0
                         didArm = false
                     }
@@ -152,23 +156,10 @@ struct SwipeRevealRow<Content: View>: View {
                     }
                 }
                 .onEnded { value in
-                    let wasLocked = lockedToHorizontal
                     defer {
                         lockedToHorizontal = false
                         lastTickDX = 0
                         didArm = false
-                        if wasLocked {
-                            // Hold the tap-swallow shield through the
-                            // current run loop so the touch-up event that
-                            // would otherwise trigger the NavigationLink
-                            // / Button under us has nowhere to land. One
-                            // dispatch is enough — by the next tick the
-                            // tap has already been resolved (or not) and
-                            // the row is interactive again.
-                            DispatchQueue.main.async { swallowTap = false }
-                        } else {
-                            swallowTap = false
-                        }
                     }
                     guard lockedToHorizontal else {
                         dragDX = 0
@@ -311,15 +302,5 @@ struct SwipeRevealRow<Content: View>: View {
             settled = 0
             dragDX = 0
         }
-    }
-}
-
-/// `.buttonStyle(.plain)` still applies a subtle opacity dim while the user
-/// holds a NavigationLink down — which makes the card flash semi-transparent
-/// the instant the swipe starts. This style hands the label back unchanged so
-/// the row stays solid throughout the drag.
-struct StaticButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
     }
 }
