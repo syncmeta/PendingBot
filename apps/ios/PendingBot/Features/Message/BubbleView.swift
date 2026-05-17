@@ -7,7 +7,7 @@ import SwiftUI
 /// Bot messages render full Markdown (headings, lists, fenced code with a
 /// copy/run toolbar, tables, blockquotes) via `MarkdownText`. User input is
 /// plain text — they just typed it, no need to interpret syntax.
-struct BubbleView: View {
+struct BubbleView<Menu: View>: View {
     let message: ChatMessage
     let botName: String
     /// Conversation id — drives the per-conv pastel tint on BotAvatar.
@@ -50,6 +50,11 @@ struct BubbleView: View {
     /// True while we're streaming but the reveal buffer is empty (no new
     /// token yet). Switches the cursor from solid to TTY-style blink.
     var streamPaused: Bool = false
+    /// Long-press context-menu items. Attached to just the avatar+bubble
+    /// region (see `botLayout` / `userLayout`) — NOT the full-width row —
+    /// so the system highlight platter hugs the bubble instead of
+    /// spanning the whole row width.
+    @ViewBuilder var menu: () -> Menu
 
     private var hasText: Bool { !message.content.isEmpty }
 
@@ -74,7 +79,8 @@ struct BubbleView: View {
     // ── Bot ─────────────────────────────────────────────────────────────────
 
     private var botLayout: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: 0) {
+            HStack(alignment: .top, spacing: 8) {
             Group {
                 if let g = groupSender {
                     // Group conv — sender resolved per-message.
@@ -145,6 +151,9 @@ struct BubbleView: View {
                         .animation(.easeOut(duration: 0.28), value: isStreaming)
                 }
             }
+            }
+            .contextMenu { menu() }
+
             Spacer(minLength: 32)
         }
         .padding(.horizontal, Theme.Metrics.gutter)
@@ -195,6 +204,7 @@ struct BubbleView: View {
                     }
                 }
             }
+            .contextMenu { menu() }
         }
         .padding(.horizontal, Theme.Metrics.gutter)
         .padding(.vertical, 4)

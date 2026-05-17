@@ -356,9 +356,7 @@ struct ConversationView: View {
                                        serverURL: account?.workerURL,
                                        citations: citationsByMsgId[msg.id] ?? [],
                                        isStreaming: revealTargetId == msg.id,
-                                       streamPaused: revealTargetId == msg.id && streamPaused)
-                                .id(msg.id)
-                                .contextMenu {
+                                       streamPaused: revealTargetId == msg.id && streamPaused) {
                                     Button {
                                         UIPasteboard.general.string = msg.content
                                         Haptics.tap()
@@ -398,6 +396,7 @@ struct ConversationView: View {
                                         Task { await deleteMessage(msg) }
                                     } label: { Label("删除", systemImage: "trash") }
                                 }
+                                .id(msg.id)
                                 .transition(.blurReplace)
                             // Tool-call trace sits between the user msg that
                             // triggered the turn and the bot's reply. Hidden
