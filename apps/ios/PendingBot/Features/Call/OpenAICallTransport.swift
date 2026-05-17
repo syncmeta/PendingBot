@@ -11,7 +11,7 @@ import WebRTC
 ///   2. Create a RTCPeerConnection, attach a single audio track (built from
 ///      the device mic via AVAudioSession in .playAndRecord), and a data
 ///      channel called "oai-events" that the server uses to push
-///      response.done / transcript events at us.
+///      response.done events at us.
 ///   3. Generate an SDP offer, POST it as raw text to
 ///      `https://api.openai.com/v1/realtime/calls` with
 ///      `Authorization: Bearer <client_secret>`. The body is the SDP
@@ -20,14 +20,62 @@ import WebRTC
 ///      `?model=` query param (the GA endpoint returns an empty 400 when
 ///      the query is present; see https://community.openai.com/t/realtime-webrtc-returns-empty-400-when-hitting-v1-realtime-calls-model/1363928).
 ///   4. Apply the answer; remote audio starts flowing automatically.
-///   5. Server events arrive on the data channel; we parse response.done
-///      for the bot transcript only. Token usage is metered server-side
-///      by RealtimeMeterDO over its sideband, not reported by the client.
+///   5. Server events arrive on the data channel. Token usage is metered
+///      server-side by RealtimeMeterDO over its sideband; the only event
+///      iOS reads is the closing recap's response.done (see requestSummary).
 ///
 /// `#if canImport(WebRTC)` guards the file so it still compiles on a
 /// fresh checkout before the WebRTC SwiftPM package has resolved. The
 /// fallback shim publishes a startup error so the UI surface still
 /// works during project setup.
+
+// MARK: - Closing-summary helpers (shared by both transports)
+
+/// Instructions for the closing recap — sent as a final text-only
+/// `response.create` when the user hangs up. The realtime model has the
+/// whole call in its own audio context; it writes a short recollection
+/// that the worker stores as conversation memory (never shown to the
+/// user, never spoken aloud).
+private let voiceCallSummaryInstructions = """
+这通电话即将结束。请用中文、一两句话简要回顾这次通话大致聊了什么，\
+作为你之后回忆这次通话的依据。只输出回顾内容本身，不要寒暄或多余的话。
+"""
+
+/// How long to wait for the model's recap before giving up (nanoseconds).
+private let voiceCallSummaryTimeoutNanos: UInt64 = 10_000_000_000
+
+/// JSON for the `response.create` event that triggers the closing recap.
+/// Text-only modality so the model writes the recap instead of speaking it.
+private func voiceCallSummaryRequestData() -> Data? {
+    let payload: [String: Any] = [
+        "type": "response.create",
+        "response": [
+            "output_modalities": ["text"],
+            "instructions": voiceCallSummaryInstructions,
+        ],
+    ]
+    return try? JSONSerialization.data(withJSONObject: payload)
+}
+
+/// Pull the recap text out of a realtime `response.done` event. With
+/// text-only output the content items carry `text`; fall back to
+/// `transcript` defensively in case the field name drifts.
+private func voiceCallSummaryText(fromResponseDone obj: [String: Any]) -> String? {
+    let response = (obj["response"] as? [String: Any]) ?? [:]
+    var text = ""
+    if let outputs = response["output"] as? [[String: Any]] {
+        for item in outputs {
+            if let contents = item["content"] as? [[String: Any]] {
+                for c in contents {
+                    if let t = c["text"] as? String { text += t }
+                    else if let t = c["transcript"] as? String { text += t }
+                }
+            }
+        }
+    }
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+}
 
 #if canImport(WebRTC)
 
@@ -44,6 +92,8 @@ final class OpenAICallTransport: NSObject, CallTransport {
     private let factory: RTCPeerConnectionFactory
     private var dataChannel: RTCDataChannel?
     private var audioTrack: RTCAudioTrack?
+    /// Pending continuation for the closing recap (requestSummary).
+    private var summaryContinuation: CheckedContinuation<String?, Never>?
 
     init(
         clientSecret: String,
@@ -117,7 +167,32 @@ final class OpenAICallTransport: NSObject, CallTransport {
         }
     }
 
+    func requestSummary() async -> String? {
+        guard
+            let channel = dataChannel,
+            channel.readyState == .open,
+            let payload = voiceCallSummaryRequestData()
+        else { return nil }
+        _ = channel.sendData(RTCDataBuffer(data: payload, isBinary: false))
+        return await withCheckedContinuation { (cont: CheckedContinuation<String?, Never>) in
+            summaryContinuation = cont
+            // Bound the wait — a stalled model shouldn't hold up teardown.
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: voiceCallSummaryTimeoutNanos)
+                self?.resolveSummary(nil)
+            }
+        }
+    }
+
+    /// Resume the pending requestSummary continuation exactly once.
+    private func resolveSummary(_ text: String?) {
+        guard let cont = summaryContinuation else { return }
+        summaryContinuation = nil
+        cont.resume(returning: text)
+    }
+
     func hangUp() async {
+        resolveSummary(nil)
         dataChannel?.close()
         peerConnection.close()
         // Release the audio session so other apps regain audio focus.
@@ -214,9 +289,9 @@ final class OpenAICallTransport: NSObject, CallTransport {
     // MARK: - Server events
 
     /// Parse one server event from the data channel. The realtime API sends
-    /// JSON objects with a `type` discriminator. We only care about
-    /// `response.done` (usage + transcripts) and the user transcript
-    /// completed event.
+    /// JSON objects with a `type` discriminator. Token usage is metered
+    /// server-side by RealtimeMeterDO, so the only event iOS reads is the
+    /// `response.done` carrying the closing recap (requestSummary).
     fileprivate func handleServerEvent(_ data: Data) {
         guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return
@@ -225,56 +300,17 @@ final class OpenAICallTransport: NSObject, CallTransport {
         switch type {
         case "response.done":
             handleResponseDone(obj)
-        case "conversation.item.input_audio_transcription.completed":
-            handleUserTranscriptCompleted(obj)
         default:
             break
         }
     }
 
     private func handleResponseDone(_ obj: [String: Any]) {
-        // We only extract the bot transcript here. Token usage is metered
-        // server-side by RealtimeMeterDO over its sideband connection —
-        // the client no longer reports usage (it could be forged).
-        //
-        // Transcript: response.output[].content[].transcript (aggregated).
-        // Keep parsing defensive so a renamed field doesn't crash the call.
-        let response = (obj["response"] as? [String: Any]) ?? [:]
-        var botTranscript = ""
-        if let outputs = response["output"] as? [[String: Any]] {
-            for item in outputs {
-                if let contents = item["content"] as? [[String: Any]] {
-                    for c in contents {
-                        if let t = c["transcript"] as? String { botTranscript += t }
-                    }
-                }
-            }
-        }
-        guard !botTranscript.isEmpty else { return }
-        let turn = VoiceCallAPI.TranscriptTurn(
-            role: "bot",
-            content: botTranscript,
-            ts: ISO8601DateFormatter().string(from: Date()),
-        )
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            self.delegate?.transport(self, didAppendTranscript: turn)
-        }
-    }
-
-    private func handleUserTranscriptCompleted(_ obj: [String: Any]) {
-        guard let transcript = obj["transcript"] as? String, !transcript.isEmpty else {
-            return
-        }
-        let turn = VoiceCallAPI.TranscriptTurn(
-            role: "user",
-            content: transcript,
-            ts: ISO8601DateFormatter().string(from: Date()),
-        )
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            self.delegate?.transport(self, didAppendTranscript: turn)
-        }
+        // The only response we read is the closing recap requested at
+        // hang-up. If no summary is pending this is a normal in-call
+        // response — nothing to do (usage is metered server-side).
+        guard summaryContinuation != nil else { return }
+        resolveSummary(voiceCallSummaryText(fromResponseDone: obj))
     }
 }
 
@@ -335,6 +371,7 @@ final class OpenAICallTransport: CallTransport {
             "WebRTC SDK 未集成（请在 Xcode 中 resolve SwiftPM 依赖后重新构建）",
         ))
     }
+    func requestSummary() async -> String? { nil }
     func hangUp() async {}
 }
 
@@ -382,6 +419,8 @@ final class OpenAIWebSocketTransport: NSObject, CallTransport {
     private let playerNode = AVAudioPlayerNode()
     private var didSignalConnected = false
     private var stopped = false
+    /// Pending continuation for the closing recap (requestSummary).
+    private var summaryContinuation: CheckedContinuation<String?, Never>?
 
     /// OpenAI realtime wire PCM: 24 kHz, mono, signed 16-bit LE. Used only
     /// to encode/decode the base64 audio on the WebSocket — NOT as an
@@ -422,7 +461,31 @@ final class OpenAIWebSocketTransport: NSObject, CallTransport {
         }
     }
 
+    func requestSummary() async -> String? {
+        guard
+            let task, !stopped, didSignalConnected,
+            let payload = voiceCallSummaryRequestData()
+        else { return nil }
+        task.send(.string(String(decoding: payload, as: UTF8.self))) { _ in }
+        return await withCheckedContinuation { (cont: CheckedContinuation<String?, Never>) in
+            summaryContinuation = cont
+            // Bound the wait — a stalled model shouldn't hold up teardown.
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: voiceCallSummaryTimeoutNanos)
+                self?.resolveSummary(nil)
+            }
+        }
+    }
+
+    /// Resume the pending requestSummary continuation exactly once.
+    private func resolveSummary(_ text: String?) {
+        guard let cont = summaryContinuation else { return }
+        summaryContinuation = nil
+        cont.resume(returning: text)
+    }
+
     func hangUp() async {
+        resolveSummary(nil)
         stopped = true
         task?.cancel(with: .goingAway, reason: nil)
         task = nil
@@ -597,8 +660,6 @@ final class OpenAIWebSocketTransport: NSObject, CallTransport {
             if let b64 = obj["delta"] as? String { enqueuePlayback(b64) }
         case "response.done":
             handleWSResponseDone(obj)
-        case "conversation.item.input_audio_transcription.completed":
-            handleWSUserTranscript(obj)
         case "error":
             let msg = ((obj["error"] as? [String: Any])?["message"] as? String)
                 ?? "realtime error"
@@ -646,42 +707,12 @@ final class OpenAIWebSocketTransport: NSObject, CallTransport {
         return buffer
     }
 
-    // MARK: Transcript parsing
+    // MARK: Closing recap
 
     private func handleWSResponseDone(_ obj: [String: Any]) {
-        let response = (obj["response"] as? [String: Any]) ?? [:]
-        var botTranscript = ""
-        if let outputs = response["output"] as? [[String: Any]] {
-            for item in outputs {
-                if let contents = item["content"] as? [[String: Any]] {
-                    for c in contents {
-                        if let t = c["transcript"] as? String { botTranscript += t }
-                    }
-                }
-            }
-        }
-        guard !botTranscript.isEmpty else { return }
-        delegate?.transport(
-            self,
-            didAppendTranscript: VoiceCallAPI.TranscriptTurn(
-                role: "bot",
-                content: botTranscript,
-                ts: ISO8601DateFormatter().string(from: Date()),
-            ),
-        )
-    }
-
-    private func handleWSUserTranscript(_ obj: [String: Any]) {
-        guard let transcript = obj["transcript"] as? String, !transcript.isEmpty else {
-            return
-        }
-        delegate?.transport(
-            self,
-            didAppendTranscript: VoiceCallAPI.TranscriptTurn(
-                role: "user",
-                content: transcript,
-                ts: ISO8601DateFormatter().string(from: Date()),
-            ),
-        )
+        // Only the closing recap (requestSummary) is read; normal in-call
+        // responses need nothing client-side (usage is metered server-side).
+        guard summaryContinuation != nil else { return }
+        resolveSummary(voiceCallSummaryText(fromResponseDone: obj))
     }
 }

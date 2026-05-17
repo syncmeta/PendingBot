@@ -8,7 +8,7 @@ import {
 } from './realtime-sessions';
 import type { Env } from '../types';
 
-// realtime-sessions guards the voice-call /usage and /transcripts
+// realtime-sessions guards the voice-call /attach and /summary
 // surface against replay. Tests pin the four rejection paths
 // (session_not_found / _forbidden / _ended / _expired) and the
 // happy path, plus the insert + end side effects. The Env wiring is

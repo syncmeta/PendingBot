@@ -45,20 +45,13 @@ struct VoiceCallAPI {
         }
     }
 
-    struct TranscriptTurn: Codable, Sendable {
-        let role: String   // "user" | "bot"
-        let content: String
-        let ts: String     // ISO8601
-    }
-
-    struct TranscriptsRequest: Encodable {
+    /// Closing recap of a call. The realtime model writes a short text
+    /// summary at hang-up; the worker stores it as a memory-only message
+    /// row (metadata.source='voice_call_summary'), never rendered.
+    struct SummaryRequest: Encodable {
         let session_id: String
         let conversation_id: String
-        let turns: [TranscriptTurn]
-    }
-
-    struct TranscriptsResponse: Decodable, Sendable {
-        let inserted: Int
+        let summary: String
     }
 
     /// Structured error payload that the realtime routes emit. Matches
@@ -177,8 +170,11 @@ struct VoiceCallAPI {
         ) as OK
     }
 
-    func uploadTranscripts(_ req: TranscriptsRequest) async throws -> TranscriptsResponse {
-        try await callDecoding(path: "/v1/realtime/transcripts", body: req)
+    /// Post the model's closing recap of the call. Fire-and-forget from
+    /// the caller's side — a missing summary just costs the bot a memory.
+    func uploadSummary(_ req: SummaryRequest) async throws {
+        struct OK: Decodable { let ok: Bool }
+        _ = try await callDecoding(path: "/v1/realtime/summary", body: req) as OK
     }
 
     func endSession(sessionId: String, conversationId: String) async throws {

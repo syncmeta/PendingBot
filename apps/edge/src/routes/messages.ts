@@ -434,7 +434,10 @@ messageRoutes.post('/', async (c) => {
             recentContext: parsed.recentContext ?? [],
             newMessage: parsed.newMessage ?? '（系统注入：根据上一轮的查证笔记，自然继续上面的对话。不要提到这是自动触发的。）',
             currentAttachmentIds: parsed.attachmentIds,
-            visionModelOverride: conv.vision_model_override,
+            // Conversation pin wins; otherwise fall back to the bot's
+            // own default vision model (bots.config.visionModel).
+            visionModelOverride:
+              conv.vision_model_override ?? botConfigString(bot.config, 'visionModel'),
             activeLookbacks: parsed.activeLookbacks ?? [],
             providerOverride: effectiveProviderOverride,
             clientTz: parsed.clientTz,
@@ -1074,6 +1077,16 @@ interface LookbackConfigEnvelope {
   lookback?: { enabled?: boolean; roundInterval?: number };
 }
 
+// Pull a non-empty string key out of the `bots.config` jsonb blob.
+// Returns null for a missing / empty / non-string value so callers can
+// `?? fallback` cleanly. Used to read the bot-level vision model
+// default that a conversation without its own pin falls back to.
+function botConfigString(config: unknown, key: string): string | null {
+  if (!config || typeof config !== 'object') return null;
+  const v = (config as Record<string, unknown>)[key];
+  return typeof v === 'string' && v.length > 0 ? v : null;
+}
+
 // Lookback cadence is keyed off a per (bot, user) counter that crosses
 // conversations — `bump_lookback_counter` returns true when the running
 // tally reaches `interval`, and atomically resets it to 0. The fired
@@ -1129,15 +1142,25 @@ async function scheduleAttachmentSummary(input: {
   try {
     const supa = serviceClient(input.env);
     let mainModelSlug: string = DEFAULT_VISION_MODEL;
+    // Conversation pin wins; otherwise the bot's own default vision
+    // model (bots.config.visionModel) fills in before pickVisionModel's
+    // auto path takes over.
+    let visionOverride: string | null = input.visionOverride;
     if (input.botId) {
       const { data: bot } = await supa
         .from('bots')
-        .select('model_id')
+        .select('model_id, config')
         .eq('id', input.botId)
         .maybeSingle();
       const botModelId = (bot as { model_id?: string } | null)?.model_id;
       if (botModelId && botModelId.length > 0) {
         mainModelSlug = botModelId;
+      }
+      if (!visionOverride) {
+        visionOverride = botConfigString(
+          (bot as { config?: unknown } | null)?.config,
+          'visionModel',
+        );
       }
     }
     await summarizeAttachments(
@@ -1147,7 +1170,7 @@ async function scheduleAttachmentSummary(input: {
         conversationId: input.conversationId,
         userId: input.userId,
         mainModelSlug,
-        visionOverride: input.visionOverride,
+        visionOverride,
       },
       input.attachmentIds,
     );

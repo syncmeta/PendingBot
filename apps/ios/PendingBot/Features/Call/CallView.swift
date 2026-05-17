@@ -86,13 +86,14 @@ struct CallView: View {
     // MARK: - Subviews
 
     private var avatar: some View {
-        Circle()
-            .fill(.tint.opacity(0.15))
-            .frame(width: 120, height: 120)
-            .overlay(
-                Text(initials(of: session.botDisplayName))
-                    .font(.system(size: 44, weight: .semibold)),
-            )
+        // Same emoji avatar the conversation header shows — emoji keyed
+        // to the bot, tint keyed to the conversation — so the call screen
+        // shows a recognisable "who you're talking to".
+        BotAvatar(
+            emojiSeed: session.botId,
+            colorSeed: session.conversationId,
+            size: 120,
+        )
     }
 
     private var metrics: some View {
@@ -182,14 +183,5 @@ struct CallView: View {
             return "打电话要直连 OpenAI，你当前所在地区（\(country)）不在它支持的国家或地区。"
         }
         return "打电话要直连 OpenAI，检查你的网络是否处于它支持的国家或地区。"
-    }
-
-    private func initials(of name: String) -> String {
-        let trimmed = name.trimmingCharacters(in: .whitespaces)
-        if trimmed.isEmpty { return "?" }
-        if let first = trimmed.first {
-            return String(first)
-        }
-        return "?"
     }
 }
