@@ -147,7 +147,6 @@ struct MeTabView: View {
                             .buttonStyle(.plain)
                         }
                         .meGlassGroup()
-                        .shadow(color: .black.opacity(0.08), radius: 10, x: 0, y: 4)
 
                         VStack(spacing: 6) {
                             HStack(spacing: 8) {
@@ -167,7 +166,6 @@ struct MeTabView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .frame(height: 52)
                             .meGlassGroup()
-                            .shadow(color: .black.opacity(0.08), radius: 10, x: 0, y: 4)
 
                             Text("WebRTC 延迟最低；网络受限地区可改用 WebSocket")
                                 .font(Theme.Fonts.monoSmall)
@@ -195,7 +193,6 @@ struct MeTabView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .frame(height: 52)
                             .meGlassGroup()
-                            .shadow(color: .black.opacity(0.08), radius: 10, x: 0, y: 4)
 
                             Text("gpt-realtime-2 质量更好但更贵；mini 便宜,适合测试")
                                 .font(Theme.Fonts.monoSmall)
@@ -230,7 +227,6 @@ struct MeTabView: View {
                             .disabled(deleting || store.current == nil)
                         }
                         .meGlassGroup()
-                        .shadow(color: .black.opacity(0.08), radius: 10, x: 0, y: 4)
 
                         Text("很多功能还没做好 不可用")
                             .font(Theme.Fonts.monoSmall)
