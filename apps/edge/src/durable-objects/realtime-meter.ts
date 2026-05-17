@@ -233,38 +233,21 @@ export class RealtimeMeterDO {
 
   // ── shared ───────────────────────────────────────────────────────
 
-  // Build the realtime endpoint URL. When the AI Gateway is configured
-  // the connection routes through it (so usage shows in the gateway
-  // dashboard); the OpenAI key still rides inline as Authorization
-  // (see upstreamHeaders) which keeps it off Unified Billing — the
-  // gateway only observes, never charges CF credits.
+  // Connect straight to OpenAI. Routing the realtime socket through the
+  // AI Gateway was tried (584310d) but the gateway returns HTTP 500 on
+  // the realtime WebSocket upgrade — for the sideband's ?call_id= attach
+  // and the proxy's ?model= alike. Direct works; metering still happens
+  // here in the DO, it just won't show in the gateway dashboard.
   private realtimeUrl(query: string): string {
-    if (
-      this.env.CF_ACCOUNT_ID &&
-      this.env.CF_AIG_GATEWAY &&
-      this.env.CF_AIG_RUN_TOKEN
-    ) {
-      return (
-        `https://gateway.ai.cloudflare.com/v1/${this.env.CF_ACCOUNT_ID}` +
-        `/${this.env.CF_AIG_GATEWAY}/openai?${query}`
-      );
-    }
     return `https://api.openai.com/v1/realtime?${query}`;
   }
 
   private upstreamHeaders(openaiKey: string): Record<string, string> {
-    const headers: Record<string, string> = {
+    return {
       Upgrade: 'websocket',
-      // Inline OpenAI key — keeps the connection on OpenAI's own billing
-      // (BYOK-style), NOT Unified Billing, so routing through the
-      // gateway never double-charges CF credits.
       Authorization: `Bearer ${openaiKey}`,
       'OpenAI-Beta': 'realtime=v1',
     };
-    if (this.env.CF_AIG_RUN_TOKEN && this.env.CF_ACCOUNT_ID && this.env.CF_AIG_GATEWAY) {
-      headers['cf-aig-authorization'] = `Bearer ${this.env.CF_AIG_RUN_TOKEN}`;
-    }
-    return headers;
   }
 
   private async onUpstreamMessage(ev: MessageEvent): Promise<void> {
@@ -274,6 +257,15 @@ export class RealtimeMeterDO {
       msg = JSON.parse(ev.data);
     } catch {
       return;
+    }
+    // Diagnostic — surface the realtime event stream server-side via the
+    // sideband so `wrangler tail` shows what the session is doing.
+    console.log('[realtime-meter] event', msg.type ?? '(no type)');
+    if (msg.type === 'error') {
+      console.warn(
+        '[realtime-meter] realtime error event',
+        JSON.stringify(msg).slice(0, 600),
+      );
     }
     // Every completed model response carries a usage block — one audit
     // row per turn, billed from OpenAI's own numbers over this socket.

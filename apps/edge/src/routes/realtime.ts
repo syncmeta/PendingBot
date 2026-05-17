@@ -658,7 +658,10 @@ realtimeRoutes.post('/transcripts', async (c) => {
   const supaService = serviceClient(c.env);
   const rows = sortedTurns.map((t, idx) => ({
     conversation_id: parsed.conversation_id,
-    client_message_id: `voice:${parsed.session_id}:${idx}`,
+    // messages.client_message_id is a uuid column — voice transcripts are
+    // server-generated, so mint a fresh uuid per row. (session_id +
+    // turn_index in metadata below still identify the voice turn.)
+    client_message_id: crypto.randomUUID(),
     role: t.role,
     status: 'done',
     content: t.content,
