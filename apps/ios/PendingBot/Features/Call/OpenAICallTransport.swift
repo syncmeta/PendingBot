@@ -481,14 +481,18 @@ final class OpenAIWebSocketTransport: NSObject, CallTransport {
         engine.attach(playerNode)
         engine.connect(playerNode, to: engine.mainMixerNode, format: openAIFormat)
 
-        let hwFormat = input.outputFormat(forBus: 0)
-        let toOpenAI = AVAudioConverter(from: hwFormat, to: openAIFormat)
-        input.installTap(onBus: 0, bufferSize: 4_096, format: hwFormat) {
+        // Tap with format: nil — the engine delivers buffers in the input
+        // node's real native format. Building one converter up-front from
+        // a pre-read format risked a zero/invalid format (engine not yet
+        // started) → nil converter → silently zero audio sent. Build the
+        // converter per buffer from that buffer's own format instead.
+        let outFmt = openAIFormat
+        input.installTap(onBus: 0, bufferSize: 4_096, format: nil) {
             [weak self] buffer, _ in
-            guard let self, let toOpenAI else { return }
-            guard let base64 = Self.encodeForOpenAI(buffer, using: toOpenAI) else {
-                return
-            }
+            guard
+                let conv = AVAudioConverter(from: buffer.format, to: outFmt),
+                let base64 = Self.encodeForOpenAI(buffer, using: conv)
+            else { return }
             Task { @MainActor [weak self] in
                 self?.sendAudioFrame(base64)
             }
@@ -497,6 +501,8 @@ final class OpenAIWebSocketTransport: NSObject, CallTransport {
         engine.prepare()
         try engine.start()
         playerNode.play()
+        print("[ws-voice] engine started; mic input format =",
+              input.inputFormat(forBus: 0))
     }
 
     /// Resample one mic buffer to 24 kHz mono PCM16, base64-encode it.
