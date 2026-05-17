@@ -21,8 +21,8 @@ import WebRTC
 ///      the query is present; see https://community.openai.com/t/realtime-webrtc-returns-empty-400-when-hitting-v1-realtime-calls-model/1363928).
 ///   4. Apply the answer; remote audio starts flowing automatically.
 ///   5. Server events arrive on the data channel; we parse response.done
-///      usage into a UsageDelta + concat the inline transcripts onto the
-///      session buffer.
+///      for the bot transcript only. Token usage is metered server-side
+///      by RealtimeMeterDO over its sideband, not reported by the client.
 ///
 /// `#if canImport(WebRTC)` guards the file so it still compiles on a
 /// fresh checkout before the WebRTC SwiftPM package has resolved. The
@@ -44,7 +44,6 @@ final class OpenAICallTransport: NSObject, CallTransport {
     private let factory: RTCPeerConnectionFactory
     private var dataChannel: RTCDataChannel?
     private var audioTrack: RTCAudioTrack?
-    private var turnIndex: Int = 0
 
     init(
         clientSecret: String,
@@ -105,9 +104,14 @@ final class OpenAICallTransport: NSObject, CallTransport {
             attachDataChannel()
             let offer = try await createOffer()
             try await peerConnection.setLocalDescription(offer)
-            let answerSDP = try await exchangeSDP(offerSDP: offer.sdp)
+            let (answerSDP, callId) = try await exchangeSDP(offerSDP: offer.sdp)
             let answer = RTCSessionDescription(type: .answer, sdp: answerSDP)
             try await peerConnection.setRemoteDescription(answer)
+            // Hand the call_id to the worker so its RealtimeMeterDO can
+            // open the server-side sideband and meter this call.
+            if let callId {
+                await delegate?.transport(self, didObtainCallId: callId)
+            }
         } catch {
             await delegate?.transport(self, didFailWith: .startupError(error.localizedDescription))
         }
@@ -175,7 +179,7 @@ final class OpenAICallTransport: NSObject, CallTransport {
         }
     }
 
-    private func exchangeSDP(offerSDP: String) async throws -> String {
+    private func exchangeSDP(offerSDP: String) async throws -> (sdp: String, callId: String?) {
         // GA endpoint: POST /v1/realtime/calls, body is SDP plain text,
         // Authorization is the ephemeral client_secret. NO ?model= query —
         // the GA endpoint returns 400 on any query string, model is fixed
@@ -200,7 +204,11 @@ final class OpenAICallTransport: NSObject, CallTransport {
         guard let sdp = String(data: data, encoding: .utf8) else {
             throw NSError(domain: "OpenAICallTransport", code: 2)
         }
-        return sdp
+        // The Location header carries the call id (.../v1/realtime/calls/<id>);
+        // works whether it's a path or an absolute URL.
+        let callId = http.value(forHTTPHeaderField: "Location")
+            .flatMap { $0.split(separator: "/").last.map(String.init) }
+        return (sdp, callId)
     }
 
     // MARK: - Server events
@@ -225,35 +233,13 @@ final class OpenAICallTransport: NSObject, CallTransport {
     }
 
     private func handleResponseDone(_ obj: [String: Any]) {
-        // Usage shape per https://platform.openai.com/docs/guides/realtime-costs:
-        //   response.usage.input_token_details.{text_tokens, audio_tokens,
-        //                                       image_tokens, cached_tokens,
-        //                                       cached_tokens_details:
-        //                                         {text_tokens, audio_tokens, image_tokens}}
-        //   response.usage.output_token_details.{text_tokens, audio_tokens}
+        // We only extract the bot transcript here. Token usage is metered
+        // server-side by RealtimeMeterDO over its sideband connection —
+        // the client no longer reports usage (it could be forged).
         //
-        // Transcript:
-        //   response.output[].content[].transcript  (aggregated bot text)
-        //
-        // We sum cached_text + cached_audio for the parent cached_tokens
-        // and forward it to the worker as a single bucket. The alias's
-        // cached_input_price covers the audio-cached rate ($0.40 /1M in
-        // GA) — text-cached share is tiny in a voice call so the small
-        // overbill (text-cached priced at the audio-cached rate) is in
-        // the noise. Keep parsing defensive so a renamed field on
-        // OpenAI's side doesn't crash the call.
+        // Transcript: response.output[].content[].transcript (aggregated).
+        // Keep parsing defensive so a renamed field doesn't crash the call.
         let response = (obj["response"] as? [String: Any]) ?? [:]
-        let usage = (response["usage"] as? [String: Any]) ?? [:]
-        let inDetails = (usage["input_token_details"] as? [String: Any]) ?? [:]
-        let outDetails = (usage["output_token_details"] as? [String: Any]) ?? [:]
-        let audioIn = (inDetails["audio_tokens"] as? Int) ?? 0
-        let textIn = (inDetails["text_tokens"] as? Int) ?? 0
-        let cachedIn = (inDetails["cached_tokens"] as? Int) ?? 0
-        let audioOut = (outDetails["audio_tokens"] as? Int) ?? 0
-        let textOut = (outDetails["text_tokens"] as? Int) ?? 0
-
-        // Bot-side transcript — concat all .transcript fields under
-        // response.output[].content[].
         var botTranscript = ""
         if let outputs = response["output"] as? [[String: Any]] {
             for item in outputs {
@@ -264,38 +250,15 @@ final class OpenAICallTransport: NSObject, CallTransport {
                 }
             }
         }
-        if !botTranscript.isEmpty {
-            let turn = VoiceCallAPI.TranscriptTurn(
-                role: "bot",
-                content: botTranscript,
-                ts: ISO8601DateFormatter().string(from: Date()),
-            )
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.delegate?.transport(self, didAppendTranscript: turn)
-            }
-        }
-
-        let nextTurn = turnIndex
-        turnIndex += 1
-        // cached_tokens reported here means "of the input tokens above,
-        // this many came from a cache". They're a subset, not in addition.
-        // The worker computeCost handles the split: charges the
-        // (audio_in − cached_audio_share) at audio_input_price and the
-        // cached portion at cached_input_price. We forward the parent
-        // cached_tokens; the worker holds the alias prices, not iOS.
-        let delta = UsageDelta(
-            audioInputTokens: audioIn,
-            audioOutputTokens: audioOut,
-            textInputTokens: textIn,
-            textOutputTokens: textOut,
-            cachedInputTokens: cachedIn,
-            latencyMs: nil,
-            turnIndex: nextTurn,
+        guard !botTranscript.isEmpty else { return }
+        let turn = VoiceCallAPI.TranscriptTurn(
+            role: "bot",
+            content: botTranscript,
+            ts: ISO8601DateFormatter().string(from: Date()),
         )
         Task { @MainActor [weak self] in
             guard let self else { return }
-            await self.delegate?.transport(self, didProduceUsageDelta: delta)
+            self.delegate?.transport(self, didAppendTranscript: turn)
         }
     }
 

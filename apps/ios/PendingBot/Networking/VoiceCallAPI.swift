@@ -18,10 +18,13 @@ struct VoiceCallAPI {
 
     // MARK: - Wire types
 
-    /// Response payload for POST /v1/realtime/session. Worker mints an
-    /// ephemeral client_secret against OpenAI's /v1/realtime/client_secrets,
-    /// pre-baking the system prompt — iOS only carries the 60s token to
-    /// the WebRTC SDP exchange.
+    /// Response payload for POST /v1/realtime/session. Shape depends on
+    /// the requested transport:
+    ///   webrtc    — carries `client_secret` (ephemeral key for the
+    ///               iOS<->OpenAI WebRTC SDP exchange). `transport` is
+    ///               absent; treat a missing value as "webrtc".
+    ///   websocket — carries `ws_path`; iOS opens that WebSocket on the
+    ///               worker and the server-side meter DO bridges it.
     struct SessionResponse: Decodable, Sendable {
         let session_id: String
         let model: String
@@ -29,37 +32,17 @@ struct VoiceCallAPI {
         let provider_id: String
         let min_threshold: Int
         let balance_credits: Int
-        let client_secret: ClientSecret
+        /// "webrtc" (absent on the WebRTC response) or "websocket".
+        let transport: String?
+        /// WebRTC transport only — the ephemeral key for the SDP exchange.
+        let client_secret: ClientSecret?
+        /// WebSocket transport only — relative path iOS opens the WS to.
+        let ws_path: String?
 
         struct ClientSecret: Decodable, Sendable {
             let value: String
             let expires_at: Int?
         }
-    }
-
-    struct UsageRequest: Encodable {
-        let session_id: String
-        let conversation_id: String
-        let alias_id: String?
-        let provider_id: String
-        // Per-turn deltas from response.done.usage. cached_input_tokens
-        // is a SUBSET of the audio/text input tokens above (already
-        // counted there) — the worker uses it to apply the alias's
-        // cached_input_price discount on that portion.
-        let audio_input_tokens: Int?
-        let audio_output_tokens: Int?
-        let text_input_tokens: Int?
-        let text_output_tokens: Int?
-        let cached_input_tokens: Int?
-        let latency_ms: Int?
-        let turn_index: Int
-    }
-
-    struct UsageResponse: Decodable, Sendable {
-        let balance_credits: Int
-        let turn_cost_credits: Int
-        let session_cost_credits: Int
-        let can_continue: Bool
     }
 
     struct TranscriptTurn: Codable, Sendable {
@@ -144,16 +127,43 @@ struct VoiceCallAPI {
 
     // MARK: - Calls
 
-    func createSession(conversationId: String) async throws -> SessionResponse {
-        struct Body: Encodable { let conversation_id: String }
+    func createSession(
+        conversationId: String,
+        transport: String,
+    ) async throws -> SessionResponse {
+        struct Body: Encodable {
+            let conversation_id: String
+            let transport: String
+        }
         return try await callDecoding(
             path: "/v1/realtime/session",
-            body: Body(conversation_id: conversationId),
+            body: Body(conversation_id: conversationId, transport: transport),
         )
     }
 
-    func reportUsage(_ req: UsageRequest) async throws -> UsageResponse {
-        try await callDecoding(path: "/v1/realtime/usage", body: req)
+    /// WebRTC transport only. After the iOS<->OpenAI SDP exchange yields a
+    /// call_id, hand it to the worker so RealtimeMeterDO can open its
+    /// server-side sideband and meter the call. Usage is no longer
+    /// self-reported by the client.
+    func attach(
+        sessionId: String,
+        conversationId: String,
+        callId: String,
+    ) async throws {
+        struct Body: Encodable {
+            let session_id: String
+            let conversation_id: String
+            let call_id: String
+        }
+        struct OK: Decodable { let ok: Bool }
+        _ = try await callDecoding(
+            path: "/v1/realtime/attach",
+            body: Body(
+                session_id: sessionId,
+                conversation_id: conversationId,
+                call_id: callId,
+            ),
+        ) as OK
     }
 
     func uploadTranscripts(_ req: TranscriptsRequest) async throws -> TranscriptsResponse {
