@@ -1,7 +1,7 @@
 // Realtime voice-call session bookkeeping. Backed by
 // pendingbot.realtime_sessions (see migration 20260512042509). Holds the
-// immutable binding session_id ↔ (user, conversation, bot) so /usage,
-// /transcripts, /end can't be replayed across sessions or used after
+// immutable binding session_id ↔ (user, conversation, bot) so /attach,
+// /summary, /end can't be replayed across sessions or used after
 // the call has been declared ended.
 //
 // Why a server-side hard cap exists at all: OpenAI's ephemeral
@@ -14,8 +14,8 @@
 import { serviceClient } from './supabase';
 import type { Env } from '../types';
 
-// Max wall-clock time between /session mint and the latest /usage or
-// /transcripts call. Past this, the session is treated as ended even
+// Max wall-clock time between /session mint and the latest /attach or
+// /summary call. Past this, the session is treated as ended even
 // if /end never arrived (call hung up uncleanly, app crashed, etc).
 // Tune in one place if real call patterns demand it.
 export const REALTIME_SESSION_MAX_AGE_MS = 30 * 60 * 1000;
@@ -36,7 +36,7 @@ export type RequireSessionResult =
 
 /**
  * Look up a realtime session by id and assert it's still valid for the
- * caller. Used by /usage, /transcripts, /end. Returns either the session
+ * caller. Used by /attach, /summary, /end. Returns either the session
  * row or a ready-to-return error response.
  *
  *   ok: false, status: 401 — session does not exist
