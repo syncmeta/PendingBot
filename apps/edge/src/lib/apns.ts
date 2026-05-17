@@ -50,6 +50,9 @@ export interface ApnsPayload {
   category?: string;          // for action buttons
   contentAvailable?: boolean; // background push (silent)
   mutableContent?: boolean;   // notification service extension
+  // Custom keys delivered alongside `aps`. The app reads these after
+  // unlock to route the tap / fetch content (e.g. { conversationId }).
+  extra?: Record<string, unknown>;
 }
 
 export interface SendApnsInput {
@@ -93,10 +96,18 @@ export async function sendApns(input: SendApnsInput): Promise<SendApnsResult> {
   if (input.collapseId) headers['apns-collapse-id'] = input.collapseId;
   if (input.expiration !== undefined) headers['apns-expiration'] = String(input.expiration);
 
+  // Custom keys ride as top-level siblings of `aps` (APNs convention).
+  const body: Record<string, unknown> = { aps };
+  if (payload.extra) {
+    for (const [k, v] of Object.entries(payload.extra)) {
+      if (k !== 'aps') body[k] = v;
+    }
+  }
+
   const res = await fetch(`https://${host}/3/device/${deviceToken}`, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ aps }),
+    body: JSON.stringify(body),
   });
 
   if (res.status === 200) {

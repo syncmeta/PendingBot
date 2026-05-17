@@ -608,6 +608,9 @@ struct ConversationView: View {
             // Pending convs (lazy-created on first send) have no row yet —
             // skip history / skills / realtime until they materialise.
             guard !conversation.id.isEmpty else { return }
+            // Mark this conv on-screen so a push for it doesn't pop a
+            // foreground banner — the live Realtime channel already shows it.
+            PushService.shared.activeConversationId = conversation.id
             await loadHistory()
             await loadSkills()
             await loadActiveLookbacks()
@@ -618,6 +621,9 @@ struct ConversationView: View {
             await loadGroupFreezeIfNeeded()
         }
         .onDisappear {
+            if PushService.shared.activeConversationId == conversation.id {
+                PushService.shared.activeConversationId = nil
+            }
             if let token = realtimeToken {
                 Task { await RealtimeManager.shared.stopConvChannel(token) }
                 realtimeToken = nil

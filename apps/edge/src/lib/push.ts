@@ -79,3 +79,33 @@ export async function notifyUser(input: NotifyUserInput): Promise<{ sent: number
 
   return { sent, failed };
 }
+
+// Fan a "new message" push out to the human participants of a conversation,
+// skipping the sender. Used for user_user DMs and group messages where the
+// recipient set lives in conversation_participants. Fire-and-forget — call
+// it through waitUntil so the HTTP response doesn't wait on APNS.
+export async function notifyConversationUsers(input: {
+  env: Env;
+  conversationId: string;
+  excludeUserId: string | null;
+  payload: ApnsPayload;
+  collapseId?: string;
+}): Promise<void> {
+  const { env, conversationId, excludeUserId, payload, collapseId } = input;
+  const supa = serviceClient(env);
+  const { data: rows, error } = await supa
+    .from('conversation_participants')
+    .select('participant_id')
+    .eq('conversation_id', conversationId)
+    .eq('participant_type', 'user');
+  if (error) {
+    console.warn('[push] participant read failed', error);
+    return;
+  }
+  const recipients = (rows ?? [])
+    .map((r) => r.participant_id as string)
+    .filter((id) => id !== excludeUserId);
+  await Promise.all(
+    recipients.map((userId) => notifyUser({ env, userId, payload, collapseId })),
+  );
+}

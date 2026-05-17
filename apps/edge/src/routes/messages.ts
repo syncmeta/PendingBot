@@ -15,7 +15,13 @@ import { deleteCachedAttachment, removeInventoryIds, resolveAttachmentOwnership 
 import { resolveBot } from '../lib/bot-cache';
 import { deleteCachedConv, resolveConv } from '../lib/conv-cache';
 import { safeWaitUntil } from '../lib/safe-wait-until';
+import { notifyUser, notifyConversationUsers } from '../lib/push';
 import type { AppBindings } from '../types';
+
+// Generic, privacy-safe "new message" push. The body carries no sender
+// name or content (iOS shows the alert on the lock screen verbatim); the
+// app reads `extra.conversationId` after unlock to open the thread.
+const NEW_MESSAGE_ALERT = '你有一条新消息';
 
 export const messageRoutes = new Hono<AppBindings>();
 messageRoutes.use('*', requireSession());
@@ -314,6 +320,24 @@ messageRoutes.post('/', async (c) => {
           })
           .catch((err) => console.error('[messages] DO signal failed', err)),
       );
+
+      // Push the human's group message to the other participants. Bot
+      // replies in groups dispatch from the GroupRouterDO and are not
+      // pushed here yet — see the DO's dispatch path for that follow-up.
+      c.executionCtx.waitUntil(
+        notifyConversationUsers({
+          env: c.env,
+          conversationId: parsed.conversationId,
+          excludeUserId: userId,
+          payload: {
+            alert: { body: NEW_MESSAGE_ALERT },
+            sound: 'default',
+            threadId: parsed.conversationId,
+            extra: { conversationId: parsed.conversationId, kind: 'group' },
+          },
+          collapseId: parsed.conversationId,
+        }),
+      );
     }
     return c.json({
       message: { id: parentMessageId },
@@ -324,6 +348,22 @@ messageRoutes.post('/', async (c) => {
   // No bot pinned (e.g. user_user, self with no bot) → just ack
   // the user write.
   if (!conv.bot_id) {
+    if (!parsed.autoLookback && conv.conversation_type === 'user_user') {
+      c.executionCtx.waitUntil(
+        notifyConversationUsers({
+          env: c.env,
+          conversationId: parsed.conversationId,
+          excludeUserId: userId,
+          payload: {
+            alert: { body: NEW_MESSAGE_ALERT },
+            sound: 'default',
+            threadId: parsed.conversationId,
+            extra: { conversationId: parsed.conversationId, kind: 'dm' },
+          },
+          collapseId: parsed.conversationId,
+        }),
+      );
+    }
     return c.json({ message: { id: parentMessageId }, botReplyScheduled: false });
   }
 
@@ -500,6 +540,26 @@ messageRoutes.post('/', async (c) => {
               userId,
               botConfig: bot.config as LookbackConfigEnvelope | null,
             });
+
+            // Push the bot reply to the conversation owner's devices. The
+            // owner is the requester (userId) — on a 1v1 user_bot conv the
+            // sender of this reply is the bot, so the user always gets it.
+            // Self chats never push (the user is talking to themselves).
+            if (conv.conversation_type !== 'self') {
+              c.executionCtx.waitUntil(
+                notifyUser({
+                  env: c.env,
+                  userId,
+                  payload: {
+                    alert: { body: NEW_MESSAGE_ALERT },
+                    sound: 'default',
+                    threadId: parsed.conversationId,
+                    extra: { conversationId: parsed.conversationId, kind: 'bot_reply' },
+                  },
+                  collapseId: parsed.conversationId,
+                }).then(() => undefined),
+              );
+            }
 
             // Auto-rename: round 1 replaces the random place-name fallback
             // set at conv creation; thereafter regenerate every 3 rounds so

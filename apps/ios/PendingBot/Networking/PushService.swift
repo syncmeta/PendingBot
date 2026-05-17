@@ -24,6 +24,11 @@ final class PushService {
 
     private var lastRegisteredToken: String?
 
+    /// The conversation currently on screen, if any. Set by ConversationView
+    /// while it's visible; willPresent suppresses the foreground banner for a
+    /// push targeting this conv (the open view shows the message live).
+    var activeConversationId: String?
+
     // MARK: - Public lifecycle hooks
 
     /// Called from PendingBotApp when AccountStore.current goes from nil → set.
@@ -143,9 +148,16 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     /// Show alert / play sound while the app is foreground — matches user
     /// expectation for IM-style apps. List view's Realtime channel will
     /// also pick up the same message, so the alert is mostly a heads-up.
+    /// Exception: if the push targets the conversation already on screen,
+    /// drop the banner/sound (the open view shows it live) and keep only
+    /// the badge update.
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 willPresent notification: UNNotification) async
                                 -> UNNotificationPresentationOptions {
-        [.banner, .sound, .badge]
+        let convId = notification.request.content.userInfo["conversationId"] as? String
+        if let convId, await PushService.shared.activeConversationId == convId {
+            return [.badge]
+        }
+        return [.banner, .sound, .badge]
     }
 }
