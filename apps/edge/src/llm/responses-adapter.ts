@@ -71,6 +71,7 @@ export interface LlmStreamChunk {
 export const OPENAI_BUILTIN_TOOLS: Tool[] = [
   { type: 'web_search_preview' },
   { type: 'code_interpreter', container: { type: 'auto' } },
+  { type: 'image_generation' },
 ];
 
 // Flatten Chat Completions tools ({type,function:{...}}) into Responses

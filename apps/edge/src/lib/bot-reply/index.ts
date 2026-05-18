@@ -34,6 +34,7 @@ import {
 } from '../../llm/vision';
 import { getBotMemory, getUserMemory } from '../memory';
 import { resolveInventory } from '../attachment-cache';
+import { sha256Hex, r2KeyForHash } from '../attachments';
 import {
   resolveBotNote,
   resolveChatMemo,
@@ -167,6 +168,56 @@ async function persistToolTraceMetadata(
     .from('messages')
     .update({ metadata: next })
     .eq('id', parentMessageId);
+}
+
+// Persist an image the OpenAI image_generation built-in tool produced:
+// base64 PNG → R2 (content-addressed, same scheme as user uploads) → an
+// attachments row owned by the conversation's user. Returns the new
+// attachment id, or null if anything failed (the turn carries on without
+// the image rather than aborting). Idempotent on (user_id, content_sha256).
+async function persistGeneratedImage(
+  env: Env,
+  supa: ReturnType<typeof serviceClient>,
+  userId: string,
+  conversationId: string,
+  base64: string,
+): Promise<string | null> {
+  try {
+    const bin = atob(base64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const sha = await sha256Hex(bytes);
+    const key = r2KeyForHash(sha, 'image/png');
+    const existing = await env.UPLOADS.head(key).catch(() => null);
+    if (!existing) {
+      await env.UPLOADS.put(key, bytes, {
+        httpMetadata: { contentType: 'image/png' },
+      });
+    }
+    const { data, error } = await supa
+      .from('attachments')
+      .upsert(
+        {
+          user_id: userId,
+          conversation_id: conversationId,
+          r2_key: key,
+          mime_type: 'image/png',
+          byte_size: bytes.length,
+          content_sha256: sha,
+        },
+        { onConflict: 'user_id,content_sha256' },
+      )
+      .select('id')
+      .single();
+    if (error) {
+      console.warn('[bot-reply] generated-image attachment insert', error.message);
+      return null;
+    }
+    return data.id as string;
+  } catch (err) {
+    console.warn('[bot-reply] persistGeneratedImage failed', err);
+    return null;
+  }
 }
 
 // Maximum agent-loop iterations (one LLM call + tool execution per iteration).
@@ -552,6 +603,39 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     });
   };
 
+  // Emit an image the OpenAI image_generation built-in tool produced as
+  // its own bubble: persist the PNG, then insert a bot message that
+  // carries the attachment (attachments jsonb shape: { ids: [...] }) and
+  // emit a `bubble` event carrying attachment_ids so iOS shows it live.
+  const emitGeneratedImage = async (base64: string) => {
+    const attachmentId = await persistGeneratedImage(
+      env, supa, userId, conversationId, base64,
+    );
+    if (!attachmentId) return;
+    bubbleIndex++;
+    const bubbleId = randomUUID();
+    await supa.from('messages').insert({
+      id: bubbleId,
+      client_message_id: randomUUID(),
+      conversation_id: conversationId,
+      sender_bot_id: bot.id,
+      role: 'bot',
+      status: 'done',
+      content: '',
+      parent_message_id: parentMessageId,
+      bubble_group_id: bubbleGroupId,
+      attachments: { ids: [attachmentId] },
+    });
+    bubblesInserted++;
+    emit('bubble', {
+      id: bubbleId,
+      index: bubbleIndex,
+      bubble_group_id: bubbleGroupId,
+      content: '',
+      attachment_ids: [attachmentId],
+    });
+  };
+
   // Each round inside the agent loop runs its own withFallback — when
   // one provider fails before-first-chunk, the router can re-resolve
   // and try the next-best alias for the same canonical model. Once a
@@ -732,15 +816,24 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
           mergeProviderUsageDetails(providerUsage, u);
         }
 
-        // Built-in (server-side) tool activity — web search / code
-        // interpreter run inside OpenAI, so there's no tool_call for the
-        // loop to execute. Just mirror progress into the tool-trace UI.
+        // Built-in (server-side) tool activity. web_search / code_interpreter
+        // run inside OpenAI — no tool_call for the loop to execute, just
+        // mirror progress into the tool-trace UI. A finished
+        // image_generation carries a PNG, which becomes its own bubble.
         if (chunk.builtinTool) {
           const bt = chunk.builtinTool;
-          emitToolEvent(
-            bt.phase === 'started' ? 'tool_call' : 'tool_result',
-            { name: bt.kind },
-          );
+          if (
+            bt.kind === 'image_generation' &&
+            bt.phase === 'completed' &&
+            bt.imageBase64
+          ) {
+            await emitGeneratedImage(bt.imageBase64);
+          } else {
+            emitToolEvent(
+              bt.phase === 'started' ? 'tool_call' : 'tool_result',
+              { name: bt.kind },
+            );
+          }
         }
       }
 
