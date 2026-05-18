@@ -78,7 +78,6 @@ export interface RouteAlias {
   inputPrice: number | null;
   cachedInputPrice: number | null;
   outputPrice: number | null;
-  cacheWritePrice: number | null;
   // Voice call pricing — per-1M audio token, populated on the alias that
   // backs the OpenAI Realtime path. Both null on text-only aliases.
   audioInputPrice: number | null;
@@ -127,7 +126,6 @@ export type AliasJoinRow = {
   input_price: number | null;
   cached_input_price: number | null;
   output_price: number | null;
-  cache_write_price: number | null;
   audio_input_price: number | null;
   audio_output_price: number | null;
   llm_providers:
@@ -348,7 +346,7 @@ async function getAliasSet(
     async (): Promise<CachedAliasSet> => {
       const ALIAS_COLS =
         `id, provider_id, provider_model_id, weight,
-         input_price, cached_input_price, output_price, cache_write_price,
+         input_price, cached_input_price, output_price,
          audio_input_price, audio_output_price`;
       const [{ data: byCanonical, error: e1 }, { data: byPassthrough, error: e2 }] =
         await Promise.all([
@@ -458,7 +456,6 @@ export async function resolveRoute(
         inputPrice: picked.input_price,
         cachedInputPrice: picked.cached_input_price,
         outputPrice: picked.output_price,
-        cacheWritePrice: picked.cache_write_price,
         audioInputPrice: picked.audio_input_price,
         audioOutputPrice: picked.audio_output_price,
       },

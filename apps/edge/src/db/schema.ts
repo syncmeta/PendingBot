@@ -1251,7 +1251,6 @@ export type Database = {
         Row: {
           audio_input_price: number | null
           audio_output_price: number | null
-          cache_write_price: number | null
           cached_input_price: number | null
           config: Json
           created_at: string
@@ -1270,7 +1269,6 @@ export type Database = {
         Insert: {
           audio_input_price?: number | null
           audio_output_price?: number | null
-          cache_write_price?: number | null
           cached_input_price?: number | null
           config?: Json
           created_at?: string
@@ -1289,7 +1287,6 @@ export type Database = {
         Update: {
           audio_input_price?: number | null
           audio_output_price?: number | null
-          cache_write_price?: number | null
           cached_input_price?: number | null
           config?: Json
           created_at?: string

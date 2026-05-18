@@ -25,7 +25,6 @@ function row(
     input_price: opts.input ?? null,
     cached_input_price: opts.cachedInput ?? null,
     output_price: opts.output ?? null,
-    cache_write_price: null,
     audio_input_price: null,
     audio_output_price: null,
     llm_providers: {
