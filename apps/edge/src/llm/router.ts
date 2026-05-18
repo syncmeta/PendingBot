@@ -85,6 +85,20 @@ export interface RouteAlias {
   audioOutputPrice: number | null;
 }
 
+// Which OpenAI-dialect API a provider speaks. 'chat' = the universal
+// Chat Completions endpoint every provider supports (OpenRouter etc.).
+// 'responses' = OpenAI's native Responses API — only the OpenAI-native
+// provider (CF AI Gateway → OpenAI passthrough) handles it. Sourced from
+// llm_providers.config.api; absent/anything-else defaults to 'chat'.
+export type ProviderApiStyle = 'chat' | 'responses';
+
+export function providerApiStyle(config: unknown): ProviderApiStyle {
+  if (config && typeof config === 'object' && !Array.isArray(config)) {
+    if ((config as Record<string, unknown>).api === 'responses') return 'responses';
+  }
+  return 'chat';
+}
+
 export interface ResolvedRoute {
   client: OpenAI;
   // The provider-specific id to put in completions.create({ model }).
@@ -92,7 +106,7 @@ export interface ResolvedRoute {
   // OpenRouter passthrough fallback it's the raw slug the caller passed.
   modelToCall: string;
   alias: RouteAlias | null;
-  provider: { id: string; slug: string };
+  provider: { id: string; slug: string; apiStyle: ProviderApiStyle };
 }
 
 export class NoRouteError extends Error {
@@ -448,7 +462,11 @@ export async function resolveRoute(
         audioInputPrice: picked.audio_input_price,
         audioOutputPrice: picked.audio_output_price,
       },
-      provider: { id: provider.id, slug: provider.slug },
+      provider: {
+        id: provider.id,
+        slug: provider.slug,
+        apiStyle: providerApiStyle(provider.config),
+      },
     };
   }
 
@@ -475,7 +493,11 @@ export async function resolveRoute(
     client: buildClient(env, openrouter, aigMetadataFrom(opts)),
     modelToCall: slug,
     alias: null,
-    provider: { id: openrouter.id, slug: openrouter.slug },
+    provider: {
+      id: openrouter.id,
+      slug: openrouter.slug,
+      apiStyle: providerApiStyle(openrouter.config),
+    },
   };
 }
 
