@@ -18,6 +18,12 @@ import {
   withFallback,
 } from '../../llm/router';
 import { mergeProviderUsageDetails } from '../../llm/provider-usage';
+import {
+  chatMessagesToResponsesInput,
+  chatToolsToResponsesTools,
+  openResponsesStream,
+  type LlmStreamChunk,
+} from '../../llm/responses-adapter';
 import { buildMessages, type BuildMessagesInput } from '../../llm/builder';
 import { resolveLocale } from '../../i18n/locale';
 import {
@@ -597,7 +603,25 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
           preferProvider: input.providerOverride ?? undefined,
           metadata: { userId, conversationId, turnId },
         },
-        async (r) => {
+        async (r): Promise<{ stream: AsyncIterable<LlmStreamChunk> }> => {
+          // OpenAI-native providers speak the Responses API; everything
+          // else (OpenRouter etc.) stays on Chat Completions. The adapter
+          // re-emits Responses events as Chat-Completions-shaped chunks so
+          // the streaming merge loop below is identical for both.
+          if (r.provider.apiStyle === 'responses') {
+            const { instructions, input } = chatMessagesToResponsesInput(messages);
+            const stream = await openResponsesStream(
+              r.client,
+              {
+                model: r.modelToCall,
+                instructions,
+                input,
+                tools: chatToolsToResponsesTools(turnTools),
+              },
+              ac.signal,
+            );
+            return { stream };
+          }
           const request = {
             model: r.modelToCall,
             messages,
