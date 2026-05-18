@@ -162,8 +162,7 @@ struct ConversationSettingsView: View {
 
                 // 提供商：本地选择走 LLMRouter 的 preferProvider，挂了
                 // 仍会走 fallback 到其它家。"自动" = 不传 preferProvider，
-                // 由 alias 权重决定。WorldRouter 一般比 OpenRouter 便宜
-                // ~30%（它声明转发 Anthropic native usage），可对账验证。
+                // 由路由默认决定。
                 Section {
                     Picker(selection: Binding(
                         get: { providerOverride ?? "" },
@@ -174,7 +173,6 @@ struct ConversationSettingsView: View {
                         }
                     )) {
                         Text("自动").tag("")
-                        Text("WorldRouter").tag("worldrouter")
                         Text("OpenRouter").tag("openrouter")
                     } label: {
                         HStack {

@@ -42,8 +42,6 @@ function parseForm(formData: FormData) {
   if (cachedInput != null && typeof cachedInput === 'object') return cachedInput;
   const output = parsePrice(formData, 'output_price');
   if (output != null && typeof output === 'object') return output;
-  const cacheWrite = parsePrice(formData, 'cache_write_price');
-  if (cacheWrite != null && typeof cacheWrite === 'object') return cacheWrite;
   // Voice-call dims — both optional, populated on the OpenAI Realtime
   // alias and null elsewhere. Aliases without these don't bill audio.
   const audioInput = parsePrice(formData, 'audio_input_price');
@@ -64,7 +62,6 @@ function parseForm(formData: FormData) {
       input_price: input as number,
       cached_input_price: cachedInput as number | null,
       output_price: output as number,
-      cache_write_price: cacheWrite as number | null,
       audio_input_price: audioInput as number | null,
       audio_output_price: audioOutput as number | null,
       notes,
