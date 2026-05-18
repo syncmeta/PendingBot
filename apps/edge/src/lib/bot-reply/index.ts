@@ -22,6 +22,7 @@ import {
   chatMessagesToResponsesInput,
   chatToolsToResponsesTools,
   openResponsesStream,
+  OPENAI_BUILTIN_TOOLS,
   type LlmStreamChunk,
 } from '../../llm/responses-adapter';
 import { buildMessages, type BuildMessagesInput } from '../../llm/builder';
@@ -583,9 +584,22 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   // model_description override. `null` means the registry was
   // unreachable; pass through unfiltered rather than serving the model
   // an empty tool list.
+  const toolRegistry = await allowedRegistryPromise;
   const turnTools: ChatCompletionTool[] = applyToolRegistry(
     turnToolsRaw,
-    await allowedRegistryPromise,
+    toolRegistry,
+  );
+
+  // OpenAI-native bots reach web search and code execution through
+  // OpenAI's server-side built-in tools (added in the runner closure
+  // below), not the Exa MCP tools or the Cloudflare sandbox — so their
+  // function-tool list is the internal surface only: no MCP, no
+  // request_execute_code / execute_code.
+  const nativeFnToolsRaw: ChatCompletionTool[] = [...CHAT_TOOLS];
+  if (input.inGroup) nativeFnToolsRaw.push(...GROUP_BOT_TOOLS);
+  const nativeFnTools: ChatCompletionTool[] = applyToolRegistry(
+    nativeFnToolsRaw,
+    toolRegistry,
   );
 
   try {
@@ -616,7 +630,12 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
                 model: r.modelToCall,
                 instructions,
                 input,
-                tools: chatToolsToResponsesTools(turnTools),
+                // Internal function tools + OpenAI's server-side built-in
+                // tools (web search, code interpreter).
+                tools: [
+                  ...chatToolsToResponsesTools(nativeFnTools),
+                  ...OPENAI_BUILTIN_TOOLS,
+                ],
               },
               ac.signal,
             );
@@ -711,6 +730,17 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
           usage.cacheRead += u.cacheReadTokens ?? 0;
           usage.cacheWrite += u.cacheWriteTokens ?? 0;
           mergeProviderUsageDetails(providerUsage, u);
+        }
+
+        // Built-in (server-side) tool activity — web search / code
+        // interpreter run inside OpenAI, so there's no tool_call for the
+        // loop to execute. Just mirror progress into the tool-trace UI.
+        if (chunk.builtinTool) {
+          const bt = chunk.builtinTool;
+          emitToolEvent(
+            bt.phase === 'started' ? 'tool_call' : 'tool_result',
+            { name: bt.kind },
+          );
         }
       }
 

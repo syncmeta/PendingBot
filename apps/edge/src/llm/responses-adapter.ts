@@ -9,6 +9,7 @@ import type {
   ResponseInput,
   ResponseInputItem,
   ResponseStreamEvent,
+  Tool,
 } from 'openai/resources/responses/responses';
 
 // ─────────────────────────────────────────────────────────────────────
@@ -49,7 +50,28 @@ export interface LlmStreamChunk {
     };
   }>;
   usage?: unknown;
+  /// Built-in OpenAI tool activity (Responses API only). Function tools
+  /// stream as `choices[].delta.tool_calls` and the bot-reply loop
+  /// executes them; built-in tools (web_search / code_interpreter /
+  /// image_generation) run server-side, so they surface here instead —
+  /// the loop renders progress in the tool-trace UI and turns a finished
+  /// image into a message.
+  builtinTool?: {
+    kind: 'web_search' | 'code_interpreter' | 'image_generation';
+    phase: 'started' | 'completed';
+    /// Base64 PNG, set on `image_generation` + phase 'completed'.
+    imageBase64?: string;
+  };
 }
+
+// OpenAI's server-side built-in tools, added to the Responses request for
+// OpenAI-native bots. The model invokes them and OpenAI runs them — no
+// worker round-trip, no function-call execution. Billed through the AI
+// Gateway alongside the turn.
+export const OPENAI_BUILTIN_TOOLS: Tool[] = [
+  { type: 'web_search_preview' },
+  { type: 'code_interpreter', container: { type: 'auto' } },
+];
 
 // Flatten Chat Completions tools ({type,function:{...}}) into Responses
 // function tools (flat name/description/parameters). strict:false — our
@@ -159,7 +181,8 @@ export interface ResponsesStreamParams {
   model: string;
   instructions: string;
   input: ResponseInput;
-  tools: FunctionTool[];
+  /// Function tools plus any built-in tools (OPENAI_BUILTIN_TOOLS).
+  tools: Tool[];
 }
 
 // Open a streamed Responses API call and adapt its event stream into
@@ -246,6 +269,37 @@ async function* mapResponseStream(
         }
         break;
       }
+
+      // ── Built-in server-side tools ──────────────────────────────────
+      case 'response.web_search_call.in_progress':
+        yield { builtinTool: { kind: 'web_search', phase: 'started' } };
+        break;
+      case 'response.web_search_call.completed':
+        yield { builtinTool: { kind: 'web_search', phase: 'completed' } };
+        break;
+      case 'response.code_interpreter_call.in_progress':
+        yield { builtinTool: { kind: 'code_interpreter', phase: 'started' } };
+        break;
+      case 'response.code_interpreter_call.completed':
+        yield { builtinTool: { kind: 'code_interpreter', phase: 'completed' } };
+        break;
+      case 'response.image_generation_call.in_progress':
+        yield { builtinTool: { kind: 'image_generation', phase: 'started' } };
+        break;
+
+      case 'response.output_item.done':
+        // The finished image lands as an output item carrying the base64
+        // result. (function_call items are handled on `added` above.)
+        if (ev.item.type === 'image_generation_call' && ev.item.result) {
+          yield {
+            builtinTool: {
+              kind: 'image_generation',
+              phase: 'completed',
+              imageBase64: ev.item.result,
+            },
+          };
+        }
+        break;
 
       case 'response.completed': {
         const u = ev.response.usage;
