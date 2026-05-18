@@ -612,6 +612,7 @@ export type Database = {
           id: string
           is_active: boolean
           model_id: string
+          model_provider: string | null
           output_mode: string
           slug: string
           updated_at: string
@@ -626,6 +627,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           model_id: string
+          model_provider?: string | null
           output_mode?: string
           slug: string
           updated_at?: string
@@ -640,6 +642,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           model_id?: string
+          model_provider?: string | null
           output_mode?: string
           slug?: string
           updated_at?: string

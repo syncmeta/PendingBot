@@ -426,6 +426,24 @@ export async function resolveRoute(
     }
   }
 
+  // Native-endpoint route. When the caller pins a provider that speaks
+  // a provider-native API (config.api='responses' — the OpenAI passthrough),
+  // route straight to it: no alias row, no weight pick. The model slug is
+  // sent as-is as the upstream model id. Skipped when that provider is in
+  // excludeProviders (a fallback retry), so failure still degrades to the
+  // alias path below (OpenRouter).
+  if (preferProvider && !opts.excludeProviders?.includes(preferProvider)) {
+    const native = await getProvider(supa, env, preferProvider);
+    if (native && providerApiStyle(native.config) === 'responses') {
+      return {
+        client: buildClient(env, native, aigMetadataFrom(opts)),
+        modelToCall: slug,
+        alias: null,
+        provider: { id: native.id, slug: native.slug, apiStyle: 'responses' },
+      };
+    }
+  }
+
   // Pull all aliases that match by canonical slug OR by passthrough
   // provider_model_id, then partition in JS. Cached per slug.
   const { byCanonical, byPassthrough } = await getAliasSet(supa, env, slug);
