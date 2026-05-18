@@ -211,8 +211,8 @@ struct ConversationSettingsView: View {
                 allowsClear: false,
                 onPick: { picked in
                     showModelPicker = false
-                    // allowsClear=false → picker only emits non-nil slugs.
-                    if let picked { pendingPick = PickPayload(slug: picked) }
+                    // allowsClear=false → picker only emits non-nil rows.
+                    if let picked { pendingPick = PickPayload(slug: picked.slug) }
                 }
             )
             .presentationDragIndicator(.visible)
@@ -226,7 +226,7 @@ struct ConversationSettingsView: View {
                 visionOnly: true,
                 onPick: { picked in
                     showVisionPicker = false
-                    let normalized = picked.flatMap { $0.isEmpty ? nil : $0 }
+                    let normalized = (picked?.slug).flatMap { $0.isEmpty ? nil : $0 }
                     visionModelOverride = normalized
                     onApplyVisionModel(normalized)
                     Haptics.success()
@@ -251,9 +251,9 @@ struct ConversationSettingsView: View {
                     case .explorer:
                         // No clear for explorer — fall back to default if
                         // somehow the picker hands us nil.
-                        envelope.explorerModel = picked ?? EnvelopeSettings.defaults.explorerModel
+                        envelope.explorerModel = picked?.slug ?? EnvelopeSettings.defaults.explorerModel
                     case .collaborator:
-                        envelope.collaboratorModel = picked
+                        envelope.collaboratorModel = picked?.slug
                     }
                     pickerTarget = nil
                 }
