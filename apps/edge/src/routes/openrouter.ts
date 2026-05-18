@@ -60,12 +60,22 @@ interface OpenRouterModelOut {
   model_provider: string | null;
 }
 
+// Isolate-local cache of OpenAI's native catalog. Purely a cache — it
+// auto-expires and re-fetches from OpenAI's own /models; nothing here is
+// hand-maintained. Keeps the picker snappy without a per-open round-trip.
+let nativeCatalogCache: { at: number; rows: OpenRouterModelOut[] } | null = null;
+const NATIVE_CATALOG_TTL_MS = 10 * 60_000;
+
 // OpenAI's native catalog, reached through the AI Gateway openai
 // passthrough. No pricing is attached — the native route bills through
 // the gateway, so the picker shows these without a cost figure.
 async function loadOpenAINativeCatalog(
   c: Context<AppBindings>,
 ): Promise<OpenRouterModelOut[]> {
+  const now = Date.now();
+  if (nativeCatalogCache && now - nativeCatalogCache.at < NATIVE_CATALOG_TTL_MS) {
+    return nativeCatalogCache.rows;
+  }
   const token = c.env.CF_AIG_RUN_TOKEN;
   if (!token) return [];
   const supa = serviceClient(c.env);
@@ -88,7 +98,7 @@ async function loadOpenAINativeCatalog(
       return [];
     }
     const json = (await res.json()) as { data?: Array<{ id?: string }> };
-    return (json.data ?? [])
+    const rows: OpenRouterModelOut[] = (json.data ?? [])
       .map((m) => m.id)
       .filter((id): id is string => typeof id === 'string' && id.startsWith('gpt-'))
       .map((id) => ({
@@ -102,6 +112,8 @@ async function loadOpenAINativeCatalog(
         source: 'openai' as const,
         model_provider: 'openai',
       }));
+    nativeCatalogCache = { at: now, rows };
+    return rows;
   } catch (err) {
     console.warn('[openrouter/models] openai-native catalog fetch failed', err);
     return [];
