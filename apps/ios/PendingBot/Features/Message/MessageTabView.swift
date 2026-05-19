@@ -491,6 +491,13 @@ struct MessageTabView: View {
                 )
             }
             self.userPeers = peers
+            // Capture the cached last_activity_at *before* overwriting the
+            // conversations cache below, so the staleness diff compares
+            // against last-known state, not the value we're about to write.
+            let prevActivity = Dictionary(
+                cached.map { ($0.id, $0.last_activity_at) },
+                uniquingKeysWith: { first, _ in first }
+            )
             LocalDatabase.shared.upsertConversations(fresh.map { c in
                 LocalDatabase.ConversationRow(
                     id: c.id,
@@ -506,6 +513,26 @@ struct MessageTabView: View {
                     last_message_sender_type: c.last_message_sender_type
                 )
             })
+
+            // A message that arrived while the user was NOT inside the conv
+            // was never persisted locally — the conv-level Realtime socket is
+            // lazy (open only while ConversationView is on screen) and push
+            // payloads carry no body. So opening the conv would show the stale
+            // message cache until loadHistory's network round-trip lands.
+            // Here, for conversations whose last_activity_at advanced past the
+            // cached value (or that weren't cached at all), refresh the local
+            // message cache so the conv opens with the new message already in
+            // place. Capped + backgrounded so it never delays the list paint.
+            let staleConvIds = fresh
+                .filter { conv in
+                    guard let prev = prevActivity[conv.id] else { return true }
+                    return conv.last_activity_at > prev
+                }
+                .prefix(8)
+                .map(\.id)
+            if !staleConvIds.isEmpty {
+                Task { await self.prefetchRecentMessages(convIds: Array(staleConvIds)) }
+            }
         } catch is CancellationError {
             // navigation / refreshable cancellation — silent
         } catch let error as NSError where error.domain == NSURLErrorDomain
@@ -513,6 +540,70 @@ struct MessageTabView: View {
         } catch {
             self.error = error.localizedDescription
             Haptics.error()
+        }
+    }
+
+    /// Refresh the local message cache for `convIds` so a conv the user
+    /// opens shows messages received while they were elsewhere on the very
+    /// first paint, instead of after loadHistory's network round-trip.
+    ///
+    /// One fetch per conv: the conv-list query only carries a truncated
+    /// `last_message_preview` string (no message id), which isn't enough to
+    /// persist as a real `messages` row. Fetches run concurrently and the
+    /// caller already bounds `convIds`, so worst case is a handful of small
+    /// reads. Failures are swallowed — this is a cache warm, not load-bearing.
+    private func prefetchRecentMessages(convIds: [String]) async {
+        struct MsgRow: Decodable {
+            let id: String
+            let client_message_id: String?
+            let conversation_id: String
+            let user_id: String?
+            let sender_bot_id: String?
+            let role: String
+            let content: String?
+            let status: String?
+            let created_at: String
+        }
+        await withTaskGroup(of: [LocalDatabase.MessageRow].self) { group in
+            for convId in convIds {
+                group.addTask {
+                    do {
+                        let rows: [MsgRow] = try await SupabaseStack.shared
+                            .from("messages")
+                            .select("id, client_message_id, conversation_id, user_id, sender_bot_id, role, content, status, created_at")
+                            .eq("conversation_id", value: convId)
+                            .order("created_at", ascending: false)
+                            .limit(30)
+                            .execute()
+                            .value
+                        return rows.compactMap { r in
+                            // Mirror loadHistory's cache policy: only real
+                            // bot/user bubbles belong in the cache. role='log'
+                            // rows (recall tombstones, review steps) and
+                            // soft-deleted rows are skipped — the conv-open
+                            // hydrate maps any non-'bot' role to a user
+                            // bubble, so a stray log row would mis-render.
+                            guard r.role != "log", r.status != "deleted" else { return nil }
+                            return LocalDatabase.MessageRow(
+                                id: r.id,
+                                client_message_id: r.client_message_id,
+                                conversation_id: r.conversation_id,
+                                user_id: r.user_id,
+                                sender_bot_id: r.sender_bot_id,
+                                role: r.role,
+                                content: r.content,
+                                status: r.status,
+                                created_at: ServerTimestamp.epochSeconds(r.created_at, default: 0)
+                            )
+                        }
+                    } catch {
+                        return []
+                    }
+                }
+            }
+            for await rows in group where !rows.isEmpty {
+                LocalDatabase.shared.upsertMessages(rows)
+            }
         }
     }
 
