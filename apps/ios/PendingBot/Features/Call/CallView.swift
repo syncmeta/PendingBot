@@ -209,6 +209,10 @@ struct CallView: View {
             case .user:
                 // Voluntary hang up — view's hangUpButton already calls dismiss.
                 break
+            case .botEnded:
+                // The bot ended the call itself — the user didn't tap
+                // anything, so the view dismisses itself.
+                dismiss()
             }
         default:
             break

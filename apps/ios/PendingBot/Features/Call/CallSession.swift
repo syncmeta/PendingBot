@@ -33,6 +33,7 @@ final class CallSession {
 
     enum TerminateReason: Equatable, Sendable {
         case user              // user tapped hang up
+        case botEnded          // the bot ended the call via its hang_up tool
         case noBalance         // pre-call balance gate (402 on /session)
         case network           // transport-level failure mid-call
         case remoteError(String)
@@ -308,7 +309,7 @@ final class CallSession {
             // voluntary hang up of a call that actually connected — a
             // failed/dead transport would just time out.
             var summary: String?
-            if wasConnected, reason == .user, let transport {
+            if wasConnected, reason == .user || reason == .botEnded, let transport {
                 summary = await transport.requestSummary()
             }
             // Upload the recap before tearing down: closing the transport
@@ -387,6 +388,9 @@ protocol CallTransportDelegate: AnyObject {
     /// Transport says we're done — either an error, remote close, or the
     /// upstream telling us the session is over.
     func transport(_ t: CallTransport, didFailWith reason: CallSession.TerminateReason) async
+    /// The bot invoked its `hang_up` tool — end the call as if the user
+    /// had tapped hang up (the closing recap still runs).
+    func transportRequestsHangUp(_ t: CallTransport) async
 }
 
 // MARK: - CallSession as delegate
@@ -416,6 +420,14 @@ extension CallSession: CallTransportDelegate {
             // is lost for this call. The worker's 30-minute session cap
             // still bounds it. Nothing the user can act on, so swallow.
         }
+    }
+
+    func transportRequestsHangUp(_ t: CallTransport) async {
+        guard t === transport else { return }
+        // Only meaningful for a live call — a hang_up during the connect
+        // chain (no pending attempt, not yet connected) is ignored.
+        guard phase == .connected else { return }
+        await terminate(reason: .botEnded)
     }
 
     func transport(_ t: CallTransport, didFailWith reason: CallSession.TerminateReason) async {
