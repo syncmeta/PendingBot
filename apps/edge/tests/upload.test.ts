@@ -146,14 +146,21 @@ const BYTES_A = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 
 const BYTES_B = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x02]);
 
 describe('POST /v1/upload — input validation', () => {
-  it('rejects unsupported mimes with 415', async () => {
+  it('accepts arbitrary non-image mimes and skips summarization', async () => {
     const env = makeFakeEnv(makeFakeDb({ attachments: [], billing_config: [] }));
     bindR2(env as unknown as Record<string, unknown>, makeR2Mock());
     const r = await post(env, 'alice', {
-      file: { file: BYTES_A, name: 'x.heic', type: 'image/heic' },
+      file: { file: BYTES_A, name: 'archive.zip', type: 'application/zip' },
     });
-    expect(r.status).toBe(415);
-    expect((r.body.error as { code?: string }).code).toBe('attachment_unsupported_mime');
+    expect(r.status).toBe(200);
+    expect(r.body.filename).toBe('archive.zip');
+
+    const db = (env as unknown as { __fakeDb: FakeDb }).__fakeDb;
+    expect(db.inserts).toHaveLength(1);
+    const row = db.inserts[0].row as { filename: string; summary_status: string };
+    expect(row.filename).toBe('archive.zip');
+    // Non-image → vision summarizer is bypassed.
+    expect(row.summary_status).toBe('skipped');
   });
 
   it('rejects missing file field with 400 attachment_missing_field', async () => {
@@ -240,7 +247,7 @@ describe('POST /v1/upload — cross-user content-addressable dedup', () => {
 describe('POST /v1/upload — quota gate', () => {
   it('rejects with 413 quota_exceeded when the new file would tip the user over', async () => {
     // Tiny quota (50 bytes) lets us tip it over with a small file —
-    // staying well under MAX_UPLOAD_BYTES (10 MiB) so the
+    // staying well under MAX_UPLOAD_BYTES (25 MiB) so the
     // attachment_too_large gate above doesn't fire instead.
     const seed: Row[] = [
       { id: 'att-old', user_id: 'alice', byte_size: 45, content_sha256: 'xx', r2_key: 'k', mime_type: 'image/png' },

@@ -4,7 +4,7 @@ import { serviceClient, userClient } from '../lib/supabase';
 import {
   DEFAULT_ATTACHMENT_QUOTA_BYTES,
   MAX_UPLOAD_BYTES,
-  isSupportedImageMime,
+  classifyAttachment,
   r2KeyForHash,
   sha256Hex,
 } from '../lib/attachments';
@@ -46,11 +46,10 @@ uploadRoutes.post('/', async (c) => {
   if (file.size > MAX_UPLOAD_BYTES) {
     return jsonError(c, 413, 'attachment_too_large', { detail: { max_bytes: MAX_UPLOAD_BYTES } });
   }
-  if (!isSupportedImageMime(file.type)) {
-    return jsonError(c, 415, 'attachment_unsupported_mime', {
-      detail: { supported: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] },
-    });
-  }
+  // Any MIME is accepted — images, PDFs, archives, audio, code. How the
+  // file reaches the LLM is decided downstream (classifyAttachment): the
+  // upload path no longer gatekeeps on type.
+  const kind = classifyAttachment(file.type);
 
   const conversationId = form.get('conversationId');
   const conversationIdStr = typeof conversationId === 'string' && conversationId.length > 0
@@ -92,7 +91,7 @@ uploadRoutes.post('/', async (c) => {
     const { data: dup } = await supa
       .schema('pendingbot')
       .from('attachments')
-      .select('id, r2_key, mime_type, byte_size, created_at, conversation_id, summary, tags, summary_status')
+      .select('id, r2_key, mime_type, byte_size, filename, created_at, conversation_id, summary, tags, summary_status')
       .eq('user_id', userId)
       .eq('content_sha256', contentSha256)
       .maybeSingle();
@@ -102,6 +101,7 @@ uploadRoutes.post('/', async (c) => {
         r2_key: string;
         mime_type: string;
         byte_size: number;
+        filename: string | null;
         created_at: string;
         conversation_id: string | null;
         summary: string | null;
@@ -133,6 +133,7 @@ uploadRoutes.post('/', async (c) => {
         r2_key: r.r2_key,
         mime: r.mime_type,
         size: r.byte_size,
+        filename: r.filename,
         url: `/v1/uploads/${r.id}`,
         created_at: r.created_at,
         deduped: true,
@@ -204,12 +205,18 @@ uploadRoutes.post('/', async (c) => {
       r2_key: key,
       mime_type: file.type,
       byte_size: file.size,
+      filename: file.name || null,
       content_sha256: contentSha256,
+      // Only images go through the vision summarizer. PDFs/files are
+      // either parsed natively by the provider or fetched on demand via
+      // read_attachment, so they skip summarization outright — 'skipped'
+      // makes summarizeAttachment short-circuit.
+      summary_status: kind === 'image' ? 'pending' : 'skipped',
       // width/height filled in once thumbnail / embed-meta generation
       // lands (see plans/.../11-scale-and-ux.md). Until then both stay
       // null, which the iOS image renderer handles.
     })
-    .select('id, r2_key, mime_type, byte_size, created_at')
+    .select('id, r2_key, mime_type, byte_size, filename, created_at')
     .single();
 
   if (insertErr) {
@@ -239,7 +246,7 @@ uploadRoutes.post('/', async (c) => {
       const { data: winner } = await supa
         .schema('pendingbot')
         .from('attachments')
-        .select('id, r2_key, mime_type, byte_size, created_at, conversation_id, summary, tags, summary_status')
+        .select('id, r2_key, mime_type, byte_size, filename, created_at, conversation_id, summary, tags, summary_status')
         .eq('user_id', userId)
         .eq('content_sha256', contentSha256)
         .maybeSingle();
@@ -250,6 +257,7 @@ uploadRoutes.post('/', async (c) => {
           r2_key: string;
           mime_type: string;
           byte_size: number;
+          filename: string | null;
           created_at: string;
           conversation_id: string | null;
           summary: string | null;
@@ -275,6 +283,7 @@ uploadRoutes.post('/', async (c) => {
           r2_key: r.r2_key,
           mime: r.mime_type,
           size: r.byte_size,
+          filename: r.filename,
           url: `/v1/uploads/${r.id}`,
           created_at: r.created_at,
           deduped: true,
@@ -307,6 +316,7 @@ uploadRoutes.post('/', async (c) => {
     r2_key: row.r2_key,
     mime: row.mime_type,
     size: row.byte_size,
+    filename: row.filename,
     url: `/v1/uploads/${row.id}`,    // Worker-served URL (auth-gated)
     created_at: row.created_at,
   });
