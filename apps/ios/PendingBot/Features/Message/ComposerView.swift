@@ -172,13 +172,18 @@ struct ComposerView: View {
         .background(Theme.Palette.canvas)
     }
 
-    /// 64×64 thumbnail content for one pending attachment — a plain icon
-    /// for images, an icon + truncated filename for files.
+    /// 64×64 thumbnail content for one pending attachment — the actual
+    /// image for images, an icon + truncated filename for files.
     @ViewBuilder
     private func pendingCellContent(_ att: PendingAttachment) -> some View {
         if att.isImage {
-            Image(systemName: "photo")
-                .foregroundStyle(Theme.Palette.inkMuted)
+            ServerImage(
+                path: "/v1/uploads/\(att.id)",
+                serverURL: HostedConfig.environment.workerURL,
+                contentMode: .fill
+            )
+            .frame(width: 64, height: 64)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         } else {
             VStack(spacing: 3) {
                 Image(systemName: "doc.fill")

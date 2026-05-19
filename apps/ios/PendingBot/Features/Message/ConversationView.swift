@@ -1828,13 +1828,13 @@ struct PendingAttachment: Identifiable, Hashable {
     var isImage: Bool { mime.lowercased().hasPrefix("image/") }
 
     /// Materialise into an `Attachment` for an optimistic bubble. The
-    /// worker-served path is `/uploads/<id>`; `kind` is left to the
-    /// renderer, which classifies by `mime`.
+    /// worker-served path is `/v1/uploads/<id>` (the auth-gated route);
+    /// `kind` is left to the renderer, which classifies by `mime`.
     func asAttachment() -> Attachment {
         Attachment(
             id: id, kind: isImage ? "image" : "file", mime: mime,
             size: size, width: nil, height: nil,
-            url: "/uploads/\(id)", filename: filename
+            url: "/v1/uploads/\(id)", filename: filename
         )
     }
 }

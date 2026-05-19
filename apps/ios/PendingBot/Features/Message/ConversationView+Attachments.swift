@@ -32,12 +32,29 @@ extension ConversationView {
         guard let api else { return }
         for item in items {
             guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
-            let mime = item.supportedContentTypes.first?.preferredMIMEType ?? "image/jpeg"
-            let ext = mime.split(separator: "/").last.map(String.init) ?? "jpg"
+            // Library photos are typically HEIC. The edge attachment
+            // classifier and the vision models only handle jpeg/png/gif/
+            // webp — a HEIC upload lands as a generic 'file', so the bot
+            // can't see it and the bubble renders no image. Re-encode to
+            // JPEG up-front (same as the camera path); this also shrinks
+            // the payload so the upload doesn't crawl on a mobile link.
+            let uploadData: Data
+            let mime: String
+            let ext: String
+            if let image = UIImage(data: data),
+               let jpeg = image.jpegData(compressionQuality: 0.85) {
+                uploadData = jpeg
+                mime = "image/jpeg"
+                ext = "jpg"
+            } else {
+                uploadData = data
+                mime = item.supportedContentTypes.first?.preferredMIMEType ?? "image/jpeg"
+                ext = mime.split(separator: "/").last.map(String.init) ?? "jpg"
+            }
             do {
                 let response: UploadResponse = try await api.upload(
                     "v1/upload",
-                    fileData: data,
+                    fileData: uploadData,
                     fileName: "image-\(UUID().uuidString.prefix(8)).\(ext)",
                     mime: mime,
                     extraFields: ["conversationId": conversation.id]
