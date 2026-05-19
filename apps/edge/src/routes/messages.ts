@@ -514,7 +514,6 @@ messageRoutes.post('/', async (c) => {
                 runTitle({
                   env: c.env,
                   conversationId: parsed.conversationId,
-                  botModelId: effectiveModelId,
                 }),
               );
             }
@@ -782,7 +781,6 @@ messageRoutes.post('/start', async (c) => {
               runTitle({
                 env: c.env,
                 conversationId: convId,
-                botModelId: bot.model_id as string,
               }),
             );
           }

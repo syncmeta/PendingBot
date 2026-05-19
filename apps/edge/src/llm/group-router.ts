@@ -21,10 +21,10 @@ import type { Env } from '../types';
 // JSON response with `{wake_bots: [...]}` keeps the schema tiny and
 // lets the router run on cheap Gemma-class models.
 //
-// Model selection: task_type='group_router' lookup (seeded in 0043).
-// Per-group override (`conversation_group_meta.router_model_slug`)
-// trumps the task_routing_rules row when set; the worker resolves the
-// effective slug here before calling resolveRoute.
+// Model selection: a per-group override
+// (`conversation_group_meta.router_model_slug`) wins when set; otherwise
+// the FALLBACK_MODEL_SLUG baseline — a cheap small model that's plenty
+// for the "pick from a list" classification.
 
 export interface GroupRouterInput {
   env: Env;
@@ -49,7 +49,7 @@ export interface GroupRouterDecision {
 }
 
 const PROMPT_BUDGET_TOKENS = 2000;
-const FALLBACK_MODEL_SLUG = 'google/gemma-3-27b-it';
+const FALLBACK_MODEL_SLUG = 'google/gemma-4-31b-it';
 
 export async function runGroupRouter(
   input: GroupRouterInput,
@@ -59,8 +59,7 @@ export async function runGroupRouter(
 
   // 1. Resolve the small-model slug. Order:
   //    a. conversation_group_meta.router_model_slug (per-group)
-  //    b. task_routing_rules('group_router').override_model.slug (global)
-  //    c. FALLBACK_MODEL_SLUG hardcoded baseline
+  //    b. FALLBACK_MODEL_SLUG hardcoded baseline
   let modelSlug: string | null = null;
 
   const { data: meta } = await supa
@@ -69,24 +68,6 @@ export async function runGroupRouter(
     .eq('conversation_id', conversationId)
     .maybeSingle();
   if (meta?.router_model_slug) modelSlug = meta.router_model_slug;
-
-  if (!modelSlug) {
-    // resolveRoute consults task_routing_rules itself, but only when
-    // we already have a slug to start with. Read the rule directly so
-    // we get the override slug to pass in.
-    const { data: rule } = await supa
-      .from('task_routing_rules')
-      .select(
-        `override_model:llm_models!task_routing_rules_override_model_fkey ( slug )`,
-      )
-      .eq('task_type', 'group_router')
-      .eq('enabled', true)
-      .order('match_priority', { ascending: true })
-      .limit(1)
-      .maybeSingle();
-    const ruleSlug = (rule?.override_model as { slug?: string } | null)?.slug;
-    if (ruleSlug) modelSlug = ruleSlug;
-  }
 
   if (!modelSlug) modelSlug = FALLBACK_MODEL_SLUG;
 

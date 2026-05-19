@@ -22,14 +22,17 @@ import { uuidv7 } from './ids';
 
 const MAX_TITLE_CHARS = 32;
 
+// Titling is a throwaway summarization — always run it on a cheap small
+// model rather than the (possibly expensive) model the bot chats with.
+const TITLE_MODEL_SLUG = 'google/gemma-4-31b-it';
+
 export interface RunTitleInput {
   env: Env;
   conversationId: string;
-  botModelId: string;
 }
 
 export async function runTitle(input: RunTitleInput): Promise<void> {
-  const { env, conversationId, botModelId } = input;
+  const { env, conversationId } = input;
   const supa = serviceClient(env);
   await ensurePromptOverridesLoaded(supa);
   const startedAt = Date.now();
@@ -57,7 +60,7 @@ export async function runTitle(input: RunTitleInput): Promise<void> {
     const { result: completion, route, routeTrace } = await withFallback(
       supa,
       env,
-      { modelSlug: botModelId, taskType: 'title', metadata: { turnId } },
+      { modelSlug: TITLE_MODEL_SLUG, taskType: 'title', metadata: { turnId } },
       (r) => {
         const request = {
           model: r.modelToCall,

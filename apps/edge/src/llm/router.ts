@@ -8,58 +8,49 @@ import { putCachedBalance } from '../lib/balance-cache';
 import { splitAndDebit } from '../lib/group-billing';
 import type { WebToolUsage } from '../lib/web-meter';
 import { uuidv7 } from '../lib/ids';
-import { kvConfig } from '../lib/kv-config';
 import { fetchGatewayCost, GATEWAY_COST_PENDING } from '../lib/ai-gateway';
 import type { AuditMessage } from '../queue/audit-types';
+import {
+  gatewayBaseUrl,
+  providerApiStyle,
+  resolveProviderSlug,
+  REALTIME_PRICING,
+  type ProviderApiStyle,
+  type ProviderSlug,
+} from './providers';
 import {
   usageFromCompletion,
   type ProviderUsageDetails,
 } from './provider-usage';
 
 export { usageFromCompletion } from './provider-usage';
+export type { ProviderApiStyle, ProviderSlug } from './providers';
 
-// LLM router — resolves a caller-supplied model slug to a concrete
-// (provider, alias) pair, hands back an OpenAI-compatible client
-// pointed at that provider, and provides the central audit-log writer
-// that records token usage and cost in a provider-aware way.
-//
-// Resolution order:
-//   1. Exact hit on llm_models.slug (canonical name registered in admin
-//      UI). Pick the highest-weight enabled alias for it.
-//   2. Exact hit on llm_model_aliases.provider_model_id (legacy /
-//      passthrough flow — bots that still hold a raw OpenRouter slug
-//      like "anthropic/claude-opus-4.5" land here once the admin
-//      registers that alias).
-//   3. Fallback: assume OpenRouter passthrough — return the OpenRouter
-//      provider with the slug used as-is. alias = null, so the audit row
-//      records provider_id but no model_alias_id and no cost (we don't
-//      know the price for an unregistered alias). This keeps the system
-//      working in the gap between deploying the router and curating
-//      every model in the admin UI.
+// LLM router — pure passthrough. A caller-supplied model slug is sent to
+// the upstream as-is; the only routing decision is which provider path on
+// the Cloudflare AI Gateway it goes through. `openai` → the native
+// Responses API; everything else → the OpenRouter passthrough (Chat
+// Completions). The provider is picked from the caller's preferProvider
+// hint (sourced from bots.model_provider) — see resolveProviderSlug.
 //
 // Auth is BYOK-on-gateway: provider API keys live in the AI Gateway
 // dashboard, never in worker env. Every LLM request carries the
-// cf-aig-authorization header (env.CF_AIG_RUN_TOKEN) to authenticate
-// to the gateway itself; the gateway then injects the stored upstream
-// provider key. No per-provider secret_ref — adding a provider in the
-// admin UI just needs its key stored in the gateway dashboard.
+// cf-aig-authorization header (env.CF_AIG_RUN_TOKEN) to authenticate to
+// the gateway itself; the gateway then injects the stored upstream key.
 
 export interface RouteResolveOpts {
   modelSlug: string;
-  // task_type that the caller will record in audit_log. When set, the
-  // router consults task_routing_rules for an enabled rule matching
-  // this task and may swap modelSlug / set preferProvider before doing
-  // the alias lookup. Without it, no rule lookup runs.
+  // task_type recorded in audit_log and tagged onto the gateway log.
   taskType?: string;
-  // Bias selection toward this provider slug. Used by per-task routing
-  // overrides ("ai_picks always uses openrouter") and by manual
-  // operator pin-to-provider overrides. Caller-supplied wins over rule.
+  // Provider hint — bots.model_provider or a manual pin. 'openai' selects
+  // the native Responses route; null / 'openrouter' / anything else uses
+  // the OpenRouter passthrough.
   preferProvider?: string;
-  // Used by fallback retries: skip these provider slugs.
+  // Used by fallback retries: a provider in this list is treated as
+  // unavailable, so resolveRoute throws NoRouteError for it.
   excludeProviders?: string[];
   // Caller context tagged onto each LLM request as the cf-aig-metadata
-  // header, so the AI Gateway dashboard / logs are sliceable by user and
-  // conversation. task_type is always tagged from `taskType` above.
+  // header so the AI Gateway logs are sliceable by user / conversation.
   // turnId stamps every LLM call of one logical turn with a shared id so
   // persistAuditMessage can sum that turn's cost from the gateway logs;
   // pass the same value as AuditCallOpts.auditId.
@@ -70,42 +61,12 @@ export interface RouteResolveOpts {
   };
 }
 
-export interface RouteAlias {
-  aliasId: string;
-  providerId: string;
-  providerSlug: string;
-  providerModelId: string;
-  inputPrice: number | null;
-  cachedInputPrice: number | null;
-  outputPrice: number | null;
-  // Voice call pricing — per-1M audio token, populated on the alias that
-  // backs the OpenAI Realtime path. Both null on text-only aliases.
-  audioInputPrice: number | null;
-  audioOutputPrice: number | null;
-}
-
-// Which OpenAI-dialect API a provider speaks. 'chat' = the universal
-// Chat Completions endpoint every provider supports (OpenRouter etc.).
-// 'responses' = OpenAI's native Responses API — only the OpenAI-native
-// provider (CF AI Gateway → OpenAI passthrough) handles it. Sourced from
-// llm_providers.config.api; absent/anything-else defaults to 'chat'.
-export type ProviderApiStyle = 'chat' | 'responses';
-
-export function providerApiStyle(config: unknown): ProviderApiStyle {
-  if (config && typeof config === 'object' && !Array.isArray(config)) {
-    if ((config as Record<string, unknown>).api === 'responses') return 'responses';
-  }
-  return 'chat';
-}
-
 export interface ResolvedRoute {
   client: OpenAI;
-  // The provider-specific id to put in completions.create({ model }).
-  // For canonical/aliased routes this is alias.providerModelId; for the
-  // OpenRouter passthrough fallback it's the raw slug the caller passed.
+  // The upstream model id to put in completions.create({ model }). In the
+  // passthrough model this is always the caller-supplied slug verbatim.
   modelToCall: string;
-  alias: RouteAlias | null;
-  provider: { id: string; slug: string; apiStyle: ProviderApiStyle };
+  provider: { slug: ProviderSlug; apiStyle: ProviderApiStyle };
 }
 
 export class NoRouteError extends Error {
@@ -115,93 +76,9 @@ export class NoRouteError extends Error {
   }
 }
 
-// Internal: shape of the alias join result from supabase-js. Exported
-// only so the pickAlias unit test can construct rows without going
-// through the DB.
-export type AliasJoinRow = {
-  id: string;
-  provider_id: string;
-  provider_model_id: string;
-  weight: number;
-  input_price: number | null;
-  cached_input_price: number | null;
-  output_price: number | null;
-  audio_input_price: number | null;
-  audio_output_price: number | null;
-  llm_providers:
-    | {
-        id: string;
-        slug: string;
-        base_url: string;
-        priority: number;
-        enabled: boolean;
-        config: unknown;
-      }
-    | null;
-};
-
-// Blended USD-per-1M-token reference price for the iOS model picker's
-// relative-cost display. Weighted 7:2:1 over (cache_hit, input, output),
-// reflecting the observed token mix on chat traffic where most input is
-// replay against a cached prefix and output is the smallest slice. When
-// an alias has no cached_input_price set, cache_hit falls back to
-// input_price (no discount applied). Returns null when either input or
-// output is missing. Not used for routing — see pickAlias.
-const BLEND_WEIGHT_CACHE_HIT = 0.7;
-const BLEND_WEIGHT_INPUT = 0.2;
-const BLEND_WEIGHT_OUTPUT = 0.1;
-
-export interface BlendablePrices {
-  inputPrice: number | null;
-  cachedInputPrice: number | null;
-  outputPrice: number | null;
-}
-
-export function blendedUsdPerMillion(p: BlendablePrices): number | null {
-  if (p.inputPrice == null || p.outputPrice == null) return null;
-  const cacheHit = p.cachedInputPrice ?? p.inputPrice;
-  return (
-    BLEND_WEIGHT_CACHE_HIT * cacheHit +
-    BLEND_WEIGHT_INPUT * p.inputPrice +
-    BLEND_WEIGHT_OUTPUT * p.outputPrice
-  );
-}
-
-export function pickAlias(
-  rows: AliasJoinRow[],
-  opts: { preferProvider?: string; excludeProviders?: string[] },
-): AliasJoinRow | null {
-  const candidates = rows.filter((r) => {
-    const p = r.llm_providers;
-    if (!p || !p.enabled) return false;
-    if (opts.preferProvider && p.slug !== opts.preferProvider) return false;
-    if (opts.excludeProviders?.includes(p.slug)) return false;
-    return true;
-  });
-  if (candidates.length === 0) return null;
-  // Ordering: weight DESC (admin's manual preference) → provider.priority
-  // ASC (registry tiebreaker) → alias id (stable output). weight=0 marks
-  // an alias as standby — kept out of the live pool unless it's all
-  // that's left after filtering.
-  //
-  // Cost-based "cheapest provider wins" routing is intentionally NOT done
-  // here anymore — per-cost / conditional routing belongs on the AI
-  // Gateway (Dynamic Routing), configured in the dashboard.
-  const live = candidates.filter((r) => r.weight > 0);
-  const pool = live.length > 0 ? live : candidates;
-  pool.sort((a, b) => {
-    if (b.weight !== a.weight) return b.weight - a.weight;
-    const pa = a.llm_providers!.priority;
-    const pb = b.llm_providers!.priority;
-    if (pa !== pb) return pa - pb;
-    return a.id.localeCompare(b.id);
-  });
-  return pool[0]!;
-}
-
 function buildClient(
   env: Env,
-  provider: { base_url: string; config: unknown },
+  baseURL: string,
   aigMetadata?: Record<string, string>,
 ): OpenAI {
   const token = env.CF_AIG_RUN_TOKEN;
@@ -211,12 +88,6 @@ function buildClient(
         'run token secret (gateway Settings → Authenticated Gateway)',
     );
   }
-  const cfg =
-    provider.config && typeof provider.config === 'object' && !Array.isArray(provider.config)
-      ? (provider.config as Record<string, unknown>)
-      : {};
-  const extraHeaders =
-    (cfg.extra_headers as Record<string, string> | undefined) ?? {};
   return new OpenAI({
     // BYOK-on-gateway: the real upstream key is stored in the AI Gateway
     // dashboard and injected by the gateway. The OpenAI SDK constructor
@@ -224,7 +95,7 @@ function buildClient(
     // — the provider Authorization header is deleted below (null) so the
     // gateway's stored BYOK key is what reaches the upstream.
     apiKey: 'cf-aig-byok',
-    baseURL: provider.base_url,
+    baseURL,
     defaultHeaders: {
       'HTTP-Referer': 'https://pendingname.com',
       'X-Title': 'PendingBot',
@@ -236,13 +107,12 @@ function buildClient(
       // cf-aig-metadata rides on every request the AI Gateway proxies,
       // tagging the gateway log so it's sliceable by task / user / conv.
       ...(aigMetadata ? { 'cf-aig-metadata': JSON.stringify(aigMetadata) } : {}),
-      ...extraHeaders,
     },
   });
 }
 
 // Assemble the cf-aig-metadata payload from the route opts. AI Gateway
-// caps custom metadata at 5 entries; we send at most 3.
+// caps custom metadata at 5 entries; we send at most 4.
 function aigMetadataFrom(opts: RouteResolveOpts): Record<string, string> | undefined {
   const m: Record<string, string> = {};
   if (opts.taskType) m.task_type = opts.taskType;
@@ -252,267 +122,27 @@ function aigMetadataFrom(opts: RouteResolveOpts): Record<string, string> | undef
   return Object.keys(m).length > 0 ? m : undefined;
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// Isolate-local caches for admin-curated routing config. All three
-// tables (task_routing_rules / llm_model_aliases / llm_providers) are
-// edited from the board admin roughly never and read on every LLM
-// dispatch — a small TTL keeps them hot on the worker isolate without
-// putting Supabase RTTs on the first-token path.
-//
-// 5 min was picked to match getMarkup + getThreshold patterns. An admin
-// price edit propagates within ~TTL across all isolates.
-// ─────────────────────────────────────────────────────────────────────
-const ROUTE_CACHE_TTL_MS = 5 * 60_000;
-const ROUTE_CACHE_TTL_S = ROUTE_CACHE_TTL_MS / 1000;
-
-interface CachedRule {
-  overrideSlug: string | null;
-  preferProvider: string | null;
-}
-const taskRuleCache = new Map<string, { at: number; value: CachedRule | null }>();
-
-interface CachedAliasSet {
-  byCanonical: AliasJoinRow[];
-  byPassthrough: AliasJoinRow[];
-}
-const aliasCache = new Map<string, { at: number; value: CachedAliasSet }>();
-
-interface CachedProvider {
-  id: string;
-  slug: string;
-  base_url: string;
-  priority: number;
-  enabled: boolean;
-  config: unknown;
-}
-const providerCache = new Map<string, { at: number; value: CachedProvider | null }>();
-
-/** For tests / forced refresh after an admin edit on the same isolate. */
-export function _resetRouteCaches(): void {
-  taskRuleCache.clear();
-  aliasCache.clear();
-  providerCache.clear();
-}
-
-async function getTaskRule(
-  supa: SupabaseClient,
-  env: Env,
-  taskType: string,
-): Promise<CachedRule | null> {
-  const now = Date.now();
-  const hit = taskRuleCache.get(taskType);
-  if (hit && now - hit.at < ROUTE_CACHE_TTL_MS) return hit.value;
-  const value = await kvConfig(
-    env,
-    `cfg:route-rule:${taskType}`,
-    ROUTE_CACHE_TTL_S,
-    async (): Promise<CachedRule | null> => {
-      const { data: rule } = await supa
-        .from('task_routing_rules')
-        .select(
-          `match_priority, override_model_id, prefer_provider_id,
-           override_model:llm_models!task_routing_rules_override_model_fkey ( slug ),
-           prefer_provider:llm_providers!task_routing_rules_prefer_provider_fkey ( slug )`,
-        )
-        .eq('task_type', taskType)
-        .eq('enabled', true)
-        .order('match_priority', { ascending: true })
-        .limit(1)
-        .maybeSingle();
-      return rule
-        ? {
-            overrideSlug: (rule.override_model as { slug?: string } | null)?.slug ?? null,
-            preferProvider: (rule.prefer_provider as { slug?: string } | null)?.slug ?? null,
-          }
-        : null;
-    },
-  );
-  taskRuleCache.set(taskType, { at: now, value });
-  return value;
-}
-
-async function getAliasSet(
-  supa: SupabaseClient,
-  env: Env,
-  slug: string,
-): Promise<CachedAliasSet> {
-  const now = Date.now();
-  const hit = aliasCache.get(slug);
-  if (hit && now - hit.at < ROUTE_CACHE_TTL_MS) return hit.value;
-  const value = await kvConfig(
-    env,
-    `cfg:route-alias:${slug}`,
-    ROUTE_CACHE_TTL_S,
-    async (): Promise<CachedAliasSet> => {
-      const ALIAS_COLS =
-        `id, provider_id, provider_model_id, weight,
-         input_price, cached_input_price, output_price,
-         audio_input_price, audio_output_price`;
-      const [{ data: byCanonical, error: e1 }, { data: byPassthrough, error: e2 }] =
-        await Promise.all([
-          supa
-            .from('llm_model_aliases')
-            .select(
-              `${ALIAS_COLS},
-               llm_providers ( id, slug, base_url, priority, enabled, config ),
-               llm_models!inner ( slug, enabled )`,
-            )
-            .eq('enabled', true)
-            .eq('llm_models.slug', slug),
-          supa
-            .from('llm_model_aliases')
-            .select(
-              `${ALIAS_COLS},
-               llm_providers ( id, slug, base_url, priority, enabled, config )`,
-            )
-            .eq('enabled', true)
-            .eq('provider_model_id', slug),
-        ]);
-      if (e1) throw new NoRouteError(`alias canonical lookup failed: ${e1.message}`);
-      if (e2) throw new NoRouteError(`alias passthrough lookup failed: ${e2.message}`);
-      return {
-        byCanonical: (byCanonical as AliasJoinRow[] | null) ?? [],
-        byPassthrough: (byPassthrough as AliasJoinRow[] | null) ?? [],
-      };
-    },
-  );
-  aliasCache.set(slug, { at: now, value });
-  return value;
-}
-
-async function getProvider(
-  supa: SupabaseClient,
-  env: Env,
-  slug: string,
-): Promise<CachedProvider | null> {
-  const now = Date.now();
-  const hit = providerCache.get(slug);
-  if (hit && now - hit.at < ROUTE_CACHE_TTL_MS) return hit.value;
-  const value = await kvConfig(
-    env,
-    `cfg:route-provider:${slug}`,
-    ROUTE_CACHE_TTL_S,
-    async (): Promise<CachedProvider | null> => {
-      const { data } = await supa
-        .from('llm_providers')
-        .select('id, slug, base_url, priority, enabled, config')
-        .eq('slug', slug)
-        .eq('enabled', true)
-        .maybeSingle();
-      return (data as CachedProvider | null) ?? null;
-    },
-  );
-  providerCache.set(slug, { at: now, value });
-  return value;
-}
-
 export async function resolveRoute(
   supa: SupabaseClient,
   env: Env,
   opts: RouteResolveOpts,
 ): Promise<ResolvedRoute> {
-  let slug = opts.modelSlug.trim();
+  void supa; // no DB lookup — kept for signature stability across callers
+  const slug = opts.modelSlug.trim();
   if (!slug) throw new NoRouteError('empty model slug');
-  let preferProvider = opts.preferProvider;
 
-  // Per-task override pass. Lowest-priority enabled rule wins; caller-
-  // supplied preferProvider overrides the rule's. Cached on the worker
-  // isolate per task_type for 5 min.
-  if (opts.taskType) {
-    const rule = await getTaskRule(supa, env, opts.taskType);
-    if (rule) {
-      if (rule.overrideSlug) slug = rule.overrideSlug;
-      if (!preferProvider && rule.preferProvider) preferProvider = rule.preferProvider;
-    }
-  }
-
-  // Native-endpoint route. When the caller pins a provider that speaks
-  // a provider-native API (config.api='responses' — the OpenAI passthrough),
-  // route straight to it: no alias row, no weight pick. The model slug is
-  // sent as-is as the upstream model id. Skipped when that provider is in
-  // excludeProviders (a fallback retry), so failure still degrades to the
-  // alias path below (OpenRouter).
-  if (preferProvider && !opts.excludeProviders?.includes(preferProvider)) {
-    const native = await getProvider(supa, env, preferProvider);
-    if (native && providerApiStyle(native.config) === 'responses') {
-      return {
-        client: buildClient(env, native, aigMetadataFrom(opts)),
-        modelToCall: slug,
-        alias: null,
-        provider: { id: native.id, slug: native.slug, apiStyle: 'responses' },
-      };
-    }
-  }
-
-  // Pull all aliases that match by canonical slug OR by passthrough
-  // provider_model_id, then partition in JS. Cached per slug.
-  const { byCanonical, byPassthrough } = await getAliasSet(supa, env, slug);
-
-  // Canonical hits take precedence over passthrough hits — once a slug
-  // is registered as a canonical model, "the same string also happens
-  // to be a provider_model_id somewhere" should not override the
-  // curated routing decision.
-  const merged = [...byCanonical];
-  if (merged.length === 0) {
-    merged.push(...byPassthrough);
-  }
-  const picked = pickAlias(merged, {
-    preferProvider,
-    excludeProviders: opts.excludeProviders,
-  });
-
-  if (picked && picked.llm_providers) {
-    const provider = picked.llm_providers;
-    return {
-      client: buildClient(env, provider, aigMetadataFrom(opts)),
-      modelToCall: picked.provider_model_id,
-      alias: {
-        aliasId: picked.id,
-        providerId: provider.id,
-        providerSlug: provider.slug,
-        providerModelId: picked.provider_model_id,
-        inputPrice: picked.input_price,
-        cachedInputPrice: picked.cached_input_price,
-        outputPrice: picked.output_price,
-        audioInputPrice: picked.audio_input_price,
-        audioOutputPrice: picked.audio_output_price,
-      },
-      provider: {
-        id: provider.id,
-        slug: provider.slug,
-        apiStyle: providerApiStyle(provider.config),
-      },
-    };
-  }
-
-  // Step 3 fallback: OpenRouter passthrough. We pick the row by slug
-  // explicitly — relying on it being seeded in 0030 — so that even
-  // unregistered models keep flowing while admin curates aliases.
-  if (preferProvider && preferProvider !== 'openrouter') {
+  const providerSlug = resolveProviderSlug(opts.preferProvider);
+  if (opts.excludeProviders?.includes(providerSlug)) {
     throw new NoRouteError(
-      `no enabled alias for ${slug} on provider ${preferProvider}`,
+      `provider ${providerSlug} is excluded and the passthrough router ` +
+        `has no alternative route for ${slug}`,
     );
   }
-  if (opts.excludeProviders?.includes('openrouter')) {
-    throw new NoRouteError(
-      `no enabled alias for ${slug} and OpenRouter passthrough is excluded`,
-    );
-  }
-  const openrouter = await getProvider(supa, env, 'openrouter');
-  if (!openrouter) {
-    throw new NoRouteError(
-      `no alias for ${slug} and OpenRouter passthrough provider is not configured`,
-    );
-  }
+
   return {
-    client: buildClient(env, openrouter, aigMetadataFrom(opts)),
+    client: buildClient(env, gatewayBaseUrl(env, providerSlug), aigMetadataFrom(opts)),
     modelToCall: slug,
-    alias: null,
-    provider: {
-      id: openrouter.id,
-      slug: openrouter.slug,
-      apiStyle: providerApiStyle(openrouter.config),
-    },
+    provider: { slug: providerSlug, apiStyle: providerApiStyle(providerSlug) },
   };
 }
 
@@ -561,37 +191,27 @@ export interface AuditCallOpts extends AuditUsage {
 
 const PER_MILLION = 1_000_000;
 
-// Local price-book cost — used ONLY for voice calls. OpenAI Realtime is
-// a direct iOS↔OpenAI WebRTC session: it never flows through the worker
-// or the AI Gateway, so there is no gateway log and no provider-reported
-// cost to read. Its cost is computed here from the alias audio prices ×
-// the audio token counts iOS reports. Every other task type goes
-// through the gateway and bills on providerCostUsd / the gateway log
-// (see persistAuditMessage) — no local computation.
-export function computeCost(alias: RouteAlias, usage: AuditUsage): number | null {
-  let known = false;
-  let cost = 0;
-  if (alias.inputPrice != null && usage.inputTokens) {
-    cost += (usage.inputTokens * alias.inputPrice) / PER_MILLION;
-    known = true;
-  }
-  if (alias.outputPrice != null && usage.outputTokens) {
-    cost += (usage.outputTokens * alias.outputPrice) / PER_MILLION;
-    known = true;
-  }
-  if (alias.cachedInputPrice != null && usage.cacheReadTokens) {
-    cost += (usage.cacheReadTokens * alias.cachedInputPrice) / PER_MILLION;
-    known = true;
-  }
-  if (alias.audioInputPrice != null && usage.audioInputTokens) {
-    cost += (usage.audioInputTokens * alias.audioInputPrice) / PER_MILLION;
-    known = true;
-  }
-  if (alias.audioOutputPrice != null && usage.audioOutputTokens) {
-    cost += (usage.audioOutputTokens * alias.audioOutputPrice) / PER_MILLION;
-    known = true;
-  }
-  return known ? cost : null;
+// Voice-call cost. OpenAI Realtime is a direct iOS↔OpenAI session that
+// never flows through the worker or the AI Gateway, so there is no
+// gateway log and no provider-reported cost to read. Its cost is computed
+// here from the hand-maintained REALTIME_PRICING table × the token counts
+// the realtime meter reports. Returns null for an unknown model slug —
+// the turn then settles with no LLM cost. Every other task type bills via
+// the gateway log (see persistAuditMessage).
+export function computeVoiceCost(
+  modelSlug: string | undefined,
+  usage: AuditUsage,
+): number | null {
+  const price = modelSlug ? REALTIME_PRICING[modelSlug] : undefined;
+  if (!price) return null;
+  return (
+    ((usage.inputTokens ?? 0) * price.inputPrice +
+      (usage.outputTokens ?? 0) * price.outputPrice +
+      (usage.cacheReadTokens ?? 0) * price.cachedInputPrice +
+      (usage.audioInputTokens ?? 0) * price.audioInputPrice +
+      (usage.audioOutputTokens ?? 0) * price.audioOutputPrice) /
+    PER_MILLION
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -618,7 +238,7 @@ function buildAuditMessage(
     auditId: opts.auditId ?? uuidv7(),
     latencyMs: Date.now() - opts.startedAt,
     route: route
-      ? { modelToCall: route.modelToCall, alias: route.alias, provider: route.provider }
+      ? { modelToCall: route.modelToCall, provider: route.provider }
       : null,
     opts,
   };
@@ -630,10 +250,9 @@ function buildAuditMessage(
 // persist so an audit/debit is never silently dropped.
 export async function enqueueAudit(
   env: Env,
-  // null when no alias was ever successfully resolved (every fallback
+  // null when no route was ever successfully resolved (every fallback
   // attempt errored out before getting an OK from any provider). The
-  // route_trace + status='error' still get persisted; provider_id /
-  // model_alias_id / cost_usd just stay null.
+  // route_trace + status='error' still get persisted; cost_usd stays null.
   route: ResolvedRoute | null,
   opts: AuditCallOpts,
 ): Promise<string> {
@@ -681,14 +300,13 @@ export async function persistAuditMessage(
   // Billing cost:
   //   1. providerCostUsd — the upstream's own reported figure
   //      (OpenRouter), summed across the turn by mergeProviderUsageDetails.
-  //   2. voice_call — local audio-price computation; OpenAI Realtime is
-  //      direct iOS↔OpenAI WebRTC, never gateway-proxied, so there is no
-  //      gateway log to read.
+  //   2. voice_call — local price-book computation; OpenAI Realtime never
+  //      flows through the gateway, so there is no gateway log to read.
   //   3. otherwise — the AI Gateway's computed cost, read from its Logs
   //      API by turn id (auditId is the value stamped into cf-aig-metadata).
   let llmCost = opts.providerCostUsd ?? null;
   if (llmCost == null && opts.taskType === 'voice_call') {
-    llmCost = route?.alias ? computeCost(route.alias, opts) : null;
+    llmCost = computeVoiceCost(route?.modelToCall, opts);
   } else if (
     llmCost == null &&
     opts.status === 'success' &&
@@ -737,7 +355,7 @@ export async function persistAuditMessage(
   // settle into a final state on insert.
   //   - 'free'    : no billable owner/group target at all
   //   - 'skipped' : has billable target but pnd == 0 (error / no usage / no
-  //                 alias pricing AND no tool spend)
+  //                 cost AND no tool spend)
   //   - 'pending' : will be flipped to billed/unbilled by billing_debit
   const initialBilling: 'free' | 'skipped' | 'pending' = !opts.userId && !isGroupTarget
     ? 'free'
@@ -779,8 +397,6 @@ export async function persistAuditMessage(
     latency_ms: latencyMs,
     status: opts.status,
     error_class: opts.errorClass ?? null,
-    provider_id: route?.provider.id ?? null,
-    model_alias_id: route?.alias?.aliasId ?? null,
     route_trace: (opts.routeTrace as Json | null) ?? null,
     tag: opts.tag ?? null,
     ...(opts.metadata ? { metadata: opts.metadata as Json } : {}),
@@ -876,25 +492,16 @@ async function isGroupConversation(
 // ============================================================
 //
 // withFallback wraps resolveRoute + a runner closure (the actual
-// completion call) in a retry loop. On a transient failure from one
-// provider it pushes that provider into excludeProviders and
-// re-resolves — picking the next-highest-weight enabled alias for the
-// same canonical model — and tries again. On a fatal failure (auth,
-// bad request, context length) it stops immediately because retrying
-// won't help.
-//
-// route_trace gets populated as we go so the audit row reflects the
-// full chain ("WR 503 → OR 200" or "WR 401 → OR 503 → exhausted").
-//
-// Streaming callers (bot-reply.ts) and multi-turn agent loops
-// (envelope-runner.ts) need different handling — once bytes have started
-// flowing to the client, fallback isn't safe. Those keep a single
-// resolveRoute() and don't call withFallback yet.
+// completion call) in a retry loop. On a transient failure it pushes the
+// provider into excludeProviders and re-resolves; in the passthrough
+// model there is one provider per route, so a transient failure
+// terminates the loop (resolveRoute throws NoRouteError for the excluded
+// provider). The wrapper is kept so callers get a uniform route_trace and
+// a single place that classifies errors.
 
 export interface RouteTraceEntry {
   attempt: number;
   provider_slug: string;
-  alias_id: string | null;
   status: 'ok' | 'transient_err' | 'fatal_err' | 'no_route';
   error_class?: string;
   error_message?: string;
@@ -1000,7 +607,6 @@ export async function withFallback<T>(
       routeTrace.push({
         attempt,
         provider_slug: '(no-route)',
-        alias_id: null,
         status: 'no_route',
         error_class: cls.errorClass,
         error_message: cls.message.slice(0, 200),
@@ -1017,7 +623,6 @@ export async function withFallback<T>(
       routeTrace.push({
         attempt,
         provider_slug: route.provider.slug,
-        alias_id: route.alias?.aliasId ?? null,
         status: 'ok',
         latency_ms: Date.now() - attemptStart,
       });
@@ -1027,7 +632,6 @@ export async function withFallback<T>(
       routeTrace.push({
         attempt,
         provider_slug: route.provider.slug,
-        alias_id: route.alias?.aliasId ?? null,
         status: cls.transient ? 'transient_err' : 'fatal_err',
         error_class: cls.errorClass,
         error_message: cls.message.slice(0, 200),
