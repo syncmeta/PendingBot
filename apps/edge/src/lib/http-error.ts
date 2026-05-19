@@ -56,7 +56,6 @@ export type ApiErrorCode =
   | 'attachment_conversation_mismatch'
   | 'attachment_object_missing'
   | 'attachment_too_large'
-  | 'attachment_unsupported_mime'
   | 'attachment_missing_field'
 
   // ── Conversations / messages ──────────────────────────────

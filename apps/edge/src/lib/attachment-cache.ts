@@ -32,6 +32,12 @@ export interface CachedAttachment {
   summary_status?: string | null;
   /// ISO 8601 timestamp; used for inventory ordering.
   created_at?: string | null;
+  /// MIME + original filename — drive how the prompt builder lists the
+  /// attachment (image inventory vs file inventory). Absent on cache
+  /// entries written before arbitrary-file support; treated as an image
+  /// then, which matches the legacy invariant (all attachments were images).
+  mime_type?: string | null;
+  filename?: string | null;
 }
 
 /// Parallel KV read for a list of attachment ids. Returns a Map with
@@ -132,6 +138,8 @@ export interface InventoryRow {
   tags: string[];
   status: string;
   created_at: string | null;
+  mime: string | null;
+  filename: string | null;
 }
 
 /// Fetch the historical attachment inventory for a conv — mirrors the
@@ -163,6 +171,8 @@ export async function resolveInventory(
         tags: c.tags ?? [],
         status: c.summary_status ?? 'pending',
         created_at: c.created_at ?? null,
+        mime: c.mime_type ?? null,
+        filename: c.filename ?? null,
       };
     });
     if (missing.length === 0) {
@@ -172,7 +182,7 @@ export async function resolveInventory(
     // to a Supabase fetch for just those, warm KV, then merge.
     const { data, error } = await supa
       .from('attachments')
-      .select('id, summary, tags, summary_status, created_at, user_id, conversation_id')
+      .select('id, summary, tags, summary_status, created_at, user_id, conversation_id, mime_type, filename')
       .in('id', missing);
     if (!error && data) {
       const rowMap = new Map(
@@ -184,6 +194,8 @@ export async function resolveInventory(
           created_at: string;
           user_id: string;
           conversation_id: string | null;
+          mime_type: string | null;
+          filename: string | null;
         }>).map((r) => [r.id, r]),
       );
       waitUntil(
@@ -196,6 +208,8 @@ export async function resolveInventory(
               tags: r.tags,
               summary_status: r.summary_status,
               created_at: r.created_at,
+              mime_type: r.mime_type,
+              filename: r.filename,
             }),
           ),
         ).then(() => undefined),
@@ -210,6 +224,8 @@ export async function resolveInventory(
           tags: r.tags ?? [],
           status: r.summary_status,
           created_at: r.created_at,
+          mime: r.mime_type,
+          filename: r.filename,
         };
       });
     }
@@ -220,7 +236,7 @@ export async function resolveInventory(
   // the list and the per-id rows.
   const { data, error } = await supa
     .from('attachments')
-    .select('id, summary, tags, summary_status, created_at, user_id, conversation_id')
+    .select('id, summary, tags, summary_status, created_at, user_id, conversation_id, mime_type, filename')
     .eq('conversation_id', conversationId)
     .order('created_at', { ascending: true })
     .limit(INVENTORY_CAP);
@@ -233,6 +249,8 @@ export async function resolveInventory(
     created_at: string;
     user_id: string;
     conversation_id: string | null;
+    mime_type: string | null;
+    filename: string | null;
   }>;
   waitUntil(
     (async () => {
@@ -245,6 +263,8 @@ export async function resolveInventory(
             tags: r.tags,
             summary_status: r.summary_status,
             created_at: r.created_at,
+            mime_type: r.mime_type,
+            filename: r.filename,
           }),
         ),
       );
@@ -257,6 +277,8 @@ export async function resolveInventory(
     tags: r.tags ?? [],
     status: r.summary_status,
     created_at: r.created_at,
+    mime: r.mime_type,
+    filename: r.filename,
   }));
 }
 
@@ -293,11 +315,17 @@ export async function resolveAttachmentOwnership(
   }
   const { data, error } = await supa
     .from('attachments')
-    .select('id, user_id, conversation_id')
+    .select('id, user_id, conversation_id, mime_type, filename')
     .in('id', misses);
   if (error || !data) return null;
   const dbMap = new Map(
-    (data as Array<{ id: string; user_id: string; conversation_id: string | null }>).map((r) => [r.id, r]),
+    (data as Array<{
+      id: string;
+      user_id: string;
+      conversation_id: string | null;
+      mime_type: string | null;
+      filename: string | null;
+    }>).map((r) => [r.id, r]),
   );
   // Warm KV for the misses we successfully fetched.
   waitUntil(
@@ -306,6 +334,8 @@ export async function resolveAttachmentOwnership(
         putCachedAttachment(env, r.id, {
           user_id: r.user_id,
           conversation_id: r.conversation_id,
+          mime_type: r.mime_type,
+          filename: r.filename,
         }),
       ),
     ).then(() => undefined),

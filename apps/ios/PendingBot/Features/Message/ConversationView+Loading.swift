@@ -416,6 +416,40 @@ extension ConversationView {
             self.tracesByUserMsgId.merge(tracesLoaded) { _, new in new }
             self.traceCitationsByUserMsgId.merge(traceCitationsLoaded) { _, new in new }
             self.attachmentIdsByMsgId.merge(attachmentIdsLoaded) { _, new in new }
+
+            // Per-id attachment metadata (mime + filename) so the bubble
+            // grid can render non-image files as icon+name chips, not
+            // broken image thumbnails. RLS on `attachments` is
+            // uploader-only — in a 1:1 bot chat every attachment is the
+            // caller's own, so they all resolve; a peer's file in a
+            // user_user conv won't, and falls back to the image guess.
+            let metaIds = Array(Set(attachmentIdsLoaded.values.flatMap { $0 }))
+            if !metaIds.isEmpty {
+                struct AttachmentMetaRow: Decodable {
+                    let id: String
+                    let mime_type: String
+                    let filename: String?
+                    let byte_size: Int?
+                }
+                if let metaRows: [AttachmentMetaRow] = try? await SupabaseStack.shared
+                    .from("attachments")
+                    .select("id, mime_type, filename, byte_size")
+                    .in("id", values: metaIds)
+                    .execute()
+                    .value {
+                    var meta: [String: Attachment] = [:]
+                    for r in metaRows {
+                        let isImage = r.mime_type.lowercased().hasPrefix("image/")
+                        meta[r.id] = Attachment(
+                            id: r.id, kind: isImage ? "image" : "file",
+                            mime: r.mime_type, size: r.byte_size,
+                            width: nil, height: nil,
+                            url: "/v1/uploads/\(r.id)", filename: r.filename
+                        )
+                    }
+                    self.attachmentMetaById.merge(meta) { _, new in new }
+                }
+            }
             LocalDatabase.shared.upsertMessages(cacheRows)
         } catch {
             // Network down + we have a cache: stay quiet (cached msgs still

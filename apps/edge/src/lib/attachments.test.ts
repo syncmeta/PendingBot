@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_ATTACHMENT_QUOTA_BYTES,
   MAX_UPLOAD_BYTES,
+  classifyAttachment,
   extForMime,
+  isPdfMime,
   isSupportedImageMime,
   r2KeyFor,
   r2KeyForHash,
@@ -124,9 +126,30 @@ describe('r2KeyForHash', () => {
   });
 });
 
+describe('isPdfMime', () => {
+  it('matches application/pdf, including a charset suffix', () => {
+    expect(isPdfMime('application/pdf')).toBe(true);
+    expect(isPdfMime('APPLICATION/PDF')).toBe(true);
+    expect(isPdfMime('application/pdf; charset=binary')).toBe(true);
+    expect(isPdfMime('image/png')).toBe(false);
+    expect(isPdfMime('application/zip')).toBe(false);
+  });
+});
+
+describe('classifyAttachment', () => {
+  it('routes images / pdf / other to the right kind', () => {
+    expect(classifyAttachment('image/png')).toBe('image');
+    expect(classifyAttachment('image/jpeg')).toBe('image');
+    expect(classifyAttachment('application/pdf')).toBe('pdf');
+    expect(classifyAttachment('application/zip')).toBe('file');
+    expect(classifyAttachment('text/x-python')).toBe('file');
+    expect(classifyAttachment('audio/mpeg')).toBe('file');
+  });
+});
+
 describe('exported constants', () => {
-  it('MAX_UPLOAD_BYTES is 10 MiB', () => {
-    expect(MAX_UPLOAD_BYTES).toBe(10 * 1024 * 1024);
+  it('MAX_UPLOAD_BYTES is 25 MiB', () => {
+    expect(MAX_UPLOAD_BYTES).toBe(25 * 1024 * 1024);
   });
 
   it('DEFAULT_ATTACHMENT_QUOTA_BYTES matches the 1 GiB migration seed', () => {

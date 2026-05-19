@@ -6,7 +6,11 @@ export const IMAGE_MIME_TO_EXT: Record<string, string> = {
   'image/webp': 'webp',
 };
 
-export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
+// Single-file upload cap. Applies to every MIME type — images, PDFs,
+// archives, audio, code, anything. 25 MB is the product-confirmed limit
+// (images used to be capped at 10 MB; this supersedes that). The
+// per-user cloud quota below is unchanged at 1 GiB.
+export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024; // 25 MB
 
 // Fallback per-user cloud cap when billing_config.default_attachment_quota_bytes
 // is missing, so a wiped config never silently disables the quota gate.
@@ -29,6 +33,23 @@ export async function sha256Hex(bytes: Uint8Array): Promise<string> {
 
 export function isSupportedImageMime(mime: string): boolean {
   return Object.prototype.hasOwnProperty.call(IMAGE_MIME_TO_EXT, mime.toLowerCase());
+}
+
+export function isPdfMime(mime: string): boolean {
+  return mime.toLowerCase().split(';')[0]!.trim() === 'application/pdf';
+}
+
+/// How an attachment is fed to the LLM:
+///   - 'image' → image_url content part (vision models) + vision summary
+///   - 'pdf'   → file content part, parsed natively by the provider
+///   - 'file'  → not sent inline; listed in the attachment inventory and
+///               fetched on demand via the read_attachment tool
+export type AttachmentKind = 'image' | 'pdf' | 'file';
+
+export function classifyAttachment(mime: string): AttachmentKind {
+  if (isSupportedImageMime(mime)) return 'image';
+  if (isPdfMime(mime)) return 'pdf';
+  return 'file';
 }
 
 export function extForMime(mime: string): string {

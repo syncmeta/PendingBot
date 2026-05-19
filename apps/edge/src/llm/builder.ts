@@ -2,6 +2,7 @@ import type {
   ChatCompletionMessageParam,
   ChatCompletionContentPart,
 } from 'openai/resources/chat/completions';
+import { classifyAttachment } from '../lib/attachments';
 import { loadPrompt } from '../i18n/prompts';
 import { DEFAULT_LOCALE, type Locale } from '../i18n/types';
 import type { SupabaseClient } from '../lib/supabase';
@@ -46,22 +47,33 @@ export interface BuildMessagesInput {
   /// sees the text turn — but the inventory section below carries the
   /// summary as a fallback signal.
   currentImageParts?: ChatCompletionContentPart[];
-  /// "[图 ID:abc12345] 摘要... 标签: ..." rows for every image visible
-  /// in this conv's recent history (typically last ~20 messages). Built
-  /// from attachments.summary by the caller and rendered as a system
-  /// context block. Empty array / undefined → section omitted.
+  /// File content parts ({type:'file'}) for the *current* user turn —
+  /// PDFs, which the provider parses natively. Appended to the user
+  /// message content array alongside currentImageParts. Non-PDF files
+  /// are never sent inline; they ride the attachment inventory only.
+  currentFileParts?: ChatCompletionContentPart[];
+  /// One row per attachment visible in this conv's recent history
+  /// (typically last ~30). Images render as "[图 ID:...] 摘要..." lines;
+  /// non-image files render as "[文件 ID:...] 文件名" lines in a separate
+  /// block. Built by the caller and rendered as system context blocks.
+  /// Empty array / undefined → sections omitted.
   attachmentInventory?: Array<{
     id: string;
     summary: string | null;
     tags: string[];
     /// 'pending' / 'failed' get a small note in the rendered line so the
     /// model knows the summary isn't available yet (and shouldn't
-    /// hallucinate). 'done' is the normal case.
+    /// hallucinate). 'done' is the normal case. Files are 'skipped'.
     status: 'pending' | 'done' | 'failed' | 'skipped' | string;
     /// Whether the row belongs to *this* turn's user message — flagged
     /// in rendering so the model can correlate "the user just sent this
     /// image" without us putting the summary inside the user turn.
     isCurrentTurn?: boolean;
+    /// MIME + original filename. mime drives image-vs-file classification
+    /// in the inventory; filename labels file rows. Absent (null) for
+    /// legacy image rows — treated as an image.
+    mime?: string | null;
+    filename?: string | null;
   }>;
   // IANA timezone from the client (e.g. "Asia/Shanghai"). Used to format
   // the *current* user turn's timestamp (server only knows UTC for "now").
@@ -155,36 +167,76 @@ function buildChatMemoSection(memo: string | null): string {
   ].join('\n');
 }
 
-// Render the attachment inventory as a system context block. Each row
-// becomes "- [图 ID:xxxxxxxx] 摘要... 标签: a, b" — the bare 8-char prefix
-// is what the model passes to read_attachment when it needs more detail
-// (the tool resolves either full UUID or any unique prefix).
+// Render the attachment inventory as system context blocks. Images and
+// non-image files are listed separately:
+//   - "## 历史图片附件" — "[图 ID:xxxxxxxx] 摘要... 标签: a, b" rows
+//   - "## 文件附件"     — "[文件 ID:xxxxxxxx] 文件名 (mime)" rows
+// The bare 8-char prefix is what the model passes to read_attachment
+// when it needs more detail (the tool resolves a full UUID or any
+// unique prefix).
 function buildAttachmentInventorySection(
   inv: BuildMessagesInput['attachmentInventory'],
 ): string {
   if (!inv || inv.length === 0) return '';
-  const lines = inv.map((a) => {
-    const idShort = a.id.slice(0, 8);
-    const idLabel = a.isCurrentTurn ? `${idShort}（本轮）` : idShort;
-    if (a.status !== 'done' || !a.summary) {
-      const why =
-        a.status === 'pending'
-          ? '摘要生成中'
-          : a.status === 'failed'
-            ? '摘要失败'
-            : a.status === 'skipped'
-              ? '摘要已跳过'
-              : `摘要状态:${a.status}`;
-      return `- [图 ID:${idLabel}] (${why}，无文字描述。需要的话可以调 read_attachment 直接看图。)`;
-    }
-    const tagPart = a.tags.length > 0 ? `  标签: ${a.tags.join(', ')}` : '';
-    return `- [图 ID:${idLabel}] ${a.summary}${tagPart}`;
-  });
-  return [
-    '## 历史图片附件',
-    '这个会话里出现过下列图片，已由识图模型预先生成摘要。如果摘要不够用、需要看图本身的细节，调用 `read_attachment` 工具（参数 `attachment_id` 填上面 [图 ID:xxx] 的 8 位前缀或完整 UUID，`question` 提具体问题）。',
-    ...lines,
-  ].join('\n');
+  // A row with no mime is a legacy image (all attachments were images
+  // before arbitrary-file support landed).
+  const isImageRow = (a: NonNullable<typeof inv>[number]) =>
+    !a.mime || classifyAttachment(a.mime) === 'image';
+  const imageRows = inv.filter(isImageRow);
+  const fileRows = inv.filter((a) => !isImageRow(a));
+
+  const sections: string[] = [];
+
+  if (imageRows.length > 0) {
+    const lines = imageRows.map((a) => {
+      const idShort = a.id.slice(0, 8);
+      const idLabel = a.isCurrentTurn ? `${idShort}（本轮）` : idShort;
+      if (a.status !== 'done' || !a.summary) {
+        const why =
+          a.status === 'pending'
+            ? '摘要生成中'
+            : a.status === 'failed'
+              ? '摘要失败'
+              : a.status === 'skipped'
+                ? '摘要已跳过'
+                : `摘要状态:${a.status}`;
+        return `- [图 ID:${idLabel}] (${why}，无文字描述。需要的话可以调 read_attachment 直接看图。)`;
+      }
+      const tagPart = a.tags.length > 0 ? `  标签: ${a.tags.join(', ')}` : '';
+      return `- [图 ID:${idLabel}] ${a.summary}${tagPart}`;
+    });
+    sections.push(
+      [
+        '## 历史图片附件',
+        '这个会话里出现过下列图片，已由识图模型预先生成摘要。如果摘要不够用、需要看图本身的细节，调用 `read_attachment` 工具（参数 `attachment_id` 填上面 [图 ID:xxx] 的 8 位前缀或完整 UUID，`question` 提具体问题）。',
+        ...lines,
+      ].join('\n'),
+    );
+  }
+
+  if (fileRows.length > 0) {
+    const lines = fileRows.map((a) => {
+      const idShort = a.id.slice(0, 8);
+      const idLabel = a.isCurrentTurn ? `${idShort}（本轮）` : idShort;
+      const name = a.filename || '未命名文件';
+      const mime = a.mime || '未知类型';
+      const isPdf = !!a.mime && classifyAttachment(a.mime) === 'pdf';
+      const hint =
+        a.isCurrentTurn && isPdf
+          ? '，已作为可解析文件直接附在本轮消息里'
+          : '';
+      return `- [文件 ID:${idLabel}] ${name} (${mime}${hint})`;
+    });
+    sections.push(
+      [
+        '## 文件附件',
+        '这个会话里出现过下列文件。要读取某个文件的内容，调用 `read_attachment` 工具（参数 `attachment_id` 填上面 [文件 ID:xxx] 的 8 位前缀或完整 UUID，`question` 写你想从文件里得到什么）。文本类文件会原样返回内容，PDF 会按问题解析；标注「已直接附在本轮消息里」的 PDF 你已经能直接看到，不必再调工具。',
+        ...lines,
+      ].join('\n'),
+    );
+  }
+
+  return sections.join('\n\n');
 }
 
 function buildLookbackSection(lookbacks: BuildMessagesInput['lookbacks']): string {
@@ -375,17 +427,21 @@ export async function buildMessages(
     }
   }
 
-  // Current user turn — outside the cache (always fresh). When the main
-  // model has vision and the caller passed image parts, send a content
-  // array so the model reads images directly. Otherwise plain text — the
-  // attachment-inventory section above carries the summary.
+  // Current user turn — outside the cache (always fresh). When the
+  // caller passed image parts (main model has vision) and/or file parts
+  // (PDFs), send a content array so the model reads them directly.
+  // Otherwise plain text — the attachment-inventory section above
+  // carries the summary / file listing.
   const userText = withTimeHint(newMessage, nowIso, clientTz);
-  if (input.currentImageParts && input.currentImageParts.length > 0) {
-    const parts: ChatCompletionContentPart[] = [
-      { type: 'text', text: userText },
-      ...input.currentImageParts,
-    ];
-    messages.push({ role: 'user', content: parts });
+  const currentParts: ChatCompletionContentPart[] = [
+    ...(input.currentImageParts ?? []),
+    ...(input.currentFileParts ?? []),
+  ];
+  if (currentParts.length > 0) {
+    messages.push({
+      role: 'user',
+      content: [{ type: 'text', text: userText }, ...currentParts],
+    });
   } else {
     messages.push({ role: 'user', content: userText });
   }

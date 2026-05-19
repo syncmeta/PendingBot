@@ -18,6 +18,9 @@ struct ComposerView: View {
     @Binding var pending: [PendingAttachment]
     @Binding var photoItems: [PhotosPickerItem]
     @Binding var cameraImage: UIImage?
+    /// Flipped true by the "文件" action tile; the host owns the
+    /// `.fileImporter` sheet bound to it.
+    @Binding var showFileImporter: Bool
     var canSend: Bool
     var onSend: () -> Void
     /// True while a bot reply is streaming. Send button morphs into a stop
@@ -118,6 +121,7 @@ struct ComposerView: View {
                 ChatActionSheet(
                     photoItems: $photoItems,
                     cameraImage: $cameraImage,
+                    onPickFile: { showFileImporter = true },
                     onDismiss: { showActions = false },
                     onLookback: onLookback
                 )
@@ -145,10 +149,7 @@ struct ComposerView: View {
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
                             .fill(Theme.Palette.surfaceMuted)
                             .frame(width: 64, height: 64)
-                            .overlay(
-                                Image(systemName: "photo")
-                                    .foregroundStyle(Theme.Palette.inkMuted)
-                            )
+                            .overlay(pendingCellContent(att))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                                     .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
@@ -169,6 +170,29 @@ struct ComposerView: View {
             .padding(.top, 8)
         }
         .background(Theme.Palette.canvas)
+    }
+
+    /// 64×64 thumbnail content for one pending attachment — a plain icon
+    /// for images, an icon + truncated filename for files.
+    @ViewBuilder
+    private func pendingCellContent(_ att: PendingAttachment) -> some View {
+        if att.isImage {
+            Image(systemName: "photo")
+                .foregroundStyle(Theme.Palette.inkMuted)
+        } else {
+            VStack(spacing: 3) {
+                Image(systemName: "doc.fill")
+                    .font(.system(size: 20))
+                    .foregroundStyle(Theme.Palette.accent)
+                Text(att.filename ?? "文件")
+                    .font(.system(size: 9))
+                    .foregroundStyle(Theme.Palette.inkMuted)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .truncationMode(.middle)
+            }
+            .padding(.horizontal, 4)
+        }
     }
 }
 

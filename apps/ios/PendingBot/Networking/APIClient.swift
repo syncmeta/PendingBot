@@ -89,6 +89,16 @@ struct APIClient {
         return try await send(req)
     }
 
+    // MARK: - Raw download
+
+    /// GET a path and return the raw response body — used for
+    /// auth-gated binary payloads like /v1/uploads/:id (file attachments).
+    func download(_ path: String) async throws -> Data {
+        let req = try await makeRequest(
+            method: "GET", path: path, query: [], body: nil as Empty?, accept: "*/*")
+        return try await sendRaw(req)
+    }
+
     // MARK: - Internals
 
     /// Pulls a fresh JWT from supabase-swift. The auth client refreshes

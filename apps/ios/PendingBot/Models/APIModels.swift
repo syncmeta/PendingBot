@@ -125,6 +125,12 @@ struct Attachment: Codable, Identifiable, Hashable {
     let width: Int?
     let height: Int?
     let url: String      // relative path, e.g. /uploads/<id>
+    /// Original filename — set for non-image files so the bubble can
+    /// render an icon+name chip. nil for images (rendered from bytes).
+    var filename: String? = nil
+
+    /// True when this attachment should render as an inline image.
+    var isImage: Bool { mime.lowercased().hasPrefix("image/") }
 }
 
 /// One web-search citation attached to a bot message. Stored as a JSON array
@@ -175,6 +181,9 @@ struct UploadResponse: Codable {
     let size: Int
     let width: Int?
     let height: Int?
+    /// Original filename echoed back by /v1/upload. nil for legacy
+    /// responses / image uploads where the name doesn't matter.
+    let filename: String?
 }
 
 struct MeProfile: Codable {

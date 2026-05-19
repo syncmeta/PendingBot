@@ -91,11 +91,11 @@ export const CHAT_TOOLS: ChatCompletionTool[] = [
         properties: {
           attachment_id: {
             type: 'string',
-            description: '附件 ID（系统提示词里 [图 ID:xxxxxxxx] 的 8 位前缀，或完整 UUID）。前缀必须能在当前会话里唯一定位一张图。',
+            description: '附件 ID（系统提示词里 [图 ID:xxxxxxxx] 或 [文件 ID:xxxxxxxx] 的 8 位前缀，或完整 UUID）。前缀必须能在当前会话里唯一定位一个附件。',
           },
           question: {
             type: 'string',
-            description: '想知道关于这张图的什么。问得越具体回答越针对。例：「图中文字内容是什么」「人物穿什么衣服」「左下角的图表数据」。1–500 字。',
+            description: '想从这个附件里得到什么。图片/PDF 会按问题解析，问得越具体越好（例：「图中文字内容是什么」「这份文件的结论是什么」）；其它文本类文件会原样返回内容，问题仅作参考。1–500 字。',
           },
         },
         required: ['attachment_id', 'question'],
