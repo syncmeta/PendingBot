@@ -118,6 +118,7 @@ export type Database = {
           content_sha256: string | null
           conversation_id: string | null
           created_at: string
+          filename: string | null
           height: number | null
           id: string
           metadata: Json
@@ -138,6 +139,7 @@ export type Database = {
           content_sha256?: string | null
           conversation_id?: string | null
           created_at?: string
+          filename?: string | null
           height?: number | null
           id?: string
           metadata?: Json
@@ -158,6 +160,7 @@ export type Database = {
           content_sha256?: string | null
           conversation_id?: string | null
           created_at?: string
+          filename?: string | null
           height?: number | null
           id?: string
           metadata?: Json
