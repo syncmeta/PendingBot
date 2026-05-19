@@ -16,6 +16,7 @@ import {
 } from '../llm/provider-usage';
 import { ensurePromptOverridesLoaded, getPrompt } from '../llm/prompt-loader';
 import { estimateTokens } from '../llm/token-estimate';
+import { modelContextWindow } from '../llm/catalog';
 import { uuidv7 } from './ids';
 import { getBotMemory } from './memory';
 import { mcpClient } from '../mcp/client';
@@ -251,7 +252,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
       throw new Error(`bot lookup failed: ${botRes.error?.message ?? 'no row'}`);
     }
 
-    const [convIdsRes, botMemory, modelCtxRes] = await Promise.all([
+    const [convIdsRes, botMemory, modelCtx] = await Promise.all([
       supa
         .from('conversations')
         .select('id')
@@ -259,16 +260,12 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
         .eq('bot_id', botId)
         .eq('conversation_type', 'user_bot'),
       getBotMemory(env, botId),
-      supa
-        .from('llm_models')
-        .select('context_window')
-        .eq('slug', botRes.data.model_id)
-        .maybeSingle(),
+      modelContextWindow(botRes.data.model_id),
     ]);
 
     const conversationIds = (convIdsRes.data ?? []).map((r) => r.id as string);
     if (conversationIds.length === 0) conversationIds.push(conversationId);
-    const contextWindow = modelCtxRes.data?.context_window ?? FALLBACK_CONTEXT_WINDOW;
+    const contextWindow = modelCtx ?? FALLBACK_CONTEXT_WINDOW;
     const tokenBudget = Math.max(
       1024,
       Math.floor((contextWindow * settings.historyTokenBudgetPct) / 100),

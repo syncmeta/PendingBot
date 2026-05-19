@@ -345,7 +345,7 @@ export class RealtimeMeterDO {
   // with code 1006 and no frames. A Cloudflare Worker can't sustain a
   // WebSocket subrequest to the AI Gateway — text LLM traffic works
   // because it's plain HTTP. Voice metering therefore stays local: the
-  // DO reads response.done usage and computeCost prices it.
+  // DO reads response.done usage and computeVoiceCost prices it.
   private proxyUpstreamRequest(
     model: string,
     openaiKey: string,
@@ -392,7 +392,7 @@ export class RealtimeMeterDO {
 
     // Split the input usage into the three billable buckets. text_tokens
     // and audio_tokens are TOTALS (cached included); cached_tokens_details
-    // says how much of the cache hit was text vs audio. computeCost
+    // says how much of the cache hit was text vs audio. computeVoiceCost
     // charges cacheReadTokens at the cached rate and inputTokens /
     // audioInputTokens at full rate, so the full-rate buckets must be the
     // NON-cached remainder — otherwise the cached slice is billed twice.

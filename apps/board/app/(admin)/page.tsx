@@ -12,29 +12,9 @@ export default function HomePage() {
           desc="DAU / 留存 / Bot 排行 / 对话与消息分布（产品侧）"
         />
         <Card
-          href="/providers"
-          title="Providers"
-          desc="OpenRouter / OpenAI 等 provider 启停、密钥引用、健康"
-        />
-        <Card
-          href="/models"
-          title="Models"
-          desc="canonical 模型注册（slug, capabilities, EOL）"
-        />
-        <Card
-          href="/aliases"
-          title="Aliases"
-          desc="(model × provider) 映射 + 价格 + 路由权重"
-        />
-        <Card
           href="/web-tool-prices"
           title="Web tool prices"
           desc="搜索 / 抓取服务的批发单价（Brave、Tavily、Exa、Firecrawl 等）"
-        />
-        <Card
-          href="/routing-rules"
-          title="Routing rules"
-          desc="按 task_type 覆盖 model / provider（让 'title' 走 cheap 等）"
         />
         <Card href="/users" title="Users & Quota" desc="用户配额、月度预算、异常用量" />
         <Card href="/admin-audit" title="Admin Audit" desc="管理操作留痕（谁、什么、何时）" />

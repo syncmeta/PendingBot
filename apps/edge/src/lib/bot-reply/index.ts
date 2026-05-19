@@ -30,9 +30,9 @@ import { resolveLocale } from '../../i18n/locale';
 import {
   loadAttachmentAsFilePart,
   loadAttachmentAsImagePart,
-  modelSupportsVision,
   summarizeAttachments,
 } from '../../llm/vision';
+import { modelSupportsVision } from '../../llm/catalog';
 import { getBotMemory, getUserMemory } from '../memory';
 import { resolveInventory } from '../attachment-cache';
 import { classifyAttachment, sha256Hex, r2KeyForHash } from '../attachments';
@@ -350,7 +350,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   //   idempotent — the async hook in routes/messages.ts may already be
   //   running; this just guarantees we don't ship without summaries.
   const visionOverride = input.visionModelOverride ?? null;
-  const mainHasVision = await modelSupportsVision(supa, bot.model_id);
+  const mainHasVision = await modelSupportsVision(bot.model_id);
   const currentSet = new Set(input.currentAttachmentIds ?? []);
 
   // History inventory pull. KV-first via per-conv id list + per-id

@@ -1,5 +1,4 @@
 import type { Env } from '../types';
-import { syncModelPricing } from './model-pricing';
 import { cleanupOrphanUploads } from './uploads-cleanup';
 import { reapStuckEnvelopes } from './envelope-reaper';
 import { finalizeExpiredAccountDeletions } from './account-deletion-sweep';
@@ -17,10 +16,6 @@ import { finalizeExpiredAccountDeletions } from './account-deletion-sweep';
 // The hourly "5 * * * *" idle-sandbox sweep was retired when the
 // code-exec tool moved off Daytona — the Cloudflare Sandbox SDK
 // container auto-sleeps on its own (see lib/sandbox.ts).
-//
-// model_pricing sync ("0 3 * * 1") was dropped to stay under the account
-// cron-trigger cap (5). syncModelPricing() stays exported as a callable
-// so admin can fire it manually via the board / wrangler if needed.
 //
 // Each task swallows its own errors so one failure doesn't poison sibling
 // jobs. Cron tasks log to CF Observability — check there if a job goes dark.

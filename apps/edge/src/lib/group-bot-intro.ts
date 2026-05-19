@@ -23,7 +23,7 @@ import type { Env } from '../types';
 // tool (M9 polish wires the tool surface). The point of the initial
 // row is "router knows the bot exists and roughly what it's about".
 
-const MODEL_FALLBACK = 'google/gemma-3-27b-it';
+const MODEL_FALLBACK = 'google/gemma-4-31b-it';
 const MAX_DESC_TOKENS = 200;
 
 export async function generateInitialBotDescription(input: {
@@ -69,22 +69,9 @@ export async function generateInitialBotDescription(input: {
   }
 
   // Pick the same router model the group uses for classification —
-  // semantically this IS the same model class. Falls through the same
-  // priority chain as group-router.ts.
-  let modelSlug: string | null = meta?.router_model_slug ?? null;
-  if (!modelSlug) {
-    const { data: rule } = await supa
-      .from('task_routing_rules')
-      .select(
-        `override_model:llm_models!task_routing_rules_override_model_fkey ( slug )`,
-      )
-      .eq('task_type', 'group_router')
-      .eq('enabled', true)
-      .order('match_priority', { ascending: true })
-      .limit(1)
-      .maybeSingle();
-    modelSlug = (rule?.override_model as { slug?: string } | null)?.slug ?? MODEL_FALLBACK;
-  }
+  // semantically this IS the same model class. Per-group override wins;
+  // otherwise the MODEL_FALLBACK baseline, same as group-router.ts.
+  const modelSlug = meta?.router_model_slug ?? MODEL_FALLBACK;
 
   const groupTitle = (meta?.title as string | null) || '一个群聊';
   const botName = bot.display_name as string;

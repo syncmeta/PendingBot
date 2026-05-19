@@ -203,10 +203,8 @@ export type Database = {
           input_tokens: number
           latency_ms: number | null
           metadata: Json
-          model_alias_id: string | null
           model_id: string
           output_tokens: number
-          provider_id: string | null
           route_trace: Json | null
           status: string | null
           tag: string | null
@@ -231,10 +229,8 @@ export type Database = {
           input_tokens?: number
           latency_ms?: number | null
           metadata?: Json
-          model_alias_id?: string | null
           model_id: string
           output_tokens?: number
-          provider_id?: string | null
           route_trace?: Json | null
           status?: string | null
           tag?: string | null
@@ -259,10 +255,8 @@ export type Database = {
           input_tokens?: number
           latency_ms?: number | null
           metadata?: Json
-          model_alias_id?: string | null
           model_id?: string
           output_tokens?: number
-          provider_id?: string | null
           route_trace?: Json | null
           status?: string | null
           tag?: string | null
@@ -277,20 +271,6 @@ export type Database = {
             columns: ["conversation_id"]
             isOneToOne: false
             referencedRelation: "conversations"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "audit_log_model_alias_id_fkey"
-            columns: ["model_alias_id"]
-            isOneToOne: false
-            referencedRelation: "llm_model_aliases"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "audit_log_provider_id_fkey"
-            columns: ["provider_id"]
-            isOneToOne: false
-            referencedRelation: "llm_providers"
             referencedColumns: ["id"]
           },
         ]
@@ -1256,165 +1236,6 @@ export type Database = {
         }
         Relationships: []
       }
-      llm_model_aliases: {
-        Row: {
-          audio_input_price: number | null
-          audio_output_price: number | null
-          cached_input_price: number | null
-          config: Json
-          created_at: string
-          currency: string
-          enabled: boolean
-          id: string
-          input_price: number
-          model_id: string
-          notes: string | null
-          output_price: number
-          provider_id: string
-          provider_model_id: string
-          updated_at: string
-          weight: number
-        }
-        Insert: {
-          audio_input_price?: number | null
-          audio_output_price?: number | null
-          cached_input_price?: number | null
-          config?: Json
-          created_at?: string
-          currency?: string
-          enabled?: boolean
-          id?: string
-          input_price: number
-          model_id: string
-          notes?: string | null
-          output_price: number
-          provider_id: string
-          provider_model_id: string
-          updated_at?: string
-          weight?: number
-        }
-        Update: {
-          audio_input_price?: number | null
-          audio_output_price?: number | null
-          cached_input_price?: number | null
-          config?: Json
-          created_at?: string
-          currency?: string
-          enabled?: boolean
-          id?: string
-          input_price?: number
-          model_id?: string
-          notes?: string | null
-          output_price?: number
-          provider_id?: string
-          provider_model_id?: string
-          updated_at?: string
-          weight?: number
-        }
-        Relationships: [
-          {
-            foreignKeyName: "llm_model_aliases_model_id_fkey"
-            columns: ["model_id"]
-            isOneToOne: false
-            referencedRelation: "llm_models"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "llm_model_aliases_provider_id_fkey"
-            columns: ["provider_id"]
-            isOneToOne: false
-            referencedRelation: "llm_providers"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      llm_models: {
-        Row: {
-          capabilities: Json
-          context_window: number | null
-          created_at: string
-          deprecated_at: string | null
-          display_name: string
-          enabled: boolean
-          family: string | null
-          id: string
-          max_output_tokens: number | null
-          notes: string | null
-          openrouter_canonical_slug: string | null
-          slug: string
-          updated_at: string
-        }
-        Insert: {
-          capabilities?: Json
-          context_window?: number | null
-          created_at?: string
-          deprecated_at?: string | null
-          display_name: string
-          enabled?: boolean
-          family?: string | null
-          id?: string
-          max_output_tokens?: number | null
-          notes?: string | null
-          openrouter_canonical_slug?: string | null
-          slug: string
-          updated_at?: string
-        }
-        Update: {
-          capabilities?: Json
-          context_window?: number | null
-          created_at?: string
-          deprecated_at?: string | null
-          display_name?: string
-          enabled?: boolean
-          family?: string | null
-          id?: string
-          max_output_tokens?: number | null
-          notes?: string | null
-          openrouter_canonical_slug?: string | null
-          slug?: string
-          updated_at?: string
-        }
-        Relationships: []
-      }
-      llm_providers: {
-        Row: {
-          base_url: string
-          config: Json
-          created_at: string
-          display_name: string
-          enabled: boolean
-          id: string
-          notes: string | null
-          priority: number
-          slug: string
-          updated_at: string
-        }
-        Insert: {
-          base_url: string
-          config?: Json
-          created_at?: string
-          display_name: string
-          enabled?: boolean
-          id?: string
-          notes?: string | null
-          priority?: number
-          slug: string
-          updated_at?: string
-        }
-        Update: {
-          base_url?: string
-          config?: Json
-          created_at?: string
-          display_name?: string
-          enabled?: boolean
-          id?: string
-          notes?: string | null
-          priority?: number
-          slug?: string
-          updated_at?: string
-        }
-        Relationships: []
-      }
       mcp_servers: {
         Row: {
           auth_header_name: string | null
@@ -1570,33 +1391,6 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
-      }
-      model_pricing: {
-        Row: {
-          cached_input_price: number | null
-          currency: string
-          input_price: number
-          model_id: string
-          output_price: number
-          updated_at: string
-        }
-        Insert: {
-          cached_input_price?: number | null
-          currency?: string
-          input_price: number
-          model_id: string
-          output_price: number
-          updated_at?: string
-        }
-        Update: {
-          cached_input_price?: number | null
-          currency?: string
-          input_price?: number
-          model_id?: string
-          output_price?: number
-          updated_at?: string
-        }
-        Relationships: []
       }
       place_names: {
         Row: {
@@ -1939,57 +1733,6 @@ export type Database = {
             columns: ["forked_from"]
             isOneToOne: false
             referencedRelation: "skills"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      task_routing_rules: {
-        Row: {
-          created_at: string
-          enabled: boolean
-          id: string
-          match_priority: number
-          notes: string | null
-          override_model_id: string | null
-          prefer_provider_id: string | null
-          task_type: string
-          updated_at: string
-        }
-        Insert: {
-          created_at?: string
-          enabled?: boolean
-          id?: string
-          match_priority?: number
-          notes?: string | null
-          override_model_id?: string | null
-          prefer_provider_id?: string | null
-          task_type: string
-          updated_at?: string
-        }
-        Update: {
-          created_at?: string
-          enabled?: boolean
-          id?: string
-          match_priority?: number
-          notes?: string | null
-          override_model_id?: string | null
-          prefer_provider_id?: string | null
-          task_type?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "task_routing_rules_override_model_fkey"
-            columns: ["override_model_id"]
-            isOneToOne: false
-            referencedRelation: "llm_models"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "task_routing_rules_prefer_provider_fkey"
-            columns: ["prefer_provider_id"]
-            isOneToOne: false
-            referencedRelation: "llm_providers"
             referencedColumns: ["id"]
           },
         ]
@@ -2395,31 +2138,14 @@ export type Database = {
           error_count: number | null
           fallback_count: number | null
           input_tokens: number | null
-          model_alias_id: string | null
           model_id: string | null
           output_tokens: number | null
-          provider_id: string | null
           request_count: number | null
           task_type: string | null
           tool_cost_usd: number | null
           user_id: string | null
         }
-        Relationships: [
-          {
-            foreignKeyName: "audit_log_model_alias_id_fkey"
-            columns: ["model_alias_id"]
-            isOneToOne: false
-            referencedRelation: "llm_model_aliases"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "audit_log_provider_id_fkey"
-            columns: ["provider_id"]
-            isOneToOne: false
-            referencedRelation: "llm_providers"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
       v_audit_monthly: {
         Row: {
@@ -2432,21 +2158,12 @@ export type Database = {
           model_id: string | null
           month: string | null
           output_tokens: number | null
-          provider_id: string | null
           request_count: number | null
           task_type: string | null
           tool_cost_usd: number | null
           user_id: string | null
         }
-        Relationships: [
-          {
-            foreignKeyName: "audit_log_provider_id_fkey"
-            columns: ["provider_id"]
-            isOneToOne: false
-            referencedRelation: "llm_providers"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
     }
     Functions: {

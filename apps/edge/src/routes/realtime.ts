@@ -377,8 +377,6 @@ realtimeRoutes.post('/session', async (c) => {
       transport: 'websocket',
       ws_path: `/v1/realtime/ws?session_id=${sessionId}`,
       model: route.modelToCall,
-      alias_id: route.alias?.aliasId ?? null,
-      provider_id: route.provider.id,
       min_threshold: minThreshold,
       balance_credits: balanceCredits,
     });
@@ -563,8 +561,6 @@ async function mintOpenAISession(
     session_id: args.sessionId,
     client_secret: { value: clientSecret, expires_at: expiresAt },
     model: data.session?.model ?? data.model ?? args.route.modelToCall,
-    alias_id: args.route.alias?.aliasId ?? null,
-    provider_id: args.route.provider.id,
     min_threshold: args.minThreshold,
     balance_credits: args.balanceCredits,
     // 'webrtc_turn' only — the iOS client feeds these into its
