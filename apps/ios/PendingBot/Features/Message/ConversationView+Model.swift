@@ -1,9 +1,9 @@
 import Foundation
 
 // Model-pick + PATCH plumbing for the conversation settings sheet.
-// Three endpoints, four functions:
 //   /v1/conversations/:id  — per-conv `model_slug`     (chat model)
 //   /v1/conversations/:id  — per-conv `vision_model_slug`
+//   /v1/conversations/:id  — per-conv `voice_model_slug`
 //   /v1/bots/:id          — bot's default `model_id`   (broader scope)
 
 extension ConversationView {
@@ -49,6 +49,20 @@ extension ConversationView {
         do {
             try await api.patchVoid("v1/conversations/\(conversation.id)",
                                     body: Body(vision_model_slug: slug))
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    /// PATCH the per-conv realtime voice-model pin. nil = follow the
+    /// bot's default. Server re-uses the model-pin gate (private bot
+    /// creator only).
+    func patchConversationVoiceModel(slug: String?) async {
+        guard let api else { return }
+        struct Body: Encodable { let voice_model_slug: String? }
+        do {
+            try await api.patchVoid("v1/conversations/\(conversation.id)",
+                                    body: Body(voice_model_slug: slug))
         } catch {
             self.error = error.localizedDescription
         }

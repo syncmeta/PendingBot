@@ -668,6 +668,9 @@ struct ConversationView: View {
                     },
                     onApplyVisionModel: { slug in
                         Task { await patchConversationVisionModel(slug: slug) }
+                    },
+                    onApplyVoiceModel: { slug in
+                        Task { await patchConversationVoiceModel(slug: slug) }
                     }
                 )
             }

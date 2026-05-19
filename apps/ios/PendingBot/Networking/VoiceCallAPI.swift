@@ -133,19 +133,16 @@ struct VoiceCallAPI {
     func createSession(
         conversationId: String,
         transport: String,
-        model: String,
     ) async throws -> SessionResponse {
         struct Body: Encodable {
             let conversation_id: String
             let transport: String
-            let model: String
         }
         return try await callDecoding(
             path: "/v1/realtime/session",
             body: Body(
                 conversation_id: conversationId,
                 transport: transport,
-                model: model,
             ),
         )
     }
