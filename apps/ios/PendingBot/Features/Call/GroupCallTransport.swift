@@ -49,6 +49,10 @@ final class GroupCallTransport: NSObject {
 
     private var didSignalConnected = false
 
+    /// Periodically logs RTP send/receive counters — the decisive signal
+    /// for "is iOS actually transmitting mic audio to the SFU".
+    private var statsTimer: Timer?
+
     /// Resolved when ICE gathering completes (or times out) so the whole
     /// offer SDP — candidates included — can be posted in one HTTP call.
     private var iceGatheringContinuation: CheckedContinuation<Void, Never>?
@@ -100,6 +104,7 @@ final class GroupCallTransport: NSObject {
             try await peerConnection.setLocalDescription(offer)
             let offerSDP = await gatheredOfferSDP()
             print("[group-voice] offer ready — \(Self.sdpSummary(offerSDP))")
+            print("[group-voice] ===OFFER SDP===\n\(offerSDP)\n===END OFFER===")
 
             let join = try await api.groupVoiceJoin(
                 conversationId: conversationId,
@@ -151,7 +156,37 @@ final class GroupCallTransport: NSObject {
         }
     }
 
+    /// Poll RTP stats every few seconds — `packetsSent` on the audio
+    /// outbound-rtp tells us definitively whether the mic is reaching the
+    /// SFU; `packetsReceived` whether bot audio is coming back.
+    private func startStatsLogging() {
+        statsTimer?.invalidate()
+        statsTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) {
+            [weak self] _ in
+            guard let self else { return }
+            self.peerConnection.statistics { report in
+                var out = "n/a"
+                var inb = "n/a"
+                for (_, s) in report.statistics {
+                    let kind = (s.values["kind"] as? String)
+                        ?? (s.values["mediaType"] as? String)
+                    guard kind == "audio" else { continue }
+                    if s.type == "outbound-rtp" {
+                        out = "pkts=\(s.values["packetsSent"] ?? "?") "
+                            + "bytes=\(s.values["bytesSent"] ?? "?")"
+                    } else if s.type == "inbound-rtp" {
+                        inb = "pkts=\(s.values["packetsReceived"] ?? "?") "
+                            + "bytes=\(s.values["bytesReceived"] ?? "?")"
+                    }
+                }
+                print("[group-voice] rtp send[\(out)] recv[\(inb)]")
+            }
+        }
+    }
+
     func hangUp() {
+        statsTimer?.invalidate()
+        statsTimer = nil
         peerConnection.close()
         do {
             try AVAudioSession.sharedInstance()
@@ -284,6 +319,7 @@ extension GroupCallTransport: RTCPeerConnectionDelegate {
             Task { @MainActor [weak self] in
                 guard let self, !self.didSignalConnected else { return }
                 self.didSignalConnected = true
+                self.startStatsLogging()
                 self.delegate?.transportDidConnect(self)
             }
         case .failed, .closed:
