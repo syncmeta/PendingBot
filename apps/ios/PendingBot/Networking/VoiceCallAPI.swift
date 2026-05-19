@@ -245,6 +245,185 @@ struct VoiceCallAPI {
     }
 }
 
+// =============================================================================
+// MARK: - Group voice
+// =============================================================================
+//
+// Wire-types + methods for the group-voice control surface on the worker
+// (`/v1/groups/:id/voice/*`). Distinct from the 1:1 realtime endpoints
+// above: a group call routes humans through the Cloudflare Realtime SFU
+// and the bots live server-side in a RoomVoiceDO. iOS is a plain WebRTC
+// peer of the SFU — it posts its SDP offer to /join, pulls bot tracks via
+// /subscribe, and answers the SFU's renegotiation offer via /renegotiate.
+
+/// One bot in the call's roster — the SFU session + track a human
+/// subscribes to in order to hear it. Keys are camelCase: the worker
+/// passes the RoomVoiceDO's roster object straight through.
+struct GroupBotRosterEntry: Decodable, Sendable, Equatable {
+    let botId: String
+    let sfuSessionId: String
+    let sfuTrackName: String
+}
+
+/// POST /voice/start — brings the room's bots online. `initiated` is true
+/// when this caller opened the call (and is privileged for its lifetime).
+struct GroupVoiceStartResponse: Decodable, Sendable {
+    let ok: Bool
+    let room_id: String
+    let bot_ids: [String]
+    let initiated: Bool?
+}
+
+/// POST /voice/join — the worker negotiated the human's RTCPeerConnection
+/// against the SFU. Carries the SFU answer SDP + the current bot roster.
+struct GroupVoiceJoinResponse: Decodable, Sendable {
+    let ok: Bool
+    let session_id: String
+    let answer: String
+    let bots: [GroupBotRosterEntry]
+}
+
+/// POST /voice/subscribe — added the bot tracks to the caller's SFU
+/// session. The SFU replies with an offer the client must answer when
+/// `requires_renegotiation` is set.
+struct GroupVoiceSubscribeResponse: Decodable, Sendable {
+    let ok: Bool
+    let offer: String?
+    let requires_renegotiation: Bool
+}
+
+/// GET /voice/roster — current bot roster, for mid-call re-sync.
+struct GroupVoiceRosterResponse: Decodable, Sendable {
+    let ok: Bool
+    let bots: [GroupBotRosterEntry]
+}
+
+extension VoiceCallAPI {
+
+    /// Bring the room's bots online. `botIds` nil = every group bot.
+    func groupVoiceStart(
+        conversationId: String,
+        botIds: [String]? = nil,
+    ) async throws -> GroupVoiceStartResponse {
+        struct Body: Encodable { let bot_ids: [String]? }
+        return try await callDecoding(
+            path: "/v1/groups/\(conversationId)/voice/start",
+            body: Body(bot_ids: botIds),
+        )
+    }
+
+    /// Join the call's SFU room. `sdp` is the local WebRTC offer; the
+    /// response carries the SFU answer + the bot roster to subscribe to.
+    func groupVoiceJoin(
+        conversationId: String,
+        sdp: String,
+    ) async throws -> GroupVoiceJoinResponse {
+        struct Body: Encodable { let sdp: String }
+        return try await callDecoding(
+            path: "/v1/groups/\(conversationId)/voice/join",
+            body: Body(sdp: sdp),
+        )
+    }
+
+    /// Subscribe to bot tracks so the human can hear them.
+    func groupVoiceSubscribe(
+        conversationId: String,
+        sessionId: String,
+        tracks: [GroupBotRosterEntry],
+    ) async throws -> GroupVoiceSubscribeResponse {
+        struct Track: Encodable { let session_id: String; let track_name: String }
+        struct Body: Encodable { let session_id: String; let tracks: [Track] }
+        return try await callDecoding(
+            path: "/v1/groups/\(conversationId)/voice/subscribe",
+            body: Body(
+                session_id: sessionId,
+                tracks: tracks.map {
+                    Track(session_id: $0.sfuSessionId, track_name: $0.sfuTrackName)
+                },
+            ),
+        )
+    }
+
+    /// Answer the SFU's renegotiation offer (`sdp` is the local answer).
+    func groupVoiceRenegotiate(
+        conversationId: String,
+        sessionId: String,
+        sdp: String,
+    ) async throws {
+        struct Body: Encodable { let session_id: String; let sdp: String }
+        struct OK: Decodable { let ok: Bool }
+        _ = try await callDecoding(
+            path: "/v1/groups/\(conversationId)/voice/renegotiate",
+            body: Body(session_id: sessionId, sdp: sdp),
+        ) as OK
+    }
+
+    /// Current bot roster — used to re-sync after add-bot.
+    func groupVoiceRoster(
+        conversationId: String,
+    ) async throws -> GroupVoiceRosterResponse {
+        try await api.get("/v1/groups/\(conversationId)/voice/roster")
+    }
+
+    /// Add one more bot to a live call.
+    func groupVoiceAddBot(conversationId: String, botId: String) async throws {
+        struct Body: Encodable { let bot_id: String }
+        struct OK: Decodable { let ok: Bool }
+        _ = try await callDecoding(
+            path: "/v1/groups/\(conversationId)/voice/add-bot",
+            body: Body(bot_id: botId),
+        ) as OK
+    }
+
+    /// Remove a bot or a human from the call. Privileged — the worker
+    /// returns 403 (surfaced as `VoiceCallError.other`) otherwise.
+    func groupVoiceKick(
+        conversationId: String,
+        targetType: String,
+        targetId: String,
+    ) async throws {
+        struct Body: Encodable { let target_type: String; let target_id: String }
+        struct OK: Decodable { let ok: Bool }
+        _ = try await callDecoding(
+            path: "/v1/groups/\(conversationId)/voice/kick",
+            body: Body(target_type: targetType, target_id: targetId),
+        ) as OK
+    }
+
+    /// Grant call-admin powers to a human or bot. Privileged.
+    func groupVoiceDesignateAdmin(
+        conversationId: String,
+        targetId: String,
+    ) async throws {
+        struct Body: Encodable { let target_id: String }
+        struct OK: Decodable { let ok: Bool }
+        _ = try await callDecoding(
+            path: "/v1/groups/\(conversationId)/voice/designate-admin",
+            body: Body(target_id: targetId),
+        ) as OK
+    }
+
+    /// The caller leaves the call.
+    func groupVoiceLeave(conversationId: String) async throws {
+        struct Body: Encodable {}
+        struct OK: Decodable { let ok: Bool }
+        _ = try await callDecoding(
+            path: "/v1/groups/\(conversationId)/voice/leave",
+            body: Body(),
+        ) as OK
+    }
+
+    /// End the whole call. Privileged.
+    func groupVoiceEnd(conversationId: String) async throws {
+        struct Body: Encodable {}
+        struct OK: Decodable { let ok: Bool }
+        _ = try await callDecoding(
+            path: "/v1/groups/\(conversationId)/voice/end",
+            body: Body(),
+        ) as OK
+    }
+}
+
 /// Typed errors callers branch on. `other` is the fallback for shapes we
 /// haven't promoted yet (forward-compat with backend additions).
 enum VoiceCallError: LocalizedError, Sendable {
