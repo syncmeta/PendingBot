@@ -687,13 +687,22 @@ realtimeRoutes.post('/summary', async (c) => {
   }
   const session = sessGate.session;
 
+  // Frame the recap so that wherever the memory pipeline surfaces it
+  // back into a prompt, the bot reads it as its own private post-call
+  // note — not as something it said to the user (the user never sees
+  // this row).
+  const framedSummary =
+    '【语音通话回顾·仅自己可见】这是上一次语音通话结束后我给自己留的小结，' +
+    '对方看不到这段文字，仅供我之后回忆通话内容用：\n' +
+    parsed.summary.trim();
+
   const supaService = serviceClient(c.env);
   const { error } = await supaService.from('messages').insert({
     conversation_id: parsed.conversation_id,
     client_message_id: crypto.randomUUID(),
     role: 'bot',
     status: 'done',
-    content: parsed.summary.trim(),
+    content: framedSummary,
     sender_bot_id: session.bot_id,
     metadata: {
       source: 'voice_call_summary',

@@ -344,6 +344,15 @@ extension ConversationView {
                 // their content has been blanked server-side and the
                 // user-facing affordance is the tombstone log row instead.
                 if r.status == "deleted" { continue }
+                // Voice-call recap rows are memory-only: the bot's closing
+                // summary of a call (metadata.source='voice_call_summary').
+                // They feed the long-term memory pipeline server-side but
+                // never render in the timeline. The realtime path drops
+                // them too (ConversationView+Realtime); this is the
+                // history-load counterpart.
+                if r.metadata?.objectValue?["source"]?.stringValue == "voice_call_summary" {
+                    continue
+                }
                 if r.role == "log" {
                     // Recall tombstone — synthesise into a render-only
                     // ChatMessage. Other log_kinds (review steps, etc.)
