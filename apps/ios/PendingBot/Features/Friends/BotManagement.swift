@@ -829,13 +829,11 @@ struct BotConfigView: View {
     }
 
     private enum PickerTarget: Identifiable {
-        case main, vision, explorer, collaborator
+        case main, vision
         var id: Int {
             switch self {
             case .main: return 0
             case .vision: return 1
-            case .explorer: return 2
-            case .collaborator: return 3
             }
         }
     }
@@ -975,50 +973,19 @@ struct BotConfigView: View {
     @ViewBuilder
     private var envelopeSection: some View {
         Section {
-            pickerRow(icon: "person.crop.square", title: "探索模型",
-                      value: shortSlug(envelope.explorerModel), enabled: canEdit) {
-                pickerTarget = .explorer
-            }
-            pickerRow(icon: "person.2.crop.square.stack", title: "协作模型",
-                      value: envelope.collaboratorModel.map(shortSlug) ?? "无",
-                      enabled: canEdit) {
-                pickerTarget = .collaborator
-            }
-            Stepper(value: $envelope.turnCap, in: 1...30) {
+            NavigationLink {
+                LetterSettingsView(envelope: $envelope, canEdit: canEdit)
+            } label: {
                 HStack {
-                    Image(systemName: "repeat")
-                    Text("轮数上限")
-                    Spacer()
-                    Text("\(envelope.turnCap)")
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
+                    Image(systemName: "envelope.open")
+                    Text("写信设置")
                 }
-            }
-            .disabled(!canEdit)
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Image(systemName: "tray.full")
-                    Text("聊天记录占用")
-                    Spacer()
-                    Text("\(envelope.historyTokenBudgetPct)%")
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
-                Slider(
-                    value: Binding(
-                        get: { Double(envelope.historyTokenBudgetPct) },
-                        set: { envelope.historyTokenBudgetPct = Int($0.rounded()) }
-                    ),
-                    in: 5...90, step: 5
-                )
-                .tint(Theme.Palette.accent)
-                .disabled(!canEdit)
             }
             .foregroundStyle(Theme.Palette.ink)
         } header: {
             Text("写信 / Envelopes")
         } footer: {
-            Text("这个机器人写信（来信）时的默认设置。在具体对话里可以临时覆盖。")
+            Text("这个机器人写信（来信）时的默认设置：探索/协作模型、检索引擎、轮数与历史预算。在具体对话里可以临时覆盖。")
         }
     }
 
@@ -1088,17 +1055,6 @@ struct BotConfigView: View {
                              clearLabel: "自动（跟随主模型 / 服务端默认）",
                              visionOnly: true) { picked in
                 visionModel = (picked?.slug).flatMap { $0.isEmpty ? nil : $0 } ?? ""
-                pickerTarget = nil
-            }
-        case .explorer:
-            ModelPickerSheet(initial: envelope.explorerModel, allowsClear: false) { picked in
-                if let picked, !picked.slug.isEmpty { envelope.explorerModel = picked.slug }
-                pickerTarget = nil
-            }
-        case .collaborator:
-            ModelPickerSheet(initial: envelope.collaboratorModel ?? "",
-                             allowsClear: true, clearLabel: "无协作者") { picked in
-                envelope.collaboratorModel = (picked?.slug).flatMap { $0.isEmpty ? nil : $0 }
                 pickerTarget = nil
             }
         }
@@ -1171,6 +1127,8 @@ struct BotConfigView: View {
             let envelopeCfg: [String: Any] = [
                 "explorerModel": envelope.explorerModel,
                 "collaboratorModel": collabVal,
+                "searchProvider": envelope.searchProvider.rawValue,
+                "scrapeProvider": envelope.scrapeProvider.rawValue,
                 "turnCap": envelope.turnCap,
                 "historyTokenBudgetPct": envelope.historyTokenBudgetPct,
             ]

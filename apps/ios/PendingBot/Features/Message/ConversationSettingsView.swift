@@ -64,7 +64,6 @@ struct ConversationSettingsView: View {
     // ── 来信 / Envelopes ─────────────────────────────────────────────────
     @State private var envelope: EnvelopeSettings = .defaults
     @State private var envelopeLoaded: Bool = false
-    @State private var pickerTarget: EnvelopeModelPickerTarget?
     @State private var triggering: Bool = false
     @State private var triggerError: String?
 
@@ -85,11 +84,6 @@ struct ConversationSettingsView: View {
         let body_md: String
         let active: Bool
         let created_at: String
-    }
-
-    private enum EnvelopeModelPickerTarget: Identifiable {
-        case explorer, collaborator
-        var id: Int { self == .explorer ? 0 : 1 }
     }
 
     private struct PickPayload: Identifiable {
@@ -219,6 +213,7 @@ struct ConversationSettingsView: View {
                     Text("选「自动」按系统默认路由。指定一家时仍保留 fallback：那家 5xx 时会自动落到另一家。")
                 }
 
+            botSettingsSection
             envelopeSection
             lookbackSection
         }
@@ -265,32 +260,6 @@ struct ConversationSettingsView: View {
                     visionModelOverride = normalized
                     onApplyVisionModel(normalized)
                     Haptics.success()
-                }
-            )
-            .presentationDragIndicator(.visible)
-            .tint(Theme.Palette.accent)
-        }
-        .sheet(item: $pickerTarget) { target in
-            let initialSlug: String = {
-                switch target {
-                case .explorer:     return envelope.explorerModel
-                case .collaborator: return envelope.collaboratorModel ?? ""
-                }
-            }()
-            ModelPickerSheet(
-                initial: initialSlug,
-                allowsClear: target == .collaborator,
-                clearLabel: "无协作者",
-                onPick: { picked in
-                    switch target {
-                    case .explorer:
-                        // No clear for explorer — fall back to default if
-                        // somehow the picker hands us nil.
-                        envelope.explorerModel = picked?.slug ?? EnvelopeSettings.defaults.explorerModel
-                    case .collaborator:
-                        envelope.collaboratorModel = picked?.slug
-                    }
-                    pickerTarget = nil
                 }
             )
             .presentationDragIndicator(.visible)
@@ -349,6 +318,30 @@ struct ConversationSettingsView: View {
         return shortSlug(slug)
     }
 
+    // MARK: - Bot settings link
+
+    /// Entry into the bot-level config (default model / voice / vision /
+    /// 写信 defaults / lookback / skills). Only shown on user_bot convs —
+    /// group / self / user_user convs have no bot to configure.
+    @ViewBuilder
+    private var botSettingsSection: some View {
+        if let bot {
+            Section {
+                NavigationLink {
+                    BotConfigView(bot: bot, currentUserId: currentUserId)
+                } label: {
+                    HStack {
+                        Image(systemName: "gearshape")
+                        Text("机器人设置")
+                    }
+                }
+                .foregroundStyle(Theme.Palette.ink)
+            } footer: {
+                Text("机器人本身的默认配置。这里的「会话设置」只覆盖当前这一个对话。")
+            }
+        }
+    }
+
     // MARK: - Envelope (来信) section
 
     @ViewBuilder
@@ -392,8 +385,8 @@ struct ConversationSettingsView: View {
     }
 
     /// User-to-bot conversation: kick off the bot's envelope (research
-    /// loop + writer phase). Settings here are local overrides — the
-    /// trigger handler persists them as the conversation's new defaults.
+    /// loop + writer phase). The trigger uses the current `envelope`
+    /// settings; the detailed knobs live behind the 写信设置 sub-page.
     @ViewBuilder
     private var botLetterSection: some View {
         Section {
@@ -410,101 +403,17 @@ struct ConversationSettingsView: View {
             .foregroundStyle(Theme.Palette.ink)
             .disabled(triggering || conversationId.isEmpty || !envelopeLoaded)
 
-            // Two explorers — main agent that drives the loop, plus an
-            // optional collaborator that critiques each non-research turn.
-            // Both default to ~google/gemini-flash-latest (cheap, fast).
-            Button {
-                pickerTarget = .explorer
+            // Detailed envelope knobs (explorer / collaborator model,
+            // search + scrape engine, turn cap, history budget). Editing
+            // these only overrides the current conversation — the trigger
+            // handler persists them as this conv's new defaults.
+            NavigationLink {
+                LetterSettingsView(envelope: $envelope)
             } label: {
                 HStack {
-                    Image(systemName: "person.crop.square")
-                    Text("探索模型")
-                    Spacer()
-                    Text(shortSlug(envelope.explorerModel))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                    Image(systemName: "chevron.right")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
+                    Image(systemName: "slider.horizontal.3")
+                    Text("写信设置")
                 }
-            }
-            .foregroundStyle(Theme.Palette.ink)
-
-            Button {
-                pickerTarget = .collaborator
-            } label: {
-                HStack {
-                    Image(systemName: "person.2.crop.square.stack")
-                    Text("协作模型")
-                    Spacer()
-                    Text(envelope.collaboratorModel.map(shortSlug) ?? "无")
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                    Image(systemName: "chevron.right")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-            }
-            .foregroundStyle(Theme.Palette.ink)
-
-            Picker(selection: $envelope.searchProvider) {
-                ForEach(EnvelopeSearchProvider.allCases, id: \.self) { p in
-                    Text(p.label).tag(p)
-                }
-            } label: {
-                HStack {
-                    Image(systemName: "magnifyingglass")
-                    Text("搜索引擎")
-                }
-            }
-            .foregroundStyle(Theme.Palette.ink)
-
-            Picker(selection: $envelope.scrapeProvider) {
-                ForEach(EnvelopeScrapeProvider.allCases, id: \.self) { p in
-                    Text(p.label).tag(p)
-                }
-            } label: {
-                HStack {
-                    Image(systemName: "doc.text.magnifyingglass")
-                    Text("用什么读网页")
-                }
-            }
-            .foregroundStyle(Theme.Palette.ink)
-
-            Stepper(value: $envelope.turnCap, in: 1...30) {
-                HStack {
-                    Image(systemName: "repeat")
-                    Text("轮数上限")
-                    Spacer()
-                    Text("\(envelope.turnCap)")
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
-            }
-            .foregroundStyle(Theme.Palette.ink)
-
-            // History budget — caps (history + framing prompts) at this
-            // fraction of the bot's main-model context window. Default
-            // 35%; user can dial up to fit more chat history at the cost
-            // of leaving less room for the loop's research turns.
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Image(systemName: "tray.full")
-                    Text("聊天记录占用")
-                    Spacer()
-                    Text("\(envelope.historyTokenBudgetPct)%")
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
-                Slider(
-                    value: Binding(
-                        get: { Double(envelope.historyTokenBudgetPct) },
-                        set: { envelope.historyTokenBudgetPct = Int($0.rounded()) }
-                    ),
-                    in: 5...90,
-                    step: 5
-                )
-                .tint(Theme.Palette.accent)
             }
             .foregroundStyle(Theme.Palette.ink)
         } header: {
@@ -707,5 +616,166 @@ struct ConversationSettingsView: View {
         } catch {
             triggerError = error.localizedDescription
         }
+    }
+}
+
+// MARK: - 写信设置 / Letter settings
+
+/// 写信设置 — 来信（Envelopes）的探索/协作模型、检索引擎、轮数与历史预算。
+/// 由「会话设置」（会话级覆盖）与「机器人设置」（机器人默认）两处推入,
+/// 编辑同一个 `EnvelopeSettings` binding;持久化由各自的父视图负责
+/// （会话级随 trigger 上送,机器人级随 BotConfigView 的保存写入 config）。
+struct LetterSettingsView: View {
+    @Binding var envelope: EnvelopeSettings
+    /// 只读模式 — 公有 / 非自有机器人。会话级覆盖永远可改,默认 true。
+    var canEdit: Bool = true
+
+    private enum PickerTarget: Identifiable {
+        case explorer, collaborator
+        var id: Int { self == .explorer ? 0 : 1 }
+    }
+    @State private var pickerTarget: PickerTarget?
+
+    var body: some View {
+        Form {
+            Section {
+                pickerRow(icon: "person.crop.square", title: "探索模型",
+                          value: shortSlug(envelope.explorerModel)) {
+                    pickerTarget = .explorer
+                }
+                pickerRow(icon: "person.2.crop.square.stack", title: "协作模型",
+                          value: envelope.collaboratorModel.map(shortSlug) ?? "无") {
+                    pickerTarget = .collaborator
+                }
+            } header: {
+                Text("模型")
+            } footer: {
+                Text("探索模型驱动来信的研究循环；协作模型在每个非研究轮做点评，可留空。")
+            }
+
+            Section {
+                Picker(selection: $envelope.searchProvider) {
+                    ForEach(EnvelopeSearchProvider.allCases, id: \.self) { p in
+                        Text(p.label).tag(p)
+                    }
+                } label: {
+                    HStack {
+                        Image(systemName: "magnifyingglass")
+                        Text("搜索引擎")
+                    }
+                }
+                .foregroundStyle(Theme.Palette.ink)
+
+                Picker(selection: $envelope.scrapeProvider) {
+                    ForEach(EnvelopeScrapeProvider.allCases, id: \.self) { p in
+                        Text(p.label).tag(p)
+                    }
+                } label: {
+                    HStack {
+                        Image(systemName: "doc.text.magnifyingglass")
+                        Text("用什么读网页")
+                    }
+                }
+                .foregroundStyle(Theme.Palette.ink)
+            } header: {
+                Text("检索")
+            }
+
+            Section {
+                Stepper(value: $envelope.turnCap, in: 1...30) {
+                    HStack {
+                        Image(systemName: "repeat")
+                        Text("轮数上限")
+                        Spacer()
+                        Text("\(envelope.turnCap)")
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                }
+                .foregroundStyle(Theme.Palette.ink)
+
+                // History budget — caps (history + framing prompts) at this
+                // fraction of the bot's main-model context window, leaving
+                // the rest for the loop's research turns.
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Image(systemName: "tray.full")
+                        Text("聊天记录占用")
+                        Spacer()
+                        Text("\(envelope.historyTokenBudgetPct)%")
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                    Slider(
+                        value: Binding(
+                            get: { Double(envelope.historyTokenBudgetPct) },
+                            set: { envelope.historyTokenBudgetPct = Int($0.rounded()) }
+                        ),
+                        in: 5...90, step: 5
+                    )
+                    .tint(Theme.Palette.accent)
+                }
+                .foregroundStyle(Theme.Palette.ink)
+            } header: {
+                Text("预算")
+            } footer: {
+                Text("「聊天记录占用」限制聊天历史与框架提示词占主模型上下文窗口的比例，余下留给研究轮。")
+            }
+        }
+        .navigationTitle("写信设置")
+        .navigationBarTitleDisplayMode(.inline)
+        .disabled(!canEdit)
+        .sheet(item: $pickerTarget) { target in
+            let initialSlug: String = {
+                switch target {
+                case .explorer:     return envelope.explorerModel
+                case .collaborator: return envelope.collaboratorModel ?? ""
+                }
+            }()
+            ModelPickerSheet(
+                initial: initialSlug,
+                allowsClear: target == .collaborator,
+                clearLabel: "无协作者",
+                onPick: { picked in
+                    switch target {
+                    case .explorer:
+                        // No clear for explorer — fall back to default if
+                        // the picker somehow hands us nil.
+                        envelope.explorerModel = picked?.slug ?? EnvelopeSettings.defaults.explorerModel
+                    case .collaborator:
+                        envelope.collaboratorModel = (picked?.slug).flatMap { $0.isEmpty ? nil : $0 }
+                    }
+                    pickerTarget = nil
+                }
+            )
+            .presentationDragIndicator(.visible)
+            .tint(Theme.Palette.accent)
+        }
+        .tint(Theme.Palette.accent)
+    }
+
+    @ViewBuilder
+    private func pickerRow(icon: String, title: String, value: String,
+                           action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Image(systemName: icon)
+                Text(title)
+                Spacer()
+                Text(value)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .foregroundStyle(Theme.Palette.ink)
+    }
+
+    private func shortSlug(_ slug: String) -> String {
+        guard !slug.isEmpty else { return "—" }
+        return slug.split(separator: "/").last.map(String.init) ?? slug
     }
 }
