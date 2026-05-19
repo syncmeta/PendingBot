@@ -142,6 +142,27 @@ messageRoutes.post('/', async (c) => {
   } | null;
   if (!conv) return jsonError(c, 404, 'conversation_no_access');
 
+  // user_user peer-existence gate. When a user hard-deletes their account
+  // the auth-delete trigger drops their conversation_participants rows but
+  // leaves any conversation the *other* side owns intact — a one-sided
+  // orphan. resolveConv only proves the caller's own access, so without
+  // this check a send into that orphan would silently 200. Reject it so
+  // the client can tell the user the peer is gone.
+  if (conv.conversation_type === 'user_user') {
+    const { data: peer, error: peerErr } = await supaService
+      .from('conversation_participants')
+      .select('participant_id')
+      .eq('conversation_id', parsed.conversationId)
+      .eq('participant_type', 'user')
+      .neq('participant_id', userId)
+      .limit(1)
+      .maybeSingle();
+    if (peerErr) return jsonError(c, 500, 'database_error', { detail: peerErr.message });
+    if (!peer) {
+      return jsonError(c, 410, 'peer_account_deleted', { message: '对方账号已注销' });
+    }
+  }
+
   // Attachment ownership gate. attachmentIds rides in the body uncontrolled —
   // verify each row's user_id matches the sender and (if already bound) its
   // conversation_id matches this conv, so a caller can't pin someone else's

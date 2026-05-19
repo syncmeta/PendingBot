@@ -69,6 +69,7 @@ export type ApiErrorCode =
   | 'handle_required'
   | 'handle_not_found'
   | 'peer_not_found'
+  | 'peer_account_deleted'
   | 'already_contacts'
   | 'cannot_add_self'
   | 'request_not_found'
