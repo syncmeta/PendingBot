@@ -28,13 +28,14 @@ import {
 import { buildMessages, type BuildMessagesInput } from '../../llm/builder';
 import { resolveLocale } from '../../i18n/locale';
 import {
+  loadAttachmentAsFilePart,
   loadAttachmentAsImagePart,
   modelSupportsVision,
   summarizeAttachments,
 } from '../../llm/vision';
 import { getBotMemory, getUserMemory } from '../memory';
 import { resolveInventory } from '../attachment-cache';
-import { sha256Hex, r2KeyForHash } from '../attachments';
+import { classifyAttachment, sha256Hex, r2KeyForHash } from '../attachments';
 import {
   resolveBotNote,
   resolveChatMemo,
@@ -369,29 +370,43 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     tags: r.tags,
     status: r.status,
     isCurrentTurn: currentSet.has(r.id),
+    mime: r.mime,
+    filename: r.filename,
   }));
 
+  // Current-turn attachment content parts. Images go in as image_url
+  // parts (only when the main model has vision); PDFs go in as file
+  // parts (the provider parses them natively, regardless of vision);
+  // all other file types are not sent inline — the model reaches them
+  // through the file inventory + read_attachment tool.
   let currentImageParts: ChatCompletionContentPart[] | undefined;
-  if (
-    mainHasVision &&
-    input.currentAttachmentIds &&
-    input.currentAttachmentIds.length > 0
-  ) {
+  let currentFileParts: ChatCompletionContentPart[] | undefined;
+  if (input.currentAttachmentIds && input.currentAttachmentIds.length > 0) {
     const { data: rows } = await supa
       .from('attachments')
-      .select('id, r2_key, mime_type, byte_size')
+      .select('id, r2_key, mime_type, byte_size, filename')
       .in('id', input.currentAttachmentIds);
-    const parts: ChatCompletionContentPart[] = [];
+    const imageParts: ChatCompletionContentPart[] = [];
+    const fileParts: ChatCompletionContentPart[] = [];
     for (const r of (rows ?? []) as Array<{
       r2_key: string;
       mime_type: string;
       byte_size: number;
+      filename: string | null;
     }>) {
-      const p = await loadAttachmentAsImagePart(env, r);
-      if (p) parts.push(p);
+      const kind = classifyAttachment(r.mime_type);
+      if (kind === 'pdf') {
+        const p = await loadAttachmentAsFilePart(env, r);
+        if (p) fileParts.push(p);
+      } else if (kind === 'image' && mainHasVision) {
+        const p = await loadAttachmentAsImagePart(env, r);
+        if (p) imageParts.push(p);
+      }
     }
-    if (parts.length > 0) currentImageParts = parts;
-  } else if (
+    if (imageParts.length > 0) currentImageParts = imageParts;
+    if (fileParts.length > 0) currentFileParts = fileParts;
+  }
+  if (
     !mainHasVision &&
     input.currentAttachmentIds &&
     input.currentAttachmentIds.length > 0
@@ -462,6 +477,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       lookbacks: activeLookbacks,
       recentContext, newMessage,
       currentImageParts,
+      currentFileParts,
       attachmentInventory: inventory,
       clientTz: input.clientTz,
     },

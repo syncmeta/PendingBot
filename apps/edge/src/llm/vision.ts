@@ -58,6 +58,12 @@ export const DEFAULT_VISION_MODEL = 'moonshotai/kimi-latest';
 /// already pre-compresses to JPEG so most uploads land under this.
 const MAX_DATA_URL_BYTES = 5 * 1024 * 1024;
 
+/// Cap on a file (PDF) content part. Files ride to the provider as a
+/// base64 data URL too; 25 MB raw (our upload cap) → ~33 MB base64,
+/// comfortably under the providers' per-file input limits. Acts as a
+/// guard rather than a real gate since it matches MAX_UPLOAD_BYTES.
+const MAX_FILE_DATA_URL_BYTES = 25 * 1024 * 1024;
+
 /// Cap on retry when the summarizer fails transiently. We only retry
 /// once — most "transient" cases here (provider 429/503) clear up but
 /// aren't worth blocking the conversation on. The attachment row keeps
@@ -71,9 +77,22 @@ interface AttachmentRow {
   r2_key: string;
   mime_type: string;
   byte_size: number;
+  filename: string | null;
   summary: string | null;
   summary_status: string;
   vision_model: string | null;
+}
+
+/// Base64-encode a byte buffer. Workers' `btoa` takes a binary string,
+/// so we chunk to dodge "Maximum call stack" on big buffers — 32 KB at
+/// a time is safe for the V8 stack.
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
 }
 
 // Isolate-local cache for llm_models.capabilities lookups. The table
@@ -156,18 +175,32 @@ export async function loadAttachmentAsImagePart(
   if (attachment.byte_size > MAX_DATA_URL_BYTES) return null;
   const obj = await env.UPLOADS.get(attachment.r2_key);
   if (!obj) return null;
-  const buf = await obj.arrayBuffer();
-  // Workers' btoa accepts a binary string — chunk to dodge "Maximum call
-  // stack" on big buffers. 32KB at a time is safe for V8 stack.
-  const bytes = new Uint8Array(buf);
-  let binary = '';
-  const CHUNK = 0x8000;
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-  }
-  const b64 = btoa(binary);
+  const b64 = bytesToBase64(new Uint8Array(await obj.arrayBuffer()));
   const url = `data:${attachment.mime_type};base64,${b64}`;
   return { type: 'image_url', image_url: { url } };
+}
+
+/// Read an attachment's bytes from R2 and produce an OpenAI-style `file`
+/// content part with a base64 data URL payload. Used for PDFs on the
+/// current turn so the provider parses the document natively (OpenRouter
+/// routes via its file-parser plugin for models lacking native support;
+/// OpenAI's gpt models accept PDF file parts directly). Returns null
+/// when the object is missing in R2 or oversize.
+export async function loadAttachmentAsFilePart(
+  env: Env,
+  attachment: Pick<AttachmentRow, 'r2_key' | 'mime_type' | 'byte_size' | 'filename'>,
+): Promise<ChatCompletionContentPart | null> {
+  if (attachment.byte_size > MAX_FILE_DATA_URL_BYTES) return null;
+  const obj = await env.UPLOADS.get(attachment.r2_key);
+  if (!obj) return null;
+  const b64 = bytesToBase64(new Uint8Array(await obj.arrayBuffer()));
+  return {
+    type: 'file',
+    file: {
+      filename: attachment.filename || 'attachment.pdf',
+      file_data: `data:${attachment.mime_type};base64,${b64}`,
+    },
+  };
 }
 
 interface VisionDeps {
@@ -429,7 +462,7 @@ export async function readAttachmentForTool(
 
   const { data: row, error } = await supa
     .from('attachments')
-    .select('id, user_id, conversation_id, r2_key, mime_type, byte_size')
+    .select('id, user_id, conversation_id, r2_key, mime_type, byte_size, filename')
     .eq('id', attachmentId)
     .maybeSingle();
   if (error) return { error: `database: ${error.message}` };

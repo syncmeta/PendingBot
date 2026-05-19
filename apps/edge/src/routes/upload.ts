@@ -120,6 +120,8 @@ uploadRoutes.post('/', async (c) => {
           tags: r.tags,
           summary_status: r.summary_status,
           created_at: r.created_at,
+          mime_type: r.mime_type,
+          filename: r.filename,
         }),
       );
       // Maintain the per-conv inventory list. Only the dup row's own
@@ -273,6 +275,8 @@ uploadRoutes.post('/', async (c) => {
             tags: r.tags,
             summary_status: r.summary_status,
             created_at: r.created_at,
+            mime_type: r.mime_type,
+            filename: r.filename,
           }),
         );
         if (r.conversation_id) {
@@ -303,8 +307,10 @@ uploadRoutes.post('/', async (c) => {
       conversation_id: conversationIdStr,
       summary: null,
       tags: null,
-      summary_status: 'pending',
+      summary_status: kind === 'image' ? 'pending' : 'skipped',
       created_at: row.created_at,
+      mime_type: row.mime_type,
+      filename: row.filename,
     }),
   );
   if (conversationIdStr) {
