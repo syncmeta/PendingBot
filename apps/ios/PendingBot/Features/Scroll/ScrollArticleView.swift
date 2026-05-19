@@ -92,7 +92,7 @@ struct ScrollArticleView: View {
                 .frame(height: 0.5)
 
             HStack(alignment: .center, spacing: 10) {
-                BotAvatar(seed: avatarSeed(run: run), size: 28)
+                LetterSenderAvatar(run: run, size: 28)
                 // Name and timestamp sit as a single byline cluster on
                 // the leading edge — the timestamp clings to the name
                 // (separated by a thin space) rather than being trailing-
@@ -113,18 +113,13 @@ struct ScrollArticleView: View {
         }
     }
 
-    /// Avatar seed differs by row kind. Bot rows carry bot_id; human
-    /// rows carry author_user_id. Both feed BotAvatar's deterministic
-    /// glyph generator the same way.
-    private func avatarSeed(run: ScrollRun) -> String {
-        run.bot_id ?? run.author_user_id ?? run.id
-    }
-
-    /// Byline label: bot's display_name (loaded async) for kind='bot',
-    /// or the local contact alias / display name for kind='human'. The
-    /// human path doesn't trigger a network fetch — pendingbot.users is
-    /// RLS-self so we only know names of people already in our contacts.
+    /// Byline label: "Untitled" for the preset 「读我」letter, the bot's
+    /// display_name (loaded async) for kind='bot', or the local contact
+    /// alias / display name for kind='human'. The human path doesn't
+    /// trigger a network fetch — pendingbot.users is RLS-self so we only
+    /// know names of people already in our contacts.
     private func senderLabel(run: ScrollRun) -> String {
+        if run.isPreset { return ScrollRun.presetSenderName }
         if run.isHuman {
             guard let id = run.author_user_id else { return "好友" }
             for c in LocalDatabase.shared.loadContacts() where c.id == id {
@@ -282,7 +277,7 @@ struct ScrollArticleView: View {
             // instead of throwing PostgREST's "cannot coerce" error.
             let rows: [ScrollRun] = try await SupabaseStack.shared
                 .from("scroll_runs")
-                .select("id, kind, bot_id, author_user_id, conversation_id, status, title, summary, body_md, progress, turns, created_at, started_at, finished_at")
+                .select("id, kind, trigger, bot_id, author_user_id, conversation_id, status, title, summary, body_md, progress, turns, created_at, started_at, finished_at")
                 .eq("id", value: scrollRunId)
                 .limit(1)
                 .execute()
@@ -292,7 +287,8 @@ struct ScrollArticleView: View {
                 return
             }
             self.run = row
-            if let botId = row.bot_id {
+            // Preset 「读我」rows render as "Untitled" — skip the self-bot fetch.
+            if let botId = row.bot_id, !row.isPreset {
                 await loadBot(id: botId)
             }
             // No async fetch for human authors — pull whatever the local

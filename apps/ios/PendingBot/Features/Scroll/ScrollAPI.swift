@@ -20,6 +20,10 @@ struct ScrollRun: Codable, Identifiable, Hashable {
     /// "bot" (runner-written article) or "human" (peer-to-peer letter).
     /// Older rows pre-0065 are decoded as "bot" by ScrollRunDecoder.
     let kind: String
+    /// What kicked the run off. `"example"` marks the preset 「读我」
+    /// letter every new user is seeded — it's attributed to the app
+    /// itself ("Untitled" + brand mark) rather than the per-user self-bot.
+    let trigger: String?
     let conversation_id: String
     let status: String
     let title: String?
@@ -38,6 +42,11 @@ struct ScrollRun: Codable, Identifiable, Hashable {
     var isDone: Bool { status == "done" && body_md != nil }
     var isRunning: Bool { status == "running" }
     var isHuman: Bool { kind == "human" }
+    /// The preset 「读我」letter — shown as authored by the app itself.
+    var isPreset: Bool { trigger == "example" }
+
+    /// Byline name for the preset letter's app-authored attribution.
+    static let presetSenderName = "Untitled"
 }
 
 extension APIClient {
@@ -489,6 +498,7 @@ enum ScrollRunDecoder {
             bot_id: record["bot_id"]?.stringValue,
             author_user_id: record["author_user_id"]?.stringValue,
             kind: record["kind"]?.stringValue ?? "bot",
+            trigger: record["trigger"]?.stringValue,
             conversation_id: conv,
             status: status,
             title: record["title"]?.stringValue,

@@ -79,11 +79,10 @@ struct ScrollFeedRow: View {
     @ViewBuilder
     private var kickerRow: some View {
         HStack(spacing: 8) {
-            // Use whichever id is set — bot for kind='bot', author for
-            // kind='human'. BotAvatar is seed-based so it produces a
-            // stable glyph either way.
-            BotAvatar(seed: avatarSeed, size: 18)
-            if let name = senderName, !name.isEmpty {
+            // Preset 「读我」row shows the app brand mark; everything else
+            // gets BotAvatar's seed-based glyph.
+            LetterSenderAvatar(run: run, size: 18)
+            if let name = displaySenderName, !name.isEmpty {
                 Text(name)
                     .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
                     .tracking(0.6)
@@ -107,8 +106,10 @@ struct ScrollFeedRow: View {
         }
     }
 
-    private var avatarSeed: String {
-        run.bot_id ?? run.author_user_id ?? run.id
+    /// Byline name. The preset 「读我」letter is attributed to the app
+    /// itself; otherwise use the resolved bot / author name.
+    private var displaySenderName: String? {
+        run.isPreset ? ScrollRun.presetSenderName : senderName
     }
 
     // MARK: - Status pill (only for non-done, non-running)

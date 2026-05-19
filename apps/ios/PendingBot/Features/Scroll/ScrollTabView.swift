@@ -133,7 +133,7 @@ struct ScrollTabView: View {
         do {
             let rows: [ScrollRun] = try await SupabaseStack.shared
                 .from("scroll_runs")
-                .select("id, kind, bot_id, author_user_id, conversation_id, status, title, summary, body_md, progress, turns, created_at, started_at, finished_at")
+                .select("id, kind, trigger, bot_id, author_user_id, conversation_id, status, title, summary, body_md, progress, turns, created_at, started_at, finished_at")
                 .order("created_at", ascending: false)
                 .limit(50)
                 .execute()
@@ -170,8 +170,10 @@ struct ScrollTabView: View {
     /// row's byline reads "<bot> · 2 分钟前" instead of an anonymous
     /// avatar. Cached in `botNames`; only the missing ids hit the table.
     private func refreshBotNames(for feed: [ScrollRun]) async {
+        // Preset 「读我」rows render as "Untitled" regardless of bot_id,
+        // so don't bother resolving their (self-bot) name.
         let missing = Array(
-            Set(feed.compactMap { $0.kind == "bot" ? $0.bot_id : nil })
+            Set(feed.compactMap { $0.kind == "bot" && !$0.isPreset ? $0.bot_id : nil })
                 .subtracting(botNames.keys)
         )
         guard !missing.isEmpty else { return }
