@@ -3,9 +3,10 @@ import Supabase
 
 // User-facing bot CRUD lives behind RLS — INSERT / UPDATE / DELETE all
 // gate on creator_id = auth.uid() so the iOS client can talk to PostgREST
-// directly. The visibility lifecycle (private → public is one-way; public
-// columns immutable except visibility) is enforced by the bots_guard_public_update
-// trigger, so the client just shows / hides the right buttons.
+// directly. The creator keeps full settings control even after a bot goes
+// public; the only one-way rule (private → public, never back) and the
+// public-bot delete block are enforced by the bots_guard_public_update
+// trigger + the bots_creator_delete RLS policy.
 
 // MARK: - Create
 
@@ -39,11 +40,11 @@ struct CreateBotSheet: View {
         var subtitle: String {
             switch self {
             case .privateBot:
-                return "只有你自己能聊。可以随时改名/改型号/删。"
+                return "只有你自己能聊。可以随时改设置、改名、删除。"
             case .publicInvite:
-                return "你邀请的人才能聊。建好之后只能切换公开程度,不能改名/改型号/删。"
+                return "你邀请的人才能聊。建好后你还能改设置和改名,但不能删、不能转回私有。"
             case .publicOpen:
-                return "任何人都能加好友聊。建好之后只能切换公开程度,不能改名/改型号/删。"
+                return "任何人都能加好友聊。建好后你还能改设置和改名,但不能删、不能转回私有。"
             }
         }
     }
@@ -167,7 +168,7 @@ struct CreateBotSheet: View {
                 model_id: row.model_id,
                 visibility: row.visibility,
                 creator_id: row.creator_id,
-                voice_call_enabled: false
+                voice_call_enabled: true
             )
             onCreated(pick)
             Haptics.success()
@@ -182,10 +183,11 @@ struct CreateBotSheet: View {
 // MARK: - Manage
 
 /// Shown by long-pressing a bot row that the current user created.
-/// Surface depends on visibility:
-///   - private:       rename + change model + delete + promote-to-public
-///   - public_invite: visibility toggle + invite list
-///   - public_open:   visibility toggle only
+/// Name, model and voice are editable regardless of visibility. The
+/// visibility-specific surface:
+///   - private:       can promote to public, and can delete
+///   - public_invite: visibility toggle + invite list (no delete)
+///   - public_open:   visibility toggle only (no delete)
 struct ManageBotSheet: View {
     @Environment(\.dismiss) private var dismiss
     /// Called after a mutation so the parent can refresh its list.
@@ -209,44 +211,28 @@ struct ManageBotSheet: View {
     @State private var error: String?
 
     private var isPrivate: Bool { visibility == "private" }
-    private var isPublic: Bool  { visibility == "public_invite" || visibility == "public_open" }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    if isPrivate {
-                        TextField("机器人名字", text: $displayName)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled(true)
-                        HStack {
-                            Text("模型").foregroundStyle(Theme.Palette.inkMuted)
-                            Spacer()
-                            ModelPickerButton(slug: $modelSlug,
-                                              modelProvider: $modelProvider,
-                                              placeholder: "选择模型")
-                        }
-                    } else {
-                        // Public: identity is frozen. Show, don't edit.
-                        LabeledContent("机器人名字", value: displayName)
-                        LabeledContent("模型", value: modelSlug.isEmpty ? "—" : modelSlug)
-                    }
-                } header: {
-                    Text(isPrivate ? "可编辑" : "已锁定")
-                } footer: {
-                    if !isPrivate {
-                        Text("公有机器人创建后,改名/改型号都被锁定。只能切换下面的公开程度。")
-                            .font(Theme.Fonts.caption)
+                    TextField("机器人名字", text: $displayName)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled(true)
+                    HStack {
+                        Text("模型").foregroundStyle(Theme.Palette.inkMuted)
+                        Spacer()
+                        ModelPickerButton(slug: $modelSlug,
+                                          modelProvider: $modelProvider,
+                                          placeholder: "选择模型")
                     }
                 }
 
-                if isPrivate {
-                    Section {
-                        Toggle("语音通话", isOn: $voiceCallEnabled)
-                    } footer: {
-                        Text("打开后,聊天页顶部会出现电话按钮,可以和这个机器人语音通话。计费走实时音频用量。")
-                            .font(Theme.Fonts.caption)
-                    }
+                Section {
+                    Toggle("语音通话", isOn: $voiceCallEnabled)
+                } footer: {
+                    Text("打开后,聊天页顶部会出现电话按钮,可以和这个机器人语音通话。计费走实时音频用量。")
+                        .font(Theme.Fonts.caption)
                 }
 
                 Section {
@@ -263,7 +249,7 @@ struct ManageBotSheet: View {
                     Text("公开程度")
                 } footer: {
                     if isPrivate {
-                        Text("升级为公有后不能再改回私有,也无法再改名/改型号/删除。请确认。")
+                        Text("升级为公有后不能再转回私有,也不能删除,但仍能改设置和改名。请确认。")
                             .font(Theme.Fonts.caption)
                     }
                 }
@@ -333,7 +319,7 @@ struct ManageBotSheet: View {
                     Button("取消", role: .cancel) {}
                 },
                 message: {
-                    Text("升级后只能切换公开程度,不能再改名/改型号/删除,也不能转回私有。")
+                    Text("升级为公有后不能转回私有,也不能删除,但仍能改设置和改名。")
                 }
             )
         }
@@ -365,12 +351,10 @@ struct ManageBotSheet: View {
     /// True when there's actually something to save vs the row we loaded.
     private var dirty: Bool {
         let trimmed = displayName.trimmingCharacters(in: .whitespaces)
-        if isPrivate {
-            if trimmed != initial.display_name { return true }
-            if modelSlug != (initial.model_id ?? "") { return true }
-            if modelProvider != initialModelProvider { return true }
-            if voiceCallEnabled != (initial.voice_call_enabled ?? false) { return true }
-        }
+        if trimmed != initial.display_name { return true }
+        if modelSlug != (initial.model_id ?? "") { return true }
+        if modelProvider != initialModelProvider { return true }
+        if voiceCallEnabled != (initial.voice_call_enabled ?? false) { return true }
         if visibility != (initial.visibility ?? "public_open") { return true }
         return false
     }
@@ -392,67 +376,36 @@ struct ManageBotSheet: View {
         do {
             // model_provider must round-trip an explicit JSON null when a
             // bot is switched off the native route — Swift's synthesized
-            // Encodable omits nil optionals, so a custom encode force-emits
-            // it (gated by writeModelProvider so the public-flip branch can
-            // still leave it out).
+            // Encodable omits nil optionals, so a custom encode force-emits it.
             struct Update: Encodable {
-                let display_name: String?
-                let model_id: String?
+                let display_name: String
+                let model_id: String
                 let model_provider: String?
-                let visibility: String?
-                let voice_call_enabled: Bool?
-                let writeModelProvider: Bool
+                let visibility: String
+                let voice_call_enabled: Bool
                 enum CodingKeys: String, CodingKey {
                     case display_name, model_id, model_provider
                     case visibility, voice_call_enabled
                 }
                 func encode(to encoder: Encoder) throws {
                     var c = encoder.container(keyedBy: CodingKeys.self)
-                    try c.encodeIfPresent(display_name, forKey: .display_name)
-                    try c.encodeIfPresent(model_id, forKey: .model_id)
-                    if writeModelProvider {
-                        try c.encode(model_provider, forKey: .model_provider)
-                    }
-                    try c.encodeIfPresent(visibility, forKey: .visibility)
-                    try c.encodeIfPresent(voice_call_enabled, forKey: .voice_call_enabled)
+                    try c.encode(display_name, forKey: .display_name)
+                    try c.encode(model_id, forKey: .model_id)
+                    try c.encode(model_provider, forKey: .model_provider)
+                    try c.encode(visibility, forKey: .visibility)
+                    try c.encode(voice_call_enabled, forKey: .voice_call_enabled)
                 }
             }
-            // For public bots the trigger blocks anything except visibility,
-            // so we only send the changed columns.
-            let payload: Update
-            if visibility == "private" {
-                // Private edit (no promotion) → keep updating identity columns.
-                payload = Update(
-                    display_name: displayName.trimmingCharacters(in: .whitespaces),
-                    model_id: modelSlug,
-                    model_provider: modelProvider,
-                    visibility: visibility,
-                    voice_call_enabled: voiceCallEnabled,
-                    writeModelProvider: true
-                )
-            } else if isPrivate {
-                // Promotion: snapshot identity + flip visibility in one UPDATE.
-                // voice_call_enabled is private-only (edge route gates on it),
-                // so freeze it to its pre-promotion value here.
-                payload = Update(
-                    display_name: displayName.trimmingCharacters(in: .whitespaces),
-                    model_id: modelSlug,
-                    model_provider: modelProvider,
-                    visibility: visibility,
-                    voice_call_enabled: voiceCallEnabled,
-                    writeModelProvider: true
-                )
-            } else {
-                // Public → public visibility flip; identity is frozen.
-                payload = Update(
-                    display_name: nil,
-                    model_id: nil,
-                    model_provider: nil,
-                    visibility: visibility,
-                    voice_call_enabled: nil,
-                    writeModelProvider: false
-                )
-            }
+            // The creator may edit every column regardless of visibility, so
+            // one payload covers private edits, public edits, and the
+            // private→public promotion alike.
+            let payload = Update(
+                display_name: displayName.trimmingCharacters(in: .whitespaces),
+                model_id: modelSlug,
+                model_provider: modelProvider,
+                visibility: visibility,
+                voice_call_enabled: voiceCallEnabled
+            )
             try await SupabaseStack.shared
                 .from("bots")
                 .update(payload)
@@ -787,9 +740,9 @@ struct InviteContactPickerSheet: View {
 /// `voice_call_enabled` columns) via PATCH /v1/bots/:id so the worker
 /// merges and drops the bot KV cache in one trip.
 ///
-/// Read-only for bots the caller didn't create, or any public bot
-/// (the worker enforces the same gate). The settings still render so the
-/// user can *see* how the bot is set up.
+/// Read-only for bots the caller didn't create (the worker enforces the
+/// same gate). The settings still render so the user can *see* how the
+/// bot is set up.
 struct BotConfigView: View {
     let bot: Bot
     let currentUserId: String?
@@ -838,12 +791,11 @@ struct BotConfigView: View {
         }
     }
 
-    /// Only the creator of a *private* bot may edit. Public bots are
-    /// frozen — the worker rejects the PATCH anyway. Preset private bots
-    /// are per-user clones, so their creator is the user — editable.
+    /// Only the creator may edit — including after the bot goes public.
+    /// Preset bots have a NULL creator and stay read-only here.
     private var canEdit: Bool {
         guard let me = currentUserId, let owner = bot.creator_id else { return false }
-        return bot.visibility == "private" && owner == me
+        return owner == me
     }
 
     private var snapshot: Snapshot {
@@ -864,7 +816,7 @@ struct BotConfigView: View {
         Form {
             if !canEdit {
                 Section {
-                    Text("这是「\(bot.display_name)」的配置。只有创建者能修改自己的私有机器人；公有机器人不可改。")
+                    Text("这是「\(bot.display_name)」的配置。只有创建者本人能修改。")
                         .font(Theme.Fonts.caption)
                         .foregroundStyle(Theme.Palette.inkMuted)
                 }

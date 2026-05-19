@@ -48,7 +48,7 @@ const PatchBody = z
     // catalog section (e.g. "OpenAI（原生）").
     model_provider: z.string().max(64).nullable().optional(),
     // Voice-call gate. When true the iOS conversation header shows the
-    // phone button. Bot owner-only — public bots stay locked.
+    // phone button. Creator-only — public bots editable too.
     voice_call_enabled: z.boolean().optional(),
     // Partial bot-config patch. Top-level keys present here replace the
     // matching key in the stored `config` jsonb wholesale; absent keys
@@ -64,10 +64,9 @@ const PatchBody = z
     { message: 'no fields to update' },
   );
 
-// PATCH /v1/bots/:id — owner-only edits to a private bot. Currently
-// exposes default model + voice-call gate. Public bots are off-limits
-// (preset private bots are per-user clones, so they edit like any
-// owned private bot).
+// PATCH /v1/bots/:id — creator-only edits. Exposes default model +
+// voice-call gate + the config blob. The creator keeps this control
+// after a bot goes public; only private→public promotion is one-way.
 botRoutes.patch('/:id', async (c) => {
   const userId = c.var.userId!;
   const id = c.req.param('id');
@@ -85,13 +84,13 @@ botRoutes.patch('/:id', async (c) => {
   const supa = serviceClient(c.env);
   const { data: bot, error: botErr } = await supa
     .from('bots')
-    .select('id, visibility, creator_id, config')
+    .select('id, creator_id, config')
     .eq('id', id)
     .maybeSingle();
   if (botErr) return jsonError(c, 500, 'database_error', { detail: botErr.message });
   if (!bot) return jsonError(c, 404, 'not_found');
-  if (bot.visibility !== 'private' || bot.creator_id !== userId) {
-    return jsonError(c, 403, 'forbidden', { message: '只能改自己创建的私有机器人' });
+  if (bot.creator_id !== userId) {
+    return jsonError(c, 403, 'forbidden', { message: '只能改自己创建的机器人' });
   }
 
   // Build partial update — only the keys the client actually sent.
