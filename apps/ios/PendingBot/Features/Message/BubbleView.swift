@@ -280,6 +280,16 @@ struct AttachmentGrid: View {
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                             .contentShape(Rectangle())
                             .onTapGesture { zoomed = ZoomTarget(path: att.url) }
+                            // The image's own context menu — long-pressing a
+                            // thumbnail offers "save to album", not the text
+                            // bubble's copy/recall menu.
+                            .contextMenu {
+                                Button {
+                                    saveToAlbum(att)
+                                } label: {
+                                    Label("保存到相册", systemImage: "square.and.arrow.down")
+                                }
+                            }
                     }
                 }
             }
@@ -289,6 +299,23 @@ struct AttachmentGrid: View {
         }
         .fullScreenCover(item: $zoomed) { target in
             ImageViewer(path: target.path, serverURL: serverURL)
+        }
+    }
+
+    /// Download the full image through the auth-gated endpoint and write
+    /// it to the system photo library. NSPhotoLibraryAddUsageDescription
+    /// is already declared; iOS prompts on first use.
+    private func saveToAlbum(_ att: Attachment) {
+        Task {
+            guard let data = try? await APIClient().download("v1/uploads/\(att.id)"),
+                  let image = UIImage(data: data) else {
+                await MainActor.run { Haptics.error() }
+                return
+            }
+            await MainActor.run {
+                UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
+                Haptics.tap()
+            }
         }
     }
 }
