@@ -19,6 +19,15 @@ struct PendingPeer: Hashable {
     let kind: String       // "bot" | "user"
     let peerId: String
     let displayName: String
+    /// Peer avatar carried over from whatever list the tap came from
+    /// (message list / friends list), so the chat header + incoming
+    /// bubbles render the correct face on the very first frame instead
+    /// of flashing a generic glyph until `loadPeerProfileIfNeeded()`'s
+    /// round-trip lands. nil when the tap origin had no avatar (e.g. the
+    /// group-member-tap path); `peerProfileForBubble` falls back to the
+    /// peer id as the emoji seed in that case.
+    var avatarPath: String? = nil
+    var avatarSeed: String? = nil
     /// Pre-resolved conv id, populated by the friends-tab tap path when
     /// we already looked up the singleton user_user conv before navigating.
     /// When set, `pendingConversation(for:)` builds a fully-keyed Conversation
@@ -309,11 +318,11 @@ struct ConversationView: View {
             return (userId: p.userId, displayName: p.displayName, avatarPath: p.avatarPath, avatarSeed: p.avatarSeed)
         }
         if let p = pendingPeer, p.kind == "user" {
-            // No server lookup yet — seed defaults to peerId so the
-            // initial render at least matches what the friends list
-            // shows for legacy accounts. loadPeerProfileIfNeeded
-            // upgrades this to the server-supplied seed when it lands.
-            return (userId: p.peerId, displayName: p.displayName, avatarPath: nil, avatarSeed: p.peerId)
+            // Avatar carried over from the originating list — correct on
+            // the first frame, no flash. Seed falls back to peerId when
+            // the tap origin had none (matches the legacy-account glyph).
+            return (userId: p.peerId, displayName: p.displayName,
+                    avatarPath: p.avatarPath, avatarSeed: p.avatarSeed ?? p.peerId)
         }
         return nil
     }

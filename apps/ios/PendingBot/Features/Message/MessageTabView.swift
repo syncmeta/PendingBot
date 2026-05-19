@@ -165,13 +165,16 @@ struct MessageTabView: View {
         switch dest {
         case .existing(let conv):
             // user_user 行点进去时,把列表里已经解析过的 peer (alias /
-            // displayName / avatarPath) 直接喂给 ConversationView 当
-            // pendingPeer,这样头像 + 标题第一帧就对,不用等
-            // loadPeerProfileIfNeeded() 那次 round-trip。
+            // displayName / avatarPath / avatarSeed) 直接喂给
+            // ConversationView 当 pendingPeer,这样头像 + 标题第一帧就对,
+            // 不用等 loadPeerProfileIfNeeded() 那次 round-trip。
             let pending: PendingPeer? = {
                 guard conv.conversation_type == "user_user",
                       let p = userPeers[conv.id] else { return nil }
-                return PendingPeer(kind: "user", peerId: p.userId, displayName: p.rowName)
+                return PendingPeer(kind: "user", peerId: p.userId,
+                                   displayName: p.rowName,
+                                   avatarPath: p.avatarPath,
+                                   avatarSeed: p.avatarSeed)
             }()
             ConversationView(conversation: conv, bot: bot(for: conv), pendingPeer: pending) {
                 reload()

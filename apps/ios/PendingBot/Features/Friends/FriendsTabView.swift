@@ -660,6 +660,8 @@ struct FriendsTabView: View {
         open(PendingPeer(kind: "user",
                          peerId: c.id,
                          displayName: c.rowName,
+                         avatarPath: c.avatarPath,
+                         avatarSeed: c.avatarSeed,
                          existingConvId: existing))
     }
 
