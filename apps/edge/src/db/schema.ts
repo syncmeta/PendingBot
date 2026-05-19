@@ -756,6 +756,7 @@ export type Database = {
           updated_at: string
           user_id: string | null
           vision_model_override: string | null
+          voice_model_override: string | null
         }
         Insert: {
           bot_id?: string | null
@@ -773,6 +774,7 @@ export type Database = {
           updated_at?: string
           user_id?: string | null
           vision_model_override?: string | null
+          voice_model_override?: string | null
         }
         Update: {
           bot_id?: string | null
@@ -790,6 +792,7 @@ export type Database = {
           updated_at?: string
           user_id?: string | null
           vision_model_override?: string | null
+          voice_model_override?: string | null
         }
         Relationships: [
           {
