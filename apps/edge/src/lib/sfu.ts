@@ -140,3 +140,143 @@ export async function closeAdapter(app: SfuApp, adapterId: string): Promise<void
     // timeout, so a failed close is not fatal — just log upstream.
   }
 }
+
+// =============================================================================
+// SFU session / track API — the WebRTC peer side
+// =============================================================================
+//
+// Distinct from the WebSocket-adapter API above: these endpoints manage
+// real WebRTC sessions and tracks. The group-voice human-join path uses
+// them to negotiate each human's RTCPeerConnection against the SFU on
+// behalf of iOS (the worker is the "Backend Server" in the SFU docs'
+// lifecycle diagram).
+//
+// Docs: developers.cloudflare.com/realtime/sfu/https-api/
+// Schema: developers.cloudflare.com/realtime/static/realtime-api-2024-05-21.yaml
+
+export interface SfuSessionDescription {
+  type: 'offer' | 'answer';
+  sdp: string;
+}
+
+// A track in a tracks/new request. `local` publishes a track the peer is
+// sending (identified by its `mid` in the offer); `remote` subscribes to
+// a track another session published (identified by sessionId+trackName).
+export interface SfuTrackRequest {
+  location: 'local' | 'remote';
+  trackName?: string;
+  mid?: string;
+  sessionId?: string;
+}
+
+export interface SfuTrackResult {
+  location?: 'local' | 'remote';
+  trackName?: string;
+  mid?: string;
+  sessionId?: string;
+  errorCode?: string;
+  errorDescription?: string;
+}
+
+export interface NewTracksResult {
+  sessionDescription?: SfuSessionDescription;
+  // When true the peer must immediately answer the returned offer via
+  // /renegotiate before the new tracks flow.
+  requiresImmediateRenegotiation?: boolean;
+  tracks: SfuTrackResult[];
+}
+
+interface SessionApiResponse {
+  sessionId?: string;
+  sessionDescription?: SfuSessionDescription;
+  requiresImmediateRenegotiation?: boolean;
+  tracks?: SfuTrackResult[];
+  errorCode?: string;
+  errorDescription?: string;
+}
+
+async function sfuFetch(
+  app: SfuApp,
+  method: 'POST' | 'PUT' | 'GET',
+  path: string,
+  body?: unknown,
+): Promise<SessionApiResponse> {
+  const resp = await fetch(`${SFU_API_BASE}/apps/${app.appId}${path}`, {
+    method,
+    headers: authHeaders(app),
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  let json: SessionApiResponse;
+  try {
+    json = (await resp.json()) as SessionApiResponse;
+  } catch {
+    throw new Error(`SFU ${method} ${path}: non-JSON response (${resp.status})`);
+  }
+  if (!resp.ok || json.errorCode) {
+    throw new Error(
+      `SFU ${method} ${path} failed: ${json.errorCode ?? resp.status} ` +
+        `${json.errorDescription ?? ''}`,
+    );
+  }
+  return json;
+}
+
+/** Create a new SFU session. Returns the session id. */
+export async function createSfuSession(app: SfuApp): Promise<string> {
+  const json = await sfuFetch(app, 'POST', '/sessions/new');
+  if (!json.sessionId) throw new Error('SFU session create returned no sessionId');
+  return json.sessionId;
+}
+
+/**
+ * Add tracks to a session. Pass the peer's SDP offer to publish local
+ * tracks or subscribe to remote ones; the SFU replies with an answer (or
+ * an offer when `requiresImmediateRenegotiation` is set).
+ */
+export async function newSfuTracks(
+  app: SfuApp,
+  sessionId: string,
+  opts: {
+    sessionDescription?: SfuSessionDescription;
+    tracks: SfuTrackRequest[];
+    autoDiscover?: boolean;
+  },
+): Promise<NewTracksResult> {
+  const json = await sfuFetch(app, 'POST', `/sessions/${sessionId}/tracks/new`, {
+    sessionDescription: opts.sessionDescription,
+    tracks: opts.tracks,
+    autoDiscover: opts.autoDiscover,
+  });
+  return {
+    sessionDescription: json.sessionDescription,
+    requiresImmediateRenegotiation: json.requiresImmediateRenegotiation,
+    tracks: json.tracks ?? [],
+  };
+}
+
+/** Answer the SFU's renegotiation offer (e.g. after new remote tracks). */
+export async function renegotiateSfuSession(
+  app: SfuApp,
+  sessionId: string,
+  sessionDescription: SfuSessionDescription,
+): Promise<void> {
+  await sfuFetch(app, 'PUT', `/sessions/${sessionId}/renegotiate`, {
+    sessionDescription,
+  });
+}
+
+/** Close tracks on a session by their `mid`. Best-effort — never throws. */
+export async function closeSfuTracks(
+  app: SfuApp,
+  sessionId: string,
+  mids: string[],
+): Promise<void> {
+  try {
+    await sfuFetch(app, 'PUT', `/sessions/${sessionId}/tracks/close`, {
+      tracks: mids.map((mid) => ({ mid })),
+      force: true,
+    });
+  } catch {
+    // Session timeout reclaims tracks anyway — a failed close is not fatal.
+  }
+}
