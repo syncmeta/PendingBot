@@ -154,3 +154,17 @@ export async function endRealtimeSession(env: Env, sessionId: string): Promise<v
     console.warn('[realtime-sessions] end failed', error.message);
   }
 }
+
+// Realtime function tool that lets a 1:1 voice bot hang up the call
+// itself. Declared in the OpenAI session config (the WebRTC mint body
+// and the WebSocket-transport session.update alike). The worker is not
+// on the 1:1 audio path, so iOS watches for this function call and ends
+// the call when the bot invokes it.
+export const REALTIME_HANG_UP_TOOL = {
+  type: 'function',
+  name: 'hang_up',
+  description:
+    'Hang up (end) this voice call. Call this when the user asks you ' +
+    'to hang up, or when the conversation has clearly finished.',
+  parameters: { type: 'object', properties: {}, additionalProperties: false },
+} as const;
