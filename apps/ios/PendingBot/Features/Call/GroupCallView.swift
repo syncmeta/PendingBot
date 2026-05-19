@@ -149,15 +149,30 @@ struct GroupCallView: View {
     // MARK: - Controls
 
     private var controlRow: some View {
-        HStack(spacing: 28) {
-            speakerButton
+        HStack(alignment: .top, spacing: 22) {
+            labeledControl("扬声器") { speakerButton }
             if session.isPrivileged {
-                addBotButton
+                labeledControl("加机器人") { addBotButton }
             }
-            hangUpButton
+            labeledControl("离开") { hangUpButton }
             if session.isPrivileged {
-                endCallButton
+                labeledControl("结束通话") { endCallButton }
             }
+        }
+    }
+
+    /// A control button with a caption underneath — the red "leave" and
+    /// orange "end call" buttons are otherwise easy to confuse.
+    @ViewBuilder
+    private func labeledControl<C: View>(
+        _ label: String,
+        @ViewBuilder _ content: () -> C,
+    ) -> some View {
+        VStack(spacing: 6) {
+            content()
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
         }
     }
 
