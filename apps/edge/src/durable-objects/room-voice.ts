@@ -263,7 +263,7 @@ export class RoomVoiceDO {
       case '/control/add-human':
         return this.addHuman((await request.json()) as HumanTrack);
       case '/control/roster':
-        return Response.json({ bots: this.roster() });
+        return Response.json(this.roster());
       case '/control/leave': {
         const { humanId } = (await request.json()) as { humanId: string };
         await this.removeHuman(humanId);
@@ -408,24 +408,38 @@ export class RoomVoiceDO {
     }
   }
 
-  // The bots a human can subscribe to — each bot's SFU ingest session +
-  // track. Bots whose ingest adapter hasn't come up yet are omitted.
-  private roster(): Array<{
-    botId: string;
-    sfuSessionId: string;
-    sfuTrackName: string;
-  }> {
-    const out: Array<{ botId: string; sfuSessionId: string; sfuTrackName: string }> = [];
+  // Everything a joining human subscribes to in order to hear the room:
+  //   bots   — each bot's SFU ingest session + track (omitted until the
+  //            ingest adapter is up)
+  //   humans — each human's own published mic session + track, so peers
+  //            hear each other (the subscriber filters out its own id)
+  private roster(): {
+    bots: Array<{ botId: string; sfuSessionId: string; sfuTrackName: string }>;
+    humans: Array<{ humanId: string; sfuSessionId: string; sfuTrackName: string }>;
+  } {
+    const bots: Array<{ botId: string; sfuSessionId: string; sfuTrackName: string }> = [];
     for (const leg of this.bots.values()) {
       if (leg.ingestSessionId && leg.ingestTrackName) {
-        out.push({
+        bots.push({
           botId: leg.spec.botId,
           sfuSessionId: leg.ingestSessionId,
           sfuTrackName: leg.ingestTrackName,
         });
       }
     }
-    return out;
+    const humans: Array<{
+      humanId: string;
+      sfuSessionId: string;
+      sfuTrackName: string;
+    }> = [];
+    for (const h of this.humans.values()) {
+      humans.push({
+        humanId: h.track.humanId,
+        sfuSessionId: h.track.sfuSessionId,
+        sfuTrackName: h.track.sfuTrackName,
+      });
+    }
+    return { bots, humans };
   }
 
   private async addHuman(track: HumanTrack): Promise<Response> {
@@ -450,9 +464,9 @@ export class RoomVoiceDO {
     // blocking (and failing) the join here.
     void this.connectHumanStream(track.humanId, ctx);
 
-    // Hand back the bot roster so the joining human can subscribe to
-    // each bot's SFU track and hear them.
-    return Response.json({ ok: true, bots: this.roster() });
+    // Hand back the roster (bots + the other humans already in the room)
+    // so the joining human can subscribe and hear everyone.
+    return Response.json({ ok: true, ...this.roster() });
   }
 
   // Bring up a human's Stream adapter, retrying until their WebRTC peer

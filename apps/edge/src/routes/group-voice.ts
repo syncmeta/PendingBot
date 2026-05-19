@@ -512,13 +512,14 @@ groupVoiceRoutes.post('/:id/voice/join', async (c) => {
     console.warn('[group-voice/join] room DO add-human failed', doResp.status);
     return jsonError(c, 502, 'voice_upstream_failed');
   }
-  const roster = ((await doResp.json()) as { bots?: unknown }).bots ?? [];
+  const roster = (await doResp.json()) as { bots?: unknown; humans?: unknown };
 
   return c.json({
     ok: true,
     session_id: humanSessionId,
     answer: answerSdp,
-    bots: roster,
+    bots: roster.bots ?? [],
+    humans: roster.humans ?? [],
   });
 });
 
@@ -586,8 +587,12 @@ groupVoiceRoutes.get('/:id/voice/roster', async (c) => {
     console.warn('[group-voice/roster] room DO failed', resp.status);
     return jsonError(c, 502, 'voice_upstream_failed');
   }
-  const roster = ((await resp.json()) as { bots?: unknown }).bots ?? [];
-  return c.json({ ok: true, bots: roster });
+  const roster = (await resp.json()) as { bots?: unknown; humans?: unknown };
+  return c.json({
+    ok: true,
+    bots: roster.bots ?? [],
+    humans: roster.humans ?? [],
+  });
 });
 
 // =============================================================================
