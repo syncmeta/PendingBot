@@ -50,6 +50,74 @@ interface OpenRouterModelOut {
   /// alias is registered yet — the row still routes via the OpenRouter
   /// passthrough fallback but at unknown cost.
   blended_usd_per_million: number | null;
+  /// Which catalog this row came from. The picker shows one collapsible
+  /// section per source: 'openrouter' is the default catalog, 'openai'
+  /// is OpenAI's own model list reached natively through the AI Gateway.
+  /// A model the bot routes via `source` → bots.model_provider.
+  source: 'openrouter' | 'openai';
+  /// bots.model_provider value to store when this row is picked. NULL for
+  /// the OpenRouter catalog (default routing); 'openai' for the native one.
+  model_provider: string | null;
+}
+
+// Isolate-local cache of OpenAI's native catalog. Purely a cache — it
+// auto-expires and re-fetches from OpenAI's own /models; nothing here is
+// hand-maintained. Keeps the picker snappy without a per-open round-trip.
+let nativeCatalogCache: { at: number; rows: OpenRouterModelOut[] } | null = null;
+const NATIVE_CATALOG_TTL_MS = 10 * 60_000;
+
+// OpenAI's native catalog, reached through the AI Gateway openai
+// passthrough. No pricing is attached — the native route bills through
+// the gateway, so the picker shows these without a cost figure.
+async function loadOpenAINativeCatalog(
+  c: Context<AppBindings>,
+): Promise<OpenRouterModelOut[]> {
+  const now = Date.now();
+  if (nativeCatalogCache && now - nativeCatalogCache.at < NATIVE_CATALOG_TTL_MS) {
+    return nativeCatalogCache.rows;
+  }
+  const token = c.env.CF_AIG_RUN_TOKEN;
+  if (!token) return [];
+  const supa = serviceClient(c.env);
+  const { data: provider } = await supa
+    .from('llm_providers')
+    .select('base_url')
+    .eq('slug', 'openai')
+    .eq('enabled', true)
+    .maybeSingle();
+  if (!provider?.base_url) return [];
+  try {
+    const res = await fetch(`${provider.base_url}/models`, {
+      headers: {
+        'cf-aig-authorization': `Bearer ${token}`,
+        Accept: 'application/json',
+      },
+    });
+    if (!res.ok) {
+      console.warn('[openrouter/models] openai-native catalog', res.status);
+      return [];
+    }
+    const json = (await res.json()) as { data?: Array<{ id?: string }> };
+    const rows: OpenRouterModelOut[] = (json.data ?? [])
+      .map((m) => m.id)
+      .filter((id): id is string => typeof id === 'string' && id.startsWith('gpt-'))
+      .map((id) => ({
+        slug: id,
+        display_name: prettifyTail(id),
+        provider: 'openai',
+        context_length: null,
+        supports_vision: false,
+        local_slug: null,
+        blended_usd_per_million: null,
+        source: 'openai' as const,
+        model_provider: 'openai',
+      }));
+    nativeCatalogCache = { at: now, rows };
+    return rows;
+  } catch (err) {
+    console.warn('[openrouter/models] openai-native catalog fetch failed', err);
+    return [];
+  }
 }
 
 interface LocalAugment {
@@ -97,9 +165,10 @@ async function loadLocalAugments(
 }
 
 openrouterRoutes.get('/models', async (c) => {
-  const [res, augments] = await Promise.all([
+  const [res, augments, nativeOpenAI] = await Promise.all([
     fetch('https://openrouter.ai/api/v1/models'),
     loadLocalAugments(c),
+    loadOpenAINativeCatalog(c),
   ]);
   if (!res.ok) {
     const body = (await res.text()).slice(0, 300);
@@ -124,9 +193,13 @@ openrouterRoutes.get('/models', async (c) => {
       supports_vision: inputModalities.includes('image'),
       local_slug: aug?.localSlug ?? null,
       blended_usd_per_million: aug?.blendedUsdPerMillion ?? null,
+      source: 'openrouter' as const,
+      model_provider: null,
     };
   });
-  return c.json(out);
+  // Append OpenAI's native catalog as a second source. The picker renders
+  // it as a separate collapsible section ("OpenAI（原生）").
+  return c.json([...out, ...nativeOpenAI]);
 });
 
 function stripVendorPrefix(name?: string): string | null {

@@ -11,7 +11,7 @@ export default async function AliasesPage() {
     .from('llm_model_aliases')
     .select(
       `id, provider_model_id, weight, enabled,
-       input_price, cached_input_price, output_price, cache_write_price,
+       input_price, cached_input_price, output_price,
        llm_models ( id, slug, display_name ),
        llm_providers ( id, slug, display_name )`,
     )
@@ -30,7 +30,7 @@ export default async function AliasesPage() {
   }
 
   // Cheapest-input price per model — used to render a "% vs cheapest"
-  // hint per row (e.g., OpenRouter 100% vs WorldRouter 70%).
+  // hint per row when a model has more than one provider alias.
   const cheapestByModel = new Map<string, number>();
   for (const [k, g] of grouped) {
     const min = g.aliases
@@ -99,7 +99,6 @@ type AliasRow = {
   input_price: number | null;
   cached_input_price: number | null;
   output_price: number | null;
-  cache_write_price: number | null;
   llm_providers: { id: string; slug: string; display_name: string } | null;
 };
 
@@ -116,8 +115,8 @@ function ModelGroup({
     <section className="rounded-lg border bg-card">
       <div className="flex items-center justify-between border-b px-5 py-3">
         <div>
-          <span className="font-mono text-sm">{model.slug}</span>
-          <span className="ml-2 text-sm text-muted-foreground">{model.display_name}</span>
+          <span className="text-sm font-medium">{model.display_name}</span>
+          <span className="ml-2 font-mono text-xs text-muted-foreground">{model.slug}</span>
         </div>
         <Link href={`/aliases/new?model_id=${model.id}`} className="text-xs underline">
           + alias

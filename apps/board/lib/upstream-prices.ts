@@ -6,13 +6,13 @@
 // Supported strategies today:
 //   - openrouter (hardcoded): GET https://openrouter.ai/api/v1/models
 //     → per-token USD strings; we multiply by 1e6 so units match
-//     llm_model_aliases.{input,cached_input,output,cache_write}_price
-//     which store USD per million tokens.
+//     llm_model_aliases.{input,cached_input,output}_price which store
+//     USD per million tokens.
 //   - mirror: provider.config.pricing_source = { kind: 'mirror',
 //     source_slug: <some other provider's slug>, factor: <number> }
 //     → for each alias on this provider, find the alias of the same
 //     canonical model on the source provider, multiply each price by
-//     factor. Used by WorldRouter (~70% of OpenRouter list).
+//     factor.
 //
 // Anything else returns "unsupported" so the diff page can render
 // "no upstream fetch wired up" for those rows.
@@ -27,7 +27,6 @@ export interface UpstreamPriceSet {
   input_price: number | null;
   cached_input_price: number | null;
   output_price: number | null;
-  cache_write_price: number | null;
 }
 
 export interface PricingSourceMirror {
@@ -42,7 +41,6 @@ export interface PricingSourceMirror {
  */
 export type PricingSource =
   | { kind: 'openrouter' }
-  | { kind: 'worldrouter_public' }
   | PricingSourceMirror
   | { kind: 'unsupported'; reason: string };
 
@@ -56,7 +54,6 @@ export function decodePricingSource(
     if (src && typeof src === 'object' && !Array.isArray(src)) {
       const s = src as Record<string, unknown>;
       if (s.kind === 'openrouter') return { kind: 'openrouter' };
-      if (s.kind === 'worldrouter_public') return { kind: 'worldrouter_public' };
       if (s.kind === 'mirror') {
         const source_slug = typeof s.source_slug === 'string' ? s.source_slug : '';
         const factor = Number(s.factor);
@@ -70,9 +67,7 @@ export function decodePricingSource(
       }
     }
   }
-  // Legacy fallback: providers seeded before pricing_source was wired
-  // up. The 20260515 migration backfills both openrouter and
-  // worldrouter, so this branch only fires for hand-added rows.
+  // Legacy fallback: providers seeded before pricing_source was wired up.
   if (providerSlug === 'openrouter') return { kind: 'openrouter' };
   return {
     kind: 'unsupported',
@@ -91,7 +86,6 @@ interface OpenRouterModel {
     prompt?: string;
     completion?: string;
     input_cache_read?: string;
-    input_cache_write?: string;
   };
 }
 
@@ -132,111 +126,15 @@ export async function fetchOpenRouterCatalog(): Promise<
       input_price: parsePerMillion(m.pricing?.prompt),
       cached_input_price: parsePerMillion(m.pricing?.input_cache_read),
       output_price: parsePerMillion(m.pricing?.completion),
-      cache_write_price: parsePerMillion(m.pricing?.input_cache_write),
     });
   }
   openRouterCache = { at: now, map };
   return map;
 }
 
-// ── WorldRouter public-page scrape ──────────────────────────────────────
-// WorldRouter doesn't expose pricing through their inference API or
-// control plane (the control-plane /supported-models endpoint exists
-// but is session-cookie protected). The public /models page, however,
-// SSRs prices into data-model-* attributes on each card row:
-//
-//   <div data-model-id="claude-haiku-4-5"
-//        data-model-provider="Anthropic"
-//        data-model-input-price="70 Credits"
-//        data-model-output-price="350 Credits"
-//        data-model-cache-read-price="7 Credits"
-//        data-model-cache-write-price="87.5 Credits">
-//
-// 1 Credit = $0.01 USD (verified against the closed-source 0.7× discount:
-// Claude Haiku 4.5 = 70 Credits = $0.70/M = OpenRouter's $1/M × 0.7).
-// So price-in-USD-per-1M = credits × 0.01.
-
-const WORLDROUTER_MODELS_URL = 'https://www.worldrouter.ai/models';
-const CREDIT_TO_USD = 0.01;
-
-function parseCredits(s: string | null | undefined): number | null {
-  if (!s) return null;
-  const trimmed = s.trim();
-  if (!trimmed || trimmed === 'N/A') return null;
-  if (trimmed === 'Free' || trimmed === '0 Credits') return 0;
-  // "1,750 Credits" → 1750; "9.8 Credits" → 9.8
-  const m = trimmed.match(/^([\d,]+(?:\.\d+)?)\s*Credits?$/i);
-  if (!m) return null;
-  const n = Number(m[1]!.replace(/,/g, ''));
-  if (!Number.isFinite(n) || n < 0) return null;
-  return n * CREDIT_TO_USD;
-}
-
-let worldRouterCache: { at: number; map: Map<string, UpstreamPriceSet> } | null = null;
-const WORLDROUTER_TTL_MS = 5 * 60_000;
-
-/**
- * Fetch and parse the WorldRouter public models page. Returns a map
- * keyed by the WR model id (matches what we store in
- * llm_model_aliases.provider_model_id for WR rows, e.g.
- * "claude-haiku-4-5"). All prices are in USD per 1M tokens.
- *
- * Implementation note: we deliberately parse with regex rather than
- * pulling in a DOM library — the cards are flat tags with no nested
- * structure to walk, and shipping cheerio (~150KB) for one selector
- * isn't worth it. If WR ever rearranges the markup so the data-model-*
- * attributes don't sit together on the opening tag, switch to a real
- * parser. */
-export async function fetchWorldRouterCatalog(): Promise<
-  Map<string, UpstreamPriceSet>
-> {
-  const now = Date.now();
-  if (worldRouterCache && now - worldRouterCache.at < WORLDROUTER_TTL_MS) {
-    return worldRouterCache.map;
-  }
-  const res = await fetch(WORLDROUTER_MODELS_URL, {
-    headers: { Accept: 'text/html' },
-  });
-  if (!res.ok) {
-    throw new Error(
-      `worldrouter /models ${res.status}: ${(await res.text()).slice(0, 300)}`,
-    );
-  }
-  const html = await res.text();
-  const map = new Map<string, UpstreamPriceSet>();
-  // Each card opens with a div whose attrs include data-model-id and
-  // four price attributes. Capture the tag and extract attrs from it.
-  const tagRe = /<[a-z]+\s[^>]*data-model-id="[^"]+"[^>]*>/g;
-  const attr = (tag: string, key: string): string | null => {
-    const m = tag.match(new RegExp(`${key}="([^"]*)"`));
-    return m ? m[1]! : null;
-  };
-  for (const m of html.matchAll(tagRe)) {
-    const tag = m[0];
-    const id = attr(tag, 'data-model-id');
-    if (!id) continue;
-    map.set(id, {
-      input_price: parseCredits(attr(tag, 'data-model-input-price')),
-      cached_input_price: parseCredits(attr(tag, 'data-model-cache-read-price')),
-      output_price: parseCredits(attr(tag, 'data-model-output-price')),
-      cache_write_price: parseCredits(attr(tag, 'data-model-cache-write-price')),
-    });
-  }
-  if (map.size === 0) {
-    // Page changed shape — fail loudly rather than silently returning
-    // empty. The /aliases/upstream page surfaces this as an error.
-    throw new Error(
-      'worldrouter /models returned 0 parseable cards — page markup likely changed',
-    );
-  }
-  worldRouterCache = { at: now, map };
-  return map;
-}
-
 /** For tests / forcing a fresh pull from the board UI. */
 export function _resetUpstreamCatalogCache(): void {
   openRouterCache = null;
-  worldRouterCache = null;
 }
 
 // ── Per-alias resolution ───────────────────────────────────────────────
@@ -263,7 +161,6 @@ export async function resolveUpstreamPrices(
   alias: AliasForResolution,
   ctx: {
     openRouter: Map<string, UpstreamPriceSet>;
-    worldRouter: Map<string, UpstreamPriceSet>;
     /** aliasId → AliasForResolution for every enabled alias across all
      * providers. Used to find mirror sources without an extra DB query
      * per alias. */
@@ -278,17 +175,6 @@ export async function resolveUpstreamPrices(
       return {
         prices: null,
         reason: `model "${alias.providerModelId}" not in OpenRouter catalog`,
-      };
-    }
-    return { prices: hit };
-  }
-
-  if (strategy.kind === 'worldrouter_public') {
-    const hit = ctx.worldRouter.get(alias.providerModelId);
-    if (!hit) {
-      return {
-        prices: null,
-        reason: `model "${alias.providerModelId}" not on the WorldRouter public catalog — update provider_model_id to match WR's id (e.g. "claude-haiku-4-5")`,
       };
     }
     return { prices: hit };
@@ -332,7 +218,6 @@ export async function resolveUpstreamPrices(
         input_price: scale(hit.input_price, strategy.factor),
         cached_input_price: scale(hit.cached_input_price, strategy.factor),
         output_price: scale(hit.output_price, strategy.factor),
-        cache_write_price: scale(hit.cache_write_price, strategy.factor),
       },
     };
   }
@@ -362,7 +247,6 @@ export interface AliasDiffRow {
     input_price: boolean;
     cached_input_price: boolean;
     output_price: boolean;
-    cache_write_price: boolean;
   };
   /** Set when upstream is null OR no field changed. */
   note: string | null;
@@ -376,20 +260,16 @@ export interface AliasDiffRow {
 export async function buildUpstreamDiff(
   supa: SupaAdmin,
 ): Promise<{ rows: AliasDiffRow[]; fetchedAt: string }> {
-  // Catalogs first — if either fails we throw early before doing DB work.
-  // Both fetches are independent so run them in parallel; the cache
-  // (5-min TTL) absorbs back-to-back Pull clicks.
-  const [openRouter, worldRouter] = await Promise.all([
-    fetchOpenRouterCatalog(),
-    fetchWorldRouterCatalog(),
-  ]);
+  // Catalog first — if the fetch fails we throw early before DB work.
+  // The cache (5-min TTL) absorbs back-to-back Pull clicks.
+  const openRouter = await fetchOpenRouterCatalog();
   const fetchedAt = new Date().toISOString();
 
   const { data, error } = await supa
     .from('llm_model_aliases')
     .select(
       `id, model_id, provider_id, provider_model_id, enabled,
-       input_price, cached_input_price, output_price, cache_write_price,
+       input_price, cached_input_price, output_price,
        llm_models ( slug, display_name ),
        llm_providers ( slug, config )`,
     )
@@ -417,7 +297,6 @@ export async function buildUpstreamDiff(
         input_price: r.input_price as number | null,
         cached_input_price: r.cached_input_price as number | null,
         output_price: r.output_price as number | null,
-        cache_write_price: r.cache_write_price as number | null,
       },
     };
     let providerMap = byProvider.get(resolution.providerSlug);
@@ -439,7 +318,6 @@ export async function buildUpstreamDiff(
     const model = row?.llm_models;
     const { prices, reason } = await resolveUpstreamPrices(a, {
       openRouter,
-      worldRouter,
       aliasesByProviderAndModel: byProvider,
     });
     const changed = {
@@ -449,16 +327,9 @@ export async function buildUpstreamDiff(
         prices?.cached_input_price ?? null,
       ),
       output_price: differs(a.current.output_price, prices?.output_price ?? null),
-      cache_write_price: differs(
-        a.current.cache_write_price,
-        prices?.cache_write_price ?? null,
-      ),
     };
     const anyChanged =
-      changed.input_price ||
-      changed.cached_input_price ||
-      changed.output_price ||
-      changed.cache_write_price;
+      changed.input_price || changed.cached_input_price || changed.output_price;
     out.push({
       aliasId: a.aliasId,
       modelSlug: model?.slug ?? '(unknown)',

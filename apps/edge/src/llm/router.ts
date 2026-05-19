@@ -78,11 +78,24 @@ export interface RouteAlias {
   inputPrice: number | null;
   cachedInputPrice: number | null;
   outputPrice: number | null;
-  cacheWritePrice: number | null;
   // Voice call pricing — per-1M audio token, populated on the alias that
   // backs the OpenAI Realtime path. Both null on text-only aliases.
   audioInputPrice: number | null;
   audioOutputPrice: number | null;
+}
+
+// Which OpenAI-dialect API a provider speaks. 'chat' = the universal
+// Chat Completions endpoint every provider supports (OpenRouter etc.).
+// 'responses' = OpenAI's native Responses API — only the OpenAI-native
+// provider (CF AI Gateway → OpenAI passthrough) handles it. Sourced from
+// llm_providers.config.api; absent/anything-else defaults to 'chat'.
+export type ProviderApiStyle = 'chat' | 'responses';
+
+export function providerApiStyle(config: unknown): ProviderApiStyle {
+  if (config && typeof config === 'object' && !Array.isArray(config)) {
+    if ((config as Record<string, unknown>).api === 'responses') return 'responses';
+  }
+  return 'chat';
 }
 
 export interface ResolvedRoute {
@@ -92,7 +105,7 @@ export interface ResolvedRoute {
   // OpenRouter passthrough fallback it's the raw slug the caller passed.
   modelToCall: string;
   alias: RouteAlias | null;
-  provider: { id: string; slug: string };
+  provider: { id: string; slug: string; apiStyle: ProviderApiStyle };
 }
 
 export class NoRouteError extends Error {
@@ -113,7 +126,6 @@ export type AliasJoinRow = {
   input_price: number | null;
   cached_input_price: number | null;
   output_price: number | null;
-  cache_write_price: number | null;
   audio_input_price: number | null;
   audio_output_price: number | null;
   llm_providers:
@@ -334,7 +346,7 @@ async function getAliasSet(
     async (): Promise<CachedAliasSet> => {
       const ALIAS_COLS =
         `id, provider_id, provider_model_id, weight,
-         input_price, cached_input_price, output_price, cache_write_price,
+         input_price, cached_input_price, output_price,
          audio_input_price, audio_output_price`;
       const [{ data: byCanonical, error: e1 }, { data: byPassthrough, error: e2 }] =
         await Promise.all([
@@ -414,6 +426,24 @@ export async function resolveRoute(
     }
   }
 
+  // Native-endpoint route. When the caller pins a provider that speaks
+  // a provider-native API (config.api='responses' — the OpenAI passthrough),
+  // route straight to it: no alias row, no weight pick. The model slug is
+  // sent as-is as the upstream model id. Skipped when that provider is in
+  // excludeProviders (a fallback retry), so failure still degrades to the
+  // alias path below (OpenRouter).
+  if (preferProvider && !opts.excludeProviders?.includes(preferProvider)) {
+    const native = await getProvider(supa, env, preferProvider);
+    if (native && providerApiStyle(native.config) === 'responses') {
+      return {
+        client: buildClient(env, native, aigMetadataFrom(opts)),
+        modelToCall: slug,
+        alias: null,
+        provider: { id: native.id, slug: native.slug, apiStyle: 'responses' },
+      };
+    }
+  }
+
   // Pull all aliases that match by canonical slug OR by passthrough
   // provider_model_id, then partition in JS. Cached per slug.
   const { byCanonical, byPassthrough } = await getAliasSet(supa, env, slug);
@@ -444,11 +474,14 @@ export async function resolveRoute(
         inputPrice: picked.input_price,
         cachedInputPrice: picked.cached_input_price,
         outputPrice: picked.output_price,
-        cacheWritePrice: picked.cache_write_price,
         audioInputPrice: picked.audio_input_price,
         audioOutputPrice: picked.audio_output_price,
       },
-      provider: { id: provider.id, slug: provider.slug },
+      provider: {
+        id: provider.id,
+        slug: provider.slug,
+        apiStyle: providerApiStyle(provider.config),
+      },
     };
   }
 
@@ -475,7 +508,11 @@ export async function resolveRoute(
     client: buildClient(env, openrouter, aigMetadataFrom(opts)),
     modelToCall: slug,
     alias: null,
-    provider: { id: openrouter.id, slug: openrouter.slug },
+    provider: {
+      id: openrouter.id,
+      slug: openrouter.slug,
+      apiStyle: providerApiStyle(openrouter.config),
+    },
   };
 }
 

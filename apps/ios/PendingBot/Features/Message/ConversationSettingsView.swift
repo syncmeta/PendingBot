@@ -162,8 +162,7 @@ struct ConversationSettingsView: View {
 
                 // 提供商：本地选择走 LLMRouter 的 preferProvider，挂了
                 // 仍会走 fallback 到其它家。"自动" = 不传 preferProvider，
-                // 由 alias 权重决定。WorldRouter 一般比 OpenRouter 便宜
-                // ~30%（它声明转发 Anthropic native usage），可对账验证。
+                // 由路由默认决定。
                 Section {
                     Picker(selection: Binding(
                         get: { providerOverride ?? "" },
@@ -174,7 +173,6 @@ struct ConversationSettingsView: View {
                         }
                     )) {
                         Text("自动").tag("")
-                        Text("WorldRouter").tag("worldrouter")
                         Text("OpenRouter").tag("openrouter")
                     } label: {
                         HStack {
@@ -213,8 +211,8 @@ struct ConversationSettingsView: View {
                 allowsClear: false,
                 onPick: { picked in
                     showModelPicker = false
-                    // allowsClear=false → picker only emits non-nil slugs.
-                    if let picked { pendingPick = PickPayload(slug: picked) }
+                    // allowsClear=false → picker only emits non-nil rows.
+                    if let picked { pendingPick = PickPayload(slug: picked.slug) }
                 }
             )
             .presentationDragIndicator(.visible)
@@ -228,7 +226,7 @@ struct ConversationSettingsView: View {
                 visionOnly: true,
                 onPick: { picked in
                     showVisionPicker = false
-                    let normalized = picked.flatMap { $0.isEmpty ? nil : $0 }
+                    let normalized = (picked?.slug).flatMap { $0.isEmpty ? nil : $0 }
                     visionModelOverride = normalized
                     onApplyVisionModel(normalized)
                     Haptics.success()
@@ -253,9 +251,9 @@ struct ConversationSettingsView: View {
                     case .explorer:
                         // No clear for explorer — fall back to default if
                         // somehow the picker hands us nil.
-                        envelope.explorerModel = picked ?? EnvelopeSettings.defaults.explorerModel
+                        envelope.explorerModel = picked?.slug ?? EnvelopeSettings.defaults.explorerModel
                     case .collaborator:
-                        envelope.collaboratorModel = picked
+                        envelope.collaboratorModel = picked?.slug
                     }
                     pickerTarget = nil
                 }

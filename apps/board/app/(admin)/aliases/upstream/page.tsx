@@ -8,7 +8,7 @@ import { DiffTable } from './_diff-table';
 //
 // Providers reached:
 //   - openrouter   → /v1/models (anonymous)
-//   - worldrouter  → mirrors openrouter × 0.7 (per provider config)
+//   - mirror       → mirrors another provider's price × a factor
 //   - everything else → "no upstream fetch wired up" note per row
 
 export default function AliasesUpstreamPage() {
@@ -20,9 +20,7 @@ export default function AliasesUpstreamPage() {
             Aliases · 上游价格对账
           </h1>
           <p className="text-sm text-muted-foreground">
-            手动从上游拉一份价目，逐行核对，勾选要应用的再写库。WorldRouter
-            走 OpenRouter × 0.7 镜像（在 provider.config.pricing_source
-            里配的）。
+            手动从上游拉一份价目，逐行核对，勾选要应用的再写库。
           </p>
         </div>
         <Link

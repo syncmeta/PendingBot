@@ -21,6 +21,9 @@ const BOT_TTL_SEC = 3600;
 export interface CachedBot {
   id: string;
   model_id: string | null;
+  /// API route pin (an llm_providers.slug, e.g. 'openai'). NULL = default
+  /// routing. Drives the router's preferProvider for this bot's turns.
+  model_provider: string | null;
   output_mode: string;
   is_active: boolean;
   config: Record<string, unknown> | null;
@@ -55,13 +58,14 @@ export async function resolveBot(
   if (cached) return cached;
   const { data, error } = await supa
     .from('bots')
-    .select('id, model_id, output_mode, is_active, config, visibility, creator_id')
+    .select('id, model_id, model_provider, output_mode, is_active, config, visibility, creator_id')
     .eq('id', botId)
     .single();
   if (error || !data) return null;
   const bot: CachedBot = {
     id: data.id as string,
     model_id: (data.model_id ?? null) as string | null,
+    model_provider: (data.model_provider ?? null) as string | null,
     output_mode: data.output_mode as string,
     is_active: data.is_active as boolean,
     config: (data.config ?? null) as Record<string, unknown> | null,

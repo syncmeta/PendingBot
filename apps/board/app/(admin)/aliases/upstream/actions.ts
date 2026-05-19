@@ -56,7 +56,6 @@ interface PayloadV1 {
   input_price: number | null;
   cached_input_price: number | null;
   output_price: number | null;
-  cache_write_price: number | null;
 }
 
 function parsePayload(raw: FormDataEntryValue | null): PayloadV1 | null {
@@ -75,7 +74,6 @@ function parsePayload(raw: FormDataEntryValue | null): PayloadV1 | null {
       input_price: num('input_price'),
       cached_input_price: num('cached_input_price'),
       output_price: num('output_price'),
-      cache_write_price: num('cache_write_price'),
     };
   } catch {
     return null;
@@ -101,7 +99,7 @@ export async function applyUpstreamPrices(
   const { data: beforeRows, error: beforeErr } = await supa
     .from('llm_model_aliases')
     .select(
-      'id, input_price, cached_input_price, output_price, cache_write_price',
+      'id, input_price, cached_input_price, output_price',
     )
     .in('id', ids);
   if (beforeErr) return { ok: false, error: beforeErr.message };
@@ -128,9 +126,8 @@ export async function applyUpstreamPrices(
     const newRow = {
       input_price: payload.input_price ?? (before.input_price as number),
       output_price: payload.output_price ?? (before.output_price as number),
-      // Optional columns: null is a valid stored value.
+      // Optional column: null is a valid stored value.
       cached_input_price: payload.cached_input_price,
-      cache_write_price: payload.cache_write_price,
       updated_at: new Date().toISOString(),
     };
     const { error: updErr } = await supa

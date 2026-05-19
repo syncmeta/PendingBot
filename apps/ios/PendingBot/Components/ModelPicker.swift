@@ -5,6 +5,11 @@ import SwiftUI
 /// "use the bot's default" — rendered as a muted placeholder.
 struct ModelPickerButton: View {
     @Binding var slug: String
+    /// Optional companion binding for the bot's API route pin. When set,
+    /// picking a model from a non-default catalog section (e.g. the
+    /// OpenAI-native list) writes that model's `model_provider` here.
+    /// Surfaces that only pick a model (envelope/vision) leave this nil.
+    var modelProvider: Binding<String?>? = nil
     var placeholder: String = "模型选择"
 
     @State private var showSheet = false
@@ -36,7 +41,8 @@ struct ModelPickerButton: View {
             ModelPickerSheet(initial: slug,
                              allowsClear: true,
                              onPick: { picked in
-                slug = picked ?? ""
+                slug = picked?.slug ?? ""
+                modelProvider?.wrappedValue = picked?.model_provider
                 showSheet = false
             })
             .presentationDragIndicator(.visible)
@@ -63,7 +69,7 @@ struct ModelPickerSheet: View {
     /// vision model there would just route into a runtime error at the
     /// upstream provider, so filtering up front is the right move.
     var visionOnly: Bool = false
-    var onPick: (String?) -> Void
+    var onPick: (OpenRouterModel?) -> Void
 
     @State private var allModels: [OpenRouterModel] = []
     @State private var loading = true
@@ -84,11 +90,23 @@ struct ModelPickerSheet: View {
         }
     }
 
-    /// Vendor groups from the (already filtered) model list, ordered by
+    /// Synthetic group key for OpenAI's native catalog — kept distinct
+    /// from the OpenRouter "openai" vendor group so the native route is
+    /// its own collapsible section.
+    private static let nativeOpenAIKey = "__native_openai__"
+
+    /// The group a model belongs to: its own collapsible section for the
+    /// OpenAI-native catalog, otherwise its OpenRouter vendor.
+    private func groupKey(_ m: OpenRouterModel) -> String {
+        m.source == "openai" ? Self.nativeOpenAIKey : m.provider
+    }
+
+    /// Groups from the (already filtered) model list, ordered by
     /// `Self.vendorPriority` (most popular first on OpenRouter), unknown
-    /// vendors trailing alphabetically.
+    /// vendors trailing alphabetically. The OpenAI-native section sorts
+    /// last among the known groups.
     private var groupedFiltered: [(provider: String, models: [OpenRouterModel])] {
-        let buckets = Dictionary(grouping: filtered, by: { $0.provider })
+        let buckets = Dictionary(grouping: filtered, by: { groupKey($0) })
         let priorityIndex = Dictionary(uniqueKeysWithValues: Self.vendorPriority.enumerated().map { ($1, $0) })
         return buckets.keys.sorted { a, b in
             switch (priorityIndex[a], priorityIndex[b]) {
@@ -101,10 +119,12 @@ struct ModelPickerSheet: View {
     }
 
     /// Vendor order based on OpenRouter's most-popular models (rankings page).
-    /// Anything not listed sorts alphabetically after these.
+    /// Anything not listed sorts alphabetically after these. The OpenAI-
+    /// native section trails the OpenRouter vendors.
     private static let vendorPriority: [String] = [
         "google", "anthropic", "openai", "x-ai", "deepseek",
         "qwen", "moonshotai", "meta-llama", "mistralai", "z-ai",
+        nativeOpenAIKey,
     ]
 
     private static let vendorDisplayName: [String: String] = [
@@ -118,6 +138,7 @@ struct ModelPickerSheet: View {
         "meta-llama": "Meta",
         "mistralai": "Mistral",
         "z-ai": "Z.AI",
+        nativeOpenAIKey: "OpenAI（原生）",
     ]
 
     private func vendorLabel(_ provider: String) -> String {
@@ -239,7 +260,7 @@ struct ModelPickerSheet: View {
                     if expanded {
                         ForEach(group.models) { m in
                             Button {
-                                onPick(m.slug)
+                                onPick(m)
                                 Haptics.success()
                             } label: {
                                 HStack(alignment: .center, spacing: 8) {
@@ -312,7 +333,7 @@ struct ModelPickerSheet: View {
             // wall.
             if !initial.isEmpty,
                let match = allModels.first(where: { $0.slug == initial }) {
-                expandedProviders.insert(match.provider)
+                expandedProviders.insert(groupKey(match))
             }
         } catch {
             self.error = error.localizedDescription

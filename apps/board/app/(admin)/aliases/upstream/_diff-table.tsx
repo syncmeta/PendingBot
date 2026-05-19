@@ -200,7 +200,6 @@ function DiffForm({
               <th className="px-3 py-2 font-medium">input</th>
               <th className="px-3 py-2 font-medium">cached_input</th>
               <th className="px-3 py-2 font-medium">output</th>
-              <th className="px-3 py-2 font-medium">cache_write</th>
               <th className="px-3 py-2 font-medium">备注</th>
             </tr>
           </thead>
@@ -216,7 +215,7 @@ function DiffForm({
             {rows.length === 0 && (
               <tr>
                 <td
-                  colSpan={8}
+                  colSpan={7}
                   className="px-3 py-6 text-center text-muted-foreground"
                 >
                   没有启用的 alias。
@@ -299,11 +298,6 @@ function DiffRow({
         current={row.current.output_price}
         upstream={row.upstream?.output_price ?? null}
         changed={row.changed.output_price}
-      />
-      <PriceCell
-        current={row.current.cache_write_price}
-        upstream={row.upstream?.cache_write_price ?? null}
-        changed={row.changed.cache_write_price}
       />
       <td className="px-3 py-2 text-[11px] text-muted-foreground">
         {row.note ?? (hasUpstream && !canApply ? '—' : '')}

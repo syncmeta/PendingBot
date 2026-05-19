@@ -13,7 +13,6 @@ export type AliasFormValues = {
   input_price?: number | string | null;
   cached_input_price?: number | string | null;
   output_price?: number | string | null;
-  cache_write_price?: number | string | null;
   // Voice-call pricing dims — null on text-only aliases.
   audio_input_price?: number | string | null;
   audio_output_price?: number | string | null;
@@ -94,7 +93,7 @@ export function AliasForm({
 
       <Field
         label="provider_model_id"
-        hint="该 provider 自己用的 model 字符串。OpenRouter 用 anthropic/claude-opus-4.5；Anthropic 直连用 claude-opus-4-5-20251022；WorldRouter 看它自己的命名"
+        hint="该 provider 自己用的 model 字符串。OpenRouter 用 anthropic/claude-opus-4.5；OpenAI 原生直连用 gpt-5.5"
       >
         <input
           name="provider_model_id"
@@ -130,8 +129,7 @@ export function AliasForm({
       <fieldset className="rounded-lg border p-4">
         <legend className="px-2 text-sm font-medium">价格（USD per 1M tokens）</legend>
         <p className="mb-3 text-xs text-muted-foreground">
-          按 provider 的官方价目表填。WorldRouter 七折就把 input/output 各 ×0.7
-          填进来；面板会和 OpenRouter 上同模型的价格自动对比，告诉你"七折省了多少"。
+          按 provider 的官方价目表填（USD per 1M tokens）。
         </p>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="input_price (必填)">
@@ -163,16 +161,6 @@ export function AliasForm({
               step="0.000001"
               min={0}
               defaultValue={initial?.cached_input_price ?? ''}
-              className="block w-full rounded-md border border-input bg-background px-3 py-2 tabular-nums"
-            />
-          </Field>
-          <Field label="cache_write_price (可选)" hint="写缓存的价，Anthropic 一般 = 1.25× input">
-            <input
-              name="cache_write_price"
-              type="number"
-              step="0.000001"
-              min={0}
-              defaultValue={initial?.cache_write_price ?? ''}
               className="block w-full rounded-md border border-input bg-background px-3 py-2 tabular-nums"
             />
           </Field>

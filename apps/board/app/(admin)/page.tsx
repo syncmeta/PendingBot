@@ -14,7 +14,7 @@ export default function HomePage() {
         <Card
           href="/providers"
           title="Providers"
-          desc="OpenRouter / WorldRouter 等 gateway 启停、密钥引用、健康"
+          desc="OpenRouter / OpenAI 等 provider 启停、密钥引用、健康"
         />
         <Card
           href="/models"

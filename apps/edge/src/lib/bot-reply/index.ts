@@ -18,6 +18,13 @@ import {
   withFallback,
 } from '../../llm/router';
 import { mergeProviderUsageDetails } from '../../llm/provider-usage';
+import {
+  chatMessagesToResponsesInput,
+  chatToolsToResponsesTools,
+  openResponsesStream,
+  OPENAI_BUILTIN_TOOLS,
+  type LlmStreamChunk,
+} from '../../llm/responses-adapter';
 import { buildMessages, type BuildMessagesInput } from '../../llm/builder';
 import { resolveLocale } from '../../i18n/locale';
 import {
@@ -27,6 +34,7 @@ import {
 } from '../../llm/vision';
 import { getBotMemory, getUserMemory } from '../memory';
 import { resolveInventory } from '../attachment-cache';
+import { sha256Hex, r2KeyForHash } from '../attachments';
 import {
   resolveBotNote,
   resolveChatMemo,
@@ -160,6 +168,56 @@ async function persistToolTraceMetadata(
     .from('messages')
     .update({ metadata: next })
     .eq('id', parentMessageId);
+}
+
+// Persist an image the OpenAI image_generation built-in tool produced:
+// base64 PNG → R2 (content-addressed, same scheme as user uploads) → an
+// attachments row owned by the conversation's user. Returns the new
+// attachment id, or null if anything failed (the turn carries on without
+// the image rather than aborting). Idempotent on (user_id, content_sha256).
+async function persistGeneratedImage(
+  env: Env,
+  supa: ReturnType<typeof serviceClient>,
+  userId: string,
+  conversationId: string,
+  base64: string,
+): Promise<string | null> {
+  try {
+    const bin = atob(base64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const sha = await sha256Hex(bytes);
+    const key = r2KeyForHash(sha, 'image/png');
+    const existing = await env.UPLOADS.head(key).catch(() => null);
+    if (!existing) {
+      await env.UPLOADS.put(key, bytes, {
+        httpMetadata: { contentType: 'image/png' },
+      });
+    }
+    const { data, error } = await supa
+      .from('attachments')
+      .upsert(
+        {
+          user_id: userId,
+          conversation_id: conversationId,
+          r2_key: key,
+          mime_type: 'image/png',
+          byte_size: bytes.length,
+          content_sha256: sha,
+        },
+        { onConflict: 'user_id,content_sha256' },
+      )
+      .select('id')
+      .single();
+    if (error) {
+      console.warn('[bot-reply] generated-image attachment insert', error.message);
+      return null;
+    }
+    return data.id as string;
+  } catch (err) {
+    console.warn('[bot-reply] persistGeneratedImage failed', err);
+    return null;
+  }
 }
 
 // Maximum agent-loop iterations (one LLM call + tool execution per iteration).
@@ -545,6 +603,34 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     });
   };
 
+  // Persist an image the OpenAI image_generation built-in tool produced
+  // as its own bot message (attachments jsonb shape: { ids: [...] }).
+  //
+  // Deliberately does NOT emit an SSE `bubble` event or touch
+  // `bubbleIndex`: that counter is kept in lockstep with the splitter's
+  // streamed text bubbles so the client can rekey them, and an image
+  // bubble has no streamed counterpart. The inserted row reaches the
+  // client through the conversation's realtime subscription instead.
+  const emitGeneratedImage = async (base64: string) => {
+    const attachmentId = await persistGeneratedImage(
+      env, supa, userId, conversationId, base64,
+    );
+    if (!attachmentId) return;
+    await supa.from('messages').insert({
+      id: randomUUID(),
+      client_message_id: randomUUID(),
+      conversation_id: conversationId,
+      sender_bot_id: bot.id,
+      role: 'bot',
+      status: 'done',
+      content: '',
+      parent_message_id: parentMessageId,
+      bubble_group_id: bubbleGroupId,
+      attachments: { ids: [attachmentId] },
+    });
+    bubblesInserted++;
+  };
+
   // Each round inside the agent loop runs its own withFallback — when
   // one provider fails before-first-chunk, the router can re-resolve
   // and try the next-best alias for the same canonical model. Once a
@@ -577,9 +663,22 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   // model_description override. `null` means the registry was
   // unreachable; pass through unfiltered rather than serving the model
   // an empty tool list.
+  const toolRegistry = await allowedRegistryPromise;
   const turnTools: ChatCompletionTool[] = applyToolRegistry(
     turnToolsRaw,
-    await allowedRegistryPromise,
+    toolRegistry,
+  );
+
+  // OpenAI-native bots reach web search and code execution through
+  // OpenAI's server-side built-in tools (added in the runner closure
+  // below), not the Exa MCP tools or the Cloudflare sandbox — so their
+  // function-tool list is the internal surface only: no MCP, no
+  // request_execute_code / execute_code.
+  const nativeFnToolsRaw: ChatCompletionTool[] = [...CHAT_TOOLS];
+  if (input.inGroup) nativeFnToolsRaw.push(...GROUP_BOT_TOOLS);
+  const nativeFnTools: ChatCompletionTool[] = applyToolRegistry(
+    nativeFnToolsRaw,
+    toolRegistry,
   );
 
   try {
@@ -597,7 +696,30 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
           preferProvider: input.providerOverride ?? undefined,
           metadata: { userId, conversationId, turnId },
         },
-        async (r) => {
+        async (r): Promise<{ stream: AsyncIterable<LlmStreamChunk> }> => {
+          // OpenAI-native providers speak the Responses API; everything
+          // else (OpenRouter etc.) stays on Chat Completions. The adapter
+          // re-emits Responses events as Chat-Completions-shaped chunks so
+          // the streaming merge loop below is identical for both.
+          if (r.provider.apiStyle === 'responses') {
+            const { instructions, input } = chatMessagesToResponsesInput(messages);
+            const stream = await openResponsesStream(
+              r.client,
+              {
+                model: r.modelToCall,
+                instructions,
+                input,
+                // Internal function tools + OpenAI's server-side built-in
+                // tools (web search, code interpreter).
+                tools: [
+                  ...chatToolsToResponsesTools(nativeFnTools),
+                  ...OPENAI_BUILTIN_TOOLS,
+                ],
+              },
+              ac.signal,
+            );
+            return { stream };
+          }
           const request = {
             model: r.modelToCall,
             messages,
@@ -687,6 +809,26 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
           usage.cacheRead += u.cacheReadTokens ?? 0;
           usage.cacheWrite += u.cacheWriteTokens ?? 0;
           mergeProviderUsageDetails(providerUsage, u);
+        }
+
+        // Built-in (server-side) tool activity. web_search / code_interpreter
+        // run inside OpenAI — no tool_call for the loop to execute, just
+        // mirror progress into the tool-trace UI. A finished
+        // image_generation carries a PNG, which becomes its own bubble.
+        if (chunk.builtinTool) {
+          const bt = chunk.builtinTool;
+          if (
+            bt.kind === 'image_generation' &&
+            bt.phase === 'completed' &&
+            bt.imageBase64
+          ) {
+            await emitGeneratedImage(bt.imageBase64);
+          } else {
+            emitToolEvent(
+              bt.phase === 'started' ? 'tool_call' : 'tool_result',
+              { name: bt.kind },
+            );
+          }
         }
       }
 

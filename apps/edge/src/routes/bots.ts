@@ -38,9 +38,15 @@ const ConfigPatch = z
 
 const PatchBody = z
   .object({
-    // OpenRouter slug. Becomes the bot's new default — applies to every conv
-    // with this bot that doesn't have a per-conv pin.
+    // Model id. Becomes the bot's new default — applies to every conv
+    // with this bot that doesn't have a per-conv pin. The string is
+    // whatever the picked source's catalog uses (an OpenRouter slug, or
+    // an OpenAI model id when model_provider is 'openai').
     model_id: z.string().min(1).max(200).optional(),
+    // API route pin — an llm_providers.slug, or null for default routing.
+    // Set together with model_id when the user picks from a non-default
+    // catalog section (e.g. "OpenAI（原生）").
+    model_provider: z.string().max(64).nullable().optional(),
     // Voice-call gate. When true the iOS conversation header shows the
     // phone button. Bot owner-only — public/preset bots stay locked.
     voice_call_enabled: z.boolean().optional(),
@@ -52,6 +58,7 @@ const PatchBody = z
   .refine(
     (v) =>
       v.model_id !== undefined ||
+      v.model_provider !== undefined ||
       v.voice_call_enabled !== undefined ||
       v.config !== undefined,
     { message: 'no fields to update' },
@@ -94,6 +101,8 @@ botRoutes.patch('/:id', async (c) => {
     updated_at: new Date().toISOString(),
   };
   if (parsed.model_id !== undefined) update.model_id = parsed.model_id;
+  if (parsed.model_provider !== undefined)
+    update.model_provider = parsed.model_provider;
   if (parsed.voice_call_enabled !== undefined)
     update.voice_call_enabled = parsed.voice_call_enabled;
   if (parsed.config !== undefined) {

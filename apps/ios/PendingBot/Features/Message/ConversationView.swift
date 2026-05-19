@@ -326,6 +326,27 @@ struct ConversationView: View {
         slug.split(separator: "/").last.map(String.init) ?? slug
     }
 
+    /// Hydrate a message's `attachments` from the `attachmentIdsByMsgId`
+    /// sidecar so BubbleView's AttachmentGrid renders them. Loaded /
+    /// realtime rows arrive with `attachments == nil` and their ids
+    /// tracked separately; this fills them in at render time. The grid
+    /// only needs `url`, which is derivable from the id.
+    private func bubbleMessage(_ msg: ChatMessage) -> ChatMessage {
+        guard msg.attachments == nil,
+              let ids = attachmentIdsByMsgId[msg.id], !ids.isEmpty else { return msg }
+        let atts = ids.map {
+            Attachment(id: $0, kind: "image", mime: "image/png",
+                       size: nil, width: nil, height: nil,
+                       url: "/v1/uploads/\($0)")
+        }
+        return ChatMessage(
+            id: msg.id, conversation_id: msg.conversation_id,
+            sender_type: msg.sender_type, sender_id: msg.sender_id,
+            content: msg.content, created_at: msg.created_at,
+            attachments: atts, status: msg.status
+        )
+    }
+
     init(conversation: Conversation, bot: Bot?, pendingPeer: PendingPeer? = nil,
          onChange: @escaping () -> Void = {}) {
         self._conversation = State(initialValue: conversation)
@@ -370,7 +391,7 @@ struct ConversationView: View {
                                 )
                                 .id(msg.id)
                             } else {
-                            BubbleView(message: msg,
+                            BubbleView(message: bubbleMessage(msg),
                                        botName: botName,
                                        conversationID: conversation.id,
                                        botID: avatarEmojiSeed,

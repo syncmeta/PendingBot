@@ -612,6 +612,7 @@ export type Database = {
           id: string
           is_active: boolean
           model_id: string
+          model_provider: string | null
           output_mode: string
           slug: string
           updated_at: string
@@ -626,6 +627,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           model_id: string
+          model_provider?: string | null
           output_mode?: string
           slug: string
           updated_at?: string
@@ -640,6 +642,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           model_id?: string
+          model_provider?: string | null
           output_mode?: string
           slug?: string
           updated_at?: string
@@ -1251,7 +1254,6 @@ export type Database = {
         Row: {
           audio_input_price: number | null
           audio_output_price: number | null
-          cache_write_price: number | null
           cached_input_price: number | null
           config: Json
           created_at: string
@@ -1270,7 +1272,6 @@ export type Database = {
         Insert: {
           audio_input_price?: number | null
           audio_output_price?: number | null
-          cache_write_price?: number | null
           cached_input_price?: number | null
           config?: Json
           created_at?: string
@@ -1289,7 +1290,6 @@ export type Database = {
         Update: {
           audio_input_price?: number | null
           audio_output_price?: number | null
-          cache_write_price?: number | null
           cached_input_price?: number | null
           config?: Json
           created_at?: string

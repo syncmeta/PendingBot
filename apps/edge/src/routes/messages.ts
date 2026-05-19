@@ -367,6 +367,11 @@ messageRoutes.post('/', async (c) => {
     }
   }
 
+  // The bot's own default route (bots.model_provider) fills in when the
+  // conversation carries no provider pin — so a bot created on the
+  // OpenAI-native route uses it without a per-conv override.
+  effectiveProviderOverride = effectiveProviderOverride ?? bot.model_provider ?? null;
+
   // Per-conv model pin. NULL → fall back to bot.model_id. Set via
   // PATCH /v1/conversations/:id (only on convs whose bot is private and
   // owned by the user).
@@ -671,6 +676,8 @@ messageRoutes.post('/start', async (c) => {
         .eq('id', convId);
     }
   }
+  // Bot's own default route fills in when there's no per-conv pin.
+  effectiveProviderOverride = effectiveProviderOverride ?? bot.model_provider ?? null;
 
   const encoder = new TextEncoder();
   const detachedAbort = new AbortController();

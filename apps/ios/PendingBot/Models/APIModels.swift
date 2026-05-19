@@ -166,7 +166,14 @@ struct OpenRouterModel: Codable, Identifiable, Hashable {
     /// compat with cached responses from older builds — treat nil as
     /// "unknown/no" (we can't show it in a vision-only filter).
     let supports_vision: Bool?
-    var id: String { slug }
+    /// Which catalog this row came from: "openrouter" (default) or
+    /// "openai" (OpenAI's native list via the AI Gateway). nil → openrouter.
+    let source: String?
+    /// bots.model_provider to store when this row is picked. nil → default.
+    let model_provider: String?
+    /// Unique across both catalogs — the same model can appear once per
+    /// source (e.g. OpenRouter "openai/gpt-5.5" and native "gpt-5.5").
+    var id: String { "\(source ?? "openrouter"):\(slug)" }
 }
 
 struct UploadResponse: Codable {

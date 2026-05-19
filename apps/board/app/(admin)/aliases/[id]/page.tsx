@@ -14,7 +14,7 @@ export default async function EditAliasPage({
   const { data: row } = await supa
     .from('llm_model_aliases')
     .select(
-      'id, model_id, provider_id, provider_model_id, enabled, weight, input_price, cached_input_price, output_price, cache_write_price, audio_input_price, audio_output_price, notes',
+      'id, model_id, provider_id, provider_model_id, enabled, weight, input_price, cached_input_price, output_price, audio_input_price, audio_output_price, notes',
     )
     .eq('id', id)
     .maybeSingle();

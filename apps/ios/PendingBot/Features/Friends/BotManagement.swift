@@ -17,6 +17,9 @@ struct CreateBotSheet: View {
 
     @State private var displayName: String = ""
     @State private var modelSlug: String = ""
+    /// API route pin for the picked model — nil = default routing,
+    /// 'openai' = native Responses route.
+    @State private var modelProvider: String?
     @State private var visibility: Visibility = .privateBot
     @State private var creating = false
     @State private var error: String?
@@ -55,7 +58,9 @@ struct CreateBotSheet: View {
                     HStack {
                         Text("模型").foregroundStyle(Theme.Palette.inkMuted)
                         Spacer()
-                        ModelPickerButton(slug: $modelSlug, placeholder: "选择模型")
+                        ModelPickerButton(slug: $modelSlug,
+                                          modelProvider: $modelProvider,
+                                          placeholder: "选择模型")
                     }
                 }
 
@@ -130,6 +135,7 @@ struct CreateBotSheet: View {
                 let visibility: String
                 let display_name: String
                 let model_id: String
+                let model_provider: String?
                 let slug: String
             }
             struct BotOut: Decodable {
@@ -147,6 +153,7 @@ struct CreateBotSheet: View {
                     visibility: visibility.rawValue,
                     display_name: trimmedName,
                     model_id: modelSlug,
+                    model_provider: modelProvider,
                     slug: String(slug)
                 ))
                 .select("id, display_name, model_id, visibility, creator_id")
@@ -189,6 +196,10 @@ struct ManageBotSheet: View {
 
     @State private var displayName: String = ""
     @State private var modelSlug: String = ""
+    /// API route pin — nil = default, 'openai' = native Responses route.
+    /// Loaded from the bots row on appear (BotPick doesn't carry it).
+    @State private var modelProvider: String?
+    @State private var initialModelProvider: String?
     @State private var visibility: String = "private"
     @State private var voiceCallEnabled: Bool = false
     @State private var saving = false
@@ -211,7 +222,9 @@ struct ManageBotSheet: View {
                         HStack {
                             Text("模型").foregroundStyle(Theme.Palette.inkMuted)
                             Spacer()
-                            ModelPickerButton(slug: $modelSlug, placeholder: "选择模型")
+                            ModelPickerButton(slug: $modelSlug,
+                                              modelProvider: $modelProvider,
+                                              placeholder: "选择模型")
                         }
                     } else {
                         // Public: identity is frozen. Show, don't edit.
@@ -330,6 +343,23 @@ struct ManageBotSheet: View {
             visibility = initial.visibility ?? "public_open"
             voiceCallEnabled = initial.voice_call_enabled ?? false
         }
+        .task { await loadModelProvider() }
+    }
+
+    /// model_provider isn't on BotPick — pull it from the bots row so the
+    /// picker pre-selects the right route and the dirty check is accurate.
+    private func loadModelProvider() async {
+        struct Row: Decodable { let model_provider: String? }
+        if let row: Row = try? await SupabaseStack.shared
+            .from("bots")
+            .select("model_provider")
+            .eq("id", value: initial.id)
+            .single()
+            .execute()
+            .value {
+            modelProvider = row.model_provider
+            initialModelProvider = row.model_provider
+        }
     }
 
     /// True when there's actually something to save vs the row we loaded.
@@ -338,6 +368,7 @@ struct ManageBotSheet: View {
         if isPrivate {
             if trimmed != initial.display_name { return true }
             if modelSlug != (initial.model_id ?? "") { return true }
+            if modelProvider != initialModelProvider { return true }
             if voiceCallEnabled != (initial.voice_call_enabled ?? false) { return true }
         }
         if visibility != (initial.visibility ?? "public_open") { return true }
@@ -359,11 +390,32 @@ struct ManageBotSheet: View {
     private func persistUpdate() async {
         saving = true; defer { saving = false }
         do {
+            // model_provider must round-trip an explicit JSON null when a
+            // bot is switched off the native route — Swift's synthesized
+            // Encodable omits nil optionals, so a custom encode force-emits
+            // it (gated by writeModelProvider so the public-flip branch can
+            // still leave it out).
             struct Update: Encodable {
                 let display_name: String?
                 let model_id: String?
+                let model_provider: String?
                 let visibility: String?
                 let voice_call_enabled: Bool?
+                let writeModelProvider: Bool
+                enum CodingKeys: String, CodingKey {
+                    case display_name, model_id, model_provider
+                    case visibility, voice_call_enabled
+                }
+                func encode(to encoder: Encoder) throws {
+                    var c = encoder.container(keyedBy: CodingKeys.self)
+                    try c.encodeIfPresent(display_name, forKey: .display_name)
+                    try c.encodeIfPresent(model_id, forKey: .model_id)
+                    if writeModelProvider {
+                        try c.encode(model_provider, forKey: .model_provider)
+                    }
+                    try c.encodeIfPresent(visibility, forKey: .visibility)
+                    try c.encodeIfPresent(voice_call_enabled, forKey: .voice_call_enabled)
+                }
             }
             // For public bots the trigger blocks anything except visibility,
             // so we only send the changed columns.
@@ -373,8 +425,10 @@ struct ManageBotSheet: View {
                 payload = Update(
                     display_name: displayName.trimmingCharacters(in: .whitespaces),
                     model_id: modelSlug,
+                    model_provider: modelProvider,
                     visibility: visibility,
-                    voice_call_enabled: voiceCallEnabled
+                    voice_call_enabled: voiceCallEnabled,
+                    writeModelProvider: true
                 )
             } else if isPrivate {
                 // Promotion: snapshot identity + flip visibility in one UPDATE.
@@ -383,16 +437,20 @@ struct ManageBotSheet: View {
                 payload = Update(
                     display_name: displayName.trimmingCharacters(in: .whitespaces),
                     model_id: modelSlug,
+                    model_provider: modelProvider,
                     visibility: visibility,
-                    voice_call_enabled: voiceCallEnabled
+                    voice_call_enabled: voiceCallEnabled,
+                    writeModelProvider: true
                 )
             } else {
                 // Public → public visibility flip; identity is frozen.
                 payload = Update(
                     display_name: nil,
                     model_id: nil,
+                    model_provider: nil,
                     visibility: visibility,
-                    voice_call_enabled: nil
+                    voice_call_enabled: nil,
+                    writeModelProvider: false
                 )
             }
             try await SupabaseStack.shared
@@ -739,6 +797,9 @@ struct BotConfigView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var model: String = ""
+    /// API route pin for the main model — nil = default routing,
+    /// 'openai' = the native Responses route. Set by the model picker.
+    @State private var modelProvider: String?
     @State private var voiceEnabled: Bool = false
     @State private var voiceModel: String = ""    // "" = auto
     @State private var visionModel: String = ""   // "" = auto
@@ -756,6 +817,7 @@ struct BotConfigView: View {
     /// lights up once the form actually diverges from what we loaded.
     private struct Snapshot: Equatable {
         let model: String
+        let modelProvider: String?
         let voiceEnabled: Bool
         let voiceModel: String
         let visionModel: String
@@ -786,7 +848,8 @@ struct BotConfigView: View {
 
     private var snapshot: Snapshot {
         Snapshot(
-            model: model, voiceEnabled: voiceEnabled, voiceModel: voiceModel,
+            model: model, modelProvider: modelProvider,
+            voiceEnabled: voiceEnabled, voiceModel: voiceModel,
             visionModel: visionModel, envelope: envelope,
             lookbackEnabled: lookbackEnabled, lookbackInterval: lookbackInterval
         )
@@ -1006,31 +1069,34 @@ struct BotConfigView: View {
         switch target {
         case .main:
             ModelPickerSheet(initial: model, allowsClear: false) { picked in
-                if let picked, !picked.isEmpty { model = picked }
+                if let picked, !picked.slug.isEmpty {
+                    model = picked.slug
+                    modelProvider = picked.model_provider
+                }
                 pickerTarget = nil
             }
         case .vision:
             ModelPickerSheet(initial: visionModel, allowsClear: true,
                              clearLabel: "自动（跟随主模型 / 服务端默认）",
                              visionOnly: true) { picked in
-                visionModel = picked.flatMap { $0.isEmpty ? nil : $0 } ?? ""
+                visionModel = (picked?.slug).flatMap { $0.isEmpty ? nil : $0 } ?? ""
                 pickerTarget = nil
             }
         case .voice:
             ModelPickerSheet(initial: voiceModel, allowsClear: true,
                              clearLabel: "自动（系统默认语音模型）") { picked in
-                voiceModel = picked.flatMap { $0.isEmpty ? nil : $0 } ?? ""
+                voiceModel = (picked?.slug).flatMap { $0.isEmpty ? nil : $0 } ?? ""
                 pickerTarget = nil
             }
         case .explorer:
             ModelPickerSheet(initial: envelope.explorerModel, allowsClear: false) { picked in
-                if let picked, !picked.isEmpty { envelope.explorerModel = picked }
+                if let picked, !picked.slug.isEmpty { envelope.explorerModel = picked.slug }
                 pickerTarget = nil
             }
         case .collaborator:
             ModelPickerSheet(initial: envelope.collaboratorModel ?? "",
                              allowsClear: true, clearLabel: "无协作者") { picked in
-                envelope.collaboratorModel = picked.flatMap { $0.isEmpty ? nil : $0 }
+                envelope.collaboratorModel = (picked?.slug).flatMap { $0.isEmpty ? nil : $0 }
                 pickerTarget = nil
             }
         }
@@ -1046,18 +1112,20 @@ struct BotConfigView: View {
     private func load() async {
         struct Row: Decodable {
             let model_id: String?
+            let model_provider: String?
             let voice_call_enabled: Bool?
             let config: AnyJSON?
         }
         do {
             let row: Row = try await SupabaseStack.shared
                 .from("bots")
-                .select("model_id, voice_call_enabled, config")
+                .select("model_id, model_provider, voice_call_enabled, config")
                 .eq("id", value: bot.id)
                 .single()
                 .execute()
                 .value
             model = row.model_id ?? bot.model ?? ""
+            modelProvider = row.model_provider
             voiceEnabled = row.voice_call_enabled ?? bot.voice_call_enabled ?? false
             applyConfig(row.config)
         } catch {
@@ -1117,6 +1185,7 @@ struct BotConfigView: View {
             ]
             let body: [String: Any] = [
                 "model_id": model,
+                "model_provider": modelProvider ?? NSNull(),
                 "voice_call_enabled": voiceEnabled,
                 "config": cfg,
             ]
