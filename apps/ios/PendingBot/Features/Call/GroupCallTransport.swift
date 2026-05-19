@@ -167,16 +167,19 @@ final class GroupCallTransport: NSObject {
             self.peerConnection.statistics { report in
                 var out = "n/a"
                 var inb = "n/a"
+                func val(_ s: RTCStatistics, _ key: String) -> String {
+                    s.values[key].map { String(describing: $0) } ?? "?"
+                }
                 for (_, s) in report.statistics {
-                    let kind = (s.values["kind"] as? String)
-                        ?? (s.values["mediaType"] as? String)
+                    let kind = String(describing: s.values["kind"]
+                        ?? s.values["mediaType"] ?? "" as NSString)
                     guard kind == "audio" else { continue }
                     if s.type == "outbound-rtp" {
-                        out = "pkts=\(s.values["packetsSent"] ?? "?") "
-                            + "bytes=\(s.values["bytesSent"] ?? "?")"
+                        out = "pkts=\(val(s, "packetsSent")) "
+                            + "bytes=\(val(s, "bytesSent"))"
                     } else if s.type == "inbound-rtp" {
-                        inb = "pkts=\(s.values["packetsReceived"] ?? "?") "
-                            + "bytes=\(s.values["bytesReceived"] ?? "?")"
+                        inb = "pkts=\(val(s, "packetsReceived")) "
+                            + "bytes=\(val(s, "bytesReceived"))"
                     }
                 }
                 print("[group-voice] rtp send[\(out)] recv[\(inb)]")
