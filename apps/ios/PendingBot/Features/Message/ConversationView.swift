@@ -1319,7 +1319,8 @@ struct ConversationView: View {
             // insert returns; sendUserUserMessage flips it to "sent" on
             // success or "failed" on error. The canonical Realtime echo
             // replaces the row shortly after.
-            await sendUserUserMessage(text, localId: localId, clientMessageId: cmid)
+            await sendUserUserMessage(text, attachmentIds: attachIds,
+                                      localId: localId, clientMessageId: cmid)
             return
         }
 
@@ -1455,15 +1456,22 @@ struct ConversationView: View {
                 }
                 restampConversationId(on: localId)
             }
-            await sendUserUserMessage(text, localId: localId, clientMessageId: cmid)
+            await sendUserUserMessage(text, attachmentIds: attachIds,
+                                      localId: localId, clientMessageId: cmid)
         }
     }
 
-    private func sendUserUserMessage(_ text: String, localId: String, clientMessageId: String) async {
+    private func sendUserUserMessage(_ text: String, attachmentIds: [String],
+                                     localId: String, clientMessageId: String) async {
         guard let userId = AccountStore.shared.current?.id else {
             markUserMessageFailed(localId)
             return
         }
+        // messages.attachments is jsonb shaped { ids: [...] }. user_user
+        // sends INSERT straight into Supabase (no worker), so the ids have
+        // to be written here — otherwise the canonical realtime row carries
+        // no attachment and the peer (and our own rekeyed bubble) lose it.
+        struct AttachmentIds: Encodable { let ids: [String] }
         struct Insert: Encodable {
             let client_message_id: String
             let conversation_id: String
@@ -1471,6 +1479,7 @@ struct ConversationView: View {
             let role = "user"
             let status = "done"
             let content: String
+            let attachments: AttachmentIds?
         }
         do {
             try await SupabaseStack.shared
@@ -1479,7 +1488,8 @@ struct ConversationView: View {
                     client_message_id: clientMessageId,
                     conversation_id: conversation.id,
                     user_id: userId,
-                    content: text
+                    content: text,
+                    attachments: attachmentIds.isEmpty ? nil : AttachmentIds(ids: attachmentIds)
                 ))
                 .execute()
             markUserMessageSent(localId)
