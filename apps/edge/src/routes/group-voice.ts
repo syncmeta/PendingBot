@@ -1,15 +1,21 @@
 // Group-voice control surface — the authenticated, user-facing side of
 // the group-voice bridge. Mounted at /v1/groups alongside groupRoutes:
 //
-//   POST /v1/groups/:id/voice/start       bring the room's bots online
-//   POST /v1/groups/:id/voice/add-bot     add one more bot mid-call
-//   POST /v1/groups/:id/voice/remove-bot  drop a bot from the call
-//   POST /v1/groups/:id/voice/stop        tear the whole call down
+//   POST /v1/groups/:id/voice/start            bring the room's bots online
+//   POST /v1/groups/:id/voice/add-bot          add one more bot mid-call
+//   POST /v1/groups/:id/voice/kick             remove a bot or human
+//   POST /v1/groups/:id/voice/designate-admin  grant call-admin powers
+//   POST /v1/groups/:id/voice/leave            the caller leaves the call
+//   POST /v1/groups/:id/voice/end              tear the whole call down
 //
 // Each endpoint requires a Supabase JWT and re-proves the caller is a
 // participant of the group. The handlers assemble each bot's persona
 // server-side (it never reaches a client) and forward a control message
 // to the room's RoomVoiceDO, which owns the SFU<->OpenAI audio bridge.
+//
+// kick / designate-admin / end are privileged: the RoomVoiceDO holds the
+// initiator / group-admin / call-admin sets and is the single authority
+// on who may do what — these handlers just forward the caller's id.
 //
 // Humans join the SFU separately (the SFU SDP proxy + /control/add-human
 // path) — that is coupled to the iOS WebRTC client and lives elsewhere.
@@ -220,6 +226,16 @@ groupVoiceRoutes.post('/:id/voice/start', async (c) => {
     });
   }
 
+  // Group owner + admins are privileged for the whole call. The caller
+  // (initiator) is privileged too — passed separately below.
+  const { data: adminRows } = await supaSvc
+    .from('conversation_participants')
+    .select('participant_id')
+    .eq('conversation_id', conversationId)
+    .eq('participant_type', 'user')
+    .in('role', ['owner', 'admin']);
+  const groupAdminIds = (adminRows ?? []).map((r) => r.participant_id as string);
+
   // wss:// origin the SFU dials back to reach this worker.
   const wsBase = `wss://${new URL(c.req.url).host}`;
   const payload = {
@@ -227,6 +243,8 @@ groupVoiceRoutes.post('/:id/voice/start', async (c) => {
       roomId: conversationId,
       conversationId,
       billUserId,
+      initiatorUserId: c.var.userId!,
+      groupAdminIds,
       publicWsBase: wsBase,
       adapterPath: ADAPTER_PATH,
       adapterToken: crypto.randomUUID(),
@@ -287,43 +305,118 @@ groupVoiceRoutes.post('/:id/voice/add-bot', async (c) => {
 });
 
 // =============================================================================
-// POST /:id/voice/remove-bot
+// POST /:id/voice/kick — remove a bot or a human from the call
 // =============================================================================
+//
+// Privileged actors only. The RoomVoiceDO owns the privilege decision
+// (it holds the initiator / group-admin / call-admin sets) and refuses a
+// kick that would strand the room without a human admin.
 
-groupVoiceRoutes.post('/:id/voice/remove-bot', async (c) => {
+const KickBody = z.object({
+  target_type: z.enum(['bot', 'human']),
+  target_id: z.string().uuid(),
+});
+
+groupVoiceRoutes.post('/:id/voice/kick', async (c) => {
   const loaded = await loadGroupContext(c);
   if (!loaded.ok) return loaded.res;
   const { conversationId } = loaded.ctx;
 
-  let parsed: z.infer<typeof BotIdBody>;
+  let parsed: z.infer<typeof KickBody>;
   try {
-    parsed = BotIdBody.parse(await c.req.json());
+    parsed = KickBody.parse(await c.req.json());
   } catch (err) {
     return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
-  const resp = await controlRoom(c, conversationId, '/control/remove-bot', {
-    botId: parsed.bot_id,
+  const resp = await controlRoom(c, conversationId, '/control/kick', {
+    actorId: c.var.userId!,
+    targetType: parsed.target_type,
+    targetId: parsed.target_id,
   });
+  if (resp.status === 403) return jsonError(c, 403, 'forbidden');
+  if (resp.status === 409) {
+    return jsonError(c, 409, 'conflict', {
+      detail: 'would leave the room without a human admin',
+    });
+  }
   if (!resp.ok) {
-    console.warn('[group-voice/remove-bot] room DO failed', resp.status);
+    console.warn('[group-voice/kick] room DO failed', resp.status);
     return jsonError(c, 502, 'voice_upstream_failed');
   }
   return c.json({ ok: true });
 });
 
 // =============================================================================
-// POST /:id/voice/stop
+// POST /:id/voice/designate-admin — grant call-admin powers
 // =============================================================================
+//
+// Privileged actors only. The target may be a human user or a bot.
 
-groupVoiceRoutes.post('/:id/voice/stop', async (c) => {
+groupVoiceRoutes.post('/:id/voice/designate-admin', async (c) => {
   const loaded = await loadGroupContext(c);
   if (!loaded.ok) return loaded.res;
   const { conversationId } = loaded.ctx;
 
-  const resp = await controlRoom(c, conversationId, '/control/stop', {});
+  let parsed: { target_id: string };
+  try {
+    parsed = z.object({ target_id: z.string().uuid() }).parse(await c.req.json());
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+
+  const resp = await controlRoom(c, conversationId, '/control/designate-admin', {
+    actorId: c.var.userId!,
+    targetId: parsed.target_id,
+  });
+  if (resp.status === 403) return jsonError(c, 403, 'forbidden');
   if (!resp.ok) {
-    console.warn('[group-voice/stop] room DO failed', resp.status);
+    console.warn('[group-voice/designate-admin] room DO failed', resp.status);
+    return jsonError(c, 502, 'voice_upstream_failed');
+  }
+  return c.json({ ok: true });
+});
+
+// =============================================================================
+// POST /:id/voice/leave — the caller leaves the call
+// =============================================================================
+//
+// Any participant may leave. If the caller is the last human admin, the
+// call ends (the RoomVoiceDO's human-admin invariant) unless they first
+// designated a successor via /designate-admin.
+
+groupVoiceRoutes.post('/:id/voice/leave', async (c) => {
+  const loaded = await loadGroupContext(c);
+  if (!loaded.ok) return loaded.res;
+  const { conversationId } = loaded.ctx;
+
+  const resp = await controlRoom(c, conversationId, '/control/leave', {
+    humanId: c.var.userId!,
+  });
+  if (!resp.ok) {
+    console.warn('[group-voice/leave] room DO failed', resp.status);
+    return jsonError(c, 502, 'voice_upstream_failed');
+  }
+  return c.json({ ok: true });
+});
+
+// =============================================================================
+// POST /:id/voice/end — end the whole call
+// =============================================================================
+//
+// Privileged actors only — the DO checks and returns 403 otherwise.
+
+groupVoiceRoutes.post('/:id/voice/end', async (c) => {
+  const loaded = await loadGroupContext(c);
+  if (!loaded.ok) return loaded.res;
+  const { conversationId } = loaded.ctx;
+
+  const resp = await controlRoom(c, conversationId, '/control/end', {
+    actorId: c.var.userId!,
+  });
+  if (resp.status === 403) return jsonError(c, 403, 'forbidden');
+  if (!resp.ok) {
+    console.warn('[group-voice/end] room DO failed', resp.status);
     return jsonError(c, 502, 'voice_upstream_failed');
   }
   return c.json({ ok: true });
