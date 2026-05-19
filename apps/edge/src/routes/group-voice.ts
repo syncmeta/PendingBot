@@ -3,6 +3,9 @@
 //
 //   POST /v1/groups/:id/voice/start            bring the room's bots online
 //   POST /v1/groups/:id/voice/add-bot          add one more bot mid-call
+//   POST /v1/groups/:id/voice/join             a human joins the SFU room
+//   POST /v1/groups/:id/voice/subscribe        pull bot tracks to hear them
+//   POST /v1/groups/:id/voice/renegotiate      answer the SFU's offer
 //   POST /v1/groups/:id/voice/kick             remove a bot or human
 //   POST /v1/groups/:id/voice/designate-admin  grant call-admin powers
 //   POST /v1/groups/:id/voice/leave            the caller leaves the call
@@ -30,6 +33,12 @@ import { getBotMemory } from '../lib/memory';
 import { resolveLocale } from '../i18n/locale';
 import { jsonError } from '../lib/http-error';
 import { UUID_RE } from '../lib/ids';
+import {
+  createSfuSession,
+  newSfuTracks,
+  renegotiateSfuSession,
+  type SfuApp,
+} from '../lib/sfu';
 import type { AppBindings } from '../types';
 
 export const groupVoiceRoutes = new Hono<AppBindings>();
@@ -160,6 +169,14 @@ async function buildBotSpec(
 // The room DO is keyed by conversation_id; one control message per call.
 function roomStub(c: Context<AppBindings>, conversationId: string) {
   return c.env.ROOM_VOICE.get(c.env.ROOM_VOICE.idFromName(conversationId));
+}
+
+// SFU app credentials for the WebRTC session/track negotiation.
+function sfuApp(c: Context<AppBindings>): SfuApp {
+  return {
+    appId: c.env.SFU_APP_ID ?? '',
+    appSecret: c.env.SFU_APP_SECRET ?? '',
+  };
 }
 
 async function controlRoom(
@@ -418,6 +435,161 @@ groupVoiceRoutes.post('/:id/voice/end', async (c) => {
   if (!resp.ok) {
     console.warn('[group-voice/end] room DO failed', resp.status);
     return jsonError(c, 502, 'voice_upstream_failed');
+  }
+  return c.json({ ok: true });
+});
+
+// =============================================================================
+// POST /:id/voice/join — a human joins the call's SFU room
+// =============================================================================
+//
+// The worker is the "Backend Server" of the SFU lifecycle: it negotiates
+// the human's RTCPeerConnection against the SFU on iOS's behalf.
+//
+//   iOS posts its WebRTC offer →
+//     1. createSfuSession()                — the human's SFU session
+//     2. newSfuTracks(offer, autoDiscover) — publish the human's mic;
+//        the SFU answers and echoes back the discovered track name
+//     3. RoomVoiceDO /control/add-human    — the DO streams that track
+//        into the bot mix and returns the current bot roster
+//   ← worker returns the SFU answer + the bot roster
+//
+// iOS then calls /subscribe to pull the bot tracks and hear them.
+
+const JoinBody = z.object({ sdp: z.string().min(1) });
+
+groupVoiceRoutes.post('/:id/voice/join', async (c) => {
+  const loaded = await loadGroupContext(c);
+  if (!loaded.ok) return loaded.res;
+  const { conversationId } = loaded.ctx;
+
+  let parsed: z.infer<typeof JoinBody>;
+  try {
+    parsed = JoinBody.parse(await c.req.json());
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+
+  const app = sfuApp(c);
+  let humanSessionId: string;
+  let answerSdp: string;
+  let humanTrackName: string;
+  try {
+    humanSessionId = await createSfuSession(app);
+    const res = await newSfuTracks(app, humanSessionId, {
+      sessionDescription: { type: 'offer', sdp: parsed.sdp },
+      tracks: [],
+      autoDiscover: true,
+    });
+    answerSdp = res.sessionDescription?.sdp ?? '';
+    humanTrackName = res.tracks[0]?.trackName ?? '';
+  } catch (err) {
+    console.warn('[group-voice/join] SFU negotiation failed', err);
+    return jsonError(c, 502, 'voice_upstream_failed', { detail: String(err) });
+  }
+  if (!answerSdp || !humanTrackName) {
+    return jsonError(c, 502, 'voice_upstream_failed', {
+      detail: 'SFU returned no answer or track',
+    });
+  }
+
+  const doResp = await controlRoom(c, conversationId, '/control/add-human', {
+    humanId: c.var.userId!,
+    sfuSessionId: humanSessionId,
+    sfuTrackName: humanTrackName,
+  });
+  if (!doResp.ok) {
+    // The DO returns 400 when the room hasn't been started yet.
+    if (doResp.status === 400) {
+      return jsonError(c, 409, 'conflict', { detail: 'voice room not started' });
+    }
+    console.warn('[group-voice/join] room DO add-human failed', doResp.status);
+    return jsonError(c, 502, 'voice_upstream_failed');
+  }
+  const roster = ((await doResp.json()) as { bots?: unknown }).bots ?? [];
+
+  return c.json({
+    ok: true,
+    session_id: humanSessionId,
+    answer: answerSdp,
+    bots: roster,
+  });
+});
+
+// =============================================================================
+// POST /:id/voice/subscribe — pull bot tracks so the human can hear them
+// =============================================================================
+//
+// Adds remote tracks to the caller's SFU session. The SFU replies with an
+// offer (requires_renegotiation); iOS answers it via /renegotiate.
+
+const SubscribeBody = z.object({
+  session_id: z.string().min(1),
+  tracks: z
+    .array(z.object({ session_id: z.string().min(1), track_name: z.string().min(1) }))
+    .min(1),
+});
+
+groupVoiceRoutes.post('/:id/voice/subscribe', async (c) => {
+  const loaded = await loadGroupContext(c);
+  if (!loaded.ok) return loaded.res;
+
+  let parsed: z.infer<typeof SubscribeBody>;
+  try {
+    parsed = SubscribeBody.parse(await c.req.json());
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+
+  let res;
+  try {
+    res = await newSfuTracks(sfuApp(c), parsed.session_id, {
+      tracks: parsed.tracks.map((t) => ({
+        location: 'remote' as const,
+        sessionId: t.session_id,
+        trackName: t.track_name,
+      })),
+    });
+  } catch (err) {
+    console.warn('[group-voice/subscribe] SFU tracks/new failed', err);
+    return jsonError(c, 502, 'voice_upstream_failed', { detail: String(err) });
+  }
+  return c.json({
+    ok: true,
+    offer: res.sessionDescription?.sdp ?? null,
+    requires_renegotiation: res.requiresImmediateRenegotiation ?? false,
+    tracks: res.tracks,
+  });
+});
+
+// =============================================================================
+// POST /:id/voice/renegotiate — answer the SFU's renegotiation offer
+// =============================================================================
+
+const RenegotiateBody = z.object({
+  session_id: z.string().min(1),
+  sdp: z.string().min(1),
+});
+
+groupVoiceRoutes.post('/:id/voice/renegotiate', async (c) => {
+  const loaded = await loadGroupContext(c);
+  if (!loaded.ok) return loaded.res;
+
+  let parsed: z.infer<typeof RenegotiateBody>;
+  try {
+    parsed = RenegotiateBody.parse(await c.req.json());
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+
+  try {
+    await renegotiateSfuSession(sfuApp(c), parsed.session_id, {
+      type: 'answer',
+      sdp: parsed.sdp,
+    });
+  } catch (err) {
+    console.warn('[group-voice/renegotiate] SFU renegotiate failed', err);
+    return jsonError(c, 502, 'voice_upstream_failed', { detail: String(err) });
   }
   return c.json({ ok: true });
 });

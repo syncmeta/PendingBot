@@ -186,6 +186,10 @@ interface BotLeg {
   // Ingest adapter socket the SFU dials to pull this bot's voice.
   ingestWs: WebSocket | null;
   ingestAdapterId: string | null;
+  // The SFU session + track the ingest adapter created for this bot's
+  // voice. Humans subscribe to these to hear the bot (see roster()).
+  ingestSessionId: string | null;
+  ingestTrackName: string | null;
   // The bot's own recent output (24 kHz mono), buffered between flushes
   // so the OTHER bots hear it on the next tick. Drained every flush.
   output: Int16Array[];
@@ -251,6 +255,8 @@ export class RoomVoiceDO {
       }
       case '/control/add-human':
         return this.addHuman((await request.json()) as HumanTrack);
+      case '/control/roster':
+        return Response.json({ bots: this.roster() });
       case '/control/leave': {
         const { humanId } = (await request.json()) as { humanId: string };
         await this.removeHuman(humanId);
@@ -366,6 +372,8 @@ export class RoomVoiceDO {
       openaiWs: null,
       ingestWs: null,
       ingestAdapterId: null,
+      ingestSessionId: null,
+      ingestTrackName: null,
       output: [],
       turnIndex: 0,
     };
@@ -374,15 +382,39 @@ export class RoomVoiceDO {
 
     // Ingest adapter: the SFU pulls this bot's voice from our endpoint
     // and publishes it as one WebRTC track everyone in the room hears.
+    // The SFU generates a fresh session for the track; humans subscribe
+    // to (ingestSessionId, ingestTrackName) to hear this bot.
     try {
       const ingest = await createIngestAdapter(this.sfuApp(), {
         trackName: `bot-${spec.botId}`,
         endpoint: this.adapterEndpoint(ctx, `ingest/${spec.botId}`),
       });
       leg.ingestAdapterId = ingest.adapterId;
+      leg.ingestSessionId = ingest.sessionId ?? null;
+      leg.ingestTrackName = ingest.trackName ?? `bot-${spec.botId}`;
     } catch (err) {
       console.warn('[room-voice] ingest adapter failed', spec.botId, err);
     }
+  }
+
+  // The bots a human can subscribe to — each bot's SFU ingest session +
+  // track. Bots whose ingest adapter hasn't come up yet are omitted.
+  private roster(): Array<{
+    botId: string;
+    sfuSessionId: string;
+    sfuTrackName: string;
+  }> {
+    const out: Array<{ botId: string; sfuSessionId: string; sfuTrackName: string }> = [];
+    for (const leg of this.bots.values()) {
+      if (leg.ingestSessionId && leg.ingestTrackName) {
+        out.push({
+          botId: leg.spec.botId,
+          sfuSessionId: leg.ingestSessionId,
+          sfuTrackName: leg.ingestTrackName,
+        });
+      }
+    }
+    return out;
   }
 
   private async addHuman(track: HumanTrack): Promise<Response> {
@@ -412,7 +444,9 @@ export class RoomVoiceDO {
     } catch (err) {
       console.warn('[room-voice] stream adapter failed', track.humanId, err);
     }
-    return Response.json({ ok: true });
+    // Hand back the bot roster so the joining human can subscribe to
+    // each bot's SFU track and hear them.
+    return Response.json({ ok: true, bots: this.roster() });
   }
 
   private async removeHuman(humanId: string): Promise<void> {
