@@ -71,3 +71,70 @@ private extension String {
         hasPrefix("/") ? String(dropFirst()) : self
     }
 }
+
+/// Full-screen viewer for a tapped attachment image — pinch to zoom,
+/// drag to pan when zoomed, double-tap to toggle 1×/2×. Tapping the
+/// backdrop or the close button dismisses.
+struct ImageViewer: View {
+    let path: String
+    let serverURL: URL
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var scale: CGFloat = 1
+    @State private var steadyScale: CGFloat = 1
+    @State private var offset: CGSize = .zero
+    @State private var steadyOffset: CGSize = .zero
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+                .onTapGesture { dismiss() }
+            ServerImage(path: path, serverURL: serverURL, contentMode: .fit)
+                .scaleEffect(scale)
+                .offset(offset)
+                .gesture(
+                    MagnificationGesture()
+                        .onChanged { v in scale = min(max(steadyScale * v, 1), 5) }
+                        .onEnded { _ in
+                            steadyScale = scale
+                            if scale <= 1 { resetPan() }
+                        }
+                )
+                .simultaneousGesture(
+                    DragGesture()
+                        .onChanged { v in
+                            guard scale > 1 else { return }
+                            offset = CGSize(
+                                width: steadyOffset.width + v.translation.width,
+                                height: steadyOffset.height + v.translation.height)
+                        }
+                        .onEnded { _ in steadyOffset = offset }
+                )
+                .onTapGesture(count: 2) {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        if scale > 1 {
+                            scale = 1; steadyScale = 1; resetPan()
+                        } else {
+                            scale = 2; steadyScale = 2
+                        }
+                    }
+                }
+        }
+        .overlay(alignment: .topTrailing) {
+            Button { dismiss() } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(10)
+                    .background(.black.opacity(0.4), in: Circle())
+            }
+            .padding(.top, 12)
+            .padding(.trailing, 16)
+        }
+    }
+
+    private func resetPan() {
+        offset = .zero
+        steadyOffset = .zero
+    }
+}

@@ -173,7 +173,8 @@ struct BubbleView<Menu: View>: View {
             VStack(alignment: .trailing, spacing: 6) {
                 if let attachments = message.attachments, !attachments.isEmpty,
                    let serverURL {
-                    AttachmentGrid(attachments: attachments, serverURL: serverURL)
+                    AttachmentGrid(attachments: attachments, serverURL: serverURL,
+                                   alignment: .trailing)
                 }
 
                 if hasText {
@@ -247,20 +248,38 @@ struct GroupBubbleSender: Equatable {
 struct AttachmentGrid: View {
     let attachments: [Attachment]
     let serverURL: URL
+    /// Side the bubble sits on — own messages pass `.trailing` so the
+    /// image grid hugs the right edge like the text bubble; peers leave
+    /// the `.leading` default.
+    var alignment: HorizontalAlignment = .leading
+
+    @State private var zoomed: ZoomTarget?
 
     private var images: [Attachment] { attachments.filter(\.isImage) }
     private var files: [Attachment] { attachments.filter { !$0.isImage } }
+    /// Fixed thumbnail edge. Fixed-size cells keep the grid intrinsically
+    /// sized so the parent VStack's alignment can position it — a
+    /// `.flexible()` grid would stretch full-width and float the image.
+    private let cell: CGFloat = 110
+
+    /// Images chunked into rows of up to 3.
+    private var imageRows: [[Attachment]] {
+        stride(from: 0, to: images.count, by: 3).map {
+            Array(images[$0 ..< min($0 + 3, images.count)])
+        }
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if !images.isEmpty {
-                let columns = Array(repeating: GridItem(.flexible(), spacing: 6),
-                                    count: min(images.count, 3))
-                LazyVGrid(columns: columns, spacing: 6) {
-                    ForEach(images) { att in
-                        ServerImage(path: att.url, serverURL: serverURL)
-                            .frame(width: 100, height: 100)
-                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        VStack(alignment: alignment, spacing: 6) {
+            ForEach(imageRows.indices, id: \.self) { row in
+                HStack(spacing: 6) {
+                    ForEach(imageRows[row]) { att in
+                        ServerImage(path: att.url, serverURL: serverURL,
+                                    contentMode: .fill)
+                            .frame(width: cell, height: cell)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .contentShape(Rectangle())
+                            .onTapGesture { zoomed = ZoomTarget(path: att.url) }
                     }
                 }
             }
@@ -268,7 +287,16 @@ struct AttachmentGrid: View {
                 FileAttachmentChip(attachment: att)
             }
         }
+        .fullScreenCover(item: $zoomed) { target in
+            ImageViewer(path: target.path, serverURL: serverURL)
+        }
     }
+}
+
+/// Identifiable wrapper so a tapped image path can drive `.fullScreenCover`.
+private struct ZoomTarget: Identifiable {
+    let path: String
+    var id: String { path }
 }
 
 /// A non-image attachment rendered as an icon + filename chip. Tapping it
