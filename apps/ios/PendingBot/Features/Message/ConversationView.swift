@@ -71,6 +71,9 @@ struct ConversationView: View {
     // so it can't be file-private.
     @State var input = ""
     @State var pendingAttachments: [PendingAttachment] = []
+    /// In-flight attachment uploads. `send()` awaits these so an upload
+    /// that lags the send tap still lands on the outgoing message.
+    @State var uploadTasks: [Task<Void, Never>] = []
     @State var photoPickerItems: [PhotosPickerItem] = []
     @State var cameraImage: UIImage?
     /// Set true to present the system document picker (any file type).
@@ -711,11 +714,12 @@ struct ConversationView: View {
                 .presentationDragIndicator(.visible)
         }
         .onChange(of: photoPickerItems) { _, items in
-            Task { await ingestPhotos(items) }
+            guard !items.isEmpty else { return }
+            uploadTasks.append(Task { await ingestPhotos(items) })
         }
         .onChange(of: cameraImage) { _, image in
             guard let image else { return }
-            Task { await ingestCameraImage(image) }
+            uploadTasks.append(Task { await ingestCameraImage(image) })
         }
         .fileImporter(
             isPresented: $showFileImporter,
@@ -724,7 +728,7 @@ struct ConversationView: View {
         ) { result in
             switch result {
             case .success(let urls):
-                Task { await ingestFiles(urls) }
+                uploadTasks.append(Task { await ingestFiles(urls) })
             case .failure(let err):
                 self.error = "选择文件失败: \(err.localizedDescription)"
             }
@@ -1162,9 +1166,17 @@ struct ConversationView: View {
     private func send() async {
         guard canSend else { return }
         let text = input.trimmingCharacters(in: .whitespaces)
+        input = ""
+        // Drain in-flight uploads first — an upload can lag the send tap
+        // by seconds, and capturing pendingAttachments before it lands
+        // would silently drop the attachment from this message.
+        if !uploadTasks.isEmpty {
+            let inflight = uploadTasks
+            uploadTasks = []
+            for t in inflight { await t.value }
+        }
         let attachIds = pendingAttachments.map(\.id)
         let attachmentSnapshot = pendingAttachments
-        input = ""
         pendingAttachments = []
         photoPickerItems = []
         Haptics.send()

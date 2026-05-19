@@ -25,6 +25,30 @@ extension ConversationView {
         attachmentMetaById[pending.id] = pending.asAttachment()
     }
 
+    /// Downscale to a 2048 px long edge and JPEG-encode at 0.85. Full-res
+    /// library/camera photos run 10–48 MP — uploading them whole is slow
+    /// and can push past the edge's 5 MB inline-vision cap. 2048 px keeps
+    /// ample detail for the model while landing well under 1 MB.
+    private func encodeImageForUpload(_ image: UIImage) -> Data? {
+        let maxEdge: CGFloat = 2048
+        let longEdge = max(image.size.width, image.size.height)
+        guard longEdge > 0 else { return nil }
+        let scaled: UIImage
+        if longEdge > maxEdge {
+            let factor = maxEdge / longEdge
+            let newSize = CGSize(width: image.size.width * factor,
+                                 height: image.size.height * factor)
+            let fmt = UIGraphicsImageRendererFormat.default()
+            fmt.scale = 1
+            scaled = UIGraphicsImageRenderer(size: newSize, format: fmt).image { _ in
+                image.draw(in: CGRect(origin: .zero, size: newSize))
+            }
+        } else {
+            scaled = image
+        }
+        return scaled.jpegData(compressionQuality: 0.85)
+    }
+
     /// PhotosPicker callback. Each picked item is loaded as raw Data,
     /// uploaded to /v1/upload, and the returned id added to
     /// `pendingAttachments`. Errors surface via `self.error`.
@@ -42,7 +66,7 @@ extension ConversationView {
             let mime: String
             let ext: String
             if let image = UIImage(data: data),
-               let jpeg = image.jpegData(compressionQuality: 0.85) {
+               let jpeg = encodeImageForUpload(image) {
                 uploadData = jpeg
                 mime = "image/jpeg"
                 ext = "jpg"
@@ -76,7 +100,7 @@ extension ConversationView {
     /// upload size matches what users get from the library picker.
     func ingestCameraImage(_ image: UIImage) async {
         defer { cameraImage = nil }
-        guard let api, let data = image.jpegData(compressionQuality: 0.85) else { return }
+        guard let api, let data = encodeImageForUpload(image) else { return }
         do {
             let response: UploadResponse = try await api.upload(
                 "v1/upload",
