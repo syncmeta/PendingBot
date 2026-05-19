@@ -4,14 +4,15 @@ import { readAttachmentForTool } from '../../../llm/vision';
 import { UUID_RE } from '../../ids';
 import type { ToolCtx } from '../tool-runner';
 
-// read_attachment — let the model re-look at an image visible in this
-// conv's history. The system prompt's "## 历史图片附件" section lists
-// every image with an 8-char ID prefix; the bot passes either that
-// prefix or the full UUID, plus a question. We resolve prefix → full
-// UUID against this conversation's attachments table (so the model
-// can't poke at images from other convs even if it guesses an id),
-// then call readAttachmentForTool which routes to the configured
-// vision model.
+// read_attachment — let the model read an attachment visible in this
+// conv's history: an image, a PDF, or any other uploaded file. The
+// system prompt's "## 历史图片附件" / "## 文件附件" sections list every
+// attachment with an 8-char ID prefix; the bot passes that prefix (or
+// the full UUID) plus a question. We resolve prefix → full UUID against
+// this conversation's attachments table (so the model can't poke at
+// attachments from other convs even if it guesses an id), then call
+// readAttachmentForTool — which parses images/PDFs via a model and
+// returns plain files' text content directly.
 export async function readAttachmentTool(
   env: Env,
   args: Record<string, unknown>,
@@ -58,7 +59,7 @@ export async function readAttachmentTool(
     if (rows.length > 1) {
       ctx.emit('tool_result', { name: 'read_attachment', error: 'ambiguous' });
       return JSON.stringify({
-        error: `prefix "${idArg}" matches ${rows.length} images; pass a longer prefix or the full UUID`,
+        error: `prefix "${idArg}" matches ${rows.length} attachments; pass a longer prefix or the full UUID`,
         candidates: rows.map((r) => r.id),
       });
     }

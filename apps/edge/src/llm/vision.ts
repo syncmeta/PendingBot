@@ -34,6 +34,7 @@ import type {
 import type { Env } from '../types';
 import type { SupabaseClient } from '../lib/supabase';
 import { patchCachedAttachment } from '../lib/attachment-cache';
+import { classifyAttachment } from '../lib/attachments';
 import { uuidv7 } from '../lib/ids';
 import {
   enqueueAudit,
@@ -447,10 +448,44 @@ export async function summarizeAttachments(
   }
 }
 
-/// Tool-side: answer a specific question about an image. Returns the
-/// model's free-form text answer. Distinct from summarize because the
-/// caller (the bot reply loop) controls the question — typically
-/// something like "图中文字内容是什么" or "人物服饰的细节描述".
+/// Max characters of a text file returned by the read_attachment tool.
+/// A 25 MB file would blow the context window; we hand back a prefix and
+/// tell the model it was truncated.
+const MAX_FILE_TEXT_CHARS = 100_000;
+
+/// Read a non-image, non-PDF attachment's bytes from R2 and return them
+/// as text. Files that aren't valid UTF-8 are reported as binary (with
+/// their metadata) rather than returning mojibake. No model call — the
+/// calling model reads the content itself.
+async function readFileAttachmentAsText(
+  env: Env,
+  att: AttachmentRow,
+): Promise<{ answer: string } | { error: string }> {
+  const obj = await env.UPLOADS.get(att.r2_key);
+  if (!obj) return { error: 'file unavailable (object missing)' };
+  const bytes = new Uint8Array(await obj.arrayBuffer());
+  let text: string;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    return {
+      answer:
+        `这是一个二进制文件（类型 ${att.mime_type}，文件名 ${att.filename ?? '未命名'}，` +
+        `大小 ${att.byte_size} 字节），无法作为文本读取。`,
+    };
+  }
+  if (text.length > MAX_FILE_TEXT_CHARS) {
+    text =
+      text.slice(0, MAX_FILE_TEXT_CHARS) +
+      `\n\n…（文件较大，已截断，仅返回前 ${MAX_FILE_TEXT_CHARS} 个字符）`;
+  }
+  return { answer: text };
+}
+
+/// Tool-side: answer a specific question about an attachment. For images
+/// and PDFs a model parses the bytes and answers; for other file types
+/// the raw text content is returned directly. Distinct from summarize
+/// because the caller (the bot reply loop) controls the question.
 export async function readAttachmentForTool(
   deps: VisionDeps,
   attachmentId: string,
@@ -480,8 +515,28 @@ export async function readAttachmentForTool(
     return { error: 'attachment does not belong to this conversation' };
   }
 
-  const part = await loadAttachmentAsImagePart(env, att);
-  if (!part) return { error: 'image unavailable (oversize or missing)' };
+  const kind = classifyAttachment(att.mime_type);
+
+  // Plain files (not image, not PDF) — return the raw text straight
+  // from R2, no model round-trip. The calling model reads it itself.
+  if (kind === 'file') {
+    return readFileAttachmentAsText(env, att);
+  }
+
+  // Image or PDF → a model parses the bytes and answers. Images ride as
+  // an image_url part; PDFs as a file part the provider parses natively.
+  const part =
+    kind === 'pdf'
+      ? await loadAttachmentAsFilePart(env, att)
+      : await loadAttachmentAsImagePart(env, att);
+  if (!part) {
+    return {
+      error:
+        kind === 'pdf'
+          ? 'file unavailable (oversize or missing)'
+          : 'image unavailable (oversize or missing)',
+    };
+  }
 
   const mainHasVision = await modelSupportsVision(supa, deps.mainModelSlug);
   const picked = pickVisionModel({
@@ -490,7 +545,9 @@ export async function readAttachmentForTool(
     mainHasVision,
   });
 
-  const userQuestion = question.trim().slice(0, 500) || '请详细描述这张图片。';
+  const userQuestion =
+    question.trim().slice(0, 500) ||
+    (kind === 'pdf' ? '请概述这个文件的内容。' : '请详细描述这张图片。');
 
   try {
     const callResult = await withFallback(
