@@ -2,10 +2,10 @@
 //
 // Three jobs:
 //
-//  1. modelSupportsVision(supa, slug) — does this model accept image input?
-//     Source of truth is llm_models.capabilities.vision (jsonb). Unknown
-//     (passthrough) slugs return false → caller falls back to
-//     DEFAULT_VISION_MODEL.
+//  1. modelSupportsVision(slug) — does this model accept image input?
+//     Source of truth is OpenRouter's catalog (architecture.
+//     input_modalities). Unknown slugs return false → caller falls back
+//     to DEFAULT_VISION_MODEL.
 //
 //  2. summarizeAttachment(deps, attachmentId) — generate a 1-2 sentence
 //     summary + 3-5 short tags for an image and persist them onto the
@@ -42,6 +42,7 @@ import {
   usageFromCompletion,
   withFallback,
 } from './router';
+import { modelSupportsVision } from './catalog';
 
 /// When the conversation's main model lacks vision and no
 /// per-conversation override is set, fall back to this slug. Picked
@@ -94,47 +95,6 @@ function bytesToBase64(bytes: Uint8Array): string {
     binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
   }
   return btoa(binary);
-}
-
-// Isolate-local cache for llm_models.capabilities lookups. The table
-// changes only when the admin board edits model pricing/capabilities;
-// 5 min TTL bounds drift without putting a Supabase RTT on every turn.
-// Per-slug entries so different bots' models stay independent.
-const VISION_CAP_TTL_MS = 5 * 60_000;
-const visionCapCache = new Map<string, { at: number; value: boolean }>();
-
-export function _resetVisionCapCache(): void {
-  visionCapCache.clear();
-}
-
-/// Returns true iff llm_models has an entry for this slug with
-/// capabilities.vision = true. Unknown slugs (passthrough) return false —
-/// conservatively assume no vision so we route through the default model.
-///
-/// Result cached for 5 min on the worker isolate; an admin edit
-/// propagates within ~TTL across all isolates.
-export async function modelSupportsVision(
-  supa: SupabaseClient,
-  slug: string,
-): Promise<boolean> {
-  if (!slug) return false;
-  const now = Date.now();
-  const hit = visionCapCache.get(slug);
-  if (hit && now - hit.at < VISION_CAP_TTL_MS) return hit.value;
-  const { data } = await supa
-    .from('llm_models')
-    .select('capabilities')
-    .eq('slug', slug)
-    .eq('enabled', true)
-    .maybeSingle();
-  let value = false;
-  if (data) {
-    const caps = (data as { capabilities?: Record<string, unknown> | null })
-      .capabilities;
-    if (caps && typeof caps === 'object' && caps.vision === true) value = true;
-  }
-  visionCapCache.set(slug, { at: now, value });
-  return value;
 }
 
 export interface PickVisionModelInput {
@@ -285,7 +245,7 @@ export async function summarizeAttachment(
   }
 
   // Resolve which model to call.
-  const mainHasVision = await modelSupportsVision(supa, deps.mainModelSlug);
+  const mainHasVision = await modelSupportsVision(deps.mainModelSlug);
   const picked = pickVisionModel({
     mainModelSlug: deps.mainModelSlug,
     override: deps.visionOverride,
@@ -538,7 +498,7 @@ export async function readAttachmentForTool(
     };
   }
 
-  const mainHasVision = await modelSupportsVision(supa, deps.mainModelSlug);
+  const mainHasVision = await modelSupportsVision(deps.mainModelSlug);
   const picked = pickVisionModel({
     mainModelSlug: deps.mainModelSlug,
     override: deps.visionOverride,
