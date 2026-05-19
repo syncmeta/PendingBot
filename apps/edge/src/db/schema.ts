@@ -2505,6 +2505,7 @@ export type Database = {
       }
       cancel_account_deletion: { Args: never; Returns: boolean }
       ensure_preset_handle: { Args: { p_uid: string }; Returns: undefined }
+      ensure_self_conv: { Args: { p_uid: string }; Returns: string }
       finalize_account_deletion: {
         Args: { p_force?: boolean; p_uid: string }
         Returns: undefined
