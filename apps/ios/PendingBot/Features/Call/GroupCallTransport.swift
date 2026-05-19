@@ -93,27 +93,45 @@ final class GroupCallTransport: NSObject {
 
     func start() async {
         do {
+            print("[group-voice] start: configuring audio session")
             try configureAudioSession()
             attachLocalAudio()
             let offer = try await createOffer()
             try await peerConnection.setLocalDescription(offer)
             let offerSDP = await gatheredOfferSDP()
+            print("[group-voice] offer ready — \(Self.sdpSummary(offerSDP))")
 
             let join = try await api.groupVoiceJoin(
                 conversationId: conversationId,
                 sdp: offerSDP,
             )
             sfuSessionId = join.session_id
+            print("[group-voice] join ok — session=\(join.session_id) "
+                + "bots=\(join.bots.count) — answer \(Self.sdpSummary(join.answer))")
             let answer = RTCSessionDescription(type: .answer, sdp: join.answer)
             try await peerConnection.setRemoteDescription(answer)
+            print("[group-voice] applied SFU answer")
             delegate?.transport(self, didUpdateRoster: join.bots)
             if !join.bots.isEmpty {
                 try await subscribe(to: join.bots)
             }
         } catch {
+            print("[group-voice] start FAILED: \(error)")
             await delegate?.transport(
                 self, didFailWith: .startupError(error.localizedDescription))
         }
+    }
+
+    /// One-line digest of an SDP for the device-console debug pass —
+    /// audio m-line direction + ICE candidate count are what matter for
+    /// "is this peer actually going to send/receive media".
+    private static func sdpSummary(_ sdp: String) -> String {
+        let lines = sdp.split(separator: "\n")
+        let audio = lines.contains { $0.hasPrefix("m=audio") }
+        let dir = ["sendrecv", "sendonly", "recvonly", "inactive"]
+            .first { d in lines.contains { $0.contains("a=\(d)") } } ?? "?"
+        let candidates = lines.filter { $0.contains("a=candidate") }.count
+        return "audio=\(audio) dir=\(dir) candidates=\(candidates) bytes=\(sdp.count)"
     }
 
     /// Pull tracks for any bots not yet subscribed (used after add-bot).
@@ -157,7 +175,11 @@ final class GroupCallTransport: NSObject {
 
         // The SFU hands back an offer for the freshly-added recv tracks;
         // answer it on the same peer connection (BUNDLE — no new ICE).
-        guard sub.requires_renegotiation, let offerSDP = sub.offer else { return }
+        guard sub.requires_renegotiation, let offerSDP = sub.offer else {
+            print("[group-voice] subscribe ok — no renegotiation needed")
+            return
+        }
+        print("[group-voice] subscribe — renegotiating \(bots.count) bot track(s)")
         let offer = RTCSessionDescription(type: .offer, sdp: offerSDP)
         try await peerConnection.setRemoteDescription(offer)
         let answer = try await createAnswer()
@@ -167,6 +189,7 @@ final class GroupCallTransport: NSObject {
             sessionId: sessionId,
             sdp: answer.sdp,
         )
+        print("[group-voice] renegotiation answered")
     }
 
     // MARK: - Setup
@@ -254,18 +277,36 @@ extension GroupCallTransport: RTCPeerConnectionDelegate {
         _ peerConnection: RTCPeerConnection,
         didChange newState: RTCIceConnectionState,
     ) {
-        if newState == .connected || newState == .completed {
+        print("[group-voice] ICE connection state = \(newState.rawValue) "
+            + "(2=connected 3=completed 4=failed 5=disconnected 6=closed)")
+        switch newState {
+        case .connected, .completed:
             Task { @MainActor [weak self] in
                 guard let self, !self.didSignalConnected else { return }
                 self.didSignalConnected = true
                 self.delegate?.transportDidConnect(self)
             }
-        }
-        if newState == .failed {
+        case .failed, .closed:
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 await self.delegate?.transport(self, didFailWith: .network)
             }
+        case .disconnected:
+            // Transient on a flaky link — but when it's the SFU tearing
+            // the room down (someone ended the call) it never recovers.
+            // Treat a sustained disconnect as the call having ended.
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 6_000_000_000)
+                guard let self else { return }
+                switch self.peerConnection.iceConnectionState {
+                case .disconnected, .failed, .closed:
+                    await self.delegate?.transport(self, didFailWith: .network)
+                default:
+                    break
+                }
+            }
+        default:
+            break
         }
     }
 
@@ -273,6 +314,8 @@ extension GroupCallTransport: RTCPeerConnectionDelegate {
         _ peerConnection: RTCPeerConnection,
         didChange newState: RTCIceGatheringState,
     ) {
+        print("[group-voice] ICE gathering state = \(newState.rawValue) "
+            + "(0=new 1=gathering 2=complete)")
         if newState == .complete {
             Task { @MainActor [weak self] in
                 self?.resolveIceGathering()
