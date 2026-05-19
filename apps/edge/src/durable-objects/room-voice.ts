@@ -590,6 +590,10 @@ export class RoomVoiceDO {
     const client = pair[0];
     const server = pair[1];
     server.accept();
+    // The SFU adapter pushes PCM as binary frames. Without this they
+    // arrive as Blob (no `.byteLength`), and `new Uint8Array(blob)`
+    // silently yields empty data — the bot then hears pure silence.
+    server.binaryType = 'arraybuffer';
 
     // Path tail: ".../ingest/<botId>" or ".../stream/<humanId>".
     const parts = url.pathname.split('/').filter(Boolean);
