@@ -70,6 +70,12 @@ interface RoomContext {
   // this to the group creator, matching how group text turns attribute
   // cost today; M6's splitAndDebit will replace it with a real split.
   billUserId: string;
+  // The user who started this call. Always privileged (can kick, end the
+  // call, designate call-admins).
+  initiatorUserId: string;
+  // Group owner + admin user IDs (conversation_participants.role). Always
+  // privileged for the lifetime of the call.
+  groupAdminIds: string[];
   // wss:// origin the SFU can dial back, e.g. "wss://api.pendingname.com".
   publicWsBase: string;
   // Route prefix on the edge worker that forwards adapter WS upgrades
@@ -79,6 +85,60 @@ interface RoomContext {
   // dialling our published endpoint is accepted.
   adapterToken: string;
 }
+
+// Realtime function tools every bot gets. `leave_call` is the bot's own
+// hang-up: it drops just that bot from the call.
+const BASE_BOT_TOOLS = [
+  {
+    type: 'function',
+    name: 'leave_call',
+    description:
+      'Leave (hang up) this voice call. Call this when you are asked to ' +
+      'leave or hang up, or when you are done and have nothing more to add.',
+    parameters: { type: 'object', properties: {}, additionalProperties: false },
+  },
+] as const;
+
+// Extra tools a bot gets only while it is a call-admin. A bot-admin has
+// the same powers as a human admin — but the human-admin invariant still
+// holds, so kicking the last human admin is refused.
+const ADMIN_BOT_TOOLS = [
+  {
+    type: 'function',
+    name: 'end_call',
+    description: 'End the entire voice call for everyone. Call-admins only.',
+    parameters: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    type: 'function',
+    name: 'kick_participant',
+    description:
+      'Remove a participant — a person or another bot — from the call. ' +
+      'Call-admins only. Removing the last human admin is refused.',
+    parameters: {
+      type: 'object',
+      properties: {
+        target_type: { type: 'string', enum: ['human', 'bot'] },
+        target_id: { type: 'string' },
+      },
+      required: ['target_type', 'target_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    type: 'function',
+    name: 'designate_admin',
+    description:
+      'Grant call-admin powers to a participant (a person or a bot). ' +
+      'Call-admins only.',
+    parameters: {
+      type: 'object',
+      properties: { target_id: { type: 'string' } },
+      required: ['target_id'],
+      additionalProperties: false,
+    },
+  },
+] as const;
 
 // Per-bot configuration handed in by the control endpoint.
 interface BotSpec {
@@ -94,6 +154,8 @@ interface StartPayload {
 }
 
 interface HumanTrack {
+  // The human's user id (conversation_participants.participant_id). Used
+  // as the room key for this human AND for privilege checks.
   humanId: string;
   sfuSessionId: string;
   sfuTrackName: string;
@@ -153,6 +215,9 @@ export class RoomVoiceDO {
 
   private bots = new Map<string, BotLeg>();
   private humans = new Map<string, HumanState>();
+  // Participants designated call-admin during this call (user or bot ids).
+  // The initiator + group owner/admins are privileged without being here.
+  private callAdminIds = new Set<string>();
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private joinGraceTimer: ReturnType<typeof setTimeout> | null = null;
   // Has any human ever joined this call? Until the first join we keep
@@ -186,14 +251,34 @@ export class RoomVoiceDO {
       }
       case '/control/add-human':
         return this.addHuman((await request.json()) as HumanTrack);
-      case '/control/remove-human': {
+      case '/control/leave': {
         const { humanId } = (await request.json()) as { humanId: string };
         await this.removeHuman(humanId);
         return Response.json({ ok: true });
       }
-      case '/control/stop':
+      case '/control/kick': {
+        const body = (await request.json()) as {
+          actorId: string;
+          targetType: 'bot' | 'human';
+          targetId: string;
+        };
+        return this.kick(body.actorId, body.targetType, body.targetId);
+      }
+      case '/control/designate-admin': {
+        const { actorId, targetId } = (await request.json()) as {
+          actorId: string;
+          targetId: string;
+        };
+        return this.designateAdmin(actorId, targetId);
+      }
+      case '/control/end': {
+        const { actorId } = (await request.json()) as { actorId: string };
+        if (!this.isPrivileged(actorId)) {
+          return new Response('forbidden', { status: 403 });
+        }
         await this.finalize();
         return Response.json({ ok: true });
+      }
       default:
         return new Response('not found', { status: 404 });
     }
@@ -252,6 +337,7 @@ export class RoomVoiceDO {
     const leg = this.bots.get(botId);
     if (!leg) return;
     this.bots.delete(botId);
+    this.callAdminIds.delete(botId);
     try {
       leg.openaiWs?.close();
     } catch {
@@ -336,11 +422,76 @@ export class RoomVoiceDO {
     if (human.adapterId) {
       await closeAdapter(this.sfuApp(), human.adapterId);
     }
-    // A voice room exists only while humans are in it. Once the last
-    // human leaves, the bots have nobody to talk to — end the call.
-    if (this.humanEverJoined && this.humans.size === 0) {
+    // A voice room must always have a human admin in it. Once none is
+    // left — whether the room emptied out or the last human admin left
+    // without designating a successor — the call ends.
+    if (this.humanEverJoined && !this.humanAdminPresent()) {
       await this.finalize();
     }
+  }
+
+  // ── permissions & roster ───────────────────────────────────────────
+
+  // The initiator, group owner/admins and designated call-admins are
+  // privileged: they may kick, designate further admins, and end the
+  // call. Works for human user ids and bot ids alike.
+  private isPrivileged(actorId: string): boolean {
+    const ctx = this.ctx;
+    if (!ctx) return false;
+    return (
+      actorId === ctx.initiatorUserId ||
+      ctx.groupAdminIds.includes(actorId) ||
+      this.callAdminIds.has(actorId)
+    );
+  }
+
+  // Is at least one privileged human still in the room? `exclude` lets a
+  // kick check "would a human admin remain if I removed this one?".
+  private humanAdminPresent(exclude?: string): boolean {
+    for (const humanId of this.humans.keys()) {
+      if (humanId === exclude) continue;
+      if (this.isPrivileged(humanId)) return true;
+    }
+    return false;
+  }
+
+  // Kick a participant. Privileged actors only. Removing the last human
+  // admin is refused — the room must always keep one (a voluntary leave
+  // can still end the room, but a kick must not strand it).
+  private async kick(
+    actorId: string,
+    targetType: 'bot' | 'human',
+    targetId: string,
+  ): Promise<Response> {
+    if (!this.isPrivileged(actorId)) {
+      return new Response('forbidden', { status: 403 });
+    }
+    if (targetType === 'bot') {
+      await this.removeBot(targetId);
+      return Response.json({ ok: true });
+    }
+    if (!this.humans.has(targetId)) {
+      return Response.json({ ok: true, already: true });
+    }
+    if (this.isPrivileged(targetId) && !this.humanAdminPresent(targetId)) {
+      return new Response('would leave the room without a human admin', {
+        status: 409,
+      });
+    }
+    await this.removeHuman(targetId);
+    return Response.json({ ok: true });
+  }
+
+  // Grant call-admin powers to a participant. Privileged actors only. If
+  // the target is a bot in this call, push the admin tools to its session.
+  private designateAdmin(actorId: string, targetId: string): Response {
+    if (!this.isPrivileged(actorId)) {
+      return new Response('forbidden', { status: 403 });
+    }
+    this.callAdminIds.add(targetId);
+    const leg = this.bots.get(targetId);
+    if (leg) this.updateBotTools(leg);
+    return Response.json({ ok: true });
   }
 
   private sfuApp(): SfuApp {
@@ -502,6 +653,8 @@ export class RoomVoiceDO {
           type: 'realtime',
           instructions: leg.spec.instructions,
           output_modalities: ['audio'],
+          tools: this.toolsFor(leg.spec.botId),
+          tool_choice: 'auto',
           audio: {
             input: { format: { type: 'audio/pcm', rate: OPENAI_RATE } },
             output: {
@@ -514,12 +667,38 @@ export class RoomVoiceDO {
     );
   }
 
+  // The tool set a bot's realtime session should expose. Every bot can
+  // hang itself up; a bot that is a call-admin also gets the admin tools.
+  private toolsFor(botId: string): unknown[] {
+    return this.isPrivileged(botId)
+      ? [...BASE_BOT_TOOLS, ...ADMIN_BOT_TOOLS]
+      : [...BASE_BOT_TOOLS];
+  }
+
+  // Re-push a bot's tool set — used when it is designated call-admin
+  // mid-call and should gain the admin tools.
+  private updateBotTools(leg: BotLeg): void {
+    const ws = leg.openaiWs;
+    if (!ws) return;
+    try {
+      ws.send(
+        JSON.stringify({
+          type: 'session.update',
+          session: { type: 'realtime', tools: this.toolsFor(leg.spec.botId) },
+        }),
+      );
+    } catch {
+      // socket gone — its close handler runs onLegClosed
+    }
+  }
+
   // A bot's OpenAI socket closed — drop just that leg. If it was the
   // last bot, the room has nothing left to do, so finalize.
   private onLegClosed(botId: string): void {
     const leg = this.bots.get(botId);
     if (!leg) return;
     this.bots.delete(botId);
+    this.callAdminIds.delete(botId);
     try {
       leg.ingestWs?.close();
     } catch {
@@ -536,6 +715,9 @@ export class RoomVoiceDO {
     let msg: {
       type?: string;
       delta?: string;
+      name?: string;
+      call_id?: string;
+      arguments?: string;
       response?: { usage?: RealtimeUsage };
     };
     try {
@@ -552,6 +734,18 @@ export class RoomVoiceDO {
       typeof msg.delta === 'string'
     ) {
       this.onBotAudio(leg, msg.delta);
+      return;
+    }
+
+    // The bot invoked a function tool. The GA event carrying the final
+    // arguments is response.function_call_arguments.done — name / call_id
+    // / arguments sit on it. (Unverified against a live session; the wire
+    // detail is on the real-device checklist.)
+    if (
+      msg.type === 'response.function_call_arguments.done' &&
+      typeof msg.name === 'string'
+    ) {
+      await this.handleBotTool(leg, msg.name, msg.call_id ?? '', msg.arguments);
       return;
     }
 
@@ -583,6 +777,84 @@ export class RoomVoiceDO {
       } catch {
         return;
       }
+    }
+  }
+
+  // Execute a tool the bot invoked. `leave_call` / `end_call` tear the
+  // bot (or room) down, so they don't send a tool result — the socket is
+  // gone. The others reply with a function_call_output so the bot can
+  // acknowledge verbally.
+  private async handleBotTool(
+    leg: BotLeg,
+    name: string,
+    callId: string,
+    argsJson: string | undefined,
+  ): Promise<void> {
+    const botId = leg.spec.botId;
+    let args: { target_type?: unknown; target_id?: unknown } = {};
+    try {
+      if (argsJson) args = JSON.parse(argsJson);
+    } catch {
+      // malformed args — treated as empty below
+    }
+
+    if (name === 'leave_call') {
+      await this.removeBot(botId);
+      return;
+    }
+
+    if (!this.isPrivileged(botId)) {
+      this.sendToolResult(leg, callId, 'refused: you are not a call-admin');
+      return;
+    }
+
+    switch (name) {
+      case 'end_call':
+        await this.finalize();
+        return;
+      case 'kick_participant': {
+        const targetType = args.target_type === 'human' ? 'human' : 'bot';
+        const targetId = typeof args.target_id === 'string' ? args.target_id : '';
+        const resp = await this.kick(botId, targetType, targetId);
+        this.sendToolResult(
+          leg,
+          callId,
+          resp.ok ? 'ok' : `refused: ${await resp.text()}`,
+        );
+        return;
+      }
+      case 'designate_admin': {
+        const targetId = typeof args.target_id === 'string' ? args.target_id : '';
+        if (!targetId) {
+          this.sendToolResult(leg, callId, 'refused: missing target_id');
+          return;
+        }
+        this.callAdminIds.add(targetId);
+        const targetLeg = this.bots.get(targetId);
+        if (targetLeg) this.updateBotTools(targetLeg);
+        this.sendToolResult(leg, callId, 'ok');
+        return;
+      }
+      default:
+        this.sendToolResult(leg, callId, `refused: unknown tool ${name}`);
+    }
+  }
+
+  // Hand a tool's result back to the bot's realtime session and ask it
+  // for a follow-up response so it can acknowledge the action out loud.
+  private sendToolResult(leg: BotLeg, callId: string, output: string): void {
+    const ws = leg.openaiWs;
+    if (!ws || !callId) return;
+    try {
+      ws.send(
+        JSON.stringify({
+          type: 'conversation.item.create',
+          item: { type: 'function_call_output', call_id: callId, output },
+        }),
+      );
+      ws.send(JSON.stringify({ type: 'response.create' }));
+    } catch {
+      // socket gone — its close handler runs onLegClosed
     }
   }
 
