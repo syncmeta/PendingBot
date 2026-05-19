@@ -253,6 +253,12 @@
   //   SFU_APP_SECRET        (Cloudflare Realtime SFU app secret — bearer
   //                          for rtc.live.cloudflare.com; pairs with the
   //                          SFU_APP_ID var. Group voice only.)
+  //   TURN_KEY_ID           (Cloudflare Realtime TURN key id — create a
+  //                          TURN key in the Realtime dashboard. Used by
+  //                          the 'webrtc_turn' 1:1 voice transport.)
+  //   TURN_KEY_API_TOKEN    (API token paired with TURN_KEY_ID; the
+  //                          worker mints short-lived ICE credentials
+  //                          with it. See lib/cf-turn.ts.)
   //
   //   --- realtime fan-in ---
   //   REALTIME_WEBHOOK_SECRET  shared secret the Supabase Database

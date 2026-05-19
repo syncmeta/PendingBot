@@ -38,6 +38,7 @@ import {
   checkOpenAIRegion,
   OPENAI_SUPPORTED_URL,
 } from '../lib/openai-regions';
+import { generateTurnCredentials, type TurnIceServer } from '../lib/cf-turn';
 import type { AppBindings } from '../types';
 
 export const realtimeRoutes = new Hono<AppBindings>();
@@ -236,10 +237,12 @@ async function assembleInstructions(
 const SessionBody = z.object({
   conversation_id: z.string(),
   // 'webrtc' (default) — direct iOS<->OpenAI WebRTC, lowest latency,
-  // region-gated. 'websocket' — audio relayed iOS<->worker<->OpenAI,
-  // egresses from Cloudflare so it works from regions OpenAI geo-blocks.
-  // The client picks.
-  transport: z.enum(['webrtc', 'websocket']).default('webrtc'),
+  // region-gated. 'webrtc_turn' — same WebRTC handshake but media is
+  // relayed through Cloudflare TURN, which traverses NATs/firewalls a
+  // direct path can't. 'websocket' — audio relayed iOS<->worker<->
+  // OpenAI, egresses from Cloudflare so it works from regions OpenAI
+  // geo-blocks. The client picks (or walks the chain in auto mode).
+  transport: z.enum(['webrtc', 'webrtc_turn', 'websocket']).default('webrtc'),
   // Optional voice model override (client picker). When set it's sent
   // straight to OpenAI's mint as the realtime `model`; when absent the
   // resolved route's model id is used.
@@ -358,10 +361,11 @@ realtimeRoutes.post('/session', async (c) => {
     });
   }
 
-  // WebRTC transport (default). Region gate applies — iOS connects to
-  // OpenAI directly, so a geo-blocked egress IP must be rejected here.
-  // cf.country is Cloudflare's edge GeoIP for the request's egress IP;
-  // the blocked list lives in lib/openai-regions.ts.
+  // WebRTC family ('webrtc' default, or 'webrtc_turn'). Region gate
+  // applies to both — the SDP exchange still leaves the device, so a
+  // geo-blocked egress IP must be rejected here. cf.country is
+  // Cloudflare's edge GeoIP for the request's egress IP; the blocked
+  // list lives in lib/openai-regions.ts.
   const cfCountry = (c.req.raw as unknown as { cf?: { country?: string } }).cf
     ?.country;
   const region = checkOpenAIRegion(cfCountry ?? null);
@@ -374,6 +378,23 @@ realtimeRoutes.post('/session', async (c) => {
       },
     });
   }
+
+  // 'webrtc_turn' — mint Cloudflare TURN credentials so iOS relays its
+  // media through Cloudflare. If TURN isn't configured (or the mint
+  // fails) there's no usable relay, so fail the session; auto mode
+  // falls through to the WebSocket transport on the next attempt.
+  let iceServers: TurnIceServer[] | undefined;
+  if (parsed.transport === 'webrtc_turn') {
+    const turn = await generateTurnCredentials(c.env);
+    if (!turn) {
+      console.warn('[realtime/session] turn credentials unavailable');
+      return routeJsonError(c, 503, 'voice_upstream_failed', {
+        message: t('voice.upstream_failed', locale),
+      });
+    }
+    iceServers = turn;
+  }
+
   return await mintOpenAISession(c.env, locale, {
     sessionId,
     userId,
@@ -386,6 +407,7 @@ realtimeRoutes.post('/session', async (c) => {
     // Client picker wins; otherwise the bot's configured default
     // realtime model (bots.config.voiceModel), else the resolved route.
     modelOverride: parsed.model ?? ctx.bot.voice_model ?? undefined,
+    iceServers,
   });
 });
 
@@ -401,6 +423,9 @@ interface MintArgs {
   /// Client-picked realtime model id. Overrides route.modelToCall in the
   /// mint body when set.
   modelOverride?: string;
+  /// 'webrtc_turn' transport only — Cloudflare TURN ICE servers the iOS
+  /// WebRTC client routes its media through. Echoed back as `ice_servers`.
+  iceServers?: TurnIceServer[];
 }
 
 async function mintOpenAISession(
@@ -511,6 +536,11 @@ async function mintOpenAISession(
     provider_id: args.route.provider.id,
     min_threshold: args.minThreshold,
     balance_credits: args.balanceCredits,
+    // 'webrtc_turn' only — the iOS client feeds these into its
+    // RTCPeerConnection and pins the ICE policy to relay.
+    ...(args.iceServers
+      ? { transport: 'webrtc_turn', ice_servers: args.iceServers }
+      : {}),
   });
 }
 

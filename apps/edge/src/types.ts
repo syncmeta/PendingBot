@@ -98,6 +98,15 @@ export interface Env {
   // SFU app secret — bearer token for rtc.live.cloudflare.com. Secret.
   SFU_APP_SECRET?: string;
 
+  // ── TURN relay (webrtc_turn voice transport) ───────────────────
+  // Cloudflare Realtime TURN key. The worker mints short-lived ICE
+  // relay credentials (lib/cf-turn.ts) so the iOS WebRTC client can
+  // route 1:1 voice media through Cloudflare's TURN servers — the
+  // middle fallback between direct WebRTC and the WebSocket relay.
+  // Both unset → 'webrtc_turn' sessions fail; auto mode skips to WS.
+  TURN_KEY_ID?: string;
+  TURN_KEY_API_TOKEN?: string;
+
   // ── Realtime fan-in ────────────────────────────────────────────
   // Shared secret the Supabase Database Webhooks send in the
   // X-Webhook-Secret header on every POST to /v1/realtime-internal/
