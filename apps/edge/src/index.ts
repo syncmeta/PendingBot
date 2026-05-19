@@ -17,6 +17,7 @@ import { deviceRoutes } from './routes/devices';
 import { codeExecRoutes } from './routes/code-exec';
 import { openrouterRoutes } from './routes/openrouter';
 import { realtimeRoutes } from './routes/realtime';
+import { roomVoiceRoutes } from './routes/room-voice';
 import { realtimeHubRoutes } from './routes/realtime-hub';
 import { realtimeInternalRoutes } from './routes/realtime-internal';
 import { wellKnownRoutes } from './routes/well-known';
@@ -31,6 +32,7 @@ import type { AuditMessage } from './queue/audit-types';
 export { GroupRouterDO } from './durable-objects/group-router';
 export { RealtimeHubDO } from './durable-objects/hub';
 export { RealtimeMeterDO } from './durable-objects/realtime-meter';
+export { RoomVoiceDO } from './durable-objects/room-voice';
 // Container-backed DO from @cloudflare/sandbox. Required export for
 // the `Sandbox` binding declared in wrangler.jsonc.
 export { Sandbox } from '@cloudflare/sandbox';
@@ -93,6 +95,9 @@ v1.route('/devices', deviceRoutes);
 v1.route('/code-exec-requests', codeExecRoutes);
 v1.route('/openrouter', openrouterRoutes);
 v1.route('/realtime', realtimeRoutes);
+// SFU-facing adapter WebSocket endpoints for group voice — no JWT gate
+// (the Cloudflare SFU is the caller; RoomVoiceDO checks the adapterToken).
+v1.route('/realtime-sfu', roomVoiceRoutes);
 v1.route('/realtime-hub', realtimeHubRoutes);
 v1.route('/realtime-internal', realtimeInternalRoutes);
 

@@ -61,7 +61,10 @@
         // gateway name match the base_url the llm_providers rows point
         // at; the Logs API auth token is the CF_AIG_TOKEN secret below.
         "CF_ACCOUNT_ID": "4c303754167f1f225e6761b5128c0d9f",
-        "CF_AIG_GATEWAY": "pendingbot"
+        "CF_AIG_GATEWAY": "pendingbot",
+        // Cloudflare Realtime SFU app for group voice. The id is not
+        // sensitive; the paired SFU_APP_SECRET is set via wrangler secret.
+        "SFU_APP_ID": "a0d4007702e06eb9eb592bfa870c7722"
       },
       "routes": [
         { "pattern": "api.pendingname.com", "custom_domain": true },
@@ -111,6 +114,7 @@
           { "name": "GROUP_ROUTER", "class_name": "GroupRouterDO" },
           { "name": "REALTIME_HUB", "class_name": "RealtimeHubDO" },
           { "name": "REALTIME_METER", "class_name": "RealtimeMeterDO" },
+          { "name": "ROOM_VOICE", "class_name": "RoomVoiceDO" },
           { "name": "Sandbox", "class_name": "Sandbox" }
         ]
       },
@@ -157,6 +161,10 @@
         {
           "tag": "v4",
           "new_sqlite_classes": ["RealtimeMeterDO"]
+        },
+        {
+          "tag": "v5",
+          "new_sqlite_classes": ["RoomVoiceDO"]
         }
       ],
       // Audit + billing offload. recordAudit used to insert audit_log
@@ -240,7 +248,11 @@
   //   DAYTONA_API_URL, DAYTONA_TOOLBOX_URL.)
   //
   //   --- voice call (optional; per-bot opt-in via bots.voice_call_enabled) ---
-  //   OPENAI_API_KEY        (mint Realtime ephemeral client_secret)
+  //   OPENAI_API_KEY        (mint Realtime ephemeral client_secret; also
+  //                          the group-voice RoomVoiceDO's OpenAI leg)
+  //   SFU_APP_SECRET        (Cloudflare Realtime SFU app secret — bearer
+  //                          for rtc.live.cloudflare.com; pairs with the
+  //                          SFU_APP_ID var. Group voice only.)
   //
   //   --- realtime fan-in ---
   //   REALTIME_WEBHOOK_SECRET  shared secret the Supabase Database
