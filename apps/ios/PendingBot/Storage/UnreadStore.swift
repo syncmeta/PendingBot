@@ -37,13 +37,6 @@ final class UnreadStore: ObservableObject {
         serverCounts.values.reduce(0, +)
     }
 
-    /// Whether any unread signal exists — drives the tab-bar dot (a plain
-    /// dot, no number). Counts both server unread messages and the
-    /// conversations the user manually flagged unread.
-    var hasUnread: Bool {
-        totalUnreadCount > 0 || !unread.isEmpty
-    }
-
     /// Server unread count for one conversation (0 when none).
     func unreadCount(_ conversationId: String) -> Int {
         serverCounts[conversationId] ?? 0

@@ -61,45 +61,26 @@ struct TabRoot: View {
     // ── Compact (iPhone) ────────────────────────────────────────────────────
 
     private var compactBody: some View {
-        // Root GeometryReader so the 消息 tab dot can be positioned over
-        // the system tab bar — its `proxy` reliably reports the window
-        // size and the bottom edge coincides with the tab bar's icon band.
-        GeometryReader { proxy in
-            ZStack(alignment: .topLeading) {
-                TabView(selection: selected) {
-                    MessageTabView()
-                        .tabItem { Label(TopTab.message.label, systemImage: TopTab.message.systemImage) }
-                        .tag(TopTab.message)
+        // 消息 tab badge — the system draws it on the tab item itself, so
+        // it sits in the right place and never bleeds onto pushed or
+        // presented views the way a hand-positioned overlay did.
+        TabView(selection: selected) {
+            MessageTabView()
+                .tabItem { Label(TopTab.message.label, systemImage: TopTab.message.systemImage) }
+                .badge(unread.totalUnreadCount)
+                .tag(TopTab.message)
 
-                    FriendsTabView()
-                        .tabItem { Label(TopTab.friends.label, systemImage: TopTab.friends.systemImage) }
-                        .tag(TopTab.friends)
+            FriendsTabView()
+                .tabItem { Label(TopTab.friends.label, systemImage: TopTab.friends.systemImage) }
+                .tag(TopTab.friends)
 
-                    ScrollTabView()
-                        .tabItem { Label(TopTab.scroll.label, systemImage: TopTab.scroll.systemImage) }
-                        .tag(TopTab.scroll)
+            ScrollTabView()
+                .tabItem { Label(TopTab.scroll.label, systemImage: TopTab.scroll.systemImage) }
+                .tag(TopTab.scroll)
 
-                    MeTabView()
-                        .tabItem { Label(TopTab.me.label, systemImage: TopTab.me.systemImage) }
-                        .tag(TopTab.me)
-                }
-                // 消息 tab dot. SwiftUI's `.badge` only renders numbers,
-                // so the dot-only indicator is placed by hand over the
-                // first of four equal-width tab slots. The 49pt icon band
-                // sits flush above the bottom safe area, which in this
-                // root GeometryReader's space is the bottom edge — so the
-                // band top is `height − 49`.
-                if unread.hasUnread {
-                    Circle()
-                        .fill(Theme.Palette.accent)
-                        .frame(width: 9, height: 9)
-                        .position(
-                            x: proxy.size.width / 8 + 12,
-                            y: proxy.size.height - 49 + 8
-                        )
-                        .allowsHitTesting(false)
-                }
-            }
+            MeTabView()
+                .tabItem { Label(TopTab.me.label, systemImage: TopTab.me.systemImage) }
+                .tag(TopTab.me)
         }
     }
 

@@ -64,11 +64,14 @@ struct SidebarTabBar: View {
                         Image(systemName: tab.systemImage)
                             .font(.system(size: 20, weight: .regular))
                             .overlay(alignment: .topTrailing) {
-                                if tab == .message, unread.hasUnread {
-                                    Circle()
-                                        .fill(Theme.Palette.accent)
-                                        .frame(width: 7, height: 7)
-                                        .offset(x: 7, y: -2)
+                                if tab == .message, unread.totalUnreadCount > 0 {
+                                    Text(unread.totalUnreadCount > 99 ? "99+" : "\(unread.totalUnreadCount)")
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundStyle(.white)
+                                        .padding(.horizontal, 5)
+                                        .frame(minWidth: 17, minHeight: 17)
+                                        .background(Capsule().fill(Color.red))
+                                        .offset(x: 12, y: -8)
                                 }
                             }
                         Text(tab.label)
