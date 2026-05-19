@@ -32,16 +32,26 @@ struct VoiceCallAPI {
         let provider_id: String
         let min_threshold: Int
         let balance_credits: Int
-        /// "webrtc" (absent on the WebRTC response) or "websocket".
+        /// "webrtc" (absent), "webrtc_turn", or "websocket".
         let transport: String?
         /// WebRTC transport only — the ephemeral key for the SDP exchange.
         let client_secret: ClientSecret?
         /// WebSocket transport only — relative path iOS opens the WS to.
         let ws_path: String?
+        /// 'webrtc_turn' transport only — Cloudflare TURN ICE servers the
+        /// WebRTC peer connection routes its media through.
+        let ice_servers: [IceServer]?
 
         struct ClientSecret: Decodable, Sendable {
             let value: String
             let expires_at: Int?
+        }
+
+        /// One RTCIceServer entry, as minted by Cloudflare TURN.
+        struct IceServer: Decodable, Sendable {
+            let urls: [String]
+            let username: String?
+            let credential: String?
         }
     }
 

@@ -16,7 +16,7 @@ struct MeTabView: View {
 
     /// Voice-call transport preference, read by CallSession.start() —
     /// the key matches CallSession.transportDefaultsKey.
-    @AppStorage("voice_transport") private var voiceTransport = "webrtc"
+    @AppStorage("voice_transport") private var voiceTransport = "auto"
 
     /// Voice-call model preference, read by CallSession.start() — the key
     /// matches CallSession.modelDefaultsKey.
@@ -155,7 +155,9 @@ struct MeTabView: View {
                                     .foregroundStyle(Theme.Palette.ink)
                                 Spacer(minLength: 0)
                                 Picker("", selection: $voiceTransport) {
+                                    Text("自动").tag("auto")
                                     Text("WebRTC").tag("webrtc")
+                                    Text("中继").tag("turn")
                                     Text("WebSocket").tag("websocket")
                                 }
                                 .labelsHidden()
@@ -167,7 +169,7 @@ struct MeTabView: View {
                             .frame(height: 52)
                             .meGlassGroup()
 
-                            Text("WebRTC 延迟最低；网络受限地区可改用 WebSocket")
+                            Text("自动会依次尝试 WebRTC、中继、WebSocket；中继经 Cloudflare 转发，WebRTC 延迟最低")
                                 .font(Theme.Fonts.monoSmall)
                                 .foregroundStyle(Theme.Palette.inkMuted)
                                 .frame(maxWidth: .infinity, alignment: .leading)

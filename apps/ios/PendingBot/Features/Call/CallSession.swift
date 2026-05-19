@@ -83,36 +83,98 @@ final class CallSession {
 
     // MARK: - Lifecycle
 
-    /// Tap on the phone button enters here. Mints the OpenAI Realtime
-    /// session via the worker, then spins up OpenAICallTransport. Errors
-    /// surface through `phase = .terminated(...)` so UI can listen via
-    /// the @Observable contract rather than try/catch.
+    /// Tap on the phone button enters here. Walks the transport chain
+    /// for the user's preference, minting a fresh OpenAI Realtime
+    /// session per attempt and falling through to the next transport
+    /// when one fails to connect. Errors surface through
+    /// `phase = .terminated(...)` so UI can listen via the @Observable
+    /// contract rather than try/catch.
     func start() async {
         guard phase == .idle else { return }
         phase = .connecting
 
-        // User-selected transport. "webrtc" (default) is lowest-latency;
-        // "websocket" is the fallback for regions OpenAI geo-blocks.
+        // User-selected transport. "auto" (default) walks the chain
+        // direct WebRTC → Cloudflare TURN relay → WebSocket; the
+        // explicit prefs pin to one transport.
         let transportPref =
-            UserDefaults.standard.string(forKey: Self.transportDefaultsKey) ?? "webrtc"
+            UserDefaults.standard.string(forKey: Self.transportDefaultsKey) ?? "auto"
         // User-selected voice model (cost vs quality).
         let modelPref =
             UserDefaults.standard.string(forKey: Self.modelDefaultsKey)
             ?? "gpt-realtime-2"
 
+        let chain = Self.attemptChain(for: transportPref)
+        for (idx, transportName) in chain.enumerated() {
+            // The user can hang up mid-chain — bail before/after each
+            // attempt rather than racing the next mint.
+            if isTerminal(phase) { return }
+            let isLast = idx == chain.count - 1
+            let outcome = await attemptConnect(transportName: transportName, model: modelPref)
+            if isTerminal(phase) { return }
+            switch outcome {
+            case .connected:
+                // transportDidConnect already flipped phase; transport retained.
+                return
+            case .failed(let reason):
+                // A balance shortfall won't be cured by another
+                // transport — stop the chain immediately.
+                if case .noBalance = reason {
+                    phase = .terminated(reason)
+                    return
+                }
+                if isLast {
+                    phase = .terminated(reason)
+                    return
+                }
+                // else: fall through to the next transport in the chain
+            }
+        }
+    }
+
+    /// Ordered list of `/session` transport values to try for a given
+    /// user preference. "auto" walks direct WebRTC → Cloudflare TURN
+    /// relay → WebSocket; explicit prefs pin to a single transport.
+    private static func attemptChain(for pref: String) -> [String] {
+        switch pref {
+        case "webrtc": return ["webrtc"]
+        case "turn": return ["webrtc_turn"]
+        case "websocket": return ["websocket"]
+        default: return ["webrtc", "webrtc_turn", "websocket"]   // "auto"
+        }
+    }
+
+    /// Outcome of one connection attempt within the transport chain.
+    private enum AttemptOutcome {
+        case connected
+        case failed(TerminateReason)
+    }
+
+    /// Continuation for the in-flight attempt. Resolved exactly once by
+    /// transportDidConnect (success), the first transport failure, or
+    /// the connect timeout. nil outside the connecting window — a
+    /// failure with no pending continuation and phase == .connected is
+    /// a real mid-call drop, not a chain fall-through.
+    private var attemptContinuation: CheckedContinuation<AttemptOutcome, Never>?
+
+    /// How long to wait for a transport to reach `connected` before
+    /// abandoning the attempt and trying the next (nanoseconds).
+    private static let attemptTimeoutNanos: UInt64 = 15_000_000_000
+
+    /// Mint a session for `transportName` and drive that transport until
+    /// it connects or fails. On failure the transport + worker session
+    /// are torn down so the chain can cleanly try the next one.
+    private func attemptConnect(transportName: String, model: String) async -> AttemptOutcome {
         let resp: VoiceCallAPI.SessionResponse
         do {
             resp = try await api.createSession(
                 conversationId: conversationId,
-                transport: transportPref,
-                model: modelPref,
+                transport: transportName,
+                model: model,
             )
         } catch let err as VoiceCallError {
-            phase = .terminated(translate(err))
-            return
+            return .failed(translate(err))
         } catch {
-            phase = .terminated(.startupError(error.localizedDescription))
-            return
+            return .failed(.startupError(error.localizedDescription))
         }
         sessionId = resp.session_id
         providerId = resp.provider_id
@@ -121,35 +183,70 @@ final class CallSession {
         let transport: CallTransport
         if resp.transport == "websocket" {
             guard let wsURL = Self.websocketURL(path: resp.ws_path) else {
-                phase = .terminated(.startupError("session response missing ws_path"))
-                return
+                return .failed(.startupError("session response missing ws_path"))
             }
             let jwt: String
             do {
                 jwt = try await SupabaseStack.shared.auth.session.accessToken
             } catch {
-                phase = .terminated(.startupError("auth token unavailable"))
-                return
+                return .failed(.startupError("auth token unavailable"))
             }
+            webrtcClientSecret = nil
             transport = OpenAIWebSocketTransport(wsURL: wsURL, jwt: jwt, delegate: self)
         } else {
+            // "webrtc" and "webrtc_turn" both ride OpenAICallTransport;
+            // the only difference is the ICE servers (empty → direct,
+            // populated → relay through Cloudflare TURN).
             guard let clientSecret = resp.client_secret?.value else {
-                phase = .terminated(.startupError("session response missing client_secret"))
-                return
+                return .failed(.startupError("session response missing client_secret"))
             }
             webrtcClientSecret = clientSecret
             transport = OpenAICallTransport(
                 clientSecret: clientSecret,
                 model: resp.model,
+                iceServers: resp.ice_servers ?? [],
                 delegate: self,
             )
         }
         self.transport = transport
-        await transport.start()
+
+        let outcome: AttemptOutcome = await withCheckedContinuation { cont in
+            attemptContinuation = cont
+            Task { @MainActor in
+                await transport.start()
+            }
+            // Guard against a transport that neither connects nor reports
+            // a failure (e.g. ICE silently stalls).
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: Self.attemptTimeoutNanos)
+                self?.resolveAttempt(.failed(.network))
+            }
+        }
+
+        if case .failed = outcome {
+            // Abandon this attempt before the next: drop the transport
+            // reference first so its teardown callbacks (delivered via
+            // the delegate) are recognised as stale and ignored.
+            if self.transport === transport { self.transport = nil }
+            await transport.hangUp()
+            if let sid = sessionId {
+                try? await api.endSession(sessionId: sid, conversationId: conversationId)
+            }
+            sessionId = nil
+            webrtcClientSecret = nil
+        }
+        return outcome
+    }
+
+    /// Resume the in-flight attempt continuation exactly once.
+    private func resolveAttempt(_ outcome: AttemptOutcome) {
+        guard let cont = attemptContinuation else { return }
+        attemptContinuation = nil
+        cont.resume(returning: outcome)
     }
 
     /// UserDefaults key for the user's voice-transport preference.
-    /// "webrtc" | "websocket"; absent → "webrtc".
+    /// "auto" | "webrtc" | "turn" | "websocket"; absent → "auto".
     static let transportDefaultsKey = "voice_transport"
 
     /// UserDefaults key for the user's voice-model preference.
@@ -183,6 +280,9 @@ final class CallSession {
         guard !isTerminal(phase) else { return }
         let wasConnected = connectedAt != nil
         phase = .hangingUp
+        // Unblock any in-flight connection attempt so start()'s chain
+        // loop sees the terminal phase and stops minting transports.
+        resolveAttempt(.failed(reason))
 
         // Closing-summary + teardown run in a background task so the UI
         // dismisses immediately. The task keeps `self` alive past the
@@ -280,11 +380,16 @@ protocol CallTransportDelegate: AnyObject {
 
 extension CallSession: CallTransportDelegate {
     func transportDidConnect(_ t: CallTransport) {
+        // Ignore callbacks from a transport we've already abandoned
+        // mid-chain — only the current attempt's transport may connect.
+        guard t === transport else { return }
         connectedAt = Date()
         phase = .connected
+        resolveAttempt(.connected)
     }
 
     func transport(_ t: CallTransport, didObtainCallId callId: String) async {
+        guard t === transport else { return }
         guard let sid = sessionId, let secret = webrtcClientSecret else { return }
         do {
             try await api.attach(
@@ -301,6 +406,17 @@ extension CallSession: CallTransportDelegate {
     }
 
     func transport(_ t: CallTransport, didFailWith reason: CallSession.TerminateReason) async {
+        guard t === transport else { return }
+        if attemptContinuation != nil {
+            // Failure inside the connecting window — let the transport
+            // chain decide whether to fall through to the next one.
+            resolveAttempt(.failed(reason))
+            return
+        }
+        // No pending attempt: only a genuinely connected call drops here.
+        // A stray callback during fallback teardown (phase still
+        // .connecting) is ignored.
+        guard phase == .connected else { return }
         await terminate(reason: reason)
     }
 }

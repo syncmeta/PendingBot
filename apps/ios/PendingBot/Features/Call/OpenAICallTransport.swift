@@ -98,6 +98,7 @@ final class OpenAICallTransport: NSObject, CallTransport {
     init(
         clientSecret: String,
         model: String,
+        iceServers: [VoiceCallAPI.SessionResponse.IceServer],
         delegate: CallTransportDelegate,
     ) {
         self.clientSecret = clientSecret
@@ -116,7 +117,24 @@ final class OpenAICallTransport: NSObject, CallTransport {
         )
         let cfg = RTCConfiguration()
         cfg.sdpSemantics = .unifiedPlan
-        cfg.iceServers = []   // OpenAI's endpoint terminates the WebRTC server-side; no TURN needed
+        if iceServers.isEmpty {
+            // Direct transport: OpenAI's endpoint terminates the WebRTC
+            // server-side, so no STUN/TURN candidates are needed.
+            cfg.iceServers = []
+        } else {
+            // 'webrtc_turn' transport: relay media through the Cloudflare
+            // TURN servers the worker minted. Pin the policy to .relay so
+            // ICE uses only relay candidates — the point of this path is
+            // to avoid the direct route that just failed.
+            cfg.iceServers = iceServers.map {
+                RTCIceServer(
+                    urlStrings: $0.urls,
+                    username: $0.username,
+                    credential: $0.credential,
+                )
+            }
+            cfg.iceTransportPolicy = .relay
+        }
         let constraints = RTCMediaConstraints(
             mandatoryConstraints: nil,
             optionalConstraints: nil,
@@ -363,7 +381,12 @@ extension OpenAICallTransport: RTCDataChannelDelegate {
 @MainActor
 final class OpenAICallTransport: CallTransport {
     private weak var delegate: CallTransportDelegate?
-    init(clientSecret: String, model: String, delegate: CallTransportDelegate) {
+    init(
+        clientSecret: String,
+        model: String,
+        iceServers: [VoiceCallAPI.SessionResponse.IceServer],
+        delegate: CallTransportDelegate,
+    ) {
         self.delegate = delegate
     }
     func start() async {
