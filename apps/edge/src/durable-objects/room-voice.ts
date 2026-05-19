@@ -58,6 +58,10 @@ const FLUSH_MS = 100;
 // audio to the Ingest adapter (leave headroom for protobuf framing).
 const MAX_INGEST_PAYLOAD = 28_000;
 
+// A voice room exists only for its humans. If nobody joins within this
+// window after start, end the call — the bots have no one to talk to.
+const JOIN_GRACE_MS = 90 * 1000;
+
 // Room-level context — everything that is not per-bot.
 interface RoomContext {
   roomId: string;
@@ -150,6 +154,10 @@ export class RoomVoiceDO {
   private bots = new Map<string, BotLeg>();
   private humans = new Map<string, HumanState>();
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
+  private joinGraceTimer: ReturnType<typeof setTimeout> | null = null;
+  // Has any human ever joined this call? Until the first join we keep
+  // the room alive on the grace timer; after it, an empty room ends.
+  private humanEverJoined = false;
   private closed = false;
 
   constructor(state: DurableObjectState, env: Env) {
@@ -214,6 +222,14 @@ export class RoomVoiceDO {
     }
 
     this.scheduleFlush();
+    // End the call if no human has joined by the time the grace window
+    // elapses — a bot-only room has nobody to talk to.
+    this.joinGraceTimer = setTimeout(() => {
+      if (!this.humanEverJoined) {
+        console.warn('[room-voice] no human joined within grace window');
+        void this.finalize();
+      }
+    }, JOIN_GRACE_MS);
     await this.state.storage.setAlarm(Date.now() + MAX_CALL_MS);
     return Response.json({ ok: true, bots: [...this.bots.keys()] });
   }
@@ -291,6 +307,11 @@ export class RoomVoiceDO {
     }
     const human: HumanState = { track, adapterId: null, pending: [] };
     this.humans.set(track.humanId, human);
+    this.humanEverJoined = true;
+    if (this.joinGraceTimer) {
+      clearTimeout(this.joinGraceTimer);
+      this.joinGraceTimer = null;
+    }
 
     // Stream adapter: the SFU streams this human's mic track out to our
     // endpoint as PCM. The DO learns sfuSessionId / sfuTrackName from the
@@ -314,6 +335,11 @@ export class RoomVoiceDO {
     this.humans.delete(humanId);
     if (human.adapterId) {
       await closeAdapter(this.sfuApp(), human.adapterId);
+    }
+    // A voice room exists only while humans are in it. Once the last
+    // human leaves, the bots have nobody to talk to — end the call.
+    if (this.humanEverJoined && this.humans.size === 0) {
+      await this.finalize();
     }
   }
 
@@ -614,6 +640,8 @@ export class RoomVoiceDO {
     this.closed = true;
     if (this.flushTimer) clearTimeout(this.flushTimer);
     this.flushTimer = null;
+    if (this.joinGraceTimer) clearTimeout(this.joinGraceTimer);
+    this.joinGraceTimer = null;
 
     const app = this.sfuApp();
     const adapterIds: Array<string | null> = [
