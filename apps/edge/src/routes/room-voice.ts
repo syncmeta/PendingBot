@@ -4,8 +4,11 @@
 // these URLs — they are the `endpoint` RoomVoiceDO passes when it creates
 // an adapter (see lib/sfu.ts, durable-objects/room-voice.ts):
 //
-//   GET /v1/realtime-sfu/<roomId>/ingest           bot voice  -> SFU track
+//   GET /v1/realtime-sfu/<roomId>/ingest/<botId>   bot voice  -> SFU track
 //   GET /v1/realtime-sfu/<roomId>/stream/<humanId> human track -> bridge
+//
+// One ingest endpoint per bot — a group call can carry several bots, and
+// each gets its own WebRTC track so iOS can tell who is speaking.
 //
 // There is deliberately no Supabase JWT gate here — the caller is the
 // Cloudflare SFU, not a user. Auth is the per-room `adapterToken` echoed
@@ -29,11 +32,11 @@ function forwardToRoom(c: Context<AppBindings>): Response | Promise<Response> {
     return c.text('expected a websocket upgrade', 400);
   }
   // RoomVoiceDO is keyed by roomId (= conversation_id). It parses the
-  // path tail itself to tell `ingest` from `stream/<humanId>`, and checks
-  // the `?t=` adapterToken — so the raw request forwards unchanged.
+  // path tail itself to tell `ingest/<botId>` from `stream/<humanId>`,
+  // and checks the `?t=` adapterToken — so the request forwards unchanged.
   const id = c.env.ROOM_VOICE.idFromName(roomId);
   return c.env.ROOM_VOICE.get(id).fetch(c.req.raw);
 }
 
-roomVoiceRoutes.get('/:roomId/ingest', forwardToRoom);
+roomVoiceRoutes.get('/:roomId/ingest/:botId', forwardToRoom);
 roomVoiceRoutes.get('/:roomId/stream/:humanId', forwardToRoom);
