@@ -21,6 +21,10 @@ const PatchBody = z.object({
   // and a future operator-curated mismatch would just route normally
   // (read_attachment would fail at the upstream provider, not at the gate).
   vision_model_slug: z.string().min(1).max(200).nullable().optional(),
+  // Per-conv realtime voice-model pin. `null` = follow the bot's default
+  // voice model. A realtime model slug (gpt-realtime-2 / -mini); not
+  // validated here — the picker offers a fixed two-option list.
+  voice_model_slug: z.string().min(1).max(200).nullable().optional(),
 });
 
 // PATCH /v1/conversations/:id — currently only handles the per-conv model
@@ -76,6 +80,9 @@ conversationRoutes.patch('/:id', async (c) => {
   }
   if (Object.prototype.hasOwnProperty.call(parsed, 'vision_model_slug')) {
     update.vision_model_override = parsed.vision_model_slug ?? null;
+  }
+  if (Object.prototype.hasOwnProperty.call(parsed, 'voice_model_slug')) {
+    update.voice_model_override = parsed.voice_model_slug ?? null;
   }
   if (Object.keys(update).length === 0) {
     return jsonError(c, 400, 'invalid_body', { message: 'no fields to update' });

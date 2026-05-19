@@ -49,24 +49,33 @@ realtimeRoutes.use('*', requireSession());
 // shared helpers
 // =============================================================================
 
-// Default voice model slug — used when the client sends no `model`.
-// The iOS picker's values double as model slugs (gpt-realtime-2 /
-// gpt-realtime-mini-2025-12-15), so a picked model resolves and prices
-// directly; this is just the fallback for an absent pick.
+// Default voice model slug — the fallback when neither the conversation
+// nor the bot has a realtime model pinned. The voice-model picker values
+// (bot / conversation settings) are model slugs (gpt-realtime-2 /
+// gpt-realtime-mini-2025-12-15) so a pinned model resolves and prices
+// directly.
 const DEFAULT_VOICE_MODEL_SLUG = 'gpt-realtime-2';
 
 interface SessionContext {
   userId: string;
   userJwt: string;
   locale: Awaited<ReturnType<typeof resolveLocale>>;
-  conversation: { id: string; bot_id: string; user_id: string };
+  conversation: {
+    id: string;
+    bot_id: string;
+    user_id: string;
+    /// Per-conv realtime model pin (conversations.voice_model_override).
+    /// Wins over the bot-level default when set.
+    voice_model_override: string | null;
+  };
   bot: {
     id: string;
     display_name: string;
     output_mode: 'single' | 'bubble';
     voice_call_enabled: boolean;
-    /// Bot-level default realtime model (bots.config.voiceModel). Used
-    /// as the mint `model` when the client picker didn't send one.
+    /// Bot-level default realtime model (bots.config.voiceModel), or null
+    /// when the bot has never been configured — callers fall back to
+    /// DEFAULT_VOICE_MODEL_SLUG.
     voice_model: string | null;
   };
 }
@@ -97,7 +106,7 @@ async function loadSessionContext(
   const supaUser = userClient(env, userJwt);
   const { data: conv } = await supaUser
     .from('conversations')
-    .select('id, bot_id, user_id, conversation_type')
+    .select('id, bot_id, user_id, conversation_type, voice_model_override')
     .eq('id', conversationId)
     .maybeSingle();
   if (!conv || conv.user_id !== userId) {
@@ -140,7 +149,12 @@ async function loadSessionContext(
       userId,
       userJwt,
       locale,
-      conversation: { id: conv.id, bot_id: conv.bot_id, user_id: conv.user_id },
+      conversation: {
+        id: conv.id,
+        bot_id: conv.bot_id,
+        user_id: conv.user_id,
+        voice_model_override: conv.voice_model_override ?? null,
+      },
       bot: {
         id: bot.id,
         display_name: bot.display_name,
@@ -237,17 +251,15 @@ async function assembleInstructions(
 
 const SessionBody = z.object({
   conversation_id: z.string(),
-  // 'webrtc' (default) — direct iOS<->OpenAI WebRTC, lowest latency,
-  // region-gated. 'webrtc_turn' — same WebRTC handshake but media is
-  // relayed through Cloudflare TURN, which traverses NATs/firewalls a
-  // direct path can't. 'websocket' — audio relayed iOS<->worker<->
-  // OpenAI, egresses from Cloudflare so it works from regions OpenAI
-  // geo-blocks. The client picks (or walks the chain in auto mode).
+  // 'webrtc' (default) — direct iOS<->OpenAI WebRTC, lowest latency.
+  // The SDP exchange leaves the device, so this is the ONLY transport
+  // the OpenAI region gate applies to. 'webrtc_turn' — same WebRTC
+  // handshake but media is relayed through Cloudflare TURN, which both
+  // traverses NATs/firewalls a direct path can't AND egresses from
+  // Cloudflare, so it is NOT region-gated. 'websocket' — audio relayed
+  // iOS<->worker<->OpenAI, also egresses from Cloudflare, not gated.
+  // The client picks (or walks the chain in auto mode).
   transport: z.enum(['webrtc', 'webrtc_turn', 'websocket']).default('webrtc'),
-  // Optional voice model override (client picker). When set it's sent
-  // straight to OpenAI's mint as the realtime `model`; when absent the
-  // resolved route's model id is used.
-  model: z.string().min(1).optional(),
 });
 
 realtimeRoutes.post('/session', async (c) => {
@@ -296,15 +308,24 @@ realtimeRoutes.post('/session', async (c) => {
   // session.update. Either way it never touches the iOS device.
   const instructions = await assembleInstructions(c.env, ctx);
 
-  // Route resolution keyed on the client-picked voice model (its picker
-  // value is the model slug); task_routing_rules can still override at
-  // admin discretion via taskType='voice_call'. Uses the service client,
-  // not supaUser — the llm_* config tables are RLS-locked (RLS on, no
-  // policy = deny for authenticated), so a user JWT reads zero rows.
+  // Voice model is resolved entirely server-side: per-conversation pin
+  // wins, then the bot-level default, then the route fallback. There is
+  // no client-supplied model — the picker lives in the bot / conversation
+  // settings and is persisted, not sent per call.
+  const voiceModel =
+    ctx.conversation.voice_model_override ??
+    ctx.bot.voice_model ??
+    DEFAULT_VOICE_MODEL_SLUG;
+
+  // Route resolution keyed on the resolved voice model slug;
+  // task_routing_rules can still override at admin discretion via
+  // taskType='voice_call'. Uses the service client, not supaUser — the
+  // llm_* config tables are RLS-locked (RLS on, no policy = deny for
+  // authenticated), so a user JWT reads zero rows.
   let route;
   try {
     route = await resolveRoute(serviceClient(c.env), c.env, {
-      modelSlug: parsed.model ?? DEFAULT_VOICE_MODEL_SLUG,
+      modelSlug: voiceModel,
       taskType: 'voice_call',
       metadata: { userId, conversationId: parsed.conversation_id },
     });
@@ -362,22 +383,27 @@ realtimeRoutes.post('/session', async (c) => {
     });
   }
 
-  // WebRTC family ('webrtc' default, or 'webrtc_turn'). Region gate
-  // applies to both — the SDP exchange still leaves the device, so a
-  // geo-blocked egress IP must be rejected here. cf.country is
-  // Cloudflare's edge GeoIP for the request's egress IP; the blocked
-  // list lives in lib/openai-regions.ts.
-  const cfCountry = (c.req.raw as unknown as { cf?: { country?: string } }).cf
-    ?.country;
-  const region = checkOpenAIRegion(cfCountry ?? null);
-  if (!region.allowed) {
-    return routeJsonError(c, 451, 'voice_region_unsupported', {
-      message: t('voice.region_unsupported', locale),
-      detail: {
-        country: region.country,
-        supported_url: OPENAI_SUPPORTED_URL,
-      },
-    });
+  // Region gate — 'webrtc' (direct) ONLY. A direct call's media path
+  // egresses from the user's device, so a geo-blocked egress IP must be
+  // rejected before we mint a token OpenAI would refuse mid-call.
+  // 'webrtc_turn' relays its media through Cloudflare TURN (Cloudflare
+  // egress, like 'websocket'), so it is not gated — in auto mode a
+  // blocked region 451s on the 'webrtc' attempt and the client falls
+  // through to 'webrtc_turn', which connects. cf.country is Cloudflare's
+  // edge GeoIP; the blocked list lives in lib/openai-regions.ts.
+  if (parsed.transport === 'webrtc') {
+    const cfCountry = (c.req.raw as unknown as { cf?: { country?: string } })
+      .cf?.country;
+    const region = checkOpenAIRegion(cfCountry ?? null);
+    if (!region.allowed) {
+      return routeJsonError(c, 451, 'voice_region_unsupported', {
+        message: t('voice.region_unsupported', locale),
+        detail: {
+          country: region.country,
+          supported_url: OPENAI_SUPPORTED_URL,
+        },
+      });
+    }
   }
 
   // 'webrtc_turn' — mint Cloudflare TURN credentials so iOS relays its
@@ -405,9 +431,8 @@ realtimeRoutes.post('/session', async (c) => {
     instructions,
     balanceCredits,
     minThreshold,
-    // Client picker wins; otherwise the bot's configured default
-    // realtime model (bots.config.voiceModel), else the resolved route.
-    modelOverride: parsed.model ?? ctx.bot.voice_model ?? undefined,
+    // The server-resolved voice model (conv pin → bot default → fallback).
+    modelOverride: voiceModel,
     iceServers,
   });
 });
@@ -421,8 +446,8 @@ interface MintArgs {
   instructions: string;
   balanceCredits: number;
   minThreshold: number;
-  /// Client-picked realtime model id. Overrides route.modelToCall in the
-  /// mint body when set.
+  /// Server-resolved realtime model id (conv pin → bot default →
+  /// fallback). Overrides route.modelToCall in the mint body when set.
   modelOverride?: string;
   /// 'webrtc_turn' transport only — Cloudflare TURN ICE servers the iOS
   /// WebRTC client routes its media through. Echoed back as `ice_servers`.

@@ -100,6 +100,7 @@
 		D0314CD060D5368E739CFDEF /* RealtimeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07DE2357BDB2124C1A2ED08F /* RealtimeManager.swift */; };
 		0FE17A0150C7EA17B1000002 /* RealtimeSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FE17A0150C7EA17B1000001 /* RealtimeSocket.swift */; };
 		D31D6EA2ABD911114EE41661 /* WalletView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA76A59CB9DB38987FE36E33 /* WalletView.swift */; };
+		5E771065A0C0AAB4F6B05E01 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E771065A0C0AAB4F6B05E02 /* SettingsView.swift */; };
 		DE00C4B1C0C0AAB4F6B05B01 /* UnreadStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 942CC4F48E3DD6424C534120 /* UnreadStore.swift */; };
 		DF50F5D82CD71AB450ADDB8B /* ScrollTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34F50A849643083228506129 /* ScrollTabView.swift */; };
 		E07E640D575A1DEECE378E3E /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = E4727211455C3629DA8744BE /* Localizable.xcstrings */; };
@@ -207,6 +208,7 @@
 		7B2A91C0E3F4012CBB915A22 /* ConversationView+Group.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConversationView+Group.swift"; sourceTree = "<group>"; };
 		7B2A91C0E3F4012CBB915A44 /* ConversationView+Realtime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConversationView+Realtime.swift"; sourceTree = "<group>"; };
 		FA76A59CB9DB38987FE36E33 /* WalletView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletView.swift; sourceTree = "<group>"; };
+		5E771065A0C0AAB4F6B05E02 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		FB16E5402FB9F31D68B74165 /* TabRoot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabRoot.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -340,6 +342,7 @@
 				0CBFA801BAAC04285872D2ED /* AddMeMethodsView.swift */,
 				2F5A6C6876FF131B3D8AA437 /* MeTabView.swift */,
 				FA76A59CB9DB38987FE36E33 /* WalletView.swift */,
+				5E771065A0C0AAB4F6B05E02 /* SettingsView.swift */,
 			);
 			path = Me;
 			sourceTree = "<group>";
@@ -645,6 +648,7 @@
 				5FF13D682608B0E290B56345 /* UserAvatar.swift in Sources */,
 				09D5A4914D4689005DD29F37 /* VoiceCallAPI.swift in Sources */,
 				D31D6EA2ABD911114EE41661 /* WalletView.swift in Sources */,
+				5E771065A0C0AAB4F6B05E01 /* SettingsView.swift in Sources */,
 				EAE5D86E4ECF3FDA0C9C43D3 /* WelcomeView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

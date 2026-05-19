@@ -801,7 +801,9 @@ struct BotConfigView: View {
     /// 'openai' = the native Responses route. Set by the model picker.
     @State private var modelProvider: String?
     @State private var voiceEnabled: Bool = false
-    @State private var voiceModel: String = ""    // "" = auto
+    /// Realtime voice model slug. Always concrete — a bot with voice on
+    /// has a model; the default is gpt-realtime-2. Never empty.
+    @State private var voiceModel: String = "gpt-realtime-2"
     @State private var visionModel: String = ""   // "" = auto
     @State private var envelope: EnvelopeSettings = .defaults
     @State private var lookbackEnabled: Bool = true
@@ -827,14 +829,13 @@ struct BotConfigView: View {
     }
 
     private enum PickerTarget: Identifiable {
-        case main, vision, voice, explorer, collaborator
+        case main, vision, explorer, collaborator
         var id: Int {
             switch self {
             case .main: return 0
             case .vision: return 1
-            case .voice: return 2
-            case .explorer: return 3
-            case .collaborator: return 4
+            case .explorer: return 2
+            case .collaborator: return 3
             }
         }
     }
@@ -937,16 +938,22 @@ struct BotConfigView: View {
             Toggle("语音通话", isOn: $voiceEnabled)
                 .disabled(!canEdit)
             if voiceEnabled {
-                pickerRow(icon: "waveform", title: "语音模型",
-                          value: voiceModel.isEmpty ? "自动" : shortSlug(voiceModel),
-                          enabled: canEdit) {
-                    pickerTarget = .voice
+                Picker(selection: $voiceModel) {
+                    Text("gpt-realtime-2").tag("gpt-realtime-2")
+                    Text("gpt-realtime-mini").tag("gpt-realtime-mini-2025-12-15")
+                } label: {
+                    HStack {
+                        Image(systemName: "waveform")
+                        Text("语音模型")
+                    }
                 }
+                .disabled(!canEdit)
+                .foregroundStyle(Theme.Palette.ink)
             }
         } header: {
             Text("语音")
         } footer: {
-            Text("打开后，聊天页顶部会出现电话按钮。「语音模型」留空时用系统默认的实时语音模型。")
+            Text("打开后，聊天页顶部会出现电话按钮。gpt-realtime-2 质量更好但更贵；mini 便宜，适合测试。每个对话可以再单独覆盖。")
         }
     }
 
@@ -1083,12 +1090,6 @@ struct BotConfigView: View {
                 visionModel = (picked?.slug).flatMap { $0.isEmpty ? nil : $0 } ?? ""
                 pickerTarget = nil
             }
-        case .voice:
-            ModelPickerSheet(initial: voiceModel, allowsClear: true,
-                             clearLabel: "自动（系统默认语音模型）") { picked in
-                voiceModel = (picked?.slug).flatMap { $0.isEmpty ? nil : $0 } ?? ""
-                pickerTarget = nil
-            }
         case .explorer:
             ModelPickerSheet(initial: envelope.explorerModel, allowsClear: false) { picked in
                 if let picked, !picked.slug.isEmpty { envelope.explorerModel = picked.slug }
@@ -1167,7 +1168,6 @@ struct BotConfigView: View {
             // an absent key as "leave untouched".
             let collabVal: Any = envelope.collaboratorModel ?? NSNull()
             let visionVal: Any = visionModel.isEmpty ? NSNull() : visionModel
-            let voiceVal: Any = voiceModel.isEmpty ? NSNull() : voiceModel
             let envelopeCfg: [String: Any] = [
                 "explorerModel": envelope.explorerModel,
                 "collaboratorModel": collabVal,
@@ -1182,7 +1182,7 @@ struct BotConfigView: View {
                 "lookback": lookbackCfg,
                 "envelope": envelopeCfg,
                 "visionModel": visionVal,
-                "voiceModel": voiceVal,
+                "voiceModel": voiceModel,
             ]
             let body: [String: Any] = [
                 "model_id": model,

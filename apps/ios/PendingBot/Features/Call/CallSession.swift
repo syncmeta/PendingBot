@@ -101,13 +101,11 @@ final class CallSession {
 
         // User-selected transport. "auto" (default) walks the chain
         // direct WebRTC → Cloudflare TURN relay → WebSocket; the
-        // explicit prefs pin to one transport.
+        // explicit prefs pin to one transport. The voice model is no
+        // longer a client choice — the worker resolves it from the
+        // conversation / bot settings.
         let transportPref =
             UserDefaults.standard.string(forKey: Self.transportDefaultsKey) ?? "auto"
-        // User-selected voice model (cost vs quality).
-        let modelPref =
-            UserDefaults.standard.string(forKey: Self.modelDefaultsKey)
-            ?? "gpt-realtime-2"
 
         let chain = Self.attemptChain(for: transportPref)
         for (idx, transportName) in chain.enumerated() {
@@ -115,7 +113,7 @@ final class CallSession {
             // attempt rather than racing the next mint.
             if isTerminal(phase) { return }
             let isLast = idx == chain.count - 1
-            let outcome = await attemptConnect(transportName: transportName, model: modelPref)
+            let outcome = await attemptConnect(transportName: transportName)
             if isTerminal(phase) { return }
             switch outcome {
             case .connected:
@@ -169,13 +167,12 @@ final class CallSession {
     /// Mint a session for `transportName` and drive that transport until
     /// it connects or fails. On failure the transport + worker session
     /// are torn down so the chain can cleanly try the next one.
-    private func attemptConnect(transportName: String, model: String) async -> AttemptOutcome {
+    private func attemptConnect(transportName: String) async -> AttemptOutcome {
         let resp: VoiceCallAPI.SessionResponse
         do {
             resp = try await api.createSession(
                 conversationId: conversationId,
                 transport: transportName,
-                model: model,
             )
         } catch let err as VoiceCallError {
             return .failed(translate(err))
@@ -254,10 +251,6 @@ final class CallSession {
     /// UserDefaults key for the user's voice-transport preference.
     /// "auto" | "webrtc" | "turn" | "websocket"; absent → "auto".
     static let transportDefaultsKey = "voice_transport"
-
-    /// UserDefaults key for the user's voice-model preference.
-    /// An OpenAI realtime model id; absent → "gpt-realtime-2".
-    static let modelDefaultsKey = "voice_model"
 
     /// Build the wss:// URL for the WebSocket transport from the worker
     /// base + the relative ws_path the /session response handed back.

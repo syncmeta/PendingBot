@@ -47,6 +47,10 @@ struct ConversationSettingsView: View {
     /// when it has vision, else server's default — currently kimi-latest).
     /// Saved via PATCH /v1/conversations/:id { vision_model_slug }.
     var onApplyVisionModel: (String?) -> Void
+    /// Per-conv realtime voice-model pin. nil = "跟随机器人设置" (follow the
+    /// bot's default voice model). Saved via PATCH /v1/conversations/:id
+    /// { voice_model_slug }.
+    var onApplyVoiceModel: (String?) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.api) private var api
@@ -55,6 +59,7 @@ struct ConversationSettingsView: View {
     @State private var pendingPick: PickPayload?
     @State private var visionModelOverride: String? = nil
     @State private var visionLoaded: Bool = false
+    @State private var voiceModelOverride: String? = nil
 
     // ── 来信 / Envelopes ─────────────────────────────────────────────────
     @State private var envelope: EnvelopeSettings = .defaults
@@ -158,6 +163,35 @@ struct ConversationSettingsView: View {
                     } footer: {
                         Text("看图、给图片写摘要、回答关于图片的问题时用这个模型。「自动」时：主模型若支持识图就直接用主模型，否则回落到默认（kimi-latest）。")
                     }
+
+                    // 语音模型 — only when this bot has voice calls on.
+                    // nil = 跟随机器人设置 (bots.config.voiceModel).
+                    if bot?.voice_call_enabled == true {
+                        Section {
+                            Picker(selection: Binding(
+                                get: { voiceModelOverride },
+                                set: { newValue in
+                                    voiceModelOverride = newValue
+                                    onApplyVoiceModel(newValue)
+                                    Haptics.tap()
+                                }
+                            )) {
+                                Text("跟随机器人设置").tag(String?.none)
+                                Text("gpt-realtime-2")
+                                    .tag(String?("gpt-realtime-2"))
+                                Text("gpt-realtime-mini")
+                                    .tag(String?("gpt-realtime-mini-2025-12-15"))
+                            } label: {
+                                HStack {
+                                    Image(systemName: "waveform")
+                                    Text("语音模型")
+                                }
+                            }
+                            .foregroundStyle(Theme.Palette.ink)
+                        } footer: {
+                            Text("这次对话语音通话用的实时模型。「跟随机器人设置」时用机器人设置里的语音模型。")
+                        }
+                    }
                 }
 
                 // 提供商：本地选择走 LLMRouter 的 preferProvider，挂了
@@ -194,6 +228,7 @@ struct ConversationSettingsView: View {
             await loadEnvelopeSettings()
             await loadLookbacks()
             await loadVisionSettings()
+            await loadVoiceSettings()
         }
         .alert("出错", isPresented: .constant(triggerError != nil)) {
             Button("好") { triggerError = nil }
@@ -531,6 +566,27 @@ struct ConversationSettingsView: View {
             // server — fall through to "auto" so the UI still works.
         }
         visionLoaded = true
+    }
+
+    /// Pull the conversation row's saved voice_model_override. nil =
+    /// follow the bot's default voice model. Read-only here; saves flow
+    /// through onApplyVoiceModel → PATCH.
+    private func loadVoiceSettings() async {
+        guard !conversationId.isEmpty else { return }
+        struct Row: Decodable { let voice_model_override: String? }
+        do {
+            let row: Row = try await SupabaseStack.shared
+                .from("conversations")
+                .select("voice_model_override")
+                .eq("id", value: conversationId)
+                .single()
+                .execute()
+                .value
+            voiceModelOverride = row.voice_model_override
+        } catch {
+            // No row, no access, or unmigrated server — fall through to
+            // "跟随机器人设置".
+        }
     }
 
     /// Pull the conversation row's saved envelope_settings, if any. We
