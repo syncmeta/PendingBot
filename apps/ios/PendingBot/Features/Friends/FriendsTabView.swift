@@ -592,9 +592,33 @@ struct FriendsTabView: View {
     // a friend and backing out without sending leaves no DB trace.
 
     private func tapBot(_ bot: BotPick) async {
+        // Unlike a 1:1 human chat (singleton), a user can hold several
+        // conversations with the same bot. Land on the most recent one so
+        // tapping a bot resumes where they left off instead of opening a
+        // blank conv. No existing conv → fall through to materialize-on-
+        // first-send (existingConvId nil).
+        let existing = await fetchRecentBotConv(botId: bot.id)
         open(PendingPeer(kind: "bot",
                          peerId: bot.id,
-                         displayName: bot.display_name))
+                         displayName: bot.display_name,
+                         existingConvId: existing))
+    }
+
+    /// Most recent user_bot conversation this user holds with `botId`,
+    /// or nil when there is none. RLS on `conversations` scopes the row
+    /// set to the caller's own conversations.
+    private func fetchRecentBotConv(botId: String) async -> String? {
+        struct Row: Decodable { let id: String }
+        let rows: [Row]? = try? await SupabaseStack.shared
+            .from("conversations")
+            .select("id")
+            .eq("bot_id", value: botId)
+            .eq("conversation_type", value: "user_bot")
+            .order("updated_at", ascending: false)
+            .limit(1)
+            .execute()
+            .value
+        return rows?.first?.id
     }
 
     private func bot(for peer: PendingPeer) -> Bot? {
