@@ -432,21 +432,45 @@ export class RoomVoiceDO {
     }
 
     // Stream adapter: the SFU streams this human's mic track out to our
-    // endpoint as PCM. The DO learns sfuSessionId / sfuTrackName from the
-    // edge join route (the human published the track when they joined).
-    try {
-      const adapter = await createStreamAdapter(this.sfuApp(), {
-        sessionId: track.sfuSessionId,
-        trackName: track.sfuTrackName,
-        endpoint: this.adapterEndpoint(ctx, `stream/${track.humanId}`),
-      });
-      human.adapterId = adapter.adapterId;
-    } catch (err) {
-      console.warn('[room-voice] stream adapter failed', track.humanId, err);
-    }
+    // endpoint as PCM. The SFU rejects the adapter until the human's
+    // WebRTC peer is connected and actually sending RTP — which only
+    // happens a beat AFTER /join hands the SFU answer back to iOS. So
+    // bring the adapter up in the background with retries rather than
+    // blocking (and failing) the join here.
+    void this.connectHumanStream(track.humanId, ctx);
+
     // Hand back the bot roster so the joining human can subscribe to
     // each bot's SFU track and hear them.
     return Response.json({ ok: true, bots: this.roster() });
+  }
+
+  // Bring up a human's Stream adapter, retrying until their WebRTC peer
+  // is sending packets. iOS connects ICE/DTLS a couple of seconds after
+  // it receives the SFU answer, so a one-shot create reliably loses the
+  // race with `not_found_track_error`.
+  private async connectHumanStream(humanId: string, ctx: RoomContext): Promise<void> {
+    const maxAttempts = 12;
+    const delayMs = 1500;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const human = this.humans.get(humanId);
+      if (!human) return;          // left before the adapter came up
+      if (human.adapterId) return; // already connected
+      try {
+        const adapter = await createStreamAdapter(this.sfuApp(), {
+          sessionId: human.track.sfuSessionId,
+          trackName: human.track.sfuTrackName,
+          endpoint: this.adapterEndpoint(ctx, `stream/${humanId}`),
+        });
+        human.adapterId = adapter.adapterId;
+        return;
+      } catch (err) {
+        if (attempt === maxAttempts) {
+          console.warn('[room-voice] stream adapter gave up', humanId, err);
+          return;
+        }
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
+    }
   }
 
   private async removeHuman(humanId: string): Promise<void> {
