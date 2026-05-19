@@ -3,6 +3,7 @@ import PhotosUI
 import UIKit
 import OSLog
 import Supabase
+import UniformTypeIdentifiers
 
 private let log = Logger.category("conversation")
 
@@ -63,6 +64,12 @@ struct ConversationView: View {
     @State var pendingAttachments: [PendingAttachment] = []
     @State var photoPickerItems: [PhotosPickerItem] = []
     @State var cameraImage: UIImage?
+    /// Set true to present the system document picker (any file type).
+    @State var showFileImporter = false
+    /// Per-id attachment metadata (mime/filename) used to hydrate
+    /// AttachmentGrid for loaded/realtime messages. Populated on upload
+    /// and on history load — see bubbleMessage.
+    @State var attachmentMetaById: [String: Attachment] = [:]
     @State var modelOverride: String = ""    // "" = use bot default
     /// Per-conv LLM provider pin. nil = follow alias-weight routing
     /// (默认). Set via the conversation settings sheet; sent on each
@@ -327,15 +334,18 @@ struct ConversationView: View {
     /// Hydrate a message's `attachments` from the `attachmentIdsByMsgId`
     /// sidecar so BubbleView's AttachmentGrid renders them. Loaded /
     /// realtime rows arrive with `attachments == nil` and their ids
-    /// tracked separately; this fills them in at render time. The grid
-    /// only needs `url`, which is derivable from the id.
+    /// tracked separately; this fills them in at render time. Per-id
+    /// mime/filename come from `attachmentMetaById` (populated on upload
+    /// and on history load); an id with no metadata falls back to an
+    /// image, which is the pre-arbitrary-file invariant.
     private func bubbleMessage(_ msg: ChatMessage) -> ChatMessage {
         guard msg.attachments == nil,
               let ids = attachmentIdsByMsgId[msg.id], !ids.isEmpty else { return msg }
-        let atts = ids.map {
-            Attachment(id: $0, kind: "image", mime: "image/png",
-                       size: nil, width: nil, height: nil,
-                       url: "/v1/uploads/\($0)")
+        let atts = ids.map { id -> Attachment in
+            if let meta = attachmentMetaById[id] { return meta }
+            return Attachment(id: id, kind: "image", mime: "image/png",
+                              size: nil, width: nil, height: nil,
+                              url: "/v1/uploads/\(id)")
         }
         return ChatMessage(
             id: msg.id, conversation_id: msg.conversation_id,
@@ -560,6 +570,7 @@ struct ConversationView: View {
                     pending: $pendingAttachments,
                     photoItems: $photoPickerItems,
                     cameraImage: $cameraImage,
+                    showFileImporter: $showFileImporter,
                     canSend: canSend,
                     onSend: { Task { await send() } },
                     isStreaming: chatTurnTask != nil,
@@ -693,6 +704,18 @@ struct ConversationView: View {
         .onChange(of: cameraImage) { _, image in
             guard let image else { return }
             Task { await ingestCameraImage(image) }
+        }
+        .fileImporter(
+            isPresented: $showFileImporter,
+            allowedContentTypes: [.item],
+            allowsMultipleSelection: true
+        ) { result in
+            switch result {
+            case .success(let urls):
+                Task { await ingestFiles(urls) }
+            case .failure(let err):
+                self.error = "选择文件失败: \(err.localizedDescription)"
+            }
         }
         .alert("出错", isPresented: .constant(error != nil)) {
             Button("好") { error = nil }
@@ -1161,10 +1184,7 @@ struct ConversationView: View {
                 sender_type: "user", sender_id: myId,
                 content: text,
                 created_at: Int(Date().timeIntervalSince1970),
-                attachments: attachmentSnapshot.map {
-                    Attachment(id: $0.id, kind: "image", mime: $0.mime, size: $0.size,
-                               width: nil, height: nil, url: "/uploads/\($0.id)")
-                },
+                attachments: attachmentSnapshot.map { $0.asAttachment() },
                 status: "sending"
             ))
             // Mirror the attachment ids into the sidecar dict the
@@ -1247,10 +1267,7 @@ struct ConversationView: View {
                 sender_type: "user", sender_id: myId,
                 content: text,
                 created_at: Int(Date().timeIntervalSince1970),
-                attachments: attachmentSnapshot.map {
-                    Attachment(id: $0.id, kind: "image", mime: $0.mime, size: $0.size,
-                               width: nil, height: nil, url: "/uploads/\($0.id)")
-                },
+                attachments: attachmentSnapshot.map { $0.asAttachment() },
                 status: "sending"
             ))
             if conversation.id.isEmpty {
@@ -1793,6 +1810,21 @@ struct PendingAttachment: Identifiable, Hashable {
     let id: String
     let mime: String
     let size: Int
+    /// Original filename — set for non-image files, nil for images.
+    var filename: String? = nil
+
+    var isImage: Bool { mime.lowercased().hasPrefix("image/") }
+
+    /// Materialise into an `Attachment` for an optimistic bubble. The
+    /// worker-served path is `/uploads/<id>`; `kind` is left to the
+    /// renderer, which classifies by `mime`.
+    func asAttachment() -> Attachment {
+        Attachment(
+            id: id, kind: isImage ? "image" : "file", mime: mime,
+            size: size, width: nil, height: nil,
+            url: "/uploads/\(id)", filename: filename
+        )
+    }
 }
 
 /// Identifiable wrapper so a `String` body can drive a `.sheet(item:)` —

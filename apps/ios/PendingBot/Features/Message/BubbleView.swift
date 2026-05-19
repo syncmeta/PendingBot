@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Asymmetric layout inspired by Claude.ai (not iMessage):
 ///   • Bot — borderless, left-aligned, avatar + name row, then content.
@@ -247,15 +248,144 @@ struct AttachmentGrid: View {
     let attachments: [Attachment]
     let serverURL: URL
 
+    private var images: [Attachment] { attachments.filter(\.isImage) }
+    private var files: [Attachment] { attachments.filter { !$0.isImage } }
+
     var body: some View {
-        let columns = Array(repeating: GridItem(.flexible(), spacing: 6),
-                            count: min(attachments.count, 3))
-        LazyVGrid(columns: columns, spacing: 6) {
-            ForEach(attachments) { att in
-                ServerImage(path: att.url, serverURL: serverURL)
-                    .frame(width: 100, height: 100)
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        VStack(alignment: .leading, spacing: 6) {
+            if !images.isEmpty {
+                let columns = Array(repeating: GridItem(.flexible(), spacing: 6),
+                                    count: min(images.count, 3))
+                LazyVGrid(columns: columns, spacing: 6) {
+                    ForEach(images) { att in
+                        ServerImage(path: att.url, serverURL: serverURL)
+                            .frame(width: 100, height: 100)
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+                }
+            }
+            ForEach(files) { att in
+                FileAttachmentChip(attachment: att)
             }
         }
     }
+}
+
+/// A non-image attachment rendered as an icon + filename chip. Tapping it
+/// downloads the bytes through the auth-gated /v1/uploads/:id endpoint
+/// and hands them to the system share sheet (open-in / preview / save).
+struct FileAttachmentChip: View {
+    let attachment: Attachment
+
+    @State private var downloading = false
+    @State private var shareURL: IdentifiedURL?
+    @State private var loadError = false
+
+    private var displayName: String { attachment.filename ?? "文件" }
+
+    private var sizeText: String? {
+        guard let size = attachment.size, size > 0 else { return nil }
+        return ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)
+    }
+
+    var body: some View {
+        Button {
+            Task { await openFile() }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: iconName)
+                    .font(.system(size: 22))
+                    .foregroundStyle(Theme.Palette.accent)
+                    .frame(width: 30)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(displayName)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(Theme.Palette.ink)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                    if let sizeText {
+                        Text(sizeText)
+                            .font(.system(size: 11))
+                            .foregroundStyle(Theme.Palette.inkMuted)
+                    }
+                }
+                Spacer(minLength: 4)
+                if downloading {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: loadError ? "exclamationmark.triangle" : "square.and.arrow.up")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: 260, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Theme.Palette.surface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(downloading)
+        .sheet(item: $shareURL) { wrapped in
+            ShareSheet(items: [wrapped.url])
+        }
+    }
+
+    /// SF Symbol picked from the MIME so the chip reads at a glance.
+    private var iconName: String {
+        let mime = attachment.mime.lowercased()
+        if mime == "application/pdf" { return "doc.richtext" }
+        if mime.hasPrefix("audio/") { return "waveform" }
+        if mime.hasPrefix("video/") { return "film" }
+        if mime.hasPrefix("text/") { return "doc.text" }
+        if mime.contains("zip") || mime.contains("compressed") || mime.contains("archive") {
+            return "doc.zipper"
+        }
+        return "doc.fill"
+    }
+
+    private func openFile() async {
+        downloading = true
+        loadError = false
+        defer { downloading = false }
+        do {
+            let data = try await APIClient().download("v1/uploads/\(attachment.id)")
+            // Write to a temp file under the real filename so the share
+            // sheet shows a sensible name and downstream apps see the
+            // right extension.
+            let dir = FileManager.default.temporaryDirectory
+                .appendingPathComponent("attachments", isDirectory: true)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let fileURL = dir.appendingPathComponent(displayName)
+            try data.write(to: fileURL, options: .atomic)
+            shareURL = IdentifiedURL(url: fileURL)
+        } catch {
+            loadError = true
+            Haptics.error()
+        }
+    }
+}
+
+/// `.sheet(item:)` wants an Identifiable payload — a thin wrapper so a
+/// freshly downloaded file URL can drive the share sheet presentation.
+struct IdentifiedURL: Identifiable {
+    let url: URL
+    var id: String { url.absoluteString }
+}
+
+/// Minimal UIActivityViewController bridge for the file share sheet.
+struct ShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }

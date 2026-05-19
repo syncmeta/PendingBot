@@ -19,6 +19,9 @@ struct ChatActionSheet: View {
     /// Image captured from the camera. ConversationView watches this and
     /// runs the same upload pipeline as for library picks.
     @Binding var cameraImage: UIImage?
+    /// Tapping the "文件" tile calls this; the host presents the system
+    /// document picker (any file type).
+    var onPickFile: () -> Void = {}
     var onDismiss: () -> Void = {}
     /// When non-nil, renders a "检查" tile that manually fires a lookback
     /// on the current conv. Nil for conv types without a single bot (group,
@@ -43,6 +46,15 @@ struct ChatActionSheet: View {
                     showCamera = true
                 } label: {
                     actionTileLabel(icon: "camera", label: "拍照")
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    Haptics.tap()
+                    onPickFile()
+                    onDismiss()
+                } label: {
+                    actionTileLabel(icon: "doc", label: "文件")
                 }
                 .buttonStyle(.plain)
 
