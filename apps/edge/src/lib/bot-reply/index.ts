@@ -603,19 +603,21 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     });
   };
 
-  // Emit an image the OpenAI image_generation built-in tool produced as
-  // its own bubble: persist the PNG, then insert a bot message that
-  // carries the attachment (attachments jsonb shape: { ids: [...] }) and
-  // emit a `bubble` event carrying attachment_ids so iOS shows it live.
+  // Persist an image the OpenAI image_generation built-in tool produced
+  // as its own bot message (attachments jsonb shape: { ids: [...] }).
+  //
+  // Deliberately does NOT emit an SSE `bubble` event or touch
+  // `bubbleIndex`: that counter is kept in lockstep with the splitter's
+  // streamed text bubbles so the client can rekey them, and an image
+  // bubble has no streamed counterpart. The inserted row reaches the
+  // client through the conversation's realtime subscription instead.
   const emitGeneratedImage = async (base64: string) => {
     const attachmentId = await persistGeneratedImage(
       env, supa, userId, conversationId, base64,
     );
     if (!attachmentId) return;
-    bubbleIndex++;
-    const bubbleId = randomUUID();
     await supa.from('messages').insert({
-      id: bubbleId,
+      id: randomUUID(),
       client_message_id: randomUUID(),
       conversation_id: conversationId,
       sender_bot_id: bot.id,
@@ -627,13 +629,6 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       attachments: { ids: [attachmentId] },
     });
     bubblesInserted++;
-    emit('bubble', {
-      id: bubbleId,
-      index: bubbleIndex,
-      bubble_group_id: bubbleGroupId,
-      content: '',
-      attachment_ids: [attachmentId],
-    });
   };
 
   // Each round inside the agent loop runs its own withFallback — when
