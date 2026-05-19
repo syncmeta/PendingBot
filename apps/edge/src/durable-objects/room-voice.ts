@@ -219,6 +219,7 @@ export class RoomVoiceDO {
 
   // Diagnostics — counters for the real-device audio-pipeline debug pass.
   private dbgHumanFrames = 0;
+  private dbgRawHumanWsMsgs = 0;
   private dbgFlushSends = 0;
   private dbgBotAudioDeltas = 0;
   private dbgSeenOpenAIEvents = new Set<string>();
@@ -614,6 +615,26 @@ export class RoomVoiceDO {
   }
 
   private onHumanFrame(humanId: string, data: string | ArrayBuffer): void {
+    // Raw WS message counter — logs BEFORE any decode so we can tell
+    // "SFU pushed nothing" apart from "decodePacket dropped it".
+    this.dbgRawHumanWsMsgs++;
+    if (this.dbgRawHumanWsMsgs === 1 || this.dbgRawHumanWsMsgs % 100 === 0) {
+      const desc =
+        typeof data === 'string'
+          ? `string len=${data.length}`
+          : `binary bytes=${data.byteLength}`;
+      let decoded = 'n/a';
+      if (typeof data !== 'string') {
+        try {
+          decoded = `payload=${decodePacket(new Uint8Array(data)).payload.length}`;
+        } catch (err) {
+          decoded = `decode-threw=${String(err).slice(0, 80)}`;
+        }
+      }
+      console.log(
+        `[room-voice] human WS msg #${this.dbgRawHumanWsMsgs} ${desc} ${decoded}`,
+      );
+    }
     const human = this.humans.get(humanId);
     if (!human || typeof data === 'string') return;
     const packet = decodePacket(new Uint8Array(data));
