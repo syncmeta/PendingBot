@@ -4,6 +4,7 @@ import SwiftUI
 struct PendingBotApp: App {
     @StateObject private var accountStore = AccountStore.shared
     @StateObject private var unreadStore = UnreadStore.shared
+    @StateObject private var modelCatalog = ModelCatalog.shared
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     init() {
@@ -21,6 +22,7 @@ struct PendingBotApp: App {
             RootView()
                 .environmentObject(accountStore)
                 .environmentObject(unreadStore)
+                .environmentObject(modelCatalog)
                 // Two-color brand (#044735 + #fdfcfa) — light theme only.
                 // Following system would force us to design + maintain a
                 // dark variant we don't actually want.
@@ -53,6 +55,7 @@ struct PendingBotApp: App {
                     // debug builds where SupabaseClient lazy init is heavy.
                     await accountStore.bootstrap()
                     unreadStore.bind(account: accountStore.current)
+                    modelCatalog.loadIfNeeded()
                     // If the user is already signed in from a previous
                     // launch, kick off the push registration flow now.
                     if accountStore.current != nil {

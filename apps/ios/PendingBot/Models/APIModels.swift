@@ -10,8 +10,8 @@ struct Bot: Codable, Identifiable, Hashable {
     let access_mode: String?
     /// The bot's default model (bots.model_id). For private bots the
     /// owner can change it via PATCH /v1/bots/:id; per-conv pins live on
-    /// `conversations.model_slug_override` instead. Drives `modelTag` /
-    /// `nameWithModel`.
+    /// `conversations.model_slug_override` instead. Resolved to a friendly
+    /// name via `ModelCatalog`.
     let model: String?
     /// Visibility — drives the 私有/公有机器人 tag in friend + message lists.
     /// `private` | `public_invite` | `public_open`. Optional so older
@@ -24,21 +24,6 @@ struct Bot: Codable, Identifiable, Hashable {
     /// button. Optional in the payload so pre-migration payloads decode.
     let voice_call_enabled: Bool?
 
-    /// Short tag derived from the OpenRouter slug — drops the provider prefix
-    /// so "z-ai/glm-5.1" renders as "glm-5.1". Returns nil when no model is set.
-    var modelTag: String? {
-        guard let m = model, !m.isEmpty else { return nil }
-        if let slash = m.lastIndex(of: "/") {
-            return String(m[m.index(after: slash)...])
-        }
-        return m
-    }
-
-    /// Display name with the live model tag appended, e.g. "01 · glm-5.1".
-    var nameWithModel: String {
-        guard let tag = modelTag else { return display_name }
-        return "\(display_name) · \(tag)"
-    }
 }
 
 struct Conversation: Codable, Identifiable, Hashable {
@@ -171,6 +156,13 @@ struct OpenRouterModel: Codable, Identifiable, Hashable {
     let source: String?
     /// bots.model_provider to store when this row is picked. nil → default.
     let model_provider: String?
+    /// Our canonical `llm_models.slug` when this model is curated locally;
+    /// nil for OpenRouter rows we don't register. ModelCatalog indexes by
+    /// this too so a bot storing the local slug still resolves.
+    let local_slug: String?
+    /// USD per 1M tokens, blended 7:2:1 (cache_hit/input/output). nil when
+    /// no priced alias is registered. Surfaced as the "Nx" price multiplier.
+    let blended_usd_per_million: Double?
     /// Unique across both catalogs — the same model can appear once per
     /// source (e.g. OpenRouter "openai/gpt-5.5" and native "gpt-5.5").
     var id: String { "\(source ?? "openrouter"):\(slug)" }

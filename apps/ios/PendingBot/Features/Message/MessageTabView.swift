@@ -993,6 +993,7 @@ private struct ScanQRSheet: View {
 /// are allowed.
 private struct CreateGroupSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var modelCatalog: ModelCatalog
     var onCreated: (String) -> Void
 
     struct BotPick: Identifiable, Hashable {
@@ -1038,7 +1039,7 @@ private struct CreateGroupSheet: View {
                     }
                     ForEach(bots) { b in
                         memberRow(name: b.name,
-                                  subtitle: b.model_id,
+                                  subtitle: b.model_id.map { modelCatalog.displayName(for: $0) },
                                   selected: selectedBots.contains(b.id)) {
                             toggle(set: &selectedBots, id: b.id)
                         }

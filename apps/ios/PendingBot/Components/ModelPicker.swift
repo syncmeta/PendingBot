@@ -12,6 +12,7 @@ struct ModelPickerButton: View {
     var modelProvider: Binding<String?>? = nil
     var placeholder: String = "模型选择"
 
+    @EnvironmentObject private var catalog: ModelCatalog
     @State private var showSheet = false
 
     var body: some View {
@@ -23,7 +24,7 @@ struct ModelPickerButton: View {
                 Image(systemName: "cube.transparent")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(slug.isEmpty ? Theme.Palette.inkMuted : Theme.Palette.accent)
-                Text(slug.isEmpty ? placeholder : slug)
+                Text(slug.isEmpty ? placeholder : catalog.displayName(for: slug))
                     .font(Theme.Fonts.rounded(size: 13, weight: .medium))
                     .foregroundStyle(slug.isEmpty ? Theme.Palette.inkMuted : Theme.Palette.ink)
                     .lineLimit(1)
@@ -276,6 +277,14 @@ struct ModelPickerSheet: View {
                                             .truncationMode(.middle)
                                     }
                                     Spacer(minLength: 8)
+                                    if let mult = m.blended_usd_per_million {
+                                        Text(ModelCatalog.formatMultiplier(mult))
+                                            .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
+                                            .foregroundStyle(Theme.Palette.inkMuted)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 3)
+                                            .background(Capsule().fill(Theme.Palette.surfaceMuted))
+                                    }
                                     if m.slug == initial {
                                         Image(systemName: "checkmark")
                                             .font(.system(size: 13, weight: .semibold))

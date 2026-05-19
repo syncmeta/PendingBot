@@ -216,7 +216,7 @@ struct FriendsTabView: View {
                                     FriendRow(kind: .bot,
                                               avatarSeed: bot.id,
                                               name: bot.display_name,
-                                              modelTag: bot.modelTag,
+                                              modelSlug: bot.model_id,
                                               botVisibility: bot.visibility)
                                         .listRowBackground(selected ? Theme.Palette.accentBg : Theme.Palette.surface)
                                         .contentShape(Rectangle())
@@ -232,7 +232,7 @@ struct FriendsTabView: View {
                                               avatarSeed: c.avatarSeed,
                                               avatarAttachmentId: c.avatarPath,
                                               name: c.rowName,
-                                              modelTag: nil,
+                                              modelSlug: nil,
                                               botVisibility: nil)
                                         .listRowBackground(selected ? Theme.Palette.accentBg : Theme.Palette.surface)
                                         .contentShape(Rectangle())
@@ -282,10 +282,6 @@ struct FriendsTabView: View {
         let visibility: String?
         let creator_id: String?
         let voice_call_enabled: Bool?
-        var modelTag: String? {
-            guard let m = model_id, let i = m.lastIndex(of: "/") else { return model_id }
-            return String(m[m.index(after: i)...])
-        }
     }
     struct HumanPick: Identifiable, Hashable {
         let id: String
@@ -742,10 +738,14 @@ private struct FriendRow: View {
     /// consistently across the friend list / chat header / bubbles.
     var avatarAttachmentId: String? = nil
     let name: String
-    let modelTag: String?
+    /// The bot's stored model slug (`bots.model_id`). Resolved to a
+    /// friendly name + price multiplier via `ModelCatalog`. nil for humans.
+    let modelSlug: String?
     /// Drives the right-side tag pill for bots. `nil` for humans
     /// (which render a `人类` pill instead).
     let botVisibility: String?
+
+    @EnvironmentObject private var catalog: ModelCatalog
 
     var body: some View {
         HStack(spacing: 10) {
@@ -763,17 +763,24 @@ private struct FriendRow: View {
                     .font(Theme.Fonts.serif(size: 16, weight: .semibold))
                     .foregroundStyle(Theme.Palette.ink)
                     .lineLimit(1)
-                if kind == .bot, let tag = modelTag {
-                    // Match message-list model tag: muted ink fg + surface
-                    // muted bg, not the accent green.
-                    Text(tag)
-                        .font(Theme.Fonts.rounded(size: 10, weight: .medium))
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(Capsule().fill(Theme.Palette.surfaceMuted))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+                if kind == .bot, let slug = modelSlug, !slug.isEmpty {
+                    // Friendly model name + blended price multiplier.
+                    // Muted ink fg + surface-muted bg, matching the
+                    // message-list model tag.
+                    HStack(spacing: 4) {
+                        Text(catalog.displayName(for: slug))
+                            .foregroundStyle(Theme.Palette.inkMuted)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        if let mult = catalog.priceMultiplier(for: slug) {
+                            Text(ModelCatalog.formatMultiplier(mult))
+                                .foregroundStyle(Theme.Palette.inkMuted.opacity(0.65))
+                        }
+                    }
+                    .font(Theme.Fonts.rounded(size: 10, weight: .medium))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Theme.Palette.surfaceMuted))
                 }
             }
 

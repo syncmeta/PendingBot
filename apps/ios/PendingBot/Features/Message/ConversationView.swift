@@ -54,6 +54,7 @@ struct ConversationView: View {
     @Environment(\.account) var account
     @Environment(\.dismiss) private var dismiss
     @Environment(\.useSidebarLayout) private var sidebarLayout
+    @EnvironmentObject private var modelCatalog: ModelCatalog
     @State var messages: [ChatMessage] = []
     // Composer text — needs to be accessible from ConversationView+Group
     // (mention picker / insertMention rewrites the trailing "@<prefix>"),
@@ -239,8 +240,9 @@ struct ConversationView: View {
         let base = bot?.display_name ?? conversation.bot_name ?? conversation.bot_id
         let tag: String? = {
             let trimmed = modelOverride.trimmingCharacters(in: .whitespaces)
-            if !trimmed.isEmpty { return shortSlug(trimmed) }
-            return bot?.modelTag
+            if !trimmed.isEmpty { return modelCatalog.displayName(for: trimmed) }
+            guard let slug = bot?.model, !slug.isEmpty else { return nil }
+            return modelCatalog.displayName(for: slug)
         }()
         guard let tag else { return base }
         return "\(base) · \(tag)"
@@ -320,10 +322,6 @@ struct ConversationView: View {
             return peer.displayName
         }
         return conversation.displayTitle
-    }
-
-    private func shortSlug(_ slug: String) -> String {
-        slug.split(separator: "/").last.map(String.init) ?? slug
     }
 
     /// Hydrate a message's `attachments` from the `attachmentIdsByMsgId`
