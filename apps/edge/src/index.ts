@@ -31,6 +31,7 @@ import type { AuditMessage } from './queue/audit-types';
 export { GroupRouterDO } from './durable-objects/group-router';
 export { RealtimeHubDO } from './durable-objects/hub';
 export { RealtimeMeterDO } from './durable-objects/realtime-meter';
+export { RoomVoiceDO } from './durable-objects/room-voice';
 // Container-backed DO from @cloudflare/sandbox. Required export for
 // the `Sandbox` binding declared in wrangler.jsonc.
 export { Sandbox } from '@cloudflare/sandbox';

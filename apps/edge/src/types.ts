@@ -32,6 +32,11 @@ export interface Env {
   /// usage is metered server-side instead of self-reported by the
   /// client. See src/durable-objects/realtime-meter.ts.
   REALTIME_METER: DurableObjectNamespace;
+  /// Group-voice bridge DO — one instance per group call (keyed by
+  /// conversation_id). Bridges humans on the Cloudflare Realtime SFU to
+  /// OpenAI Realtime via the SFU's WebSocket adapter: no WebRTC stack in
+  /// the worker. See src/durable-objects/room-voice.ts.
+  ROOM_VOICE: DurableObjectNamespace;
   /// Cloudflare ratelimit binding for handle-enumeration endpoints
   /// (friend-request /lookup, group /join, friend-request POST /).
   /// Limit + period live in wrangler.jsonc — call from a route via
@@ -85,6 +90,13 @@ export interface Env {
   // OpenAI Realtime — the worker mints a 60s ephemeral client_secret
   // for the iOS WebRTC handshake; the API key never leaves the worker.
   OPENAI_API_KEY?: string;
+
+  // ── Group voice (CF Realtime SFU) ──────────────────────────────
+  // SFU app id — pairs with SFU_APP_SECRET to authenticate the SFU API
+  // (sessions, tracks, WebSocket adapters). The id is not sensitive.
+  SFU_APP_ID?: string;
+  // SFU app secret — bearer token for rtc.live.cloudflare.com. Secret.
+  SFU_APP_SECRET?: string;
 
   // ── Realtime fan-in ────────────────────────────────────────────
   // Shared secret the Supabase Database Webhooks send in the
