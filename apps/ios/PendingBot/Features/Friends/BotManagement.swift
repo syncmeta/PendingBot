@@ -787,7 +787,7 @@ struct InviteContactPickerSheet: View {
 /// `voice_call_enabled` columns) via PATCH /v1/bots/:id so the worker
 /// merges and drops the bot KV cache in one trip.
 ///
-/// Read-only for bots the caller didn't create, or any public/preset bot
+/// Read-only for bots the caller didn't create, or any public bot
 /// (the worker enforces the same gate). The settings still render so the
 /// user can *see* how the bot is set up.
 struct BotConfigView: View {
@@ -839,8 +839,9 @@ struct BotConfigView: View {
         }
     }
 
-    /// Only the creator of a *private* bot may edit. Public/preset bots
-    /// are frozen — the worker rejects the PATCH anyway.
+    /// Only the creator of a *private* bot may edit. Public bots are
+    /// frozen — the worker rejects the PATCH anyway. Preset private bots
+    /// are per-user clones, so their creator is the user — editable.
     private var canEdit: Bool {
         guard let me = currentUserId, let owner = bot.creator_id else { return false }
         return bot.visibility == "private" && owner == me
@@ -864,7 +865,7 @@ struct BotConfigView: View {
         Form {
             if !canEdit {
                 Section {
-                    Text("这是「\(bot.display_name)」的配置。只有创建者能修改自己的私有机器人；公有 / 预置机器人不可改。")
+                    Text("这是「\(bot.display_name)」的配置。只有创建者能修改自己的私有机器人；公有机器人不可改。")
                         .font(Theme.Fonts.caption)
                         .foregroundStyle(Theme.Palette.inkMuted)
                 }

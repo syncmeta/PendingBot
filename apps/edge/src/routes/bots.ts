@@ -48,7 +48,7 @@ const PatchBody = z
     // catalog section (e.g. "OpenAI（原生）").
     model_provider: z.string().max(64).nullable().optional(),
     // Voice-call gate. When true the iOS conversation header shows the
-    // phone button. Bot owner-only — public/preset bots stay locked.
+    // phone button. Bot owner-only — public bots stay locked.
     voice_call_enabled: z.boolean().optional(),
     // Partial bot-config patch. Top-level keys present here replace the
     // matching key in the stored `config` jsonb wholesale; absent keys
@@ -65,8 +65,9 @@ const PatchBody = z
   );
 
 // PATCH /v1/bots/:id — owner-only edits to a private bot. Currently
-// exposes default model + voice-call gate. Public/preset bots are
-// off-limits.
+// exposes default model + voice-call gate. Public bots are off-limits
+// (preset private bots are per-user clones, so they edit like any
+// owned private bot).
 botRoutes.patch('/:id', async (c) => {
   const userId = c.var.userId!;
   const id = c.req.param('id');
