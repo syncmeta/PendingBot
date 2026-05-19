@@ -134,7 +134,7 @@ export async function dispatchGroupTurn(
 
     const { data: bot } = await supa
       .from('bots')
-      .select('id, model_id, output_mode, is_active')
+      .select('id, display_name, model_id, output_mode, is_active')
       .eq('id', botId)
       .maybeSingle();
     if (!bot || !bot.is_active) continue;
@@ -188,6 +188,7 @@ export async function dispatchGroupTurn(
         parentMessageId,
         bot: {
           id: bot.id,
+          display_name: (bot.display_name as string | null) ?? '',
           model_id: bot.model_id as string,
           output_mode: bot.output_mode === 'bubble' ? 'bubble' : 'single',
         },

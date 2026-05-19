@@ -12,6 +12,10 @@ export interface BuildMessagesInput {
   bot: {
     id: string;
     output_mode: 'single' | 'bubble';
+    // The bot's display name (bots.display_name) — the name the user gave
+    // it and what everyone calls it by. Injected as a system section so
+    // the bot knows its own name. May be empty on unnamed/legacy rows.
+    display_name?: string | null;
   };
   // Bot's own representation (Honcho passive observation) cached in KV.
   // Null on cold start — we then fall back to the identity-quest meta-prompt.
@@ -134,6 +138,15 @@ async function buildSelfSection(
   const hasMemory = !!botMemory && botMemory.representation.trim().length > 0;
   if (!hasMemory) return loadPrompt(supa, 'identity-quest', locale);
   return `## How I observe myself (passive)\n${botMemory!.representation.trim()}`;
+}
+
+// The bot's own name. A plain fact, not a persona — placed near the top
+// so the bot can answer "你叫什么名字" without inventing one. Empty/legacy
+// rows just drop the section.
+function buildIdentitySection(displayName: string | null | undefined): string {
+  const name = displayName?.trim();
+  if (!name) return '';
+  return `## 你的名字\n你叫「${name}」。这是用户给你起的名字，别人也用这个名字称呼你。`;
 }
 
 function buildSkillsSection(skills: BuildMessagesInput['skills']): string {
@@ -366,6 +379,7 @@ export async function buildSystemPrompt(
     loadPrompt(supa, 'system', locale),
     buildSelfSection(supa, input.botMemory, locale),
   ]);
+  const identitySection = buildIdentitySection(input.bot.display_name);
   const skillsSection = buildSkillsSection(input.skills);
   const botNoteSection = buildBotNoteSection(input.botNote);
   const chatMemoSection = buildChatMemoSection(input.chatMemo);
@@ -377,7 +391,7 @@ export async function buildSystemPrompt(
   // before the always-mutating mode/recent-turn segment. chat-memo sits
   // right after bot-note since both are bot-private long-term context.
   return [
-    platform, selfSection, skillsSection,
+    platform, identitySection, selfSection, skillsSection,
     botNoteSection, chatMemoSection, lookbackSection, attachmentSection, modeInstr,
   ].filter(Boolean).join('\n\n');
 }

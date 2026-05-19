@@ -448,6 +448,7 @@ messageRoutes.post('/', async (c) => {
             parentMessageId: parentMessageId ?? '',
             bot: {
               id: bot.id,
+              display_name: bot.display_name,
               model_id: effectiveModelId,
               // CHECK constraint guarantees one of these two; types can't see it.
               output_mode: bot.output_mode === 'bubble' ? 'bubble' : 'single',
@@ -746,6 +747,7 @@ messageRoutes.post('/start', async (c) => {
             parentMessageId: userMessageId,
             bot: {
               id: bot.id,
+              display_name: bot.display_name,
               model_id: bot.model_id,
               output_mode: bot.output_mode === 'bubble' ? 'bubble' : 'single',
             },

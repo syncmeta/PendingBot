@@ -15,6 +15,47 @@ const botMemory: Memory = {
   lastCoveredMessageId: null,
 };
 
+// The system message content is wrapped in the cache-control block array;
+// pull the raw text out for substring assertions.
+function systemText(content: unknown): string {
+  if (Array.isArray(content)) {
+    return content.map((p) => (p as { text?: string }).text ?? '').join('');
+  }
+  return String(content);
+}
+
+describe('buildMessages identity section', () => {
+  it('injects the bot display name as a system section', async () => {
+    const messages = await buildMessages(supa, {
+      bot: { id: 'bot-1', output_mode: 'single', display_name: '小绿' },
+      botMemory,
+      skills: [],
+      botNote: null,
+      chatMemo: null,
+      recentContext: [],
+      newMessage: '你叫什么名字',
+    });
+
+    const sys = systemText(messages[0]?.content);
+    expect(sys).toContain('你的名字');
+    expect(sys).toContain('小绿');
+  });
+
+  it('omits the identity section when the bot has no name', async () => {
+    const messages = await buildMessages(supa, {
+      bot: { id: 'bot-1', output_mode: 'single' },
+      botMemory,
+      skills: [],
+      botNote: null,
+      chatMemo: null,
+      recentContext: [],
+      newMessage: 'hi',
+    });
+
+    expect(systemText(messages[0]?.content)).not.toContain('你的名字');
+  });
+});
+
 describe('buildMessages time hints', () => {
   it('includes the full year for the current user turn in the client timezone', async () => {
     const messages = await buildMessages(supa, {

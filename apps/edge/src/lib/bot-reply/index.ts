@@ -241,6 +241,7 @@ export interface RunChatTurnInput {
   parentMessageId: string;     // user's just-inserted message id
   bot: {
     id: string;
+    display_name: string;
     model_id: string;
     output_mode: 'single' | 'bubble';
   };

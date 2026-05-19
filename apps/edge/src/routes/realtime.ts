@@ -232,6 +232,7 @@ async function assembleInstructions(
   const sysInput: BuildSystemPromptInput = {
     bot: {
       id: ctx.bot.id,
+      display_name: ctx.bot.display_name,
       output_mode: ctx.bot.output_mode,
     },
     botMemory,

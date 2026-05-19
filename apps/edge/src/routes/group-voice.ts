@@ -133,7 +133,7 @@ async function buildBotSpec(
   const supaSvc = serviceClient(c.env);
   const { data: bot } = await supaSvc
     .from('bots')
-    .select('id, output_mode, voice_call_enabled, config')
+    .select('id, display_name, output_mode, voice_call_enabled, config')
     .eq('id', botId)
     .maybeSingle();
   if (!bot || !bot.voice_call_enabled) return null;
@@ -148,6 +148,7 @@ async function buildBotSpec(
     {
       bot: {
         id: bot.id,
+        display_name: (bot.display_name as string | null) ?? '',
         output_mode: bot.output_mode === 'bubble' ? 'bubble' : 'single',
       },
       botMemory,
