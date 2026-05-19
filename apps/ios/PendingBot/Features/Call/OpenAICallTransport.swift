@@ -229,7 +229,10 @@ final class OpenAICallTransport: NSObject, CallTransport {
         try session.setCategory(
             .playAndRecord,
             mode: .voiceChat,            // enables built-in AEC + noise suppression
-            options: [.allowBluetooth, .allowBluetoothA2DP, .defaultToSpeaker],
+            // No .defaultToSpeaker — the call opens on the earpiece so the
+            // proximity sensor can blank the screen when held to the ear.
+            // CallSession.setSpeaker drives the speaker via overrideOutputAudioPort.
+            options: [.allowBluetooth, .allowBluetoothA2DP],
         )
         try session.setActive(true, options: [])
     }
@@ -529,7 +532,10 @@ final class OpenAIWebSocketTransport: NSObject, CallTransport {
         try session.setCategory(
             .playAndRecord,
             mode: .voiceChat,            // built-in AEC + noise suppression
-            options: [.allowBluetooth, .allowBluetoothA2DP, .defaultToSpeaker],
+            // No .defaultToSpeaker — the call opens on the earpiece so the
+            // proximity sensor can blank the screen when held to the ear.
+            // CallSession.setSpeaker drives the speaker via overrideOutputAudioPort.
+            options: [.allowBluetooth, .allowBluetoothA2DP],
         )
         try session.setActive(true, options: [])
         print("[ws-voice] audio session active; inputAvailable=",

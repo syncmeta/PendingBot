@@ -44,18 +44,26 @@ struct CallView: View {
                 Spacer()
                 metrics
                 Spacer()
-                hangUpButton
+                controlRow
                     .padding(.bottom, 40)
             }
             .padding()
         }
-        .task { await session.start() }
+        .task {
+            updateProximityMonitoring()
+            await session.start()
+        }
         .onChange(of: session.phase) { _, new in
             handlePhaseChange(new)
+            updateProximityMonitoring()
+        }
+        .onChange(of: session.isSpeakerOn) { _, _ in
+            updateProximityMonitoring()
         }
         .onDisappear {
             tickTimer?.invalidate()
             tickTimer = nil
+            UIDevice.current.isProximityMonitoringEnabled = false
         }
         .alert(item: $regionAlert) { alert in
             let support = alert.supportedURL
@@ -105,6 +113,33 @@ struct CallView: View {
             .font(.title3)
     }
 
+    private var controlRow: some View {
+        HStack(spacing: 44) {
+            speakerButton
+            hangUpButton
+        }
+    }
+
+    private var speakerButton: some View {
+        Button {
+            session.toggleSpeaker()
+            Haptics.tap()
+        } label: {
+            Image(systemName: session.isSpeakerOn ? "speaker.wave.2.fill" : "speaker.fill")
+                .font(.system(size: 24))
+                .foregroundStyle(session.isSpeakerOn ? Color.white : Color.primary)
+                .frame(width: 64, height: 64)
+                .background(
+                    Circle().fill(
+                        session.isSpeakerOn
+                            ? AnyShapeStyle(Theme.Palette.accent)
+                            : AnyShapeStyle(Color(.secondarySystemBackground))
+                    )
+                )
+        }
+        .disabled(isCallInactive)
+    }
+
     private var hangUpButton: some View {
         Button {
             Task {
@@ -119,6 +154,23 @@ struct CallView: View {
                 .background(Circle().fill(.red))
         }
         .disabled(isHangUpDisabled)
+    }
+
+    /// True once the call has left its live phases — the speaker toggle
+    /// has nothing to act on.
+    private var isCallInactive: Bool {
+        switch session.phase {
+        case .connecting, .connected: return false
+        default: return true
+        }
+    }
+
+    /// Drives the proximity sensor: blank the screen when the device is
+    /// held to the ear, but only while the call is live and on the
+    /// earpiece (speaker mode means the phone is away from the face).
+    private func updateProximityMonitoring() {
+        UIDevice.current.isProximityMonitoringEnabled =
+            !isCallInactive && !session.isSpeakerOn
     }
 
     // MARK: - Phase reactions

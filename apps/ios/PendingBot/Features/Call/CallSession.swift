@@ -10,6 +10,7 @@ import Foundation
 /// observes these via SwiftUI. Implementations should use `@MainActor`
 /// on the class itself so the compiler enforces it.
 
+import AVFoundation
 import Combine
 import Supabase
 
@@ -45,6 +46,11 @@ final class CallSession {
     /// `connectedAt` when it sees first remote audio, CallView's timer
     /// formats this for the "通话 02:34" line). nil while connecting.
     var connectedAt: Date?
+
+    /// Whether call audio is routed to the loudspeaker. Starts false —
+    /// the call opens on the earpiece so the proximity sensor can blank
+    /// the screen. CallView's speaker button toggles it.
+    var isSpeakerOn: Bool = false
 
     // MARK: - Inputs
 
@@ -270,6 +276,20 @@ final class CallSession {
             comps.path = path
         }
         return comps.url
+    }
+
+    /// Flip the audio route between the earpiece and the loudspeaker.
+    /// `overrideOutputAudioPort` acts on the shared AVAudioSession, so it
+    /// works regardless of which transport (WebRTC / WebSocket) is live.
+    func toggleSpeaker() {
+        let on = !isSpeakerOn
+        do {
+            try AVAudioSession.sharedInstance()
+                .overrideOutputAudioPort(on ? .speaker : .none)
+            isSpeakerOn = on
+        } catch {
+            // Non-fatal — leave the route and the flag as they were.
+        }
     }
 
     func hangUp() async {
