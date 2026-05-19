@@ -265,6 +265,14 @@ struct GroupBotRosterEntry: Decodable, Sendable, Equatable {
     let sfuTrackName: String
 }
 
+/// One human in the call's roster — their own published mic session +
+/// track. Peers subscribe to these to hear each other.
+struct GroupHumanRosterEntry: Decodable, Sendable, Equatable {
+    let humanId: String
+    let sfuSessionId: String
+    let sfuTrackName: String
+}
+
 /// POST /voice/start — brings the room's bots online. `initiated` is true
 /// when this caller opened the call (and is privileged for its lifetime).
 struct GroupVoiceStartResponse: Decodable, Sendable {
@@ -281,6 +289,7 @@ struct GroupVoiceJoinResponse: Decodable, Sendable {
     let session_id: String
     let answer: String
     let bots: [GroupBotRosterEntry]
+    let humans: [GroupHumanRosterEntry]
 }
 
 /// POST /voice/subscribe — added the bot tracks to the caller's SFU
@@ -296,6 +305,7 @@ struct GroupVoiceSubscribeResponse: Decodable, Sendable {
 struct GroupVoiceRosterResponse: Decodable, Sendable {
     let ok: Bool
     let bots: [GroupBotRosterEntry]
+    let humans: [GroupHumanRosterEntry]
 }
 
 extension VoiceCallAPI {
@@ -325,11 +335,12 @@ extension VoiceCallAPI {
         )
     }
 
-    /// Subscribe to bot tracks so the human can hear them.
+    /// Subscribe to SFU tracks (bots and/or other humans) so the caller
+    /// can hear them. Each ref is an (SFU session id, track name) pair.
     func groupVoiceSubscribe(
         conversationId: String,
         sessionId: String,
-        tracks: [GroupBotRosterEntry],
+        tracks: [(session: String, track: String)],
     ) async throws -> GroupVoiceSubscribeResponse {
         struct Track: Encodable { let session_id: String; let track_name: String }
         struct Body: Encodable { let session_id: String; let tracks: [Track] }
@@ -337,9 +348,7 @@ extension VoiceCallAPI {
             path: "/v1/groups/\(conversationId)/voice/subscribe",
             body: Body(
                 session_id: sessionId,
-                tracks: tracks.map {
-                    Track(session_id: $0.sfuSessionId, track_name: $0.sfuTrackName)
-                },
+                tracks: tracks.map { Track(session_id: $0.session, track_name: $0.track) },
             ),
         )
     }

@@ -43,15 +43,19 @@ final class GroupCallTransport: NSObject {
     /// for every later /subscribe and /renegotiate round-trip.
     private(set) var sfuSessionId: String?
 
-    /// Bots whose tracks we've already subscribed to — guards against a
-    /// re-subscribe (after add-bot) double-pulling an existing track.
-    private var subscribedBotIds: Set<String> = []
+    /// SFU tracks (bots + peers) already subscribed to — keyed
+    /// "sessionId|trackName" — so a re-sync never double-pulls a track.
+    private var subscribedKeys: Set<String> = []
 
     private var didSignalConnected = false
 
     /// Periodically logs RTP send/receive counters — the decisive signal
     /// for "is iOS actually transmitting mic audio to the SFU".
     private var statsTimer: Timer?
+
+    /// Periodically re-syncs the roster so peers (and bots) who join
+    /// after us still get subscribed — and thus heard.
+    private var rosterTimer: Timer?
 
     /// Resolved when ICE gathering completes (or times out) so the whole
     /// offer SDP — candidates included — can be posted in one HTTP call.
@@ -117,9 +121,9 @@ final class GroupCallTransport: NSObject {
             try await peerConnection.setRemoteDescription(answer)
             print("[group-voice] applied SFU answer")
             delegate?.transport(self, didUpdateRoster: join.bots)
-            if !join.bots.isEmpty {
-                try await subscribe(to: join.bots)
-            }
+            print("[group-voice] join roster — bots=\(join.bots.count) "
+                + "peers=\(join.humans.count)")
+            try await subscribeToRoster(bots: join.bots, humans: join.humans)
         } catch {
             print("[group-voice] start FAILED: \(error)")
             await delegate?.transport(
@@ -139,20 +143,27 @@ final class GroupCallTransport: NSObject {
         return "audio=\(audio) dir=\(dir) candidates=\(candidates) bytes=\(sdp.count)"
     }
 
-    /// Pull tracks for any bots not yet subscribed (used after add-bot).
-    /// Re-fetches the roster from the worker so the new bot's SFU track
-    /// info is known, then subscribes + renegotiates.
+    /// Re-fetch the roster and subscribe to anything new — bots added
+    /// mid-call, and peers who joined after us. Runs on a timer (so late
+    /// joiners get heard) and on demand after add-bot.
     func resyncRoster() async {
         do {
             let roster = try await api.groupVoiceRoster(conversationId: conversationId)
             delegate?.transport(self, didUpdateRoster: roster.bots)
-            let fresh = roster.bots.filter { !subscribedBotIds.contains($0.botId) }
-            if !fresh.isEmpty {
-                try await subscribe(to: fresh)
-            }
+            try await subscribeToRoster(bots: roster.bots, humans: roster.humans)
         } catch {
-            // Non-fatal — the call keeps running; the new bot just isn't
-            // audible until a successful re-sync.
+            // Non-fatal — the call keeps running; a new participant just
+            // isn't audible until a later re-sync succeeds.
+        }
+    }
+
+    /// Re-sync the roster every few seconds so a peer who joins the call
+    /// after us still gets subscribed — otherwise we'd never hear them.
+    private func startRosterPolling() {
+        rosterTimer?.invalidate()
+        rosterTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) {
+            [weak self] _ in
+            Task { @MainActor [weak self] in await self?.resyncRoster() }
         }
     }
 
@@ -190,6 +201,8 @@ final class GroupCallTransport: NSObject {
     func hangUp() {
         statsTimer?.invalidate()
         statsTimer = nil
+        rosterTimer?.invalidate()
+        rosterTimer = nil
         peerConnection.close()
         do {
             try AVAudioSession.sharedInstance()
@@ -202,22 +215,43 @@ final class GroupCallTransport: NSObject {
 
     // MARK: - Subscribe / renegotiate
 
-    private func subscribe(to bots: [GroupBotRosterEntry]) async throws {
-        guard let sessionId = sfuSessionId, !bots.isEmpty else { return }
+    private func trackKey(_ session: String, _ track: String) -> String {
+        "\(session)|\(track)"
+    }
+
+    /// Subscribe to every bot + peer-human track we're not already
+    /// pulling, so the caller hears the whole room. Our own published
+    /// mic track is skipped (a session can't subscribe to itself).
+    private func subscribeToRoster(
+        bots: [GroupBotRosterEntry],
+        humans: [GroupHumanRosterEntry],
+    ) async throws {
+        guard let sessionId = sfuSessionId else { return }
+        var refs: [(session: String, track: String)] = []
+        for b in bots
+        where !subscribedKeys.contains(trackKey(b.sfuSessionId, b.sfuTrackName)) {
+            refs.append((b.sfuSessionId, b.sfuTrackName))
+        }
+        for h in humans where h.sfuSessionId != sessionId
+            && !subscribedKeys.contains(trackKey(h.sfuSessionId, h.sfuTrackName)) {
+            refs.append((h.sfuSessionId, h.sfuTrackName))
+        }
+        guard !refs.isEmpty else { return }
+
         let sub = try await api.groupVoiceSubscribe(
             conversationId: conversationId,
             sessionId: sessionId,
-            tracks: bots,
+            tracks: refs,
         )
-        for b in bots { subscribedBotIds.insert(b.botId) }
+        for r in refs { subscribedKeys.insert(trackKey(r.session, r.track)) }
 
         // The SFU hands back an offer for the freshly-added recv tracks;
         // answer it on the same peer connection (BUNDLE — no new ICE).
         guard sub.requires_renegotiation, let offerSDP = sub.offer else {
-            print("[group-voice] subscribe ok — no renegotiation needed")
+            print("[group-voice] subscribed \(refs.count) track(s) — no renegotiation")
             return
         }
-        print("[group-voice] subscribe — renegotiating \(bots.count) bot track(s)")
+        print("[group-voice] subscribe — renegotiating \(refs.count) track(s)")
         let offer = RTCSessionDescription(type: .offer, sdp: offerSDP)
         try await peerConnection.setRemoteDescription(offer)
         let answer = try await createAnswer()
@@ -323,6 +357,7 @@ extension GroupCallTransport: RTCPeerConnectionDelegate {
                 guard let self, !self.didSignalConnected else { return }
                 self.didSignalConnected = true
                 self.startStatsLogging()
+                self.startRosterPolling()
                 self.delegate?.transportDidConnect(self)
             }
         case .failed, .closed:
