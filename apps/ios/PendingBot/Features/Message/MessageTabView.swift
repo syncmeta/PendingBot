@@ -32,6 +32,7 @@ struct MessageTabView: View {
     @Environment(\.api) private var api
     @Environment(\.useSidebarLayout) private var sidebarLayout
     @Environment(\.topTabSelection) private var topTabSelection
+    @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var unread: UnreadStore
     @State private var conversations: [Conversation] = []
     @State private var bots: [Bot] = []
@@ -73,6 +74,11 @@ struct MessageTabView: View {
         }
         .task {
             await load()
+            // Pull the active-voice-calls snapshot so the row-level phone
+            // icon paints right away. The store also self-updates from
+            // conv-channel voice_call frames whenever the user opens a
+            // conversation that's live.
+            await ActiveVoiceCallStore.shared.refresh()
             // Subscribe to user-level Realtime — every unread-counts row
             // change (new bot/cron message anywhere) triggers a reload so
             // last_activity_at + preview + ordering refresh without a pull.
@@ -82,6 +88,11 @@ struct MessageTabView: View {
                 await RealtimeManager.shared.startUserChannel(userId: userId) { _ in
                     Task { @MainActor in await self.load() }
                 }
+            }
+        }
+        .onChange(of: scenePhase) { _, new in
+            if new == .active {
+                Task { await ActiveVoiceCallStore.shared.refresh() }
             }
         }
         .alert("出错了", isPresented: .constant(error != nil), actions: {
@@ -869,6 +880,12 @@ private struct ConversationListRow: View {
                             rowTitleIsPlaceholder ? Theme.Palette.inkMuted : Theme.Palette.ink
                         )
                         .lineLimit(1)
+                    if ActiveVoiceCallStore.shared.calls[conv.id] != nil {
+                        Image(systemName: "phone.fill")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.green)
+                            .accessibilityLabel("通话中")
+                    }
                     Spacer(minLength: 8)
                     if conv.last_activity_at > 0 {
                         // Preset preseeded conversations are stamped with a

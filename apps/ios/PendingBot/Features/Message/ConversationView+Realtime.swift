@@ -55,6 +55,11 @@ extension ConversationView {
                     // we don't bother diffing.
                     await loadGroupSendersIfNeeded()
                 }
+            },
+            onVoiceCall: { frame in
+                Task { @MainActor in
+                    ActiveVoiceCallStore.shared.apply(frame)
+                }
             }
         )
     }

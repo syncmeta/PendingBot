@@ -1,8 +1,15 @@
 import Foundation
 import Supabase
 
-/// One row change delivered over a realtime hub WebSocket. Mirrors the
-/// edge `RealtimeChange` wire shape (apps/edge/src/lib/realtime-publish.ts).
+/// One frame delivered over a realtime hub WebSocket. Two payload kinds
+/// share the socket — a row change ("change") and a group voice call
+/// lifecycle event ("voice_call") — and the variants below mirror the
+/// edge wire shapes in `apps/edge/src/lib/realtime-publish.ts`.
+enum HubFrame: Sendable {
+    case change(HubChange)
+    case voiceCall(VoiceCallFrame)
+}
+
 struct HubChange: Sendable {
     enum Op: String, Sendable { case insert, update, delete }
     let table: String
@@ -10,6 +17,25 @@ struct HubChange: Sendable {
     /// Row JSON in the same `[String: AnyJSON]` shape Supabase Realtime
     /// used to hand callers, so downstream decoding is unchanged.
     let record: [String: AnyJSON]
+}
+
+/// "voice_call" frames — emitted by RoomVoiceDO on every membership /
+/// pending change and on final teardown. The conv-hub subscriber uses
+/// these to drive the in-conv banner and ActiveVoiceCallStore.
+struct VoiceCallFrame: Sendable {
+    enum Event: String, Sendable { case state, ended }
+    let event: Event
+    let conversationId: String
+    let startedAt: Double?      // ms epoch, absent on `.ended`
+    let initiatorId: String?
+    let participants: [Participant]
+    let pending: [Participant]
+
+    struct Participant: Sendable, Hashable {
+        enum Kind: String, Sendable { case human, bot }
+        let kind: Kind
+        let id: String
+    }
 }
 
 /// WebSocket client for one RealtimeHubDO topic — the replacement for a
@@ -28,7 +54,7 @@ struct HubChange: Sendable {
 @MainActor
 final class RealtimeSocket {
     private let url: URL
-    private let onChange: (HubChange) -> Void
+    private let onFrame: (HubFrame) -> Void
 
     private var task: URLSessionWebSocketTask?
     private var runLoop: Task<Void, Never>?
@@ -38,9 +64,17 @@ final class RealtimeSocket {
 
     /// `path` is relative to the worker base, e.g.
     /// "v1/realtime-hub/conv/<id>" or "v1/realtime-hub/user".
-    init(path: String, onChange: @escaping (HubChange) -> Void) {
+    init(path: String, onFrame: @escaping (HubFrame) -> Void) {
         self.url = Self.wsURL(path: path)
-        self.onChange = onChange
+        self.onFrame = onFrame
+    }
+
+    /// Convenience for callers that only care about row changes — keeps
+    /// the common case in RealtimeManager from threading the union.
+    convenience init(path: String, onChange: @escaping (HubChange) -> Void) {
+        self.init(path: path) { frame in
+            if case .change(let c) = frame { onChange(c) }
+        }
     }
 
     func start() {
@@ -110,21 +144,58 @@ final class RealtimeSocket {
 
     private func handle(_ text: String) {
         guard let data = text.data(using: .utf8),
-              let frame = try? JSONDecoder().decode(HubFrame.self, from: data),
-              frame.type == "change",
-              let table = frame.table,
-              let opRaw = frame.op, let op = HubChange.Op(rawValue: opRaw),
-              let record = frame.record
-        else { return }   // "ready" / "pong" / anything unrecognised — ignore
-        onChange(HubChange(table: table, op: op, record: record))
+              let raw = try? JSONDecoder().decode(RawFrame.self, from: data)
+        else { return }
+        switch raw.type {
+        case "change":
+            guard let table = raw.table,
+                  let opRaw = raw.op, let op = HubChange.Op(rawValue: opRaw),
+                  let record = raw.record
+            else { return }
+            onFrame(.change(HubChange(table: table, op: op, record: record)))
+        case "voice_call":
+            guard let convId = raw.conversation_id,
+                  let eventRaw = raw.event,
+                  let event = VoiceCallFrame.Event(rawValue: eventRaw)
+            else { return }
+            let participants = (raw.participants ?? []).compactMap { p -> VoiceCallFrame.Participant? in
+                guard let k = VoiceCallFrame.Participant.Kind(rawValue: p.kind) else { return nil }
+                return VoiceCallFrame.Participant(kind: k, id: p.id)
+            }
+            let pending = (raw.pending ?? []).compactMap { p -> VoiceCallFrame.Participant? in
+                guard let k = VoiceCallFrame.Participant.Kind(rawValue: p.kind) else { return nil }
+                return VoiceCallFrame.Participant(kind: k, id: p.id)
+            }
+            onFrame(.voiceCall(VoiceCallFrame(
+                event: event,
+                conversationId: convId,
+                startedAt: raw.started_at,
+                initiatorId: raw.initiator_id,
+                participants: participants,
+                pending: pending,
+            )))
+        default:
+            // "ready" / "pong" / anything unrecognised — ignore.
+            break
+        }
     }
 
-    private struct HubFrame: Decodable {
+    private struct RawFrame: Decodable {
         let type: String
+        // row-change fields
         let table: String?
         let op: String?
         let record: [String: AnyJSON]?
+        // voice-call fields
+        let event: String?
+        let conversation_id: String?
+        let started_at: Double?
+        let initiator_id: String?
+        let participants: [RawParticipant]?
+        let pending: [RawParticipant]?
     }
+
+    private struct RawParticipant: Decodable { let kind: String; let id: String }
 
     private static func wsURL(path: String) -> URL {
         var comps = URLComponents(
