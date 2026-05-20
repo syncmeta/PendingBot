@@ -34,6 +34,9 @@ struct MessageTabView: View {
     @Environment(\.topTabSelection) private var topTabSelection
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var unread: UnreadStore
+    /// One-slot store fed by PushService when the user taps a voice_ring
+    /// notification. The .onChange below drives the actual navigation.
+    @State private var incomingRing = IncomingVoiceRingStore.shared
     @State private var conversations: [Conversation] = []
     @State private var bots: [Bot] = []
     /// Peer profile keyed by user_user conv id. Populated alongside the
@@ -93,6 +96,27 @@ struct MessageTabView: View {
         .onChange(of: scenePhase) { _, new in
             if new == .active {
                 Task { await ActiveVoiceCallStore.shared.refresh() }
+            }
+        }
+        // React to a tapped voice_ring push — open the conversation so
+        // the in-conv banner shows up and the user can tap to join.
+        .onChange(of: incomingRing.pendingConversationId) { _, convId in
+            guard let convId, !convId.isEmpty else { return }
+            incomingRing.pendingConversationId = nil
+            let userId = AccountStore.shared.current?.id ?? ""
+            let stub = Conversation(
+                id: convId, bot_id: "", user_id: userId,
+                title: nil, feature_type: "message",
+                conversation_type: "group",
+                last_activity_at: Int(Date().timeIntervalSince1970),
+                round_count: 0, bot_name: nil,
+                last_message_content: nil, last_message_sender_type: nil,
+                model_override: nil, provider_override: nil,
+            )
+            if sidebarLayout {
+                selected = .existing(stub)
+            } else {
+                path.append(.existing(stub))
             }
         }
         .alert("出错了", isPresented: .constant(error != nil), actions: {
