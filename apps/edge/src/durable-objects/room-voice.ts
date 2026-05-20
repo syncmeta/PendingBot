@@ -217,13 +217,6 @@ export class RoomVoiceDO {
   private env: Env;
   private ctx: RoomContext | null = null;
 
-  // Diagnostics — counters for the real-device audio-pipeline debug pass.
-  private dbgHumanFrames = 0;
-  private dbgRawHumanWsMsgs = 0;
-  private dbgFlushSends = 0;
-  private dbgBotAudioDeltas = 0;
-  private dbgSeenOpenAIEvents = new Set<string>();
-
   private bots = new Map<string, BotLeg>();
   private humans = new Map<string, HumanState>();
   // Participants designated call-admin during this call (user or bot ids).
@@ -399,10 +392,6 @@ export class RoomVoiceDO {
       leg.ingestAdapterId = ingest.adapterId;
       leg.ingestSessionId = ingest.sessionId ?? null;
       leg.ingestTrackName = ingest.trackName ?? `bot-${spec.botId}`;
-      console.log(
-        `[room-voice] ingest adapter up ${spec.botId} ` +
-          `session=${leg.ingestSessionId} track=${leg.ingestTrackName}`,
-      );
     } catch (err) {
       console.warn('[room-voice] ingest adapter failed', spec.botId, err);
     }
@@ -633,38 +622,11 @@ export class RoomVoiceDO {
   }
 
   private onHumanFrame(humanId: string, data: string | ArrayBuffer): void {
-    // Raw WS message counter — logs BEFORE any decode so we can tell
-    // "SFU pushed nothing" apart from "decodePacket dropped it".
-    this.dbgRawHumanWsMsgs++;
-    if (this.dbgRawHumanWsMsgs === 1 || this.dbgRawHumanWsMsgs % 100 === 0) {
-      const desc =
-        typeof data === 'string'
-          ? `string len=${data.length}`
-          : `binary bytes=${data.byteLength}`;
-      let decoded = 'n/a';
-      if (typeof data !== 'string') {
-        try {
-          decoded = `payload=${decodePacket(new Uint8Array(data)).payload.length}`;
-        } catch (err) {
-          decoded = `decode-threw=${String(err).slice(0, 80)}`;
-        }
-      }
-      console.log(
-        `[room-voice] human WS msg #${this.dbgRawHumanWsMsgs} ${desc} ${decoded}`,
-      );
-    }
     const human = this.humans.get(humanId);
     if (!human || typeof data === 'string') return;
     const packet = decodePacket(new Uint8Array(data));
     if (packet.payload.length === 0) return;
     human.pending.push(bytesToSamples(packet.payload));
-    this.dbgHumanFrames++;
-    if (this.dbgHumanFrames === 1 || this.dbgHumanFrames % 100 === 0) {
-      console.log(
-        `[room-voice] human frame #${this.dbgHumanFrames} ` +
-          `bytes=${packet.payload.length}`,
-      );
-    }
   }
 
   // ── mixer: humans + bots -> each bot's OpenAI socket ───────────────
@@ -721,14 +683,6 @@ export class RoomVoiceDO {
 
       const mixed = inputs.length === 1 ? inputs[0] : mixPcm(inputs);
       if (mixed.length === 0) continue;
-      this.dbgFlushSends++;
-      if (this.dbgFlushSends === 1 || this.dbgFlushSends % 100 === 0) {
-        console.log(
-          `[room-voice] -> openai send #${this.dbgFlushSends} ` +
-            `bot=${botId} samples=${mixed.length} ` +
-            `humanMix=${humanMix?.length ?? 0}`,
-        );
-      }
       try {
         openai.send(
           JSON.stringify({
@@ -786,10 +740,6 @@ export class RoomVoiceDO {
           },
         },
       }),
-    );
-    console.log(
-      `[room-voice] bot leg up ${leg.spec.botId} model=${model} ` +
-        `voice=${leg.spec.voice || 'marin'}`,
     );
   }
 
@@ -852,13 +802,6 @@ export class RoomVoiceDO {
       return;
     }
 
-    // Diagnostics — log the first occurrence of each OpenAI event type
-    // so the real-device pass can see what the bot's leg is doing.
-    if (msg.type && !this.dbgSeenOpenAIEvents.has(msg.type)) {
-      this.dbgSeenOpenAIEvents.add(msg.type);
-      console.log(`[room-voice] openai event (first): ${msg.type}`);
-    }
-
     // Bot audio out. The GA event is response.output_audio.delta; accept
     // the older response.audio.delta name defensively too.
     if (
@@ -899,14 +842,6 @@ export class RoomVoiceDO {
   private onBotAudio(leg: BotLeg, deltaB64: string): void {
     const mono24 = bytesToSamples(base64ToBytes(deltaB64));
     leg.output.push(mono24);
-    this.dbgBotAudioDeltas++;
-    if (this.dbgBotAudioDeltas === 1 || this.dbgBotAudioDeltas % 100 === 0) {
-      console.log(
-        `[room-voice] bot audio delta #${this.dbgBotAudioDeltas} ` +
-          `bot=${leg.spec.botId} samples=${mono24.length} ` +
-          `ingestWs=${leg.ingestWs ? 'up' : 'down'}`,
-      );
-    }
 
     const ingest = leg.ingestWs;
     if (!ingest) return;

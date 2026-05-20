@@ -49,10 +49,6 @@ final class GroupCallTransport: NSObject {
 
     private var didSignalConnected = false
 
-    /// Periodically logs RTP send/receive counters — the decisive signal
-    /// for "is iOS actually transmitting mic audio to the SFU".
-    private var statsTimer: Timer?
-
     /// Periodically re-syncs the roster so peers (and bots) who join
     /// after us still get subscribed — and thus heard.
     private var rosterTimer: Timer?
@@ -101,46 +97,25 @@ final class GroupCallTransport: NSObject {
 
     func start() async {
         do {
-            print("[group-voice] start: configuring audio session")
             try configureAudioSession()
             attachLocalAudio()
             let offer = try await createOffer()
             try await peerConnection.setLocalDescription(offer)
             let offerSDP = await gatheredOfferSDP()
-            print("[group-voice] offer ready — \(Self.sdpSummary(offerSDP))")
-            print("[group-voice] ===OFFER SDP===\n\(offerSDP)\n===END OFFER===")
 
             let join = try await api.groupVoiceJoin(
                 conversationId: conversationId,
                 sdp: offerSDP,
             )
             sfuSessionId = join.session_id
-            print("[group-voice] join ok — session=\(join.session_id) "
-                + "bots=\(join.bots.count) — answer \(Self.sdpSummary(join.answer))")
             let answer = RTCSessionDescription(type: .answer, sdp: join.answer)
             try await peerConnection.setRemoteDescription(answer)
-            print("[group-voice] applied SFU answer")
             delegate?.transport(self, didUpdateRoster: join.bots)
-            print("[group-voice] join roster — bots=\(join.bots.count) "
-                + "peers=\(join.humans.count)")
             try await subscribeToRoster(bots: join.bots, humans: join.humans)
         } catch {
-            print("[group-voice] start FAILED: \(error)")
             await delegate?.transport(
                 self, didFailWith: .startupError(error.localizedDescription))
         }
-    }
-
-    /// One-line digest of an SDP for the device-console debug pass —
-    /// audio m-line direction + ICE candidate count are what matter for
-    /// "is this peer actually going to send/receive media".
-    private static func sdpSummary(_ sdp: String) -> String {
-        let lines = sdp.split(separator: "\n")
-        let audio = lines.contains { $0.hasPrefix("m=audio") }
-        let dir = ["sendrecv", "sendonly", "recvonly", "inactive"]
-            .first { d in lines.contains { $0.contains("a=\(d)") } } ?? "?"
-        let candidates = lines.filter { $0.contains("a=candidate") }.count
-        return "audio=\(audio) dir=\(dir) candidates=\(candidates) bytes=\(sdp.count)"
     }
 
     /// Re-fetch the roster and subscribe to anything new — bots added
@@ -167,40 +142,7 @@ final class GroupCallTransport: NSObject {
         }
     }
 
-    /// Poll RTP stats every few seconds — `packetsSent` on the audio
-    /// outbound-rtp tells us definitively whether the mic is reaching the
-    /// SFU; `packetsReceived` whether bot audio is coming back.
-    private func startStatsLogging() {
-        statsTimer?.invalidate()
-        statsTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) {
-            [weak self] _ in
-            guard let self else { return }
-            self.peerConnection.statistics { report in
-                var out = "n/a"
-                var inb = "n/a"
-                func val(_ s: RTCStatistics, _ key: String) -> String {
-                    s.values[key].map { String(describing: $0) } ?? "?"
-                }
-                for (_, s) in report.statistics {
-                    let kind = String(describing: s.values["kind"]
-                        ?? s.values["mediaType"] ?? "" as NSString)
-                    guard kind == "audio" else { continue }
-                    if s.type == "outbound-rtp" {
-                        out = "pkts=\(val(s, "packetsSent")) "
-                            + "bytes=\(val(s, "bytesSent"))"
-                    } else if s.type == "inbound-rtp" {
-                        inb = "pkts=\(val(s, "packetsReceived")) "
-                            + "bytes=\(val(s, "bytesReceived"))"
-                    }
-                }
-                print("[group-voice] rtp send[\(out)] recv[\(inb)]")
-            }
-        }
-    }
-
     func hangUp() {
-        statsTimer?.invalidate()
-        statsTimer = nil
         rosterTimer?.invalidate()
         rosterTimer = nil
         peerConnection.close()
@@ -247,11 +189,7 @@ final class GroupCallTransport: NSObject {
 
         // The SFU hands back an offer for the freshly-added recv tracks;
         // answer it on the same peer connection (BUNDLE — no new ICE).
-        guard sub.requires_renegotiation, let offerSDP = sub.offer else {
-            print("[group-voice] subscribed \(refs.count) track(s) — no renegotiation")
-            return
-        }
-        print("[group-voice] subscribe — renegotiating \(refs.count) track(s)")
+        guard sub.requires_renegotiation, let offerSDP = sub.offer else { return }
         let offer = RTCSessionDescription(type: .offer, sdp: offerSDP)
         try await peerConnection.setRemoteDescription(offer)
         let answer = try await createAnswer()
@@ -261,7 +199,6 @@ final class GroupCallTransport: NSObject {
             sessionId: sessionId,
             sdp: answer.sdp,
         )
-        print("[group-voice] renegotiation answered")
     }
 
     // MARK: - Setup
@@ -349,14 +286,11 @@ extension GroupCallTransport: RTCPeerConnectionDelegate {
         _ peerConnection: RTCPeerConnection,
         didChange newState: RTCIceConnectionState,
     ) {
-        print("[group-voice] ICE connection state = \(newState.rawValue) "
-            + "(2=connected 3=completed 4=failed 5=disconnected 6=closed)")
         switch newState {
         case .connected, .completed:
             Task { @MainActor [weak self] in
                 guard let self, !self.didSignalConnected else { return }
                 self.didSignalConnected = true
-                self.startStatsLogging()
                 self.startRosterPolling()
                 self.delegate?.transportDidConnect(self)
             }
@@ -388,8 +322,6 @@ extension GroupCallTransport: RTCPeerConnectionDelegate {
         _ peerConnection: RTCPeerConnection,
         didChange newState: RTCIceGatheringState,
     ) {
-        print("[group-voice] ICE gathering state = \(newState.rawValue) "
-            + "(0=new 1=gathering 2=complete)")
         if newState == .complete {
             Task { @MainActor [weak self] in
                 self?.resolveIceGathering()
