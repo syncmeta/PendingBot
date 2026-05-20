@@ -40,22 +40,19 @@ import {
 } from './envelope-loop';
 
 // Worker-side orchestration shell around the pure agent loop in
-// envelope-loop.ts. Owns the scroll_runs row lifecycle, history/memory
+// envelope-loop.ts. Owns the envelope_runs row lifecycle, history/memory
 // loading, audit logging — i.e. everything the offline replay harness
-// in apps/scroll-lab does NOT want to do.
+// in apps/envelope-lab does NOT want to do.
 //
 // Surfaced to users as 来信/Envelopes — config (explorer model,
 // collaborator model, turn cap) lives on the trigger body and is frozen
-// onto the row at INSERT time. Per-turn trace lands in scroll_runs.turns
+// onto the row at INSERT time. Per-turn trace lands in envelope_runs.turns
 // as the loop progresses so the iOS detail page can render the thinking
 // process.
 //
-// Naming note: the DB table is still `scroll_runs`, the prompt IDs are
-// still `scroll`/`scroll-injected`/`scroll-write`/`scroll-collaborator`,
-// and the taskType in audit_log is still `scroll`. Renaming those
-// would need a coordinated DB migration plus iOS update; the wire
-// shapes / DB schema kept the old name on purpose. Code-side
-// identifiers all moved to envelope.
+// Naming note: audit_log.task_type carries `'scroll'` for historical
+// rows from before the rename; new runs write `'envelope'`. iOS
+// WalletView maps both to the same display label.
 
 export {
   buildEnvelopeInitialUserContent,
@@ -78,7 +75,7 @@ export {
 } from './envelope-loop';
 
 // Defaults baked at trigger time so a config schema change doesn't
-// retroactively rewrite already-recorded runs. Mirrors what scroll-lab
+// retroactively rewrite already-recorded runs. Mirrors what envelope-lab
 // settled on as the production defaults the user asked for.
 export const DEFAULT_EXPLORER_MODEL = '~google/gemini-flash-latest';
 export const DEFAULT_COLLABORATOR_MODEL = '~google/gemini-flash-latest';
@@ -153,7 +150,7 @@ export interface RunEnvelopeInput {
 }
 
 // Compact wire shape the iOS detail page reads — same intent as the
-// scroll-lab dev panel, minus per-call usage. Truncated tool replies
+// envelope-lab dev panel, minus per-call usage. Truncated tool replies
 // keep the row small; iOS only needs enough to render the trace.
 interface TurnTraceEntry {
   i: number;
@@ -220,7 +217,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
   const turnId = uuidv7();
 
   await supa
-    .from('scroll_runs')
+    .from('envelope_runs')
     .update({
       started_at: new Date().toISOString(),
       status: 'running',
@@ -231,7 +228,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
   let route: ResolvedRoute | null = null;
   let result: EnvelopeLoopResult | null = null;
   const turnTrace: TurnTraceEntry[] = [];
-  // Web-tool meter for this scroll run. Covers every search_web /
+  // Web-tool meter for this envelope run. Covers every search_web /
   // fetch_url call the explorer fires; snapshot is handed to recordAudit
   // at the end so tool spend lands in audit_web_tool_calls and folds
   // into the billed credits.
@@ -284,8 +281,8 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
     // memory block — is reserved up-front so a giant memory section
     // can't push the prompt over the model's hard limit.
     const framingTokens =
-      estimateTokens(getPrompt('scroll')) +
-      estimateTokens(getPrompt('scroll-injected')) +
+      estimateTokens(getPrompt('envelope')) +
+      estimateTokens(getPrompt('envelope-injected')) +
       estimateTokens(botMemory?.representation ?? '') +
       512; // slack for transcript headers / separators / silent-token
     let used = framingTokens;
@@ -314,14 +311,14 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
     }>;
     if (history.filter((m) => m.content && m.content.trim()).length < 2) {
       // Not enough material to write an envelope. Per "空奏折不落库": delete.
-      await supa.from('scroll_runs').delete().eq('id', envelopeRunId);
+      await supa.from('envelope_runs').delete().eq('id', envelopeRunId);
       return;
     }
 
     const initialUser = buildEnvelopeInitialUserContent({
       history,
       memoryRepresentation: botMemory?.representation,
-      injectedPrompt: getPrompt('scroll-injected'),
+      injectedPrompt: getPrompt('envelope-injected'),
     });
 
     const initialProgress: ProgressState = {
@@ -331,7 +328,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
       plan_rounds: 0,
     };
     await supa
-      .from('scroll_runs')
+      .from('envelope_runs')
       .update({ progress: initialProgress as unknown as Json, updated_at: new Date().toISOString() })
       .eq('id', envelopeRunId);
 
@@ -341,7 +338,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
     // alias was retired or has no enabled provider.
     route = await resolveRoute(supa, env, {
       modelSlug: settings.explorerModel,
-      taskType: 'scroll',
+      taskType: 'envelope',
       metadata: { turnId },
     });
 
@@ -350,7 +347,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
       try {
         collaboratorRoute = await resolveRoute(supa, env, {
           modelSlug: settings.collaboratorModel,
-          taskType: 'scroll',
+          taskType: 'envelope',
           metadata: { turnId },
         });
       } catch (err) {
@@ -362,7 +359,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
     }
     const mainRoute = route;
 
-    const collaboratorPrompt = getPrompt('scroll-collaborator');
+    const collaboratorPrompt = getPrompt('envelope-collaborator');
     const transcript = history
       .filter((m) => m.content && m.content.trim())
       .map((m) => `${m.role === 'bot' ? '主探索者' : '朋友'}：${m.content}`)
@@ -385,7 +382,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
     result = await runEnvelopeLoop({
       openai: mainRoute.client,
       modelId: mainRoute.modelToCall,
-      systemPrompt: getPrompt('scroll'),
+      systemPrompt: getPrompt('envelope'),
       initialUserContent: initialUser,
       tools: envelopeTools,
       webSearch: async (query) => {
@@ -444,7 +441,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
       onTurn: async ({ turn, progress, newMessages }) => {
         turnTrace.push(summarizeTurn(turn, newMessages));
         await supa
-          .from('scroll_runs')
+          .from('envelope_runs')
           .update({
             progress: progress as unknown as Json,
             turns: turnTrace as unknown as Json,
@@ -458,7 +455,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
       // so we can fire ~3 of these per turn without much overhead.
       onActivity: async (snapshot) => {
         await supa
-          .from('scroll_runs')
+          .from('envelope_runs')
           .update({
             progress: snapshot as unknown as Json,
             updated_at: new Date().toISOString(),
@@ -470,7 +467,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
 
     if (result.reason === 'cancelled') {
       await supa
-        .from('scroll_runs')
+        .from('envelope_runs')
         .update({ status: 'cancelled', finished_at: new Date().toISOString() })
         .eq('id', envelopeRunId);
       await auditRun(env, route, {
@@ -531,7 +528,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
       const request = {
         model: mainRoute.modelToCall,
         messages: [
-          { role: 'system', content: getPrompt('scroll-write') },
+          { role: 'system', content: getPrompt('envelope-write') },
           { role: 'user', content: writeUser },
         ],
       } as ChatCompletionCreateParamsNonStreaming;
@@ -560,7 +557,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
     const stripped = writeArticle.trim();
     const isEmpty = !stripped || stripped === SILENT_TOKEN || stripped.length < 20;
     if (isEmpty) {
-      await supa.from('scroll_runs').delete().eq('id', envelopeRunId);
+      await supa.from('envelope_runs').delete().eq('id', envelopeRunId);
       await auditRun(env, route, {
         auditId: turnId,
         userId,
@@ -584,7 +581,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
     const cleanedBody = stripLeadingTitleAndSubtitle(stripped);
 
     await supa
-      .from('scroll_runs')
+      .from('envelope_runs')
       .update({
         status: 'done',
         body_md: cleanedBody,
@@ -620,7 +617,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
       phase: 'error',
     };
     await supa
-      .from('scroll_runs')
+      .from('envelope_runs')
       .update({
         status: 'error',
         finished_at: new Date().toISOString(),
@@ -656,7 +653,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
 }
 
 // Render the explorer's most recent turn as a short transcript the
-// collaborator model can chew on. Mirrors apps/scroll-lab's helper —
+// collaborator model can chew on. Mirrors apps/envelope-lab's helper —
 // keep them in sync if the format ever changes there.
 function formatTurnForCollaborator(newMessages: ChatCompletionMessageParam[]): string {
   const lines: string[] = [];
@@ -697,7 +694,7 @@ async function isRunCancelled(
   envelopeRunId: string,
 ): Promise<boolean> {
   const { data } = await supa
-    .from('scroll_runs')
+    .from('envelope_runs')
     .select('status')
     .eq('id', envelopeRunId)
     .maybeSingle();
@@ -730,7 +727,7 @@ async function auditRun(
     auditId: i.auditId,
     userId: i.userId,
     conversationId: i.conversationId,
-    taskType: 'scroll',
+    taskType: 'envelope',
     startedAt: i.startedAt,
     generationId: i.generationId,
     status: i.status ?? 'success',
@@ -741,6 +738,6 @@ async function auditRun(
     cacheWriteTokens: 0,
     providerCostUsd: i.usage.providerCostUsd,
     webTools: i.webTools,
-    metadata: { scroll_run_id: i.envelopeRunId, bot_id: i.botId, action: i.action },
+    metadata: { envelope_run_id: i.envelopeRunId, bot_id: i.botId, action: i.action },
   });
 }

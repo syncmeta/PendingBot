@@ -1,4 +1,4 @@
-// scroll-lab server — local dev panel for the 奏折 (scroll) loop.
+// envelope-lab server — local dev panel for the 来信 (envelope) loop.
 // Not deployed. Hono on Node. Reads keys from the same .dev.vars
 // stash the CLI harness uses; runs runEnvelopeLoop with injected
 // search/scrape provider; streams turns to the client over SSE.
@@ -34,7 +34,7 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LAB_ROOT = path.resolve(__dirname, '..');
 const REPO_ROOT = path.resolve(LAB_ROOT, '../..');
-const EDGE_PROMPTS = path.join(REPO_ROOT, 'apps/edge/prompts');
+const EDGE_PROMPTS = path.join(REPO_ROOT, 'apps/edge/prompts/zh');
 const FIXTURE_DIRS = [
   path.join(LAB_ROOT, 'fixtures'),
   path.join(REPO_ROOT, 'apps/edge/scripts/fixtures'),
@@ -42,7 +42,7 @@ const FIXTURE_DIRS = [
 const RUNS_DIR = path.join(LAB_ROOT, 'runs');
 fs.mkdirSync(RUNS_DIR, { recursive: true });
 
-// ── .dev.vars loader (mirrors apps/edge/scripts/scroll-replay.ts) ────
+// ── .dev.vars loader (mirrors apps/edge/scripts/envelope-replay.ts) ────
 function parseDotenv(text: string, into: Record<string, string>): void {
   for (const line of text.split('\n')) {
     const t = line.trim();
@@ -95,10 +95,10 @@ const proxyUrl =
   process.env.all_proxy;
 if (proxyUrl) {
   setGlobalDispatcher(new ProxyAgent({ uri: proxyUrl, ...KEEP_ALIVE }));
-  console.log(`[scroll-lab/api] proxy: ${proxyUrl}`);
+  console.log(`[envelope-lab/api] proxy: ${proxyUrl}`);
 } else {
   setGlobalDispatcher(new Agent(KEEP_ALIVE));
-  console.log('[scroll-lab/api] no proxy (set PROXY_URL or HTTPS_PROXY)');
+  console.log('[envelope-lab/api] no proxy (set PROXY_URL or HTTPS_PROXY)');
 }
 
 // ── Models — mirrors surf-test/config.ts list. OpenRouter for the
@@ -174,10 +174,10 @@ app.get('/api/config', (c) => {
 
 // ── Prompts ──────────────────────────────────────────────────────────
 app.get('/api/prompts', (c) => {
-  const system = fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll.md'), 'utf8');
-  const injected = fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll-injected.md'), 'utf8');
-  const write = fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll-write.md'), 'utf8');
-  const collaborator = fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll-collaborator.md'), 'utf8');
+  const system = fs.readFileSync(path.join(EDGE_PROMPTS, 'envelope.md'), 'utf8');
+  const injected = fs.readFileSync(path.join(EDGE_PROMPTS, 'envelope-injected.md'), 'utf8');
+  const write = fs.readFileSync(path.join(EDGE_PROMPTS, 'envelope-write.md'), 'utf8');
+  const collaborator = fs.readFileSync(path.join(EDGE_PROMPTS, 'envelope-collaborator.md'), 'utf8');
   return c.json({ system, injected, write, collaborator });
 });
 
@@ -195,16 +195,16 @@ app.put('/api/prompts', async (c) => {
     return c.json({ error: 'invalid json' }, 400);
   }
   if (typeof body.system === 'string') {
-    fs.writeFileSync(path.join(EDGE_PROMPTS, 'scroll.md'), body.system);
+    fs.writeFileSync(path.join(EDGE_PROMPTS, 'envelope.md'), body.system);
   }
   if (typeof body.injected === 'string') {
-    fs.writeFileSync(path.join(EDGE_PROMPTS, 'scroll-injected.md'), body.injected);
+    fs.writeFileSync(path.join(EDGE_PROMPTS, 'envelope-injected.md'), body.injected);
   }
   if (typeof body.write === 'string') {
-    fs.writeFileSync(path.join(EDGE_PROMPTS, 'scroll-write.md'), body.write);
+    fs.writeFileSync(path.join(EDGE_PROMPTS, 'envelope-write.md'), body.write);
   }
   if (typeof body.collaborator === 'string') {
-    fs.writeFileSync(path.join(EDGE_PROMPTS, 'scroll-collaborator.md'), body.collaborator);
+    fs.writeFileSync(path.join(EDGE_PROMPTS, 'envelope-collaborator.md'), body.collaborator);
   }
   return c.json({ ok: true });
 });
@@ -259,7 +259,7 @@ app.get('/api/fixtures/:id', (c) => {
 
 // ── Runs (persisted after each /api/run completes) ───────────────────
 // Each file: <ts>__<short>.json  containing { input, turns, result, ts }.
-// Lives in apps/scroll-lab/runs/ — gitignored via repo-level *.json? no,
+// Lives in apps/envelope-lab/runs/ — gitignored via repo-level *.json? no,
 // .gitignore covers *.log only, so runs/ is committed-eligible. Add a
 // .gitignore inside runs/ (next commit) so contents don't pollute git.
 app.get('/api/runs', (c) => {
@@ -312,8 +312,8 @@ app.get('/api/runs/:id', (c) => {
 type HistoryMsg = { role: 'user' | 'bot' | 'human'; content: string };
 interface RunBody {
   model: string;
-  systemPrompt: string;        // editable; fall back to current scroll.md if empty
-  injectedPrompt: string;      // editable; fall back to current scroll-injected.md if empty
+  systemPrompt: string;        // editable; fall back to current envelope.md if empty
+  injectedPrompt: string;      // editable; fall back to current envelope-injected.md if empty
   history: HistoryMsg[];
   memory?: string;
   searchProvider: SearchProvider;
@@ -326,7 +326,7 @@ interface RunBody {
   // propose_plan still gets the static "用户：继续..." reply.
   collaboratorModel?: string;
   // System prompt for the collaborator. Empty / absent → server reads
-  // scroll-collaborator.md from disk.
+  // envelope-collaborator.md from disk.
   collaboratorPrompt?: string;
   // When true, the panel injects a `（系统提示：还剩 N 轮可用）`
   // user message at the start of each turn so the model can reason
@@ -345,7 +345,7 @@ interface RunBody {
   initialResearchUnlocked?: boolean;
   // Writer phase: always runs after the loop exits with
   // reason='stopped'. writeModel falls back to body.model when empty;
-  // writePhasePrompt falls back to scroll-write.md from disk.
+  // writePhasePrompt falls back to envelope-write.md from disk.
   writeModel?: string;
   writePhasePrompt?: string;
 }
@@ -355,7 +355,7 @@ interface RunBody {
 // + memory + a summary of what the main agent JUST did (assistant
 // content + tool calls + truncated tool results). Returns a string
 // that the loop pushes as a `role: 'user'` message before the next
-// iteration. System prompt is editable via prompts/scroll-collaborator.md.
+// iteration. System prompt is editable via prompts/envelope-collaborator.md.
 type CollaboratorInput = {
   turn: number;
   hardCapTurns: number;
@@ -493,7 +493,7 @@ app.post('/api/run', async (c) => {
       fetch: undiciFetch as unknown as typeof globalThis.fetch,
       defaultHeaders: {
         'HTTP-Referer': 'http://localhost:5174',
-        'X-Title': 'PendingBot/scroll-lab',
+        'X-Title': 'PendingBot/envelope-lab',
       },
     });
   }
@@ -513,7 +513,7 @@ app.post('/api/run', async (c) => {
     const collabPrompt =
       body.collaboratorPrompt && body.collaboratorPrompt.trim()
         ? body.collaboratorPrompt
-        : fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll-collaborator.md'), 'utf8');
+        : fs.readFileSync(path.join(EDGE_PROMPTS, 'envelope-collaborator.md'), 'utf8');
     collaborator = makeCollaborator(
       collabClient,
       body.collaboratorModel,
@@ -534,7 +534,7 @@ app.post('/api/run', async (c) => {
 
   const webSearch = body.stubSearch ? async () => [] : makeSearch(body.searchProvider, ENV);
   const fetchUrl = body.stubFetch
-    ? async (url: string) => ({ url, title: '', content: '(stub: scroll-lab 跳过抓取)' })
+    ? async (url: string) => ({ url, title: '', content: '(stub: envelope-lab 跳过抓取)' })
     : makeScrape(body.scrapeProvider, ENV);
 
   // Cancel hook: client closes the SSE stream → the request's
@@ -656,7 +656,7 @@ app.post('/api/run', async (c) => {
       const writePrompt =
         body.writePhasePrompt && body.writePhasePrompt.trim()
           ? body.writePhasePrompt
-          : fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll-write.md'), 'utf8');
+          : fs.readFileSync(path.join(EDGE_PROMPTS, 'envelope-write.md'), 'utf8');
       if ('error' in writeClient) {
         await stream.writeSSE({
           event: 'error',
@@ -813,7 +813,7 @@ app.post('/api/run', async (c) => {
           ),
         );
       } catch (err) {
-        console.warn('[scroll-lab/api] failed to persist run:', err);
+        console.warn('[envelope-lab/api] failed to persist run:', err);
       }
     }
     // Run finished — let the runStates entry linger briefly so a
@@ -844,8 +844,8 @@ app.get('/api/openrouter-generation/:id', async (c) => {
 // ── Bind ─────────────────────────────────────────────────────────────
 const PORT = Number(process.env.PORT ?? 5175);
 serve({ fetch: app.fetch, port: PORT });
-console.log(`[scroll-lab/api] listening on http://localhost:${PORT}`);
-console.log(`[scroll-lab/api] keys present:`, {
+console.log(`[envelope-lab/api] listening on http://localhost:${PORT}`);
+console.log(`[envelope-lab/api] keys present:`, {
   openrouter: !!ENV.OPENROUTER_API_KEY,
   brave: !!ENV.BRAVE_API_KEY,
   tavily: !!ENV.TAVILY_API_KEY,

@@ -178,7 +178,7 @@ export interface AuditCallOpts extends AuditUsage {
   errorClass?: string | null;
   routeTrace?: unknown;
   tag?: string | null;
-  // Per-task free-form metadata (bot_id, scroll_run_id, action, …).
+  // Per-task free-form metadata (bot_id, envelope_run_id, action, …).
   // Surfaced in audit_log.metadata jsonb so downstream queries can
   // group by these without bloating the column list.
   metadata?: Record<string, unknown> | null;

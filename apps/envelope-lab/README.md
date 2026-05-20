@@ -1,18 +1,18 @@
-# scroll-lab
+# envelope-lab
 
-本地 web 面板，用来打磨 [奏折 (scroll) 功能](../edge/src/lib/scroll-loop.ts) 的 prompt 和 agent loop。**不部署、不进 app**。
+本地 web 面板，用来打磨 [来信 (envelope) 功能](../edge/src/lib/envelope-loop.ts) 的 prompt 和 agent loop。**不部署、不进 app**。
 
 ## 启动
 
 ```bash
-cd apps/scroll-lab
+cd apps/envelope-lab
 bun install            # 一次
 bun run dev            # 开 vite (5174) + tsx watch api (5175)
 ```
 
 打开 <http://localhost:5174>。
 
-API key 来自 `~/.config/pendingbot/.dev.vars`（与 [scroll-replay CLI](../edge/scripts/scroll-replay.ts) 共用）：
+API key 来自 `~/.config/pendingbot/.dev.vars`（与 [envelope-replay CLI](../edge/scripts/envelope-replay.ts) 共用）：
 - `OPENROUTER_API_KEY`（必需）
 - `BRAVE_API_KEY` / `TAVILY_API_KEY` / `EXA_API_KEY` / `SERPER_API_KEY`（搜索，按需）
 - `FIRECRAWL_API_KEY`（抓取，按需，Tavily/Exa 也支持抓取且 key 跟搜索共用）
@@ -29,13 +29,13 @@ API key 来自 `~/.config/pendingbot/.dev.vars`（与 [scroll-replay CLI](../edg
 
 ## 我改了 prompt / loop，怎么"装回去"
 
-prompt 的"原版"来自 [apps/edge/prompts/scroll.md](../edge/prompts/scroll.md) 和 [scroll-injected.md](../edge/prompts/scroll-injected.md)；面板里改过的版本只在内存中，不写盘。打磨满意后，**手动把改好的内容粘回那两个文件**，commit、merge、deploy 流程同 [CLAUDE.md](../../CLAUDE.md) 的发布约定。
+prompt 的"原版"来自 [apps/edge/prompts/zh/envelope.md](../edge/prompts/zh/envelope.md) 和 [envelope-injected.md](../edge/prompts/zh/envelope-injected.md)；面板里改过的版本只在内存中，不写盘。打磨满意后，**手动把改好的内容粘回那两个文件**，commit、merge、deploy 流程同 [CLAUDE.md](../../CLAUDE.md) 的发布约定。
 
-loop 行为改在 [apps/edge/src/lib/scroll-loop.ts](../edge/src/lib/scroll-loop.ts) ——**面板 server 直接 import 那个文件**，所以你 hot-reload tsx 看到的就是生产 loop 的真实行为。
+loop 行为改在 [apps/edge/src/lib/envelope-loop.ts](../edge/src/lib/envelope-loop.ts) ——**面板 server 直接 import 那个文件**，所以你 hot-reload tsx 看到的就是生产 loop 的真实行为。
 
 ## fixtures
 
-放在 [apps/scroll-lab/fixtures/](./fixtures/) 或 [apps/edge/scripts/fixtures/](../edge/scripts/fixtures/) — 两个目录都会被加载。
+放在 [apps/envelope-lab/fixtures/](./fixtures/) 或 [apps/edge/scripts/fixtures/](../edge/scripts/fixtures/) — 两个目录都会被加载。
 
 格式：
 

@@ -1,9 +1,9 @@
 {
-  "name": "@pendingbot/scroll-lab",
+  "name": "@pendingbot/envelope-lab",
   "private": true,
   "version": "0.0.1",
   "type": "module",
-  "description": "Local web panel for打磨 the 奏折 (scroll) prompt + agent loop. Not deployed.",
+  "description": "Local web panel for 打磨 the 来信 (envelope) prompt + agent loop. Not deployed.",
   "scripts": {
     "dev": "concurrently -k -n web,api -c cyan,magenta \"vite\" \"tsx watch server/index.ts\"",
     "web": "vite",

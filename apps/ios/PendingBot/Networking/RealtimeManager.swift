@@ -11,8 +11,8 @@ import Supabase
 ///   user-level (resident) — one socket to `/v1/realtime-hub/user`,
 ///       carrying `user_unread_counts` changes for the message list /
 ///       badge UI. One per signed-in user, opened on launch, closed on
-///       sign-out. (The same user topic also carries `scroll_runs`;
-///       ScrollAPI opens its own socket for that — see ScrollAPI.swift.)
+///       sign-out. (The same user topic also carries `envelope_runs`;
+///       EnvelopeAPI opens its own socket for that — see EnvelopeAPI.swift.)
 ///   conv-level (lazy)     — one socket per conversation to
 ///       `/v1/realtime-hub/conv/<id>`, carrying `messages`,
 ///       `bot_lookbacks`, `group_continue_requests` and
@@ -35,7 +35,7 @@ final class RealtimeManager {
                           onUnreadEvent: @escaping @Sendable (UnreadEvent) -> Void) async {
         if userSocket != nil { return }
         let socket = RealtimeSocket(path: "v1/realtime-hub/user") { change in
-            // The user topic also carries scroll_runs; only unread
+            // The user topic also carries envelope_runs; only unread
             // changes belong to this consumer.
             guard change.table == "user_unread_counts" else { return }
             onUnreadEvent(UnreadEvent(record: change.record))

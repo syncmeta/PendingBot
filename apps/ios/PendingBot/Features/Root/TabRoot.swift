@@ -74,9 +74,9 @@ struct TabRoot: View {
                 .tabItem { Label(TopTab.friends.label, systemImage: TopTab.friends.systemImage) }
                 .tag(TopTab.friends)
 
-            ScrollTabView()
-                .tabItem { Label(TopTab.scroll.label, systemImage: TopTab.scroll.systemImage) }
-                .tag(TopTab.scroll)
+            EnvelopeTabView()
+                .tabItem { Label(TopTab.envelope.label, systemImage: TopTab.envelope.systemImage) }
+                .tag(TopTab.envelope)
 
             MeTabView()
                 .tabItem { Label(TopTab.me.label, systemImage: TopTab.me.systemImage) }
@@ -91,7 +91,7 @@ struct TabRoot: View {
         switch selected.wrappedValue {
         case .message: MessageTabView()
         case .friends: FriendsTabView()
-        case .scroll:  ScrollTabView()
+        case .envelope: EnvelopeTabView()
         case .me:      MeTabView()
         }
     }

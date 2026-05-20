@@ -6,7 +6,7 @@ import SwiftUI
 /// collaborator's reply (if one is configured).
 ///
 /// Live runs auto-expand the latest turn so the user can watch progress
-/// as the runner appends to scroll_runs.turns over Realtime. Done runs
+/// as the runner appends to envelope_runs.turns over Realtime. Done runs
 /// start collapsed under a section header so the article remains the
 /// primary content.
 struct EnvelopeThinkingTrace: View {

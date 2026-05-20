@@ -875,7 +875,7 @@ struct ConversationView: View {
         triggeringLetter = true
         defer { triggeringLetter = false }
         do {
-            _ = try await api.scrollTrigger(conversationId: conversation.id, settings: nil)
+            _ = try await api.envelopeTrigger(conversationId: conversation.id, settings: nil)
             withAnimation { letterTriggered = true }
             Haptics.success()
         } catch is CancellationError {

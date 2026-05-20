@@ -43,8 +43,8 @@ struct ToolTraceEvent: Identifiable, Hashable, Decodable {
         self.done = (try? c.decode(Bool.self, forKey: .done)) ?? false
     }
 
-    /// Per-tool human label. Mirrors the Scroll runner phrasing so the two
-    /// surfaces (chat trace + scroll progress) read consistently.
+    /// Per-tool human label. Mirrors the Envelope runner phrasing so the two
+    /// surfaces (chat trace + envelope progress) read consistently.
     var headline: String {
         switch name {
         case "search_web":        return "搜索"

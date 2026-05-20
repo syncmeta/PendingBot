@@ -227,7 +227,8 @@ struct WalletView: View {
         case "group_router":  return "群聊路由"
         case "title":         return "起标题"
         case "voice_call":    return "语音通话"
-        case "scroll":        return "Scroll"
+        case "envelope",
+             "scroll":        return "来信"
         case "chat_memo":     return "聊天备忘"
         case "bot_note":      return "机器人笔记"
         default:              return key

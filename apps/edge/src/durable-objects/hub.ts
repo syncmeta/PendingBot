@@ -7,7 +7,7 @@ import type { Env } from '../types';
 // single DO class / binding serves both layers:
 //   conv:<conversation_id>  — message / lookback / continue-request /
 //                             participant changes for one conversation
-//   user:<user_id>          — unread-count / scroll-run changes for one
+//   user:<user_id>          — unread-count / envelope-run changes for one
 //                             user (their resident connection)
 //
 // The DO holds every client's *hibernatable* WebSocket — the runtime can

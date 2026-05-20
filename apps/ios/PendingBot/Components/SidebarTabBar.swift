@@ -7,24 +7,24 @@ import SwiftUI
 enum TopTab: String, Hashable, CaseIterable {
     case message
     case friends
-    case scroll
+    case envelope
     case me
 
     var label: String {
         switch self {
-        case .message: return "消息"
-        case .friends: return "好友"
-        case .scroll:  return "来信"
-        case .me:      return "我"
+        case .message:  return "消息"
+        case .friends:  return "好友"
+        case .envelope: return "来信"
+        case .me:       return "我"
         }
     }
 
     var systemImage: String {
         switch self {
-        case .message: return "bubble.left"
-        case .friends: return "person.2"
-        case .scroll:  return "envelope.open"
-        case .me:      return "person.crop.circle"
+        case .message:  return "bubble.left"
+        case .friends:  return "person.2"
+        case .envelope: return "envelope.open"
+        case .me:       return "person.crop.circle"
         }
     }
 }

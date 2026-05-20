@@ -181,9 +181,9 @@ route before the triggers exist.
      `messages.content_partial` column. (The iOS client no longer uses
      Supabase Realtime, so this is a clean teardown, not a staged one.)
 4. **iOS** already cuts over on the next build — `RealtimeManager` /
-   `ScrollFeedChannel` connect to the hub, no flag.
+   `EnvelopeFeedChannel` connect to the hub, no flag.
 
-Verify on-device: messages, unread badges, scroll-feed and group
+Verify on-device: messages, unread badges, envelope-feed and group
 continue-requests all update live; check `net._http_response` in
 Postgres for failed webhook POSTs.
 

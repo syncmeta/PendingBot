@@ -8,7 +8,7 @@ import SwiftUI
 //
 // What this file still holds:
 //   • LetterRecipient — recipient identity for the markdown letter sheet.
-//     Used by LetterComposeSheet (Scroll module).
+//     Used by LetterComposeSheet (Envelope module).
 //   • LetterSettingsView — knobs for the bot's letter (envelope) loop.
 //     Used by BotConfigView.
 //   • ContactSettingsView — human 1:1 settings (备注 / 免打扰 / 删除好友).

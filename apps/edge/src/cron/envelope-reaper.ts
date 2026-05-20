@@ -1,7 +1,7 @@
 import type { Env } from '../types';
 import { serviceClient } from '../lib/supabase';
 
-// Reap stuck envelope runs (scroll_runs table).
+// Reap stuck envelope runs (envelope_runs table).
 //
 // Background: an envelope's wall budget is 4 minutes (MAX_WALL_MS in
 // envelope-loop.ts) plus a writer phase + audit. If the Worker is
@@ -25,7 +25,7 @@ export async function reapStuckEnvelopes(env: Env): Promise<void> {
   const cutoff = new Date(Date.now() - STUCK_AGE_MS).toISOString();
 
   const { data, error } = await supa
-    .from('scroll_runs')
+    .from('envelope_runs')
     .update({
       status: 'error',
       finished_at: new Date().toISOString(),

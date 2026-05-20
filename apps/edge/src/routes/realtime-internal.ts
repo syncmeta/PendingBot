@@ -27,7 +27,7 @@ const CONV_TABLES = new Set<RealtimeTable>([
   'group_continue_requests',
   'conversation_participants',
 ]);
-const USER_TABLES = new Set<RealtimeTable>(['user_unread_counts', 'scroll_runs']);
+const USER_TABLES = new Set<RealtimeTable>(['user_unread_counts', 'envelope_runs']);
 
 interface WebhookPayload {
   type: 'INSERT' | 'UPDATE' | 'DELETE';
