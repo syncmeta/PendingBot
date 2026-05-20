@@ -42,6 +42,16 @@ final class GroupCallSession {
     /// any later re-sync. Drives the participant list.
     var roster: [GroupBotRosterEntry] = []
 
+    /// Other humans currently in the call (peers). The caller themselves
+    /// is reflected separately through `phase == .connected` — they don't
+    /// appear in this list.
+    var humanRoster: [GroupHumanRosterEntry] = []
+
+    /// Participants invited into the call but who haven't joined yet —
+    /// humans whose phones are ringing, or bots in the middle of coming
+    /// up. Rendered below the joined list in the call UI.
+    var pendingInvites: [GroupPendingEntry] = []
+
     /// True when the caller may kick / end / designate — they opened the
     /// call, or they are a group owner/admin.
     var isPrivileged: Bool = false
@@ -98,12 +108,68 @@ final class GroupCallSession {
         }
     }
 
+    /// Other humans in the call (excluding the caller themselves).
+    var humanParticipants: [GroupBubbleSender] {
+        humanRoster.compactMap { entry in
+            entry.humanId == currentUserId
+                ? nil
+                : (members["user:\(entry.humanId)"]
+                    ?? GroupBubbleSender(
+                        kind: .user,
+                        id: entry.humanId,
+                        displayName: String(entry.humanId.prefix(6)),
+                        avatarPath: nil,
+                        avatarSeed: entry.humanId,
+                    ))
+        }
+    }
+
+    /// Pending invites resolved to display identities + their kind, for
+    /// the "ringing" section under the joined list.
+    var pendingParticipants: [(sender: GroupBubbleSender, kind: GroupBubbleSender.Kind)] {
+        pendingInvites.compactMap { p in
+            let kind: GroupBubbleSender.Kind = p.kind == "bot" ? .bot : .user
+            let lookupKey = (kind == .bot ? "bot:" : "user:") + p.id
+            let sender = members[lookupKey]
+                ?? GroupBubbleSender(
+                    kind: kind,
+                    id: p.id,
+                    displayName: String(p.id.prefix(6)),
+                    avatarPath: nil,
+                    avatarSeed: p.id,
+                )
+            return (sender, kind)
+        }
+    }
+
     /// Group bots not currently in the call — candidates for add-bot.
     var addableBots: [GroupBubbleSender] {
         let inCall = Set(roster.map(\.botId))
+        let pendingIds = Set(pendingInvites.filter { $0.kind == "bot" }.map(\.id))
         return members.values
-            .filter { $0.kind == .bot && !inCall.contains($0.id) }
+            .filter { $0.kind == .bot && !inCall.contains($0.id) && !pendingIds.contains($0.id) }
             .sorted { $0.displayName < $1.displayName }
+    }
+
+    /// Group humans (excluding the caller) not currently in the call and
+    /// not already being rung — candidates for the "叫真人来" sheet.
+    var ringableHumans: [GroupBubbleSender] {
+        let inCall = Set(humanRoster.map(\.humanId))
+        let pendingIds = Set(pendingInvites.filter { $0.kind == "human" }.map(\.id))
+        return members.values
+            .filter {
+                $0.kind == .user
+                && $0.id != currentUserId
+                && !inCall.contains($0.id)
+                && !pendingIds.contains($0.id)
+            }
+            .sorted { $0.displayName < $1.displayName }
+    }
+
+    /// True when the caller is the only one in the call — UI shows
+    /// "等其他人进" rather than the regular "通话中" status.
+    var isAlone: Bool {
+        humanParticipants.isEmpty && botParticipants.isEmpty
     }
 
     // MARK: - Lifecycle
@@ -114,8 +180,10 @@ final class GroupCallSession {
 
         await loadGroupRole()
 
-        // Bring the room's bots online (idempotent — a no-op if the call
-        // is already running). `initiated` tells us if we opened it.
+        // Open the empty room (idempotent — a no-op if the call is
+        // already running). Bots and other humans are NOT auto-pulled;
+        // the caller invites them from the call UI. `initiated` tells us
+        // if we're the one who opened it (and is thus privileged).
         do {
             let started = try await api.groupVoiceStart(conversationId: conversationId)
             didInitiate = started.initiated ?? false
@@ -232,7 +300,9 @@ final class GroupCallSession {
         }
     }
 
-    /// Add another group bot to the live call.
+    /// Add another group bot to the live call. Any participant may call
+    /// this — bots no longer auto-join on /voice/start, so a human has
+    /// to tap "叫机器人来" inside the call UI first.
     func addBot(id: String) async {
         do {
             try await api.groupVoiceAddBot(conversationId: conversationId, botId: id)
@@ -244,6 +314,42 @@ final class GroupCallSession {
         // appears in the roster — give it a beat, then re-sync.
         try? await Task.sleep(nanoseconds: 2_000_000_000)
         await transport?.resyncRoster()
+    }
+
+    /// Ring a group human into the call. Sends an APNs push so their
+    /// phone actually rings, and stages them in the pending set so the
+    /// UI shows them as "正在拉".
+    func ringHuman(id: String) async {
+        do {
+            try await api.groupVoiceRing(conversationId: conversationId, userId: id)
+            // Optimistic — show them in pending immediately. The next
+            // realtime/poll snapshot will replace this with the truth.
+            if !pendingInvites.contains(where: { $0.id == id }) {
+                pendingInvites.append(
+                    GroupPendingEntry(
+                        id: id,
+                        kind: "human",
+                        invitedAt: Date().timeIntervalSince1970 * 1000,
+                        invitedBy: currentUserId,
+                    ),
+                )
+            }
+        } catch {
+            actionError = "邀请失败，请重试"
+        }
+    }
+
+    /// Drop a pending invite (cancel the ring).
+    func cancelInvite(id: String) async {
+        do {
+            try await api.groupVoiceCancelInvite(
+                conversationId: conversationId,
+                targetId: id,
+            )
+            pendingInvites.removeAll { $0.id == id }
+        } catch {
+            actionError = "取消失败"
+        }
     }
 
     // MARK: - Teardown
@@ -308,9 +414,11 @@ extension GroupCallSession: GroupCallTransportDelegate {
         phase = .connected
     }
 
-    func transport(_ t: GroupCallTransport, didUpdateRoster bots: [GroupBotRosterEntry]) {
+    func transport(_ t: GroupCallTransport, didUpdateRoster snapshot: GroupRosterSnapshot) {
         guard t === transport else { return }
-        roster = bots
+        roster = snapshot.bots
+        humanRoster = snapshot.humans
+        pendingInvites = snapshot.pending
     }
 
     func transport(
