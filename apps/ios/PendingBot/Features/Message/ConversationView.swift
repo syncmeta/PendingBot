@@ -825,7 +825,7 @@ struct ConversationView: View {
                 .foregroundStyle(Theme.Palette.ink)
             if showsBotPreChatActions {
                 botPreChatActions
-                    .padding(.top, 10)
+                    .padding(.top, 28)
             }
         }
         .frame(maxWidth: .infinity)
@@ -2041,11 +2041,16 @@ private struct PreChatActionButton: View {
             }
             .foregroundStyle(Theme.Palette.ink)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
+            .aspectRatio(1, contentMode: .fit)
             .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Theme.Palette.surfaceMuted)
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.white)
             )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Theme.Palette.hairline, lineWidth: 1)
+            )
+            .shadow(color: Color.black.opacity(0.06), radius: 2.5, x: 0, y: 1)
         }
         .buttonStyle(.plain)
     }
