@@ -240,10 +240,10 @@ final class GroupCallSession {
             let started = try await api.groupVoiceStart(conversationId: conversationId)
             didInitiate = started.initiated ?? false
         } catch let err as VoiceCallError {
-            phase = .terminated(translate(err))
+            await terminate(reason: translate(err))
             return
         } catch {
-            phase = .terminated(.startupError(error.localizedDescription))
+            await terminate(reason: .startupError(error.localizedDescription))
             return
         }
         if isTerminal(phase) { return }
@@ -331,6 +331,10 @@ final class GroupCallSession {
                 // Best-effort — we're tearing down locally regardless.
             }
             transport?.hangUp()
+            // Reflect the room-gone state in the banner store right
+            // away — endCall finalised the DO, and other clients will
+            // pick it up via the broadcast 'ended' frame on their own.
+            await ActiveVoiceCallStore.shared.refresh()
         }
         phase = .terminated(.ended)
     }
@@ -434,16 +438,36 @@ final class GroupCallSession {
             // Tell the worker we left so the room's human-admin invariant
             // and participant set stay correct. Skipped for `.ended` —
             // endCall already finalized the whole room.
+            //
+            // Retry once after a short backoff because the most common
+            // terminate path is `.network`, where the first POST is
+            // likely to fail for the same reason the call did. Without a
+            // retry, the DO is left holding a stale human and the
+            // in-conv banner stays stuck until the 30-min alarm.
             if reason != .ended {
-                do {
-                    try await self.api.groupVoiceLeave(
-                        conversationId: self.conversationId)
-                } catch {
-                    // Best-effort — the DO also reaps stale humans.
+                await self.bestEffortLeave()
+            }
+            // Refresh the active-calls index so the in-conv banner
+            // reflects server truth — if the DO finalised (we were the
+            // last human admin), the row is gone and the banner clears.
+            await ActiveVoiceCallStore.shared.refresh()
+        }
+        phase = .terminated(reason)
+    }
+
+    /// POST /voice/leave with one retry — the first attempt often races
+    /// the same network failure that triggered teardown.
+    private func bestEffortLeave() async {
+        for attempt in 0..<2 {
+            do {
+                try await api.groupVoiceLeave(conversationId: conversationId)
+                return
+            } catch {
+                if attempt == 0 {
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
                 }
             }
         }
-        phase = .terminated(reason)
     }
 
     /// Open a conv-hub subscription that feeds `cumulativePnd` from the
@@ -529,10 +553,10 @@ extension GroupCallSession: GroupCallTransportDelegate {
     ) async {
         guard t === transport else { return }
         if isTerminal(phase) { return }
-        if phase == .connecting {
-            phase = .terminated(reason)
-            return
-        }
+        // Whether we failed during `connecting` (e.g. /voice/join 502'd
+        // or ICE never completed) or mid-call (.disconnected → .failed),
+        // run the same teardown: best-effort leave + refresh the banner
+        // store so a stuck "通话中" row clears as soon as the DO finalises.
         await terminate(reason: reason)
     }
 }
