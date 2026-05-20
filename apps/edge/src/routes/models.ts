@@ -13,7 +13,8 @@ import type { AppBindings } from '../types';
 // blended_usd_per_million is a 7:2:1 (cache_hit/input/output) reference
 // price derived from OpenRouter's own per-model pricing, so the picker
 // can show "≈$X / 1M" next to each row. OpenAI's catalog exposes no
-// pricing, so its rows carry a null price.
+// pricing of its own, so its rows borrow OpenRouter's pricing via the
+// `openai/<slug>` ↔ `<slug>` mapping.
 
 export const modelCatalogRoutes = new Hono<AppBindings>();
 modelCatalogRoutes.use('*', requireSession());
@@ -46,8 +47,8 @@ interface OpenRouterModelOut {
   /// in ConversationSettingsView filters on this.
   supports_vision: boolean;
   /// USD per 1M tokens, blended 7:2:1 (cache_hit/input/output) from the
-  /// upstream catalog's own pricing. Null when the source exposes no
-  /// pricing (OpenAI's native catalog).
+  /// upstream catalog's own pricing. Null when no OpenRouter mirror
+  /// exposes pricing for this slug.
   blended_usd_per_million: number | null;
   /// Which catalog this row came from. The picker shows one collapsible
   /// section per source: 'openrouter' is the default catalog, 'openai'
@@ -79,21 +80,20 @@ function blendedFromCatalog(p: OpenRouterCatalogModel['pricing']): number | null
   return perToken * 1_000_000;
 }
 
-// Isolate-local cache of OpenAI's native catalog. Purely a cache — it
-// auto-expires and re-fetches from OpenAI's own /models; nothing here is
-// hand-maintained. Keeps the picker snappy without a per-open round-trip.
-let nativeCatalogCache: { at: number; rows: OpenRouterModelOut[] } | null = null;
+// Isolate-local cache of OpenAI's raw /models id list. We only cache the
+// ids — display name / pricing / context / vision are enriched on each
+// request from the OpenRouter catalog, so the rows always reflect the
+// latest OpenRouter metadata without a second AI Gateway hop.
+let nativeIdsCache: { at: number; ids: string[] } | null = null;
 const NATIVE_CATALOG_TTL_MS = 10 * 60_000;
 
-// OpenAI's native catalog, reached through the AI Gateway openai
-// passthrough. No pricing is attached — OpenAI's /models API exposes
-// none, so the picker shows these without a cost figure.
-async function loadOpenAINativeCatalog(
-  c: Context<AppBindings>,
-): Promise<OpenRouterModelOut[]> {
+// Fetch OpenAI's native /models id list through the AI Gateway openai
+// passthrough. Returns the raw list of model ids; enrichment happens in
+// the route handler against the OpenRouter catalog.
+async function loadOpenAINativeIds(c: Context<AppBindings>): Promise<string[]> {
   const now = Date.now();
-  if (nativeCatalogCache && now - nativeCatalogCache.at < NATIVE_CATALOG_TTL_MS) {
-    return nativeCatalogCache.rows;
+  if (nativeIdsCache && now - nativeIdsCache.at < NATIVE_CATALOG_TTL_MS) {
+    return nativeIdsCache.ids;
   }
   const token = c.env.CF_AIG_RUN_TOKEN;
   if (!token) return [];
@@ -120,31 +120,52 @@ async function loadOpenAINativeCatalog(
       return [];
     }
     const json = (await res.json()) as { data?: Array<{ id?: string }> };
-    const rows: OpenRouterModelOut[] = (json.data ?? [])
+    const ids = (json.data ?? [])
       .map((m) => m.id)
-      .filter((id): id is string => typeof id === 'string' && id.startsWith('gpt-'))
-      .map((id) => ({
-        slug: id,
-        display_name: prettifyTail(id),
-        provider: 'openai',
-        context_length: null,
-        supports_vision: false,
-        blended_usd_per_million: null,
-        source: 'openai' as const,
-        model_provider: 'openai',
-      }));
-    nativeCatalogCache = { at: now, rows };
-    return rows;
+      .filter((id): id is string => typeof id === 'string');
+    nativeIdsCache = { at: now, ids };
+    return ids;
   } catch (err) {
     console.warn('[v1/models] openai-native catalog fetch failed', err);
     return [];
   }
 }
 
+// Build the OpenAI-native section by enriching each id with metadata
+// from the OpenRouter catalog (display name, pricing, context, vision).
+// Slugs align one-to-one: OpenAI `gpt-4o` ↔ OpenRouter `openai/gpt-4o`.
+// Ids without an OpenRouter counterpart are dropped — OpenAI's /models
+// is noisy (date-pinned variants, internal previews, embeddings, TTS,
+// etc.) and the picker only cares about chat-capable models the user
+// can actually compare on price.
+function enrichNativeOpenAI(
+  ids: string[],
+  orMap: Map<string, OpenRouterCatalogModel>,
+): OpenRouterModelOut[] {
+  const rows: OpenRouterModelOut[] = [];
+  for (const id of ids) {
+    const m = orMap.get(`openai/${id}`);
+    if (!m) continue;
+    const displayName = stripVendorPrefix(m.name) ?? prettifyTail(id);
+    const inputModalities = m.architecture?.input_modalities ?? [];
+    rows.push({
+      slug: id,
+      display_name: displayName,
+      provider: 'openai',
+      context_length: typeof m.context_length === 'number' ? m.context_length : null,
+      supports_vision: inputModalities.includes('image'),
+      blended_usd_per_million: blendedFromCatalog(m.pricing),
+      source: 'openai' as const,
+      model_provider: 'openai',
+    });
+  }
+  return rows;
+}
+
 modelCatalogRoutes.get('/', async (c) => {
-  const [res, nativeOpenAI] = await Promise.all([
+  const [res, nativeIds] = await Promise.all([
     fetch('https://openrouter.ai/api/v1/models'),
-    loadOpenAINativeCatalog(c),
+    loadOpenAINativeIds(c),
   ]);
   if (!res.ok) {
     const body = (await res.text()).slice(0, 300);
@@ -152,7 +173,9 @@ modelCatalogRoutes.get('/', async (c) => {
     return jsonError(c, 502, 'upstream_error', { detail: { status: res.status } });
   }
   const json = (await res.json()) as { data?: OpenRouterCatalogModel[] };
-  const out: OpenRouterModelOut[] = (json.data ?? []).map((m) => {
+  const catalog = json.data ?? [];
+  const orMap = new Map<string, OpenRouterCatalogModel>(catalog.map((m) => [m.id, m]));
+  const out: OpenRouterModelOut[] = catalog.map((m) => {
     const slash = m.id.indexOf('/');
     const provider = slash > 0 ? m.id.slice(0, slash) : 'unknown';
     const tail = slash > 0 ? m.id.slice(slash + 1) : m.id;
@@ -171,8 +194,11 @@ modelCatalogRoutes.get('/', async (c) => {
       model_provider: null,
     };
   });
-  // Append OpenAI's native catalog as a second source. The picker renders
-  // it as a separate collapsible section ("OpenAI（原生）").
+  // Append OpenAI's native catalog as a second source, enriched against
+  // OpenRouter's catalog so display names and prices match the OpenRouter
+  // rows. The picker renders it as a separate collapsible section
+  // ("OpenAI（原生）").
+  const nativeOpenAI = enrichNativeOpenAI(nativeIds, orMap);
   return c.json([...out, ...nativeOpenAI]);
 });
 
