@@ -450,6 +450,17 @@ extension ConversationView {
                     self.attachmentMetaById.merge(meta) { _, new in new }
                 }
             }
+            // Reconcile the local cache against the server's authoritative
+            // view: drop any cached rows the server no longer returns
+            // (recall tombstones we skipped, voice-call recaps now
+            // hidden by RLS, etc.) before upserting the fresh set.
+            // Without the prune, a stale recap row already in the
+            // local SQLite cache would keep flashing on every conv-open
+            // before the network round-trip overwrites it.
+            LocalDatabase.shared.pruneMessages(
+                conversationId: conversation.id,
+                keepIds: cacheRows.map(\.id)
+            )
             LocalDatabase.shared.upsertMessages(cacheRows)
         } catch {
             // Network down + we have a cache: stay quiet (cached msgs still

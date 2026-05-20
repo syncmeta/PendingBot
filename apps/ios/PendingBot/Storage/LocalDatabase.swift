@@ -310,6 +310,34 @@ final class LocalDatabase {
         }
     }
 
+    /// Drop any cached messages for `conversationId` whose id isn't in
+    /// `keepIds`. Used by loadHistory to reconcile the local cache with
+    /// the authoritative server response — wipes rows the server no
+    /// longer returns (recalled, RLS-hidden voice-call recaps, etc.) so
+    /// they don't keep flashing on the next conv-open before the
+    /// network round-trip overwrites them.
+    func pruneMessages(conversationId: String, keepIds: [String]) {
+        try? dbQueue.write { db in
+            if keepIds.isEmpty {
+                try db.execute(
+                    sql: "DELETE FROM messages WHERE conversation_id = ?",
+                    arguments: [conversationId]
+                )
+                return
+            }
+            // Parameter-binding the IN list keeps it safe and lets SQLite
+            // pick its own plan; the loadHistory cap (~200) keeps the
+            // list well under SQLITE_MAX_VARIABLE_NUMBER.
+            let placeholders = Array(repeating: "?", count: keepIds.count).joined(separator: ",")
+            var args: [DatabaseValueConvertible] = [conversationId]
+            args.append(contentsOf: keepIds)
+            try db.execute(
+                sql: "DELETE FROM messages WHERE conversation_id = ? AND id NOT IN (\(placeholders))",
+                arguments: StatementArguments(args)
+            )
+        }
+    }
+
     // MARK: - Friends (bots + contacts)
 
     struct BotRow: Codable, FetchableRecord, PersistableRecord {
