@@ -150,7 +150,6 @@ struct ConversationView: View {
     // Skill summaries — counted in the settings sheet so the user sees
     // how many are active without leaving the conversation.
     @State var skills: [SkillSummary] = []
-    @State private var showingSkills = false
     @State private var showingSettings = false
     /// Drives the push into BotConfigView from the pre-chat 设置 button.
     @State private var showingBotConfig = false
@@ -628,15 +627,6 @@ struct ConversationView: View {
             revealTask?.cancel()
             revealTask = nil
         }
-        .sheet(isPresented: $showingSkills) {
-            NavigationStack {
-                SkillsView()
-            }
-            .tint(Theme.Palette.accent)
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
-            .onDisappear { Task { await loadSkills() } }
-        }
         .fullScreenCover(
             isPresented: Binding(
                 get: { callSession != nil },
@@ -658,46 +648,23 @@ struct ConversationView: View {
             }
         }
         .navigationDestination(isPresented: $showingSettings) {
-            // Group convs route to GroupSettingsView (members, nickname,
-            // mute, leave). Owner/admin-only knobs (billing, handle,
-            // policy, approval inbox) live as sub-screens of that view.
-            // Other conv types (user_bot / user_user / self) keep the
-            // existing ConversationSettingsView with model + provider
-            // overrides.
+            // 设置入口扁平化:不再有"会话设置"这一层 — gear 按钮直接落到对应
+            // 实体的设置页 (人 / 机器人 / 群)。
+            //   • group  → GroupSettingsView (成员 / 昵称 / 免打扰 / 退出)
+            //   • user_user → ContactSettingsView (备注 / 免打扰 / 删除好友)
+            //   • user_bot / self → BotConfigView (机器人本身的默认配置)
             if conversation.conversation_type == "group" {
                 GroupSettingsView(conversationId: conversation.id)
-            } else {
-                ConversationSettingsView(
-                    modelOverride: $modelOverride,
-                    providerOverride: $providerOverride,
-                    conversationId: conversation.id,
-                    bot: bot,
-                    currentUserId: AccountStore.shared.current?.id,
-                    recipient: peerProfileForBubble.map {
-                        LetterRecipient(userId: $0.userId, displayName: $0.displayName)
-                    },
-                    enabledSkillCount: skills.filter { $0.enabled }.count,
-                    totalSkillCount: skills.count,
-                    onOpenSkills: { showingSkills = true },
-                    onApplyModel: { slug, scope in
-                        Task { await applyModelPick(slug: slug, scope: scope) }
-                    },
-                    onApplyProvider: { slug in
-                        // Local-only update; the value rides with the next chat
-                        // POST. We deliberately don't fire a separate PATCH —
-                        // /v1/messages persists provider_override server-side
-                        // when the body field differs from the row.
-                        providerOverride = slug
-                        providerOverrideTouched = true
-                        Haptics.tap()
-                    },
-                    onApplyVisionModel: { slug in
-                        Task { await patchConversationVisionModel(slug: slug) }
-                    },
-                    onApplyVoiceModel: { slug in
-                        Task { await patchConversationVoiceModel(slug: slug) }
-                    }
+            } else if conversation.conversation_type == "user_user",
+                      let peer = peerProfileForBubble {
+                ContactSettingsView(
+                    contactUserId: peer.userId,
+                    initialDisplayName: peer.displayName,
+                    initialAvatarPath: peer.avatarPath,
+                    initialAvatarSeed: peer.avatarSeed
                 )
+            } else if let bot {
+                BotConfigView(bot: bot, currentUserId: AccountStore.shared.current?.id)
             }
         }
         .navigationDestination(isPresented: $showingBotConfig) {
