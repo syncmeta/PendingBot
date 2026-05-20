@@ -186,8 +186,8 @@ function loadPrompt(rel: string, override?: string): string {
   const p = override ?? path.join(EDGE_ROOT, 'prompts', rel);
   return fs.readFileSync(p, 'utf8');
 }
-const systemPrompt = loadPrompt('scroll.md', systemPromptFile);
-const injectedPrompt = loadPrompt('scroll-injected.md', injectedPromptFile);
+const systemPrompt = loadPrompt('envelope.md', systemPromptFile);
+const injectedPrompt = loadPrompt('envelope-injected.md', injectedPromptFile);
 
 // ── Fixture loader ───────────────────────────────────────────────────
 type HistoryMsg = { role: 'user' | 'bot' | 'human'; content: string | null };

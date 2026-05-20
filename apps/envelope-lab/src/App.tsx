@@ -82,7 +82,7 @@ export function App() {
   const [runs, setRuns] = useState<RunSummary[]>([]);
   // Abort controller for the active /api/run stream — Stop button calls
   // abort() which closes the SSE connection; the server's request signal
-  // fires and runScrollLoop's isCancelled returns true on next iteration.
+  // fires and runEnvelopeLoop's isCancelled returns true on next iteration.
   const abortRef = useRef<AbortController | null>(null);
 
   // ── Boot: load /api/config, /api/prompts, /api/fixtures ───────────
@@ -162,7 +162,7 @@ export function App() {
           // Writer phase always runs after the loop exits with
           // reason='stopped'. writeModel falls back to body.model
           // server-side when empty; writePhasePrompt falls back to
-          // scroll-write.md from disk.
+          // envelope-write.md from disk.
           writeModel: writeModel || undefined,
           writePhasePrompt:
             writePrompt && writePrompt.trim() ? writePrompt : undefined,
@@ -366,28 +366,28 @@ export function App() {
         </section>
         <section className="editors">
           <PromptsBlock
-            label="System (prompts/scroll.md)"
+            label="System (prompts/envelope.md)"
             value={systemPrompt}
             setValue={setSystemPrompt}
             original={systemPromptOriginal}
             onSaveToDisk={saveSystemPromptToDisk}
           />
           <PromptsBlock
-            label="Injected (prompts/scroll-injected.md)"
+            label="Injected (prompts/envelope-injected.md)"
             value={injectedPrompt}
             setValue={setInjectedPrompt}
             original={injectedPromptOriginal}
             onSaveToDisk={saveInjectedPromptToDisk}
           />
           <PromptsBlock
-            label={`Collaborator (prompts/scroll-collaborator.md)${collaboratorModel ? '' : ' · 协作者模型未选'}`}
+            label={`Collaborator (prompts/envelope-collaborator.md)${collaboratorModel ? '' : ' · 协作者模型未选'}`}
             value={collaboratorPrompt}
             setValue={setCollaboratorPrompt}
             original={collaboratorPromptOriginal}
             onSaveToDisk={saveCollaboratorPromptToDisk}
           />
           <PromptsBlock
-            label="Write phase (prompts/scroll-write.md)"
+            label="Write phase (prompts/envelope-write.md)"
             value={writePrompt}
             setValue={setWritePrompt}
             original={writePromptOriginal}

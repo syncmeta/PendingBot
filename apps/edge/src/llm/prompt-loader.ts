@@ -11,7 +11,7 @@
 //
 // Cache lifecycle: each isolate keeps a Map<`${locale}/${name}`, body_md>
 // with a 30s TTL. Concurrent loads dedupe via the inflight Promise. Each
-// async entry point (runChatTurn / runScroll / runTitle / runLookback /
+// async entry point (runChatTurn / runEnvelope / runTitle / runLookback /
 // runGroupRouter) should `await ensurePromptOverridesLoaded(supa)` early so
 // subsequent sync getPrompt calls hit the cache.
 //
@@ -26,20 +26,20 @@ import type { PromptName } from './prompt-names';
 
 import system_zh from '../../prompts/zh/system.md';
 import identityQuest_zh from '../../prompts/zh/identity-quest.md';
-import scroll_zh from '../../prompts/zh/scroll.md';
-import scrollInjected_zh from '../../prompts/zh/scroll-injected.md';
-import scrollWrite_zh from '../../prompts/zh/scroll-write.md';
-import scrollCollaborator_zh from '../../prompts/zh/scroll-collaborator.md';
+import envelope_zh from '../../prompts/zh/envelope.md';
+import envelopeInjected_zh from '../../prompts/zh/envelope-injected.md';
+import envelopeWrite_zh from '../../prompts/zh/envelope-write.md';
+import envelopeCollaborator_zh from '../../prompts/zh/envelope-collaborator.md';
 import title_zh from '../../prompts/zh/title.md';
 import groupRouter_zh from '../../prompts/zh/group-router.md';
 
 const PROMPTS_ZH = {
   'system': system_zh,
   'identity-quest': identityQuest_zh,
-  'scroll': scroll_zh,
-  'scroll-injected': scrollInjected_zh,
-  'scroll-write': scrollWrite_zh,
-  'scroll-collaborator': scrollCollaborator_zh,
+  'envelope': envelope_zh,
+  'envelope-injected': envelopeInjected_zh,
+  'envelope-write': envelopeWrite_zh,
+  'envelope-collaborator': envelopeCollaborator_zh,
   'title': title_zh,
   'group-router': groupRouter_zh,
 } as const;

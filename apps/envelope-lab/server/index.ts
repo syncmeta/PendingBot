@@ -34,7 +34,7 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LAB_ROOT = path.resolve(__dirname, '..');
 const REPO_ROOT = path.resolve(LAB_ROOT, '../..');
-const EDGE_PROMPTS = path.join(REPO_ROOT, 'apps/edge/prompts');
+const EDGE_PROMPTS = path.join(REPO_ROOT, 'apps/edge/prompts/zh');
 const FIXTURE_DIRS = [
   path.join(LAB_ROOT, 'fixtures'),
   path.join(REPO_ROOT, 'apps/edge/scripts/fixtures'),
@@ -174,10 +174,10 @@ app.get('/api/config', (c) => {
 
 // ── Prompts ──────────────────────────────────────────────────────────
 app.get('/api/prompts', (c) => {
-  const system = fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll.md'), 'utf8');
-  const injected = fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll-injected.md'), 'utf8');
-  const write = fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll-write.md'), 'utf8');
-  const collaborator = fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll-collaborator.md'), 'utf8');
+  const system = fs.readFileSync(path.join(EDGE_PROMPTS, 'envelope.md'), 'utf8');
+  const injected = fs.readFileSync(path.join(EDGE_PROMPTS, 'envelope-injected.md'), 'utf8');
+  const write = fs.readFileSync(path.join(EDGE_PROMPTS, 'envelope-write.md'), 'utf8');
+  const collaborator = fs.readFileSync(path.join(EDGE_PROMPTS, 'envelope-collaborator.md'), 'utf8');
   return c.json({ system, injected, write, collaborator });
 });
 
@@ -195,16 +195,16 @@ app.put('/api/prompts', async (c) => {
     return c.json({ error: 'invalid json' }, 400);
   }
   if (typeof body.system === 'string') {
-    fs.writeFileSync(path.join(EDGE_PROMPTS, 'scroll.md'), body.system);
+    fs.writeFileSync(path.join(EDGE_PROMPTS, 'envelope.md'), body.system);
   }
   if (typeof body.injected === 'string') {
-    fs.writeFileSync(path.join(EDGE_PROMPTS, 'scroll-injected.md'), body.injected);
+    fs.writeFileSync(path.join(EDGE_PROMPTS, 'envelope-injected.md'), body.injected);
   }
   if (typeof body.write === 'string') {
-    fs.writeFileSync(path.join(EDGE_PROMPTS, 'scroll-write.md'), body.write);
+    fs.writeFileSync(path.join(EDGE_PROMPTS, 'envelope-write.md'), body.write);
   }
   if (typeof body.collaborator === 'string') {
-    fs.writeFileSync(path.join(EDGE_PROMPTS, 'scroll-collaborator.md'), body.collaborator);
+    fs.writeFileSync(path.join(EDGE_PROMPTS, 'envelope-collaborator.md'), body.collaborator);
   }
   return c.json({ ok: true });
 });
@@ -312,8 +312,8 @@ app.get('/api/runs/:id', (c) => {
 type HistoryMsg = { role: 'user' | 'bot' | 'human'; content: string };
 interface RunBody {
   model: string;
-  systemPrompt: string;        // editable; fall back to current scroll.md if empty
-  injectedPrompt: string;      // editable; fall back to current scroll-injected.md if empty
+  systemPrompt: string;        // editable; fall back to current envelope.md if empty
+  injectedPrompt: string;      // editable; fall back to current envelope-injected.md if empty
   history: HistoryMsg[];
   memory?: string;
   searchProvider: SearchProvider;
@@ -326,7 +326,7 @@ interface RunBody {
   // propose_plan still gets the static "用户：继续..." reply.
   collaboratorModel?: string;
   // System prompt for the collaborator. Empty / absent → server reads
-  // scroll-collaborator.md from disk.
+  // envelope-collaborator.md from disk.
   collaboratorPrompt?: string;
   // When true, the panel injects a `（系统提示：还剩 N 轮可用）`
   // user message at the start of each turn so the model can reason
@@ -345,7 +345,7 @@ interface RunBody {
   initialResearchUnlocked?: boolean;
   // Writer phase: always runs after the loop exits with
   // reason='stopped'. writeModel falls back to body.model when empty;
-  // writePhasePrompt falls back to scroll-write.md from disk.
+  // writePhasePrompt falls back to envelope-write.md from disk.
   writeModel?: string;
   writePhasePrompt?: string;
 }
@@ -355,7 +355,7 @@ interface RunBody {
 // + memory + a summary of what the main agent JUST did (assistant
 // content + tool calls + truncated tool results). Returns a string
 // that the loop pushes as a `role: 'user'` message before the next
-// iteration. System prompt is editable via prompts/scroll-collaborator.md.
+// iteration. System prompt is editable via prompts/envelope-collaborator.md.
 type CollaboratorInput = {
   turn: number;
   hardCapTurns: number;
@@ -513,7 +513,7 @@ app.post('/api/run', async (c) => {
     const collabPrompt =
       body.collaboratorPrompt && body.collaboratorPrompt.trim()
         ? body.collaboratorPrompt
-        : fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll-collaborator.md'), 'utf8');
+        : fs.readFileSync(path.join(EDGE_PROMPTS, 'envelope-collaborator.md'), 'utf8');
     collaborator = makeCollaborator(
       collabClient,
       body.collaboratorModel,
@@ -656,7 +656,7 @@ app.post('/api/run', async (c) => {
       const writePrompt =
         body.writePhasePrompt && body.writePhasePrompt.trim()
           ? body.writePhasePrompt
-          : fs.readFileSync(path.join(EDGE_PROMPTS, 'scroll-write.md'), 'utf8');
+          : fs.readFileSync(path.join(EDGE_PROMPTS, 'envelope-write.md'), 'utf8');
       if ('error' in writeClient) {
         await stream.writeSSE({
           event: 'error',

@@ -50,12 +50,10 @@ import {
 // as the loop progresses so the iOS detail page can render the thinking
 // process.
 //
-// Naming note: the DB table is still `scroll_runs`, the prompt IDs are
-// still `scroll`/`scroll-injected`/`scroll-write`/`scroll-collaborator`,
-// and the taskType in audit_log is still `scroll`. Renaming those
-// would need a coordinated DB migration plus iOS update; the wire
-// shapes / DB schema kept the old name on purpose. Code-side
-// identifiers all moved to envelope.
+// Naming note: the DB table is still `scroll_runs` (renamed in a
+// later commit) and the taskType in audit_log is still `'scroll'`
+// for historical rows — new rows write `'envelope'`. Prompt IDs
+// moved to `envelope*` together with this commit.
 
 export {
   buildEnvelopeInitialUserContent,
@@ -284,8 +282,8 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
     // memory block — is reserved up-front so a giant memory section
     // can't push the prompt over the model's hard limit.
     const framingTokens =
-      estimateTokens(getPrompt('scroll')) +
-      estimateTokens(getPrompt('scroll-injected')) +
+      estimateTokens(getPrompt('envelope')) +
+      estimateTokens(getPrompt('envelope-injected')) +
       estimateTokens(botMemory?.representation ?? '') +
       512; // slack for transcript headers / separators / silent-token
     let used = framingTokens;
@@ -321,7 +319,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
     const initialUser = buildEnvelopeInitialUserContent({
       history,
       memoryRepresentation: botMemory?.representation,
-      injectedPrompt: getPrompt('scroll-injected'),
+      injectedPrompt: getPrompt('envelope-injected'),
     });
 
     const initialProgress: ProgressState = {
@@ -362,7 +360,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
     }
     const mainRoute = route;
 
-    const collaboratorPrompt = getPrompt('scroll-collaborator');
+    const collaboratorPrompt = getPrompt('envelope-collaborator');
     const transcript = history
       .filter((m) => m.content && m.content.trim())
       .map((m) => `${m.role === 'bot' ? '主探索者' : '朋友'}：${m.content}`)
@@ -385,7 +383,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
     result = await runEnvelopeLoop({
       openai: mainRoute.client,
       modelId: mainRoute.modelToCall,
-      systemPrompt: getPrompt('scroll'),
+      systemPrompt: getPrompt('envelope'),
       initialUserContent: initialUser,
       tools: envelopeTools,
       webSearch: async (query) => {
@@ -531,7 +529,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
       const request = {
         model: mainRoute.modelToCall,
         messages: [
-          { role: 'system', content: getPrompt('scroll-write') },
+          { role: 'system', content: getPrompt('envelope-write') },
           { role: 'user', content: writeUser },
         ],
       } as ChatCompletionCreateParamsNonStreaming;
