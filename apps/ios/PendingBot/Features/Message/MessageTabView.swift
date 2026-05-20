@@ -456,17 +456,12 @@ struct MessageTabView: View {
 
             // Push server-truth unread counts into the shared store so the
             // per-row badge, the tab dot, and the app icon badge all read
-            // from one place. Preset conversations (epoch-year timestamp,
-            // see migration 0024) default to read — their preseeded
-            // messages never count as unread.
-            let convById = Dictionary(uniqueKeysWithValues: fresh.map { ($0.id, $0) })
+            // from one place. Preset conversations are pre-zeroed at seed
+            // time (migration 20260520020753), so we just trust the server
+            // count here — no epoch-year guard needed.
             var counts: [String: Int] = [:]
             for row in convFetched {
-                let serverCount = row.unread?.first?.unread_count ?? 0
-                let ts = convById[row.id]?.last_activity_at ?? 0
-                let year = Calendar.current.component(
-                    .year, from: Date(timeIntervalSince1970: TimeInterval(ts)))
-                counts[row.id] = year == 1970 ? 0 : serverCount
+                counts[row.id] = row.unread?.first?.unread_count ?? 0
             }
             unread.setServerCounts(counts)
 
