@@ -733,8 +733,10 @@ export type Database = {
           last_turn_status: string | null
           metadata: Json
           model_slug_override: string | null
+          parent_message_id: string | null
           provider_override: string | null
           round_count: number
+          spawner_bot_id: string | null
           title: string | null
           updated_at: string
           user_id: string | null
@@ -751,8 +753,10 @@ export type Database = {
           last_turn_status?: string | null
           metadata?: Json
           model_slug_override?: string | null
+          parent_message_id?: string | null
           provider_override?: string | null
           round_count?: number
+          spawner_bot_id?: string | null
           title?: string | null
           updated_at?: string
           user_id?: string | null
@@ -769,8 +773,10 @@ export type Database = {
           last_turn_status?: string | null
           metadata?: Json
           model_slug_override?: string | null
+          parent_message_id?: string | null
           provider_override?: string | null
           round_count?: number
+          spawner_bot_id?: string | null
           title?: string | null
           updated_at?: string
           user_id?: string | null
@@ -781,6 +787,20 @@ export type Database = {
           {
             foreignKeyName: "conversations_bot_id_fkey"
             columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "bots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "conversations_parent_message_id_fkey"
+            columns: ["parent_message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "conversations_spawner_bot_id_fkey"
+            columns: ["spawner_bot_id"]
             isOneToOne: false
             referencedRelation: "bots"
             referencedColumns: ["id"]
