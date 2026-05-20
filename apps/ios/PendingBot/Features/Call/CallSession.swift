@@ -66,6 +66,12 @@ final class CallSession {
     /// Concrete transport, picked by provider on `start()`.
     private var transport: CallTransport?
 
+    /// Region-specific ringback tone played while we negotiate. Stays
+    /// silent past `.connected` and tears down on terminate. nil before
+    /// the first start() — keeps the unit tests from spinning the audio
+    /// engine for nothing.
+    private var ringback: RingbackPlayer?
+
     /// Returned by the worker on /session. Stored so /attach and
     /// /summary can correlate against the same call.
     private(set) var sessionId: String?
@@ -97,6 +103,16 @@ final class CallSession {
     func start() async {
         guard phase == .idle else { return }
         phase = .connecting
+
+        // Prime the audio session and start the regional ringback tone
+        // before the network round-trip — the user just tapped "phone",
+        // dead silence for 1–2 s while SDP exchanges feels broken. The
+        // transport's own configureAudioSession is idempotent on these
+        // same parameters; calling it twice is harmless.
+        primeAudioSessionForRingback()
+        let player = RingbackPlayer()
+        player.start()
+        ringback = player
 
         // User-selected transport. "auto" (default) walks the chain
         // direct WebRTC → Cloudflare TURN relay → WebSocket; the
@@ -268,6 +284,37 @@ final class CallSession {
         return comps.url
     }
 
+    /// Configure the AVAudioSession in the same `.playAndRecord` /
+    /// `.voiceChat` shape the transport will use, so the ringback tone
+    /// and the call audio share one session without a category flip
+    /// (which would briefly cut audio when the transport takes over).
+    /// Bluetooth options match transport's; speaker route is left at
+    /// the default (earpiece) so the proximity sensor can blank the
+    /// screen.
+    private func primeAudioSessionForRingback() {
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(
+                .playAndRecord,
+                mode: .voiceChat,
+                options: [.allowBluetooth, .allowBluetoothA2DP],
+            )
+            try session.setActive(true, options: [])
+        } catch {
+            // Swallow — a missing ringback is a degraded experience,
+            // not a fatal one; the transport will re-attempt session
+            // setup and surface its own error if that also fails.
+        }
+    }
+
+    /// Stop and release the ringback player if it's still running.
+    /// Called when the transport reaches `.connected` (the bot's audio
+    /// is the new "ringing stopped, talking now" cue) and on terminate.
+    private func stopRingback() {
+        ringback?.stop()
+        ringback = nil
+    }
+
     /// Flip the audio route between the earpiece and the loudspeaker.
     /// `overrideOutputAudioPort` acts on the shared AVAudioSession, so it
     /// works regardless of which transport (WebRTC / WebSocket) is live.
@@ -290,6 +337,11 @@ final class CallSession {
         guard !isTerminal(phase) else { return }
         let wasConnected = connectedAt != nil
         phase = .hangingUp
+        // The ringback is normally cleared on transportDidConnect; if we
+        // never connected (startup error, region-blocked, balance gate)
+        // it's still spinning here, so stop it before the teardown
+        // races the audio session.
+        stopRingback()
         // Unblock any in-flight connection attempt so start()'s chain
         // loop sees the terminal phase and stops minting transports.
         resolveAttempt(.failed(reason))
@@ -396,6 +448,9 @@ extension CallSession: CallTransportDelegate {
         // Ignore callbacks from a transport we've already abandoned
         // mid-chain — only the current attempt's transport may connect.
         guard t === transport else { return }
+        // Bot audio is about to start — silence the ringback first so
+        // the two don't briefly overlap.
+        stopRingback()
         connectedAt = Date()
         phase = .connected
         resolveAttempt(.connected)
