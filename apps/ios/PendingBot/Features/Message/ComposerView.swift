@@ -264,142 +264,62 @@ private extension View {
 
 // ── Progressive blur backdrop ──────────────────────────────────────────────
 
-/// Top-to-bottom progressive Gaussian-blur backdrop sitting behind the
-/// floating composer. UIKit has no public API for a single blur view with
-/// a position-varying radius, so we approximate one by stacking four
-/// `UIVisualEffectView`s of increasing intensity, each masked to its own
-/// vertical band of the parent's height. Overlapping the masks with soft
-/// gradient edges makes the seams disappear — visually the result reads
-/// as a smooth, continuous variable-radius blur from clear at the top to
-/// fully blurred at the bottom.
+/// Soft top-to-bottom blur sitting behind the floating composer. Messages
+/// scrolling underneath fade from fully visible at the top edge of the
+/// inset region to fully blurred down past the home indicator. A single
+/// `UIVisualEffectView` with a `CAGradientLayer` mask: the gradient runs
+/// from clear → opaque downwards, so the blur layer is invisible at the
+/// top and fully revealed at the bottom.
 ///
-/// Intensity is controlled via the `UIViewPropertyAnimator` trick: a
-/// paused linear animator interpolates the blur view's `effect` from
-/// nothing to a full UIBlurEffect, and `fractionComplete` parks it at a
-/// fractional strength. The animator is retained so the partial state
-/// sticks instead of bouncing back to one of the endpoints.
+/// Earlier draft stacked 4 layered blurs of increasing strength to fake a
+/// variable-radius Gaussian, but the visual outcome wasn't worth the
+/// complexity — the single masked blur reads as a clean reveal here.
 struct ProgressiveBlurBackdrop: UIViewRepresentable {
     func makeUIView(context: Context) -> ProgressiveBlurBackdropView { ProgressiveBlurBackdropView() }
     func updateUIView(_ uiView: ProgressiveBlurBackdropView, context: Context) {}
 }
 
 final class ProgressiveBlurBackdropView: UIView {
-    /// One blur layer in the stack. `bandTop`/`bandBottom` are the
-    /// normalized y-coordinates of the gradient mask's fully-opaque
-    /// region; mask alpha feathers into 0 a short distance above/below.
-    private struct Layer {
-        let blur: UIVisualEffectView
-        let animator: UIViewPropertyAnimator
-        let gradient: CAGradientLayer
-        let intensity: CGFloat
-        let bandTop: CGFloat
-        let bandBottom: CGFloat
-    }
-
-    private var layers: [Layer] = []
+    private let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterial))
+    private let gradient = CAGradientLayer()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         isUserInteractionEnabled = false
-
-        // 4 strips, each parking a stronger blur in a lower band. Bands
-        // overlap by ~0.15 normalized units so the mask edges feather
-        // into each other — that overlap is what hides the seams.
-        //
-        //   intensity   band  (top → bottom of mask's opaque region)
-        //   0.18        0.00 → 0.35
-        //   0.40        0.25 → 0.60
-        //   0.65        0.50 → 0.85
-        //   1.00        0.75 → 1.05  (slight overshoot so the bottom
-        //                              edge stays fully blurred even
-        //                              after subpixel mask rounding)
-        let stops: [(intensity: CGFloat, top: CGFloat, bottom: CGFloat)] = [
-            (0.18, 0.00, 0.35),
-            (0.40, 0.25, 0.60),
-            (0.65, 0.50, 0.85),
-            (1.00, 0.75, 1.05),
-        ]
-        for stop in stops { addLayer(intensity: stop.intensity, bandTop: stop.top, bandBottom: stop.bottom) }
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-    private func addLayer(intensity: CGFloat, bandTop: CGFloat, bandBottom: CGFloat) {
-        let blur = UIVisualEffectView(effect: nil)
-        blur.translatesAutoresizingMaskIntoConstraints = false
         addSubview(blur)
+        blur.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             blur.topAnchor.constraint(equalTo: topAnchor),
             blur.bottomAnchor.constraint(equalTo: bottomAnchor),
             blur.leadingAnchor.constraint(equalTo: leadingAnchor),
             blur.trailingAnchor.constraint(equalTo: trailingAnchor),
         ])
-
-        // Pause a 1s linear animator at `intensity` to get a fractional
-        // blur strength. `pausesOnCompletion` keeps the effect parked at
-        // the partial value instead of snapping to the endpoint when the
-        // animator considers itself "done".
-        let animator = UIViewPropertyAnimator(duration: 1, curve: .linear)
-        animator.addAnimations { blur.effect = UIBlurEffect(style: .systemUltraThinMaterial) }
-        animator.pausesOnCompletion = true
-        animator.fractionComplete = intensity
-
-        // Mask: a soft 4-stop gradient that's clear above bandTop, opaque
-        // between (bandTop+feather, bandBottom-feather), then clear again
-        // below bandBottom. Each layer thus contributes only inside its
-        // strip, with feathered edges blending into its neighbours.
-        let gradient = CAGradientLayer()
+        // Multi-stop gradient gives a softer ramp than a 0→1 linear; the
+        // 0.0/0.35/0.7/1.0 stops with eased alpha hide the seam where the
+        // mask first reveals the blur layer.
+        gradient.colors = [
+            UIColor.black.withAlphaComponent(0).cgColor,
+            UIColor.black.withAlphaComponent(0.15).cgColor,
+            UIColor.black.withAlphaComponent(0.55).cgColor,
+            UIColor.black.withAlphaComponent(1).cgColor,
+        ]
+        gradient.locations = [0.0, 0.35, 0.7, 1.0]
         gradient.startPoint = CGPoint(x: 0.5, y: 0)
         gradient.endPoint = CGPoint(x: 0.5, y: 1)
         blur.layer.mask = gradient
-
-        layers.append(Layer(
-            blur: blur,
-            animator: animator,
-            gradient: gradient,
-            intensity: intensity,
-            bandTop: bandTop,
-            bandBottom: bandBottom,
-        ))
-        updateMask(layer: layers.last!)
     }
 
-    private func updateMask(layer: Layer) {
-        // The mask only covers the layer's own band; outside it is fully
-        // transparent so neighbours own those rows. Inside the band the
-        // alpha is constant 1 (so the parked intensity reads cleanly),
-        // with a short feathered edge top and bottom.
-        let feather: CGFloat = 0.08
-        let topFade = max(0, layer.bandTop)
-        let topSolid = min(1, layer.bandTop + feather)
-        let bottomSolid = max(0, layer.bandBottom - feather)
-        let bottomFade = min(1, layer.bandBottom)
-        layer.gradient.colors = [
-            UIColor.black.withAlphaComponent(0).cgColor,
-            UIColor.black.withAlphaComponent(1).cgColor,
-            UIColor.black.withAlphaComponent(1).cgColor,
-            UIColor.black.withAlphaComponent(0).cgColor,
-        ]
-        layer.gradient.locations = [
-            NSNumber(value: Double(topFade)),
-            NSNumber(value: Double(topSolid)),
-            NSNumber(value: Double(bottomSolid)),
-            NSNumber(value: Double(bottomFade)),
-        ]
-    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        // Disable implicit CALayer animation — the gradient mask should
+        // snap to new bounds during keyboard/inset frame changes, not
+        // animate independently from UIKit's transition.
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        for layer in layers { layer.gradient.frame = layer.blur.bounds }
+        gradient.frame = blur.bounds
         CATransaction.commit()
-    }
-
-    deinit {
-        // Property animators retain their target views — stop them so the
-        // blur views don't get pinned past this view's lifetime.
-        for layer in layers { layer.animator.stopAnimation(true) }
     }
 }
 
