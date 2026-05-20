@@ -53,7 +53,6 @@ export type ApiErrorCode =
   // ── Attachments ───────────────────────────────────────────
   | 'attachment_not_found'
   | 'attachment_not_owned'
-  | 'attachment_conversation_mismatch'
   | 'attachment_object_missing'
   | 'attachment_too_large'
   | 'attachment_missing_field'

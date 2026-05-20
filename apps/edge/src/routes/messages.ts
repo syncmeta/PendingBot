@@ -100,8 +100,8 @@ messageRoutes.post('/', async (c) => {
   //   normal     newMessage required, INSERT user row, parent = that row
   //   autoLookback newMessage absent, no user row written, parent = last
   //                user row in conv (best effort) or null
-  if (!parsed.autoLookback && !parsed.newMessage) {
-    return jsonError(c, 400, 'invalid_body', { message: 'newMessage required' });
+  if (!parsed.autoLookback && !parsed.newMessage && !parsed.attachmentIds?.length) {
+    return jsonError(c, 400, 'invalid_body', { message: 'newMessage or attachment required' });
   }
 
   const supaUser = userClient(c.env, userJwt);
@@ -164,9 +164,12 @@ messageRoutes.post('/', async (c) => {
   }
 
   // Attachment ownership gate. attachmentIds rides in the body uncontrolled —
-  // verify each row's user_id matches the sender and (if already bound) its
-  // conversation_id matches this conv, so a caller can't pin someone else's
-  // upload onto their own bubble or recycle attachments across convs.
+  // verify each row's user_id matches the sender so a caller can't pin
+  // someone else's upload onto their own bubble. The row's conversation_id
+  // is not an access boundary: an attachment belongs to the user and may be
+  // re-sent in any of their conversations (per-user dedup deliberately
+  // shares one row across convs). GET /v1/uploads/:id still gates reads via
+  // message references + membership.
   if (hasAttachments) {
     if (!attRows) {
       return jsonError(c, 403, 'attachment_not_found');
@@ -174,9 +177,6 @@ messageRoutes.post('/', async (c) => {
     for (const r of attRows) {
       if (r.user_id !== userId) {
         return jsonError(c, 403, 'attachment_not_owned');
-      }
-      if (r.conversation_id && r.conversation_id !== parsed.conversationId) {
-        return jsonError(c, 403, 'attachment_conversation_mismatch');
       }
     }
   }
@@ -235,7 +235,7 @@ messageRoutes.post('/', async (c) => {
               conversation_id: parsed.conversationId,
               user_id: userId,
               role: 'user',
-              content: parsed.newMessage,
+              content: parsed.newMessage ?? '',
               status: 'done',
               attachments: parsed.attachmentIds ? { ids: parsed.attachmentIds } : null,
             },
@@ -570,7 +570,9 @@ messageRoutes.post('/', async (c) => {
 const StartBody = z.object({
   botId: z.string().uuid(),
   clientMessageId: z.string().uuid(),
-  newMessage: z.string().min(1).max(64_000),
+  // Optional: an attachment-only first turn (image with no caption) is
+  // valid. The handler rejects the both-empty case below.
+  newMessage: z.string().min(1).max(64_000).optional(),
   attachmentIds: z.array(z.string().uuid()).optional(),
   recentContext: z
     .array(
@@ -595,6 +597,9 @@ messageRoutes.post('/start', async (c) => {
     parsed = StartBody.parse(await c.req.json());
   } catch (err) {
     return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+  if (!parsed.newMessage && !parsed.attachmentIds?.length) {
+    return jsonError(c, 400, 'invalid_body', { message: 'newMessage or attachment required' });
   }
 
   const supaUser = userClient(c.env, userJwt);
@@ -626,12 +631,15 @@ messageRoutes.post('/start', async (c) => {
     throw err;
   }
 
-  // Attachment ownership gate. First-turn uploads should not be bound to
-  // any conv yet; reject anything that already is, and verify ownership.
+  // Attachment ownership gate — verify each row belongs to the caller. The
+  // row's conversation_id is not checked: an attachment belongs to the user,
+  // not a conversation, and per-user dedup deliberately shares one row across
+  // convs, so a first turn legitimately reuses an attachment already bound
+  // to an earlier conv.
   if (parsed.attachmentIds && parsed.attachmentIds.length > 0) {
     const { data: rows, error: attErr } = await supaService
       .from('attachments')
-      .select('id, user_id, conversation_id')
+      .select('id, user_id')
       .in('id', parsed.attachmentIds);
     if (attErr) return jsonError(c, 500, 'database_error', { detail: attErr.message });
     if (!rows || rows.length !== parsed.attachmentIds.length) {
@@ -639,7 +647,6 @@ messageRoutes.post('/start', async (c) => {
     }
     for (const r of rows) {
       if (r.user_id !== userId) return jsonError(c, 403, 'attachment_not_owned');
-      if (r.conversation_id) return jsonError(c, 403, 'attachment_conversation_mismatch');
     }
   }
 
@@ -649,7 +656,7 @@ messageRoutes.post('/start', async (c) => {
   const rpcResp = await supaUser.rpc('start_user_bot_turn', {
     p_bot_id: parsed.botId,
     p_client_message_id: parsed.clientMessageId,
-    p_content: parsed.newMessage,
+    p_content: parsed.newMessage ?? '',
     p_attachment_ids: parsed.attachmentIds,
   });
   if (rpcResp.error) {
@@ -752,7 +759,7 @@ messageRoutes.post('/start', async (c) => {
             },
             isSelfChat: false,
             recentContext: parsed.recentContext ?? [],
-            newMessage: parsed.newMessage,
+            newMessage: parsed.newMessage ?? '',
             currentAttachmentIds: parsed.attachmentIds,
             // Brand-new conv from /start — no override possible yet.
             visionModelOverride: null,

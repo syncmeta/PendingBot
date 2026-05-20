@@ -71,6 +71,9 @@ struct ConversationView: View {
     // so it can't be file-private.
     @State var input = ""
     @State var pendingAttachments: [PendingAttachment] = []
+    /// In-flight attachment uploads. `send()` awaits these so an upload
+    /// that lags the send tap still lands on the outgoing message.
+    @State var uploadTasks: [Task<Void, Never>] = []
     @State var photoPickerItems: [PhotosPickerItem] = []
     @State var cameraImage: UIImage?
     /// Set true to present the system document picker (any file type).
@@ -711,11 +714,12 @@ struct ConversationView: View {
                 .presentationDragIndicator(.visible)
         }
         .onChange(of: photoPickerItems) { _, items in
-            Task { await ingestPhotos(items) }
+            guard !items.isEmpty else { return }
+            uploadTasks.append(Task { await ingestPhotos(items) })
         }
         .onChange(of: cameraImage) { _, image in
             guard let image else { return }
-            Task { await ingestCameraImage(image) }
+            uploadTasks.append(Task { await ingestCameraImage(image) })
         }
         .fileImporter(
             isPresented: $showFileImporter,
@@ -724,7 +728,7 @@ struct ConversationView: View {
         ) { result in
             switch result {
             case .success(let urls):
-                Task { await ingestFiles(urls) }
+                uploadTasks.append(Task { await ingestFiles(urls) })
             case .failure(let err):
                 self.error = "选择文件失败: \(err.localizedDescription)"
             }
@@ -1162,9 +1166,17 @@ struct ConversationView: View {
     private func send() async {
         guard canSend else { return }
         let text = input.trimmingCharacters(in: .whitespaces)
+        input = ""
+        // Drain in-flight uploads first — an upload can lag the send tap
+        // by seconds, and capturing pendingAttachments before it lands
+        // would silently drop the attachment from this message.
+        if !uploadTasks.isEmpty {
+            let inflight = uploadTasks
+            uploadTasks = []
+            for t in inflight { await t.value }
+        }
         let attachIds = pendingAttachments.map(\.id)
         let attachmentSnapshot = pendingAttachments
-        input = ""
         pendingAttachments = []
         photoPickerItems = []
         Haptics.send()
@@ -1307,7 +1319,8 @@ struct ConversationView: View {
             // insert returns; sendUserUserMessage flips it to "sent" on
             // success or "failed" on error. The canonical Realtime echo
             // replaces the row shortly after.
-            await sendUserUserMessage(text, localId: localId, clientMessageId: cmid)
+            await sendUserUserMessage(text, attachmentIds: attachIds,
+                                      localId: localId, clientMessageId: cmid)
             return
         }
 
@@ -1443,15 +1456,22 @@ struct ConversationView: View {
                 }
                 restampConversationId(on: localId)
             }
-            await sendUserUserMessage(text, localId: localId, clientMessageId: cmid)
+            await sendUserUserMessage(text, attachmentIds: attachIds,
+                                      localId: localId, clientMessageId: cmid)
         }
     }
 
-    private func sendUserUserMessage(_ text: String, localId: String, clientMessageId: String) async {
+    private func sendUserUserMessage(_ text: String, attachmentIds: [String],
+                                     localId: String, clientMessageId: String) async {
         guard let userId = AccountStore.shared.current?.id else {
             markUserMessageFailed(localId)
             return
         }
+        // messages.attachments is jsonb shaped { ids: [...] }. user_user
+        // sends INSERT straight into Supabase (no worker), so the ids have
+        // to be written here — otherwise the canonical realtime row carries
+        // no attachment and the peer (and our own rekeyed bubble) lose it.
+        struct AttachmentIds: Encodable { let ids: [String] }
         struct Insert: Encodable {
             let client_message_id: String
             let conversation_id: String
@@ -1459,6 +1479,7 @@ struct ConversationView: View {
             let role = "user"
             let status = "done"
             let content: String
+            let attachments: AttachmentIds?
         }
         do {
             try await SupabaseStack.shared
@@ -1467,7 +1488,8 @@ struct ConversationView: View {
                     client_message_id: clientMessageId,
                     conversation_id: conversation.id,
                     user_id: userId,
-                    content: text
+                    content: text,
+                    attachments: attachmentIds.isEmpty ? nil : AttachmentIds(ids: attachmentIds)
                 ))
                 .execute()
             markUserMessageSent(localId)
@@ -1828,13 +1850,13 @@ struct PendingAttachment: Identifiable, Hashable {
     var isImage: Bool { mime.lowercased().hasPrefix("image/") }
 
     /// Materialise into an `Attachment` for an optimistic bubble. The
-    /// worker-served path is `/uploads/<id>`; `kind` is left to the
-    /// renderer, which classifies by `mime`.
+    /// worker-served path is `/v1/uploads/<id>` (the auth-gated route);
+    /// `kind` is left to the renderer, which classifies by `mime`.
     func asAttachment() -> Attachment {
         Attachment(
             id: id, kind: isImage ? "image" : "file", mime: mime,
             size: size, width: nil, height: nil,
-            url: "/uploads/\(id)", filename: filename
+            url: "/v1/uploads/\(id)", filename: filename
         )
     }
 }
