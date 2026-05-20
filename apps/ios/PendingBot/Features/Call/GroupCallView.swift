@@ -31,14 +31,11 @@ struct GroupCallView: View {
 
     var body: some View {
         ZStack {
-            Color(.systemBackground).ignoresSafeArea()
+            Theme.Palette.canvas.ignoresSafeArea()
             VStack(spacing: 0) {
-                header
-                    .padding(.top, 24)
-                    .padding(.horizontal)
-                inviteRow
-                    .padding(.top, 16)
-                    .padding(.horizontal)
+                topBar
+                    .padding(.top, 44)
+                    .padding(.horizontal, 24)
                 ScrollView {
                     rosterSection
                         .padding(.horizontal, 32)
@@ -96,67 +93,61 @@ struct GroupCallView: View {
         )
     }
 
-    // MARK: - Header
+    // MARK: - Top bar
 
-    private var header: some View {
-        VStack(spacing: 6) {
-            Text(session.groupTitle.isEmpty ? "群语音" : session.groupTitle)
-                .font(.title2).bold()
-                .multilineTextAlignment(.center)
-                .lineLimit(2)
-            // Single status slot: "接通中" while connecting, elapsed time
-            // (+ optional PND) once connected. Same vertical position so
-            // the layout doesn't jump on the connect transition.
-            statusSlot
-        }
-    }
-
-    @ViewBuilder
-    private var statusSlot: some View {
-        if session.phase == .connected {
-            VStack(spacing: 4) {
-                Text(elapsedDisplay)
-                    .font(.title3)
-                    .monospacedDigit()
-                // PND figure stays hidden until the first turn settles —
-                // a "0 PND" under the timer for the first 1–2 s reads
-                // as broken.
-                if session.cumulativePnd > 0 {
+    /// Title + status on the left, the two invite CTAs on the right —
+    /// vertically aligned so name and buttons read as a balanced pair
+    /// across the top of the screen.
+    private var topBar: some View {
+        HStack(alignment: .center, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text(session.groupTitle.isEmpty ? "群语音" : session.groupTitle)
+                        .font(.title3).bold()
+                        .lineLimit(1)
+                    inlineStatus
+                }
+                if session.phase == .connected, session.cumulativePnd > 0 {
                     Text("本次通话的费用：\(session.cumulativePnd) PND")
-                        .font(.subheadline)
+                        .font(.caption)
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                 }
             }
-        } else {
-            Text(statusText)
-                .font(.title3)
-                .foregroundStyle(.secondary)
+            Spacer(minLength: 8)
+            HStack(spacing: 10) {
+                inviteButton(
+                    title: "叫机器人",
+                    systemImage: "sparkle",
+                    tint: Self.botInviteInk,
+                ) {
+                    Haptics.tap()
+                    showingAddBot = true
+                }
+                inviteButton(
+                    title: "叫真人",
+                    systemImage: "person.wave.2.fill",
+                    tint: .primary,
+                ) {
+                    Haptics.tap()
+                    showingRingHuman = true
+                }
+            }
         }
     }
 
-    // MARK: - Invite CTAs
-
-    private var inviteRow: some View {
-        HStack(spacing: 14) {
-            inviteButton(
-                title: "叫机器人",
-                systemImage: "sparkle",
-                tint: Self.botInviteInk,
-            ) {
-                Haptics.tap()
-                showingAddBot = true
-            }
-            inviteButton(
-                title: "叫真人",
-                systemImage: "person.wave.2.fill",
-                tint: .primary,
-            ) {
-                Haptics.tap()
-                showingRingHuman = true
-            }
+    @ViewBuilder
+    private var inlineStatus: some View {
+        if session.phase == .connected {
+            Text(elapsedDisplay)
+                .font(.subheadline)
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+        } else {
+            Text(statusText)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
         }
-        .frame(maxWidth: .infinity)
     }
 
     /// Deep navy used for the "叫机器人" pill — picked to read as
@@ -171,18 +162,18 @@ struct GroupCallView: View {
         action: @escaping () -> Void,
     ) -> some View {
         Button(action: action) {
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 Image(systemName: systemImage)
-                    .font(.body)
+                    .font(.subheadline)
                 Text(title)
-                    .font(.body).fontWeight(.medium)
+                    .font(.subheadline).fontWeight(.medium)
             }
             .foregroundStyle(tint)
-            .padding(.horizontal, 22)
-            .padding(.vertical, 12)
-            .background(Capsule().fill(Color(.systemBackground)))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 18)
+            .background(Capsule().fill(Theme.Palette.surface))
             .overlay(
-                Capsule().stroke(Color(.separator), lineWidth: 0.5),
+                Capsule().stroke(Theme.Palette.hairline, lineWidth: 0.5),
             )
         }
         .disabled(!isCallLive)
