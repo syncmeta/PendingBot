@@ -9,7 +9,9 @@ private let log = Logger.category("conversation")
 
 /// One conversation. Loads history from Supabase, runs the user-direct
 /// chat turn over Worker SSE (ChatStream), and listens for cross-device /
-/// background-task messages via Supabase Realtime on the conv channel.
+/// background-task messages via the Cloudflare realtime hub WebSocket
+/// (`/v1/realtime-hub/conv/<id>` — replaced Supabase Realtime on
+/// 2026-05-16).
 /// Identifies the peer for a conversation that hasn't been materialised in
 /// the DB yet — set when the user taps a friend (bot or human) in the
 /// friends tab. We defer creating the `conversations` row until they
@@ -108,13 +110,16 @@ struct ConversationView: View {
     // chatTurnTask gates the auto-lookback fire timer in
     // ConversationView+Realtime, so it needs to be cross-extension visible.
     @State var chatTurnTask: Task<Void, Never>?
-    /// Realtime subscription token for this conv's `messages` channel —
-    /// dropped when the view disappears. Picks up cross-device messages
-    /// and bot rows that land via background paths (cron, review).
+    /// Cloudflare realtime hub subscription for this conv (WebSocket to
+    /// /v1/realtime-hub/conv/<id>; replaced Supabase Realtime on
+    /// 2026-05-16). Dropped when the view disappears. Picks up cross-
+    /// device messages and bot rows that land via background paths
+    /// (cron, review).
     @State var realtimeToken: ConvSubscriptionToken?
-    /// Lookback notes the bot wrote about prior turns (Realtime push from
-    /// pendingbot.bot_lookbacks). Invisible to the user; passed in
-    /// `activeLookbacks` on the next POST so the bot sees them as context.
+    /// Lookback notes the bot wrote about prior turns (pushed from
+    /// pendingbot.bot_lookbacks via the Cloudflare realtime hub).
+    /// Invisible to the user; passed in `activeLookbacks` on the next
+    /// POST so the bot sees them as context.
     @State var activeLookbacks: [LookbackNote] = []
     /// 30s grace timer started when a new lookback arrives. If user hasn't
     /// sent anything before it fires, we auto-trigger a continuation turn
@@ -130,14 +135,15 @@ struct ConversationView: View {
     /// Multiple traces can land for the same user msg if the agent loops.
     @State var liveTraceUserMsgId: String?
     /// Web-search citations attached to a bot bubble, keyed by message id.
-    /// Sources: history `select citations`, Realtime UPDATE on the row, and
-    /// the per-turn `citations` SSE event copied to each in-flight bubble.
+    /// Sources: history `select citations`, hub-pushed UPDATE on the row
+    /// (CF realtime hub), and the per-turn `citations` SSE event copied
+    /// to each in-flight bubble.
     /// `MarkdownText` reads the entry to resolve inline `[N]` markers.
     @State var citationsByMsgId: [String: [MessageCitation]] = [:]
     /// Cumulative citations for the in-flight turn — last value pushed by the
     /// `citations` SSE event. Snapshotted onto each bubble created during
     /// the turn so the live preview can resolve `[N]` taps before the
-    /// canonical row arrives via Realtime.
+    /// canonical row arrives via the realtime hub.
     @State var liveCitations: [MessageCitation] = []
     /// Per-trace citations bucket so the inline `搜索` trace can list the
     /// hits it surfaced even after the turn ends + `liveCitations` resets.
@@ -146,10 +152,10 @@ struct ConversationView: View {
     /// shows its results.
     @State var traceCitationsByUserMsgId: [String: [MessageCitation]] = [:]
     /// Attachment ids per message id. Populated from `messages.attachments`
-    /// jsonb on load + Realtime, and from the local pending attachment set
-    /// when the user sends. Used on recall (own + peer's, via the
-    /// status='deleted' Realtime UPDATE) to scrub the matching responses
-    /// from URLCache.shared so cached image bytes for a recalled message
+    /// jsonb on load + via the realtime hub, and from the local pending
+    /// attachment set when the user sends. Used on recall (own + peer's,
+    /// via the status='deleted' hub-pushed UPDATE) to scrub the matching
+    /// responses from URLCache.shared so cached image bytes for a recalled message
     /// don't linger on disk after the server-side R2 object is purged.
     @State var attachmentIdsByMsgId: [String: [String]] = [:]
     // Skill summaries — counted in the settings sheet so the user sees
@@ -208,7 +214,7 @@ struct ConversationView: View {
     /// upsert in `applyRealtimeEvent` — never a duplicate.
     @State var turnBubbleIds: [String] = []
 
-    /// Maps `local-<uuid>` → `client_message_id` so a Realtime INSERT echo
+    /// Maps `local-<uuid>` → `client_message_id` so a hub-pushed INSERT echo
     /// can dedupe against our optimistic row by matching the server's
     /// `client_message_id` field exactly, instead of guessing via a 5s
     /// recency window that fails on slow networks. Cleared once the
@@ -1578,8 +1584,9 @@ struct ConversationView: View {
                     userInfo: [NSLocalizedDescriptionKey: msg],
                 )
             }
-            // Realtime delivers the canonical message row + any bot
-            // replies that the GroupRouterDO wakes — we just return.
+            // The Cloudflare realtime hub delivers the canonical message
+            // row + any bot replies that the GroupRouterDO wakes — we
+            // just return.
         } catch {
             self.error = "发送失败: \(error.localizedDescription)"
             Haptics.error()

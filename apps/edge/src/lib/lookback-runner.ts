@@ -18,8 +18,11 @@ import { uuidv7 } from './ids';
 // totally different: the bot replays the transcript with a special
 // instruction asking it to fact-check what either side has said, then
 // writes a short note. The note is stored in pendingbot.bot_lookbacks
-// (active=true). Realtime pushes the row to the client; the client adds
-// the body to the next prompt's context, and ~30s later (if the user
+// (active=true). The Cloudflare realtime hub pushes the row to the
+// client (bot_lookbacks AFTER INSERT trigger →
+// /v1/realtime-internal/notify → RealtimeHubDO WebSocket — see
+// 20260516073714_realtime_webhooks.sql); the client adds the body to
+// the next prompt's context, and ~30s later (if the user
 // didn't send anything) auto-fires a normal /v1/messages request that
 // uses the note. The bot may emit [DROP_LOOKBACK] in a future reply to
 // retire the note; otherwise it stays.
