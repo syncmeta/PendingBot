@@ -170,16 +170,29 @@ extension ConversationView {
         // with the soft-delete above for user_user convs. Synthesise a
         // recall_log ChatMessage so the ForEach renderer drops a
         // centered "你/对方撤回了 X 的一条消息" pill at the right spot.
-        // 1v1 bot conv: SSE is the authoritative source for bot bubbles.
-        // The WS INSERT for the canonical row races the SSE `bubble` rekey
-        // event; when WS wins (fast model or long content), the live-*
-        // dedupe at the bottom of this function misses and we end up with
-        // two bot bubbles. Drop the WS bot row outright — if SSE genuinely
-        // dropped a bubble, re-entering the conv refetches /v1/messages
-        // and reconstructs the timeline. status='deleted' (recall) was
-        // already handled above so this skip preserves recall behavior.
+        // 1v1 bot conv: SSE is the authoritative source for *text* bot
+        // bubbles. The WS INSERT for the canonical row races the SSE
+        // `bubble` rekey event; when WS wins (fast model or long content),
+        // the live-* dedupe at the bottom of this function misses and we
+        // end up with two bot bubbles. Drop the WS bot row outright — if
+        // SSE genuinely dropped a bubble, re-entering the conv refetches
+        // /v1/messages and reconstructs the timeline. status='deleted'
+        // (recall) was already handled above so this skip preserves
+        // recall behavior.
+        //
+        // Carve-out: image bubbles (OpenAI image_generation results)
+        // have content="" + non-empty attachments and SSE never emits a
+        // `bubble` event for them (no streamed text counterpart), so the
+        // hub WS INSERT is their ONLY delivery path. Letting them through
+        // is safe — text bubbles arrive via SSE, image bubbles via hub,
+        // disjoint sets, no duplicate risk.
         if conversation.conversation_type == "user_bot" && role == "bot" {
-            return
+            let contentEmpty = (r["content"]?.stringValue ?? "").isEmpty
+            let attIds = r["attachments"].flatMap { decodeAttachmentIds($0) } ?? []
+            let isImageOnlyBubble = contentEmpty && !attIds.isEmpty
+            if !isImageOnlyBubble {
+                return
+            }
         }
         if role == "log" {
             let logKind = r["log_kind"]?.stringValue ?? ""
