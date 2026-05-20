@@ -65,6 +65,18 @@ import { uuidv7 } from '../ids';
 // which resolves through this barrel.
 export { type Citation } from './tool-runner';
 
+// OpenRouter server-side tool plugins. The model decides when to call
+// them; OpenRouter runs the search / fetch / clock lookup on its side
+// and feeds results back to the model — no function_call ever returns
+// to the worker, so they don't go through the runTool dispatcher.
+// Shape is OpenRouter-specific (not an OpenAI function tool), so we
+// cast at the splat site.
+const OPENROUTER_SERVER_TOOLS = [
+  { type: 'openrouter:web_search' },
+  { type: 'openrouter:web_fetch' },
+  { type: 'openrouter:datetime' },
+] as const;
+
 // Multi-bubble splitter — bot's reply may be one continuous block, or several
 // short bubbles separated by `\n---\n`.
 const BUBBLE_DELIMITER = '\n---\n';
@@ -303,12 +315,10 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   const startedAt = Date.now();
   const turnId = uuidv7();
 
-  // Kick off the tool-list lookups immediately — neither the MCP tool
-  // advertise (KV-cached schemas) nor the tools-registry allowlist
-  // depends on the prompt, so they overlap with locale + memory
+  // Kick off the tools-registry allowlist lookup immediately — it
+  // doesn't depend on the prompt, so it overlaps with locale + memory
   // resolution + prompt assembly instead of sitting serially in front
   // of the LLM call.
-  const mcpToolsPromise = mcpClient.getAITools(env);
   const allowedRegistryPromise = loadToolRegistry(env, 'chat');
 
   const locale = await resolveLocale(null, supa, userId, env);
@@ -667,14 +677,13 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   // plus request_execute_code (user-approval-gated, safe by construction).
   // Skill-gated tools (currently: unsupervised execute_code) only appear
   // when at least one subscribed skill opts the user in via its
-  // frontmatter.allowed_tools. Web search/scrape tools come from the MCP
-  // client (Exa hosted MCP) — vendor-native names with vendor descriptions
-  // so we don't carry our own copy of the surface.
-  const mcpTools = await mcpToolsPromise;
+  // frontmatter.allowed_tools. Web search / web fetch / datetime come
+  // from the provider's own server-side tools — OpenRouter native
+  // plugins on the Chat Completions path, OpenAI built-ins on the
+  // Responses path — added to the request below per provider.
   const turnToolsRaw: ChatCompletionTool[] = [
     ...CHAT_TOOLS,
     REQUEST_EXECUTE_CODE_TOOL,
-    ...mcpTools,
   ];
   if (allowedTools.has('execute_code')) turnToolsRaw.push(EXECUTE_CODE_TOOL);
   if (input.inGroup) turnToolsRaw.push(...GROUP_BOT_TOOLS);
@@ -693,9 +702,8 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
 
   // OpenAI-native bots reach web search and code execution through
   // OpenAI's server-side built-in tools (added in the runner closure
-  // below), not the Exa MCP tools or the Cloudflare sandbox — so their
-  // function-tool list is the internal surface only: no MCP, no
-  // request_execute_code / execute_code.
+  // below), not the Cloudflare sandbox — so their function-tool list
+  // is the internal surface only: no request_execute_code / execute_code.
   const nativeFnToolsRaw: ChatCompletionTool[] = [...CHAT_TOOLS];
   if (input.inGroup) nativeFnToolsRaw.push(...GROUP_BOT_TOOLS);
   const nativeFnTools: ChatCompletionTool[] = applyToolRegistry(
@@ -742,17 +750,26 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
             );
             return { stream };
           }
+          // OpenRouter exposes web search / fetch / datetime as
+          // server-executed plugin tools. They sit alongside our
+          // function tools in the `tools` array but don't conform to the
+          // OpenAI function-tool shape, so the cast is unavoidable. The
+          // model decides when to call them; OpenRouter runs them and
+          // feeds the result back without ever surfacing a function_call
+          // to the worker.
+          const chatTools =
+            r.provider.slug === 'openrouter'
+              ? [...turnTools, ...(OPENROUTER_SERVER_TOOLS as unknown as ChatCompletionTool[])]
+              : turnTools;
           const request = {
             model: r.modelToCall,
             messages,
-            tools: turnTools,
+            tools: chatTools,
             tool_choice: 'auto',
             stream: true,
             stream_options: { include_usage: true },
             // OpenRouter only returns `usage.cost` in streaming when this
-            // extra body field is set. WorldRouter rejects unknown fields
-            // with HTTP 400 (fatal-classified → fallback bails after 1
-            // attempt), so gate it on the resolved provider.
+            // extra body field is set.
             ...(r.provider.slug === 'openrouter' ? { usage: { include: true } } : {}),
           } as ChatCompletionCreateParamsStreaming;
           const stream = await r.client.chat.completions.create(
@@ -863,9 +880,10 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
           tool_calls: toolCalls,
         });
         // Execute tools. Each result becomes a tool message in history.
-        // Tools owned by mcpClient (Exa hosted MCP) route through
-        // dispatchMcpTool; everything else flows through the internal
-        // runTool dispatcher. Both return the same JSON-string envelope.
+        // The mcpClient.owns() branch handles MCP-advertised tools (none
+        // are advertised by default — the envelope-runner still drives
+        // Exa MCP directly, and this branch is the seam for a future
+        // per-bot MCP opt-in). Everything else flows through runTool.
         for (const tc of toolCalls) {
           const args = safeParseArgs(tc.function.arguments);
           const result = mcpClient.owns(tc.function.name)
