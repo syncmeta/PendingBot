@@ -85,6 +85,16 @@ final class GroupCallSession {
     private var didInitiate = false
     private var groupRoleIsAdmin = false
 
+    /// CallKit handle for this call. Two ways it gets populated:
+    ///   • Incoming (PushKit-driven): start() claims the UUID that
+    ///     CallKitManager surfaced when the VoIP push landed; CallKit
+    ///     already has an active call from CXAnswerCallAction.
+    ///   • Outgoing (manual join from the in-conv banner): start() asks
+    ///     CallKitManager to mint a fresh outgoing CallKit call.
+    /// nil only if CallKit declined the request (e.g. user on a real
+    /// PSTN call); the in-app UI still works without the system surface.
+    private var callKitUUID: UUID?
+
     /// Conv-hub subscription feeding `cumulativePnd` from server-side
     /// per-turn voice_cost events. Dropped on terminate.
     private var costSubscription: ConvSubscriptionToken?
@@ -193,6 +203,33 @@ final class GroupCallSession {
         guard phase == .idle else { return }
         phase = .connecting
 
+        // Hook into CallKit. If we got here because a VoIP push fired
+        // and the user accepted on the CallKit incoming UI, the
+        // manager already has an active call UUID for this conv — claim
+        // it. Otherwise (manual join from the in-conv banner) mint a
+        // fresh outgoing CallKit call. Either way the CallKit teardown
+        // path lands on hangUp(), so the in-app and system controls
+        // converge on one teardown.
+        let cxManager = CallKitManager.shared
+        if let claimed = cxManager.claimIncoming(forConversation: conversationId) {
+            callKitUUID = claimed
+            cxManager.setOnSystemEnd(claimed) { [weak self] in
+                guard let self else { return }
+                self.callKitUUID = nil
+                Task { @MainActor in await self.hangUp() }
+            }
+        } else {
+            let display = groupTitle.isEmpty ? "群语音" : groupTitle
+            callKitUUID = cxManager.startOutgoingCall(
+                displayName: display,
+                onSystemEnd: { [weak self] in
+                    guard let self else { return }
+                    self.callKitUUID = nil
+                    Task { @MainActor in await self.hangUp() }
+                },
+            )
+        }
+
         await loadGroupRole()
 
         // Open the empty room (idempotent — a no-op if the call is
@@ -283,6 +320,10 @@ final class GroupCallSession {
         let transport = self.transport
         self.transport = nil
         await unsubscribeFromCost()
+        if let uuid = callKitUUID {
+            callKitUUID = nil
+            CallKitManager.shared.endCall(uuid: uuid)
+        }
         Task { @MainActor in
             do {
                 try await self.api.groupVoiceEnd(conversationId: self.conversationId)
@@ -381,6 +422,13 @@ final class GroupCallSession {
         let transport = self.transport
         self.transport = nil
         await unsubscribeFromCost()
+        // Tell CallKit the call is done. Skipped when CallKit *drove*
+        // the teardown (onSystemEnd already cleared callKitUUID) so we
+        // don't double-end the action.
+        if let uuid = callKitUUID {
+            callKitUUID = nil
+            CallKitManager.shared.endCall(uuid: uuid)
+        }
         Task { @MainActor in
             transport?.hangUp()
             // Tell the worker we left so the room's human-admin invariant
@@ -461,6 +509,11 @@ extension GroupCallSession: GroupCallTransportDelegate {
         guard t === transport, phase == .connecting else { return }
         connectedAt = Date()
         phase = .connected
+        // Flip the CallKit lock-screen UI to "in call" so the timer
+        // starts and Control Center shows green.
+        if let uuid = callKitUUID {
+            CallKitManager.shared.reportCallConnected(uuid: uuid)
+        }
     }
 
     func transport(_ t: GroupCallTransport, didUpdateRoster snapshot: GroupRosterSnapshot) {

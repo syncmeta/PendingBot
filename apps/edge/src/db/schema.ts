@@ -793,6 +793,7 @@ export type Database = {
           endpoint: string | null
           id: string
           is_active: boolean
+          kind: string
           last_used_at: string | null
           metadata: Json
           platform: string
@@ -804,6 +805,7 @@ export type Database = {
           endpoint?: string | null
           id?: string
           is_active?: boolean
+          kind?: string
           last_used_at?: string | null
           metadata?: Json
           platform: string
@@ -815,6 +817,7 @@ export type Database = {
           endpoint?: string | null
           id?: string
           is_active?: boolean
+          kind?: string
           last_used_at?: string | null
           metadata?: Json
           platform?: string

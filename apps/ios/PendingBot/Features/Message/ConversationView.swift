@@ -630,6 +630,20 @@ struct ConversationView: View {
             await loadGroupSendersIfNeeded()
             await loadPendingContinueIfNeeded()
             await loadGroupFreezeIfNeeded()
+            // Cold-launch path: we arrived here because the user
+            // accepted a CallKit incoming voice ring. Now that
+            // loadGroupSendersIfNeeded() has populated `groupSenders`
+            // (required for GroupCallSession's roster labels), open
+            // GroupCallView so the user doesn't have to tap "join"
+            // after already accepting on the system call surface.
+            consumePendingAutoJoinIfMatches()
+        }
+        .onChange(of: IncomingCallStore.shared.pendingAutoJoinConversationId) { _, _ in
+            // Warm-launch path: app was already open in this conv when
+            // the push landed and the user accepted via CallKit; the
+            // .task above already ran, so this onChange covers the
+            // late arrival of the auto-join signal.
+            consumePendingAutoJoinIfMatches()
         }
         .onDisappear {
             if PushService.shared.activeConversationId == conversation.id {

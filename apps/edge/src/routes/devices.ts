@@ -14,6 +14,10 @@ const RegisterBody = z.object({
   // iOS only: which APNS environment (TestFlight/Debug=dev, App Store=prod).
   // The client reports this from build flags so we route correctly.
   apnsEnv: z.enum(['dev', 'prod']).optional(),
+  // iOS only: distinguish a standard APNs token from a PushKit VoIP token.
+  // Each install registers both (separate tokens, separate rows). Web /
+  // android only ever send 'apns' or omit it — the default covers them.
+  kind: z.enum(['apns', 'voip']).optional(),
   endpoint: z.string().url().optional(), // web push endpoint
 });
 
@@ -37,6 +41,7 @@ deviceRoutes.post('/register', async (c) => {
       token: parsed.token,
       endpoint: parsed.endpoint,
       metadata,
+      kind: parsed.kind ?? 'apns',
       is_active: true,
       last_used_at: new Date().toISOString(),
     },

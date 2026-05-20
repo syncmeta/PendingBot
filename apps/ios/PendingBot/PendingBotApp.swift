@@ -15,6 +15,38 @@ struct PendingBotApp: App {
         // network request, hence early-init not .task.
         ProtectedURLCache.install()
         Haptics.warmUp()
+        // Wire CallKit → app navigation. Set the closures here (rather
+        // than later in .task) so a VoIP push that wakes us from a cold
+        // launch and answers immediately still finds an `onIncomingAnswer`
+        // hook to route into the conversation. App-launch init runs
+        // before AppDelegate.didFinishLaunching's `bootstrap()`, which
+        // is when the CallKit provider's delegate goes live.
+        MainActor.assumeIsolated {
+            CallKitManager.shared.onIncomingAnswer = { convId in
+                // The two slots are read by different consumers:
+                //   • MessageTabView.onChange(pendingNavConversationId)
+                //     navigates the nav stack / sidebar selection.
+                //   • ConversationView.onAppear(pendingAutoJoinConversationId)
+                //     auto-opens GroupCallView so the user doesn't have
+                //     to tap "join" after accepting in CallKit.
+                IncomingCallStore.shared.pendingNavConversationId = convId
+                IncomingCallStore.shared.pendingAutoJoinConversationId = convId
+            }
+            CallKitManager.shared.onIncomingDecline = { convId in
+                // User declined via CallKit's incoming UI — release the
+                // pending invite on the server so the inviter's UI drops
+                // the ringing chip. Best-effort: a network failure here
+                // just means the inviter sees a slightly delayed pending
+                // entry expire on its own.
+                Task { @MainActor in
+                    guard let uid = AccountStore.shared.current?.id else { return }
+                    try? await VoiceCallAPI().groupVoiceCancelInvite(
+                        conversationId: convId,
+                        targetId: uid,
+                    )
+                }
+            }
+        }
     }
 
     var body: some Scene {

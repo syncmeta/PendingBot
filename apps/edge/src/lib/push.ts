@@ -59,22 +59,36 @@ interface SendToTokensInput {
   userId: string;
   payload: ApnsPayload;
   collapseId?: string;
+  // Which kind of device_tokens row to target. 'apns' = standard alert /
+  // background pushes (default, matches the historical fan-out behaviour);
+  // 'voip' = PushKit VoIP push for CallKit-incoming voice_ring. The two
+  // are stored as separate rows since Apple mints distinct tokens per
+  // registry and the topic/push-type differ.
+  kind?: 'apns' | 'voip';
 }
 
 // Internal — caller has already decided exactly what alert text to ship.
 async function sendToTokens(input: SendToTokensInput): Promise<{ sent: number; failed: number }> {
   const { env, userId, payload, collapseId } = input;
+  const kind = input.kind ?? 'apns';
   const supa = serviceClient(env);
 
   const { data: tokens, error } = await supa
     .from('device_tokens')
     .select('id, token, platform, metadata')
     .eq('user_id', userId)
-    .eq('is_active', true);
+    .eq('is_active', true)
+    .eq('kind', kind);
   if (error) {
     console.warn('[push] device_tokens read failed', error);
     return { sent: 0, failed: 0 };
   }
+
+  // For VoIP, target the `.voip` topic suffix and flag the push-type so
+  // Apple routes it through PushKit (and the receiver is allowed —
+  // required, actually — to call CallKit's reportNewIncomingCall on it).
+  const isVoip = kind === 'voip';
+  const topic = isVoip ? `${env.APNS_TOPIC}.voip` : undefined;
 
   let sent = 0;
   let failed = 0;
@@ -89,6 +103,8 @@ async function sendToTokens(input: SendToTokensInput): Promise<{ sent: number; f
         apnsEnv,
         payload,
         collapseId,
+        pushType: isVoip ? 'voip' : 'alert',
+        topic,
       });
       if (result.ok) {
         sent++;
@@ -123,10 +139,27 @@ export interface NotifyUserInput {
   collapseId?: string;
 }
 
-// Raw, caller-controlled body. Used by voice-ring and other typed
-// notifications whose copy is fixed at the call site.
+// Raw, caller-controlled body. Used by typed notifications whose copy is
+// fixed at the call site (not voice_ring — that goes through
+// `sendVoipRing` to PushKit).
 export async function notifyUser(input: NotifyUserInput): Promise<{ sent: number; failed: number }> {
   return sendToTokens(input);
+}
+
+// PushKit VoIP delivery — fan out to every active VoIP token the user
+// has registered. iOS 13+ contract: the receiving app must call
+// CXProvider.reportNewIncomingCall the moment the push lands, or Apple
+// revokes VoIP push privileges for the app. That means VoIP push is
+// reserved for inputs that **will** produce an incoming-call screen —
+// don't reuse this for arbitrary background work. Payload body sits
+// alongside `aps` (PushKit hands the whole top-level dict to the app).
+export async function sendVoipRing(input: {
+  env: Env;
+  userId: string;
+  payload: ApnsPayload;
+  collapseId?: string;
+}): Promise<{ sent: number; failed: number }> {
+  return sendToTokens({ ...input, kind: 'voip' });
 }
 
 export interface NotifyUserMessageInput {
