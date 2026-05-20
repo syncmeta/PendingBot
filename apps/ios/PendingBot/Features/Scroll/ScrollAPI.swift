@@ -2,11 +2,11 @@ import Foundation
 import Supabase
 
 // 奏折/Scroll networking layer — REST writes go through APIClient
-// (POST /v1/scroll/...), reads pull from Supabase directly the same way
+// (POST /v1/envelope/...), reads pull from Supabase directly the same way
 // FriendsTab queries `bots`. Realtime is a feed-level channel filtered
 // by user_id so the article list updates without polling.
 
-/// One row from `pendingbot.scroll_runs`. Covers every status — UI uses
+/// One row from `pendingbot.envelope_runs`. Covers every status — UI uses
 /// `status` to decide between shimmer / article / hide. `body_md` is
 /// only present once status flips to "done"; `summary` may be set
 /// earlier but the runner won't write it until the article is final.
@@ -50,7 +50,7 @@ struct ScrollRun: Codable, Identifiable, Hashable {
 }
 
 extension APIClient {
-    /// Kicks off a new envelope (scroll_runs) for the given conversation.
+    /// Kicks off a new envelope (envelope_runs) for the given conversation.
     /// `settings` lets the caller override the conversation's saved
     /// envelope_settings — the worker persists whatever the caller sent
     /// back onto the conversation row so the next trigger inherits.
@@ -61,22 +61,22 @@ extension APIClient {
             let conversationId: String
             let settings: EnvelopeSettings?
         }
-        struct Resp: Decodable { let scrollRunId: String }
+        struct Resp: Decodable { let envelopeRunId: String }
         let resp: Resp = try await post(
-            "v1/scroll/trigger",
+            "v1/envelope/trigger",
             body: Body(conversationId: conversationId, settings: settings)
         )
-        return resp.scrollRunId
+        return resp.envelopeRunId
     }
 
     /// Marks a running envelope as cancelled. The runner notices on its
     /// next turn and exits cleanly.
     func scrollCancel(id: String) async throws {
-        try await postVoid("v1/scroll/\(id)/cancel")
+        try await postVoid("v1/envelope/\(id)/cancel")
     }
 
     /// Send a markdown letter to a mutual friend (kind='human' row in
-    /// scroll_runs). The recipient sees it on their own 来信 tab via
+    /// envelope_runs). The recipient sees it on their own 来信 tab via
     /// the same realtime feed channel that bot envelopes use. Server
     /// returns 403 / `not_mutual_friends` if the friendship requirement
     /// fails — APIClient surfaces that as an error the caller can show.
@@ -92,9 +92,9 @@ extension APIClient {
             let title: String?
             let bodyMd: String
         }
-        struct Resp: Decodable { let scrollRunId: String }
+        struct Resp: Decodable { let envelopeRunId: String }
         let resp: Resp = try await post(
-            "v1/scroll/letter",
+            "v1/envelope/letter",
             body: Body(
                 conversationId: conversationId,
                 recipientUserId: recipientUserId,
@@ -103,7 +103,7 @@ extension APIClient {
                 bodyMd: bodyMd
             )
         )
-        return resp.scrollRunId
+        return resp.envelopeRunId
     }
 }
 
@@ -207,9 +207,9 @@ struct EnvelopeSettings: Codable, Hashable {
 //
 // One WebSocket per signed-in user to the user-level realtime hub
 // (/v1/realtime-hub/user), opened when the Scroll tab appears, closed
-// when it disappears. The user topic carries scroll_runs changes
+// when it disappears. The user topic carries envelope_runs changes
 // (alongside user_unread_counts, which RealtimeManager consumes on its
-// own socket) — this channel keeps only the scroll_runs rows. iOS
+// own socket) — this channel keeps only the envelope_runs rows. iOS
 // callers receive INSERT / UPDATE / DELETE as raw records and decode
 // them locally.
 
@@ -287,7 +287,7 @@ final class ScrollFeedChannel {
 // ── Progress ─────────────────────────────────────────────────────────────
 
 /// Typed view of the JSONB `progress` blob the runner writes (see
-/// `apps/edge/src/lib/scroll-runner.ts` — `ProgressState`). Every field
+/// `apps/edge/src/lib/envelope-runner.ts` — `ProgressState`). Every field
 /// is optional so older rows / drift in shape still render something.
 struct ScrollProgress {
     let phase: String?
@@ -362,8 +362,8 @@ enum ScrollPhaseLabel {
 
 // ── Envelope thinking trace ──────────────────────────────────────────────
 //
-// Mirrors the wire shape the runner appends to scroll_runs.turns
-// (apps/edge/src/lib/scroll-runner.ts: TurnTraceEntry). The detail page
+// Mirrors the wire shape the runner appends to envelope_runs.turns
+// (apps/edge/src/lib/envelope-runner.ts: TurnTraceEntry). The detail page
 // renders these as the "thinking process" so users can see what the
 // model thought + searched + scraped on the way to the final article.
 

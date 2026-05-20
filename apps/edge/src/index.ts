@@ -87,7 +87,7 @@ v1.route('/conversations', conversationRoutes);
 v1.route('/bots', botRoutes);
 v1.route('/upload', uploadRoutes);
 v1.route('/uploads', uploadRoutes);   // GET /v1/uploads/:id
-v1.route('/scroll', envelopeRoutes);   // legacy URL prefix; iOS still calls /v1/scroll/*
+v1.route('/envelope', envelopeRoutes);
 v1.route('/me', meRoutes);
 v1.route('/contacts', contactRoutes);
 v1.route('/friend-requests', friendRequestRoutes);

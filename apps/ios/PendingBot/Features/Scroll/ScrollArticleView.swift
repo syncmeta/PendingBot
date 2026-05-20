@@ -5,7 +5,7 @@ import Supabase
 /// it via Realtime so a still-running scroll fills in the body live as
 /// the runner writes it. Renders body_md with MarkdownText.
 struct ScrollArticleView: View {
-    let scrollRunId: String
+    let envelopeRunId: String
     @Environment(\.dismiss) private var dismiss
     @Environment(\.api) private var api
 
@@ -278,7 +278,7 @@ struct ScrollArticleView: View {
             let rows: [ScrollRun] = try await SupabaseStack.shared
                 .from("envelope_runs")
                 .select("id, kind, trigger, bot_id, author_user_id, conversation_id, status, title, summary, body_md, progress, turns, created_at, started_at, finished_at")
-                .eq("id", value: scrollRunId)
+                .eq("id", value: envelopeRunId)
                 .limit(1)
                 .execute()
                 .value
@@ -321,7 +321,7 @@ struct ScrollArticleView: View {
             userId: userId,
             onUpsert: { record in
                 guard let r = ScrollRunDecoder.decode(record),
-                      r.id == scrollRunId else { return }
+                      r.id == envelopeRunId else { return }
                 Task { @MainActor in self.run = r }
             },
             onDelete: { _ in
@@ -343,7 +343,7 @@ struct ScrollArticleView: View {
         cancelling = true
         defer { cancelling = false }
         do {
-            try await api.scrollCancel(id: scrollRunId)
+            try await api.scrollCancel(id: envelopeRunId)
         } catch {
             self.error = error.localizedDescription
         }

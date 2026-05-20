@@ -8,9 +8,8 @@ import { jsonError } from '../lib/http-error';
 import type { AppBindings } from '../types';
 import type { Json } from '../db/schema';
 
-// Envelope (来信) routes. The HTTP path stays at /v1/scroll/* and the
-// JSON response field stays `scrollRunId` — iOS still keys off those
-// in this commit and gets renamed in the next one.
+// Envelope (来信) routes. Mounted at /v1/envelope/* — see
+// apps/edge/src/index.ts for the prefix.
 //
 // The trigger body carries the per-run config the user picked in
 // conversation settings (explorer/collaborator models, turn cap).
@@ -41,8 +40,8 @@ const TriggerBody = z.object({
   settings: SettingsBody,
 });
 
-// POST /v1/scroll/trigger
-//   Kicks off a scroll run for the given user_bot conversation. The bot
+// POST /v1/envelope/trigger
+//   Kicks off an envelope run for the given user_bot conversation. The bot
 //   reads its own history with the user, optionally surfs the web, and
 //   writes an article. Returns 202 with the run id; the iOS client
 //   subscribes to envelope_runs Realtime to watch progress.
@@ -70,7 +69,7 @@ envelopeRoutes.post('/trigger', async (c) => {
   if (convErr) return jsonError(c, 500, 'database_error', { detail: convErr.message });
   if (!conv) return jsonError(c, 404, 'conversation_no_access');
   if (!conv.bot_id) {
-    return jsonError(c, 400, 'conversation_has_no_bot', { message: 'conversation has no bot to write the scroll' });
+    return jsonError(c, 400, 'conversation_has_no_bot', { message: 'conversation has no bot to write the envelope' });
   }
 
   // Bot-level envelope defaults (bots.config.envelope) sit underneath
@@ -112,7 +111,7 @@ envelopeRoutes.post('/trigger', async (c) => {
       .eq('id', parsed.conversationId);
   }
 
-  // Billing gate. A scroll is multi-step LLM work (probably the most
+  // Billing gate. An envelope is multi-step LLM work (probably the most
   // expensive single trigger we have); reject up-front when balance is
   // below threshold rather than burn credits half-way through.
   try {
@@ -160,13 +159,11 @@ envelopeRoutes.post('/trigger', async (c) => {
     }),
   );
 
-  // JSON response field keeps the legacy `scrollRunId` name because iOS
-  // decodes it that way. Internal code uses envelopeRunId.
-  return c.json({ scrollRunId: run.id }, 202);
+  return c.json({ envelopeRunId: run.id }, 202);
 });
 
-// GET /v1/scroll/list?limit&before
-//   Paginated feed of this user's scrolls (newest first). Only completed
+// GET /v1/envelope/list?limit&before
+//   Paginated feed of this user's envelopes (newest first). Only completed
 //   articles surface — running rows are picked up via Realtime, not list.
 //   `before` is an ISO timestamp from the previous page's tail.
 envelopeRoutes.get('/list', async (c) => {
@@ -196,7 +193,7 @@ envelopeRoutes.get('/list', async (c) => {
   return c.json({ items: data ?? [] });
 });
 
-// GET /v1/scroll/:id — full article (body_md included).
+// GET /v1/envelope/:id — full article (body_md included).
 envelopeRoutes.get('/:id', async (c) => {
   const id = c.req.param('id');
   const userJwt = c.var.userJwt!;
@@ -211,11 +208,11 @@ envelopeRoutes.get('/:id', async (c) => {
   return c.json(data);
 });
 
-// POST /v1/scroll/letter
+// POST /v1/envelope/letter
 //   Human-authored letter to a mutual friend. Same envelope_runs row
 //   shape as a bot envelope but kind='human', author_user_id set, no
 //   bot_id, status='done' on insert (no async runner). The recipient
-//   sees it on their 来信 tab via the existing scroll-feed Realtime
+//   sees it on their 来信 tab via the existing envelope-feed Realtime
 //   filter (user_id=eq.<recipient>). Mutual-friend gating happens
 //   server-side too (RLS + this handler) — the iOS sheet only shows
 //   the entry for user_user convs but RLS is the real backstop.
@@ -309,10 +306,10 @@ envelopeRoutes.post('/letter', async (c) => {
     return jsonError(c, 500, 'database_error', { detail: insertErr?.message ?? 'insert failed' });
   }
 
-  return c.json({ scrollRunId: row.id }, 201);
+  return c.json({ envelopeRunId: row.id }, 201);
 });
 
-// POST /v1/scroll/:id/cancel — flip status='cancelled'. The runner
+// POST /v1/envelope/:id/cancel — flip status='cancelled'. The runner
 // checks this between turns and exits cleanly.
 envelopeRoutes.post('/:id/cancel', async (c) => {
   const id = c.req.param('id');

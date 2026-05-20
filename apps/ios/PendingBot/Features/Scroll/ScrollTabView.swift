@@ -6,7 +6,7 @@ import Supabase
 /// your bots to write a new one (manual trigger only for now; cron
 /// auto-trigger is pending design tests).
 ///
-/// Reads the initial page directly from `pendingbot.scroll_runs` (RLS
+/// Reads the initial page directly from `pendingbot.envelope_runs` (RLS
 /// scoped to the signed-in user) and subscribes to a feed-level
 /// Realtime channel for live INSERT/UPDATE/DELETE.
 struct ScrollTabView: View {
@@ -104,7 +104,7 @@ struct ScrollTabView: View {
             .navigationDestination(for: ScrollNav.self) { dest in
                 switch dest {
                 case .article(let id):
-                    ScrollArticleView(scrollRunId: id)
+                    ScrollArticleView(envelopeRunId: id)
                 }
             }
         }
