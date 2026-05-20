@@ -830,7 +830,10 @@ struct BotConfigView: View {
 
             Section("技能") {
                 NavigationLink {
-                    SkillsView()
+                    // Match the user's skills view to whichever provider
+                    // this bot routes through — OpenAI native goes one
+                    // way, everything else (OpenRouter default) the other.
+                    SkillsView(provider: modelProvider == "openai" ? .openaiNative : .openrouter)
                 } label: {
                     HStack {
                         Image(systemName: "puzzlepiece.extension")

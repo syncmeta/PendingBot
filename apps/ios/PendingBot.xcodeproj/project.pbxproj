@@ -84,6 +84,7 @@
 		93195F559ABAEBD132E64F17 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = 23AC5D1A6CD4C748003E6936 /* MarkdownUI */; };
 		5A7D1E0066F40000A0000001 /* SwiftMath in Frameworks */ = {isa = PBXBuildFile; productRef = 5A7D1E0066F40000A0000003 /* SwiftMath */; };
 		94657E0860679B913AE1A78D /* SkillsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47CBECD15BE9204330CB00AD /* SkillsView.swift */; };
+		1B4F2D0E0001000000000001 /* BotCapabilitiesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B4F2D0E0001000000000002 /* BotCapabilitiesView.swift */; };
 		96C09BE5D54583A8016A5E8B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2CE994684E5E6189CC090363 /* Assets.xcassets */; };
 		9C2D6876ED3285CA4508D130 /* EnvelopeFeedRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A32CFD03CE72A90611766007 /* EnvelopeFeedRow.swift */; };
 		A015F5C92DDE84FF6D4BAAEB /* AccountStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CC956D0BC262560F70E112A /* AccountStore.swift */; };
@@ -147,6 +148,7 @@
 		42A11830F64F80977210B443 /* PendingBot.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = PendingBot.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		46789D89F437D52724B2568C /* GroupSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupSettingsView.swift; sourceTree = "<group>"; };
 		47CBECD15BE9204330CB00AD /* SkillsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkillsView.swift; sourceTree = "<group>"; };
+		1B4F2D0E0001000000000002 /* BotCapabilitiesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotCapabilitiesView.swift; sourceTree = "<group>"; };
 		4CC956D0BC262560F70E112A /* AccountStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountStore.swift; sourceTree = "<group>"; };
 		54274B6144493F79AB8DC3D1 /* Haptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Haptics.swift; sourceTree = "<group>"; };
 		54E1D0F65173FEE03FB14635 /* BillingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BillingService.swift; sourceTree = "<group>"; };
@@ -273,6 +275,7 @@
 			isa = PBXGroup;
 			children = (
 				47CBECD15BE9204330CB00AD /* SkillsView.swift */,
+				1B4F2D0E0001000000000002 /* BotCapabilitiesView.swift */,
 			);
 			path = Skills;
 			sourceTree = "<group>";
@@ -650,6 +653,7 @@
 				52F96822550D55A2446083BE /* ServerTimestamp.swift in Sources */,
 				A7EAB9A4D95F17682C7079BB /* SidebarTabBar.swift in Sources */,
 				94657E0860679B913AE1A78D /* SkillsView.swift in Sources */,
+				1B4F2D0E0001000000000001 /* BotCapabilitiesView.swift in Sources */,
 				B3417CC338433628B03B7B1D /* SplitNav.swift in Sources */,
 				252E72745FF2F6B5758D2523 /* SupabaseStack.swift in Sources */,
 				88978249B3DE9BBB9F495363 /* SwipeRevealRow.swift in Sources */,
