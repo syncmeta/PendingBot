@@ -76,6 +76,9 @@ struct TabRoot: View {
 
             EnvelopeTabView()
                 .tabItem { Label(TopTab.envelope.label, systemImage: TopTab.envelope.systemImage) }
+                // System tab badge doesn't have a dot-only variant — a
+                // bullet glyph is the closest we get to "small red dot".
+                .badge(unread.hasUnreadEnvelopes ? Text(verbatim: "●") : nil)
                 .tag(TopTab.envelope)
 
             MeTabView()

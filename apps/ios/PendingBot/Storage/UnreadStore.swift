@@ -13,6 +13,15 @@ import UserNotifications
 ///     the swipe action. Local-only (the server has no "mark unread"),
 ///     persisted to UserDefaults keyed by account.id so switching accounts
 ///     surfaces the right dots.
+///
+/// Plus an envelope (来信) layer — `envelope_runs` has no server-side read
+/// marker, so we track read state locally: `currentEnvelopeIds` (in-memory
+/// snapshot of what the Envelope tab is currently displaying) minus
+/// `readEnvelopeIds` (persisted set of ids the user has opened) gives the
+/// unread dot. To avoid flooding an established account with fake dots on
+/// first launch, the first call to `setCurrentEnvelopes` seeds every
+/// then-visible id into `readEnvelopeIds` (one-time per account, tracked
+/// by `hasSeededEnvelopes`).
 @MainActor
 final class UnreadStore: ObservableObject {
     static let shared = UnreadStore()
@@ -23,10 +32,27 @@ final class UnreadStore: ObservableObject {
     /// Server-truth unread message counts, keyed by conversation id.
     @Published private(set) var serverCounts: [String: Int] = [:]
 
+    /// Envelope ids the user has explicitly opened. Persisted per account.
+    @Published private(set) var readEnvelopeIds: Set<String> = []
+
+    /// Live set of envelope ids currently visible in the Envelope tab —
+    /// the source of truth for "what could be unread right now". Not
+    /// persisted; refilled on tab appearance + realtime upserts.
+    @Published private(set) var currentEnvelopeIds: Set<String> = []
+
+    /// Per-account flag: have we seeded `readEnvelopeIds` with the
+    /// existing envelope backlog yet? Without this, a fresh install on
+    /// an account that already has 50 envelopes would surface a dot
+    /// the user can't make go away short of opening every letter.
+    private var hasSeededEnvelopes: Bool = false
+
     private var accountId: String?
     private let userDefaults = UserDefaults.standard
     private func storageKey(for accountId: String) -> String {
         "pendingbot.unread.\(accountId).v1"
+    }
+    private func envelopeStorageKey(for accountId: String) -> String {
+        "pendingbot.envelopeRead.\(accountId).v1"
     }
 
     private init() {}
@@ -57,12 +83,18 @@ final class UnreadStore: ObservableObject {
         }
         accountId = account?.id
         serverCounts = [:]
+        currentEnvelopeIds = []
         guard let accountId = account?.id else {
             unread = []
+            readEnvelopeIds = []
+            hasSeededEnvelopes = false
             syncAppIconBadge()
             return
         }
         unread = load(accountId: accountId)
+        let env = loadEnvelopes(accountId: accountId)
+        readEnvelopeIds = env.read
+        hasSeededEnvelopes = env.seeded
         syncAppIconBadge()
     }
 
@@ -111,6 +143,56 @@ final class UnreadStore: ObservableObject {
         }
     }
 
+    // ── Envelope (来信) read state ──────────────────────────────────────────
+
+    /// Is there at least one envelope currently visible that the user
+    /// hasn't opened? Drives the small red dot on the 来信 tab.
+    var hasUnreadEnvelopes: Bool {
+        !currentEnvelopeIds.subtracting(readEnvelopeIds).isEmpty
+    }
+
+    /// Replace the live snapshot of envelope ids the tab is showing.
+    /// First call after `bind(account:)` also seeds the backlog into
+    /// `readEnvelopeIds` so an established account doesn't start with
+    /// a wall of fake dots.
+    func setCurrentEnvelopes(_ ids: Set<String>) {
+        if !hasSeededEnvelopes {
+            hasSeededEnvelopes = true
+            if !ids.isEmpty {
+                readEnvelopeIds.formUnion(ids)
+            }
+            persistEnvelopes()
+        }
+        currentEnvelopeIds = ids
+    }
+
+    /// Add one envelope id to the live snapshot — called from the
+    /// realtime upsert handler on the Envelope tab.
+    func addCurrentEnvelope(_ id: String) {
+        guard !currentEnvelopeIds.contains(id) else { return }
+        // No backlog seeding here: a brand-new envelope arriving via
+        // realtime is genuinely new, even if it's the first one this
+        // account has ever seen.
+        if !hasSeededEnvelopes {
+            hasSeededEnvelopes = true
+            persistEnvelopes()
+        }
+        currentEnvelopeIds.insert(id)
+    }
+
+    /// Drop an envelope id from the live snapshot — called when the
+    /// row is removed (e.g. cancelled or deleted).
+    func removeCurrentEnvelope(_ id: String) {
+        currentEnvelopeIds.remove(id)
+    }
+
+    /// Mark an envelope as read — called when the user taps the row.
+    func markEnvelopeRead(_ id: String) {
+        guard !readEnvelopeIds.contains(id) else { return }
+        readEnvelopeIds.insert(id)
+        persistEnvelopes()
+    }
+
     // ── App icon badge ──────────────────────────────────────────────────────
 
     private func syncAppIconBadge() {
@@ -137,5 +219,31 @@ final class UnreadStore: ObservableObject {
             return []
         }
         return Set(array)
+    }
+
+    // ── Envelope persistence ────────────────────────────────────────────────
+
+    /// On-disk shape for the envelope read state. `seeded` distinguishes
+    /// "fresh account, never observed the feed yet" from "account has been
+    /// observed and just happens to have zero read entries".
+    private struct EnvelopeReadBlob: Codable {
+        var read: [String]
+        var seeded: Bool
+    }
+
+    private func persistEnvelopes() {
+        guard let accountId else { return }
+        let blob = EnvelopeReadBlob(read: readEnvelopeIds.sorted(), seeded: hasSeededEnvelopes)
+        if let data = try? JSONEncoder().encode(blob) {
+            userDefaults.set(data, forKey: envelopeStorageKey(for: accountId))
+        }
+    }
+
+    private func loadEnvelopes(accountId: String) -> (read: Set<String>, seeded: Bool) {
+        guard let data = userDefaults.data(forKey: envelopeStorageKey(for: accountId)),
+              let blob = try? JSONDecoder().decode(EnvelopeReadBlob.self, from: data) else {
+            return ([], false)
+        }
+        return (Set(blob.read), blob.seeded)
     }
 }

@@ -72,6 +72,16 @@ struct SidebarTabBar: View {
                                         .frame(minWidth: 17, minHeight: 17)
                                         .background(Capsule().fill(Color.red))
                                         .offset(x: 12, y: -8)
+                                } else if tab == .envelope, unread.hasUnreadEnvelopes {
+                                    // No count — just a small dot, matching
+                                    // the message tab's visual placement.
+                                    Circle()
+                                        .fill(Color.red)
+                                        .frame(width: 8, height: 8)
+                                        .overlay(
+                                            Circle().strokeBorder(Theme.Palette.canvas, lineWidth: 1)
+                                        )
+                                        .offset(x: 6, y: -4)
                                 }
                             }
                         Text(tab.label)
