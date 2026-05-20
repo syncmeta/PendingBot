@@ -138,6 +138,11 @@ struct CreateBotSheet: View {
                 let model_id: String
                 let model_provider: String?
                 let slug: String
+                /// IANA tz on the bot row. Public bots default to the
+                /// creator's device tz at creation; private bots stay
+                /// null (they always 1:1 with the creator and the
+                /// per-turn clientTz already carries the tz).
+                let tz: String?
             }
             struct BotOut: Decodable {
                 let id: String
@@ -155,7 +160,8 @@ struct CreateBotSheet: View {
                     display_name: trimmedName,
                     model_id: modelSlug,
                     model_provider: modelProvider,
-                    slug: String(slug)
+                    slug: String(slug),
+                    tz: visibility == .privateBot ? nil : TimeZone.current.identifier
                 ))
                 .select("id, display_name, model_id, visibility, creator_id")
                 .single()
@@ -204,6 +210,14 @@ struct ManageBotSheet: View {
     @State private var initialModelProvider: String?
     @State private var visibility: String = "private"
     @State private var voiceCallEnabled: Bool = false
+    /// IANA tz the bot considers its own. Only meaningful on public bots
+    /// — for private bots the column stays NULL and the bot follows the
+    /// listener's clientTz like before. Loaded from the bots row on
+    /// appear; default = device tz when the row's tz is null but the
+    /// bot is public (which only happens for legacy rows or for a
+    /// promotion-in-progress that hasn't yet persisted).
+    @State private var tz: String = TimeZone.current.identifier
+    @State private var initialTz: String = ""
     @State private var saving = false
     @State private var deleting = false
     @State private var confirmingDelete = false
@@ -250,6 +264,27 @@ struct ManageBotSheet: View {
                 } footer: {
                     if isPrivate {
                         Text("升级为公有后不能再转回私有,也不能删除,但仍能改设置和改名。请确认。")
+                            .font(Theme.Fonts.caption)
+                    }
+                }
+
+                // Public bots have a self-tz: drives the "你所在的时区是
+                // X" line in the bot's system prompt and the group time
+                // hint. Private bots don't (follow listener clientTz).
+                if visibility != "private" {
+                    Section {
+                        NavigationLink {
+                            TimeZonePickerView(selection: $tz)
+                        } label: {
+                            HStack {
+                                Text("机器人时区").foregroundStyle(Theme.Palette.ink)
+                                Spacer()
+                                Text(tz.isEmpty ? TimeZone.current.identifier : tz)
+                                    .foregroundStyle(Theme.Palette.inkMuted)
+                            }
+                        }
+                    } footer: {
+                        Text("机器人会认为自己在这个时区，群聊里的时间提示也按这个时区显示。私聊里，时间提示仍按你的设备时区。")
                             .font(Theme.Fonts.caption)
                     }
                 }
@@ -332,19 +367,28 @@ struct ManageBotSheet: View {
         .task { await loadModelProvider() }
     }
 
-    /// model_provider isn't on BotPick — pull it from the bots row so the
-    /// picker pre-selects the right route and the dirty check is accurate.
+    /// model_provider + tz aren't on BotPick — pull them from the bots
+    /// row so the pickers pre-select the right values and the dirty
+    /// check is accurate.
     private func loadModelProvider() async {
-        struct Row: Decodable { let model_provider: String? }
+        struct Row: Decodable { let model_provider: String?; let tz: String? }
         if let row: Row = try? await SupabaseStack.shared
             .from("bots")
-            .select("model_provider")
+            .select("model_provider, tz")
             .eq("id", value: initial.id)
             .single()
             .execute()
             .value {
             modelProvider = row.model_provider
             initialModelProvider = row.model_provider
+            // Public bots have a tz from creation/backfill ('Etc/UTC'
+            // for preset, creator-device-tz for user-created). The
+            // empty initial state lets the dirty check distinguish
+            // "loaded null from a private bot" from "explicitly set
+            // an empty tz".
+            let loaded = row.tz ?? ""
+            tz = loaded.isEmpty ? TimeZone.current.identifier : loaded
+            initialTz = loaded
         }
     }
 
@@ -356,6 +400,10 @@ struct ManageBotSheet: View {
         if modelProvider != initialModelProvider { return true }
         if voiceCallEnabled != (initial.voice_call_enabled ?? false) { return true }
         if visibility != (initial.visibility ?? "public_open") { return true }
+        // tz changes only matter on public bots. Private edits don't
+        // touch the column, so don't flag the form dirty just because
+        // the placeholder device-tz differs from the row's null.
+        if visibility != "private" && tz != initialTz { return true }
         return false
     }
 
@@ -383,9 +431,14 @@ struct ManageBotSheet: View {
                 let model_provider: String?
                 let visibility: String
                 let voice_call_enabled: Bool
+                /// nil here means "not promoting / no tz change for a
+                /// private bot" — the encode() below force-emits it as
+                /// JSON null so a private→public promotion correctly
+                /// SET tz = ... too.
+                let tz: String?
                 enum CodingKeys: String, CodingKey {
                     case display_name, model_id, model_provider
-                    case visibility, voice_call_enabled
+                    case visibility, voice_call_enabled, tz
                 }
                 func encode(to encoder: Encoder) throws {
                     var c = encoder.container(keyedBy: CodingKeys.self)
@@ -394,17 +447,22 @@ struct ManageBotSheet: View {
                     try c.encode(model_provider, forKey: .model_provider)
                     try c.encode(visibility, forKey: .visibility)
                     try c.encode(voice_call_enabled, forKey: .voice_call_enabled)
+                    try c.encode(tz, forKey: .tz)
                 }
             }
             // The creator may edit every column regardless of visibility, so
             // one payload covers private edits, public edits, and the
-            // private→public promotion alike.
+            // private→public promotion alike. tz round-trips as null for
+            // a row that should clear the column (private bot, or a
+            // promotion we forgot to default — unlikely with the UI gate
+            // but the schema tolerates it).
             let payload = Update(
                 display_name: displayName.trimmingCharacters(in: .whitespaces),
                 model_id: modelSlug,
                 model_provider: modelProvider,
                 visibility: visibility,
-                voice_call_enabled: voiceCallEnabled
+                voice_call_enabled: voiceCallEnabled,
+                tz: visibility == "private" ? nil : tz
             )
             try await SupabaseStack.shared
                 .from("bots")
@@ -435,6 +493,73 @@ struct ManageBotSheet: View {
             self.error = error.localizedDescription
             Haptics.error()
         }
+    }
+}
+
+// MARK: - Time zone picker
+
+/// Searchable list of IANA time zones (TimeZone.knownTimeZoneIdentifiers).
+/// Pushed from ManageBotSheet when the creator wants to pin a public bot
+/// to a specific zone. The current device tz is offered as a one-tap
+/// reset row at the top.
+struct TimeZonePickerView: View {
+    @Binding var selection: String
+    @Environment(\.dismiss) private var dismiss
+    @State private var search: String = ""
+
+    private var identifiers: [String] {
+        // Sort alphabetically — IANA names group naturally by continent
+        // when sorted, and search makes scrolling unnecessary anyway.
+        TimeZone.knownTimeZoneIdentifiers.sorted()
+    }
+
+    private var filtered: [String] {
+        let q = search.trimmingCharacters(in: .whitespaces).lowercased()
+        if q.isEmpty { return identifiers }
+        return identifiers.filter { $0.lowercased().contains(q) }
+    }
+
+    var body: some View {
+        List {
+            // Quick reset to whatever the device thinks "here" is.
+            // Common case: creator's tz moved (travel, relocation) and
+            // they want the bot to follow.
+            Section {
+                Button {
+                    selection = TimeZone.current.identifier
+                    dismiss()
+                } label: {
+                    HStack {
+                        Text("当前设备时区")
+                        Spacer()
+                        Text(TimeZone.current.identifier)
+                            .foregroundStyle(Theme.Palette.inkMuted)
+                    }
+                }
+                .foregroundStyle(Theme.Palette.ink)
+            }
+            Section {
+                ForEach(filtered, id: \.self) { id in
+                    Button {
+                        selection = id
+                        dismiss()
+                    } label: {
+                        HStack {
+                            Text(id)
+                            Spacer()
+                            if id == selection {
+                                Image(systemName: "checkmark")
+                                    .foregroundStyle(Theme.Palette.accent)
+                            }
+                        }
+                    }
+                    .foregroundStyle(Theme.Palette.ink)
+                }
+            }
+        }
+        .searchable(text: $search, prompt: "搜索时区")
+        .navigationTitle("机器人时区")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
