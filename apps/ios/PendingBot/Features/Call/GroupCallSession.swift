@@ -38,6 +38,12 @@ final class GroupCallSession {
 
     var isSpeakerOn: Bool = false
 
+    /// Running PND spend across all bot legs in the room, fed by the
+    /// `voice_cost` frames RoomVoiceDO publishes on the conv hub after
+    /// every settleTurn. 0 until the first turn — view hides the figure
+    /// until then so an empty "0 PND" doesn't sit on the screen.
+    var cumulativePnd: Int = 0
+
     /// Current bot roster, as the transport learns it from /join and
     /// any later re-sync. Drives the participant list.
     var roster: [GroupBotRosterEntry] = []
@@ -75,6 +81,10 @@ final class GroupCallSession {
     private var transport: GroupCallTransport?
     private var didInitiate = false
     private var groupRoleIsAdmin = false
+
+    /// Conv-hub subscription feeding `cumulativePnd` from server-side
+    /// per-turn voice_cost events. Dropped on terminate.
+    private var costSubscription: ConvSubscriptionToken?
 
     /// Total time to wait for the call to connect before giving up.
     private static let connectTimeoutNanos: UInt64 = 20_000_000_000
@@ -197,6 +207,11 @@ final class GroupCallSession {
         if isTerminal(phase) { return }
         isPrivileged = didInitiate || groupRoleIsAdmin
 
+        // Subscribe to the conv hub for `voice_cost` previews — every
+        // bot's settleTurn fans out a delta + cumulative PND to every
+        // joined human. The view reads cumulativePnd off this observer.
+        await subscribeToCost()
+
         let transport = GroupCallTransport(
             conversationId: conversationId,
             api: api,
@@ -262,6 +277,7 @@ final class GroupCallSession {
         phase = .hangingUp
         let transport = self.transport
         self.transport = nil
+        await unsubscribeFromCost()
         Task { @MainActor in
             do {
                 try await self.api.groupVoiceEnd(conversationId: self.conversationId)
@@ -359,6 +375,7 @@ final class GroupCallSession {
         phase = .hangingUp
         let transport = self.transport
         self.transport = nil
+        await unsubscribeFromCost()
         Task { @MainActor in
             transport?.hangUp()
             // Tell the worker we left so the room's human-admin invariant
@@ -374,6 +391,33 @@ final class GroupCallSession {
             }
         }
         phase = .terminated(reason)
+    }
+
+    /// Open a conv-hub subscription that feeds `cumulativePnd` from the
+    /// server's voice_cost events. Other observers on the same channel
+    /// (banners, message stream) keep working through this token —
+    /// observers are independent.
+    private func subscribeToCost() async {
+        let token = await RealtimeManager.shared.startConvChannel(
+            conversationId: conversationId,
+            onMessage: { _ in },
+            onVoiceCost: { [weak self] cost in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    if cost.cumulativePnd > self.cumulativePnd {
+                        self.cumulativePnd = cost.cumulativePnd
+                    }
+                }
+            },
+        )
+        costSubscription = token
+    }
+
+    private func unsubscribeFromCost() async {
+        if let token = costSubscription {
+            costSubscription = nil
+            await RealtimeManager.shared.stopConvChannel(token)
+        }
     }
 
     private func isTerminal(_ p: Phase) -> Bool {

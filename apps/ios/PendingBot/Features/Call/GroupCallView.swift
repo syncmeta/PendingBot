@@ -114,10 +114,22 @@ struct GroupCallView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             if isCallLive {
-                Text(elapsedDisplay)
-                    .monospacedDigit()
-                    .font(.title3)
-                    .padding(.top, 4)
+                HStack(spacing: 10) {
+                    Text(elapsedDisplay)
+                        .monospacedDigit()
+                    // PND figure stays hidden until the first turn
+                    // settles — a "0 PND" alongside the timer for the
+                    // first 1–2 s reads as broken.
+                    if session.cumulativePnd > 0 {
+                        Text("·")
+                            .foregroundStyle(.secondary)
+                        Text("\(session.cumulativePnd) PND")
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .font(.title3)
+                .padding(.top, 4)
             }
         }
     }

@@ -479,9 +479,11 @@ export class RealtimeMeterDO {
       const delta = usdToPnd(usd, markup);
       if (delta <= 0) return;
       this.cumulativePnd += delta;
-      // 1:1 voice — only the caller subscribes, so route to the user
-      // hub. Group voice fans out on conv:* in room-voice.ts.
-      await publishToHub(this.env, `user:${ctx.userId}`, {
+      // Route through the conv hub — same channel iOS already opens for
+      // the conversation, and a 1:1 conv has only the caller subscribed
+      // so the figure stays private without needing a separate user-hub
+      // path. Group voice fans out on the same key in room-voice.ts.
+      await publishToHub(this.env, `conv:${ctx.conversationId}`, {
         type: 'voice_cost',
         conversation_id: ctx.conversationId,
         session_id: ctx.sessionId,

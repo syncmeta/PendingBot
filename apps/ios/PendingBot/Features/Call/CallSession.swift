@@ -53,6 +53,12 @@ final class CallSession {
     /// the screen. CallView's speaker button toggles it.
     var isSpeakerOn: Bool = false
 
+    /// Running PND spend for this call, fed by `voice_cost` frames the
+    /// edge meter publishes after every model turn. 0 until the first
+    /// turn settles — the view hides the figure while it's still 0 so a
+    /// stale "0" doesn't sit next to the timer.
+    var cumulativePnd: Int = 0
+
     // MARK: - Inputs
 
     let conversationId: String
@@ -71,6 +77,10 @@ final class CallSession {
     /// the first start() — keeps the unit tests from spinning the audio
     /// engine for nothing.
     private var ringback: RingbackPlayer?
+
+    /// Conv-hub subscription that feeds `cumulativePnd` from server-side
+    /// per-turn voice_cost events. Held so terminate() can drop it.
+    private var costSubscription: ConvSubscriptionToken?
 
     /// Returned by the worker on /session. Stored so /attach and
     /// /summary can correlate against the same call.
@@ -113,6 +123,11 @@ final class CallSession {
         let player = RingbackPlayer()
         player.start()
         ringback = player
+
+        // Subscribe to the conv hub for `voice_cost` previews. The edge
+        // meter publishes one of these after every turn's settleTurn,
+        // and the UI reads `cumulativePnd` off this observer.
+        await subscribeToCost()
 
         // User-selected transport. "auto" (default) walks the chain
         // direct WebRTC → Cloudflare TURN relay → WebSocket; the
@@ -315,6 +330,36 @@ final class CallSession {
         ringback = nil
     }
 
+    /// Subscribe to the conversation hub so `voice_cost` frames feed
+    /// `cumulativePnd`. We only need the cost slot — leave the other
+    /// callbacks as the no-op defaults so this subscriber doesn't get
+    /// woken up for every message in the conv.
+    private func subscribeToCost() async {
+        let token = await RealtimeManager.shared.startConvChannel(
+            conversationId: conversationId,
+            onMessage: { _ in },
+            onVoiceCost: { [weak self] cost in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    // The server sends a monotonically growing cumulative
+                    // for the session; clamp regressions out so a stale
+                    // late-arriving frame can't make the number drop.
+                    if cost.cumulativePnd > self.cumulativePnd {
+                        self.cumulativePnd = cost.cumulativePnd
+                    }
+                }
+            },
+        )
+        costSubscription = token
+    }
+
+    private func unsubscribeFromCost() async {
+        if let token = costSubscription {
+            costSubscription = nil
+            await RealtimeManager.shared.stopConvChannel(token)
+        }
+    }
+
     /// Flip the audio route between the earpiece and the loudspeaker.
     /// `overrideOutputAudioPort` acts on the shared AVAudioSession, so it
     /// works regardless of which transport (WebRTC / WebSocket) is live.
@@ -342,6 +387,9 @@ final class CallSession {
         // it's still spinning here, so stop it before the teardown
         // races the audio session.
         stopRingback()
+        // Drop the cost subscription so we stop holding the conv socket
+        // for a session that's over.
+        await unsubscribeFromCost()
         // Unblock any in-flight connection attempt so start()'s chain
         // loop sees the terminal phase and stops minting transports.
         resolveAttempt(.failed(reason))

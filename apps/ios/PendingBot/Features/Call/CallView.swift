@@ -105,12 +105,23 @@ struct CallView: View {
     }
 
     private var metrics: some View {
-        // Running cost is no longer shown live — metering moved
-        // server-side (RealtimeMeterDO), so the device doesn't see
-        // per-turn spend. The call's cost settles into audit_log.
-        Text("通话 \(elapsedDisplay)")
-            .monospacedDigit()
-            .font(.title3)
+        // Server-side meter (RealtimeMeterDO) publishes per-turn spend
+        // over the conv hub, so we have a running PND figure to show.
+        // It stays hidden until the first turn settles — a "PND 0"
+        // sitting next to the timer for the first 1–2 s of "talking
+        // but no usage yet" reads as broken.
+        HStack(spacing: 10) {
+            Text("通话 \(elapsedDisplay)")
+                .monospacedDigit()
+            if session.cumulativePnd > 0 {
+                Text("·")
+                    .foregroundStyle(.secondary)
+                Text("\(session.cumulativePnd) PND")
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .font(.title3)
     }
 
     private var controlRow: some View {

@@ -44,9 +44,10 @@ export interface VoiceCallEvent {
 // queue / billing_debit round-trip. NOT a debit — the actual billing
 // still flows through AUDIT_QUEUE; this is purely a display number.
 //
-// Routing: 1:1 calls publish on `user:<userId>` (only the caller sees it).
-// Group calls publish on `conv:<conversationId>` (everyone in the room
-// sees the same cumulative figure).
+// Routing: both 1:1 and group calls publish on `conv:<conversationId>`.
+// For a 1:1 conv only the caller is a member, so the figure stays
+// private to them; for a group conv every joined human sees the same
+// cumulative number.
 export interface VoiceCostEvent {
   type: 'voice_cost';
   conversation_id: string;

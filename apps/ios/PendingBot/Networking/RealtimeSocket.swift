@@ -1,13 +1,15 @@
 import Foundation
 import Supabase
 
-/// One frame delivered over a realtime hub WebSocket. Two payload kinds
-/// share the socket — a row change ("change") and a group voice call
-/// lifecycle event ("voice_call") — and the variants below mirror the
-/// edge wire shapes in `apps/edge/src/lib/realtime-publish.ts`.
+/// One frame delivered over a realtime hub WebSocket. Three payload
+/// kinds share the socket — a row change ("change"), a group voice call
+/// lifecycle event ("voice_call"), and a per-turn voice call cost
+/// preview ("voice_cost") — and the variants below mirror the edge
+/// wire shapes in `apps/edge/src/lib/realtime-publish.ts`.
 enum HubFrame: Sendable {
     case change(HubChange)
     case voiceCall(VoiceCallFrame)
+    case voiceCost(VoiceCostFrame)
 }
 
 struct HubChange: Sendable {
@@ -36,6 +38,19 @@ struct VoiceCallFrame: Sendable {
         let kind: Kind
         let id: String
     }
+}
+
+/// "voice_cost" frames — emitted by RealtimeMeterDO (1:1) and
+/// RoomVoiceDO (group) after each settleTurn. Drives the live PND
+/// display in CallView / GroupCallView. `cumulativePnd` is the
+/// authoritative running total for the session; `deltaPnd` is the
+/// turn's increment (kept so callers can blink it if they want).
+struct VoiceCostFrame: Sendable {
+    let conversationId: String
+    let sessionId: String
+    let deltaPnd: Int
+    let cumulativePnd: Int
+    let atMs: Double
 }
 
 /// WebSocket client for one RealtimeHubDO topic — the replacement for a
@@ -174,6 +189,20 @@ final class RealtimeSocket {
                 participants: participants,
                 pending: pending,
             )))
+        case "voice_cost":
+            guard let convId = raw.conversation_id,
+                  let sid = raw.session_id,
+                  let delta = raw.delta_pnd,
+                  let cum = raw.cumulative_pnd,
+                  let at = raw.at_ms
+            else { return }
+            onFrame(.voiceCost(VoiceCostFrame(
+                conversationId: convId,
+                sessionId: sid,
+                deltaPnd: delta,
+                cumulativePnd: cum,
+                atMs: at,
+            )))
         default:
             // "ready" / "pong" / anything unrecognised — ignore.
             break
@@ -193,6 +222,11 @@ final class RealtimeSocket {
         let initiator_id: String?
         let participants: [RawParticipant]?
         let pending: [RawParticipant]?
+        // voice-cost fields
+        let session_id: String?
+        let delta_pnd: Int?
+        let cumulative_pnd: Int?
+        let at_ms: Double?
     }
 
     private struct RawParticipant: Decodable { let kind: String; let id: String }
