@@ -56,6 +56,58 @@ describe('buildMessages identity section', () => {
   });
 });
 
+describe('buildMessages bot self-tz', () => {
+  it('renders the "你所在的时区" system block when the bot has a tz', async () => {
+    const messages = await buildMessages(supa, {
+      bot: { id: 'bot-1', output_mode: 'single', tz: 'Asia/Shanghai' },
+      botMemory,
+      skills: [],
+      botNote: null,
+      chatMemo: null,
+      recentContext: [],
+      newMessage: 'hi',
+    });
+
+    const sys = systemText(messages[0]?.content);
+    expect(sys).toContain('你所在的时区');
+    expect(sys).toContain('Asia/Shanghai');
+  });
+
+  it('falls back to the bot tz for the time hint when clientTz is absent (group dispatch)', async () => {
+    // Group dispatch never has clientTz on the request — the bot's own
+    // tz drives the per-message timestamp instead of dropping to UTC.
+    const messages = await buildMessages(supa, {
+      bot: { id: 'bot-1', output_mode: 'single', tz: 'Asia/Shanghai' },
+      botMemory,
+      skills: [],
+      botNote: null,
+      chatMemo: null,
+      recentContext: [],
+      newMessage: '现在几点',
+      nowIso: '2026-05-12T03:23:45.000Z',
+    });
+
+    expect(messages.at(-1)?.content).toContain('2026年5月12日 11:23:45');
+  });
+
+  it('uses clientTz over bot.tz when both are present (1:1 chat)', async () => {
+    const messages = await buildMessages(supa, {
+      bot: { id: 'bot-1', output_mode: 'single', tz: 'Etc/UTC' },
+      botMemory,
+      skills: [],
+      botNote: null,
+      chatMemo: null,
+      recentContext: [],
+      newMessage: '现在几点',
+      clientTz: 'Asia/Shanghai',
+      nowIso: '2026-05-12T03:23:45.000Z',
+    });
+
+    // listener wins — 11:23 in Shanghai, not 03:23 UTC
+    expect(messages.at(-1)?.content).toContain('2026年5月12日 11:23:45');
+  });
+});
+
 describe('buildMessages time hints', () => {
   it('includes the full year for the current user turn in the client timezone', async () => {
     const messages = await buildMessages(supa, {

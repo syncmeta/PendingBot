@@ -134,7 +134,7 @@ export async function dispatchGroupTurn(
 
     const { data: bot } = await supa
       .from('bots')
-      .select('id, display_name, model_id, output_mode, is_active')
+      .select('id, display_name, model_id, output_mode, is_active, tz')
       .eq('id', botId)
       .maybeSingle();
     if (!bot || !bot.is_active) continue;
@@ -191,6 +191,12 @@ export async function dispatchGroupTurn(
           display_name: (bot.display_name as string | null) ?? '',
           model_id: bot.model_id as string,
           output_mode: bot.output_mode === 'bubble' ? 'bubble' : 'single',
+          // Public bots in groups always have tz set (migration backfill
+          // + iOS create flow). The builder uses this as the time-hint tz
+          // when clientTz is absent (which it always is here — group
+          // dispatch has no live request body) and includes a self-tz
+          // line in the system prompt.
+          tz: (bot.tz as string | null) ?? null,
         },
         recentContext,
         newMessage: nudge,

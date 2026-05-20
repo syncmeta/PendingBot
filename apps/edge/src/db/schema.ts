@@ -598,6 +598,7 @@ export type Database = {
           model_provider: string | null
           output_mode: string
           slug: string
+          tz: string | null
           updated_at: string
           visibility: string
           voice_call_enabled: boolean
@@ -613,6 +614,7 @@ export type Database = {
           model_provider?: string | null
           output_mode?: string
           slug: string
+          tz?: string | null
           updated_at?: string
           visibility?: string
           voice_call_enabled?: boolean
@@ -628,6 +630,7 @@ export type Database = {
           model_provider?: string | null
           output_mode?: string
           slug?: string
+          tz?: string | null
           updated_at?: string
           visibility?: string
           voice_call_enabled?: boolean

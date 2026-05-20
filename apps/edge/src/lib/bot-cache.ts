@@ -30,6 +30,12 @@ export interface CachedBot {
   config: Record<string, unknown> | null;
   visibility: string;
   creator_id: string | null;
+  /// IANA timezone the bot considers itself in. Public bots only;
+  /// private bots leave it NULL (they always 1:1 with the creator and
+  /// the per-turn clientTz already carries the right tz). Used by
+  /// builder for system-prompt self-awareness and by group dispatch as
+  /// the time-hint tz.
+  tz: string | null;
 }
 
 export async function getCachedBot(env: Env, botId: string): Promise<CachedBot | null> {
@@ -59,7 +65,7 @@ export async function resolveBot(
   if (cached) return cached;
   const { data, error } = await supa
     .from('bots')
-    .select('id, display_name, model_id, model_provider, output_mode, is_active, config, visibility, creator_id')
+    .select('id, display_name, model_id, model_provider, output_mode, is_active, config, visibility, creator_id, tz')
     .eq('id', botId)
     .single();
   if (error || !data) return null;
@@ -73,6 +79,7 @@ export async function resolveBot(
     config: (data.config ?? null) as Record<string, unknown> | null,
     visibility: data.visibility as string,
     creator_id: (data.creator_id ?? null) as string | null,
+    tz: (data.tz ?? null) as string | null,
   };
   waitUntil(putCachedBot(env, bot));
   return bot;
