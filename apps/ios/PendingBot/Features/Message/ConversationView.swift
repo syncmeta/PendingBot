@@ -513,6 +513,11 @@ struct ConversationView: View {
                             )
                     }
                     .padding(.top, 4)
+                    // 把 LazyVStack 撑到至少一屏高,内容对顶。配合下方的
+                    // defaultScrollAnchor(.bottom):内容不到一屏时 frame
+                    // 比内容高、按 top 对齐显示在顶端;内容超过一屏时 frame
+                    // 等于内容自身高度,底部锚点把最新一条压在 composer 上沿。
+                    .frame(minHeight: scrollViewportHeight, alignment: .top)
                     .readableColumnWidth()
                 }
                 .coordinateSpace(.named("convScroll"))
