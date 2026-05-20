@@ -61,12 +61,7 @@ struct ComposerView: View {
                         .font(.system(size: 18, weight: .medium))
                         .foregroundStyle(Theme.Palette.inkMuted)
                         .frame(width: 38, height: 38)
-                        .background(
-                            Circle()
-                                .fill(.ultraThinMaterial)
-                                .overlay(Circle().fill(Color.white.opacity(0.45)))
-                        )
-                        .overlay(Circle().strokeBorder(Color.white.opacity(0.6), lineWidth: 0.5))
+                        .floatingComposerSurface(shape: Circle())
                 }
                 .buttonStyle(.plain)
 
@@ -111,17 +106,8 @@ struct ComposerView: View {
                     .padding(.trailing, 4)
                     .padding(.bottom, 4)
                 }
-                .background(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .fill(.ultraThinMaterial)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                                .fill(Color.white.opacity(0.45))
-                        )
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.6), lineWidth: 0.5)
+                .floatingComposerSurface(
+                    shape: RoundedRectangle(cornerRadius: 22, style: .continuous)
                 )
             }
             .padding(.horizontal, Theme.Metrics.gutter)
@@ -215,6 +201,29 @@ struct ComposerView: View {
                     .truncationMode(.middle)
             }
             .padding(.horizontal, 4)
+        }
+    }
+}
+
+// ── Floating surface backing ───────────────────────────────────────────────
+
+/// Pure-white pill / circle with a barely-there drop shadow, used as the
+/// background for both the "+" button and the input capsule. On iOS 26 we
+/// upgrade to Liquid Glass via `.glassEffect`, which adds depth-aware
+/// refraction on top of the same white tint and softer shadow.
+private extension View {
+    @ViewBuilder
+    func floatingComposerSurface<S: InsettableShape>(shape: S) -> some View {
+        if #available(iOS 26.0, *) {
+            self
+                .background(shape.fill(Color.white))
+                .glassEffect(.regular, in: shape)
+                .shadow(color: Color.black.opacity(0.06), radius: 6, x: 0, y: 1)
+        } else {
+            self
+                .background(shape.fill(Color.white))
+                .overlay(shape.strokeBorder(Color.black.opacity(0.04), lineWidth: 0.5))
+                .shadow(color: Color.black.opacity(0.08), radius: 6, x: 0, y: 2)
         }
     }
 }
