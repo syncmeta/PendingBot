@@ -1914,6 +1914,38 @@ export type Database = {
         }
         Relationships: []
       }
+      user_bot_contacts: {
+        Row: {
+          added_at: string
+          added_via: string
+          alias: string | null
+          bot_id: string
+          user_id: string
+        }
+        Insert: {
+          added_at?: string
+          added_via?: string
+          alias?: string | null
+          bot_id: string
+          user_id: string
+        }
+        Update: {
+          added_at?: string
+          added_via?: string
+          alias?: string | null
+          bot_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_bot_contacts_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "bots"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_contacts: {
         Row: {
           added_via_handle_id: string | null
