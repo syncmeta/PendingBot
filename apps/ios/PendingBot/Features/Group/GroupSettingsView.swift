@@ -382,6 +382,14 @@ struct GroupSettingsView: View {
     private func load() async {
         loading = true
         defer { loading = false }
+        // Hydrate from the local cache first so the meta block + member
+        // rows paint instantly on entry. Same cache-then-refresh pattern
+        // ConversationView uses for history and group senders — the
+        // network branch below overwrites everything that came from the
+        // cache once the authoritative reads land.
+        if meta == nil && members.isEmpty {
+            hydrateFromCache()
+        }
         do {
             async let metaResp: [GroupMetaDecodable] = SupabaseStack.shared
                 .from("conversation_group_meta")
@@ -455,6 +463,7 @@ struct GroupSettingsView: View {
             self.meta = metas.first.map {
                 GroupMeta(title: $0.title ?? "", joinPolicy: $0.join_policy, maxMembers: $0.max_members)
             }
+            var cacheRows: [LocalDatabase.GroupMemberRow] = []
             self.members = parts.map { p in
                 let isBot = p.participant_type == "bot"
                 let nick = (p.nickname?.isEmpty == false) ? p.nickname : nil
@@ -471,6 +480,21 @@ struct GroupSettingsView: View {
                     ? p.participant_id
                     : (userInfo[p.participant_id]?.2 ?? p.participant_id)
                 let frozen = !isBot && (billingByUser[p.participant_id]?.overdrawn ?? false)
+                let resolvedName: String = {
+                    if isBot { return botNames[p.participant_id] ?? "未知机器人" }
+                    return userInfo[p.participant_id]?.0 ?? ""
+                }()
+                cacheRows.append(LocalDatabase.GroupMemberRow(
+                    conversation_id: conversationId,
+                    participant_type: p.participant_type,
+                    participant_id: p.participant_id,
+                    nickname: p.nickname,
+                    role: p.role,
+                    display_name: resolvedName,
+                    avatar_path: avatarPath,
+                    avatar_seed: avatarSeed,
+                    frozen: frozen
+                ))
                 return Member(
                     id: "\(p.participant_type):\(p.participant_id)",
                     isBot: isBot,
@@ -493,10 +517,73 @@ struct GroupSettingsView: View {
 
             let contacts = await contactsTask
             self.friendUserIds = Set(contacts.map(\.id))
+
+            // Persist the resolved snapshot so the next entry into this
+            // settings page (and the chat page) paints from cache before
+            // the network round-trip lands.
+            LocalDatabase.shared.replaceGroupMembers(
+                conversationId: conversationId, cacheRows)
+            if let m = self.meta {
+                LocalDatabase.shared.upsertGroupMeta(
+                    LocalDatabase.GroupMetaRow(
+                        conversation_id: conversationId,
+                        title: m.title,
+                        join_policy: m.joinPolicy,
+                        max_members: m.maxMembers,
+                        number_handle: self.numberHandle
+                    ))
+            }
         } catch is CancellationError {
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    /// Read the most-recent cached snapshot of meta + members so the
+    /// view paints last-known content while `load()` waits on the
+    /// network. Frozen / muted / friend-membership state aren't cached
+    /// here — the badges that depend on them paint in once the network
+    /// load finishes, but the avatars + names + role hierarchy land
+    /// instantly.
+    private func hydrateFromCache() {
+        if let cachedMeta = LocalDatabase.shared.loadGroupMeta(conversationId: conversationId) {
+            self.meta = GroupMeta(
+                title: cachedMeta.title,
+                joinPolicy: cachedMeta.join_policy,
+                maxMembers: cachedMeta.max_members,
+            )
+            self.numberHandle = cachedMeta.number_handle
+        }
+        let cachedMembers = LocalDatabase.shared.loadGroupMembers(conversationId: conversationId)
+        guard !cachedMembers.isEmpty else { return }
+        self.members = cachedMembers.map { r in
+            let isBot = r.participant_type == "bot"
+            let nick = r.nickname?.trimmingCharacters(in: .whitespaces)
+            let label: String = {
+                if let n = nick, !n.isEmpty { return n }
+                if !r.display_name.isEmpty { return r.display_name }
+                return String(r.participant_id.prefix(8))
+            }()
+            return Member(
+                id: "\(r.participant_type):\(r.participant_id)",
+                isBot: isBot,
+                botId: isBot ? r.participant_id : nil,
+                userId: isBot ? nil : r.participant_id,
+                displayLabel: label,
+                avatarPath: r.avatar_path,
+                avatarSeed: r.avatar_seed ?? r.participant_id,
+                role: r.role ?? "",
+                isOwner: r.role == "owner",
+                frozen: r.frozen,
+            )
+        }
+        let myRole = cachedMembers.first(where: {
+            $0.participant_type == "user" && $0.participant_id == myUserId
+        })?.role
+        self.isAdmin = (myRole == "owner" || myRole == "admin")
+        self.myNickname = cachedMembers.first(where: {
+            $0.participant_type == "user" && $0.participant_id == myUserId
+        })?.nickname ?? ""
     }
 
     private func reloadFriends() async {

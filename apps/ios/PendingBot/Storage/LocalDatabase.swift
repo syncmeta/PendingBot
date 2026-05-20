@@ -220,6 +220,31 @@ final class LocalDatabase {
                 t.add(column: "voice_call_enabled", .boolean)
             }
         }
+        // Cache resolved group state per conversation so opening a group
+        // chat or its settings page paints last-known members instantly,
+        // instead of flashing empty for the network round-trip it takes
+        // to assemble participants + bot names + worker-side profiles.
+        m.registerMigration("v6_group_cache") { db in
+            try db.create(table: "group_members") { t in
+                t.column("conversation_id", .text).notNull().indexed()
+                t.column("participant_type", .text).notNull()
+                t.column("participant_id", .text).notNull()
+                t.column("nickname", .text)
+                t.column("role", .text)
+                t.column("display_name", .text).notNull().defaults(to: "")
+                t.column("avatar_path", .text)
+                t.column("avatar_seed", .text)
+                t.column("frozen", .boolean).notNull().defaults(to: false)
+                t.primaryKey(["conversation_id", "participant_type", "participant_id"])
+            }
+            try db.create(table: "group_meta") { t in
+                t.column("conversation_id", .text).primaryKey()
+                t.column("title", .text).notNull().defaults(to: "")
+                t.column("join_policy", .text).notNull().defaults(to: "")
+                t.column("max_members", .integer).notNull().defaults(to: 0)
+                t.column("number_handle", .text).notNull().defaults(to: "")
+            }
+        }
         return m
     }
 
@@ -230,6 +255,8 @@ final class LocalDatabase {
             try db.execute(sql: "DELETE FROM conversations")
             try db.execute(sql: "DELETE FROM bots")
             try db.execute(sql: "DELETE FROM contacts")
+            try db.execute(sql: "DELETE FROM group_members")
+            try db.execute(sql: "DELETE FROM group_meta")
         }
     }
 
@@ -395,6 +422,71 @@ final class LocalDatabase {
         try? dbQueue.write { db in
             try db.execute(sql: "DELETE FROM contacts")
             for r in rows { try r.save(db) }
+        }
+    }
+
+    // MARK: - Group cache (members + meta)
+
+    /// Cached snapshot of a single `conversation_participants` row enriched
+    /// with the resolved display_name / avatar_path / avatar_seed and the
+    /// own-side `frozen` flag from `group_member_billing`. Both the chat
+    /// timeline (GroupBubbleSender) and the settings page (Member) hydrate
+    /// from this same shape — settings reads role/frozen, chat doesn't.
+    struct GroupMemberRow: Codable, FetchableRecord, PersistableRecord {
+        var conversation_id: String
+        var participant_type: String
+        var participant_id: String
+        var nickname: String?
+        var role: String?
+        var display_name: String
+        var avatar_path: String?
+        var avatar_seed: String?
+        var frozen: Bool
+
+        static let databaseTableName = "group_members"
+    }
+
+    struct GroupMetaRow: Codable, FetchableRecord, PersistableRecord {
+        var conversation_id: String
+        var title: String
+        var join_policy: String
+        var max_members: Int
+        var number_handle: String
+
+        static let databaseTableName = "group_meta"
+    }
+
+    func loadGroupMembers(conversationId: String) -> [GroupMemberRow] {
+        (try? dbQueue.read { db in
+            try GroupMemberRow
+                .filter(Column("conversation_id") == conversationId)
+                .fetchAll(db)
+        }) ?? []
+    }
+
+    func loadGroupMeta(conversationId: String) -> GroupMetaRow? {
+        try? dbQueue.read { db in
+            try GroupMetaRow.fetchOne(db, key: conversationId)
+        }
+    }
+
+    /// Wholesale replace — server is authoritative for who's in the group,
+    /// so a partial upsert would leave stale rows behind after a member
+    /// leaves. Called only on a successful fetch; on network failure we
+    /// keep the prior cache intact so the next open still paints.
+    func replaceGroupMembers(conversationId: String, _ rows: [GroupMemberRow]) {
+        try? dbQueue.write { db in
+            try db.execute(
+                sql: "DELETE FROM group_members WHERE conversation_id = ?",
+                arguments: [conversationId]
+            )
+            for r in rows { try r.save(db) }
+        }
+    }
+
+    func upsertGroupMeta(_ row: GroupMetaRow) {
+        try? dbQueue.write { db in
+            try row.save(db)
         }
     }
 }

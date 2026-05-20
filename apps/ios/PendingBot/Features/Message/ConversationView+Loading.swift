@@ -139,15 +139,37 @@ extension ConversationView {
     func loadGroupSendersIfNeeded() async {
         guard conversation.conversation_type == "group" else { return }
         guard !conversation.id.isEmpty else { return }
+        // Hydrate from the local cache first so avatars + nicknames +
+        // the canStartGroupCall check paint immediately on entry, even
+        // before the network round-trip below. The pattern matches
+        // loadHistory's cache-then-refresh approach.
+        let cached = LocalDatabase.shared.loadGroupMembers(conversationId: conversation.id)
+        if !cached.isEmpty && groupSenders.isEmpty {
+            var lookup: [String: GroupBubbleSender] = [:]
+            for r in cached {
+                let key = "\(r.participant_type):\(r.participant_id)"
+                let nick = r.nickname?.trimmingCharacters(in: .whitespaces)
+                let display = (nick?.isEmpty == false ? nick! : r.display_name)
+                lookup[key] = GroupBubbleSender(
+                    kind: r.participant_type == "bot" ? .bot : .user,
+                    id: r.participant_id,
+                    displayName: display.isEmpty ? String(r.participant_id.prefix(8)) : display,
+                    avatarPath: r.avatar_path,
+                    avatarSeed: r.avatar_seed ?? r.participant_id,
+                )
+            }
+            self.groupSenders = lookup
+        }
         do {
             struct PartRow: Decodable {
                 let participant_type: String
                 let participant_id: String
                 let nickname: String?
+                let role: String?
             }
             let parts: [PartRow] = try await SupabaseStack.shared
                 .from("conversation_participants")
-                .select("participant_type, participant_id, nickname")
+                .select("participant_type, participant_id, nickname, role")
                 .eq("conversation_id", value: conversation.id)
                 .execute()
                 .value
@@ -177,11 +199,19 @@ extension ConversationView {
                 (try await botResp).map { ($0.id, $0.display_name) })
             let userMap = await userInfoMap
 
+            // Preserve any frozen flags the settings page previously
+            // wrote — chat-side load doesn't query group_member_billing,
+            // so without this we'd clobber that bit back to false and
+            // the frozen badge would flash off on the next settings
+            // open until the next billing-fetch round-trip.
+            let priorFrozen: [String: Bool] = Dictionary(uniqueKeysWithValues:
+                cached.map { ("\($0.participant_type):\($0.participant_id)", $0.frozen) })
             var lookup: [String: GroupBubbleSender] = [:]
+            var cacheRows: [LocalDatabase.GroupMemberRow] = []
             for p in parts {
                 let key = "\(p.participant_type):\(p.participant_id)"
                 let isBot = p.participant_type == "bot"
-                let fallback: String = {
+                let resolvedName: String = {
                     if isBot {
                         return botMap[p.participant_id] ?? "未知机器人"
                     }
@@ -189,17 +219,31 @@ extension ConversationView {
                     return name.isEmpty ? String(p.participant_id.prefix(8)) : name
                 }()
                 let nick = p.nickname?.trimmingCharacters(in: .whitespaces)
-                let display = (nick?.isEmpty == false ? nick! : fallback)
+                let display = (nick?.isEmpty == false ? nick! : resolvedName)
                 let info = isBot ? nil : userMap[p.participant_id]
+                let avatarSeed = info?.2 ?? p.participant_id
                 lookup[key] = GroupBubbleSender(
                     kind: isBot ? .bot : .user,
                     id: p.participant_id,
                     displayName: display,
                     avatarPath: info?.1,
-                    avatarSeed: info?.2 ?? p.participant_id,
+                    avatarSeed: avatarSeed,
                 )
+                cacheRows.append(LocalDatabase.GroupMemberRow(
+                    conversation_id: conversation.id,
+                    participant_type: p.participant_type,
+                    participant_id: p.participant_id,
+                    nickname: p.nickname,
+                    role: p.role,
+                    display_name: resolvedName,
+                    avatar_path: info?.1,
+                    avatar_seed: avatarSeed,
+                    frozen: priorFrozen[key] ?? false
+                ))
             }
             self.groupSenders = lookup
+            LocalDatabase.shared.replaceGroupMembers(
+                conversationId: conversation.id, cacheRows)
         } catch {
             loadingLog.warning("group senders load failed: \(error.localizedDescription, privacy: .public)")
         }
