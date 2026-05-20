@@ -314,7 +314,15 @@ friendRequestRoutes.post('/:id/accept', async (c) => {
     p_user_id: userId,
   });
   if (rpcErr) return jsonError(c, 500, 'database_error', { message: '接受申请失败,请稍后重试', detail: rpcErr.message });
-  return c.json({ ok: true });
+
+  // iOS uses peerUserId to navigate straight into the chat once accepted,
+  // so the user doesn't have to scroll to find the new friend's row.
+  const { data: full } = await supa
+    .from('friend_requests')
+    .select('from_user_id')
+    .eq('id', requestId)
+    .maybeSingle();
+  return c.json({ ok: true, peerUserId: full?.from_user_id ?? null });
 });
 
 friendRequestRoutes.post('/:id/decline', async (c) => {
