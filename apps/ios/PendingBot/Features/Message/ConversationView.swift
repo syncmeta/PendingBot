@@ -516,6 +516,11 @@ struct ConversationView: View {
                     .readableColumnWidth()
                 }
                 .coordinateSpace(.named("convScroll"))
+                // 初始进入聊天时让 ScrollView 锚在底部 — 否则 LazyVStack 从顶部
+                // 开始 materialise,后续的 scrollToBottom 在底部行尚未测量时
+                // 落位,最终最后一条会贴 ScrollView frame 底、被 composer 盖住。
+                // 配合 .safeAreaInset 后,底部锚点位于 composer 上沿。
+                .defaultScrollAnchor(.bottom)
                 .background(
                     GeometryReader { geo in
                         Color.clear
