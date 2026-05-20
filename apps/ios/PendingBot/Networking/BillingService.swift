@@ -182,4 +182,51 @@ enum BillingService {
             query: [URLQueryItem(name: "range", value: range.rawValue)]
         )
     }
+
+    // MARK: - Log (per-call list)
+
+    /// One audit_log row, shaped for the wallet's consumption list.
+    /// `costCredits` is PND (∂); `botName` is the resolved bot
+    /// display name (nil for non-bot tasks like group_router).
+    struct LogEntry: Decodable, Identifiable {
+        let id: String
+        let createdAt: String
+        let taskType: String
+        let modelId: String
+        let costCredits: Int
+        let billingStatus: String
+        let botId: String?
+        let botName: String?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case createdAt = "created_at"
+            case taskType = "task_type"
+            case modelId = "model_id"
+            case costCredits = "cost_credits"
+            case billingStatus = "billing_status"
+            case botId = "bot_id"
+            case botName = "bot_name"
+        }
+    }
+
+    struct LogPage: Decodable {
+        let items: [LogEntry]
+        let nextCursor: String?
+
+        enum CodingKeys: String, CodingKey {
+            case items
+            case nextCursor = "next_cursor"
+        }
+    }
+
+    static func fetchLog(
+        before: String? = nil,
+        limit: Int = 50,
+        api: APIClient = APIClient()
+    ) async throws -> LogPage {
+        var query: [URLQueryItem] = [URLQueryItem(name: "limit", value: String(limit))]
+        if let before { query.append(URLQueryItem(name: "before", value: before)) }
+        return try await api.get("/v1/me/billing/log", query: query)
+    }
 }

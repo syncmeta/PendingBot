@@ -1,15 +1,16 @@
 import SwiftUI
-import Charts
 
-/// 钱包 — PND 余额、兑换码、消费审计图表。Pull-to-refresh 重拉余额 +
-/// summary 两个端点。详细的逐条调用日志不再在客户端展示（迁到了 board
-/// 的 /audit 页），这里只看「在哪个机器人 / 任务 / 模型上、哪天花了多少」。
+/// 钱包 — PND 余额、兑换码、消费日志。Pull-to-refresh 重拉余额 +
+/// log。统计图表/聚合先去掉了，详细的逐条调用列表直接在这里看。
 struct WalletView: View {
     @State private var balance: BillingService.Balance?
-    @State private var summary: BillingService.Summary?
-    @State private var range: BillingService.SummaryRange = .month
     @State private var loading = false
     @State private var loadError: String?
+
+    @State private var logItems: [BillingService.LogEntry] = []
+    @State private var logCursor: String?
+    @State private var logLoadingMore = false
+    @State private var logExhausted = false
 
     @State private var redeemCode = ""
     @State private var redeemBusy = false
@@ -26,10 +27,7 @@ struct WalletView: View {
         List {
             balanceSection
             redeemSection
-            spendSection
-            breakdownSection(title: "按机器人", rows: botRows, emptyHint: "还没有机器人消费")
-            breakdownSection(title: "按任务", rows: taskRows, emptyHint: "还没有任务消费")
-            breakdownSection(title: "按模型", rows: modelRows, emptyHint: "还没有模型消费")
+            logSection
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
@@ -45,14 +43,14 @@ struct WalletView: View {
     @ViewBuilder
     private var balanceSection: some View {
         Section {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
                     Text(formatPnd(balance?.balanceCredits ?? 0))
-                        .font(Theme.Fonts.serif(size: 40, weight: .bold))
+                        .font(Theme.Fonts.serif(size: 22, weight: .semibold))
                         .foregroundStyle(Theme.Palette.ink)
                         .monospacedDigit()
                     Text("PND")
-                        .font(Theme.Fonts.serif(size: 20, weight: .semibold))
+                        .font(Theme.Fonts.monoSmall)
                         .foregroundStyle(Theme.Palette.inkMuted)
                 }
 
@@ -61,16 +59,9 @@ struct WalletView: View {
                           systemImage: "exclamationmark.triangle.fill")
                         .font(Theme.Fonts.monoSmall)
                         .foregroundStyle(Color(hex: 0xB14B3C))
-                        .padding(.top, 2)
                 }
-
-                HStack(spacing: 16) {
-                    miniStat(label: "累计入账", value: balance?.lifetimeTopupCredits ?? 0)
-                    miniStat(label: "累计消费", value: balance?.lifetimeSpentCredits ?? 0)
-                }
-                .padding(.top, 4)
             }
-            .padding(.vertical, 6)
+            .padding(.vertical, 4)
             .listRowBackground(Theme.Palette.surface)
         } footer: {
             if let loadError {
@@ -82,18 +73,6 @@ struct WalletView: View {
                     .font(Theme.Fonts.monoSmall)
                     .foregroundStyle(Theme.Palette.inkMuted)
             }
-        }
-    }
-
-    private func miniStat(label: String, value: Int) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label)
-                .font(Theme.Fonts.monoSmall)
-                .foregroundStyle(Theme.Palette.inkMuted)
-            Text(formatPnd(value))
-                .font(Theme.Fonts.body)
-                .foregroundStyle(Theme.Palette.ink)
-                .monospacedDigit()
         }
     }
 
@@ -166,147 +145,80 @@ struct WalletView: View {
         }
     }
 
-    // MARK: - Spend (daily chart)
+    // MARK: - Log (per-call list)
 
     @ViewBuilder
-    private var spendSection: some View {
+    private var logSection: some View {
         Section {
-            Picker("时间范围", selection: $range) {
-                ForEach(BillingService.SummaryRange.allCases) { r in
-                    Text(r.label).tag(r)
-                }
-            }
-            .pickerStyle(.segmented)
-            .onChange(of: range) { Task { await reloadSummary() } }
-
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(formatPnd(summary?.totalCredits ?? 0))
-                        .font(Theme.Fonts.serif(size: 28, weight: .bold))
-                        .foregroundStyle(Theme.Palette.ink)
-                        .monospacedDigit()
-                    Text("PND · 近 \(summary?.rangeDays ?? range.days) 天")
-                        .font(Theme.Fonts.monoSmall)
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                }
-
-                if loading && summary == nil {
-                    HStack { ProgressView(); Text("加载中…") }
-                        .font(Theme.Fonts.monoSmall)
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                } else if dailyPoints.isEmpty {
-                    Text("这段时间还没有消费。")
-                        .font(Theme.Fonts.monoSmall)
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                } else {
-                    Chart(dailyPoints) { p in
-                        BarMark(
-                            x: .value("日期", p.date, unit: .day),
-                            y: .value("PND", p.credits)
-                        )
-                        .foregroundStyle(Theme.Palette.ink)
-                    }
-                    .chartXAxis {
-                        AxisMarks(values: .stride(by: .day, count: range == .week ? 1 : 7)) {
-                            AxisValueLabel(format: .dateTime.month(.defaultDigits).day())
-                        }
-                    }
-                    .frame(height: 140)
-                }
-            }
-            .padding(.vertical, 4)
-            .listRowBackground(Theme.Palette.surface)
-        } header: {
-            Text("消费趋势")
-        }
-    }
-
-    // MARK: - Breakdown (by bot / task / model)
-
-    private struct BreakdownRow: Identifiable {
-        let id: String
-        let label: String
-        let credits: Int
-    }
-
-    @ViewBuilder
-    private func breakdownSection(
-        title: String,
-        rows: [BreakdownRow],
-        emptyHint: String
-    ) -> some View {
-        Section {
-            if rows.isEmpty {
-                Text(emptyHint)
+            if loading && logItems.isEmpty {
+                HStack { ProgressView(); Text("加载中…") }
+                    .font(Theme.Fonts.monoSmall)
+                    .foregroundStyle(Theme.Palette.inkMuted)
+            } else if logItems.isEmpty {
+                Text("还没有消费记录。")
                     .font(Theme.Fonts.monoSmall)
                     .foregroundStyle(Theme.Palette.inkMuted)
             } else {
-                Chart(rows) { row in
-                    BarMark(
-                        x: .value("PND", row.credits),
-                        y: .value("项", row.label)
-                    )
-                    .foregroundStyle(Theme.Palette.ink)
-                    .annotation(position: .trailing) {
-                        Text(formatPnd(row.credits))
+                ForEach(logItems) { entry in
+                    logRow(entry)
+                        .listRowBackground(Theme.Palette.surface)
+                }
+                if !logExhausted {
+                    HStack {
+                        Spacer()
+                        if logLoadingMore {
+                            ProgressView()
+                        } else {
+                            Button("加载更多") {
+                                Task { await loadMore() }
+                            }
                             .font(Theme.Fonts.monoSmall)
                             .foregroundStyle(Theme.Palette.inkMuted)
+                        }
+                        Spacer()
                     }
+                    .listRowBackground(Theme.Palette.surface)
                 }
-                .chartXAxis(.hidden)
-                .chartYAxis {
-                    AxisMarks(preset: .aligned, position: .leading) { _ in
-                        AxisValueLabel()
-                    }
-                }
-                .frame(height: CGFloat(rows.count) * 34 + 12)
-                .padding(.vertical, 4)
-                .listRowBackground(Theme.Palette.surface)
             }
         } header: {
-            Text(title)
+            Text("消费日志")
         }
     }
 
-    // MARK: - Derived data
-
-    private struct DailyPoint: Identifiable {
-        let id: String
-        let date: Date
-        let credits: Int
-    }
-
-    private var dailyPoints: [DailyPoint] {
-        (summary?.byDay ?? []).compactMap { p in
-            guard let date = Self.dayFormatter.date(from: p.day) else { return nil }
-            return DailyPoint(id: p.day, date: date, credits: p.credits)
+    @ViewBuilder
+    private func logRow(_ entry: BillingService.LogEntry) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(Self.taskLabel(entry.taskType))
+                    .font(Theme.Fonts.body)
+                    .foregroundStyle(Theme.Palette.ink)
+                if let botName = entry.botName, !botName.isEmpty {
+                    Text("· \(botName)")
+                        .font(Theme.Fonts.monoSmall)
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Text("-\(formatPnd(entry.costCredits))")
+                    .font(Theme.Fonts.body)
+                    .foregroundStyle(Theme.Palette.ink)
+                    .monospacedDigit()
+            }
+            HStack(spacing: 6) {
+                Text(Self.formatTime(entry.createdAt))
+                    .font(Theme.Fonts.monoSmall)
+                    .foregroundStyle(Theme.Palette.inkMuted)
+                if !entry.modelId.isEmpty {
+                    Text("· \(entry.modelId)")
+                        .font(Theme.Fonts.monoSmall)
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
         }
+        .padding(.vertical, 2)
     }
-
-    private var botRows: [BreakdownRow] {
-        (summary?.byBot ?? []).prefix(8).map {
-            BreakdownRow(id: $0.key, label: $0.label, credits: $0.credits)
-        }
-    }
-
-    private var taskRows: [BreakdownRow] {
-        (summary?.byTask ?? []).prefix(8).map {
-            BreakdownRow(id: $0.key, label: Self.taskLabel($0.key), credits: $0.credits)
-        }
-    }
-
-    private var modelRows: [BreakdownRow] {
-        (summary?.byModel ?? []).prefix(8).map {
-            BreakdownRow(id: $0.key, label: $0.key, credits: $0.credits)
-        }
-    }
-
-    private static let dayFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd"
-        f.timeZone = TimeZone(identifier: "UTC")
-        return f
-    }()
 
     /// Human label for an audit task_type; falls back to the raw value.
     private static func taskLabel(_ key: String) -> String {
@@ -322,35 +234,56 @@ struct WalletView: View {
         }
     }
 
+    private static let isoParser: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    private static let isoParserNoFrac: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+
+    private static let displayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MM-dd HH:mm"
+        return f
+    }()
+
+    private static func formatTime(_ iso: String) -> String {
+        let date = isoParser.date(from: iso)
+            ?? isoParserNoFrac.date(from: iso)
+        guard let date else { return iso }
+        return displayFormatter.string(from: date)
+    }
+
     // MARK: - Reload
 
     private func reload() async {
         loading = true
         defer { loading = false }
         async let bal: BillingService.Balance? = try? BillingService.fetchBalance()
-        async let sum: BillingService.Summary? = try? BillingService.fetchSummary(range: range)
-        let (b, s) = await (bal, sum)
+        async let page: BillingService.LogPage? = try? BillingService.fetchLog()
+        let (b, p) = await (bal, page)
         balance = b ?? balance
-        summary = s ?? summary
+        if let p {
+            logItems = p.items
+            logCursor = p.nextCursor
+            logExhausted = p.nextCursor == nil
+        }
         loadError = (b == nil) ? "加载余额失败，下拉重试。" : nil
     }
 
-    private func reloadSummary() async {
-        if let s = try? await BillingService.fetchSummary(range: range) {
-            summary = s
-        }
-    }
-}
-
-private extension BillingService.SummaryRange {
-    /// Day count, used only as a pre-fetch placeholder before the
-    /// server echoes `range_days` back.
-    var days: Int {
-        switch self {
-        case .week:    return 7
-        case .month:   return 30
-        case .quarter: return 90
-        }
+    private func loadMore() async {
+        guard let cursor = logCursor, !logLoadingMore else { return }
+        logLoadingMore = true
+        defer { logLoadingMore = false }
+        guard let p = try? await BillingService.fetchLog(before: cursor) else { return }
+        logItems.append(contentsOf: p.items)
+        logCursor = p.nextCursor
+        logExhausted = p.nextCursor == nil
     }
 }
 

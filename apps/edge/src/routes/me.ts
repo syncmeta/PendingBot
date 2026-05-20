@@ -94,6 +94,73 @@ meRoutes.post('/redeem', async (c) => {
   }
 });
 
+// GET /v1/me/billing/log?limit=50&before=<iso> — recent per-call
+// charges for the iOS wallet's consumption list. Cursor pagination by
+// `created_at` (descending). RLS scopes audit_log to the calling user
+// (audit_log_self_read in 0033).
+meRoutes.get('/billing/log', async (c) => {
+  const userJwt = c.var.userJwt!;
+  const supa = userClient(c.env, userJwt);
+
+  const limitParam = Number.parseInt(c.req.query('limit') ?? '', 10);
+  const limit = Math.min(Math.max(Number.isFinite(limitParam) ? limitParam : 50, 1), 100);
+  const before = c.req.query('before');
+
+  let q = supa
+    .from('audit_log')
+    .select('id, created_at, task_type, model_id, cost_credits, billing_status, metadata')
+    .in('billing_status', ['billed', 'unbilled'])
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (before) q = q.lt('created_at', before);
+
+  const { data: rows, error } = await q;
+  if (error) {
+    console.error('[me/billing/log] query failed', error);
+    return jsonError(c, 500, 'internal_error');
+  }
+
+  const turns = rows ?? [];
+
+  const botIds = [
+    ...new Set(
+      turns
+        .map((r) =>
+          r.metadata && typeof r.metadata === 'object'
+            ? ((r.metadata as Record<string, unknown>).bot_id as unknown)
+            : null,
+        )
+        .filter((v): v is string => typeof v === 'string'),
+    ),
+  ];
+  const { data: bots } = botIds.length
+    ? await supa.from('bots').select('id, display_name').in('id', botIds)
+    : { data: [] as { id: string; display_name: string }[] };
+  const botName = new Map((bots ?? []).map((b) => [b.id, b.display_name]));
+
+  const items = turns.map((r) => {
+    const botId =
+      r.metadata && typeof r.metadata === 'object'
+        ? ((r.metadata as Record<string, unknown>).bot_id as unknown)
+        : null;
+    return {
+      id: r.id,
+      created_at: r.created_at,
+      task_type: r.task_type,
+      model_id: r.model_id,
+      cost_credits: Number(r.cost_credits) || 0,
+      billing_status: r.billing_status,
+      bot_id: typeof botId === 'string' ? botId : null,
+      bot_name: typeof botId === 'string' ? botName.get(botId) ?? null : null,
+    };
+  });
+
+  const nextCursor =
+    items.length === limit ? items[items.length - 1].created_at : null;
+
+  return c.json({ items, next_cursor: nextCursor });
+});
+
 // GET /v1/me/billing/summary?range=7d|30d|90d — aggregated spend for
 // the iOS wallet's audit charts (the wallet no longer shows a per-call
 // list; the detailed log lives in the board's /audit page). Breaks the
