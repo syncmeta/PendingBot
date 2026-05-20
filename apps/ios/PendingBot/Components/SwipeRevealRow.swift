@@ -124,20 +124,19 @@ struct SwipeRevealRow<Content: View>: View {
         }
         .contentShape(Rectangle())
         .clipShape(RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous))
-        // Tap is its own gesture so DragGesture can keep minimumDistance >= 12
-        // (anything lower and `simultaneousGesture` claims the touch on
-        // touch-down, starving the parent ScrollView's pan recognizer and
-        // locking the whole list). TapGesture has a ~10pt internal travel
-        // tolerance, which sits just under the 12pt swipe threshold — so a
-        // small horizontal flick exceeds tap's tolerance (no spurious nav)
-        // but stays under our swipe threshold (no row reveal). The drag
-        // cancels the tap once it activates, so a real swipe never fires
-        // onTap on release either.
+        // Tap is its own gesture so the DragGesture can keep a generous
+        // minimumDistance. The threshold must be high enough that SwiftUI's
+        // arbiter doesn't hold the single-touch sequence pending while
+        // waiting for our drag to confirm — anything below ~20pt starves
+        // UIScrollView's single-touch pan and the list only scrolls under
+        // a 2-finger pan (which routes through UIScrollView's 2-touch
+        // path, bypassing SwiftUI's per-row pending drag). 20pt has been
+        // the proven floor since the original SwipeRevealRow.
         .onTapGesture {
             if isOpen { close() } else { onTap?() }
         }
         .simultaneousGesture(
-            DragGesture(minimumDistance: 12)
+            DragGesture(minimumDistance: 20)
                 .onChanged { value in
                     let dx = value.translation.width
                     let dy = value.translation.height
