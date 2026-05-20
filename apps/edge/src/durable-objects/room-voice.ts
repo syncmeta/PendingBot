@@ -582,9 +582,26 @@ export class RoomVoiceDO {
   private async addHuman(track: HumanTrack): Promise<Response> {
     const ctx = this.ctx;
     if (!ctx) return new Response('room not started', { status: 400 });
-    if (this.humans.has(track.humanId)) {
-      return Response.json({ ok: true, already: true });
+
+    // Reconnect path: the human already has a HumanState from a prior
+    // join, but iOS has just minted a NEW SFU session (e.g. after a
+    // /voice/network watchdog tore the previous attempt down). Drop the
+    // old stream adapter and rebind to the new session/track so their
+    // mic actually reaches the room and peers can subscribe to them.
+    const existing = this.humans.get(track.humanId);
+    if (existing) {
+      if (existing.adapterId) {
+        await closeAdapter(this.sfuApp(), existing.adapterId).catch(() => {});
+      }
+      existing.track = track;
+      existing.adapterId = null;
+      existing.pending = [];
+      void this.connectHumanStream(track.humanId, ctx);
+      const snapshot = this.roster();
+      await this.broadcastState('state');
+      return Response.json({ ok: true, rebound: true, ...snapshot });
     }
+
     const human: HumanState = { track, adapterId: null, pending: [] };
     this.humans.set(track.humanId, human);
     this.pendingInvites.delete(track.humanId);
