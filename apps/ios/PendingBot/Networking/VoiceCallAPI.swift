@@ -463,6 +463,20 @@ extension VoiceCallAPI {
         ) as OK
     }
 
+    /// Tell the worker we're still here. While the call is up iOS posts
+    /// this every ~10s — the DO removes humans whose heartbeat goes
+    /// missing for >30s. A 404 means the DO already forgot us (app was
+    /// suspended too long, presence audit kicked us); caller should
+    /// teardown locally.
+    func groupVoiceHeartbeat(conversationId: String) async throws {
+        struct Body: Encodable {}
+        struct OK: Decodable { let ok: Bool }
+        _ = try await callDecoding(
+            path: "/v1/groups/\(conversationId)/voice/heartbeat",
+            body: Body(),
+        ) as OK
+    }
+
     /// End the whole call. Privileged.
     func groupVoiceEnd(conversationId: String) async throws {
         struct Body: Encodable {}

@@ -99,6 +99,16 @@ final class GroupCallSession {
     /// per-turn voice_cost events. Dropped on terminate.
     private var costSubscription: ConvSubscriptionToken?
 
+    /// Keepalive task that posts /voice/heartbeat on a fixed cadence so
+    /// the DO knows we're still in the room. Without it, an iOS process
+    /// kill / network drop / forgotten /voice/leave would leave a ghost
+    /// call running on the worker. Cancelled on terminate.
+    private var heartbeatTask: Task<Void, Never>?
+
+    /// Cadence for the heartbeat above. DO times out at 30 s, so 10 s
+    /// gives us two retries' worth of headroom.
+    private static let heartbeatIntervalNanos: UInt64 = 10_000_000_000
+
     /// Total time to wait for the call to connect before giving up.
     private static let connectTimeoutNanos: UInt64 = 20_000_000_000
 
@@ -275,6 +285,36 @@ final class GroupCallSession {
         await transport.start()
     }
 
+    private func startHeartbeat() {
+        heartbeatTask?.cancel()
+        heartbeatTask = Task { @MainActor [weak self] in
+            while let self, !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: Self.heartbeatIntervalNanos)
+                if Task.isCancelled { return }
+                guard !isTerminal(self.phase) else { return }
+                do {
+                    try await self.api.groupVoiceHeartbeat(conversationId: self.conversationId)
+                } catch let VoiceCallError.other(status, code, _) where status == 404 || code == "not_in_room" {
+                    // DO already forgot us — finalize already ran (or
+                    // we missed too many beats while suspended). Tear
+                    // down locally so the UI matches server truth.
+                    if !isTerminal(self.phase) {
+                        await self.terminate(reason: .ended)
+                    }
+                    return
+                } catch {
+                    // Transient — keep beating. The DO's 30s grace gives
+                    // us two more attempts before it times us out.
+                }
+            }
+        }
+    }
+
+    private func stopHeartbeat() {
+        heartbeatTask?.cancel()
+        heartbeatTask = nil
+    }
+
     /// Read the caller's role in the group so owner/admins get the
     /// privileged controls even when they didn't open the call.
     private func loadGroupRole() async {
@@ -322,6 +362,7 @@ final class GroupCallSession {
         phase = .hangingUp
         let transport = self.transport
         self.transport = nil
+        stopHeartbeat()
         await unsubscribeFromCost()
         if let uuid = callKitUUID {
             callKitUUID = nil
@@ -428,6 +469,7 @@ final class GroupCallSession {
         phase = .hangingUp
         let transport = self.transport
         self.transport = nil
+        stopHeartbeat()
         await unsubscribeFromCost()
         // Tell CallKit the call is done. Skipped when CallKit *drove*
         // the teardown (onSystemEnd already cleared callKitUUID) so we
@@ -536,6 +578,9 @@ extension GroupCallSession: GroupCallTransportDelegate {
         guard t === transport, phase == .connecting else { return }
         connectedAt = Date()
         phase = .connected
+        // /voice/join has landed by now (addHuman ran on the DO), so the
+        // first heartbeat is safe to send — it'll find us in the room.
+        startHeartbeat()
         // Flip the CallKit lock-screen UI to "in call" so the timer
         // starts and Control Center shows green.
         if let uuid = callKitUUID {
