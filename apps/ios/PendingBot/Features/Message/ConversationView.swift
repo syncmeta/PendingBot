@@ -97,6 +97,11 @@ struct ConversationView: View {
     @State private var providerOverrideTouched: Bool = false
     @State var error: String?
     @State private var pending = false              // server is generating (bot_typing active)
+    /// Outstanding tool calls this turn. Incremented on each `tool_call`,
+    /// decremented on its `tool_result`. When > 0 we suppress the typing
+    /// dots — the model isn't producing user-visible output during tool
+    /// execution, the tool-trace row covers that phase instead.
+    @State private var activeToolCount = 0
     /// Active SSE turn task; canceling it closes the stream which Worker
     /// reads as request.signal.aborted (= interrupt). Set by sendViaSSE,
     /// cleared on completion. Non-nil while a turn is in flight.
@@ -1577,9 +1582,11 @@ struct ConversationView: View {
         // 30s lookback grace timer either way.
         lookbackAutoFireTask?.cancel()
         lookbackAutoFireTask = nil
-        // pending (= TypingDots in the header) is now gated on the first
-        // bot token, not on send-time. The optimistic user bubble already
-        // signals "request in flight" via its lighter-green tint.
+        // pending (= TypingDots in the header) gets lit on the SSE
+        // `.connected` event — i.e. the moment the worker returns 200,
+        // which means the bot/balance resolved and the model call is
+        // about to fire. Stays on through streaming output, drops only
+        // while a tool is running (gated by activeToolCount below).
         // Bind the upcoming tool-trace bucket to the user message that
         // triggered this turn. Auto-fire turns (no user msg) skip this —
         // their tool calls have nowhere natural to attach in the list.
@@ -1592,6 +1599,9 @@ struct ConversationView: View {
         liveCitations = []
         // Fresh bubble-id slate — `bubble` events rekey entries in here.
         turnBubbleIds = []
+        // Fresh tool-call counter — last turn's count should never leak
+        // into this turn's typing-dots gating.
+        activeToolCount = 0
 
         let body: [String: Any] = {
             // Reuse the cmid bound to the optimistic row when there is one
@@ -1657,9 +1667,14 @@ struct ConversationView: View {
                     case .connected:
                         // Server returned 200 — flip the optimistic user
                         // bubble from "sending" (light green) to "sent"
-                        // (full green). TypingDots stays off until the
-                        // first token actually arrives.
+                        // (full green) AND light the typing dots right
+                        // away: 200 means the worker has resolved the
+                        // bot/balance and is about to call the model, so
+                        // a reply is on the way. Dots stay on through
+                        // streaming output, get suppressed only while a
+                        // tool is running (see .toolCall / .toolResult).
                         if let userMsgId { markUserMessageSent(userMsgId) }
+                        if !pending { pending = true }
                     case .meta(let convId, let userMsgServerId):
                         // Lazy-cloud-conv first turn: rekey the optimistic
                         // local row to the canonical user-message id and
@@ -1712,11 +1727,12 @@ struct ConversationView: View {
                             }
                         }
                     case .typing:
-                        // Worker's typing pulse — we ignore it and gate
-                        // the indicator on the first token instead, so
-                        // the dots only appear once content is actually
-                        // on the way.
-                        break
+                        // Worker's typing pulse, fired right before each
+                        // LLM round. Treated as a redundant top-up of the
+                        // dots — `.connected` already lit them on 200,
+                        // and the second round (after tools) re-asserts
+                        // them via `.toolResult` clearing activeToolCount.
+                        if !pending && activeToolCount == 0 { pending = true }
                     case .token(let delta):
                         if !pending { pending = true }
                         splitter.accept(token: delta)
@@ -1747,8 +1763,16 @@ struct ConversationView: View {
                         // splitter yet, so just clear its buffer.
                         _ = splitter.drain()
                     case .toolCall(let name, let input):
+                        // While a tool is running the model isn't producing
+                        // user-visible output — the tool-trace row covers
+                        // that phase. Suppress dots until every outstanding
+                        // tool returns.
+                        activeToolCount += 1
+                        pending = false
                         appendToolCall(name: name, input: input)
                     case .toolResult(let name, let summary, let error, let detail):
+                        activeToolCount = max(0, activeToolCount - 1)
+                        if activeToolCount == 0 { pending = true }
                         completeToolCall(name: name, summary: summary, error: error, detail: detail)
                     case .citations(let items):
                         // Update the per-turn snapshot AND backfill every
