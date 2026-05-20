@@ -63,6 +63,7 @@ final class GroupCallTransport: NSObject {
     init(
         conversationId: String,
         api: VoiceCallAPI,
+        iceServers: [VoiceCallAPI.SessionResponse.IceServer],
         delegate: GroupCallTransportDelegate,
     ) {
         self.conversationId = conversationId
@@ -77,9 +78,18 @@ final class GroupCallTransport: NSObject {
         )
         let cfg = RTCConfiguration()
         cfg.sdpSemantics = .unifiedPlan
-        // The SFU terminates WebRTC server-side and reflects its own
-        // candidates in the answer — no STUN/TURN needed client-side.
-        cfg.iceServers = []
+        // Feed in Cloudflare TURN/STUN so ICE can gather server-reflexive
+        // (srflx) and relay candidates. Host-only gathering used to work
+        // when iOS happened to sit on the same edge as the SFU, but any
+        // NAT between the device and the SFU stalls ICE — which was the
+        // visible "网络中断" symptom for everyone behind a router.
+        cfg.iceServers = iceServers.map {
+            RTCIceServer(
+                urlStrings: $0.urls,
+                username: $0.username,
+                credential: $0.credential,
+            )
+        }
         let constraints = RTCMediaConstraints(
             mandatoryConstraints: nil,
             optionalConstraints: nil,
@@ -363,6 +373,7 @@ final class GroupCallTransport {
     init(
         conversationId _: String,
         api _: VoiceCallAPI,
+        iceServers _: [VoiceCallAPI.SessionResponse.IceServer],
         delegate: GroupCallTransportDelegate,
     ) {
         self.delegate = delegate

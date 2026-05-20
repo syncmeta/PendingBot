@@ -236,9 +236,11 @@ final class GroupCallSession {
         // already running). Bots and other humans are NOT auto-pulled;
         // the caller invites them from the call UI. `initiated` tells us
         // if we're the one who opened it (and is thus privileged).
+        let iceServers: [VoiceCallAPI.SessionResponse.IceServer]
         do {
             let started = try await api.groupVoiceStart(conversationId: conversationId)
             didInitiate = started.initiated ?? false
+            iceServers = started.ice_servers ?? []
         } catch let err as VoiceCallError {
             await terminate(reason: translate(err))
             return
@@ -257,6 +259,7 @@ final class GroupCallSession {
         let transport = GroupCallTransport(
             conversationId: conversationId,
             api: api,
+            iceServers: iceServers,
             delegate: self,
         )
         self.transport = transport

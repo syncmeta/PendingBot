@@ -284,11 +284,15 @@ struct GroupPendingEntry: Decodable, Sendable, Equatable {
 
 /// POST /voice/start — opens an empty room. The caller follows up with
 /// /voice/join. `initiated` is true when this caller opened the call (and
-/// is privileged for its lifetime).
+/// is privileged for its lifetime). `ice_servers` carries the Cloudflare
+/// TURN/STUN credentials the SFU's WebRTC peer connection needs — without
+/// them iOS can only gather host candidates and ICE never completes
+/// behind any NAT.
 struct GroupVoiceStartResponse: Decodable, Sendable {
     let ok: Bool
     let room_id: String
     let initiated: Bool?
+    let ice_servers: [VoiceCallAPI.SessionResponse.IceServer]?
 }
 
 /// POST /voice/join — the worker negotiated the human's RTCPeerConnection

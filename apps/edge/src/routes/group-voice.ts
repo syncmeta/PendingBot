@@ -41,6 +41,7 @@ import { resolveLocale } from '../i18n/locale';
 import { jsonError } from '../lib/http-error';
 import { UUID_RE } from '../lib/ids';
 import { sendVoipRing } from '../lib/push';
+import { generateTurnCredentials } from '../lib/cf-turn';
 import {
   createSfuSession,
   newSfuTracks,
@@ -255,10 +256,19 @@ groupVoiceRoutes.post('/:id/voice/start', async (c) => {
   // `initiated` tells this caller whether *they* opened the call (and are
   // therefore privileged for its lifetime).
   const startData = (await resp.json().catch(() => ({}))) as { already?: boolean };
+
+  // Mint Cloudflare TURN credentials so iOS can gather srflx + relay
+  // candidates against the SFU. Without them iOS only has host
+  // candidates, and any NAT between the device and the SFU prevents ICE
+  // from completing — which was the visible "网络中断" symptom group
+  // voice was hitting. Best-effort: a null mint just means the client
+  // falls back to host-only (works on the same LAN as the SFU edge).
+  const iceServers = await generateTurnCredentials(c.env);
   return c.json({
     ok: true,
     room_id: conversationId,
     initiated: !startData.already,
+    ice_servers: iceServers ?? [],
   });
 });
 
