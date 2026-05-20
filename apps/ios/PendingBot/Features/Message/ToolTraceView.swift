@@ -57,6 +57,7 @@ struct ToolTraceEvent: Identifiable, Hashable, Decodable {
         case "read_attachment":   return "读附件"
         case "set_my_group_nickname": return "改群昵称"
         case "set_bot_group_description": return "改群简介"
+        case "delegate_to_specialist": return "委托专家"
         default:                  return name
         }
     }
@@ -69,6 +70,7 @@ struct ToolTraceEvent: Identifiable, Hashable, Decodable {
         case "create_skill": return "sparkles"
         case "query_user_memory": return "brain.head.profile"
         case "read_attachment": return "paperclip"
+        case "delegate_to_specialist": return "person.2.wave.2"
         default: return "hammer"
         }
     }
@@ -81,8 +83,20 @@ struct ToolTraceEvent: Identifiable, Hashable, Decodable {
         case "execute_code", "request_execute_code": return "代码"
         case "query_user_memory": return "记忆查询"
         case "create_skill": return "技能名"
+        case "delegate_to_specialist": return "目标专家"
         default: return "输入"
         }
+    }
+
+    /// Sub-conversation id surfaced by `delegate_to_specialist` — extracted
+    /// from `resultDetail` (which stashes it as "sub_conversation:<uuid>").
+    /// Used by the trace row to deep-link into the child thread when a
+    /// dedicated sub-conv view ships; nil for every other tool.
+    var subConversationId: String? {
+        guard name == "delegate_to_specialist",
+              let detail = resultDetail,
+              detail.hasPrefix("sub_conversation:") else { return nil }
+        return String(detail.dropFirst("sub_conversation:".count))
     }
 
     var isCodeLike: Bool {
@@ -204,6 +218,7 @@ struct ToolTraceView: View {
         if events.contains(where: { $0.isCodeLike }) { return "terminal" }
         if events.contains(where: { $0.name == "read_url" }) { return "safari" }
         if events.contains(where: { $0.name == "query_user_memory" }) { return "brain.head.profile" }
+        if events.contains(where: { $0.name == "delegate_to_specialist" }) { return "person.2.wave.2" }
         return "magnifyingglass"
     }
 
@@ -288,7 +303,23 @@ struct ToolTraceView: View {
                                 labelledBlock(label: "结果", text: summary, mono: ev.isCodeLike)
                             }
                         }
-                        if let detail = ev.resultDetail, !detail.isEmpty {
+                        // delegate_to_specialist uses resultDetail as a
+                        // deep-link carrier ("sub_conversation:<uuid>"), not
+                        // human-facing text — surface the child id as a
+                        // capsule chip instead of raw inside a 详情 block.
+                        if ev.subConversationId != nil {
+                            HStack(spacing: 4) {
+                                Image(systemName: "bubble.left.and.bubble.right")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(Theme.Palette.accent)
+                                Text("子对话已生成")
+                                    .font(Theme.Fonts.rounded(size: 11, weight: .medium))
+                                    .foregroundStyle(Theme.Palette.inkMuted)
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Theme.Palette.accentBg.opacity(0.6), in: Capsule())
+                        } else if let detail = ev.resultDetail, !detail.isEmpty {
                             labelledBlock(label: "详情", text: softWrapped(detail), mono: true, isMuted: true)
                         }
                     }

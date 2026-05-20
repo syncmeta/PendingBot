@@ -256,6 +256,13 @@ private func decode(eventName: String, dataJSON: String) -> ChatEvent {
                 if let preview { return preview }
                 if let reason { return reason }
             }
+            if name == "delegate_to_specialist" {
+                // `target` is the specialist enum (claude / openai / gemini)
+                // and is what we want to surface as the trace input —
+                // the prompt itself can be very long and isn't useful in
+                // the collapsed summary row.
+                if let t = json["target"] as? String, !t.isEmpty { return t }
+            }
             if let q = json["query"] as? String, !q.isEmpty { return q }
             if let u = json["url"] as? String, !u.isEmpty { return u }
             if let s = json["skill_name"] as? String, !s.isEmpty { return s }
@@ -274,10 +281,30 @@ private func decode(eventName: String, dataJSON: String) -> ChatEvent {
     case "tool_result":
         let name = (json["name"] as? String) ?? ""
         let err = (json["error"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        // `detail` doubles as a deep-link carrier for delegate_to_specialist:
+        // the worker emits `sub_conversation_id` on the tool_result, which we
+        // stash here so the trace row can later route a tap into the
+        // sub-conversation view. Existing detail uses (stderr, etc.) take
+        // precedence for the other tools so this is purely additive.
         let detail = (json["detail"] as? String)
             .flatMap { $0.isEmpty ? nil : $0 }
             ?? (json["stderr"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            ?? {
+                if name == "delegate_to_specialist",
+                   let sub = json["sub_conversation_id"] as? String, !sub.isEmpty {
+                    return "sub_conversation:\(sub)"
+                }
+                return nil
+            }()
         let summary: String? = {
+            if name == "delegate_to_specialist" {
+                // delegate emits both `target` and `chars` on the result;
+                // build a more readable summary than the bare "Nxx 字回答".
+                let target = (json["target"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                let chars = json["chars"] as? Int
+                if let target, let chars { return "\(target) · \(chars) 字回答" }
+                if let target { return target }
+            }
             if let n = json["count"] as? Int { return "\(n) 条结果" }
             if let t = json["title"] as? String, !t.isEmpty { return t }
             if let s = json["skill_name"] as? String, !s.isEmpty { return s }
