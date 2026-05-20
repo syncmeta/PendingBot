@@ -175,12 +175,12 @@ struct ConversationView: View {
     /// competing long-press gesture, where the system's selection
     /// handles work normally.
     @State private var selectableTextBody: String?
-    /// Active voice call session, present while CallView is on screen.
-    /// Created on phone-button tap and torn down when CallView dismisses.
-    @State var callSession: CallSession?
-    /// Active group voice call session, present while GroupCallView is on
-    /// screen. Created on the group-call header button; group convs only.
-    @State var groupCallSession: GroupCallSession?
+    /// App-level call ownership. The call session itself lives on
+    /// `CallCenter.shared`, so the user can minimize the call surface,
+    /// navigate to other tabs, and the transport keeps running. The
+    /// full-screen cover and the floating pill are presented by
+    /// `TabRoot`, not here.
+    @Environment(CallCenter.self) var callCenter
 
     // Jump-to-latest pill state. `isAtBottom` is recomputed from a
     // geometry preference on the bottom marker; while it's false, new
@@ -674,26 +674,10 @@ struct ConversationView: View {
             revealTask?.cancel()
             revealTask = nil
         }
-        .fullScreenCover(
-            isPresented: Binding(
-                get: { callSession != nil },
-                set: { if !$0 { callSession = nil } },
-            ),
-        ) {
-            if let session = callSession {
-                CallView(session: session)
-            }
-        }
-        .fullScreenCover(
-            isPresented: Binding(
-                get: { groupCallSession != nil },
-                set: { if !$0 { groupCallSession = nil } },
-            ),
-        ) {
-            if let session = groupCallSession {
-                GroupCallView(session: session)
-            }
-        }
+        // Call full-screen covers live on TabRoot — see CallHostWrapper.
+        // Hosted there so minimizing the call (chevron-down) hides the
+        // surface without tearing down the session, and the user can
+        // browse other tabs while it keeps running.
         .navigationDestination(isPresented: $showingSettings) {
             // 设置入口扁平化:不再有"会话设置"这一层 — gear 按钮直接落到对应
             // 实体的设置页 (人 / 机器人 / 群)。

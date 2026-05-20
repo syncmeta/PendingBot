@@ -31,6 +31,8 @@
 		2A629BF058F4834777600BE4 /* Haptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54274B6144493F79AB8DC3D1 /* Haptics.swift */; };
 		2C4C6BB79FF77588C3D8D502 /* BotManagement.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FB18020603674A7F6885245 /* BotManagement.swift */; };
 		2DD9CFB972517A81A546329E /* CallSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA46A65B33759B4EC85F985D /* CallSession.swift */; };
+		7A1B2C3D4E5F60AABBCC1A02 /* CallCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1B2C3D4E5F60AABBCC1A01 /* CallCenter.swift */; };
+		7A1B2C3D4E5F60AABBCC1B02 /* CallFloatingPill.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1B2C3D4E5F60AABBCC1B01 /* CallFloatingPill.swift */; };
 		A1B2C3D4E5F60718293A4B5C /* GroupCallTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F1E2D3C4B5A69788796A5B4 /* GroupCallTransport.swift */; };
 		B2C3D4E5F6071829A1B2C3D4 /* GroupCallSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F2E3D4C5B6A79889796A5B5 /* GroupCallSession.swift */; };
 		C3D4E5F6071829A1B2C3D4E5 /* GroupCallView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F3E4D5C6B7A89989796A5B6 /* GroupCallView.swift */; };
@@ -190,6 +192,8 @@
 		B14FCE8ADC9DE6D22FBC7387 /* ChatStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatStream.swift; sourceTree = "<group>"; };
 		B1DB7B76BE5141EDA731228F /* EnvelopeThinkingTrace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvelopeThinkingTrace.swift; sourceTree = "<group>"; };
 		BA46A65B33759B4EC85F985D /* CallSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallSession.swift; sourceTree = "<group>"; };
+		7A1B2C3D4E5F60AABBCC1A01 /* CallCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallCenter.swift; sourceTree = "<group>"; };
+		7A1B2C3D4E5F60AABBCC1B01 /* CallFloatingPill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallFloatingPill.swift; sourceTree = "<group>"; };
 		0F1E2D3C4B5A69788796A5B4 /* GroupCallTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupCallTransport.swift; sourceTree = "<group>"; };
 		1F2E3D4C5B6A79889796A5B5 /* GroupCallSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupCallSession.swift; sourceTree = "<group>"; };
 		2F3E4D5C6B7A89989796A5B6 /* GroupCallView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupCallView.swift; sourceTree = "<group>"; };
@@ -424,6 +428,8 @@
 			children = (
 				BA46A65B33759B4EC85F985D /* CallSession.swift */,
 				ABDADB4EF94D06B74B02EE8F /* CallView.swift */,
+				7A1B2C3D4E5F60AABBCC1A01 /* CallCenter.swift */,
+				7A1B2C3D4E5F60AABBCC1B01 /* CallFloatingPill.swift */,
 				BC2ABD8515508D964920FDB2 /* OpenAICallTransport.swift */,
 				1F2E3D4C5B6A79889796A5B5 /* GroupCallSession.swift */,
 				2F3E4D5C6B7A89989796A5B6 /* GroupCallView.swift */,
@@ -598,6 +604,8 @@
 				58EDA71C7AEE2D168E2D4949 /* BubbleSplitter.swift in Sources */,
 				38FCC07405D2C9B619FFC027 /* BubbleView.swift in Sources */,
 				2DD9CFB972517A81A546329E /* CallSession.swift in Sources */,
+				7A1B2C3D4E5F60AABBCC1A02 /* CallCenter.swift in Sources */,
+				7A1B2C3D4E5F60AABBCC1B02 /* CallFloatingPill.swift in Sources */,
 				A1B2C3D4E5F60718293A4B5C /* GroupCallTransport.swift in Sources */,
 				B2C3D4E5F6071829A1B2C3D4 /* GroupCallSession.swift in Sources */,
 				C3D4E5F6071829A1B2C3D4E5 /* GroupCallView.swift in Sources */,

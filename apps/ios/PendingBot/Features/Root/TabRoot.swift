@@ -16,6 +16,11 @@ struct TabRoot: View {
     @EnvironmentObject var store: AccountStore
     @EnvironmentObject private var unread: UnreadStore
     @Environment(\.useSidebarLayout) private var sidebarLayout
+    /// App-level call ownership. The full-screen cover for in-call UI
+    /// and the floating pill that takes its place when minimized both
+    /// live here at the root, so the call survives the user switching
+    /// tabs or popping the conversation off the nav stack.
+    @Environment(CallCenter.self) private var callCenter
 
     // Persisted across launches so reopening the app on iPad puts the
     // user back where they were. SceneStorage keeps it per-window which
@@ -51,11 +56,74 @@ struct TabRoot: View {
             .environment(\.api, APIClient())
             .environment(\.account, store.current)
             .environment(\.topTabSelection, selected)
+            .safeAreaInset(edge: .bottom) {
+                // Floating pill sits above whatever bottom chrome the
+                // current layout puts on screen (TabBar on compact,
+                // SidebarTabBar on regular). `safeAreaInset` keeps the
+                // underlying scroll content aware of the pill's height
+                // so the last list row isn't covered.
+                CallFloatingPill(center: callCenter)
+                    .animation(
+                        .spring(response: 0.32, dampingFraction: 0.85),
+                        value: callCenter.isMinimized,
+                    )
+                    .animation(
+                        .spring(response: 0.32, dampingFraction: 0.85),
+                        value: callCenter.voiceCall != nil,
+                    )
+                    .animation(
+                        .spring(response: 0.32, dampingFraction: 0.85),
+                        value: callCenter.groupCall != nil,
+                    )
+            }
+            .fullScreenCover(isPresented: voiceCoverBinding) {
+                if let session = callCenter.voiceCall {
+                    CallView(session: session)
+                }
+            }
+            .fullScreenCover(isPresented: groupCoverBinding) {
+                if let session = callCenter.groupCall {
+                    GroupCallView(session: session)
+                }
+            }
             .onChange(of: store.current) { _, _ in Haptics.tap() }
         } else {
             // Defensive — RootView wouldn't have shown TabRoot otherwise.
             WelcomeView()
         }
+    }
+
+    // MARK: - Call cover bindings
+
+    /// Drives the 1:1 voice call full-screen cover: shown iff a voice
+    /// session is active AND the user hasn't minimized it. Set to
+    /// false (the SwiftUI dismiss path) means "user wants to minimize"
+    /// rather than "kill the session" — the session keeps running and
+    /// the floating pill takes the surface's place.
+    private var voiceCoverBinding: Binding<Bool> {
+        Binding(
+            get: { callCenter.voiceCall != nil && !callCenter.isMinimized },
+            set: { showing in
+                if !showing, callCenter.voiceCall != nil {
+                    // Cover dismissal while a call is still live —
+                    // treat as minimize. Slot-clear only happens when
+                    // the session itself reaches .terminated and the
+                    // call surface calls `clearVoiceCall`.
+                    callCenter.minimize()
+                }
+            },
+        )
+    }
+
+    private var groupCoverBinding: Binding<Bool> {
+        Binding(
+            get: { callCenter.groupCall != nil && !callCenter.isMinimized },
+            set: { showing in
+                if !showing, callCenter.groupCall != nil {
+                    callCenter.minimize()
+                }
+            },
+        )
     }
 
     // ── Compact (iPhone) ────────────────────────────────────────────────────

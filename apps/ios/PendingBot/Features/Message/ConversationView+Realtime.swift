@@ -13,9 +13,10 @@ import SwiftUI
 //     dicts when ids swap, drop recalled rows + scrub URLCache.
 //
 //   • Voice-call entry — canStartVoiceCall gates the header phone
-//     button (1v1 bot conv with voice_call_enabled flipped on); the
-//     binding's @State callSession triggers the .fullScreenCover via
-//     CallView in the body. startVoiceCall just hydrates the session.
+//     button (1v1 bot conv with voice_call_enabled flipped on);
+//     startVoiceCall hands a fresh CallSession to CallCenter, which is
+//     where the .fullScreenCover and floating pill live (so the call
+//     survives leaving this conversation).
 //
 // All the lookback-note bookkeeping lives here too because the
 // onLookback push and its 30s auto-fire timer share state with the
@@ -375,18 +376,29 @@ extension ConversationView {
         return groupSenders.values.contains { $0.kind == .bot }
     }
 
-    /// Spin up a GroupCallSession + present GroupCallView via the
-    /// .fullScreenCover bound to `groupCallSession`.
+    /// Spin up a GroupCallSession and hand it to `CallCenter`. The
+    /// app-level center owns the session past this view's lifetime, so
+    /// the call survives the user navigating away (minimize → other
+    /// tab → re-expand from the floating pill).
+    ///
+    /// If a call is already active, no-op — the existing one re-expands
+    /// (via the pill the user is presumably looking at) rather than us
+    /// minting a competing session.
     func startGroupCall() {
         guard let userId = AccountStore.shared.current?.id, !userId.isEmpty
         else { return }
-        groupCallSession = GroupCallSession(
+        guard !callCenter.hasActiveCall else {
+            callCenter.expand()
+            return
+        }
+        let session = GroupCallSession(
             conversationId: conversation.id,
             currentUserId: userId,
             groupTitle: conversation.displayTitle,
             members: groupSenders,
             api: VoiceCallAPI(),
         )
+        callCenter.startGroupCall(session)
     }
 
     /// If the IncomingCallStore is currently flagging this conv as
@@ -402,25 +414,28 @@ extension ConversationView {
         store.pendingAutoJoinConversationId = nil
         // Already in a call (rare race) — leave it; flipping sessions
         // mid-call would tear down the live one.
-        if groupCallSession != nil { return }
+        if callCenter.hasActiveCall { return }
         startGroupCall()
     }
 
-    /// Spin up a CallSession for the current bot + present CallView via
-    /// the .fullScreenCover bound to `callSession`. Tearing down happens
-    /// in the cover's onDismiss; we don't await session.start() here so
-    /// the UI flips to the call screen immediately.
+    /// Spin up a CallSession for the current bot and hand it to
+    /// `CallCenter`. See `startGroupCall` for the ownership rationale.
     func startVoiceCall() {
         let botId: String = {
             if let bid = bot?.id, !bid.isEmpty { return bid }
             return conversation.bot_id
         }()
         guard !botId.isEmpty else { return }
-        callSession = CallSession(
+        guard !callCenter.hasActiveCall else {
+            callCenter.expand()
+            return
+        }
+        let session = CallSession(
             conversationId: conversation.id,
             botId: botId,
             botDisplayName: bot?.display_name ?? "AI",
             api: VoiceCallAPI(),
         )
+        callCenter.startVoiceCall(session)
     }
 }

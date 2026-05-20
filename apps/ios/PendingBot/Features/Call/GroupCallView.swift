@@ -14,10 +14,7 @@ import SwiftUI
 ///               privileged callers and brings up a 2nd-tap confirm.
 struct GroupCallView: View {
     @Bindable var session: GroupCallSession
-    @Environment(\.dismiss) private var dismiss
-
-    @State private var elapsedDisplay = "00:00"
-    @State private var tickTimer: Timer?
+    @Environment(CallCenter.self) private var callCenter
     /// Non-fatal action feedback (e.g. a kick the worker rejected). The
     /// alert just dismisses itself — the call stays live.
     @State private var actionAlert: String?
@@ -30,7 +27,7 @@ struct GroupCallView: View {
     @State private var showingEndConfirm = false
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .topLeading) {
             Theme.Palette.canvas.ignoresSafeArea()
             VStack(spacing: 0) {
                 topBar
@@ -47,15 +44,14 @@ struct GroupCallView: View {
                 toolbar
                     .padding(.bottom, 28)
             }
+            minimizeButton
+                .padding(.top, 44)
+                .padding(.leading, 16)
         }
         .task { await session.start() }
         .onChange(of: session.phase) { _, new in handlePhaseChange(new) }
         .onChange(of: session.actionError) { _, new in
             if let new { actionAlert = new; session.actionError = nil }
-        }
-        .onDisappear {
-            tickTimer?.invalidate()
-            tickTimer = nil
         }
         .sheet(isPresented: $showingAddBot) { addBotSheet }
         .sheet(isPresented: $showingRingHuman) { ringHumanSheet }
@@ -74,7 +70,7 @@ struct GroupCallView: View {
                 get: { fatalAlert != nil },
                 set: { if !$0 { fatalAlert = nil } },
             ),
-            actions: { Button("好") { dismiss() } },
+            actions: { Button("好") { callCenter.clearGroupCall() } },
             message: { Text(fatalAlert ?? "") },
         )
         .alert(
@@ -85,7 +81,7 @@ struct GroupCallView: View {
                 Button("结束", role: .destructive) {
                     Task {
                         await session.endCall()
-                        dismiss()
+                        // .terminated phase clears the slot via handlePhaseChange.
                     }
                 }
             },
@@ -110,12 +106,14 @@ struct GroupCallView: View {
 
     @ViewBuilder
     private var inlineStatus: some View {
-        if session.phase == .connected {
+        if session.phase == .connected, let start = session.connectedAt {
             HStack(spacing: 8) {
-                Text(elapsedDisplay)
-                    .font(.subheadline)
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
+                TimelineView(.periodic(from: start, by: 1.0)) { ctx in
+                    Text(Self.formatElapsed(ctx.date.timeIntervalSince(start)))
+                        .font(.subheadline)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
                 if session.cumulativePnd > 0 {
                     Text("\(session.cumulativePnd) PND")
                         .font(.subheadline)
@@ -128,6 +126,34 @@ struct GroupCallView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    static func formatElapsed(_ seconds: TimeInterval) -> String {
+        let total = max(0, Int(seconds))
+        return String(format: "%02d:%02d", total / 60, total % 60)
+    }
+
+    /// Top-leading collapse button — see `CallView.minimizeButton` for
+    /// the rationale. Hides the full-screen surface but keeps the
+    /// SFU connection / CallKit handle alive.
+    private var minimizeButton: some View {
+        Button {
+            Haptics.tap()
+            callCenter.minimize()
+        } label: {
+            Image(systemName: "chevron.down")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 44, height: 44)
+                .background(
+                    Circle().fill(Theme.Palette.surface),
+                )
+                .overlay(
+                    Circle()
+                        .stroke(Theme.Palette.hairline, lineWidth: 0.5),
+                )
+        }
+        .accessibilityLabel("收起")
     }
 
     /// Two invite CTAs sitting just above the toolbar, centered as a
@@ -364,7 +390,7 @@ struct GroupCallView: View {
         Button {
             Task {
                 await session.hangUp()
-                dismiss()
+                // .terminated phase clears the slot via handlePhaseChange.
             }
         } label: {
             Image(systemName: "phone.down.fill")
@@ -525,15 +551,13 @@ struct GroupCallView: View {
     private func handlePhaseChange(_ phase: GroupCallSession.Phase) {
         switch phase {
         case .connected:
-            startElapsedTicker()
             Haptics.connected()
         case .terminated(let reason):
-            tickTimer?.invalidate()
-            tickTimer = nil
             switch reason {
             case .user, .ended:
-                // Voluntary — the tapped button already calls dismiss.
-                break
+                // Voluntary — drop the slot immediately so the full
+                // screen collapses (or the pill disappears).
+                callCenter.clearGroupCall()
             case .startupError(let m), .remoteError(let m):
                 fatalAlert = m.isEmpty ? "通话失败" : m
             case .noBalance:
@@ -543,16 +567,6 @@ struct GroupCallView: View {
             }
         default:
             break
-        }
-    }
-
-    private func startElapsedTicker() {
-        tickTimer?.invalidate()
-        elapsedDisplay = "00:00"
-        tickTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-            guard let start = session.connectedAt else { return }
-            let total = Int(Date().timeIntervalSince(start))
-            elapsedDisplay = String(format: "%02d:%02d", total / 60, total % 60)
         }
     }
 }

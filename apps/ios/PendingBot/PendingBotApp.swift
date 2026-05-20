@@ -55,6 +55,11 @@ struct PendingBotApp: App {
                 .environmentObject(accountStore)
                 .environmentObject(unreadStore)
                 .environmentObject(modelCatalog)
+                // CallCenter is the app-level owner of the currently
+                // active voice / group call — kept here (not inside a
+                // tab) so the session survives navigation and the
+                // floating-pill / cover hosted on TabRoot can read it.
+                .environment(CallCenter.shared)
                 // Two-color brand (#044735 + #fdfcfa) — light theme only.
                 // Following system would force us to design + maintain a
                 // dark variant we don't actually want.

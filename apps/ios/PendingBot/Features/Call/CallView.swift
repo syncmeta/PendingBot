@@ -6,18 +6,21 @@ import SwiftUI
 /// the call UI removes a mental anchor that would distract mid-conversation.
 ///
 /// State source is CallSession (@Observable). The view's lifecycle is:
-///   - On `.task`, call session.start() — that mints the worker session
-///     and brings up the transport.
-///   - Tap on the hang up button → session.hangUp(), then dismiss.
-///   - On terminate(.regionUnsupported) we show an alert + link rather
-///     than the in-call UI.
+///   - On `.task`, call session.start() — idempotent (guard against
+///     non-idle phase), so re-appearing after a minimize round-trip
+///     is a no-op rather than a re-mint.
+///   - Tap on the hang up button → session.hangUp(); the .terminated
+///     phase handler calls `callCenter.clearVoiceCall()` which collapses
+///     the cover binding.
+///   - Tap on the top-leading chevron-down → `callCenter.minimize()`.
+///     Cover dismisses, session keeps running, floating pill on TabRoot
+///     replaces this surface until the user taps it to re-expand.
+///   - On terminate(.regionUnsupported) we show an alert + link; the
+///     alert's button clears the slot.
 struct CallView: View {
     @Bindable var session: CallSession
-    @Environment(\.dismiss) private var dismiss
+    @Environment(CallCenter.self) private var callCenter
     @Environment(\.openURL) private var openURL
-
-    @State private var elapsedDisplay: String = "00:00"
-    @State private var tickTimer: Timer?
 
     // Pulled out so the region-unsupported alert payload survives the
     // .terminated phase transition.
@@ -31,7 +34,7 @@ struct CallView: View {
     }
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .topLeading) {
             Color(.systemBackground).ignoresSafeArea()
             VStack(spacing: 24) {
                 Spacer()
@@ -48,6 +51,9 @@ struct CallView: View {
                     .padding(.bottom, 40)
             }
             .padding()
+            minimizeButton
+                .padding(.top, 12)
+                .padding(.leading, 12)
         }
         .task {
             updateProximityMonitoring()
@@ -61,8 +67,10 @@ struct CallView: View {
             updateProximityMonitoring()
         }
         .onDisappear {
-            tickTimer?.invalidate()
-            tickTimer = nil
+            // Proximity-driven screen blanking is only useful while the
+            // full-screen UI is showing; when the user minimizes (and
+            // is browsing other tabs) we don't want the screen blanking
+            // as they tilt the phone. `.task` re-enables it on re-expand.
             UIDevice.current.isProximityMonitoringEnabled = false
         }
         .alert(item: $regionAlert) { alert in
@@ -72,8 +80,11 @@ struct CallView: View {
                 message: Text(regionAlertBody(country: alert.country)),
                 primaryButton: .default(Text("查看支持地区")) {
                     if let support { openURL(support) }
+                    callCenter.clearVoiceCall()
                 },
-                secondaryButton: .cancel(Text("关闭")) { dismiss() },
+                secondaryButton: .cancel(Text("关闭")) {
+                    callCenter.clearVoiceCall()
+                },
             )
         }
         .alert(
@@ -83,7 +94,7 @@ struct CallView: View {
                 set: { if !$0 { errorAlert = nil } },
             ),
             actions: {
-                Button("好") { dismiss() }
+                Button("好") { callCenter.clearVoiceCall() }
             },
             message: {
                 Text(errorAlert ?? "")
@@ -110,10 +121,24 @@ struct CallView: View {
         // It stays hidden until the first turn settles — a "本次通话的费用：0 PND"
         // sitting below the timer for the first 1–2 s of "talking
         // but no usage yet" reads as broken.
+        //
+        // Elapsed display ticks via TimelineView so the same date
+        // formatting can power the minimized floating pill without
+        // sharing a Timer between two views. Pre-connect we show a
+        // placeholder so the layout doesn't jump.
         VStack(spacing: 6) {
-            Text(elapsedDisplay)
-                .font(.title3)
-                .monospacedDigit()
+            if let start = session.connectedAt {
+                TimelineView(.periodic(from: start, by: 1.0)) { ctx in
+                    Text(Self.formatElapsed(ctx.date.timeIntervalSince(start)))
+                        .font(.title3)
+                        .monospacedDigit()
+                }
+            } else {
+                Text("00:00")
+                    .font(.title3)
+                    .monospacedDigit()
+                    .opacity(0)
+            }
             if session.cumulativePnd > 0 {
                 Text("本次通话的费用：\(session.cumulativePnd) PND")
                     .font(.subheadline)
@@ -121,6 +146,33 @@ struct CallView: View {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    static func formatElapsed(_ seconds: TimeInterval) -> String {
+        let total = max(0, Int(seconds))
+        return String(format: "%02d:%02d", total / 60, total % 60)
+    }
+
+    /// Top-leading collapse button — hides the full-screen surface but
+    /// keeps the call running; the user navigates to other tabs and
+    /// taps the floating pill to come back. Disabled before connect so
+    /// a user can't strand themselves on a half-opened call with
+    /// nowhere visible to hang up (the pill only shows after the cover
+    /// dismisses, and the cover dismisses only on minimize).
+    private var minimizeButton: some View {
+        Button {
+            Haptics.tap()
+            callCenter.minimize()
+        } label: {
+            Image(systemName: "chevron.down")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 44, height: 44)
+                .background(
+                    Circle().fill(Color(.secondarySystemBackground)),
+                )
+        }
+        .accessibilityLabel("收起")
     }
 
     private var controlRow: some View {
@@ -154,7 +206,9 @@ struct CallView: View {
         Button {
             Task {
                 await session.hangUp()
-                dismiss()
+                // Slot clear happens in handlePhaseChange when the
+                // session reports .terminated; the cover's binding
+                // collapses naturally then. No explicit dismiss here.
             }
         } label: {
             Image(systemName: "phone.down.fill")
@@ -203,11 +257,12 @@ struct CallView: View {
     private func handlePhaseChange(_ phase: CallSession.Phase) {
         switch phase {
         case .connected:
-            startElapsedTicker()
             Haptics.connected()
         case .terminated(let reason):
-            tickTimer?.invalidate()
-            tickTimer = nil
+            // Alerts that need user acknowledgement: the alert button
+            // calls `callCenter.clearVoiceCall()` so the cover stays up
+            // until the user reads the message. Voluntary / bot-driven /
+            // CallKit-driven ends drop straight away.
             switch reason {
             case .regionUnsupported(let country, let url):
                 regionAlert = RegionAlert(country: country, supportedURL: url)
@@ -217,32 +272,11 @@ struct CallView: View {
                 errorAlert = "余额不足，通话结束"
             case .network:
                 errorAlert = "网络中断，通话结束"
-            case .user:
-                // Voluntary hang up — either the in-app hangUpButton (whose
-                // own Task also calls dismiss; a double-dismiss is a no-op)
-                // or the CallKit lock-screen end button (where the session
-                // ends via onSystemEnd and the view *must* dismiss itself,
-                // otherwise the user gets stuck on a frozen "已结束").
-                dismiss()
-            case .botEnded:
-                // The bot ended the call itself — the user didn't tap
-                // anything, so the view dismisses itself.
-                dismiss()
+            case .user, .botEnded:
+                callCenter.clearVoiceCall()
             }
         default:
             break
-        }
-    }
-
-    private func startElapsedTicker() {
-        tickTimer?.invalidate()
-        elapsedDisplay = "00:00"
-        tickTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-            guard let start = session.connectedAt else { return }
-            let total = Int(Date().timeIntervalSince(start))
-            let mm = total / 60
-            let ss = total % 60
-            elapsedDisplay = String(format: "%02d:%02d", mm, ss)
         }
     }
 
