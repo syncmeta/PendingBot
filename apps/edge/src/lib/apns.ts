@@ -61,8 +61,14 @@ export interface SendApnsInput {
   deviceToken: string;
   apnsEnv: 'dev' | 'prod';
   payload: ApnsPayload;
-  // Push type — 'alert' = visible, 'background' = silent (no alert payload).
-  pushType?: 'alert' | 'background';
+  // Push type — 'alert' = visible, 'background' = silent, 'voip' = PushKit
+  // VoIP push (must target the .voip topic suffix; receiver MUST hand it
+  // to CallKit immediately or Apple revokes VoIP privileges).
+  pushType?: 'alert' | 'background' | 'voip';
+  // Override the default APNs topic. Defaults to `env.APNS_TOPIC` (the app
+  // bundle id). VoIP pushes set this to `<bundle>.voip` — Apple routes
+  // them through a distinct pipeline keyed off the topic suffix.
+  topic?: string;
   collapseId?: string;        // dedup similar notifications server-side
   expiration?: number;        // unix ts; 0 = drop if not deliverable now
 }
@@ -91,9 +97,14 @@ export async function sendApns(input: SendApnsInput): Promise<SendApnsResult> {
 
   const headers: Record<string, string> = {
     authorization: `bearer ${jwt}`,
-    'apns-topic': env.APNS_TOPIC,
+    'apns-topic': input.topic ?? env.APNS_TOPIC,
     'apns-push-type': pushType,
   };
+  // VoIP pushes have a strict deadline (Apple drops them after a few
+  // seconds if not deliverable). Mark high priority so they don't get
+  // queued behind a backlog of alert pushes — alert defaults are good
+  // enough for the visible-banner path.
+  if (pushType === 'voip') headers['apns-priority'] = '10';
   if (input.collapseId) headers['apns-collapse-id'] = input.collapseId;
   if (input.expiration !== undefined) headers['apns-expiration'] = String(input.expiration);
 

@@ -40,7 +40,7 @@ import { getBotMemory } from '../lib/memory';
 import { resolveLocale } from '../i18n/locale';
 import { jsonError } from '../lib/http-error';
 import { UUID_RE } from '../lib/ids';
-import { notifyUser } from '../lib/push';
+import { sendVoipRing } from '../lib/push';
 import {
   createSfuSession,
   newSfuTracks,
@@ -353,28 +353,52 @@ groupVoiceRoutes.post('/:id/voice/ring', async (c) => {
     return jsonError(c, 502, 'voice_upstream_failed');
   }
 
-  // Lock screen banner — generic copy on purpose. No conversation title,
-  // no caller name, no group name. The structured `extra` lets the app
-  // resolve the rich text once unlocked.
-  const { sent, failed } = await notifyUser({
+  // Resolve the caller's display name + the group title server-side so
+  // the iOS PushKit handler can hand them to CallKit's CXCallUpdate
+  // without a follow-up round-trip. CallKit shows these on the
+  // lock-screen / full-screen incoming surface, so the names need to be
+  // in the push body — there's no "I'll fetch this after answer" window.
+  const [{ data: callerRow }, { data: convRow }] = await Promise.all([
+    supaSvc.from('users').select('display_name').eq('id', callerId).maybeSingle(),
+    supaSvc
+      .from('conversations')
+      .select('title')
+      .eq('id', conversationId)
+      .maybeSingle(),
+  ]);
+  const callerName =
+    (callerRow?.display_name as string | null | undefined) ?? '某人';
+  const groupTitle =
+    (convRow?.title as string | null | undefined) ?? '群语音';
+
+  // One UUID per ring attempt. CallKit dedups incoming calls by UUID; if
+  // the same user gets rung twice for the same call (e.g. inviter
+  // re-rings after decline) we deliberately mint a new UUID so the
+  // second push is a fresh incoming-call surface, not a no-op.
+  const callUuid = crypto.randomUUID();
+
+  // PushKit delivers the whole top-level dict to the app — `aps` is
+  // ignored on this path, but harmless. The iOS handler reads the
+  // `voice_ring` keys and calls CXProvider.reportNewIncomingCall the
+  // moment the push lands (mandatory under iOS 13+ VoIP rules).
+  const { sent, failed } = await sendVoipRing({
     env: c.env,
     userId: parsed.user_id,
     payload: {
-      alert: { title: '群语音通话', body: '有人邀请你加入群语音' },
-      sound: 'default',
-      threadId: `voice:${conversationId}`,
-      category: 'VOICE_RING',
       extra: {
         kind: 'voice_ring',
+        call_uuid: callUuid,
         conversation_id: conversationId,
         from_user_id: callerId,
+        caller_display_name: callerName,
+        group_title: groupTitle,
       },
     },
     // Multiple rings of the same user collapse on the device.
     collapseId: `voice-ring:${conversationId}:${parsed.user_id}`,
   });
 
-  return c.json({ ok: true, pushed: sent, failed });
+  return c.json({ ok: true, pushed: sent, failed, call_uuid: callUuid });
 });
 
 // =============================================================================
