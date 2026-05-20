@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
 
 // Tiny useState wrapper that persists to localStorage. Keys are
-// namespaced under `scroll-lab.` so we don't collide with whatever
+// namespaced under `envelope-lab.` so we don't collide with whatever
 // else might be in this origin's storage.
 //
 // Single-user dev tool, so no merge / conflict handling — last write
 // from this tab wins. JSON-encoded; non-serializable values blow up
 // at write time.
-const NS = 'scroll-lab.';
+const NS = 'envelope-lab.';
 
 export function useLocalStorage<T>(key: string, initial: T): [T, (v: T) => void] {
   const fullKey = NS + key;
@@ -30,7 +30,7 @@ export function useLocalStorage<T>(key: string, initial: T): [T, (v: T) => void]
   return [value, setValue];
 }
 
-// Wipe every scroll-lab.* key. Used by the "reset all" button.
+// Wipe every envelope-lab.* key. Used by the "reset all" button.
 export function clearAll(): void {
   const keys: string[] = [];
   for (let i = 0; i < localStorage.length; i++) {

@@ -1,5 +1,5 @@
 // Tiny SSE-over-fetch helper plus typed REST wrappers around the
-// scroll-lab Hono server.
+// envelope-lab Hono server.
 
 import type {
   ConfigResponse,

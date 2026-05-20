@@ -428,7 +428,7 @@ function Header(props: {
   const running = props.status === 'running';
   return (
     <header className="hdr">
-      <div className="title">scroll-lab <span className="dim">— 奏折打磨台</span></div>
+      <div className="title">envelope-lab <span className="dim">— 来信打磨台</span></div>
       <div className="grow" />
       <div className="status">
         {props.status === 'idle' && <span className="dim">idle</span>}

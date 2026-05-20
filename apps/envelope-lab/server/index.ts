@@ -1,4 +1,4 @@
-// scroll-lab server — local dev panel for the 奏折 (scroll) loop.
+// envelope-lab server — local dev panel for the 来信 (envelope) loop.
 // Not deployed. Hono on Node. Reads keys from the same .dev.vars
 // stash the CLI harness uses; runs runEnvelopeLoop with injected
 // search/scrape provider; streams turns to the client over SSE.
@@ -42,7 +42,7 @@ const FIXTURE_DIRS = [
 const RUNS_DIR = path.join(LAB_ROOT, 'runs');
 fs.mkdirSync(RUNS_DIR, { recursive: true });
 
-// ── .dev.vars loader (mirrors apps/edge/scripts/scroll-replay.ts) ────
+// ── .dev.vars loader (mirrors apps/edge/scripts/envelope-replay.ts) ────
 function parseDotenv(text: string, into: Record<string, string>): void {
   for (const line of text.split('\n')) {
     const t = line.trim();
@@ -95,10 +95,10 @@ const proxyUrl =
   process.env.all_proxy;
 if (proxyUrl) {
   setGlobalDispatcher(new ProxyAgent({ uri: proxyUrl, ...KEEP_ALIVE }));
-  console.log(`[scroll-lab/api] proxy: ${proxyUrl}`);
+  console.log(`[envelope-lab/api] proxy: ${proxyUrl}`);
 } else {
   setGlobalDispatcher(new Agent(KEEP_ALIVE));
-  console.log('[scroll-lab/api] no proxy (set PROXY_URL or HTTPS_PROXY)');
+  console.log('[envelope-lab/api] no proxy (set PROXY_URL or HTTPS_PROXY)');
 }
 
 // ── Models — mirrors surf-test/config.ts list. OpenRouter for the
@@ -259,7 +259,7 @@ app.get('/api/fixtures/:id', (c) => {
 
 // ── Runs (persisted after each /api/run completes) ───────────────────
 // Each file: <ts>__<short>.json  containing { input, turns, result, ts }.
-// Lives in apps/scroll-lab/runs/ — gitignored via repo-level *.json? no,
+// Lives in apps/envelope-lab/runs/ — gitignored via repo-level *.json? no,
 // .gitignore covers *.log only, so runs/ is committed-eligible. Add a
 // .gitignore inside runs/ (next commit) so contents don't pollute git.
 app.get('/api/runs', (c) => {
@@ -493,7 +493,7 @@ app.post('/api/run', async (c) => {
       fetch: undiciFetch as unknown as typeof globalThis.fetch,
       defaultHeaders: {
         'HTTP-Referer': 'http://localhost:5174',
-        'X-Title': 'PendingBot/scroll-lab',
+        'X-Title': 'PendingBot/envelope-lab',
       },
     });
   }
@@ -534,7 +534,7 @@ app.post('/api/run', async (c) => {
 
   const webSearch = body.stubSearch ? async () => [] : makeSearch(body.searchProvider, ENV);
   const fetchUrl = body.stubFetch
-    ? async (url: string) => ({ url, title: '', content: '(stub: scroll-lab 跳过抓取)' })
+    ? async (url: string) => ({ url, title: '', content: '(stub: envelope-lab 跳过抓取)' })
     : makeScrape(body.scrapeProvider, ENV);
 
   // Cancel hook: client closes the SSE stream → the request's
@@ -813,7 +813,7 @@ app.post('/api/run', async (c) => {
           ),
         );
       } catch (err) {
-        console.warn('[scroll-lab/api] failed to persist run:', err);
+        console.warn('[envelope-lab/api] failed to persist run:', err);
       }
     }
     // Run finished — let the runStates entry linger briefly so a
@@ -844,8 +844,8 @@ app.get('/api/openrouter-generation/:id', async (c) => {
 // ── Bind ─────────────────────────────────────────────────────────────
 const PORT = Number(process.env.PORT ?? 5175);
 serve({ fetch: app.fetch, port: PORT });
-console.log(`[scroll-lab/api] listening on http://localhost:${PORT}`);
-console.log(`[scroll-lab/api] keys present:`, {
+console.log(`[envelope-lab/api] listening on http://localhost:${PORT}`);
+console.log(`[envelope-lab/api] keys present:`, {
   openrouter: !!ENV.OPENROUTER_API_KEY,
   brave: !!ENV.BRAVE_API_KEY,
   tavily: !!ENV.TAVILY_API_KEY,

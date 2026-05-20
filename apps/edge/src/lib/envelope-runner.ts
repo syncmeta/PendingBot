@@ -42,7 +42,7 @@ import {
 // Worker-side orchestration shell around the pure agent loop in
 // envelope-loop.ts. Owns the scroll_runs row lifecycle, history/memory
 // loading, audit logging — i.e. everything the offline replay harness
-// in apps/scroll-lab does NOT want to do.
+// in apps/envelope-lab does NOT want to do.
 //
 // Surfaced to users as 来信/Envelopes — config (explorer model,
 // collaborator model, turn cap) lives on the trigger body and is frozen
@@ -78,7 +78,7 @@ export {
 } from './envelope-loop';
 
 // Defaults baked at trigger time so a config schema change doesn't
-// retroactively rewrite already-recorded runs. Mirrors what scroll-lab
+// retroactively rewrite already-recorded runs. Mirrors what envelope-lab
 // settled on as the production defaults the user asked for.
 export const DEFAULT_EXPLORER_MODEL = '~google/gemini-flash-latest';
 export const DEFAULT_COLLABORATOR_MODEL = '~google/gemini-flash-latest';
@@ -153,7 +153,7 @@ export interface RunEnvelopeInput {
 }
 
 // Compact wire shape the iOS detail page reads — same intent as the
-// scroll-lab dev panel, minus per-call usage. Truncated tool replies
+// envelope-lab dev panel, minus per-call usage. Truncated tool replies
 // keep the row small; iOS only needs enough to render the trace.
 interface TurnTraceEntry {
   i: number;
@@ -656,7 +656,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
 }
 
 // Render the explorer's most recent turn as a short transcript the
-// collaborator model can chew on. Mirrors apps/scroll-lab's helper —
+// collaborator model can chew on. Mirrors apps/envelope-lab's helper —
 // keep them in sync if the format ever changes there.
 function formatTurnForCollaborator(newMessages: ChatCompletionMessageParam[]): string {
   const lines: string[] = [];

@@ -413,7 +413,7 @@ export function buildEnvelopeInitialUserContent(input: {
 
 // Pure agent loop — no Supabase, no audit, no row mutation. Both the
 // production worker (runEnvelope in envelope-runner.ts) and the
-// offline replay harness in apps/scroll-lab call this with their own
+// offline replay harness in apps/envelope-lab call this with their own
 // deps.
 export async function runEnvelopeLoop(deps: EnvelopeLoopDeps): Promise<EnvelopeLoopResult> {
   const {
