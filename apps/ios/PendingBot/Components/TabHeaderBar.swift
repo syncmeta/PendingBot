@@ -60,10 +60,9 @@ extension TabHeaderBar where Leading == EmptyView {
     }
 }
 
-/// SF Symbol icon used as a tab-header trailing action — rendered as a
-/// glass chip (iOS 26+) or a flat muted capsule (older). Mirrors Apple's
-/// circular header pills in iOS 26 Mail / Messages (camera, compose,
-/// ellipsis). 36×36 hit target keeps it HIG-compliant.
+/// SF Symbol icon used as a tab-header trailing action — plain glyph
+/// inside a 36×36 hit target. No background chip; the icon stroke alone
+/// communicates affordance, matching the user's "首页/好友 按钮无背景" spec.
 struct HeaderActionIcon: View {
     let systemImage: String
     var size: CGFloat = 36
@@ -75,7 +74,6 @@ struct HeaderActionIcon: View {
             .foregroundStyle(Theme.Palette.accent)
             .frame(width: size, height: size)
             .contentShape(Capsule())
-            .headerChipBackground()
     }
 }
 
@@ -104,43 +102,17 @@ struct CircleComposeButton: View {
     }
 }
 
-/// Pairs a left + right header action as two **independent** chips with
-/// a small gap — mirrors iOS 26 Messages app's camera + compose pair,
-/// where each pill has its own press feedback. Each child carries its
-/// own chip background (via `HeaderActionIcon`); on iOS 26 a
-/// `GlassEffectContainer` coordinates their glass surfaces, on older
-/// systems they're just spaced muted capsules.
+/// Pairs a left + right header action as two glyph buttons with a small
+/// gap — mirrors iOS 26 Messages' camera + compose pair, minus the
+/// surrounding glass pills.
 struct GroupedHeaderControls<Leading: View, Trailing: View>: View {
     @ViewBuilder var leading: () -> Leading
     @ViewBuilder var trailing: () -> Trailing
 
     var body: some View {
-        if #available(iOS 26.0, *) {
-            GlassEffectContainer(spacing: 2) {
-                HStack(spacing: 4) {
-                    leading()
-                    trailing()
-                }
-            }
-        } else {
-            HStack(spacing: 6) {
-                leading()
-                trailing()
-            }
-        }
-    }
-}
-
-private extension View {
-    /// Glass-or-capsule background applied to a single header chip. Glass
-    /// is `.interactive()` so press state flows from the enclosing Button
-    /// or Menu rather than highlighting a multi-button group as one.
-    @ViewBuilder
-    func headerChipBackground() -> some View {
-        if #available(iOS 26.0, *) {
-            self.glassEffect(.regular.interactive(), in: Capsule())
-        } else {
-            self.background(Capsule(style: .continuous).fill(Theme.Palette.surfaceMuted))
+        HStack(spacing: 6) {
+            leading()
+            trailing()
         }
     }
 }
@@ -162,7 +134,7 @@ struct PlusActionItem: Identifiable {
 struct PlusActionPopover: View {
     let items: [PlusActionItem]
     var size: CGFloat = 36
-    var width: CGFloat = 168
+    var width: CGFloat = 188
 
     @State private var isPresented = false
 
@@ -186,7 +158,7 @@ struct PlusActionPopover: View {
                         Haptics.tap()
                         item.action()
                     } label: {
-                        HStack(spacing: 12) {
+                        HStack(spacing: 14) {
                             Image(systemName: item.systemImage)
                                 .font(.system(size: 15, weight: .regular))
                                 .frame(width: 22, alignment: .center)
@@ -196,13 +168,13 @@ struct PlusActionPopover: View {
                         }
                         .foregroundStyle(Theme.Palette.ink)
                         .padding(.vertical, 12)
-                        .padding(.horizontal, 14)
+                        .padding(.horizontal, 20)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.vertical, 6)
+            .padding(.vertical, 10)
             .frame(width: width)
             .presentationCompactAdaptation(.popover)
         }
