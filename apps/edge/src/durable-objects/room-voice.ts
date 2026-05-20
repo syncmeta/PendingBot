@@ -1,6 +1,7 @@
 import type { Env } from '../types';
 import { serviceClient } from '../lib/supabase';
 import { resolveRoute, enqueueAudit } from '../llm/router';
+import { publishToHub, type VoiceCallEvent } from '../lib/realtime-publish';
 import {
   createStreamAdapter,
   createIngestAdapter,
@@ -59,7 +60,10 @@ const FLUSH_MS = 100;
 const MAX_INGEST_PAYLOAD = 28_000;
 
 // A voice room exists only for its humans. If nobody joins within this
-// window after start, end the call — the bots have no one to talk to.
+// window after start, end the call. With the new invite flow the
+// initiator joins immediately after /voice/start so this is mostly a
+// defensive timer — it still trips if the iOS WebRTC negotiation never
+// completes.
 const JOIN_GRACE_MS = 90 * 1000;
 
 // Room-level context — everything that is not per-bot.
@@ -84,6 +88,18 @@ interface RoomContext {
   // Shared secret echoed in the adapter endpoint URL so only the SFU
   // dialling our published endpoint is accepted.
   adapterToken: string;
+  // Wall-clock ms when /control/start ran — surfaced via roster() so the
+  // in-conv banner can render a live "talking for N:NN" timer.
+  startedAt: number;
+}
+
+// A participant the call invited but who hasn't joined yet. Humans land
+// here when /voice/ring fires (the route also dispatches the APNs push);
+// they leave when /control/add-human runs or someone cancels the invite.
+interface PendingInvite {
+  kind: 'human' | 'bot';
+  invitedAt: number;
+  invitedBy: string;
 }
 
 // Realtime function tools every bot gets. `leave_call` is the bot's own
@@ -219,6 +235,9 @@ export class RoomVoiceDO {
 
   private bots = new Map<string, BotLeg>();
   private humans = new Map<string, HumanState>();
+  // Group participants the call invited but who haven't joined yet.
+  // Surfaced via roster() so the in-call UI can render a "ringing" group.
+  private pendingInvites = new Map<string, PendingInvite>();
   // Participants designated call-admin during this call (user or bot ids).
   // The initiator + group owner/admins are privileged without being here.
   private callAdminIds = new Set<string>();
@@ -255,6 +274,18 @@ export class RoomVoiceDO {
       }
       case '/control/add-human':
         return this.addHuman((await request.json()) as HumanTrack);
+      case '/control/invite': {
+        const body = (await request.json()) as {
+          kind: 'human' | 'bot';
+          targetId: string;
+          invitedBy: string;
+        };
+        return this.invite(body.kind, body.targetId, body.invitedBy);
+      }
+      case '/control/cancel-invite': {
+        const body = (await request.json()) as { targetId: string };
+        return this.cancelInvite(body.targetId);
+      }
       case '/control/roster':
         return Response.json(this.roster());
       case '/control/leave': {
@@ -294,27 +325,23 @@ export class RoomVoiceDO {
 
   private async start(payload: StartPayload): Promise<Response> {
     if (this.ctx) return Response.json({ ok: true, already: true });
-    if (payload.bots.length === 0) {
-      return new Response('no bots', { status: 400 });
-    }
-    this.ctx = payload.room;
-    await this.state.storage.put('ctx', payload.room);
+    const ctx: RoomContext = { ...payload.room, startedAt: Date.now() };
+    this.ctx = ctx;
+    await this.state.storage.put('ctx', ctx);
 
-    // Bring every bot's leg up. A leg that fails to connect is skipped;
-    // the room only fails to start if NO bot came up.
+    // Bring any prefilled bot up — historically /voice/start auto-pulled
+    // every group bot here. The new invite flow leaves this list empty:
+    // bots only join when a human explicitly taps "叫机器人来".
     for (const spec of payload.bots) {
       await this.connectBot(spec).catch((err) =>
         console.warn('[room-voice] bot leg failed at start', spec.botId, err),
       );
     }
-    if (this.bots.size === 0) {
-      await this.finalize();
-      return new Response('all bot legs failed', { status: 502 });
-    }
 
     this.scheduleFlush();
-    // End the call if no human has joined by the time the grace window
-    // elapses — a bot-only room has nobody to talk to.
+    // Defensive timer — the initiator's /voice/join should land within
+    // a few seconds. If their WebRTC negotiation stalls and no human
+    // ever joins, tear the empty room down.
     this.joinGraceTimer = setTimeout(() => {
       if (!this.humanEverJoined) {
         console.warn('[room-voice] no human joined within grace window');
@@ -322,7 +349,46 @@ export class RoomVoiceDO {
       }
     }, JOIN_GRACE_MS);
     await this.state.storage.setAlarm(Date.now() + MAX_CALL_MS);
+    // Index this active call so the message list can show a phone-icon
+    // badge on conv rows without waking us up. finalize() clears the row.
+    await this.upsertActiveIndex();
+    await this.broadcastState('state');
     return Response.json({ ok: true, bots: [...this.bots.keys()] });
+  }
+
+  // Upsert/delete a row in pendingbot.voice_active_calls so the read-side
+  // (the iOS message list) can do one cheap query instead of polling
+  // every conversation's DO.
+  private async upsertActiveIndex(): Promise<void> {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    try {
+      await serviceClient(this.env)
+        .from('voice_active_calls')
+        .upsert(
+          {
+            conversation_id: ctx.conversationId,
+            started_at: new Date(ctx.startedAt).toISOString(),
+            initiator_id: ctx.initiatorUserId,
+          },
+          { onConflict: 'conversation_id' },
+        );
+    } catch (err) {
+      console.warn('[room-voice] active-index upsert failed', err);
+    }
+  }
+
+  private async clearActiveIndex(): Promise<void> {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    try {
+      await serviceClient(this.env)
+        .from('voice_active_calls')
+        .delete()
+        .eq('conversation_id', ctx.conversationId);
+    } catch (err) {
+      console.warn('[room-voice] active-index clear failed', err);
+    }
   }
 
   private async addBot(spec: BotSpec): Promise<Response> {
@@ -335,6 +401,40 @@ export class RoomVoiceDO {
     } catch (err) {
       console.warn('[room-voice] add-bot leg failed', spec.botId, err);
       return new Response('bot leg failed', { status: 502 });
+    }
+    this.pendingInvites.delete(spec.botId);
+    await this.broadcastState('state');
+    return Response.json({ ok: true });
+  }
+
+  // Mark a group participant as invited. Humans land here when /voice/ring
+  // fires (the route layer also dispatches the APNs push); bots can also
+  // be staged here when a future "invite-bot" path wants to show a
+  // ringing state. Idempotent — re-invite is a no-op.
+  private async invite(
+    kind: 'human' | 'bot',
+    targetId: string,
+    invitedBy: string,
+  ): Promise<Response> {
+    if (!this.ctx) return new Response('room not started', { status: 400 });
+    if (kind === 'human' && this.humans.has(targetId)) {
+      return Response.json({ ok: true, already: 'joined' });
+    }
+    if (kind === 'bot' && this.bots.has(targetId)) {
+      return Response.json({ ok: true, already: 'joined' });
+    }
+    this.pendingInvites.set(targetId, {
+      kind,
+      invitedAt: Date.now(),
+      invitedBy,
+    });
+    await this.broadcastState('state');
+    return Response.json({ ok: true });
+  }
+
+  private async cancelInvite(targetId: string): Promise<Response> {
+    if (this.pendingInvites.delete(targetId)) {
+      await this.broadcastState('state');
     }
     return Response.json({ ok: true });
   }
@@ -357,8 +457,9 @@ export class RoomVoiceDO {
     if (leg.ingestAdapterId) {
       await closeAdapter(this.sfuApp(), leg.ingestAdapterId);
     }
-    // A room with no bots left is pointless — tear the whole call down.
-    if (this.bots.size === 0) await this.finalize();
+    // A human-only call is fine — don't tear down just because the last
+    // bot left. The room ends when its last human leaves (see removeHuman).
+    await this.broadcastState('state');
   }
 
   // Bring up one bot: open its OpenAI Realtime socket and create the SFU
@@ -398,13 +499,19 @@ export class RoomVoiceDO {
   }
 
   // Everything a joining human subscribes to in order to hear the room:
-  //   bots   — each bot's SFU ingest session + track (omitted until the
-  //            ingest adapter is up)
-  //   humans — each human's own published mic session + track, so peers
-  //            hear each other (the subscriber filters out its own id)
+  //   bots    — each bot's SFU ingest session + track (omitted until the
+  //             ingest adapter is up)
+  //   humans  — each human's own published mic session + track, so peers
+  //             hear each other (the subscriber filters out its own id)
+  //   pending — group participants invited but not yet joined
+  //   startedAt — wall-clock ms when /control/start ran; drives the
+  //             in-conv banner's elapsed-time display
   private roster(): {
+    startedAt: number;
+    initiatorId: string;
     bots: Array<{ botId: string; sfuSessionId: string; sfuTrackName: string }>;
     humans: Array<{ humanId: string; sfuSessionId: string; sfuTrackName: string }>;
+    pending: Array<{ id: string; kind: 'human' | 'bot'; invitedAt: number; invitedBy: string }>;
   } {
     const bots: Array<{ botId: string; sfuSessionId: string; sfuTrackName: string }> = [];
     for (const leg of this.bots.values()) {
@@ -428,7 +535,27 @@ export class RoomVoiceDO {
         sfuTrackName: h.track.sfuTrackName,
       });
     }
-    return { bots, humans };
+    const pending: Array<{
+      id: string;
+      kind: 'human' | 'bot';
+      invitedAt: number;
+      invitedBy: string;
+    }> = [];
+    for (const [id, inv] of this.pendingInvites) {
+      pending.push({
+        id,
+        kind: inv.kind,
+        invitedAt: inv.invitedAt,
+        invitedBy: inv.invitedBy,
+      });
+    }
+    return {
+      startedAt: this.ctx?.startedAt ?? 0,
+      initiatorId: this.ctx?.initiatorUserId ?? '',
+      bots,
+      humans,
+      pending,
+    };
   }
 
   private async addHuman(track: HumanTrack): Promise<Response> {
@@ -439,6 +566,7 @@ export class RoomVoiceDO {
     }
     const human: HumanState = { track, adapterId: null, pending: [] };
     this.humans.set(track.humanId, human);
+    this.pendingInvites.delete(track.humanId);
     this.humanEverJoined = true;
     if (this.joinGraceTimer) {
       clearTimeout(this.joinGraceTimer);
@@ -455,7 +583,9 @@ export class RoomVoiceDO {
 
     // Hand back the roster (bots + the other humans already in the room)
     // so the joining human can subscribe and hear everyone.
-    return Response.json({ ok: true, ...this.roster() });
+    const snapshot = this.roster();
+    await this.broadcastState('state');
+    return Response.json({ ok: true, ...snapshot });
   }
 
   // Bring up a human's Stream adapter, retrying until their WebRTC peer
@@ -499,7 +629,9 @@ export class RoomVoiceDO {
     // without designating a successor — the call ends.
     if (this.humanEverJoined && !this.humanAdminPresent()) {
       await this.finalize();
+      return;
     }
+    await this.broadcastState('state');
   }
 
   // ── permissions & roster ───────────────────────────────────────────
@@ -564,6 +696,39 @@ export class RoomVoiceDO {
     const leg = this.bots.get(targetId);
     if (leg) this.updateBotTools(leg);
     return Response.json({ ok: true });
+  }
+
+  // Emit a snapshot of the current call state to the conversation's
+  // realtime hub. Conv-channel subscribers re-render the in-conv banner
+  // and (if open) the in-call participant list off this.
+  //
+  // Best-effort: a publish failure must not affect the actual call, so
+  // we await but swallow. Two emit moments:
+  //   'state'  — membership / pending changed
+  //   'ended'  — finalize() ran; banner should disappear
+  private async broadcastState(event: 'state' | 'ended'): Promise<void> {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const snapshot = this.roster();
+    const payload: VoiceCallEvent = {
+      type: 'voice_call',
+      event,
+      conversation_id: ctx.conversationId,
+      started_at: snapshot.startedAt,
+      initiator_id: snapshot.initiatorId,
+      participants: [
+        ...snapshot.humans.map((h) => ({ kind: 'human' as const, id: h.humanId })),
+        ...snapshot.bots.map((b) => ({ kind: 'bot' as const, id: b.botId })),
+      ],
+      pending: snapshot.pending.map((p) => ({
+        kind: p.kind,
+        id: p.id,
+        invited_by: p.invitedBy,
+      })),
+    };
+    await publishToHub(this.env, `conv:${ctx.conversationId}`, payload).catch(
+      (err) => console.warn('[room-voice] broadcast failed', err),
+    );
   }
 
   private sfuApp(): SfuApp {
@@ -768,8 +933,9 @@ export class RoomVoiceDO {
     }
   }
 
-  // A bot's OpenAI socket closed — drop just that leg. If it was the
-  // last bot, the room has nothing left to do, so finalize.
+  // A bot's OpenAI socket closed — drop just that leg. A bot leg dying
+  // doesn't end the call (humans can still talk to each other); the room
+  // ends with its last human, not its last bot.
   private onLegClosed(botId: string): void {
     const leg = this.bots.get(botId);
     if (!leg) return;
@@ -783,7 +949,7 @@ export class RoomVoiceDO {
     if (leg.ingestAdapterId) {
       void closeAdapter(this.sfuApp(), leg.ingestAdapterId);
     }
-    if (this.bots.size === 0) void this.finalize();
+    void this.broadcastState('state');
   }
 
   private async onOpenAIMessage(leg: BotLeg, ev: MessageEvent): Promise<void> {
@@ -986,6 +1152,10 @@ export class RoomVoiceDO {
   private async finalize(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    // Notify the conv channel first — once we tear down sockets and
+    // clear ctx, the snapshot we'd produce is meaningless.
+    await this.broadcastState('ended');
+    await this.clearActiveIndex();
     if (this.flushTimer) clearTimeout(this.flushTimer);
     this.flushTimer = null;
     if (this.joinGraceTimer) clearTimeout(this.joinGraceTimer);
@@ -1011,6 +1181,7 @@ export class RoomVoiceDO {
     }
     this.bots.clear();
     this.humans.clear();
+    this.pendingInvites.clear();
 
     await this.state.storage.deleteAlarm().catch(() => undefined);
     await this.state.storage.deleteAll().catch(() => undefined);

@@ -160,4 +160,33 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         }
         return [.banner, .sound, .badge]
     }
+
+    /// User tapped a push. For voice_ring payloads, surface a request to
+    /// the UI layer to open the conversation and rejoin the call.
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                didReceive response: UNNotificationResponse) async {
+        let info = response.notification.request.content.userInfo
+        guard let kind = info["kind"] as? String, kind == "voice_ring",
+              let convId = info["conversation_id"] as? String
+        else { return }
+        await MainActor.run {
+            IncomingVoiceRingStore.shared.pendingConversationId = convId
+        }
+    }
+}
+
+/// One-slot store that the message-tab and conversation views observe to
+/// react to a tapped "voice_ring" push. The push handler stores the
+/// conversation id; ContentView / MessageTabView pops the corresponding
+/// conversation onto its nav stack, which in turn shows the call view.
+@MainActor
+@Observable
+final class IncomingVoiceRingStore {
+    static let shared = IncomingVoiceRingStore()
+    private init() {}
+
+    /// Set by the push handler when the user taps a ring notification.
+    /// The observing view consumes (reads + nils-out) the value once it
+    /// has acted on it.
+    var pendingConversationId: String?
 }

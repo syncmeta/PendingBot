@@ -56,63 +56,74 @@ final class RealtimeManager {
     /// Open or reuse a conv-level socket. Multiple observers share one
     /// underlying socket — each gets a token to drop later. One socket
     /// covers `messages`, `bot_lookbacks`, `group_continue_requests` and
-    /// `conversation_participants`; callers register one closure per
-    /// category.
+    /// `conversation_participants` (row-change frames) plus group voice
+    /// call lifecycle (voice_call frames); callers register one closure
+    /// per category.
     func startConvChannel(
         conversationId: String,
         onMessage: @escaping @Sendable (MessageEvent) -> Void,
         onLookback: @escaping @Sendable (LookbackEvent) -> Void = { _ in },
         onContinueRequest: @escaping @Sendable (ContinueRequestEvent) -> Void = { _ in },
-        onParticipants: @escaping @Sendable (ParticipantsEvent) -> Void = { _ in }
+        onParticipants: @escaping @Sendable (ParticipantsEvent) -> Void = { _ in },
+        onVoiceCall: @escaping @Sendable (VoiceCallFrame) -> Void = { _ in }
     ) async -> ConvSubscriptionToken {
         let token = ConvSubscriptionToken(id: UUID(), conversationId: conversationId)
 
         if let handle = convChannels[conversationId] {
-            handle.observers[token.id] = (onMessage, onLookback, onContinueRequest, onParticipants)
+            handle.observers[token.id] = (onMessage, onLookback, onContinueRequest, onParticipants, onVoiceCall)
             return token
         }
 
         let handle = ConvChannelHandle()
-        handle.observers[token.id] = (onMessage, onLookback, onContinueRequest, onParticipants)
+        handle.observers[token.id] = (onMessage, onLookback, onContinueRequest, onParticipants, onVoiceCall)
 
         let socket = RealtimeSocket(
             path: "v1/realtime-hub/conv/\(conversationId)"
-        ) { [weak handle] change in
+        ) { [weak handle] frame in
             guard let handle else { return }
-            switch change.table {
-            case "messages":
-                // The conv topic only ever emits message INSERT/UPDATE
-                // (rows are soft-deleted via a status UPDATE, never a
-                // row DELETE) — ignore any stray delete.
-                guard change.op != .delete else { return }
-                let evt = MessageEvent(kind: change.op == .insert ? .insert : .update,
-                                       record: change.record)
-                for (_, obs) in handle.observers { obs.message(evt) }
-            case "bot_lookbacks":
-                guard change.op != .delete else { return }
-                let evt = LookbackEvent(kind: change.op == .insert ? .insert : .update,
-                                        record: change.record)
-                for (_, obs) in handle.observers { obs.lookback(evt) }
-            case "group_continue_requests":
-                guard change.op != .delete else { return }
-                let evt = ContinueRequestEvent(kind: change.op == .insert ? .insert : .update,
-                                               record: change.record)
-                for (_, obs) in handle.observers { obs.continueReq(evt) }
-            case "conversation_participants":
-                let kind: ParticipantsEvent.Kind = switch change.op {
-                case .insert: .insert
-                case .update: .update
-                case .delete: .delete
-                }
-                for (_, obs) in handle.observers { obs.participants(ParticipantsEvent(kind: kind)) }
-            default:
-                break
+            switch frame {
+            case .change(let change):
+                Self.dispatchChange(change, to: handle)
+            case .voiceCall(let v):
+                for (_, obs) in handle.observers { obs.voiceCall(v) }
             }
         }
         handle.socket = socket
         socket.start()
         convChannels[conversationId] = handle
         return token
+    }
+
+    private static func dispatchChange(_ change: HubChange, to handle: ConvChannelHandle) {
+        switch change.table {
+        case "messages":
+            // The conv topic only ever emits message INSERT/UPDATE
+            // (rows are soft-deleted via a status UPDATE, never a
+            // row DELETE) — ignore any stray delete.
+            guard change.op != .delete else { return }
+            let evt = MessageEvent(kind: change.op == .insert ? .insert : .update,
+                                   record: change.record)
+            for (_, obs) in handle.observers { obs.message(evt) }
+        case "bot_lookbacks":
+            guard change.op != .delete else { return }
+            let evt = LookbackEvent(kind: change.op == .insert ? .insert : .update,
+                                    record: change.record)
+            for (_, obs) in handle.observers { obs.lookback(evt) }
+        case "group_continue_requests":
+            guard change.op != .delete else { return }
+            let evt = ContinueRequestEvent(kind: change.op == .insert ? .insert : .update,
+                                           record: change.record)
+            for (_, obs) in handle.observers { obs.continueReq(evt) }
+        case "conversation_participants":
+            let kind: ParticipantsEvent.Kind = switch change.op {
+            case .insert: .insert
+            case .update: .update
+            case .delete: .delete
+            }
+            for (_, obs) in handle.observers { obs.participants(ParticipantsEvent(kind: kind)) }
+        default:
+            break
+        }
     }
 
     /// Drop one observer. Last observer out closes the underlying socket.
@@ -184,11 +195,13 @@ private final class ConvChannelHandle {
     typealias LookbackHandler = @Sendable (LookbackEvent) -> Void
     typealias ContinueHandler = @Sendable (ContinueRequestEvent) -> Void
     typealias ParticipantsHandler = @Sendable (ParticipantsEvent) -> Void
+    typealias VoiceCallHandler = @Sendable (VoiceCallFrame) -> Void
     typealias Observers = (
         message: MessageHandler,
         lookback: LookbackHandler,
         continueReq: ContinueHandler,
-        participants: ParticipantsHandler
+        participants: ParticipantsHandler,
+        voiceCall: VoiceCallHandler
     )
     var socket: RealtimeSocket?
     var observers: [UUID: Observers] = [:]

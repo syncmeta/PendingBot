@@ -273,23 +273,45 @@ struct GroupHumanRosterEntry: Decodable, Sendable, Equatable {
     let sfuTrackName: String
 }
 
-/// POST /voice/start — brings the room's bots online. `initiated` is true
-/// when this caller opened the call (and is privileged for its lifetime).
+/// A participant the call invited but hasn't joined yet. Surfaced from
+/// roster() so the in-call UI can render a "ringing" group below the
+/// joined participants. Cleared automatically when the target joins or
+/// when /voice/cancel-invite runs.
+struct GroupPendingEntry: Decodable, Sendable, Equatable {
+    let id: String
+    let kind: String         // "human" | "bot"
+    let invitedAt: Double    // ms epoch
+    let invitedBy: String
+}
+
+/// POST /voice/start — opens an empty room. The caller follows up with
+/// /voice/join. `initiated` is true when this caller opened the call (and
+/// is privileged for its lifetime).
 struct GroupVoiceStartResponse: Decodable, Sendable {
     let ok: Bool
     let room_id: String
-    let bot_ids: [String]
     let initiated: Bool?
 }
 
 /// POST /voice/join — the worker negotiated the human's RTCPeerConnection
-/// against the SFU. Carries the SFU answer SDP + the current bot roster.
+/// against the SFU. Carries the SFU answer SDP + the current roster (bots
+/// + peers + pending invites).
 struct GroupVoiceJoinResponse: Decodable, Sendable {
     let ok: Bool
     let session_id: String
     let answer: String
+    let startedAt: Double?
+    let initiatorId: String?
     let bots: [GroupBotRosterEntry]
     let humans: [GroupHumanRosterEntry]
+    let pending: [GroupPendingEntry]?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, session_id, answer
+        case startedAt
+        case initiatorId
+        case bots, humans, pending
+    }
 }
 
 /// POST /voice/subscribe — added the bot tracks to the caller's SFU
@@ -301,24 +323,41 @@ struct GroupVoiceSubscribeResponse: Decodable, Sendable {
     let requires_renegotiation: Bool
 }
 
-/// GET /voice/roster — current bot roster, for mid-call re-sync.
+/// GET /voice/roster — current roster, for mid-call re-sync.
 struct GroupVoiceRosterResponse: Decodable, Sendable {
     let ok: Bool
+    let startedAt: Double?
+    let initiatorId: String?
     let bots: [GroupBotRosterEntry]
     let humans: [GroupHumanRosterEntry]
+    let pending: [GroupPendingEntry]?
+}
+
+/// GET /v1/voice/active — current active voice calls across the user's
+/// groups. Polled by the message list on tab focus to render a phone
+/// icon on rows whose conversation has a live call.
+struct ActiveVoiceCallsResponse: Decodable, Sendable {
+    let ok: Bool
+    let active: [ActiveVoiceCall]
+
+    struct ActiveVoiceCall: Decodable, Sendable, Equatable {
+        let conversation_id: String
+        let started_at: String
+        let initiator_id: String
+    }
 }
 
 extension VoiceCallAPI {
 
-    /// Bring the room's bots online. `botIds` nil = every group bot.
+    /// Open the call's empty room. Bots and other humans are NOT auto-
+    /// pulled — the caller invites them via /add-bot or /ring afterward.
     func groupVoiceStart(
         conversationId: String,
-        botIds: [String]? = nil,
     ) async throws -> GroupVoiceStartResponse {
-        struct Body: Encodable { let bot_ids: [String]? }
+        struct Body: Encodable {}
         return try await callDecoding(
             path: "/v1/groups/\(conversationId)/voice/start",
-            body: Body(bot_ids: botIds),
+            body: Body(),
         )
     }
 
@@ -430,6 +469,36 @@ extension VoiceCallAPI {
             path: "/v1/groups/\(conversationId)/voice/end",
             body: Body(),
         ) as OK
+    }
+
+    /// Ring a human into the call. Stages them in the call's pending
+    /// invite set and sends an APNs push so their phone actually rings.
+    /// Any participant currently in the call may ring any other group
+    /// human — the spec is "如果没有特地拉谁进来, 不要让群内其他人类响铃".
+    func groupVoiceRing(conversationId: String, userId: String) async throws {
+        struct Body: Encodable { let user_id: String }
+        struct OK: Decodable { let ok: Bool; let pushed: Int? }
+        _ = try await callDecoding(
+            path: "/v1/groups/\(conversationId)/voice/ring",
+            body: Body(user_id: userId),
+        ) as OK
+    }
+
+    /// Drop a pending invite — when the inviter changes their mind, or
+    /// when the in-call UI offers a "stop ringing" affordance.
+    func groupVoiceCancelInvite(conversationId: String, targetId: String) async throws {
+        struct Body: Encodable { let target_id: String }
+        struct OK: Decodable { let ok: Bool }
+        _ = try await callDecoding(
+            path: "/v1/groups/\(conversationId)/voice/cancel-invite",
+            body: Body(target_id: targetId),
+        ) as OK
+    }
+
+    /// Snapshot of active group voice calls for the caller's groups —
+    /// one cheap query that backs the message-list phone-icon badge.
+    func getActiveVoiceCalls() async throws -> ActiveVoiceCallsResponse {
+        try await api.get("/v1/voice/active")
     }
 }
 

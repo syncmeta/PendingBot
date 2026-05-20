@@ -2102,6 +2102,32 @@ export type Database = {
         }
         Relationships: []
       }
+      voice_active_calls: {
+        Row: {
+          conversation_id: string
+          initiator_id: string
+          started_at: string
+        }
+        Insert: {
+          conversation_id: string
+          initiator_id: string
+          started_at?: string
+        }
+        Update: {
+          conversation_id?: string
+          initiator_id?: string
+          started_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "voice_active_calls_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: true
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       web_tool_prices: {
         Row: {
           kind: string

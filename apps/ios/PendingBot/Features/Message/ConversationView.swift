@@ -380,6 +380,7 @@ struct ConversationView: View {
     var body: some View {
         VStack(spacing: 0) {
             chatHeader
+            activeCallBanner
 
             ScrollViewReader { proxy in
                 ScrollView {
@@ -895,6 +896,23 @@ struct ConversationView: View {
         guard await materializeIfPending() else { return }
         Haptics.tap()
         startVoiceCall()
+    }
+
+    /// Slim in-conv banner shown when a group voice call is live in this
+    /// conversation. Tapping it rejoins the call. From left to right:
+    ///   phone-icon · MM:SS elapsed · "N 人"
+    /// Driven by ActiveVoiceCallStore which mirrors the conv-channel's
+    /// voice_call frames.
+    @ViewBuilder
+    private var activeCallBanner: some View {
+        if let snap = ActiveVoiceCallStore.shared.calls[conversation.id] {
+            ActiveCallBanner(snapshot: snap) {
+                Haptics.tap()
+                if canStartGroupCall {
+                    startGroupCall()
+                }
+            }
+        }
     }
 
     /// Custom in-body chat header — replaces the system nav bar so we have

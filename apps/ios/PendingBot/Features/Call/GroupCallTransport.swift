@@ -110,7 +110,14 @@ final class GroupCallTransport: NSObject {
             sfuSessionId = join.session_id
             let answer = RTCSessionDescription(type: .answer, sdp: join.answer)
             try await peerConnection.setRemoteDescription(answer)
-            delegate?.transport(self, didUpdateRoster: join.bots)
+            delegate?.transport(
+                self,
+                didUpdateRoster: GroupRosterSnapshot(
+                    bots: join.bots,
+                    humans: join.humans,
+                    pending: join.pending ?? [],
+                ),
+            )
             try await subscribeToRoster(bots: join.bots, humans: join.humans)
         } catch {
             await delegate?.transport(
@@ -124,7 +131,14 @@ final class GroupCallTransport: NSObject {
     func resyncRoster() async {
         do {
             let roster = try await api.groupVoiceRoster(conversationId: conversationId)
-            delegate?.transport(self, didUpdateRoster: roster.bots)
+            delegate?.transport(
+                self,
+                didUpdateRoster: GroupRosterSnapshot(
+                    bots: roster.bots,
+                    humans: roster.humans,
+                    pending: roster.pending ?? [],
+                ),
+            )
             try await subscribeToRoster(bots: roster.bots, humans: roster.humans)
         } catch {
             // Non-fatal — the call keeps running; a new participant just
@@ -347,8 +361,8 @@ final class GroupCallTransport {
     private weak var delegate: GroupCallTransportDelegate?
     private(set) var sfuSessionId: String?
     init(
-        conversationId: String,
-        api: VoiceCallAPI,
+        conversationId _: String,
+        api _: VoiceCallAPI,
         delegate: GroupCallTransportDelegate,
     ) {
         self.delegate = delegate
@@ -366,14 +380,22 @@ final class GroupCallTransport {
 
 // MARK: - Transport delegate
 
+/// Full snapshot the transport hands back on roster updates — joined
+/// bots and humans, plus participants invited but not yet joined.
+struct GroupRosterSnapshot: Sendable, Equatable {
+    let bots: [GroupBotRosterEntry]
+    let humans: [GroupHumanRosterEntry]
+    let pending: [GroupPendingEntry]
+}
+
 /// Callback surface the transport feeds events back through.
 /// `GroupCallSession` adopts it.
 @MainActor
 protocol GroupCallTransportDelegate: AnyObject {
     /// ICE connected — the human's mic + any subscribed bot audio is live.
     func transportDidConnect(_ t: GroupCallTransport)
-    /// The bot roster changed (initial join, or a re-sync after add-bot).
-    func transport(_ t: GroupCallTransport, didUpdateRoster bots: [GroupBotRosterEntry])
+    /// The roster (joined + pending) changed.
+    func transport(_ t: GroupCallTransport, didUpdateRoster snapshot: GroupRosterSnapshot)
     /// The transport failed — startup error or a mid-call drop.
     func transport(
         _ t: GroupCallTransport,

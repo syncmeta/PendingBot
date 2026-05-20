@@ -50,8 +50,9 @@ export interface ApnsPayload {
   category?: string;          // for action buttons
   contentAvailable?: boolean; // background push (silent)
   mutableContent?: boolean;   // notification service extension
-  // Custom keys delivered alongside `aps`. The app reads these after
-  // unlock to route the tap / fetch content (e.g. { conversationId }).
+  // Free-form top-level fields. Apple reserves only `aps`; anything else
+  // lands alongside it for the app to inspect. Used for typed payloads
+  // (e.g. { kind: 'voice_ring', conversation_id, from_user_id }).
   extra?: Record<string, unknown>;
 }
 
@@ -100,7 +101,8 @@ export async function sendApns(input: SendApnsInput): Promise<SendApnsResult> {
   const body: Record<string, unknown> = { aps };
   if (payload.extra) {
     for (const [k, v] of Object.entries(payload.extra)) {
-      if (k !== 'aps') body[k] = v;
+      if (k === 'aps') continue; // aps is reserved
+      body[k] = v;
     }
   }
 
