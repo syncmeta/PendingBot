@@ -2086,7 +2086,7 @@ private struct PreChatActionButton: View {
                     .font(Theme.Fonts.rounded(size: 12, weight: .regular))
                     .lineLimit(1)
             }
-            .foregroundStyle(Theme.Palette.inkMuted)
+            .foregroundStyle(Theme.Palette.ink)
             .frame(width: 92, height: 92)
             .background(
                 RoundedRectangle(cornerRadius: 22, style: .continuous)

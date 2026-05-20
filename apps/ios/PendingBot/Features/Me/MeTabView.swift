@@ -284,20 +284,20 @@ struct OptionRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Text(title)
-                .font(.system(size: 15, weight: .regular))
+                .font(.body)
                 .foregroundStyle(role == .destructive
                                  ? Color(hex: 0xB14B3C)
                                  : Theme.Palette.ink)
             Spacer(minLength: 0)
             if showsChevron {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Theme.Palette.inkMuted.opacity(0.55))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color(uiColor: .tertiaryLabel))
             }
         }
         .padding(.horizontal, 20)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(height: 50)
+        .frame(height: 44)
         .contentShape(Rectangle())
     }
 }
