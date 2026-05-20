@@ -69,8 +69,6 @@ final class CallSession {
     /// Returned by the worker on /session. Stored so /attach and
     /// /summary can correlate against the same call.
     private(set) var sessionId: String?
-    private(set) var providerId: String?
-    private(set) var aliasId: String?
 
     /// WebRTC only — the ephemeral client_secret from /session. Forwarded
     /// to /attach so the server-side sideband can authenticate with it.
@@ -181,8 +179,6 @@ final class CallSession {
             return .failed(.startupError(error.localizedDescription))
         }
         sessionId = resp.session_id
-        providerId = resp.provider_id
-        aliasId = resp.alias_id
 
         let transport: CallTransport
         if resp.transport == "websocket" {

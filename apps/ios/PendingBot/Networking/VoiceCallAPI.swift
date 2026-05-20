@@ -28,8 +28,6 @@ struct VoiceCallAPI {
     struct SessionResponse: Decodable, Sendable {
         let session_id: String
         let model: String
-        let alias_id: String?
-        let provider_id: String
         let min_threshold: Int
         let balance_credits: Int
         /// "webrtc" (absent), "webrtc_turn", or "websocket".
