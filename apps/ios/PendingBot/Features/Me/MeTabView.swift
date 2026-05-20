@@ -302,22 +302,13 @@ struct OptionRow: View {
     }
 }
 
-/// Glass background for a whole group of option rows — a single rounded
-/// rectangle so the rows inside read as one connected card. Uses the
-/// iOS 26 Liquid Glass path with a material fallback.
+/// Solid white background for a whole group of option rows — a single
+/// rounded rectangle so the rows inside read as one connected card.
 extension View {
-    @ViewBuilder
     func meGlassGroup() -> some View {
         let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
-        if #available(iOS 26.0, *) {
-            self
-                .glassEffect(.regular, in: shape)
-                .clipShape(shape)
-        } else {
-            self
-                .background(shape.fill(.regularMaterial))
-                .overlay(shape.strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
-                .clipShape(shape)
-        }
+        return self
+            .background(shape.fill(Color.white))
+            .clipShape(shape)
     }
 }
