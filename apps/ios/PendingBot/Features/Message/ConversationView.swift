@@ -533,18 +533,6 @@ struct ConversationView: View {
                     if atBottom && unreadCount != 0 { unreadCount = 0 }
                 }
                 .scrollDismissesKeyboard(.interactively)
-                // Tapping anywhere in the messages area dismisses the
-                // keyboard — matches native iOS chat behaviour. Uses
-                // simultaneousGesture so taps still reach bubbles for
-                // long-press context menus.
-                .simultaneousGesture(
-                    TapGesture().onEnded {
-                        UIApplication.shared.sendAction(
-                            #selector(UIResponder.resignFirstResponder),
-                            to: nil, from: nil, for: nil
-                        )
-                    }
-                )
                 .onChange(of: messages.count) { oldCount, newCount in
                     // The user's own send always scrolls into view; incoming
                     // messages only auto-scroll when already at the bottom.
