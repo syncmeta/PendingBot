@@ -80,6 +80,14 @@ const TARGET_OPENAI_SAMPLES_PER_FLUSH = (OPENAI_RATE * FLUSH_MS) / 1000;
 // completes.
 const JOIN_GRACE_MS = 90 * 1000;
 
+// iOS posts /voice/heartbeat every PRESENCE_HEARTBEAT_MS while the call
+// is up. The DO removes a human whose last heartbeat is older than
+// PRESENCE_TIMEOUT_MS — once the last admin's gone the room finalizes,
+// even if /voice/leave never reached us (app killed, network down,
+// SFU stream-adapter close never fired).
+const PRESENCE_TIMEOUT_MS = 30 * 1000;
+const PRESENCE_AUDIT_MS = 5 * 1000;
+
 // Room-level context — everything that is not per-bot.
 interface RoomContext {
   roomId: string;
@@ -226,6 +234,9 @@ interface HumanState {
   // Anti-alias biquad state for the 48→24 kHz downsample. Persists
   // across flushes so chunk boundaries don't click.
   downsampleState: DownsampleState;
+  // Wall-clock ms of the last /control/heartbeat (or initial add-human).
+  // The presence audit times out humans whose iOS stopped pinging.
+  lastSeenAt: number;
 }
 
 interface BotLeg {
@@ -276,6 +287,7 @@ export class RoomVoiceDO {
   private callAdminIds = new Set<string>();
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private joinGraceTimer: ReturnType<typeof setTimeout> | null = null;
+  private presenceAuditTimer: ReturnType<typeof setTimeout> | null = null;
   // Has any human ever joined this call? Until the first join we keep
   // the room alive on the grace timer; after it, an empty room ends.
   private humanEverJoined = false;
@@ -330,6 +342,13 @@ export class RoomVoiceDO {
         await this.removeHuman(humanId);
         return Response.json({ ok: true });
       }
+      case '/control/heartbeat': {
+        const { humanId } = (await request.json()) as { humanId: string };
+        const human = this.humans.get(humanId);
+        if (!human) return Response.json({ ok: false, code: 'not_in_room' }, { status: 404 });
+        human.lastSeenAt = Date.now();
+        return Response.json({ ok: true });
+      }
       case '/control/kick': {
         const body = (await request.json()) as {
           actorId: string;
@@ -376,6 +395,7 @@ export class RoomVoiceDO {
     }
 
     this.scheduleFlush();
+    this.schedulePresenceAudit();
     // Defensive timer — the initiator's /voice/join should land within
     // a few seconds. If their WebRTC negotiation stalls and no human
     // ever joins, tear the empty room down.
@@ -616,6 +636,7 @@ export class RoomVoiceDO {
       existing.adapterId = null;
       existing.pending = [];
       existing.downsampleState = newDownsampleState();
+      existing.lastSeenAt = Date.now();
       if (oldAdapter) {
         await closeAdapter(this.sfuApp(), oldAdapter).catch(() => {});
       }
@@ -630,6 +651,7 @@ export class RoomVoiceDO {
       adapterId: null,
       pending: [],
       downsampleState: newDownsampleState(),
+      lastSeenAt: Date.now(),
     };
     this.humans.set(track.humanId, human);
     this.pendingInvites.delete(track.humanId);
@@ -851,12 +873,10 @@ export class RoomVoiceDO {
       // (removeHuman / rebind / finalize all set adapterId to null
       // first). Only the "spontaneous SFU/network close" case wants a
       // reconnect — that's the one where adapterId is still set and
-      // the room is still alive.
-      //
-      // The old behaviour was to call removeHuman here; that turned
-      // every adapter blip into a kick, and (if the affected human was
-      // the only admin) ended the whole call. Symptom: 2+ humans had
-      // unexplained drops mid-call while a 1:1 felt stable.
+      // the room is still alive. Whether the human is actually still
+      // present is the iOS heartbeat's job (see auditPresence) — a
+      // human who really is gone shows up as missing heartbeats within
+      // PRESENCE_TIMEOUT_MS regardless of what this socket does.
       server.addEventListener('close', () => {
         if (this.closed) return;
         const human = this.humans.get(id);
@@ -898,6 +918,32 @@ export class RoomVoiceDO {
       }
       this.scheduleFlush();
     }, FLUSH_MS);
+  }
+
+  // Sweep humans whose iOS stopped heartbeating. The SFU stream-adapter
+  // close used to be our "human left" signal but it both over- and
+  // under-fires (spurious closes on network blips; never fires if the
+  // adapter never came up or the SFU keeps the WS alive past the source
+  // session). Heartbeat is the source of truth now.
+  private schedulePresenceAudit(): void {
+    if (this.closed) return;
+    this.presenceAuditTimer = setTimeout(() => {
+      void this.auditPresence().finally(() => this.schedulePresenceAudit());
+    }, PRESENCE_AUDIT_MS);
+  }
+
+  private async auditPresence(): Promise<void> {
+    if (this.closed || !this.humanEverJoined) return;
+    const now = Date.now();
+    const stale: string[] = [];
+    for (const [humanId, h] of this.humans) {
+      if (now - h.lastSeenAt > PRESENCE_TIMEOUT_MS) stale.push(humanId);
+    }
+    for (const humanId of stale) {
+      console.warn('[room-voice] presence timeout — removing', humanId);
+      await this.removeHuman(humanId);
+      if (this.closed) return;
+    }
   }
 
   private flush(): void {
@@ -1336,6 +1382,8 @@ export class RoomVoiceDO {
     this.flushTimer = null;
     if (this.joinGraceTimer) clearTimeout(this.joinGraceTimer);
     this.joinGraceTimer = null;
+    if (this.presenceAuditTimer) clearTimeout(this.presenceAuditTimer);
+    this.presenceAuditTimer = null;
 
     const app = this.sfuApp();
     const adapterIds: Array<string | null> = [

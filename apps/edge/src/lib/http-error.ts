@@ -49,6 +49,7 @@ export type ApiErrorCode =
   | 'voice_region_unsupported'
   | 'voice_bot_disabled'
   | 'voice_upstream_failed'
+  | 'not_in_room'
 
   // ── Attachments ───────────────────────────────────────────
   | 'attachment_not_found'

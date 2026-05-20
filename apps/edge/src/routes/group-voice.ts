@@ -12,6 +12,7 @@
 //   POST /v1/groups/:id/voice/kick             remove a bot or human
 //   POST /v1/groups/:id/voice/designate-admin  grant call-admin powers
 //   POST /v1/groups/:id/voice/leave            the caller leaves the call
+//   POST /v1/groups/:id/voice/heartbeat        iOS keepalive; absence == gone
 //   POST /v1/groups/:id/voice/end              tear the whole call down
 //
 // /start opens an empty room — bots are NOT auto-pulled, and humans are
@@ -538,6 +539,32 @@ groupVoiceRoutes.post('/:id/voice/leave', async (c) => {
   });
   if (!resp.ok) {
     console.warn('[group-voice/leave] room DO failed', resp.status);
+    return jsonError(c, 502, 'voice_upstream_failed');
+  }
+  return c.json({ ok: true });
+});
+
+// =============================================================================
+// POST /:id/voice/heartbeat — iOS keepalive
+// =============================================================================
+//
+// iOS posts this every ~10s while a call is up. The DO times out humans
+// whose heartbeat goes missing — once the last admin's gone the room
+// finalizes, regardless of whether /voice/leave reached us (app killed,
+// network down, SFU stream-adapter close never fired). 404 means the
+// DO no longer thinks the caller is in the room: iOS should tear down.
+
+groupVoiceRoutes.post('/:id/voice/heartbeat', async (c) => {
+  const loaded = await loadGroupContext(c);
+  if (!loaded.ok) return loaded.res;
+  const { conversationId } = loaded.ctx;
+
+  const resp = await controlRoom(c, conversationId, '/control/heartbeat', {
+    humanId: c.var.userId!,
+  });
+  if (resp.status === 404) return jsonError(c, 404, 'not_in_room');
+  if (!resp.ok) {
+    console.warn('[group-voice/heartbeat] room DO failed', resp.status);
     return jsonError(c, 502, 'voice_upstream_failed');
   }
   return c.json({ ok: true });
