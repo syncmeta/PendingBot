@@ -1,6 +1,7 @@
 import type { Env } from '../types';
 import { serviceClient } from '../lib/supabase';
-import { resolveRoute, enqueueAudit } from '../llm/router';
+import { resolveRoute, enqueueAudit, computeVoiceCost } from '../llm/router';
+import { getMarkup, usdToPnd } from '../lib/billing';
 import { publishToHub, type VoiceCallEvent } from '../lib/realtime-publish';
 import {
   createStreamAdapter,
@@ -247,6 +248,10 @@ export class RoomVoiceDO {
   // the room alive on the grace timer; after it, an empty room ends.
   private humanEverJoined = false;
   private closed = false;
+  /// Running PND total across every bot leg in the room. Mirrors what
+  /// AUDIT_QUEUE → billing_debit will eventually settle; published as
+  /// `voice_cost` on conv:<id> so the in-call UI shows live spend.
+  private cumulativePnd = 0;
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -1127,17 +1132,21 @@ export class RoomVoiceDO {
       return;
     }
 
+    const turnUsage = {
+      inputTokens,
+      outputTokens: usage.output_token_details?.text_tokens ?? 0,
+      audioInputTokens,
+      audioOutputTokens: usage.output_token_details?.audio_tokens ?? 0,
+      cacheReadTokens,
+    } as const;
+
     await enqueueAudit(this.env, route, {
       userId: ctx.billUserId,
       conversationId: ctx.conversationId,
       taskType: 'voice_call',
       startedAt: Date.now(),
       status: 'success',
-      inputTokens,
-      outputTokens: usage.output_token_details?.text_tokens ?? 0,
-      audioInputTokens,
-      audioOutputTokens: usage.output_token_details?.audio_tokens ?? 0,
-      cacheReadTokens,
+      ...turnUsage,
       metadata: {
         source: 'group_voice_call',
         room_id: ctx.roomId,
@@ -1145,6 +1154,45 @@ export class RoomVoiceDO {
         bot_id: leg.spec.botId,
       },
     });
+
+    // Live PND preview to every conv subscriber — group calls fan out
+    // on the conversation channel, so every joined human sees the same
+    // cumulative spend. Same pricing helpers the audit consumer will
+    // use, so the preview matches the eventual debit within rounding.
+    void this.broadcastCost(supa, route?.modelToCall, turnUsage);
+  }
+
+  private async broadcastCost(
+    supa: ReturnType<typeof serviceClient>,
+    modelToCall: string | undefined,
+    usage: {
+      inputTokens: number;
+      outputTokens: number;
+      audioInputTokens: number;
+      audioOutputTokens: number;
+      cacheReadTokens: number;
+    },
+  ): Promise<void> {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const usd = computeVoiceCost(modelToCall, usage);
+    if (usd == null) return;
+    try {
+      const markup = await getMarkup(supa);
+      const delta = usdToPnd(usd, markup);
+      if (delta <= 0) return;
+      this.cumulativePnd += delta;
+      await publishToHub(this.env, `conv:${ctx.conversationId}`, {
+        type: 'voice_cost',
+        conversation_id: ctx.conversationId,
+        session_id: ctx.roomId,
+        delta_pnd: delta,
+        cumulative_pnd: this.cumulativePnd,
+        at_ms: Date.now(),
+      });
+    } catch (err) {
+      console.warn('[room-voice] broadcast cost failed', err);
+    }
   }
 
   // ── teardown ───────────────────────────────────────────────────────

@@ -65,17 +65,24 @@ final class RealtimeManager {
         onLookback: @escaping @Sendable (LookbackEvent) -> Void = { _ in },
         onContinueRequest: @escaping @Sendable (ContinueRequestEvent) -> Void = { _ in },
         onParticipants: @escaping @Sendable (ParticipantsEvent) -> Void = { _ in },
-        onVoiceCall: @escaping @Sendable (VoiceCallFrame) -> Void = { _ in }
+        onVoiceCall: @escaping @Sendable (VoiceCallFrame) -> Void = { _ in },
+        onVoiceCost: @escaping @Sendable (VoiceCostFrame) -> Void = { _ in }
     ) async -> ConvSubscriptionToken {
         let token = ConvSubscriptionToken(id: UUID(), conversationId: conversationId)
 
         if let handle = convChannels[conversationId] {
-            handle.observers[token.id] = (onMessage, onLookback, onContinueRequest, onParticipants, onVoiceCall)
+            handle.observers[token.id] = (
+                onMessage, onLookback, onContinueRequest, onParticipants,
+                onVoiceCall, onVoiceCost,
+            )
             return token
         }
 
         let handle = ConvChannelHandle()
-        handle.observers[token.id] = (onMessage, onLookback, onContinueRequest, onParticipants, onVoiceCall)
+        handle.observers[token.id] = (
+            onMessage, onLookback, onContinueRequest, onParticipants,
+            onVoiceCall, onVoiceCost,
+        )
 
         let socket = RealtimeSocket(
             path: "v1/realtime-hub/conv/\(conversationId)"
@@ -86,6 +93,8 @@ final class RealtimeManager {
                 Self.dispatchChange(change, to: handle)
             case .voiceCall(let v):
                 for (_, obs) in handle.observers { obs.voiceCall(v) }
+            case .voiceCost(let c):
+                for (_, obs) in handle.observers { obs.voiceCost(c) }
             }
         }
         handle.socket = socket
@@ -196,12 +205,14 @@ private final class ConvChannelHandle {
     typealias ContinueHandler = @Sendable (ContinueRequestEvent) -> Void
     typealias ParticipantsHandler = @Sendable (ParticipantsEvent) -> Void
     typealias VoiceCallHandler = @Sendable (VoiceCallFrame) -> Void
+    typealias VoiceCostHandler = @Sendable (VoiceCostFrame) -> Void
     typealias Observers = (
         message: MessageHandler,
         lookback: LookbackHandler,
         continueReq: ContinueHandler,
         participants: ParticipantsHandler,
-        voiceCall: VoiceCallHandler
+        voiceCall: VoiceCallHandler,
+        voiceCost: VoiceCostHandler
     )
     var socket: RealtimeSocket?
     var observers: [UUID: Observers] = [:]

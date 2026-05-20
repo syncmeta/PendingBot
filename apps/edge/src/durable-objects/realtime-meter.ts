@@ -1,7 +1,8 @@
 import type { Env } from '../types';
 import { serviceClient } from '../lib/supabase';
-import { resolveRoute, enqueueAudit } from '../llm/router';
-import { getBalance, getConfigInt } from '../lib/billing';
+import { resolveRoute, enqueueAudit, computeVoiceCost } from '../llm/router';
+import { getBalance, getConfigInt, getMarkup, usdToPnd } from '../lib/billing';
+import { publishToHub } from '../lib/realtime-publish';
 import { endRealtimeSession, REALTIME_HANG_UP_TOOL } from '../lib/realtime-sessions';
 
 // RealtimeMeterDO — server-side, tamper-proof metering for a voice call.
@@ -87,6 +88,11 @@ export class RealtimeMeterDO {
   private ctx: MeterContext | null = null;
   private turnIndex = 0;
   private closed = false;
+  /// Running PND total previewed to the in-call UI via `voice_cost`
+  /// hub events. Authoritative billing still flows through AUDIT_QUEUE;
+  /// this is a display-only mirror of what the consumer will end up
+  /// debiting, computed turn-by-turn so the user sees spend live.
+  private cumulativePnd = 0;
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -418,17 +424,21 @@ export class RealtimeMeterDO {
       return;
     }
 
+    const turnUsage = {
+      inputTokens,
+      outputTokens: usage.output_token_details?.text_tokens ?? 0,
+      audioInputTokens,
+      audioOutputTokens: usage.output_token_details?.audio_tokens ?? 0,
+      cacheReadTokens,
+    } as const;
+
     await enqueueAudit(this.env, route, {
       userId: ctx.userId,
       conversationId: ctx.conversationId,
       taskType: 'voice_call',
       startedAt: Date.now(),
       status: 'success',
-      inputTokens,
-      outputTokens: usage.output_token_details?.text_tokens ?? 0,
-      audioInputTokens,
-      audioOutputTokens: usage.output_token_details?.audio_tokens ?? 0,
-      cacheReadTokens,
+      ...turnUsage,
       metadata: {
         source: 'voice_call',
         session_id: ctx.sessionId,
@@ -437,7 +447,53 @@ export class RealtimeMeterDO {
       },
     });
 
+    // Mirror the queue consumer's pricing locally so the in-call UI
+    // sees a running spend figure within ~100 ms of the model's
+    // response.done instead of waiting on AUDIT_QUEUE → debit. The
+    // numbers come from the same computeVoiceCost + usdToPnd helpers
+    // the consumer uses, so the live preview and the eventual ledger
+    // entry agree to within rounding.
+    void this.broadcastCost(ctx, route?.modelToCall, supa, turnUsage);
+
     await this.enforceBalance(ctx);
+  }
+
+  // Compute and publish this turn's PND to the caller's user hub.
+  // Best-effort: failures are logged but never block the call.
+  private async broadcastCost(
+    ctx: MeterContext,
+    modelToCall: string | undefined,
+    supa: ReturnType<typeof serviceClient>,
+    usage: {
+      inputTokens: number;
+      outputTokens: number;
+      audioInputTokens: number;
+      audioOutputTokens: number;
+      cacheReadTokens: number;
+    },
+  ): Promise<void> {
+    const usd = computeVoiceCost(modelToCall, usage);
+    if (usd == null) return;
+    try {
+      const markup = await getMarkup(supa);
+      const delta = usdToPnd(usd, markup);
+      if (delta <= 0) return;
+      this.cumulativePnd += delta;
+      // Route through the conv hub — same channel iOS already opens for
+      // the conversation, and a 1:1 conv has only the caller subscribed
+      // so the figure stays private without needing a separate user-hub
+      // path. Group voice fans out on the same key in room-voice.ts.
+      await publishToHub(this.env, `conv:${ctx.conversationId}`, {
+        type: 'voice_cost',
+        conversation_id: ctx.conversationId,
+        session_id: ctx.sessionId,
+        delta_pnd: delta,
+        cumulative_pnd: this.cumulativePnd,
+        at_ms: Date.now(),
+      });
+    } catch (err) {
+      console.warn('[realtime-meter] broadcast cost failed', err);
+    }
   }
 
   // After a turn is billed, drop the call if the user can't afford it.

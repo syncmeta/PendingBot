@@ -53,6 +53,12 @@ final class CallSession {
     /// the screen. CallView's speaker button toggles it.
     var isSpeakerOn: Bool = false
 
+    /// Running PND spend for this call, fed by `voice_cost` frames the
+    /// edge meter publishes after every model turn. 0 until the first
+    /// turn settles — the view hides the figure while it's still 0 so a
+    /// stale "0" doesn't sit next to the timer.
+    var cumulativePnd: Int = 0
+
     // MARK: - Inputs
 
     let conversationId: String
@@ -65,6 +71,23 @@ final class CallSession {
 
     /// Concrete transport, picked by provider on `start()`.
     private var transport: CallTransport?
+
+    /// Region-specific ringback tone played while we negotiate. Stays
+    /// silent past `.connected` and tears down on terminate. nil before
+    /// the first start() — keeps the unit tests from spinning the audio
+    /// engine for nothing.
+    private var ringback: RingbackPlayer?
+
+    /// Conv-hub subscription that feeds `cumulativePnd` from server-side
+    /// per-turn voice_cost events. Held so terminate() can drop it.
+    private var costSubscription: ConvSubscriptionToken?
+
+    /// CallKit handle for this call — set once at start(), cleared on
+    /// terminate. nil means CallKit either declined the request or the
+    /// call hasn't started yet. Tracked here so we can both call
+    /// endCall() on the manager and ignore the manager's own system-end
+    /// callback once we initiated the teardown ourselves.
+    private var callKitUUID: UUID?
 
     /// Returned by the worker on /session. Stored so /attach and
     /// /summary can correlate against the same call.
@@ -97,6 +120,41 @@ final class CallSession {
     func start() async {
         guard phase == .idle else { return }
         phase = .connecting
+
+        // Register the call with CallKit before anything else — gives
+        // iOS the system-call surface (Control Center indicator,
+        // lock-screen UI, call-history row) for the rest of this call.
+        // We keep audio-session ownership in CallSession; CallKit's
+        // didActivate is a no-op for us. If CallKit declines (rare —
+        // user already on a real phone call), the in-app UI still
+        // works; we just won't have system controls.
+        callKitUUID = CallKitManager.shared.startOutgoingCall(
+            displayName: botDisplayName,
+            onSystemEnd: { [weak self] in
+                // CallKit-driven hang up (lock-screen end button etc).
+                // Drop our UUID first so terminate() doesn't try to
+                // call back into CallKit and trip the request that
+                // just resolved.
+                guard let self else { return }
+                self.callKitUUID = nil
+                Task { @MainActor in await self.terminate(reason: .user) }
+            },
+        )
+
+        // Prime the audio session and start the regional ringback tone
+        // before the network round-trip — the user just tapped "phone",
+        // dead silence for 1–2 s while SDP exchanges feels broken. The
+        // transport's own configureAudioSession is idempotent on these
+        // same parameters; calling it twice is harmless.
+        primeAudioSessionForRingback()
+        let player = RingbackPlayer()
+        player.start()
+        ringback = player
+
+        // Subscribe to the conv hub for `voice_cost` previews. The edge
+        // meter publishes one of these after every turn's settleTurn,
+        // and the UI reads `cumulativePnd` off this observer.
+        await subscribeToCost()
 
         // User-selected transport. "auto" (default) walks the chain
         // direct WebRTC → Cloudflare TURN relay → WebSocket; the
@@ -268,6 +326,67 @@ final class CallSession {
         return comps.url
     }
 
+    /// Configure the AVAudioSession in the same `.playAndRecord` /
+    /// `.voiceChat` shape the transport will use, so the ringback tone
+    /// and the call audio share one session without a category flip
+    /// (which would briefly cut audio when the transport takes over).
+    /// Bluetooth options match transport's; speaker route is left at
+    /// the default (earpiece) so the proximity sensor can blank the
+    /// screen.
+    private func primeAudioSessionForRingback() {
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(
+                .playAndRecord,
+                mode: .voiceChat,
+                options: [.allowBluetooth, .allowBluetoothA2DP],
+            )
+            try session.setActive(true, options: [])
+        } catch {
+            // Swallow — a missing ringback is a degraded experience,
+            // not a fatal one; the transport will re-attempt session
+            // setup and surface its own error if that also fails.
+        }
+    }
+
+    /// Stop and release the ringback player if it's still running.
+    /// Called when the transport reaches `.connected` (the bot's audio
+    /// is the new "ringing stopped, talking now" cue) and on terminate.
+    private func stopRingback() {
+        ringback?.stop()
+        ringback = nil
+    }
+
+    /// Subscribe to the conversation hub so `voice_cost` frames feed
+    /// `cumulativePnd`. We only need the cost slot — leave the other
+    /// callbacks as the no-op defaults so this subscriber doesn't get
+    /// woken up for every message in the conv.
+    private func subscribeToCost() async {
+        let token = await RealtimeManager.shared.startConvChannel(
+            conversationId: conversationId,
+            onMessage: { _ in },
+            onVoiceCost: { [weak self] cost in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    // The server sends a monotonically growing cumulative
+                    // for the session; clamp regressions out so a stale
+                    // late-arriving frame can't make the number drop.
+                    if cost.cumulativePnd > self.cumulativePnd {
+                        self.cumulativePnd = cost.cumulativePnd
+                    }
+                }
+            },
+        )
+        costSubscription = token
+    }
+
+    private func unsubscribeFromCost() async {
+        if let token = costSubscription {
+            costSubscription = nil
+            await RealtimeManager.shared.stopConvChannel(token)
+        }
+    }
+
     /// Flip the audio route between the earpiece and the loudspeaker.
     /// `overrideOutputAudioPort` acts on the shared AVAudioSession, so it
     /// works regardless of which transport (WebRTC / WebSocket) is live.
@@ -290,6 +409,21 @@ final class CallSession {
         guard !isTerminal(phase) else { return }
         let wasConnected = connectedAt != nil
         phase = .hangingUp
+        // The ringback is normally cleared on transportDidConnect; if we
+        // never connected (startup error, region-blocked, balance gate)
+        // it's still spinning here, so stop it before the teardown
+        // races the audio session.
+        stopRingback()
+        // Drop the cost subscription so we stop holding the conv socket
+        // for a session that's over.
+        await unsubscribeFromCost()
+        // Tell CallKit the call's done. Skipped when the teardown was
+        // *driven* by CallKit (the onSystemEnd callback already cleared
+        // callKitUUID) so we don't double-end the action.
+        if let uuid = callKitUUID {
+            callKitUUID = nil
+            CallKitManager.shared.endCall(uuid: uuid)
+        }
         // Unblock any in-flight connection attempt so start()'s chain
         // loop sees the terminal phase and stops minting transports.
         resolveAttempt(.failed(reason))
@@ -396,9 +530,17 @@ extension CallSession: CallTransportDelegate {
         // Ignore callbacks from a transport we've already abandoned
         // mid-chain — only the current attempt's transport may connect.
         guard t === transport else { return }
+        // Bot audio is about to start — silence the ringback first so
+        // the two don't briefly overlap.
+        stopRingback()
         connectedAt = Date()
         phase = .connected
         resolveAttempt(.connected)
+        // Flip the CallKit state from "dialing" to "in call" so the
+        // lock-screen timer starts and Control Center shows green.
+        if let uuid = callKitUUID {
+            CallKitManager.shared.reportCallConnected(uuid: uuid)
+        }
     }
 
     func transport(_ t: CallTransport, didObtainCallId callId: String) async {
