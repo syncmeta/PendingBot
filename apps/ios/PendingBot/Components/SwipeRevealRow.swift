@@ -60,8 +60,8 @@ struct SwipeRevealRow<Content: View>: View {
         self.content = content
     }
 
-    private let buttonSize: CGFloat = 38
-    private let buttonGap: CGFloat = 10
+    private let buttonSize: CGFloat = 48
+    private let buttonGap: CGFloat = 12
     private let edgePadding: CGFloat = 14
     /// Drag distance past which a release commits the leading-trigger
     /// action. Sized so the user has to make a deliberate pull — short
@@ -121,31 +121,31 @@ struct SwipeRevealRow<Content: View>: View {
             content()
                 .offset(x: clampedOffset)
                 .contentShape(Rectangle())
-                .onTapGesture {
-                    // A tap with no meaningful travel. A swipe never reaches
-                    // here — the DragGesture eats it and TapGesture fails.
-                    // While open, a tap just dismisses the revealed actions.
-                    if isOpen {
-                        close()
-                    } else {
-                        onTap?()
-                    }
-                }
         }
         .contentShape(Rectangle())
         .clipShape(RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous))
         .simultaneousGesture(
-            // minimumDistance must stay high enough that incidental vertical
-            // pans on the parent ScrollView never wake this gesture up — when
-            // many rows in a LazyVStack each register a DragGesture, SwiftUI's
-            // arbiter starves the ScrollView's pan recognizer and the whole
-            // list locks up. 20pt lets normal vertical scrolls pass through.
-            DragGesture(minimumDistance: 20)
+            // Unified tap + swipe detector. We can't use a separate
+            // .onTapGesture — under simultaneousGesture it fires on small
+            // flicks and on release after a vertical scroll, which the user
+            // sees as "swiping the list opens the conversation". Doing both
+            // through one DragGesture(minimumDistance: 0) lets us classify
+            // at end time: tight motion → tap, horizontal-dominant motion →
+            // swipe, vertical-dominant motion → ignore (the parent
+            // ScrollView still scrolls because we never lock and never
+            // touch dragDX).
+            DragGesture(minimumDistance: 0)
                 .onChanged { value in
                     let dx = value.translation.width
                     let dy = value.translation.height
                     if !lockedToHorizontal {
-                        guard abs(dx) > abs(dy) else { return }
+                        // Stay undecided until the finger has clearly moved
+                        // AND moved more horizontally than vertically. Until
+                        // then we don't touch dragDX, so the row sits still
+                        // and the ScrollView can scroll vertically.
+                        let absDx = abs(dx), absDy = abs(dy)
+                        if absDx < 12 { return }
+                        if absDx <= absDy { return }
                         lockedToHorizontal = true
                         lastTickDX = 0
                         didArm = false
@@ -156,16 +156,24 @@ struct SwipeRevealRow<Content: View>: View {
                     }
                 }
                 .onEnded { value in
+                    let dx = value.translation.width
+                    let dy = value.translation.height
                     defer {
                         lockedToHorizontal = false
                         lastTickDX = 0
                         didArm = false
                     }
-                    guard lockedToHorizontal else {
+                    // Tight release with no horizontal lock → real tap.
+                    // The 8pt tolerance is well below the 12pt we need
+                    // before locking horizontal, so a swipe-then-release
+                    // never lands here.
+                    if !lockedToHorizontal {
+                        if abs(dx) < 8 && abs(dy) < 8 {
+                            if isOpen { close() } else { onTap?() }
+                        }
                         dragDX = 0
                         return
                     }
-                    let dx = value.translation.width
                     let velocity = value.predictedEndTranslation.width - dx
                     // Right-swipe: commit the leading trigger if the user
                     // released past the trigger line OR flicked past a
@@ -266,17 +274,18 @@ struct SwipeRevealRow<Content: View>: View {
                     action.action()
                     close()
                 } label: {
-                    // Light tinted disc + saturated icon, lifted off the
-                    // canvas with a soft black drop shadow. The shadow's
-                    // alpha rides `appearance` so it fades in alongside
-                    // the staggered reveal — no shadow trailing the disc
-                    // before the disc itself is visible.
+                    // Native Liquid Glass disc on iOS 26 (interactive so it
+                    // reacts to the press), with a thin material fallback on
+                    // older systems. Icon stays in the action's tint. The
+                    // shadow's alpha rides `appearance` so it fades in
+                    // alongside the staggered reveal — no shadow trailing
+                    // the disc before the disc itself is visible.
                     Image(systemName: action.systemImage)
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: 19, weight: .semibold))
                         .foregroundStyle(action.tint)
                         .frame(width: buttonSize, height: buttonSize)
-                        .background(Circle().fill(action.tint.opacity(0.16)))
-                        .shadow(color: Color.black.opacity(0.12 * appearance), radius: 4, y: 1.5)
+                        .glassDisc()
+                        .shadow(color: Color.black.opacity(0.14 * appearance), radius: 5, y: 1.5)
                 }
                 .buttonStyle(.plain)
                 .scaleEffect(appearance)
@@ -301,6 +310,19 @@ struct SwipeRevealRow<Content: View>: View {
         withAnimation(.spring(response: 0.34, dampingFraction: 0.78)) {
             settled = 0
             dragDX = 0
+        }
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func glassDisc() -> some View {
+        if #available(iOS 26.0, *) {
+            self.glassEffect(.regular.interactive(), in: Circle())
+        } else {
+            self
+                .background(Circle().fill(.thinMaterial))
+                .overlay(Circle().strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
         }
     }
 }
