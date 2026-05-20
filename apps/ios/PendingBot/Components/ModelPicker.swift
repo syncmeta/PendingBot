@@ -91,21 +91,28 @@ struct ModelPickerSheet: View {
         }
     }
 
-    /// Synthetic group key for OpenAI's native catalog — kept distinct
-    /// from the OpenRouter "openai" vendor group so the native route is
-    /// its own collapsible section.
+    /// Synthetic group keys for the native catalogs — kept distinct from
+    /// their OpenRouter vendor counterparts so each native route is its
+    /// own collapsible section. The three native sections sort to the
+    /// TOP of the picker (see `vendorPriority`).
+    private static let nativeAnthropicKey = "__native_anthropic__"
+    private static let nativeGeminiKey = "__native_gemini__"
     private static let nativeOpenAIKey = "__native_openai__"
 
-    /// The group a model belongs to: its own collapsible section for the
-    /// OpenAI-native catalog, otherwise its OpenRouter vendor.
+    /// The group a model belongs to: its own collapsible section for any
+    /// of the native catalogs, otherwise its OpenRouter vendor.
     private func groupKey(_ m: OpenRouterModel) -> String {
-        m.source == "openai" ? Self.nativeOpenAIKey : m.provider
+        switch m.source {
+        case "anthropic": return Self.nativeAnthropicKey
+        case "google-ai-studio": return Self.nativeGeminiKey
+        case "openai": return Self.nativeOpenAIKey
+        default: return m.provider
+        }
     }
 
     /// Groups from the (already filtered) model list, ordered by
-    /// `Self.vendorPriority` (most popular first on OpenRouter), unknown
-    /// vendors trailing alphabetically. The OpenAI-native section sorts
-    /// last among the known groups.
+    /// `Self.vendorPriority` (native catalogs first, then most popular
+    /// OpenRouter vendors); unknown vendors trail alphabetically.
     private var groupedFiltered: [(provider: String, models: [OpenRouterModel])] {
         let buckets = Dictionary(grouping: filtered, by: { groupKey($0) })
         let priorityIndex = Dictionary(uniqueKeysWithValues: Self.vendorPriority.enumerated().map { ($1, $0) })
@@ -119,13 +126,14 @@ struct ModelPickerSheet: View {
         }.map { ($0, buckets[$0] ?? []) }
     }
 
-    /// Vendor order based on OpenRouter's most-popular models (rankings page).
-    /// Anything not listed sorts alphabetically after these. The OpenAI-
-    /// native section trails the OpenRouter vendors.
+    /// Vendor order. The three native catalogs sort to the top so the
+    /// user sees them before the (much larger) OpenRouter long tail.
+    /// OpenRouter vendor order is based on its rankings page (most-used
+    /// first); anything not listed sorts alphabetically after these.
     private static let vendorPriority: [String] = [
+        nativeAnthropicKey, nativeGeminiKey, nativeOpenAIKey,
         "google", "anthropic", "openai", "x-ai", "deepseek",
         "qwen", "moonshotai", "meta-llama", "mistralai", "z-ai",
-        nativeOpenAIKey,
     ]
 
     private static let vendorDisplayName: [String: String] = [
@@ -139,6 +147,8 @@ struct ModelPickerSheet: View {
         "meta-llama": "Meta",
         "mistralai": "Mistral",
         "z-ai": "Z.AI",
+        nativeAnthropicKey: "Anthropic（原生）",
+        nativeGeminiKey: "Gemini（原生）",
         nativeOpenAIKey: "OpenAI（原生）",
     ]
 

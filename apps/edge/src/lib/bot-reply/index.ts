@@ -44,11 +44,13 @@ import {
 import { resolveProviderSlug } from '../../llm/providers';
 import { WebToolMeter } from '../web-meter';
 import {
+  buildDelegateTool,
   CHAT_TOOLS,
   EXECUTE_CODE_TOOL,
   GROUP_BOT_TOOLS,
   REQUEST_EXECUTE_CODE_TOOL,
 } from './tool-defs';
+import { specialistTargetsForUser } from './tools/delegate';
 import {
   type Citation,
   type ToolCtx,
@@ -361,6 +363,13 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   // resolution + prompt assembly instead of sitting serially in front
   // of the LLM call.
   const allowedRegistryPromise = loadToolRegistry(env, 'chat');
+  // Specialist enumeration is also independent of the prompt; the
+  // delegate tool only joins the per-turn list when at least one
+  // registered specialist exists. Resolved lazily — failure here
+  // shouldn't block the turn, so we swallow and treat as "no targets".
+  const delegateTargetsPromise = specialistTargetsForUser(env, userId).catch(
+    () => [] as Array<'claude' | 'openai' | 'gemini'>,
+  );
 
   const locale = await resolveLocale(null, supa, userId, env);
 
@@ -641,6 +650,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     emit: emitToolEvent,
     userId,
     botId: bot.id,
+    parentMessageId,
     botModelId: bot.model_id,
     visionOverride,
     conversationId,
@@ -748,6 +758,15 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   ];
   if (allowedTools.has('execute_code')) turnToolsRaw.push(EXECUTE_CODE_TOOL);
   if (input.inGroup) turnToolsRaw.push(...GROUP_BOT_TOOLS);
+  // Subagent delegation. Only the OpenRouter routing path gets this tool
+  // — native-provider bots are the targets, not the callers, so giving
+  // a native bot the tool would either no-op (no one to delegate to) or
+  // invite recursion. The dynamic enum is the user's actual specialist
+  // set; with no specialists registered, the tool simply doesn't ship.
+  const delegateTargets = await delegateTargetsPromise;
+  if (turnProviderSlug === 'openrouter' && delegateTargets.length > 0) {
+    turnToolsRaw.push(buildDelegateTool(delegateTargets));
+  }
 
   // Strict allowlist from the tools registry — disabling a row in the
   // board "Tools" page strips it here within ~1 min (60s isolate

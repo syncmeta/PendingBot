@@ -13,6 +13,7 @@ import {
   executeCodeTool,
   requestExecuteCodeTool,
 } from './tools/code-exec';
+import { delegateToSpecialistTool } from './tools/delegate';
 
 /// Single web-search citation. Stored on each bubble row's `citations`
 /// jsonb so iOS can resolve inline `[N]` markers to a tappable link.
@@ -31,6 +32,10 @@ export interface ToolCtx {
   userId: string;
   botId: string;
   conversationId: string;
+  /// The user message that triggered this turn — sub-conversations spawned
+  /// by delegate_to_specialist pin themselves to it via parent_message_id
+  /// so the iOS bubble can deep-link into the child thread.
+  parentMessageId: string;
   /// Conv's main model slug — needed by read_attachment to decide whether
   /// to route the tool call to the main model itself (vision-capable) or
   /// fall back to the configured vision model.
@@ -109,6 +114,9 @@ export async function runTool(
     }
     if (name === 'set_bot_group_description') {
       return await setBotGroupDescriptionTool(env, args, ctx);
+    }
+    if (name === 'delegate_to_specialist') {
+      return await delegateToSpecialistTool(env, args, ctx);
     }
     return JSON.stringify({ error: `unknown tool: ${name}` });
   } catch (err) {

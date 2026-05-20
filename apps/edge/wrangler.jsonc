@@ -62,11 +62,16 @@
         // at; the Logs API auth token is the CF_AIG_TOKEN secret below.
         "CF_ACCOUNT_ID": "4c303754167f1f225e6761b5128c0d9f",
         "CF_AIG_GATEWAY": "pendingbot",
-        // BYOK alias used only by the model-catalog fetch in
-        // routes/models.ts (OpenAI's /models needs real provider auth,
-        // which Unified Billing can't supply). Inference calls stay on
-        // Unified Billing and do not send this header.
+        // BYOK aliases used only by the model-catalog fetches in
+        // routes/models.ts (each provider's /models endpoint needs real
+        // provider auth, which Unified Billing can't supply). Inference
+        // calls stay on Unified Billing and do not send these headers.
+        // Set the anthropic / gemini aliases to whatever names are
+        // configured in the AI Gateway dashboard; unset → that section
+        // simply stays empty in the iOS picker.
         "CF_AIG_BYOK_OPENAI_ALIAS": "byok-1",
+        "CF_AIG_BYOK_ANTHROPIC_ALIAS": "byok-anthropic",
+        "CF_AIG_BYOK_GOOGLE_AI_STUDIO_ALIAS": "byok-google-ai-studio",
         // Cloudflare Realtime SFU app for group voice. The id is not
         // sensitive; the paired SFU_APP_SECRET is set via wrangler secret.
         "SFU_APP_ID": "a0d4007702e06eb9eb592bfa870c7722"

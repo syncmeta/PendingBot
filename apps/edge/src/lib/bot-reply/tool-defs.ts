@@ -187,6 +187,55 @@ export const EXECUTE_CODE_TOOL: ChatCompletionTool = {
   },
 };
 
+// Subagent delegation tool. Only added to the per-turn tool list when:
+//   1. The calling bot uses the default (OpenRouter) routing — native-
+//      provider bots don't get this tool so we avoid infinite recursion.
+//   2. The user owns at least one specialist bot (a bot whose
+//      model_provider is anthropic / openai / google-ai-studio).
+//
+// The `target` enum is generated dynamically against the user's actually-
+// registered specialists so the model can't ask for a target that won't
+// resolve. Tool description (model_description) lives in the tools
+// registry; the strings below are just the seed values for the board.
+//
+// Specialist capability summary (also surfaced in model_description so
+// the board admin can refine):
+//   claude — Anthropic Claude. Best engineering reasoning + tool-use.
+//            Expensive; reserve for hard problems / multi-step thinking.
+//   openai — OpenAI. Strong at image generation, transcription, and
+//            general "do this task" delegation. Solid all-rounder.
+//   gemini — Google Gemini. Native Google Search grounding + Maps,
+//            and ~1M-token context. Use for fresh-information lookups,
+//            map/place queries, and very long document review.
+export function buildDelegateTool(targets: ReadonlyArray<'claude' | 'openai' | 'gemini'>): ChatCompletionTool {
+  return {
+    type: 'function',
+    function: {
+      name: 'delegate_to_specialist',
+      parameters: {
+        type: 'object',
+        properties: {
+          target: {
+            type: 'string',
+            enum: [...targets],
+            description:
+              'Which specialist to delegate to. ' +
+              'claude=Anthropic Claude (engineering, tool-use, deep reasoning — expensive). ' +
+              'openai=OpenAI (image generation, transcription, general task execution). ' +
+              'gemini=Google Gemini (Google Search grounding, Maps, very long context).',
+          },
+          prompt: {
+            type: 'string',
+            description:
+              '完整、自包含的任务描述 — 专家看不到你这边的对话历史，必须把它需要的所有上下文写进来。1–8000 字。',
+          },
+        },
+        required: ['target', 'prompt'],
+      },
+    },
+  };
+}
+
 // Group-only tools — exposed by dispatchGroupTurn via input.inGroup.
 // Both write to the same conversation_id + bot_id the runner is acting
 // for, so they take just the new value as an argument. Description

@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { computeVoiceCost } from './router';
-import { providerApiStyle, resolveProviderSlug } from './providers';
+import {
+  modelForUpstream,
+  providerApiStyle,
+  resolveProviderSlug,
+} from './providers';
 
 describe('resolveProviderSlug', () => {
-  it('selects the native OpenAI route for the openai hint', () => {
+  it('selects each native route for its known hint', () => {
     expect(resolveProviderSlug('openai')).toBe('openai');
+    expect(resolveProviderSlug('anthropic')).toBe('anthropic');
+    expect(resolveProviderSlug('google-ai-studio')).toBe('google-ai-studio');
   });
 
   it('falls back to OpenRouter for null / openrouter / unknown hints', () => {
@@ -16,9 +22,38 @@ describe('resolveProviderSlug', () => {
 });
 
 describe('providerApiStyle', () => {
-  it('maps openai to the Responses dialect and openrouter to chat', () => {
+  it('maps openai to Responses, everything else to Chat Completions', () => {
     expect(providerApiStyle('openai')).toBe('responses');
     expect(providerApiStyle('openrouter')).toBe('chat');
+    expect(providerApiStyle('anthropic')).toBe('chat');
+    expect(providerApiStyle('google-ai-studio')).toBe('chat');
+  });
+});
+
+describe('modelForUpstream', () => {
+  it('passes openai / openrouter slugs through unchanged', () => {
+    expect(modelForUpstream('openai', 'gpt-5-mini')).toBe('gpt-5-mini');
+    expect(modelForUpstream('openrouter', 'anthropic/claude-3-haiku')).toBe(
+      'anthropic/claude-3-haiku',
+    );
+  });
+
+  it('prefixes the provider slug onto anthropic / google-ai-studio models', () => {
+    expect(modelForUpstream('anthropic', 'claude-sonnet-4-5')).toBe(
+      'anthropic/claude-sonnet-4-5',
+    );
+    expect(modelForUpstream('google-ai-studio', 'gemini-2.5-flash')).toBe(
+      'google-ai-studio/gemini-2.5-flash',
+    );
+  });
+
+  it('does not double-prefix an already-prefixed model id', () => {
+    expect(modelForUpstream('anthropic', 'anthropic/claude-sonnet-4-5')).toBe(
+      'anthropic/claude-sonnet-4-5',
+    );
+    expect(
+      modelForUpstream('google-ai-studio', 'google-ai-studio/gemini-2.5-flash'),
+    ).toBe('google-ai-studio/gemini-2.5-flash');
   });
 });
 

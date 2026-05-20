@@ -12,6 +12,7 @@ import { fetchGatewayCost, GATEWAY_COST_PENDING } from '../lib/ai-gateway';
 import type { AuditMessage } from '../queue/audit-types';
 import {
   gatewayBaseUrl,
+  modelForUpstream,
   providerApiStyle,
   resolveProviderSlug,
   REALTIME_PRICING,
@@ -141,7 +142,7 @@ export async function resolveRoute(
 
   return {
     client: buildClient(env, gatewayBaseUrl(env, providerSlug), aigMetadataFrom(opts)),
-    modelToCall: slug,
+    modelToCall: modelForUpstream(providerSlug, slug),
     provider: { slug: providerSlug, apiStyle: providerApiStyle(providerSlug) },
   };
 }
