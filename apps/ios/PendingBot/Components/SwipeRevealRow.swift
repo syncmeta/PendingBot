@@ -277,7 +277,7 @@ struct SwipeRevealRow<Content: View>: View {
                         .foregroundStyle(action.tint)
                         .frame(width: buttonSize, height: buttonSize)
                         .glassDisc()
-                        .shadow(color: Color.black.opacity(0.14 * appearance), radius: 5, y: 1.5)
+                        .shadow(color: Color.black.opacity(0.07 * appearance), radius: 4, y: 1)
                 }
                 .buttonStyle(.plain)
                 .scaleEffect(appearance)

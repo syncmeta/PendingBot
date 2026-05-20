@@ -849,7 +849,7 @@ struct ConversationView: View {
     @ViewBuilder
     private var botPreChatActions: some View {
         VStack(spacing: 10) {
-            HStack(spacing: 10) {
+            HStack(spacing: 16) {
                 PreChatActionButton(
                     title: triggeringLetter ? "派出中…" : "请它写信",
                     systemImage: "envelope.open",
@@ -873,7 +873,6 @@ struct ConversationView: View {
                     .transition(.opacity)
             }
         }
-        .padding(.horizontal, 32)
     }
 
     /// Materialize the pending conv (if needed), then kick off an
@@ -2048,33 +2047,32 @@ private struct PreChatActionButton: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 6) {
+            VStack(spacing: 8) {
                 ZStack {
                     Image(systemName: systemImage)
-                        .font(.system(size: 18, weight: .regular))
+                        .font(.system(size: 26, weight: .regular))
                         .opacity(busy ? 0 : 1)
                     if busy {
                         ProgressView()
                             .controlSize(.small)
                     }
                 }
-                .frame(height: 22)
+                .frame(height: 30)
                 Text(title)
-                    .font(Theme.Fonts.rounded(size: 12, weight: .medium))
+                    .font(Theme.Fonts.rounded(size: 13, weight: .medium))
                     .lineLimit(1)
             }
             .foregroundStyle(Theme.Palette.ink)
-            .frame(maxWidth: .infinity)
-            .aspectRatio(1, contentMode: .fit)
+            .frame(width: 92, height: 92)
             .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
                     .fill(Color.white)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
                     .stroke(Theme.Palette.hairline, lineWidth: 1)
             )
-            .shadow(color: Color.black.opacity(0.06), radius: 2.5, x: 0, y: 1)
+            .shadow(color: Color.black.opacity(0.05), radius: 3, x: 0, y: 1.5)
         }
         .buttonStyle(.plain)
     }
