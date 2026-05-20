@@ -1002,6 +1002,11 @@ private struct FilterPill: View {
 struct AddFriendSheet: View {
     @Environment(\.dismiss) private var dismiss
     var onAdded: () -> Void = {}
+    /// When non-empty, the sheet opens with the field pre-filled and
+    /// kicks off the preview lookup immediately. Used by the scan flow
+    /// to land on the same review page (avatar + nickname + 验证信息)
+    /// without making the user re-type the handle.
+    var prefilledHandle: String = ""
 
     /// Preview state for the looked-up profile. `idle` is the initial /
     /// post-edit state (user changed input → preview cleared, must tap
@@ -1098,6 +1103,15 @@ struct AddFriendSheet: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("发送申请") { Task { await submit() } }
                         .disabled(!canSubmit)
+                }
+            }
+            .onAppear {
+                // Scan-then-preview: caller hands the decoded handle in
+                // and we kick off the lookup automatically so the user
+                // lands on the avatar+nickname review page right away.
+                if !prefilledHandle.isEmpty, handleValue.isEmpty {
+                    handleValue = prefilledHandle
+                    Task { await runLookupTapped() }
                 }
             }
         }
@@ -1222,7 +1236,7 @@ struct AddFriendSheet: View {
             } else if (payload?["autoAccepted"] as? Bool) == true {
                 successHint = "对方此前也加过你 — 已直接成为好友"
             } else {
-                successHint = "好友申请已发送,等对方同意"
+                successHint = "发过去了 等对方同意"
             }
             Haptics.success()
             onAdded()

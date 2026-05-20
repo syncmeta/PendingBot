@@ -1,6 +1,8 @@
 import SwiftUI
 import Supabase
 import OSLog
+import PhotosUI
+import CoreImage
 
 private let log = Logger.category("conv-list")
 
@@ -45,6 +47,14 @@ struct MessageTabView: View {
     @State private var joiningGroup = false
     @State private var addingFriend = false
     @State private var scanning = false
+    /// Two-way 加好友 chooser (扫码 / 输号码). Shown when the user taps
+    /// 加好友 from the "+" menu; picking either option dismisses the
+    /// chooser and opens the corresponding next sheet.
+    @State private var addFriendChooser = false
+    /// Handle pre-filled into AddFriendSheet from the scan flow — non-
+    /// empty means the sheet should auto-run the lookup on appear so the
+    /// user lands on the preview page without re-typing.
+    @State private var addFriendPrefill: String = ""
     // Path-based nav for compact: keyed to .toolbar(.hidden, for: .tabBar)
     // so the bottom tab bar slides out alongside the push transition (rather
     // than snapping back in *after* the back transition finishes, which is
@@ -108,13 +118,46 @@ struct MessageTabView: View {
             .presentationDetents([.medium])
             .presentationDragIndicator(.visible)
         }
-        .sheet(isPresented: $addingFriend) {
-            AddFriendSheet { Task { await load() } }
-                .presentationDetents([.medium])
-                .presentationDragIndicator(.visible)
+        .sheet(isPresented: $addingFriend, onDismiss: { addFriendPrefill = "" }) {
+            AddFriendSheet(
+                onAdded: { Task { await load() } },
+                prefilledHandle: addFriendPrefill
+            )
+            .presentationDetents([.medium])
+            .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $scanning) {
-            ScanQRSheet { Task { await load() } }
+            ScanQRSheet(
+                onAdded: { Task { await load() } },
+                onScannedUserHandle: { token in
+                    // Scanned a known user handle — flip to the add-friend
+                    // preview page with the token pre-loaded, matching the
+                    // 输号码 → 查找 review screen.
+                    scanning = false
+                    addFriendPrefill = token
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        addingFriend = true
+                    }
+                }
+            )
+        }
+        .sheet(isPresented: $addFriendChooser) {
+            AddFriendChooserSheet(
+                onPickScan: {
+                    addFriendChooser = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        scanning = true
+                    }
+                },
+                onPickHandle: {
+                    addFriendChooser = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        addingFriend = true
+                    }
+                }
+            )
+            .presentationDetents([.fraction(0.32)])
+            .presentationDragIndicator(.visible)
         }
     }
 
@@ -246,16 +289,18 @@ struct MessageTabView: View {
                     } trailing: {
                         PlusActionPopover(items: [
                             PlusActionItem(title: "加好友", systemImage: "person.badge.plus") {
-                                addingFriend = true
+                                // 二级选择 — 扫码 or 输号码. The standalone
+                                // 扫码 entry that used to sit alongside is
+                                // gone; scanning is now a sub-mode of
+                                // "加好友" so both paths land on the same
+                                // preview (avatar + nickname + 验证信息).
+                                addFriendChooser = true
                             },
                             PlusActionItem(title: "拉群", systemImage: "person.3") {
                                 creatingGroup = true
                             },
                             PlusActionItem(title: "加群", systemImage: "person.3.sequence") {
                                 joiningGroup = true
-                            },
-                            PlusActionItem(title: "扫码", systemImage: "qrcode.viewfinder") {
-                                scanning = true
                             },
                         ])
                     }
@@ -915,18 +960,28 @@ private struct ConversationListRow: View {
     }
 }
 
-// MARK: - 扫码 sheet (real camera scanner)
+// MARK: - 扫码 sheet (camera + photo library QR decode)
 
-/// Camera-backed QR scanner. First valid QR detection fires
-/// /v1/friend-requests with handleValue=<scanned> and dismisses.
+/// Camera-backed QR scanner. PendingBot user-handle QRs land on the
+/// add-friend preview page (avatar + nickname + 验证信息); group QRs auto-
+/// join via /v1/groups/join (no useful preview — the join either lands or
+/// it doesn't). The "从相册扫码" button lets the user pick a saved photo
+/// and have its embedded QR decoded by CIDetector — same fan-out as the
+/// camera path.
 private struct ScanQRSheet: View {
     @Environment(\.dismiss) private var dismiss
     var onAdded: () -> Void = {}
+    /// Called with the bare token when the scanned QR points at a user
+    /// handle (resolved via /v1/friend-requests/lookup). Caller dismisses
+    /// the scanner and presents AddFriendSheet with the handle pre-loaded,
+    /// so both 扫码 and 输号码 land on the same review page.
+    var onScannedUserHandle: (String) -> Void = { _ in }
 
     @State private var scannedValue: String?
     @State private var submitting = false
     @State private var error: String?
     @State private var displayText: String?
+    @State private var showPhotoPicker = false
 
     var body: some View {
         NavigationStack {
@@ -953,7 +1008,7 @@ private struct ScanQRSheet: View {
                 } else if submitting {
                     VStack(spacing: 12) {
                         ProgressView().tint(.white).controlSize(.large)
-                        Text("加好友中...")
+                        Text("处理中...")
                             .foregroundStyle(.white)
                     }
                 } else if let error {
@@ -972,6 +1027,27 @@ private struct ScanQRSheet: View {
                         .foregroundStyle(.white)
                     }
                 }
+
+                // "从相册扫码" affordance — pinned to the bottom while the
+                // live camera is showing. Hidden once a code is decoded
+                // (the sheet has already shifted into its result state).
+                if scannedValue == nil, displayText == nil {
+                    VStack {
+                        Spacer()
+                        Button {
+                            showPhotoPicker = true
+                        } label: {
+                            Label("从相册扫码", systemImage: "photo.on.rectangle")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 18)
+                                .padding(.vertical, 12)
+                                .background(.ultraThinMaterial, in: Capsule())
+                                .overlay(Capsule().strokeBorder(.white.opacity(0.25), lineWidth: 0.5))
+                        }
+                        .padding(.bottom, 32)
+                    }
+                }
             }
             .navigationTitle("扫码")
             .navigationBarTitleDisplayMode(.inline)
@@ -983,16 +1059,38 @@ private struct ScanQRSheet: View {
                 }
             }
         }
+        .sheet(isPresented: $showPhotoPicker) {
+            QRPhotoPicker { decoded in
+                showPhotoPicker = false
+                guard let decoded else {
+                    error = "相册里这张图没找到二维码"
+                    scannedValue = ""  // flip out of live-preview state
+                    return
+                }
+                scannedValue = decoded
+                Haptics.tap()
+                Task { await handle(value: decoded) }
+            }
+        }
     }
 
-    /// Three-way fan-out for whatever the camera saw:
-    ///   1. PendingBot contact-share URL → existing add-friend / join-group flow.
+    /// Fan-out for whatever the camera (or album decoder) produced:
+    ///   1. PendingBot contact-share URL → try group join first (still an
+    ///      immediate action — there's no useful "preview" for groups);
+    ///      if the token isn't a group, hand the bare token back up to
+    ///      the parent so it can open the add-friend preview page.
     ///   2. Other http(s) URL → hand off to Safari and dismiss.
     ///   3. Anything else → render the raw text in the centre of the sheet.
     private func handle(value: String) async {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         if PendingBotQR.isPendingBotQR(trimmed) {
-            await submit(value: trimmed)
+            submitting = true
+            defer { submitting = false }
+            let token = PendingBotQR.token(fromScanned: trimmed)
+            if await tryJoinGroup(token: token) { return }
+            // Not a group — hand the token off to the parent for the
+            // preview/review flow. The parent dismisses us.
+            onScannedUserHandle(token)
             return
         }
         if let url = URL(string: trimmed),
@@ -1006,22 +1104,9 @@ private struct ScanQRSheet: View {
         displayText = trimmed
     }
 
-    private func submit(value: String) async {
-        submitting = true
-        defer { submitting = false }
-        let handleToken = PendingBotQR.token(fromScanned: value)
-        // Try the scanned token as a group handle first; if the worker
-        // returns "group not found" we fall through to the friend-add
-        // path. Group + user handle namespaces don't formally collide
-        // (different tables, both UNIQUE), so the order is just about
-        // picking which kind of error message to surface.
-        if await tryJoinGroup(token: handleToken) { return }
-        await addFriend(token: handleToken)
-    }
-
     /// Returns true when we either joined or filed a pending request.
     /// Returns false (without setting error) when the token isn't a
-    /// known group handle — caller falls back to the friend path.
+    /// known group handle — caller falls back to the user-handle path.
     private func tryJoinGroup(token: String) async -> Bool {
         do {
             let url = HostedConfig.environment.workerURL.appendingPathComponent("v1/groups/join")
@@ -1049,29 +1134,158 @@ private struct ScanQRSheet: View {
             return false
         }
     }
+}
 
-    private func addFriend(token: String) async {
-        do {
-            let url = HostedConfig.environment.workerURL.appendingPathComponent("v1/friend-requests")
-            var req = URLRequest(url: url)
-            req.httpMethod = "POST"
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            let accessToken = try await SupabaseStack.shared.auth.session.accessToken
-            req.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-            req.httpBody = try JSONSerialization.data(withJSONObject: ["handleValue": token])
-            let (data, resp) = try await URLSession.shared.data(for: req)
-            guard let http = resp as? HTTPURLResponse else { throw URLError(.badServerResponse) }
-            if !(200..<300).contains(http.statusCode) {
-                let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-                error = (payload?["error"] as? String) ?? "HTTP \(http.statusCode)"
-                return
+// MARK: - 加好友 chooser (扫码 / 输号码)
+
+/// Two-way fork shown when the user taps 加好友 from the message tab's
+/// "+" menu. Picking either option closes the chooser; the parent
+/// presents the corresponding next sheet on a tiny delay so SwiftUI
+/// fully tears down the chooser before the next sheet animates in.
+private struct AddFriendChooserSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    var onPickScan: () -> Void
+    var onPickHandle: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 14) {
+                chooserButton(
+                    title: "扫码",
+                    subtitle: "扫对方的二维码,或从相册里挑一张",
+                    systemImage: "qrcode.viewfinder",
+                    action: onPickScan
+                )
+                chooserButton(
+                    title: "输号码",
+                    subtitle: "输入对方的号码 / 隐私号",
+                    systemImage: "number",
+                    action: onPickHandle
+                )
+                Spacer(minLength: 0)
             }
-            Haptics.success()
-            onAdded()
-            dismiss()
-        } catch {
-            self.error = error.localizedDescription
+            .padding(.horizontal, 16)
+            .padding(.top, 18)
+            .background(Theme.Palette.canvas.ignoresSafeArea())
+            .navigationTitle("加好友")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("取消") { dismiss() }
+                }
+            }
         }
+    }
+
+    @ViewBuilder
+    private func chooserButton(title: String, subtitle: String,
+                               systemImage: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 20, weight: .regular))
+                    .foregroundStyle(Theme.Palette.accent)
+                    .frame(width: 36, height: 36)
+                    .background(Circle().fill(Theme.Palette.accentBg))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(Theme.Fonts.serif(size: 16, weight: .semibold))
+                        .foregroundStyle(Theme.Palette.ink)
+                    Text(subtitle)
+                        .font(Theme.Fonts.footnote)
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(Theme.Palette.inkMuted)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
+                    .fill(Theme.Palette.surface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
+                    .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - 从相册扫码 (decode QR from a picked photo)
+
+/// PhotosPicker wrapper that loads a single image and feeds it to
+/// CIDetector for QR recognition. Callback receives the first decoded
+/// string, or nil if the picked image contained no QR. iOS 16+ only,
+/// which matches the app's deployment target.
+private struct QRPhotoPicker: View {
+    var onResult: (String?) -> Void
+
+    @State private var picked: PhotosPickerItem?
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 24) {
+                Spacer()
+                PhotosPicker(selection: $picked, matching: .images, photoLibrary: .shared()) {
+                    Label("选一张相册里的图片", systemImage: "photo")
+                        .font(.system(size: 16, weight: .semibold))
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 12)
+                        .background(Capsule().fill(Theme.Palette.accentBg))
+                        .foregroundStyle(Theme.Palette.accent)
+                }
+                Text("挑一张包含二维码的图,会自动识别")
+                    .font(Theme.Fonts.footnote)
+                    .foregroundStyle(Theme.Palette.inkMuted)
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Theme.Palette.canvas.ignoresSafeArea())
+            .navigationTitle("从相册扫码")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("取消") {
+                        // Treat cancel as "no QR" so the parent doesn't
+                        // sit waiting for a callback that never fires.
+                        onResult(nil)
+                        dismiss()
+                    }
+                }
+            }
+            .onChange(of: picked) { _, item in
+                guard let item else { return }
+                Task {
+                    let decoded = await decodeQR(from: item)
+                    onResult(decoded)
+                    dismiss()
+                }
+            }
+        }
+    }
+
+    private func decodeQR(from item: PhotosPickerItem) async -> String? {
+        guard let data = try? await item.loadTransferable(type: Data.self),
+              let uiImage = UIImage(data: data),
+              let ciImage = CIImage(image: uiImage) else { return nil }
+        let detector = CIDetector(
+            ofType: CIDetectorTypeQRCode,
+            context: nil,
+            options: [CIDetectorAccuracy: CIDetectorAccuracyHigh]
+        )
+        let features = detector?.features(in: ciImage) ?? []
+        for f in features {
+            if let q = f as? CIQRCodeFeature, let s = q.messageString, !s.isEmpty {
+                return s
+            }
+        }
+        return nil
     }
 }
 
