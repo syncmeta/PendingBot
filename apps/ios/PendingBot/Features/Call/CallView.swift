@@ -218,8 +218,12 @@ struct CallView: View {
             case .network:
                 errorAlert = "网络中断，通话结束"
             case .user:
-                // Voluntary hang up — view's hangUpButton already calls dismiss.
-                break
+                // Voluntary hang up — either the in-app hangUpButton (whose
+                // own Task also calls dismiss; a double-dismiss is a no-op)
+                // or the CallKit lock-screen end button (where the session
+                // ends via onSystemEnd and the view *must* dismiss itself,
+                // otherwise the user gets stuck on a frozen "已结束").
+                dismiss()
             case .botEnded:
                 // The bot ended the call itself — the user didn't tap
                 // anything, so the view dismisses itself.

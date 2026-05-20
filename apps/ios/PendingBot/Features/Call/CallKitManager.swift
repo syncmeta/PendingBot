@@ -40,6 +40,13 @@ final class CallKitManager: NSObject {
     /// hang-up. CallSession registers it so the same teardown path runs
     /// whether the user tapped the in-app or system control.
     private var onSystemEnd: (() -> Void)?
+    /// True once CallKit has actually picked up the outgoing call via
+    /// `perform(:CXStartCallAction)`. Guards against the spurious
+    /// `providerDidReset` CallKit posts to the main queue shortly after
+    /// `setDelegate` — without this, the reset lands *after*
+    /// `startOutgoingCall` has already wired `onSystemEnd` for a brand-new
+    /// call and tears the call down before it even leaves the gate.
+    private var callConfirmed: Bool = false
 
     private override init() {
         // `localizedName` is set at init on iOS 14+; the no-arg
@@ -80,6 +87,7 @@ final class CallKitManager: NSObject {
         }
         let uuid = UUID()
         activeCallUUID = uuid
+        callConfirmed = false
         self.onSystemEnd = onSystemEnd
 
         let handle = CXHandle(type: .generic, value: displayName)
@@ -113,6 +121,7 @@ final class CallKitManager: NSObject {
         if uuid == activeCallUUID {
             activeCallUUID = nil
             onSystemEnd = nil
+            callConfirmed = false
         }
     }
 }
@@ -124,9 +133,16 @@ extension CallKitManager: CXProviderDelegate {
     /// session layer to tear down whatever it has open.
     nonisolated func providerDidReset(_ provider: CXProvider) {
         Task { @MainActor [weak self] in
-            self?.onSystemEnd?()
-            self?.onSystemEnd = nil
-            self?.activeCallUUID = nil
+            guard let self else { return }
+            // Ignore the init-time reset CallKit posts after setDelegate —
+            // until `perform(:CXStartCallAction)` confirms a real outgoing
+            // call, there's nothing for the session layer to tear down.
+            // (See `callConfirmed`.)
+            guard self.callConfirmed else { return }
+            self.onSystemEnd?()
+            self.onSystemEnd = nil
+            self.activeCallUUID = nil
+            self.callConfirmed = false
         }
     }
 
@@ -141,6 +157,14 @@ extension CallKitManager: CXProviderDelegate {
             startedConnectingAt: Date(),
         )
         action.fulfill()
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            // Arm `providerDidReset` to actually fire `onSystemEnd` — from
+            // here on, a reset means "real call in progress, tear it down".
+            if self.activeCallUUID == action.callUUID {
+                self.callConfirmed = true
+            }
+        }
     }
 
     /// The user pressed end from the system UI. Notify CallSession so
@@ -151,6 +175,7 @@ extension CallKitManager: CXProviderDelegate {
             guard let self else { return }
             if self.activeCallUUID == action.callUUID {
                 self.activeCallUUID = nil
+                self.callConfirmed = false
                 let cb = self.onSystemEnd
                 self.onSystemEnd = nil
                 cb?()
