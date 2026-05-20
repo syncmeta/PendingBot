@@ -492,6 +492,7 @@ messageRoutes.post('/', async (c) => {
               model_id: effectiveModelId,
               // CHECK constraint guarantees one of these two; types can't see it.
               output_mode: bot.output_mode === 'bubble' ? 'bubble' : 'single',
+              tz: bot.tz,
             },
             isSelfChat,
             recentContext: parsed.recentContext ?? [],
@@ -816,6 +817,7 @@ messageRoutes.post('/start', async (c) => {
               display_name: bot.display_name,
               model_id: bot.model_id,
               output_mode: bot.output_mode === 'bubble' ? 'bubble' : 'single',
+              tz: bot.tz,
             },
             isSelfChat: false,
             recentContext: parsed.recentContext ?? [],

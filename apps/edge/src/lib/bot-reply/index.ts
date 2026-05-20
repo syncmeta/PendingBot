@@ -257,6 +257,11 @@ export interface RunChatTurnInput {
     display_name: string;
     model_id: string;
     output_mode: 'single' | 'bubble';
+    /// IANA timezone the bot considers itself in (bots.tz). NULL for
+    /// private bots (they follow the listener's clientTz). For public
+    /// bots: appears in the system prompt as self-awareness, and is the
+    /// fallback time-hint tz when clientTz is absent (group dispatch).
+    tz?: string | null;
   };
   recentContext: BuildMessagesInput['recentContext'];
   newMessage: string;

@@ -77,6 +77,10 @@ interface SessionContext {
     /// when the bot has never been configured — callers fall back to
     /// DEFAULT_VOICE_MODEL_SLUG.
     voice_model: string | null;
+    /// IANA timezone of the bot (bots.tz). Public bots only; private bots
+    /// leave it NULL. Surfaced in the system prompt so the bot knows its
+    /// own clock when the user says "tomorrow" / "this morning".
+    tz: string | null;
   };
 }
 
@@ -126,7 +130,7 @@ async function loadSessionContext(
   const supaService = serviceClient(env);
   const { data: bot } = await supaService
     .from('bots')
-    .select('id, display_name, output_mode, voice_call_enabled, config')
+    .select('id, display_name, output_mode, voice_call_enabled, config, tz')
     .eq('id', conv.bot_id)
     .maybeSingle();
   if (!bot) {
@@ -168,6 +172,7 @@ async function loadSessionContext(
           const v = (cfg as Record<string, unknown>).voiceModel;
           return typeof v === 'string' && v.length > 0 ? v : null;
         })(),
+        tz: (bot.tz as string | null) ?? null,
       },
     },
   };
@@ -234,6 +239,7 @@ async function assembleInstructions(
       id: ctx.bot.id,
       display_name: ctx.bot.display_name,
       output_mode: ctx.bot.output_mode,
+      tz: ctx.bot.tz,
     },
     botMemory,
     skills,

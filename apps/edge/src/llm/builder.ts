@@ -16,6 +16,12 @@ export interface BuildMessagesInput {
     // it and what everyone calls it by. Injected as a system section so
     // the bot knows its own name. May be empty on unnamed/legacy rows.
     display_name?: string | null;
+    // IANA timezone the bot considers itself in (bots.tz). Public bots
+    // only; private bots leave it null and fall back to the listener's
+    // clientTz. When set: (1) appears in the system prompt as "你所在的
+    // 时区是 X" for self-awareness; (2) used as the time-hint tz when no
+    // clientTz is available (group dispatch).
+    tz?: string | null;
   };
   // Bot's own representation (Honcho passive observation) cached in KV.
   // Null on cold start — we then fall back to the identity-quest meta-prompt.
@@ -147,6 +153,17 @@ function buildIdentitySection(displayName: string | null | undefined): string {
   const name = displayName?.trim();
   if (!name) return '';
   return `## 你的名字\n你叫「${name}」。这是用户给你起的名字，别人也用这个名字称呼你。`;
+}
+
+// Bot's own timezone — only meaningful for public bots (private bots
+// always 1:1 with their creator and the per-turn time hint already
+// renders in the user's clientTz). When set, the bot can reason about
+// "tomorrow" / "this morning" relative to its own clock, and in group
+// chats this same tz drives the per-message time hints.
+function buildBotTzSection(tz: string | null | undefined): string {
+  const t = tz?.trim();
+  if (!t) return '';
+  return `## 你所在的时区\n你所在的时区是 ${t}（IANA 名）。当对方说「明天 / 今早 / 周末」这类相对时间时，按这个时区理解。`;
 }
 
 function buildSkillsSection(skills: BuildMessagesInput['skills']): string {
@@ -380,6 +397,7 @@ export async function buildSystemPrompt(
     buildSelfSection(supa, input.botMemory, locale),
   ]);
   const identitySection = buildIdentitySection(input.bot.display_name);
+  const botTzSection = buildBotTzSection(input.bot.tz);
   const skillsSection = buildSkillsSection(input.skills);
   const botNoteSection = buildBotNoteSection(input.botNote);
   const chatMemoSection = buildChatMemoSection(input.chatMemo);
@@ -390,8 +408,9 @@ export async function buildSystemPrompt(
   // cached prefix because the inventory mutates with every new image,
   // before the always-mutating mode/recent-turn segment. chat-memo sits
   // right after bot-note since both are bot-private long-term context.
+  // botTzSection rides next to identity — both are stable bot-facts.
   return [
-    platform, identitySection, selfSection, skillsSection,
+    platform, identitySection, botTzSection, selfSection, skillsSection,
     botNoteSection, chatMemoSection, lookbackSection, attachmentSection, modeInstr,
   ].filter(Boolean).join('\n\n');
 }
@@ -407,6 +426,10 @@ export async function buildMessages(
     clientTz,
     nowIso = new Date().toISOString(),
   } = input;
+  // Time-hint tz resolution: 1:1 has clientTz (listener's device tz);
+  // group dispatch has no clientTz but the bot has its own tz on
+  // bots.tz. Fall back in that order; UTC is the last resort.
+  const timeHintTz = clientTz ?? input.bot.tz ?? undefined;
 
   const systemContent = await buildSystemPrompt(supa, input, locale);
 
@@ -424,7 +447,7 @@ export async function buildMessages(
     if (!text) continue;
     historyMsgs.push({
       role: llmRole,
-      content: llmRole === 'user' ? withTimeHint(text, m.created_at, clientTz) : text,
+      content: llmRole === 'user' ? withTimeHint(text, m.created_at, timeHintTz) : text,
     });
   }
 
@@ -446,7 +469,7 @@ export async function buildMessages(
   // (PDFs), send a content array so the model reads them directly.
   // Otherwise plain text — the attachment-inventory section above
   // carries the summary / file listing.
-  const userText = withTimeHint(newMessage, nowIso, clientTz);
+  const userText = withTimeHint(newMessage, nowIso, timeHintTz);
   const currentParts: ChatCompletionContentPart[] = [
     ...(input.currentImageParts ?? []),
     ...(input.currentFileParts ?? []),
