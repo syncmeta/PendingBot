@@ -37,6 +37,8 @@ enum Haptics {
     }
     /// Tab switch / list selection.
     @MainActor static func tap()     { selection.selectionChanged() }
+    /// Voice call answered — single firm thump, the "you're through" cue.
+    @MainActor static func connected() { rigid.impactOccurred(intensity: 0.8) }
     /// Successful action (sent / saved / deleted).
     @MainActor static func success() { notification.notificationOccurred(.success) }
     /// Recoverable failure.

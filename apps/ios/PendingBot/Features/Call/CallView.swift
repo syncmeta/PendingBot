@@ -107,21 +107,20 @@ struct CallView: View {
     private var metrics: some View {
         // Server-side meter (RealtimeMeterDO) publishes per-turn spend
         // over the conv hub, so we have a running PND figure to show.
-        // It stays hidden until the first turn settles — a "PND 0"
-        // sitting next to the timer for the first 1–2 s of "talking
+        // It stays hidden until the first turn settles — a "本次通话的费用：0 PND"
+        // sitting below the timer for the first 1–2 s of "talking
         // but no usage yet" reads as broken.
-        HStack(spacing: 10) {
-            Text("通话 \(elapsedDisplay)")
+        VStack(spacing: 6) {
+            Text(elapsedDisplay)
+                .font(.title3)
                 .monospacedDigit()
             if session.cumulativePnd > 0 {
-                Text("·")
-                    .foregroundStyle(.secondary)
-                Text("\(session.cumulativePnd) PND")
+                Text("本次通话的费用：\(session.cumulativePnd) PND")
+                    .font(.subheadline)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
             }
         }
-        .font(.title3)
     }
 
     private var controlRow: some View {
@@ -188,7 +187,7 @@ struct CallView: View {
 
     private var statusText: String {
         switch session.phase {
-        case .idle, .connecting: return "正在接通…"
+        case .idle, .connecting: return "正在呼叫…"
         case .connected:         return "通话中"
         case .hangingUp:         return "结束中…"
         case .terminated:        return "已结束"
@@ -205,6 +204,7 @@ struct CallView: View {
         switch phase {
         case .connected:
             startElapsedTicker()
+            Haptics.connected()
         case .terminated(let reason):
             tickTimer?.invalidate()
             tickTimer = nil

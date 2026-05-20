@@ -114,21 +114,20 @@ struct GroupCallView: View {
     @ViewBuilder
     private var statusSlot: some View {
         if session.phase == .connected {
-            HStack(spacing: 10) {
+            VStack(spacing: 4) {
                 Text(elapsedDisplay)
+                    .font(.title3)
                     .monospacedDigit()
                 // PND figure stays hidden until the first turn settles —
-                // a "0 PND" alongside the timer for the first 1–2 s reads
+                // a "0 PND" under the timer for the first 1–2 s reads
                 // as broken.
                 if session.cumulativePnd > 0 {
-                    Text("·")
-                        .foregroundStyle(.secondary)
-                    Text("\(session.cumulativePnd) PND")
+                    Text("本次通话的费用：\(session.cumulativePnd) PND")
+                        .font(.subheadline)
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                 }
             }
-            .font(.title3)
         } else {
             Text(statusText)
                 .font(.title3)
@@ -531,6 +530,7 @@ struct GroupCallView: View {
         switch phase {
         case .connected:
             startElapsedTicker()
+            Haptics.connected()
         case .terminated(let reason):
             tickTimer?.invalidate()
             tickTimer = nil
