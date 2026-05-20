@@ -124,28 +124,29 @@ struct SwipeRevealRow<Content: View>: View {
         }
         .contentShape(Rectangle())
         .clipShape(RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous))
+        // Tap is its own gesture so DragGesture can keep minimumDistance >= 12
+        // (anything lower and `simultaneousGesture` claims the touch on
+        // touch-down, starving the parent ScrollView's pan recognizer and
+        // locking the whole list). TapGesture has a ~10pt internal travel
+        // tolerance, which sits just under the 12pt swipe threshold — so a
+        // small horizontal flick exceeds tap's tolerance (no spurious nav)
+        // but stays under our swipe threshold (no row reveal). The drag
+        // cancels the tap once it activates, so a real swipe never fires
+        // onTap on release either.
+        .onTapGesture {
+            if isOpen { close() } else { onTap?() }
+        }
         .simultaneousGesture(
-            // Unified tap + swipe detector. We can't use a separate
-            // .onTapGesture — under simultaneousGesture it fires on small
-            // flicks and on release after a vertical scroll, which the user
-            // sees as "swiping the list opens the conversation". Doing both
-            // through one DragGesture(minimumDistance: 0) lets us classify
-            // at end time: tight motion → tap, horizontal-dominant motion →
-            // swipe, vertical-dominant motion → ignore (the parent
-            // ScrollView still scrolls because we never lock and never
-            // touch dragDX).
-            DragGesture(minimumDistance: 0)
+            DragGesture(minimumDistance: 12)
                 .onChanged { value in
                     let dx = value.translation.width
                     let dy = value.translation.height
                     if !lockedToHorizontal {
-                        // Stay undecided until the finger has clearly moved
-                        // AND moved more horizontally than vertically. Until
-                        // then we don't touch dragDX, so the row sits still
-                        // and the ScrollView can scroll vertically.
-                        let absDx = abs(dx), absDy = abs(dy)
-                        if absDx < 12 { return }
-                        if absDx <= absDy { return }
+                        // Only commit to a horizontal swipe once the finger
+                        // has clearly moved horizontally-dominant. Vertical-
+                        // dominant motion falls through and the ScrollView
+                        // keeps scrolling.
+                        guard abs(dx) > abs(dy) else { return }
                         lockedToHorizontal = true
                         lastTickDX = 0
                         didArm = false
@@ -157,20 +158,12 @@ struct SwipeRevealRow<Content: View>: View {
                 }
                 .onEnded { value in
                     let dx = value.translation.width
-                    let dy = value.translation.height
                     defer {
                         lockedToHorizontal = false
                         lastTickDX = 0
                         didArm = false
                     }
-                    // Tight release with no horizontal lock → real tap.
-                    // The 8pt tolerance is well below the 12pt we need
-                    // before locking horizontal, so a swipe-then-release
-                    // never lands here.
-                    if !lockedToHorizontal {
-                        if abs(dx) < 8 && abs(dy) < 8 {
-                            if isOpen { close() } else { onTap?() }
-                        }
+                    guard lockedToHorizontal else {
                         dragDX = 0
                         return
                     }
