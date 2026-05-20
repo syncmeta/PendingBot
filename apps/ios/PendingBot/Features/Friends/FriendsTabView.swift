@@ -511,6 +511,12 @@ struct FriendsTabView: View {
     /// Accept (or decline) by hitting the worker endpoint. Optimistically
     /// drops the row from the inbox so the UI feels responsive; a follow-
     /// up `load()` reconciles whatever the server actually committed.
+    ///
+    /// On accept, we ride the worker's `peerUserId` field straight into
+    /// the new friend's 1:1 chat — same path as tapping their row in the
+    /// friend list. open-chat finds-or-creates the user_user conv (it
+    /// already exists at this point: accept_friend_request wrote both
+    /// user_contacts rows before returning).
     private func respondToRequest(_ request: PendingFriendRequest, accept: Bool) async {
         pendingFriendRequests.removeAll { $0.id == request.id }
         do {
@@ -521,10 +527,19 @@ struct FriendsTabView: View {
             req.httpMethod = "POST"
             let token = try await SupabaseStack.shared.auth.session.accessToken
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            let (_, resp) = try await URLSession.shared.data(for: req)
+            let (data, resp) = try await URLSession.shared.data(for: req)
             guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode)
             else { throw URLError(.badServerResponse) }
             Haptics.success()
+            if accept {
+                // Prefer the worker-returned peerUserId (canonical), but
+                // fall back to whatever the inbox row carried.
+                struct AcceptResp: Decodable { let peerUserId: String? }
+                let peerId = (try? JSONDecoder().decode(AcceptResp.self, from: data).peerUserId)
+                    ?? request.peerUserId
+                await openChatWith(peerId: peerId, displayName: request.peerDisplayName,
+                                   avatarSeed: request.peerAvatarSeed)
+            }
         } catch {
             self.error = "处理好友申请失败: \(error.localizedDescription)"
             Haptics.error()
@@ -532,6 +547,20 @@ struct FriendsTabView: View {
         // Always refresh — accept also adds a row to user_contacts which
         // the friends list needs to pick up.
         await load()
+    }
+
+    /// Resolve (or materialise) the singleton user_user conv between the
+    /// caller and `peerId`, then route to it via the existing `open()`
+    /// path. Same recipe as tapping a human friend row in the list, just
+    /// driven from the accept-button instead of a tap gesture.
+    private func openChatWith(peerId: String, displayName: String, avatarSeed: String) async {
+        let convId = try? await fetchOrCreateUserUserConv(peerId: peerId)
+        open(PendingPeer(kind: "user",
+                         peerId: peerId,
+                         displayName: displayName,
+                         avatarPath: nil,
+                         avatarSeed: avatarSeed,
+                         existingConvId: convId))
     }
 
     // MARK: - Filtering
@@ -1002,6 +1031,11 @@ private struct FilterPill: View {
 struct AddFriendSheet: View {
     @Environment(\.dismiss) private var dismiss
     var onAdded: () -> Void = {}
+    /// When non-empty, the sheet opens with the field pre-filled and
+    /// kicks off the preview lookup immediately. Used by the scan flow
+    /// to land on the same review page (avatar + nickname + 验证信息)
+    /// without making the user re-type the handle.
+    var prefilledHandle: String = ""
 
     /// Preview state for the looked-up profile. `idle` is the initial /
     /// post-edit state (user changed input → preview cleared, must tap
@@ -1098,6 +1132,15 @@ struct AddFriendSheet: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("发送申请") { Task { await submit() } }
                         .disabled(!canSubmit)
+                }
+            }
+            .onAppear {
+                // Scan-then-preview: caller hands the decoded handle in
+                // and we kick off the lookup automatically so the user
+                // lands on the avatar+nickname review page right away.
+                if !prefilledHandle.isEmpty, handleValue.isEmpty {
+                    handleValue = prefilledHandle
+                    Task { await runLookupTapped() }
                 }
             }
         }
@@ -1222,7 +1265,7 @@ struct AddFriendSheet: View {
             } else if (payload?["autoAccepted"] as? Bool) == true {
                 successHint = "对方此前也加过你 — 已直接成为好友"
             } else {
-                successHint = "好友申请已发送,等对方同意"
+                successHint = "发过去了 等对方同意"
             }
             Haptics.success()
             onAdded()

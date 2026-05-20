@@ -9,9 +9,11 @@ import UIKit
 /// (e.g. after a photo pick) without the panel needing its own modal
 /// context.
 ///
-/// Slimmed down — model picker + skills moved to ConversationSettingsView
-/// (gear icon in chat header). The remaining tiles are the per-message
-/// attach actions: 图片 (library) and 拍照 (camera).
+/// Slimmed down — model picker + skills moved out to BotConfigView (the
+/// gear icon in the chat header now lands there directly for bot chats;
+/// human chats go to ContactSettingsView, group chats to GroupSettingsView).
+/// The remaining tiles are the per-message attach actions: 图片 (library)
+/// and 拍照 (camera).
 enum ModelPickScope { case conversation, bot }
 
 struct ChatActionSheet: View {

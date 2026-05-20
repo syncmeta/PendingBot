@@ -249,6 +249,177 @@ contactRoutes.patch('/:contactUserId', async (c) => {
   return c.json({ ok: true, alias: aliasValue });
 });
 
+// POST /v1/contacts/:contactUserId/mute — toggle the caller's mute flag
+// for the singleton user_user conv between caller and this contact.
+// Mute lives on conversation_participants.muted (set on caller's row only,
+// so each side mutes independently). The conv is materialised lazily on
+// first chat; the worker creates the row here when missing so the toggle
+// always has somewhere to land.
+const MuteBody = z.object({ muted: z.boolean() });
+contactRoutes.post('/:contactUserId/mute', async (c) => {
+  const userId = c.var.userId!;
+  const contactUserId = c.req.param('contactUserId');
+  if (!UUID_RE.test(contactUserId)) return jsonError(c, 400, 'invalid_id');
+  let parsed: z.infer<typeof MuteBody>;
+  try {
+    parsed = MuteBody.parse(await c.req.json());
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+
+  const supa = serviceClient(c.env);
+
+  // Friendship gate — same as open-chat. Stops a stale alias from being
+  // used to flip a participant row in a conv the caller no longer shares.
+  const { data: contact } = await supa
+    .from('user_contacts')
+    .select('contact_user_id')
+    .eq('user_id', userId)
+    .eq('contact_user_id', contactUserId)
+    .maybeSingle();
+  if (!contact) return jsonError(c, 403, 'forbidden', { message: '还不是好友' });
+
+  // Find the singleton user_user conv between the two — same intersect
+  // pattern as /open-chat. Empty result is fine: nothing to mute yet.
+  const { data: mine } = await supa
+    .from('conversation_participants')
+    .select('conversation_id, conversations!inner(conversation_type)')
+    .eq('participant_type', 'user')
+    .eq('participant_id', userId)
+    .eq('conversations.conversation_type', 'user_user');
+  const myConvIds = (mine ?? []).map((r) => r.conversation_id as string);
+  if (myConvIds.length === 0) return c.json({ ok: true, muted: parsed.muted });
+  const { data: theirs } = await supa
+    .from('conversation_participants')
+    .select('conversation_id')
+    .eq('participant_type', 'user')
+    .eq('participant_id', contactUserId)
+    .in('conversation_id', myConvIds);
+  const sharedId = (theirs ?? []).map((r) => r.conversation_id as string)[0];
+  if (!sharedId) return c.json({ ok: true, muted: parsed.muted });
+
+  const { error } = await supa
+    .from('conversation_participants')
+    .update({ muted: parsed.muted })
+    .eq('conversation_id', sharedId)
+    .eq('participant_type', 'user')
+    .eq('participant_id', userId);
+  if (error) return jsonError(c, 500, 'database_error', { detail: error.message });
+  return c.json({ ok: true, muted: parsed.muted });
+});
+
+// GET /v1/contacts/:contactUserId — return whether caller has muted this
+// contact's user_user conv. Used by the 1v1 settings page to seed the
+// 免打扰 toggle.
+contactRoutes.get('/:contactUserId', async (c) => {
+  const userId = c.var.userId!;
+  const contactUserId = c.req.param('contactUserId');
+  if (!UUID_RE.test(contactUserId)) return jsonError(c, 400, 'invalid_id');
+
+  const supa = serviceClient(c.env);
+  const { data: contact } = await supa
+    .from('user_contacts')
+    .select('alias')
+    .eq('user_id', userId)
+    .eq('contact_user_id', contactUserId)
+    .maybeSingle();
+  if (!contact) return jsonError(c, 404, 'not_found', { message: '不是好友' });
+
+  // Look up the conv (same intersect) and read the caller's muted flag.
+  // Missing conv → default false; the row gets created on first chat.
+  const { data: mine } = await supa
+    .from('conversation_participants')
+    .select('conversation_id, conversations!inner(conversation_type)')
+    .eq('participant_type', 'user')
+    .eq('participant_id', userId)
+    .eq('conversations.conversation_type', 'user_user');
+  const myConvIds = (mine ?? []).map((r) => r.conversation_id as string);
+  let muted = false;
+  if (myConvIds.length > 0) {
+    const { data: theirs } = await supa
+      .from('conversation_participants')
+      .select('conversation_id, muted')
+      .eq('participant_type', 'user')
+      .eq('participant_id', contactUserId)
+      .in('conversation_id', myConvIds);
+    const sharedConvId = (theirs ?? []).map((r) => r.conversation_id as string)[0];
+    if (sharedConvId) {
+      const { data: myRow } = await supa
+        .from('conversation_participants')
+        .select('muted')
+        .eq('conversation_id', sharedConvId)
+        .eq('participant_type', 'user')
+        .eq('participant_id', userId)
+        .maybeSingle();
+      muted = Boolean(myRow?.muted);
+    }
+  }
+  return c.json({
+    contactUserId,
+    alias: (contact.alias as string | null) ?? null,
+    muted,
+  });
+});
+
+// DELETE /v1/contacts/:contactUserId — 删除好友. Drops user_contacts rows
+// in both directions so neither side ends up holding a stale half-edge
+// (which would let one party still hit /open-chat). The shared user_user
+// conv is removed too, so messages, attachments, participants etc. fall
+// away via cascade. audit_log rows reference the conv without CASCADE, so
+// null those out first or the DELETE would error.
+contactRoutes.delete('/:contactUserId', async (c) => {
+  const userId = c.var.userId!;
+  const contactUserId = c.req.param('contactUserId');
+  if (!UUID_RE.test(contactUserId)) return jsonError(c, 400, 'invalid_id');
+
+  const supa = serviceClient(c.env);
+
+  // Drop both directions in one statement so a transient failure between
+  // the two writes can't leave a half-edge.
+  const { error: deleteErr } = await supa
+    .from('user_contacts')
+    .delete()
+    .or(
+      `and(user_id.eq.${userId},contact_user_id.eq.${contactUserId}),` +
+      `and(user_id.eq.${contactUserId},contact_user_id.eq.${userId})`,
+    );
+  if (deleteErr) return jsonError(c, 500, 'database_error', { detail: deleteErr.message });
+
+  // Find the shared user_user conv (if any) and remove it. Same intersect
+  // pattern as /open-chat / /mute.
+  const { data: mine } = await supa
+    .from('conversation_participants')
+    .select('conversation_id, conversations!inner(conversation_type)')
+    .eq('participant_type', 'user')
+    .eq('participant_id', userId)
+    .eq('conversations.conversation_type', 'user_user');
+  const myConvIds = (mine ?? []).map((r) => r.conversation_id as string);
+  if (myConvIds.length > 0) {
+    const { data: theirs } = await supa
+      .from('conversation_participants')
+      .select('conversation_id')
+      .eq('participant_type', 'user')
+      .eq('participant_id', contactUserId)
+      .in('conversation_id', myConvIds);
+    const sharedConvIds = (theirs ?? []).map((r) => r.conversation_id as string);
+    if (sharedConvIds.length > 0) {
+      // audit_log FK has no CASCADE — null its conversation_id first so
+      // the DELETE on conversations doesn't trip the constraint.
+      await supa
+        .from('audit_log')
+        .update({ conversation_id: null })
+        .in('conversation_id', sharedConvIds);
+      const { error: convErr } = await supa
+        .from('conversations')
+        .delete()
+        .in('id', sharedConvIds);
+      if (convErr) return jsonError(c, 500, 'database_error', { detail: convErr.message });
+    }
+  }
+
+  return c.json({ ok: true });
+});
+
 // GET /v1/contacts/conv-peer/:convId — resolve the other user's display
 // info for a user_user conversation. Caller must already be a participant
 // (RLS on `pendingbot.users` is self-only, so iOS can't read this directly
