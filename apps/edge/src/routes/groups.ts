@@ -84,6 +84,20 @@ groupRoutes.post('/', async (c) => {
   return c.json({ conversationId: data });
 });
 
+// GET /v1/groups/random-name — returns a random place-name suggestion so
+// the iOS create-group page can prefill a title (same logic as the
+// auto-title fallback baked into start_user_bot_turn / open_user_bot_conv:
+// pendingbot.random_place_name() draws from the seeded place_names table).
+// Auth-gated via the groupRoutes middleware; cheap single-row read.
+groupRoutes.get('/random-name', async (c) => {
+  const supa = serviceClient(c.env);
+  const { data, error } = await supa.rpc('random_place_name');
+  if (error) {
+    return jsonError(c, 500, 'database_error', { detail: error.message });
+  }
+  return c.json({ name: (data as string | null) ?? '新群聊' });
+});
+
 // ─────────────────────────────────────────────────────────────────────
 // Invite / remove
 // ─────────────────────────────────────────────────────────────────────
