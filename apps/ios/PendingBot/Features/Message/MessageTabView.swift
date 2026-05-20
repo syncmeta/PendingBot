@@ -360,7 +360,15 @@ struct MessageTabView: View {
                                             systemImage: "envelope.badge",
                                             tint: Color(red: 0.20, green: 0.40, blue: 0.78)
                                         ) {
-                                            unread.markUnread(conv.id)
+                                            // Direct to the singleton —
+                                            // @EnvironmentObject access from
+                                            // a stored escaping closure can
+                                            // resolve to a placeholder when
+                                            // the closure outlives the view
+                                            // body, which silently swallows
+                                            // the insert and leaves the row
+                                            // never flipping to isUnread.
+                                            UnreadStore.shared.markUnread(conv.id)
                                         },
                                         SwipeRevealAction(
                                             systemImage: "trash",
@@ -437,8 +445,6 @@ struct MessageTabView: View {
             conv: conv,
             bot: bot(for: conv),
             userPeer: userPeers[conv.id],
-            unreadCount: unread.unreadCount(conv.id),
-            isUnread: unread.isUnread(conv.id),
             isSelected: isSelected
         )
     }
@@ -902,16 +908,24 @@ private struct ConversationListRow: View {
     let bot: Bot?
     /// Resolved peer for user_user rows; nil for bot / group / self.
     let userPeer: UserUserPeer?
-    /// Server-truth unread message count for this conversation.
-    let unreadCount: Int
-    /// True when the user manually swiped this row to "标未读" — a
-    /// local-only flag with no server count behind it.
-    let isUnread: Bool
     /// True only in the regular-size sidebar layout when this row's
     /// conversation is the one currently shown in the detail pane.
     /// Drives a tinted background so the user can see what's selected
     /// (compact mode pushes a new screen, so it never needs this).
     var isSelected: Bool = false
+
+    /// Subscribe directly to the unread store rather than receiving
+    /// `unreadCount` / `isUnread` as drilled props — prop-drilling
+    /// from MessageTabView's @EnvironmentObject worked for the numeric
+    /// badge (count fetched alongside the conv list) but the manual
+    /// "标未读" dot was flaky: the Set<String> mutation fires
+    /// objectWillChange on the store, but SwiftUI's diff on the
+    /// ConversationListRow struct sometimes skipped the body re-run
+    /// because the other props (Conversation / Bot) hadn't changed.
+    /// Observing the store here makes the dot pop reliably.
+    @EnvironmentObject private var unreadStore: UnreadStore
+    private var unreadCount: Int { unreadStore.unreadCount(conv.id) }
+    private var isUnread: Bool { unreadStore.isUnread(conv.id) }
 
     // Right-side name pill. For user_user it carries the peer's nickname
     // (the user's own profile name, not the local alias — the title above
