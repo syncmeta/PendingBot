@@ -308,6 +308,13 @@ extension ConversationView {
                 if let citations { citationsByMsgId[id] = citations }
             }
         }
+        // Conversation is open and a new message just landed — clear the
+        // server unread bump the INSERT trigger added. Without this the
+        // count silently climbs while the user is reading and resurfaces
+        // on the message list the moment they back out. clearServerCount
+        // early-returns when serverCounts is already 0, so this is a cheap
+        // no-op for our own outgoing rows (sender starts at 0 server-side).
+        UnreadStore.shared.markRead(conversation.id)
         // Mirror to local cache.
         LocalDatabase.shared.upsertMessages([
             LocalDatabase.MessageRow(
