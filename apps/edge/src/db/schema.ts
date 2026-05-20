@@ -1683,6 +1683,7 @@ export type Database = {
           frontmatter: Json
           id: string
           owner_id: string | null
+          provider: string
           updated_at: string
           user_id: string | null
           visibility: string
@@ -1696,6 +1697,7 @@ export type Database = {
           frontmatter: Json
           id?: string
           owner_id?: string | null
+          provider?: string
           updated_at?: string
           user_id?: string | null
           visibility?: string
@@ -1709,6 +1711,7 @@ export type Database = {
           frontmatter?: Json
           id?: string
           owner_id?: string | null
+          provider?: string
           updated_at?: string
           user_id?: string | null
           visibility?: string
