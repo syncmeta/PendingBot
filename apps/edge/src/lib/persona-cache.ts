@@ -12,6 +12,7 @@
 
 import type { SupabaseClient } from './supabase';
 import type { Env } from '../types';
+import type { ProviderSlug } from '../llm/providers';
 
 const MEMO_PREFIX = 'memo:';
 const NOTE_PREFIX = 'botnote:';
@@ -200,13 +201,22 @@ function toCachedSkill(fm: SkillFrontmatter | null | undefined, body: string): C
   };
 }
 
+function subsCacheKey(
+  userId: string,
+  conversationId: string,
+  providerSlug: ProviderSlug,
+): string {
+  return `${SUBS_PREFIX}${userId}:${conversationId}:${providerSlug}`;
+}
+
 async function getCachedSubsRefs(
   env: Env,
   userId: string,
   conversationId: string,
+  providerSlug: ProviderSlug,
 ): Promise<CachedSubsRefs | null> {
   return env.MEMORY.get<CachedSubsRefs>(
-    `${SUBS_PREFIX}${userId}:${conversationId}`,
+    subsCacheKey(userId, conversationId, providerSlug),
     'json',
   );
 }
@@ -215,10 +225,11 @@ async function putCachedSubsRefs(
   env: Env,
   userId: string,
   conversationId: string,
+  providerSlug: ProviderSlug,
   refs: CachedSubsRefs,
 ): Promise<void> {
   await env.MEMORY.put(
-    `${SUBS_PREFIX}${userId}:${conversationId}`,
+    subsCacheKey(userId, conversationId, providerSlug),
     JSON.stringify(refs),
     { expirationTtl: SUBS_TTL_SEC },
   );
@@ -244,9 +255,10 @@ export async function resolveSubscriptions(
   supa: SupabaseClient,
   userId: string,
   conversationId: string,
+  providerSlug: ProviderSlug,
   waitUntil: (p: Promise<unknown>) => void,
 ): Promise<CachedSubsBundle> {
-  let refsBundle = await getCachedSubsRefs(env, userId, conversationId);
+  let refsBundle = await getCachedSubsRefs(env, userId, conversationId, providerSlug);
   // Frontmatter we already fetched alongside refs — lets us skip the
   // bodies query for nothing-cached-but-just-fetched-meta rows.
   const freshMeta = new Map<string, SkillFrontmatter>();
@@ -257,10 +269,15 @@ export async function resolveSubscriptions(
       updated_at: string;
       frontmatter: SkillFrontmatter;
     };
+    // !inner forces an INNER JOIN so the embedded skills.provider
+    // filter actually filters parent rows (default LEFT JOIN would
+    // keep subscriptions whose skill is the wrong provider but with
+    // a null embed, which we'd then have to drop in JS).
     const { data } = await supa
       .from('skill_subscriptions')
-      .select('skills(id, updated_at, frontmatter)')
+      .select('skills!inner(id, updated_at, frontmatter)')
       .eq('user_id', userId)
+      .eq('skills.provider', providerSlug)
       .or(`conversation_id.eq.${conversationId},conversation_id.is.null`);
 
     const refs: SkillRef[] = [];
@@ -275,7 +292,7 @@ export async function resolveSubscriptions(
       }
     }
     refsBundle = { refs, allowedTools: Array.from(allowedToolSet) };
-    waitUntil(putCachedSubsRefs(env, userId, conversationId, refsBundle));
+    waitUntil(putCachedSubsRefs(env, userId, conversationId, providerSlug, refsBundle));
   }
 
   const bodyResults = await Promise.all(
