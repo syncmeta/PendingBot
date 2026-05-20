@@ -50,6 +50,12 @@ const PatchBody = z
     // Voice-call gate. When true the iOS conversation header shows the
     // phone button. Creator-only — public bots editable too.
     voice_call_enabled: z.boolean().optional(),
+    // IANA timezone for this bot. Only meaningful for public bots — group
+    // dispatch uses it as the time-hint tz and builder injects it into
+    // the system prompt as "你所在的时区是 X". Sending '' (empty) clears
+    // it back to NULL; iOS does that when promoting public→private,
+    // though that path doesn't actually exist in the UI today.
+    tz: z.string().max(64).optional(),
     // Partial bot-config patch. Top-level keys present here replace the
     // matching key in the stored `config` jsonb wholesale; absent keys
     // are left untouched.
@@ -60,6 +66,7 @@ const PatchBody = z
       v.model_id !== undefined ||
       v.model_provider !== undefined ||
       v.voice_call_enabled !== undefined ||
+      v.tz !== undefined ||
       v.config !== undefined,
     { message: 'no fields to update' },
   );
@@ -105,6 +112,7 @@ botRoutes.patch('/:id', async (c) => {
     update.model_provider = parsed.model_provider;
   if (parsed.voice_call_enabled !== undefined)
     update.voice_call_enabled = parsed.voice_call_enabled;
+  if (parsed.tz !== undefined) update.tz = parsed.tz === '' ? null : parsed.tz;
   if (parsed.config !== undefined) {
     // Shallow-merge at the top level: the client always sends a
     // complete sub-object for each key it touches, so replacing
