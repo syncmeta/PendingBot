@@ -61,8 +61,12 @@ struct ComposerView: View {
                         .font(.system(size: 18, weight: .medium))
                         .foregroundStyle(Theme.Palette.inkMuted)
                         .frame(width: 38, height: 38)
-                        .background(.ultraThinMaterial, in: Circle())
-                        .overlay(Circle().strokeBorder(Theme.Palette.hairline.opacity(0.6), lineWidth: 0.5))
+                        .background(
+                            Circle()
+                                .fill(.ultraThinMaterial)
+                                .overlay(Circle().fill(Color.white.opacity(0.45)))
+                        )
+                        .overlay(Circle().strokeBorder(Color.white.opacity(0.6), lineWidth: 0.5))
                 }
                 .buttonStyle(.plain)
 
@@ -107,10 +111,17 @@ struct ComposerView: View {
                     .padding(.trailing, 4)
                     .padding(.bottom, 4)
                 }
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .background(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                .fill(Color.white.opacity(0.45))
+                        )
+                )
                 .overlay(
                     RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .strokeBorder(Theme.Palette.hairline.opacity(0.6), lineWidth: 0.5)
+                        .strokeBorder(Color.white.opacity(0.6), lineWidth: 0.5)
                 )
             }
             .padding(.horizontal, Theme.Metrics.gutter)
