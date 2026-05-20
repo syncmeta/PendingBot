@@ -49,12 +49,22 @@ struct ComposerView: View {
             HStack(alignment: .bottom, spacing: 8) {
                 Button {
                     Haptics.tap()
+                    // Scope the action-sheet animation to a withAnimation
+                    // block so it doesn't bleed into the keyboard's frame
+                    // change. The keyboard goes via UIKit's resignFirstResponder
+                    // / becomeFirstResponder path and animates with the system's
+                    // native curve; if isFocused were toggled inside withAnimation
+                    // it'd retime to easeInOut(0.22) and look like a slow fall.
                     if showActions {
-                        showActions = false
+                        withAnimation(.easeInOut(duration: 0.22)) {
+                            showActions = false
+                        }
                         isFocused = true
                     } else {
                         isFocused = false
-                        showActions = true
+                        withAnimation(.easeInOut(duration: 0.22)) {
+                            showActions = true
+                        }
                     }
                 } label: {
                     Image(systemName: showActions ? "xmark" : "plus")
@@ -79,7 +89,11 @@ struct ComposerView: View {
                         }
                     )
                     .onChange(of: isFocused) { _, focused in
-                        if focused { showActions = false }
+                        if focused {
+                            withAnimation(.easeInOut(duration: 0.22)) {
+                                showActions = false
+                            }
+                        }
                     }
                     .padding(.leading, 14)
                     .padding(.vertical, 4)
@@ -100,6 +114,12 @@ struct ComposerView: View {
                                         : Theme.Palette.surfaceMuted
                                 )
                             )
+                            // Short ease on color so the gray↔accent flip
+                            // when canSend toggles isn't a hard cut. Kept
+                            // brief so it never feels laggy after the user
+                            // types the first character.
+                            .animation(.easeInOut(duration: 0.18), value: canSend)
+                            .animation(.easeInOut(duration: 0.18), value: isStreaming)
                     }
                     .buttonStyle(.plain)
                     .disabled(!isStreaming && !canSend)
@@ -131,16 +151,22 @@ struct ComposerView: View {
             // Without a backstop the safeAreaInset region above the
             // "+" panel is transparent during the open/close transition
             // and the message list briefly bleeds through. When the
-            // panel is closed we keep the bar itself transparent so the
-            // floating capsule/circle blur picks up the scrolled
-            // messages behind them.
+            // panel is closed we drop in a top-to-bottom progressive
+            // blur so messages scrolling near the composer fade out
+            // gracefully behind the floating capsule — clear at the top
+            // edge, fully blurred down by the home indicator.
             if showActions {
                 Theme.Palette.canvas
             } else {
-                Color.clear
+                ProgressiveBlurBackdrop()
+                    .allowsHitTesting(false)
             }
         }
-        .animation(.easeInOut(duration: 0.22), value: showActions)
+        // No outer `.animation(..., value: showActions)` modifier — the
+        // showActions toggles are wrapped in withAnimation at their call
+        // sites instead, so the keyboard's frame change (driven by
+        // resign/becomeFirstResponder, not by showActions) is not retimed
+        // to SwiftUI's curve and keeps UIKit's native open/close cadence.
     }
 
     // ── Attachment thumbnails strip ────────────────────────────────────────
@@ -225,6 +251,69 @@ private extension View {
                 .overlay(shape.strokeBorder(Color.black.opacity(0.04), lineWidth: 0.5))
                 .shadow(color: Color.black.opacity(0.08), radius: 6, x: 0, y: 2)
         }
+    }
+}
+
+// ── Progressive blur backdrop ──────────────────────────────────────────────
+
+/// Soft top-to-bottom gradient blur sitting behind the floating composer.
+/// Messages scrolling underneath the composer fade from fully visible at
+/// the top edge of the inset region to fully blurred by the home-indicator
+/// row. Implemented as a UIVisualEffectView with a `CAGradientLayer` mask:
+/// the gradient runs from clear → opaque downwards, so the blur layer is
+/// invisible at the top and fully revealed at the bottom. Apple uses the
+/// same technique in Mail's tab-bar overlay.
+///
+/// True variable-intensity blur (different radius per row) requires
+/// stacking multiple visual effect views or a private API; the masked
+/// single-blur approach is visually almost indistinguishable here because
+/// the height of the inset region is small relative to the blur radius.
+struct ProgressiveBlurBackdrop: UIViewRepresentable {
+    func makeUIView(context: Context) -> ProgressiveBlurBackdropView { ProgressiveBlurBackdropView() }
+    func updateUIView(_ uiView: ProgressiveBlurBackdropView, context: Context) {}
+}
+
+final class ProgressiveBlurBackdropView: UIView {
+    private let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterial))
+    private let gradient = CAGradientLayer()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        addSubview(blur)
+        blur.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            blur.topAnchor.constraint(equalTo: topAnchor),
+            blur.bottomAnchor.constraint(equalTo: bottomAnchor),
+            blur.leadingAnchor.constraint(equalTo: leadingAnchor),
+            blur.trailingAnchor.constraint(equalTo: trailingAnchor),
+        ])
+        // Multi-stop gradient gives a softer ramp than a 0→1 linear; the
+        // 0.0/0.35/0.7/1.0 stops with eased alpha hide the seam where the
+        // mask first reveals the blur layer.
+        gradient.colors = [
+            UIColor.black.withAlphaComponent(0).cgColor,
+            UIColor.black.withAlphaComponent(0.15).cgColor,
+            UIColor.black.withAlphaComponent(0.55).cgColor,
+            UIColor.black.withAlphaComponent(1).cgColor,
+        ]
+        gradient.locations = [0.0, 0.35, 0.7, 1.0]
+        gradient.startPoint = CGPoint(x: 0.5, y: 0)
+        gradient.endPoint = CGPoint(x: 0.5, y: 1)
+        blur.layer.mask = gradient
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // Disable implicit CALayer animation — the gradient mask should
+        // snap to new bounds during keyboard/inset frame changes, not
+        // animate independently from UIKit's transition.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        gradient.frame = blur.bounds
+        CATransaction.commit()
     }
 }
 
