@@ -41,8 +41,8 @@ struct GroupCallView: View {
                     .padding(.horizontal)
                 ScrollView {
                     rosterSection
-                        .padding(.horizontal)
-                        .padding(.top, 20)
+                        .padding(.horizontal, 32)
+                        .padding(.top, 28)
                 }
                 Spacer(minLength: 0)
                 toolbar
@@ -104,61 +104,83 @@ struct GroupCallView: View {
                 .font(.title2).bold()
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
-            Text(statusText)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            if isCallLive {
-                HStack(spacing: 10) {
-                    Text(elapsedDisplay)
+            // Single status slot: "接通中" while connecting, elapsed time
+            // (+ optional PND) once connected. Same vertical position so
+            // the layout doesn't jump on the connect transition.
+            statusSlot
+        }
+    }
+
+    @ViewBuilder
+    private var statusSlot: some View {
+        if session.phase == .connected {
+            HStack(spacing: 10) {
+                Text(elapsedDisplay)
+                    .monospacedDigit()
+                // PND figure stays hidden until the first turn settles —
+                // a "0 PND" alongside the timer for the first 1–2 s reads
+                // as broken.
+                if session.cumulativePnd > 0 {
+                    Text("·")
+                        .foregroundStyle(.secondary)
+                    Text("\(session.cumulativePnd) PND")
                         .monospacedDigit()
-                    // PND figure stays hidden until the first turn
-                    // settles — a "0 PND" alongside the timer for the
-                    // first 1–2 s reads as broken.
-                    if session.cumulativePnd > 0 {
-                        Text("·")
-                            .foregroundStyle(.secondary)
-                        Text("\(session.cumulativePnd) PND")
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
-                    }
+                        .foregroundStyle(.secondary)
                 }
-                .font(.title3)
-                .padding(.top, 4)
             }
+            .font(.title3)
+        } else {
+            Text(statusText)
+                .font(.title3)
+                .foregroundStyle(.secondary)
         }
     }
 
     // MARK: - Invite CTAs
 
     private var inviteRow: some View {
-        HStack(spacing: 10) {
-            inviteButton(title: "叫机器人", systemImage: "sparkle") {
+        HStack(spacing: 14) {
+            inviteButton(
+                title: "叫机器人",
+                systemImage: "sparkle",
+                tint: Self.botInviteInk,
+            ) {
                 Haptics.tap()
                 showingAddBot = true
             }
-            inviteButton(title: "叫真人", systemImage: "person.wave.2.fill") {
+            inviteButton(
+                title: "叫真人",
+                systemImage: "person.wave.2.fill",
+                tint: .primary,
+            ) {
                 Haptics.tap()
                 showingRingHuman = true
             }
-            Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity)
     }
+
+    /// Deep navy used for the "叫机器人" pill — picked to read as
+    /// distinctly "bot" against the brand green / human accent without
+    /// borrowing one of the existing tag colours.
+    private static let botInviteInk = Color(hex: 0x1E3A8A)
 
     private func inviteButton(
         title: String,
         systemImage: String,
+        tint: Color,
         action: @escaping () -> Void,
     ) -> some View {
         Button(action: action) {
-            HStack(spacing: 6) {
+            HStack(spacing: 8) {
                 Image(systemName: systemImage)
-                    .font(.subheadline)
+                    .font(.body)
                 Text(title)
-                    .font(.subheadline).fontWeight(.medium)
+                    .font(.body).fontWeight(.medium)
             }
-            .foregroundStyle(.primary)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 9)
+            .foregroundStyle(tint)
+            .padding(.horizontal, 22)
+            .padding(.vertical, 12)
             .background(Capsule().fill(Color(.systemBackground)))
             .overlay(
                 Capsule().stroke(Color(.separator), lineWidth: 0.5),
@@ -170,11 +192,17 @@ struct GroupCallView: View {
     // MARK: - Roster
 
     private var rosterSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 22) {
             // Joined first — the caller themselves plus any peers/bots.
+            // Avatars sit in an adaptive grid; the kind-coloured halo
+            // around each avatar replaces the (now removed) text label.
             sectionHeader(text: "通话中")
-            VStack(spacing: 14) {
-                joinedRow(
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 72), spacing: 22)],
+                alignment: .leading,
+                spacing: 22,
+            ) {
+                avatarTile(
                     sender: GroupBubbleSender(
                         kind: .user,
                         id: session.currentUserId,
@@ -185,10 +213,10 @@ struct GroupCallView: View {
                     showMenu: false,
                 )
                 ForEach(session.humanParticipants, id: \.id) { p in
-                    joinedRow(sender: p, showMenu: session.isPrivileged)
+                    avatarTile(sender: p, showMenu: session.isPrivileged)
                 }
                 ForEach(session.botParticipants, id: \.id) { p in
-                    joinedRow(sender: p, showMenu: session.isPrivileged)
+                    avatarTile(sender: p, showMenu: session.isPrivileged)
                 }
             }
 
@@ -213,27 +241,36 @@ struct GroupCallView: View {
         }
     }
 
-    private func joinedRow(
+    /// Single grid cell: the participant's avatar with a kind-coloured
+    /// outer shadow (human → pale green / accentBg; bot → pale amber).
+    /// Tapping a tile opens the privileged action menu when allowed; the
+    /// caller's own tile is inert.
+    private func avatarTile(
         sender: GroupBubbleSender,
         showMenu: Bool,
     ) -> some View {
-        HStack(spacing: 12) {
+        let haloColor: Color = sender.kind == .bot
+            ? Theme.Palette.amberBg
+            : Theme.Palette.accentBg
+        let avatar = Group {
             if sender.kind == .bot {
                 BotAvatar(
                     emojiSeed: sender.id,
                     colorSeed: session.conversationId,
-                    size: 36,
+                    size: 56,
                 )
             } else {
                 UserAvatar(
                     seed: sender.avatarSeed,
                     attachmentId: sender.avatarPath,
-                    size: 36,
+                    size: 56,
                 )
             }
-            Text(sender.displayName)
-                .font(.body)
-            Spacer()
+        }
+        .shadow(color: haloColor, radius: 6, x: 0, y: 0)
+        .shadow(color: haloColor.opacity(0.7), radius: 12, x: 0, y: 0)
+
+        return Group {
             if showMenu, isCallLive {
                 Menu {
                     Button("设为管理员") {
@@ -242,12 +279,9 @@ struct GroupCallView: View {
                     Button("移出通话", role: .destructive) {
                         Task { await session.kick(kind: sender.kind, id: sender.id) }
                     }
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 18))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 32, height: 32)
-                }
+                } label: { avatar }
+            } else {
+                avatar
             }
         }
     }
@@ -472,7 +506,7 @@ struct GroupCallView: View {
 
     private var statusText: String {
         switch session.phase {
-        case .idle, .connecting: return "正在接通…"
+        case .idle, .connecting: return "接通中"
         case .connected:         return session.isAlone ? "等其他人进" : "通话中"
         case .hangingUp:         return "结束中…"
         case .terminated:        return "已结束"
