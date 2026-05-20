@@ -557,8 +557,14 @@ struct MessageTabView: View {
                 .execute()
                 .value
             // user_unread_counts has a row per (user, conv) only after the
-            // conv received its first message. Joining it INNER is the
-            // empty-conv filter (item: 如果会话内消息是空的就不要出现).
+            // conv received its first non-recap message — the unread
+            // trigger skips role='log' / status='replaced' / voice-call
+            // recap rows, so a conv that has only ever held a voice-call
+            // recap has no row here. !inner makes the embed an INNER
+            // JOIN so those convs drop out of the list entirely instead
+            // of showing as empty rows (the conv list query is the
+            // empty-conv filter; previously LEFT-joined and let blanks
+            // through).
             // `participants` is embedded so user_user rows know the peer's
             // user id without a second trip — RLS lets us see both rows of
             // a conv we participate in.
@@ -568,7 +574,7 @@ struct MessageTabView: View {
                     id, bot_id, user_id, title, conversation_type, feature, round_count, updated_at,
                     provider_override,
                     bot:bots!conversations_bot_id_fkey(display_name, model_id, visibility, creator_id),
-                    unread:user_unread_counts(last_message_at, last_message_preview, unread_count),
+                    unread:user_unread_counts!inner(last_message_at, last_message_preview, unread_count),
                     participants:conversation_participants(participant_type, participant_id)
                 """)
                 .order("updated_at", ascending: false)
