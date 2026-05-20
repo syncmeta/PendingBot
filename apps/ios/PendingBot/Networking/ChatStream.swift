@@ -49,10 +49,33 @@ struct ChatStream {
     let session: URLSession
 
     init(workerURL: URL = HostedConfig.environment.workerURL,
-         session: URLSession = .shared) {
+         session: URLSession = Self.longLivedSession) {
         self.workerURL = workerURL
         self.session = session
     }
+
+    /// Dedicated session for SSE — `URLSession.shared` ships with a 60s
+    /// `timeoutIntervalForRequest` (the "max gap between bytes" timeout),
+    /// which is shorter than the silent stretches some Worker turns produce.
+    /// In particular OpenAI's `image_generation` built-in tool runs entirely
+    /// server-side and can sit for 30–90s between the `in_progress` event
+    /// and the base64 result — during that window no bytes flow over the
+    /// SSE connection and the 60s default fires, surfacing as a spurious
+    /// "已超时" to the user. Worker also writes a 15s keepalive comment on
+    /// the stream so this timeout shouldn't normally fire, but we keep a
+    /// generous client-side ceiling as a safety net:
+    ///   • request: 10 min between bytes (matches OpenAI SDK default)
+    ///   • resource: 30 min total — well below AI Gateway's 1h cap and
+    ///     longer than any plausible single-turn agent loop.
+    /// Cloudflare Workers streaming responses don't have a hard wall-clock
+    /// limit, so these client-side numbers are the binding constraint.
+    nonisolated(unsafe) static let longLivedSession: URLSession = {
+        let cfg = URLSessionConfiguration.default
+        cfg.timeoutIntervalForRequest = 600   // 10 min between bytes
+        cfg.timeoutIntervalForResource = 1800 // 30 min total
+        cfg.waitsForConnectivity = false
+        return URLSession(configuration: cfg)
+    }()
 
     /// Body shape is intentionally `[String: Any]` — chat POST has optional
     /// fields (recentContext, oldestContextMessageId, attachmentIds) and we
