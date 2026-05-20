@@ -4,17 +4,22 @@ import { jsonError } from '../lib/http-error';
 import { gatewayBaseUrl } from '../llm/providers';
 import type { AppBindings } from '../types';
 
-// GET /v1/models — aggregated model catalog for the iOS picker. Multiple
-// upstream catalogs are merged: OpenRouter's public catalog and OpenAI's
-// native catalog (reached through the AI Gateway). Nothing here is
-// hand-maintained — model ids, names and pricing all come straight from
-// upstream and are cached briefly.
+// GET /v1/models — aggregated model catalog for the iOS picker. Several
+// upstream catalogs are merged: OpenRouter's public catalog and the
+// three native catalogs reached through AI Gateway (Anthropic, Google AI
+// Studio, OpenAI). Nothing here is hand-maintained — model ids, names
+// and pricing all come straight from upstream and are cached briefly.
 //
 // blended_usd_per_million is a 7:2:1 (cache_hit/input/output) reference
 // price derived from OpenRouter's own per-model pricing, so the picker
-// can show "≈$X / 1M" next to each row. OpenAI's catalog exposes no
-// pricing of its own, so its rows borrow OpenRouter's pricing via the
-// `openai/<slug>` ↔ `<slug>` mapping.
+// can show "≈$X / 1M" next to each row. Native catalogs (anthropic /
+// google-ai-studio / openai) don't expose pricing of their own, so each
+// native row borrows the matching OpenRouter mirror's pricing via the
+// `{provider}/{slug}` ↔ `{slug}` mapping.
+//
+// Native rows are returned BEFORE the OpenRouter rows so the iOS picker
+// shows them at the top of the list. Within the native group the order
+// is anthropic → google-ai-studio → openai.
 
 export const modelCatalogRoutes = new Hono<AppBindings>();
 modelCatalogRoutes.use('*', requireSession());
@@ -38,6 +43,8 @@ interface OpenRouterCatalogModel {
   };
 }
 
+type CatalogSource = 'openrouter' | 'openai' | 'anthropic' | 'google-ai-studio';
+
 interface OpenRouterModelOut {
   slug: string;
   display_name: string;
@@ -51,11 +58,12 @@ interface OpenRouterModelOut {
   /// exposes pricing for this slug.
   blended_usd_per_million: number | null;
   /// Which catalog this row came from. The picker shows one collapsible
-  /// section per source: 'openrouter' is the default catalog, 'openai'
-  /// is OpenAI's own model list reached natively through the AI Gateway.
-  source: 'openrouter' | 'openai';
+  /// section per source. Native sources land at the top of the response;
+  /// 'openrouter' is the long tail.
+  source: CatalogSource;
   /// bots.model_provider value to store when this row is picked. NULL for
-  /// the OpenRouter catalog (default routing); 'openai' for the native one.
+  /// the OpenRouter catalog (default routing); the provider slug for any
+  /// native row so the LLM router knows which AI Gateway path to use.
   model_provider: string | null;
 }
 
@@ -80,102 +88,190 @@ function blendedFromCatalog(p: OpenRouterCatalogModel['pricing']): number | null
   return perToken * 1_000_000;
 }
 
-// Isolate-local cache of OpenAI's raw /models id list. We only cache the
-// ids — display name / pricing / context / vision are enriched on each
-// request from the OpenRouter catalog, so the rows always reflect the
-// latest OpenRouter metadata without a second AI Gateway hop.
-let nativeIdsCache: { at: number; ids: string[] } | null = null;
+// Isolate-local cache of each native catalog's raw model id list. We
+// only cache the ids — display name / pricing / context / vision are
+// enriched on each request from the OpenRouter catalog, so the rows
+// always reflect the latest OpenRouter metadata without a second AI
+// Gateway hop per call.
+interface NativeIdsCache {
+  at: number;
+  ids: string[];
+}
+const nativeIdsCache: Record<CatalogSource, NativeIdsCache | null> = {
+  openrouter: null,
+  openai: null,
+  anthropic: null,
+  'google-ai-studio': null,
+};
 const NATIVE_CATALOG_TTL_MS = 10 * 60_000;
 
-// Fetch OpenAI's native /models id list through the AI Gateway openai
-// passthrough. Returns the raw list of model ids; enrichment happens in
-// the route handler against the OpenRouter catalog.
-async function loadOpenAINativeIds(c: Context<AppBindings>): Promise<string[]> {
+// One native-catalog source. Each upstream exposes its model list at a
+// different path under its AI Gateway slug; the response shape also
+// differs (OpenAI/Anthropic return `{ data: [{id}, …] }`, Gemini returns
+// `{ models: [{name: 'models/…'}, …] }`). The parser collapses both
+// shapes onto a flat list of provider-local ids.
+interface NativeSource {
+  source: Exclude<CatalogSource, 'openrouter'>;
+  catalogPath: string;
+  byokAliasEnv:
+    | 'CF_AIG_BYOK_OPENAI_ALIAS'
+    | 'CF_AIG_BYOK_ANTHROPIC_ALIAS'
+    | 'CF_AIG_BYOK_GOOGLE_AI_STUDIO_ALIAS';
+  /// Convert the upstream catalog payload into the list of provider-local
+  /// ids we care about (the picker-facing slug — no `models/` prefix).
+  parseIds(json: unknown): string[];
+}
+
+const NATIVE_SOURCES: readonly NativeSource[] = [
+  {
+    source: 'anthropic',
+    // Anthropic native /v1/models — { data: [{id, …}] }
+    catalogPath: '/anthropic/v1/models',
+    byokAliasEnv: 'CF_AIG_BYOK_ANTHROPIC_ALIAS',
+    parseIds(json) {
+      const j = json as { data?: Array<{ id?: string }> };
+      return (j.data ?? [])
+        .map((m) => m.id)
+        .filter((id): id is string => typeof id === 'string');
+    },
+  },
+  {
+    source: 'google-ai-studio',
+    // Gemini /v1beta/models — { models: [{name: 'models/gemini-…', …}] }
+    catalogPath: '/google-ai-studio/v1beta/models',
+    byokAliasEnv: 'CF_AIG_BYOK_GOOGLE_AI_STUDIO_ALIAS',
+    parseIds(json) {
+      const j = json as { models?: Array<{ name?: string; supportedGenerationMethods?: string[] }> };
+      return (j.models ?? [])
+        .filter((m) => {
+          // Skip embeddings / TTS / image-gen variants — the picker is
+          // about chat-capable models the user can compare on price.
+          const methods = m.supportedGenerationMethods ?? [];
+          return methods.includes('generateContent');
+        })
+        .map((m) => (m.name ?? '').replace(/^models\//, ''))
+        .filter((id) => id.length > 0);
+    },
+  },
+  {
+    source: 'openai',
+    // OpenAI native /models — { data: [{id, …}] }
+    catalogPath: '/openai/models',
+    byokAliasEnv: 'CF_AIG_BYOK_OPENAI_ALIAS',
+    parseIds(json) {
+      const j = json as { data?: Array<{ id?: string }> };
+      return (j.data ?? [])
+        .map((m) => m.id)
+        .filter((id): id is string => typeof id === 'string');
+    },
+  },
+];
+
+// Fetch one native catalog through its AI Gateway slug. Returns an empty
+// list when the BYOK alias env var isn't set (catalog stays empty in the
+// picker, but inference can still work via Unified Billing).
+async function loadNativeIds(
+  c: Context<AppBindings>,
+  src: NativeSource,
+): Promise<string[]> {
   const now = Date.now();
-  if (nativeIdsCache && now - nativeIdsCache.at < NATIVE_CATALOG_TTL_MS) {
-    return nativeIdsCache.ids;
+  const cached = nativeIdsCache[src.source];
+  if (cached && now - cached.at < NATIVE_CATALOG_TTL_MS) {
+    return cached.ids;
   }
   const token = c.env.CF_AIG_RUN_TOKEN;
   if (!token) return [];
+  // The catalog fetch goes through each provider's native passthrough
+  // path (not /compat), so we build the URL from the gateway base for
+  // a known provider slug. gatewayBaseUrl wraps the account+gateway
+  // segment; we strip the trailing `/<provider>` and append our path.
   let baseURL: string;
   try {
-    baseURL = gatewayBaseUrl(c.env, 'openai');
+    baseURL = gatewayBaseUrl(c.env, 'openai').replace(/\/openai$/, '');
   } catch {
     return [];
   }
-  // Unified Billing can't authenticate OpenAI's /models (no provider key
-  // attached), so we ride a BYOK alias just for the catalog fetch. The
-  // alias is set via env; without it the catalog stays empty and the
-  // picker simply doesn't show the OpenAI-native section.
-  const byokAlias = c.env.CF_AIG_BYOK_OPENAI_ALIAS;
+  const url = `${baseURL}${src.catalogPath}`;
+  const byokAlias = c.env[src.byokAliasEnv];
   const headers: Record<string, string> = {
     'cf-aig-authorization': `Bearer ${token}`,
     Accept: 'application/json',
   };
   if (byokAlias) headers['cf-aig-byok-alias'] = byokAlias;
   try {
-    const res = await fetch(`${baseURL}/models`, { headers });
+    const res = await fetch(url, { headers });
     if (!res.ok) {
-      console.warn('[v1/models] openai-native catalog', res.status);
+      console.warn(`[v1/models] ${src.source} catalog`, res.status);
       return [];
     }
-    const json = (await res.json()) as { data?: Array<{ id?: string }> };
-    const ids = (json.data ?? [])
-      .map((m) => m.id)
-      .filter((id): id is string => typeof id === 'string');
-    nativeIdsCache = { at: now, ids };
+    const json = await res.json();
+    const ids = src.parseIds(json);
+    nativeIdsCache[src.source] = { at: now, ids };
     return ids;
   } catch (err) {
-    console.warn('[v1/models] openai-native catalog fetch failed', err);
+    console.warn(`[v1/models] ${src.source} catalog fetch failed`, err);
     return [];
   }
 }
 
-// Build the OpenAI-native section by enriching each id with metadata
-// from the OpenRouter catalog (display name, pricing, context, vision).
-// Slugs align one-to-one: OpenAI `gpt-4o` ↔ OpenRouter `openai/gpt-4o`.
-// Ids without an OpenRouter counterpart are dropped — OpenAI's /models
-// is noisy (date-pinned variants, internal previews, embeddings, TTS,
-// etc.) and the picker only cares about chat-capable models the user
-// can actually compare on price.
-function enrichNativeOpenAI(
+// Build one native section by enriching each id with metadata from the
+// OpenRouter catalog (display name, pricing, context, vision). Slugs
+// align one-to-one between OpenRouter and each native:
+//   OpenAI         `gpt-4o`              ↔ OpenRouter `openai/gpt-4o`
+//   Anthropic      `claude-sonnet-4-5`   ↔ OpenRouter `anthropic/claude-sonnet-4-5`
+//   Google Gemini  `gemini-2.5-flash`    ↔ OpenRouter `google/gemini-2.5-flash`
+// Ids without an OpenRouter counterpart are dropped — the native /models
+// lists are noisy (date-pinned variants, internal previews, embeddings,
+// TTS, etc.) and the picker only cares about chat-capable models the
+// user can actually compare on price.
+function enrichNative(
+  source: Exclude<CatalogSource, 'openrouter'>,
   ids: string[],
   orMap: Map<string, OpenRouterCatalogModel>,
 ): OpenRouterModelOut[] {
+  // Native source slug → OpenRouter vendor prefix for the same model.
+  // OpenAI/Anthropic happen to use the same prefix on OpenRouter
+  // ('openai/' / 'anthropic/'), Google AI Studio maps to 'google/'.
+  const orVendor =
+    source === 'google-ai-studio'
+      ? 'google'
+      : source === 'anthropic'
+        ? 'anthropic'
+        : 'openai';
   const rows: OpenRouterModelOut[] = [];
   for (const id of ids) {
-    const m = orMap.get(`openai/${id}`);
+    const m = orMap.get(`${orVendor}/${id}`);
     if (!m) continue;
     const displayName = stripVendorPrefix(m.name) ?? prettifyTail(id);
     const inputModalities = m.architecture?.input_modalities ?? [];
     rows.push({
       slug: id,
       display_name: displayName,
-      provider: 'openai',
+      provider: source,
       context_length: typeof m.context_length === 'number' ? m.context_length : null,
       supports_vision: inputModalities.includes('image'),
       blended_usd_per_million: blendedFromCatalog(m.pricing),
-      source: 'openai' as const,
-      model_provider: 'openai',
+      source,
+      model_provider: source,
     });
   }
   return rows;
 }
 
 modelCatalogRoutes.get('/', async (c) => {
-  const [res, nativeIds] = await Promise.all([
+  const [orRes, ...nativeIdLists] = await Promise.all([
     fetch('https://openrouter.ai/api/v1/models'),
-    loadOpenAINativeIds(c),
+    ...NATIVE_SOURCES.map((src) => loadNativeIds(c, src)),
   ]);
-  if (!res.ok) {
-    const body = (await res.text()).slice(0, 300);
-    console.warn('[v1/models] upstream', res.status, body);
-    return jsonError(c, 502, 'upstream_error', { detail: { status: res.status } });
+  if (!orRes.ok) {
+    const body = (await orRes.text()).slice(0, 300);
+    console.warn('[v1/models] upstream', orRes.status, body);
+    return jsonError(c, 502, 'upstream_error', { detail: { status: orRes.status } });
   }
-  const json = (await res.json()) as { data?: OpenRouterCatalogModel[] };
+  const json = (await orRes.json()) as { data?: OpenRouterCatalogModel[] };
   const catalog = json.data ?? [];
   const orMap = new Map<string, OpenRouterCatalogModel>(catalog.map((m) => [m.id, m]));
-  const out: OpenRouterModelOut[] = catalog.map((m) => {
+  const openrouterRows: OpenRouterModelOut[] = catalog.map((m) => {
     const slash = m.id.indexOf('/');
     const provider = slash > 0 ? m.id.slice(0, slash) : 'unknown';
     const tail = slash > 0 ? m.id.slice(slash + 1) : m.id;
@@ -194,12 +290,15 @@ modelCatalogRoutes.get('/', async (c) => {
       model_provider: null,
     };
   });
-  // Append OpenAI's native catalog as a second source, enriched against
-  // OpenRouter's catalog so display names and prices match the OpenRouter
-  // rows. The picker renders it as a separate collapsible section
-  // ("OpenAI（原生）").
-  const nativeOpenAI = enrichNativeOpenAI(nativeIds, orMap);
-  return c.json([...out, ...nativeOpenAI]);
+  // Build each native section in NATIVE_SOURCES order (anthropic →
+  // google-ai-studio → openai) and concatenate them ahead of the
+  // OpenRouter long tail. iOS renders these as sticky-top sections so
+  // the user sees "原生 Anthropic" / "原生 Gemini" / "原生 OpenAI"
+  // before the OpenRouter catalog.
+  const nativeRows: OpenRouterModelOut[] = NATIVE_SOURCES.flatMap((src, i) =>
+    enrichNative(src.source, nativeIdLists[i] ?? [], orMap),
+  );
+  return c.json([...nativeRows, ...openrouterRows]);
 });
 
 function stripVendorPrefix(name?: string): string | null {

@@ -55,15 +55,17 @@ export interface Env {
   /// Optional so `wrangler dev` without these set still typechecks/runs.
   CF_ACCOUNT_ID?: string;
   CF_AIG_GATEWAY?: string;
-  /// AI Gateway BYOK alias for OpenAI, used only by the model-catalog
-  /// fetch (routes/models.ts → loadOpenAINativeCatalog). OpenAI's
-  /// `/models` endpoint needs real provider auth, which Unified Billing
-  /// can't supply — sending `cf-aig-byok-alias: <alias>` makes the
-  /// gateway inject the BYOK key stored under that alias for this one
-  /// request. Inference calls do NOT send this header — they stay on
-  /// Unified Billing. Unset → the OpenAI-native section just stays empty
-  /// in the iOS model picker.
+  /// AI Gateway BYOK aliases, used only by the model-catalog fetches in
+  /// routes/models.ts. Each provider's `/models` (or `/v1/models`,
+  /// `/v1beta/models`) endpoint needs real provider auth, which Unified
+  /// Billing can't supply — sending `cf-aig-byok-alias: <alias>` makes
+  /// the gateway inject the BYOK key stored under that alias for this
+  /// one request. Inference calls do NOT send this header — they stay
+  /// on Unified Billing. Unset → the corresponding native section just
+  /// stays empty in the iOS model picker.
   CF_AIG_BYOK_OPENAI_ALIAS?: string;
+  CF_AIG_BYOK_ANTHROPIC_ALIAS?: string;
+  CF_AIG_BYOK_GOOGLE_AI_STUDIO_ALIAS?: string;
 
   // ── Secrets (set via `wrangler secret put --env <env>`) ────────
   SUPABASE_ANON_KEY: string;
