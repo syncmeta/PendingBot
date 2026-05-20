@@ -838,6 +838,90 @@ export type Database = {
         }
         Relationships: []
       }
+      envelope_runs: {
+        Row: {
+          author_user_id: string | null
+          body_md: string | null
+          bot_id: string | null
+          conversation_id: string
+          cost_budget_usd: number | null
+          cost_used_usd: number
+          created_at: string
+          finished_at: string | null
+          id: string
+          kind: string
+          progress: Json
+          settings: Json | null
+          started_at: string | null
+          status: string
+          summary: string | null
+          title: string | null
+          trigger: string | null
+          turns: Json
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          author_user_id?: string | null
+          body_md?: string | null
+          bot_id?: string | null
+          conversation_id: string
+          cost_budget_usd?: number | null
+          cost_used_usd?: number
+          created_at?: string
+          finished_at?: string | null
+          id?: string
+          kind?: string
+          progress?: Json
+          settings?: Json | null
+          started_at?: string | null
+          status?: string
+          summary?: string | null
+          title?: string | null
+          trigger?: string | null
+          turns?: Json
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          author_user_id?: string | null
+          body_md?: string | null
+          bot_id?: string | null
+          conversation_id?: string
+          cost_budget_usd?: number | null
+          cost_used_usd?: number
+          created_at?: string
+          finished_at?: string | null
+          id?: string
+          kind?: string
+          progress?: Json
+          settings?: Json | null
+          started_at?: string | null
+          status?: string
+          summary?: string | null
+          title?: string | null
+          trigger?: string | null
+          turns?: Json
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "envelope_runs_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "bots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "envelope_runs_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       friend_requests: {
         Row: {
           created_at: string
@@ -1517,90 +1601,6 @@ export type Database = {
           status?: string
         }
         Relationships: []
-      }
-      scroll_runs: {
-        Row: {
-          author_user_id: string | null
-          body_md: string | null
-          bot_id: string | null
-          conversation_id: string
-          cost_budget_usd: number | null
-          cost_used_usd: number
-          created_at: string
-          finished_at: string | null
-          id: string
-          kind: string
-          progress: Json
-          settings: Json | null
-          started_at: string | null
-          status: string
-          summary: string | null
-          title: string | null
-          trigger: string | null
-          turns: Json
-          updated_at: string
-          user_id: string
-        }
-        Insert: {
-          author_user_id?: string | null
-          body_md?: string | null
-          bot_id?: string | null
-          conversation_id: string
-          cost_budget_usd?: number | null
-          cost_used_usd?: number
-          created_at?: string
-          finished_at?: string | null
-          id?: string
-          kind?: string
-          progress?: Json
-          settings?: Json | null
-          started_at?: string | null
-          status?: string
-          summary?: string | null
-          title?: string | null
-          trigger?: string | null
-          turns?: Json
-          updated_at?: string
-          user_id: string
-        }
-        Update: {
-          author_user_id?: string | null
-          body_md?: string | null
-          bot_id?: string | null
-          conversation_id?: string
-          cost_budget_usd?: number | null
-          cost_used_usd?: number
-          created_at?: string
-          finished_at?: string | null
-          id?: string
-          kind?: string
-          progress?: Json
-          settings?: Json | null
-          started_at?: string | null
-          status?: string
-          summary?: string | null
-          title?: string | null
-          trigger?: string | null
-          turns?: Json
-          updated_at?: string
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "scroll_runs_bot_id_fkey"
-            columns: ["bot_id"]
-            isOneToOne: false
-            referencedRelation: "bots"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "scroll_runs_conversation_id_fkey"
-            columns: ["conversation_id"]
-            isOneToOne: false
-            referencedRelation: "conversations"
-            referencedColumns: ["id"]
-          },
-        ]
       }
       skill_subscriptions: {
         Row: {

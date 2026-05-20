@@ -40,20 +40,19 @@ import {
 } from './envelope-loop';
 
 // Worker-side orchestration shell around the pure agent loop in
-// envelope-loop.ts. Owns the scroll_runs row lifecycle, history/memory
+// envelope-loop.ts. Owns the envelope_runs row lifecycle, history/memory
 // loading, audit logging — i.e. everything the offline replay harness
 // in apps/envelope-lab does NOT want to do.
 //
 // Surfaced to users as 来信/Envelopes — config (explorer model,
 // collaborator model, turn cap) lives on the trigger body and is frozen
-// onto the row at INSERT time. Per-turn trace lands in scroll_runs.turns
+// onto the row at INSERT time. Per-turn trace lands in envelope_runs.turns
 // as the loop progresses so the iOS detail page can render the thinking
 // process.
 //
-// Naming note: the DB table is still `scroll_runs` (renamed in a
-// later commit) and the taskType in audit_log is still `'scroll'`
-// for historical rows — new rows write `'envelope'`. Prompt IDs
-// moved to `envelope*` together with this commit.
+// Naming note: audit_log.task_type carries `'scroll'` for historical
+// rows from before the rename; new runs write `'envelope'`. iOS
+// WalletView maps both to the same display label.
 
 export {
   buildEnvelopeInitialUserContent,
@@ -218,7 +217,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
   const turnId = uuidv7();
 
   await supa
-    .from('scroll_runs')
+    .from('envelope_runs')
     .update({
       started_at: new Date().toISOString(),
       status: 'running',
@@ -312,7 +311,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
     }>;
     if (history.filter((m) => m.content && m.content.trim()).length < 2) {
       // Not enough material to write an envelope. Per "空奏折不落库": delete.
-      await supa.from('scroll_runs').delete().eq('id', envelopeRunId);
+      await supa.from('envelope_runs').delete().eq('id', envelopeRunId);
       return;
     }
 
@@ -329,7 +328,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
       plan_rounds: 0,
     };
     await supa
-      .from('scroll_runs')
+      .from('envelope_runs')
       .update({ progress: initialProgress as unknown as Json, updated_at: new Date().toISOString() })
       .eq('id', envelopeRunId);
 
@@ -339,7 +338,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
     // alias was retired or has no enabled provider.
     route = await resolveRoute(supa, env, {
       modelSlug: settings.explorerModel,
-      taskType: 'scroll',
+      taskType: 'envelope',
       metadata: { turnId },
     });
 
@@ -348,7 +347,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
       try {
         collaboratorRoute = await resolveRoute(supa, env, {
           modelSlug: settings.collaboratorModel,
-          taskType: 'scroll',
+          taskType: 'envelope',
           metadata: { turnId },
         });
       } catch (err) {
@@ -442,7 +441,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
       onTurn: async ({ turn, progress, newMessages }) => {
         turnTrace.push(summarizeTurn(turn, newMessages));
         await supa
-          .from('scroll_runs')
+          .from('envelope_runs')
           .update({
             progress: progress as unknown as Json,
             turns: turnTrace as unknown as Json,
@@ -456,7 +455,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
       // so we can fire ~3 of these per turn without much overhead.
       onActivity: async (snapshot) => {
         await supa
-          .from('scroll_runs')
+          .from('envelope_runs')
           .update({
             progress: snapshot as unknown as Json,
             updated_at: new Date().toISOString(),
@@ -468,7 +467,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
 
     if (result.reason === 'cancelled') {
       await supa
-        .from('scroll_runs')
+        .from('envelope_runs')
         .update({ status: 'cancelled', finished_at: new Date().toISOString() })
         .eq('id', envelopeRunId);
       await auditRun(env, route, {
@@ -558,7 +557,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
     const stripped = writeArticle.trim();
     const isEmpty = !stripped || stripped === SILENT_TOKEN || stripped.length < 20;
     if (isEmpty) {
-      await supa.from('scroll_runs').delete().eq('id', envelopeRunId);
+      await supa.from('envelope_runs').delete().eq('id', envelopeRunId);
       await auditRun(env, route, {
         auditId: turnId,
         userId,
@@ -582,7 +581,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
     const cleanedBody = stripLeadingTitleAndSubtitle(stripped);
 
     await supa
-      .from('scroll_runs')
+      .from('envelope_runs')
       .update({
         status: 'done',
         body_md: cleanedBody,
@@ -618,7 +617,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
       phase: 'error',
     };
     await supa
-      .from('scroll_runs')
+      .from('envelope_runs')
       .update({
         status: 'error',
         finished_at: new Date().toISOString(),
@@ -695,7 +694,7 @@ async function isRunCancelled(
   envelopeRunId: string,
 ): Promise<boolean> {
   const { data } = await supa
-    .from('scroll_runs')
+    .from('envelope_runs')
     .select('status')
     .eq('id', envelopeRunId)
     .maybeSingle();
@@ -728,7 +727,7 @@ async function auditRun(
     auditId: i.auditId,
     userId: i.userId,
     conversationId: i.conversationId,
-    taskType: 'scroll',
+    taskType: 'envelope',
     startedAt: i.startedAt,
     generationId: i.generationId,
     status: i.status ?? 'success',

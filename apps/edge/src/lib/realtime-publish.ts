@@ -9,7 +9,7 @@ export type RealtimeTable =
   | 'group_continue_requests'
   | 'conversation_participants'
   | 'user_unread_counts'
-  | 'scroll_runs';
+  | 'envelope_runs';
 
 // Wire shape of a single row change delivered to clients over the
 // WebSocket. `record` is the row as it stands after the change (for

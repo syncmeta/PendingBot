@@ -276,7 +276,7 @@ struct ScrollArticleView: View {
             // already silently deleted ("空奏折不落库") returns empty
             // instead of throwing PostgREST's "cannot coerce" error.
             let rows: [ScrollRun] = try await SupabaseStack.shared
-                .from("scroll_runs")
+                .from("envelope_runs")
                 .select("id, kind, trigger, bot_id, author_user_id, conversation_id, status, title, summary, body_md, progress, turns, created_at, started_at, finished_at")
                 .eq("id", value: scrollRunId)
                 .limit(1)

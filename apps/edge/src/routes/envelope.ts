@@ -9,9 +9,8 @@ import type { AppBindings } from '../types';
 import type { Json } from '../db/schema';
 
 // Envelope (来信) routes. The HTTP path stays at /v1/scroll/* and the
-// JSON wire fields keep their `scrollRunId` name — iOS depends on
-// those — but internal code uses envelope-flavoured names. The DB
-// table is still `scroll_runs`.
+// JSON response field stays `scrollRunId` — iOS still keys off those
+// in this commit and gets renamed in the next one.
 //
 // The trigger body carries the per-run config the user picked in
 // conversation settings (explorer/collaborator models, turn cap).
@@ -46,7 +45,7 @@ const TriggerBody = z.object({
 //   Kicks off a scroll run for the given user_bot conversation. The bot
 //   reads its own history with the user, optionally surfs the web, and
 //   writes an article. Returns 202 with the run id; the iOS client
-//   subscribes to scroll_runs Realtime to watch progress.
+//   subscribes to envelope_runs Realtime to watch progress.
 envelopeRoutes.post('/trigger', async (c) => {
   const userId = c.var.userId!;
   const userJwt = c.var.userJwt!;
@@ -134,7 +133,7 @@ envelopeRoutes.post('/trigger', async (c) => {
 
   const supa = serviceClient(c.env);
   const { data: run, error: runErr } = await supa
-    .from('scroll_runs')
+    .from('envelope_runs')
     .insert({
       conversation_id: parsed.conversationId,
       user_id: userId,
@@ -185,7 +184,7 @@ envelopeRoutes.get('/list', async (c) => {
   //   So eq(user_id, caller) returns both bot envelopes and inbound human
   //   letters, and drops the caller's own outgoing rows.
   let q = supa
-    .from('scroll_runs')
+    .from('envelope_runs')
     .select('id, bot_id, conversation_id, status, title, summary, created_at, finished_at')
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
@@ -203,7 +202,7 @@ envelopeRoutes.get('/:id', async (c) => {
   const userJwt = c.var.userJwt!;
   const supa = userClient(c.env, userJwt);
   const { data, error } = await supa
-    .from('scroll_runs')
+    .from('envelope_runs')
     .select('id, bot_id, conversation_id, status, title, summary, body_md, progress, settings, turns, created_at, started_at, finished_at')
     .eq('id', id)
     .maybeSingle();
@@ -213,7 +212,7 @@ envelopeRoutes.get('/:id', async (c) => {
 });
 
 // POST /v1/scroll/letter
-//   Human-authored letter to a mutual friend. Same scroll_runs row
+//   Human-authored letter to a mutual friend. Same envelope_runs row
 //   shape as a bot envelope but kind='human', author_user_id set, no
 //   bot_id, status='done' on insert (no async runner). The recipient
 //   sees it on their 来信 tab via the existing scroll-feed Realtime
@@ -288,7 +287,7 @@ envelopeRoutes.post('/letter', async (c) => {
 
   const nowIso = new Date().toISOString();
   const { data: row, error: insertErr } = await supaUser
-    .from('scroll_runs')
+    .from('envelope_runs')
     .insert({
       conversation_id: parsed.conversationId,
       user_id: parsed.recipientUserId,
@@ -320,7 +319,7 @@ envelopeRoutes.post('/:id/cancel', async (c) => {
   const userJwt = c.var.userJwt!;
   const supa = userClient(c.env, userJwt);
   const { error } = await supa
-    .from('scroll_runs')
+    .from('envelope_runs')
     .update({ status: 'cancelled', finished_at: new Date().toISOString() })
     .eq('id', id);
   if (error) return jsonError(c, 500, 'database_error', { detail: error.message });

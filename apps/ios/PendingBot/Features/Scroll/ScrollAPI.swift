@@ -254,7 +254,7 @@ final class ScrollFeedChannel {
         let sock = RealtimeSocket(path: "v1/realtime-hub/user") { [weak self] change in
             // The user topic also carries user_unread_counts; keep only
             // scroll feed rows.
-            guard change.table == "scroll_runs", let self else { return }
+            guard change.table == "envelope_runs", let self else { return }
             for (_, obs) in self.observers {
                 // DELETE carries the row from the webhook's old_record —
                 // the id is what feed state keys off.

@@ -191,7 +191,7 @@ export interface EnvelopeLoopDeps {
   onTurn?: (info: EnvelopeTurnInfo) => Promise<void> | void;
   // Fires between awaits inside a turn so the UI can show a live
   // "current_activity" line — "主探索者在思考…", "正在搜索 X", "协作者
-  // 在评议…". The runner persists each snapshot to scroll_runs.progress
+  // 在评议…". The runner persists each snapshot to envelope_runs.progress
   // so iOS Realtime gets ticks within a single long turn instead of one
   // bulk update at the end. Snapshot is a fresh object — caller is free
   // to keep it.

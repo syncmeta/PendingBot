@@ -10,7 +10,7 @@ import { finalizeExpiredAccountDeletions } from './account-deletion-sweep';
 //   "0 4 * * *"    daily 04:00 UTC — orphan upload sweep + finalize
 //                  expired account-deletion tombstones (28d cooldown)
 //   "*/5 * * * *"  every 5 min — envelope-run watchdog (force-fail
-//                  scroll_runs rows stuck in 'running' past the loop's
+//                  envelope_runs rows stuck in 'running' past the loop's
 //                  4-min wall budget)
 //
 // The hourly "5 * * * *" idle-sandbox sweep was retired when the
