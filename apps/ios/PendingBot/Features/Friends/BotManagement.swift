@@ -873,6 +873,7 @@ struct BotConfigView: View {
     let currentUserId: String?
 
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var catalog: ModelCatalog
 
     @State private var model: String = ""
     /// API route pin for the main model — nil = default routing,
@@ -949,7 +950,6 @@ struct BotConfigView: View {
 
             modelSection
             voiceSection
-            visionSection
             envelopeSection
             lookbackSection
 
@@ -999,26 +999,32 @@ struct BotConfigView: View {
     @ViewBuilder
     private var modelSection: some View {
         Section {
-            pickerRow(icon: "cube.transparent", title: "默认模型",
-                      value: shortSlug(model), enabled: canEdit) {
+            pickerRow(icon: "cube.transparent", title: "主模型",
+                      value: model.isEmpty ? "—" : catalog.displayName(for: model),
+                      enabled: canEdit) {
                 pickerTarget = .main
+            }
+            pickerRow(icon: "eye", title: "识图模型",
+                      value: visionModel.isEmpty ? "自动" : catalog.displayName(for: visionModel),
+                      enabled: canEdit) {
+                pickerTarget = .vision
             }
         } header: {
             Text("模型")
-        } footer: {
-            Text("这个机器人聊天时用的主模型。每个对话可以再单独覆盖。")
         }
     }
 
     @ViewBuilder
     private var voiceSection: some View {
         Section {
-            Toggle("语音通话", isOn: $voiceEnabled)
+            Toggle("通话能力", isOn: $voiceEnabled)
                 .disabled(!canEdit)
             if voiceEnabled {
                 Picker(selection: $voiceModel) {
-                    Text("gpt-realtime-2").tag("gpt-realtime-2")
-                    Text("gpt-realtime-mini").tag("gpt-realtime-mini-2025-12-15")
+                    Text(catalog.displayName(for: "gpt-realtime-2"))
+                        .tag("gpt-realtime-2")
+                    Text(catalog.displayName(for: "gpt-realtime-mini-2025-12-15"))
+                        .tag("gpt-realtime-mini-2025-12-15")
                 } label: {
                     HStack {
                         Image(systemName: "waveform")
@@ -1029,24 +1035,9 @@ struct BotConfigView: View {
                 .foregroundStyle(Theme.Palette.ink)
             }
         } header: {
-            Text("语音")
+            Text("通话")
         } footer: {
-            Text("打开后，聊天页顶部会出现电话按钮。gpt-realtime-2 质量更好但更贵；mini 便宜，适合测试。每个对话可以再单独覆盖。")
-        }
-    }
-
-    @ViewBuilder
-    private var visionSection: some View {
-        Section {
-            pickerRow(icon: "eye", title: "识图模型",
-                      value: visionModel.isEmpty ? "自动" : shortSlug(visionModel),
-                      enabled: canEdit) {
-                pickerTarget = .vision
-            }
-        } header: {
-            Text("视觉")
-        } footer: {
-            Text("看图、给图片写摘要、回答关于图片的问题时用这个模型。「自动」时：主模型若支持识图就直接用，否则回落到服务端默认。")
+            Text("目前只接入了 OpenAI 的两个模型，Realtime 2 比较贵，Mini 比较笨。")
         }
     }
 
@@ -1088,7 +1079,7 @@ struct BotConfigView: View {
                 .disabled(!canEdit)
             }
         } header: {
-            Text("回看 / Lookback")
+            Text("检查")
         } footer: {
             Text("打开后，机器人每隔若干轮会自我复盘一次，检查你或它说过的内容是否需要更正、补充。")
         }
@@ -1138,11 +1129,6 @@ struct BotConfigView: View {
                 pickerTarget = nil
             }
         }
-    }
-
-    private func shortSlug(_ slug: String) -> String {
-        guard !slug.isEmpty else { return "—" }
-        return slug.split(separator: "/").last.map(String.init) ?? slug
     }
 
     // ── Load / save ─────────────────────────────────────────────────────────
