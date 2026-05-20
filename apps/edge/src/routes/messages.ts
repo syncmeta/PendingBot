@@ -15,6 +15,7 @@ import { deleteCachedAttachment, removeInventoryIds, resolveAttachmentOwnership 
 import { resolveBot } from '../lib/bot-cache';
 import { deleteCachedConv, resolveConv } from '../lib/conv-cache';
 import { safeWaitUntil } from '../lib/safe-wait-until';
+import { startSseKeepalive } from '../lib/sse-keepalive';
 import { notifyConversationUsers, notifyUserMessage } from '../lib/push';
 import type { AppBindings } from '../types';
 
@@ -483,6 +484,12 @@ messageRoutes.post('/', async (c) => {
         }
       };
 
+      // SSE keepalive: writes a `:\n\n` comment every 15s so long quiet
+      // stretches (notably OpenAI's image_generation built-in tool, which
+      // can sit silent for 30–90s while rendering) don't trip the client's
+      // 60s inactivity timeout. Stopped in `finally`.
+      const stopKeepalive = startSseKeepalive(controller, () => streamClosed);
+
       // The whole turn — LLM stream + post-turn DB updates — runs detached
       // from this response. waitUntil keeps the Worker alive past stream
       // cancel so partial UPDATEs continue to land in the DB and reach the
@@ -596,6 +603,7 @@ messageRoutes.post('/', async (c) => {
           console.error('[messages] stream error after runChatTurn:', err);
           emit('error', { message });
         } finally {
+          stopKeepalive();
           streamClosed = true;
           try { controller.close(); } catch {}
         }
@@ -810,6 +818,11 @@ messageRoutes.post('/start', async (c) => {
         rawEmit(event, data);
       };
 
+      // See /v1/messages above — same reasoning. Keepalive starts
+      // immediately (before `meta`) because the gap from request-receipt to
+      // first-token can itself exceed 60s on a cold OpenAI tool call.
+      const stopKeepalive = startSseKeepalive(controller, () => streamClosed);
+
       const turnWork = (async () => {
         let producedOutput = false;
         try {
@@ -880,6 +893,7 @@ messageRoutes.post('/start', async (c) => {
               console.error('[messages/start] rollback delete failed', delErr);
             }
           }
+          stopKeepalive();
           streamClosed = true;
           try { controller.close(); } catch {}
         }
