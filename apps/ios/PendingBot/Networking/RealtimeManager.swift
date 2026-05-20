@@ -12,7 +12,7 @@ import Supabase
 ///       carrying `user_unread_counts` changes for the message list /
 ///       badge UI. One per signed-in user, opened on launch, closed on
 ///       sign-out. (The same user topic also carries `envelope_runs`;
-///       ScrollAPI opens its own socket for that — see ScrollAPI.swift.)
+///       EnvelopeAPI opens its own socket for that — see EnvelopeAPI.swift.)
 ///   conv-level (lazy)     — one socket per conversation to
 ///       `/v1/realtime-hub/conv/<id>`, carrying `messages`,
 ///       `bot_lookbacks`, `group_continue_requests` and

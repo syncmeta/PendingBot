@@ -1,7 +1,7 @@
 import Foundation
 import Supabase
 
-// 奏折/Scroll networking layer — REST writes go through APIClient
+// 来信/Envelope networking layer — REST writes go through APIClient
 // (POST /v1/envelope/...), reads pull from Supabase directly the same way
 // FriendsTab queries `bots`. Realtime is a feed-level channel filtered
 // by user_id so the article list updates without polling.
@@ -10,7 +10,7 @@ import Supabase
 /// `status` to decide between shimmer / article / hide. `body_md` is
 /// only present once status flips to "done"; `summary` may be set
 /// earlier but the runner won't write it until the article is final.
-struct ScrollRun: Codable, Identifiable, Hashable {
+struct EnvelopeRun: Codable, Identifiable, Hashable {
     let id: String
     /// Set when kind == "bot". Null on human-authored letters.
     let bot_id: String?
@@ -18,7 +18,7 @@ struct ScrollRun: Codable, Identifiable, Hashable {
     /// the letter. Null on bot-authored envelopes.
     let author_user_id: String?
     /// "bot" (runner-written article) or "human" (peer-to-peer letter).
-    /// Older rows pre-0065 are decoded as "bot" by ScrollRunDecoder.
+    /// Older rows pre-0065 are decoded as "bot" by EnvelopeRunDecoder.
     let kind: String
     /// What kicked the run off. `"example"` marks the preset 「读我」
     /// letter every new user is seeded — it's attributed to the app
@@ -56,7 +56,7 @@ extension APIClient {
     /// back onto the conversation row so the next trigger inherits.
     /// Returns the run id immediately; the runner streams progress via
     /// Realtime. Caller subscribes to the feed channel to watch it.
-    func scrollTrigger(conversationId: String, settings: EnvelopeSettings? = nil) async throws -> String {
+    func envelopeTrigger(conversationId: String, settings: EnvelopeSettings? = nil) async throws -> String {
         struct Body: Encodable {
             let conversationId: String
             let settings: EnvelopeSettings?
@@ -71,7 +71,7 @@ extension APIClient {
 
     /// Marks a running envelope as cancelled. The runner notices on its
     /// next turn and exits cleanly.
-    func scrollCancel(id: String) async throws {
+    func envelopeCancel(id: String) async throws {
         try await postVoid("v1/envelope/\(id)/cancel")
     }
 
@@ -80,7 +80,7 @@ extension APIClient {
     /// the same realtime feed channel that bot envelopes use. Server
     /// returns 403 / `not_mutual_friends` if the friendship requirement
     /// fails — APIClient surfaces that as an error the caller can show.
-    func scrollSendLetter(
+    func envelopeSendLetter(
         conversationId: String,
         recipientUserId: String,
         title: String?,
@@ -206,7 +206,7 @@ struct EnvelopeSettings: Codable, Hashable {
 // ── Realtime feed channel ────────────────────────────────────────────────
 //
 // One WebSocket per signed-in user to the user-level realtime hub
-// (/v1/realtime-hub/user), opened when the Scroll tab appears, closed
+// (/v1/realtime-hub/user), opened when the Envelope tab appears, closed
 // when it disappears. The user topic carries envelope_runs changes
 // (alongside user_unread_counts, which RealtimeManager consumes on its
 // own socket) — this channel keeps only the envelope_runs rows. iOS
@@ -214,14 +214,14 @@ struct EnvelopeSettings: Codable, Hashable {
 // them locally.
 
 /// Token returned by `start`; pass it back to `stop` to detach.
-struct ScrollFeedToken: Hashable, Sendable {
+struct EnvelopeFeedToken: Hashable, Sendable {
     let id: UUID
     let userId: String
 }
 
 @MainActor
-final class ScrollFeedChannel {
-    static let shared = ScrollFeedChannel()
+final class EnvelopeFeedChannel {
+    static let shared = EnvelopeFeedChannel()
     private init() {}
 
     private var socket: RealtimeSocket?
@@ -239,8 +239,8 @@ final class ScrollFeedChannel {
         userId: String,
         onUpsert: @escaping UpsertHandler,
         onDelete: @escaping DeleteHandler
-    ) async -> ScrollFeedToken {
-        let token = ScrollFeedToken(id: UUID(), userId: userId)
+    ) async -> EnvelopeFeedToken {
+        let token = EnvelopeFeedToken(id: UUID(), userId: userId)
         observers[token.id] = ObserverFns(upsert: onUpsert, delete: onDelete)
 
         // Already connected for this user — just hook in the new observers.
@@ -253,7 +253,7 @@ final class ScrollFeedChannel {
         currentUserId = userId
         let sock = RealtimeSocket(path: "v1/realtime-hub/user") { [weak self] change in
             // The user topic also carries user_unread_counts; keep only
-            // scroll feed rows.
+            // envelope feed rows.
             guard change.table == "envelope_runs", let self else { return }
             for (_, obs) in self.observers {
                 // DELETE carries the row from the webhook's old_record —
@@ -270,7 +270,7 @@ final class ScrollFeedChannel {
         return token
     }
 
-    func stop(_ token: ScrollFeedToken) async {
+    func stop(_ token: EnvelopeFeedToken) async {
         observers.removeValue(forKey: token.id)
         if observers.isEmpty {
             tearDown()
@@ -289,7 +289,7 @@ final class ScrollFeedChannel {
 /// Typed view of the JSONB `progress` blob the runner writes (see
 /// `apps/edge/src/lib/envelope-runner.ts` — `ProgressState`). Every field
 /// is optional so older rows / drift in shape still render something.
-struct ScrollProgress {
+struct EnvelopeProgress {
     let phase: String?
     /// Live "what's happening right now" line written by the runner
     /// between awaits (model call → tools → collaborator). When set,
@@ -304,9 +304,9 @@ struct ScrollProgress {
         let source: String?
     }
 
-    static let empty = ScrollProgress(phase: nil, currentActivity: nil, notes: [], visitedURLs: [])
+    static let empty = EnvelopeProgress(phase: nil, currentActivity: nil, notes: [], visitedURLs: [])
 
-    static func from(_ json: AnyJSON?) -> ScrollProgress {
+    static func from(_ json: AnyJSON?) -> EnvelopeProgress {
         guard let json, case let .object(dict) = json else { return .empty }
 
         var phase: String?
@@ -337,14 +337,14 @@ struct ScrollProgress {
             }
         }
 
-        return ScrollProgress(phase: phase, currentActivity: currentActivity, notes: notes, visitedURLs: urls)
+        return EnvelopeProgress(phase: phase, currentActivity: currentActivity, notes: notes, visitedURLs: urls)
     }
 }
 
 /// Human label for a runner phase (`"research"` → `"上网查证"`). Falls
 /// back to the raw value when the phase is unknown, and to a generic
 /// "拟稿中" when nothing has been written yet.
-enum ScrollPhaseLabel {
+enum EnvelopePhaseLabel {
     static func text(_ phase: String?) -> String {
         switch phase {
         case "queued":   return "排队中"
@@ -477,11 +477,11 @@ private func anyJSONToCompactString(_ json: AnyJSON) -> String {
 
 // ── Decoding helpers ─────────────────────────────────────────────────────
 
-enum ScrollRunDecoder {
-    /// Decode a Realtime record (`[String: AnyJSON]`) into a ScrollRun.
+enum EnvelopeRunDecoder {
+    /// Decode a Realtime record (`[String: AnyJSON]`) into a EnvelopeRun.
     /// Returns nil if the row is missing required fields — defensive in
     /// case the publication shape changes upstream.
-    static func decode(_ record: [String: AnyJSON]) -> ScrollRun? {
+    static func decode(_ record: [String: AnyJSON]) -> EnvelopeRun? {
         guard
             let id = record["id"]?.stringValue,
             let conv = record["conversation_id"]?.stringValue,
@@ -493,7 +493,7 @@ enum ScrollRunDecoder {
         // bot_id is now nullable (kind='human' rows have no bot). Default
         // kind to 'bot' so realtime rows from old workers / pre-migration
         // backfill still decode without surfacing a nil.
-        return ScrollRun(
+        return EnvelopeRun(
             id: id,
             bot_id: record["bot_id"]?.stringValue,
             author_user_id: record["author_user_id"]?.stringValue,

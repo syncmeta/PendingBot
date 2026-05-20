@@ -9,13 +9,13 @@ import Supabase
 /// Reads the initial page directly from `pendingbot.envelope_runs` (RLS
 /// scoped to the signed-in user) and subscribes to a feed-level
 /// Realtime channel for live INSERT/UPDATE/DELETE.
-struct ScrollTabView: View {
+struct EnvelopeTabView: View {
     @EnvironmentObject private var store: AccountStore
     @Environment(\.api) private var api
     @Environment(\.useSidebarLayout) private var sidebarLayout
     @Environment(\.topTabSelection) private var topTabSelection
 
-    @State private var runs: [ScrollRun] = []
+    @State private var runs: [EnvelopeRun] = []
     @State private var botNames: [String: String] = [:]
     /// Display names for human-letter authors. Resolved from the local
     /// contacts cache (LocalDatabase) since pendingbot.users is RLS-self
@@ -25,9 +25,9 @@ struct ScrollTabView: View {
     @State private var authorNames: [String: String] = [:]
     @State private var loading = false
     @State private var error: String?
-    @State private var path: [ScrollNav] = []
+    @State private var path: [EnvelopeNav] = []
 
-    @State private var feedToken: ScrollFeedToken?
+    @State private var feedToken: EnvelopeFeedToken?
 
     var body: some View {
         Group {
@@ -82,7 +82,7 @@ struct ScrollTabView: View {
                         ScrollView {
                             LazyVStack(spacing: 16) {
                                 ForEach(runs) { run in
-                                    ScrollFeedRow(run: run, senderName: senderName(for: run))
+                                    EnvelopeFeedRow(run: run, senderName: senderName(for: run))
                                         .contentShape(Rectangle())
                                         .onTapGesture {
                                             guard run.isDone || run.isRunning else { return }
@@ -101,10 +101,10 @@ struct ScrollTabView: View {
             }
             .background(Theme.Palette.canvas.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
-            .navigationDestination(for: ScrollNav.self) { dest in
+            .navigationDestination(for: EnvelopeNav.self) { dest in
                 switch dest {
                 case .article(let id):
-                    ScrollArticleView(envelopeRunId: id)
+                    EnvelopeArticleView(envelopeRunId: id)
                 }
             }
         }
@@ -119,7 +119,7 @@ struct ScrollTabView: View {
 
     private func onDisappearLifecycle() async {
         if let t = feedToken {
-            await ScrollFeedChannel.shared.stop(t)
+            await EnvelopeFeedChannel.shared.stop(t)
             feedToken = nil
         }
     }
@@ -131,7 +131,7 @@ struct ScrollTabView: View {
         loading = true
         defer { loading = false }
         do {
-            let rows: [ScrollRun] = try await SupabaseStack.shared
+            let rows: [EnvelopeRun] = try await SupabaseStack.shared
                 .from("envelope_runs")
                 .select("id, kind, trigger, bot_id, author_user_id, conversation_id, status, title, summary, body_md, progress, turns, created_at, started_at, finished_at")
                 .order("created_at", ascending: false)
@@ -157,7 +157,7 @@ struct ScrollTabView: View {
     /// look up by bot_id; human-letter rows use the local-cached author
     /// name (or alias). Returns nil if the lookup hasn't landed yet —
     /// the row falls back to a generic "机器人" / "好友" label.
-    private func senderName(for run: ScrollRun) -> String? {
+    private func senderName(for run: EnvelopeRun) -> String? {
         if run.isHuman {
             guard let id = run.author_user_id else { return nil }
             return authorNames[id]
@@ -169,7 +169,7 @@ struct ScrollTabView: View {
     /// Resolve any bot_ids referenced by `feed` into display names so the
     /// row's byline reads "<bot> · 2 分钟前" instead of an anonymous
     /// avatar. Cached in `botNames`; only the missing ids hit the table.
-    private func refreshBotNames(for feed: [ScrollRun]) async {
+    private func refreshBotNames(for feed: [EnvelopeRun]) async {
         // Preset 「读我」rows render as "Untitled" regardless of bot_id,
         // so don't bother resolving their (self-bot) name.
         let missing = Array(
@@ -196,7 +196,7 @@ struct ScrollTabView: View {
     /// Pull author display names (and the caller's local alias if set)
     /// for human-letter rows out of the local contacts cache. We only
     /// add to the cache; LocalDatabase is the source of truth.
-    private func refreshAuthorNames(for feed: [ScrollRun]) {
+    private func refreshAuthorNames(for feed: [EnvelopeRun]) {
         let missing = Set(feed.compactMap { $0.kind == "human" ? $0.author_user_id : nil })
             .subtracting(authorNames.keys)
         guard !missing.isEmpty else { return }
@@ -213,10 +213,10 @@ struct ScrollTabView: View {
 
     private func subscribe() async {
         guard let userId = store.current?.id, feedToken == nil else { return }
-        feedToken = await ScrollFeedChannel.shared.start(
+        feedToken = await EnvelopeFeedChannel.shared.start(
             userId: userId,
             onUpsert: { record in
-                guard let run = ScrollRunDecoder.decode(record) else { return }
+                guard let run = EnvelopeRunDecoder.decode(record) else { return }
                 Task { @MainActor in
                     upsert(run: run)
                 }
@@ -231,7 +231,7 @@ struct ScrollTabView: View {
     }
 
     @MainActor
-    private func upsert(run: ScrollRun) {
+    private func upsert(run: EnvelopeRun) {
         if run.status == "cancelled" {
             runs.removeAll { $0.id == run.id }
             return
@@ -250,7 +250,7 @@ struct ScrollTabView: View {
 
 }
 
-enum ScrollNav: Hashable {
+enum EnvelopeNav: Hashable {
     case article(String)
 }
 

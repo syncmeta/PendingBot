@@ -5,7 +5,7 @@ import SwiftUI
 /// other row falls back to the deterministic BotAvatar glyph, seeded by
 /// bot_id (kind='bot') or author_user_id (kind='human').
 struct LetterSenderAvatar: View {
-    let run: ScrollRun
+    let run: EnvelopeRun
     var size: CGFloat = 36
 
     var body: some View {

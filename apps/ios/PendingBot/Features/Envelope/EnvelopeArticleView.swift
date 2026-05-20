@@ -4,16 +4,16 @@ import Supabase
 /// Detail view for a single scroll. Loads the row, then subscribes to
 /// it via Realtime so a still-running scroll fills in the body live as
 /// the runner writes it. Renders body_md with MarkdownText.
-struct ScrollArticleView: View {
+struct EnvelopeArticleView: View {
     let envelopeRunId: String
     @Environment(\.dismiss) private var dismiss
     @Environment(\.api) private var api
 
-    @State private var run: ScrollRun?
+    @State private var run: EnvelopeRun?
     @State private var loading = true
     @State private var error: String?
     @State private var bot: BotMeta?
-    @State private var feedToken: ScrollFeedToken?
+    @State private var feedToken: EnvelopeFeedToken?
     @State private var cancelling = false
     @State private var showCancelConfirm = false
 
@@ -67,7 +67,7 @@ struct ScrollArticleView: View {
     /// muted caption on the trailing edge. No green kicker on top — the
     /// title is allowed to lead.
     @ViewBuilder
-    private func headerSection(run: ScrollRun) -> some View {
+    private func headerSection(run: EnvelopeRun) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             if let title = run.title, !title.isEmpty {
                 Text(title)
@@ -118,8 +118,8 @@ struct ScrollArticleView: View {
     /// alias / display name for kind='human'. The human path doesn't
     /// trigger a network fetch — pendingbot.users is RLS-self so we only
     /// know names of people already in our contacts.
-    private func senderLabel(run: ScrollRun) -> String {
-        if run.isPreset { return ScrollRun.presetSenderName }
+    private func senderLabel(run: EnvelopeRun) -> String {
+        if run.isPreset { return EnvelopeRun.presetSenderName }
         if run.isHuman {
             guard let id = run.author_user_id else { return "好友" }
             for c in LocalDatabase.shared.loadContacts() where c.id == id {
@@ -146,7 +146,7 @@ struct ScrollArticleView: View {
     // MARK: - Body
 
     @ViewBuilder
-    private func bodySection(run: ScrollRun) -> some View {
+    private func bodySection(run: EnvelopeRun) -> some View {
         if let body = run.body_md, !body.isEmpty {
             MarkdownText(text: body, variant: .article)
             // Bot envelopes carry a per-turn research trace; human-written
@@ -155,7 +155,7 @@ struct ScrollArticleView: View {
                 EnvelopeThinkingTrace(turns: EnvelopeTurn.parse(run.turns), collapsed: true)
             }
         } else if run.isRunning {
-            runningSection(progress: ScrollProgress.from(run.progress))
+            runningSection(progress: EnvelopeProgress.from(run.progress))
             EnvelopeThinkingTrace(turns: EnvelopeTurn.parse(run.turns), collapsed: false)
         } else if run.status == "error" {
             Text("这封来信写丢了。可以从来信列表删掉重来。")
@@ -177,12 +177,12 @@ struct ScrollArticleView: View {
     /// fetched — all of which the runner persists into `progress` after
     /// every turn so this view fills in over Realtime as the agent works.
     @ViewBuilder
-    private func runningSection(progress: ScrollProgress) -> some View {
+    private func runningSection(progress: EnvelopeProgress) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     TypingDots()
-                    Text(progress.currentActivity ?? ScrollPhaseLabel.text(progress.phase))
+                    Text(progress.currentActivity ?? EnvelopePhaseLabel.text(progress.phase))
                         .font(Theme.Fonts.footnote)
                         .foregroundStyle(Theme.Palette.ink)
                 }
@@ -191,7 +191,7 @@ struct ScrollArticleView: View {
                 // the user can still see "上网查证" while the heartbeat
                 // line updates per step.
                 if progress.currentActivity != nil {
-                    Text(ScrollPhaseLabel.text(progress.phase))
+                    Text(EnvelopePhaseLabel.text(progress.phase))
                         .font(Theme.Fonts.caption)
                         .foregroundStyle(Theme.Palette.inkMuted)
                         .padding(.leading, 22)
@@ -275,7 +275,7 @@ struct ScrollArticleView: View {
             // Array fetch (not .single()) so a row that the runner has
             // already silently deleted ("空奏折不落库") returns empty
             // instead of throwing PostgREST's "cannot coerce" error.
-            let rows: [ScrollRun] = try await SupabaseStack.shared
+            let rows: [EnvelopeRun] = try await SupabaseStack.shared
                 .from("envelope_runs")
                 .select("id, kind, trigger, bot_id, author_user_id, conversation_id, status, title, summary, body_md, progress, turns, created_at, started_at, finished_at")
                 .eq("id", value: envelopeRunId)
@@ -317,10 +317,10 @@ struct ScrollArticleView: View {
 
     private func subscribe() async {
         guard let userId = AccountStore.shared.current?.id, feedToken == nil else { return }
-        feedToken = await ScrollFeedChannel.shared.start(
+        feedToken = await EnvelopeFeedChannel.shared.start(
             userId: userId,
             onUpsert: { record in
-                guard let r = ScrollRunDecoder.decode(record),
+                guard let r = EnvelopeRunDecoder.decode(record),
                       r.id == envelopeRunId else { return }
                 Task { @MainActor in self.run = r }
             },
@@ -333,7 +333,7 @@ struct ScrollArticleView: View {
 
     private func stop() async {
         if let t = feedToken {
-            await ScrollFeedChannel.shared.stop(t)
+            await EnvelopeFeedChannel.shared.stop(t)
             feedToken = nil
         }
     }
@@ -343,7 +343,7 @@ struct ScrollArticleView: View {
         cancelling = true
         defer { cancelling = false }
         do {
-            try await api.scrollCancel(id: envelopeRunId)
+            try await api.envelopeCancel(id: envelopeRunId)
         } catch {
             self.error = error.localizedDescription
         }

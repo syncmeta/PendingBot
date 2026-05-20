@@ -6,8 +6,8 @@ import Supabase
 /// summary, and a status pill for non-done states. A running row gets a
 /// thin accent strip on the leading edge so the whole card reads as
 /// "still being written" without crowding the body with typing dots.
-struct ScrollFeedRow: View {
-    let run: ScrollRun
+struct EnvelopeFeedRow: View {
+    let run: EnvelopeRun
     /// Display name for the sender — bot's display_name when kind='bot',
     /// the author's profile name (resolved from local contacts cache)
     /// when kind='human'. Nil while the lookup is in flight; the row
@@ -109,7 +109,7 @@ struct ScrollFeedRow: View {
     /// Byline name. The preset 「读我」letter is attributed to the app
     /// itself; otherwise use the resolved bot / author name.
     private var displaySenderName: String? {
-        run.isPreset ? ScrollRun.presetSenderName : senderName
+        run.isPreset ? EnvelopeRun.presetSenderName : senderName
     }
 
     // MARK: - Status pill (only for non-done, non-running)
@@ -141,8 +141,8 @@ struct ScrollFeedRow: View {
     /// feed updates per step (e.g. "搜索 X · 读 host.com"); falls back to
     /// the coarser phase label between heartbeats.
     private var progressLabel: String {
-        let p = ScrollProgress.from(run.progress)
-        return p.currentActivity ?? ScrollPhaseLabel.text(p.phase)
+        let p = EnvelopeProgress.from(run.progress)
+        return p.currentActivity ?? EnvelopePhaseLabel.text(p.phase)
     }
 
     private var relativeTime: String? {
