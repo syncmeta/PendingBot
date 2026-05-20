@@ -2094,9 +2094,9 @@ private struct PreChatActionButton: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .stroke(Theme.Palette.hairline, lineWidth: 1)
+                    .stroke(Color.black.opacity(0.04), lineWidth: 0.5)
             )
-            .shadow(color: Color.black.opacity(0.05), radius: 3, x: 0, y: 1.5)
+            .shadow(color: Color.black.opacity(0.02), radius: 3, x: 0, y: 1.5)
         }
         .buttonStyle(.plain)
     }
