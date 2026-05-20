@@ -511,6 +511,12 @@ struct FriendsTabView: View {
     /// Accept (or decline) by hitting the worker endpoint. Optimistically
     /// drops the row from the inbox so the UI feels responsive; a follow-
     /// up `load()` reconciles whatever the server actually committed.
+    ///
+    /// On accept, we ride the worker's `peerUserId` field straight into
+    /// the new friend's 1:1 chat — same path as tapping their row in the
+    /// friend list. open-chat finds-or-creates the user_user conv (it
+    /// already exists at this point: accept_friend_request wrote both
+    /// user_contacts rows before returning).
     private func respondToRequest(_ request: PendingFriendRequest, accept: Bool) async {
         pendingFriendRequests.removeAll { $0.id == request.id }
         do {
@@ -521,10 +527,19 @@ struct FriendsTabView: View {
             req.httpMethod = "POST"
             let token = try await SupabaseStack.shared.auth.session.accessToken
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            let (_, resp) = try await URLSession.shared.data(for: req)
+            let (data, resp) = try await URLSession.shared.data(for: req)
             guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode)
             else { throw URLError(.badServerResponse) }
             Haptics.success()
+            if accept {
+                // Prefer the worker-returned peerUserId (canonical), but
+                // fall back to whatever the inbox row carried.
+                struct AcceptResp: Decodable { let peerUserId: String? }
+                let peerId = (try? JSONDecoder().decode(AcceptResp.self, from: data).peerUserId)
+                    ?? request.peerUserId
+                await openChatWith(peerId: peerId, displayName: request.peerDisplayName,
+                                   avatarSeed: request.peerAvatarSeed)
+            }
         } catch {
             self.error = "处理好友申请失败: \(error.localizedDescription)"
             Haptics.error()
@@ -532,6 +547,20 @@ struct FriendsTabView: View {
         // Always refresh — accept also adds a row to user_contacts which
         // the friends list needs to pick up.
         await load()
+    }
+
+    /// Resolve (or materialise) the singleton user_user conv between the
+    /// caller and `peerId`, then route to it via the existing `open()`
+    /// path. Same recipe as tapping a human friend row in the list, just
+    /// driven from the accept-button instead of a tap gesture.
+    private func openChatWith(peerId: String, displayName: String, avatarSeed: String) async {
+        let convId = try? await fetchOrCreateUserUserConv(peerId: peerId)
+        open(PendingPeer(kind: "user",
+                         peerId: peerId,
+                         displayName: displayName,
+                         avatarPath: nil,
+                         avatarSeed: avatarSeed,
+                         existingConvId: convId))
     }
 
     // MARK: - Filtering
