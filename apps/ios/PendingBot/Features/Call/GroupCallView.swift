@@ -42,6 +42,8 @@ struct GroupCallView: View {
                         .padding(.top, 28)
                 }
                 Spacer(minLength: 0)
+                inviteRow
+                    .padding(.bottom, 18)
                 toolbar
                     .padding(.bottom, 28)
             }
@@ -95,58 +97,59 @@ struct GroupCallView: View {
 
     // MARK: - Top bar
 
-    /// Title + status on the left, the two invite CTAs on the right —
-    /// vertically aligned so name and buttons read as a balanced pair
-    /// across the top of the screen.
+    /// Title + status on the left across the top.
     private var topBar: some View {
-        HStack(alignment: .center, spacing: 16) {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Text(session.groupTitle.isEmpty ? "群语音" : session.groupTitle)
-                        .font(.title3).bold()
-                        .lineLimit(1)
-                    inlineStatus
-                }
-                if session.phase == .connected, session.cumulativePnd > 0 {
-                    Text("本次通话的费用：\(session.cumulativePnd) PND")
-                        .font(.caption)
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                }
-            }
-            Spacer(minLength: 8)
-            HStack(spacing: 10) {
-                inviteButton(
-                    title: "叫机器人",
-                    systemImage: "sparkle",
-                    tint: Self.botInviteInk,
-                ) {
-                    Haptics.tap()
-                    showingAddBot = true
-                }
-                inviteButton(
-                    title: "叫真人",
-                    systemImage: "person.wave.2.fill",
-                    tint: .primary,
-                ) {
-                    Haptics.tap()
-                    showingRingHuman = true
-                }
-            }
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(session.groupTitle.isEmpty ? "群语音" : session.groupTitle)
+                .font(.title3).bold()
+                .lineLimit(1)
+            inlineStatus
+            Spacer(minLength: 0)
         }
     }
 
     @ViewBuilder
     private var inlineStatus: some View {
         if session.phase == .connected {
-            Text(elapsedDisplay)
-                .font(.subheadline)
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Text(elapsedDisplay)
+                    .font(.subheadline)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                if session.cumulativePnd > 0 {
+                    Text("\(session.cumulativePnd) PND")
+                        .font(.subheadline)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
+            }
         } else {
             Text(statusText)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    /// Two invite CTAs sitting just above the toolbar, centered as a
+    /// balanced pair.
+    private var inviteRow: some View {
+        HStack(spacing: 14) {
+            inviteButton(
+                title: "叫机器人",
+                systemImage: "sparkle",
+                tint: Self.botInviteInk,
+            ) {
+                Haptics.tap()
+                showingAddBot = true
+            }
+            inviteButton(
+                title: "叫真人",
+                systemImage: "person.wave.2.fill",
+                tint: .primary,
+            ) {
+                Haptics.tap()
+                showingRingHuman = true
+            }
         }
     }
 
@@ -167,9 +170,11 @@ struct GroupCallView: View {
                     .font(.subheadline)
                 Text(title)
                     .font(.subheadline).fontWeight(.medium)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
             .foregroundStyle(tint)
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 20)
             .padding(.vertical, 18)
             .background(Capsule().fill(Theme.Palette.surface))
             .overlay(
