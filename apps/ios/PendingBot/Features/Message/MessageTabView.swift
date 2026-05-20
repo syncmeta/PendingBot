@@ -14,6 +14,7 @@ private let log = Logger.category("conv-list")
 enum ChatDest: Hashable {
     case existing(Conversation)
     case pending(PendingPeer)
+    case composeGroup
 }
 
 /// 消息 tab — primary chat.
@@ -43,7 +44,6 @@ struct MessageTabView: View {
     @State private var userPeers: [String: UserUserPeer] = [:]
     @State private var loading = false
     @State private var error: String?
-    @State private var creatingGroup = false
     @State private var joiningGroup = false
     @State private var addingFriend = false
     @State private var scanning = false
@@ -87,11 +87,6 @@ struct MessageTabView: View {
         .alert("出错了", isPresented: .constant(error != nil), actions: {
             Button("好") { error = nil }
         }, message: { Text(error ?? "") })
-        .sheet(isPresented: $creatingGroup) {
-            CreateGroupSheet { _ in Task { await load() } }
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-        }
         .sheet(isPresented: $joiningGroup) {
             GroupJoinView { convId in
                 // After successful join, refresh the conv list and
@@ -231,6 +226,11 @@ struct MessageTabView: View {
             ) {
                 reload()
             }
+        case .composeGroup:
+            CreateGroupView(
+                recentOrder: recentParticipantOrder,
+                onCreated: { convId in groupCreated(convId: convId) }
+            )
         }
     }
 
@@ -238,6 +238,7 @@ struct MessageTabView: View {
         switch dest {
         case .existing(let c): return "conv:\(c.id)"
         case .pending(let p):  return "pending:\(p.kind):\(p.peerId)"
+        case .composeGroup:    return "composeGroup"
         }
     }
 
@@ -297,7 +298,7 @@ struct MessageTabView: View {
                                 addFriendChooser = true
                             },
                             PlusActionItem(title: "拉群", systemImage: "person.3") {
-                                creatingGroup = true
+                                openCreateGroup()
                             },
                             PlusActionItem(title: "加群", systemImage: "person.3.sequence") {
                                 joiningGroup = true
@@ -410,6 +411,65 @@ struct MessageTabView: View {
             selected = .existing(conv)
         } else {
             path.append(.existing(conv))
+        }
+    }
+
+    private func openCreateGroup() {
+        Haptics.tap()
+        if sidebarLayout {
+            selected = .composeGroup
+        } else {
+            path.append(.composeGroup)
+        }
+    }
+
+    /// Build a [participantId: rank] map so the create-group picker can
+    /// sort members by recent chat activity. The conversations list is
+    /// already sorted by `last_activity_at` desc, so the first appearance
+    /// of each participant id is its most-recent activity rank.
+    private var recentParticipantOrder: [String: Int] {
+        var order: [String: Int] = [:]
+        let myId = AccountStore.shared.current?.id ?? ""
+        for conv in conversations {
+            switch conv.conversation_type {
+            case "user_bot":
+                let id = conv.bot_id
+                if !id.isEmpty, order[id] == nil { order[id] = order.count }
+            case "user_user":
+                if let peer = userPeers[conv.id], peer.userId != myId,
+                   order[peer.userId] == nil {
+                    order[peer.userId] = order.count
+                }
+            default:
+                break
+            }
+        }
+        return order
+    }
+
+    /// Land the newly-created group's conversation in place of the
+    /// compose page so the back button returns to the conv list rather
+    /// than to the empty compose UI.
+    private func groupCreated(convId: String) {
+        let userId = AccountStore.shared.current?.id ?? ""
+        let stub = Conversation(
+            id: convId, bot_id: "", user_id: userId,
+            title: nil, feature_type: "message",
+            conversation_type: "group",
+            last_activity_at: Int(Date().timeIntervalSince1970),
+            round_count: 0, bot_name: nil,
+            last_message_content: nil, last_message_sender_type: nil,
+            model_override: nil, provider_override: nil
+        )
+        Task { await load() }
+        if sidebarLayout {
+            selected = .existing(stub)
+        } else {
+            if !path.isEmpty, case .composeGroup = path.last {
+                path[path.count - 1] = .existing(stub)
+            } else {
+                path.append(.existing(stub))
+            }
         }
     }
 
@@ -1292,107 +1352,132 @@ private struct QRPhotoPicker: View {
     }
 }
 
-// MARK: - Create group sheet
+// MARK: - Create group page
 
-/// Group chat creation. Caller picks 0..N bots + 0..N human friends and a
-/// title, plus is automatically added as owner. Mixed bot+human groups
-/// are allowed.
-private struct CreateGroupSheet: View {
+/// Group chat creation page (pushed onto the message-tab nav stack so it
+/// gets a full screen rather than a half-sheet). Title is auto-filled
+/// from `/v1/groups/random-name` on appear, with a regenerate button at
+/// the trailing edge of the name field. The member picker merges bots
+/// + humans into one list sorted by recent chat activity — same ranking
+/// as the parent conversations list (most-recent first), with anyone the
+/// caller hasn't talked to yet appended at the bottom in name order.
+private struct CreateGroupView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var modelCatalog: ModelCatalog
+
+    /// participant id → rank (lower = more recently chatted). Built by
+    /// MessageTabView from its already-sorted conversations list so this
+    /// view doesn't re-query.
+    let recentOrder: [String: Int]
     var onCreated: (String) -> Void
 
-    struct BotPick: Identifiable, Hashable {
+    enum MemberKind { case bot, human }
+    struct Member: Identifiable, Hashable {
         let id: String
+        let kind: MemberKind
         let name: String
-        let model_id: String?
+        /// Bot model_id (subtitle); nil for humans.
+        let modelId: String?
+        /// Avatar inputs — humans use the seed/path pair, bots use the
+        /// emoji-glyph deterministic avatar keyed off `id`.
+        let avatarSeed: String
+        let avatarPath: String?
     }
-    struct HumanPick: Identifiable, Hashable {
-        let id: String
-        let name: String
-    }
+
     private struct BotDecodable: Decodable {
         let id: String
         let display_name: String
         let model_id: String?
         let visibility: String?
     }
-    // ContactDecodable is gone — the picker now uses ContactsAPI which
-    // routes through the worker so display_name + avatar_path land
-    // alongside alias. The previous direct supabase query against
-    // user_contacts couldn't join pendingbot.users (RLS is self-only),
-    // so the picker fell back to alias-or-id-prefix and humans appeared
-    // as 8-char hex strings instead of their real display names.
 
     @State private var title = ""
-    @State private var bots: [BotPick] = []
-    @State private var humans: [HumanPick] = []
-    @State private var selectedBots = Set<String>()
-    @State private var selectedHumans = Set<String>()
+    @State private var members: [Member] = []
+    @State private var selectedIds = Set<String>()
     @State private var loading = true
     @State private var creating = false
+    @State private var generatingName = false
+    @State private var didPreloadTitle = false
     @State private var error: String?
 
     var body: some View {
-        NavigationStack {
-            Form {
-                Section("群名") {
+        Form {
+            Section("群名") {
+                HStack(spacing: 8) {
                     TextField("起个名字", text: $title)
-                }
-                Section("机器人成员") {
-                    if bots.isEmpty {
-                        Text("没有可选机器人").foregroundStyle(.secondary)
+                        .textInputAutocapitalization(.never)
+                    Button {
+                        Task { await regenerateTitle() }
+                    } label: {
+                        Image(systemName: generatingName ? "hourglass" : "arrow.clockwise")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Theme.Palette.accent)
+                            .frame(width: 32, height: 32)
+                            .background(Circle().fill(Theme.Palette.accentBg))
                     }
-                    ForEach(bots) { b in
-                        memberRow(name: b.name,
-                                  subtitle: b.model_id.map { modelCatalog.displayName(for: $0) },
-                                  selected: selectedBots.contains(b.id)) {
-                            toggle(set: &selectedBots, id: b.id)
-                        }
-                    }
-                }
-                Section("真人成员") {
-                    if humans.isEmpty {
-                        Text("还没有真人朋友").foregroundStyle(.secondary)
-                    }
-                    ForEach(humans) { h in
-                        memberRow(name: h.name,
-                                  subtitle: nil,
-                                  selected: selectedHumans.contains(h.id)) {
-                            toggle(set: &selectedHumans, id: h.id)
-                        }
-                    }
-                }
-                if let error {
-                    Text(error).foregroundStyle(.red).font(.footnote)
+                    .buttonStyle(.plain)
+                    .disabled(generatingName)
+                    .accessibilityLabel("换一个名字")
                 }
             }
-            .navigationTitle("发起群聊")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("取消") { dismiss() }
+            Section("成员") {
+                if loading && members.isEmpty {
+                    HStack { ProgressView(); Text("加载中...").foregroundStyle(.secondary) }
+                } else if members.isEmpty {
+                    Text("还没有可选成员").foregroundStyle(.secondary)
                 }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("创建") { Task { await create() } }
-                        .disabled(creating || title.trimmingCharacters(in: .whitespaces).isEmpty
-                                  || (selectedBots.isEmpty && selectedHumans.isEmpty))
+                ForEach(members) { m in
+                    memberRow(m)
+                }
+            }
+            if let error {
+                Section { Text(error).foregroundStyle(.red).font(.footnote) }
+            }
+        }
+        .navigationTitle("发起群聊")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("创建") { Task { await create() } }
+                    .disabled(creating
+                              || title.trimmingCharacters(in: .whitespaces).isEmpty
+                              || selectedIds.isEmpty)
+            }
+        }
+        .task {
+            await load()
+            if !didPreloadTitle {
+                didPreloadTitle = true
+                if title.trimmingCharacters(in: .whitespaces).isEmpty {
+                    await regenerateTitle()
                 }
             }
         }
-        .task { await load() }
     }
 
     @ViewBuilder
-    private func memberRow(name: String, subtitle: String?, selected: Bool, onTap: @escaping () -> Void) -> some View {
-        Button(action: onTap) {
-            HStack(spacing: 10) {
+    private func memberRow(_ m: Member) -> some View {
+        let selected = selectedIds.contains(m.id)
+        Button {
+            toggle(id: m.id)
+        } label: {
+            HStack(spacing: 12) {
                 Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                     .foregroundStyle(selected ? Theme.Palette.accent : Theme.Palette.inkMuted)
+                Group {
+                    switch m.kind {
+                    case .bot:
+                        BotAvatar(emojiSeed: m.id, colorSeed: m.id, size: 32)
+                    case .human:
+                        UserAvatar(seed: m.avatarSeed, attachmentId: m.avatarPath, size: 32)
+                    }
+                }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(name).foregroundStyle(Theme.Palette.ink)
-                    if let s = subtitle {
-                        Text(s).font(Theme.Fonts.monoSmall).foregroundStyle(Theme.Palette.inkMuted)
+                    Text(m.name).foregroundStyle(Theme.Palette.ink)
+                    if let mid = m.modelId {
+                        Text(modelCatalog.displayName(for: mid))
+                            .font(Theme.Fonts.monoSmall)
+                            .foregroundStyle(Theme.Palette.inkMuted)
                     }
                 }
                 Spacer()
@@ -1401,8 +1486,8 @@ private struct CreateGroupSheet: View {
         .buttonStyle(.plain)
     }
 
-    private func toggle(set: inout Set<String>, id: String) {
-        if set.contains(id) { set.remove(id) } else { set.insert(id) }
+    private func toggle(id: String) {
+        if selectedIds.contains(id) { selectedIds.remove(id) } else { selectedIds.insert(id) }
         Haptics.tap()
     }
 
@@ -1415,29 +1500,66 @@ private struct CreateGroupSheet: View {
                 .eq("is_active", value: true)
                 .execute()
                 .value
-            // Friends list goes through the worker (service-role read of
-            // pendingbot.users) so display_name + alias both land. Direct
-            // supabase queries can't get display_name — the users table's
-            // RLS is self-only.
             async let humanRowsResp: [FriendsTabView.HumanPick] = ContactsAPI.fetchContacts()
-            let botRows = try await botRowsResp
             // Drop private bots — open_group_conv RPC rejects them
             // server-side, so showing them in the picker just leads to
             // a confusing failure.
-            self.bots = botRows
+            let bots = try await botRowsResp
                 .filter { $0.visibility != "private" }
-                .map { BotPick(id: $0.id, name: $0.display_name, model_id: $0.model_id) }
-            self.humans = (try await humanRowsResp).map {
-                HumanPick(id: $0.id, name: $0.rowName)
+                .map { Member(
+                    id: $0.id, kind: .bot, name: $0.display_name,
+                    modelId: $0.model_id, avatarSeed: $0.id, avatarPath: nil
+                ) }
+            let humans = try await humanRowsResp.map { h in
+                Member(
+                    id: h.id, kind: .human, name: h.rowName,
+                    modelId: nil, avatarSeed: h.avatarSeed, avatarPath: h.avatarPath
+                )
+            }
+            // Merge + sort: anyone in `recentOrder` ranks first (lower
+            // rank = more recent). Everyone else is appended below in
+            // localized name order so the list stays deterministic.
+            let merged = bots + humans
+            self.members = merged.sorted { a, b in
+                switch (recentOrder[a.id], recentOrder[b.id]) {
+                case let (.some(ra), .some(rb)): return ra < rb
+                case (.some, .none):             return true
+                case (.none, .some):             return false
+                case (.none, .none):
+                    return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+                }
             }
         } catch {
             self.error = error.localizedDescription
         }
     }
 
+    private func regenerateTitle() async {
+        generatingName = true; defer { generatingName = false }
+        struct Response: Decodable { let name: String }
+        do {
+            let url = HostedConfig.environment.workerURL
+                .appendingPathComponent("v1/groups/random-name")
+            var req = URLRequest(url: url)
+            req.httpMethod = "GET"
+            let token = try await SupabaseStack.shared.auth.session.accessToken
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else { return }
+            let decoded = try JSONDecoder().decode(Response.self, from: data)
+            self.title = decoded.name
+            Haptics.tap()
+        } catch {
+            // Silent — leave whatever title was there. The user can still
+            // type one in by hand.
+        }
+    }
+
     private func create() async {
         creating = true; defer { creating = false }
         let trimmedTitle = title.trimmingCharacters(in: .whitespaces)
+        let selectedBots = members.filter { $0.kind == .bot && selectedIds.contains($0.id) }.map(\.id)
+        let selectedHumans = members.filter { $0.kind == .human && selectedIds.contains($0.id) }.map(\.id)
         do {
             // Worker /v1/groups (open_group_conv RPC). Direct INSERTs would
             // skip conversation_group_meta + group_billing_config +
@@ -1460,8 +1582,8 @@ private struct CreateGroupSheet: View {
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             req.httpBody = try JSONEncoder().encode(Body(
                 title: trimmedTitle.isEmpty ? nil : trimmedTitle,
-                memberUserIds: Array(selectedHumans),
-                memberBotIds: Array(selectedBots),
+                memberUserIds: selectedHumans,
+                memberBotIds: selectedBots,
             ))
 
             let (data, resp) = try await URLSession.shared.data(for: req)
@@ -1476,7 +1598,6 @@ private struct CreateGroupSheet: View {
             let decoded = try JSONDecoder().decode(Response.self, from: data)
             Haptics.success()
             onCreated(decoded.conversationId)
-            dismiss()
         } catch {
             self.error = error.localizedDescription
         }
