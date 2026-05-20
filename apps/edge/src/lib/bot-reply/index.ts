@@ -683,13 +683,28 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   // `bubbleIndex`: that counter is kept in lockstep with the splitter's
   // streamed text bubbles so the client can rekey them, and an image
   // bubble has no streamed counterpart. The inserted row reaches the
-  // client through the conversation's realtime subscription instead.
-  const emitGeneratedImage = async (base64: string) => {
+  // client through the Cloudflare realtime hub (messages-table AFTER
+  // INSERT trigger → notify_realtime() → /v1/realtime-internal/notify →
+  // RealtimeHubDO WebSocket fan-out). The caller is responsible for
+  // resolving the corresponding `tool_result` SSE so the UI chip
+  // doesn't sit at "image_generation 中" forever.
+  //
+  // Returns: ok with the new attachment id, or failed with a reason
+  // string so the dispatch site can surface an error chip in the trace
+  // UI instead of silently swallowing the result. ("not-persisted"
+  // covers persistGeneratedImage returning null — R2 PUT or DB INSERT
+  // failed and was logged; "insert-failed" covers the messages.insert.)
+  type EmitImageResult =
+    | { ok: true; attachmentId: string }
+    | { ok: false; reason: string };
+  const emitGeneratedImage = async (
+    base64: string,
+  ): Promise<EmitImageResult> => {
     const attachmentId = await persistGeneratedImage(
       env, supa, userId, conversationId, base64,
     );
-    if (!attachmentId) return;
-    await supa.from('messages').insert({
+    if (!attachmentId) return { ok: false, reason: 'not-persisted' };
+    const { error } = await supa.from('messages').insert({
       id: randomUUID(),
       client_message_id: randomUUID(),
       conversation_id: conversationId,
@@ -701,7 +716,12 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       bubble_group_id: bubbleGroupId,
       attachments: { ids: [attachmentId] },
     });
+    if (error) {
+      console.warn('[bot-reply] generated-image message insert', error.message);
+      return { ok: false, reason: 'insert-failed' };
+    }
     bubblesInserted++;
+    return { ok: true, attachmentId };
   };
 
   // Each round inside the agent loop runs its own withFallback — when
@@ -902,7 +922,19 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
             bt.phase === 'completed' &&
             bt.imageBase64
           ) {
-            await emitGeneratedImage(bt.imageBase64);
+            // Persist → message row → resolve the open image_generation
+            // chip with a tool_result either way. Without this the UI's
+            // tool trace would sit on "image_generation 中" forever
+            // (the started chip never got its matching result), even
+            // when persistence succeeded. On success the bubble itself
+            // arrives separately via the realtime hub.
+            const r = await emitGeneratedImage(bt.imageBase64);
+            emitToolEvent(
+              'tool_result',
+              r.ok
+                ? { name: bt.kind, attachment_id: r.attachmentId }
+                : { name: bt.kind, error: r.reason },
+            );
           } else {
             emitToolEvent(
               bt.phase === 'started' ? 'tool_call' : 'tool_result',
