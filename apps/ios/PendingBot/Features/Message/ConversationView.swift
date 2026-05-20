@@ -602,15 +602,21 @@ struct ConversationView: View {
                 .readableColumnWidth()
             }
         }
+        .onAppear {
+            // Set synchronously so a push arriving in the first few ms
+            // after view-appear sees the right id. .task below is async-
+            // scheduled and leaves a tiny race window in which willPresent
+            // reads nil and pops a foreground banner.
+            if !conversation.id.isEmpty {
+                PushService.shared.activeConversationId = conversation.id
+            }
+        }
         .task {
             modelOverride = conversation.model_override ?? ""
             providerOverride = conversation.provider_override
             // Pending convs (lazy-created on first send) have no row yet —
             // skip history / skills / realtime until they materialise.
             guard !conversation.id.isEmpty else { return }
-            // Mark this conv on-screen so a push for it doesn't pop a
-            // foreground banner — the live Realtime channel already shows it.
-            PushService.shared.activeConversationId = conversation.id
             await loadHistory()
             await loadSkills()
             await loadActiveLookbacks()
