@@ -132,9 +132,9 @@ struct MeTabView: View {
                             optionDivider
 
                             NavigationLink {
-                                SkillsView().toolbar(.hidden, for: .tabBar)
+                                BotCapabilitiesView().toolbar(.hidden, for: .tabBar)
                             } label: {
-                                OptionRow(title: "技能管理")
+                                OptionRow(title: "机器人能力扩展")
                             }
                             .buttonStyle(.plain)
 
@@ -274,7 +274,7 @@ struct MeTabView: View {
 
 /// One option row — no background of its own; it lives inside a
 /// `meGlassGroup()` container so several rows read as one connected card.
-private struct OptionRow: View {
+struct OptionRow: View {
     enum Role { case normal, destructive }
 
     let title: String
@@ -305,7 +305,7 @@ private struct OptionRow: View {
 /// Glass background for a whole group of option rows — a single rounded
 /// rectangle so the rows inside read as one connected card. Uses the
 /// iOS 26 Liquid Glass path with a material fallback.
-private extension View {
+extension View {
     @ViewBuilder
     func meGlassGroup() -> some View {
         let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)

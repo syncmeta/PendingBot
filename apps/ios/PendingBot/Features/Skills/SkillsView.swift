@@ -1,14 +1,15 @@
 import SwiftUI
 import Supabase
 
-/// Full skills management screen — opens from 「我」 → 技能.
-/// Lists every skill visible to this account (own + system presets),
-/// and lets the user toggle / edit / delete (own only) / fork (preset →
-/// own copy) / create. Goes straight through Supabase PostgREST + RLS;
-/// no edge route in front.
+/// User-customized skills list, scoped to one provider (OpenAI native
+/// or OpenRouter). Opens from 「我 → 机器人能力扩展 → <provider> →
+/// Skills」. System presets (owner_id IS NULL) are admin-managed in
+/// the Board and stay hidden here.
 struct SkillsView: View {
     @Environment(\.api) private var api
     @Environment(\.dismiss) private var dismiss
+
+    let provider: BotProvider
 
     @State private var skills: [SkillSummary] = []
     @State private var loading = true
@@ -28,7 +29,7 @@ struct SkillsView: View {
                         ProgressView().tint(Theme.Palette.accent)
                             .padding(.top, 20)
                     } else if skills.isEmpty {
-                        Text("还没有技能 — 点上方「新建技能」从空白开始")
+                        Text("还没有自定义 Skill — 点右上 + 新建")
                             .font(Theme.Fonts.footnote)
                             .foregroundStyle(Theme.Palette.inkMuted)
                             .padding(.top, 20)
@@ -47,7 +48,7 @@ struct SkillsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                Text("技能")
+                Text("Skills · \(provider.displayName)")
                     .font(Theme.Fonts.serif(size: 17, weight: .semibold))
                     .foregroundStyle(Theme.Palette.ink)
             }
@@ -61,17 +62,17 @@ struct SkillsView: View {
         }
         .task { await load() }
         .sheet(item: $editingSkill) { detail in
-            SkillEditorSheet(mode: .edit(detail)) { Task { await load() } }
+            SkillEditorSheet(mode: .edit(detail), provider: provider) { Task { await load() } }
                 .tint(Theme.Palette.accent)
                 .presentationDragIndicator(.visible)
         }
         .sheet(item: $forkingFrom) { source in
-            SkillEditorSheet(mode: .fork(source)) { Task { await load() } }
+            SkillEditorSheet(mode: .fork(source), provider: provider) { Task { await load() } }
                 .tint(Theme.Palette.accent)
                 .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $creatingNew) {
-            SkillEditorSheet(mode: .create) { Task { await load() } }
+            SkillEditorSheet(mode: .create, provider: provider) { Task { await load() } }
                 .tint(Theme.Palette.accent)
                 .presentationDragIndicator(.visible)
         }
@@ -84,11 +85,8 @@ struct SkillsView: View {
 
     private var headerCard: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("启用的技能会拼进系统提示词，机器人按需调用。")
+            Text("启用后会拼进系统提示词，使用 \(provider.displayName) 的机器人按需调用。")
                 .font(Theme.Fonts.footnote)
-                .foregroundStyle(Theme.Palette.inkMuted)
-            Text("预设技能来自 anthropic/skills（Apache-2.0）。")
-                .font(Theme.Fonts.caption)
                 .foregroundStyle(Theme.Palette.inkMuted)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -121,42 +119,22 @@ struct SkillsView: View {
             }
 
             HStack(spacing: 10) {
-                if skill.is_preset {
-                    Label("预设", systemImage: "sparkles")
-                        .font(Theme.Fonts.caption)
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                } else {
-                    Label("自建", systemImage: "person")
-                        .font(Theme.Fonts.caption)
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                }
                 Text("\(skill.body_length) 字符")
                     .font(Theme.Fonts.caption)
                     .foregroundStyle(Theme.Palette.inkMuted)
                 Spacer(minLength: 0)
-                if skill.is_preset {
-                    // Preset rows are read-only — fork to make a private copy
-                    // (carries forked_from for lineage), then edit freely.
-                    Button("Fork") {
-                        Task { await openFork(skill) }
-                    }
-                    .font(Theme.Fonts.rounded(size: 12, weight: .medium))
-                    .foregroundStyle(Theme.Palette.accent)
-                    .buttonStyle(.plain)
-                } else {
-                    Button("编辑") {
-                        Task { await openEditor(skill) }
-                    }
-                    .font(Theme.Fonts.rounded(size: 12, weight: .medium))
-                    .foregroundStyle(Theme.Palette.accent)
-                    .buttonStyle(.plain)
-                    Button("删除") {
-                        Task { await delete(skill) }
-                    }
-                    .font(Theme.Fonts.rounded(size: 12, weight: .medium))
-                    .foregroundStyle(Color(hex: 0xB14B3C))
-                    .buttonStyle(.plain)
+                Button("编辑") {
+                    Task { await openEditor(skill) }
                 }
+                .font(Theme.Fonts.rounded(size: 12, weight: .medium))
+                .foregroundStyle(Theme.Palette.accent)
+                .buttonStyle(.plain)
+                Button("删除") {
+                    Task { await delete(skill) }
+                }
+                .font(Theme.Fonts.rounded(size: 12, weight: .medium))
+                .foregroundStyle(Color(hex: 0xB14B3C))
+                .buttonStyle(.plain)
             }
         }
         .padding(14)
@@ -177,11 +155,15 @@ struct SkillsView: View {
 
     private func load() async {
         loading = true; defer { loading = false }
+        guard let userId = AccountStore.shared.current?.id else {
+            self.skills = []
+            return
+        }
         do {
-            // RLS hides bot-authored rows; this returns my own + system-public.
+            // Only user-owned skills in this provider scope — presets
+            // (owner_id IS NULL) are admin-managed in the Board.
             struct SkillRow: Decodable {
                 let id: String
-                let owner_id: String?
                 let frontmatter: SkillFrontmatter
                 let body_md: String
                 let updated_at: String?
@@ -194,7 +176,9 @@ struct SkillsView: View {
 
             async let skillRows: [SkillRow] = SupabaseStack.shared
                 .from("skills")
-                .select("id, owner_id, frontmatter, body_md, updated_at")
+                .select("id, frontmatter, body_md, updated_at")
+                .eq("owner_id", value: userId)
+                .eq("provider", value: provider.rawValue)
                 .order("updated_at", ascending: false)
                 .execute()
                 .value
@@ -215,7 +199,7 @@ struct SkillsView: View {
                     source: nil,
                     source_url: nil,
                     license: nil,
-                    is_preset: row.owner_id == nil,
+                    is_preset: false,
                     body_length: row.body_md.count,
                     updated_at: row.updated_at.map { ServerTimestamp.epochSeconds($0, default: 0) } ?? 0
                 )
@@ -350,6 +334,11 @@ struct SkillEditorSheet: View {
     @Environment(\.api) private var api
     @Environment(\.dismiss) private var dismiss
     let mode: Mode
+    /// Provider scope to stamp on the row on create/fork. Defaults to
+    /// `.openrouter` so the in-chat "保存为技能" path (which doesn't
+    /// know the bot's provider) stays consistent with the legacy
+    /// route. For .edit the value is ignored — provider is fixed.
+    var provider: BotProvider = .openrouter
     var onSaved: () -> Void = {}
 
     @State private var name: String = ""
@@ -566,6 +555,7 @@ struct SkillEditorSheet: View {
                     let frontmatter: Frontmatter
                     let body_md: String
                     let visibility = "private"
+                    let provider: String
                     let forked_from: String?
                 }
                 struct InsertedId: Decodable { let id: String }
@@ -575,6 +565,7 @@ struct SkillEditorSheet: View {
                         owner_id: userId,
                         frontmatter: fm,
                         body_md: skillBody,
+                        provider: provider.rawValue,
                         forked_from: forkSourceId
                     ))
                     .select("id")

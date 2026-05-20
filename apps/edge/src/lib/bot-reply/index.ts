@@ -41,6 +41,7 @@ import {
   resolveChatMemo,
   resolveSubscriptions,
 } from '../persona-cache';
+import { resolveProviderSlug } from '../../llm/providers';
 import { WebToolMeter } from '../web-meter';
 import {
   CHAT_TOOLS,
@@ -320,9 +321,13 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   // we're already inside turnWork (kept alive by the SSE stream's own
   // waitUntil binding).
   const noop = (p: Promise<unknown>) => { p.catch(() => undefined); };
+  // Same provider hint we'll later hand to the LLM router. Used to
+  // scope which user skills are visible this turn — skills the user
+  // tagged for the other provider stay hidden.
+  const turnProviderSlug = resolveProviderSlug(input.providerOverride);
   const [botMemory, subsBundle, botNote, chatMemo] = await Promise.all([
     input.isSelfChat ? getUserMemory(env, userId) : getBotMemory(env, bot.id),
-    resolveSubscriptions(env, supa, userId, conversationId, noop),
+    resolveSubscriptions(env, supa, userId, conversationId, turnProviderSlug, noop),
     resolveBotNote(env, supa, bot.id, userId, noop),
     resolveChatMemo(env, supa, bot.id, conversationId, noop),
   ]);
