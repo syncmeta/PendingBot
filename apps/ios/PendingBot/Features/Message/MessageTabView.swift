@@ -1073,9 +1073,9 @@ private struct ConversationListRow: View {
 /// Camera-backed QR scanner. PendingBot user-handle QRs land on the
 /// add-friend preview page (avatar + nickname + 验证信息); group QRs auto-
 /// join via /v1/groups/join (no useful preview — the join either lands or
-/// it doesn't). The "从相册扫码" button lets the user pick a saved photo
-/// and have its embedded QR decoded by CIDetector — same fan-out as the
-/// camera path.
+/// it doesn't). The "扫相册里的码" button opens the system PhotosPicker
+/// directly; the picked image is run through CIDetector and the result
+/// fans out the same way as the camera path.
 private struct ScanQRSheet: View {
     @Environment(\.dismiss) private var dismiss
     var onAdded: () -> Void = {}
@@ -1089,7 +1089,7 @@ private struct ScanQRSheet: View {
     @State private var submitting = false
     @State private var error: String?
     @State private var displayText: String?
-    @State private var showPhotoPicker = false
+    @State private var pickedPhoto: PhotosPickerItem?
 
     var body: some View {
         NavigationStack {
@@ -1136,16 +1136,16 @@ private struct ScanQRSheet: View {
                     }
                 }
 
-                // "从相册扫码" affordance — pinned to the bottom while the
-                // live camera is showing. Hidden once a code is decoded
+                // "扫相册里的码" affordance — pinned to the bottom while
+                // the live camera is showing. Hidden once a code is decoded
                 // (the sheet has already shifted into its result state).
+                // Uses PhotosPicker directly so the tap opens the system
+                // picker — no intermediate sheet with a second button.
                 if scannedValue == nil, displayText == nil {
                     VStack {
                         Spacer()
-                        Button {
-                            showPhotoPicker = true
-                        } label: {
-                            Label("从相册扫码", systemImage: "photo.on.rectangle")
+                        PhotosPicker(selection: $pickedPhoto, matching: .images, photoLibrary: .shared()) {
+                            Label("扫相册里的码", systemImage: "photo.on.rectangle")
                                 .font(.system(size: 15, weight: .semibold))
                                 .foregroundStyle(.white)
                                 .padding(.horizontal, 18)
@@ -1167,9 +1167,11 @@ private struct ScanQRSheet: View {
                 }
             }
         }
-        .sheet(isPresented: $showPhotoPicker) {
-            QRPhotoPicker { decoded in
-                showPhotoPicker = false
+        .onChange(of: pickedPhoto) { _, item in
+            guard let item else { return }
+            Task {
+                let decoded = await decodeQRFromPhoto(item)
+                pickedPhoto = nil
                 guard let decoded else {
                     error = "相册里这张图没找到二维码"
                     scannedValue = ""  // flip out of live-preview state
@@ -1177,7 +1179,7 @@ private struct ScanQRSheet: View {
                 }
                 scannedValue = decoded
                 Haptics.tap()
-                Task { await handle(value: decoded) }
+                await handle(value: decoded)
             }
         }
     }
@@ -1302,77 +1304,27 @@ private struct AddFriendChooserSheet: View {
     }
 }
 
-// MARK: - 从相册扫码 (decode QR from a picked photo)
+// MARK: - 扫相册里的码 (decode QR from a picked photo)
 
-/// PhotosPicker wrapper that loads a single image and feeds it to
-/// CIDetector for QR recognition. Callback receives the first decoded
-/// string, or nil if the picked image contained no QR. iOS 16+ only,
-/// which matches the app's deployment target.
-private struct QRPhotoPicker: View {
-    var onResult: (String?) -> Void
-
-    @State private var picked: PhotosPickerItem?
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 24) {
-                Spacer()
-                PhotosPicker(selection: $picked, matching: .images, photoLibrary: .shared()) {
-                    Label("选一张相册里的图片", systemImage: "photo")
-                        .font(.system(size: 16, weight: .semibold))
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 12)
-                        .background(Capsule().fill(Theme.Palette.accentBg))
-                        .foregroundStyle(Theme.Palette.accent)
-                }
-                Text("挑一张包含二维码的图,会自动识别")
-                    .font(Theme.Fonts.footnote)
-                    .foregroundStyle(Theme.Palette.inkMuted)
-                Spacer()
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Theme.Palette.canvas.ignoresSafeArea())
-            .navigationTitle("从相册扫码")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("取消") {
-                        // Treat cancel as "no QR" so the parent doesn't
-                        // sit waiting for a callback that never fires.
-                        onResult(nil)
-                        dismiss()
-                    }
-                }
-            }
-            .onChange(of: picked) { _, item in
-                guard let item else { return }
-                Task {
-                    let decoded = await decodeQR(from: item)
-                    onResult(decoded)
-                    dismiss()
-                }
-            }
+/// Loads the picked photo via PhotosPickerItem and runs CIDetector over
+/// it; returns the first decoded QR string, or nil if the image has none.
+/// iOS 16+ only, which matches the app's deployment target.
+private func decodeQRFromPhoto(_ item: PhotosPickerItem) async -> String? {
+    guard let data = try? await item.loadTransferable(type: Data.self),
+          let uiImage = UIImage(data: data),
+          let ciImage = CIImage(image: uiImage) else { return nil }
+    let detector = CIDetector(
+        ofType: CIDetectorTypeQRCode,
+        context: nil,
+        options: [CIDetectorAccuracy: CIDetectorAccuracyHigh]
+    )
+    let features = detector?.features(in: ciImage) ?? []
+    for f in features {
+        if let q = f as? CIQRCodeFeature, let s = q.messageString, !s.isEmpty {
+            return s
         }
     }
-
-    private func decodeQR(from item: PhotosPickerItem) async -> String? {
-        guard let data = try? await item.loadTransferable(type: Data.self),
-              let uiImage = UIImage(data: data),
-              let ciImage = CIImage(image: uiImage) else { return nil }
-        let detector = CIDetector(
-            ofType: CIDetectorTypeQRCode,
-            context: nil,
-            options: [CIDetectorAccuracy: CIDetectorAccuracyHigh]
-        )
-        let features = detector?.features(in: ciImage) ?? []
-        for f in features {
-            if let q = f as? CIQRCodeFeature, let s = q.messageString, !s.isEmpty {
-                return s
-            }
-        }
-        return nil
-    }
+    return nil
 }
 
 // MARK: - Create group page
