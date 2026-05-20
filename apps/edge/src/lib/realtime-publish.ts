@@ -38,10 +38,31 @@ export interface VoiceCallEvent {
   pending?: Array<{ kind: 'human' | 'bot'; id: string; invited_by: string }>;
 }
 
+// Per-turn voice call cost preview. Emitted by RealtimeMeterDO (1:1) and
+// RoomVoiceDO (group) right after settleTurn computes a turn's PND, so
+// the in-call UI can show running spend without waiting on the audit
+// queue / billing_debit round-trip. NOT a debit — the actual billing
+// still flows through AUDIT_QUEUE; this is purely a display number.
+//
+// Routing: 1:1 calls publish on `user:<userId>` (only the caller sees it).
+// Group calls publish on `conv:<conversationId>` (everyone in the room
+// sees the same cumulative figure).
+export interface VoiceCostEvent {
+  type: 'voice_cost';
+  conversation_id: string;
+  session_id: string;
+  // Per-turn delta and the running session total. cumulative_pnd is
+  // authoritative — clients can ignore delta and just render the total.
+  delta_pnd: number;
+  cumulative_pnd: number;
+  // ms epoch at which this turn settled (server clock).
+  at_ms: number;
+}
+
 // One frame a hub subscriber sees over the WebSocket. The Cloudflare
 // realtime hub is content-agnostic; this union just narrows what consumers
 // branch on.
-export type RealtimeEvent = RealtimeChange | VoiceCallEvent;
+export type RealtimeEvent = RealtimeChange | VoiceCallEvent | VoiceCostEvent;
 
 // Push one change to a hub topic. `hubKey` is 'conv:<id>' or
 // 'user:<id>'. Returns how many sockets the DO reached (0 on failure —
