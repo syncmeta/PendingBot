@@ -1021,105 +1021,49 @@ private struct FilterPill: View {
 
 // MARK: - Add friend (handle only, with preview)
 
-/// 加好友 page — handle-only entry. The user types a number, hits the
-/// 查找 button, and we look up the matching profile (avatar + nickname
-/// only — by design, no email or other PII surfaces here). After the
-/// preview confirms it's the right person, the sender can attach an
-/// optional 验证信息 that the recipient sees alongside the request
-/// (WeChat-style); the alias for *the sender's own contact list* is
-/// set separately from the friend row after acceptance.
+/// 加好友 — two-page push flow. Page 1 is a bare number input; tapping
+/// 查找 pushes Page 2, which renders the looked-up profile (avatar +
+/// nickname) plus the optional 验证信息 textbox and the 发送申请 button.
+/// The scan path opens this sheet with `prefilledHandle` set, which skips
+/// Page 1 entirely and lands the user on Page 2's preview straight away.
 struct AddFriendSheet: View {
     @Environment(\.dismiss) private var dismiss
     var onAdded: () -> Void = {}
-    /// When non-empty, the sheet opens with the field pre-filled and
-    /// kicks off the preview lookup immediately. Used by the scan flow
-    /// to land on the same review page (avatar + nickname + 验证信息)
-    /// without making the user re-type the handle.
+    /// When non-empty, opens the sheet directly on the preview page with
+    /// the lookup already in flight. Used by the scan flow so the user
+    /// never sees the number-input step.
     var prefilledHandle: String = ""
 
-    /// Preview state for the looked-up profile. `idle` is the initial /
-    /// post-edit state (user changed input → preview cleared, must tap
-    /// 查找 again). `loading` shows the spinner during the round-trip.
-    enum Preview: Equatable {
-        case idle
-        case loading
-        case loaded(userId: String, displayName: String, avatarPath: String?, avatarSeed: String)
-        case notFound(message: String)
-    }
+    enum Route: Hashable { case preview(handle: String) }
 
     @State private var handleValue: String = ""
-    @State private var verifyMessage: String = ""
-    @State private var preview: Preview = .idle
-    @State private var lookupTask: Task<Void, Never>?
-    @State private var lastLookupAt: Date = .distantPast
-    @State private var submitting = false
-    @State private var error: String?
-    @State private var successHint: String?
+    @State private var path: [Route] = []
+    @State private var lookupError: String?
 
     private var trimmedHandle: String {
         handleValue.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private var canLookup: Bool {
-        if case .loading = preview { return false }
-        return trimmedHandle.count >= 4
-    }
-
-    /// Send is only meaningful once we have a confirmed match. Disables
-    /// the button on partial input, lookup-in-flight, and not-found, so
-    /// the user can't fire a request that the worker would just reject.
-    private var canSubmit: Bool {
-        if submitting { return false }
-        if case .loaded = preview { return true }
-        return false
-    }
+    private var canLookup: Bool { trimmedHandle.count >= 4 }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             Form {
                 Section {
                     HStack(spacing: 8) {
                         TextField("号码 / 隐私号", text: $handleValue)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
-                            // Clear stale preview whenever the user edits
-                            // the field — they must tap 查找 again to re-
-                            // confirm. Keeps "submit" disabled until the
-                            // preview matches what's in the text field.
-                            .onChange(of: handleValue) { _, _ in
-                                if case .loading = preview { return }
-                                if case .idle = preview { return }
-                                preview = .idle
-                            }
-                            .onSubmit { Task { await runLookupTapped() } }
-                        Button("查找") { Task { await runLookupTapped() } }
+                            .onSubmit { pushPreview() }
+                        Button("查找") { pushPreview() }
                             .disabled(!canLookup)
                             .buttonStyle(.borderedProminent)
                             .controlSize(.small)
                     }
-                } footer: {
-                    Text("只能用号码（ID/隐私号）添加,不支持邮箱。输入后点「查找」确认对方。")
                 }
-
-                Section("对方") {
-                    previewRow
-                }
-
-                Section("验证信息（可选）") {
-                    TextField("给对方留个话,会和申请一起送达", text: $verifyMessage, axis: .vertical)
-                        .textInputAutocapitalization(.sentences)
-                        .autocorrectionDisabled()
-                        .lineLimit(1...3)
-                }
-
-                if let successHint {
+                if let lookupError {
                     Section {
-                        Text(successHint).foregroundStyle(Theme.Palette.accent).font(.footnote)
-                    }
-                }
-                if let error {
-                    Section {
-                        Text(error).foregroundStyle(.red).font(.footnote)
+                        Text(lookupError).foregroundStyle(.red).font(.footnote)
                     }
                 }
             }
@@ -1129,30 +1073,103 @@ struct AddFriendSheet: View {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("取消") { dismiss() }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("发送申请") { Task { await submit() } }
-                        .disabled(!canSubmit)
+            }
+            .navigationDestination(for: Route.self) { route in
+                switch route {
+                case .preview(let handle):
+                    AddFriendPreviewPage(
+                        handle: handle,
+                        onAdded: onAdded,
+                        onFinished: { dismiss() }
+                    )
                 }
             }
             .onAppear {
-                // Scan-then-preview: caller hands the decoded handle in
-                // and we kick off the lookup automatically so the user
-                // lands on the avatar+nickname review page right away.
-                if !prefilledHandle.isEmpty, handleValue.isEmpty {
-                    handleValue = prefilledHandle
-                    Task { await runLookupTapped() }
+                // Scan flow: skip Page 1 entirely and push straight to
+                // the preview so the user lands on avatar + nickname +
+                // 验证信息 without ever seeing the number input.
+                if !prefilledHandle.isEmpty, path.isEmpty {
+                    path.append(.preview(handle: prefilledHandle))
                 }
             }
         }
     }
 
+    private func pushPreview() {
+        let value = trimmedHandle
+        guard value.count >= 4 else { return }
+        lookupError = nil
+        path.append(.preview(handle: value))
+    }
+}
+
+// MARK: - Add friend preview page (Page 2)
+
+/// Pushed page that runs the handle lookup, renders the resolved
+/// profile (avatar + nickname), and lets the sender attach an optional
+/// 验证信息 before tapping 发送申请. Owns its own lookup + submit state;
+/// the parent sheet only owns the handle string and the dismiss action.
+private struct AddFriendPreviewPage: View {
+    let handle: String
+    var onAdded: () -> Void
+    var onFinished: () -> Void
+
+    @Environment(\.dismiss) private var dismissPage
+
+    enum Preview: Equatable {
+        case loading
+        case loaded(userId: String, displayName: String, avatarPath: String?, avatarSeed: String)
+        case notFound(message: String)
+    }
+
+    @State private var preview: Preview = .loading
+    @State private var verifyMessage: String = ""
+    @State private var submitting = false
+    @State private var error: String?
+    @State private var successHint: String?
+
+    private var canSubmit: Bool {
+        if submitting { return false }
+        if case .loaded = preview { return true }
+        return false
+    }
+
+    var body: some View {
+        Form {
+            Section("对方") {
+                previewRow
+            }
+            Section("验证信息（可选）") {
+                TextField("给对方留个话,会和申请一起送达", text: $verifyMessage, axis: .vertical)
+                    .textInputAutocapitalization(.sentences)
+                    .autocorrectionDisabled()
+                    .lineLimit(1...3)
+            }
+            if let successHint {
+                Section {
+                    Text(successHint).foregroundStyle(Theme.Palette.accent).font(.footnote)
+                }
+            }
+            if let error {
+                Section {
+                    Text(error).foregroundStyle(.red).font(.footnote)
+                }
+            }
+        }
+        .navigationTitle("加好友")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("发送申请") { Task { await submit() } }
+                    .disabled(!canSubmit)
+            }
+        }
+        .task { await runLookup(value: handle) }
+    }
+
     @ViewBuilder
     private var previewRow: some View {
         switch preview {
-        case .idle:
-            Text("输入号码后会显示对方的头像和昵称")
-                .foregroundStyle(.secondary)
-                .font(.footnote)
         case .loading:
             HStack(spacing: 12) {
                 ProgressView()
@@ -1171,23 +1188,6 @@ struct AddFriendSheet: View {
         case .notFound(let message):
             Text(message).foregroundStyle(.red).font(.footnote)
         }
-    }
-
-    /// Explicit lookup fired by the 查找 button / keyboard submit. Trips
-    /// a soft client-side rate limit (1.5s between calls) so a wrist-spasm
-    /// double-tap doesn't double-fire; further server-side throttling lives
-    /// behind the auth gate.
-    private func runLookupTapped() async {
-        let value = trimmedHandle
-        guard value.count >= 4 else { return }
-        let now = Date()
-        if now.timeIntervalSince(lastLookupAt) < 1.5 { return }
-        lastLookupAt = now
-        lookupTask?.cancel()
-        preview = .loading
-        let task = Task { await runLookup(value: value) }
-        lookupTask = task
-        await task.value
     }
 
     private func runLookup(value: String) async {
@@ -1228,7 +1228,7 @@ struct AddFriendSheet: View {
                 avatarSeed: r.avatarSeed ?? r.userId
             )
         } catch is CancellationError {
-            // User kept typing — drop the result silently.
+            // Page went away — drop result silently.
         } catch {
             preview = .notFound(message: error.localizedDescription)
         }
@@ -1240,7 +1240,7 @@ struct AddFriendSheet: View {
         error = nil
         successHint = nil
         do {
-            var body: [String: Any] = ["handleValue": trimmedHandle]
+            var body: [String: Any] = ["handleValue": handle]
             let trimmedMessage = verifyMessage.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmedMessage.isEmpty { body["message"] = trimmedMessage }
 
@@ -1270,7 +1270,7 @@ struct AddFriendSheet: View {
             Haptics.success()
             onAdded()
             try? await Task.sleep(nanoseconds: 1_500_000_000)
-            dismiss()
+            onFinished()
         } catch {
             self.error = error.localizedDescription
         }

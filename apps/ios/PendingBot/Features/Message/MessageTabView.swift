@@ -325,12 +325,10 @@ struct MessageTabView: View {
                     } trailing: {
                         PlusActionPopover(items: [
                             PlusActionItem(title: "加好友", systemImage: "person.badge.plus") {
-                                // 二级选择 — 扫码 or 输号码. The standalone
-                                // 扫码 entry that used to sit alongside is
-                                // gone; scanning is now a sub-mode of
-                                // "加好友" so both paths land on the same
-                                // preview (avatar + nickname + 验证信息).
                                 addFriendChooser = true
+                            },
+                            PlusActionItem(title: "扫码", systemImage: "qrcode.viewfinder") {
+                                scanning = true
                             },
                             PlusActionItem(title: "拉群", systemImage: "person.3") {
                                 openCreateGroup()
@@ -1249,9 +1247,7 @@ private struct ScanQRSheet: View {
 // MARK: - 加好友 chooser (扫码 / 输号码)
 
 /// Two-way fork shown when the user taps 加好友 from the message tab's
-/// "+" menu. Picking either option closes the chooser; the parent
-/// presents the corresponding next sheet on a tiny delay so SwiftUI
-/// fully tears down the chooser before the next sheet animates in.
+/// "+" menu. Two side-by-side tiles, icon + short label, no copy.
 private struct AddFriendChooserSheet: View {
     @Environment(\.dismiss) private var dismiss
     var onPickScan: () -> Void
@@ -1259,23 +1255,13 @@ private struct AddFriendChooserSheet: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 14) {
-                chooserButton(
-                    title: "扫码",
-                    subtitle: "扫对方的二维码,或从相册里挑一张",
-                    systemImage: "qrcode.viewfinder",
-                    action: onPickScan
-                )
-                chooserButton(
-                    title: "输号码",
-                    subtitle: "输入对方的号码 / 隐私号",
-                    systemImage: "number",
-                    action: onPickHandle
-                )
-                Spacer(minLength: 0)
+            HStack(spacing: 14) {
+                chooserTile(title: "扫码", systemImage: "qrcode.viewfinder", action: onPickScan)
+                chooserTile(title: "输号码", systemImage: "number", action: onPickHandle)
             }
             .padding(.horizontal, 16)
             .padding(.top, 18)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .background(Theme.Palette.canvas.ignoresSafeArea())
             .navigationTitle("加好友")
             .navigationBarTitleDisplayMode(.inline)
@@ -1288,31 +1274,21 @@ private struct AddFriendChooserSheet: View {
     }
 
     @ViewBuilder
-    private func chooserButton(title: String, subtitle: String,
-                               systemImage: String, action: @escaping () -> Void) -> some View {
+    private func chooserTile(title: String, systemImage: String,
+                             action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 14) {
+            VStack(spacing: 12) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 20, weight: .regular))
+                    .font(.system(size: 36, weight: .regular))
                     .foregroundStyle(Theme.Palette.accent)
-                    .frame(width: 36, height: 36)
+                    .frame(width: 72, height: 72)
                     .background(Circle().fill(Theme.Palette.accentBg))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(Theme.Fonts.serif(size: 16, weight: .semibold))
-                        .foregroundStyle(Theme.Palette.ink)
-                    Text(subtitle)
-                        .font(Theme.Fonts.footnote)
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                }
-                Spacer(minLength: 8)
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundStyle(Theme.Palette.inkMuted)
+                Text(title)
+                    .font(Theme.Fonts.serif(size: 16, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.ink)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 14)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 22)
+            .frame(maxWidth: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
                     .fill(Theme.Palette.surface)
