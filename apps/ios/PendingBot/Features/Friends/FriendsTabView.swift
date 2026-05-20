@@ -35,6 +35,7 @@ struct FriendsTabView: View {
     @State private var loading = false
     @State private var error: String?
     @State private var addingFriend = false
+    @State private var addingBot = false
     @State private var creatingBot = false
     @State private var managingBot: BotPick?
     @State private var aliasEditTarget: HumanPick?
@@ -61,6 +62,25 @@ struct FriendsTabView: View {
         .sheet(isPresented: $addingFriend) {
             AddFriendSheet { Task { await load() } }
                 .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $addingBot) {
+            AddBotSheet { addedBot in
+                // Optimistic prepend so the row shows up immediately, even
+                // before the network refresh resolves. Refresh follows to
+                // pick up server-derived fields (added_at ordering, etc.).
+                if !self.bots.contains(where: { $0.id == addedBot.id }) {
+                    self.bots.insert(addedBot, at: 0)
+                }
+                Task {
+                    await load()
+                    // Drop straight into the new bot's chat — matches the
+                    // "accept friend request → open chat" affordance for
+                    // humans. Without this jump the user has to dismiss
+                    // the sheet then go hunt for the bot in the list.
+                    await tapBot(addedBot)
+                }
+            }
+            .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $creatingBot) {
             CreateBotSheet { newBot in
@@ -154,6 +174,9 @@ struct FriendsTabView: View {
                 PlusActionPopover(items: [
                     PlusActionItem(title: "加好友", systemImage: "person.badge.plus") {
                         addingFriend = true
+                    },
+                    PlusActionItem(title: "加机器人", systemImage: "rectangle.badge.plus") {
+                        addingBot = true
                     },
                     PlusActionItem(title: "新建机器人", systemImage: "sparkles") {
                         creatingBot = true
@@ -362,6 +385,15 @@ struct FriendsTabView: View {
         let visibility: String?
         let creator_id: String?
         let voice_call_enabled: Bool?
+        let is_active: Bool?
+    }
+
+    /// Embed wrapper for `from("user_bot_contacts").select("bot:bots!fk(...)")`.
+    /// The Friends Tab now lists bots the user has explicitly added (or that
+    /// were added implicitly via the auto-conv trigger / bootstrap); the bot
+    /// payload comes back nested under `bot`.
+    private struct BotContactDecodable: Decodable {
+        let bot: BotDecodable
     }
     private func load() async {
         // Hydrate from local cache so the tab paints last-known friends
@@ -393,17 +425,29 @@ struct FriendsTabView: View {
         }
         loading = true; defer { loading = false }
         do {
-            async let botRowsResp: [BotDecodable] = SupabaseStack.shared
-                .from("bots")
-                .select("id, slug, display_name, model_id, visibility, creator_id, voice_call_enabled")
-                .eq("is_active", value: true)
-                .order("created_at", ascending: true)
+            // Bot list now comes from `user_bot_contacts` (added bots only),
+            // not the global `bots` table. Two reasons:
+            //   1. UX: the previous query returned every public_open bot in
+            //      the system, so the list grew unbounded and users couldn't
+            //      curate it. With contacts, the user only sees what they
+            //      explicitly (or implicitly, via past conversations) added.
+            //   2. Visibility: the old path leaked public_open bots into the
+            //      friends list whether the user cared about them or not.
+            // `user_bot_contacts` is RLS-scoped to auth.uid(), and the !inner
+            // join to `bots` drops rows whose bot was hard-deleted. is_active
+            // is filtered client-side after decode — soft-deleted bots stay
+            // hidden but their contact row remains (for cheap re-show if the
+            // bot comes back).
+            async let botRowsResp: [BotContactDecodable] = SupabaseStack.shared
+                .from("user_bot_contacts")
+                .select("bot:bots!user_bot_contacts_bot_id_fkey!inner(id, slug, display_name, model_id, visibility, creator_id, voice_call_enabled, is_active)")
+                .order("added_at", ascending: true)
                 .execute()
                 .value
             async let contactsResp: [HumanPick] = loadContactsWithProfiles()
             async let incomingFR: [PendingFriendRequest] = loadIncomingFriendRequests()
 
-            let botRows = try await botRowsResp
+            let botRows = try await botRowsResp.map { $0.bot }
 
             // Drop the per-user self-bot from the regular bot list — its
             // entry is the SelfRow pinned at the top of the friends tab,
@@ -411,6 +455,7 @@ struct FriendsTabView: View {
             // self-chat materialiser (open_self_conv RPC) and the
             // user-memory swap in bot-reply.
             self.bots = botRows
+                .filter { $0.is_active != false }
                 .filter { !($0.slug?.hasPrefix("self-") ?? false) }
                 .map {
                     BotPick(id: $0.id, display_name: $0.display_name,
@@ -1273,6 +1318,293 @@ private struct AddFriendPreviewPage: View {
             onFinished()
         } catch {
             self.error = error.localizedDescription
+        }
+    }
+}
+
+// MARK: - Add bot sheet
+//
+// "加机器人" affordance — the bot-side counterpart of AddFriendSheet.
+// Counterpart, not extension: real-friend lookup goes through the worker's
+// /v1/friend-requests/lookup endpoint (because pendingbot.users RLS is
+// self-only and the worker uses service-role to fetch peer profiles), but
+// bots have their own visibility-aware RLS on the `bots` table that already
+// returns exactly the rows the caller is allowed to see. So the bot path
+// can stay client-only: direct supabase query for lookup, direct insert
+// into user_bot_contacts on add. The RLS INSERT policy on
+// user_bot_contacts replays the same visibility check, so a private bot
+// the user discovers by guessing the slug still 0-rows on lookup; if the
+// user somehow gets past lookup (cached slug, race), the insert fails with
+// 42501 and we surface a friendly message.
+//
+// UX flow:
+//   1) Page 1 — slug input + 查找 button.
+//   2) Page 2 — preview card (display_name + visibility tag + model id),
+//      "添加到联系人" button.
+//   3) On success — sheet dismisses, FriendsTabView reloads, and the new
+//      bot's chat opens automatically (mirrors "accept friend request →
+//      open chat" for humans).
+
+struct AddBotSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    /// Caller wants the picked BotPick so it can optimistically prepend
+    /// to the list and route into the bot's chat without waiting for the
+    /// reload to land.
+    var onAdded: (FriendsTabView.BotPick) -> Void = { _ in }
+
+    enum Route: Hashable { case preview(slug: String) }
+
+    @State private var slugInput: String = ""
+    @State private var path: [Route] = []
+    @State private var lookupError: String?
+
+    private var trimmedSlug: String {
+        slugInput
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "@"))
+            .lowercased()
+    }
+
+    /// Bot slugs are unique text labels (see `bots.slug` UNIQUE). They're
+    /// usually short (≥3 chars) — gate the lookup so we don't fire on the
+    /// first keystroke.
+    private var canLookup: Bool { trimmedSlug.count >= 2 }
+
+    var body: some View {
+        NavigationStack(path: $path) {
+            Form {
+                Section {
+                    HStack(spacing: 8) {
+                        TextField("机器人标识(slug)", text: $slugInput)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .onSubmit { pushPreview() }
+                        Button("查找") { pushPreview() }
+                            .disabled(!canLookup)
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                    }
+                } footer: {
+                    Text("机器人的 slug 由创建者设定,公开机器人才能被任意人加入。")
+                }
+                if let lookupError {
+                    Section {
+                        Text(lookupError).foregroundStyle(.red).font(.footnote)
+                    }
+                }
+            }
+            .navigationTitle("加机器人")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("取消") { dismiss() }
+                }
+            }
+            .navigationDestination(for: Route.self) { route in
+                switch route {
+                case .preview(let slug):
+                    AddBotPreviewPage(
+                        slug: slug,
+                        onAdded: onAdded,
+                        onFinished: { dismiss() }
+                    )
+                }
+            }
+        }
+    }
+
+    private func pushPreview() {
+        let value = trimmedSlug
+        guard value.count >= 2 else { return }
+        lookupError = nil
+        path.append(.preview(slug: value))
+    }
+}
+
+// MARK: - Add bot preview page (Page 2)
+
+private struct AddBotPreviewPage: View {
+    let slug: String
+    var onAdded: (FriendsTabView.BotPick) -> Void
+    var onFinished: () -> Void
+
+    @Environment(\.dismiss) private var dismissPage
+
+    /// Mirrors AddFriendPreviewPage.Preview: loading / loaded / notFound.
+    enum Preview: Equatable {
+        case loading
+        case loaded(bot: FriendsTabView.BotPick, slug: String?)
+        case notFound(message: String)
+    }
+
+    @State private var preview: Preview = .loading
+    @State private var submitting = false
+    @State private var error: String?
+
+    private var canSubmit: Bool {
+        if submitting { return false }
+        if case .loaded = preview { return true }
+        return false
+    }
+
+    var body: some View {
+        Form {
+            Section("机器人") {
+                previewRow
+            }
+            if let error {
+                Section {
+                    Text(error).foregroundStyle(.red).font(.footnote)
+                }
+            }
+        }
+        .navigationTitle("加机器人")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("添加") { Task { await submit() } }
+                    .disabled(!canSubmit)
+            }
+        }
+        .task { await runLookup() }
+    }
+
+    @ViewBuilder
+    private var previewRow: some View {
+        switch preview {
+        case .loading:
+            HStack(spacing: 12) {
+                ProgressView()
+                Text("正在查找…").foregroundStyle(.secondary).font(.footnote)
+            }
+        case .loaded(let bot, let foundSlug):
+            HStack(spacing: 12) {
+                // Bots use id as the avatar seed (same as FriendRow does
+                // in the friends list).
+                UserAvatar(seed: bot.id, attachmentId: nil, size: 44)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(bot.display_name.isEmpty
+                         ? (foundSlug ?? bot.id.prefix(8).description)
+                         : bot.display_name)
+                        .font(.body)
+                    HStack(spacing: 6) {
+                        if let v = bot.visibility {
+                            Text(visibilityLabel(v))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        if let m = bot.model_id, !m.isEmpty {
+                            Text(m).font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .padding(.vertical, 2)
+        case .notFound(let message):
+            Text(message).foregroundStyle(.red).font(.footnote)
+        }
+    }
+
+    private func visibilityLabel(_ v: String) -> String {
+        switch v {
+        case "public_open":   return "公开"
+        case "public_invite": return "邀请制"
+        case "private":       return "私有"
+        default:              return v
+        }
+    }
+
+    private func runLookup() async {
+        // Direct supabase query — RLS on `bots` already enforces visibility,
+        // so a private bot the user doesn't own returns 0 rows here. That
+        // gives us "not found" for both "doesn't exist" and "not allowed",
+        // which is the right privacy default.
+        struct BotRow: Decodable {
+            let id: String
+            let slug: String?
+            let display_name: String
+            let model_id: String?
+            let visibility: String?
+            let creator_id: String?
+            let voice_call_enabled: Bool?
+        }
+        do {
+            let rows: [BotRow] = try await SupabaseStack.shared
+                .from("bots")
+                .select("id, slug, display_name, model_id, visibility, creator_id, voice_call_enabled")
+                .eq("slug", value: slug)
+                .eq("is_active", value: true)
+                .limit(1)
+                .execute()
+                .value
+            if Task.isCancelled { return }
+            guard let r = rows.first else {
+                preview = .notFound(message: "找不到这个机器人,或者它不允许你加入。")
+                return
+            }
+            let pick = FriendsTabView.BotPick(
+                id: r.id,
+                display_name: r.display_name,
+                model_id: r.model_id,
+                visibility: r.visibility,
+                creator_id: r.creator_id,
+                voice_call_enabled: r.voice_call_enabled
+            )
+            preview = .loaded(bot: pick, slug: r.slug)
+        } catch is CancellationError {
+            // Page went away — drop result silently.
+        } catch {
+            preview = .notFound(message: error.localizedDescription)
+        }
+    }
+
+    private func submit() async {
+        guard case .loaded(let bot, _) = preview else { return }
+        guard let userId = AccountStore.shared.current?.id else {
+            error = "请先登录"
+            return
+        }
+        submitting = true
+        defer { submitting = false }
+        error = nil
+
+        struct ContactInsert: Encodable {
+            let user_id: String
+            let bot_id: String
+            let added_via: String
+        }
+        do {
+            try await SupabaseStack.shared
+                .from("user_bot_contacts")
+                .insert(ContactInsert(
+                    user_id: userId,
+                    bot_id: bot.id,
+                    added_via: "manual"
+                ))
+                .execute()
+            Haptics.success()
+            onAdded(bot)
+            onFinished()
+        } catch {
+            let msg = error.localizedDescription
+            // 23505 == unique_violation, i.e. already in contacts.
+            // Treat as success — the user's intent ("add this bot") is
+            // already satisfied; just open the chat.
+            if msg.contains("23505") || msg.lowercased().contains("duplicate") {
+                Haptics.success()
+                onAdded(bot)
+                onFinished()
+                return
+            }
+            // 42501 == insufficient_privilege, which is what the RLS
+            // policy raises if the bot isn't visible (would only happen
+            // if the bot's visibility flipped between lookup and insert).
+            if msg.contains("42501") || msg.lowercased().contains("permission") {
+                self.error = "这个机器人不允许加为联系人。"
+            } else {
+                self.error = msg
+            }
+            Haptics.error()
         }
     }
 }
