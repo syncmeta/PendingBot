@@ -100,7 +100,7 @@ struct ComposerView: View {
 
                     Button(action: { isStreaming ? onStop() : onSend() }) {
                         Image(systemName: isStreaming ? "stop.fill" : "arrow.up")
-                            .font(.system(size: 15, weight: .bold))
+                            .font(.system(size: isStreaming ? 12 : 15, weight: .bold))
                             .foregroundStyle(
                                 isStreaming || canSend
                                     ? .white
@@ -123,7 +123,7 @@ struct ComposerView: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(!isStreaming && !canSend)
-                    .padding(.trailing, 4)
+                    .padding(.trailing, 6)
                     .padding(.bottom, 4)
                 }
                 .floatingComposerSurface(
