@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
 import { getUserMemory } from '../lib/memory';
 import { userClient } from '../lib/supabase';
@@ -14,6 +15,69 @@ import type { AppBindings } from '../types';
 
 export const meRoutes = new Hono<AppBindings>();
 meRoutes.use('*', requireSession());
+
+// GET /v1/me/profile — read-side for app-wide user preferences. Today
+// only exposes notification_preview_mode (lock-screen privacy knob); add
+// other preference fields here as they appear rather than scattering them
+// across the API. Backed by users.custom_fields so no schema migration is
+// needed per knob — the iOS side is the source of truth for available
+// modes (the union here just enforces server-side normalisation).
+meRoutes.get('/profile', async (c) => {
+  const userJwt = c.var.userJwt!;
+  const userId = c.var.userId!;
+  const supa = userClient(c.env, userJwt);
+  const { data, error } = await supa
+    .from('users')
+    .select('custom_fields')
+    .eq('id', userId)
+    .maybeSingle();
+  if (error) {
+    console.error('[me/profile] read failed', error);
+    return jsonError(c, 500, 'internal_error');
+  }
+  const cf = (data?.custom_fields ?? null) as Record<string, unknown> | null;
+  const rawMode = cf?.notification_preview_mode;
+  const mode =
+    rawMode === 'name' || rawMode === 'name_content' ? rawMode : 'generic';
+  return c.json({ notification_preview_mode: mode });
+});
+
+// PATCH /v1/me/profile — write-side. Merges into users.custom_fields so
+// other keys the iOS side may have stashed (avatar_seed etc.) survive.
+// RLS policy users_self_update gates this to the caller's own row.
+const PatchProfileBody = z.object({
+  notification_preview_mode: z.enum(['generic', 'name', 'name_content']).optional(),
+});
+meRoutes.patch('/profile', async (c) => {
+  const userJwt = c.var.userJwt!;
+  const userId = c.var.userId!;
+  let body: z.infer<typeof PatchProfileBody>;
+  try {
+    body = PatchProfileBody.parse(await c.req.json());
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+  if (body.notification_preview_mode === undefined) {
+    return c.json({ ok: true }); // nothing to patch
+  }
+  const supa = userClient(c.env, userJwt);
+  const { data: existing } = await supa
+    .from('users')
+    .select('custom_fields')
+    .eq('id', userId)
+    .maybeSingle();
+  const cf = ((existing?.custom_fields ?? {}) as Record<string, unknown>);
+  cf.notification_preview_mode = body.notification_preview_mode;
+  const { error } = await supa
+    .from('users')
+    .update({ custom_fields: cf as never })
+    .eq('id', userId);
+  if (error) {
+    console.error('[me/profile] update failed', error);
+    return jsonError(c, 500, 'internal_error');
+  }
+  return c.json({ ok: true, notification_preview_mode: body.notification_preview_mode });
+});
 
 // GET /v1/me/memory — transparency UI: "what bots see in me".
 // Backed by KV (Honcho user-peer representation, refreshed after each turn).

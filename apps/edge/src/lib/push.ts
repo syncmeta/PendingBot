@@ -7,30 +7,62 @@ import { sendApns, type ApnsPayload } from './apns';
 // ('dev' for TestFlight/Debug builds, 'prod' for App Store builds — same
 // table, runtime routing).
 //
+// Two layers:
+//   - notifyUser({ payload, ... })          → raw send, caller owns the
+//                                              alert body verbatim. Use
+//                                              this for non-message pushes
+//                                              (voice rings etc.).
+//   - notifyUserMessage({ senderName, ... }) → message-shaped push that
+//                                              renders the alert body
+//                                              against the recipient's
+//                                              notification_preview_mode
+//                                              preference (generic / name /
+//                                              name_content).
+//
 // On Apple's "BadDeviceToken" / "Unregistered" responses, mark the token
 // inactive so we stop hammering it. Other errors are logged-and-shrugged
 // (transient).
 
-// PRIVACY: do not embed message text, sender display name, or any other
-// content the user might consider private in `payload.alert.body` or
-// `.title`. iOS Notification Center retains the alert verbatim and shows
-// it on the lock screen, where anyone with physical access can read it.
-// The intended pattern (once a real caller arrives) is a generic alert
-// ("New message" / "BotX replied") plus a structured extra object the
-// app reads after unlock to fetch the actual content over HTTPS.
-//
-// See the audit follow-up: tightening this into a semantic `kind` enum
-// belongs with the first product caller that wires push into a flow.
-export interface NotifyUserInput {
+export type NotificationPreviewMode = 'generic' | 'name' | 'name_content';
+
+const PREVIEW_MAX_LEN = 60;
+const GENERIC_ALERT = '新消息';
+
+function normalizePreviewMode(v: unknown): NotificationPreviewMode {
+  return v === 'name' || v === 'name_content' ? v : 'generic';
+}
+
+// Single source of truth for what users see on the lock screen. Anything
+// above 'generic' opts the user into surfacing names / message text — the
+// caller's job is to feed in clean, untrimmed values; this fn handles the
+// truncation + fallback chain.
+export function renderAlertBody(
+  mode: NotificationPreviewMode,
+  senderName: string | null,
+  contentPreview: string | null,
+): string {
+  if (mode === 'name' && senderName) return senderName;
+  if (mode === 'name_content') {
+    const name = senderName ?? GENERIC_ALERT;
+    const raw = (contentPreview ?? '').replace(/\s+/g, ' ').trim();
+    if (!raw) return name;
+    const body = raw.length > PREVIEW_MAX_LEN ? raw.slice(0, PREVIEW_MAX_LEN) + '…' : raw;
+    return `${name}：${body}`;
+  }
+  return GENERIC_ALERT;
+}
+
+const RETIREMENT_REASONS = new Set(['BadDeviceToken', 'Unregistered', 'DeviceTokenNotForTopic']);
+
+interface SendToTokensInput {
   env: Env;
   userId: string;
   payload: ApnsPayload;
   collapseId?: string;
 }
 
-const RETIREMENT_REASONS = new Set(['BadDeviceToken', 'Unregistered', 'DeviceTokenNotForTopic']);
-
-export async function notifyUser(input: NotifyUserInput): Promise<{ sent: number; failed: number }> {
+// Internal — caller has already decided exactly what alert text to ship.
+async function sendToTokens(input: SendToTokensInput): Promise<{ sent: number; failed: number }> {
   const { env, userId, payload, collapseId } = input;
   const supa = serviceClient(env);
 
@@ -72,7 +104,11 @@ export async function notifyUser(input: NotifyUserInput): Promise<{ sent: number
             .update({ is_active: false })
             .eq('id', row.id);
         }
-        console.warn('[push] apns failed', { tokenId: row.id, status: result.status, reason: result.reason });
+        console.warn('[push] apns failed', {
+          tokenId: row.id,
+          status: result.status,
+          reason: result.reason,
+        });
       }
     }),
   );
@@ -80,7 +116,65 @@ export async function notifyUser(input: NotifyUserInput): Promise<{ sent: number
   return { sent, failed };
 }
 
-// Fan a "new message" push out to the human participants of a conversation,
+export interface NotifyUserInput {
+  env: Env;
+  userId: string;
+  payload: ApnsPayload;
+  collapseId?: string;
+}
+
+// Raw, caller-controlled body. Used by voice-ring and other typed
+// notifications whose copy is fixed at the call site.
+export async function notifyUser(input: NotifyUserInput): Promise<{ sent: number; failed: number }> {
+  return sendToTokens(input);
+}
+
+export interface NotifyUserMessageInput {
+  env: Env;
+  userId: string;
+  // Sender display name as it should appear in the alert body. Pass the
+  // bot's display_name for bot replies, the user's display_name for human
+  // messages. null disables name-mode rendering (alert falls back to the
+  // generic copy).
+  senderName: string | null;
+  // Untrimmed message text. Trimming + truncation happen inside the
+  // renderer. Pass null for non-textual notifications.
+  contentPreview: string | null;
+  // Custom keys to ride alongside aps (e.g. { conversationId, kind }).
+  extra?: Record<string, unknown>;
+  threadId?: string;
+  collapseId?: string;
+}
+
+// Message-shaped push — renders the alert body against the recipient's
+// notification_preview_mode preference, then sends to all their devices.
+export async function notifyUserMessage(
+  input: NotifyUserMessageInput,
+): Promise<{ sent: number; failed: number }> {
+  const { env, userId, senderName, contentPreview, extra, threadId, collapseId } = input;
+  const supa = serviceClient(env);
+  const { data: prefRow } = await supa
+    .from('users')
+    .select('custom_fields')
+    .eq('id', userId)
+    .maybeSingle();
+  const cf = (prefRow?.custom_fields ?? null) as Record<string, unknown> | null;
+  const mode = normalizePreviewMode(cf?.notification_preview_mode);
+  const body = renderAlertBody(mode, senderName, contentPreview);
+  return sendToTokens({
+    env,
+    userId,
+    payload: {
+      alert: { body },
+      sound: 'default',
+      threadId,
+      extra,
+    },
+    collapseId,
+  });
+}
+
+// Fan a message-shaped push out to the human participants of a conversation,
 // skipping the sender. Used for user_user DMs and group messages where the
 // recipient set lives in conversation_participants. Fire-and-forget — call
 // it through waitUntil so the HTTP response doesn't wait on APNS.
@@ -88,10 +182,13 @@ export async function notifyConversationUsers(input: {
   env: Env;
   conversationId: string;
   excludeUserId: string | null;
-  payload: ApnsPayload;
+  senderName: string | null;
+  contentPreview: string | null;
+  extra?: Record<string, unknown>;
+  threadId?: string;
   collapseId?: string;
 }): Promise<void> {
-  const { env, conversationId, excludeUserId, payload, collapseId } = input;
+  const { env, conversationId, excludeUserId, ...passthrough } = input;
   const supa = serviceClient(env);
   const { data: rows, error } = await supa
     .from('conversation_participants')
@@ -106,6 +203,6 @@ export async function notifyConversationUsers(input: {
     .map((r) => r.participant_id as string)
     .filter((id) => id !== excludeUserId);
   await Promise.all(
-    recipients.map((userId) => notifyUser({ env, userId, payload, collapseId })),
+    recipients.map((userId) => notifyUserMessage({ env, userId, ...passthrough })),
   );
 }
