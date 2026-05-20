@@ -883,6 +883,9 @@ struct BotConfigView: View {
     /// Realtime voice model slug. Always concrete — a bot with voice on
     /// has a model; the default is gpt-realtime-2. Never empty.
     @State private var voiceModel: String = "gpt-realtime-2"
+    /// Per-bot realtime call knobs (voice id, VAD mode + thresholds,
+    /// auto-respond / interrupt flags). Lives under `bots.config.voice`.
+    @State private var voiceSettings: BotVoiceSettings = .defaults
     @State private var visionModel: String = ""   // "" = auto
     @State private var envelope: EnvelopeSettings = .defaults
     @State private var lookbackEnabled: Bool = true
@@ -901,6 +904,7 @@ struct BotConfigView: View {
         let modelProvider: String?
         let voiceEnabled: Bool
         let voiceModel: String
+        let voiceSettings: BotVoiceSettings
         let visionModel: String
         let envelope: EnvelopeSettings
         let lookbackEnabled: Bool
@@ -928,6 +932,7 @@ struct BotConfigView: View {
         Snapshot(
             model: model, modelProvider: modelProvider,
             voiceEnabled: voiceEnabled, voiceModel: voiceModel,
+            voiceSettings: voiceSettings,
             visionModel: visionModel, envelope: envelope,
             lookbackEnabled: lookbackEnabled, lookbackInterval: lookbackInterval
         )
@@ -1020,11 +1025,14 @@ struct BotConfigView: View {
             Toggle("通话能力", isOn: $voiceEnabled)
                 .disabled(!canEdit)
             if voiceEnabled {
+                // Friendly labels for the two realtime models — we don't
+                // route these through ModelCatalog because the catalog
+                // exists for the chat-side LLM picker, and the realtime
+                // names ("GPT Realtime 2" / "GPT Realtime Mini") are
+                // stable, short, and worth showing as-is.
                 Picker(selection: $voiceModel) {
-                    Text(catalog.displayName(for: "gpt-realtime-2"))
-                        .tag("gpt-realtime-2")
-                    Text(catalog.displayName(for: "gpt-realtime-mini-2025-12-15"))
-                        .tag("gpt-realtime-mini-2025-12-15")
+                    Text("GPT Realtime 2").tag("gpt-realtime-2")
+                    Text("GPT Realtime Mini").tag("gpt-realtime-mini-2025-12-15")
                 } label: {
                     HStack {
                         Image(systemName: "waveform")
@@ -1033,11 +1041,21 @@ struct BotConfigView: View {
                 }
                 .disabled(!canEdit)
                 .foregroundStyle(Theme.Palette.ink)
+
+                NavigationLink {
+                    BotVoiceSettingsView(settings: $voiceSettings, canEdit: canEdit)
+                } label: {
+                    HStack {
+                        Image(systemName: "slider.horizontal.3")
+                        Text("通话设置")
+                    }
+                }
+                .foregroundStyle(Theme.Palette.ink)
             }
         } header: {
             Text("通话")
         } footer: {
-            Text("目前只接入了 OpenAI 的两个模型，Realtime 2 比较贵，Mini 比较笨。")
+            Text("Realtime 2 比较贵，Mini 比较笨。「通话设置」里可以调音色、回合检测模式与阈值、是否自动回复、是否被打断。")
         }
     }
 
@@ -1169,6 +1187,7 @@ struct BotConfigView: View {
         guard let json, case let .object(dict) = json else { return }
         if case let .string(s)? = dict["voiceModel"], !s.isEmpty { voiceModel = s }
         if case let .string(s)? = dict["visionModel"], !s.isEmpty { visionModel = s }
+        voiceSettings = BotVoiceSettings.from(dict["voice"])
         envelope = EnvelopeSettings.from(dict["envelope"])
         if case let .object(lb)? = dict["lookback"] {
             if case let .bool(b)? = lb["enabled"] { lookbackEnabled = b }
@@ -1207,6 +1226,7 @@ struct BotConfigView: View {
                 "envelope": envelopeCfg,
                 "visionModel": visionVal,
                 "voiceModel": voiceModel,
+                "voice": voiceSettings.toConfigDict(),
             ]
             let body: [String: Any] = [
                 "model_id": model,
@@ -1241,6 +1261,267 @@ struct BotConfigView: View {
         } catch {
             self.error = error.localizedDescription
             Haptics.error()
+        }
+    }
+}
+
+// MARK: - 通话设置 / Realtime voice + turn-detection knobs
+
+/// Per-bot realtime call knobs persisted under `bots.config.voice`. The
+/// edge resolver (lib/voice-config) maps this to OpenAI's
+/// `audio.output.voice` + `audio.input.turn_detection` on session create.
+///
+/// `turnType` is a four-way switch:
+///   • .auto         → omit turn_detection (OpenAI default = semantic_vad)
+///   • .server_vad   → energy-based VAD with threshold + paddings
+///   • .semantic_vad → model-decided end-of-turn with eagerness
+///   • .none         → no VAD; user controls every response (push-to-talk)
+///
+/// `createResponse` / `interruptResponse` only apply to server_vad +
+/// semantic_vad; the UI hides them when turnType is .auto or .none.
+struct BotVoiceSettings: Codable, Hashable {
+    enum VoiceId: String, Codable, CaseIterable, Hashable {
+        case marin, cedar, alloy, ash, ballad, coral, echo, sage, shimmer, verse
+        var label: String { rawValue.capitalized }
+    }
+
+    enum TurnDetectionType: String, Codable, CaseIterable, Hashable {
+        case auto, server_vad, semantic_vad, none
+        var label: String {
+            switch self {
+            case .auto:         return "自动"
+            case .server_vad:   return "服务端 VAD"
+            case .semantic_vad: return "语义 VAD"
+            case .none:         return "关闭（按住说话）"
+            }
+        }
+    }
+
+    enum Eagerness: String, Codable, CaseIterable, Hashable {
+        case low, medium, high, auto
+        var label: String {
+            switch self {
+            case .low:    return "低"
+            case .medium: return "中"
+            case .high:   return "高"
+            case .auto:   return "自动"
+            }
+        }
+    }
+
+    var voiceId: VoiceId = .marin
+    var turnType: TurnDetectionType = .auto
+    /// server_vad activity threshold — 0.0 (mic always on) … 1.0 (only
+    /// shouting trips). OpenAI's own default is 0.5; ours matches.
+    var threshold: Double = 0.5
+    /// server_vad — how much audio before VAD-trip to keep as the user's
+    /// utterance (default 300 ms).
+    var prefixPaddingMs: Int = 300
+    /// server_vad — how long silence must hold before VAD declares
+    /// end-of-turn (default 200 ms).
+    var silenceDurationMs: Int = 200
+    /// semantic_vad — how eager the model is to assume the user is done.
+    var eagerness: Eagerness = .auto
+    /// After VAD declares end-of-turn, immediately ask the model for a
+    /// response. Off = user (or a tool call) must trigger one manually.
+    var createResponse: Bool = true
+    /// When the user starts speaking mid-response, truncate the current
+    /// model audio so the bot stops talking over them.
+    var interruptResponse: Bool = true
+
+    static let defaults = BotVoiceSettings()
+
+    /// Decode from a Supabase JSONB blob (`AnyJSON`). Every field is
+    /// optional — missing keys fall back to defaults so older bot rows
+    /// still render.
+    static func from(_ json: AnyJSON?) -> BotVoiceSettings {
+        var s = BotVoiceSettings.defaults
+        guard let json, case let .object(dict) = json else { return s }
+        if case let .string(v)? = dict["voiceId"], let id = VoiceId(rawValue: v) {
+            s.voiceId = id
+        }
+        guard case let .object(td)? = dict["turnDetection"] else { return s }
+        if case let .string(v)? = td["type"], let t = TurnDetectionType(rawValue: v) {
+            s.turnType = t
+        }
+        if case let .double(v)? = td["threshold"] {
+            s.threshold = max(0, min(1, v))
+        } else if case let .integer(v)? = td["threshold"] {
+            s.threshold = max(0, min(1, Double(v)))
+        }
+        if case let .integer(v)? = td["prefixPaddingMs"], v >= 0 {
+            s.prefixPaddingMs = v
+        } else if case let .double(v)? = td["prefixPaddingMs"], v >= 0 {
+            s.prefixPaddingMs = Int(v)
+        }
+        if case let .integer(v)? = td["silenceDurationMs"], v >= 0 {
+            s.silenceDurationMs = v
+        } else if case let .double(v)? = td["silenceDurationMs"], v >= 0 {
+            s.silenceDurationMs = Int(v)
+        }
+        if case let .string(v)? = td["eagerness"], let e = Eagerness(rawValue: v) {
+            s.eagerness = e
+        }
+        if case let .bool(v)? = td["createResponse"] { s.createResponse = v }
+        if case let .bool(v)? = td["interruptResponse"] { s.interruptResponse = v }
+        return s
+    }
+
+    /// Serialize for the PATCH body. The whole sub-object is sent every
+    /// save — the edge resolver only consumes fields relevant to the
+    /// chosen `type`, so extras are harmless.
+    func toConfigDict() -> [String: Any] {
+        [
+            "voiceId": voiceId.rawValue,
+            "turnDetection": [
+                "type": turnType.rawValue,
+                "threshold": threshold,
+                "prefixPaddingMs": prefixPaddingMs,
+                "silenceDurationMs": silenceDurationMs,
+                "eagerness": eagerness.rawValue,
+                "createResponse": createResponse,
+                "interruptResponse": interruptResponse,
+            ] as [String: Any],
+        ]
+    }
+}
+
+struct BotVoiceSettingsView: View {
+    @Binding var settings: BotVoiceSettings
+    var canEdit: Bool = true
+
+    var body: some View {
+        Form {
+            Section {
+                Picker(selection: $settings.voiceId) {
+                    ForEach(BotVoiceSettings.VoiceId.allCases, id: \.self) { v in
+                        Text(v.label).tag(v)
+                    }
+                } label: {
+                    HStack {
+                        Image(systemName: "person.wave.2")
+                        Text("音色")
+                    }
+                }
+                .foregroundStyle(Theme.Palette.ink)
+            } header: {
+                Text("声音")
+            } footer: {
+                Text("OpenAI Realtime 提供的音色。Marin 是默认。")
+            }
+
+            Section {
+                Picker(selection: $settings.turnType) {
+                    ForEach(BotVoiceSettings.TurnDetectionType.allCases, id: \.self) { t in
+                        Text(t.label).tag(t)
+                    }
+                } label: {
+                    HStack {
+                        Image(systemName: "ear")
+                        Text("检测模式")
+                    }
+                }
+                .foregroundStyle(Theme.Palette.ink)
+
+                switch settings.turnType {
+                case .server_vad:
+                    serverVadRows
+                case .semantic_vad:
+                    semanticVadRows
+                case .auto, .none:
+                    EmptyView()
+                }
+            } header: {
+                Text("回合检测（VAD）")
+            } footer: {
+                Text(turnDetectionFooter)
+            }
+
+            if settings.turnType == .server_vad || settings.turnType == .semantic_vad {
+                Section {
+                    Toggle("说完自动回复", isOn: $settings.createResponse)
+                        .foregroundStyle(Theme.Palette.ink)
+                    Toggle("被打断时停止当前回答", isOn: $settings.interruptResponse)
+                        .foregroundStyle(Theme.Palette.ink)
+                } header: {
+                    Text("回复行为")
+                } footer: {
+                    Text("「说完自动回复」关掉后，机器人不会主动接话；「被打断时停止」关掉后，你说话时它会继续讲完当前那句。")
+                }
+            }
+        }
+        .navigationTitle("通话设置")
+        .navigationBarTitleDisplayMode(.inline)
+        .disabled(!canEdit)
+        .tint(Theme.Palette.accent)
+    }
+
+    @ViewBuilder
+    private var serverVadRows: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Image(systemName: "speaker.wave.2")
+                Text("音量阈值")
+                Spacer()
+                Text(String(format: "%.2f", settings.threshold))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            Slider(value: $settings.threshold, in: 0...1, step: 0.05)
+                .tint(Theme.Palette.accent)
+        }
+        .foregroundStyle(Theme.Palette.ink)
+
+        Stepper(value: $settings.prefixPaddingMs, in: 0...1000, step: 50) {
+            HStack {
+                Image(systemName: "arrow.backward.to.line")
+                Text("前导补足")
+                Spacer()
+                Text("\(settings.prefixPaddingMs) ms")
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+        }
+        .foregroundStyle(Theme.Palette.ink)
+
+        Stepper(value: $settings.silenceDurationMs, in: 0...2000, step: 50) {
+            HStack {
+                Image(systemName: "pause.circle")
+                Text("静音判定")
+                Spacer()
+                Text("\(settings.silenceDurationMs) ms")
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+        }
+        .foregroundStyle(Theme.Palette.ink)
+    }
+
+    @ViewBuilder
+    private var semanticVadRows: some View {
+        Picker(selection: $settings.eagerness) {
+            ForEach(BotVoiceSettings.Eagerness.allCases, id: \.self) { e in
+                Text(e.label).tag(e)
+            }
+        } label: {
+            HStack {
+                Image(systemName: "brain")
+                Text("灵敏度")
+            }
+        }
+        .foregroundStyle(Theme.Palette.ink)
+    }
+
+    private var turnDetectionFooter: String {
+        switch settings.turnType {
+        case .auto:
+            return "由模型决定何时认为你说完。最稳。"
+        case .server_vad:
+            return "按音量切换回合。阈值越低越敏感；前导补足是触发时往前保留的音频；静音判定是认为说完所需的静音长度。"
+        case .semantic_vad:
+            return "由模型判断语义是否完整。灵敏度越高越早抢答。"
+        case .none:
+            return "关闭检测，需要手动控制（暂未支持完全的按住说话 UI，建议选「自动」）。"
         }
     }
 }
