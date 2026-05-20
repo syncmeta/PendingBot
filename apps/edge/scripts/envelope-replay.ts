@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
-// Offline replay harness for the 奏折 (scroll) agent loop.
+// Offline replay harness for the 来信 (envelope) agent loop.
 //
 // 用法（A：从真实对话拉取）:
-//   bun run apps/edge/scripts/scroll-replay.ts <conversation-id> [flags]
+//   bun run apps/edge/scripts/envelope-replay.ts <conversation-id> [flags]
 //
 // 用法（B：用合成对话 fixture，纯本地、不连 conversations 表）:
-//   bun run apps/edge/scripts/scroll-replay.ts --fixture path/to/fixture.json --model <id>
+//   bun run apps/edge/scripts/envelope-replay.ts --fixture path/to/fixture.json --model <id>
 //
 // Flags:
 //   --fixture <file>   Synthetic-conv JSON ({ history, model?, memory? } or just an array)
@@ -20,14 +20,14 @@
 //   --no-color         Disable ANSI color
 //
 // Reads apps/edge/.dev.vars for keys, pulls history from the configured
-// Supabase (or from --fixture), runs runScrollLoop with stdout logging —
+// Supabase (or from --fixture), runs runEnvelopeLoop with stdout logging —
 // every assistant turn / tool call / tool result is printed. No DB writes.
 //
-// Find a conversation id with: bun run scripts/scroll-list-convs.ts
+// Find a conversation id with: bun run scripts/envelope-list-convs.ts
 //
 // Iteration loop:
-//   1. tweak prompts/scroll.md or prompts/scroll-injected.md (or src/lib/scroll-loop.ts)
-//   2. bun run apps/edge/scripts/scroll-replay.ts <conv-id>   (or --fixture ...)
+//   1. tweak prompts/envelope.md or prompts/envelope-injected.md (or src/lib/envelope-loop.ts)
+//   2. bun run apps/edge/scripts/envelope-replay.ts <conv-id>   (or --fixture ...)
 //   3. read the trace, repeat.
 
 import fs from 'node:fs';
@@ -36,13 +36,13 @@ import { fileURLToPath } from 'node:url';
 import { createClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
 import {
-  buildScrollInitialUserContent,
+  buildEnvelopeInitialUserContent,
   extractSummary,
   extractTitle,
   HISTORY_LIMIT,
-  runScrollLoop,
-  type ScrollTurnInfo,
-} from '../src/lib/scroll-loop';
+  runEnvelopeLoop,
+  type EnvelopeTurnInfo,
+} from '../src/lib/envelope-loop';
 import { runWebScrape, runWebSearch } from '../src/lib/web';
 import { WebToolMeter } from '../src/lib/web-meter';
 
@@ -93,8 +93,8 @@ const stubFetch = opts['--no-fetch'] === true;
 const stubSearch = opts['--no-search'] === true;
 
 if (!conversationId && !fixtureFile) {
-  console.error('usage: bun run scroll-replay.ts <conversation-id> [flags]');
-  console.error('       bun run scroll-replay.ts --fixture <file.json> --model <id> [flags]');
+  console.error('usage: bun run envelope-replay.ts <conversation-id> [flags]');
+  console.error('       bun run envelope-replay.ts --fixture <file.json> --model <id> [flags]');
   process.exit(2);
 }
 if (conversationId && fixtureFile) {
@@ -269,7 +269,7 @@ async function main(): Promise<void> {
   console.log(`model_id:         ${C.cyan(modelId)}`);
   console.log(`history messages: ${hLen}`);
   if (hLen < 2) {
-    console.error(C.red('history too short — runScroll would early-delete the row'));
+    console.error(C.red('history too short — runEnvelope would early-delete the row'));
     process.exit(1);
   }
 
@@ -285,7 +285,7 @@ async function main(): Promise<void> {
     console.log(C.dim('memory:           (none — pass --memory <file> to inject)'));
   }
 
-  const initialUser = buildScrollInitialUserContent({
+  const initialUser = buildEnvelopeInitialUserContent({
     history,
     memoryRepresentation,
     injectedPrompt,
@@ -299,7 +299,7 @@ async function main(): Promise<void> {
     baseURL: 'https://openrouter.ai/api/v1',
     defaultHeaders: {
       'HTTP-Referer': 'https://pendingname.com',
-      'X-Title': 'PendingBot/scroll-replay',
+      'X-Title': 'PendingBot/envelope-replay',
     },
   });
 
@@ -315,7 +315,7 @@ async function main(): Promise<void> {
   const replayMeter = WebToolMeter.withPrices({});
 
   const startedAt = Date.now();
-  const onTurn = ({ turn, progress, newMessages }: ScrollTurnInfo): void => {
+  const onTurn = ({ turn, progress, newMessages }: EnvelopeTurnInfo): void => {
     divider(`turn ${turn}  phase=${progress.phase}  notes=${progress.notes.length}  urls=${progress.visited_urls.length}`);
     for (const m of newMessages) {
       if (m.role === 'assistant') {
@@ -337,7 +337,7 @@ async function main(): Promise<void> {
     }
   };
 
-  const result = await runScrollLoop({
+  const result = await runEnvelopeLoop({
     openai,
     modelId,
     systemPrompt,
@@ -369,7 +369,7 @@ async function main(): Promise<void> {
     console.log(C.green('reason=stopped — production runner would now run the writer phase.'));
     if (result.stopReason) console.log(`stop reason: ${result.stopReason}`);
   } else {
-    console.log(C.dim(`reason=${result.reason} — no writer phase; runScroll would delete the row as 空奏折.`));
+    console.log(C.dim(`reason=${result.reason} — no writer phase; runEnvelope would delete the row as 空来信.`));
   }
   if (result.lastAssistantText) {
     console.log();

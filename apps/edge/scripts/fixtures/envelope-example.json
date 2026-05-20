@@ -1,5 +1,5 @@
 {
-  "_doc": "Synthetic conversation for scroll-replay.ts. Edit the history list to simulate a different friend / topic / vibe; tweak `model` to switch the model. Pass `--memory` to override the `memory` field below at the command line.",
+  "_doc": "Synthetic conversation for envelope-replay.ts. Edit the history list to simulate a different friend / topic / vibe; tweak `model` to switch the model. Pass `--memory` to override the `memory` field below at the command line.",
   "model": "anthropic/claude-opus-latest",
   "memory": "这位朋友在做一个 indie 写作工具，已经做了 8 个月，用户增长缓慢；偏向闷头打磨产品而不是营销。最近开始焦虑收入。",
   "history": [

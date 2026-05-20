@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
 // List recent user↔bot conversations with enough context to pick one
-// for `scroll-replay.ts`. Service-role read against the configured
+// for `envelope-replay.ts`. Service-role read against the configured
 // Supabase (apps/edge/.dev.vars) — sees all conversations, regardless
 // of RLS.
 //
 // 用法:
-//   bun run apps/edge/scripts/scroll-list-convs.ts [--limit 20] [--user <id>] [--bot <id>]
+//   bun run apps/edge/scripts/envelope-list-convs.ts [--limit 20] [--user <id>] [--bot <id>]
 //
 // Output (TSV-ish): id  updated_at  bot_name  user_id  msg_count  last_msg_preview
 
