@@ -162,7 +162,23 @@ interface BotSpec {
   botId: string;
   model: string;
   instructions: string;
-  voice: string;
+  /// Resolved per-bot voice + turn-detection block from lib/voice-config.
+  /// `turnDetection` follows the OpenAI tri-state: undefined = omit (use
+  /// OpenAI default semantic_vad); null = push-to-talk; object = explicit.
+  voiceConfig: {
+    voice: string;
+    turnDetection?:
+      | null
+      | {
+          type: 'server_vad' | 'semantic_vad';
+          threshold?: number;
+          prefix_padding_ms?: number;
+          silence_duration_ms?: number;
+          eagerness?: 'low' | 'medium' | 'high' | 'auto';
+          create_response?: boolean;
+          interrupt_response?: boolean;
+        };
+  };
 }
 
 interface StartPayload {
@@ -892,6 +908,7 @@ export class RoomVoiceDO {
 
     // Bake the persona server-side — the bot never gets instructions from
     // a client. 24 kHz PCM both ways matches the mixer's output rate.
+    const td = leg.spec.voiceConfig.turnDetection;
     ws.send(
       JSON.stringify({
         type: 'session.update',
@@ -902,10 +919,16 @@ export class RoomVoiceDO {
           tools: this.toolsFor(leg.spec.botId),
           tool_choice: 'auto',
           audio: {
-            input: { format: { type: 'audio/pcm', rate: OPENAI_RATE } },
+            input: {
+              format: { type: 'audio/pcm', rate: OPENAI_RATE },
+              // undefined → omit (OpenAI default semantic_vad);
+              // null → disable VAD entirely (push-to-talk);
+              // object → apply as-is.
+              ...(td !== undefined && { turn_detection: td }),
+            },
             output: {
               format: { type: 'audio/pcm', rate: OPENAI_RATE },
-              voice: leg.spec.voice || 'marin',
+              voice: leg.spec.voiceConfig.voice || 'marin',
             },
           },
         },

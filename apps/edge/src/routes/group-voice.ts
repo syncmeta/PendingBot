@@ -47,14 +47,18 @@ import {
   renegotiateSfuSession,
   type SfuApp,
 } from '../lib/sfu';
+import {
+  resolveVoiceConfig,
+  type ResolvedVoiceConfig,
+} from '../lib/voice-config';
 import type { AppBindings } from '../types';
 
 export const groupVoiceRoutes = new Hono<AppBindings>();
 groupVoiceRoutes.use('*', requireSession());
 
-// Default realtime model / voice when a bot's config doesn't pin one.
+// Default realtime model when a bot's config doesn't pin one. (Voice id +
+// turn-detection defaults live in lib/voice-config.)
 const DEFAULT_VOICE_MODEL_SLUG = 'gpt-realtime-2';
-const DEFAULT_VOICE = 'marin';
 
 // Path the SFU adapter WebSocket route is mounted on (see index.ts).
 const ADAPTER_PATH = '/v1/realtime-sfu';
@@ -63,7 +67,7 @@ interface BotSpec {
   botId: string;
   model: string;
   instructions: string;
-  voice: string;
+  voiceConfig: ResolvedVoiceConfig;
 }
 
 // Pull a non-empty string field out of a bot's free-form `config` JSON.
@@ -172,7 +176,7 @@ async function buildBotSpec(
     botId: bot.id,
     model: configString(bot.config, 'voiceModel') ?? DEFAULT_VOICE_MODEL_SLUG,
     instructions,
-    voice: configString(bot.config, 'voice') ?? DEFAULT_VOICE,
+    voiceConfig: resolveVoiceConfig(bot.config),
   };
 }
 

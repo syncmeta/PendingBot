@@ -57,6 +57,22 @@ interface MeterContext {
   // proxy (WebSocket) only — model id + baked persona for session.update.
   model?: string;
   instructions?: string;
+  // proxy (WebSocket) only — resolved per-bot voice/turn-detection block
+  // produced by lib/voice-config. Baked into the initial session.update.
+  voiceConfig?: {
+    voice: string;
+    turnDetection?:
+      | null
+      | {
+          type: 'server_vad' | 'semantic_vad';
+          threshold?: number;
+          prefix_padding_ms?: number;
+          silence_duration_ms?: number;
+          eagerness?: 'low' | 'medium' | 'high' | 'auto';
+          create_response?: boolean;
+          interrupt_response?: boolean;
+        };
+  };
 }
 
 // Usage object inside an OpenAI realtime `response.done` event.
@@ -295,6 +311,8 @@ export class RealtimeMeterDO {
     // Configure the session server-side. iOS never sends instructions —
     // the persona is assembled by the worker and baked here.
     try {
+      const voiceId = ctx.voiceConfig?.voice ?? 'marin';
+      const td = ctx.voiceConfig?.turnDetection;
       upstream.send(
         JSON.stringify({
           type: 'session.update',
@@ -311,8 +329,11 @@ export class RealtimeMeterDO {
             audio: {
               input: {
                 format: { type: 'audio/pcm', rate: 24000 },
+                // undefined → omit (OpenAI default semantic_vad); null →
+                // disable VAD entirely (push-to-talk); object → apply.
+                ...(td !== undefined && { turn_detection: td }),
               },
-              output: { format: { type: 'audio/pcm', rate: 24000 }, voice: 'marin' },
+              output: { format: { type: 'audio/pcm', rate: 24000 }, voice: voiceId },
             },
           },
         }),

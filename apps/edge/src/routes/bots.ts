@@ -33,6 +33,45 @@ const ConfigPatch = z
       .optional(),
     visionModel: z.string().max(200).nullable().optional(),
     voiceModel: z.string().max(200).nullable().optional(),
+    // Realtime voice call knobs. All optional — absent / null fields fall
+    // back to OpenAI defaults at session-mint time. The 8 voices below
+    // are the OpenAI Realtime catalog as of 2026-Q2; 'marin' is the
+    // worker fallback when voiceId is unset.
+    voice: z
+      .object({
+        voiceId: z
+          .enum([
+            'alloy',
+            'ash',
+            'ballad',
+            'cedar',
+            'coral',
+            'echo',
+            'marin',
+            'sage',
+            'shimmer',
+            'verse',
+          ])
+          .nullable()
+          .optional(),
+        // turn_detection in OpenAI Realtime — server_vad (energy-based,
+        // tunable threshold) vs semantic_vad (model decides end-of-turn,
+        // tunable eagerness) vs 'none' (push-to-talk; client controls
+        // response creation). 'auto' = let OpenAI pick the default
+        // (currently semantic_vad).
+        turnDetection: z
+          .object({
+            type: z.enum(['auto', 'server_vad', 'semantic_vad', 'none']).optional(),
+            threshold: z.number().min(0).max(1).optional(),
+            prefixPaddingMs: z.number().int().min(0).max(2000).optional(),
+            silenceDurationMs: z.number().int().min(0).max(2000).optional(),
+            eagerness: z.enum(['low', 'medium', 'high', 'auto']).optional(),
+            createResponse: z.boolean().optional(),
+            interruptResponse: z.boolean().optional(),
+          })
+          .optional(),
+      })
+      .optional(),
   })
   .strict();
 
