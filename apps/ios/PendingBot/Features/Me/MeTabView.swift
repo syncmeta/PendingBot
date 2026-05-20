@@ -304,11 +304,16 @@ struct OptionRow: View {
 
 /// Solid white background for a whole group of option rows — a single
 /// rounded rectangle so the rows inside read as one connected card.
+/// Thin gray hairline + a soft outer shadow lift it off the canvas.
 extension View {
     func meGlassGroup() -> some View {
         let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
         return self
             .background(shape.fill(Color.white))
             .clipShape(shape)
+            .overlay(
+                shape.strokeBorder(Color.black.opacity(0.08), lineWidth: 0.5)
+            )
+            .shadow(color: .black.opacity(0.06), radius: 6, x: 0, y: 2)
     }
 }
