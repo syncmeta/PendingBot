@@ -61,61 +61,61 @@ struct ComposerView: View {
                         .font(.system(size: 18, weight: .medium))
                         .foregroundStyle(Theme.Palette.inkMuted)
                         .frame(width: 38, height: 38)
-                        .background(Circle().fill(Theme.Palette.surface))
-                        .overlay(Circle().strokeBorder(Theme.Palette.hairline, lineWidth: 0.5))
+                        .background(.ultraThinMaterial, in: Circle())
+                        .overlay(Circle().strokeBorder(Theme.Palette.hairline.opacity(0.6), lineWidth: 0.5))
                 }
                 .buttonStyle(.plain)
 
-                ComposerTextField(
-                    text: $input,
-                    placeholder: "发消息…",
-                    isFocused: $isFocused,
-                    onHardwareReturn: {
-                        // Hardware keyboard's plain Return — Mac Catalyst
-                        // and iPad-with-keyboard. Shift+Return falls
-                        // through to default UITextView behaviour (newline)
-                        // by way of the subclass not consuming it.
-                        if canSend { onSend() }
+                HStack(alignment: .bottom, spacing: 6) {
+                    ComposerTextField(
+                        text: $input,
+                        placeholder: "发消息…",
+                        isFocused: $isFocused,
+                        onHardwareReturn: {
+                            // Hardware keyboard's plain Return — Mac Catalyst
+                            // and iPad-with-keyboard. Shift+Return falls
+                            // through to default UITextView behaviour (newline)
+                            // by way of the subclass not consuming it.
+                            if canSend { onSend() }
+                        }
+                    )
+                    .onChange(of: isFocused) { _, focused in
+                        if focused { showActions = false }
                     }
-                )
-                .onChange(of: isFocused) { _, focused in
-                    if focused { showActions = false }
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 4)
-                .background(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .fill(Theme.Palette.surface)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                                .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
-                        )
-                )
+                    .padding(.leading, 14)
+                    .padding(.vertical, 4)
 
-                Button(action: { isStreaming ? onStop() : onSend() }) {
-                    Image(systemName: isStreaming ? "stop.fill" : "arrow.up")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(
-                            isStreaming || canSend
-                                ? .white
-                                : Theme.Palette.inkMuted.opacity(0.5)
-                        )
-                        .frame(width: 38, height: 38)
-                        .background(
-                            Circle().fill(
+                    Button(action: { isStreaming ? onStop() : onSend() }) {
+                        Image(systemName: isStreaming ? "stop.fill" : "arrow.up")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(
                                 isStreaming || canSend
-                                    ? Theme.Palette.accent
-                                    : Theme.Palette.surfaceMuted
+                                    ? .white
+                                    : Theme.Palette.inkMuted.opacity(0.5)
                             )
-                        )
+                            .frame(width: 30, height: 30)
+                            .background(
+                                Circle().fill(
+                                    isStreaming || canSend
+                                        ? Theme.Palette.accent
+                                        : Theme.Palette.surfaceMuted
+                                )
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!isStreaming && !canSend)
+                    .padding(.trailing, 4)
+                    .padding(.bottom, 4)
                 }
-                .buttonStyle(.plain)
-                .disabled(!isStreaming && !canSend)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .strokeBorder(Theme.Palette.hairline.opacity(0.6), lineWidth: 0.5)
+                )
             }
             .padding(.horizontal, Theme.Metrics.gutter)
-            .padding(.top, 10)
-            .padding(.bottom, 10)
-            .background(Theme.Palette.canvas)
+            .padding(.top, 8)
+            .padding(.bottom, 8)
 
             if showActions {
                 ChatActionSheet(
@@ -130,12 +130,19 @@ struct ComposerView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .background(
-            // Solid backstop — without it the safeAreaInset region above
-            // the panel is transparent during the open/close transition,
-            // and the message list briefly bleeds through.
-            Theme.Palette.canvas
-        )
+        .background {
+            // Without a backstop the safeAreaInset region above the
+            // "+" panel is transparent during the open/close transition
+            // and the message list briefly bleeds through. When the
+            // panel is closed we keep the bar itself transparent so the
+            // floating capsule/circle blur picks up the scrolled
+            // messages behind them.
+            if showActions {
+                Theme.Palette.canvas
+            } else {
+                Color.clear
+            }
+        }
         .animation(.easeInOut(duration: 0.22), value: showActions)
     }
 
