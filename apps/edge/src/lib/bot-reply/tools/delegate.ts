@@ -24,11 +24,20 @@ export type SpecialistKey = 'claude' | 'openai' | 'gemini';
 
 const SPECIALIST_KEYS = new Set<string>(Object.keys(SPECIALIST_PROVIDERS));
 
-// One specialist turn is bounded — beyond this the bot caller's own
-// SSE stream is at risk of timing out. The async/push-wakeup flow that
-// would survive a longer wait is a follow-up (see the SSE-detach task);
-// today we cap and report back.
-const SPECIALIST_TIMEOUT_MS = 60_000;
+// One specialist turn is bounded by this internal cap. The cap is
+// generous because the parent bot's runChatTurn runs detached from the
+// SSE response (see routes/messages.ts — `detachedAbort` rather than
+// the client's signal), so a client disconnect mid-delegation doesn't
+// stop the work. When the parent's final reply lands, notifyUserMessage
+// already fires a push to the user's devices — that IS the wakeup. So
+// "SSE detach + push wakeup" for long delegations is the existing
+// architecture; we just need a sensible upper bound here.
+//
+// 5 min covers near every realistic specialist turn (Anthropic + Gemini
+// + OpenAI's chat completions reliably return well under 2 min even on
+// the heaviest reasoning models). AI Gateway will surface its own
+// upstream timeout long before this fires if the provider hangs.
+const SPECIALIST_TIMEOUT_MS = 300_000;
 const PROMPT_MAX = 8_000;
 
 interface BotRow {
