@@ -40,6 +40,17 @@ final class CallKitManager: NSObject {
     /// hang-up. CallSession registers it so the same teardown path runs
     /// whether the user tapped the in-app or system control.
     private var onSystemEnd: (() -> Void)?
+    /// Fires once CallKit hands us the audio session via
+    /// `provider(_:didActivate:)`. CallSession uses it to start the
+    /// ringback tone at the moment audio output is actually usable —
+    /// kicking AVAudioEngine before this lands gets silently suppressed
+    /// by the system, which is why an outgoing call had no ringback.
+    private var onAudioActivated: (() -> Void)?
+    /// True once CallKit has already delivered its `didActivate` for the
+    /// current call. Lets a late-registered `onAudioActivated` (CallSession
+    /// wires it after `startOutgoingCall` returns) still fire immediately
+    /// instead of waiting for a callback that already happened.
+    private var audioAlreadyActivated: Bool = false
     /// True once CallKit has actually picked up the outgoing call via
     /// `perform(:CXStartCallAction)`. Guards against the spurious
     /// `providerDidReset` CallKit posts to the main queue shortly after
@@ -88,6 +99,8 @@ final class CallKitManager: NSObject {
         let uuid = UUID()
         activeCallUUID = uuid
         callConfirmed = false
+        audioAlreadyActivated = false
+        onAudioActivated = nil
         self.onSystemEnd = onSystemEnd
 
         let handle = CXHandle(type: .generic, value: displayName)
@@ -121,8 +134,24 @@ final class CallKitManager: NSObject {
         if uuid == activeCallUUID {
             activeCallUUID = nil
             onSystemEnd = nil
+            onAudioActivated = nil
             callConfirmed = false
+            audioAlreadyActivated = false
         }
+    }
+
+    /// Register a closure that fires the moment CallKit hands us the
+    /// audio session (`provider(_:didActivate:)`). If activation already
+    /// happened for this call, the closure runs synchronously here so
+    /// the caller doesn't miss the edge. Callers must register before
+    /// the call ends; cleared along with `endCall`.
+    func onAudioSessionActivated(_ uuid: UUID, run: @escaping @MainActor () -> Void) {
+        guard uuid == activeCallUUID else { return }
+        if audioAlreadyActivated {
+            run()
+            return
+        }
+        onAudioActivated = run
     }
 }
 
@@ -183,8 +212,19 @@ extension CallKitManager: CXProviderDelegate {
         }
     }
 
-    // We deliberately leave audio-session ownership to CallSession —
-    // these two callbacks are required by the protocol but do nothing.
-    nonisolated func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {}
+    // Audio-session config (category/mode) stays in CallSession + the
+    // transport. CallKit still owns *activation* on outgoing calls,
+    // though — AVAudioEngine output started before this callback gets
+    // suppressed by the system, so CallSession waits on it before
+    // kicking the ringback engine.
+    nonisolated func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.audioAlreadyActivated = true
+            let cb = self.onAudioActivated
+            self.onAudioActivated = nil
+            cb?()
+        }
+    }
     nonisolated func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {}
 }

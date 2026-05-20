@@ -146,10 +146,29 @@ final class CallSession {
         // dead silence for 1–2 s while SDP exchanges feels broken. The
         // transport's own configureAudioSession is idempotent on these
         // same parameters; calling it twice is harmless.
-        primeAudioSessionForRingback()
+        //
+        // When CallKit accepted the outgoing call it owns audio-session
+        // activation: AVAudioEngine output started before
+        // `provider(_:didActivate:)` lands gets silently suppressed by
+        // the system, so wait for that callback before kicking the
+        // ringback engine. If CallKit declined (rare — user on a real
+        // PSTN call), activate the session ourselves and start ringback
+        // immediately like before.
+        primeAudioSessionCategoryForRingback()
         let player = RingbackPlayer()
-        player.start()
         ringback = player
+        if let uuid = callKitUUID {
+            CallKitManager.shared.onAudioSessionActivated(uuid) { [weak self] in
+                guard let self else { return }
+                // Bail if start() already moved past .connecting (user
+                // hung up, or transport beat us to it).
+                guard self.phase == .connecting else { return }
+                self.ringback?.start()
+            }
+        } else {
+            activatePrimedAudioSession()
+            player.start()
+        }
 
         // Subscribe to the conv hub for `voice_cost` previews. The edge
         // meter publishes one of these after every turn's settleTurn,
@@ -332,8 +351,10 @@ final class CallSession {
     /// (which would briefly cut audio when the transport takes over).
     /// Bluetooth options match transport's; speaker route is left at
     /// the default (earpiece) so the proximity sensor can blank the
-    /// screen.
-    private func primeAudioSessionForRingback() {
+    /// screen. **Does not** call `setActive(true)` — when CallKit
+    /// accepted the call, the system owns activation and an early
+    /// setActive races CallKit and gets the engine muted.
+    private func primeAudioSessionCategoryForRingback() {
         let session = AVAudioSession.sharedInstance()
         do {
             try session.setCategory(
@@ -341,12 +362,19 @@ final class CallSession {
                 mode: .voiceChat,
                 options: [.allowBluetooth, .allowBluetoothA2DP],
             )
-            try session.setActive(true, options: [])
         } catch {
             // Swallow — a missing ringback is a degraded experience,
             // not a fatal one; the transport will re-attempt session
             // setup and surface its own error if that also fails.
         }
+    }
+
+    /// Activate the audio session ourselves. Only called when CallKit
+    /// declined the outgoing-call request; under CallKit the system
+    /// activates via `provider(_:didActivate:)` and us doing it first
+    /// silently suppresses the AVAudioEngine output.
+    private func activatePrimedAudioSession() {
+        try? AVAudioSession.sharedInstance().setActive(true, options: [])
     }
 
     /// Stop and release the ringback player if it's still running.
