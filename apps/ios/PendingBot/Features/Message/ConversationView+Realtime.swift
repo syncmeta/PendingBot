@@ -170,6 +170,17 @@ extension ConversationView {
         // with the soft-delete above for user_user convs. Synthesise a
         // recall_log ChatMessage so the ForEach renderer drops a
         // centered "你/对方撤回了 X 的一条消息" pill at the right spot.
+        // 1v1 bot conv: SSE is the authoritative source for bot bubbles.
+        // The WS INSERT for the canonical row races the SSE `bubble` rekey
+        // event; when WS wins (fast model or long content), the live-*
+        // dedupe at the bottom of this function misses and we end up with
+        // two bot bubbles. Drop the WS bot row outright — if SSE genuinely
+        // dropped a bubble, re-entering the conv refetches /v1/messages
+        // and reconstructs the timeline. status='deleted' (recall) was
+        // already handled above so this skip preserves recall behavior.
+        if conversation.conversation_type == "user_bot" && role == "bot" {
+            return
+        }
         if role == "log" {
             let logKind = r["log_kind"]?.stringValue ?? ""
             if logKind == "recall" {
