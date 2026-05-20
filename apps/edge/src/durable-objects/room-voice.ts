@@ -17,6 +17,9 @@ import {
   monoToStereo,
   resample,
   mixPcm,
+  downsample48to24,
+  newDownsampleState,
+  type DownsampleState,
 } from '../lib/pcm';
 
 // RoomVoiceDO — the group-voice bridge. One instance per group call
@@ -59,6 +62,16 @@ const FLUSH_MS = 100;
 // Stay under the adapter's 32 KB-per-message limit when sending bot
 // audio to the Ingest adapter (leave headroom for protobuf framing).
 const MAX_INGEST_PAYLOAD = 28_000;
+
+// Fixed window per flush: 100 ms of 48 kHz interleaved stereo = 9600
+// samples. Keeping every flush exactly this wide is what stops the
+// OpenAI input timeline from drifting when the SFU delivers bursty
+// chunks (catchup after a network blip, or under-delivery during one).
+// Surplus stays in `pending` for the next flush; shortfall is padded
+// with silence so wall-clock alignment holds.
+const TARGET_STEREO_PER_FLUSH = (SFU_RATE * 2 * FLUSH_MS) / 1000;
+// And the matching 24 kHz mono length we send to OpenAI per flush.
+const TARGET_OPENAI_SAMPLES_PER_FLUSH = (OPENAI_RATE * FLUSH_MS) / 1000;
 
 // A voice room exists only for its humans. If nobody joins within this
 // window after start, end the call. With the new invite flow the
@@ -210,6 +223,9 @@ interface HumanState {
   adapterId: string | null;
   // 48 kHz stereo PCM samples buffered since the last mixer flush.
   pending: Int16Array[];
+  // Anti-alias biquad state for the 48→24 kHz downsample. Persists
+  // across flushes so chunk boundaries don't click.
+  downsampleState: DownsampleState;
 }
 
 interface BotLeg {
@@ -588,21 +604,33 @@ export class RoomVoiceDO {
     // /voice/network watchdog tore the previous attempt down). Drop the
     // old stream adapter and rebind to the new session/track so their
     // mic actually reaches the room and peers can subscribe to them.
+    //
+    // Important: clear adapterId BEFORE calling closeAdapter so that
+    // when the adapter's close event fires it sees we already nulled
+    // out our side and skips the auto-reconnect path (we'll start a
+    // fresh stream below ourselves).
     const existing = this.humans.get(track.humanId);
     if (existing) {
-      if (existing.adapterId) {
-        await closeAdapter(this.sfuApp(), existing.adapterId).catch(() => {});
-      }
+      const oldAdapter = existing.adapterId;
       existing.track = track;
       existing.adapterId = null;
       existing.pending = [];
+      existing.downsampleState = newDownsampleState();
+      if (oldAdapter) {
+        await closeAdapter(this.sfuApp(), oldAdapter).catch(() => {});
+      }
       void this.connectHumanStream(track.humanId, ctx);
       const snapshot = this.roster();
       await this.broadcastState('state');
       return Response.json({ ok: true, rebound: true, ...snapshot });
     }
 
-    const human: HumanState = { track, adapterId: null, pending: [] };
+    const human: HumanState = {
+      track,
+      adapterId: null,
+      pending: [],
+      downsampleState: newDownsampleState(),
+    };
     this.humans.set(track.humanId, human);
     this.pendingInvites.delete(track.humanId);
     this.humanEverJoined = true;
@@ -817,7 +845,33 @@ export class RoomVoiceDO {
       server.addEventListener('message', (ev) => {
         this.onHumanFrame(id, ev.data);
       });
-      server.addEventListener('close', () => this.removeHuman(id));
+      // The SFU stream adapter's WebSocket closing does NOT mean the
+      // human left the room. It can fire on a transient blip between
+      // SFU and edge, or when we tore the adapter down ourselves
+      // (removeHuman / rebind / finalize all set adapterId to null
+      // first). Only the "spontaneous SFU/network close" case wants a
+      // reconnect — that's the one where adapterId is still set and
+      // the room is still alive.
+      //
+      // The old behaviour was to call removeHuman here; that turned
+      // every adapter blip into a kick, and (if the affected human was
+      // the only admin) ended the whole call. Symptom: 2+ humans had
+      // unexplained drops mid-call while a 1:1 felt stable.
+      server.addEventListener('close', () => {
+        if (this.closed) return;
+        const human = this.humans.get(id);
+        if (!human || human.adapterId === null) return;
+        const ctx = this.ctx;
+        if (!ctx) return;
+        human.adapterId = null;
+        human.pending = [];
+        human.downsampleState = newDownsampleState();
+        console.warn(
+          '[room-voice] stream adapter closed unexpectedly, reconnecting',
+          id,
+        );
+        void this.connectHumanStream(id, ctx);
+      });
     } else {
       return new Response('bad adapter slot', { status: 400 });
     }
@@ -849,14 +903,37 @@ export class RoomVoiceDO {
   private flush(): void {
     if (this.bots.size === 0) return;
 
-    // Each human: drain buffered 48 kHz stereo PCM, fold to 24 kHz mono.
+    // Each human: extract exactly TARGET_STEREO_PER_FLUSH samples (100 ms)
+    // of 48 kHz stereo PCM and fold to anti-aliased 24 kHz mono. Surplus
+    // stays in `pending` for next flush; shortfall is padded with silence.
+    // The fixed window stops OpenAI's input timeline from drifting when
+    // the SFU delivers bursty / under-delivered chunks.
     const humanStreams: Int16Array[] = [];
     for (const human of this.humans.values()) {
-      if (human.pending.length === 0) continue;
-      const stereo = concatSamples(human.pending);
-      human.pending = [];
-      const mono48 = stereoToMono(stereo);
-      humanStreams.push(resample(mono48, SFU_RATE, OPENAI_RATE));
+      let stereo =
+        human.pending.length === 0 ? null : concatSamples(human.pending);
+      if (stereo && stereo.length > TARGET_STEREO_PER_FLUSH) {
+        // Have more than 100 ms — take the front slice, stash the rest.
+        // Copy the leftover so it owns its buffer (subarray is a view).
+        const head = stereo.subarray(0, TARGET_STEREO_PER_FLUSH);
+        const tail = stereo.subarray(TARGET_STEREO_PER_FLUSH);
+        human.pending = [new Int16Array(tail)];
+        stereo = head;
+      } else {
+        human.pending = [];
+      }
+      if (!stereo || stereo.length === 0) continue;
+      // Pad short windows to the full 100 ms so the downsample state
+      // and timeline stay aligned with wall-clock cadence.
+      let mono48: Int16Array;
+      if (stereo.length < TARGET_STEREO_PER_FLUSH) {
+        const padded = new Int16Array(TARGET_STEREO_PER_FLUSH);
+        padded.set(stereo);
+        mono48 = stereoToMono(padded);
+      } else {
+        mono48 = stereoToMono(stereo);
+      }
+      humanStreams.push(downsample48to24(mono48, human.downsampleState));
     }
     const humanMix = humanStreams.length > 0 ? mixPcm(humanStreams) : null;
 
@@ -882,9 +959,20 @@ export class RoomVoiceDO {
         if (otherId === botId || !audio || audio.length === 0) continue;
         inputs.push(audio);
       }
-      if (inputs.length === 0) continue;
-
-      const mixed = inputs.length === 1 ? inputs[0] : mixPcm(inputs);
+      // Always send a 100 ms frame, even pure silence. Two reasons:
+      //   1. Keep the OpenAI WebSocket warm — long silent stretches
+      //      otherwise risk NAT/load-balancer idle disconnects.
+      //   2. Keep the input_audio_buffer timeline aligned with
+      //      wall-clock so server VAD makes decisions on a consistent
+      //      cadence rather than catching up after a quiet gap.
+      let mixed: Int16Array;
+      if (inputs.length === 0) {
+        mixed = new Int16Array(TARGET_OPENAI_SAMPLES_PER_FLUSH);
+      } else if (inputs.length === 1) {
+        mixed = inputs[0];
+      } else {
+        mixed = mixPcm(inputs);
+      }
       if (mixed.length === 0) continue;
       try {
         openai.send(
