@@ -82,6 +82,13 @@ final class CallSession {
     /// per-turn voice_cost events. Held so terminate() can drop it.
     private var costSubscription: ConvSubscriptionToken?
 
+    /// CallKit handle for this call — set once at start(), cleared on
+    /// terminate. nil means CallKit either declined the request or the
+    /// call hasn't started yet. Tracked here so we can both call
+    /// endCall() on the manager and ignore the manager's own system-end
+    /// callback once we initiated the teardown ourselves.
+    private var callKitUUID: UUID?
+
     /// Returned by the worker on /session. Stored so /attach and
     /// /summary can correlate against the same call.
     private(set) var sessionId: String?
@@ -113,6 +120,26 @@ final class CallSession {
     func start() async {
         guard phase == .idle else { return }
         phase = .connecting
+
+        // Register the call with CallKit before anything else — gives
+        // iOS the system-call surface (Control Center indicator,
+        // lock-screen UI, call-history row) for the rest of this call.
+        // We keep audio-session ownership in CallSession; CallKit's
+        // didActivate is a no-op for us. If CallKit declines (rare —
+        // user already on a real phone call), the in-app UI still
+        // works; we just won't have system controls.
+        callKitUUID = CallKitManager.shared.startOutgoingCall(
+            displayName: botDisplayName,
+            onSystemEnd: { [weak self] in
+                // CallKit-driven hang up (lock-screen end button etc).
+                // Drop our UUID first so terminate() doesn't try to
+                // call back into CallKit and trip the request that
+                // just resolved.
+                guard let self else { return }
+                self.callKitUUID = nil
+                Task { @MainActor in await self.terminate(reason: .user) }
+            },
+        )
 
         // Prime the audio session and start the regional ringback tone
         // before the network round-trip — the user just tapped "phone",
@@ -390,6 +417,13 @@ final class CallSession {
         // Drop the cost subscription so we stop holding the conv socket
         // for a session that's over.
         await unsubscribeFromCost()
+        // Tell CallKit the call's done. Skipped when the teardown was
+        // *driven* by CallKit (the onSystemEnd callback already cleared
+        // callKitUUID) so we don't double-end the action.
+        if let uuid = callKitUUID {
+            callKitUUID = nil
+            CallKitManager.shared.endCall(uuid: uuid)
+        }
         // Unblock any in-flight connection attempt so start()'s chain
         // loop sees the terminal phase and stops minting transports.
         resolveAttempt(.failed(reason))
@@ -502,6 +536,11 @@ extension CallSession: CallTransportDelegate {
         connectedAt = Date()
         phase = .connected
         resolveAttempt(.connected)
+        // Flip the CallKit state from "dialing" to "in call" so the
+        // lock-screen timer starts and Control Center shows green.
+        if let uuid = callKitUUID {
+            CallKitManager.shared.reportCallConnected(uuid: uuid)
+        }
     }
 
     func transport(_ t: CallTransport, didObtainCallId callId: String) async {
