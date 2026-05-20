@@ -671,6 +671,7 @@ struct ConversationView: View {
                       let peer = peerProfileForBubble {
                 ContactSettingsView(
                     contactUserId: peer.userId,
+                    conversationId: conversation.id,
                     initialDisplayName: peer.displayName,
                     initialAvatarPath: peer.avatarPath,
                     initialAvatarSeed: peer.avatarSeed

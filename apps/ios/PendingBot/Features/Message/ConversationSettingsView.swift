@@ -39,15 +39,20 @@ struct LetterRecipient: Equatable, Hashable, Identifiable {
 ///   • DELETE /v1/contacts/:id         — 删除好友 + 删除共享 user_user 会话
 struct ContactSettingsView: View {
     let contactUserId: String
+    /// 1:1 conversation id — used as the source for the 写信 entry.
+    let conversationId: String
     /// Peer's own profile name — used as the placeholder in the 备注
-    /// field so the user sees "默认显示「张三」" if they leave it blank.
+    /// field and as the recipient label on the 写信 sheet.
     let initialDisplayName: String
     let initialAvatarPath: String?
     let initialAvatarSeed: String
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.api) private var api
 
     @State private var alias: String = ""
+    @State private var letterRecipient: LetterRecipient?
+    @State private var sendingLetter: Bool = false
     /// `alias` server-side as last seen. Used to gate the save button so
     /// pure-edits without changes don't fire a PATCH.
     @State private var loadedAlias: String? = nil
@@ -88,8 +93,7 @@ struct ContactSettingsView: View {
             }
 
             Section {
-                TextField(initialDisplayName.isEmpty
-                          ? "起个备注" : "默认显示「\(initialDisplayName)」",
+                TextField(initialDisplayName.isEmpty ? "起个备注" : initialDisplayName,
                           text: $alias)
                     .textInputAutocapitalization(.sentences)
                     .autocorrectionDisabled()
@@ -108,7 +112,28 @@ struct ContactSettingsView: View {
             } header: {
                 Text("备注")
             } footer: {
-                Text("只有你能看到这个备注。留空恢复对方自己的昵称。")
+                Text("只有你看得到。")
+            }
+
+            Section {
+                Button {
+                    letterRecipient = LetterRecipient(
+                        userId: contactUserId,
+                        displayName: initialDisplayName.isEmpty
+                            ? String(contactUserId.prefix(8)) : initialDisplayName
+                    )
+                } label: {
+                    HStack {
+                        Image(systemName: "envelope")
+                        Text("给 TA 写信")
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .foregroundStyle(Theme.Palette.ink)
+                .disabled(sendingLetter)
             }
 
             Section {
@@ -120,8 +145,6 @@ struct ContactSettingsView: View {
                     }
                 ))
                 .disabled(savingMute || !loaded)
-            } footer: {
-                Text("打开后,这位好友发来的消息不再推送。会话仍照常出现在消息列表里。")
             }
 
             Section {
@@ -135,7 +158,7 @@ struct ContactSettingsView: View {
                 }
                 .disabled(deleting)
             } footer: {
-                Text("删除后,会话历史也会一并清掉。要再和 TA 说话需要重新添加。")
+                Text("会话历史会同步删除。")
             }
 
             if let error {
@@ -158,6 +181,12 @@ struct ContactSettingsView: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text("会一并删除你们的聊天记录。")
+        }
+        .sheet(item: $letterRecipient) { recipient in
+            LetterComposeSheet(recipient: recipient) { title, bodyMd in
+                await sendLetter(title: title, bodyMd: bodyMd)
+            }
+            .tint(Theme.Palette.accent)
         }
     }
 
@@ -244,6 +273,29 @@ struct ContactSettingsView: View {
             Haptics.tap()
         } catch {
             self.error = error.localizedDescription
+        }
+    }
+
+    private func sendLetter(title: String?, bodyMd: String) async -> Bool {
+        guard let api else {
+            self.error = "网络未就绪"
+            return false
+        }
+        sendingLetter = true; defer { sendingLetter = false }
+        error = nil
+        do {
+            _ = try await api.envelopeSendLetter(
+                conversationId: conversationId,
+                recipientUserId: contactUserId,
+                title: title,
+                bodyMd: bodyMd
+            )
+            Haptics.success()
+            return true
+        } catch {
+            self.error = error.localizedDescription
+            Haptics.error()
+            return false
         }
     }
 
