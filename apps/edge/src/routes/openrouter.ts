@@ -103,13 +103,18 @@ async function loadOpenAINativeCatalog(
   } catch {
     return [];
   }
+  // Unified Billing can't authenticate OpenAI's /models (no provider key
+  // attached), so we ride a BYOK alias just for the catalog fetch. The
+  // alias is set via env; without it the catalog stays empty and the
+  // picker simply doesn't show the OpenAI-native section.
+  const byokAlias = c.env.CF_AIG_BYOK_OPENAI_ALIAS;
+  const headers: Record<string, string> = {
+    'cf-aig-authorization': `Bearer ${token}`,
+    Accept: 'application/json',
+  };
+  if (byokAlias) headers['cf-aig-byok-alias'] = byokAlias;
   try {
-    const res = await fetch(`${baseURL}/models`, {
-      headers: {
-        'cf-aig-authorization': `Bearer ${token}`,
-        Accept: 'application/json',
-      },
-    });
+    const res = await fetch(`${baseURL}/models`, { headers });
     if (!res.ok) {
       console.warn('[openrouter/models] openai-native catalog', res.status);
       return [];

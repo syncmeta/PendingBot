@@ -62,6 +62,11 @@
         // at; the Logs API auth token is the CF_AIG_TOKEN secret below.
         "CF_ACCOUNT_ID": "4c303754167f1f225e6761b5128c0d9f",
         "CF_AIG_GATEWAY": "pendingbot",
+        // BYOK alias used only by the model-catalog fetch in
+        // routes/openrouter.ts (OpenAI's /models needs real provider auth,
+        // which Unified Billing can't supply). Inference calls stay on
+        // Unified Billing and do not send this header.
+        "CF_AIG_BYOK_OPENAI_ALIAS": "byok-1",
         // Cloudflare Realtime SFU app for group voice. The id is not
         // sensitive; the paired SFU_APP_SECRET is set via wrangler secret.
         "SFU_APP_ID": "a0d4007702e06eb9eb592bfa870c7722"
