@@ -70,6 +70,9 @@ final class GroupCallSession {
 
     let conversationId: String
     let currentUserId: String
+    /// Group conversation's display title — shown as the call screen
+    /// header. Empty string falls back to a generic "群语音" in the view.
+    let groupTitle: String
     /// Group members keyed "bot:<id>" / "user:<id>" — name + avatar
     /// lookup for the participant list. Sourced from the conversation's
     /// `groupSenders` map.
@@ -92,11 +95,13 @@ final class GroupCallSession {
     init(
         conversationId: String,
         currentUserId: String,
+        groupTitle: String,
         members: [String: GroupBubbleSender],
         api: VoiceCallAPI,
     ) {
         self.conversationId = conversationId
         self.currentUserId = currentUserId
+        self.groupTitle = groupTitle
         self.members = members
         self.api = api
     }

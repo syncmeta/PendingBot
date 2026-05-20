@@ -370,6 +370,7 @@ extension ConversationView {
         groupCallSession = GroupCallSession(
             conversationId: conversation.id,
             currentUserId: userId,
+            groupTitle: conversation.displayTitle,
             members: groupSenders,
             api: VoiceCallAPI(),
         )

@@ -6,15 +6,12 @@ import SwiftUI
 /// from this screen; everyone else stays silent until explicitly rung.
 ///
 /// Layout (top → bottom):
-///   * Header  — "等其他人进" when alone, "通话中 (elapsed)" otherwise
-///   * Invite  — two prominent CTAs that open sheets
-///   * Roster  — joined humans + bots, then a "正在拉" section for
-///               pending invites (humans whose phone is ringing, bots
-///               still coming up)
-///   * Toolbar — speaker + leave
-///   * End all — a single full-width button at the bottom; tapping it
-///               brings up a 2nd-tap confirmation alert before the
-///               worker tears the call down for everyone.
+///   * Header  — group title + status ("等其他人进" / "通话中" / elapsed)
+///   * Invite  — two capsule CTAs that open sheets
+///   * Roster  — joined humans + bots (avatar + name only), then a
+///               "正在拉" section for pending invites
+///   * Toolbar — 免提 / 离开 / 散会; the last is only present for
+///               privileged callers and brings up a 2nd-tap confirm.
 struct GroupCallView: View {
     @Bindable var session: GroupCallSession
     @Environment(\.dismiss) private var dismiss
@@ -49,12 +46,7 @@ struct GroupCallView: View {
                 }
                 Spacer(minLength: 0)
                 toolbar
-                    .padding(.bottom, 12)
-                if session.isPrivileged {
-                    endAllButton
-                        .padding(.horizontal)
-                        .padding(.bottom, 28)
-                }
+                    .padding(.bottom, 28)
             }
         }
         .task { await session.start() }
@@ -108,8 +100,10 @@ struct GroupCallView: View {
 
     private var header: some View {
         VStack(spacing: 6) {
-            Text("群语音")
+            Text(session.groupTitle.isEmpty ? "群语音" : session.groupTitle)
                 .font(.title2).bold()
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
             Text(statusText)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
@@ -137,41 +131,38 @@ struct GroupCallView: View {
     // MARK: - Invite CTAs
 
     private var inviteRow: some View {
-        HStack(spacing: 12) {
-            inviteButton(
-                title: "叫机器人来",
-                systemImage: "sparkle",
-                tint: Theme.Palette.accent,
-            ) {
+        HStack(spacing: 10) {
+            inviteButton(title: "叫机器人", systemImage: "sparkle") {
                 Haptics.tap()
                 showingAddBot = true
             }
-            inviteButton(
-                title: "叫真人来",
-                systemImage: "person.wave.2.fill",
-                tint: .blue,
-            ) {
+            inviteButton(title: "叫真人", systemImage: "person.wave.2.fill") {
                 Haptics.tap()
                 showingRingHuman = true
             }
+            Spacer(minLength: 0)
         }
     }
 
     private func inviteButton(
         title: String,
         systemImage: String,
-        tint: some ShapeStyle,
         action: @escaping () -> Void,
     ) -> some View {
         Button(action: action) {
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 Image(systemName: systemImage)
-                Text(title).font(.body).fontWeight(.semibold)
+                    .font(.subheadline)
+                Text(title)
+                    .font(.subheadline).fontWeight(.medium)
             }
-            .foregroundStyle(.white)
-            .frame(maxWidth: .infinity)
-            .frame(height: 48)
-            .background(RoundedRectangle(cornerRadius: 14).fill(tint))
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 9)
+            .background(Capsule().fill(Color(.systemBackground)))
+            .overlay(
+                Capsule().stroke(Color(.separator), lineWidth: 0.5),
+            )
         }
         .disabled(!isCallLive)
     }
@@ -182,8 +173,8 @@ struct GroupCallView: View {
         VStack(alignment: .leading, spacing: 16) {
             // Joined first — the caller themselves plus any peers/bots.
             sectionHeader(text: "通话中")
-            VStack(spacing: 10) {
-                participantRow(
+            VStack(spacing: 14) {
+                joinedRow(
                     sender: GroupBubbleSender(
                         kind: .user,
                         id: session.currentUserId,
@@ -191,22 +182,13 @@ struct GroupCallView: View {
                         avatarPath: nil,
                         avatarSeed: session.currentUserId,
                     ),
-                    statusText: nil,
                     showMenu: false,
                 )
                 ForEach(session.humanParticipants, id: \.id) { p in
-                    participantRow(
-                        sender: p,
-                        statusText: nil,
-                        showMenu: session.isPrivileged,
-                    )
+                    joinedRow(sender: p, showMenu: session.isPrivileged)
                 }
                 ForEach(session.botParticipants, id: \.id) { p in
-                    participantRow(
-                        sender: p,
-                        statusText: nil,
-                        showMenu: session.isPrivileged,
-                    )
+                    joinedRow(sender: p, showMenu: session.isPrivileged)
                 }
             }
 
@@ -218,10 +200,9 @@ struct GroupCallView: View {
                         Array(session.pendingParticipants.enumerated()),
                         id: \.offset,
                     ) { _, item in
-                        participantRow(
+                        pendingRow(
                             sender: item.sender,
                             statusText: item.kind == .bot ? "机器人连接中…" : "等对方接听",
-                            showMenu: false,
                             cancelInviteAction: {
                                 Task { await session.cancelInvite(id: item.sender.id) }
                             },
@@ -232,49 +213,28 @@ struct GroupCallView: View {
         }
     }
 
-    private func sectionHeader(text: String) -> some View {
-        Text(text)
-            .font(.footnote).fontWeight(.semibold)
-            .foregroundStyle(.secondary)
-            .textCase(.uppercase)
-    }
-
-    private func participantRow(
+    private func joinedRow(
         sender: GroupBubbleSender,
-        statusText: String?,
         showMenu: Bool,
-        cancelInviteAction: (() -> Void)? = nil,
     ) -> some View {
         HStack(spacing: 12) {
             if sender.kind == .bot {
                 BotAvatar(
                     emojiSeed: sender.id,
                     colorSeed: session.conversationId,
-                    size: 44,
+                    size: 36,
                 )
             } else {
                 UserAvatar(
                     seed: sender.avatarSeed,
                     attachmentId: sender.avatarPath,
-                    size: 44,
+                    size: 36,
                 )
             }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(sender.displayName)
-                    .font(.body).fontWeight(.medium)
-                Text(statusText ?? (sender.kind == .bot ? "机器人" : "用户"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            Text(sender.displayName)
+                .font(.body)
             Spacer()
-            if let cancelInviteAction {
-                Button(action: cancelInviteAction) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 22))
-                        .foregroundStyle(.secondary)
-                }
-                .accessibilityLabel("取消邀请")
-            } else if showMenu, isCallLive {
+            if showMenu, isCallLive {
                 Menu {
                     Button("设为管理员") {
                         Task { await session.designateAdmin(id: sender.id) }
@@ -283,26 +243,67 @@ struct GroupCallView: View {
                         Task { await session.kick(kind: sender.kind, id: sender.id) }
                     }
                 } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .font(.system(size: 22))
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 18))
                         .foregroundStyle(.secondary)
+                        .frame(width: 32, height: 32)
                 }
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(Color(.secondarySystemBackground)),
-        )
+    }
+
+    private func pendingRow(
+        sender: GroupBubbleSender,
+        statusText: String,
+        cancelInviteAction: @escaping () -> Void,
+    ) -> some View {
+        HStack(spacing: 12) {
+            if sender.kind == .bot {
+                BotAvatar(
+                    emojiSeed: sender.id,
+                    colorSeed: session.conversationId,
+                    size: 36,
+                )
+            } else {
+                UserAvatar(
+                    seed: sender.avatarSeed,
+                    attachmentId: sender.avatarPath,
+                    size: 36,
+                )
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(sender.displayName)
+                    .font(.body)
+                Text(statusText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button(action: cancelInviteAction) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 22))
+                    .foregroundStyle(.secondary)
+            }
+            .accessibilityLabel("取消邀请")
+        }
+    }
+
+    private func sectionHeader(text: String) -> some View {
+        Text(text)
+            .font(.footnote).fontWeight(.semibold)
+            .foregroundStyle(.secondary)
+            .textCase(.uppercase)
     }
 
     // MARK: - Toolbar
 
     private var toolbar: some View {
-        HStack(spacing: 24) {
-            labeledControl("扬声器") { speakerButton }
+        HStack(spacing: 28) {
+            labeledControl("免提") { speakerButton }
             labeledControl("离开") { hangUpButton }
+            if session.isPrivileged {
+                labeledControl("散会") { endAllButton }
+            }
         }
     }
 
@@ -366,26 +367,21 @@ struct GroupCallView: View {
         }
     }
 
-    // MARK: - End all (bottom, privileged + 2nd confirmation)
+    // MARK: - End all (toolbar, privileged + 2nd confirmation)
 
     private var endAllButton: some View {
         Button {
             Haptics.tap()
             showingEndConfirm = true
         } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 20, weight: .semibold))
-                Text("结束所有人的通话")
-                    .font(.body).fontWeight(.semibold)
-            }
-            .foregroundStyle(.white)
-            .frame(maxWidth: .infinity)
-            .frame(height: 52)
-            .background(RoundedRectangle(cornerRadius: 14).fill(.orange))
+            Image(systemName: "xmark")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 64, height: 64)
+                .background(Circle().fill(.orange))
         }
         .disabled(isHangUpDisabled)
-        .accessibilityLabel("结束所有人的通话")
+        .accessibilityLabel("散会")
     }
 
     // MARK: - Sheets
