@@ -12,8 +12,8 @@ import {
 } from '../llm/provider-usage';
 import type { WebReadResult, WebSearchResult } from './web-types';
 
-// Pure agent-loop core for the envelope feature (来信; formerly 奏折/
-// "scroll"). Lives here, not in envelope-runner.ts, so the offline
+// Pure agent-loop core for the envelope feature (来信). Lives here,
+// not in envelope-runner.ts, so the offline
 // replay harness can import it from plain Node/Bun without dragging in
 // `prompt-loader` (which uses wrangler's `.md`-as-text loader) or the
 // `Env`-typed worker bindings.
@@ -718,7 +718,7 @@ export async function runEnvelopeLoop(deps: EnvelopeLoopDeps): Promise<EnvelopeL
     // can run the writer phase. The tool replies and onTurn for this
     // final exploration turn have already been emitted above; the
     // writer phase is owned by the caller (production runner reads
-    // the 'scroll-write' prompt; lab uses its own writePhasePrompt).
+    // the 'envelope-write' prompt; lab uses its own writePhasePrompt).
     if (decision.stopped) {
       reason = 'stopped';
       break;

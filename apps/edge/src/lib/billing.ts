@@ -180,7 +180,7 @@ export class InsufficientBalanceError extends Error {
 /**
  * Throw InsufficientBalanceError when balance < min_balance_threshold.
  * Call this BEFORE issuing an LLM request from a user-initiated path
- * (message reply, scroll). Skip for system-triggered cascades
+ * (message reply, envelope). Skip for system-triggered cascades
  * (title, lookback, bot_note) — those bill but don't gate.
  *
  * Reads:

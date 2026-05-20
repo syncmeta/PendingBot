@@ -29,7 +29,7 @@ API key 来自 `~/.config/pendingbot/.dev.vars`（与 [envelope-replay CLI](../e
 
 ## 我改了 prompt / loop，怎么"装回去"
 
-prompt 的"原版"来自 [apps/edge/prompts/scroll.md](../edge/prompts/scroll.md) 和 [scroll-injected.md](../edge/prompts/scroll-injected.md)；面板里改过的版本只在内存中，不写盘。打磨满意后，**手动把改好的内容粘回那两个文件**，commit、merge、deploy 流程同 [CLAUDE.md](../../CLAUDE.md) 的发布约定。
+prompt 的"原版"来自 [apps/edge/prompts/zh/envelope.md](../edge/prompts/zh/envelope.md) 和 [envelope-injected.md](../edge/prompts/zh/envelope-injected.md)；面板里改过的版本只在内存中，不写盘。打磨满意后，**手动把改好的内容粘回那两个文件**，commit、merge、deploy 流程同 [CLAUDE.md](../../CLAUDE.md) 的发布约定。
 
 loop 行为改在 [apps/edge/src/lib/envelope-loop.ts](../edge/src/lib/envelope-loop.ts) ——**面板 server 直接 import 那个文件**，所以你 hot-reload tsx 看到的就是生产 loop 的真实行为。
 

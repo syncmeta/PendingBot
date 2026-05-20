@@ -228,7 +228,7 @@ export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
   let route: ResolvedRoute | null = null;
   let result: EnvelopeLoopResult | null = null;
   const turnTrace: TurnTraceEntry[] = [];
-  // Web-tool meter for this scroll run. Covers every search_web /
+  // Web-tool meter for this envelope run. Covers every search_web /
   // fetch_url call the explorer fires; snapshot is handed to recordAudit
   // at the end so tool spend lands in audit_web_tool_calls and folds
   // into the billed credits.
@@ -738,6 +738,6 @@ async function auditRun(
     cacheWriteTokens: 0,
     providerCostUsd: i.usage.providerCostUsd,
     webTools: i.webTools,
-    metadata: { scroll_run_id: i.envelopeRunId, bot_id: i.botId, action: i.action },
+    metadata: { envelope_run_id: i.envelopeRunId, bot_id: i.botId, action: i.action },
   });
 }

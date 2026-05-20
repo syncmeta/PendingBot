@@ -86,9 +86,9 @@ export default async function AppStatsPage() {
       .eq('role', 'bot')
       .gte('created_at', since30)
       .not('replaces_message_id', 'is', null),
-    // Scroll/奏折: status + budget signals over the window.
+    // Envelope/来信: status + budget signals over the window.
     supa
-      .from('scroll_runs')
+      .from('envelope_runs')
       .select('status, cost_used_usd, cost_budget_usd, started_at, finished_at')
       .gte('created_at', since30)
       .returns<
@@ -208,7 +208,7 @@ export default async function AppStatsPage() {
   const totalBotMsgs = msgs30.filter((m) => m.role === 'bot').length;
   const regenRate = totalBotMsgs > 0 ? regenerateCount / totalBotMsgs : null;
 
-  // ── Scroll/奏折 runs ──────────────────────────────────────────
+  // ── Envelope/来信 runs ──────────────────────────────────────────
   const surf = surfRunsR.data ?? [];
   const surfStatusCounts = new Map<string, number>();
   let surfCostSum = 0;
