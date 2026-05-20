@@ -113,7 +113,38 @@ struct CreateBotSheet: View {
                     .disabled(creating || !canCreate)
                 }
             }
+            .task { await seedDefaultName() }
         }
+    }
+
+    /// "Lorem ipsum" tokens used to seed the default display name when
+    /// 新建机器人 opens — the user can still edit. We pick the first token
+    /// they haven't already used, so spamming + walks down the sequence
+    /// Lorem → Ipsum → Dolor → …
+    private static let loremTokens: [String] = [
+        "Lorem", "Ipsum", "Dolor", "Sit", "Amet",
+        "Consectetur", "Adipiscing", "Elit", "Sed", "Do",
+        "Eiusmod", "Tempor", "Incididunt", "Ut", "Labore",
+        "Et", "Dolore", "Magna", "Aliqua", "Enim",
+        "Ad", "Minim", "Veniam", "Quis", "Nostrud",
+        "Exercitation", "Ullamco", "Laboris", "Nisi", "Aliquip",
+    ]
+
+    private func seedDefaultName() async {
+        guard displayName.isEmpty else { return }
+        guard let userId = AccountStore.shared.current?.id else { return }
+        struct Row: Decodable { let display_name: String }
+        let rows: [Row] = (try? await SupabaseStack.shared
+            .from("bots")
+            .select("display_name")
+            .eq("creator_id", value: userId)
+            .execute()
+            .value) ?? []
+        let used = Set(rows.map { $0.display_name.lowercased() })
+        let pick = Self.loremTokens.first { !used.contains($0.lowercased()) }
+            ?? Self.loremTokens[0]
+        guard displayName.isEmpty else { return }
+        displayName = pick
     }
 
     private var canCreate: Bool {
