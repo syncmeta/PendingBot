@@ -1,16 +1,22 @@
 // Group-voice control surface — the authenticated, user-facing side of
 // the group-voice bridge. Mounted at /v1/groups alongside groupRoutes:
 //
-//   POST /v1/groups/:id/voice/start            bring the room's bots online
-//   POST /v1/groups/:id/voice/add-bot          add one more bot mid-call
+//   POST /v1/groups/:id/voice/start            open the (empty) call
+//   POST /v1/groups/:id/voice/add-bot          add a bot to the call
+//   POST /v1/groups/:id/voice/ring             ring a human into the call
+//   POST /v1/groups/:id/voice/cancel-invite    drop a pending invite
 //   POST /v1/groups/:id/voice/join             a human joins the SFU room
 //   POST /v1/groups/:id/voice/subscribe        pull bot tracks to hear them
 //   POST /v1/groups/:id/voice/renegotiate      answer the SFU's offer
-//   GET  /v1/groups/:id/voice/roster           current bot roster (re-sync)
+//   GET  /v1/groups/:id/voice/roster           current roster (re-sync)
 //   POST /v1/groups/:id/voice/kick             remove a bot or human
 //   POST /v1/groups/:id/voice/designate-admin  grant call-admin powers
 //   POST /v1/groups/:id/voice/leave            the caller leaves the call
 //   POST /v1/groups/:id/voice/end              tear the whole call down
+//
+// /start opens an empty room — bots are NOT auto-pulled, and humans are
+// NOT auto-rung. The caller alone is in the room until they tap "叫
+// 机器人来" (/add-bot) or "叫真人来" (/ring) inside the call UI.
 //
 // Each endpoint requires a Supabase JWT and re-proves the caller is a
 // participant of the group. The handlers assemble each bot's persona
@@ -34,6 +40,7 @@ import { getBotMemory } from '../lib/memory';
 import { resolveLocale } from '../i18n/locale';
 import { jsonError } from '../lib/http-error';
 import { UUID_RE } from '../lib/ids';
+import { notifyUser } from '../lib/push';
 import {
   createSfuSession,
   newSfuTracks,
@@ -197,54 +204,17 @@ async function controlRoom(
 // =============================================================================
 // POST /:id/voice/start
 // =============================================================================
-
-const StartBody = z.object({
-  // Which group bots to bring into the call. Omitted = every bot that is
-  // a participant of the group.
-  bot_ids: z.array(z.string().uuid()).optional(),
-});
+//
+// Open the call. Empty room — no bots, no other humans rung. The caller
+// follows up with /join (their own WebRTC SDP), then with /add-bot or
+// /ring from inside the call UI to bring others in.
 
 groupVoiceRoutes.post('/:id/voice/start', async (c) => {
   const loaded = await loadGroupContext(c);
   if (!loaded.ok) return loaded.res;
-  const { conversationId, billUserId, locale } = loaded.ctx;
+  const { conversationId, billUserId } = loaded.ctx;
 
-  let parsed: z.infer<typeof StartBody>;
-  try {
-    parsed = StartBody.parse(await c.req.json().catch(() => ({})));
-  } catch (err) {
-    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
-  }
-
-  // The group's bot participants. A start request may pick a subset.
   const supaSvc = serviceClient(c.env);
-  const { data: botParts } = await supaSvc
-    .from('conversation_participants')
-    .select('participant_id')
-    .eq('conversation_id', conversationId)
-    .eq('participant_type', 'bot');
-  const groupBotIds = new Set((botParts ?? []).map((r) => r.participant_id as string));
-  const wanted = parsed.bot_ids
-    ? parsed.bot_ids.filter((id) => groupBotIds.has(id))
-    : [...groupBotIds];
-  if (wanted.length === 0) {
-    return jsonError(c, 400, 'voice_bot_disabled', {
-      detail: 'no group bots selected',
-    });
-  }
-
-  // Assemble each bot's leg spec. Bots with voice calling disabled drop out.
-  const specs: BotSpec[] = [];
-  for (const botId of wanted) {
-    const spec = await buildBotSpec(c, botId, locale);
-    if (spec) specs.push(spec);
-  }
-  if (specs.length === 0) {
-    return jsonError(c, 403, 'voice_bot_disabled', {
-      detail: 'no voice-enabled bots in this group',
-    });
-  }
-
   // Group owner + admins are privileged for the whole call. The caller
   // (initiator) is privileged too — passed separately below.
   const { data: adminRows } = await supaSvc
@@ -268,7 +238,7 @@ groupVoiceRoutes.post('/:id/voice/start', async (c) => {
       adapterPath: ADAPTER_PATH,
       adapterToken: crypto.randomUUID(),
     },
-    bots: specs,
+    bots: [] as BotSpec[],
   };
 
   const resp = await controlRoom(c, conversationId, '/control/start', payload);
@@ -283,7 +253,6 @@ groupVoiceRoutes.post('/:id/voice/start', async (c) => {
   return c.json({
     ok: true,
     room_id: conversationId,
-    bot_ids: specs.map((s) => s.botId),
     initiated: !startData.already,
   });
 });
@@ -326,6 +295,117 @@ groupVoiceRoutes.post('/:id/voice/add-bot', async (c) => {
     return jsonError(c, 502, 'voice_upstream_failed');
   }
   return c.json({ ok: true, bot_id: parsed.bot_id });
+});
+
+// =============================================================================
+// POST /:id/voice/ring — ring a human into the call
+// =============================================================================
+//
+// Adds the target user to the call's pending-invite set and sends them an
+// APNs push so their phone actually rings. Any participant currently in
+// the call may ring any other group human — the privilege is intentional:
+// the spec is "如果没有特地拉谁进来, 不要让群内其他人类响铃". Auto-pull
+// of the whole group on call start is gone.
+
+const RingBody = z.object({ user_id: z.string().uuid() });
+
+groupVoiceRoutes.post('/:id/voice/ring', async (c) => {
+  const loaded = await loadGroupContext(c);
+  if (!loaded.ok) return loaded.res;
+  const { conversationId } = loaded.ctx;
+
+  let parsed: z.infer<typeof RingBody>;
+  try {
+    parsed = RingBody.parse(await c.req.json());
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+  const callerId = c.var.userId!;
+  if (parsed.user_id === callerId) {
+    return jsonError(c, 400, 'invalid_body', { detail: 'cannot ring self' });
+  }
+
+  // The target must be a human participant of this group.
+  const supaSvc = serviceClient(c.env);
+  const { data: part } = await supaSvc
+    .from('conversation_participants')
+    .select('participant_id')
+    .eq('conversation_id', conversationId)
+    .eq('participant_type', 'user')
+    .eq('participant_id', parsed.user_id)
+    .maybeSingle();
+  if (!part) {
+    return jsonError(c, 404, 'not_found', { detail: 'user not in group' });
+  }
+
+  const doResp = await controlRoom(c, conversationId, '/control/invite', {
+    kind: 'human',
+    targetId: parsed.user_id,
+    invitedBy: callerId,
+  });
+  if (!doResp.ok) {
+    // 400 = room hasn't been started yet (the inviter must be in the call).
+    if (doResp.status === 400) {
+      return jsonError(c, 409, 'conflict', { detail: 'voice room not started' });
+    }
+    console.warn('[group-voice/ring] room DO invite failed', doResp.status);
+    return jsonError(c, 502, 'voice_upstream_failed');
+  }
+
+  // Lock screen banner — generic copy on purpose. No conversation title,
+  // no caller name, no group name. The structured `extra` lets the app
+  // resolve the rich text once unlocked.
+  const { sent, failed } = await notifyUser({
+    env: c.env,
+    userId: parsed.user_id,
+    payload: {
+      alert: { title: '群语音通话', body: '有人邀请你加入群语音' },
+      sound: 'default',
+      threadId: `voice:${conversationId}`,
+      category: 'VOICE_RING',
+      extra: {
+        kind: 'voice_ring',
+        conversation_id: conversationId,
+        from_user_id: callerId,
+      },
+    },
+    // Multiple rings of the same user collapse on the device.
+    collapseId: `voice-ring:${conversationId}:${parsed.user_id}`,
+  });
+
+  return c.json({ ok: true, pushed: sent, failed });
+});
+
+// =============================================================================
+// POST /:id/voice/cancel-invite — drop a pending invite
+// =============================================================================
+//
+// Used when the inviter changes their mind, or when the in-call UI offers
+// a "stop ringing" affordance. The user simply not answering is also
+// fine — when the call ends the DO clears the pending set anyway.
+
+const CancelInviteBody = z.object({ target_id: z.string().uuid() });
+
+groupVoiceRoutes.post('/:id/voice/cancel-invite', async (c) => {
+  const loaded = await loadGroupContext(c);
+  if (!loaded.ok) return loaded.res;
+  const { conversationId } = loaded.ctx;
+
+  let parsed: z.infer<typeof CancelInviteBody>;
+  try {
+    parsed = CancelInviteBody.parse(await c.req.json());
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+
+  const resp = await controlRoom(c, conversationId, '/control/cancel-invite', {
+    targetId: parsed.target_id,
+  });
+  if (!resp.ok) {
+    console.warn('[group-voice/cancel-invite] room DO failed', resp.status);
+    return jsonError(c, 502, 'voice_upstream_failed');
+  }
+  return c.json({ ok: true });
 });
 
 // =============================================================================

@@ -50,6 +50,10 @@ export interface ApnsPayload {
   category?: string;          // for action buttons
   contentAvailable?: boolean; // background push (silent)
   mutableContent?: boolean;   // notification service extension
+  // Free-form top-level fields. Apple reserves only `aps`; anything else
+  // lands alongside it for the app to inspect. Used for typed payloads
+  // (e.g. { kind: 'voice_ring', conversation_id, from_user_id }).
+  extra?: Record<string, unknown>;
 }
 
 export interface SendApnsInput {
@@ -93,10 +97,17 @@ export async function sendApns(input: SendApnsInput): Promise<SendApnsResult> {
   if (input.collapseId) headers['apns-collapse-id'] = input.collapseId;
   if (input.expiration !== undefined) headers['apns-expiration'] = String(input.expiration);
 
+  const body: Record<string, unknown> = { aps };
+  if (payload.extra) {
+    for (const [k, v] of Object.entries(payload.extra)) {
+      if (k === 'aps') continue; // aps is reserved
+      body[k] = v;
+    }
+  }
   const res = await fetch(`https://${host}/3/device/${deviceToken}`, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ aps }),
+    body: JSON.stringify(body),
   });
 
   if (res.status === 200) {

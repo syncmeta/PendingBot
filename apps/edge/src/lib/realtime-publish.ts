@@ -21,13 +21,35 @@ export interface RealtimeChange {
   record: Record<string, unknown>;
 }
 
+// Out-of-band events the worker emits directly (no DB row backs them).
+// Today: group voice call lifecycle. Conv-channel subscribers branch on
+// `type === 'voice_call'` and re-render the in-conv banner / call view.
+export interface VoiceCallEvent {
+  type: 'voice_call';
+  // 'state'  — full snapshot (started/joined/pending changed)
+  // 'ended'  — the room finalized; banner should disappear
+  event: 'state' | 'ended';
+  conversation_id: string;
+  started_at?: number; // ms epoch; absent on 'ended'
+  initiator_id?: string;
+  // Joined participants (humans + bots that have an active leg).
+  participants?: Array<{ kind: 'human' | 'bot'; id: string }>;
+  // Invited but not joined yet.
+  pending?: Array<{ kind: 'human' | 'bot'; id: string; invited_by: string }>;
+}
+
+// One frame a hub subscriber sees over the WebSocket. The Cloudflare
+// realtime hub is content-agnostic; this union just narrows what consumers
+// branch on.
+export type RealtimeEvent = RealtimeChange | VoiceCallEvent;
+
 // Push one change to a hub topic. `hubKey` is 'conv:<id>' or
 // 'user:<id>'. Returns how many sockets the DO reached (0 on failure —
 // realtime is best-effort, clients refetch over HTTP on reconnect).
 export async function publishToHub(
   env: Env,
   hubKey: string,
-  event: RealtimeChange,
+  event: RealtimeEvent,
 ): Promise<number> {
   const stub = env.REALTIME_HUB.get(env.REALTIME_HUB.idFromName(hubKey));
   try {
