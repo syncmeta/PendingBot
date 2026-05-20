@@ -181,7 +181,7 @@ struct MeTabView: View {
                             .foregroundStyle(Theme.Palette.inkMuted)
                             .frame(maxWidth: .infinity, alignment: .center)
                     }
-                    .padding(.horizontal, 20)
+                    .padding(.horizontal, 28)
                     .padding(.top, 72)
                     .padding(.bottom, 32)
                 }
@@ -284,20 +284,20 @@ struct OptionRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Text(title)
-                .font(Theme.Fonts.bodyEmphasized)
+                .font(.system(size: 15, weight: .regular))
                 .foregroundStyle(role == .destructive
                                  ? Color(hex: 0xB14B3C)
                                  : Theme.Palette.ink)
             Spacer(minLength: 0)
             if showsChevron {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Theme.Palette.inkMuted.opacity(0.7))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.Palette.inkMuted.opacity(0.55))
             }
         }
         .padding(.horizontal, 20)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(height: 52)
+        .frame(height: 50)
         .contentShape(Rectangle())
     }
 }
@@ -314,6 +314,6 @@ extension View {
             .overlay(
                 shape.strokeBorder(Color.black.opacity(0.08), lineWidth: 0.5)
             )
-            .shadow(color: .black.opacity(0.06), radius: 6, x: 0, y: 2)
+            .shadow(color: .black.opacity(0.03), radius: 5, x: 0, y: 1.5)
     }
 }

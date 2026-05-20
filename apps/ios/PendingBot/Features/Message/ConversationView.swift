@@ -2074,19 +2074,19 @@ private struct PreChatActionButton: View {
             VStack(spacing: 8) {
                 ZStack {
                     Image(systemName: systemImage)
-                        .font(.system(size: 26, weight: .regular))
+                        .font(.system(size: 22, weight: .light))
                         .opacity(busy ? 0 : 1)
                     if busy {
                         ProgressView()
                             .controlSize(.small)
                     }
                 }
-                .frame(height: 30)
+                .frame(height: 28)
                 Text(title)
-                    .font(Theme.Fonts.rounded(size: 13, weight: .medium))
+                    .font(Theme.Fonts.rounded(size: 12, weight: .regular))
                     .lineLimit(1)
             }
-            .foregroundStyle(Theme.Palette.ink)
+            .foregroundStyle(Theme.Palette.inkMuted)
             .frame(width: 92, height: 92)
             .background(
                 RoundedRectangle(cornerRadius: 22, style: .continuous)

@@ -35,40 +35,19 @@ enum BotProvider: String, Hashable {
 
 struct BotCapabilitiesView: View {
     var body: some View {
-        ZStack {
-            Theme.Palette.canvas.ignoresSafeArea()
-            ScrollView {
-                VStack(spacing: 22) {
-                    headerCard
-                    VStack(spacing: 0) {
-                        providerRow(.openaiNative)
-                        optionDivider
-                        providerRow(.openrouter)
-                    }
-                    .meGlassGroup()
-                }
-                .padding(.horizontal, Theme.Metrics.gutter)
-                .padding(.top, 12)
-                .padding(.bottom, 32)
+        Form {
+            Section {
+                providerRow(.openaiNative)
+                providerRow(.openrouter)
+            } footer: {
+                Text("按机器人使用的模型供应商分别配置。自建条目默认按所选供应商生效，不跨用。")
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(Theme.Palette.canvas.ignoresSafeArea())
+        .navigationTitle("机器人能力扩展")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                Text("机器人能力扩展")
-                    .font(Theme.Fonts.serif(size: 17, weight: .semibold))
-                    .foregroundStyle(Theme.Palette.ink)
-            }
-        }
-    }
-
-    private var headerCard: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("按机器人使用的模型供应商分别配置。自建条目默认按所选供应商生效，不跨用。")
-                .font(Theme.Fonts.footnote)
-                .foregroundStyle(Theme.Palette.inkMuted)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .tint(Theme.Palette.accent)
     }
 
     @ViewBuilder
@@ -77,34 +56,16 @@ struct BotCapabilitiesView: View {
             ProviderCapabilitiesView(provider: p)
                 .toolbar(.hidden, for: .tabBar)
         } label: {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(p.displayName)
-                        .font(Theme.Fonts.rounded(size: 15, weight: .medium))
-                        .foregroundStyle(Theme.Palette.ink)
-                    Text(p.subtitle)
-                        .font(Theme.Fonts.caption)
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                }
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Theme.Palette.inkMuted.opacity(0.6))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(p.displayName)
+                Text(p.subtitle)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
-            .contentShape(Rectangle())
+            .padding(.vertical, 2)
         }
-        .buttonStyle(.plain)
-    }
-
-    private var optionDivider: some View {
-        Rectangle()
-            .fill(Theme.Palette.hairline)
-            .frame(height: 0.5)
-            .padding(.leading, 16)
     }
 }
 
@@ -114,47 +75,27 @@ struct ProviderCapabilitiesView: View {
     let provider: BotProvider
 
     var body: some View {
-        ZStack {
-            Theme.Palette.canvas.ignoresSafeArea()
-            ScrollView {
-                VStack(spacing: 22) {
-                    VStack(spacing: 0) {
-                        NavigationLink {
-                            SkillsView(provider: provider)
-                                .toolbar(.hidden, for: .tabBar)
-                        } label: {
-                            OptionRow(title: "Skills")
-                        }
-                        .buttonStyle(.plain)
-
-                        Rectangle()
-                            .fill(Theme.Palette.hairline)
-                            .frame(height: 0.5)
-                            .padding(.leading, 16)
-
-                        NavigationLink {
-                            MCPServersStubView(provider: provider)
-                                .toolbar(.hidden, for: .tabBar)
-                        } label: {
-                            OptionRow(title: "MCP Server")
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .meGlassGroup()
+        Form {
+            Section {
+                NavigationLink {
+                    SkillsView(provider: provider)
+                        .toolbar(.hidden, for: .tabBar)
+                } label: {
+                    Text("Skills")
                 }
-                .padding(.horizontal, Theme.Metrics.gutter)
-                .padding(.top, 12)
-                .padding(.bottom, 32)
+                NavigationLink {
+                    MCPServersStubView(provider: provider)
+                        .toolbar(.hidden, for: .tabBar)
+                } label: {
+                    Text("MCP Server")
+                }
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(Theme.Palette.canvas.ignoresSafeArea())
+        .navigationTitle(provider.displayName)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                Text(provider.displayName)
-                    .font(Theme.Fonts.serif(size: 17, weight: .semibold))
-                    .foregroundStyle(Theme.Palette.ink)
-            }
-        }
+        .tint(Theme.Palette.accent)
     }
 }
 
