@@ -35,9 +35,11 @@ struct MessageTabView: View {
     @Environment(\.topTabSelection) private var topTabSelection
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var unread: UnreadStore
-    /// One-slot store fed by PushService when the user taps a voice_ring
-    /// notification. The .onChange below drives the actual navigation.
-    @State private var incomingRing = IncomingVoiceRingStore.shared
+    /// Store fed by CallKitManager when the user accepts an incoming
+    /// voice call. The .onChange below drives the navigation step;
+    /// ConversationView reads `pendingAutoJoinConversationId` on appear
+    /// to auto-open GroupCallView (no second tap to enter the call).
+    @State private var incomingCall = IncomingCallStore.shared
     @State private var conversations: [Conversation] = []
     @State private var bots: [Bot] = []
     /// Peer profile keyed by user_user conv id. Populated alongside the
@@ -98,11 +100,14 @@ struct MessageTabView: View {
                 Task { await ActiveVoiceCallStore.shared.refresh() }
             }
         }
-        // React to a tapped voice_ring push — open the conversation so
-        // the in-conv banner shows up and the user can tap to join.
-        .onChange(of: incomingRing.pendingConversationId) { _, convId in
+        // React to a CallKit-accepted incoming call — navigate to the
+        // conversation so ConversationView mounts and its onAppear
+        // consumes `pendingAutoJoinConversationId` to open the call view
+        // directly. Two separate slots: this one is the navigation
+        // trigger, the auto-join slot is read by ConversationView.
+        .onChange(of: incomingCall.pendingNavConversationId) { _, convId in
             guard let convId, !convId.isEmpty else { return }
-            incomingRing.pendingConversationId = nil
+            incomingCall.pendingNavConversationId = nil
             let userId = AccountStore.shared.current?.id ?? ""
             let stub = Conversation(
                 id: convId, bot_id: "", user_id: userId,

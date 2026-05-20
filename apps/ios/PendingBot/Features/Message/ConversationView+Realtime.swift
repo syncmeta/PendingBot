@@ -376,6 +376,23 @@ extension ConversationView {
         )
     }
 
+    /// If the IncomingCallStore is currently flagging this conv as
+    /// "user already accepted via CallKit, please auto-open the call",
+    /// consume the flag and spin up the group call. No-op otherwise.
+    /// Called from both `.task` (after groupSenders loads) and
+    /// `.onChange` (warm path where the user was already in this conv).
+    func consumePendingAutoJoinIfMatches() {
+        let store = IncomingCallStore.shared
+        guard let target = store.pendingAutoJoinConversationId,
+              target == conversation.id
+        else { return }
+        store.pendingAutoJoinConversationId = nil
+        // Already in a call (rare race) — leave it; flipping sessions
+        // mid-call would tear down the live one.
+        if groupCallSession != nil { return }
+        startGroupCall()
+    }
+
     /// Spin up a CallSession for the current bot + present CallView via
     /// the .fullScreenCover bound to `callSession`. Tearing down happens
     /// in the cover's onDismiss; we don't await session.start() here so
