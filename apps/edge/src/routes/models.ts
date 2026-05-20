@@ -4,19 +4,19 @@ import { jsonError } from '../lib/http-error';
 import { gatewayBaseUrl } from '../llm/providers';
 import type { AppBindings } from '../types';
 
-// GET /v1/openrouter/models — proxy the upstream model catalogs, reshaped
-// for the iOS model picker. Two sources are merged: OpenRouter's public
-// catalog and OpenAI's native catalog (reached through the AI Gateway).
-// Nothing here is hand-maintained — the catalog is fetched live and
-// cached; model ids, names and pricing all come straight from upstream.
+// GET /v1/models — aggregated model catalog for the iOS picker. Multiple
+// upstream catalogs are merged: OpenRouter's public catalog and OpenAI's
+// native catalog (reached through the AI Gateway). Nothing here is
+// hand-maintained — model ids, names and pricing all come straight from
+// upstream and are cached briefly.
 //
 // blended_usd_per_million is a 7:2:1 (cache_hit/input/output) reference
 // price derived from OpenRouter's own per-model pricing, so the picker
 // can show "≈$X / 1M" next to each row. OpenAI's catalog exposes no
 // pricing, so its rows carry a null price.
 
-export const openrouterRoutes = new Hono<AppBindings>();
-openrouterRoutes.use('*', requireSession());
+export const modelCatalogRoutes = new Hono<AppBindings>();
+modelCatalogRoutes.use('*', requireSession());
 
 interface OpenRouterCatalogModel {
   id: string;
@@ -116,7 +116,7 @@ async function loadOpenAINativeCatalog(
   try {
     const res = await fetch(`${baseURL}/models`, { headers });
     if (!res.ok) {
-      console.warn('[openrouter/models] openai-native catalog', res.status);
+      console.warn('[v1/models] openai-native catalog', res.status);
       return [];
     }
     const json = (await res.json()) as { data?: Array<{ id?: string }> };
@@ -136,19 +136,19 @@ async function loadOpenAINativeCatalog(
     nativeCatalogCache = { at: now, rows };
     return rows;
   } catch (err) {
-    console.warn('[openrouter/models] openai-native catalog fetch failed', err);
+    console.warn('[v1/models] openai-native catalog fetch failed', err);
     return [];
   }
 }
 
-openrouterRoutes.get('/models', async (c) => {
+modelCatalogRoutes.get('/', async (c) => {
   const [res, nativeOpenAI] = await Promise.all([
     fetch('https://openrouter.ai/api/v1/models'),
     loadOpenAINativeCatalog(c),
   ]);
   if (!res.ok) {
     const body = (await res.text()).slice(0, 300);
-    console.warn('[openrouter/models] upstream', res.status, body);
+    console.warn('[v1/models] upstream', res.status, body);
     return jsonError(c, 502, 'upstream_error', { detail: { status: res.status } });
   }
   const json = (await res.json()) as { data?: OpenRouterCatalogModel[] };

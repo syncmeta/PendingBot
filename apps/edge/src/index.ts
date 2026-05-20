@@ -16,7 +16,7 @@ import { groupRoutes } from './routes/groups';
 import { groupVoiceRoutes } from './routes/group-voice';
 import { deviceRoutes } from './routes/devices';
 import { codeExecRoutes } from './routes/code-exec';
-import { openrouterRoutes } from './routes/openrouter';
+import { modelCatalogRoutes } from './routes/models';
 import { realtimeRoutes } from './routes/realtime';
 import { roomVoiceRoutes } from './routes/room-voice';
 import { realtimeHubRoutes } from './routes/realtime-hub';
@@ -95,7 +95,7 @@ v1.route('/groups', groupRoutes);
 v1.route('/groups', groupVoiceRoutes);
 v1.route('/devices', deviceRoutes);
 v1.route('/code-exec-requests', codeExecRoutes);
-v1.route('/openrouter', openrouterRoutes);
+v1.route('/models', modelCatalogRoutes);
 v1.route('/realtime', realtimeRoutes);
 // SFU-facing adapter WebSocket endpoints for group voice — no JWT gate
 // (the Cloudflare SFU is the caller; RoomVoiceDO checks the adapterToken).

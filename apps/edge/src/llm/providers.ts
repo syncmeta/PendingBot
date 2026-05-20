@@ -5,7 +5,7 @@ import type { Env } from '../types';
 // providers exist: `openrouter` (default, Chat Completions dialect) and
 // `openai` (native, Responses API dialect). There is no DB-backed
 // provider / alias / model table — model metadata is pulled live from the
-// upstream catalogs (see routes/openrouter.ts) and per-request cost comes
+// upstream catalogs (see routes/models.ts) and per-request cost comes
 // from the AI Gateway logs (see lib/ai-gateway.ts). The only thing this
 // side owns is the global markup, stored in billing_config.
 

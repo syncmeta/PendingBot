@@ -63,7 +63,7 @@
         "CF_ACCOUNT_ID": "4c303754167f1f225e6761b5128c0d9f",
         "CF_AIG_GATEWAY": "pendingbot",
         // BYOK alias used only by the model-catalog fetch in
-        // routes/openrouter.ts (OpenAI's /models needs real provider auth,
+        // routes/models.ts (OpenAI's /models needs real provider auth,
         // which Unified Billing can't supply). Inference calls stay on
         // Unified Billing and do not send this header.
         "CF_AIG_BYOK_OPENAI_ALIAS": "byok-1",

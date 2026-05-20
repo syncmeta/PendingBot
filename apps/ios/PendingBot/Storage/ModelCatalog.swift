@@ -1,7 +1,7 @@
 import Foundation
 import Combine
 
-/// Client-side cache of the model catalog (`/v1/openrouter/models`).
+/// Client-side cache of the model catalog (`/v1/models`).
 ///
 /// Bots store a bare slug (`z-ai/glm-5.1`) in `model_id`; the UI wants the
 /// friendly `display_name` ("GLM 5.1") and the blended price multiplier.
@@ -28,7 +28,7 @@ final class ModelCatalog: ObservableObject {
         inFlight = Task {
             defer { inFlight = nil }
             do {
-                let models: [OpenRouterModel] = try await APIClient().get("v1/openrouter/models")
+                let models: [OpenRouterModel] = try await APIClient().get("v1/models")
                 var map: [String: OpenRouterModel] = [:]
                 for m in models {
                     map[m.slug] = m

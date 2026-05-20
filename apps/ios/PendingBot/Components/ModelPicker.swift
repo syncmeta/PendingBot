@@ -335,7 +335,7 @@ struct ModelPickerSheet: View {
         guard let api else { return }
         loading = true; defer { loading = false }
         do {
-            allModels = try await api.get("v1/openrouter/models")
+            allModels = try await api.get("v1/models")
             error = nil
             // Auto-expand the group containing the currently-selected model
             // so the user lands on something visible instead of an all-collapsed
