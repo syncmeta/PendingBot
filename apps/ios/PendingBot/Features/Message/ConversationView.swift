@@ -168,6 +168,9 @@ struct ConversationView: View {
     /// Active voice call session, present while CallView is on screen.
     /// Created on phone-button tap and torn down when CallView dismisses.
     @State var callSession: CallSession?
+    /// Active group voice call session, present while GroupCallView is on
+    /// screen. Created on the group-call header button; group convs only.
+    @State var groupCallSession: GroupCallSession?
 
     // Jump-to-latest pill state. `isAtBottom` is recomputed from a
     // geometry preference on the bottom marker; while it's false, new
@@ -644,6 +647,16 @@ struct ConversationView: View {
                 CallView(session: session)
             }
         }
+        .fullScreenCover(
+            isPresented: Binding(
+                get: { groupCallSession != nil },
+                set: { if !$0 { groupCallSession = nil } },
+            ),
+        ) {
+            if let session = groupCallSession {
+                GroupCallView(session: session)
+            }
+        }
         .navigationDestination(isPresented: $showingSettings) {
             // Group convs route to GroupSettingsView (members, nickname,
             // mute, leave). Owner/admin-only knobs (billing, handle,
@@ -972,6 +985,19 @@ struct ConversationView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("语音通话")
+            }
+            if canStartGroupCall {
+                Button {
+                    Haptics.tap()
+                    startGroupCall()
+                } label: {
+                    Image(systemName: "phone.fill")
+                        .font(.system(size: 17, weight: .regular))
+                        .foregroundStyle(Theme.Palette.ink)
+                        .frame(width: 32, height: 32)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("群语音")
             }
             if canStartNewBotConv {
                 Button {

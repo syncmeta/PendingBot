@@ -328,6 +328,30 @@ extension ConversationView {
         return bot?.voice_call_enabled == true
     }
 
+    /// Group-call button visibility — group convs with at least one bot
+    /// participant. Pending convs need a materialized id for the
+    /// `/v1/groups/:id/voice/*` round-trips, so we gate on conv.id too.
+    /// The worker filters to voice-enabled bots and 403s an all-disabled
+    /// group, which surfaces as a "通话失败" alert.
+    var canStartGroupCall: Bool {
+        guard !conversation.id.isEmpty else { return false }
+        guard conversation.conversation_type == "group" else { return false }
+        return groupSenders.values.contains { $0.kind == .bot }
+    }
+
+    /// Spin up a GroupCallSession + present GroupCallView via the
+    /// .fullScreenCover bound to `groupCallSession`.
+    func startGroupCall() {
+        guard let userId = AccountStore.shared.current?.id, !userId.isEmpty
+        else { return }
+        groupCallSession = GroupCallSession(
+            conversationId: conversation.id,
+            currentUserId: userId,
+            members: groupSenders,
+            api: VoiceCallAPI(),
+        )
+    }
+
     /// Spin up a CallSession for the current bot + present CallView via
     /// the .fullScreenCover bound to `callSession`. Tearing down happens
     /// in the cover's onDismiss; we don't await session.start() here so

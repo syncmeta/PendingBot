@@ -77,6 +77,19 @@ private func voiceCallSummaryText(fromResponseDone obj: [String: Any]) -> String
     return trimmed.isEmpty ? nil : trimmed
 }
 
+/// True when a realtime `response.done` event carries a `hang_up`
+/// function call — the 1:1 voice bot's tool for ending the call itself
+/// (declared server-side at session-mint time). Both transports inspect
+/// `response.output` for it and ask CallSession to tear the call down.
+private func responseDoneRequestsHangUp(_ obj: [String: Any]) -> Bool {
+    let response = (obj["response"] as? [String: Any]) ?? [:]
+    guard let outputs = response["output"] as? [[String: Any]] else { return false }
+    return outputs.contains { item in
+        (item["type"] as? String) == "function_call"
+            && (item["name"] as? String) == "hang_up"
+    }
+}
+
 #if canImport(WebRTC)
 
 @MainActor
@@ -327,9 +340,18 @@ final class OpenAICallTransport: NSObject, CallTransport {
     }
 
     private func handleResponseDone(_ obj: [String: Any]) {
-        // The only response we read is the closing recap requested at
-        // hang-up. If no summary is pending this is a normal in-call
-        // response — nothing to do (usage is metered server-side).
+        // The bot can end the call itself via the `hang_up` tool — when
+        // that function call lands, ask the session to tear down.
+        if responseDoneRequestsHangUp(obj) {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                await self.delegate?.transportRequestsHangUp(self)
+            }
+            return
+        }
+        // Otherwise the only response we read is the closing recap
+        // requested at hang-up. If no summary is pending this is a normal
+        // in-call response — nothing to do (metered server-side).
         guard summaryContinuation != nil else { return }
         resolveSummary(voiceCallSummaryText(fromResponseDone: obj))
     }
@@ -739,8 +761,16 @@ final class OpenAIWebSocketTransport: NSObject, CallTransport {
     // MARK: Closing recap
 
     private func handleWSResponseDone(_ obj: [String: Any]) {
-        // Only the closing recap (requestSummary) is read; normal in-call
-        // responses need nothing client-side (usage is metered server-side).
+        // The bot can end the call itself via the `hang_up` tool.
+        if responseDoneRequestsHangUp(obj) {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                await self.delegate?.transportRequestsHangUp(self)
+            }
+            return
+        }
+        // Only the closing recap (requestSummary) is read otherwise;
+        // normal in-call responses need nothing client-side.
         guard summaryContinuation != nil else { return }
         resolveSummary(voiceCallSummaryText(fromResponseDone: obj))
     }

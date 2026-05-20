@@ -6,6 +6,7 @@
 //   POST /v1/groups/:id/voice/join             a human joins the SFU room
 //   POST /v1/groups/:id/voice/subscribe        pull bot tracks to hear them
 //   POST /v1/groups/:id/voice/renegotiate      answer the SFU's offer
+//   GET  /v1/groups/:id/voice/roster           current bot roster (re-sync)
 //   POST /v1/groups/:id/voice/kick             remove a bot or human
 //   POST /v1/groups/:id/voice/designate-admin  grant call-admin powers
 //   POST /v1/groups/:id/voice/leave            the caller leaves the call
@@ -275,10 +276,15 @@ groupVoiceRoutes.post('/:id/voice/start', async (c) => {
     console.warn('[group-voice/start] room DO start failed', resp.status);
     return jsonError(c, 502, 'voice_upstream_failed');
   }
+  // The DO answers `{ already: true }` when the room was already up — so
+  // `initiated` tells this caller whether *they* opened the call (and are
+  // therefore privileged for its lifetime).
+  const startData = (await resp.json().catch(() => ({}))) as { already?: boolean };
   return c.json({
     ok: true,
     room_id: conversationId,
     bot_ids: specs.map((s) => s.botId),
+    initiated: !startData.already,
   });
 });
 
@@ -507,13 +513,14 @@ groupVoiceRoutes.post('/:id/voice/join', async (c) => {
     console.warn('[group-voice/join] room DO add-human failed', doResp.status);
     return jsonError(c, 502, 'voice_upstream_failed');
   }
-  const roster = ((await doResp.json()) as { bots?: unknown }).bots ?? [];
+  const roster = (await doResp.json()) as { bots?: unknown; humans?: unknown };
 
   return c.json({
     ok: true,
     session_id: humanSessionId,
     answer: answerSdp,
-    bots: roster,
+    bots: roster.bots ?? [],
+    humans: roster.humans ?? [],
   });
 });
 
@@ -560,6 +567,32 @@ groupVoiceRoutes.post('/:id/voice/subscribe', async (c) => {
     offer: res.sessionDescription?.sdp ?? null,
     requires_renegotiation: res.requiresImmediateRenegotiation ?? false,
     tracks: res.tracks,
+  });
+});
+
+// =============================================================================
+// GET /:id/voice/roster — current bot roster, for mid-call re-sync
+// =============================================================================
+//
+// /join hands back the roster at join time; this lets a client that
+// added a bot mid-call (or wants to recover) pull the current set of
+// bots — each with the SFU session + track a human subscribes to.
+
+groupVoiceRoutes.get('/:id/voice/roster', async (c) => {
+  const loaded = await loadGroupContext(c);
+  if (!loaded.ok) return loaded.res;
+  const { conversationId } = loaded.ctx;
+
+  const resp = await controlRoom(c, conversationId, '/control/roster', {});
+  if (!resp.ok) {
+    console.warn('[group-voice/roster] room DO failed', resp.status);
+    return jsonError(c, 502, 'voice_upstream_failed');
+  }
+  const roster = (await resp.json()) as { bots?: unknown; humans?: unknown };
+  return c.json({
+    ok: true,
+    bots: roster.bots ?? [],
+    humans: roster.humans ?? [],
   });
 });
 
