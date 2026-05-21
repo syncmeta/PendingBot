@@ -108,6 +108,14 @@ struct ComposerView: View {
                     Button(action: { isStreaming ? onStop() : onSend() }) {
                         Image(systemName: isStreaming ? "stop.fill" : "arrow.up")
                             .font(.system(size: isStreaming ? 12 : 15, weight: .bold))
+                            // Subtle SF Symbol "fly up & replace" when the
+                            // arrow morphs into the stop glyph (and back) —
+                            // the old symbol lifts up and out, the new one
+                            // rises in. Reads as "sent" without being flashy.
+                            // Needs the stable accessory host (see
+                            // ChatComposerAccessory.swift) to actually fire;
+                            // a re-created/AnyView root would skip it.
+                            .contentTransition(.symbolEffect(.replace.upUp))
                             .foregroundStyle(
                                 isStreaming || canSend
                                     ? .white
