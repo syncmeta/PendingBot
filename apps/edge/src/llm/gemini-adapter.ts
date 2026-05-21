@@ -205,7 +205,13 @@ export async function openGeminiStream(
   signal: AbortSignal,
 ): Promise<AsyncIterable<LlmStreamChunk>> {
   const body = toGeminiRequest(params.messages, params.tools);
-  const url = `${baseURL}/v1beta/models/${params.model}:generateContent`;
+  // Must be the `/v1/models/…` path, NOT `/v1beta/…`: AI Gateway only
+  // recognises `/v1/models/{model}:{action}` as a google-ai-studio
+  // inference request and injects the Unified Billing credential there.
+  // A `/v1beta/…` path is forwarded as an opaque passthrough with NO key,
+  // so Google answers 403 "unregistered callers". `/v1` still supports
+  // systemInstruction + functionDeclarations for every Gemini 1.5+ model.
+  const url = `${baseURL}/v1/models/${params.model}:generateContent`;
   const res = await fetch(url, {
     method: 'POST',
     signal,
