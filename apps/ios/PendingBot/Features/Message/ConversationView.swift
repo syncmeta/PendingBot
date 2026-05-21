@@ -585,13 +585,15 @@ struct ConversationView: View {
                 // 落位,最终最后一条会贴 ScrollView frame 底、被 composer 盖住。
                 // 配合 .safeAreaInset 后,底部锚点位于 composer 上沿。
                 .defaultScrollAnchor(.bottom)
-                // Reserve room for the floating composer (inputAccessoryView)
-                // while the keyboard is DOWN, so the last message isn't covered
-                // on entry. When the keyboard is UP, SwiftUI's auto keyboard
-                // avoidance already insets for keyboard+accessory, so drop this
-                // to 0 to avoid double-counting (which would leave a gap above
-                // the keyboard). Height is reported by the accessory itself.
-                .contentMargins(.bottom, effectiveComposerScrollInset, for: .scrollContent)
+                // Reserve room for the floating composer by shrinking the
+                // scrollable viewport, not by appending bottom margin to the
+                // scroll content. A content margin becomes reachable space
+                // after the last bubble, which feels like an invisible message.
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    Color.clear
+                        .frame(height: effectiveComposerScrollInset)
+                        .allowsHitTesting(false)
+                }
                 .background(
                     GeometryReader { geo in
                         Color.clear
