@@ -108,6 +108,77 @@ describe('buildMessages bot self-tz', () => {
   });
 });
 
+describe('buildMessages cache prefix', () => {
+  // The whole point of the cache restructure: the system message holds only
+  // the stable persona (cacheable) and carries the cache_control breakpoint;
+  // per-turn volatile context (lookbacks, attachment inventory) must NOT be
+  // in it, or it busts the cached prefix every round.
+  it('marks the system message with a cache_control breakpoint', async () => {
+    const messages = await buildMessages(supa, {
+      bot: { id: 'bot-1', output_mode: 'single' },
+      botMemory,
+      skills: [],
+      botNote: null,
+      chatMemo: null,
+      recentContext: [],
+      newMessage: 'hi',
+    });
+
+    const content = messages[0]?.content as unknown as Array<{
+      type: string;
+      cache_control?: { type: string };
+    }>;
+    expect(Array.isArray(content)).toBe(true);
+    expect(content[content.length - 1]?.cache_control).toEqual({ type: 'ephemeral' });
+  });
+
+  it('keeps lookbacks out of the system prefix and on the current turn', async () => {
+    const messages = await buildMessages(supa, {
+      bot: { id: 'bot-1', output_mode: 'single' },
+      botMemory,
+      skills: [],
+      botNote: null,
+      chatMemo: null,
+      lookbacks: [{ id: 'lb-1', body_md: '上次说的是周三不是周四' }],
+      recentContext: [],
+      newMessage: '继续',
+    });
+
+    // Not in the cached system prefix...
+    expect(systemText(messages[0]?.content)).not.toContain('周三不是周四');
+    // ...but present on the current (uncached) user turn.
+    const last = messages.at(-1)?.content as Array<{ type: string; text?: string }>;
+    expect(Array.isArray(last)).toBe(true);
+    const joined = last.map((p) => p.text ?? '').join('\n');
+    expect(joined).toContain('周三不是周四');
+    expect(joined).toContain('继续');
+  });
+
+  it('keeps the attachment inventory out of the system prefix', async () => {
+    const messages = await buildMessages(supa, {
+      bot: { id: 'bot-1', output_mode: 'single' },
+      botMemory,
+      skills: [],
+      botNote: null,
+      chatMemo: null,
+      attachmentInventory: [
+        {
+          id: 'aabbccdd-1111-2222-3333-444455556666',
+          summary: '一只橘猫',
+          tags: ['cat'],
+          status: 'done',
+        },
+      ],
+      recentContext: [],
+      newMessage: '看这个',
+    });
+
+    expect(systemText(messages[0]?.content)).not.toContain('一只橘猫');
+    const last = messages.at(-1)?.content as Array<{ type: string; text?: string }>;
+    expect(last.map((p) => p.text ?? '').join('\n')).toContain('一只橘猫');
+  });
+});
+
 describe('buildMessages time hints', () => {
   it('includes the full year for the current user turn in the client timezone', async () => {
     const messages = await buildMessages(supa, {

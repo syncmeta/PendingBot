@@ -65,8 +65,9 @@ export interface BuildMessagesInput {
   /// One row per attachment visible in this conv's recent history
   /// (typically last ~30). Images render as "[图 ID:...] 摘要..." lines;
   /// non-image files render as "[文件 ID:...] 文件名" lines in a separate
-  /// block. Built by the caller and rendered as system context blocks.
-  /// Empty array / undefined → sections omitted.
+  /// block. Built by the caller; rendered into the per-turn volatile
+  /// context that rides the current user turn (out of the cached prefix —
+  /// the inventory mutates with every new image). Empty/undefined → omitted.
   attachmentInventory?: Array<{
     id: string;
     summary: string | null;
@@ -392,11 +393,15 @@ export type BuildSystemPromptInput = Pick<
 // prompt and drops the text-only bubble/single output-mode instructions.
 export type PromptSurface = 'text' | 'voice';
 
-export async function buildSystemPrompt(
+// Stable persona block — the cacheable prefix. Everything here is stable
+// across turns until the persona itself changes (self/skills/notes update
+// on an hours-scale, not per-turn), so it sits BEFORE the cache breakpoint.
+// modeInstr rides here too: it's a fixed per-bot fact, not per-turn context.
+async function buildStablePersona(
   supa: SupabaseClient,
   input: BuildSystemPromptInput,
-  locale: Locale = DEFAULT_LOCALE,
-  surface: PromptSurface = 'text',
+  locale: Locale,
+  surface: PromptSurface,
 ): Promise<string> {
   const [platform, selfSection] = await Promise.all([
     loadPrompt(supa, surface === 'voice' ? 'voice' : 'system', locale),
@@ -407,8 +412,6 @@ export async function buildSystemPrompt(
   const skillsSection = buildSkillsSection(input.skills);
   const botNoteSection = buildBotNoteSection(input.botNote);
   const chatMemoSection = buildChatMemoSection(input.chatMemo);
-  const lookbackSection = buildLookbackSection(input.lookbacks);
-  const attachmentSection = buildAttachmentInventorySection(input.attachmentInventory);
   // Bubble/single segmentation is a text-chat concept; voice has no message
   // splitting, so the mode instruction drops out (filtered as '' below).
   const modeInstr =
@@ -417,15 +420,37 @@ export async function buildSystemPrompt(
       : input.bot.output_mode === 'bubble'
         ? BUBBLE_INSTRUCTIONS
         : SINGLE_INSTRUCTIONS;
-  // attachmentSection sits between lookbacks and modeInstr — out of the
-  // cached prefix because the inventory mutates with every new image,
-  // before the always-mutating mode/recent-turn segment. chat-memo sits
-  // right after bot-note since both are bot-private long-term context.
-  // botTzSection rides next to identity — both are stable bot-facts.
   return [
-    platform, identitySection, botTzSection, selfSection, skillsSection,
-    botNoteSection, chatMemoSection, lookbackSection, attachmentSection, modeInstr,
+    platform, identitySection, botTzSection, modeInstr,
+    selfSection, skillsSection, botNoteSection, chatMemoSection,
   ].filter(Boolean).join('\n\n');
+}
+
+// Per-turn volatile context — attachment inventory (mutates with every new
+// image/file) + lookback notes (added/dropped almost every round). Kept OUT
+// of the cached prefix: in buildMessages it rides on the current user turn
+// (never cached anyway), so a change here never busts the persona/history
+// cache. For voice it's just appended to the instructions string.
+function buildVolatileContext(input: BuildSystemPromptInput): string {
+  const attachmentSection = buildAttachmentInventorySection(input.attachmentInventory);
+  const lookbackSection = buildLookbackSection(input.lookbacks);
+  return [attachmentSection, lookbackSection].filter(Boolean).join('\n\n');
+}
+
+export async function buildSystemPrompt(
+  supa: SupabaseClient,
+  input: BuildSystemPromptInput,
+  locale: Locale = DEFAULT_LOCALE,
+  surface: PromptSurface = 'text',
+): Promise<string> {
+  // Voice (and any caller that wants the whole prompt as one string) gets
+  // stable persona + volatile context concatenated — there's no message
+  // array to spread the cache breakpoint across, so the split is moot here.
+  const [stable, volatile] = await Promise.all([
+    buildStablePersona(supa, input, locale, surface),
+    Promise.resolve(buildVolatileContext(input)),
+  ]);
+  return [stable, volatile].filter(Boolean).join('\n\n');
 }
 
 export async function buildMessages(
@@ -444,11 +469,18 @@ export async function buildMessages(
   // bots.tz. Fall back in that order; UTC is the last resort.
   const timeHintTz = clientTz ?? input.bot.tz ?? undefined;
 
-  const systemContent = await buildSystemPrompt(supa, input, locale);
+  // Stable persona → the cached system prefix. Volatile per-turn context
+  // (attachment inventory + lookbacks) is built separately and ride the
+  // current user turn below, so it never invalidates the persona/history
+  // cache (Anthropic only caches all-or-nothing up to a breakpoint; OpenAI
+  // caches the longest stable prefix — either way, volatile content in the
+  // system block would near-zero the hit rate).
+  const stablePersona = await buildStablePersona(supa, input, locale, 'text');
+  const volatileContext = buildVolatileContext(input);
 
-  // System message: always cached. Stable across turns until prompts change.
+  // System message: cached. Stable across turns until the persona changes.
   const messages: ChatCompletionMessageParam[] = [
-    { role: 'system', content: withCacheControl(systemContent) as unknown as string },
+    { role: 'system', content: withCacheControl(stablePersona) as unknown as string },
   ];
 
   // Build LLM-role history first so we know its length for breakpoint calc.
@@ -477,21 +509,22 @@ export async function buildMessages(
     }
   }
 
-  // Current user turn — outside the cache (always fresh). When the
-  // caller passed image parts (main model has vision) and/or file parts
-  // (PDFs), send a content array so the model reads them directly.
-  // Otherwise plain text — the attachment-inventory section above
-  // carries the summary / file listing.
+  // Current user turn — outside the cache (always fresh). The volatile
+  // per-turn context (attachment inventory + lookback notes) is prepended
+  // here as its own text block so it stays out of the cached prefix while
+  // still sitting right next to the message it's context for. Image parts
+  // (main model has vision) and file parts (PDFs) follow so the model reads
+  // them directly.
   const userText = withTimeHint(newMessage, nowIso, timeHintTz);
-  const currentParts: ChatCompletionContentPart[] = [
+  const attachmentParts: ChatCompletionContentPart[] = [
     ...(input.currentImageParts ?? []),
     ...(input.currentFileParts ?? []),
   ];
-  if (currentParts.length > 0) {
-    messages.push({
-      role: 'user',
-      content: [{ type: 'text', text: userText }, ...currentParts],
-    });
+  if (volatileContext || attachmentParts.length > 0) {
+    const textParts: ChatCompletionContentPart[] = [];
+    if (volatileContext) textParts.push({ type: 'text', text: volatileContext });
+    textParts.push({ type: 'text', text: userText });
+    messages.push({ role: 'user', content: [...textParts, ...attachmentParts] });
   } else {
     messages.push({ role: 'user', content: userText });
   }
