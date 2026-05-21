@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreAudio
 import Foundation
 
 /// Locale-aware call tones, generated rather than sampled. A single
