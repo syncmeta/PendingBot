@@ -33,6 +33,23 @@ const ConfigPatch = z
       .optional(),
     visionModel: z.string().max(200).nullable().optional(),
     voiceModel: z.string().max(200).nullable().optional(),
+    // OpenRouter `openrouter:web_search` server-tool knobs. Only consumed
+    // on the default (OpenRouter) routing path; native-provider bots reach
+    // search through their provider's own built-in tools. All fields
+    // optional — absent config = search on, engine=auto, no constraints.
+    // Maps camelCase here → OpenRouter snake_case params at request build
+    // (buildOpenRouterServerTools).
+    webSearch: z
+      .object({
+        enabled: z.boolean().optional(),
+        engine: z.enum(['auto', 'native', 'exa', 'firecrawl', 'parallel']).optional(),
+        maxResults: z.number().int().min(1).max(25).optional(),
+        maxTotalResults: z.number().int().min(1).max(100).optional(),
+        searchContextSize: z.enum(['low', 'medium', 'high']).optional(),
+        allowedDomains: z.array(z.string().max(253)).max(50).optional(),
+        excludedDomains: z.array(z.string().max(253)).max(50).optional(),
+      })
+      .optional(),
     // Realtime voice call knobs. All optional — absent / null fields fall
     // back to OpenAI defaults at session-mint time. The 8 voices below
     // are the OpenAI Realtime catalog as of 2026-Q2; 'marin' is the

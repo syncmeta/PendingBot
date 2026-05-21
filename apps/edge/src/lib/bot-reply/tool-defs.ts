@@ -24,6 +24,98 @@ import type { ChatCompletionTool } from 'openai/resources/chat/completions';
 //   REQUEST_EXECUTE_CODE_TOOL — always-on; gates on a per-call user tap
 //   EXECUTE_CODE_TOOL          — appended only when allowed_tools opts in
 
+// OpenRouter `openrouter:web_search` configuration. Stored per-bot under
+// bots.config.webSearch (camelCase), edited from the board. Maps to the
+// OpenRouter server-tool `parameters` (snake_case) at build time. All
+// fields optional — an absent config means "search on, engine=auto, no
+// constraints", which is OpenRouter's default behaviour.
+export interface WebSearchConfig {
+  /// false drops the web_search tool entirely (web_fetch / datetime stay).
+  /// Absent / true keeps it on.
+  enabled?: boolean;
+  /// auto = native provider search when available, else Exa fallback.
+  engine?: 'auto' | 'native' | 'exa' | 'firecrawl' | 'parallel';
+  /// Max results per search call (1–25). Ignored by native search.
+  maxResults?: number;
+  /// Cap on total results across every search call in one request.
+  maxTotalResults?: number;
+  /// Context retrieved per result (Exa) or total (Parallel). Native ignores.
+  searchContextSize?: 'low' | 'medium' | 'high';
+  /// Restrict results to these domains.
+  allowedDomains?: string[];
+  /// Drop results from these domains.
+  excludedDomains?: string[];
+}
+
+// Defensively read a WebSearchConfig out of the raw bots.config jsonb.
+// The PATCH /v1/bots Zod schema validates on write, but iOS can also
+// write config straight through Supabase RLS, so we don't trust the shape
+// blindly. Returns null when no webSearch key is present.
+export function parseWebSearchConfig(config: unknown): WebSearchConfig | null {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return null;
+  const ws = (config as Record<string, unknown>).webSearch;
+  if (!ws || typeof ws !== 'object' || Array.isArray(ws)) return null;
+  const o = ws as Record<string, unknown>;
+  const out: WebSearchConfig = {};
+  if (typeof o.enabled === 'boolean') out.enabled = o.enabled;
+  if (
+    o.engine === 'auto' || o.engine === 'native' || o.engine === 'exa' ||
+    o.engine === 'firecrawl' || o.engine === 'parallel'
+  ) {
+    out.engine = o.engine;
+  }
+  if (typeof o.maxResults === 'number' && Number.isFinite(o.maxResults)) {
+    out.maxResults = o.maxResults;
+  }
+  if (typeof o.maxTotalResults === 'number' && Number.isFinite(o.maxTotalResults)) {
+    out.maxTotalResults = o.maxTotalResults;
+  }
+  if (
+    o.searchContextSize === 'low' || o.searchContextSize === 'medium' ||
+    o.searchContextSize === 'high'
+  ) {
+    out.searchContextSize = o.searchContextSize;
+  }
+  if (Array.isArray(o.allowedDomains)) {
+    const ds = o.allowedDomains.filter((d): d is string => typeof d === 'string' && d.length > 0);
+    if (ds.length > 0) out.allowedDomains = ds;
+  }
+  if (Array.isArray(o.excludedDomains)) {
+    const ds = o.excludedDomains.filter((d): d is string => typeof d === 'string' && d.length > 0);
+    if (ds.length > 0) out.excludedDomains = ds;
+  }
+  return out;
+}
+
+// OpenRouter server-side tool plugins. The model decides when to call
+// them; OpenRouter runs the search / fetch / clock lookup on its side and
+// feeds results back — no function_call ever returns to the worker, so
+// they don't go through the runTool dispatcher. Shape is OpenRouter-
+// specific (not an OpenAI function tool), so callers cast at the splat
+// site. web_search honours the per-bot WebSearchConfig; web_fetch and
+// datetime are always on.
+export function buildOpenRouterServerTools(
+  webSearch?: WebSearchConfig | null,
+): Array<Record<string, unknown>> {
+  const tools: Array<Record<string, unknown>> = [];
+  if (webSearch?.enabled !== false) {
+    const params: Record<string, unknown> = {};
+    if (webSearch?.engine) params.engine = webSearch.engine;
+    if (webSearch?.maxResults != null) params.max_results = webSearch.maxResults;
+    if (webSearch?.maxTotalResults != null) params.max_total_results = webSearch.maxTotalResults;
+    if (webSearch?.searchContextSize) params.search_context_size = webSearch.searchContextSize;
+    if (webSearch?.allowedDomains?.length) params.allowed_domains = webSearch.allowedDomains;
+    if (webSearch?.excludedDomains?.length) params.excluded_domains = webSearch.excludedDomains;
+    tools.push(
+      Object.keys(params).length > 0
+        ? { type: 'openrouter:web_search', parameters: params }
+        : { type: 'openrouter:web_search' },
+    );
+  }
+  tools.push({ type: 'openrouter:web_fetch' }, { type: 'openrouter:datetime' });
+  return tools;
+}
+
 // Web search/scrape tools moved out of this static list. They now come
 // from the MCP client (apps/edge/src/mcp/client.ts), which talks to Exa's
 // hosted MCP server. bot-reply merges that dynamic list with these

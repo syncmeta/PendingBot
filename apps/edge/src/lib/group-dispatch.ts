@@ -1,4 +1,5 @@
 import { runChatTurn } from './bot-reply';
+import { parseWebSearchConfig } from './bot-reply/tool-defs';
 import { serviceClient } from './supabase';
 import type { Env } from '../types';
 
@@ -134,7 +135,7 @@ export async function dispatchGroupTurn(
 
     const { data: bot } = await supa
       .from('bots')
-      .select('id, display_name, model_id, output_mode, is_active, tz')
+      .select('id, display_name, model_id, output_mode, is_active, tz, config')
       .eq('id', botId)
       .maybeSingle();
     if (!bot || !bot.is_active) continue;
@@ -202,6 +203,7 @@ export async function dispatchGroupTurn(
         newMessage: nudge,
         providerOverride: convRow?.provider_override ?? null,
         visionModelOverride: convRow?.vision_model_override ?? null,
+        webSearch: parseWebSearchConfig(bot.config),
         // Exposes set_my_group_nickname + set_bot_group_description
         // tools to this turn. The bot can call them mid-reply to
         // refine its group identity / "when to call me" doc.

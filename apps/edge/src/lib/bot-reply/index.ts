@@ -47,10 +47,12 @@ import { resolveProviderSlug } from '../../llm/providers';
 import { WebToolMeter } from '../web-meter';
 import {
   buildDelegateTool,
+  buildOpenRouterServerTools,
   CHAT_TOOLS,
   EXECUTE_CODE_TOOL,
   GROUP_BOT_TOOLS,
   REQUEST_EXECUTE_CODE_TOOL,
+  type WebSearchConfig,
 } from './tool-defs';
 import { specialistTargetsForUser } from './tools/delegate';
 import {
@@ -68,18 +70,6 @@ import { uuidv7 } from '../ids';
 //   import { runChatTurn, type RunChatTurnInput } from '../lib/bot-reply';
 // which resolves through this barrel.
 export { type Citation } from './tool-runner';
-
-// OpenRouter server-side tool plugins. The model decides when to call
-// them; OpenRouter runs the search / fetch / clock lookup on its side
-// and feeds results back to the model — no function_call ever returns
-// to the worker, so they don't go through the runTool dispatcher.
-// Shape is OpenRouter-specific (not an OpenAI function tool), so we
-// cast at the splat site.
-const OPENROUTER_SERVER_TOOLS = [
-  { type: 'openrouter:web_search' },
-  { type: 'openrouter:web_fetch' },
-  { type: 'openrouter:datetime' },
-] as const;
 
 // Multi-bubble splitter — bot's reply may be one continuous block, or several
 // short bubbles separated by `\n---\n`.
@@ -339,6 +329,11 @@ export interface RunChatTurnInput {
   /// turn's tool list. Default false keeps 1v1 / self / user_user
   /// surfaces clean.
   inGroup?: boolean;
+  /// Per-bot OpenRouter web-search config (bots.config.webSearch), parsed
+  /// by the caller. Only consumed on the OpenRouter routing path — it
+  /// tunes the `openrouter:web_search` server tool (engine, result caps,
+  /// domain filters). Absent = default search (engine=auto, no limits).
+  webSearch?: WebSearchConfig | null;
 }
 
 export interface RunChatTurnResult {
@@ -866,7 +861,10 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
           // to the worker.
           const chatTools =
             r.provider.slug === 'openrouter'
-              ? [...turnTools, ...(OPENROUTER_SERVER_TOOLS as unknown as ChatCompletionTool[])]
+              ? [
+                  ...turnTools,
+                  ...(buildOpenRouterServerTools(input.webSearch) as unknown as ChatCompletionTool[]),
+                ]
               : turnTools;
           const request = {
             model: r.modelToCall,

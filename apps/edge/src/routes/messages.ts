@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
 import { serviceClient, userClient } from '../lib/supabase';
 import { runChatTurn } from '../lib/bot-reply';
+import { parseWebSearchConfig } from '../lib/bot-reply/tool-defs';
 import { maybeRefreshMemory } from '../lib/memory';
 import { runLookback } from '../lib/lookback-runner';
 import { runTitle } from '../lib/title-runner';
@@ -517,6 +518,7 @@ messageRoutes.post('/', async (c) => {
             // own default vision model (bots.config.visionModel).
             visionModelOverride:
               conv.vision_model_override ?? botConfigString(bot.config, 'visionModel'),
+            webSearch: parseWebSearchConfig(bot.config),
             activeLookbacks: parsed.activeLookbacks ?? [],
             providerOverride: effectiveProviderOverride,
             clientTz: parsed.clientTz,
@@ -844,6 +846,7 @@ messageRoutes.post('/start', async (c) => {
             currentAttachmentIds: parsed.attachmentIds,
             // Brand-new conv from /start — no override possible yet.
             visionModelOverride: null,
+            webSearch: parseWebSearchConfig(bot.config),
             activeLookbacks: [],
             providerOverride: effectiveProviderOverride,
             clientTz: parsed.clientTz,
