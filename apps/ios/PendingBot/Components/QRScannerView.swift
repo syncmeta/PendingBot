@@ -1,6 +1,38 @@
 import SwiftUI
 import AVFoundation
 import UIKit
+import Observation
+
+/// App-level inbox for incoming universal links (https deep links). The
+/// app root pumps `onOpenURL` here; the tab that owns the matching
+/// surface observes the relevant slot and consumes it.
+///
+/// Mirrors the IncomingCallStore.shared pattern (an @Observable singleton
+/// read by the tab views) rather than threading a binding through the
+/// whole hierarchy.
+@MainActor
+@Observable
+final class DeepLinkStore {
+    static let shared = DeepLinkStore()
+    private init() {}
+
+    /// Set when a `bot.pendingname.com/b/<slug>` link is opened. The
+    /// friends tab switches itself in and presents the add-bot preview,
+    /// then clears this back to nil.
+    var pendingAddBotSlug: String?
+
+    /// Parse an incoming URL into a pending action. Returns true when the
+    /// link was recognised (so the caller can stop here).
+    @discardableResult
+    func handle(_ url: URL) -> Bool {
+        let raw = url.absoluteString
+        if BotShareLink.isBotShareLink(raw) {
+            pendingAddBotSlug = BotShareLink.slug(fromScanned: raw)
+            return true
+        }
+        return false
+    }
+}
 
 /// Codec for the contact-share QR.
 ///
@@ -49,6 +81,53 @@ enum PendingBotQR {
     /// want the legacy bare-token behaviour should use
     /// `token(fromScanned:)` directly.
     static func isPendingBotQR(_ raw: String) -> Bool {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed),
+              url.host?.lowercased().hasSuffix(urlHostSuffix) == true,
+              url.path.hasPrefix(pathPrefix) else { return false }
+        return !url.path.dropFirst(pathPrefix.count).isEmpty
+    }
+}
+
+/// Codec for the bot-share deep link.
+///
+/// Encoded form is `https://bot.pendingname.com/b/<slug>` — same `bot.`
+/// subdomain as the contact/group QRs (so the Universal Links
+/// entitlement applies), but the AASA path is `/b/` (see
+/// apps/edge/src/routes/well-known.ts). Unlike the rotating `/c/` and
+/// `/g/` tokens, the payload is the bot's own `slug`: a public bot's
+/// slug is its stable, intentionally-public identity, so there's nothing
+/// to rotate. The same slug is what a user can type in 加机器人.
+enum BotShareLink {
+    static let host = "bot.pendingname.com"
+    static let pathPrefix = "/b/"
+
+    /// Matches *pendingname.com so apex-host links (pre-`bot.` subdomain)
+    /// still parse, mirroring PendingBotQR.
+    private static let urlHostSuffix = "pendingname.com"
+
+    static func url(forSlug slug: String) -> String {
+        "https://\(host)\(pathPrefix)\(slug)"
+    }
+
+    /// Parse a payload back into the bare slug. Accepts the current
+    /// `bot.pendingname.com/b/<slug>` form, the legacy apex form, and a
+    /// bare slug. Always returns lowercased (slugs are case-insensitive).
+    static func slug(fromScanned raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let url = URL(string: trimmed),
+           url.host?.lowercased().hasSuffix(urlHostSuffix) == true,
+           url.path.hasPrefix(pathPrefix) {
+            let slug = String(url.path.dropFirst(pathPrefix.count))
+            if !slug.isEmpty { return slug.lowercased() }
+        }
+        return trimmed.lowercased()
+    }
+
+    /// Strict check: only true when the payload is unambiguously a
+    /// bot-share URL (`*pendingname.com/b/<slug>`). Bare slugs are not
+    /// recognised here (indistinguishable from arbitrary text).
+    static func isBotShareLink(_ raw: String) -> Bool {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: trimmed),
               url.host?.lowercased().hasSuffix(urlHostSuffix) == true,

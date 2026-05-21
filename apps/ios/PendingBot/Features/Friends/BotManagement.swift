@@ -1,5 +1,7 @@
 import SwiftUI
 import Supabase
+import CoreImage.CIFilterBuiltins
+import UIKit
 
 // User-facing bot CRUD lives behind RLS — INSERT / UPDATE / DELETE all
 // gate on creator_id = auth.uid() so the iOS client can talk to PostgREST
@@ -7,6 +9,39 @@ import Supabase
 // public; the only one-way rule (private → public, never back) and the
 // public-bot delete block are enforced by the bots_guard_public_update
 // trigger + the bots_creator_delete RLS policy.
+
+// MARK: - Slug rule
+
+/// Validation for a public bot's user-chosen slug — the stable, public
+/// handle others type in 加机器人 and that powers the share link / QR
+/// (see BotShareLink). Private bots never use this; they keep the
+/// synthetic `u_<random>` slug minted at creation.
+///
+/// Reserved namespaces are refused so a user can't squat on the
+/// machine-minted forms: `u_` (user-created private bots) and `self-`
+/// (per-user self-bot, filtered out of the friends list).
+enum BotSlugRule {
+    static let minLen = 3
+    static let maxLen = 20
+    private static let allowed = CharacterSet(
+        charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789_-")
+
+    /// Lowercase + drop surrounding whitespace and a leading/trailing @.
+    static func normalize(_ raw: String) -> String {
+        raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "@"))
+            .lowercased()
+    }
+
+    static func isValid(_ slug: String) -> Bool {
+        guard slug.count >= minLen, slug.count <= maxLen else { return false }
+        guard slug.unicodeScalars.allSatisfy({ allowed.contains($0) }) else { return false }
+        if slug.hasPrefix("u_") || slug.hasPrefix("self-") { return false }
+        return true
+    }
+
+    static let helpText = "3–20 位，小写字母、数字、下划线或连字符"
+}
 
 // MARK: - Create
 
@@ -22,6 +57,9 @@ struct CreateBotSheet: View {
     /// 'openai' = native Responses route.
     @State private var modelProvider: String?
     @State private var visibility: Visibility = .privateBot
+    /// User-chosen public handle. Only required (and only sent) when the
+    /// bot is public — private bots keep the synthetic `u_<random>` slug.
+    @State private var slug: String = ""
     @State private var creating = false
     @State private var error: String?
 
@@ -94,6 +132,29 @@ struct CreateBotSheet: View {
                     Text("公开程度")
                 }
 
+                // Public bots need a human-chosen slug — it's the handle
+                // others type in 加机器人 and the payload of the share
+                // link / QR. Private bots don't (can't be added by anyone
+                // else), so the field only shows for public visibilities.
+                if visibility != .privateBot {
+                    Section {
+                        HStack(spacing: 4) {
+                            Text("@").foregroundStyle(Theme.Palette.inkMuted)
+                            TextField("机器人标识(slug)", text: $slug)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled(true)
+                                .onChange(of: slug) { _, v in
+                                    let n = BotSlugRule.normalize(v)
+                                    if n != v { slug = n }
+                                }
+                        }
+                    } header: {
+                        Text("机器人标识")
+                    } footer: {
+                        Text("别人按这个标识、链接或二维码加你的机器人。\(BotSlugRule.helpText)。建好后可在管理里修改。")
+                    }
+                }
+
                 if let error {
                     Section {
                         Text(error).foregroundStyle(.red)
@@ -148,8 +209,11 @@ struct CreateBotSheet: View {
     }
 
     private var canCreate: Bool {
-        !displayName.trimmingCharacters(in: .whitespaces).isEmpty
-        && !modelSlug.isEmpty
+        let nameOK = !displayName.trimmingCharacters(in: .whitespaces).isEmpty
+        let modelOK = !modelSlug.isEmpty
+        // Public bots additionally require a valid slug.
+        if visibility == .privateBot { return nameOK && modelOK }
+        return nameOK && modelOK && BotSlugRule.isValid(slug)
     }
 
     private func create() async {
@@ -158,10 +222,11 @@ struct CreateBotSheet: View {
         guard !trimmedName.isEmpty, !modelSlug.isEmpty else { return }
         creating = true; defer { creating = false }
         do {
-            // bots.slug is NOT NULL UNIQUE, but it's only meaningful for the
-            // 8 system presets ("lorem"/"ipsum"/...). For user-created bots
-            // we mint a synthetic slug from a fresh UUID so the unique
-            // constraint stays satisfied without leaking creator info.
+            // bots.slug is NOT NULL UNIQUE. Public bots use the creator's
+            // chosen handle (the thing others type / scan to add); private
+            // bots mint a synthetic slug from a fresh UUID so the unique
+            // constraint stays satisfied without leaking creator info and
+            // without burning a nice handle no one can reach anyway.
             struct BotInsert: Encodable {
                 let creator_id: String
                 let visibility: String
@@ -182,7 +247,9 @@ struct CreateBotSheet: View {
                 let visibility: String?
                 let creator_id: String?
             }
-            let slug = "u_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(16)
+            let finalSlug: String = visibility == .privateBot
+                ? "u_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(16).description
+                : BotSlugRule.normalize(slug)
             let row: BotOut = try await SupabaseStack.shared
                 .from("bots")
                 .insert(BotInsert(
@@ -191,13 +258,29 @@ struct CreateBotSheet: View {
                     display_name: trimmedName,
                     model_id: modelSlug,
                     model_provider: modelProvider,
-                    slug: String(slug),
+                    slug: finalSlug,
                     tz: visibility == .privateBot ? nil : TimeZone.current.identifier
                 ))
                 .select("id, display_name, model_id, visibility, creator_id")
                 .single()
                 .execute()
                 .value
+
+            // The friends-tab bot list reads from user_bot_contacts, not the
+            // bots table — so without a contact row the freshly-created bot
+            // vanishes on the next load(). The conversations→contact trigger
+            // only fires once a conversation exists, which doesn't happen at
+            // creation time, so register the creator here explicitly. RLS
+            // allows it via the creator_id = auth.uid() branch.
+            struct ContactInsert: Encodable {
+                let user_id: String
+                let bot_id: String
+                let added_via: String
+            }
+            try await SupabaseStack.shared
+                .from("user_bot_contacts")
+                .insert(ContactInsert(user_id: userId, bot_id: row.id, added_via: "manual"))
+                .execute()
 
             let pick = FriendsTabView.BotPick(
                 id: row.id,
@@ -211,7 +294,15 @@ struct CreateBotSheet: View {
             Haptics.success()
             dismiss()
         } catch {
-            self.error = error.localizedDescription
+            // 23505 == unique_violation on bots.slug — the chosen handle
+            // is taken (by another public bot or a preset). Surface a
+            // targeted message so the user knows to pick a different slug.
+            let msg = error.localizedDescription
+            if msg.contains("23505") || msg.lowercased().contains("duplicate") {
+                self.error = "「\(BotSlugRule.normalize(slug))」这个标识已被占用，换一个试试。"
+            } else {
+                self.error = msg
+            }
             Haptics.error()
         }
     }
@@ -249,6 +340,12 @@ struct ManageBotSheet: View {
     /// promotion-in-progress that hasn't yet persisted).
     @State private var tz: String = TimeZone.current.identifier
     @State private var initialTz: String = ""
+    /// Public handle. Loaded from the bots row; editable for public bots
+    /// (the others-add-me identity), frozen-irrelevant for private ones.
+    /// `initialSlug` is the persisted value — also what the share page
+    /// uses, so an unsaved edit doesn't hand out a dead link.
+    @State private var slug: String = ""
+    @State private var initialSlug: String = ""
     @State private var saving = false
     @State private var deleting = false
     @State private var confirmingDelete = false
@@ -296,6 +393,50 @@ struct ManageBotSheet: View {
                     if isPrivate {
                         Text("升级为公有后不能再转回私有,也不能删除,但仍能改设置和改名。请确认。")
                             .font(Theme.Fonts.caption)
+                    }
+                }
+
+                // Public bots carry a user-facing slug — the handle others
+                // type / scan / tap to add. Editable here (rename anytime);
+                // old links break on rename, same as changing a username.
+                if visibility != "private" {
+                    Section {
+                        HStack(spacing: 4) {
+                            Text("@").foregroundStyle(Theme.Palette.inkMuted)
+                            TextField("机器人标识(slug)", text: $slug)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled(true)
+                                .onChange(of: slug) { _, v in
+                                    let n = BotSlugRule.normalize(v)
+                                    if n != v { slug = n }
+                                }
+                        }
+                    } header: {
+                        Text("机器人标识")
+                    } footer: {
+                        Text("别人按这个标识、链接或二维码加你的机器人。\(BotSlugRule.helpText)。")
+                    }
+                }
+
+                // Share affordance — only for already-public bots with a
+                // persisted slug. (A promotion-in-progress shows the slug
+                // editor above but not this, until the row is saved.)
+                if (initial.visibility ?? "private") != "private" && !initialSlug.isEmpty {
+                    Section {
+                        NavigationLink {
+                            BotSharePage(
+                                slug: initialSlug,
+                                botName: displayName.trimmingCharacters(in: .whitespaces).isEmpty
+                                    ? initial.display_name : displayName)
+                        } label: {
+                            Label("分享机器人", systemImage: "square.and.arrow.up")
+                                .foregroundStyle(Theme.Palette.ink)
+                        }
+                    } footer: {
+                        if BotSlugRule.normalize(slug) != initialSlug {
+                            Text("标识改了记得先保存,分享的链接 / 二维码才会用新的。")
+                                .font(Theme.Fonts.caption)
+                        }
                     }
                 }
 
@@ -357,7 +498,10 @@ struct ManageBotSheet: View {
                     Button(saving ? "保存中…" : "保存") {
                         Task { await save() }
                     }
-                    .disabled(saving || !dirty)
+                    // Block save on an invalid public slug — otherwise the
+                    // INSERT/UPDATE just bounces off the format/unique guard.
+                    .disabled(saving || !dirty
+                              || (visibility != "private" && !BotSlugRule.isValid(slug)))
                 }
             }
             .confirmationDialog(
@@ -402,16 +546,18 @@ struct ManageBotSheet: View {
     /// row so the pickers pre-select the right values and the dirty
     /// check is accurate.
     private func loadModelProvider() async {
-        struct Row: Decodable { let model_provider: String?; let tz: String? }
+        struct Row: Decodable { let model_provider: String?; let tz: String?; let slug: String? }
         if let row: Row = try? await SupabaseStack.shared
             .from("bots")
-            .select("model_provider, tz")
+            .select("model_provider, tz, slug")
             .eq("id", value: initial.id)
             .single()
             .execute()
             .value {
             modelProvider = row.model_provider
             initialModelProvider = row.model_provider
+            slug = row.slug ?? ""
+            initialSlug = row.slug ?? ""
             // Public bots have a tz from creation/backfill ('Etc/UTC'
             // for preset, creator-device-tz for user-created). The
             // empty initial state lets the dirty check distinguish
@@ -431,6 +577,9 @@ struct ManageBotSheet: View {
         if modelProvider != initialModelProvider { return true }
         if voiceCallEnabled != (initial.voice_call_enabled ?? false) { return true }
         if visibility != (initial.visibility ?? "public_open") { return true }
+        // slug renames only matter on public bots (private bots keep their
+        // synthetic slug and never send it).
+        if visibility != "private" && BotSlugRule.normalize(slug) != initialSlug { return true }
         // tz changes only matter on public bots. Private edits don't
         // touch the column, so don't flag the form dirty just because
         // the placeholder device-tz differs from the row's null.
@@ -467,9 +616,13 @@ struct ManageBotSheet: View {
                 /// JSON null so a private→public promotion correctly
                 /// SET tz = ... too.
                 let tz: String?
+                /// nil = leave the slug untouched (private bots keep their
+                /// synthetic slug). Unlike tz, slug is NOT NULL, so the
+                /// encode() OMITS the key when nil rather than sending null.
+                let slug: String?
                 enum CodingKeys: String, CodingKey {
                     case display_name, model_id, model_provider
-                    case visibility, voice_call_enabled, tz
+                    case visibility, voice_call_enabled, tz, slug
                 }
                 func encode(to encoder: Encoder) throws {
                     var c = encoder.container(keyedBy: CodingKeys.self)
@@ -479,6 +632,7 @@ struct ManageBotSheet: View {
                     try c.encode(visibility, forKey: .visibility)
                     try c.encode(voice_call_enabled, forKey: .voice_call_enabled)
                     try c.encode(tz, forKey: .tz)
+                    if let slug { try c.encode(slug, forKey: .slug) }
                 }
             }
             // The creator may edit every column regardless of visibility, so
@@ -493,7 +647,8 @@ struct ManageBotSheet: View {
                 model_provider: modelProvider,
                 visibility: visibility,
                 voice_call_enabled: voiceCallEnabled,
-                tz: visibility == "private" ? nil : tz
+                tz: visibility == "private" ? nil : tz,
+                slug: visibility == "private" ? nil : BotSlugRule.normalize(slug)
             )
             try await SupabaseStack.shared
                 .from("bots")
@@ -504,7 +659,14 @@ struct ManageBotSheet: View {
             Haptics.success()
             dismiss()
         } catch {
-            self.error = error.localizedDescription
+            // 23505 == unique_violation on bots.slug — the renamed handle
+            // is taken. Surface a targeted message so the user retries.
+            let msg = error.localizedDescription
+            if msg.contains("23505") || msg.lowercased().contains("duplicate") {
+                self.error = "「\(BotSlugRule.normalize(slug))」这个标识已被占用,换一个。"
+            } else {
+                self.error = msg
+            }
             Haptics.error()
         }
     }
@@ -1840,5 +2002,206 @@ private struct DomainListEditor: View {
     private func cleaned(_ s: String) -> String? {
         let t = s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return t.isEmpty ? nil : t
+    }
+}
+
+// MARK: - 分享机器人 / share page (link + QR)
+
+/// Pushed from ManageBotSheet for a public bot. Surfaces the three ways
+/// to add it — the typed slug (@handle), the universal link, and a QR —
+/// all keyed on the same `bots.slug`. Presentational only: the slug is
+/// the persisted one, so edits in ManageBotSheet must be saved first
+/// before they show up here (the caller passes the saved value).
+struct BotSharePage: View {
+    let slug: String
+    let botName: String
+
+    @State private var copied = false
+
+    private var shareURLString: String { BotShareLink.url(forSlug: slug) }
+    private var shareURL: URL? { URL(string: shareURLString) }
+    /// Display form drops the scheme — `bot.pendingname.com/b/<slug>`.
+    private var displayURL: String {
+        shareURLString.replacingOccurrences(of: "https://", with: "")
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 24) {
+                BotQRCard(slug: slug, botName: botName)
+
+                VStack(spacing: 12) {
+                    Text(displayURL)
+                        .font(.footnote.monospaced())
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .padding(.horizontal)
+
+                    HStack(spacing: 12) {
+                        Button {
+                            UIPasteboard.general.string = shareURLString
+                            copied = true
+                            Haptics.tap()
+                        } label: {
+                            Label(copied ? "已复制" : "复制链接",
+                                  systemImage: copied ? "checkmark" : "doc.on.doc")
+                                .font(.system(size: 14, weight: .semibold))
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 10)
+                                .background(Capsule().fill(Theme.Palette.accentBg))
+                                .foregroundStyle(Theme.Palette.accent)
+                        }
+                        .buttonStyle(.plain)
+
+                        if let shareURL {
+                            ShareLink(item: shareURL) {
+                                Label("分享", systemImage: "square.and.arrow.up")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 10)
+                                    .background(Capsule().fill(Theme.Palette.accentBg))
+                                    .foregroundStyle(Theme.Palette.accent)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+
+                Text("把这个链接、二维码,或者标识 @\(slug) 发给别人。对方点开链接、扫码,或在「加机器人」里输入这个标识,就能加这个机器人。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+            }
+            .padding(.vertical, 8)
+        }
+        .background(Theme.Palette.canvas.ignoresSafeArea())
+        .navigationTitle("分享机器人")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+// MARK: - Bot QR card
+
+/// Bot-side counterpart to GroupQRCard. Renders a deep-green QR of the
+/// bot-share link (`BotShareLink.url(forSlug:)`) with the brand mark in
+/// the centre, plus the bot name + handle below. No rotation/minting —
+/// the slug is the bot's stable public identity, so the QR is a pure
+/// function of the slug.
+struct BotQRCard: View {
+    let slug: String
+    let botName: String
+
+    private let context = CIContext()
+
+    var body: some View {
+        VStack(spacing: 18) {
+            qrPanel
+            VStack(spacing: 6) {
+                Text(botName.isEmpty ? "@\(slug)" : botName)
+                    .font(Theme.Fonts.serif(size: 20, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.ink)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                Text("@\(slug) · 扫码加我")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 16)
+    }
+
+    @ViewBuilder
+    private var qrPanel: some View {
+        let size: CGFloat = 240
+        ZStack {
+            background(size: size)
+            if let qr = qrImage(for: BotShareLink.url(forSlug: slug)) {
+                Image(uiImage: qr)
+                    .interpolation(.none)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: size - 32, height: size - 32)
+                    .padding(10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(Color.white)
+                    )
+                Image("BrandMark")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 40, height: 40)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .padding(6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Theme.Palette.canvas)
+                    )
+            } else {
+                Text("生成二维码失败")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(width: size, height: size)
+    }
+
+    @ViewBuilder
+    private func background(size: CGFloat) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 28, style: .continuous)
+        if #available(iOS 26.0, *) {
+            Color.clear
+                .frame(width: size, height: size)
+                .glassEffect(.regular, in: shape)
+        } else {
+            shape
+                .fill(Theme.Palette.surface)
+                .frame(width: size, height: size)
+                .overlay(
+                    shape.strokeBorder(Theme.Palette.accent.opacity(0.08),
+                                       lineWidth: 0.5)
+                )
+                .shadow(color: Theme.Palette.accent.opacity(0.12),
+                        radius: 18, y: 8)
+        }
+    }
+
+    // Mirrors MyQRBusinessCard.qrImage / GroupQRCard.qrImage — kept in
+    // sync intentionally (CIQRCodeGenerator + recolour + manual
+    // quiet-zone padding). Extracting a shared helper would need pbxproj
+    // juggling for a new file; this copy is cheaper.
+    private func qrImage(for payload: String) -> UIImage? {
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(payload.utf8)
+        filter.correctionLevel = "H"
+        guard let raw = filter.outputImage else { return nil }
+        let recolour = CIFilter.falseColor()
+        recolour.inputImage = raw
+        recolour.color0 = CIColor(red: 4 / 255.0, green: 71 / 255.0, blue: 53 / 255.0)
+        recolour.color1 = CIColor(red: 253 / 255.0, green: 252 / 255.0, blue: 250 / 255.0)
+        guard let coloured = recolour.outputImage else { return nil }
+        let scale: CGFloat = 10
+        let scaled = coloured.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        guard let cg = context.createCGImage(scaled, from: scaled.extent) else { return nil }
+        let inner = CGFloat(cg.width)
+        let quiet = scale * 4
+        let total = inner + quiet * 2
+        let renderer = UIGraphicsImageRenderer(
+            size: CGSize(width: total, height: total),
+            format: {
+                let f = UIGraphicsImageRendererFormat.default()
+                f.scale = 1
+                f.opaque = true
+                return f
+            }(),
+        )
+        return renderer.image { ctx in
+            UIColor(red: 253 / 255.0, green: 252 / 255.0, blue: 250 / 255.0, alpha: 1).setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: total, height: total))
+            ctx.cgContext.translateBy(x: 0, y: total)
+            ctx.cgContext.scaleBy(x: 1, y: -1)
+            ctx.cgContext.draw(cg, in: CGRect(x: quiet, y: quiet, width: inner, height: inner))
+        }
     }
 }

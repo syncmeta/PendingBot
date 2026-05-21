@@ -36,6 +36,12 @@ struct FriendsTabView: View {
     @State private var error: String?
     @State private var addingFriend = false
     @State private var addingBot = false
+    /// Slug pre-filled into AddBotSheet from a scanned QR / tapped
+    /// universal link — non-empty means the sheet jumps to the preview.
+    @State private var addBotPrefill = ""
+    /// App-level deep-link inbox. When a /b/<slug> link lands here while
+    /// the friends tab is alive, we consume it into addBotPrefill.
+    @State private var deepLink = DeepLinkStore.shared
     @State private var creatingBot = false
     @State private var managingBot: BotPick?
     @State private var aliasEditTarget: HumanPick?
@@ -56,6 +62,11 @@ struct FriendsTabView: View {
             }
         }
         .task { await load() }
+        // Consume a /b/<slug> deep link both when it arrives while we're
+        // already on screen (onChange) and when TabRoot has just switched
+        // us in to handle it (onAppear).
+        .onAppear { consumeDeepLink() }
+        .onChange(of: deepLink.pendingAddBotSlug) { _, _ in consumeDeepLink() }
         .alert("出错", isPresented: .constant(error != nil)) {
             Button("好") { error = nil }
         } message: { Text(error ?? "") }
@@ -63,23 +74,25 @@ struct FriendsTabView: View {
             AddFriendSheet { Task { await load() } }
                 .presentationDragIndicator(.visible)
         }
-        .sheet(isPresented: $addingBot) {
-            AddBotSheet { addedBot in
-                // Optimistic prepend so the row shows up immediately, even
-                // before the network refresh resolves. Refresh follows to
-                // pick up server-derived fields (added_at ordering, etc.).
-                if !self.bots.contains(where: { $0.id == addedBot.id }) {
-                    self.bots.insert(addedBot, at: 0)
-                }
-                Task {
-                    await load()
-                    // Drop straight into the new bot's chat — matches the
-                    // "accept friend request → open chat" affordance for
-                    // humans. Without this jump the user has to dismiss
-                    // the sheet then go hunt for the bot in the list.
-                    await tapBot(addedBot)
-                }
-            }
+        .sheet(isPresented: $addingBot, onDismiss: { addBotPrefill = "" }) {
+            AddBotSheet(
+                onAdded: { addedBot in
+                    // Optimistic prepend so the row shows up immediately,
+                    // even before the network refresh resolves. Refresh
+                    // follows to pick up server-derived fields.
+                    if !self.bots.contains(where: { $0.id == addedBot.id }) {
+                        self.bots.insert(addedBot, at: 0)
+                    }
+                    Task {
+                        await load()
+                        // Drop straight into the new bot's chat — matches
+                        // the "accept friend request → open chat"
+                        // affordance for humans.
+                        await tapBot(addedBot)
+                    }
+                },
+                prefilledSlug: addBotPrefill
+            )
             .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $creatingBot) {
@@ -395,6 +408,20 @@ struct FriendsTabView: View {
     private struct BotContactDecodable: Decodable {
         let bot: BotDecodable
     }
+
+    /// Pull a pending /b/<slug> deep link out of the shared inbox and open
+    /// the add-bot preview on it. The small defer lets a concurrent tab
+    /// switch (regular layout: TabRoot flips us in) settle before the
+    /// sheet animates in.
+    private func consumeDeepLink() {
+        guard let slug = deepLink.pendingAddBotSlug, !slug.isEmpty else { return }
+        deepLink.pendingAddBotSlug = nil
+        addBotPrefill = slug
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            addingBot = true
+        }
+    }
+
     private func load() async {
         // Hydrate from local cache so the tab paints last-known friends
         // instantly instead of flashing empty until the network round-trip
@@ -1351,6 +1378,10 @@ struct AddBotSheet: View {
     /// to the list and route into the bot's chat without waiting for the
     /// reload to land.
     var onAdded: (FriendsTabView.BotPick) -> Void = { _ in }
+    /// When non-empty, opens the sheet directly on the preview page with
+    /// the lookup already in flight. Used by the scan / universal-link
+    /// flows so the user never sees the slug-input step.
+    var prefilledSlug: String = ""
 
     enum Route: Hashable { case preview(slug: String) }
 
@@ -1408,6 +1439,13 @@ struct AddBotSheet: View {
                         onAdded: onAdded,
                         onFinished: { dismiss() }
                     )
+                }
+            }
+            .onAppear {
+                // Scan / universal-link flow: skip the slug-input page and
+                // push straight to the preview, mirroring AddFriendSheet.
+                if !prefilledSlug.isEmpty, path.isEmpty {
+                    path.append(.preview(slug: BotShareLink.slug(fromScanned: prefilledSlug)))
                 }
             }
         }
