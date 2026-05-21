@@ -126,9 +126,13 @@ export const CHAT_TOOLS: ChatCompletionTool[] = [
     function: {
       name: 'query_user_memory',
       // Honcho dialectic endpoint as a tool — the bot phrases a natural-
-      // language question and Honcho's reasoning agent searches everything
-      // it's observed about this user across sessions. Description in the
-      // tools registry.
+      // language question and Honcho's reasoning agent answers from the
+      // bot's local model of this user (theory-of-mind). In private turns
+      // it pools across every session the (bot, user) pair shares; in group
+      // turns it's scoped to the current conversation so private-1v1 facts
+      // don't leak into a multi-party room. Scoping lives in
+      // queryUserRepresentation (lib/honcho.ts). Description in the tools
+      // registry.
       parameters: {
         type: 'object',
         properties: {

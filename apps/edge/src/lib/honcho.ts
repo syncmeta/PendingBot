@@ -23,35 +23,48 @@ export const conversationSessionId = (convId: string): string => `conv-${convId}
 export interface QueryUserOptions {
   env: Env;
   userId: string;
-  /// Scope the dialectic call to this conversation's session so the answer
-  /// reflects only what's been said in this thread. REQUIRED: an unscoped
-  /// query lets a bot in one conv learn about the user from a different
-  /// conv they share (private chat → group leak), which is precisely the
-  /// per-conversation isolation the rest of the codebase enforces.
+  botId: string;
+  /// Only consulted for group turns — see `inGroup`.
   conversationId: string;
+  /// Directional scoping of the dialectic call:
+  ///   • Private turn (1v1 / self / sub-conversation, inGroup=false) →
+  ///     no session scope. The bot draws on everything it has observed
+  ///     about this user across *all* the sessions they share, so memory
+  ///     follows the (bot, user) relationship rather than being trapped in
+  ///     the current thread.
+  ///   • Group turn (inGroup=true) → scope to this conversation's session,
+  ///     so a bot replying in a multi-party room can't surface what the
+  ///     user told it in a private 1v1 (cross-context leak).
+  inGroup: boolean;
   query: string;
   signal?: AbortSignal;
 }
 
-/// Ask Honcho's dialectic endpoint a natural-language question about the user.
-/// The dialectic agent does retrieval + reasoning over what's been observed
-/// inside the named conversation's session (conclusions, raw messages, peer
-/// card) and returns a grounded answer. Returns null when Honcho has nothing
-/// to say.
+/// Ask Honcho's dialectic endpoint what *this bot* knows about *this user*.
+/// We query the bot peer's local representation of the user (theory-of-mind,
+/// via `target`) rather than the user's global representation — that keeps
+/// the answer bounded to the (bot, user) pair instead of bleeding in what
+/// the user said to other bots. The dialectic agent does retrieval +
+/// reasoning over the in-scope conclusions / raw messages / peer card and
+/// returns a grounded answer, or null when it has nothing to say.
 export async function queryUserRepresentation(
   opts: QueryUserOptions,
 ): Promise<string | null> {
-  const { env, userId, conversationId, query, signal } = opts;
-  const honcho = honchoClient(env);
-  const peer = await honcho.peer(userPeerId(userId));
-  // SDK v2: peer.chat(query, { session }) returns { content: string | null }.
+  const { env, userId, botId, conversationId, inGroup, query, signal } = opts;
   // We don't pipe AbortSignal through (SDK doesn't accept one); the dialectic
   // call is bounded server-side, and this tool is invoked inside an agent loop
   // whose outer abort flips the model's stream — a stale dialectic in flight
   // is harmless.
   void signal;
-  const content = await peer.chat(query, {
-    session: conversationSessionId(conversationId),
+  const honcho = honchoClient(env);
+  const botPeer = await honcho.peer(botPeerId(botId));
+  // SDK v2: peer.chat(query, { target, session? }) returns string | null.
+  // target = the user peer → bot's local model of the user. Session is only
+  // added for group turns (leak boundary); private turns stay unscoped so
+  // recall pools across every conversation the pair shares.
+  const content = await botPeer.chat(query, {
+    target: userPeerId(userId),
+    ...(inGroup ? { session: conversationSessionId(conversationId) } : {}),
   });
   return content?.trim() || null;
 }

@@ -48,6 +48,10 @@ export interface ToolCtx {
   /// Per-turn meter — every web search / read goes through it so the
   /// call lands in audit_web_tool_calls and folds into billing.
   webMeter: WebToolMeter;
+  /// True for group turns. query_user_memory uses it to decide whether to
+  /// scope the dialectic to this conversation (group → no private-1v1 leak)
+  /// or pool across all the (bot, user) pair's sessions (private turn).
+  inGroup: boolean;
 }
 
 /// Tolerant JSON parse for tool arg blobs. Models occasionally emit
@@ -84,7 +88,9 @@ export async function runTool(
       const answer = await queryUserRepresentation({
         env,
         userId: ctx.userId,
+        botId: ctx.botId,
         conversationId: ctx.conversationId,
+        inGroup: ctx.inGroup,
         query,
         signal: ctx.signal,
       });

@@ -653,6 +653,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     conversationId,
     citations,
     webMeter,
+    inGroup: input.inGroup ?? false,
   };
 
   const emitBubble = async (text: string) => {
