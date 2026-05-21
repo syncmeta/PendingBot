@@ -1383,6 +1383,7 @@ struct BotConfigView: View {
     // ── Load / save ─────────────────────────────────────────────────────────
 
     private func load() async {
+        guard !loaded else { return }
         struct Row: Decodable {
             let model_id: String?
             let model_provider: String?
