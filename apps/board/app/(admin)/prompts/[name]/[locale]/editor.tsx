@@ -1,9 +1,9 @@
 'use client';
 
-import { useActionState, useTransition } from 'react';
+import { useActionState, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { savePrompt, resetPrompt } from '../../actions';
-import type { SavePromptState } from '../../_shared';
+import { savePrompt, resetPrompt, commitPrompt } from '../../actions';
+import type { CommitPromptResult, SavePromptState } from '../../_shared';
 
 export function PromptEditor({
   name,
@@ -24,6 +24,10 @@ export function PromptEditor({
     {},
   );
   const [resetPending, startReset] = useTransition();
+  const [commitPending, startCommit] = useTransition();
+  const [commitResult, setCommitResult] = useState<CommitPromptResult | null>(
+    null,
+  );
 
   return (
     <div className="space-y-4">
@@ -66,15 +70,45 @@ export function PromptEditor({
               {resetPending ? '重置中…' : '重置为 bundled'}
             </button>
           )}
+          <button
+            type="button"
+            disabled={commitPending}
+            onClick={() => {
+              setCommitResult(null);
+              startCommit(async () => {
+                const r = await commitPrompt(name, locale);
+                setCommitResult(r);
+                router.refresh();
+              });
+            }}
+            className="rounded-md border border-input px-3 py-1.5 text-sm hover:bg-accent disabled:opacity-50"
+          >
+            {commitPending ? '提交中…' : '提交到 git'}
+          </button>
           {state.error && (
             <span className="text-xs text-destructive">{state.error}</span>
+          )}
+          {commitResult?.ok && commitResult.committed && (
+            <span className="text-xs text-emerald-700">
+              已提交 <code>{commitResult.sha}</code>
+            </span>
+          )}
+          {commitResult?.ok && !commitResult.committed && (
+            <span className="text-xs text-muted-foreground">
+              git 无改动可提交
+            </span>
+          )}
+          {commitResult && !commitResult.ok && (
+            <span className="text-xs text-destructive">
+              提交失败：{commitResult.error}
+            </span>
           )}
           {state.ok && !pending && (
             <span className="text-xs text-emerald-700">已保存 — edge 缓存 ≤ 30s 内刷新</span>
           )}
           {state.ok && !pending && state.bundled?.ok && (
             <span className="text-xs text-emerald-700">
-              已写入 <code>{state.bundled.path}</code>（记得 git commit）
+              已写入 <code>{state.bundled.path}</code>（点"提交到 git"入库）
             </span>
           )}
           {state.ok && !pending && state.bundled && !state.bundled.ok && (

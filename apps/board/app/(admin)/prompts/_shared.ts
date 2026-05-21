@@ -13,3 +13,10 @@ export type SavePromptState = {
   // only meaningful when Board runs locally with the monorepo source on disk).
   bundled?: { ok: true; path: string } | { ok: false; error: string };
 };
+
+// Result of committing the bundled .md into git from the Board UI (only works
+// when Board runs locally with the monorepo source on disk).
+export type CommitPromptResult =
+  | { ok: true; committed: true; sha: string; path: string }
+  | { ok: true; committed: false }
+  | { ok: false; error: string };

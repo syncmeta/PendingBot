@@ -1,7 +1,9 @@
 'use server';
 
+import { execFile } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import { headers } from 'next/headers';
 import { revalidatePath } from 'next/cache';
 import { requireAdmin } from '@/lib/auth';
@@ -12,9 +14,12 @@ import {
 } from '@pendingbot/edge/llm/prompt-names';
 import {
   SUPPORTED_LOCALES,
+  type CommitPromptResult,
   type PromptLocale,
   type SavePromptState,
 } from './_shared';
+
+const execFileAsync = promisify(execFile);
 
 function assertPromptName(s: string): asserts s is PromptName {
   if (!(PROMPT_NAMES as readonly string[]).includes(s)) {
@@ -27,30 +32,70 @@ function assertLocale(s: string): asserts s is PromptLocale {
   }
 }
 
+// Resolve the repo-relative and on-disk path of a bundled prompt .md, the same
+// way the editor reads the bundled default (sibling apps/edge tree). Board sits
+// at apps/board, so the edge tree is one level up.
+function bundledFile(name: string, locale: string): { rel: string; abs: string } {
+  return {
+    rel: `apps/edge/prompts/${locale}/${name}.md`,
+    abs: path.resolve(process.cwd(), '..', 'edge', 'prompts', locale, `${name}.md`),
+  };
+}
+
 // Mirror a saved prompt into the repo's bundled .md so git stays in sync with
-// the DB override and the next edge deploy bakes in the same text. Resolved the
-// same way the editor reads the bundled default (sibling apps/edge tree); only
-// has an effect when Board runs locally with the monorepo source on disk.
+// the DB override and the next edge deploy bakes in the same text. Only has an
+// effect when Board runs locally with the monorepo source on disk.
 async function writeBundled(
   name: string,
   locale: string,
   body_md: string,
 ): Promise<NonNullable<SavePromptState['bundled']>> {
-  const rel = `apps/edge/prompts/${locale}/${name}.md`;
+  const { rel, abs } = bundledFile(name, locale);
   try {
-    const file = path.resolve(
-      process.cwd(),
-      '..',
-      'edge',
-      'prompts',
-      locale,
-      `${name}.md`,
-    );
-    await fs.mkdir(path.dirname(file), { recursive: true });
-    await fs.writeFile(file, body_md, 'utf-8');
+    await fs.mkdir(path.dirname(abs), { recursive: true });
+    await fs.writeFile(abs, body_md, 'utf-8');
     return { ok: true, path: rel };
   } catch (e) {
     return { ok: false, error: (e as Error).message };
+  }
+}
+
+// Commit just the bundled .md for this prompt so a save doesn't leave the
+// working tree dirty. Scoped to the single file by pathspec, so it never sweeps
+// up other dirty files. Only works locally with the monorepo + git on disk.
+export async function commitPrompt(
+  name: string,
+  locale: string,
+): Promise<CommitPromptResult> {
+  await requireAdmin();
+  assertPromptName(name);
+  assertLocale(locale);
+
+  const { rel, abs } = bundledFile(name, locale);
+  const cwd = path.dirname(abs);
+  try {
+    const { stdout: status } = await execFileAsync(
+      'git',
+      ['status', '--porcelain', '--', abs],
+      { cwd },
+    );
+    if (!status.trim()) return { ok: true, committed: false };
+
+    await execFileAsync('git', ['add', '--', abs], { cwd });
+    await execFileAsync(
+      'git',
+      ['commit', '-m', `edge(prompts): update ${name}/${locale} via board`, '--', abs],
+      { cwd },
+    );
+    const { stdout: sha } = await execFileAsync(
+      'git',
+      ['rev-parse', '--short', 'HEAD'],
+      { cwd },
+    );
+    return { ok: true, committed: true, sha: sha.trim(), path: rel };
+  } catch (e) {
+    const err = e as { stderr?: string; message?: string };
+    return { ok: false, error: (err.stderr || err.message || 'git failed').trim() };
   }
 }
 
