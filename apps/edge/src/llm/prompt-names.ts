@@ -6,6 +6,7 @@
 export const PROMPT_NAMES = [
   'system',
   'voice',
+  'group-voice',
   'identity-quest',
   'envelope',
   'envelope-injected',
@@ -21,7 +22,8 @@ export type PromptName = (typeof PROMPT_NAMES)[number];
 // list view so it's clear what each name does without reading the .md.
 export const PROMPT_DESCRIPTIONS: Record<PromptName, string> = {
   'system': '主 system prompt：定义平台身份、消息格式、调用约定',
-  'voice': '语音通话 system prompt：口语化、无 markdown/分段、可挂断',
+  'voice': '1:1 语音通话 system prompt：口语化、无 markdown/分段、可挂断',
+  'group-voice': '群语音通话 system prompt：多人在场、别抢话、轮到才说',
   'identity-quest': '新机器人首次出场前的"身份问询"，引导用户填关键信息',
   'envelope': '来信主 system prompt：bot 给用户写一篇文章的整体指令',
   'envelope-injected': '来信注入段：把任务背景注入到 system 末尾的额外指令',

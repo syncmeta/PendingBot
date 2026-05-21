@@ -154,9 +154,10 @@ async function buildBotSpec(
 
   const botMemory = await getBotMemory(c.env, bot.id);
   // Group-voice personas use the bot's core self only. Per-user context
-  // (skills, chat-memo) doesn't apply in a multi-user room; group-specific
-  // prompt engineering (nicknames, per-group descriptions) lands with the
-  // wider group-prompt work, same as group text turns today.
+  // (skills, chat-memo) doesn't apply in a multi-user room. The platform
+  // layer comes from the dedicated `group-voice` prompt (spoken style +
+  // turn-taking) via surface 'group-voice' below. Per-group prompt knobs
+  // (nicknames, per-group descriptions) still land with the wider work.
   const instructions = await buildSystemPrompt(
     supaSvc,
     {
@@ -172,7 +173,7 @@ async function buildBotSpec(
       chatMemo: null,
     },
     locale,
-    'voice',
+    'group-voice',
   );
 
   return {

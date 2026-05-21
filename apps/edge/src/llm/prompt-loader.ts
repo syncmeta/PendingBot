@@ -26,6 +26,7 @@ import type { PromptName } from './prompt-names';
 
 import system_zh from '../../prompts/zh/system.md';
 import voice_zh from '../../prompts/zh/voice.md';
+import groupVoice_zh from '../../prompts/zh/group-voice.md';
 import identityQuest_zh from '../../prompts/zh/identity-quest.md';
 import envelope_zh from '../../prompts/zh/envelope.md';
 import envelopeInjected_zh from '../../prompts/zh/envelope-injected.md';
@@ -37,6 +38,7 @@ import groupRouter_zh from '../../prompts/zh/group-router.md';
 const PROMPTS_ZH = {
   'system': system_zh,
   'voice': voice_zh,
+  'group-voice': groupVoice_zh,
   'identity-quest': identityQuest_zh,
   'envelope': envelope_zh,
   'envelope-injected': envelopeInjected_zh,

@@ -388,10 +388,18 @@ export type BuildSystemPromptInput = Pick<
   | 'attachmentInventory'
 >;
 
-// Which surface the prompt is for. 'text' is the default IM chat; 'voice' is a
-// realtime call, which swaps the platform core for the spoken-style `voice`
-// prompt and drops the text-only bubble/single output-mode instructions.
-export type PromptSurface = 'text' | 'voice';
+// Which surface the prompt is for. Each maps to its own platform prompt:
+//   'text'        → `system`        (IM chat, the default)
+//   'voice'       → `voice`         (1:1 realtime call, spoken style)
+//   'group-voice' → `group-voice`   (multi-party voice room, turn-taking)
+// Both voice surfaces drop the text-only bubble/single output-mode block.
+export type PromptSurface = 'text' | 'voice' | 'group-voice';
+
+const PLATFORM_PROMPT_BY_SURFACE = {
+  'text': 'system',
+  'voice': 'voice',
+  'group-voice': 'group-voice',
+} as const;
 
 // Stable persona block — the cacheable prefix. Everything here is stable
 // across turns until the persona itself changes (self/skills/notes update
@@ -404,7 +412,7 @@ async function buildStablePersona(
   surface: PromptSurface,
 ): Promise<string> {
   const [platform, selfSection] = await Promise.all([
-    loadPrompt(supa, surface === 'voice' ? 'voice' : 'system', locale),
+    loadPrompt(supa, PLATFORM_PROMPT_BY_SURFACE[surface], locale),
     buildSelfSection(supa, input.botMemory, locale),
   ]);
   const identitySection = buildIdentitySection(input.bot.display_name);
@@ -412,10 +420,11 @@ async function buildStablePersona(
   const skillsSection = buildSkillsSection(input.skills);
   const botNoteSection = buildBotNoteSection(input.botNote);
   const chatMemoSection = buildChatMemoSection(input.chatMemo);
-  // Bubble/single segmentation is a text-chat concept; voice has no message
-  // splitting, so the mode instruction drops out (filtered as '' below).
+  // Bubble/single segmentation is a text-chat concept; voice (1:1 or group)
+  // has no message splitting, so the mode instruction drops out (filtered as
+  // '' below) for any non-text surface.
   const modeInstr =
-    surface === 'voice'
+    surface !== 'text'
       ? ''
       : input.bot.output_mode === 'bubble'
         ? BUBBLE_INSTRUCTIONS
