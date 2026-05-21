@@ -708,7 +708,7 @@
 				CODE_SIGN_ENTITLEMENTS = PendingBot/Resources/PendingBot.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 7;
 				DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER = NO;
 				INFOPLIST_FILE = PendingBot/Resources/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -734,7 +734,7 @@
 				CODE_SIGN_ENTITLEMENTS = PendingBot/Resources/PendingBot.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 7;
 				DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER = NO;
 				INFOPLIST_FILE = PendingBot/Resources/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
