@@ -71,6 +71,12 @@ struct SwipeRevealRow<Content: View>: View {
     /// Spacing between successive ratcheting haptic ticks during the
     /// leading drag — every `tickStride` pt advanced fires one click.
     private let tickStride: CGFloat = 9
+    /// Keep the per-row drag recognizer out of the way of fast vertical
+    /// flicks. Quick list scrolls often carry 10-25pt of incidental X
+    /// motion before UIScrollView settles into its pan; starting the row
+    /// swipe in that band makes the list feel randomly inert.
+    private let horizontalSwipeMinimumDistance: CGFloat = 32
+    private let horizontalDominanceRatio: CGFloat = 1.35
 
     private var actionsWidth: CGFloat {
         let n = CGFloat(actions.count)
@@ -127,25 +133,31 @@ struct SwipeRevealRow<Content: View>: View {
         // Tap is its own gesture so the DragGesture can keep a generous
         // minimumDistance. The threshold must be high enough that SwiftUI's
         // arbiter doesn't hold the single-touch sequence pending while
-        // waiting for our drag to confirm — anything below ~20pt starves
-        // UIScrollView's single-touch pan and the list only scrolls under
-        // a 2-finger pan (which routes through UIScrollView's 2-touch
-        // path, bypassing SwiftUI's per-row pending drag). 20pt has been
-        // the proven floor since the original SwipeRevealRow.
+        // waiting for our drag to confirm — anything near the ScrollView
+        // pan threshold starves UIScrollView's single-touch pan and the
+        // list only scrolls under a 2-finger pan (which routes through
+        // UIScrollView's 2-touch path, bypassing SwiftUI's per-row pending
+        // drag). Keep this above the incidental horizontal travel produced
+        // by a quick vertical flick.
         .onTapGesture {
             if isOpen { close() } else { onTap?() }
         }
         .simultaneousGesture(
-            DragGesture(minimumDistance: 20)
+            DragGesture(minimumDistance: horizontalSwipeMinimumDistance)
                 .onChanged { value in
                     let dx = value.translation.width
                     let dy = value.translation.height
                     if !lockedToHorizontal {
                         // Only commit to a horizontal swipe once the finger
-                        // has clearly moved horizontally-dominant. Vertical-
-                        // dominant motion falls through and the ScrollView
-                        // keeps scrolling.
-                        guard abs(dx) > abs(dy) else { return }
+                        // has moved clearly sideways and is materially more
+                        // horizontal than vertical. A mere dx > dy test is
+                        // too twitchy for fast list flicks, where the first
+                        // coalesced sample can be slightly diagonal.
+                        let absDX = abs(dx)
+                        let absDY = abs(dy)
+                        guard absDX >= horizontalSwipeMinimumDistance,
+                              absDX > absDY * horizontalDominanceRatio
+                        else { return }
                         lockedToHorizontal = true
                         lastTickDX = 0
                         didArm = false
