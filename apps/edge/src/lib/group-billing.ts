@@ -73,7 +73,7 @@ export async function splitAndDebit(input: SplitInput): Promise<void> {
     return;
   }
 
-  const allMembers = (members ?? []).filter((m) => m.participates);
+  const allMembers = (members ?? []).filter((m) => m.participates && !m.overdrawn);
   if (allMembers.length === 0) {
     await supa.from('audit_log').update({ billing_status: 'unbilled' }).eq('id', auditLogId);
     return;

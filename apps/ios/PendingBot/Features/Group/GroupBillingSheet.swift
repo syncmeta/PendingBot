@@ -13,6 +13,7 @@ struct GroupBillingSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var mode: SplitMode = .hybrid
+    @State private var loadedMode: SplitMode = .hybrid
     @State private var windowSeconds: Int = 86_400
     @State private var capCredits: String = ""
     @State private var capEnabled: Bool = false
@@ -26,7 +27,7 @@ struct GroupBillingSheet: View {
         .perHead: "按人头平分",
         .perMessage: "按发言条数",
         .perToken: "按发言 token",
-        .custom: "自定义比例",
+        .custom: "自定义比例(暂不支持编辑)",
     ]
 
     private static let windowOptions: [(Int, String)] = [
@@ -35,14 +36,23 @@ struct GroupBillingSheet: View {
         (7 * 86_400, "最近 7 天"),
     ]
 
+    private var modeOptions: [SplitMode] {
+        var modes: [SplitMode] = [.hybrid, .perHead, .perMessage, .perToken]
+        if mode == .custom {
+            modes.insert(.custom, at: 0)
+        }
+        return modes
+    }
+
     var body: some View {
         NavigationStack {
             Form {
                 if isAdmin {
                     Section("分摊方式") {
                         Picker("模式", selection: $mode) {
-                            ForEach(SplitMode.allCases, id: \.self) { m in
+                            ForEach(modeOptions, id: \.self) { m in
                                 Text(Self.modeLabel[m] ?? m.rawValue).tag(m)
+                                    .disabled(m == .custom)
                             }
                         }
                         .pickerStyle(.inline)
@@ -63,7 +73,7 @@ struct GroupBillingSheet: View {
 
                     if mode == .custom {
                         Section {
-                            Text("自定义比例编辑下次再做。先用其他模式。")
+                            Text("当前为自定义比例。要修改分摊方式,请选择上面的其他模式。")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -130,7 +140,9 @@ struct GroupBillingSheet: View {
                 .execute()
                 .value
             if let cfg = (try await cfgResp).first {
-                mode = SplitMode(rawValue: cfg.mode) ?? .hybrid
+                let loaded = SplitMode(rawValue: cfg.mode) ?? .hybrid
+                mode = loaded
+                loadedMode = loaded
                 windowSeconds = cfg.window_seconds
             }
             if let mine = (try await mineResp).first {
@@ -158,15 +170,20 @@ struct GroupBillingSheet: View {
                 let windowSeconds: Int
                 let customShares: [String]?
             }
-            await postVoid(
-                path: "v1/groups/\(conversationId)/billing",
-                body: BillingBody(
-                    mode: mode.rawValue,
-                    windowSeconds: windowSeconds,
-                    customShares: nil,
-                ),
-            )
-            if error != nil { return }
+            if mode != .custom {
+                await postVoid(
+                    path: "v1/groups/\(conversationId)/billing",
+                    body: BillingBody(
+                        mode: mode.rawValue,
+                        windowSeconds: windowSeconds,
+                        customShares: nil,
+                    ),
+                )
+                if error != nil { return }
+            } else if loadedMode != .custom {
+                error = "自定义比例编辑还没开放。请选择其他分摊方式。"
+                return
+            }
         }
 
         struct CapBody: Encodable { let capCredits: Int? }

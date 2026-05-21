@@ -372,7 +372,9 @@ groupRoutes.post('/:id/billing', async (c) => {
   return c.json({ ok: true });
 });
 
-const CapBody = z.object({ capCredits: z.number().int().nonnegative().nullable() });
+const CapBody = z.object({
+  capCredits: z.number().int().nonnegative().nullable().optional(),
+});
 groupRoutes.post('/:id/cap', async (c) => {
   const convId = c.req.param('id');
   let parsed: z.infer<typeof CapBody>;
@@ -389,7 +391,7 @@ groupRoutes.post('/:id/cap', async (c) => {
   // PostgREST; the cast is a type-only workaround.
   const { error } = await supa.rpc('group_set_member_cap', {
     p_conv_id: convId,
-    p_cap_credits: parsed.capCredits as unknown as number,
+    p_cap_credits: (parsed.capCredits ?? null) as unknown as number,
   });
   if (error) {
     const e = rpcError(error);
