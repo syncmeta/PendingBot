@@ -201,23 +201,123 @@ private struct MentionPickerView: View {
     }
 }
 
+// MARK: - Live values bridge
+
+/// Holds the current composer values/bindings/closures. The hosting
+/// controller's root view (`ComposerAccessoryRoot`) is created ONCE and
+/// observes this model; ConversationView pushes fresh values in on each render
+/// by mutating the model and bumping `revision`.
+///
+/// Why not just reassign the hosting controller's `rootView` every render?
+/// Because that (especially wrapped in `AnyView`) defeats SwiftUI's view-
+/// identity diffing, so implicit animations like the send button's
+/// `.animation(.easeInOut, value: canSend)` / `value: isStreaming` never fire
+/// — the button snaps instead of morphing. A stable root + observed model
+/// keeps the identity intact so those animations work.
+final class ComposerAccessoryModel: ObservableObject {
+    /// Bumped on every push so the stable root re-renders with the latest
+    /// (non-@Published) bindings/values/closures below.
+    @Published var revision = 0
+
+    var input: Binding<String> = .constant("")
+    var pendingAttachments: Binding<[PendingAttachment]> = .constant([])
+    var photoPickerItems: Binding<[PhotosPickerItem]> = .constant([])
+    var cameraImage: Binding<UIImage?> = .constant(nil)
+    var showFileImporter: Binding<Bool> = .constant(false)
+    var showPhotoPicker: Binding<Bool> = .constant(false)
+    var showCamera: Binding<Bool> = .constant(false)
+    var iAmFrozen = false
+    var pendingContinue: ConversationView.PendingContinue?
+    var continueDeciding = false
+    var conversationType = ""
+    var mentionActive = false
+    var mentionCandidates: [GroupBubbleSender] = []
+    var canSend = false
+    var isStreaming = false
+    var onSend: () -> Void = {}
+    var onStop: () -> Void = {}
+    var onLookback: (() -> Void)?
+    var onInsertMention: (GroupBubbleSender) -> Void = { _ in }
+    var onDecideContinue: (ConversationView.PendingContinue, Bool) -> Void = { _, _ in }
+
+    /// Copy the freshly-built content's fields in, then trigger one re-render.
+    func push(_ c: ComposerAccessoryContent) {
+        input = c.$input
+        pendingAttachments = c.$pendingAttachments
+        photoPickerItems = c.$photoPickerItems
+        cameraImage = c.$cameraImage
+        showFileImporter = c.$showFileImporter
+        showPhotoPicker = c.$showPhotoPicker
+        showCamera = c.$showCamera
+        iAmFrozen = c.iAmFrozen
+        pendingContinue = c.pendingContinue
+        continueDeciding = c.continueDeciding
+        conversationType = c.conversationType
+        mentionActive = c.mentionActive
+        mentionCandidates = c.mentionCandidates
+        canSend = c.canSend
+        isStreaming = c.isStreaming
+        onSend = c.onSend
+        onStop = c.onStop
+        onLookback = c.onLookback
+        onInsertMention = c.onInsertMention
+        onDecideContinue = c.onDecideContinue
+        revision += 1
+    }
+}
+
+/// Stable root hosted in the accessory's UIHostingController. Created once;
+/// rebuilds `ComposerAccessoryContent` from the observed model on each
+/// `revision` bump while keeping its SwiftUI identity (so child animations fire).
+struct ComposerAccessoryRoot: View {
+    @ObservedObject var model: ComposerAccessoryModel
+
+    var body: some View {
+        // Subscribe to revision so a push re-renders us. (The other fields are
+        // plain, not @Published — they're read fresh here each time.)
+        let _ = model.revision
+        return ComposerAccessoryContent(
+            input: model.input,
+            pendingAttachments: model.pendingAttachments,
+            photoPickerItems: model.photoPickerItems,
+            cameraImage: model.cameraImage,
+            showFileImporter: model.showFileImporter,
+            showPhotoPicker: model.showPhotoPicker,
+            showCamera: model.showCamera,
+            iAmFrozen: model.iAmFrozen,
+            pendingContinue: model.pendingContinue,
+            continueDeciding: model.continueDeciding,
+            conversationType: model.conversationType,
+            mentionActive: model.mentionActive,
+            mentionCandidates: model.mentionCandidates,
+            canSend: model.canSend,
+            isStreaming: model.isStreaming,
+            onSend: model.onSend,
+            onStop: model.onStop,
+            onLookback: model.onLookback,
+            onInsertMention: model.onInsertMention,
+            onDecideContinue: model.onDecideContinue
+        )
+    }
+}
+
 // MARK: - UIKit bridge
 
 /// Installs the first-responder owner that vends the composer as an
 /// `inputAccessoryView`. Its own view is inert (zero-impact, non-interactive);
 /// the visible bar is the separate accessory.
-struct ChatComposerAccessory<Content: View>: UIViewControllerRepresentable {
-    let content: Content
+struct ChatComposerAccessory: UIViewControllerRepresentable {
+    /// Freshly built by ConversationView.body each render. We don't host this
+    /// directly — we copy its fields into the controller's stable model (see
+    /// ComposerAccessoryModel) so SwiftUI keeps the hosted view's identity.
+    let content: ComposerAccessoryContent
 
     func makeUIViewController(context: Context) -> AccessoryOwnerController {
         AccessoryOwnerController()
     }
 
     func updateUIViewController(_ uiViewController: AccessoryOwnerController, context: Context) {
-        // Rebuild the hosted root each render so fresh values/closures from
-        // ConversationView.body cross the boundary (the content does not
-        // observe @State directly).
-        uiViewController.setContent(AnyView(content))
+        uiViewController.push(content)
     }
 
     static func dismantleUIViewController(_ uiViewController: AccessoryOwnerController, coordinator: ()) {
@@ -226,7 +326,8 @@ struct ChatComposerAccessory<Content: View>: UIViewControllerRepresentable {
 }
 
 final class AccessoryOwnerController: UIViewController {
-    private let host = UIHostingController(rootView: AnyView(EmptyView()))
+    private let model = ComposerAccessoryModel()
+    private lazy var host = UIHostingController(rootView: ComposerAccessoryRoot(model: model))
     private lazy var barContainer = ComposerBarContainerView(host: host)
     private var isTearingDown = false
 
@@ -243,8 +344,9 @@ final class AccessoryOwnerController: UIViewController {
         host.sizingOptions = [.intrinsicContentSize]
     }
 
-    func setContent(_ content: AnyView) {
-        host.rootView = content
+    /// Push fresh values into the stable root's model (no rootView swap).
+    func push(_ content: ComposerAccessoryContent) {
+        model.push(content)
         barContainer.contentDidChange()
     }
 
