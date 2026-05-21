@@ -132,7 +132,12 @@ struct ComposerView: View {
             }
             .padding(.horizontal, Theme.Metrics.gutter)
             .padding(.top, 8)
-            .padding(.bottom, 8)
+            // Bottom clearance between the capsule and the keyboard top
+            // (when up) / home indicator (at rest). Kept generous so the
+            // capsule's bottom edge isn't clipped by the keyboard during
+            // an interactive scroll-to-dismiss, where the safeAreaInset
+            // lags the keyboard's frame for a frame or two.
+            .padding(.bottom, 12)
 
             if showActions {
                 ChatActionSheet(
