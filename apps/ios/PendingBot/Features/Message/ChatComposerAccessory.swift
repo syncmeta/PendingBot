@@ -404,6 +404,7 @@ final class AccessoryOwnerController: UIViewController {
 /// docked; zero when riding the keyboard, which iOS reports automatically).
 final class ComposerBarContainerView: UIView {
     private let host: UIViewController
+    private let backdrop = ProgressiveBlurBackdropView()
     private var lastHeight: CGFloat = -1
 
     init(host: UIViewController) {
@@ -412,14 +413,35 @@ final class ComposerBarContainerView: UIView {
         // Required for the inputAccessoryView system to honour
         // intrinsicContentSize as the bar's height.
         autoresizingMask = .flexibleHeight
+
+        // Progressive blur backdrop pinned to the FULL bar (all four edges,
+        // including the home-indicator strip the system reserves below the
+        // docked accessory). Painting it here in UIKit — rather than as the
+        // SwiftUI ComposerView's `.background` — is what makes it reach the
+        // strip: the hosted SwiftUI content sizes to itself and sits above the
+        // strip, and the accessory's hosting controller doesn't propagate the
+        // bottom safe area to SwiftUI, so a SwiftUI `.ignoresSafeArea(.bottom)`
+        // never gets a frame down there. An Auto Layout view pinned to the
+        // container edges always covers it. Sits behind the host content.
+        backdrop.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(backdrop)
+        NSLayoutConstraint.activate([
+            backdrop.leadingAnchor.constraint(equalTo: leadingAnchor),
+            backdrop.trailingAnchor.constraint(equalTo: trailingAnchor),
+            backdrop.topAnchor.constraint(equalTo: topAnchor),
+            backdrop.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+
         host.view.translatesAutoresizingMaskIntoConstraints = false
+        host.view.backgroundColor = .clear
         addSubview(host.view)
         NSLayoutConstraint.activate([
             host.view.leadingAnchor.constraint(equalTo: leadingAnchor),
             host.view.trailingAnchor.constraint(equalTo: trailingAnchor),
             host.view.topAnchor.constraint(equalTo: topAnchor),
             // Content sits above the safe-area strip; the strip is added back
-            // into intrinsicContentSize so the bar reserves room for it.
+            // into intrinsicContentSize so the bar reserves room for it. The
+            // backdrop above covers that strip.
             host.view.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor),
         ])
     }

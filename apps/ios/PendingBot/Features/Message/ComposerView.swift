@@ -167,25 +167,20 @@ struct ComposerView: View {
             }
         }
         .background {
-            // Without a backstop the safeAreaInset region above the
-            // "+" panel is transparent during the open/close transition
-            // and the message list briefly bleeds through. When the
-            // panel is closed we drop in a top-to-bottom progressive
-            // blur so messages scrolling near the composer fade out
-            // gracefully behind the floating capsule — clear at the top
-            // edge, fully blurred down past the home indicator.
+            // Closed state: the progressive blur backdrop is painted by the
+            // accessory container (ComposerBarContainerView) so it reaches the
+            // home-indicator strip — a SwiftUI `.background` here can't, since
+            // the hosted content sizes to itself above the strip and the
+            // accessory's hosting controller doesn't hand SwiftUI the bottom
+            // safe area. So we draw nothing when closed.
             //
-            // ignoresSafeArea(edges: .bottom) extends the backdrop into
-            // the system bottom safe area (the home-indicator strip);
-            // without it the blur ends at the composer's own bottom
-            // padding and the un-blurred messages bleed through that
-            // ~34pt gap.
+            // Open state: the "+" panel needs an opaque backstop (you don't
+            // want blurred messages behind the action tiles), and a solid
+            // fill also covers the transient transparency during the
+            // open/close transition. ignoresSafeArea(.bottom) extends it into
+            // the home-indicator strip.
             if showActions {
                 Theme.Palette.canvas
-                    .ignoresSafeArea(edges: .bottom)
-            } else {
-                ProgressiveBlurBackdrop()
-                    .allowsHitTesting(false)
                     .ignoresSafeArea(edges: .bottom)
             }
         }
@@ -293,11 +288,10 @@ private extension View {
 /// Earlier draft stacked 4 layered blurs of increasing strength to fake a
 /// variable-radius Gaussian, but the visual outcome wasn't worth the
 /// complexity — the single masked blur reads as a clean reveal here.
-struct ProgressiveBlurBackdrop: UIViewRepresentable {
-    func makeUIView(context: Context) -> ProgressiveBlurBackdropView { ProgressiveBlurBackdropView() }
-    func updateUIView(_ uiView: ProgressiveBlurBackdropView, context: Context) {}
-}
-
+///
+/// Used directly (as a UIView) by ComposerBarContainerView, which pins it to
+/// the full accessory bounds so it covers the home-indicator strip — see
+/// ChatComposerAccessory.swift.
 final class ProgressiveBlurBackdropView: UIView {
     private let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterial))
     private let gradient = CAGradientLayer()
