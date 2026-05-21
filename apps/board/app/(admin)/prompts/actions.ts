@@ -1,5 +1,7 @@
 'use server';
 
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
 import { headers } from 'next/headers';
 import { revalidatePath } from 'next/cache';
 import { requireAdmin } from '@/lib/auth';
@@ -22,6 +24,33 @@ function assertPromptName(s: string): asserts s is PromptName {
 function assertLocale(s: string): asserts s is PromptLocale {
   if (!(SUPPORTED_LOCALES as readonly string[]).includes(s)) {
     throw new Error(`unsupported locale: ${s}`);
+  }
+}
+
+// Mirror a saved prompt into the repo's bundled .md so git stays in sync with
+// the DB override and the next edge deploy bakes in the same text. Resolved the
+// same way the editor reads the bundled default (sibling apps/edge tree); only
+// has an effect when Board runs locally with the monorepo source on disk.
+async function writeBundled(
+  name: string,
+  locale: string,
+  body_md: string,
+): Promise<NonNullable<SavePromptState['bundled']>> {
+  const rel = `apps/edge/prompts/${locale}/${name}.md`;
+  try {
+    const file = path.resolve(
+      process.cwd(),
+      '..',
+      'edge',
+      'prompts',
+      locale,
+      `${name}.md`,
+    );
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, body_md, 'utf-8');
+    return { ok: true, path: rel };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
   }
 }
 
@@ -78,9 +107,11 @@ export async function savePrompt(
     user_agent: h.get('user-agent') ?? null,
   });
 
+  const bundled = await writeBundled(name, locale, body_md);
+
   revalidatePath('/prompts');
   revalidatePath(`/prompts/${name}/${locale}`);
-  return { ok: true };
+  return { ok: true, bundled };
 }
 
 export async function resetPrompt(name: string, locale: string): Promise<void> {

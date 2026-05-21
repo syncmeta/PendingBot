@@ -6,4 +6,10 @@
 export const SUPPORTED_LOCALES = ['zh', 'en'] as const;
 export type PromptLocale = (typeof SUPPORTED_LOCALES)[number];
 
-export type SavePromptState = { error?: string; ok?: boolean };
+export type SavePromptState = {
+  error?: string;
+  ok?: boolean;
+  // Result of mirroring the save into the repo's bundled .md (best-effort;
+  // only meaningful when Board runs locally with the monorepo source on disk).
+  bundled?: { ok: true; path: string } | { ok: false; error: string };
+};

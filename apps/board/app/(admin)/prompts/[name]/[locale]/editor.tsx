@@ -72,6 +72,16 @@ export function PromptEditor({
           {state.ok && !pending && (
             <span className="text-xs text-emerald-700">已保存 — edge 缓存 ≤ 30s 内刷新</span>
           )}
+          {state.ok && !pending && state.bundled?.ok && (
+            <span className="text-xs text-emerald-700">
+              已写入 <code>{state.bundled.path}</code>（记得 git commit）
+            </span>
+          )}
+          {state.ok && !pending && state.bundled && !state.bundled.ok && (
+            <span className="text-xs text-amber-600">
+              bundled .md 未写入：{state.bundled.error}
+            </span>
+          )}
         </div>
       </form>
 
