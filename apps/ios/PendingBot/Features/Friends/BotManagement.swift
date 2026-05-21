@@ -919,6 +919,11 @@ struct BotConfigView: View {
     @State private var voiceSettings: BotVoiceSettings = .defaults
     @State private var visionModel: String = ""   // "" = auto
     @State private var envelope: EnvelopeSettings = .defaults
+    /// Per-bot OpenRouter web-search knobs. Lives under
+    /// `bots.config.webSearch`; only takes effect on the default
+    /// (OpenRouter) routing path — native-provider bots reach search
+    /// through their own provider tools, so the section is hidden for them.
+    @State private var webSearch: BotWebSearchSettings = .defaults
     @State private var lookbackEnabled: Bool = true
     @State private var lookbackInterval: Int = 10
 
@@ -938,6 +943,7 @@ struct BotConfigView: View {
         let voiceSettings: BotVoiceSettings
         let visionModel: String
         let envelope: EnvelopeSettings
+        let webSearch: BotWebSearchSettings
         let lookbackEnabled: Bool
         let lookbackInterval: Int
     }
@@ -965,6 +971,7 @@ struct BotConfigView: View {
             voiceEnabled: voiceEnabled, voiceModel: voiceModel,
             voiceSettings: voiceSettings,
             visionModel: visionModel, envelope: envelope,
+            webSearch: webSearch,
             lookbackEnabled: lookbackEnabled, lookbackInterval: lookbackInterval
         )
     }
@@ -985,6 +992,11 @@ struct BotConfigView: View {
             }
 
             modelSection
+            // Web search only applies on the default (OpenRouter) routing
+            // path; native-provider bots ignore it, so hide the knob then.
+            if modelProvider == nil {
+                webSearchSection
+            }
             voiceSection
             envelopeSection
             lookbackSection
@@ -1047,6 +1059,32 @@ struct BotConfigView: View {
             }
         } header: {
             Text("模型")
+        }
+    }
+
+    @ViewBuilder
+    private var webSearchSection: some View {
+        Section {
+            Toggle("联网搜索", isOn: $webSearch.enabled)
+                .disabled(!canEdit)
+            if webSearch.enabled {
+                NavigationLink {
+                    BotWebSearchSettingsView(settings: $webSearch, canEdit: canEdit)
+                } label: {
+                    HStack {
+                        Image(systemName: "magnifyingglass")
+                        Text("搜索设置")
+                        Spacer()
+                        Text(webSearch.engine.label)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .foregroundStyle(Theme.Palette.ink)
+            }
+        } header: {
+            Text("联网搜索")
+        } footer: {
+            Text("打开后，机器人可以在需要时自己联网搜索并引用结果（由模型决定何时搜）。「搜索设置」里可以选搜索引擎、结果数量、上下文大小，以及限定/排除域名。仅对默认（OpenRouter）模型生效。")
         }
     }
 
@@ -1220,6 +1258,7 @@ struct BotConfigView: View {
         if case let .string(s)? = dict["visionModel"], !s.isEmpty { visionModel = s }
         voiceSettings = BotVoiceSettings.from(dict["voice"])
         envelope = EnvelopeSettings.from(dict["envelope"])
+        webSearch = BotWebSearchSettings.from(dict["webSearch"])
         if case let .object(lb)? = dict["lookback"] {
             if case let .bool(b)? = lb["enabled"] { lookbackEnabled = b }
             if case let .integer(i)? = lb["roundInterval"], i > 0 {
@@ -1258,6 +1297,7 @@ struct BotConfigView: View {
                 "visionModel": visionVal,
                 "voiceModel": voiceModel,
                 "voice": voiceSettings.toConfigDict(),
+                "webSearch": webSearch.toConfigDict(),
             ]
             let body: [String: Any] = [
                 "model_id": model,
@@ -1554,5 +1594,251 @@ struct BotVoiceSettingsView: View {
         case .none:
             return "关闭检测，需要手动控制（暂未支持完全的按住说话 UI，建议选「自动」）。"
         }
+    }
+}
+
+// MARK: - 联网搜索设置 / OpenRouter web_search knobs
+
+/// Per-bot OpenRouter `openrouter:web_search` server-tool config, persisted
+/// under `bots.config.webSearch`. The edge maps these camelCase fields to
+/// OpenRouter's snake_case `parameters` at request build. Only applies on
+/// the default (OpenRouter) routing path.
+///
+/// Two fields are "omittable" so the server keeps OpenRouter's adaptive
+/// defaults instead of a forced value:
+///   • `maxTotalResults == 0` → no total-results cap (key omitted)
+///   • `contextSize == .auto` → let Exa size highlights adaptively (omitted)
+struct BotWebSearchSettings: Codable, Hashable {
+    enum Engine: String, Codable, CaseIterable, Hashable {
+        case auto, native, exa, firecrawl, parallel
+        var label: String {
+            switch self {
+            case .auto:      return "自动"
+            case .native:    return "模型原生"
+            case .exa:       return "Exa"
+            case .firecrawl: return "Firecrawl"
+            case .parallel:  return "Parallel"
+            }
+        }
+    }
+
+    enum ContextSize: String, Codable, CaseIterable, Hashable {
+        case auto, low, medium, high
+        var label: String {
+            switch self {
+            case .auto:   return "自动"
+            case .low:    return "少"
+            case .medium: return "中"
+            case .high:   return "多"
+            }
+        }
+    }
+
+    var enabled: Bool = true
+    var engine: Engine = .auto
+    /// Results per search call (1–25). OpenRouter's own default is 5.
+    var maxResults: Int = 5
+    /// Cap on total results across all search calls in one request.
+    /// 0 = no cap (key omitted on save).
+    var maxTotalResults: Int = 0
+    /// Highlight size per result. `.auto` = let the engine pick (omitted).
+    var contextSize: ContextSize = .auto
+    var allowedDomains: [String] = []
+    var excludedDomains: [String] = []
+
+    static let defaults = BotWebSearchSettings()
+
+    static func from(_ json: AnyJSON?) -> BotWebSearchSettings {
+        var s = BotWebSearchSettings.defaults
+        guard let json, case let .object(d) = json else { return s }
+        if case let .bool(b)? = d["enabled"] { s.enabled = b }
+        if case let .string(v)? = d["engine"], let e = Engine(rawValue: v) { s.engine = e }
+        if case let .integer(v)? = d["maxResults"], v > 0 {
+            s.maxResults = min(25, max(1, v))
+        } else if case let .double(v)? = d["maxResults"], v > 0 {
+            s.maxResults = min(25, max(1, Int(v)))
+        }
+        if case let .integer(v)? = d["maxTotalResults"], v > 0 {
+            s.maxTotalResults = min(100, v)
+        } else if case let .double(v)? = d["maxTotalResults"], v > 0 {
+            s.maxTotalResults = min(100, Int(v))
+        }
+        if case let .string(v)? = d["searchContextSize"], let c = ContextSize(rawValue: v) {
+            s.contextSize = c
+        }
+        if case let .array(arr)? = d["allowedDomains"] {
+            s.allowedDomains = arr.compactMap { if case let .string(x) = $0 { return x } else { return nil } }
+        }
+        if case let .array(arr)? = d["excludedDomains"] {
+            s.excludedDomains = arr.compactMap { if case let .string(x) = $0 { return x } else { return nil } }
+        }
+        return s
+    }
+
+    /// Serialize for the PATCH body. Omittable fields are left out so the
+    /// server falls back to OpenRouter's adaptive defaults.
+    func toConfigDict() -> [String: Any] {
+        var d: [String: Any] = [
+            "enabled": enabled,
+            "engine": engine.rawValue,
+            "maxResults": maxResults,
+        ]
+        if maxTotalResults > 0 { d["maxTotalResults"] = maxTotalResults }
+        if contextSize != .auto { d["searchContextSize"] = contextSize.rawValue }
+        if !allowedDomains.isEmpty { d["allowedDomains"] = allowedDomains }
+        if !excludedDomains.isEmpty { d["excludedDomains"] = excludedDomains }
+        return d
+    }
+}
+
+struct BotWebSearchSettingsView: View {
+    @Binding var settings: BotWebSearchSettings
+    var canEdit: Bool = true
+
+    var body: some View {
+        Form {
+            Section {
+                Picker(selection: $settings.engine) {
+                    ForEach(BotWebSearchSettings.Engine.allCases, id: \.self) { e in
+                        Text(e.label).tag(e)
+                    }
+                } label: {
+                    HStack {
+                        Image(systemName: "server.rack")
+                        Text("搜索引擎")
+                    }
+                }
+                .foregroundStyle(Theme.Palette.ink)
+            } header: {
+                Text("引擎")
+            } footer: {
+                Text("「自动」会优先用模型自带的联网搜索，没有就退回 Exa。Firecrawl 需要在 OpenRouter 后台填自己的 key。")
+            }
+
+            Section {
+                Stepper(value: $settings.maxResults, in: 1...25) {
+                    HStack {
+                        Image(systemName: "list.number")
+                        Text("单次结果数")
+                        Spacer()
+                        Text("\(settings.maxResults)")
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                }
+                .foregroundStyle(Theme.Palette.ink)
+
+                Stepper(value: $settings.maxTotalResults, in: 0...100, step: 5) {
+                    HStack {
+                        Image(systemName: "sum")
+                        Text("总结果上限")
+                        Spacer()
+                        Text(settings.maxTotalResults == 0 ? "不限" : "\(settings.maxTotalResults)")
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                }
+                .foregroundStyle(Theme.Palette.ink)
+            } header: {
+                Text("结果数量")
+            } footer: {
+                Text("「单次结果数」是每次搜索返回多少条；「总结果上限」是一轮里多次搜索加起来最多多少条，0 表示不限。条数越多越贵、占用上下文越多。")
+            }
+
+            Section {
+                Picker(selection: $settings.contextSize) {
+                    ForEach(BotWebSearchSettings.ContextSize.allCases, id: \.self) { c in
+                        Text(c.label).tag(c)
+                    }
+                } label: {
+                    HStack {
+                        Image(systemName: "text.alignleft")
+                        Text("上下文大小")
+                    }
+                }
+                .foregroundStyle(Theme.Palette.ink)
+            } header: {
+                Text("每条摘要长度")
+            } footer: {
+                Text("每条结果保留多少正文喂给模型。「自动」让引擎自己定（Exa 约 2–4K 字符）；多 = 更全但更贵。原生搜索与 Firecrawl 不支持此项。")
+            }
+
+            DomainListEditor(
+                title: "只搜这些域名",
+                icon: "checkmark.shield",
+                placeholder: "如 arxiv.org",
+                footer: "留空表示不限。Exa 可同时配置黑白名单；其它引擎两者互斥，建议只填一边。",
+                domains: $settings.allowedDomains,
+                canEdit: canEdit
+            )
+
+            DomainListEditor(
+                title: "排除这些域名",
+                icon: "xmark.shield",
+                placeholder: "如 reddit.com",
+                footer: nil,
+                domains: $settings.excludedDomains,
+                canEdit: canEdit
+            )
+        }
+        .navigationTitle("搜索设置")
+        .navigationBarTitleDisplayMode(.inline)
+        .disabled(!canEdit)
+        .tint(Theme.Palette.accent)
+    }
+}
+
+/// Add/remove editor for a domain allow/deny list. Domains are lowercased
+/// and de-duplicated on add; rows swipe to delete.
+private struct DomainListEditor: View {
+    let title: String
+    let icon: String
+    let placeholder: String
+    let footer: String?
+    @Binding var domains: [String]
+    var canEdit: Bool
+    @State private var draft: String = ""
+
+    var body: some View {
+        Section {
+            ForEach(domains, id: \.self) { d in
+                HStack {
+                    Image(systemName: "globe").foregroundStyle(.secondary)
+                    Text(d)
+                }
+            }
+            .onDelete { domains.remove(atOffsets: $0) }
+
+            if canEdit {
+                HStack {
+                    TextField(placeholder, text: $draft)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.URL)
+                        .onSubmit(add)
+                    Button(action: add) {
+                        Image(systemName: "plus.circle.fill")
+                    }
+                    .disabled(cleaned(draft) == nil)
+                    .buttonStyle(.borderless)
+                }
+                .foregroundStyle(Theme.Palette.ink)
+            }
+        } header: {
+            HStack { Image(systemName: icon); Text(title) }
+        } footer: {
+            if let footer { Text(footer) }
+        }
+    }
+
+    private func add() {
+        guard let d = cleaned(draft) else { return }
+        if !domains.contains(d) { domains.append(d) }
+        draft = ""
+    }
+
+    private func cleaned(_ s: String) -> String? {
+        let t = s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return t.isEmpty ? nil : t
     }
 }
