@@ -1,6 +1,7 @@
 import SwiftUI
 import PhotosUI
 import UIKit
+import Combine
 import OSLog
 import Supabase
 import UniformTypeIdentifiers
@@ -86,6 +87,16 @@ struct ConversationView: View {
     /// reliable — same pattern as `showFileImporter`.
     @State var showPhotoPicker = false
     @State var showCamera = false
+    /// Composer content height (excluding the home-indicator strip), reported
+    /// by the inputAccessoryView. The message list reserves this much bottom
+    /// inset while the keyboard is DOWN so the floating composer doesn't cover
+    /// the last message. Default ≈ a one-line bar so the very first frame is
+    /// already roughly right (no "last message hidden until you scroll").
+    @State private var composerContentHeight: CGFloat = 52
+    /// True while the real software keyboard is up. When up, SwiftUI's
+    /// automatic keyboard avoidance already insets for keyboard+accessory, so
+    /// the manual composer inset is dropped to 0 to avoid double-counting.
+    @State private var keyboardVisible = false
     /// Per-id attachment metadata (mime/filename) used to hydrate
     /// AttachmentGrid for loaded/realtime messages. Populated on upload
     /// and on history load — see bubbleMessage.
@@ -538,6 +549,13 @@ struct ConversationView: View {
                 // 落位,最终最后一条会贴 ScrollView frame 底、被 composer 盖住。
                 // 配合 .safeAreaInset 后,底部锚点位于 composer 上沿。
                 .defaultScrollAnchor(.bottom)
+                // Reserve room for the floating composer (inputAccessoryView)
+                // while the keyboard is DOWN, so the last message isn't covered
+                // on entry. When the keyboard is UP, SwiftUI's auto keyboard
+                // avoidance already insets for keyboard+accessory, so drop this
+                // to 0 to avoid double-counting (which would leave a gap above
+                // the keyboard). Height is reported by the accessory itself.
+                .contentMargins(.bottom, keyboardVisible ? 0 : composerContentHeight, for: .scrollContent)
                 .background(
                     GeometryReader { geo in
                         Color.clear
@@ -605,6 +623,32 @@ struct ConversationView: View {
                 if let image { cameraImage = image }
             }
             .ignoresSafeArea()
+        }
+        // Track whether the real software keyboard is up, to gate the
+        // composer's bottom inset (see `.contentMargins` above). Use the
+        // discrete show/hide events (not willChangeFrame) so an interactive
+        // scroll-to-dismiss doesn't flip the inset mid-drag — keyboardVisible
+        // stays true through the drag (auto-avoidance follows the keyboard
+        // down) and flips on commit. The height guard on show ignores the
+        // short docked accessory bar (and a hardware keyboard, where only the
+        // bar shows, correctly reads as "down").
+        .onReceive(NotificationCenter.default.publisher(
+            for: UIResponder.keyboardWillShowNotification
+        )) { note in
+            guard let info = note.userInfo,
+                  let endFrame = info[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect
+            else { return }
+            let visibleH = max(0, UIScreen.main.bounds.height - endFrame.minY)
+            guard visibleH > 180, !keyboardVisible else { return }
+            let duration = (info[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+            withAnimation(.easeOut(duration: duration)) { keyboardVisible = true }
+        }
+        .onReceive(NotificationCenter.default.publisher(
+            for: UIResponder.keyboardWillHideNotification
+        )) { note in
+            guard keyboardVisible else { return }
+            let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+            withAnimation(.easeOut(duration: duration)) { keyboardVisible = false }
         }
         .onAppear {
             // Set synchronously so a push arriving in the first few ms
@@ -780,7 +824,9 @@ struct ConversationView: View {
                 onDecideContinue: { pc, allow in
                     Task { await decideContinue(pc, allow: allow) }
                 }
-            )
+            ),
+            composerHeight: $composerContentHeight,
+            keyboardVisible: keyboardVisible
         )
     }
 

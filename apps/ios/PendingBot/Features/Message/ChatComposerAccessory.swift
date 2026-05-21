@@ -312,11 +312,30 @@ struct ChatComposerAccessory: UIViewControllerRepresentable {
     /// ComposerAccessoryModel) so SwiftUI keeps the hosted view's identity.
     let content: ComposerAccessoryContent
 
+    /// Reports the composer's measured content height (excluding the bottom
+    /// safe-area strip) back to ConversationView, so the message list can
+    /// reserve that much bottom inset while the keyboard is down — otherwise
+    /// the floating accessory covers the last message. Updated as the bar
+    /// grows (attachment tray / "+" panel / multi-line text).
+    let composerHeight: Binding<CGFloat>
+
+    /// Whether the software keyboard is up — used to fade out the progressive
+    /// blur backdrop (it reads as a weird shadow over the keyboard).
+    let keyboardVisible: Bool
+
     func makeUIViewController(context: Context) -> AccessoryOwnerController {
         AccessoryOwnerController()
     }
 
     func updateUIViewController(_ uiViewController: AccessoryOwnerController, context: Context) {
+        let sink = composerHeight
+        uiViewController.composerHeightSink = { h in
+            // Hop off the layout pass before mutating SwiftUI state.
+            DispatchQueue.main.async {
+                if abs(sink.wrappedValue - h) > 0.5 { sink.wrappedValue = h }
+            }
+        }
+        uiViewController.setKeyboardVisible(keyboardVisible)
         uiViewController.push(content)
     }
 
@@ -331,6 +350,10 @@ final class AccessoryOwnerController: UIViewController {
     private lazy var barContainer = ComposerBarContainerView(host: host)
     private var isTearingDown = false
 
+    /// Set by the representable; receives the composer's content height
+    /// (excluding the bottom safe-area strip) whenever it changes.
+    var composerHeightSink: ((CGFloat) -> Void)?
+
     override var canBecomeFirstResponder: Bool { !isTearingDown }
     override var inputAccessoryView: UIView? { barContainer }
 
@@ -342,12 +365,17 @@ final class AccessoryOwnerController: UIViewController {
         // Lets the hosting view's intrinsicContentSize track the SwiftUI
         // content so the container can self-size when the "+" panel opens.
         host.sizingOptions = [.intrinsicContentSize]
+        barContainer.onContentHeight = { [weak self] h in self?.composerHeightSink?(h) }
     }
 
     /// Push fresh values into the stable root's model (no rootView swap).
     func push(_ content: ComposerAccessoryContent) {
         model.push(content)
         barContainer.contentDidChange()
+    }
+
+    func setKeyboardVisible(_ visible: Bool) {
+        barContainer.setKeyboardVisible(visible)
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -406,6 +434,18 @@ final class ComposerBarContainerView: UIView {
     private let host: UIViewController
     private let backdrop = ProgressiveBlurBackdropView()
     private var lastHeight: CGFloat = -1
+    private var lastContentHeight: CGFloat = -1
+    private var keyboardVisible = false
+    private var lastBackdropShown = true
+
+    /// Above this content height the bar is showing the "+" panel (240pt) —
+    /// the progressive blur reads as a weird shadow there, so we hide it.
+    /// Comfortably above the tray / banner heights, below the panel height.
+    private let panelHeightThreshold: CGFloat = 200
+
+    /// Reports the content height (excluding the bottom safe-area strip) when
+    /// it changes, so the message list can reserve matching bottom inset.
+    var onContentHeight: ((CGFloat) -> Void)?
 
     init(host: UIViewController) {
         self.host = host
@@ -452,14 +492,37 @@ final class ComposerBarContainerView: UIView {
         invalidateIntrinsicContentSize()
     }
 
-    private func measuredHeight() -> CGFloat {
+    func setKeyboardVisible(_ visible: Bool) {
+        guard visible != keyboardVisible else { return }
+        keyboardVisible = visible
+        refreshBackdrop()
+    }
+
+    /// Fade the progressive blur out when the keyboard is up or the "+" panel
+    /// is open (it looks like a stray shadow over the keyboard / panel), fade
+    /// it back in for the normal docked bar. Animated — never a hard cut.
+    private func refreshBackdrop() {
+        let shown = !keyboardVisible && contentHeight() <= panelHeightThreshold
+        guard shown != lastBackdropShown else { return }
+        lastBackdropShown = shown
+        UIView.animate(withDuration: 0.22, delay: 0, options: [.beginFromCurrentState, .curveEaseInOut]) {
+            self.backdrop.alpha = shown ? 1 : 0
+        }
+    }
+
+    /// Composer content height, excluding the bottom safe-area strip.
+    private func contentHeight() -> CGFloat {
         let width = bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width
         let fitted = host.view.systemLayoutSizeFitting(
             CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
             withHorizontalFittingPriority: .required,
             verticalFittingPriority: .fittingSizeLevel
         )
-        return fitted.height + safeAreaInsets.bottom
+        return fitted.height
+    }
+
+    private func measuredHeight() -> CGFloat {
+        contentHeight() + safeAreaInsets.bottom
     }
 
     override var intrinsicContentSize: CGSize {
@@ -476,10 +539,17 @@ final class ComposerBarContainerView: UIView {
         // Catch height changes that come from the hosted content itself
         // (e.g. the "+" panel toggling) rather than from setContent. The
         // guard prevents an invalidate→layout→invalidate loop.
-        let h = measuredHeight()
+        let content = contentHeight()
+        let h = content + safeAreaInsets.bottom
         if abs(h - lastHeight) > 0.5 {
             lastHeight = h
             invalidateIntrinsicContentSize()
         }
+        if abs(content - lastContentHeight) > 0.5 {
+            lastContentHeight = content
+            onContentHeight?(content)
+        }
+        // Panel open/close changes content height — re-evaluate the backdrop.
+        refreshBackdrop()
     }
 }
