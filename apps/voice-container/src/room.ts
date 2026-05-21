@@ -64,6 +64,11 @@ const PREROLL_SAMPLES = (OPENAI_RATE * PREROLL_MS) / 1000; // 5760
 // without bound if another leg stalls. 2 s is plenty for "bots hear each
 // other"; older audio is dropped.
 const INTERBOT_CAP_SAMPLES = OPENAI_RATE * 2;
+// Cap the playout buffer too: if the SFU ingest socket is slow to connect
+// (or never does), the bot can produce audio with nowhere to drain it.
+// 5 s keeps a greeting buffered for a normal ingest connect while bounding
+// memory + latency; older audio is dropped.
+const PLAYOUT_CAP_SAMPLES = OPENAI_RATE * 5;
 
 const MAX_INGEST_PAYLOAD = 28_000;
 
@@ -75,6 +80,9 @@ export type WsData =
 interface BotLeg {
   spec: ContainerBotSpec;
   openaiWs: WebSocket | null;
+  // Set once we've sent session.update — gates input so we never append
+  // audio before the session's format/persona is configured.
+  sessionReady: boolean;
   ingestWs: ServerWebSocket<WsData> | null;
   // Bot voice for humans — drained by the steady playout clock (24k mono).
   playout: Int16Array[];
@@ -94,6 +102,21 @@ function totalLen(chunks: Int16Array[]): number {
   let n = 0;
   for (const c of chunks) n += c.length;
   return n;
+}
+
+// Drop oldest samples so a chunk list stays under `cap` total samples.
+function trimOldest(chunks: Int16Array[], cap: number): void {
+  let over = totalLen(chunks) - cap;
+  while (over > 0 && chunks.length > 0) {
+    const head = chunks[0];
+    if (head.length <= over) {
+      over -= head.length;
+      chunks.shift();
+    } else {
+      chunks[0] = new Int16Array(head.subarray(over));
+      over = 0;
+    }
+  }
 }
 
 // Take up to `n` samples off the front of a chunk list; return the taken
@@ -247,6 +270,7 @@ export class Room {
     const leg: BotLeg = {
       spec,
       openaiWs: null,
+      sessionReady: false,
       ingestWs: null,
       playout: [],
       playoutState: 'buffering',
@@ -331,6 +355,7 @@ export class Room {
           },
         }),
       );
+      leg.sessionReady = true;
     });
     ws.addEventListener('message', (ev: MessageEvent) => {
       this.onOpenAIMessage(leg, ev.data);
@@ -401,18 +426,11 @@ export class Room {
     if (mono24.length === 0) return;
     leg.playout.push(mono24);
     leg.interbot.push(mono24);
-    // Bound the inter-bot buffer; drop oldest beyond the cap.
-    let over = totalLen(leg.interbot) - INTERBOT_CAP_SAMPLES;
-    while (over > 0 && leg.interbot.length > 0) {
-      const head = leg.interbot[0];
-      if (head.length <= over) {
-        over -= head.length;
-        leg.interbot.shift();
-      } else {
-        leg.interbot[0] = new Int16Array(head.subarray(over));
-        over = 0;
-      }
-    }
+    // Bound both buffers; drop oldest beyond the caps. Playout is capped in
+    // case the ingest socket is slow/never connects; inter-bot in case a
+    // continuously-talking bot outruns another leg's drain.
+    trimOldest(leg.playout, PLAYOUT_CAP_SAMPLES);
+    trimOldest(leg.interbot, INTERBOT_CAP_SAMPLES);
   }
 
   // Result of a tool the DO executed (kick / designate) — hand it back so
@@ -486,7 +504,7 @@ export class Room {
 
     for (const [botId, leg] of this.bots) {
       const ws = leg.openaiWs;
-      if (!ws || ws.readyState !== WebSocket.OPEN) continue;
+      if (!ws || !leg.sessionReady || ws.readyState !== WebSocket.OPEN) continue;
       const inputs: Int16Array[] = [];
       if (humanMix && humanMix.length > 0) inputs.push(humanMix);
       for (const [otherId, audio] of botAudio) {
