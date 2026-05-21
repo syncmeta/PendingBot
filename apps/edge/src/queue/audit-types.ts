@@ -12,9 +12,11 @@ import type { AuditCallOpts, ResolvedRoute } from '../llm/router';
 // it from `startedAt` because it runs minutes later — Date.now() in
 // the consumer would massively overstate latency.
 
-// ResolvedRoute minus the live OpenAI client. persistAuditMessage only
-// ever reads modelToCall / provider, so nothing of value is lost.
-export type StrippedRoute = Omit<ResolvedRoute, 'client'>;
+// ResolvedRoute minus the live OpenAI client and the native-adapter
+// gateway coordinates (baseURL / aigToken — the latter is a secret that
+// must never ride a queue message). persistAuditMessage only ever reads
+// modelToCall / provider, so nothing of value is lost.
+export type StrippedRoute = Omit<ResolvedRoute, 'client' | 'baseURL' | 'aigToken'>;
 
 // AuditCallOpts minus the worker Env (rebuilt consumer-side).
 export type SerializableAuditOpts = Omit<AuditCallOpts, 'env'>;

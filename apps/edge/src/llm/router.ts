@@ -12,7 +12,6 @@ import { fetchGatewayCost, GATEWAY_COST_PENDING } from '../lib/ai-gateway';
 import type { AuditMessage } from '../queue/audit-types';
 import {
   gatewayBaseUrl,
-  modelForUpstream,
   providerApiStyle,
   resolveProviderSlug,
   REALTIME_PRICING,
@@ -64,10 +63,20 @@ export interface RouteResolveOpts {
 
 export interface ResolvedRoute {
   client: OpenAI;
-  // The upstream model id to put in completions.create({ model }). In the
-  // passthrough model this is always the caller-supplied slug verbatim.
+  // The upstream model id to put in completions.create({ model }) — or, for
+  // native-adapter providers, the bare provider model id (e.g.
+  // `claude-sonnet-4-6`, `gemini-2.5-flash`). Always the caller-supplied
+  // slug verbatim (passthrough router does no rewriting).
   modelToCall: string;
   provider: { slug: ProviderSlug; apiStyle: ProviderApiStyle };
+  // AI Gateway coordinates for native-adapter providers (anthropic /
+  // gemini) that bypass the OpenAI SDK and POST raw to the gateway. The
+  // OpenAI-SDK paths (chat / responses) ignore these and use `client`.
+  //   baseURL  — gateway base for this provider (no trailing slash), e.g.
+  //              https://gateway.ai.cloudflare.com/v1/{acct}/{gw}/anthropic
+  //   aigToken — cf-aig-authorization bearer (CF_AIG_RUN_TOKEN)
+  baseURL: string;
+  aigToken: string;
 }
 
 export class NoRouteError extends Error {
@@ -140,10 +149,20 @@ export async function resolveRoute(
     );
   }
 
+  const baseURL = gatewayBaseUrl(env, providerSlug);
+  const aigToken = env.CF_AIG_RUN_TOKEN;
+  if (!aigToken) {
+    throw new NoRouteError(
+      'CF_AIG_RUN_TOKEN is not bound on the worker — set the AI Gateway ' +
+        'run token secret (gateway Settings → Authenticated Gateway)',
+    );
+  }
   return {
-    client: buildClient(env, gatewayBaseUrl(env, providerSlug), aigMetadataFrom(opts)),
-    modelToCall: modelForUpstream(providerSlug, slug),
+    client: buildClient(env, baseURL, aigMetadataFrom(opts)),
+    modelToCall: slug,
     provider: { slug: providerSlug, apiStyle: providerApiStyle(providerSlug) },
+    baseURL,
+    aigToken,
   };
 }
 

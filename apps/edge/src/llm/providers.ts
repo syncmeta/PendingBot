@@ -4,22 +4,26 @@ import type { Env } from '../types';
 // Gateway; the provider is a path segment on the gateway URL. Providers:
 //   `openrouter`        — OpenRouter passthrough, Chat Completions dialect
 //   `openai`            — OpenAI native, Responses API dialect
-//   `anthropic`         — Anthropic native, Chat Completions via /compat
-//   `google-ai-studio`  — Gemini native, Chat Completions via /compat
+//   `anthropic`         — Anthropic native, Messages API (/anthropic/v1/messages)
+//   `google-ai-studio`  — Gemini native, generateContent (/google-ai-studio/v1beta/…)
 //
-// Anthropic and Gemini share AI Gateway's /compat/chat/completions
-// endpoint: the OpenAI SDK speaks plain Chat Completions and the model
-// field carries the provider prefix (e.g. `anthropic/claude-sonnet-4-5`).
-// That keeps the streaming merge loop in bot-reply identical across all
-// four providers while still letting us tag the gateway log by upstream.
+// Anthropic and Gemini speak their OWN native protocols — NOT the OpenAI
+// Chat Completions dialect and NOT the AI Gateway /compat translation
+// layer (which would strip provider-specific features like Claude's
+// extended thinking / prompt-cache control and Gemini's Search grounding
+// / Maps). They route through their native passthrough paths on the
+// gateway and authenticate with cf-aig-authorization alone (Unified
+// Billing — Cloudflare-managed credentials, no BYOK key). The adapters
+// in anthropic-adapter.ts / gemini-adapter.ts translate to/from the
+// internal Chat-Completions-shaped message format.
 //
 // There is no DB-backed provider / alias / model table — model metadata
-// is pulled live from the upstream catalogs (see routes/models.ts) and
+// is derived from the OpenRouter catalog (see routes/models.ts) and
 // per-request cost comes from the AI Gateway logs (see lib/ai-gateway.ts).
 // The only thing this side owns is the global markup, stored in
 // billing_config.
 
-export type ProviderApiStyle = 'chat' | 'responses';
+export type ProviderApiStyle = 'chat' | 'responses' | 'anthropic' | 'gemini';
 export type ProviderSlug =
   | 'openrouter'
   | 'openai'
@@ -29,19 +33,18 @@ export type ProviderSlug =
 const API_STYLE: Record<ProviderSlug, ProviderApiStyle> = {
   openrouter: 'chat',
   openai: 'responses',
-  anthropic: 'chat',
-  'google-ai-studio': 'chat',
+  anthropic: 'anthropic',
+  'google-ai-studio': 'gemini',
 };
 
-// Path segment on the AI Gateway URL. `openai` and `openrouter` get
-// their own provider passthrough paths; `anthropic` and `google-ai-studio`
-// both ride the cross-provider /compat path with the model field
-// prefixed (modelToCall keeps the `{provider}/{slug}` form for those).
+// Path segment on the AI Gateway URL. Each provider rides its own native
+// passthrough path; the adapter appends the provider-specific tail
+// (Anthropic `/v1/messages`, Gemini `/v1beta/models/{model}:…`).
 const GATEWAY_PATH: Record<ProviderSlug, string> = {
   openrouter: 'openrouter',
   openai: 'openai',
-  anthropic: 'compat',
-  'google-ai-studio': 'compat',
+  anthropic: 'anthropic',
+  'google-ai-studio': 'google-ai-studio',
 };
 
 const VALID_SLUGS = new Set<string>(Object.keys(API_STYLE));
@@ -58,10 +61,18 @@ export function providerApiStyle(slug: ProviderSlug): ProviderApiStyle {
   return API_STYLE[slug];
 }
 
+// True for providers whose inference is driven by a native adapter using
+// raw fetch (Anthropic Messages / Gemini generateContent) rather than the
+// OpenAI SDK. The router still constructs an OpenAI client for these (it's
+// cheap and harmless) but bot-reply / delegate branch on this to pick the
+// adapter and use route.baseURL + route.aigToken directly.
+export function isNativeAdapterStyle(style: ProviderApiStyle): boolean {
+  return style === 'anthropic' || style === 'gemini';
+}
+
 // AI Gateway inference endpoint for a provider:
 //   https://gateway.ai.cloudflare.com/v1/{account}/{gateway}/{path}
-// where {path} is the provider passthrough slug for openai/openrouter
-// and the cross-provider /compat path for anthropic/google-ai-studio.
+// where {path} is the provider's native passthrough segment.
 export function gatewayBaseUrl(env: Env, slug: ProviderSlug): string {
   const account = env.CF_ACCOUNT_ID;
   const gateway = env.CF_AIG_GATEWAY;
@@ -72,19 +83,6 @@ export function gatewayBaseUrl(env: Env, slug: ProviderSlug): string {
     );
   }
   return `https://gateway.ai.cloudflare.com/v1/${account}/${gateway}/${GATEWAY_PATH[slug]}`;
-}
-
-// Compose the model id to send upstream. The /compat endpoint requires
-// the model field to carry the provider prefix (e.g. `anthropic/claude-sonnet-4-5`,
-// `google-ai-studio/gemini-2.5-flash`); openai/openrouter use the bare
-// slug as-is. We accept either form on input — if a caller passes the
-// already-prefixed form, we strip-and-reapply to avoid double-prefixing.
-export function modelForUpstream(slug: ProviderSlug, modelSlug: string): string {
-  if (slug === 'openai' || slug === 'openrouter') return modelSlug;
-  const expectedPrefix = `${slug}/`;
-  return modelSlug.startsWith(expectedPrefix)
-    ? modelSlug
-    : `${expectedPrefix}${modelSlug}`;
 }
 
 // Realtime (voice) per-1M-token pricing. OpenAI Realtime is a direct

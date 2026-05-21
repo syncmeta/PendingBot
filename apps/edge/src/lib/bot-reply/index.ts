@@ -25,6 +25,8 @@ import {
   OPENAI_BUILTIN_TOOLS,
   type LlmStreamChunk,
 } from '../../llm/responses-adapter';
+import { openAnthropicStream } from '../../llm/anthropic-adapter';
+import { openGeminiStream } from '../../llm/gemini-adapter';
 import { buildMessages, type BuildMessagesInput } from '../../llm/builder';
 import { resolveLocale } from '../../i18n/locale';
 import {
@@ -807,6 +809,31 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
           metadata: { userId, conversationId, turnId },
         },
         async (r): Promise<{ stream: AsyncIterable<LlmStreamChunk> }> => {
+          // Native-protocol providers (Anthropic Messages / Gemini
+          // generateContent) go through their own adapters using raw fetch
+          // against the AI Gateway native passthrough (route.baseURL +
+          // route.aigToken, Unified Billing). Each adapter re-emits its
+          // response as Chat-Completions-shaped chunks so the merge loop
+          // below is identical. nativeFnTools is the function-tool surface
+          // (no OpenRouter server plugins / OpenAI built-ins).
+          if (r.provider.apiStyle === 'anthropic') {
+            const stream = await openAnthropicStream(
+              r.baseURL,
+              r.aigToken,
+              { model: r.modelToCall, messages, tools: nativeFnTools },
+              ac.signal,
+            );
+            return { stream };
+          }
+          if (r.provider.apiStyle === 'gemini') {
+            const stream = await openGeminiStream(
+              r.baseURL,
+              r.aigToken,
+              { model: r.modelToCall, messages, tools: nativeFnTools },
+              ac.signal,
+            );
+            return { stream };
+          }
           // OpenAI-native providers speak the Responses API; everything
           // else (OpenRouter etc.) stays on Chat Completions. The adapter
           // re-emits Responses events as Chat-Completions-shaped chunks so

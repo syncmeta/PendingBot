@@ -1,4 +1,7 @@
-import type { ChatCompletionCreateParamsNonStreaming } from 'openai/resources/chat/completions';
+import type {
+  ChatCompletionCreateParamsNonStreaming,
+  ChatCompletionMessageParam,
+} from 'openai/resources/chat/completions';
 import type { Env } from '../../../types';
 import { serviceClient } from '../../supabase';
 import { uuidv7 } from '../../ids';
@@ -8,6 +11,8 @@ import {
   usageFromCompletion,
   withFallback,
 } from '../../../llm/router';
+import { openAnthropicStream } from '../../../llm/anthropic-adapter';
+import { openGeminiStream } from '../../../llm/gemini-adapter';
 import type { ToolCtx } from '../tool-runner';
 
 // Specialist registry — fixed enum the parent bot picks from. We keep
@@ -200,15 +205,44 @@ export async function delegateToSpecialistTool(
       },
       async (route) => {
         const systemPrompt = extractSystemPrompt(specialist.config);
+        const messages: ChatCompletionMessageParam[] = [
+          ...(systemPrompt
+            ? [{ role: 'system' as const, content: systemPrompt }]
+            : []),
+          { role: 'user' as const, content: prompt },
+        ];
+        // Anthropic / Gemini specialists go through their native adapters
+        // (raw fetch on the AI Gateway native passthrough). The adapters
+        // return a single-burst async iterable; collect text + usage from
+        // it. OpenAI specialists use the Chat Completions endpoint on the
+        // openai passthrough (also fine on Unified Billing).
+        if (route.provider.apiStyle === 'anthropic' || route.provider.apiStyle === 'gemini') {
+          const open =
+            route.provider.apiStyle === 'anthropic'
+              ? openAnthropicStream
+              : openGeminiStream;
+          const stream = await open(
+            route.baseURL,
+            route.aigToken,
+            { model: route.modelToCall, messages, tools: [] },
+            ac.signal,
+          );
+          let text = '';
+          for await (const chunk of stream) {
+            const delta = chunk.choices?.[0]?.delta?.content;
+            if (delta) text += delta;
+            if (chunk.usage) {
+              const usage = usageFromCompletion(chunk.usage);
+              bytesIn = usage.inputTokens ?? 0;
+              bytesOut = usage.outputTokens ?? 0;
+            }
+          }
+          return { text };
+        }
         const req: ChatCompletionCreateParamsNonStreaming = {
           model: route.modelToCall,
           stream: false,
-          messages: [
-            ...(systemPrompt
-              ? [{ role: 'system' as const, content: systemPrompt }]
-              : []),
-            { role: 'user' as const, content: prompt },
-          ],
+          messages,
         };
         const completion = await route.client.chat.completions.create(req, {
           signal: ac.signal,
