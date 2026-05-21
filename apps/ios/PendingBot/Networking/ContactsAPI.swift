@@ -39,6 +39,10 @@ enum ContactsAPI {
                 /// emoji still renders consistently across viewers (everyone hashes
                 /// the same fallback).
                 let avatarSeed: String?
+                /// Friend-added time as epoch seconds (user_contacts.created_at).
+                /// Drives the "按加好友时间" sort. Optional for older worker
+                /// builds that predate the field; defaults to 0.
+                let addedAt: Int?
             }
             let contacts: [Row]
         }
@@ -49,7 +53,8 @@ enum ContactsAPI {
                 alias: $0.alias,
                 displayName: $0.displayName,
                 avatarPath: $0.avatarPath,
-                avatarSeed: $0.avatarSeed ?? $0.userId
+                avatarSeed: $0.avatarSeed ?? $0.userId,
+                addedAt: $0.addedAt ?? 0
             )
         }
     }

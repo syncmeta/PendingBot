@@ -66,10 +66,22 @@ contactRoutes.get('/', async (c) => {
       displayName: p?.display_name ?? '',
       avatarPath: p?.avatar_path ?? null,
       avatarSeed: p?.avatar_seed ?? (r.contact_user_id as string),
+      // Friend-added time as epoch seconds — drives the "按加好友时间"
+      // sort option in the friends list. 0 when the timestamp is somehow
+      // missing/unparseable so the client still has a stable key.
+      addedAt: epochSeconds(r.created_at as string | null),
     };
   });
   return c.json({ contacts });
 });
+
+// Postgres timestamptz → Unix epoch seconds. Returns 0 when the value is
+// null or unparseable so the client always gets a numeric sort key.
+function epochSeconds(ts: string | null): number {
+  if (!ts) return 0;
+  const ms = Date.parse(ts);
+  return Number.isFinite(ms) ? Math.floor(ms / 1000) : 0;
+}
 
 // custom_fields.avatar_seed is the UUID the user picked during onboarding
 // (ProfileBootstrapView "shuffle" loop). It's the only source of truth for

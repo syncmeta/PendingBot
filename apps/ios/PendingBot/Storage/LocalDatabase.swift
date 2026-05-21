@@ -245,6 +245,17 @@ final class LocalDatabase {
                 t.column("number_handle", .text).notNull().defaults(to: "")
             }
         }
+        // Friend-added time (epoch seconds) for bots + human contacts so the
+        // "按加好友时间" sort is correct on the first cached paint, before the
+        // network refresh lands. 0 for rows persisted before this migration.
+        m.registerMigration("v7_friend_added_at") { db in
+            try db.alter(table: "bots") { t in
+                t.add(column: "added_at", .integer).defaults(to: 0)
+            }
+            try db.alter(table: "contacts") { t in
+                t.add(column: "added_at", .integer).defaults(to: 0)
+            }
+        }
         return m
     }
 
@@ -377,6 +388,9 @@ final class LocalDatabase {
         /// before that migration will have null. nil reads as "off" at the
         /// call site.
         var voice_call_enabled: Bool?
+        /// Friend-added time (epoch seconds). Optional only because the column
+        /// was added in v7; older rows read as nil → treated as 0 by callers.
+        var added_at: Int?
 
         static let databaseTableName = "bots"
     }
@@ -391,6 +405,9 @@ final class LocalDatabase {
         /// before that migration will have null. Callers should fall back
         /// to `id` so legacy cached entries still render.
         var avatar_seed: String?
+        /// Friend-added time (epoch seconds). Optional only because the column
+        /// was added in v7; older rows read as nil → treated as 0 by callers.
+        var added_at: Int?
 
         static let databaseTableName = "contacts"
     }

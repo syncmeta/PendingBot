@@ -47,6 +47,15 @@ struct FriendsTabView: View {
     @State private var aliasEditTarget: HumanPick?
     @State private var showingQR = false
     @State private var filter: FriendFilter = .all
+    // Sort preference — persisted so the user's choice survives relaunches.
+    // `sortField` is the column; `sortAscending` is the direction (A→Z / 旧→新
+    // when true). Stored as raw strings via @AppStorage so no extra plumbing.
+    @AppStorage("friendSortFieldRaw") private var sortFieldRaw = FriendSortField.name.rawValue
+    @AppStorage("friendSortAscending") private var sortAscending = true
+    private var sortField: FriendSortField { FriendSortField(rawValue: sortFieldRaw) ?? .name }
+    // friendId ("bot:<id>" / "user:<id>") → last-chat epoch seconds, built
+    // from the conversations the user participates in. Drives "按最近聊天".
+    @State private var lastActivity: [String: Int] = [:]
     @State private var path: [PendingPeer] = []
     // Selection-driven detail for regular size class — mirrors
     // MessageTabView so tapping a friend on Mac / iPad-landscape opens
@@ -184,17 +193,20 @@ struct FriendsTabView: View {
             // the lower ZStack) so the TabHeaderBar at the top sits
             // on canvas instead of the default white safe-area fill.
             TabHeaderBar(title: "好友") {
-                PlusActionPopover(items: [
-                    PlusActionItem(title: "加好友", systemImage: "person.badge.plus") {
-                        addingFriend = true
-                    },
-                    PlusActionItem(title: "加机器人", systemImage: "rectangle.badge.plus") {
-                        addingBot = true
-                    },
-                    PlusActionItem(title: "新建机器人", systemImage: "sparkles") {
-                        creatingBot = true
-                    },
-                ])
+                HStack(spacing: 6) {
+                    friendSortMenu
+                    PlusActionPopover(items: [
+                        PlusActionItem(title: "加好友", systemImage: "person.badge.plus") {
+                            addingFriend = true
+                        },
+                        PlusActionItem(title: "加机器人", systemImage: "rectangle.badge.plus") {
+                            addingBot = true
+                        },
+                        PlusActionItem(title: "新建机器人", systemImage: "sparkles") {
+                            creatingBot = true
+                        },
+                    ])
+                }
             }
             ZStack {
                 Theme.Palette.canvas.ignoresSafeArea()
@@ -309,6 +321,42 @@ struct FriendsTabView: View {
         return peer.kind == kind && peer.peerId == id
     }
 
+    // ── Sort menu ───────────────────────────────────────────────────────────
+
+    /// Header sort control. The inline Picker picks the field (with native
+    /// checkmarks); the row below flips the direction for the active field.
+    /// Switching field resets to that field's natural default direction.
+    private var friendSortMenu: some View {
+        Menu {
+            Picker("排序方式", selection: sortFieldBinding) {
+                ForEach(FriendSortField.allCases, id: \.self) { field in
+                    Label(field.label, systemImage: field.systemImage).tag(field)
+                }
+            }
+            Divider()
+            Button {
+                sortAscending.toggle()
+                Haptics.tap()
+            } label: {
+                Label(sortField.directionLabel(ascending: sortAscending),
+                      systemImage: sortAscending ? "arrow.up" : "arrow.down")
+            }
+        } label: {
+            HeaderActionIcon(systemImage: "arrow.up.arrow.down")
+        }
+    }
+
+    private var sortFieldBinding: Binding<FriendSortField> {
+        Binding(
+            get: { sortField },
+            set: { newValue in
+                sortFieldRaw = newValue.rawValue
+                sortAscending = newValue.defaultAscending
+                Haptics.tap()
+            }
+        )
+    }
+
     // MARK: - Data
 
     struct BotPick: Identifiable, Hashable {
@@ -318,6 +366,10 @@ struct FriendsTabView: View {
         let visibility: String?
         let creator_id: String?
         let voice_call_enabled: Bool?
+        /// When this bot was added (user_bot_contacts.added_at), epoch
+        /// seconds. Drives the "按加好友时间" sort; 0 when unknown (e.g. a
+        /// pre-v7 cached row before the network refresh lands).
+        var addedAt: Int = 0
     }
     struct HumanPick: Identifiable, Hashable {
         let id: String
@@ -341,6 +393,9 @@ struct FriendsTabView: View {
         /// viewers will still pick the same emoji for that user since
         /// they're hashing the same id.
         let avatarSeed: String
+        /// When this friend was added (user_contacts.created_at), epoch
+        /// seconds. Drives the "按加好友时间" sort; 0 when unknown.
+        var addedAt: Int = 0
 
         /// What to render in the row title and pass on to ConversationView
         /// as the header label. Mirrors the chat-header alias > displayName
@@ -388,6 +443,14 @@ struct FriendsTabView: View {
             case .human(let h): return h.rowName
             }
         }
+
+        /// Friend-added time (epoch seconds) for the "按加好友时间" sort.
+        var addedAt: Int {
+            switch self {
+            case .bot(let b):   return b.addedAt
+            case .human(let h): return h.addedAt
+            }
+        }
     }
 
     private struct BotDecodable: Decodable {
@@ -401,11 +464,13 @@ struct FriendsTabView: View {
         let is_active: Bool?
     }
 
-    /// Embed wrapper for `from("user_bot_contacts").select("bot:bots!fk(...)")`.
+    /// Embed wrapper for `from("user_bot_contacts").select("added_at, bot:bots!fk(...)")`.
     /// The Friends Tab now lists bots the user has explicitly added (or that
     /// were added implicitly via the auto-conv trigger / bootstrap); the bot
-    /// payload comes back nested under `bot`.
+    /// payload comes back nested under `bot`. `added_at` is the contact-row
+    /// timestamp (ISO 8601) driving the "按加好友时间" sort.
     private struct BotContactDecodable: Decodable {
+        let added_at: String?
         let bot: BotDecodable
     }
 
@@ -438,7 +503,8 @@ struct FriendsTabView: View {
                     BotPick(id: $0.id, display_name: $0.display_name,
                             model_id: $0.model_id, visibility: $0.visibility,
                             creator_id: $0.creator_id,
-                            voice_call_enabled: $0.voice_call_enabled)
+                            voice_call_enabled: $0.voice_call_enabled,
+                            addedAt: $0.added_at ?? 0)
                 }
             }
             if !cachedContacts.isEmpty {
@@ -446,8 +512,22 @@ struct FriendsTabView: View {
                     HumanPick(id: $0.id, alias: $0.alias,
                               displayName: $0.display_name,
                               avatarPath: $0.avatar_path,
-                              avatarSeed: $0.avatar_seed ?? $0.id)
+                              avatarSeed: $0.avatar_seed ?? $0.id,
+                              addedAt: $0.added_at ?? 0)
                 }
+            }
+            // Seed the recent-chat sort key from the cached conversations so
+            // the "按最近聊天" order is roughly right on first paint. Bots map
+            // cleanly by bot_id; user_user convs don't carry the peer id in
+            // the cache, so humans fill in once the network query below lands.
+            if lastActivity.isEmpty {
+                var seeded: [String: Int] = [:]
+                for conv in LocalDatabase.shared.loadConversations() {
+                    if let botId = conv.bot_id, !botId.isEmpty {
+                        seeded["bot:\(botId)"] = max(seeded["bot:\(botId)"] ?? 0, conv.last_activity_at)
+                    }
+                }
+                lastActivity = seeded
             }
         }
         loading = true; defer { loading = false }
@@ -467,28 +547,32 @@ struct FriendsTabView: View {
             // bot comes back).
             async let botRowsResp: [BotContactDecodable] = SupabaseStack.shared
                 .from("user_bot_contacts")
-                .select("bot:bots!user_bot_contacts_bot_id_fkey!inner(id, slug, display_name, model_id, visibility, creator_id, voice_call_enabled, is_active)")
+                .select("added_at, bot:bots!user_bot_contacts_bot_id_fkey!inner(id, slug, display_name, model_id, visibility, creator_id, voice_call_enabled, is_active)")
                 .order("added_at", ascending: true)
                 .execute()
                 .value
             async let contactsResp: [HumanPick] = loadContactsWithProfiles()
             async let incomingFR: [PendingFriendRequest] = loadIncomingFriendRequests()
+            // Recent-chat sort key. Non-fatal: an empty map just degrades the
+            // "按最近聊天" order, it never blocks the list.
+            async let activityResp: [ConvActivityRow] = loadConversationActivity()
 
-            let botRows = try await botRowsResp.map { $0.bot }
+            let botContactRows = try await botRowsResp
 
             // Drop the per-user self-bot from the regular bot list — its
             // entry is the SelfRow pinned at the top of the friends tab,
             // and chatting with it via the bot path would skip the
             // self-chat materialiser (open_self_conv RPC) and the
             // user-memory swap in bot-reply.
-            self.bots = botRows
-                .filter { $0.is_active != false }
-                .filter { !($0.slug?.hasPrefix("self-") ?? false) }
-                .map {
-                    BotPick(id: $0.id, display_name: $0.display_name,
-                            model_id: $0.model_id, visibility: $0.visibility,
-                            creator_id: $0.creator_id,
-                            voice_call_enabled: $0.voice_call_enabled)
+            self.bots = botContactRows
+                .filter { $0.bot.is_active != false }
+                .filter { !($0.bot.slug?.hasPrefix("self-") ?? false) }
+                .map { row in
+                    BotPick(id: row.bot.id, display_name: row.bot.display_name,
+                            model_id: row.bot.model_id, visibility: row.bot.visibility,
+                            creator_id: row.bot.creator_id,
+                            voice_call_enabled: row.bot.voice_call_enabled,
+                            addedAt: row.added_at.map { ServerTimestamp.epochSeconds($0, default: 0) } ?? 0)
                 }
             // Persist bots wholesale on success — server is the source of
             // truth for which ones are still active / visible to us.
@@ -497,7 +581,8 @@ struct FriendsTabView: View {
                     id: $0.id, display_name: $0.display_name,
                     model_id: $0.model_id, visibility: $0.visibility,
                     creator_id: $0.creator_id,
-                    voice_call_enabled: $0.voice_call_enabled
+                    voice_call_enabled: $0.voice_call_enabled,
+                    added_at: $0.addedAt
                 )
             })
 
@@ -511,12 +596,14 @@ struct FriendsTabView: View {
                         id: $0.id, alias: $0.alias,
                         display_name: $0.displayName,
                         avatar_path: $0.avatarPath,
-                        avatar_seed: $0.avatarSeed
+                        avatar_seed: $0.avatarSeed,
+                        added_at: $0.addedAt
                     )
                 })
             } else {
                 self.humans = []
             }
+            self.lastActivity = buildActivityMap(await activityResp)
             self.pendingFriendRequests = (try? await incomingFR) ?? []
         } catch is CancellationError {
             // Tab switch / refreshable cancellation — silent. The Mac
@@ -536,6 +623,74 @@ struct FriendsTabView: View {
     /// because pendingbot.users RLS is self-only.
     private func loadContactsWithProfiles() async throws -> [HumanPick] {
         try await ContactsAPI.fetchContacts()
+    }
+
+    // MARK: - Recent-chat activity
+
+    /// One row of the conversations the caller participates in, trimmed to
+    /// just what the "按最近聊天" sort needs. RLS (`is_participant`) scopes
+    /// the read to the caller's own convs, so no explicit user filter is
+    /// needed. `participants` is embedded so user_user rows can resolve the
+    /// peer's user id (the conv row itself only carries the creator).
+    private struct ConvActivityRow: Decodable {
+        let bot_id: String?
+        let conversation_type: String?
+        let updated_at: String?
+        struct Unread: Decodable { let last_message_at: String? }
+        let unread: [Unread]?
+        struct Participant: Decodable {
+            let participant_type: String
+            let participant_id: String
+        }
+        let participants: [Participant]?
+
+        /// Prefer the unread row's last_message_at (mirrors the message list's
+        /// ordering); fall back to updated_at, then 0.
+        var activitySeconds: Int {
+            if let s = unread?.first?.last_message_at,
+               let d = ServerTimestamp.parse(s) { return Int(d.timeIntervalSince1970) }
+            if let s = updated_at,
+               let d = ServerTimestamp.parse(s) { return Int(d.timeIntervalSince1970) }
+            return 0
+        }
+    }
+
+    private func loadConversationActivity() async -> [ConvActivityRow] {
+        do {
+            return try await SupabaseStack.shared
+                .from("conversations")
+                .select("bot_id, conversation_type, updated_at, unread:user_unread_counts(last_message_at), participants:conversation_participants(participant_type, participant_id)")
+                .execute()
+                .value
+        } catch {
+            return []
+        }
+    }
+
+    /// Collapse the conversation rows into a friendId → last-chat-seconds map,
+    /// keyed with the same "bot:<id>" / "user:<id>" scheme as FriendRowItem.id
+    /// so the sort comparator can look up by `item.id` directly. A bot can
+    /// have several convs (sub-conversations), so we keep the max.
+    private func buildActivityMap(_ rows: [ConvActivityRow]) -> [String: Int] {
+        let myId = AccountStore.shared.current?.id ?? ""
+        var map: [String: Int] = [:]
+        for row in rows {
+            let ts = row.activitySeconds
+            if let botId = row.bot_id, !botId.isEmpty {
+                let key = "bot:\(botId)"
+                map[key] = max(map[key] ?? 0, ts)
+            }
+            if row.conversation_type == "user_user" {
+                let otherId = row.participants?.first {
+                    $0.participant_type == "user" && $0.participant_id != myId
+                }?.participant_id
+                if let otherId {
+                    let key = "user:\(otherId)"
+                    map[key] = max(map[key] ?? 0, ts)
+                }
+            }
+        }
+        return map
     }
 
     // MARK: - Friend requests
@@ -637,10 +792,12 @@ struct FriendsTabView: View {
 
     // MARK: - Filtering
 
-    /// Merged + alphabetically-sorted friend list for the current filter.
-    /// Bots and humans share one section so the sort can interleave them;
-    /// `localizedStandardCompare` handles pinyin for Chinese names and is
-    /// case-insensitive for ASCII.
+    /// Merged + sorted friend list for the current filter. Bots and humans
+    /// share one section so the sort can interleave them. The order is driven
+    /// by `sortField` / `sortAscending`; name comparison uses
+    /// `localizedStandardCompare` (pinyin-aware for Chinese, case-insensitive
+    /// for ASCII), and the time fields fall back to name on ties so the order
+    /// stays stable when timestamps are missing/equal.
     private var friendsForFilter: [FriendRowItem] {
         let items: [FriendRowItem]
         switch filter {
@@ -655,8 +812,36 @@ struct FriendsTabView: View {
         case .groups:
             items = []
         }
-        return items.sorted {
-            $0.sortName.localizedStandardCompare($1.sortName) == .orderedAscending
+        return items.sorted(by: sortComparator)
+    }
+
+    /// Two-friend ordering for the active sort field + direction. Pulled out
+    /// of `friendsForFilter` so the comparison logic reads top-to-bottom.
+    private func sortComparator(_ a: FriendRowItem, _ b: FriendRowItem) -> Bool {
+        func byName() -> Bool {
+            let r = a.sortName.localizedStandardCompare(b.sortName)
+            if r == .orderedSame { return a.id < b.id }
+            return sortAscending ? (r == .orderedAscending) : (r == .orderedDescending)
+        }
+        switch sortField {
+        case .name:
+            return byName()
+        case .recentChat:
+            let la = lastActivity[a.id] ?? 0
+            let lb = lastActivity[b.id] ?? 0
+            if la == lb {
+                // Tie (e.g. neither has chatted yet) → fall back to A→Z so
+                // the list never looks randomly shuffled.
+                return a.sortName.localizedStandardCompare(b.sortName) == .orderedAscending
+            }
+            return sortAscending ? (la < lb) : (la > lb)
+        case .addedTime:
+            let aa = a.addedAt
+            let ab = b.addedAt
+            if aa == ab {
+                return a.sortName.localizedStandardCompare(b.sortName) == .orderedAscending
+            }
+            return sortAscending ? (aa < ab) : (aa > ab)
         }
     }
 
@@ -968,6 +1153,52 @@ private struct HumanKindTag: View {
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(Capsule().fill(Theme.Palette.accentBg))
+    }
+}
+
+// MARK: - Sort
+
+/// How the merged friend list is ordered. The direction (A→Z vs Z→A,
+/// 旧→新 vs 新→旧) is a separate `sortAscending` flag so each field can be
+/// flipped without multiplying the cases.
+enum FriendSortField: String, CaseIterable {
+    case name        // 名称 (pinyin-aware)
+    case recentChat  // 最近聊天
+    case addedTime   // 加好友时间
+
+    var label: String {
+        switch self {
+        case .name:       return "名称"
+        case .recentChat: return "最近聊天"
+        case .addedTime:  return "加好友时间"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .name:       return "textformat"
+        case .recentChat: return "bubble.left.and.bubble.right"
+        case .addedTime:  return "person.badge.clock"
+        }
+    }
+
+    /// Sensible default direction when the user first switches to this field:
+    /// names read A→Z; time fields lead with the most recent.
+    var defaultAscending: Bool {
+        switch self {
+        case .name:                  return true
+        case .recentChat, .addedTime: return false
+        }
+    }
+
+    /// Direction-aware label for the active row in the sort menu, so the user
+    /// can see (and toggle) whether tapping again flips the order.
+    func directionLabel(ascending: Bool) -> String {
+        switch self {
+        case .name:       return ascending ? "A→Z" : "Z→A"
+        case .recentChat: return ascending ? "最早优先" : "最近优先"
+        case .addedTime:  return ascending ? "最早添加" : "最近添加"
+        }
     }
 }
 
