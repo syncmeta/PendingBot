@@ -40,7 +40,7 @@ struct ModelPickerButton: View {
         .buttonStyle(.plain)
         .sheet(isPresented: $showSheet) {
             ModelPickerSheet(initial: slug,
-                             allowsClear: true,
+                             showLegend: true,
                              onPick: { picked in
                 slug = picked?.slug ?? ""
                 modelProvider?.wrappedValue = picked?.model_provider
@@ -62,14 +62,19 @@ struct ModelPickerSheet: View {
     let initial: String
     var allowsClear: Bool = false
     /// Label shown on the "clear selection" row when `allowsClear` is on.
-    /// Different surfaces want different wording — e.g. envelope picker
-    /// uses "无协作者", a bot/conv picker would use "跟随机器人默认".
-    var clearLabel: String = "跟随机器人默认"
+    /// Only the envelope collaborator picker uses this today ("无协作者");
+    /// the bot model picker dropped its clear row in favour of `showLegend`.
+    var clearLabel: String = "无协作者"
     /// When true, only show models whose server-side `supports_vision` is
     /// true. Used by the per-conv vision-model picker — picking a non-
     /// vision model there would just route into a runtime error at the
     /// upstream provider, so filtering up front is the right move.
     var visionOnly: Bool = false
+    /// When true, the picker leads with a non-interactive legend row that
+    /// labels what each column means (name / slug / 价格倍率) using
+    /// placeholder text. Used by the bot model picker, which replaced its
+    /// old "跟随机器人默认" clear row with this explainer.
+    var showLegend: Bool = false
     var onPick: (OpenRouterModel?) -> Void
 
     @State private var allModels: [OpenRouterModel] = []
@@ -147,13 +152,17 @@ struct ModelPickerSheet: View {
         "meta-llama": "Meta",
         "mistralai": "Mistral",
         "z-ai": "Z.AI",
-        nativeAnthropicKey: "Anthropic（原生）",
-        nativeGeminiKey: "Gemini（原生）",
-        nativeOpenAIKey: "OpenAI（原生）",
+        nativeAnthropicKey: "Claude",
+        nativeGeminiKey: "Gemini",
+        nativeOpenAIKey: "GPT",
     ]
 
     private func vendorLabel(_ provider: String) -> String {
         Self.vendorDisplayName[provider] ?? provider
+    }
+
+    private static func isNativeKey(_ key: String) -> Bool {
+        key == nativeAnthropicKey || key == nativeGeminiKey || key == nativeOpenAIKey
     }
 
     var body: some View {
@@ -262,10 +271,22 @@ struct ModelPickerSheet: View {
                 }
                 .listRowBackground(Theme.Palette.surface)
             }
+            if showLegend && query.isEmpty {
+                legendSection
+            }
             // While searching, force every group expanded so matches are
             // visible without the user having to tap each header.
             let searching = !query.trimmingCharacters(in: .whitespaces).isEmpty
-            ForEach(groupedFiltered, id: \.provider) { group in
+            let groups = groupedFiltered
+            // Index of the first OpenRouter (non-native) group, used to slot
+            // the "native above / OpenRouter below" note right at the seam.
+            // Only when there's at least one native group ahead of it.
+            let orSeam: Int? = searching ? nil : groups.firstIndex { !Self.isNativeKey($0.provider) }.flatMap { $0 > 0 ? $0 : nil }
+            ForEach(Array(groups.enumerated()), id: \.element.provider) { item in
+                let group = item.element
+                if item.offset == orSeam {
+                    nativeVsOpenRouterNote
+                }
                 let expanded = searching || expandedProviders.contains(group.provider)
                 Section {
                     if expanded {
@@ -339,6 +360,51 @@ struct ModelPickerSheet: View {
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(Theme.Palette.canvas)
+    }
+
+    /// Non-interactive sample row that names each column of a model row so
+    /// the placeholder copy itself spells out the layout.
+    private var legendSection: some View {
+        Section {
+            HStack(alignment: .center, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("示例 模型名称")
+                        .font(Theme.Fonts.rounded(size: 14, weight: .medium))
+                        .foregroundStyle(Theme.Palette.ink)
+                        .lineLimit(1)
+                    Text("模型标识名")
+                        .font(Theme.Fonts.monoSmall)
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                Text("参考价格倍率")
+                    .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.inkMuted)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Theme.Palette.surfaceMuted))
+            }
+            .padding(.vertical, 4)
+        } footer: {
+            Text("每行就是一个模型：上面是名称，下面是模型标识名，右边是参考价格倍率。")
+                .font(Theme.Fonts.caption)
+                .foregroundStyle(Theme.Palette.inkMuted)
+        }
+        .listRowBackground(Theme.Palette.surface)
+    }
+
+    /// Sits at the seam between the native sections and the OpenRouter long
+    /// tail, calling out that picking a native vendor's model from below
+    /// (via OpenRouter) breaks prompt caching.
+    private var nativeVsOpenRouterNote: some View {
+        Section {
+            Text("以上三家是原生调用，下面走 OpenRouter。如果在下面选以上三家的模型，账单会爆，因为提示词缓存没配置好。")
+                .font(Theme.Fonts.caption)
+                .foregroundStyle(Theme.Palette.inkMuted)
+                .padding(.vertical, 2)
+        }
+        .listRowBackground(Theme.Palette.surface)
     }
 
     private func load() async {
