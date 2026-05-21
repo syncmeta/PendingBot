@@ -1,16 +1,13 @@
 // Wire codec for the CF Realtime SFU WebSocket adapter.
 //
-// Media frames over the adapter WebSocket are Protocol Buffers:
+// Vendored from apps/edge/src/lib/ws-adapter-proto.ts. Media frames over
+// the adapter WebSocket are Protocol Buffers:
 //
 //   message Packet {
 //     uint32 sequenceNumber = 1;  // Stream mode (WebRTC -> WS) only
 //     uint32 timestamp      = 2;  // Stream mode (WebRTC -> WS) only
 //     bytes  payload        = 5;  // PCM audio data
 //   }
-//
-// Hand-rolled — the schema is three fields, not worth a protobuf runtime
-// dependency. Stream mode (SFU -> DO) sends all fields; Ingest "buffer"
-// mode (DO -> SFU) uses only `payload`.
 
 export interface AdapterPacket {
   sequenceNumber: number;
@@ -62,8 +59,6 @@ export function decodePacket(buf: Uint8Array): AdapterPacket {
       if (field === 5) payload = buf.subarray(pos, pos + len);
       pos += len;
     } else {
-      // Unknown wire type — the schema has no 64-bit / 32-bit fields, so
-      // bail rather than risk desyncing the cursor.
       break;
     }
   }

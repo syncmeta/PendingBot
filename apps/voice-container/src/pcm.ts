@@ -1,14 +1,11 @@
-// PCM audio helpers for the group-voice bridge (RoomVoiceDO).
+// PCM audio helpers for the group-voice media container.
 //
-// All PCM here is 16-bit signed little-endian. The CF Realtime SFU
-// WebSocket adapter delivers and accepts 48 kHz interleaved stereo;
-// OpenAI Realtime speaks 24 kHz mono. These helpers convert between the
-// two and mix several human streams into one.
+// Vendored from apps/edge/src/lib/pcm.ts — the container is a separate
+// Bun process and can't import worker source. Kept byte-compatible so the
+// SFU<->container wire (48 kHz interleaved stereo) and the OpenAI leg
+// (24 kHz mono) behave identically to the old in-DO path.
 //
-// The arithmetic is deliberately cheap — it runs per audio frame inside
-// a Durable Object and the quality bar for group voice is low (the
-// perceptual ceiling is already set by Opus on the phone leg and
-// OpenAI's own 24 kHz, not by this internal SFU<->DO hop).
+// All PCM here is 16-bit signed little-endian.
 
 const INT16_MIN = -32768;
 const INT16_MAX = 32767;
@@ -50,9 +47,9 @@ export function monoToStereo(mono: Int16Array): Int16Array {
 }
 
 /**
- * Linear-interpolation resampler. Covers both the 48 kHz -> 24 kHz
- * downsample (OpenAI input) and the 24 kHz -> 48 kHz upsample (adapter
- * ingest). Cheap on purpose — no anti-alias filtering.
+ * Linear-interpolation resampler. Used for the 24 kHz -> 48 kHz upsample
+ * (bot voice -> SFU ingest). Cheap on purpose — upsampling has imaging
+ * artifacts but no aliasing, and the SFU's Opus encoder lowpasses anyway.
  */
 export function resample(
   input: Int16Array,
@@ -74,16 +71,9 @@ export function resample(
 }
 
 /**
- * Sum N mono streams into one, scaled by 1/sqrt(N) so simultaneous
- * peaks don't clip and so perceived loudness stays roughly constant as
- * more talkers join. Final clamp catches the rare in-phase peak case.
- * The output is as long as the longest input; shorter streams are
- * treated as silence past their end.
- *
- * Why sqrt(N) and not 1/N: voice signals are largely uncorrelated, so
- * their summed RMS grows as sqrt(N). Dividing by sqrt(N) preserves
- * perceived energy across N=1..4 — the bot doesn't suddenly hear a
- * quieter room when a second human joins.
+ * Sum N mono streams into one, scaled by 1/sqrt(N) so simultaneous peaks
+ * don't clip and perceived loudness stays roughly constant as more
+ * talkers join. Output is as long as the longest input.
  */
 export function mixPcm(streams: Int16Array[]): Int16Array {
   if (streams.length === 0) return new Int16Array(0);
@@ -102,25 +92,15 @@ export function mixPcm(streams: Int16Array[]): Int16Array {
   return out;
 }
 
-// 2nd-order Butterworth lowpass coefficients precomputed for
-// fs=48000, fc=9000. Below the 12 kHz Nyquist of the 24 kHz output by a
-// 3 kHz transition band — kills the aliasing band hard (~-16 dB at the
-// fold-back edge once cascaded) while preserving most of voice content
-// (most speech energy lives under 4 kHz; sibilance tops out around 8 kHz).
-//
-// Direct Form II Transposed: y = b0*x + s1; s1' = b1*x - a1*y + s2;
-// s2' = b2*x - a2*y. RBJ Audio Cookbook, Q = 1/sqrt(2).
+// 2nd-order Butterworth lowpass, fs=48000 fc=9000 (RBJ, Q=1/sqrt(2)).
+// Direct Form II Transposed. Anti-alias before 2:1 decimation.
 const LPF_B0 = 0.1867;
 const LPF_B1 = 0.3734;
 const LPF_B2 = 0.1867;
 const LPF_A1 = -0.4630;
 const LPF_A2 = 0.2097;
 
-/**
- * Filter state for the anti-alias downsampler. One instance per stream;
- * must persist across calls or every chunk starts with the filter's
- * transient and clicks at the boundary.
- */
+/** Filter state for the anti-alias downsampler; one per stream, persists. */
 export interface DownsampleState {
   s1: number;
   s2: number;
@@ -130,17 +110,7 @@ export function newDownsampleState(): DownsampleState {
   return { s1: 0, s2: 0 };
 }
 
-/**
- * Anti-aliased 48 kHz → 24 kHz mono PCM downsample. Applies a 2nd-order
- * Butterworth lowpass before 2:1 decimation — without this, content
- * between 12 kHz and 24 kHz (sibilants, mic noise) folds back into the
- * audible band as inharmonic buzz and the bot hears "noisy" audio.
- *
- * Replaces the linear-interp `resample(_, 48000, 24000)` path for the
- * human→bot direction. The reverse (24→48 upsample for bot→SFU) still
- * uses `resample` — upsampling has imaging artifacts but no aliasing,
- * and the SFU's Opus encoder lowpasses on the way out anyway.
- */
+/** Anti-aliased 48 kHz -> 24 kHz mono downsample (human mic -> bot ears). */
 export function downsample48to24(
   input: Int16Array,
   state: DownsampleState,
@@ -163,5 +133,20 @@ export function downsample48to24(
   }
   state.s1 = s1;
   state.s2 = s2;
+  return out;
+}
+
+/** Concatenate a list of PCM sample chunks into one buffer. */
+export function concatSamples(chunks: Int16Array[]): Int16Array {
+  if (chunks.length === 0) return new Int16Array(0);
+  if (chunks.length === 1) return chunks[0];
+  let len = 0;
+  for (const c of chunks) len += c.length;
+  const out = new Int16Array(len);
+  let off = 0;
+  for (const c of chunks) {
+    out.set(c, off);
+    off += c.length;
+  }
   return out;
 }
