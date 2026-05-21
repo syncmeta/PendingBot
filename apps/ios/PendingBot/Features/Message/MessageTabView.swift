@@ -61,6 +61,10 @@ struct MessageTabView: View {
     /// empty means the sheet should auto-run the lookup on appear so the
     /// user lands on the preview page without re-typing.
     @State private var addFriendPrefill: String = ""
+    /// Bot-add sheet driven by a scanned bot-share QR. `addBotPrefill`
+    /// carries the slug so AddBotSheet opens straight on the preview.
+    @State private var addingBot = false
+    @State private var addBotPrefill: String = ""
     // Path-based nav for compact: keyed to .toolbar(.hidden, for: .tabBar)
     // so the bottom tab bar slides out alongside the push transition (rather
     // than snapping back in *after* the back transition finishes, which is
@@ -173,8 +177,24 @@ struct MessageTabView: View {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                         addingFriend = true
                     }
+                },
+                onScannedBotSlug: { slug in
+                    // Scanned a bot-share QR — open the add-bot preview
+                    // with the slug pre-loaded.
+                    scanning = false
+                    addBotPrefill = slug
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        addingBot = true
+                    }
                 }
             )
+        }
+        .sheet(isPresented: $addingBot, onDismiss: { addBotPrefill = "" }) {
+            AddBotSheet(
+                onAdded: { _ in Task { await load() } },
+                prefilledSlug: addBotPrefill
+            )
+            .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $addFriendChooser) {
             AddFriendChooserSheet(
@@ -1103,6 +1123,10 @@ private struct ScanQRSheet: View {
     /// the scanner and presents AddFriendSheet with the handle pre-loaded,
     /// so both 扫码 and 输号码 land on the same review page.
     var onScannedUserHandle: (String) -> Void = { _ in }
+    /// Called with the bot slug when the scanned QR is a bot-share link
+    /// (`/b/<slug>`). Caller dismisses the scanner and presents
+    /// AddBotSheet with the slug pre-loaded, landing on the bot preview.
+    var onScannedBotSlug: (String) -> Void = { _ in }
 
     @State private var scannedValue: String?
     @State private var submitting = false
@@ -1212,6 +1236,12 @@ private struct ScanQRSheet: View {
     ///   3. Anything else → render the raw text in the centre of the sheet.
     private func handle(value: String) async {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Bot-share link (/b/<slug>) — disjoint from the /c/ contact path,
+        // so check it first and hand the slug up for the add-bot preview.
+        if BotShareLink.isBotShareLink(trimmed) {
+            onScannedBotSlug(BotShareLink.slug(fromScanned: trimmed))
+            return
+        }
         if PendingBotQR.isPendingBotQR(trimmed) {
             submitting = true
             defer { submitting = false }

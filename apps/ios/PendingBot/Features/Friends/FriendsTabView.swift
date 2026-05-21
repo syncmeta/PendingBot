@@ -1351,6 +1351,10 @@ struct AddBotSheet: View {
     /// to the list and route into the bot's chat without waiting for the
     /// reload to land.
     var onAdded: (FriendsTabView.BotPick) -> Void = { _ in }
+    /// When non-empty, opens the sheet directly on the preview page with
+    /// the lookup already in flight. Used by the scan / universal-link
+    /// flows so the user never sees the slug-input step.
+    var prefilledSlug: String = ""
 
     enum Route: Hashable { case preview(slug: String) }
 
@@ -1408,6 +1412,13 @@ struct AddBotSheet: View {
                         onAdded: onAdded,
                         onFinished: { dismiss() }
                     )
+                }
+            }
+            .onAppear {
+                // Scan / universal-link flow: skip the slug-input page and
+                // push straight to the preview, mirroring AddFriendSheet.
+                if !prefilledSlug.isEmpty, path.isEmpty {
+                    path.append(.preview(slug: BotShareLink.slug(fromScanned: prefilledSlug)))
                 }
             }
         }
