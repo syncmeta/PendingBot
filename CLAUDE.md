@@ -147,7 +147,8 @@ Do not push `main` automatically after local merges. Remote is a backup; push on
 ## Deploys
 
 - Edge: `bun --filter='@pendingbot/edge' run deploy` — single deployed env (`env.production` in `wrangler.jsonc`); local iteration uses `wrangler dev`. The `--filter='...'` form (with `=`) matters — bun ≥ 1.3 silently mis-parses `--filter @pendingbot/edge` (space-separated) as no-match.
-- iOS: TestFlight via the configured ASC API key (see user memory)
+- iOS: TestFlight via the configured ASC API key. When asked to upload,
+  follow the concrete runbook in `docs/deploy.md#ios-appsios`.
 
 Don't auto-deploy on merge — deploys are deliberate and user-initiated.
 

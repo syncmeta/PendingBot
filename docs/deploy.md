@@ -50,9 +50,89 @@ was re-putting with the flag).
 
 ## iOS (`apps/ios/`)
 
-TestFlight via the configured ASC API key (see user memory). Driven
-by Xcode's archive flow + `xcodebuild -exportOptionsPlist`. Out of
-scope for most agent sessions.
+TestFlight uploads are operator-initiated. When the user asks
+"上传一版到 TestFlight" / "upload to TestFlight", do the upload end to end
+from a short-lived branch. Do not stop with instructions for the user.
+
+The project uses automatic signing with team `M42BKJN82S` and Xcode's
+archive/export flow. The configured App Store Connect/Xcode account on
+this machine is enough; no repo-secret is needed.
+
+### Fast TestFlight recipe
+
+1. **Check location and branch first**:
+   ```sh
+   pwd
+   git branch --show-current
+   git status --short --branch
+   ```
+   If in the main worktree on `main`, create a short-lived branch or
+   worktree first. Do not edit the build number directly on `main`.
+
+2. **Bump the iOS build number** in
+   `apps/ios/PendingBot.xcodeproj/project.pbxproj` by changing both
+   `CURRENT_PROJECT_VERSION = <old>;` entries to the next integer. Keep
+   `MARKETING_VERSION` unchanged unless the user explicitly asks for a
+   version bump. Commit this after the upload succeeds.
+
+3. **Resolve SwiftPM packages**. This usually needs network/Xcode cache
+   access; if sandboxed DNS/cache writes fail, rerun with escalation.
+   ```sh
+   xcodebuild -resolvePackageDependencies \
+     -project apps/ios/PendingBot.xcodeproj \
+     -scheme PendingBot \
+     -clonedSourcePackagesDirPath /private/tmp/pendingbot-xcode-packages \
+     -derivedDataPath /private/tmp/pendingbot-xcode-derived
+   ```
+
+4. **Create a temporary upload export plist**. Keep the repo
+   `ExportOptions.plist` as `destination=export`; use `/private/tmp` for
+   upload.
+   ```sh
+   cp apps/ios/ExportOptions.plist /private/tmp/PendingBot-ExportUpload.plist
+   /usr/libexec/PlistBuddy -c 'Set :destination upload' /private/tmp/PendingBot-ExportUpload.plist
+   ```
+
+5. **Archive Release for iPhoneOS**:
+   ```sh
+   xcodebuild archive \
+     -project apps/ios/PendingBot.xcodeproj \
+     -scheme PendingBot \
+     -configuration Release \
+     -sdk iphoneos \
+     -destination generic/platform=iOS \
+     -archivePath /private/tmp/PendingBot-0.1.0-<build>.xcarchive \
+     -derivedDataPath /private/tmp/pendingbot-xcode-derived \
+     -clonedSourcePackagesDirPath /private/tmp/pendingbot-xcode-packages \
+     -allowProvisioningUpdates
+   ```
+   Success marker: `** ARCHIVE SUCCEEDED **`.
+
+6. **Upload to TestFlight**:
+   ```sh
+   xcodebuild -exportArchive \
+     -archivePath /private/tmp/PendingBot-0.1.0-<build>.xcarchive \
+     -exportOptionsPlist /private/tmp/PendingBot-ExportUpload.plist \
+     -exportPath /private/tmp/PendingBot-0.1.0-<build>-export \
+     -allowProvisioningUpdates
+   ```
+   Success markers: `Uploaded PendingBot` and `** EXPORT SUCCEEDED **`.
+   If App Store Connect says the uploaded package is processing, the
+   TestFlight upload is complete.
+
+7. **Commit and merge the build number**:
+   ```sh
+   git add apps/ios/PendingBot.xcodeproj/project.pbxproj
+   git commit -m "ios: bump TestFlight build to <build>"
+   git rebase main
+   ```
+   Then fast-forward local `main` if conflict-free and leave unrelated
+   dirty files untouched. Do not push `main` unless the user asks.
+
+Known warning: uploads may print
+`exportArchive Upload Symbols Failed` for `WebRTC.framework` missing a
+matching dSYM. This does not block TestFlight install or processing; it
+only means WebRTC framework crash logs may lack readable symbols.
 
 ---
 
