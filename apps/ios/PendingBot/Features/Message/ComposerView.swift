@@ -8,11 +8,11 @@ import UIKit
 ///   • Center — capsule textfield (1–6 lines, hairline border)
 ///   • Right — circle send button (state-aware: accent on, muted off)
 ///
-/// The "+" panel is rendered inline below the input row. Mounted via
-/// `.safeAreaInset(edge: .bottom)` from the host so the message scroll
-/// view shrinks predictably when the panel opens — this is what lets
-/// the existing scroll position stay put instead of "jumping from above"
-/// when the host's animation timing fights with keyboard avoidance.
+/// The "+" panel is rendered inline below the input row. The host mounts
+/// this whole bar inside a UIKit `inputAccessoryView` (see
+/// ChatComposerAccessory.swift) so it tracks the keyboard frame-by-frame
+/// during an interactive scroll-to-dismiss instead of lagging on SwiftUI's
+/// keyboard-avoidance curve.
 struct ComposerView: View {
     @Binding var input: String
     @Binding var pending: [PendingAttachment]
@@ -139,11 +139,10 @@ struct ComposerView: View {
             }
             .padding(.horizontal, Theme.Metrics.gutter)
             .padding(.top, 8)
-            // Bottom clearance between the capsule and the keyboard top
-            // (when up) / home indicator (at rest). Kept generous so the
-            // capsule's bottom edge isn't clipped by the keyboard during
-            // an interactive scroll-to-dismiss, where the safeAreaInset
-            // lags the keyboard's frame for a frame or two.
+            // Visual clearance between the capsule and the bar's bottom
+            // edge. The home-indicator / keyboard-top safe-area gap is added
+            // by the inputAccessoryView container, so this is purely the
+            // breathing room above that.
             .padding(.bottom, 12)
 
             if showActions {
