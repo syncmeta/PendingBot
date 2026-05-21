@@ -72,6 +72,9 @@ const PLAYOUT_CAP_SAMPLES = OPENAI_RATE * 5;
 
 const MAX_INGEST_PAYLOAD = 28_000;
 
+// How often to emit per-bot playout diagnostics over the control channel.
+const STATS_MS = 2_000;
+
 export type WsData =
   | { kind: 'control' }
   | { kind: 'stream'; humanId: string }
@@ -89,6 +92,12 @@ interface BotLeg {
   playoutState: 'buffering' | 'playing';
   // Bot voice for the OTHER bots' ears — drained by the input mixer.
   interbot: Int16Array[];
+  // Diagnostics for the current ~2s stats window (reset on emit).
+  lastDeltaAt: number;
+  maxGapMs: number;
+  underruns: number;
+  voiceFrames: number;
+  silenceFrames: number;
 }
 
 interface HumanState {
@@ -140,6 +149,7 @@ export class Room {
 
   private inputTimer: ReturnType<typeof setInterval> | null = null;
   private playoutTimer: ReturnType<typeof setInterval> | null = null;
+  private statsTimer: ReturnType<typeof setInterval> | null = null;
   private closed = false;
 
   // ── control plane (DO <-> container) ───────────────────────────────
@@ -211,6 +221,32 @@ export class Room {
     if (!this.playoutTimer) {
       this.playoutTimer = setInterval(() => this.playoutTick(), PLAYOUT_TICK_MS);
     }
+    if (!this.statsTimer) {
+      this.statsTimer = setInterval(() => this.emitStats(), STATS_MS);
+    }
+  }
+
+  // Periodic per-bot playout diagnostics over the control channel — surfaces
+  // in `wrangler tail` (DO logs) so choppiness can be located without
+  // container log access. Reset the window counters after each emit.
+  private emitStats(): void {
+    if (this.closed) return;
+    for (const [botId, leg] of this.bots) {
+      this.emit({
+        t: 'stats',
+        botId,
+        depthMs: Math.round(totalLen(leg.playout) / (OPENAI_RATE / 1000)),
+        state: leg.playoutState,
+        underruns: leg.underruns,
+        maxGapMs: leg.maxGapMs,
+        voiceFrames: leg.voiceFrames,
+        silenceFrames: leg.silenceFrames,
+      });
+      leg.underruns = 0;
+      leg.maxGapMs = 0;
+      leg.voiceFrames = 0;
+      leg.silenceFrames = 0;
+    }
   }
 
   // ── adapter sockets (SFU dials in via the worker) ──────────────────
@@ -275,6 +311,11 @@ export class Room {
       playout: [],
       playoutState: 'buffering',
       interbot: [],
+      lastDeltaAt: 0,
+      maxGapMs: 0,
+      underruns: 0,
+      voiceFrames: 0,
+      silenceFrames: 0,
     };
     this.bots.set(spec.botId, leg);
     this.connectOpenAI(leg);
@@ -424,6 +465,13 @@ export class Room {
   private onBotAudio(leg: BotLeg, deltaB64: string): void {
     const mono24 = bytesToSamples(Buffer.from(deltaB64, 'base64'));
     if (mono24.length === 0) return;
+    // Track inter-delta gap for diagnostics (largest gap this window).
+    const now = Date.now();
+    if (leg.lastDeltaAt > 0) {
+      const gap = now - leg.lastDeltaAt;
+      if (gap > leg.maxGapMs) leg.maxGapMs = gap;
+    }
+    leg.lastDeltaAt = now;
     leg.playout.push(mono24);
     leg.interbot.push(mono24);
     // Bound both buffers; drop oldest beyond the caps. Playout is capped in
@@ -546,6 +594,7 @@ export class Room {
           // Keep the SFU track continuous with comfort silence while we
           // build the cushion.
           this.sendIngest(ing, new Int16Array(PLAYOUT_SAMPLES));
+          leg.silenceFrames++;
           continue;
         }
       }
@@ -557,9 +606,15 @@ export class Room {
         const padded = new Int16Array(PLAYOUT_SAMPLES);
         padded.set(frame);
         frame = padded;
+        leg.silenceFrames++;
         // Genuine underrun (cushion exhausted) — rebuild it before
         // resuming so a momentary OpenAI stall doesn't chop the speech.
-        if (rest.length === 0) leg.playoutState = 'buffering';
+        if (rest.length === 0) {
+          leg.playoutState = 'buffering';
+          leg.underruns++;
+        }
+      } else {
+        leg.voiceFrames++;
       }
       this.sendIngest(ing, frame);
     }
@@ -588,6 +643,8 @@ export class Room {
     this.inputTimer = null;
     if (this.playoutTimer) clearInterval(this.playoutTimer);
     this.playoutTimer = null;
+    if (this.statsTimer) clearInterval(this.statsTimer);
+    this.statsTimer = null;
     for (const leg of this.bots.values()) {
       try {
         leg.openaiWs?.close();

@@ -75,4 +75,18 @@ export type ControlEvent =
   // A human's SFU stream-adapter socket closed. The DO decides whether to
   // recreate the adapter (only if it still believes the human is live —
   // the adapterId guard), mirroring the old in-DO reconnect.
-  | { t: 'stream-dropped'; humanId: string };
+  | { t: 'stream-dropped'; humanId: string }
+  // Periodic diagnostics for the bot-voice playout path (per ~2s window).
+  // Routed through the DO so they surface in `wrangler tail` while tuning
+  // choppiness. depthMs = playout cushion depth; underruns = ticks that
+  // ran dry; maxGapMs = largest gap between OpenAI audio deltas.
+  | {
+      t: 'stats';
+      botId: string;
+      depthMs: number;
+      state: 'buffering' | 'playing';
+      underruns: number;
+      maxGapMs: number;
+      voiceFrames: number;
+      silenceFrames: number;
+    };
