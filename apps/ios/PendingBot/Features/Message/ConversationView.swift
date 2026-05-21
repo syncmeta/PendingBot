@@ -1370,19 +1370,40 @@ struct ConversationView: View {
             return
         }
 
-        // group: still need a real conv id before the worker call, since
-        // it goes straight to Postgres without an SSE handshake. The
-        // existing flow (await materialise, then post) is correct here —
-        // the round-trip is cheap relative to bot turns and there's no
-        // typing indicator to play hide-and-seek with.
+        // group: optimistic — same shape as user_user. Drop the light-green
+        // bubble in immediately so the sender sees their own message without
+        // waiting on the realtime hub echo, then materialise (if pending) and
+        // POST to the worker. The hub echo, keyed on client_message_id,
+        // replaces the optimistic row with the canonical one when it lands;
+        // if the hub is slow or drops, the optimistic row stays put.
+        let myId = AccountStore.shared.current?.id ?? ""
+        let localId = "local-\(UUID().uuidString)"
+        let cmid = UUID().uuidString.lowercased()
+        localMsgClientIds[localId] = cmid
+        messages.append(ChatMessage(
+            id: localId,
+            conversation_id: conversation.id,
+            sender_type: "user", sender_id: myId,
+            content: text,
+            created_at: Int(Date().timeIntervalSince1970),
+            attachments: attachmentSnapshot.map { $0.asAttachment() },
+            status: "sending"
+        ))
         if conversation.id.isEmpty {
             let ok = await materializeIfPending()
             guard ok else {
-                input = text
+                markUserMessageFailed(localId)
                 return
             }
+            // Re-stamp conv id on the optimistic row so the hub dedup keys
+            // on the right conversation when the canonical echo lands.
+            restampConversationId(on: localId)
         }
-        await sendGroupUserMessage(text)
+        // Bubble stays "sending" (light green) until the worker returns 200;
+        // sendGroupUserMessage flips it to "sent" on success or "failed" on
+        // error. The canonical hub echo replaces the row shortly after.
+        await sendGroupUserMessage(text, attachmentIds: attachIds,
+                                   localId: localId, clientMessageId: cmid)
     }
 
     /// Flip an in-flight optimistic user row to .failed (red bubble + alert).
@@ -1493,6 +1514,22 @@ struct ConversationView: View {
             return
         }
 
+        // group — worker POST path (GroupRouterDO fans out + hub echoes).
+        if conversation.conversation_type == "group" {
+            Task {
+                if conversation.id.isEmpty {
+                    guard await materializeIfPending() else {
+                        markUserMessageFailed(localId)
+                        return
+                    }
+                    restampConversationId(on: localId)
+                }
+                await sendGroupUserMessage(text, attachmentIds: attachIds,
+                                           localId: localId, clientMessageId: cmid)
+            }
+            return
+        }
+
         // user_user — Supabase insert path.
         Task {
             if conversation.id.isEmpty {
@@ -1545,11 +1582,13 @@ struct ConversationView: View {
         }
     }
 
-    private func sendGroupUserMessage(_ text: String) async {
+    private func sendGroupUserMessage(_ text: String, attachmentIds: [String],
+                                      localId: String, clientMessageId: String) async {
         struct Body: Encodable {
             let conversationId: String
             let clientMessageId: String
             let newMessage: String
+            let attachmentIds: [String]?
         }
         do {
             let url = HostedConfig.environment.workerURL
@@ -1561,8 +1600,9 @@ struct ConversationView: View {
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             req.httpBody = try JSONEncoder().encode(Body(
                 conversationId: conversation.id,
-                clientMessageId: UUID().uuidString.lowercased(),
+                clientMessageId: clientMessageId,
                 newMessage: text,
+                attachmentIds: attachmentIds.isEmpty ? nil : attachmentIds,
             ))
             let (data, resp) = try await URLSession.shared.data(for: req)
             guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
@@ -1573,12 +1613,14 @@ struct ConversationView: View {
                     userInfo: [NSLocalizedDescriptionKey: msg],
                 )
             }
-            // The Cloudflare realtime hub delivers the canonical message
-            // row + any bot replies that the GroupRouterDO wakes — we
-            // just return.
+            // 200 — flip the optimistic bubble from "sending" (light green)
+            // to "sent" (full green). The Cloudflare realtime hub then
+            // delivers the canonical message row (replacing this one) plus
+            // any bot replies the GroupRouterDO wakes.
+            markUserMessageSent(localId)
         } catch {
             self.error = "发送失败: \(error.localizedDescription)"
-            Haptics.error()
+            markUserMessageFailed(localId)
         }
     }
 

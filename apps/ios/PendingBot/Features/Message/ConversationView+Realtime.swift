@@ -294,9 +294,13 @@ extension ConversationView {
                     // Fallback for legacy / cross-device echoes that landed
                     // here without a tracked cmid (e.g. a peer device that
                     // just inserted a row in a user_user thread we have open).
+                    // Gate on sender_id too — in a group thread several rows
+                    // carry sender_type=="user", so a peer's echo must not
+                    // claim our own pending optimistic bubble.
                     return messages.firstIndex { m in
                         m.id.hasPrefix("local-")
                             && m.sender_type == senderType
+                            && m.sender_id == senderId
                             && abs(m.created_at - now) < 5
                     }
                 }
