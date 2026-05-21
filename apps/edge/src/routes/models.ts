@@ -203,7 +203,18 @@ modelCatalogRoutes.get('/', async (c) => {
     const slash = m.id.indexOf('/');
     const provider = slash > 0 ? m.id.slice(0, slash) : 'unknown';
     const tail = slash > 0 ? m.id.slice(slash + 1) : m.id;
-    const displayName = stripVendorPrefix(m.name) ?? prettifyTail(tail);
+    const baseName = stripVendorPrefix(m.name) ?? prettifyTail(tail);
+    // Anthropic via OpenRouter silently loses prompt caching: the cache_control
+    // breakpoints we send don't survive the AI Gateway → OpenRouter → Anthropic
+    // hop (verified — cache_write_tokens stays 0), so every turn pays the full
+    // uncached input price. The native Anthropic rows (top of the list) cache
+    // correctly. Flag the OpenRouter Claude rows in the picker so the cost
+    // blow-up is a deliberate choice, not a surprise. Other vendors (DeepSeek,
+    // Gemini, etc.) cache fine through OpenRouter, so they get no warning.
+    const displayName =
+      provider === 'anthropic'
+        ? `${baseName}（走 OpenRouter，缓存失效，账单会爆）`
+        : baseName;
     const inputModalities = m.architecture?.input_modalities ?? [];
     return {
       slug: m.id,
