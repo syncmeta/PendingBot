@@ -212,6 +212,14 @@ struct ConversationView: View {
     /// animation (no visible scroll), and only later arrivals animate.
     @State private var didInitialScroll = false
 
+    private var composerScrollInset: CGFloat {
+        keyboardVisible ? 0 : composerContentHeight
+    }
+
+    private var minimumMessageStackHeight: CGFloat {
+        max(0, scrollViewportHeight - composerScrollInset)
+    }
+
     // Streaming bubble state — see applyBubbleEmissions. The splitter
     // (BubbleSplitter.swift) decides whether a bubble pops in whole or
     // streams; for the streaming case `revealTargetId` is the local key
@@ -540,11 +548,14 @@ struct ConversationView: View {
                             )
                     }
                     .padding(.top, 4)
-                    // 把 LazyVStack 撑到至少一屏高,内容对顶。配合下方的
-                    // defaultScrollAnchor(.bottom):内容不到一屏时 frame
-                    // 比内容高、按 top 对齐显示在顶端;内容超过一屏时 frame
-                    // 等于内容自身高度,底部锚点把最新一条压在 composer 上沿。
-                    .frame(minHeight: scrollViewportHeight, alignment: .top)
+                    // Keep short conversations pinned to the top without
+                    // making the composer clearance itself scrollable.
+                    // `contentMargins(.bottom, ...)` is appended to the scroll
+                    // content, so the minimum stack height must subtract that
+                    // inset; otherwise a 3-message chat still has roughly one
+                    // composer-height of phantom scroll range after the last
+                    // bubble.
+                    .frame(minHeight: minimumMessageStackHeight, alignment: .top)
                     .readableColumnWidth()
                 }
                 .coordinateSpace(.named("convScroll"))
@@ -559,7 +570,7 @@ struct ConversationView: View {
                 // avoidance already insets for keyboard+accessory, so drop this
                 // to 0 to avoid double-counting (which would leave a gap above
                 // the keyboard). Height is reported by the accessory itself.
-                .contentMargins(.bottom, keyboardVisible ? 0 : composerContentHeight, for: .scrollContent)
+                .contentMargins(.bottom, composerScrollInset, for: .scrollContent)
                 .background(
                     GeometryReader { geo in
                         Color.clear
