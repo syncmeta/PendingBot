@@ -35,9 +35,18 @@ import type { LlmStreamChunk } from './responses-adapter';
 const ANTHROPIC_MAX_TOKENS = 8192;
 const ANTHROPIC_VERSION = '2023-06-01';
 
+// Anthropic prompt-cache breakpoint. The internal Chat-Completions-shaped
+// request carries it on text blocks (builder.ts withCacheControl); it must
+// survive translation or Anthropic does no caching at all (unlike OpenAI,
+// it has no automatic prefix caching — the breakpoint is mandatory).
+interface CacheControl {
+  type: 'ephemeral';
+}
+
 interface AnthropicTextBlock {
   type: 'text';
   text: string;
+  cache_control?: CacheControl;
 }
 interface AnthropicImageBlock {
   type: 'image';
@@ -76,9 +85,40 @@ interface AnthropicTool {
 interface AnthropicRequest {
   model: string;
   max_tokens: number;
-  system?: string;
+  // Array form (not bare string) so cache_control breakpoints survive on
+  // the system prefix — Anthropic caches up to the last breakpoint.
+  system?: AnthropicTextBlock[];
   messages: AnthropicMessage[];
   tools?: AnthropicTool[];
+}
+
+// Read a cache_control marker off a Chat content block, if present. The
+// builder attaches it via withCacheControl; the OpenAI ContentPart type
+// doesn't model it, so we read it off-type.
+function cacheControlOf(part: unknown): CacheControl | undefined {
+  const cc = (part as { cache_control?: unknown }).cache_control;
+  return cc && typeof cc === 'object' && (cc as { type?: unknown }).type === 'ephemeral'
+    ? { type: 'ephemeral' }
+    : undefined;
+}
+
+// Turn a Chat system/developer message content into Anthropic system text
+// blocks, preserving any cache_control breakpoint on each block.
+function toSystemBlocks(content: unknown): AnthropicTextBlock[] {
+  if (typeof content === 'string') {
+    return content ? [{ type: 'text', text: content }] : [];
+  }
+  if (!Array.isArray(content)) return [];
+  const blocks: AnthropicTextBlock[] = [];
+  for (const p of content) {
+    if (p && typeof p === 'object' && (p as { type?: unknown }).type === 'text') {
+      const text = String((p as { text?: unknown }).text ?? '');
+      if (!text) continue;
+      const cc = cacheControlOf(p);
+      blocks.push(cc ? { type: 'text', text, cache_control: cc } : { type: 'text', text });
+    }
+  }
+  return blocks;
 }
 
 // Pull plain text out of a Chat message content (string or block array).
@@ -109,7 +149,8 @@ function toContentBlocks(
   const blocks: AnthropicContentBlock[] = [];
   for (const p of content) {
     if (p.type === 'text') {
-      blocks.push({ type: 'text', text: p.text });
+      const cc = cacheControlOf(p);
+      blocks.push(cc ? { type: 'text', text: p.text, cache_control: cc } : { type: 'text', text: p.text });
     } else if (p.type === 'image_url') {
       const url = p.image_url.url;
       const m = /^data:([^;]+);base64,(.+)$/.exec(url);
@@ -149,12 +190,12 @@ export function toAnthropicRequest(
   messages: ChatCompletionMessageParam[],
   tools: ChatCompletionTool[],
 ): AnthropicRequest {
-  const systemParts: string[] = [];
+  const systemBlocks: AnthropicTextBlock[] = [];
   const out: AnthropicMessage[] = [];
 
   for (const m of messages) {
     if (m.role === 'system' || m.role === 'developer') {
-      systemParts.push(extractText(m.content));
+      systemBlocks.push(...toSystemBlocks(m.content));
       continue;
     }
     if (m.role === 'user') {
@@ -202,8 +243,7 @@ export function toAnthropicRequest(
     max_tokens: ANTHROPIC_MAX_TOKENS,
     messages: out,
   };
-  const system = systemParts.filter(Boolean).join('\n\n');
-  if (system) req.system = system;
+  if (systemBlocks.length > 0) req.system = systemBlocks;
   if (tools.length > 0) {
     req.tools = tools.map((t) => ({
       name: t.function.name,
