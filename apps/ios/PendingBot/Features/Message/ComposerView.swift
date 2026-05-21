@@ -166,24 +166,15 @@ struct ComposerView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .background {
-            // Closed state: the progressive blur backdrop is painted by the
-            // accessory container (ComposerBarContainerView) so it reaches the
-            // home-indicator strip — a SwiftUI `.background` here can't, since
-            // the hosted content sizes to itself above the strip and the
-            // accessory's hosting controller doesn't hand SwiftUI the bottom
-            // safe area. So we draw nothing when closed.
-            //
-            // Open state: the "+" panel needs an opaque backstop (you don't
-            // want blurred messages behind the action tiles), and a solid
-            // fill also covers the transient transparency during the
-            // open/close transition. ignoresSafeArea(.bottom) extends it into
-            // the home-indicator strip.
-            if showActions {
-                Theme.Palette.canvas
-                    .ignoresSafeArea(edges: .bottom)
-            }
-        }
+        // No SwiftUI background here in either state. Both backstops live in
+        // the accessory container (ComposerBarContainerView): the progressive
+        // blur when docked, a solid canvas when the "+" panel is open. They're
+        // painted in UIKit so they reach the home-indicator strip — a SwiftUI
+        // `.background` can't, since the hosted content sizes to itself above
+        // the strip and the accessory's hosting controller never hands SwiftUI
+        // the bottom safe area, so `.ignoresSafeArea(.bottom)` gets no frame
+        // down there. The panel's own tiles (ChatActionSheet) and the pending
+        // tray still carry their own opaque canvas fills.
         // No outer `.animation(..., value: showActions)` modifier — the
         // showActions toggles are wrapped in withAnimation at their call
         // sites instead, so the keyboard's frame change (driven by

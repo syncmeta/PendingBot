@@ -433,14 +433,31 @@ final class AccessoryOwnerController: UIViewController {
 final class ComposerBarContainerView: UIView {
     private let host: UIViewController
     private let backdrop = ProgressiveBlurBackdropView()
+    /// Solid canvas behind the whole bar, shown only while the "+" panel is
+    /// open (the progressive blur is hidden then). Pinned to the full container
+    /// — including the home-indicator strip — so the panel's opaque backstop
+    /// reaches the bottom edge instead of letting messages show through the
+    /// strip. The SwiftUI ComposerView can't paint down there itself: its
+    /// hosted content sizes above the strip and the accessory's hosting
+    /// controller never hands SwiftUI the bottom safe area, so an
+    /// `.ignoresSafeArea(.bottom)` background gets no frame in the strip.
+    private let canvasBackdrop: UIView = {
+        let v = UIView()
+        v.backgroundColor = UIColor(Theme.Palette.canvas)
+        v.isUserInteractionEnabled = false
+        v.alpha = 0
+        return v
+    }()
     private var lastHeight: CGFloat = -1
     private var lastContentHeight: CGFloat = -1
     private var keyboardVisible = false
     private var lastBackdropShown = true
+    private var lastCanvasShown = false
 
-    /// Above this content height the bar is showing the "+" panel (240pt) —
-    /// the progressive blur reads as a weird shadow there, so we hide it.
-    /// Comfortably above the tray / banner heights, below the panel height.
+    /// Above this content height the bar is showing the "+" panel (240pt).
+    /// Used to split the docked state (blur) from the panel state (solid
+    /// canvas). Comfortably above the tray / banner heights, below the panel
+    /// height.
     private let panelHeightThreshold: CGFloat = 200
 
     /// Reports the content height (excluding the bottom safe-area strip) when
@@ -454,6 +471,18 @@ final class ComposerBarContainerView: UIView {
         // intrinsicContentSize as the bar's height.
         autoresizingMask = .flexibleHeight
 
+        // Solid canvas backstop, furthest back. Same full-bar pinning as the
+        // blur below — see the property comment for why the strip needs a UIKit
+        // layer here rather than a SwiftUI background.
+        canvasBackdrop.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(canvasBackdrop)
+        NSLayoutConstraint.activate([
+            canvasBackdrop.leadingAnchor.constraint(equalTo: leadingAnchor),
+            canvasBackdrop.trailingAnchor.constraint(equalTo: trailingAnchor),
+            canvasBackdrop.topAnchor.constraint(equalTo: topAnchor),
+            canvasBackdrop.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+
         // Progressive blur backdrop pinned to the FULL bar (all four edges,
         // including the home-indicator strip the system reserves below the
         // docked accessory). Painting it here in UIKit — rather than as the
@@ -462,7 +491,8 @@ final class ComposerBarContainerView: UIView {
         // strip, and the accessory's hosting controller doesn't propagate the
         // bottom safe area to SwiftUI, so a SwiftUI `.ignoresSafeArea(.bottom)`
         // never gets a frame down there. An Auto Layout view pinned to the
-        // container edges always covers it. Sits behind the host content.
+        // container edges always covers it. Sits behind the host content,
+        // in front of the canvas backstop.
         backdrop.translatesAutoresizingMaskIntoConstraints = false
         addSubview(backdrop)
         NSLayoutConstraint.activate([
@@ -498,15 +528,28 @@ final class ComposerBarContainerView: UIView {
         refreshBackdrop()
     }
 
-    /// Fade the progressive blur out when the keyboard is up or the "+" panel
-    /// is open (it looks like a stray shadow over the keyboard / panel), fade
-    /// it back in for the normal docked bar. Animated — never a hard cut.
+    /// Crossfade the two backstops across three states. Never a hard cut.
+    ///   • Docked (keyboard down, panel closed) → blur visible, canvas hidden.
+    ///   • Panel open (keyboard down, panel up)  → canvas visible, blur hidden
+    ///     (the blur reads as a stray shadow behind the tiles; the solid canvas
+    ///     covers the home-indicator strip the panel can't reach itself).
+    ///   • Keyboard up → both hidden (either backstop reads as a weird shadow
+    ///     over the keyboard).
     private func refreshBackdrop() {
-        let shown = !keyboardVisible && contentHeight() <= panelHeightThreshold
-        guard shown != lastBackdropShown else { return }
-        lastBackdropShown = shown
-        UIView.animate(withDuration: 0.22, delay: 0, options: [.beginFromCurrentState, .curveEaseInOut]) {
-            self.backdrop.alpha = shown ? 1 : 0
+        let panelOpen = contentHeight() > panelHeightThreshold
+        let blurShown = !keyboardVisible && !panelOpen
+        let canvasShown = !keyboardVisible && panelOpen
+        if blurShown != lastBackdropShown {
+            lastBackdropShown = blurShown
+            UIView.animate(withDuration: 0.22, delay: 0, options: [.beginFromCurrentState, .curveEaseInOut]) {
+                self.backdrop.alpha = blurShown ? 1 : 0
+            }
+        }
+        if canvasShown != lastCanvasShown {
+            lastCanvasShown = canvasShown
+            UIView.animate(withDuration: 0.22, delay: 0, options: [.beginFromCurrentState, .curveEaseInOut]) {
+                self.canvasBackdrop.alpha = canvasShown ? 1 : 0
+            }
         }
     }
 
