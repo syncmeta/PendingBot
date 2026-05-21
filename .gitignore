@@ -11,6 +11,9 @@ node_modules/
 **/next-env.d.ts
 **/tsconfig.tsbuildinfo
 
+# scroll-lab experiment run outputs (scratch)
+apps/scroll-lab/runs/
+
 # SQLite database files (only matter for self-host dev runs)
 **/data/*.sqlite
 **/data/*.sqlite-shm
