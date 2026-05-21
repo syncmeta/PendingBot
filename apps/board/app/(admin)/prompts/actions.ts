@@ -61,7 +61,9 @@ export async function savePrompt(
   const admin = await requireAdmin();
   const name = String(formData.get('name') ?? '');
   const locale = String(formData.get('locale') ?? '');
-  const body_md = String(formData.get('body_md') ?? '');
+  // Textareas submit with CRLF per the HTML spec; normalize to LF so both the
+  // DB override and the bundled .md stay in Unix line endings.
+  const body_md = String(formData.get('body_md') ?? '').replace(/\r\n?/g, '\n');
 
   try {
     assertPromptName(name);
