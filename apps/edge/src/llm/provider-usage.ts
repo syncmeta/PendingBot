@@ -64,7 +64,14 @@ export function usageFromCompletion(
     finiteNumber(u.cache_read_input_tokens) ??
     finiteNumber(promptDetails?.cached_tokens) ??
     0;
-  const cacheWrite = finiteNumber(u.cache_creation_input_tokens) ?? 0;
+  // Cache writes: Anthropic-native reports cache_creation_input_tokens at the
+  // top level; OpenRouter reports it as prompt_tokens_details.cache_write_tokens
+  // (only present for models with explicit caching + cache-write pricing). The
+  // OpenAI Responses / Gemini paths set neither, so this is a no-op for them.
+  const cacheWrite =
+    finiteNumber(u.cache_creation_input_tokens) ??
+    finiteNumber(promptDetails?.cache_write_tokens) ??
+    0;
   // promptTokens conventionally includes cached tokens. We split them
   // so accounting is non-overlapping: input = prompt - cache_read.
   const promptTotal = finiteNumber(u.prompt_tokens) ?? 0;
