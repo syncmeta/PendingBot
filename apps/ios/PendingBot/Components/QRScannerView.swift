@@ -57,6 +57,53 @@ enum PendingBotQR {
     }
 }
 
+/// Codec for the bot-share deep link.
+///
+/// Encoded form is `https://bot.pendingname.com/b/<slug>` — same `bot.`
+/// subdomain as the contact/group QRs (so the Universal Links
+/// entitlement applies), but the AASA path is `/b/` (see
+/// apps/edge/src/routes/well-known.ts). Unlike the rotating `/c/` and
+/// `/g/` tokens, the payload is the bot's own `slug`: a public bot's
+/// slug is its stable, intentionally-public identity, so there's nothing
+/// to rotate. The same slug is what a user can type in 加机器人.
+enum BotShareLink {
+    static let host = "bot.pendingname.com"
+    static let pathPrefix = "/b/"
+
+    /// Matches *pendingname.com so apex-host links (pre-`bot.` subdomain)
+    /// still parse, mirroring PendingBotQR.
+    private static let urlHostSuffix = "pendingname.com"
+
+    static func url(forSlug slug: String) -> String {
+        "https://\(host)\(pathPrefix)\(slug)"
+    }
+
+    /// Parse a payload back into the bare slug. Accepts the current
+    /// `bot.pendingname.com/b/<slug>` form, the legacy apex form, and a
+    /// bare slug. Always returns lowercased (slugs are case-insensitive).
+    static func slug(fromScanned raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let url = URL(string: trimmed),
+           url.host?.lowercased().hasSuffix(urlHostSuffix) == true,
+           url.path.hasPrefix(pathPrefix) {
+            let slug = String(url.path.dropFirst(pathPrefix.count))
+            if !slug.isEmpty { return slug.lowercased() }
+        }
+        return trimmed.lowercased()
+    }
+
+    /// Strict check: only true when the payload is unambiguously a
+    /// bot-share URL (`*pendingname.com/b/<slug>`). Bare slugs are not
+    /// recognised here (indistinguishable from arbitrary text).
+    static func isBotShareLink(_ raw: String) -> Bool {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed),
+              url.host?.lowercased().hasSuffix(urlHostSuffix) == true,
+              url.path.hasPrefix(pathPrefix) else { return false }
+        return !url.path.dropFirst(pathPrefix.count).isEmpty
+    }
+}
+
 /// SwiftUI wrapper around AVCaptureSession for QR-code scanning. The
 /// preview fills the parent; first valid QR detection fires `onScan`
 /// with the decoded string and stops the session.

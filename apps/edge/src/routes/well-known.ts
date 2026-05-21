@@ -15,6 +15,8 @@ import type { AppBindings } from '../types';
 // Path components currently covered:
 //   /c/*  contact-share QR (see Components/QRScannerView.swift)
 //   /g/*  group invite (see Features/Group/GroupJoinView.swift)
+//   /b/*  bot share (see Components/BotShareLink.swift) — slug-based,
+//         non-rotating: a public bot's slug is its public identity.
 const AASA = {
   applinks: {
     details: [
@@ -23,6 +25,7 @@ const AASA = {
         components: [
           { '/': '/c/*', comment: 'contact share' },
           { '/': '/g/*', comment: 'group invite' },
+          { '/': '/b/*', comment: 'bot share' },
         ],
       },
     ],
