@@ -199,6 +199,22 @@ struct CreateBotSheet: View {
                 .execute()
                 .value
 
+            // The friends-tab bot list reads from user_bot_contacts, not the
+            // bots table — so without a contact row the freshly-created bot
+            // vanishes on the next load(). The conversations→contact trigger
+            // only fires once a conversation exists, which doesn't happen at
+            // creation time, so register the creator here explicitly. RLS
+            // allows it via the creator_id = auth.uid() branch.
+            struct ContactInsert: Encodable {
+                let user_id: String
+                let bot_id: String
+                let added_via: String
+            }
+            try await SupabaseStack.shared
+                .from("user_bot_contacts")
+                .insert(ContactInsert(user_id: userId, bot_id: row.id, added_via: "manual"))
+                .execute()
+
             let pick = FriendsTabView.BotPick(
                 id: row.id,
                 display_name: row.display_name,
