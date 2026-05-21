@@ -66,6 +66,13 @@ struct PendingBotApp: App {
                 .preferredColorScheme(.light)
                 .tint(Theme.Palette.accent)
                 .background(Theme.Palette.canvas.ignoresSafeArea())
+                // Universal links (applinks:bot.pendingname.com). SwiftUI
+                // delivers both custom-scheme and associated-domain URLs
+                // here. Bot-share links (/b/<slug>) get parked in
+                // DeepLinkStore for the friends tab to consume.
+                .onOpenURL { url in
+                    DeepLinkStore.shared.handle(url)
+                }
                 #if targetEnvironment(macCatalyst)
                 // Catalyst inherits CFBundleDisplayName ("大绿豆") into the
                 // window titlebar by default — clear it so the chrome stays

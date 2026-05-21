@@ -1,6 +1,38 @@
 import SwiftUI
 import AVFoundation
 import UIKit
+import Observation
+
+/// App-level inbox for incoming universal links (https deep links). The
+/// app root pumps `onOpenURL` here; the tab that owns the matching
+/// surface observes the relevant slot and consumes it.
+///
+/// Mirrors the IncomingCallStore.shared pattern (an @Observable singleton
+/// read by the tab views) rather than threading a binding through the
+/// whole hierarchy.
+@MainActor
+@Observable
+final class DeepLinkStore {
+    static let shared = DeepLinkStore()
+    private init() {}
+
+    /// Set when a `bot.pendingname.com/b/<slug>` link is opened. The
+    /// friends tab switches itself in and presents the add-bot preview,
+    /// then clears this back to nil.
+    var pendingAddBotSlug: String?
+
+    /// Parse an incoming URL into a pending action. Returns true when the
+    /// link was recognised (so the caller can stop here).
+    @discardableResult
+    func handle(_ url: URL) -> Bool {
+        let raw = url.absoluteString
+        if BotShareLink.isBotShareLink(raw) {
+            pendingAddBotSlug = BotShareLink.slug(fromScanned: raw)
+            return true
+        }
+        return false
+    }
+}
 
 /// Codec for the contact-share QR.
 ///

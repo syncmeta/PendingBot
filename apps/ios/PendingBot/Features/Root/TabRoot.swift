@@ -21,6 +21,9 @@ struct TabRoot: View {
     /// live here at the root, so the call survives the user switching
     /// tabs or popping the conversation off the nav stack.
     @Environment(CallCenter.self) private var callCenter
+    /// Deep-link inbox. A /b/<slug> link flips us to the friends tab,
+    /// which then presents the add-bot preview (it clears the slug).
+    @State private var deepLink = DeepLinkStore.shared
 
     // Persisted across launches so reopening the app on iPad puts the
     // user back where they were. SceneStorage keeps it per-window which
@@ -87,6 +90,12 @@ struct TabRoot: View {
                 }
             }
             .onChange(of: store.current) { _, _ in Haptics.tap() }
+            // A bot-share link landed — make sure the friends tab is the
+            // one on screen so it can present the add-bot preview. The
+            // friends tab itself consumes (and clears) the pending slug.
+            .onChange(of: deepLink.pendingAddBotSlug) { _, new in
+                if new != nil { selected.wrappedValue = .friends }
+            }
         } else {
             // Defensive — RootView wouldn't have shown TabRoot otherwise.
             WelcomeView()
