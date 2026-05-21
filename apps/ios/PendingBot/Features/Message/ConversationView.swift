@@ -207,6 +207,7 @@ struct ConversationView: View {
     @State private var isAtBottom = true
     @State private var unreadCount = 0
     @State private var scrollViewportHeight: CGFloat = 0
+    @State private var messageStackContentHeight: CGFloat = 0
     /// Flips on the first history population so the conv opens already
     /// parked at the latest message: that initial settle jumps with no
     /// animation (no visible scroll), and only later arrivals animate.
@@ -216,8 +217,21 @@ struct ConversationView: View {
         keyboardVisible ? 0 : composerContentHeight
     }
 
+    private var messageContentNeedsComposerInset: Bool {
+        guard composerScrollInset > 0, scrollViewportHeight > 0 else { return false }
+        return messageStackContentHeight > max(0, scrollViewportHeight - composerScrollInset) + 1
+    }
+
+    private var effectiveComposerScrollInset: CGFloat {
+        messageContentNeedsComposerInset ? composerScrollInset : 0
+    }
+
     private var minimumMessageStackHeight: CGFloat {
-        max(0, scrollViewportHeight - composerScrollInset)
+        max(0, scrollViewportHeight - effectiveComposerScrollInset)
+    }
+
+    private var messageStackCanScroll: Bool {
+        messageStackContentHeight + effectiveComposerScrollInset > scrollViewportHeight + 1
     }
 
     // Streaming bubble state — see applyBubbleEmissions. The splitter
@@ -548,13 +562,20 @@ struct ConversationView: View {
                             )
                     }
                     .padding(.top, 4)
-                    // Keep short conversations pinned to the top without
-                    // making the composer clearance itself scrollable.
-                    // `contentMargins(.bottom, ...)` is appended to the scroll
-                    // content, so the minimum stack height must subtract that
-                    // inset; otherwise a 3-message chat still has roughly one
-                    // composer-height of phantom scroll range after the last
-                    // bubble.
+                    .background(
+                        GeometryReader { geo in
+                            Color.clear
+                                .onAppear { updateMessageStackContentHeight(geo.size.height) }
+                                .onChange(of: geo.size.height) { _, h in
+                                    updateMessageStackContentHeight(h)
+                                }
+                        }
+                    )
+                    // Short conversations should occupy exactly one viewport
+                    // and stay top-aligned. Only once the natural message
+                    // content outgrows the area above the docked composer do we
+                    // subtract the composer clearance and add that clearance as
+                    // scroll content margin below.
                     .frame(minHeight: minimumMessageStackHeight, alignment: .top)
                     .readableColumnWidth()
                 }
@@ -570,7 +591,7 @@ struct ConversationView: View {
                 // avoidance already insets for keyboard+accessory, so drop this
                 // to 0 to avoid double-counting (which would leave a gap above
                 // the keyboard). Height is reported by the accessory itself.
-                .contentMargins(.bottom, composerScrollInset, for: .scrollContent)
+                .contentMargins(.bottom, effectiveComposerScrollInset, for: .scrollContent)
                 .background(
                     GeometryReader { geo in
                         Color.clear
@@ -616,6 +637,10 @@ struct ConversationView: View {
                             unreadCount += newCount - oldCount
                         }
                     }
+                }
+                .onChange(of: messageStackCanScroll) { _, canScroll in
+                    guard canScroll, didInitialScroll, isAtBottom else { return }
+                    scrollToBottom(proxy: proxy, animated: false)
                 }
                 .overlay(alignment: .bottomTrailing) {
                     if unreadCount > 0 && !isAtBottom {
@@ -915,6 +940,7 @@ struct ConversationView: View {
         // scrolling synchronously inside the same state-change tick lands on a
         // stale offset and the list visibly jumps past the bottom.
         DispatchQueue.main.async {
+            guard messageStackCanScroll else { return }
             let land = {
                 if let lastId = messages.last?.id {
                     proxy.scrollTo(lastId, anchor: .bottom)
@@ -928,6 +954,14 @@ struct ConversationView: View {
                 withAnimation(.easeOut(duration: 0.22)) { land() }
             } else {
                 land()
+            }
+        }
+    }
+
+    private func updateMessageStackContentHeight(_ height: CGFloat) {
+        DispatchQueue.main.async {
+            if abs(messageStackContentHeight - height) > 0.5 {
+                messageStackContentHeight = height
             }
         }
     }
