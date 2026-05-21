@@ -203,21 +203,26 @@ struct CallView: View {
     }
 
     private var hangUpButton: some View {
+        // Once tapped, the button dims to a lighter red and stops
+        // responding while the disconnect tone plays — the call screen
+        // stays up until the session reports `.terminated`, which clears
+        // the slot via handlePhaseChange. Mirrors the system phone app's
+        // ending-call button.
         Button {
-            Task {
-                await session.hangUp()
-                // Slot clear happens in handlePhaseChange when the
-                // session reports .terminated; the cover's binding
-                // collapses naturally then. No explicit dismiss here.
-            }
+            guard !isHangUpDisabled else { return }
+            Task { await session.hangUp() }
         } label: {
             Image(systemName: "phone.down.fill")
                 .font(.system(size: 28))
                 .foregroundStyle(.white)
                 .frame(width: 76, height: 76)
-                .background(Circle().fill(.red))
+                .background(
+                    Circle().fill(
+                        isHangUpDisabled ? Color.red.opacity(0.45) : Color.red,
+                    ),
+                )
         }
-        .disabled(isHangUpDisabled)
+        .animation(.easeOut(duration: 0.2), value: isHangUpDisabled)
     }
 
     /// True once the call has left its live phases — the speaker toggle

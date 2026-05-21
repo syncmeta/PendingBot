@@ -449,27 +449,6 @@ final class CallSession {
         // loop sees the terminal phase and stops minting transports.
         resolveAttempt(.failed(reason))
 
-        // Regional disconnect tone for a genuine hang up of a connected
-        // call (the user tapped end, or the bot ended via its hang_up
-        // tool). It starts now, on the still-active call audio session,
-        // so the user hears it the instant the call ends; the teardown
-        // below waits for it before deactivating the session and ending
-        // the CallKit call, so neither pulls the session out mid-tone.
-        let hangupTone: HangupTonePlayer?
-        let toneStartedAt: Date?
-        if wasConnected, reason == .user || reason == .botEnded {
-            let t = HangupTonePlayer()
-            t.start()
-            hangupTone = t
-            toneStartedAt = Date()
-        } else {
-            hangupTone = nil
-            toneStartedAt = nil
-        }
-
-        // Closing-summary + teardown run in a background task so the UI
-        // dismisses immediately. The task keeps `self` alive past the
-        // CallView dismissal until the teardown finishes.
         let transport = self.transport
         let sid = sessionId
         // Hold the CallKit handle for the deferred end below; clear our
@@ -477,18 +456,46 @@ final class CallSession {
         // CallKit drove the teardown (onSystemEnd already cleared it).
         let uuid = callKitUUID
         callKitUUID = nil
-        Task { @MainActor in
-            // Ask the realtime model for a short recap while the transport
-            // is still open and the session still active. Only for a
-            // voluntary hang up of a call that actually connected — a
-            // failed/dead transport would just time out.
-            var summary: String?
-            if wasConnected, reason == .user || reason == .botEnded, let transport {
-                summary = await transport.requestSummary()
+
+        // Failed / never-connected ends (startup error, region-blocked,
+        // balance gate, network drop) skip the disconnect tone and
+        // dismiss immediately; their teardown runs in the background.
+        guard wasConnected, reason == .user || reason == .botEnded else {
+            phase = .terminated(reason)
+            Task { @MainActor in
+                await transport?.hangUp()
+                if let uuid { CallKitManager.shared.endCall(uuid: uuid) }
+                if let sid {
+                    try? await self.api.endSession(
+                        sessionId: sid,
+                        conversationId: self.conversationId,
+                    )
+                }
             }
-            // Upload the recap before tearing down: closing the transport
-            // can trip the server-side meter into ending the session,
-            // which would 410 a later /summary.
+            return
+        }
+
+        // Genuine hang up of a connected call (user tapped end, or the bot
+        // ended via its hang_up tool). Play the regional disconnect tone
+        // now, on the still-active call audio session, and keep the call
+        // screen up (hang-up button dimmed) for the tone's full duration
+        // before dismissing — like the system phone app. Teardown follows
+        // dismissal, so neither the transport nor CallKit deactivates the
+        // session out from under the tone.
+        let tone = HangupTonePlayer()
+        tone.start()
+        Task { @MainActor in
+            try? await Task.sleep(
+                nanoseconds: UInt64(HangupTonePlayer.playbackSeconds * 1_000_000_000),
+            )
+            tone.stop()
+            phase = .terminated(reason)
+
+            // Recap over the still-open transport, then tear down. Upload
+            // before closing the transport: closing it can trip the
+            // server-side meter into ending the session, which would 410
+            // a later /summary.
+            let summary = await transport?.requestSummary()
             if let sid, let summary, !summary.isEmpty {
                 _ = try? await self.api.uploadSummary(
                     .init(
@@ -498,25 +505,8 @@ final class CallSession {
                     ),
                 )
             }
-            // Let the disconnect tone play its full duration before we
-            // deactivate the session. requestSummary often already covers
-            // it, so this usually waits little or nothing.
-            if let hangupTone, let toneStartedAt {
-                let remaining =
-                    HangupTonePlayer.playbackSeconds
-                    - Date().timeIntervalSince(toneStartedAt)
-                if remaining > 0 {
-                    try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
-                }
-                hangupTone.stop()
-            }
             await transport?.hangUp()
-            // Tell CallKit the call's done — deferred until after the tone
-            // so the system doesn't deactivate the session mid-tone.
-            // Skipped when CallKit drove the teardown (uuid already nil).
-            if let uuid {
-                CallKitManager.shared.endCall(uuid: uuid)
-            }
+            if let uuid { CallKitManager.shared.endCall(uuid: uuid) }
             if let sid {
                 try? await self.api.endSession(
                     sessionId: sid,
@@ -524,7 +514,6 @@ final class CallSession {
                 )
             }
         }
-        phase = .terminated(reason)
     }
 
     private func isTerminal(_ p: Phase) -> Bool {
