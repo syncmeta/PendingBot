@@ -8,6 +8,39 @@ import Supabase
 // public-bot delete block are enforced by the bots_guard_public_update
 // trigger + the bots_creator_delete RLS policy.
 
+// MARK: - Slug rule
+
+/// Validation for a public bot's user-chosen slug — the stable, public
+/// handle others type in 加机器人 and that powers the share link / QR
+/// (see BotShareLink). Private bots never use this; they keep the
+/// synthetic `u_<random>` slug minted at creation.
+///
+/// Reserved namespaces are refused so a user can't squat on the
+/// machine-minted forms: `u_` (user-created private bots) and `self-`
+/// (per-user self-bot, filtered out of the friends list).
+enum BotSlugRule {
+    static let minLen = 3
+    static let maxLen = 20
+    private static let allowed = CharacterSet(
+        charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789_-")
+
+    /// Lowercase + drop surrounding whitespace and a leading/trailing @.
+    static func normalize(_ raw: String) -> String {
+        raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "@"))
+            .lowercased()
+    }
+
+    static func isValid(_ slug: String) -> Bool {
+        guard slug.count >= minLen, slug.count <= maxLen else { return false }
+        guard slug.unicodeScalars.allSatisfy({ allowed.contains($0) }) else { return false }
+        if slug.hasPrefix("u_") || slug.hasPrefix("self-") { return false }
+        return true
+    }
+
+    static let helpText = "3–20 位，小写字母、数字、下划线或连字符"
+}
+
 // MARK: - Create
 
 struct CreateBotSheet: View {
@@ -22,6 +55,9 @@ struct CreateBotSheet: View {
     /// 'openai' = native Responses route.
     @State private var modelProvider: String?
     @State private var visibility: Visibility = .privateBot
+    /// User-chosen public handle. Only required (and only sent) when the
+    /// bot is public — private bots keep the synthetic `u_<random>` slug.
+    @State private var slug: String = ""
     @State private var creating = false
     @State private var error: String?
 
@@ -94,6 +130,29 @@ struct CreateBotSheet: View {
                     Text("公开程度")
                 }
 
+                // Public bots need a human-chosen slug — it's the handle
+                // others type in 加机器人 and the payload of the share
+                // link / QR. Private bots don't (can't be added by anyone
+                // else), so the field only shows for public visibilities.
+                if visibility != .privateBot {
+                    Section {
+                        HStack(spacing: 4) {
+                            Text("@").foregroundStyle(Theme.Palette.inkMuted)
+                            TextField("机器人标识(slug)", text: $slug)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled(true)
+                                .onChange(of: slug) { _, v in
+                                    let n = BotSlugRule.normalize(v)
+                                    if n != v { slug = n }
+                                }
+                        }
+                    } header: {
+                        Text("机器人标识")
+                    } footer: {
+                        Text("别人按这个标识、链接或二维码加你的机器人。\(BotSlugRule.helpText)。建好后可在管理里修改。")
+                    }
+                }
+
                 if let error {
                     Section {
                         Text(error).foregroundStyle(.red)
@@ -148,8 +207,11 @@ struct CreateBotSheet: View {
     }
 
     private var canCreate: Bool {
-        !displayName.trimmingCharacters(in: .whitespaces).isEmpty
-        && !modelSlug.isEmpty
+        let nameOK = !displayName.trimmingCharacters(in: .whitespaces).isEmpty
+        let modelOK = !modelSlug.isEmpty
+        // Public bots additionally require a valid slug.
+        if visibility == .privateBot { return nameOK && modelOK }
+        return nameOK && modelOK && BotSlugRule.isValid(slug)
     }
 
     private func create() async {
@@ -158,10 +220,11 @@ struct CreateBotSheet: View {
         guard !trimmedName.isEmpty, !modelSlug.isEmpty else { return }
         creating = true; defer { creating = false }
         do {
-            // bots.slug is NOT NULL UNIQUE, but it's only meaningful for the
-            // 8 system presets ("lorem"/"ipsum"/...). For user-created bots
-            // we mint a synthetic slug from a fresh UUID so the unique
-            // constraint stays satisfied without leaking creator info.
+            // bots.slug is NOT NULL UNIQUE. Public bots use the creator's
+            // chosen handle (the thing others type / scan to add); private
+            // bots mint a synthetic slug from a fresh UUID so the unique
+            // constraint stays satisfied without leaking creator info and
+            // without burning a nice handle no one can reach anyway.
             struct BotInsert: Encodable {
                 let creator_id: String
                 let visibility: String
@@ -182,7 +245,9 @@ struct CreateBotSheet: View {
                 let visibility: String?
                 let creator_id: String?
             }
-            let slug = "u_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(16)
+            let finalSlug: String = visibility == .privateBot
+                ? "u_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(16).description
+                : BotSlugRule.normalize(slug)
             let row: BotOut = try await SupabaseStack.shared
                 .from("bots")
                 .insert(BotInsert(
@@ -191,7 +256,7 @@ struct CreateBotSheet: View {
                     display_name: trimmedName,
                     model_id: modelSlug,
                     model_provider: modelProvider,
-                    slug: String(slug),
+                    slug: finalSlug,
                     tz: visibility == .privateBot ? nil : TimeZone.current.identifier
                 ))
                 .select("id, display_name, model_id, visibility, creator_id")
@@ -227,7 +292,15 @@ struct CreateBotSheet: View {
             Haptics.success()
             dismiss()
         } catch {
-            self.error = error.localizedDescription
+            // 23505 == unique_violation on bots.slug — the chosen handle
+            // is taken (by another public bot or a preset). Surface a
+            // targeted message so the user knows to pick a different slug.
+            let msg = error.localizedDescription
+            if msg.contains("23505") || msg.lowercased().contains("duplicate") {
+                self.error = "「\(BotSlugRule.normalize(slug))」这个标识已被占用，换一个试试。"
+            } else {
+                self.error = msg
+            }
             Haptics.error()
         }
     }
