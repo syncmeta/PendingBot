@@ -47,6 +47,16 @@ final class GroupCallTransport: NSObject {
     /// "sessionId|trackName" — so a re-sync never double-pulls a track.
     private var subscribedKeys: Set<String> = []
 
+    /// Latest roster a caller asked us to subscribe to. SFU signaling is
+    /// strictly sequential: after /subscribe returns an offer, the same
+    /// PeerConnection must answer it via /renegotiate before any later
+    /// /subscribe. MainActor alone is not enough because it is reentrant
+    /// across awaits, so timer/add-bot resyncs can otherwise overlap.
+    private var pendingSubscriptionRoster:
+        (bots: [GroupBotRosterEntry], humans: [GroupHumanRosterEntry])?
+    private var subscriptionGeneration = 0
+    private var subscriptionLoopRunning = false
+
     private var didSignalConnected = false
 
     /// Periodically re-syncs the roster so peers (and bots) who join
@@ -192,7 +202,31 @@ final class GroupCallTransport: NSObject {
         bots: [GroupBotRosterEntry],
         humans: [GroupHumanRosterEntry],
     ) async throws {
-        guard let sessionId = sfuSessionId else { return }
+        pendingSubscriptionRoster = (bots, humans)
+        subscriptionGeneration += 1
+        guard !subscriptionLoopRunning else { return }
+        subscriptionLoopRunning = true
+        defer { subscriptionLoopRunning = false }
+
+        while true {
+            let generation = subscriptionGeneration
+            guard let roster = pendingSubscriptionRoster else { return }
+            let refs = unsubscribedRefs(bots: roster.bots, humans: roster.humans)
+            if refs.isEmpty {
+                if generation == subscriptionGeneration { return }
+                continue
+            }
+
+            try await subscribeToRefs(refs)
+            if generation == subscriptionGeneration { return }
+        }
+    }
+
+    private func unsubscribedRefs(
+        bots: [GroupBotRosterEntry],
+        humans: [GroupHumanRosterEntry],
+    ) -> [(session: String, track: String)] {
+        guard let sessionId = sfuSessionId else { return [] }
         var refs: [(session: String, track: String)] = []
         for b in bots
         where !subscribedKeys.contains(trackKey(b.sfuSessionId, b.sfuTrackName)) {
@@ -202,27 +236,31 @@ final class GroupCallTransport: NSObject {
             && !subscribedKeys.contains(trackKey(h.sfuSessionId, h.sfuTrackName)) {
             refs.append((h.sfuSessionId, h.sfuTrackName))
         }
-        guard !refs.isEmpty else { return }
+        return refs
+    }
 
+    private func subscribeToRefs(_ refs: [(session: String, track: String)]) async throws {
+        guard let sessionId = sfuSessionId else { return }
         let sub = try await api.groupVoiceSubscribe(
             conversationId: conversationId,
             sessionId: sessionId,
             tracks: refs,
         )
-        for r in refs { subscribedKeys.insert(trackKey(r.session, r.track)) }
 
         // The SFU hands back an offer for the freshly-added recv tracks;
         // answer it on the same peer connection (BUNDLE — no new ICE).
-        guard sub.requires_renegotiation, let offerSDP = sub.offer else { return }
-        let offer = RTCSessionDescription(type: .offer, sdp: offerSDP)
-        try await peerConnection.setRemoteDescription(offer)
-        let answer = try await createAnswer()
-        try await peerConnection.setLocalDescription(answer)
-        try await api.groupVoiceRenegotiate(
-            conversationId: conversationId,
-            sessionId: sessionId,
-            sdp: answer.sdp,
-        )
+        if sub.requires_renegotiation, let offerSDP = sub.offer {
+            let offer = RTCSessionDescription(type: .offer, sdp: offerSDP)
+            try await peerConnection.setRemoteDescription(offer)
+            let answer = try await createAnswer()
+            try await peerConnection.setLocalDescription(answer)
+            try await api.groupVoiceRenegotiate(
+                conversationId: conversationId,
+                sessionId: sessionId,
+                sdp: answer.sdp,
+            )
+        }
+        for r in refs { subscribedKeys.insert(trackKey(r.session, r.track)) }
     }
 
     // MARK: - Setup
