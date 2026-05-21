@@ -32,6 +32,16 @@ final class UnreadStore: ObservableObject {
     /// Server-truth unread message counts, keyed by conversation id.
     @Published private(set) var serverCounts: [String: Int] = [:]
 
+    /// The conversation currently open in the foreground, if any. While
+    /// set, its unread count is pinned to 0: any server-side +1 (a message
+    /// that lands while the user is looking at the thread) is cleared on
+    /// arrival rather than allowed to surface. This is what makes "messages
+    /// in the open conversation are always read" hold regardless of which
+    /// realtime path delivered the message or which event won the race —
+    /// the per-message `markRead` call alone can't, because the list
+    /// refetch triggered by the user-level unread channel overwrites it.
+    private var activeConversationId: String?
+
     /// Envelope ids the user has explicitly opened. Persisted per account.
     @Published private(set) var readEnvelopeIds: Set<String> = []
 
@@ -102,9 +112,38 @@ final class UnreadStore: ObservableObject {
 
     /// Replace the server unread snapshot — called after every
     /// conversation-list fetch. Refreshes the app icon badge.
+    ///
+    /// Pins the open conversation to 0: the list refetch fires off the
+    /// user-level unread channel, which races (and usually beats) the
+    /// optimistic per-message clear, so a message that arrived while the
+    /// user is reading would otherwise resurface as unread the moment they
+    /// back out. If the server row still says >0, persist a clear so other
+    /// devices and the next fetch agree.
     func setServerCounts(_ counts: [String: Int]) {
+        var counts = counts
+        if let active = activeConversationId, (counts[active] ?? 0) > 0 {
+            counts[active] = 0
+            pushClear(active)
+        }
         serverCounts = counts
         syncAppIconBadge()
+    }
+
+    // ── Active conversation ───────────────────────────────────────────────────
+
+    /// The user opened a conversation — pin it read and clear any backlog.
+    func enterConversation(_ conversationId: String) {
+        activeConversationId = conversationId
+        markRead(conversationId)
+    }
+
+    /// The user left a conversation — stop pinning it. Guarded so a fast
+    /// switch (new view's onAppear before old view's onDisappear) doesn't
+    /// clear the id the newly-opened conversation just set.
+    func leaveConversation(_ conversationId: String) {
+        if activeConversationId == conversationId {
+            activeConversationId = nil
+        }
     }
 
     // ── Mutations ───────────────────────────────────────────────────────────
@@ -132,8 +171,13 @@ final class UnreadStore: ObservableObject {
         guard (serverCounts[conversationId] ?? 0) > 0 else { return }
         serverCounts[conversationId] = 0
         syncAppIconBadge()
-        // RLS on user_unread_counts scopes UPDATE to user_id = auth.uid(),
-        // so matching conversation_id alone hits exactly this user's row.
+        pushClear(conversationId)
+    }
+
+    /// Persist unread_count = 0 for one conversation. RLS on
+    /// user_unread_counts scopes UPDATE to user_id = auth.uid(), so
+    /// matching conversation_id alone hits exactly this user's row.
+    private func pushClear(_ conversationId: String) {
         Task {
             try? await SupabaseStack.shared
                 .from("user_unread_counts")

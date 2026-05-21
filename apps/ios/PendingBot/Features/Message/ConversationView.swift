@@ -630,6 +630,10 @@ struct ConversationView: View {
             // reads nil and pops a foreground banner.
             if !conversation.id.isEmpty {
                 PushService.shared.activeConversationId = conversation.id
+                // Pin this conv read while it's on screen — any message
+                // that arrives now stays read no matter which realtime
+                // path (or refetch) reports it.
+                UnreadStore.shared.enterConversation(conversation.id)
             }
         }
         .task {
@@ -665,6 +669,7 @@ struct ConversationView: View {
             if PushService.shared.activeConversationId == conversation.id {
                 PushService.shared.activeConversationId = nil
             }
+            UnreadStore.shared.leaveConversation(conversation.id)
             if let token = realtimeToken {
                 Task { await RealtimeManager.shared.stopConvChannel(token) }
                 realtimeToken = nil
