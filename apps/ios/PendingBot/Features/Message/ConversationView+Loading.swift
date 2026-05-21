@@ -136,30 +136,43 @@ extension ConversationView {
     /// participants once on conv open; new senders that join mid-stream
     /// fall back to the avatar-only render until next conv reopen
     /// (Realtime delta sync for membership is M9 polish).
+    /// Paint group avatars + nicknames from the local cache synchronously,
+    /// before any network round-trip. Called at the very top of the view's
+    /// `.task` (ahead of `loadHistory()`) so the senders land on the first
+    /// frame instead of a second later — otherwise this cache read would sit
+    /// behind loadHistory's await and the bubbles flash id-prefix labels +
+    /// generic glyphs until it returns. Idempotent: skips when `groupSenders`
+    /// is already populated, so the network refresh below never re-runs it.
+    func hydrateGroupSendersFromCache() {
+        guard conversation.conversation_type == "group" else { return }
+        guard !conversation.id.isEmpty, groupSenders.isEmpty else { return }
+        let cached = LocalDatabase.shared.loadGroupMembers(conversationId: conversation.id)
+        guard !cached.isEmpty else { return }
+        var lookup: [String: GroupBubbleSender] = [:]
+        for r in cached {
+            let key = "\(r.participant_type):\(r.participant_id)"
+            let nick = r.nickname?.trimmingCharacters(in: .whitespaces)
+            let display = (nick?.isEmpty == false ? nick! : r.display_name)
+            lookup[key] = GroupBubbleSender(
+                kind: r.participant_type == "bot" ? .bot : .user,
+                id: r.participant_id,
+                displayName: display.isEmpty ? String(r.participant_id.prefix(8)) : display,
+                avatarPath: r.avatar_path,
+                avatarSeed: r.avatar_seed ?? r.participant_id,
+            )
+        }
+        self.groupSenders = lookup
+    }
+
     func loadGroupSendersIfNeeded() async {
         guard conversation.conversation_type == "group" else { return }
         guard !conversation.id.isEmpty else { return }
-        // Hydrate from the local cache first so avatars + nicknames +
-        // the canStartGroupCall check paint immediately on entry, even
-        // before the network round-trip below. The pattern matches
-        // loadHistory's cache-then-refresh approach.
+        // Cache-first paint (also runs synchronously from `.task` before
+        // loadHistory so the first frame is correct); this call covers the
+        // path where senders weren't pre-hydrated. The network refresh below
+        // then overwrites with the authoritative roster.
+        hydrateGroupSendersFromCache()
         let cached = LocalDatabase.shared.loadGroupMembers(conversationId: conversation.id)
-        if !cached.isEmpty && groupSenders.isEmpty {
-            var lookup: [String: GroupBubbleSender] = [:]
-            for r in cached {
-                let key = "\(r.participant_type):\(r.participant_id)"
-                let nick = r.nickname?.trimmingCharacters(in: .whitespaces)
-                let display = (nick?.isEmpty == false ? nick! : r.display_name)
-                lookup[key] = GroupBubbleSender(
-                    kind: r.participant_type == "bot" ? .bot : .user,
-                    id: r.participant_id,
-                    displayName: display.isEmpty ? String(r.participant_id.prefix(8)) : display,
-                    avatarPath: r.avatar_path,
-                    avatarSeed: r.avatar_seed ?? r.participant_id,
-                )
-            }
-            self.groupSenders = lookup
-        }
         do {
             struct PartRow: Decodable {
                 let participant_type: String

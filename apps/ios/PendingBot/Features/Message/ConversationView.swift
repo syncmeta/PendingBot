@@ -207,6 +207,10 @@ struct ConversationView: View {
     @State private var isAtBottom = true
     @State private var unreadCount = 0
     @State private var scrollViewportHeight: CGFloat = 0
+    /// Flips on the first history population so the conv opens already
+    /// parked at the latest message: that initial settle jumps with no
+    /// animation (no visible scroll), and only later arrivals animate.
+    @State private var didInitialScroll = false
 
     // Streaming bubble state — see applyBubbleEmissions. The splitter
     // (BubbleSplitter.swift) decides whether a bubble pops in whole or
@@ -585,7 +589,15 @@ struct ConversationView: View {
                     // the user away from the history they're reading.
                     let mine = messages.last?
                         .isMine(currentUserId: AccountStore.shared.current?.id) ?? false
-                    if isAtBottom || mine {
+                    if !didInitialScroll && newCount > 0 {
+                        // First history population (cache or network) — land
+                        // straight on the latest message with no animated
+                        // scroll, so opening the conv doesn't visibly skid
+                        // past or jump around while rows settle.
+                        didInitialScroll = true
+                        unreadCount = 0
+                        scrollToBottom(proxy: proxy, animated: false)
+                    } else if isAtBottom || mine {
                         unreadCount = 0
                         scrollToBottom(proxy: proxy)
                     } else if newCount > oldCount {
@@ -669,12 +681,25 @@ struct ConversationView: View {
             // Pending convs (lazy-created on first send) have no row yet —
             // skip history / skills / realtime until they materialise.
             guard !conversation.id.isEmpty else { return }
+            // Paint group sender avatars + nicknames from cache on the first
+            // frame, before any await — otherwise this cache read sits behind
+            // loadHistory's round-trip and the bubbles flash id-prefix labels
+            // for ~1s. (1:1 peers are carried in via pendingPeer, so they're
+            // already correct on frame one.)
+            hydrateGroupSendersFromCache()
+            // Refresh peer profile + group senders concurrently with the
+            // history load so the names/avatars don't queue up behind it.
+            // @MainActor keeps their @State writes on the main actor.
+            let identity = Task { @MainActor in
+                await loadPeerProfileIfNeeded()
+                await loadGroupSendersIfNeeded()
+            }
             await loadHistory()
             await loadSkills()
             await loadActiveLookbacks()
             await subscribeRealtime()
-            await loadPeerProfileIfNeeded()
-            await loadGroupSendersIfNeeded()
+            // Ensure the roster is in before the auto-join below reads it.
+            await identity.value
             await loadPendingContinueIfNeeded()
             await loadGroupFreezeIfNeeded()
             // Cold-launch path: we arrived here because the user
@@ -874,17 +899,24 @@ struct ConversationView: View {
         return ids
     }
 
-    private func scrollToBottom(proxy: ScrollViewProxy) {
+    private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool = true) {
         // Defer one runloop so LazyVStack has measured any just-appended row;
         // scrolling synchronously inside the same state-change tick lands on a
         // stale offset and the list visibly jumps past the bottom.
         DispatchQueue.main.async {
-            withAnimation(.easeOut(duration: 0.22)) {
+            let land = {
                 if let lastId = messages.last?.id {
                     proxy.scrollTo(lastId, anchor: .bottom)
                 } else {
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
+            }
+            // The first settle on conv-open is instant (no animation) so the
+            // view simply appears at the latest message; later arrivals glide.
+            if animated {
+                withAnimation(.easeOut(duration: 0.22)) { land() }
+            } else {
+                land()
             }
         }
     }
