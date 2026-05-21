@@ -37,6 +37,13 @@ export interface Env {
   /// OpenAI Realtime via the SFU's WebSocket adapter: no WebRTC stack in
   /// the worker. See src/durable-objects/room-voice.ts.
   ROOM_VOICE: DurableObjectNamespace;
+  /// Container-backed media engine for group voice — one instance per
+  /// room (keyed by conversation_id via getContainer(env.ROOM_MEDIA, id)).
+  /// RoomVoiceDO delegates the real-time audio path (SFU adapter PCM, mix,
+  /// OpenAI socket, bot-voice playout) to it so the work runs in a real OS
+  /// process with reliable timers instead of a workerd isolate. See
+  /// src/durable-objects/room-media.ts + apps/voice-container.
+  ROOM_MEDIA: DurableObjectNamespace;
   /// Cloudflare ratelimit binding for handle-enumeration endpoints
   /// (friend-request /lookup, group /join, friend-request POST /).
   /// Limit + period live in wrangler.jsonc — call from a route via

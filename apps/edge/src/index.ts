@@ -35,6 +35,9 @@ export { GroupRouterDO } from './durable-objects/group-router';
 export { RealtimeHubDO } from './durable-objects/hub';
 export { RealtimeMeterDO } from './durable-objects/realtime-meter';
 export { RoomVoiceDO } from './durable-objects/room-voice';
+// Container-enabled DO wrapping the group-voice media container
+// (apps/voice-container). Required export for the ROOM_MEDIA binding.
+export { RoomMediaContainerDO } from './durable-objects/room-media';
 // Container-backed DO from @cloudflare/sandbox. Required export for
 // the `Sandbox` binding declared in wrangler.jsonc.
 export { Sandbox } from '@cloudflare/sandbox';

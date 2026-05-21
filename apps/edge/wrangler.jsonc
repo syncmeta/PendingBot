@@ -115,6 +115,7 @@
           { "name": "REALTIME_HUB", "class_name": "RealtimeHubDO" },
           { "name": "REALTIME_METER", "class_name": "RealtimeMeterDO" },
           { "name": "ROOM_VOICE", "class_name": "RoomVoiceDO" },
+          { "name": "ROOM_MEDIA", "class_name": "RoomMediaContainerDO" },
           { "name": "Sandbox", "class_name": "Sandbox" }
         ]
       },
@@ -129,6 +130,17 @@
           "class_name": "Sandbox",
           "image": "./Dockerfile",
           "instance_type": "lite",
+          "max_instances": 10
+        },
+        // Group-voice media engine (apps/voice-container). One running
+        // instance per active group call; "basic" gives steadier CPU than
+        // "lite" for the real-time audio loop. max_instances caps
+        // concurrent calls — raise as group-voice traffic grows.
+        {
+          "name": "pendingbot-edge-voice",
+          "class_name": "RoomMediaContainerDO",
+          "image": "../voice-container/Dockerfile",
+          "instance_type": "basic",
           "max_instances": 10
         }
       ],
@@ -165,6 +177,10 @@
         {
           "tag": "v5",
           "new_sqlite_classes": ["RoomVoiceDO"]
+        },
+        {
+          "tag": "v6",
+          "new_sqlite_classes": ["RoomMediaContainerDO"]
         }
       ],
       // Audit + billing offload. recordAudit used to insert audit_log
