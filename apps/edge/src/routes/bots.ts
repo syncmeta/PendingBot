@@ -106,6 +106,12 @@ const PatchBody = z
     // Voice-call gate. When true the iOS conversation header shows the
     // phone button. Creator-only — public bots editable too.
     voice_call_enabled: z.boolean().optional(),
+    // Text-chat segmentation. 'bubble' makes the bot split its reply into
+    // WeChat-style bubbles (builder injects the `\n---\n` instruction);
+    // 'single' is one continuous block. Routed through here (not the iOS
+    // direct-supabase edit) so the KV bot-cache is busted immediately and
+    // the toggle takes effect on the very next turn.
+    output_mode: z.enum(['single', 'bubble']).optional(),
     // IANA timezone for this bot. Only meaningful for public bots — group
     // dispatch uses it as the time-hint tz and builder injects it into
     // the system prompt as "你所在的时区是 X". Sending '' (empty) clears
@@ -122,6 +128,7 @@ const PatchBody = z
       v.model_id !== undefined ||
       v.model_provider !== undefined ||
       v.voice_call_enabled !== undefined ||
+      v.output_mode !== undefined ||
       v.tz !== undefined ||
       v.config !== undefined,
     { message: 'no fields to update' },
@@ -168,6 +175,7 @@ botRoutes.patch('/:id', async (c) => {
     update.model_provider = parsed.model_provider;
   if (parsed.voice_call_enabled !== undefined)
     update.voice_call_enabled = parsed.voice_call_enabled;
+  if (parsed.output_mode !== undefined) update.output_mode = parsed.output_mode;
   if (parsed.tz !== undefined) update.tz = parsed.tz === '' ? null : parsed.tz;
   if (parsed.config !== undefined) {
     // Shallow-merge at the top level: the client always sends a
