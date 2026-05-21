@@ -80,6 +80,12 @@ struct ConversationView: View {
     @State var cameraImage: UIImage?
     /// Set true to present the system document picker (any file type).
     @State var showFileImporter = false
+    /// Set true to present the photo library picker / camera. Driven by the
+    /// composer's "+" action tiles. Presented from the main view tree (not
+    /// from inside the composer's inputAccessoryView) so the pickers are
+    /// reliable — same pattern as `showFileImporter`.
+    @State var showPhotoPicker = false
+    @State var showCamera = false
     /// Per-id attachment metadata (mime/filename) used to hydrate
     /// AttachmentGrid for loaded/realtime messages. Populated on upload
     /// and on history load — see bubbleMessage.
@@ -579,49 +585,26 @@ struct ConversationView: View {
         }
         .background(Theme.Palette.canvas.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
-        // Mount the composer as a bottom safe-area inset so the message
-        // list above it gets a stable bottom edge — this is what fixes
-        // the "input bar / messages jump in from above" glitch when the
-        // "+" panel toggles. With safeAreaInset, SwiftUI accounts for
-        // the inset change in one coordinated layout pass instead of the
-        // ScrollView and composer animating against each other.
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            VStack(spacing: 0) {
-                if iAmFrozen {
-                    frozenComposerBanner
-                        .readableColumnWidth()
-                }
-                if let pc = pendingContinue {
-                    continueRequestBanner(pc)
-                        .readableColumnWidth()
-                }
-                if conversation.conversation_type == "group",
-                   let prefix = mentionPrefix {
-                    mentionPickerOverlay(prefix: prefix)
-                        .readableColumnWidth()
-                }
-                ComposerView(
-                    input: $input,
-                    pending: $pendingAttachments,
-                    photoItems: $photoPickerItems,
-                    cameraImage: $cameraImage,
-                    showFileImporter: $showFileImporter,
-                    canSend: canSend,
-                    onSend: { Task { await send() } },
-                    isStreaming: chatTurnTask != nil,
-                    onStop: {
-                        chatTurnTask?.cancel()
-                        flushRevealImmediately()
-                    },
-                    // Show 检查 only when the conv has a single bot — group
-                    // dispatches across multiple bots and user_user has none.
-                    onLookback: (conversation.conversation_type == "user_bot"
-                                 || conversation.conversation_type == "self")
-                        ? { Task { await triggerManualLookback() } }
-                        : nil
-                )
-                .readableColumnWidth()
+        // Mount the composer (plus its banners) as a UIKit inputAccessoryView
+        // rather than a SwiftUI bottom safe-area inset. The accessory is
+        // physically attached to the keyboard, so it tracks
+        // `.scrollDismissesKeyboard(.interactively)` frame-by-frame instead of
+        // lagging behind on SwiftUI's animation curve. The message list keeps
+        // its automatic keyboard avoidance — iOS reports the accessory as part
+        // of the keyboard frame, so the list insets correctly whether the bar
+        // is docked or riding the keyboard. See ChatComposerAccessory.swift.
+        .background { composerAccessory }
+        .photosPicker(
+            isPresented: $showPhotoPicker,
+            selection: $photoPickerItems,
+            matching: .images
+        )
+        .fullScreenCover(isPresented: $showCamera) {
+            CameraPicker { image in
+                showCamera = false
+                if let image { cameraImage = image }
             }
+            .ignoresSafeArea()
         }
         .onAppear {
             // Set synchronously so a push arriving in the first few ms
@@ -753,6 +736,52 @@ struct ConversationView: View {
         .alert("出错", isPresented: .constant(error != nil)) {
             Button("好") { error = nil }
         } message: { Text(error ?? "") }
+    }
+
+    /// The composer + its banners (freeze / continue / @-mention picker),
+    /// mounted as a UIKit inputAccessoryView so it tracks the keyboard
+    /// frame-by-frame. Extracted from `body` so the large initializer doesn't
+    /// blow the type-checker's budget inside body's expression tree. See
+    /// ChatComposerAccessory.swift.
+    private var composerAccessory: some View {
+        ChatComposerAccessory(
+            content: ComposerAccessoryContent(
+                input: $input,
+                pendingAttachments: $pendingAttachments,
+                photoPickerItems: $photoPickerItems,
+                cameraImage: $cameraImage,
+                showFileImporter: $showFileImporter,
+                showPhotoPicker: $showPhotoPicker,
+                showCamera: $showCamera,
+                iAmFrozen: iAmFrozen,
+                pendingContinue: pendingContinue,
+                continueDeciding: continueDeciding,
+                conversationType: conversation.conversation_type ?? "",
+                mentionActive: mentionPrefix != nil,
+                mentionCandidates: mentionPrefix.map { mentionCandidates(prefix: $0) } ?? [],
+                canSend: canSend,
+                isStreaming: chatTurnTask != nil,
+                onSend: { Task { await send() } },
+                onStop: {
+                    chatTurnTask?.cancel()
+                    flushRevealImmediately()
+                },
+                // Show 检查 only when the conv has a single bot — group
+                // dispatches across multiple bots and user_user has none.
+                onLookback: (conversation.conversation_type == "user_bot"
+                             || conversation.conversation_type == "self")
+                    ? { Task { await triggerManualLookback() } }
+                    : nil,
+                onInsertMention: { sender in
+                    if let prefix = mentionPrefix {
+                        insertMention(sender, prefix: prefix)
+                    }
+                },
+                onDecideContinue: { pc, allow in
+                    Task { await decideContinue(pc, allow: allow) }
+                }
+            )
+        )
     }
 
     private var canSend: Bool {
@@ -1935,10 +1964,11 @@ struct ConversationView: View {
     // loadPendingContinueIfNeeded + loadHistory live in
     // ConversationView+Loading.swift.
 
-    // Group-only surfaces — groupSenderFor + frozenComposerBanner +
-    // mentionPrefix / mentionCandidates / mentionPickerOverlay /
-    // insertMention + continueRequestBanner / decideContinue — live in
-    // ConversationView+Group.swift.
+    // Group-only surfaces — groupSenderFor + mentionPrefix /
+    // mentionCandidates / insertMention + decideContinue — live in
+    // ConversationView+Group.swift. The composer + its banners (freeze /
+    // continue / @-mention picker) render inside the inputAccessoryView; see
+    // ChatComposerAccessory.swift.
 
     // applyModelPick + patchConversationModel + patchConversationVisionModel
     // + patchBotDefaultModel live in ConversationView+Model.swift.

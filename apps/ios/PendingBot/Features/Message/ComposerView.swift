@@ -21,6 +21,13 @@ struct ComposerView: View {
     /// Flipped true by the "文件" action tile; the host owns the
     /// `.fileImporter` sheet bound to it.
     @Binding var showFileImporter: Bool
+    /// Flipped true by the "图片" / "拍照" action tiles. The host owns the
+    /// `.photosPicker` / camera `.fullScreenCover` bound to these. Presenting
+    /// from the main view tree (not from inside the inputAccessoryView's
+    /// hosting controller) is what keeps those pickers reliable — same pattern
+    /// as `showFileImporter`.
+    @Binding var showPhotoPicker: Bool
+    @Binding var showCamera: Bool
     var canSend: Bool
     var onSend: () -> Void
     /// True while a bot reply is streaming. Send button morphs into a stop
@@ -141,8 +148,8 @@ struct ComposerView: View {
 
             if showActions {
                 ChatActionSheet(
-                    photoItems: $photoItems,
-                    cameraImage: $cameraImage,
+                    onPickPhoto: { showPhotoPicker = true },
+                    onPickCamera: { showCamera = true },
                     onPickFile: { showFileImporter = true },
                     onDismiss: { showActions = false },
                     onLookback: onLookback

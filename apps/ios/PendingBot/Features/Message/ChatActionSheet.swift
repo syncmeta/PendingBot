@@ -1,5 +1,4 @@
 import SwiftUI
-import PhotosUI
 import UIKit
 
 /// WeChat-style "+" action panel for the chat composer. Renders inline
@@ -17,10 +16,10 @@ import UIKit
 enum ModelPickScope { case conversation, bot }
 
 struct ChatActionSheet: View {
-    @Binding var photoItems: [PhotosPickerItem]
-    /// Image captured from the camera. ConversationView watches this and
-    /// runs the same upload pipeline as for library picks.
-    @Binding var cameraImage: UIImage?
+    /// Tapping the "图片" tile calls this; the host presents `.photosPicker`.
+    var onPickPhoto: () -> Void = {}
+    /// Tapping the "拍照" tile calls this; the host presents the camera cover.
+    var onPickCamera: () -> Void = {}
     /// Tapping the "文件" tile calls this; the host presents the system
     /// document picker (any file type).
     var onPickFile: () -> Void = {}
@@ -30,22 +29,27 @@ struct ChatActionSheet: View {
     /// user_user) — those skip the tile entirely.
     var onLookback: (() -> Void)? = nil
 
-    @State private var showCamera = false
+    // All pickers (photo / camera / file) are presented by the host from the
+    // main view tree via bindings, not from here — this panel lives inside the
+    // composer's inputAccessoryView, and presenting a sheet / fullScreenCover
+    // from a hosting controller embedded in the accessory is unreliable.
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 18) {
-                PhotosPicker(selection: $photoItems, matching: .images) {
+                Button {
+                    Haptics.tap()
+                    onPickPhoto()
+                    onDismiss()
+                } label: {
                     actionTileLabel(icon: "photo.on.rectangle.angled", label: "图片")
                 }
                 .buttonStyle(.plain)
-                .onChange(of: photoItems) { _, items in
-                    if !items.isEmpty { onDismiss() }
-                }
 
                 Button {
                     Haptics.tap()
-                    showCamera = true
+                    onPickCamera()
+                    onDismiss()
                 } label: {
                     actionTileLabel(icon: "camera", label: "拍照")
                 }
@@ -80,16 +84,6 @@ struct ChatActionSheet: View {
             Spacer(minLength: 0)
         }
         .background(Theme.Palette.canvas)
-        .fullScreenCover(isPresented: $showCamera) {
-            CameraPicker { image in
-                showCamera = false
-                if let image {
-                    cameraImage = image
-                    onDismiss()
-                }
-            }
-            .ignoresSafeArea()
-        }
     }
 
     private func actionTileLabel(icon: String, label: String) -> some View {

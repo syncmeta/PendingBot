@@ -119,6 +119,7 @@
 		EAE5D86E4ECF3FDA0C9C43D3 /* WelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E688431D1768A5D1A6F573EA /* WelcomeView.swift */; };
 		EDDC0F0C64844A46536D2ED4 /* EnvelopeArticleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33B8F3751DF5EDACE6B8E705 /* EnvelopeArticleView.swift */; };
 		F21D3DA278967B87BA15A3EF /* ComposerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3085FEC82B399B97022B1078 /* ComposerView.swift */; };
+		CA11AC0E55051C0DE0000001 /* ChatComposerAccessory.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA11AC0E55051C0DE0000002 /* ChatComposerAccessory.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -142,6 +143,7 @@
 		2F5A6C6876FF131B3D8AA437 /* MeTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeTabView.swift; sourceTree = "<group>"; };
 		30495B623EBB8262B0F70B38 /* Keychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Keychain.swift; sourceTree = "<group>"; };
 		3085FEC82B399B97022B1078 /* ComposerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerView.swift; sourceTree = "<group>"; };
+		CA11AC0E55051C0DE0000002 /* ChatComposerAccessory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatComposerAccessory.swift; sourceTree = "<group>"; };
 		31232B257324691ACAD4B56A /* ProfileBootstrapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileBootstrapView.swift; sourceTree = "<group>"; };
 		33B8F3751DF5EDACE6B8E705 /* EnvelopeArticleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvelopeArticleView.swift; sourceTree = "<group>"; };
 		33E761E1099E8B059DB355AB /* GroupQRCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupQRCard.swift; sourceTree = "<group>"; };
@@ -265,6 +267,7 @@
 				F932206D62405FD4C1F0143B /* BubbleView.swift */,
 				37E2067C1C372EB858B6A6DC /* ChatActionSheet.swift */,
 				3085FEC82B399B97022B1078 /* ComposerView.swift */,
+				CA11AC0E55051C0DE0000002 /* ChatComposerAccessory.swift */,
 				C99F8DD8956403453040B34E /* ConversationSettingsView.swift */,
 				F9E90A433CF0CAC8986218C6 /* ConversationView.swift */,
 				D177F1FF6ADC5CEEAFB768F9 /* ConversationView+Recall.swift */,
@@ -620,6 +623,7 @@
 				4B8F775758566FA94BB05F1B /* ColorHash.swift in Sources */,
 				F58AFBD54F00280FA78236C3 /* RelativeMessageTime.swift in Sources */,
 				F21D3DA278967B87BA15A3EF /* ComposerView.swift in Sources */,
+				CA11AC0E55051C0DE0000001 /* ChatComposerAccessory.swift in Sources */,
 				7D1661C95F98D7DCA6F08419 /* ContactsAPI.swift in Sources */,
 				7EC924CCEF279940B5934910 /* ConversationSettingsView.swift in Sources */,
 				091D2F4E1050EAF98F72B1B1 /* ConversationView.swift in Sources */,

@@ -1,0 +1,361 @@
+import SwiftUI
+import UIKit
+import PhotosUI
+
+// Mounts the chat composer (plus the banners that sit above it) as a UIKit
+// `inputAccessoryView` instead of a SwiftUI `.safeAreaInset(edge: .bottom)`.
+//
+// Why: with `.safeAreaInset`, the composer follows the keyboard via SwiftUI's
+// keyboard avoidance, which steps along an animation curve. The message list's
+// `.scrollDismissesKeyboard(.interactively)` moves the keyboard frame-by-frame
+// as the finger drags, so the two desync — the bar lags the finger, jerks, and
+// briefly overlaps on release. An `inputAccessoryView` is physically attached
+// to the keyboard, so it tracks the interactive drag perfectly (iMessage /
+// WeChat behaviour).
+//
+// Structure:
+//   • AccessoryOwnerController is a permanent first responder. Its
+//     `inputAccessoryView` is the bar, so the bar stays docked above the home
+//     indicator even when no keyboard is up. When the text view inside the bar
+//     becomes first responder the keyboard rises and the bar rides on top
+//     (the text view is a descendant of the accessory, so iOS keeps them
+//     glued); when it resigns we re-grab first responder to keep the bar.
+//   • ComposerBarContainerView self-sizes to the hosted SwiftUI content so the
+//     "+" panel / attachment tray / @-mention picker grow the bar.
+//   • The SwiftUI message list keeps its automatic keyboard avoidance — iOS
+//     reports the accessory as part of the keyboard frame, so the list insets
+//     correctly in both docked and raised states.
+//
+// State note: this view holds NO @State of its own — every value/binding/
+// closure is threaded in from ConversationView.body where the real @State
+// lives, because @State/@Environment do not cross the hosting-controller
+// boundary. Bindings and closures (get/set + capture of `self`) do cross
+// cleanly, which is why ConversationView keeps owning the state.
+
+// MARK: - SwiftUI content
+
+/// The bottom stack rendered inside the accessory: optional banners above the
+/// composer row. Mirrors the exact ordering the old `.safeAreaInset` block had.
+struct ComposerAccessoryContent: View {
+    @Binding var input: String
+    @Binding var pendingAttachments: [PendingAttachment]
+    @Binding var photoPickerItems: [PhotosPickerItem]
+    @Binding var cameraImage: UIImage?
+    @Binding var showFileImporter: Bool
+    @Binding var showPhotoPicker: Bool
+    @Binding var showCamera: Bool
+
+    let iAmFrozen: Bool
+    let pendingContinue: ConversationView.PendingContinue?
+    let continueDeciding: Bool
+    let conversationType: String
+    let mentionActive: Bool
+    let mentionCandidates: [GroupBubbleSender]
+    let canSend: Bool
+    let isStreaming: Bool
+
+    let onSend: () -> Void
+    let onStop: () -> Void
+    let onLookback: (() -> Void)?
+    let onInsertMention: (GroupBubbleSender) -> Void
+    let onDecideContinue: (ConversationView.PendingContinue, Bool) -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if iAmFrozen {
+                FrozenComposerBannerView()
+                    .readableColumnWidth()
+            }
+            if let pc = pendingContinue {
+                ContinueRequestBannerView(pc: pc, deciding: continueDeciding, onDecide: onDecideContinue)
+                    .readableColumnWidth()
+            }
+            if conversationType == "group", mentionActive, !mentionCandidates.isEmpty {
+                MentionPickerView(candidates: mentionCandidates, onPick: onInsertMention)
+                    .readableColumnWidth()
+            }
+            ComposerView(
+                input: $input,
+                pending: $pendingAttachments,
+                photoItems: $photoPickerItems,
+                cameraImage: $cameraImage,
+                showFileImporter: $showFileImporter,
+                showPhotoPicker: $showPhotoPicker,
+                showCamera: $showCamera,
+                canSend: canSend,
+                onSend: onSend,
+                isStreaming: isStreaming,
+                onStop: onStop,
+                onLookback: onLookback
+            )
+            .readableColumnWidth()
+        }
+    }
+}
+
+// MARK: - Banners (parameterized copies of the old ConversationView+Group
+// view-builders, which read @State directly and so couldn't cross the
+// hosting boundary).
+
+private struct FrozenComposerBannerView: View {
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(Theme.Palette.amber)
+                .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("已达本群 PND 上限,新消息和发送已暂停")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Theme.Palette.ink)
+                Text("提高上限或为账户充值后会自动恢复")
+                    .font(.caption)
+                    .foregroundStyle(Theme.Palette.inkMuted)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, Theme.Metrics.gutter)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.Palette.amberBg)
+    }
+}
+
+private struct ContinueRequestBannerView: View {
+    let pc: ConversationView.PendingContinue
+    let deciding: Bool
+    let onDecide: (ConversationView.PendingContinue, Bool) -> Void
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text("机器人还有话想说,让它继续吗?")
+                .font(Theme.Fonts.body)
+                .foregroundStyle(Theme.Palette.ink)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            if deciding {
+                ProgressView()
+            } else {
+                Button {
+                    onDecide(pc, false)
+                } label: {
+                    Text("✕ 闭嘴")
+                        .font(Theme.Fonts.body)
+                        .foregroundStyle(.red)
+                }
+                .buttonStyle(.bordered)
+                Button {
+                    onDecide(pc, true)
+                } label: {
+                    Text("✓ 继续")
+                        .font(Theme.Fonts.body)
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(.horizontal, Theme.Metrics.gutter)
+        .padding(.vertical, 10)
+        .background(Theme.Palette.surface)
+    }
+}
+
+private struct MentionPickerView: View {
+    let candidates: [GroupBubbleSender]
+    let onPick: (GroupBubbleSender) -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(candidates, id: \.id) { sender in
+                Button {
+                    onPick(sender)
+                } label: {
+                    HStack(spacing: 10) {
+                        switch sender.kind {
+                        case .bot:
+                            BotAvatar(emojiSeed: sender.id, colorSeed: sender.id, size: 24)
+                        case .user:
+                            UserAvatar(seed: sender.avatarSeed, attachmentId: sender.avatarPath, size: 24)
+                        }
+                        Text(sender.displayName)
+                            .font(Theme.Fonts.body)
+                            .foregroundStyle(Theme.Palette.ink)
+                        Spacer()
+                        if sender.kind == .bot {
+                            Text("机器人")
+                                .font(Theme.Fonts.rounded(size: 10, weight: .medium))
+                                .foregroundStyle(Theme.Palette.inkMuted)
+                        }
+                    }
+                    .padding(.horizontal, Theme.Metrics.gutter)
+                    .padding(.vertical, 8)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                Divider().opacity(0.4)
+            }
+        }
+        .background(Theme.Palette.surface)
+        .overlay(
+            Rectangle().frame(height: 0.5).foregroundStyle(Theme.Palette.hairline),
+            alignment: .top
+        )
+    }
+}
+
+// MARK: - UIKit bridge
+
+/// Installs the first-responder owner that vends the composer as an
+/// `inputAccessoryView`. Its own view is inert (zero-impact, non-interactive);
+/// the visible bar is the separate accessory.
+struct ChatComposerAccessory<Content: View>: UIViewControllerRepresentable {
+    let content: Content
+
+    func makeUIViewController(context: Context) -> AccessoryOwnerController {
+        AccessoryOwnerController()
+    }
+
+    func updateUIViewController(_ uiViewController: AccessoryOwnerController, context: Context) {
+        // Rebuild the hosted root each render so fresh values/closures from
+        // ConversationView.body cross the boundary (the content does not
+        // observe @State directly).
+        uiViewController.setContent(AnyView(content))
+    }
+
+    static func dismantleUIViewController(_ uiViewController: AccessoryOwnerController, coordinator: ()) {
+        uiViewController.tearDown()
+    }
+}
+
+final class AccessoryOwnerController: UIViewController {
+    private let host = UIHostingController(rootView: AnyView(EmptyView()))
+    private lazy var barContainer = ComposerBarContainerView(host: host)
+    private var isTearingDown = false
+
+    override var canBecomeFirstResponder: Bool { !isTearingDown }
+    override var inputAccessoryView: UIView? { barContainer }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .clear
+        view.isUserInteractionEnabled = false
+        host.view.backgroundColor = .clear
+        // Lets the hosting view's intrinsicContentSize track the SwiftUI
+        // content so the container can self-size when the "+" panel opens.
+        host.sizingOptions = [.intrinsicContentSize]
+    }
+
+    func setContent(_ content: AnyView) {
+        host.rootView = content
+        barContainer.contentDidChange()
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        // Reset in case the view is returning after a presented sheet/cover
+        // (camera, photo picker) temporarily took the screen.
+        isTearingDown = false
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(keyboardWillHide(_:)),
+            name: UIResponder.keyboardWillHideNotification,
+            object: nil
+        )
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        if !isFirstResponder, !isTearingDown {
+            becomeFirstResponder()
+        }
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        // Drop the bar when leaving the screen (navigation pop, or a sheet
+        // covering us) so it doesn't linger over whatever comes next.
+        NotificationCenter.default.removeObserver(
+            self, name: UIResponder.keyboardWillHideNotification, object: nil)
+        resignFirstResponder()
+    }
+
+    /// When the text view resigns (interactive dismiss completes, or the "+"
+    /// panel opens), first responder would otherwise fall to nil and the bar
+    /// would vanish. Re-grab it so the bar stays docked at the bottom.
+    @objc private func keyboardWillHide(_ note: Notification) {
+        guard !isTearingDown, view.window != nil else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.isTearingDown, self.view.window != nil else { return }
+            if !self.isFirstResponder {
+                self.becomeFirstResponder()
+            }
+        }
+    }
+
+    func tearDown() {
+        isTearingDown = true
+        NotificationCenter.default.removeObserver(self)
+        resignFirstResponder()
+    }
+}
+
+/// Self-sizing container for the accessory. Drives its height from the hosted
+/// SwiftUI content plus the bottom safe area (the home-indicator strip when
+/// docked; zero when riding the keyboard, which iOS reports automatically).
+final class ComposerBarContainerView: UIView {
+    private let host: UIViewController
+    private var lastHeight: CGFloat = -1
+
+    init(host: UIViewController) {
+        self.host = host
+        super.init(frame: CGRect(x: 0, y: 0, width: UIScreen.main.bounds.width, height: 56))
+        // Required for the inputAccessoryView system to honour
+        // intrinsicContentSize as the bar's height.
+        autoresizingMask = .flexibleHeight
+        host.view.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(host.view)
+        NSLayoutConstraint.activate([
+            host.view.leadingAnchor.constraint(equalTo: leadingAnchor),
+            host.view.trailingAnchor.constraint(equalTo: trailingAnchor),
+            host.view.topAnchor.constraint(equalTo: topAnchor),
+            // Content sits above the safe-area strip; the strip is added back
+            // into intrinsicContentSize so the bar reserves room for it.
+            host.view.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func contentDidChange() {
+        invalidateIntrinsicContentSize()
+    }
+
+    private func measuredHeight() -> CGFloat {
+        let width = bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width
+        let fitted = host.view.systemLayoutSizeFitting(
+            CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+        return fitted.height + safeAreaInsets.bottom
+    }
+
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: UIView.noIntrinsicMetric, height: measuredHeight())
+    }
+
+    override func safeAreaInsetsDidChange() {
+        super.safeAreaInsetsDidChange()
+        invalidateIntrinsicContentSize()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // Catch height changes that come from the hosted content itself
+        // (e.g. the "+" panel toggling) rather than from setContent. The
+        // guard prevents an invalidate→layout→invalidate loop.
+        let h = measuredHeight()
+        if abs(h - lastHeight) > 0.5 {
+            lastHeight = h
+            invalidateIntrinsicContentSize()
+        }
+    }
+}

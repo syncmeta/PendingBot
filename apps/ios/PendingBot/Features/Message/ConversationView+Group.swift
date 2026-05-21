@@ -9,14 +9,16 @@ import SwiftUI
 //
 //   • @-mention composer — mentionPrefix detects an in-progress mention
 //     trigger at the end of `input`, mentionCandidates filters
-//     groupSenders against it, mentionPickerOverlay renders the picker
-//     above the composer, and insertMention rewrites `input` when a
-//     candidate is tapped.
+//     groupSenders against it, and insertMention rewrites `input` when a
+//     candidate is tapped. (The picker view itself lives in
+//     ChatComposerAccessory.swift since it renders inside the composer's
+//     inputAccessoryView.)
 //
-//   • Group billing freeze + continue-request banner — frozenComposerBanner
-//     shows when the caller crossed their per-group PND cap (group conv
-//     only); continueRequestBanner / decideContinue surface the worker's
-//     "bot wants to keep going" vote in user_bot/group flows.
+//   • Group billing freeze + continue-request vote — decideContinue posts
+//     the worker's "bot wants to keep going" allow/deny in user_bot/group
+//     flows. (The freeze + continue banner views live in
+//     ChatComposerAccessory.swift; they read values threaded in from
+//     ConversationView.body.)
 //
 // Everything stays inside ConversationView via extension; body in the
 // main file calls these as plain methods/computed vars.
@@ -39,30 +41,6 @@ extension ConversationView {
         default: return nil
         }
         return groupSenders[key]
-    }
-
-    /// Banner shown above the composer when the caller is frozen out of
-    /// the group. Composer itself stays mounted (so the field still
-    /// shows the typed-but-not-sent draft) but `canSend` is false.
-    var frozenComposerBanner: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(Theme.Palette.amber)
-                .padding(.top, 1)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("已达本群 PND 上限,新消息和发送已暂停")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(Theme.Palette.ink)
-                Text("提高上限或为账户充值后会自动恢复")
-                    .font(.caption)
-                    .foregroundStyle(Theme.Palette.inkMuted)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, Theme.Metrics.gutter)
-        .padding(.vertical, 8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.Palette.amberBg)
     }
 
     /// Detects an in-progress @-mention at the end of `input`. Returns
@@ -104,50 +82,6 @@ extension ConversationView {
             .map { $0 }
     }
 
-    @ViewBuilder
-    func mentionPickerOverlay(prefix: String) -> some View {
-        let candidates = mentionCandidates(prefix: prefix)
-        if candidates.isEmpty {
-            EmptyView()
-        } else {
-            VStack(spacing: 0) {
-                ForEach(candidates, id: \.id) { sender in
-                    Button {
-                        insertMention(sender, prefix: prefix)
-                    } label: {
-                        HStack(spacing: 10) {
-                            switch sender.kind {
-                            case .bot:
-                                BotAvatar(emojiSeed: sender.id, colorSeed: sender.id, size: 24)
-                            case .user:
-                                UserAvatar(seed: sender.avatarSeed, attachmentId: sender.avatarPath, size: 24)
-                            }
-                            Text(sender.displayName)
-                                .font(Theme.Fonts.body)
-                                .foregroundStyle(Theme.Palette.ink)
-                            Spacer()
-                            if sender.kind == .bot {
-                                Text("机器人")
-                                    .font(Theme.Fonts.rounded(size: 10, weight: .medium))
-                                    .foregroundStyle(Theme.Palette.inkMuted)
-                            }
-                        }
-                        .padding(.horizontal, Theme.Metrics.gutter)
-                        .padding(.vertical, 8)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    Divider().opacity(0.4)
-                }
-            }
-            .background(Theme.Palette.surface)
-            .overlay(
-                Rectangle().frame(height: 0.5).foregroundStyle(Theme.Palette.hairline),
-                alignment: .top,
-            )
-        }
-    }
-
     func insertMention(_ sender: GroupBubbleSender, prefix: String) {
         // Drop the trailing "@<prefix>" and re-insert "@<displayName> ".
         // Spaces inside nicknames stay because we replace by length, not
@@ -157,39 +91,6 @@ extension ConversationView {
         let head = String(input.dropLast(dropCount))
         input = head + "@" + sender.displayName + " "
         Haptics.tap()
-    }
-
-    @ViewBuilder
-    func continueRequestBanner(_ pc: PendingContinue) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text("机器人还有话想说,让它继续吗?")
-                .font(Theme.Fonts.body)
-                .foregroundStyle(Theme.Palette.ink)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 8)
-            if continueDeciding {
-                ProgressView()
-            } else {
-                Button {
-                    Task { await decideContinue(pc, allow: false) }
-                } label: {
-                    Text("✕ 闭嘴")
-                        .font(Theme.Fonts.body)
-                        .foregroundStyle(.red)
-                }
-                .buttonStyle(.bordered)
-                Button {
-                    Task { await decideContinue(pc, allow: true) }
-                } label: {
-                    Text("✓ 继续")
-                        .font(Theme.Fonts.body)
-                }
-                .buttonStyle(.borderedProminent)
-            }
-        }
-        .padding(.horizontal, Theme.Metrics.gutter)
-        .padding(.vertical, 10)
-        .background(Theme.Palette.surface)
     }
 
     func decideContinue(_ pc: PendingContinue, allow: Bool) async {
