@@ -8,13 +8,9 @@ import { ActionButton } from '@/components/action-button';
 const LINKS: { href: string; label: string }[] = [
   { href: '/app-stats', label: 'App stats' },
   { href: '/billing', label: 'Billing' },
-  { href: '/providers', label: 'Providers' },
-  { href: '/models', label: 'Models' },
-  { href: '/aliases', label: 'Aliases' },
   { href: '/web-tool-prices', label: 'Web tools' },
   { href: '/mcp-servers', label: 'MCP servers' },
   { href: '/tools', label: 'Tools' },
-  { href: '/routing-rules', label: 'Routing' },
   { href: '/prompts', label: 'Prompts' },
   { href: '/letters', label: 'Letters' },
   { href: '/users', label: 'Users' },
