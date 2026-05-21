@@ -50,6 +50,7 @@ struct CallView: View {
                 controlRow
                     .padding(.bottom, 40)
             }
+            .frame(maxWidth: .infinity)
             .padding()
             minimizeButton
                 .padding(.top, 12)

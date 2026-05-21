@@ -32,7 +32,8 @@ struct GroupCallView: View {
             VStack(spacing: 0) {
                 topBar
                     .padding(.top, 44)
-                    .padding(.horizontal, 24)
+                    .padding(.leading, 24)
+                    .padding(.trailing, 76)
                 ScrollView {
                     rosterSection
                         .padding(.horizontal, 32)
@@ -45,8 +46,9 @@ struct GroupCallView: View {
                     .padding(.bottom, 28)
             }
             minimizeButton
+                .frame(maxWidth: .infinity, alignment: .trailing)
                 .padding(.top, 44)
-                .padding(.leading, 16)
+                .padding(.trailing, 16)
         }
         .task { await session.start() }
         .onChange(of: session.phase) { _, new in handlePhaseChange(new) }
