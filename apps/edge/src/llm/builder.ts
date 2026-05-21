@@ -23,9 +23,18 @@ export interface BuildMessagesInput {
     // clientTz is available (group dispatch).
     tz?: string | null;
   };
-  // Bot's own representation (Honcho passive observation) cached in KV.
-  // Null on cold start — we then fall back to the identity-quest meta-prompt.
+  // ① Bot's own GLOBAL self-representation (Honcho passive observation)
+  // cached in KV. Null on cold start — we then fall back to the
+  // identity-quest meta-prompt.
   botMemory: Memory | null;
+  // ② Bot's LOCAL model of this user ("how I read this person"). Pair-scoped
+  // theory-of-mind. Only set for regular 1v1 turns; omitted in group / self.
+  // Null until first refresh → section dropped.
+  botViewOfUser?: Memory | null;
+  // ④ User's LOCAL model of this bot ("how this person seems to see me").
+  // Pair-scoped — lets the bot see itself through the user's eyes, which can
+  // diverge from its own self-image (①). Same gating/cold-start as ②.
+  userViewOfBot?: Memory | null;
   // Skills the user has subscribed (globally and/or for this conv). Each
   // contributes a `## Skill: ...` block to system content.
   skills: Array<{ name: string; description: string; body: string }>;
@@ -145,6 +154,24 @@ async function buildSelfSection(
   const hasMemory = !!botMemory && botMemory.representation.trim().length > 0;
   if (!hasMemory) return loadPrompt(supa, 'identity-quest', locale);
   return `## How I observe myself (passive)\n${botMemory!.representation.trim()}`;
+}
+
+// ② Bot's standing read on the person it's talking to. Honcho's local
+// representation of the user from the bot's perspective — pooled across every
+// session the pair shares. Passive context, not a directive.
+function buildUserModelSection(botViewOfUser: Memory | null | undefined): string {
+  const rep = botViewOfUser?.representation.trim();
+  if (!rep) return '';
+  return `## How I read this person (passive · 我对ta的认知)\n${rep}`;
+}
+
+// ④ How the user seems to model the bot. Honcho's representation of the bot
+// from the *user's* perspective — "myself through their eyes". May diverge
+// from the bot's own self-image above; that gap is the point.
+function buildPerceivedSelfSection(userViewOfBot: Memory | null | undefined): string {
+  const rep = userViewOfBot?.representation.trim();
+  if (!rep) return '';
+  return `## How this person seems to see me (passive · ta 眼中的我)\n${rep}`;
 }
 
 // The bot's own name. A plain fact, not a persona — placed near the top
@@ -381,6 +408,8 @@ export type BuildSystemPromptInput = Pick<
   BuildMessagesInput,
   | 'bot'
   | 'botMemory'
+  | 'botViewOfUser'
+  | 'userViewOfBot'
   | 'skills'
   | 'botNote'
   | 'chatMemo'
@@ -417,6 +446,9 @@ async function buildStablePersona(
   ]);
   const identitySection = buildIdentitySection(input.bot.display_name);
   const botTzSection = buildBotTzSection(input.bot.tz);
+  // Theory-of-mind context (1v1 only; null/omitted elsewhere → '').
+  const userModelSection = buildUserModelSection(input.botViewOfUser);       // ②
+  const perceivedSelfSection = buildPerceivedSelfSection(input.userViewOfBot); // ④
   const skillsSection = buildSkillsSection(input.skills);
   const botNoteSection = buildBotNoteSection(input.botNote);
   const chatMemoSection = buildChatMemoSection(input.chatMemo);
@@ -431,7 +463,8 @@ async function buildStablePersona(
         : SINGLE_INSTRUCTIONS;
   return [
     platform, identitySection, botTzSection, modeInstr,
-    selfSection, skillsSection, botNoteSection, chatMemoSection,
+    selfSection, userModelSection, perceivedSelfSection,
+    skillsSection, botNoteSection, chatMemoSection,
   ].filter(Boolean).join('\n\n');
 }
 

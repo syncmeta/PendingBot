@@ -11,9 +11,25 @@ import {
 } from '../llm/router';
 import { uuidv7 } from './ids';
 
-// Long-term memory cache backed by CF Workers KV. Two key namespaces:
-//   user:${userId}  — derived "what bots see in this user" (transparency UI only)
-//   bot:${botId}    — bot self-representation (injected into bot's system prompt)
+// Long-term memory cache backed by CF Workers KV. Honcho gives four
+// theory-of-mind representations per (bot, user) pair — observer × observed —
+// and we cache each under its own key namespace:
+//   bot:${botId}                  — ① bot's GLOBAL self-model (observer=observed=bot).
+//                                    Injected into the bot's system prompt as "how I
+//                                    observe myself". Cross-user (the bot's identity).
+//   user:${userId}                — ③ user's GLOBAL self-model. Transparency UI +
+//                                    self-chat self-section.
+//   botview:${botId}:${userId}    — ② bot's LOCAL model of the user ("how I read this
+//                                    person"). Pair-scoped, pools across every session
+//                                    the two share.
+//   userview:${userId}:${botId}   — ④ user's LOCAL model of the bot ("how this person
+//                                    seems to see me"). Pair-scoped — lets the bot see
+//                                    itself through the user's eyes, which can diverge
+//                                    from its own self-image (①).
+//
+// ② and ④ are injected into the system prompt only for regular 1v1 turns
+// (not group: no single "you"; not self-chat: bot ≡ user). ① and ③ are the
+// global self-models.
 //
 // Refresh is lazy: it only fires when the client's local context window has
 // moved past the messages this memory snapshot covers. Plan/02 — "刷新机制
@@ -28,6 +44,8 @@ export interface Memory {
 
 const USER_PREFIX = 'user:';
 const BOT_PREFIX = 'bot:';
+const BOT_VIEW_PREFIX = 'botview:';   // ② bot→user, key botview:${botId}:${userId}
+const USER_VIEW_PREFIX = 'userview:'; // ④ user→bot, key userview:${userId}:${botId}
 
 export async function getUserMemory(env: Env, userId: string): Promise<Memory | null> {
   return env.MEMORY.get<Memory>(USER_PREFIX + userId, 'json');
@@ -43,6 +61,32 @@ export async function putUserMemory(env: Env, userId: string, memory: Memory): P
 
 export async function putBotMemory(env: Env, botId: string, memory: Memory): Promise<void> {
   await env.MEMORY.put(BOT_PREFIX + botId, JSON.stringify(memory));
+}
+
+/// ② bot's local model of this user ("how I read this person").
+export async function getBotViewOfUser(
+  env: Env, botId: string, userId: string,
+): Promise<Memory | null> {
+  return env.MEMORY.get<Memory>(`${BOT_VIEW_PREFIX}${botId}:${userId}`, 'json');
+}
+
+export async function putBotViewOfUser(
+  env: Env, botId: string, userId: string, memory: Memory,
+): Promise<void> {
+  await env.MEMORY.put(`${BOT_VIEW_PREFIX}${botId}:${userId}`, JSON.stringify(memory));
+}
+
+/// ④ user's local model of this bot ("how this person seems to see me").
+export async function getUserViewOfBot(
+  env: Env, userId: string, botId: string,
+): Promise<Memory | null> {
+  return env.MEMORY.get<Memory>(`${USER_VIEW_PREFIX}${userId}:${botId}`, 'json');
+}
+
+export async function putUserViewOfBot(
+  env: Env, userId: string, botId: string, memory: Memory,
+): Promise<void> {
+  await env.MEMORY.put(`${USER_VIEW_PREFIX}${userId}:${botId}`, JSON.stringify(memory));
 }
 
 export interface MaybeRefreshInput {
@@ -112,14 +156,28 @@ export async function maybeRefreshMemory(input: MaybeRefreshInput): Promise<void
     // Pull fresh representations and update KV. Each peer is updated only
     // if it actually had catch-up to do, so we don't overwrite a fresher
     // snapshot taken by a parallel turn.
+    const now = new Date().toISOString();
+    // Each observer peer refreshes two perspectives together: its GLOBAL
+    // self-model (no target) and its LOCAL model of the other peer (target).
+    //   user observer → ③ user self + ④ user's-view-of-bot
+    //   bot  observer → ① bot self  + ② bot's-view-of-user
     if (sinceForUser) {
       try {
         const peer = await honcho.peer(userPeerId(userId));
-        const ctx = await peer.context();
+        const [selfCtx, viewOfBot] = await Promise.all([
+          peer.context(),                                 // ③ user self
+          peer.context({ target: botPeerId(botId) }),     // ④ user → bot
+        ]);
         await putUserMemory(env, userId, {
-          card: ctx.peerCard ?? [],
-          representation: ctx.representation ?? '',
-          syncedAt: new Date().toISOString(),
+          card: selfCtx.peerCard ?? [],
+          representation: selfCtx.representation ?? '',
+          syncedAt: now,
+          lastCoveredMessageId: oldestContextMessageId,
+        });
+        await putUserViewOfBot(env, userId, botId, {
+          card: viewOfBot.peerCard ?? [],
+          representation: viewOfBot.representation ?? '',
+          syncedAt: now,
           lastCoveredMessageId: oldestContextMessageId,
         });
       } catch (err) {
@@ -129,11 +187,20 @@ export async function maybeRefreshMemory(input: MaybeRefreshInput): Promise<void
     if (sinceForBot) {
       try {
         const peer = await honcho.peer(botPeerId(botId));
-        const ctx = await peer.context();
+        const [selfCtx, viewOfUser] = await Promise.all([
+          peer.context(),                                 // ① bot self
+          peer.context({ target: userPeerId(userId) }),   // ② bot → user
+        ]);
         await putBotMemory(env, botId, {
-          card: ctx.peerCard ?? [],
-          representation: ctx.representation ?? '',
-          syncedAt: new Date().toISOString(),
+          card: selfCtx.peerCard ?? [],
+          representation: selfCtx.representation ?? '',
+          syncedAt: now,
+          lastCoveredMessageId: oldestContextMessageId,
+        });
+        await putBotViewOfUser(env, botId, userId, {
+          card: viewOfUser.peerCard ?? [],
+          representation: viewOfUser.representation ?? '',
+          syncedAt: now,
           lastCoveredMessageId: oldestContextMessageId,
         });
       } catch (err) {

@@ -35,7 +35,12 @@ import {
   summarizeAttachments,
 } from '../../llm/vision';
 import { modelSupportsVision } from '../../llm/catalog';
-import { getBotMemory, getUserMemory } from '../memory';
+import {
+  getBotMemory,
+  getUserMemory,
+  getBotViewOfUser,
+  getUserViewOfBot,
+} from '../memory';
 import { resolveInventory } from '../attachment-cache';
 import { classifyAttachment, sha256Hex, r2KeyForHash } from '../attachments';
 import {
@@ -382,12 +387,19 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   // scope which user skills are visible this turn — skills the user
   // tagged for the other provider stay hidden.
   const turnProviderSlug = resolveProviderSlug(input.providerOverride);
-  const [botMemory, subsBundle, botNote, chatMemo] = await Promise.all([
-    input.isSelfChat ? getUserMemory(env, userId) : getBotMemory(env, bot.id),
-    resolveSubscriptions(env, supa, userId, conversationId, turnProviderSlug, noop),
-    resolveBotNote(env, supa, bot.id, userId, noop),
-    resolveChatMemo(env, supa, bot.id, conversationId, noop),
-  ]);
+  // Theory-of-mind sections (② bot→user, ④ user→bot) are pair-scoped and
+  // only make sense for a regular 1v1: a group has no single "you", and in a
+  // self-chat the bot ≡ the user. Skip the KV reads otherwise.
+  const relational = !input.isSelfChat && !(input.inGroup ?? false);
+  const [botMemory, subsBundle, botNote, chatMemo, botViewOfUser, userViewOfBot] =
+    await Promise.all([
+      input.isSelfChat ? getUserMemory(env, userId) : getBotMemory(env, bot.id),
+      resolveSubscriptions(env, supa, userId, conversationId, turnProviderSlug, noop),
+      resolveBotNote(env, supa, bot.id, userId, noop),
+      resolveChatMemo(env, supa, bot.id, conversationId, noop),
+      relational ? getBotViewOfUser(env, bot.id, userId) : Promise.resolve(null),
+      relational ? getUserViewOfBot(env, userId, bot.id) : Promise.resolve(null),
+    ]);
   const skills = subsBundle.skills.map((s) => ({
     name: s.name,
     description: s.description,
@@ -536,7 +548,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   const messages: ChatCompletionMessageParam[] = await buildMessages(
     supa,
     {
-      bot, botMemory, skills, botNote, chatMemo,
+      bot, botMemory, botViewOfUser, userViewOfBot, skills, botNote, chatMemo,
       lookbacks: activeLookbacks,
       recentContext, newMessage,
       currentImageParts,
