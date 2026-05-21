@@ -172,6 +172,7 @@ async function buildBotSpec(
       chatMemo: null,
     },
     locale,
+    'voice',
   );
 
   return {

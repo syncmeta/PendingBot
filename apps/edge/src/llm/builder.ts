@@ -387,13 +387,19 @@ export type BuildSystemPromptInput = Pick<
   | 'attachmentInventory'
 >;
 
+// Which surface the prompt is for. 'text' is the default IM chat; 'voice' is a
+// realtime call, which swaps the platform core for the spoken-style `voice`
+// prompt and drops the text-only bubble/single output-mode instructions.
+export type PromptSurface = 'text' | 'voice';
+
 export async function buildSystemPrompt(
   supa: SupabaseClient,
   input: BuildSystemPromptInput,
   locale: Locale = DEFAULT_LOCALE,
+  surface: PromptSurface = 'text',
 ): Promise<string> {
   const [platform, selfSection] = await Promise.all([
-    loadPrompt(supa, 'system', locale),
+    loadPrompt(supa, surface === 'voice' ? 'voice' : 'system', locale),
     buildSelfSection(supa, input.botMemory, locale),
   ]);
   const identitySection = buildIdentitySection(input.bot.display_name);
@@ -403,7 +409,14 @@ export async function buildSystemPrompt(
   const chatMemoSection = buildChatMemoSection(input.chatMemo);
   const lookbackSection = buildLookbackSection(input.lookbacks);
   const attachmentSection = buildAttachmentInventorySection(input.attachmentInventory);
-  const modeInstr = input.bot.output_mode === 'bubble' ? BUBBLE_INSTRUCTIONS : SINGLE_INSTRUCTIONS;
+  // Bubble/single segmentation is a text-chat concept; voice has no message
+  // splitting, so the mode instruction drops out (filtered as '' below).
+  const modeInstr =
+    surface === 'voice'
+      ? ''
+      : input.bot.output_mode === 'bubble'
+        ? BUBBLE_INSTRUCTIONS
+        : SINGLE_INSTRUCTIONS;
   // attachmentSection sits between lookbacks and modeInstr — out of the
   // cached prefix because the inventory mutates with every new image,
   // before the always-mutating mode/recent-turn segment. chat-memo sits
