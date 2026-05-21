@@ -5,7 +5,7 @@ import type { Env } from '../types';
 //   `openrouter`        — OpenRouter passthrough, Chat Completions dialect
 //   `openai`            — OpenAI native, Responses API dialect
 //   `anthropic`         — Anthropic native, Messages API (/anthropic/v1/messages)
-//   `google-ai-studio`  — Gemini native, generateContent (/google-ai-studio/v1/…)
+//   `google-ai-studio`  — Gemini native, generateContent (/google-ai-studio/v1beta/…)
 //
 // Anthropic and Gemini speak their OWN native protocols — NOT the OpenAI
 // Chat Completions dialect and NOT the AI Gateway /compat translation
