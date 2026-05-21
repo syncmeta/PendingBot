@@ -332,6 +332,14 @@ struct ManageBotSheet: View {
     @State private var initialModelProvider: String?
     @State private var visibility: String = "private"
     @State private var voiceCallEnabled: Bool = false
+    /// Text-chat segmentation. true = 'bubble' (reply splits into
+    /// WeChat-style bubbles), false = 'single' (one block). Loaded from
+    /// the bots row on appear; persisted via the edge PATCH (not the
+    /// direct-supabase save below) so the worker's KV bot-cache is busted
+    /// and the change takes effect on the next turn instead of after the
+    /// 1h cache TTL.
+    @State private var outputBubble: Bool = true
+    @State private var initialOutputBubble: Bool = true
     /// IANA tz the bot considers its own. Only meaningful on public bots
     /// — for private bots the column stays NULL and the bot follows the
     /// listener's clientTz like before. Loaded from the bots row on
@@ -374,6 +382,13 @@ struct ManageBotSheet: View {
                     Toggle("语音通话", isOn: $voiceCallEnabled)
                 } footer: {
                     Text("打开后,聊天页顶部会出现电话按钮,可以和这个机器人语音通话。计费走实时音频用量。")
+                        .font(Theme.Fonts.caption)
+                }
+
+                Section {
+                    Toggle("分段气泡", isOn: $outputBubble)
+                } footer: {
+                    Text("打开后,机器人会把回复切成多条短气泡,更像真人聊天;关掉则一整段发出。")
                         .font(Theme.Fonts.caption)
                 }
 
@@ -546,10 +561,15 @@ struct ManageBotSheet: View {
     /// row so the pickers pre-select the right values and the dirty
     /// check is accurate.
     private func loadModelProvider() async {
-        struct Row: Decodable { let model_provider: String?; let tz: String?; let slug: String? }
+        struct Row: Decodable {
+            let model_provider: String?
+            let tz: String?
+            let slug: String?
+            let output_mode: String?
+        }
         if let row: Row = try? await SupabaseStack.shared
             .from("bots")
-            .select("model_provider, tz, slug")
+            .select("model_provider, tz, slug, output_mode")
             .eq("id", value: initial.id)
             .single()
             .execute()
@@ -558,6 +578,9 @@ struct ManageBotSheet: View {
             initialModelProvider = row.model_provider
             slug = row.slug ?? ""
             initialSlug = row.slug ?? ""
+            let bubble = row.output_mode == "bubble"
+            outputBubble = bubble
+            initialOutputBubble = bubble
             // Public bots have a tz from creation/backfill ('Etc/UTC'
             // for preset, creator-device-tz for user-created). The
             // empty initial state lets the dirty check distinguish
@@ -576,6 +599,7 @@ struct ManageBotSheet: View {
         if modelSlug != (initial.model_id ?? "") { return true }
         if modelProvider != initialModelProvider { return true }
         if voiceCallEnabled != (initial.voice_call_enabled ?? false) { return true }
+        if outputBubble != initialOutputBubble { return true }
         if visibility != (initial.visibility ?? "public_open") { return true }
         // slug renames only matter on public bots (private bots keep their
         // synthetic slug and never send it).
@@ -655,6 +679,16 @@ struct ManageBotSheet: View {
                 .update(payload)
                 .eq("id", value: initial.id)
                 .execute()
+            // output_mode is the one column we route through the worker
+            // (PATCH /v1/bots) rather than direct-supabase: the handler
+            // busts the KV bot-cache, so the segmentation change lands on
+            // the next turn instead of waiting out the 1h cache TTL.
+            if outputBubble != initialOutputBubble {
+                struct ModeBody: Encodable { let output_mode: String }
+                try await APIClient().patchVoid(
+                    "v1/bots/\(initial.id)",
+                    body: ModeBody(output_mode: outputBubble ? "bubble" : "single"))
+            }
             onChanged()
             Haptics.success()
             dismiss()
