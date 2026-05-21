@@ -203,6 +203,11 @@ export async function openGeminiStream(
     tools: ChatCompletionTool[];
   },
   signal: AbortSignal,
+  // BYOK key alias → cf-aig-byok-alias header. Gemini 3.x isn't on the
+  // gateway's Unified Billing native passthrough, so Google rides a stored
+  // BYOK key; a non-`default` alias must be named explicitly or the
+  // gateway forwards keyless and Google answers 403 "unregistered callers".
+  byokAlias?: string,
 ): Promise<AsyncIterable<LlmStreamChunk>> {
   const body = toGeminiRequest(params.messages, params.tools);
   // Must be `/v1beta/…`, NOT `/v1/…`: Google's stable `v1`
@@ -218,6 +223,7 @@ export async function openGeminiStream(
     headers: {
       'Content-Type': 'application/json',
       'cf-aig-authorization': `Bearer ${aigToken}`,
+      ...(byokAlias ? { 'cf-aig-byok-alias': byokAlias } : {}),
     },
     body: JSON.stringify(body),
   });

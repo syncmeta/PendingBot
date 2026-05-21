@@ -77,6 +77,11 @@ export interface ResolvedRoute {
   //   aigToken — cf-aig-authorization bearer (CF_AIG_RUN_TOKEN)
   baseURL: string;
   aigToken: string;
+  // BYOK key alias (cf-aig-byok-alias header) for providers that ride a
+  // stored provider key instead of Unified Billing. Set only for
+  // google-ai-studio (Gemini 3.x isn't on the UB native passthrough); the
+  // gemini adapter sends it. undefined for every other provider.
+  byokAlias?: string;
 }
 
 export class NoRouteError extends Error {
@@ -163,6 +168,8 @@ export async function resolveRoute(
     provider: { slug: providerSlug, apiStyle: providerApiStyle(providerSlug) },
     baseURL,
     aigToken,
+    byokAlias:
+      providerSlug === 'google-ai-studio' ? env.GOOGLE_BYOK_ALIAS : undefined,
   };
 }
 

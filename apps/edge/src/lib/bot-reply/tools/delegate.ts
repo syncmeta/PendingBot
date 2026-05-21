@@ -217,16 +217,21 @@ export async function delegateToSpecialistTool(
         // it. OpenAI specialists use the Chat Completions endpoint on the
         // openai passthrough (also fine on Unified Billing).
         if (route.provider.apiStyle === 'anthropic' || route.provider.apiStyle === 'gemini') {
-          const open =
+          const stream =
             route.provider.apiStyle === 'anthropic'
-              ? openAnthropicStream
-              : openGeminiStream;
-          const stream = await open(
-            route.baseURL,
-            route.aigToken,
-            { model: route.modelToCall, messages, tools: [] },
-            ac.signal,
-          );
+              ? await openAnthropicStream(
+                  route.baseURL,
+                  route.aigToken,
+                  { model: route.modelToCall, messages, tools: [] },
+                  ac.signal,
+                )
+              : await openGeminiStream(
+                  route.baseURL,
+                  route.aigToken,
+                  { model: route.modelToCall, messages, tools: [] },
+                  ac.signal,
+                  route.byokAlias,
+                );
           let text = '';
           for await (const chunk of stream) {
             const delta = chunk.choices?.[0]?.delta?.content;

@@ -839,6 +839,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
               r.aigToken,
               { model: r.modelToCall, messages, tools: nativeFnTools },
               ac.signal,
+              r.byokAlias,
             );
             return { stream };
           }

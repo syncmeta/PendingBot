@@ -63,6 +63,15 @@ export interface Env {
   /// Optional so `wrangler dev` without these set still typechecks/runs.
   CF_ACCOUNT_ID?: string;
   CF_AIG_GATEWAY?: string;
+  /// BYOK key alias for the google-ai-studio provider. Gemini 3.x isn't
+  /// served by AI Gateway Unified Billing on the native generateContent
+  /// passthrough (only ~2.x is), so Google rides a stored BYOK key
+  /// instead. The key is saved in the gateway dashboard under this alias;
+  /// the gemini adapter sends it as the `cf-aig-byok-alias` header so the
+  /// gateway injects this key (a non-`default` alias must be named
+  /// explicitly). Unset → no alias header (relies on a `default` key /
+  /// Unified Billing). Not a secret — just the alias name.
+  GOOGLE_BYOK_ALIAS?: string;
 
   // ── Secrets (set via `wrangler secret put --env <env>`) ────────
   SUPABASE_ANON_KEY: string;
