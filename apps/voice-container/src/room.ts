@@ -212,9 +212,11 @@ export class Room {
     const human = this.humans.get(humanId);
     if (!human || human.streamWs !== ws) return;
     // Presence (whether the human is really gone) is the DO's job via the
-    // iOS heartbeat. Here we just stop mixing a socket that closed; if the
-    // SFU reconnects the adapter, attachStream rebinds it.
+    // iOS heartbeat. Here we just stop mixing a socket that closed and tell
+    // the DO; the DO decides whether to recreate the SFU adapter (it owns
+    // the SFU API + the adapterId intent guard).
     this.humans.delete(humanId);
+    this.emit({ t: 'stream-dropped', humanId });
   }
 
   attachIngest(botId: string, ws: ServerWebSocket<WsData>): boolean {

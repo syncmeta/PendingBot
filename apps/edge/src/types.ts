@@ -3,6 +3,7 @@
 // time via `wrangler secret put` so they aren't in source.
 
 import type { Sandbox } from '@cloudflare/sandbox';
+import type { RoomMediaContainerDO } from './durable-objects/room-media';
 import type { AuditMessage } from './queue/audit-types';
 
 export interface Env {
@@ -43,7 +44,7 @@ export interface Env {
   /// OpenAI socket, bot-voice playout) to it so the work runs in a real OS
   /// process with reliable timers instead of a workerd isolate. See
   /// src/durable-objects/room-media.ts + apps/voice-container.
-  ROOM_MEDIA: DurableObjectNamespace;
+  ROOM_MEDIA: DurableObjectNamespace<RoomMediaContainerDO>;
   /// Cloudflare ratelimit binding for handle-enumeration endpoints
   /// (friend-request /lookup, group /join, friend-request POST /).
   /// Limit + period live in wrangler.jsonc — call from a route via

@@ -71,4 +71,8 @@ export type ControlEvent =
   // One completed model turn — the DO bills it from OpenAI's own numbers.
   | { t: 'turn-usage'; botId: string; usage: RealtimeUsage }
   // The bot's OpenAI socket closed — the DO drops the leg + rebroadcasts.
-  | { t: 'leg-closed'; botId: string };
+  | { t: 'leg-closed'; botId: string }
+  // A human's SFU stream-adapter socket closed. The DO decides whether to
+  // recreate the adapter (only if it still believes the human is live —
+  // the adapterId guard), mirroring the old in-DO reconnect.
+  | { t: 'stream-dropped'; humanId: string };

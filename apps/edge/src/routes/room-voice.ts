@@ -7,36 +7,44 @@
 //   GET /v1/realtime-sfu/<roomId>/ingest/<botId>   bot voice  -> SFU track
 //   GET /v1/realtime-sfu/<roomId>/stream/<humanId> human track -> bridge
 //
-// One ingest endpoint per bot — a group call can carry several bots, and
-// each gets its own WebRTC track so iOS can tell who is speaking.
+// The media plane now lives in a container (apps/voice-container), so this
+// route forwards the upgrade to the room's container instance — keyed by
+// roomId (= conversation_id) via getContainer(env.ROOM_MEDIA, roomId) —
+// rewriting the path to the container's /adapter/<kind>/<id> shape and
+// keeping the ?t= adapter token (the container verifies it).
 //
 // There is deliberately no Supabase JWT gate here — the caller is the
-// Cloudflare SFU, not a user. Auth is the per-room `adapterToken` echoed
-// in the `?t=` query, which RoomVoiceDO verifies before it accepts the
-// socket. This route only forwards the upgrade to the room's DO.
-//
-// The authenticated, user-facing control surface (start/stop a room,
-// register a human's SFU track) is mounted separately and is coupled to
-// the group conversation model + the iOS SFU client.
+// Cloudflare SFU, not a user. Auth is the per-room adapterToken in ?t=.
 
 import { Hono } from 'hono';
 import type { Context } from 'hono';
+import { getContainer } from '@cloudflare/containers';
 import type { AppBindings } from '../types';
 
 export const roomVoiceRoutes = new Hono<AppBindings>();
 
-function forwardToRoom(c: Context<AppBindings>): Response | Promise<Response> {
+function forwardToContainer(
+  c: Context<AppBindings>,
+  kind: 'ingest' | 'stream',
+  id: string | undefined,
+): Response | Promise<Response> {
   const roomId = c.req.param('roomId');
-  if (!roomId) return c.text('missing roomId', 400);
+  if (!roomId || !id) return c.text('missing path params', 400);
   if (c.req.header('Upgrade')?.toLowerCase() !== 'websocket') {
     return c.text('expected a websocket upgrade', 400);
   }
-  // RoomVoiceDO is keyed by roomId (= conversation_id). It parses the
-  // path tail itself to tell `ingest/<botId>` from `stream/<humanId>`,
-  // and checks the `?t=` adapterToken — so the request forwards unchanged.
-  const id = c.env.ROOM_VOICE.idFromName(roomId);
-  return c.env.ROOM_VOICE.get(id).fetch(c.req.raw);
+  // Rewrite to the container's adapter path, preserving the ?t= query, and
+  // forward the upgrade. The container parses kind/id itself and checks the
+  // token before accepting the socket.
+  const target = new URL(c.req.url);
+  target.pathname = `/adapter/${kind}/${id}`;
+  const stub = getContainer(c.env.ROOM_MEDIA, roomId);
+  return stub.fetch(new Request(target.toString(), c.req.raw));
 }
 
-roomVoiceRoutes.get('/:roomId/ingest/:botId', forwardToRoom);
-roomVoiceRoutes.get('/:roomId/stream/:humanId', forwardToRoom);
+roomVoiceRoutes.get('/:roomId/ingest/:botId', (c) =>
+  forwardToContainer(c, 'ingest', c.req.param('botId')),
+);
+roomVoiceRoutes.get('/:roomId/stream/:humanId', (c) =>
+  forwardToContainer(c, 'stream', c.req.param('humanId')),
+);
