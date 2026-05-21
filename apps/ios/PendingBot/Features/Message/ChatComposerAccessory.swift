@@ -300,20 +300,11 @@ final class AccessoryOwnerController: UIViewController {
 /// Self-sizing container for the accessory. Drives its height from the hosted
 /// SwiftUI content plus the bottom safe area (the home-indicator strip when
 /// docked; zero when riding the keyboard, which iOS reports automatically).
-///
-/// `host.view` is pinned to the container's *true* bottom (not the safe-area
-/// guide) so the SwiftUI content physically spans the home-indicator strip.
-/// That's what lets ComposerView's `.background { … .ignoresSafeArea(.bottom) }`
-/// blur paint all the way down — UIKit propagates the bottom safe-area inset
-/// into the hosting controller, so the interactive content (capsule, buttons)
-/// still lays out *above* the home indicator while only the backdrop bleeds
-/// into it. Pinning to the safe-area guide instead clips the content short and
-/// the message list shows through that ~34pt strip.
 final class ComposerBarContainerView: UIView {
-    private let host: UIHostingController<AnyView>
+    private let host: UIViewController
     private var lastHeight: CGFloat = -1
 
-    init(host: UIHostingController<AnyView>) {
+    init(host: UIViewController) {
         self.host = host
         super.init(frame: CGRect(x: 0, y: 0, width: UIScreen.main.bounds.width, height: 56))
         // Required for the inputAccessoryView system to honour
@@ -325,9 +316,9 @@ final class ComposerBarContainerView: UIView {
             host.view.leadingAnchor.constraint(equalTo: leadingAnchor),
             host.view.trailingAnchor.constraint(equalTo: trailingAnchor),
             host.view.topAnchor.constraint(equalTo: topAnchor),
-            // Full bounds — the SwiftUI content covers the home-indicator
-            // strip; safe-area propagation keeps the capsule above it.
-            host.view.bottomAnchor.constraint(equalTo: bottomAnchor),
+            // Content sits above the safe-area strip; the strip is added back
+            // into intrinsicContentSize so the bar reserves room for it.
+            host.view.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor),
         ])
     }
 
@@ -339,13 +330,12 @@ final class ComposerBarContainerView: UIView {
 
     private func measuredHeight() -> CGFloat {
         let width = bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width
-        // sizeThatFits measures the SwiftUI content WITHOUT safe area, so add
-        // the bottom strip back explicitly. (host.view fills the full bounds,
-        // so its own systemLayoutSizeFitting would already bake in the safe
-        // area and double-count it — measuring the content directly avoids
-        // that ambiguity.)
-        let content = host.sizeThatFits(in: CGSize(width: width, height: .greatestFiniteMagnitude))
-        return content.height + safeAreaInsets.bottom
+        let fitted = host.view.systemLayoutSizeFitting(
+            CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+        return fitted.height + safeAreaInsets.bottom
     }
 
     override var intrinsicContentSize: CGSize {
