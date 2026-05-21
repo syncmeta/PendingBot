@@ -376,17 +376,6 @@ export class RoomVoiceDO {
       case 'stream-dropped':
         this.handleStreamDropped(ev.humanId);
         return;
-      case 'stats':
-        // Surface container playout diagnostics in `wrangler tail` while
-        // tuning choppiness. underruns>0 or maxGap>~200 → upstream (OpenAI
-        // delivery) is gappy; healthy depth + 0 underruns but still choppy
-        // → the chop is downstream (container→SFU→iOS), not our buffer.
-        console.log(
-          `[room-voice] media-stats bot=${ev.botId} depth=${ev.depthMs}ms ` +
-            `state=${ev.state} underruns=${ev.underruns} maxGap=${ev.maxGapMs}ms ` +
-            `voice=${ev.voiceFrames} silence=${ev.silenceFrames}`,
-        );
-        return;
     }
   }
 

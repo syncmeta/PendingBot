@@ -61,14 +61,4 @@ export type ControlEvent =
   | { t: 'bot-tool'; botId: string; name: string; callId: string; args?: string }
   | { t: 'turn-usage'; botId: string; usage: RealtimeUsage }
   | { t: 'leg-closed'; botId: string }
-  | { t: 'stream-dropped'; humanId: string }
-  | {
-      t: 'stats';
-      botId: string;
-      depthMs: number;
-      state: 'buffering' | 'playing';
-      underruns: number;
-      maxGapMs: number;
-      voiceFrames: number;
-      silenceFrames: number;
-    };
+  | { t: 'stream-dropped'; humanId: string };

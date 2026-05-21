@@ -133,15 +133,19 @@
           "max_instances": 10
         },
         // Group-voice media engine (apps/voice-container). One running
-        // instance per active group call; "basic" gives steadier CPU than
-        // "lite" for the real-time audio loop. max_instances caps
-        // concurrent calls — raise as group-voice traffic grows.
+        // instance per active group call. "basic" (1/4 vCPU, 1 GiB) — NOT
+        // "lite" (1/16 vCPU): the real-time audio loop needs steady CPU,
+        // and lite's tiny slice risks reintroducing the choppiness we moved
+        // off the workerd isolate to fix. Custom instance types can't go
+        // smaller than basic (CF floors them at 1 vCPU / 3 GiB), so basic
+        // is the smallest safe option. max_instances caps the warm pool +
+        // concurrent calls — 3 is plenty pre-launch; raise as traffic grows.
         {
           "name": "pendingbot-edge-voice",
           "class_name": "RoomMediaContainerDO",
           "image": "../voice-container/Dockerfile",
           "instance_type": "basic",
-          "max_instances": 10
+          "max_instances": 3
         }
       ],
       // Cloudflare native rate limiting. Per-namespace_id counters shared

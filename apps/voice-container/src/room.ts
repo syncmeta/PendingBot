@@ -226,22 +226,22 @@ export class Room {
     }
   }
 
-  // Periodic per-bot playout diagnostics over the control channel — surfaces
-  // in `wrangler tail` (DO logs) so choppiness can be located without
-  // container log access. Reset the window counters after each emit.
+  // Periodic per-bot playout diagnostics. Logged container-side so they
+  // land in the container's Cloudflare observability logs (dashboard) —
+  // the DO's WebSocket-handler logs don't surface in `wrangler tail`, so
+  // routing these through the control channel was invisible. Read these
+  // when tuning choppiness: underruns>0 or large maxGap ⇒ upstream (OpenAI
+  // delivery) is gappy; healthy depth + 0 underruns but still choppy ⇒
+  // downstream (container→SFU→iOS). Reset the window counters after each.
   private emitStats(): void {
     if (this.closed) return;
     for (const [botId, leg] of this.bots) {
-      this.emit({
-        t: 'stats',
-        botId,
-        depthMs: Math.round(totalLen(leg.playout) / (OPENAI_RATE / 1000)),
-        state: leg.playoutState,
-        underruns: leg.underruns,
-        maxGapMs: leg.maxGapMs,
-        voiceFrames: leg.voiceFrames,
-        silenceFrames: leg.silenceFrames,
-      });
+      const depthMs = Math.round(totalLen(leg.playout) / (OPENAI_RATE / 1000));
+      console.log(
+        `[room] stats bot=${botId} depth=${depthMs}ms state=${leg.playoutState} ` +
+          `underruns=${leg.underruns} maxGap=${leg.maxGapMs}ms ` +
+          `voice=${leg.voiceFrames} silence=${leg.silenceFrames}`,
+      );
       leg.underruns = 0;
       leg.maxGapMs = 0;
       leg.voiceFrames = 0;

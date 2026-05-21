@@ -19,6 +19,7 @@ export class RoomMediaContainerDO extends Container<Env> {
   defaultPort = 8080;
   // A call runs up to 30 min; the control + adapter sockets keep the
   // container active for its lifetime. Once the call ends (RoomVoiceDO
-  // sends 'end' and the sockets close) reclaim the instance promptly.
-  sleepAfter = '2m';
+  // sends 'end' and the sockets close) reclaim the idle instance promptly
+  // so we don't pay for warm-but-empty containers between calls.
+  sleepAfter = '1m';
 }
