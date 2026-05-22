@@ -33,10 +33,21 @@ export type { ProviderApiStyle, ProviderSlug } from './providers';
 // Completions). The provider is picked from the caller's preferProvider
 // hint (sourced from bots.model_provider) — see resolveProviderSlug.
 //
-// Auth is BYOK-on-gateway: provider API keys live in the AI Gateway
-// dashboard, never in worker env. Every LLM request carries the
+// Auth is Unified Billing: every LLM request carries only the
 // cf-aig-authorization header (env.CF_AIG_RUN_TOKEN) to authenticate to
-// the gateway itself; the gateway then injects the stored upstream key.
+// the gateway, and no provider key — the gateway pays the upstream from
+// the account's AI Gateway credits. No provider API key lives in worker
+// env or in the gateway dashboard for openai/anthropic. The lone
+// exception is google-ai-studio: Gemini 3.x isn't on the Unified Billing
+// native passthrough, so it rides a stored BYOK key selected via the
+// cf-aig-byok-alias header (see byokAlias below + gemini-adapter.ts).
+//
+// NB: a stale BYOK provider key left in the gateway dashboard for a
+// Unified-Billing provider hijacks that provider onto the BYOK path and
+// fails with "Configured BYOK credentials are unavailable" once its
+// secret is gone — the gateway prefers a configured BYOK key over
+// credits and won't fall back. Keep the dashboard's Provider Keys empty
+// except for the Gemini alias.
 
 export interface RouteResolveOpts {
   modelSlug: string;
@@ -104,20 +115,20 @@ function buildClient(
     );
   }
   return new OpenAI({
-    // BYOK-on-gateway: the real upstream key is stored in the AI Gateway
-    // dashboard and injected by the gateway. The OpenAI SDK constructor
-    // requires a non-empty apiKey, so this placeholder just satisfies it
-    // — the provider Authorization header is deleted below (null) so the
-    // gateway's stored BYOK key is what reaches the upstream.
-    apiKey: 'cf-aig-byok',
+    // Unified Billing: no provider key reaches the upstream. The OpenAI
+    // SDK constructor requires a non-empty apiKey, so this placeholder
+    // just satisfies it — the provider Authorization header is deleted
+    // below (null), so the gateway authenticates via cf-aig-authorization
+    // alone and bills the request to the account's AI Gateway credits.
+    apiKey: 'unused-unified-billing',
     baseURL,
     defaultHeaders: {
       'HTTP-Referer': 'https://pendingname.com',
       'X-Title': 'PendingBot',
-      // Authenticate to the gateway itself; it injects the BYOK key.
+      // Authenticate to the gateway itself; it pays the upstream.
       'cf-aig-authorization': `Bearer ${token}`,
-      // Drop the SDK's Authorization header — BYOK requires no upstream
-      // provider auth header on the request.
+      // Drop the SDK's Authorization header — Unified Billing carries no
+      // upstream provider auth header on the request.
       Authorization: null,
       // cf-aig-metadata rides on every request the AI Gateway proxies,
       // tagging the gateway log so it's sliceable by task / user / conv.

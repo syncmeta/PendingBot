@@ -84,7 +84,9 @@ export interface Env {
   /// AI Gateway "Authenticated Gateway" run token (created in the gateway
   /// Settings with Run permission). buildClient sends it as the
   /// cf-aig-authorization header on every LLM request; the gateway then
-  /// injects the BYOK provider key stored in its dashboard.
+  /// pays the upstream from the account's Unified Billing credits (the
+  /// google-ai-studio path is the exception — it adds cf-aig-byok-alias
+  /// to use a stored BYOK key, see GOOGLE_BYOK_ALIAS).
   CF_AIG_RUN_TOKEN?: string;
   HONCHO_API_KEY: string;
   HONCHO_WORKSPACE_ID: string;
