@@ -549,10 +549,10 @@ struct ConversationView: View {
                                     conversationId: conversation.id,
                                     parentMessageId: msg.id,
                                     variants: variants,
+                                    avatarSeed: avatarEmojiSeed,
                                     onRegenerate: { await regenerateArenaAnswer(parentId: msg.id) }
                                 )
                                 .id("arena:\(msg.id)")
-                                .padding(.horizontal, Theme.Metrics.gutter)
                                 .transition(.opacity)
                             }
                             }  // end else (non-recall_log branch)
@@ -2384,6 +2384,7 @@ struct ArenaCompareCard: View {
     let conversationId: String
     let parentMessageId: String
     let variants: [ArenaVariant]
+    var avatarSeed: String = ""
     let onRegenerate: () async -> Void
 
     @State private var outcome: String?     // 'a' / 'b' once voted
@@ -2397,28 +2398,31 @@ struct ArenaCompareCard: View {
     private var chosen: ArenaVariant { outcome == "b" ? b : a }
 
     var body: some View {
-        // Mirror a normal bot message row: bubble hugs content, left-aligned,
-        // trailing Spacer caps its width (same as BubbleView).
-        HStack(alignment: .top, spacing: 0) {
+        // Mirror BubbleView's bot row exactly: avatar + bubble + trailing
+        // Spacer, same gutter/vertical padding — so it sits like a normal
+        // bot message, just with two answers inside one bubble.
+        HStack(alignment: .top, spacing: 8) {
+            BotAvatar(emojiSeed: avatarSeed.isEmpty ? conversationId : avatarSeed,
+                      colorSeed: conversationId, size: 30)
             Group {
                 if collapsed, outcome != nil { collapsedBubble } else { expanded }
             }
             Spacer(minLength: 32)
         }
+        .padding(.horizontal, Theme.Metrics.gutter)
+        .padding(.vertical, 4)
         .task { await loadExistingVote() }
     }
 
-    // One normal message bubble holding both answers, split by a thin line.
-    // No title. Tap a half to pick it. Gray hint + 再生成 at the bottom.
+    // The bot answer bubble — same chrome as a normal message bubble, but
+    // holding both candidates split by a thin line. Tap a half to pick it.
     private var expanded: some View {
         VStack(alignment: .leading, spacing: 0) {
             answerSection(a, side: "a")
             hairline
             answerSection(b, side: "b")
             hairline
-            footer
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
+            footer.padding(.horizontal, 14).padding(.vertical, 8)
         }
         .background(Theme.Palette.surface)
         .clipShape(RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous))
@@ -2456,65 +2460,66 @@ struct ArenaCompareCard: View {
         }
     }
 
-    // One answer occupying a tappable half of the bubble (the tap is the vote).
-    // After voting the chosen half gets a faint tint + checkmark.
+    // One answer: the same MarkdownText the normal bubble uses, occupying a
+    // tappable half of the bubble (the tap is the vote). After voting the
+    // chosen half gets a faint tint + checkmark.
     private func answerSection(_ v: ArenaVariant, side: String) -> some View {
         let isChosen = outcome == side
-        return Button { Task { await vote(side) } } label: {
-            VStack(alignment: .leading, spacing: 3) {
-                if revealed {
-                    HStack(spacing: 4) {
-                        Text(catalog.displayName(for: v.modelSlug))
-                            .font(Theme.Fonts.rounded(size: 10, weight: .semibold))
+        return VStack(alignment: .leading, spacing: 3) {
+            if revealed {
+                HStack(spacing: 4) {
+                    Text(catalog.displayName(for: v.modelSlug))
+                        .font(Theme.Fonts.rounded(size: 10, weight: .semibold))
+                        .foregroundStyle(Theme.Palette.accent)
+                    if isChosen {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 10))
                             .foregroundStyle(Theme.Palette.accent)
-                        if isChosen {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 10))
-                                .foregroundStyle(Theme.Palette.accent)
-                        }
                     }
                 }
-                Text(v.content.isEmpty ? "（空）" : v.content)
-                    .font(Theme.Fonts.rounded(size: 14, weight: .regular))
-                    .foregroundStyle(Theme.Palette.ink)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .lineLimit(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(isChosen ? Theme.Palette.accent.opacity(0.08) : Color.clear)
-            .contentShape(Rectangle())
+            MarkdownText(text: v.content.isEmpty ? "（空）" : v.content,
+                         allowCodeRun: false, citations: [])
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .buttonStyle(.plain)
-        .disabled(voting || outcome != nil)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(isChosen ? Theme.Palette.accent.opacity(0.08) : Color.clear)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard outcome == nil, !voting else { return }
+            Task { await vote(side) }
+        }
     }
 
-    // Collapsed: just the chosen answer as one normal bubble + expand chevron.
+    // Collapsed: just the chosen answer, rendered like a normal bubble, + 展开.
     private var collapsedBubble: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 4) {
             if revealed {
                 Text(catalog.displayName(for: chosen.modelSlug))
                     .font(Theme.Fonts.rounded(size: 10, weight: .semibold))
                     .foregroundStyle(Theme.Palette.accent)
             }
-            HStack(alignment: .bottom, spacing: 6) {
-                Text(chosen.content.isEmpty ? "（空）" : chosen.content)
-                    .font(Theme.Fonts.rounded(size: 14, weight: .regular))
-                    .foregroundStyle(Theme.Palette.ink)
-                    .fixedSize(horizontal: false, vertical: true)
+            MarkdownText(text: chosen.content.isEmpty ? "（空）" : chosen.content,
+                         allowCodeRun: false, citations: [])
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 0) {
+                Spacer(minLength: 0)
                 Button { withAnimation { collapsed = false } } label: {
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Theme.Palette.inkMuted)
+                    HStack(spacing: 3) {
+                        Image(systemName: "chevron.down")
+                        Text("展开")
+                    }
+                    .font(Theme.Fonts.rounded(size: 11, weight: .medium))
+                    .foregroundStyle(Theme.Palette.inkMuted)
                 }
                 .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 14).padding(.vertical, 10)
-        .background(RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
-            .fill(Theme.Palette.surface))
+        .background(Theme.Palette.surface)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
             .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5))
     }
