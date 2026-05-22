@@ -248,4 +248,55 @@ describe('openResponsesStream', () => {
     );
     await expect(collect(stream)).rejects.toThrow('boom');
   });
+
+  it('surfaces the web_search query on the started chip', async () => {
+    const events = [
+      {
+        type: 'response.output_item.added',
+        output_index: 0,
+        sequence_number: 0,
+        item: { type: 'web_search_call', id: 'ws_1', status: 'in_progress', action: { type: 'search', query: 'weather tokyo' } },
+      },
+      { type: 'response.web_search_call.in_progress', item_id: 'ws_1', output_index: 0, sequence_number: 1 },
+      { type: 'response.web_search_call.completed', item_id: 'ws_1', output_index: 0, sequence_number: 2 },
+    ] as unknown as ResponseStreamEvent[];
+    const chunks = await collect(
+      await openResponsesStream(fakeClient(events), baseParams, new AbortController().signal),
+    );
+    // in_progress is swallowed; started rides on output_item.added with query.
+    expect(chunks).toEqual([
+      { builtinTool: { kind: 'web_search', phase: 'started', query: 'weather tokyo' } },
+      { builtinTool: { kind: 'web_search', phase: 'completed' } },
+    ]);
+  });
+
+  it('buffers url_citation annotations and flushes them at completion', async () => {
+    const events = [
+      {
+        type: 'response.output_text_annotation.added',
+        item_id: 'm', output_index: 0, content_index: 0, annotation_index: 0, sequence_number: 0,
+        annotation: { type: 'url_citation', url: 'https://a.com', title: 'A', start_index: 0, end_index: 4 },
+      },
+      {
+        type: 'response.output_text_annotation.added',
+        item_id: 'm', output_index: 0, content_index: 0, annotation_index: 1, sequence_number: 1,
+        // duplicate URL — deduped
+        annotation: { type: 'url_citation', url: 'https://a.com', title: 'A again' },
+      },
+      {
+        type: 'response.output_text_annotation.added',
+        item_id: 'm', output_index: 0, content_index: 0, annotation_index: 2, sequence_number: 2,
+        annotation: { type: 'url_citation', url: 'https://b.com', title: 'B' },
+      },
+      { type: 'response.completed', sequence_number: 3, response: { id: 'r' } },
+    ] as unknown as ResponseStreamEvent[];
+    const chunks = await collect(
+      await openResponsesStream(fakeClient(events), baseParams, new AbortController().signal),
+    );
+    const cited = chunks.find((c) => c.citations);
+    expect(cited?.citations).toEqual([
+      { url: 'https://a.com', title: 'A' },
+      { url: 'https://b.com', title: 'B' },
+    ]);
+  });
 });

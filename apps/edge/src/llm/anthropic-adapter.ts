@@ -3,7 +3,16 @@ import type {
   ChatCompletionMessageParam,
   ChatCompletionTool,
 } from 'openai/resources/chat/completions';
-import type { LlmStreamChunk } from './responses-adapter';
+import type { BuiltinCitation, LlmStreamChunk } from './responses-adapter';
+
+/// Web-search options the bot-reply layer threads down to the native
+/// adapters. Domain lists are camelCase to match bots.config.webSearch;
+/// each adapter maps them onto its provider's own field names. `null` /
+/// absent at the call site means "don't attach web search this turn".
+export interface NativeWebSearchOpts {
+  allowedDomains?: string[];
+  excludedDomains?: string[];
+}
 
 // ─────────────────────────────────────────────────────────────────────
 // Anthropic native adapter.
@@ -82,6 +91,21 @@ interface AnthropicTool {
   input_schema: Record<string, unknown>;
 }
 
+// Anthropic's server-side web search tool. Not a function tool: the model
+// calls it, Anthropic runs the search and feeds the results back, surfacing
+// `server_tool_use` + `web_search_tool_result` blocks (and inline citations
+// on the answer text). max_uses caps searches per turn. allowed_domains and
+// blocked_domains are mutually exclusive — Anthropic 400s if both are set.
+interface AnthropicWebSearchTool {
+  type: 'web_search_20250305';
+  name: 'web_search';
+  max_uses?: number;
+  allowed_domains?: string[];
+  blocked_domains?: string[];
+}
+
+type AnthropicAnyTool = AnthropicTool | AnthropicWebSearchTool;
+
 interface AnthropicRequest {
   model: string;
   max_tokens: number;
@@ -89,7 +113,7 @@ interface AnthropicRequest {
   // the system prefix — Anthropic caches up to the last breakpoint.
   system?: AnthropicTextBlock[];
   messages: AnthropicMessage[];
-  tools?: AnthropicTool[];
+  tools?: AnthropicAnyTool[];
 }
 
 // Read a cache_control marker off a Chat content block, if present. The
@@ -189,6 +213,7 @@ export function toAnthropicRequest(
   model: string,
   messages: ChatCompletionMessageParam[],
   tools: ChatCompletionTool[],
+  webSearch?: NativeWebSearchOpts | null,
 ): AnthropicRequest {
   const systemBlocks: AnthropicTextBlock[] = [];
   const out: AnthropicMessage[] = [];
@@ -244,23 +269,52 @@ export function toAnthropicRequest(
     messages: out,
   };
   if (systemBlocks.length > 0) req.system = systemBlocks;
-  if (tools.length > 0) {
-    req.tools = tools.map((t) => ({
-      name: t.function.name,
-      description: t.function.description,
-      input_schema: (t.function.parameters as Record<string, unknown>) ?? {
-        type: 'object',
-        properties: {},
-      },
-    }));
+  const tooling: AnthropicAnyTool[] = tools.map((t) => ({
+    name: t.function.name,
+    description: t.function.description,
+    input_schema: (t.function.parameters as Record<string, unknown>) ?? {
+      type: 'object',
+      properties: {},
+    },
+  }));
+  if (webSearch) {
+    const ws: AnthropicWebSearchTool = {
+      type: 'web_search_20250305',
+      name: 'web_search',
+      max_uses: 5,
+    };
+    // allowed/blocked are mutually exclusive — prefer an allowlist when both
+    // are somehow present (the board UI shouldn't let that happen).
+    if (webSearch.allowedDomains?.length) {
+      ws.allowed_domains = webSearch.allowedDomains;
+    } else if (webSearch.excludedDomains?.length) {
+      ws.blocked_domains = webSearch.excludedDomains;
+    }
+    tooling.push(ws);
   }
+  if (tooling.length > 0) req.tools = tooling;
   return req;
+}
+
+interface AnthropicWebSearchResultItem {
+  type?: string;
+  url?: string;
+  title?: string;
+  page_age?: string;
 }
 
 interface AnthropicResponse {
   content?: Array<
     | { type: 'text'; text?: string }
     | { type: 'tool_use'; id?: string; name?: string; input?: unknown }
+    // Server-side web search: the query the model ran…
+    | { type: 'server_tool_use'; id?: string; name?: string; input?: { query?: string } }
+    // …and the results it got back (array of hits, or an error object).
+    | {
+        type: 'web_search_tool_result';
+        tool_use_id?: string;
+        content?: AnthropicWebSearchResultItem[] | { type?: string; error_code?: string };
+      }
   >;
   usage?: {
     input_tokens?: number;
@@ -283,10 +337,16 @@ export async function openAnthropicStream(
     model: string;
     messages: ChatCompletionMessageParam[];
     tools: ChatCompletionTool[];
+    webSearch?: NativeWebSearchOpts | null;
   },
   signal: AbortSignal,
 ): Promise<AsyncIterable<LlmStreamChunk>> {
-  const body = toAnthropicRequest(params.model, params.messages, params.tools);
+  const body = toAnthropicRequest(
+    params.model,
+    params.messages,
+    params.tools,
+    params.webSearch,
+  );
   const res = await fetch(`${baseURL}/v1/messages`, {
     method: 'POST',
     signal,
@@ -336,6 +396,23 @@ async function* mapAnthropicResponse(
           },
         ],
       };
+    } else if (block.type === 'server_tool_use' && block.name === 'web_search') {
+      // The search the model decided to run — surface its query on the chip.
+      const query = typeof block.input?.query === 'string' ? block.input.query : undefined;
+      yield { builtinTool: { kind: 'web_search', phase: 'started', query } };
+    } else if (block.type === 'web_search_tool_result') {
+      // Close the chip and hand the result list up as citations. On a
+      // search error `content` is an error object, not an array — skip it.
+      yield { builtinTool: { kind: 'web_search', phase: 'completed' } };
+      if (Array.isArray(block.content)) {
+        const citations: BuiltinCitation[] = [];
+        for (const hit of block.content) {
+          if (hit && typeof hit.url === 'string' && hit.url) {
+            citations.push({ url: hit.url, title: hit.title || hit.url });
+          }
+        }
+        if (citations.length > 0) yield { citations };
+      }
     }
   }
   const u = json.usage;

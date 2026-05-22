@@ -4,7 +4,7 @@ import type {
   ChatCompletionMessageParam,
   ChatCompletionTool,
 } from 'openai/resources/chat/completions';
-import type { LlmStreamChunk } from './responses-adapter';
+import type { BuiltinCitation, LlmStreamChunk } from './responses-adapter';
 
 // ─────────────────────────────────────────────────────────────────────
 // Gemini (Google AI Studio) native adapter.
@@ -31,13 +31,19 @@ interface GeminiContent {
   role: 'user' | 'model';
   parts: GeminiPart[];
 }
-interface GeminiTool {
+interface GeminiFnTool {
   functionDeclarations: Array<{
     name: string;
     description?: string;
     parameters?: Record<string, unknown>;
   }>;
 }
+// Built-in Google Search grounding. Empty config object enables it; the
+// model decides when to search and returns sources in groundingMetadata.
+interface GeminiSearchTool {
+  google_search: Record<string, never>;
+}
+type GeminiTool = GeminiFnTool | GeminiSearchTool;
 interface GeminiRequest {
   systemInstruction?: { parts: GeminiPart[] };
   contents: GeminiContent[];
@@ -107,6 +113,7 @@ function parseObject(s: string | undefined): Record<string, unknown> {
 export function toGeminiRequest(
   messages: ChatCompletionMessageParam[],
   tools: ChatCompletionTool[],
+  webSearch?: boolean,
 ): GeminiRequest {
   const systemParts: GeminiPart[] = [];
   const contents: GeminiContent[] = [];
@@ -162,26 +169,37 @@ export function toGeminiRequest(
 
   const req: GeminiRequest = { contents };
   if (systemParts.length > 0) req.systemInstruction = { parts: systemParts };
+  const toolEntries: GeminiTool[] = [];
   if (tools.length > 0) {
-    req.tools = [
-      {
-        functionDeclarations: tools.map((t) => ({
-          name: t.function.name,
-          description: t.function.description,
-          parameters: (t.function.parameters as Record<string, unknown>) ?? {
-            type: 'object',
-            properties: {},
-          },
-        })),
-      },
-    ];
+    toolEntries.push({
+      functionDeclarations: tools.map((t) => ({
+        name: t.function.name,
+        description: t.function.description,
+        parameters: (t.function.parameters as Record<string, unknown>) ?? {
+          type: 'object',
+          properties: {},
+        },
+      })),
+    });
   }
+  // Google Search grounding rides as its own tools entry alongside the
+  // function declarations. Gemini 2.x/3.x support search + function calling
+  // in one request; older models reject the combination.
+  if (webSearch) toolEntries.push({ google_search: {} });
+  if (toolEntries.length > 0) req.tools = toolEntries;
   return req;
 }
 
+interface GeminiGroundingMetadata {
+  // The actual query strings the model searched for.
+  webSearchQueries?: string[];
+  // The sources it grounded on; web.uri / web.title are the link + label.
+  groundingChunks?: Array<{ web?: { uri?: string; title?: string } }>;
+}
 interface GeminiResponse {
   candidates?: Array<{
     content?: { parts?: GeminiPart[] };
+    groundingMetadata?: GeminiGroundingMetadata;
   }>;
   usageMetadata?: {
     promptTokenCount?: number;
@@ -201,6 +219,7 @@ export async function openGeminiStream(
     model: string;
     messages: ChatCompletionMessageParam[];
     tools: ChatCompletionTool[];
+    webSearch?: boolean;
   },
   signal: AbortSignal,
   // BYOK key alias → cf-aig-byok-alias header. Gemini 3.x isn't on the
@@ -209,7 +228,7 @@ export async function openGeminiStream(
   // gateway forwards keyless and Google answers 403 "unregistered callers".
   byokAlias?: string,
 ): Promise<AsyncIterable<LlmStreamChunk>> {
-  const body = toGeminiRequest(params.messages, params.tools);
+  const body = toGeminiRequest(params.messages, params.tools, params.webSearch);
   // Must be `/v1beta/…`, NOT `/v1/…`: Google's stable `v1`
   // generateContent proto has no `systemInstruction` / `tools` fields and
   // rejects them ("Unknown name … Cannot find field"). Those live on
@@ -243,7 +262,28 @@ export async function openGeminiStream(
 async function* mapGeminiResponse(
   json: GeminiResponse,
 ): AsyncGenerator<LlmStreamChunk> {
-  const parts = json.candidates?.[0]?.content?.parts ?? [];
+  const candidate = json.candidates?.[0];
+  const parts = candidate?.content?.parts ?? [];
+
+  // Google Search grounding: surface the queries the model ran and the
+  // sources it grounded on. groundingMetadata sits on the candidate, beside
+  // the content parts — emit the search chip + citations before the answer
+  // text so the trace ordering reads naturally.
+  const grounding = candidate?.groundingMetadata;
+  if (grounding && (grounding.webSearchQueries?.length || grounding.groundingChunks?.length)) {
+    const query = grounding.webSearchQueries?.filter((q) => q).join(' / ') || undefined;
+    yield { builtinTool: { kind: 'web_search', phase: 'started', query } };
+    yield { builtinTool: { kind: 'web_search', phase: 'completed' } };
+    const citations: BuiltinCitation[] = [];
+    for (const chunk of grounding.groundingChunks ?? []) {
+      const url = chunk.web?.uri;
+      if (typeof url === 'string' && url) {
+        citations.push({ url, title: chunk.web?.title || url });
+      }
+    }
+    if (citations.length > 0) yield { citations };
+  }
+
   let toolIndex = 0;
   for (const part of parts) {
     if (part.text) {
