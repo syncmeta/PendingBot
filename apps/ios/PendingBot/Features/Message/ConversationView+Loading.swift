@@ -379,14 +379,20 @@ extension ConversationView {
             // sender_type="recall_log" and stash the original message's
             // created_at in `content` so the row renderer can format
             // "我撤回了 几分钟前 的一条消息" without further look-ups.
-            let rows: [Row] = try await SupabaseStack.shared
+            // Fetch the LATEST 200 (descending) then flip to chronological
+            // for the ascending timeline. `ascending: true` + limit would
+            // pin us to the OLDEST 200 rows and hide recent messages the
+            // moment a conversation passes 200 — the user would scroll to
+            // "bottom" and land on an ancient message.
+            let rowsDesc: [Row] = try await SupabaseStack.shared
                 .from("messages")
                 .select("id, client_message_id, conversation_id, user_id, sender_bot_id, role, log_kind, log_payload, attachments, content, status, created_at, citations, metadata")
                 .eq("conversation_id", value: conversation.id)
-                .order("created_at", ascending: true)
+                .order("created_at", ascending: false)
                 .limit(200)
                 .execute()
                 .value
+            let rows = Array(rowsDesc.reversed())
             var viewMessages: [ChatMessage] = []
             var cacheRows: [LocalDatabase.MessageRow] = []
             viewMessages.reserveCapacity(rows.count)
@@ -466,7 +472,14 @@ extension ConversationView {
                     created_at: secs
                 ))
             }
-            self.messages = viewMessages
+            // Only reassign when the authoritative set actually differs from
+            // what's already on screen (the cache hydrate above, or a turn
+            // that persisted into cache and got reloaded). A wholesale
+            // reassign of an identical array still triggers a full SwiftUI
+            // re-render — that's the visible "刷新一次" flash on every reopen.
+            if self.messages != viewMessages {
+                self.messages = viewMessages
+            }
             // Merge — keep any in-flight live snapshots that the SSE turn
             // already populated; history's persisted values win on key collision.
             self.citationsByMsgId.merge(citationsLoaded) { _, new in new }
@@ -508,17 +521,14 @@ extension ConversationView {
                 }
             }
             // Reconcile the local cache against the server's authoritative
-            // view: drop any cached rows the server no longer returns
-            // (recall tombstones we skipped, voice-call recaps now
-            // hidden by RLS, etc.) before upserting the fresh set.
-            // Without the prune, a stale recap row already in the
-            // local SQLite cache would keep flashing on every conv-open
-            // before the network round-trip overwrites it.
-            LocalDatabase.shared.pruneMessages(
-                conversationId: conversation.id,
-                keepIds: cacheRows.map(\.id)
-            )
-            LocalDatabase.shared.upsertMessages(cacheRows)
+            // view in one atomic transaction: the cache for this conv
+            // becomes exactly the fetched set — no leftover recall
+            // tombstones / RLS-hidden recaps, no duplicates, and no window
+            // where the cache is empty or partial. Replaces the old
+            // prune-then-upsert split (two transactions, conflict-resolved
+            // on `id` rather than the cmid dedup key).
+            LocalDatabase.shared.replaceMessages(
+                conversationId: conversation.id, cacheRows)
         } catch {
             // Network down + we have a cache: stay quiet (cached msgs still
             // visible). Show the error only if we have nothing to display.

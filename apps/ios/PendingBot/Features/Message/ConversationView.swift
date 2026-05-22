@@ -2045,6 +2045,12 @@ struct ConversationView: View {
             }
             pending = false
             chatTurnTask = nil
+            // Mirror this turn's canonical rows into the local cache now —
+            // the SSE path only touched the in-memory list, so without this
+            // the cache is a turn behind the moment the user leaves (see
+            // persistTurnToCache). `turnBubbleIds` is still this turn's set
+            // here; it's reset at the start of the next turn, not now.
+            persistTurnToCache(userMsgId: userMsgId)
             // Trace bucket stays in tracesByUserMsgId so the user can keep
             // expanding it after the turn completes; only the live binding
             // is cleared here.

@@ -630,7 +630,13 @@ struct MessageTabView: View {
                 }
                 return l.id < r.id
             }
-            self.conversations = fresh
+            // Only reassign when the row set actually changed. The list has
+            // no realtime, so every appear refetches — reassigning an
+            // identical array still forces a full SwiftUI re-render, which
+            // is the visible "刷新一次" flash on returning to the tab.
+            if self.conversations != fresh {
+                self.conversations = fresh
+            }
 
             // Push server-truth unread counts into the shared store so the
             // per-row badge, the tab dot, and the app icon badge all read
