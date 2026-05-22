@@ -2397,32 +2397,31 @@ struct ArenaCompareCard: View {
     private var chosen: ArenaVariant { outcome == "b" ? b : a }
 
     var body: some View {
-        Group {
-            if collapsed, outcome != nil {
-                collapsedBubble
-            } else {
-                expanded
+        // Mirror a normal bot message row: bubble hugs content, left-aligned,
+        // trailing Spacer caps its width (same as BubbleView).
+        HStack(alignment: .top, spacing: 0) {
+            Group {
+                if collapsed, outcome != nil { collapsedBubble } else { expanded }
             }
+            Spacer(minLength: 32)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
         .task { await loadExistingVote() }
     }
 
-    // Big bubble wrapping the two answer bubbles. No title. Vote heart sits
-    // to the right of each answer; gray hint at the bottom before voting.
+    // A normal-looking message bubble that holds the two answer sub-bubbles.
+    // No title. Tap a sub-bubble to pick it. Gray hint before voting.
     private var expanded: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            answerRow(a, side: "a")
-            answerRow(b, side: "b")
+        VStack(alignment: .leading, spacing: 6) {
+            answerBubble(a, side: "a")
+            answerBubble(b, side: "b")
             if outcome == nil {
                 Text("喜欢哪个点哪个")
                     .font(Theme.Fonts.caption)
                     .foregroundStyle(Theme.Palette.inkMuted)
-                    .padding(.top, 2)
+                regenInline
             } else {
-                HStack(spacing: 8) {
+                HStack(spacing: 14) {
                     regenInline
-                    Spacer()
                     Button { withAnimation { collapsed = true } } label: {
                         HStack(spacing: 3) {
                             Image(systemName: "chevron.up")
@@ -2433,20 +2432,19 @@ struct ArenaCompareCard: View {
                     }
                     .buttonStyle(.plain)
                 }
-                .padding(.top, 2)
             }
-            if outcome == nil { regenInline.padding(.top, 2) }
         }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Theme.Palette.surface))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Theme.Palette.hairline, lineWidth: 0.5))
-        .frame(maxWidth: 320, alignment: .leading)
+        .padding(.horizontal, 10).padding(.vertical, 8)
+        .background(RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
+            .fill(Theme.Palette.surface))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
+            .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5))
     }
 
-    // One answer: a (slightly shrunk) chat bubble + the pick heart on its right.
-    private func answerRow(_ v: ArenaVariant, side: String) -> some View {
+    // One answer as a tappable sub-bubble — the whole bubble is the vote.
+    private func answerBubble(_ v: ArenaVariant, side: String) -> some View {
         let isChosen = outcome == side
-        return HStack(alignment: .center, spacing: 8) {
+        return Button { Task { await vote(side) } } label: {
             VStack(alignment: .leading, spacing: 3) {
                 if revealed {
                     Text(catalog.displayName(for: v.modelSlug))
@@ -2454,51 +2452,47 @@ struct ArenaCompareCard: View {
                         .foregroundStyle(Theme.Palette.accent)
                 }
                 Text(v.content.isEmpty ? "（空）" : v.content)
-                    .font(Theme.Fonts.rounded(size: 13, weight: .regular))
+                    .font(Theme.Fonts.rounded(size: 14, weight: .regular))
                     .foregroundStyle(Theme.Palette.ink)
-                    .lineLimit(8)
-                    .padding(.horizontal, 10).padding(.vertical, 8)
-                    .background(RoundedRectangle(cornerRadius: 13, style: .continuous)
-                        .fill(Theme.Palette.surfaceMuted))
-                    .overlay(RoundedRectangle(cornerRadius: 13, style: .continuous)
-                        .strokeBorder(isChosen ? Theme.Palette.accent : Color.clear, lineWidth: 1.5))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(10)
             }
-            Button { Task { await vote(side) } } label: {
-                Image(systemName: isChosen ? "heart.fill" : "heart")
-                    .font(.system(size: 18, weight: .regular))
-                    .foregroundStyle(isChosen ? Theme.Palette.accent
-                                     : (outcome == nil ? Theme.Palette.accent : Theme.Palette.inkMuted.opacity(0.4)))
-            }
-            .buttonStyle(.plain)
-            .disabled(voting || outcome != nil)
+            .padding(.horizontal, 11).padding(.vertical, 8)
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Theme.Palette.surfaceMuted))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(isChosen ? Theme.Palette.accent : Color.clear, lineWidth: 1.5))
         }
+        .buttonStyle(.plain)
+        .disabled(voting || outcome != nil)
     }
 
-    // Collapsed: just the chosen answer as one bubble + an expand button.
+    // Collapsed: just the chosen answer as one normal bubble + expand chevron.
     private var collapsedBubble: some View {
-        HStack(alignment: .center, spacing: 8) {
-            VStack(alignment: .leading, spacing: 3) {
-                if revealed {
-                    Text(catalog.displayName(for: chosen.modelSlug))
-                        .font(Theme.Fonts.rounded(size: 10, weight: .semibold))
-                        .foregroundStyle(Theme.Palette.accent)
-                }
+        VStack(alignment: .leading, spacing: 3) {
+            if revealed {
+                Text(catalog.displayName(for: chosen.modelSlug))
+                    .font(Theme.Fonts.rounded(size: 10, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.accent)
+            }
+            HStack(alignment: .bottom, spacing: 6) {
                 Text(chosen.content.isEmpty ? "（空）" : chosen.content)
                     .font(Theme.Fonts.rounded(size: 14, weight: .regular))
                     .foregroundStyle(Theme.Palette.ink)
-                    .padding(.horizontal, 12).padding(.vertical, 9)
-                    .background(RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(Theme.Palette.surfaceMuted))
+                    .fixedSize(horizontal: false, vertical: true)
+                Button { withAnimation { collapsed = false } } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                }
+                .buttonStyle(.plain)
             }
-            Button { withAnimation { collapsed = false } } label: {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Theme.Palette.inkMuted)
-            }
-            .buttonStyle(.plain)
-            Spacer(minLength: 0)
         }
-        .frame(maxWidth: 320, alignment: .leading)
+        .padding(.horizontal, 14).padding(.vertical, 10)
+        .background(RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
+            .fill(Theme.Palette.surface))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
+            .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5))
     }
 
     private var regenInline: some View {
