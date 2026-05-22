@@ -353,14 +353,20 @@ final class LocalDatabase {
         static let databaseTableName = "messages"
     }
 
+    /// Latest `limit` rows for the conversation, returned in chronological
+    /// (ascending) order. Fetches descending so a cache that has drifted
+    /// past `limit` rows (realtime / prefetch upserts accumulate between
+    /// loadHistory's wholesale replaces) hydrates the RECENT window, not
+    /// the oldest — matching loadHistory's latest-200 server fetch.
     func loadMessages(conversationId: String, limit: Int = 200) -> [MessageRow] {
-        (try? dbQueue.read { db in
+        let rows = (try? dbQueue.read { db in
             try MessageRow
                 .filter(Column("conversation_id") == conversationId)
-                .order(Column("created_at").asc)
+                .order(Column("created_at").desc)
                 .limit(limit)
                 .fetchAll(db)
         }) ?? []
+        return Array(rows.reversed())
     }
 
     /// Incremental upsert for the realtime / prefetch paths. `save()` keys

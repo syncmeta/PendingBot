@@ -379,14 +379,20 @@ extension ConversationView {
             // sender_type="recall_log" and stash the original message's
             // created_at in `content` so the row renderer can format
             // "我撤回了 几分钟前 的一条消息" without further look-ups.
-            let rows: [Row] = try await SupabaseStack.shared
+            // Fetch the LATEST 200 (descending) then flip to chronological
+            // for the ascending timeline. `ascending: true` + limit would
+            // pin us to the OLDEST 200 rows and hide recent messages the
+            // moment a conversation passes 200 — the user would scroll to
+            // "bottom" and land on an ancient message.
+            let rowsDesc: [Row] = try await SupabaseStack.shared
                 .from("messages")
                 .select("id, client_message_id, conversation_id, user_id, sender_bot_id, role, log_kind, log_payload, attachments, content, status, created_at, citations, metadata")
                 .eq("conversation_id", value: conversation.id)
-                .order("created_at", ascending: true)
+                .order("created_at", ascending: false)
                 .limit(200)
                 .execute()
                 .value
+            let rows = Array(rowsDesc.reversed())
             var viewMessages: [ChatMessage] = []
             var cacheRows: [LocalDatabase.MessageRow] = []
             viewMessages.reserveCapacity(rows.count)
