@@ -2408,60 +2408,84 @@ struct ArenaCompareCard: View {
         .task { await loadExistingVote() }
     }
 
-    // A normal-looking message bubble that holds the two answer sub-bubbles.
-    // No title. Tap a sub-bubble to pick it. Gray hint before voting.
+    // One normal message bubble holding both answers, split by a thin line.
+    // No title. Tap a half to pick it. Gray hint + 再生成 at the bottom.
     private var expanded: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            answerBubble(a, side: "a")
-            answerBubble(b, side: "b")
-            if outcome == nil {
-                Text("喜欢哪个点哪个")
-                    .font(Theme.Fonts.caption)
-                    .foregroundStyle(Theme.Palette.inkMuted)
-                regenInline
-            } else {
-                HStack(spacing: 14) {
-                    regenInline
-                    Button { withAnimation { collapsed = true } } label: {
-                        HStack(spacing: 3) {
-                            Image(systemName: "chevron.up")
-                            Text("收起")
-                        }
-                        .font(Theme.Fonts.rounded(size: 12, weight: .medium))
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
+        VStack(alignment: .leading, spacing: 0) {
+            answerSection(a, side: "a")
+            hairline
+            answerSection(b, side: "b")
+            hairline
+            footer
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
         }
-        .padding(.horizontal, 10).padding(.vertical, 8)
-        .background(RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
-            .fill(Theme.Palette.surface))
+        .background(Theme.Palette.surface)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
             .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5))
     }
 
-    // One answer as a tappable sub-bubble — the whole bubble is the vote.
-    private func answerBubble(_ v: ArenaVariant, side: String) -> some View {
+    private var hairline: some View {
+        Rectangle().fill(Theme.Palette.hairline).frame(height: 0.5)
+    }
+
+    @ViewBuilder private var footer: some View {
+        if outcome == nil {
+            HStack(spacing: 14) {
+                Text("喜欢哪个点哪个")
+                    .font(Theme.Fonts.caption)
+                    .foregroundStyle(Theme.Palette.inkMuted)
+                Spacer(minLength: 8)
+                regenInline
+            }
+        } else {
+            HStack(spacing: 14) {
+                regenInline
+                Spacer(minLength: 8)
+                Button { withAnimation { collapsed = true } } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "chevron.up")
+                        Text("收起")
+                    }
+                    .font(Theme.Fonts.rounded(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.Palette.inkMuted)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    // One answer occupying a tappable half of the bubble (the tap is the vote).
+    // After voting the chosen half gets a faint tint + checkmark.
+    private func answerSection(_ v: ArenaVariant, side: String) -> some View {
         let isChosen = outcome == side
         return Button { Task { await vote(side) } } label: {
             VStack(alignment: .leading, spacing: 3) {
                 if revealed {
-                    Text(catalog.displayName(for: v.modelSlug))
-                        .font(Theme.Fonts.rounded(size: 10, weight: .semibold))
-                        .foregroundStyle(Theme.Palette.accent)
+                    HStack(spacing: 4) {
+                        Text(catalog.displayName(for: v.modelSlug))
+                            .font(Theme.Fonts.rounded(size: 10, weight: .semibold))
+                            .foregroundStyle(Theme.Palette.accent)
+                        if isChosen {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 10))
+                                .foregroundStyle(Theme.Palette.accent)
+                        }
+                    }
                 }
                 Text(v.content.isEmpty ? "（空）" : v.content)
                     .font(Theme.Fonts.rounded(size: 14, weight: .regular))
                     .foregroundStyle(Theme.Palette.ink)
                     .fixedSize(horizontal: false, vertical: true)
                     .lineLimit(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.horizontal, 11).padding(.vertical, 8)
-            .background(RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Theme.Palette.surfaceMuted))
-            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(isChosen ? Theme.Palette.accent : Color.clear, lineWidth: 1.5))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(isChosen ? Theme.Palette.accent.opacity(0.08) : Color.clear)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(voting || outcome != nil)
