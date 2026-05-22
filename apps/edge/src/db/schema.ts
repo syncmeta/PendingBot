@@ -727,46 +727,64 @@ export type Database = {
           bot_id: string | null
           conversation_type: string
           created_at: string
+          envelope_settings: Json | null
           feature: string
           id: string
           last_turn_status: string | null
           metadata: Json
+          model_slug_override: string | null
           parent_message_id: string | null
+          provider_override: string | null
+          random_model_config: Json | null
           round_count: number
           spawner_bot_id: string | null
           title: string | null
           updated_at: string
           user_id: string | null
+          vision_model_override: string | null
+          voice_model_override: string | null
         }
         Insert: {
           bot_id?: string | null
           conversation_type?: string
           created_at?: string
+          envelope_settings?: Json | null
           feature?: string
           id?: string
           last_turn_status?: string | null
           metadata?: Json
+          model_slug_override?: string | null
           parent_message_id?: string | null
+          provider_override?: string | null
+          random_model_config?: Json | null
           round_count?: number
           spawner_bot_id?: string | null
           title?: string | null
           updated_at?: string
           user_id?: string | null
+          vision_model_override?: string | null
+          voice_model_override?: string | null
         }
         Update: {
           bot_id?: string | null
           conversation_type?: string
           created_at?: string
+          envelope_settings?: Json | null
           feature?: string
           id?: string
           last_turn_status?: string | null
           metadata?: Json
+          model_slug_override?: string | null
           parent_message_id?: string | null
+          provider_override?: string | null
+          random_model_config?: Json | null
           round_count?: number
           spawner_bot_id?: string | null
           title?: string | null
           updated_at?: string
           user_id?: string | null
+          vision_model_override?: string | null
+          voice_model_override?: string | null
         }
         Relationships: [
           {
@@ -1393,6 +1411,8 @@ export type Database = {
           log_kind: string | null
           log_payload: Json | null
           metadata: Json | null
+          model_provider: string | null
+          model_slug: string | null
           parent_message_id: string | null
           replaced_by_message_id: string | null
           replaces_message_id: string | null
@@ -1416,6 +1436,8 @@ export type Database = {
           log_kind?: string | null
           log_payload?: Json | null
           metadata?: Json | null
+          model_provider?: string | null
+          model_slug?: string | null
           parent_message_id?: string | null
           replaced_by_message_id?: string | null
           replaces_message_id?: string | null
@@ -1439,6 +1461,8 @@ export type Database = {
           log_kind?: string | null
           log_payload?: Json | null
           metadata?: Json | null
+          model_provider?: string | null
+          model_slug?: string | null
           parent_message_id?: string | null
           replaced_by_message_id?: string | null
           replaces_message_id?: string | null
@@ -1483,6 +1507,59 @@ export type Database = {
             columns: ["sender_bot_id"]
             isOneToOne: false
             referencedRelation: "bots"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      model_comparisons: {
+        Row: {
+          conversation_id: string | null
+          created_at: string
+          group_a_id: string
+          group_b_id: string
+          id: string
+          model_a: string
+          model_b: string
+          outcome: string
+          parent_message_id: string | null
+          provider_a: string | null
+          provider_b: string | null
+          user_id: string
+        }
+        Insert: {
+          conversation_id?: string | null
+          created_at?: string
+          group_a_id: string
+          group_b_id: string
+          id?: string
+          model_a: string
+          model_b: string
+          outcome: string
+          parent_message_id?: string | null
+          provider_a?: string | null
+          provider_b?: string | null
+          user_id: string
+        }
+        Update: {
+          conversation_id?: string | null
+          created_at?: string
+          group_a_id?: string
+          group_b_id?: string
+          id?: string
+          model_a?: string
+          model_b?: string
+          outcome?: string
+          parent_message_id?: string | null
+          provider_a?: string | null
+          provider_b?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "model_comparisons_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
             referencedColumns: ["id"]
           },
         ]

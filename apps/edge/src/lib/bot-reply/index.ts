@@ -684,6 +684,8 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       parent_message_id: parentMessageId,
       bubble_group_id: bubbleGroupId,
       citations: snapshot,
+      model_slug: bot.model_id,
+      model_provider: turnProviderSlug,
     });
     bubblesInserted++;
     emit('bubble', {
@@ -734,6 +736,8 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       parent_message_id: parentMessageId,
       bubble_group_id: bubbleGroupId,
       attachments: { ids: [attachmentId] },
+      model_slug: bot.model_id,
+      model_provider: turnProviderSlug,
     });
     if (error) {
       console.warn('[bot-reply] generated-image message insert', error.message);
