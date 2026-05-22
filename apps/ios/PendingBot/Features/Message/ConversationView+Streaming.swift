@@ -146,6 +146,68 @@ extension ConversationView {
         if revealTargetId == oldId { revealTargetId = id }
     }
 
+    /// Persist this turn's canonical rows (the user message + each bot
+    /// bubble) into the local cache at turn end.
+    ///
+    /// The live SSE path mutates only the in-memory `messages` array, and
+    /// `applyRealtimeEvent` drops 1:1 bot text rows *before* its own cache
+    /// write — so without this the cache is a full turn behind the moment
+    /// the user leaves the conversation, and reopening paints stale content
+    /// (missing the latest reply) until loadHistory's network round-trip
+    /// lands. That's the "每次进去都是旧的，要刷新一次" symptom.
+    ///
+    /// Skips rows still carrying an optimistic id (`live-*` bot bubble not
+    /// yet rekeyed by its SSE `bubble` event, or `local-*` user row not yet
+    /// promoted by `.meta` / the realtime echo): no canonical id means we
+    /// can't write a row loadHistory would recognise, and those paths fill
+    /// the cache themselves. Idempotent — safe to call once per turn.
+    func persistTurnToCache(userMsgId: String?) {
+        guard !conversation.id.isEmpty else { return }
+        var rows: [LocalDatabase.MessageRow] = []
+        if let uid = userMsgId,
+           !uid.hasPrefix("local-"), !uid.hasPrefix("live-"),
+           let m = messages.first(where: { $0.id == uid }) {
+            rows.append(LocalDatabase.MessageRow(
+                id: m.id,
+                client_message_id: localMsgClientIds[m.id],
+                conversation_id: conversation.id,
+                user_id: m.sender_id,
+                sender_bot_id: nil,
+                role: "user",
+                content: m.content,
+                status: "done",
+                created_at: m.created_at
+            ))
+        }
+        for bid in turnBubbleIds where !bid.hasPrefix("live-") {
+            guard let m = messages.first(where: { $0.id == bid }) else { continue }
+            rows.append(LocalDatabase.MessageRow(
+                id: m.id,
+                client_message_id: nil,
+                conversation_id: conversation.id,
+                user_id: nil,
+                sender_bot_id: m.sender_id.isEmpty ? conversation.bot_id : m.sender_id,
+                role: "bot",
+                content: m.content,
+                status: "done",
+                created_at: m.created_at
+            ))
+        }
+        guard !rows.isEmpty else { return }
+        LocalDatabase.shared.upsertMessages(rows)
+        // Keep the conv-list preview + ordering fresh from the same data so
+        // the message list's first paint on next launch isn't a turn behind
+        // either (the list has no realtime; it only refreshes on appear).
+        if let last = rows.last {
+            LocalDatabase.shared.touchConversationPreview(
+                id: conversation.id,
+                lastContent: last.content ?? "",
+                lastSenderType: last.role == "bot" ? "bot" : "user",
+                lastActivityAt: last.created_at
+            )
+        }
+    }
+
     /// Restart the idle debounce — after `cursorBlinkAfterIdle` with no
     /// further .append on the live bubble, flip `streamPaused = true`
     /// so the cursor switches from solid to TTY-style blink.
