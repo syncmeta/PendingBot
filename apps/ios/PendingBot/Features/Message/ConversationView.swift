@@ -483,6 +483,16 @@ struct ConversationView: View {
                                             } label: {
                                                 Label("保存为技能", systemImage: "square.and.arrow.down.on.square")
                                             }
+                                            // Arena: regenerate another answer to the same
+                                            // prompt so the inline blind A/B compare appears.
+                                            if let parent = msg.parent_message_id {
+                                                Button {
+                                                    Haptics.tap()
+                                                    Task { await regenerateArenaAnswer(parentId: parent) }
+                                                } label: {
+                                                    Label("再生成一个回答", systemImage: "die.face.5")
+                                                }
+                                            }
                                         }
                                     }
                                     if msg.isMine(currentUserId: AccountStore.shared.current?.id) {
