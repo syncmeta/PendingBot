@@ -550,6 +550,7 @@ struct ConversationView: View {
                                     parentMessageId: msg.id,
                                     variants: variants,
                                     avatarSeed: avatarEmojiSeed,
+                                    streamingGroupId: revealTargetId,
                                     onRegenerate: { await regenerateArenaAnswer(parentId: msg.id) }
                                 )
                                 .id("arena:\(msg.id)")
@@ -937,15 +938,18 @@ struct ConversationView: View {
     /// becomes a compare candidate. Variants are chronological.
     var arenaGroups: [String: [ArenaVariant]] {
         var contentByGroup: [String: [String: String]] = [:]   // parent → group → content
-        var modelByGroup: [String: [String: String]] = [:]
+        var modelByGroup: [String: [String: String?]] = [:]
         var order: [String: [String]] = [:]                    // parent → group order
         for m in messages where m.sender_type == "bot" {
+            // Model is optional here so a freshly-streamed regenerate bubble
+            // (no model_slug until reload) still joins its group live.
             guard let parent = m.parent_message_id,
-                  let gid = m.bubble_group_id,
-                  let model = m.model_slug, !model.isEmpty else { continue }
+                  let gid = m.bubble_group_id else { continue }
             if contentByGroup[parent]?[gid] == nil {
                 order[parent, default: []].append(gid)
-                modelByGroup[parent, default: [:]][gid] = model
+                modelByGroup[parent, default: [:]][gid] = m.model_slug
+            } else if modelByGroup[parent]?[gid] == nil, let ms = m.model_slug {
+                modelByGroup[parent]?[gid] = ms
             }
             contentByGroup[parent, default: [:]][gid, default: ""] += m.content
         }
@@ -954,7 +958,7 @@ struct ConversationView: View {
             result[parent] = groupIds.map { gid in
                 ArenaVariant(groupId: gid,
                              content: contentByGroup[parent]?[gid] ?? "",
-                             modelSlug: modelByGroup[parent]?[gid] ?? "")
+                             modelSlug: (modelByGroup[parent]?[gid]) ?? nil)
             }
         }
         return result
@@ -2335,10 +2339,10 @@ extension ConversationView {
         return prior.last?.id
     }
 
-    /// Regenerate another answer to a prompt (arena 再生成). Streams the
-    /// regenerate SSE to completion, then reloads so the new variant — and
-    /// the inline compare card — appear. The bot's arena pool decides the
-    /// model (a different one when possible).
+    /// Regenerate another answer to a prompt (arena 再生成). Appends a live
+    /// bot bubble tagged to the same prompt so it joins the arena group at
+    /// once, streams tokens into it (blinking cursor via revealTargetId),
+    /// then reloads so the canonical variant (with model_slug) replaces it.
     func regenerateArenaAnswer(parentId: String) async {
         guard let parent = messages.first(where: { $0.id == parentId }) else { return }
         let iso = ISO8601DateFormatter()
@@ -2353,13 +2357,43 @@ extension ConversationView {
                 ]
             }
         let body: [String: Any] = ["conversationId": conversation.id, "recentContext": prior]
+
+        let liveId = "arena-live-\(UUID().uuidString)"
+        messages.append(ChatMessage(
+            id: liveId, conversation_id: conversation.id, sender_type: "bot",
+            sender_id: conversation.bot_id, content: "",
+            created_at: Int(Date().timeIntervalSince1970), attachments: nil,
+            parent_message_id: parentId, bubble_group_id: liveId, model_slug: nil))
+        revealTargetId = liveId
+        streamPaused = true
+
+        func setContent(_ make: (String) -> String) {
+            guard let i = messages.lastIndex(where: { $0.id == liveId }) else { return }
+            let p = messages[i]
+            messages[i] = ChatMessage(
+                id: p.id, conversation_id: p.conversation_id, sender_type: p.sender_type,
+                sender_id: p.sender_id, content: make(p.content), created_at: p.created_at,
+                attachments: nil, parent_message_id: p.parent_message_id,
+                bubble_group_id: p.bubble_group_id, model_slug: p.model_slug)
+        }
         do {
             let stream = ChatStream().send(body: body, path: "v1/messages/\(parentId)/regenerate")
-            for try await _ in stream { /* drain to completion */ }
+            for try await event in stream {
+                switch event {
+                case .token(let delta):
+                    streamPaused = false
+                    setContent { $0 + delta }
+                case .done(_, let total), .interrupted(_, let total):
+                    if !total.isEmpty { setContent { _ in total } }
+                default:
+                    break
+                }
+            }
         } catch {
-            // Whatever landed shows on reload; a hard failure just yields no
-            // new variant.
+            // Whatever streamed stays until the reload below corrects it.
         }
+        revealTargetId = nil
+        messages.removeAll { $0.id == liveId }
         await loadHistory()
     }
 }
@@ -2369,7 +2403,9 @@ extension ConversationView {
 struct ArenaVariant: Identifiable, Hashable {
     let groupId: String
     let content: String
-    let modelSlug: String
+    /// nil until the canonical row's model_slug loads (e.g. a regenerate
+    /// bubble that's still streaming).
+    let modelSlug: String?
     var id: String { groupId }
 }
 
@@ -2385,6 +2421,9 @@ struct ArenaCompareCard: View {
     let parentMessageId: String
     let variants: [ArenaVariant]
     var avatarSeed: String = ""
+    /// The bubble_group_id of the variant currently streaming (a live
+    /// regenerate), so its bubble shows a blinking cursor. nil = none.
+    var streamingGroupId: String? = nil
     let onRegenerate: () async -> Void
 
     @State private var outcome: String?     // 'a' / 'b' once voted
@@ -2398,55 +2437,97 @@ struct ArenaCompareCard: View {
     private var chosen: ArenaVariant { outcome == "b" ? b : a }
 
     var body: some View {
-        // Mirror BubbleView's bot row exactly: avatar + bubble + trailing
-        // Spacer, same gutter/vertical padding — so it sits like a normal
-        // bot message, just with two answers inside one bubble.
+        Group {
+            if collapsed, outcome != nil {
+                collapsedStack
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(variants.enumerated()), id: \.element.id) { item in
+                        variantRow(item.element, index: item.offset)
+                    }
+                    footerRow
+                }
+            }
+        }
+        .task { await loadExistingVote() }
+    }
+
+    private func sideFor(_ v: ArenaVariant) -> String? {
+        if v.groupId == b.groupId { return "b" }
+        if v.groupId == a.groupId { return "a" }
+        return nil   // an older variant (>2): shown but not part of the active vote
+    }
+    private func isChosenVariant(_ v: ArenaVariant) -> Bool {
+        guard let o = outcome else { return false }
+        return (o == "a" && v.groupId == a.groupId) || (o == "b" && v.groupId == b.groupId)
+    }
+
+    // Each answer is its own bot bubble — the regenerated ones drop the avatar
+    // (a Color.clear keeps the bubble aligned) so they read as alternatives.
+    // The model name shows below in small gray text only after voting.
+    private func variantRow(_ v: ArenaVariant, index: Int) -> some View {
         HStack(alignment: .top, spacing: 8) {
-            BotAvatar(emojiSeed: avatarSeed.isEmpty ? conversationId : avatarSeed,
-                      colorSeed: conversationId, size: 30)
-            Group {
-                if collapsed, outcome != nil { collapsedBubble } else { expanded }
+            if index == 0 {
+                BotAvatar(emojiSeed: avatarSeed.isEmpty ? conversationId : avatarSeed,
+                          colorSeed: conversationId, size: 30)
+            } else {
+                Color.clear.frame(width: 30, height: 1)
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                answerBubble(v)
+                if revealed, let m = v.modelSlug, !m.isEmpty {
+                    Text(catalog.displayName(for: m))
+                        .font(Theme.Fonts.caption)
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                        .padding(.leading, 4)
+                }
             }
             Spacer(minLength: 32)
         }
         .padding(.horizontal, Theme.Metrics.gutter)
-        .padding(.vertical, 4)
-        .task { await loadExistingVote() }
     }
 
-    // The bot answer bubble — same chrome as a normal message bubble, but
-    // holding both candidates split by a thin line. Tap a half to pick it.
-    private var expanded: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            answerSection(a, side: "a")
-            hairline
-            answerSection(b, side: "b")
-            hairline
-            footer.padding(.horizontal, 14).padding(.vertical, 8)
-        }
-        .background(Theme.Palette.surface)
-        .clipShape(RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
-            .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5))
+    // The bubble itself — same chrome + MarkdownText as a normal bot bubble.
+    // The whole bubble is the vote target; the chosen one gets an accent ring.
+    private func answerBubble(_ v: ArenaVariant) -> some View {
+        let isChosen = isChosenVariant(v)
+        let isStreaming = streamingGroupId == v.groupId
+        let text = v.content.isEmpty ? (isStreaming ? " " : "（空）") : v.content
+        return MarkdownText(text: text, allowCodeRun: false, citations: [])
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 14).padding(.vertical, 10)
+            .background(RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
+                .fill(Theme.Palette.surface))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
+                .strokeBorder(isChosen ? Theme.Palette.accent : Theme.Palette.hairline,
+                              lineWidth: isChosen ? 1.5 : 0.5))
+            .overlay(alignment: .bottomTrailing) {
+                if isStreaming {
+                    BlinkingCursor(paused: streamPausedSeed)
+                        .padding(.trailing, 12).padding(.bottom, 12)
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                guard outcome == nil, !voting, let side = sideFor(v) else { return }
+                Task { await vote(side) }
+            }
     }
 
-    private var hairline: some View {
-        Rectangle().fill(Theme.Palette.hairline).frame(height: 0.5)
-    }
+    // BlinkingCursor needs a paused flag; arena's live stream is always
+    // "flowing" from the card's POV, so keep it solid-then-blink default off.
+    private var streamPausedSeed: Bool { false }
 
-    @ViewBuilder private var footer: some View {
-        if outcome == nil {
-            HStack(spacing: 14) {
+    private var footerRow: some View {
+        HStack(spacing: 14) {
+            Color.clear.frame(width: 30, height: 1)
+            if outcome == nil {
                 Text("喜欢哪个点哪个")
                     .font(Theme.Fonts.caption)
                     .foregroundStyle(Theme.Palette.inkMuted)
-                Spacer(minLength: 8)
                 regenInline
-            }
-        } else {
-            HStack(spacing: 14) {
+            } else {
                 regenInline
-                Spacer(minLength: 8)
                 Button { withAnimation { collapsed = true } } label: {
                     HStack(spacing: 3) {
                         Image(systemName: "chevron.up")
@@ -2457,71 +2538,52 @@ struct ArenaCompareCard: View {
                 }
                 .buttonStyle(.plain)
             }
+            Spacer(minLength: 32)
         }
+        .padding(.horizontal, Theme.Metrics.gutter)
+        .padding(.bottom, 2)
     }
 
-    // One answer: the same MarkdownText the normal bubble uses, occupying a
-    // tappable half of the bubble (the tap is the vote). After voting the
-    // chosen half gets a faint tint + checkmark.
-    private func answerSection(_ v: ArenaVariant, side: String) -> some View {
-        let isChosen = outcome == side
-        return VStack(alignment: .leading, spacing: 3) {
-            if revealed {
-                HStack(spacing: 4) {
-                    Text(catalog.displayName(for: v.modelSlug))
-                        .font(Theme.Fonts.rounded(size: 10, weight: .semibold))
-                        .foregroundStyle(Theme.Palette.accent)
-                    if isChosen {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 10))
-                            .foregroundStyle(Theme.Palette.accent)
+    // Collapsed: the chosen answer on top of a small offset card stack
+    // (iOS app-switcher feel, simple version). Tap anywhere to expand.
+    private var collapsedStack: some View {
+        HStack(alignment: .top, spacing: 8) {
+            BotAvatar(emojiSeed: avatarSeed.isEmpty ? conversationId : avatarSeed,
+                      colorSeed: conversationId, size: 30)
+            ZStack(alignment: .top) {
+                RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
+                    .fill(Theme.Palette.surface)
+                    .overlay(RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
+                        .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5))
+                    .offset(x: 7, y: 7)
+                RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
+                    .fill(Theme.Palette.surface)
+                    .overlay(RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
+                        .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5))
+                    .offset(x: 3.5, y: 3.5)
+                VStack(alignment: .leading, spacing: 3) {
+                    MarkdownText(text: chosen.content.isEmpty ? "（空）" : chosen.content,
+                                 allowCodeRun: false, citations: [])
+                        .fixedSize(horizontal: false, vertical: true)
+                    if revealed, let m = chosen.modelSlug, !m.isEmpty {
+                        Text("\(catalog.displayName(for: m)) · 共 \(variants.count) 个回答")
+                            .font(Theme.Fonts.caption)
+                            .foregroundStyle(Theme.Palette.inkMuted)
                     }
                 }
+                .padding(.horizontal, 14).padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
+                    .fill(Theme.Palette.surface))
+                .overlay(RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
+                    .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5))
             }
-            MarkdownText(text: v.content.isEmpty ? "（空）" : v.content,
-                         allowCodeRun: false, citations: [])
-                .fixedSize(horizontal: false, vertical: true)
+            .contentShape(Rectangle())
+            .onTapGesture { withAnimation { collapsed = false } }
+            Spacer(minLength: 40)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(isChosen ? Theme.Palette.accent.opacity(0.08) : Color.clear)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            guard outcome == nil, !voting else { return }
-            Task { await vote(side) }
-        }
-    }
-
-    // Collapsed: just the chosen answer, rendered like a normal bubble, + 展开.
-    private var collapsedBubble: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            if revealed {
-                Text(catalog.displayName(for: chosen.modelSlug))
-                    .font(Theme.Fonts.rounded(size: 10, weight: .semibold))
-                    .foregroundStyle(Theme.Palette.accent)
-            }
-            MarkdownText(text: chosen.content.isEmpty ? "（空）" : chosen.content,
-                         allowCodeRun: false, citations: [])
-                .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 0) {
-                Spacer(minLength: 0)
-                Button { withAnimation { collapsed = false } } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "chevron.down")
-                        Text("展开")
-                    }
-                    .font(Theme.Fonts.rounded(size: 11, weight: .medium))
-                    .foregroundStyle(Theme.Palette.inkMuted)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 14).padding(.vertical, 10)
-        .background(Theme.Palette.surface)
-        .clipShape(RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
-            .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5))
+        .padding(.horizontal, Theme.Metrics.gutter)
+        .padding(.vertical, 4)
     }
 
     private var regenInline: some View {
