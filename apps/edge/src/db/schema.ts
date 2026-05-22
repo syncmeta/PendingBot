@@ -727,61 +727,46 @@ export type Database = {
           bot_id: string | null
           conversation_type: string
           created_at: string
-          envelope_settings: Json | null
           feature: string
           id: string
           last_turn_status: string | null
           metadata: Json
-          model_slug_override: string | null
           parent_message_id: string | null
-          provider_override: string | null
           round_count: number
           spawner_bot_id: string | null
           title: string | null
           updated_at: string
           user_id: string | null
-          vision_model_override: string | null
-          voice_model_override: string | null
         }
         Insert: {
           bot_id?: string | null
           conversation_type?: string
           created_at?: string
-          envelope_settings?: Json | null
           feature?: string
           id?: string
           last_turn_status?: string | null
           metadata?: Json
-          model_slug_override?: string | null
           parent_message_id?: string | null
-          provider_override?: string | null
           round_count?: number
           spawner_bot_id?: string | null
           title?: string | null
           updated_at?: string
           user_id?: string | null
-          vision_model_override?: string | null
-          voice_model_override?: string | null
         }
         Update: {
           bot_id?: string | null
           conversation_type?: string
           created_at?: string
-          envelope_settings?: Json | null
           feature?: string
           id?: string
           last_turn_status?: string | null
           metadata?: Json
-          model_slug_override?: string | null
           parent_message_id?: string | null
-          provider_override?: string | null
           round_count?: number
           spawner_bot_id?: string | null
           title?: string | null
           updated_at?: string
           user_id?: string | null
-          vision_model_override?: string | null
-          voice_model_override?: string | null
         }
         Relationships: [
           {

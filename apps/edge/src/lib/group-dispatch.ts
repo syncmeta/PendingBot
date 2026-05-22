@@ -3,6 +3,15 @@ import { parseWebSearchConfig } from './bot-reply/tool-defs';
 import { serviceClient } from './supabase';
 import type { Env } from '../types';
 
+/// Pull the bot's default vision model (bots.config.visionModel) out of
+/// the jsonb config blob. null = auto (use main model if vision-capable,
+/// else the server's default vision model).
+function botConfigVisionModel(config: unknown): string | null {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return null;
+  const v = (config as Record<string, unknown>).visionModel;
+  return typeof v === 'string' && v.length > 0 ? v : null;
+}
+
 // Group-turn dispatch — wake one or more bots in a group conversation
 // to take a turn. Called by:
 //   - M4: GroupRouterDO after the small-model classifier returns a
@@ -119,7 +128,7 @@ export async function dispatchGroupTurn(
   //    then runChatTurn's recordAudit writes user_id = creator.
   const { data: convRow } = await supa
     .from('conversations')
-    .select('user_id, provider_override, round_count, vision_model_override')
+    .select('user_id, round_count')
     .eq('id', conversationId)
     .single();
   const placeholderUserId = convRow?.user_id ?? '';
@@ -135,7 +144,7 @@ export async function dispatchGroupTurn(
 
     const { data: bot } = await supa
       .from('bots')
-      .select('id, display_name, model_id, output_mode, is_active, tz, config')
+      .select('id, display_name, model_id, model_provider, output_mode, is_active, tz, config')
       .eq('id', botId)
       .maybeSingle();
     if (!bot || !bot.is_active) continue;
@@ -201,8 +210,9 @@ export async function dispatchGroupTurn(
         },
         recentContext,
         newMessage: nudge,
-        providerOverride: convRow?.provider_override ?? null,
-        visionModelOverride: convRow?.vision_model_override ?? null,
+        // Bot-level routing + vision defaults (no per-conv overrides).
+        providerOverride: (bot.model_provider as string | null) ?? null,
+        visionModelOverride: botConfigVisionModel(bot.config),
         webSearch: parseWebSearchConfig(bot.config),
         // Exposes set_my_group_nickname + set_bot_group_description
         // tools to this turn. The bot can call them mid-reply to

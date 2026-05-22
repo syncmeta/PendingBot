@@ -14,7 +14,7 @@ import { UUID_RE } from '../lib/ids';
 import { jsonError } from '../lib/http-error';
 import { deleteCachedAttachment, removeInventoryIds, resolveAttachmentOwnership } from '../lib/attachment-cache';
 import { resolveBot } from '../lib/bot-cache';
-import { deleteCachedConv, resolveConv } from '../lib/conv-cache';
+import { resolveConv } from '../lib/conv-cache';
 import { safeWaitUntil } from '../lib/safe-wait-until';
 import { startSseKeepalive } from '../lib/sse-keepalive';
 import { notifyConversationUsers, notifyUserMessage } from '../lib/push';
@@ -58,15 +58,6 @@ const PostBody = z.object({
   // Result: the bot replies "as if" the user just sent something, with
   // the lookback note in scope.
   autoLookback: z.boolean().optional(),
-  // Per-conv provider pin. Tri-state on the wire:
-  //   absent  → "no opinion this turn" — Worker uses conv.provider_override
-  //             from the row (cross-device persistence)
-  //   null    → "clear the pin" — Worker also persists null onto the row
-  //   string  → set/replace pin to this slug — Worker persists onto the row
-  // When non-null, passed through to LLMRouter as preferProvider for this
-  // turn. Fallback retries still work; if the chosen provider 503s, router
-  // falls through to other providers (the pin biases, doesn't lock).
-  providerOverride: z.string().nullable().optional(),
   // IANA timezone of the client (e.g. "Asia/Shanghai" / "America/Los_Angeles").
   // Used to render the per-turn time hint we append to the user's message in
   // the LLM prompt, so the model sees the user's *local* clock — not UTC.
@@ -139,9 +130,6 @@ messageRoutes.post('/', async (c) => {
     conversation_type: 'user_bot' | 'self' | 'group' | 'user_user';
     bot_id: string | null;
     round_count: number | null;
-    provider_override: string | null;
-    model_slug_override: string | null;
-    vision_model_override: string | null;
   } | null;
   if (!conv) return jsonError(c, 404, 'conversation_no_access');
 
@@ -258,7 +246,9 @@ messageRoutes.post('/', async (c) => {
           userId,
           attachmentIds: parsed.attachmentIds!,
           botId: conv.bot_id ?? null,
-          visionOverride: conv.vision_model_override ?? null,
+          // No per-conv vision pin — scheduleAttachmentSummary resolves the
+          // bot's own default (bots.config.visionModel) then auto-fallback.
+          visionOverride: null,
         }),
       );
     }
@@ -407,45 +397,12 @@ messageRoutes.post('/', async (c) => {
     }
   }
 
-  // Resolve effective provider pin for this turn. Tri-state body field
-  // (see PostBody comment): when the body carries an opinion (defined,
-  // even null), persist it onto the conv row so other devices see it on
-  // their next conv-list fetch. Whichever value lands here is what gets
-  // passed to LLMRouter as preferProvider. Persistence is fire-and-forget
-  // so the SSE stream doesn't wait on it.
-  const persistedOverride = conv.provider_override ?? null;
-  let effectiveProviderOverride: string | null = persistedOverride;
-  if (parsed.providerOverride !== undefined) {
-    const desired = parsed.providerOverride;
-    effectiveProviderOverride = desired;
-    if (desired !== persistedOverride) {
-      safeWaitUntil(
-        c,
-        (async () => {
-          const { error } = await supaService
-            .from('conversations')
-            .update({ provider_override: desired })
-            .eq('id', parsed.conversationId);
-          if (error) console.error('[messages] provider_override persist failed', error.message);
-          // Invalidate KV so the next message reads the new override.
-          await deleteCachedConv(c.env, parsed.conversationId).catch(() => undefined);
-        })(),
-      );
-    }
-  }
+  // Provider routing is bot-level only — the bot's own default route
+  // (bots.model_provider) drives preferProvider for the turn.
+  const effectiveProviderOverride: string | null = bot.model_provider ?? null;
 
-  // The bot's own default route (bots.model_provider) fills in when the
-  // conversation carries no provider pin — so a bot created on the
-  // OpenAI-native route uses it without a per-conv override.
-  effectiveProviderOverride = effectiveProviderOverride ?? bot.model_provider ?? null;
-
-  // Per-conv model pin. NULL → fall back to bot.model_id. Set via
-  // PATCH /v1/conversations/:id (only on convs whose bot is private and
-  // owned by the user).
-  const effectiveModelId: string =
-    conv.model_slug_override && conv.model_slug_override.length > 0
-      ? conv.model_slug_override
-      : (bot.model_id as string);
+  // Chat model is the bot's own default (bots.model_id).
+  const effectiveModelId: string = bot.model_id as string;
 
   const isSelfChat = conv.conversation_type === 'self';
 
@@ -514,10 +471,9 @@ messageRoutes.post('/', async (c) => {
             recentContext: parsed.recentContext ?? [],
             newMessage: parsed.newMessage ?? '（系统注入：根据上一轮的查证笔记，自然继续上面的对话。不要提到这是自动触发的。）',
             currentAttachmentIds: parsed.attachmentIds,
-            // Conversation pin wins; otherwise fall back to the bot's
-            // own default vision model (bots.config.visionModel).
-            visionModelOverride:
-              conv.vision_model_override ?? botConfigString(bot.config, 'visionModel'),
+            // Bot's own default vision model (bots.config.visionModel);
+            // null = auto (use main model if vision-capable, else default).
+            visionModelOverride: botConfigString(bot.config, 'visionModel'),
             webSearch: parseWebSearchConfig(bot.config),
             activeLookbacks: parsed.activeLookbacks ?? [],
             providerOverride: effectiveProviderOverride,
@@ -661,7 +617,6 @@ const StartBody = z.object({
     )
     .max(50)
     .optional(),
-  providerOverride: z.string().nullable().optional(),
   clientTz: z.string().max(64).optional(),
 });
 
@@ -750,10 +705,10 @@ messageRoutes.post('/start', async (c) => {
   const convId = startInfo.conv_id;
   const userMessageId = startInfo.user_message_id;
 
-  // Detached attachment summarization for the just-created conv. New convs
-  // can't have vision_model_override set yet (form doesn't expose it on
-  // first turn), so we pass null — scheduleAttachmentSummary falls back to
-  // bot.model_id-vs-vision check, then DEFAULT_VISION_MODEL.
+  // Detached attachment summarization for the just-created conv.
+  // scheduleAttachmentSummary resolves the bot's own default vision model
+  // (bots.config.visionModel), then the bot.model_id-vs-vision check, then
+  // DEFAULT_VISION_MODEL.
   if (parsed.attachmentIds && parsed.attachmentIds.length > 0) {
     c.executionCtx.waitUntil(
       scheduleAttachmentSummary({
@@ -767,18 +722,8 @@ messageRoutes.post('/start', async (c) => {
     );
   }
 
-  let effectiveProviderOverride: string | null = null;
-  if (parsed.providerOverride !== undefined) {
-    effectiveProviderOverride = parsed.providerOverride;
-    if (effectiveProviderOverride !== null) {
-      await supaService
-        .from('conversations')
-        .update({ provider_override: effectiveProviderOverride })
-        .eq('id', convId);
-    }
-  }
-  // Bot's own default route fills in when there's no per-conv pin.
-  effectiveProviderOverride = effectiveProviderOverride ?? bot.model_provider ?? null;
+  // Provider routing is bot-level only (bots.model_provider).
+  const effectiveProviderOverride: string | null = bot.model_provider ?? null;
 
   const encoder = new TextEncoder();
   const detachedAbort = new AbortController();
@@ -844,8 +789,8 @@ messageRoutes.post('/start', async (c) => {
             recentContext: parsed.recentContext ?? [],
             newMessage: parsed.newMessage ?? '',
             currentAttachmentIds: parsed.attachmentIds,
-            // Brand-new conv from /start — no override possible yet.
-            visionModelOverride: null,
+            // Bot's own default vision model (bots.config.visionModel).
+            visionModelOverride: botConfigString(bot.config, 'visionModel'),
             webSearch: parseWebSearchConfig(bot.config),
             activeLookbacks: [],
             providerOverride: effectiveProviderOverride,

@@ -40,7 +40,8 @@ export interface ToolCtx {
   /// to route the tool call to the main model itself (vision-capable) or
   /// fall back to the configured vision model.
   botModelId: string;
-  /// conversations.vision_model_override — null = auto fallback chain.
+  /// Bot's pinned vision model (bots.config.visionModel) — null = auto
+  /// fallback chain.
   visionOverride: string | null;
   /// Accumulator shared with runChatTurn — search_web pushes deduped hits
   /// here so the per-turn `[N]` numbering stays stable across rounds.
