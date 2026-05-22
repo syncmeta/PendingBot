@@ -154,6 +154,23 @@ Don't auto-deploy on merge — deploys are deliberate and user-initiated.
 
 Full deploy recipe (Board, Edge secrets, DB push, seed apply, post-merge checklist, gotchas) lives in `docs/deploy.md` — read that file when the session is actually about deploying, not on every session.
 
+## Keep an eye on project health — log structural issues to `docs/tech-debt.md`
+
+While doing normal work, stay alert for problems that undermine the project's foundation, not just the task in front of you. When you notice one, **record it** in `docs/tech-debt.md` (the structural-risk register). This is passive vigilance during regular work, not a dedicated audit pass — you're not expected to go hunting.
+
+What's worth logging (the register has the full rubric + entry format):
+
+- 🔴 **Foundational** — wrong data models, designs that get worse with scale, hidden cross-module coupling, security / data-consistency hazards, migration-ledger drift. Anything project-wide.
+- 🟡 **Rob-Peter-to-pay-Paul** — a fix that makes A work by pushing the cost onto B; workarounds that bypass types/validation/constraints; copy-paste instead of abstraction; "temporary" implementations.
+- 🟢 **Non-standard** — code/naming/structure that drifts from this repo's conventions; not fatal but corrodes consistency over time.
+
+Rules:
+
+- **Record, don't auto-fix.** Fixing a foundational issue is usually its own chunk of work that would derail the current task. Append an entry and move on — unless the user asks you to fix it now.
+- If *you* introduce a knowingly-temporary or makeshift implementation in the current task, log it too (own the holes you dig).
+- Don't log what linter/typecheck already catches, pure style nits, or task-local TODOs.
+- Mention any notable new entries in your end-of-turn summary so the user sees them surface.
+
 ## First action on every session that's about to change code
 
 Before touching files, check where you are:

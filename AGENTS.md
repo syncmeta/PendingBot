@@ -20,6 +20,10 @@ Use this together with `CLAUDE.md`, which is the detailed source of truth for th
 - Treat local `main` as the source of truth. Do not fetch or rebase against `origin/main` during the normal merge flow; the remote is only a backup.
 - Do not auto-deploy after merging; deploys remain deliberate and user-initiated.
 
+## Log structural issues
+
+- While working, watch for foundational problems, band-aid fixes, and non-standard code that undermine the project — and record them in `docs/tech-debt.md` (record, don't auto-fix; see that file and `CLAUDE.md` for the rubric).
+
 ## Preserve user work
 
 - Treat unrecognized dirty files as user work. Do not revert or overwrite them.
