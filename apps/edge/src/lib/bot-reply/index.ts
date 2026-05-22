@@ -801,6 +801,12 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     toolRegistry,
   );
 
+  // Per-bot web-search master switch, shared across every provider path
+  // (OpenAI built-in, Anthropic server tool, Gemini grounding, OpenRouter
+  // plugin). Absent / true = on, matching OpenRouter's historical default;
+  // only an explicit `enabled: false` in bots.config.webSearch turns it off.
+  const webSearchOn = input.webSearch?.enabled !== false;
+
   try {
     // Outer agent loop. Each iteration is one LLM call. If the model emits
     // tool_calls, we execute them and re-iterate; otherwise we exit.
@@ -828,7 +834,12 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
             const stream = await openAnthropicStream(
               r.baseURL,
               r.aigToken,
-              { model: r.modelToCall, messages, tools: nativeFnTools },
+              {
+                model: r.modelToCall,
+                messages,
+                tools: nativeFnTools,
+                webSearch: webSearchOn ? input.webSearch ?? {} : null,
+              },
               ac.signal,
             );
             return { stream };
@@ -837,7 +848,12 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
             const stream = await openGeminiStream(
               r.baseURL,
               r.aigToken,
-              { model: r.modelToCall, messages, tools: nativeFnTools },
+              {
+                model: r.modelToCall,
+                messages,
+                tools: nativeFnTools,
+                webSearch: webSearchOn,
+              },
               ac.signal,
               r.byokAlias,
             );
@@ -856,10 +872,15 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
                 instructions,
                 input,
                 // Internal function tools + OpenAI's server-side built-in
-                // tools (web search, code interpreter).
+                // tools (code interpreter, image gen always; web search only
+                // when the bot's web-search switch is on).
                 tools: [
                   ...chatToolsToResponsesTools(nativeFnTools),
-                  ...OPENAI_BUILTIN_TOOLS,
+                  ...(webSearchOn
+                    ? OPENAI_BUILTIN_TOOLS
+                    : OPENAI_BUILTIN_TOOLS.filter(
+                        (t) => t.type !== 'web_search_preview',
+                      )),
                 ],
               },
               ac.signal,
@@ -905,6 +926,12 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       // Per-call accumulators.
       let assistantContent = '';
       const toolCalls: ChatCompletionMessageToolCall[] = [];
+      // OpenRouter runs web search server-side and returns its sources as
+      // message-level `annotations` (no function call to trace). Open a
+      // synthetic search chip on the first one so the UI shows a search
+      // happened; close it after the stream. OpenRouter doesn't expose the
+      // query, so the chip carries no 搜索词.
+      let orSearchChipOpen = false;
 
       for await (const chunk of stream) {
         if (ac.signal.aborted) break;
@@ -960,6 +987,35 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
           }
         }
 
+        // OpenRouter web-search citations ride the delta as `annotations`
+        // (type 'url_citation', url+title nested under `url_citation`). The
+        // Responses/native paths surface their sources via chunk.citations
+        // instead; this handles the Chat Completions dialect only.
+        const anns = (delta as { annotations?: unknown } | undefined)?.annotations;
+        if (Array.isArray(anns)) {
+          let addedAny = false;
+          for (const a of anns) {
+            if (!a || typeof a !== 'object') continue;
+            const rec = a as { type?: unknown; url_citation?: unknown };
+            if (rec.type !== 'url_citation' || !rec.url_citation || typeof rec.url_citation !== 'object') {
+              continue;
+            }
+            const uc = rec.url_citation as { url?: unknown; title?: unknown };
+            const url = typeof uc.url === 'string' ? uc.url : '';
+            if (!url || citations.some((x) => x.url === url)) continue;
+            if (!orSearchChipOpen) {
+              emitToolEvent('tool_call', { name: 'web_search' });
+              orSearchChipOpen = true;
+            }
+            citations.push({
+              url,
+              title: typeof uc.title === 'string' && uc.title ? uc.title : url,
+            });
+            addedAny = true;
+          }
+          if (addedAny) emitToolEvent('citations', { items: citations });
+        }
+
         if (chunk.usage) {
           const u = usageFromCompletion(chunk.usage, chunk);
           usage.input += u.inputTokens ?? 0;
@@ -970,8 +1026,8 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
         }
 
         // Built-in (server-side) tool activity. web_search / code_interpreter
-        // run inside OpenAI — no tool_call for the loop to execute, just
-        // mirror progress into the tool-trace UI. A finished
+        // run inside the provider — no tool_call for the loop to execute,
+        // just mirror progress into the tool-trace UI. A finished
         // image_generation carries a PNG, which becomes its own bubble.
         if (chunk.builtinTool) {
           const bt = chunk.builtinTool;
@@ -993,6 +1049,18 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
                 ? { name: bt.kind, attachment_id: r.attachmentId }
                 : { name: bt.kind, error: r.reason },
             );
+          } else if (bt.kind === 'web_search') {
+            // Normalise every provider's server-side search onto the same
+            // tool name so the iOS trace renders it identically (chip,
+            // 搜索词 label). The query (when the provider surfaces it) rides
+            // the 'started' chip; results arrive separately via
+            // chunk.citations below.
+            emitToolEvent(
+              bt.phase === 'started' ? 'tool_call' : 'tool_result',
+              bt.phase === 'started' && bt.query
+                ? { name: 'web_search', query: bt.query }
+                : { name: 'web_search' },
+            );
           } else {
             emitToolEvent(
               bt.phase === 'started' ? 'tool_call' : 'tool_result',
@@ -1000,6 +1068,26 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
             );
           }
         }
+
+        // Server-side web-search results (OpenAI url_citation annotations,
+        // Anthropic/Gemini result blocks). Fold into the per-turn citation
+        // list — deduped against anything the MCP search path already added
+        // — and push the cumulative list so iOS resolves [N] taps and shows
+        // the result count.
+        if (chunk.citations && chunk.citations.length > 0) {
+          let added = false;
+          for (const c of chunk.citations) {
+            if (!c.url || citations.some((x) => x.url === c.url)) continue;
+            citations.push({ url: c.url, title: c.title || c.url, snippet: c.snippet });
+            added = true;
+          }
+          if (added) emitToolEvent('citations', { items: citations });
+        }
+      }
+
+      // Close the synthetic OpenRouter search chip now the stream is done.
+      if (orSearchChipOpen) {
+        emitToolEvent('tool_result', { name: 'web_search', count: citations.length });
       }
 
       // Push the assistant turn (with any tool_calls) into running history

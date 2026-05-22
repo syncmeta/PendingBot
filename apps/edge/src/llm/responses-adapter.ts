@@ -61,7 +61,27 @@ export interface LlmStreamChunk {
     phase: 'started' | 'completed';
     /// Base64 PNG, set on `image_generation` + phase 'completed'.
     imageBase64?: string;
+    /// The search query the model ran, set on `web_search` + phase
+    /// 'started' when the provider surfaces it (OpenAI action.query,
+    /// Anthropic server_tool_use.input.query, Gemini webSearchQueries).
+    query?: string;
   };
+  /// Server-side web-search results, decoupled from the tool chip because
+  /// providers deliver them out of band: OpenAI streams `url_citation`
+  /// annotations during the answer text (after the search "completed"),
+  /// OpenRouter attaches them to the final message, Anthropic/Gemini carry
+  /// them in their result blocks. The bot-reply loop folds these into the
+  /// per-turn citation list and emits a `citations` SSE event.
+  citations?: BuiltinCitation[];
+}
+
+/// Minimal citation shape the LLM adapters hand up to bot-reply. Kept local
+/// (structurally identical to bot-reply's Citation) so the provider adapters
+/// don't reach down into the bot-reply module.
+export interface BuiltinCitation {
+  url: string;
+  title: string;
+  snippet?: string;
 }
 
 // OpenAI's server-side built-in tools, added to the Responses request for
@@ -223,6 +243,13 @@ async function* mapResponseStream(
   const itemIdToIndex = new Map<string, number>();
   let nextToolIndex = 0;
 
+  // web_search built-in: the query rides the `web_search_call` output item
+  // (action.query), but its result `url_citation` annotations only arrive
+  // later, interleaved with the answer text. Accumulate them and flush as
+  // a single citations chunk at the end so bot-reply gets one clean list.
+  const webCitations: BuiltinCitation[] = [];
+  const seenCitationUrls = new Set<string>();
+
   for await (const ev of stream) {
     switch (ev.type) {
       case 'response.created':
@@ -252,6 +279,16 @@ async function* mapResponseStream(
               },
             ],
           };
+        } else if (ev.item.type === 'web_search_call') {
+          // The query the model decided to search for lives on the call
+          // item's `action` (action.query for type 'search'). Surface the
+          // 'started' chip here rather than on web_search_call.in_progress
+          // so it carries the query. Read off-type — the SDK union for
+          // `action` varies (search / open_page / find).
+          const action = (ev.item as { action?: { query?: unknown } }).action;
+          const query =
+            action && typeof action.query === 'string' ? action.query : undefined;
+          yield { builtinTool: { kind: 'web_search', phase: 'started', query } };
         }
         break;
 
@@ -272,12 +309,34 @@ async function* mapResponseStream(
       }
 
       // ── Built-in server-side tools ──────────────────────────────────
+      // 'started' is emitted on output_item.added (above) so it carries the
+      // query; in_progress would only duplicate it without one.
       case 'response.web_search_call.in_progress':
-        yield { builtinTool: { kind: 'web_search', phase: 'started' } };
         break;
       case 'response.web_search_call.completed':
         yield { builtinTool: { kind: 'web_search', phase: 'completed' } };
         break;
+
+      // Citation for a web_search result, attached to the answer text as it
+      // streams. Dedupe by URL and buffer; flushed at response.completed.
+      // (SDK 4.104.0 names this event with an underscore between text and
+      // annotation; newer APIs use a dot.)
+      case 'response.output_text_annotation.added': {
+        const ann = (ev as { annotation?: unknown }).annotation;
+        if (ann && typeof ann === 'object') {
+          const a = ann as { type?: unknown; url?: unknown; title?: unknown };
+          if (a.type === 'url_citation' && typeof a.url === 'string' && a.url) {
+            if (!seenCitationUrls.has(a.url)) {
+              seenCitationUrls.add(a.url);
+              webCitations.push({
+                url: a.url,
+                title: typeof a.title === 'string' && a.title ? a.title : a.url,
+              });
+            }
+          }
+        }
+        break;
+      }
       case 'response.code_interpreter_call.in_progress':
         yield { builtinTool: { kind: 'code_interpreter', phase: 'started' } };
         break;
@@ -303,6 +362,9 @@ async function* mapResponseStream(
         break;
 
       case 'response.completed': {
+        if (webCitations.length > 0) {
+          yield { citations: webCitations };
+        }
         const u = ev.response.usage;
         if (u) {
           // Re-shape into the Chat Completions usage object so the
