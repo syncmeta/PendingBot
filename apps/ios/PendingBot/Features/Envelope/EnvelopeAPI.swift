@@ -51,20 +51,17 @@ struct EnvelopeRun: Codable, Identifiable, Hashable {
 
 extension APIClient {
     /// Kicks off a new envelope (envelope_runs) for the given conversation.
-    /// `settings` lets the caller override the conversation's saved
-    /// envelope_settings — the worker persists whatever the caller sent
-    /// back onto the conversation row so the next trigger inherits.
+    /// The run uses the bot's own envelope defaults (bots.config.envelope).
     /// Returns the run id immediately; the runner streams progress via
     /// Realtime. Caller subscribes to the feed channel to watch it.
-    func envelopeTrigger(conversationId: String, settings: EnvelopeSettings? = nil) async throws -> String {
+    func envelopeTrigger(conversationId: String) async throws -> String {
         struct Body: Encodable {
             let conversationId: String
-            let settings: EnvelopeSettings?
         }
         struct Resp: Decodable { let envelopeRunId: String }
         let resp: Resp = try await post(
             "v1/envelope/trigger",
-            body: Body(conversationId: conversationId, settings: settings)
+            body: Body(conversationId: conversationId)
         )
         return resp.envelopeRunId
     }
@@ -111,13 +108,12 @@ private extension String {
     var nonEmpty: String? { isEmpty ? nil : self }
 }
 
-// ── Envelope settings (per-conversation) ─────────────────────────────────
+// ── Envelope settings (bot-level) ────────────────────────────────────────
 //
 // Mirrors the shape of EnvelopeSettings on the edge runner — explorer
 // model, optional collaborator model, search/scrape provider, turn cap.
-// Stored on `conversations.envelope_settings` (JSONB); the worker reads
-// it as the trigger's defaults. Sent in the trigger body so a one-off
-// override doesn't have to round-trip through a separate save call.
+// Edited in BotConfigView and stored on `bots.config.envelope` (JSONB);
+// the worker reads it as the envelope run's defaults.
 
 /// Search providers the runner knows. `brave` is the default.
 enum EnvelopeSearchProvider: String, Codable, CaseIterable, Hashable {

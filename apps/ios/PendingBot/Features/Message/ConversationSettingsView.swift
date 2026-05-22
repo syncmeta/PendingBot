@@ -330,7 +330,7 @@ struct ContactSettingsView: View {
 /// 预算。Edited from BotConfigView (机器人级别默认)。
 struct LetterSettingsView: View {
     @Binding var envelope: EnvelopeSettings
-    /// 只读模式 — 公有 / 非自有机器人。会话级覆盖永远可改,默认 true。
+    /// 只读模式 — 公有 / 非自有机器人。默认 true(自有机器人可改)。
     var canEdit: Bool = true
 
     private enum PickerTarget: Identifiable {

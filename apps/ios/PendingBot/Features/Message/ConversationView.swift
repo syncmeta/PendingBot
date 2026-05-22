@@ -101,19 +101,6 @@ struct ConversationView: View {
     /// AttachmentGrid for loaded/realtime messages. Populated on upload
     /// and on history load — see bubbleMessage.
     @State var attachmentMetaById: [String: Attachment] = [:]
-    @State var modelOverride: String = ""    // "" = use bot default
-    /// Per-conv LLM provider pin. nil = follow alias-weight routing
-    /// (默认). Set via the conversation settings sheet; sent on each
-    /// chat POST as `providerOverride` so the server persists it onto
-    /// conversations.provider_override.
-    @State private var providerOverride: String?
-    /// True iff the user has touched the provider picker in THIS view
-    /// instance. Distinguishes "no opinion, leave the row alone" from
-    /// "user explicitly picked 自动 → server should clear the row" — both
-    /// would otherwise look like providerOverride == nil. We don't ride on
-    /// (providerOverride != conversation.provider_override) because the
-    /// row's value may itself be nil and we still need to clear it idempotently.
-    @State private var providerOverrideTouched: Bool = false
     @State var error: String?
     @State private var pending = false              // server is generating (bot_typing active)
     /// Outstanding tool calls this turn. Incremented on each `tool_call`,
@@ -308,19 +295,13 @@ struct ConversationView: View {
     /// messages stay visible so the user can still scroll their history.
     @State var groupFreezeAt: Date?
 
-    /// "<bot_name> · <effective-model-tag>". Effective model = the per-conv
-    /// override if set, otherwise the bot's resolved model (which itself
-    /// already accounts for the user's per-bot pin from 我 → 机器人管理).
+    /// "<bot_name> · <model-tag>". The model is the bot's resolved model
+    /// (bots.model_id, which already accounts for the owner's edits in
+    /// 我 → 机器人管理).
     private var botName: String {
         let base = bot?.display_name ?? conversation.bot_name ?? conversation.bot_id
-        let tag: String? = {
-            let trimmed = modelOverride.trimmingCharacters(in: .whitespaces)
-            if !trimmed.isEmpty { return modelCatalog.displayName(for: trimmed) }
-            guard let slug = bot?.model, !slug.isEmpty else { return nil }
-            return modelCatalog.displayName(for: slug)
-        }()
-        guard let tag else { return base }
-        return "\(base) · \(tag)"
+        guard let slug = bot?.model, !slug.isEmpty else { return base }
+        return "\(base) · \(modelCatalog.displayName(for: slug))"
     }
 
     /// Seed for the avatar's emoji glyph. Always tied to bot identity so
@@ -714,8 +695,6 @@ struct ConversationView: View {
             }
         }
         .task {
-            modelOverride = conversation.model_override ?? ""
-            providerOverride = conversation.provider_override
             // Pending convs (lazy-created on first send) have no row yet —
             // skip history / skills / realtime until they materialise.
             guard !conversation.id.isEmpty else { return }
@@ -1058,7 +1037,7 @@ struct ConversationView: View {
         triggeringLetter = true
         defer { triggeringLetter = false }
         do {
-            _ = try await api.envelopeTrigger(conversationId: conversation.id, settings: nil)
+            _ = try await api.envelopeTrigger(conversationId: conversation.id)
             withAnimation { letterTriggered = true }
             Haptics.success()
         } catch is CancellationError {
@@ -1250,9 +1229,7 @@ struct ConversationView: View {
             conversation_type: "user_bot",
             last_activity_at: Int(Date().timeIntervalSince1970),
             round_count: 0, bot_name: displayName,
-            last_message_content: nil, last_message_sender_type: nil,
-            model_override: nil,
-            provider_override: nil
+            last_message_content: nil, last_message_sender_type: nil
         )
         pendingPeer = PendingPeer(kind: "bot", peerId: botId, displayName: displayName)
         messages = []
@@ -1260,7 +1237,6 @@ struct ConversationView: View {
         pendingAttachments = []
         photoPickerItems = []
         activeLookbacks = []
-        modelOverride = ""
     }
 
     /// Create the conv row (and participant rows) for a pending conv whose
@@ -1292,9 +1268,7 @@ struct ConversationView: View {
                     conversation_type: "user_bot",
                     last_activity_at: Int(Date().timeIntervalSince1970),
                     round_count: 0, bot_name: peer.displayName,
-                    last_message_content: nil, last_message_sender_type: nil,
-                    model_override: nil,
-                    provider_override: nil
+                    last_message_content: nil, last_message_sender_type: nil
                 )
             case "user":
                 // Hand off to Worker — its open-chat endpoint inserts both
@@ -1326,9 +1300,7 @@ struct ConversationView: View {
                     conversation_type: "user_user",
                     last_activity_at: Int(Date().timeIntervalSince1970),
                     round_count: nil, bot_name: nil,
-                    last_message_content: nil, last_message_sender_type: nil,
-                    model_override: nil,
-                    provider_override: nil
+                    last_message_content: nil, last_message_sender_type: nil
                 )
             case "self":
                 // Singleton self-chat conv. RPC is find-or-create so
@@ -1345,9 +1317,7 @@ struct ConversationView: View {
                     conversation_type: "self",
                     last_activity_at: Int(Date().timeIntervalSince1970),
                     round_count: 0, bot_name: peer.displayName,
-                    last_message_content: nil, last_message_sender_type: nil,
-                    model_override: nil,
-                    provider_override: nil
+                    last_message_content: nil, last_message_sender_type: nil
                 )
             default:
                 self.error = "未知会话类型"
@@ -1859,15 +1829,6 @@ struct ConversationView: View {
             }
             if !text.isEmpty { b["newMessage"] = text }
             if !attachmentIds.isEmpty { b["attachmentIds"] = attachmentIds }
-            // Tri-state on the wire: only attach the field when the user
-            // has expressed an opinion via the settings sheet. Server
-            // treats absence as "leave the persisted row alone" — so a
-            // device that never opened the picker can't accidentally
-            // clobber another device's pin. NSNull = "user picked 自动,
-            // please clear".
-            if providerOverrideTouched {
-                b["providerOverride"] = providerOverride ?? NSNull()
-            }
             return b
         }()
 
@@ -1908,9 +1869,7 @@ struct ConversationView: View {
                                 round_count: conversation.round_count,
                                 bot_name: conversation.bot_name,
                                 last_message_content: conversation.last_message_content,
-                                last_message_sender_type: conversation.last_message_sender_type,
-                                model_override: conversation.model_override,
-                                provider_override: conversation.provider_override
+                                last_message_sender_type: conversation.last_message_sender_type
                             )
                             await subscribeRealtime()
                             onChange()
@@ -2100,9 +2059,6 @@ struct ConversationView: View {
     // ConversationView+Group.swift. The composer + its banners (freeze /
     // continue / @-mention picker) render inside the inputAccessoryView; see
     // ChatComposerAccessory.swift.
-
-    // applyModelPick + patchConversationModel + patchConversationVisionModel
-    // + patchBotDefaultModel live in ConversationView+Model.swift.
 
     // Recall + delete + URLCache scrubbing live in ConversationView+Recall.swift.
 

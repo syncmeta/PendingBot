@@ -9,8 +9,7 @@ struct Bot: Codable, Identifiable, Hashable {
     let display_name: String
     let access_mode: String?
     /// The bot's default model (bots.model_id). For private bots the
-    /// owner can change it via PATCH /v1/bots/:id; per-conv pins live on
-    /// `conversations.model_slug_override` instead. Resolved to a friendly
+    /// owner can change it via PATCH /v1/bots/:id. Resolved to a friendly
     /// name via `ModelCatalog`.
     let model: String?
     /// Visibility — drives the 私有/公有机器人 tag in friend + message lists.
@@ -43,15 +42,6 @@ struct Conversation: Codable, Identifiable, Hashable {
     /// Both nil when the conversation has no messages yet.
     let last_message_content: String?
     let last_message_sender_type: String?
-    /// Per-conversation model override (OpenRouter slug). nil = use the
-    /// bot's configured default.
-    let model_override: String?
-    /// Per-conversation LLM provider pin (slug from llm_providers, e.g.
-    /// "worldrouter" / "openrouter"). nil = follow the bot's default
-    /// routing. Sent on every chat POST so this device's choice
-    /// propagates server-side; persisted on the row so other devices
-    /// see it on their next conversation-list fetch.
-    let provider_override: String?
 
     var displayTitle: String { title?.isEmpty == false ? title! : "未命名" }
 

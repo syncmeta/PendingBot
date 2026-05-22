@@ -367,9 +367,7 @@ struct GroupSettingsView: View {
             round_count: 0,
             bot_name: nil,
             last_message_content: nil,
-            last_message_sender_type: nil,
-            model_override: nil,
-            provider_override: nil,
+            last_message_sender_type: nil
         )
     }
 
