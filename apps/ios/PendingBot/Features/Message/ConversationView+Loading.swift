@@ -466,7 +466,14 @@ extension ConversationView {
                     created_at: secs
                 ))
             }
-            self.messages = viewMessages
+            // Only reassign when the authoritative set actually differs from
+            // what's already on screen (the cache hydrate above, or a turn
+            // that persisted into cache and got reloaded). A wholesale
+            // reassign of an identical array still triggers a full SwiftUI
+            // re-render — that's the visible "刷新一次" flash on every reopen.
+            if self.messages != viewMessages {
+                self.messages = viewMessages
+            }
             // Merge — keep any in-flight live snapshots that the SSE turn
             // already populated; history's persisted values win on key collision.
             self.citationsByMsgId.merge(citationsLoaded) { _, new in new }
