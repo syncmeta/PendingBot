@@ -2449,8 +2449,13 @@ struct ArenaCompareCard: View {
                 }
             }
         }
-        .task { await loadExistingVote() }
+        // Keyed on the active pair: regenerating adds a variant, which shifts
+        // a/b to the two newest answers — re-check the vote for that new pair
+        // (and fall back to blind) so a stale outcome can't ring the wrong one.
+        .task(id: comparePairKey) { await loadExistingVote() }
     }
+
+    private var comparePairKey: String { "\(a.groupId)|\(b.groupId)" }
 
     private func sideFor(_ v: ArenaVariant) -> String? {
         if v.groupId == b.groupId { return "b" }
@@ -2492,6 +2497,7 @@ struct ArenaCompareCard: View {
     private func answerBubble(_ v: ArenaVariant) -> some View {
         let isChosen = isChosenVariant(v)
         let isStreaming = streamingGroupId == v.groupId
+        let votable = outcome == nil && !isStreaming && sideFor(v) != nil
         let text = v.content.isEmpty ? (isStreaming ? " " : "（空）") : v.content
         return MarkdownText(text: text, allowCodeRun: false, citations: [])
             .fixedSize(horizontal: false, vertical: true)
@@ -2507,10 +2513,17 @@ struct ArenaCompareCard: View {
                         .padding(.trailing, 12).padding(.bottom, 12)
                 }
             }
-            .contentShape(Rectangle())
-            .onTapGesture {
-                guard outcome == nil, !voting, let side = sideFor(v) else { return }
-                Task { await vote(side) }
+            // While blind, a clear layer on top captures the vote tap —
+            // MarkdownText enables text selection, which would otherwise eat
+            // the gesture. Removed after voting so the text stays selectable.
+            .overlay {
+                if votable {
+                    Color.clear.contentShape(Rectangle())
+                        .onTapGesture {
+                            guard !voting, let side = sideFor(v) else { return }
+                            Task { await vote(side) }
+                        }
+                }
             }
     }
 
@@ -2645,9 +2658,14 @@ struct ArenaCompareCard: View {
                     outcome = r.outcome == "a" ? "b" : r.outcome == "b" ? "a" : "tie"
                 }
                 revealed = true
+            } else {
+                // This pair (e.g. after a regenerate shifted a/b) has no vote —
+                // go blind so a stale outcome doesn't ring the wrong bubble.
+                outcome = nil
+                revealed = false
             }
         } catch {
-            // No vote yet / read failed — leave blind.
+            // Read failed — leave whatever state we have.
         }
     }
 }
