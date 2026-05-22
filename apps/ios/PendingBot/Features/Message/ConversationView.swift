@@ -2386,105 +2386,137 @@ struct ArenaCompareCard: View {
     let variants: [ArenaVariant]
     let onRegenerate: () async -> Void
 
-    @State private var outcome: String?     // 'a' / 'b' / 'tie' once voted
+    @State private var outcome: String?     // 'a' / 'b' once voted
     @State private var revealed = false
     @State private var voting = false
     @State private var regenerating = false
+    @State private var collapsed = false
 
     private var a: ArenaVariant { variants[variants.count - 2] }
     private var b: ArenaVariant { variants[variants.count - 1] }
+    private var chosen: ArenaVariant { outcome == "b" ? b : a }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "die.face.5")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Theme.Palette.accent)
-                Text(variants.count > 2 ? "盲评 · 共 \(variants.count) 个回答(对比最新两个)" : "盲评 · 哪个回答更好?")
-                    .font(Theme.Fonts.rounded(size: 12, weight: .semibold))
-                    .foregroundStyle(Theme.Palette.inkMuted)
-            }
-            answer(label: "回答 A", v: a)
-            answer(label: "回答 B", v: b)
-            if let outcome {
-                Text(verdict(outcome))
-                    .font(Theme.Fonts.rounded(size: 13, weight: .semibold))
-                    .foregroundStyle(Theme.Palette.accent)
+        Group {
+            if collapsed, outcome != nil {
+                collapsedBubble
             } else {
-                HStack(spacing: 8) {
-                    voteButton("A 更好", "a")
-                    voteButton("平", "tie")
-                    voteButton("B 更好", "b")
-                }
+                expanded
             }
-            Button {
-                guard !regenerating else { return }
-                regenerating = true
-                Task { await onRegenerate(); regenerating = false }
-            } label: {
-                HStack(spacing: 6) {
-                    if regenerating { ProgressView().controlSize(.small) }
-                    else { Image(systemName: "arrow.triangle.2.circlepath") }
-                    Text(regenerating ? "生成中…" : "再生成一个回答")
-                }
-                .font(Theme.Fonts.rounded(size: 12, weight: .medium))
-                .foregroundStyle(Theme.Palette.inkMuted)
-            }
-            .buttonStyle(.plain)
-            .disabled(regenerating)
         }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Theme.Palette.surface))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Theme.Palette.hairline, lineWidth: 0.5))
+        .frame(maxWidth: .infinity, alignment: .leading)
         .task { await loadExistingVote() }
     }
 
-    private func answer(label: String, v: ArenaVariant) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Text(label)
-                    .font(Theme.Fonts.rounded(size: 11, weight: .bold))
+    // Big bubble wrapping the two answer bubbles. No title. Vote heart sits
+    // to the right of each answer; gray hint at the bottom before voting.
+    private var expanded: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            answerRow(a, side: "a")
+            answerRow(b, side: "b")
+            if outcome == nil {
+                Text("喜欢哪个点哪个")
+                    .font(Theme.Fonts.caption)
                     .foregroundStyle(Theme.Palette.inkMuted)
+                    .padding(.top, 2)
+            } else {
+                HStack(spacing: 8) {
+                    regenInline
+                    Spacer()
+                    Button { withAnimation { collapsed = true } } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "chevron.up")
+                            Text("收起")
+                        }
+                        .font(Theme.Fonts.rounded(size: 12, weight: .medium))
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.top, 2)
+            }
+            if outcome == nil { regenInline.padding(.top, 2) }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Theme.Palette.surface))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Theme.Palette.hairline, lineWidth: 0.5))
+        .frame(maxWidth: 320, alignment: .leading)
+    }
+
+    // One answer: a (slightly shrunk) chat bubble + the pick heart on its right.
+    private func answerRow(_ v: ArenaVariant, side: String) -> some View {
+        let isChosen = outcome == side
+        return HStack(alignment: .center, spacing: 8) {
+            VStack(alignment: .leading, spacing: 3) {
                 if revealed {
                     Text(catalog.displayName(for: v.modelSlug))
-                        .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
+                        .font(Theme.Fonts.rounded(size: 10, weight: .semibold))
                         .foregroundStyle(Theme.Palette.accent)
-                        .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(Capsule().fill(Theme.Palette.surfaceMuted))
                 }
+                Text(v.content.isEmpty ? "（空）" : v.content)
+                    .font(Theme.Fonts.rounded(size: 13, weight: .regular))
+                    .foregroundStyle(Theme.Palette.ink)
+                    .lineLimit(8)
+                    .padding(.horizontal, 10).padding(.vertical, 8)
+                    .background(RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .fill(Theme.Palette.surfaceMuted))
+                    .overlay(RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .strokeBorder(isChosen ? Theme.Palette.accent : Color.clear, lineWidth: 1.5))
             }
-            Text(v.content.isEmpty ? "（空）" : v.content)
-                .font(Theme.Fonts.rounded(size: 14, weight: .regular))
-                .foregroundStyle(Theme.Palette.ink)
-                .lineLimit(8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(10)
-                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.Palette.surfaceMuted))
+            Button { Task { await vote(side) } } label: {
+                Image(systemName: isChosen ? "heart.fill" : "heart")
+                    .font(.system(size: 18, weight: .regular))
+                    .foregroundStyle(isChosen ? Theme.Palette.accent
+                                     : (outcome == nil ? Theme.Palette.accent : Theme.Palette.inkMuted.opacity(0.4)))
+            }
+            .buttonStyle(.plain)
+            .disabled(voting || outcome != nil)
         }
     }
 
-    private func voteButton(_ title: String, _ value: String) -> some View {
-        Button { Task { await vote(value) } } label: {
-            Text(title)
-                .font(Theme.Fonts.rounded(size: 13, weight: .semibold))
-                .foregroundStyle(Theme.Palette.accent)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
-                .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(Theme.Palette.accent.opacity(0.4), lineWidth: 1))
+    // Collapsed: just the chosen answer as one bubble + an expand button.
+    private var collapsedBubble: some View {
+        HStack(alignment: .center, spacing: 8) {
+            VStack(alignment: .leading, spacing: 3) {
+                if revealed {
+                    Text(catalog.displayName(for: chosen.modelSlug))
+                        .font(Theme.Fonts.rounded(size: 10, weight: .semibold))
+                        .foregroundStyle(Theme.Palette.accent)
+                }
+                Text(chosen.content.isEmpty ? "（空）" : chosen.content)
+                    .font(Theme.Fonts.rounded(size: 14, weight: .regular))
+                    .foregroundStyle(Theme.Palette.ink)
+                    .padding(.horizontal, 12).padding(.vertical, 9)
+                    .background(RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(Theme.Palette.surfaceMuted))
+            }
+            Button { withAnimation { collapsed = false } } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.inkMuted)
+            }
+            .buttonStyle(.plain)
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: 320, alignment: .leading)
+    }
+
+    private var regenInline: some View {
+        Button {
+            guard !regenerating else { return }
+            regenerating = true
+            Task { await onRegenerate(); regenerating = false }
+        } label: {
+            HStack(spacing: 5) {
+                if regenerating { ProgressView().controlSize(.small) }
+                else { Image(systemName: "arrow.triangle.2.circlepath") }
+                Text(regenerating ? "生成中…" : "再生成")
+            }
+            .font(Theme.Fonts.rounded(size: 12, weight: .medium))
+            .foregroundStyle(Theme.Palette.inkMuted)
         }
         .buttonStyle(.plain)
-        .disabled(voting)
-    }
-
-    private func verdict(_ o: String) -> String {
-        let nameA = catalog.displayName(for: a.modelSlug)
-        let nameB = catalog.displayName(for: b.modelSlug)
-        switch o {
-        case "a": return "你选了 A · \(nameA) 胜 \(nameB)"
-        case "b": return "你选了 B · \(nameB) 胜 \(nameA)"
-        default:  return "平局 · \(nameA) vs \(nameB)"
-        }
+        .disabled(regenerating)
     }
 
     private func vote(_ value: String) async {

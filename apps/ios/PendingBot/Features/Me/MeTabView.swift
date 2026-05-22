@@ -143,7 +143,7 @@ struct MeTabView: View {
                             NavigationLink {
                                 ArenaLeaderboardView().toolbar(.hidden, for: .tabBar)
                             } label: {
-                                OptionRow(title: "模型竞技场榜单")
+                                OptionRow(title: "猜你喜欢")
                             }
                             .buttonStyle(.plain)
 
@@ -366,7 +366,7 @@ struct ArenaLeaderboardView: View {
                 .refreshable { await load() }
             }
         }
-        .navigationTitle("模型竞技场")
+        .navigationTitle("猜你喜欢")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
     }
