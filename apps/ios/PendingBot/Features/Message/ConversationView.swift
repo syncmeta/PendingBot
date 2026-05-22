@@ -485,7 +485,9 @@ struct ConversationView: View {
                                             }
                                             // Arena: regenerate another answer to the same
                                             // prompt so the inline blind A/B compare appears.
-                                            if let parent = msg.parent_message_id {
+                                            // parent_message_id is nil on freshly-streamed
+                                            // rows, so fall back to the preceding user message.
+                                            if let parent = arenaParentId(for: msg) {
                                                 Button {
                                                     Haptics.tap()
                                                     Task { await regenerateArenaAnswer(parentId: parent) }
@@ -2323,6 +2325,16 @@ private struct PreChatActionButton: View {
 // MARK: - Arena inline blind compare
 
 extension ConversationView {
+    /// The user prompt a bot answer belongs to. Uses the row's
+    /// parent_message_id when present (loaded rows), else the most recent
+    /// user message before this bot bubble (freshly-streamed rows that don't
+    /// carry the field yet) — so 再生成 works without a manual reload.
+    func arenaParentId(for msg: ChatMessage) -> String? {
+        if let p = msg.parent_message_id, !p.isEmpty { return p }
+        let prior = messages.filter { $0.created_at <= msg.created_at && $0.sender_type == "user" }
+        return prior.last?.id
+    }
+
     /// Regenerate another answer to a prompt (arena 再生成). Streams the
     /// regenerate SSE to completion, then reloads so the new variant — and
     /// the inline compare card — appear. The bot's arena pool decides the
