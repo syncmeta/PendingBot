@@ -38,7 +38,7 @@ export async function splitAndDebit(input: SplitInput): Promise<void> {
 
   const { data: audit, error: auditErr } = await supa
     .from('audit_log')
-    .select('id, conversation_id, cost_credits, billing_status')
+    .select('id, conversation_id, cost_credits, billing_status, task_type, metadata')
     .eq('id', auditLogId)
     .single();
   if (auditErr || !audit) {
@@ -89,37 +89,52 @@ export async function splitAndDebit(input: SplitInput): Promise<void> {
     (balances ?? []).map((u) => [u.id as string, Number(u.balance_credits) || 0]),
   );
 
-  // 2. Compute share_bps. Decide grace-period vs full-mode payers.
-  const graceMs = (cfg.new_member_grace_seconds as number) * 1000;
-  const gracePayers: typeof allMembers = [];
-  const fullPayers: typeof allMembers = [];
-  for (const m of allMembers) {
-    const joined = m.joined_at ? new Date(m.joined_at as string).getTime() : now;
-    if (now - joined < graceMs) gracePayers.push(m);
-    else fullPayers.push(m);
-  }
-
-  const fullPayerIds = fullPayers.map((m) => m.user_id as string);
-  const fullShareBps = await computeShareBps(supa, conversationId, fullPayers, cfg.mode as Mode, cfg.window_seconds as number);
-
-  // Grace payers always go per_head over (grace + full count). The full
-  // payers' shares get scaled down to the remaining bps after grace
-  // covers its head share. Net result: 1/(N) for grace each, and the
-  // mode-driven distribution among full payers covers the rest.
-  const totalPayerCount = gracePayers.length + fullPayers.length;
-  const graceShareEach = gracePayers.length > 0
-    ? Math.floor(10000 / totalPayerCount)
-    : 0;
-  const graceTotalBps = graceShareEach * gracePayers.length;
-  const fullScaleBps = 10000 - graceTotalBps;
-
-  // Combine into a single per-user map.
+  // 2. Compute share_bps.
   const sharesBps = new Map<string, number>();
-  for (const m of gracePayers) sharesBps.set(m.user_id as string, graceShareEach);
-  for (const id of fullPayerIds) {
-    const raw = fullShareBps.get(id) ?? 0;
-    const scaled = Math.floor((raw * fullScaleBps) / 10000);
-    sharesBps.set(id, scaled);
+  if (audit.task_type === 'voice_call') {
+    // Group voice splits "按在场时长": each bot turn is borne equally by the
+    // humans in the room at that turn (the DO ships that set in metadata),
+    // so over the call a member's total tracks how long they were in it —
+    // and nobody pays for turns before they joined or after they left. The
+    // group's configured text mode (per_message/token/…) doesn't apply: a
+    // voice turn has no per-sender text to weight by.
+    const present = presentUserIds(audit.metadata);
+    const inCall = present.size > 0
+      ? allMembers.filter((m) => present.has(m.user_id as string))
+      : allMembers; // transient: nobody present maps to a payer — bill the group
+    for (const [id, bps] of perHead(inCall)) sharesBps.set(id, bps);
+  } else {
+    // Decide grace-period vs full-mode payers.
+    const graceMs = (cfg.new_member_grace_seconds as number) * 1000;
+    const gracePayers: typeof allMembers = [];
+    const fullPayers: typeof allMembers = [];
+    for (const m of allMembers) {
+      const joined = m.joined_at ? new Date(m.joined_at as string).getTime() : now;
+      if (now - joined < graceMs) gracePayers.push(m);
+      else fullPayers.push(m);
+    }
+
+    const fullPayerIds = fullPayers.map((m) => m.user_id as string);
+    const fullShareBps = await computeShareBps(supa, conversationId, fullPayers, cfg.mode as Mode, cfg.window_seconds as number);
+
+    // Grace payers always go per_head over (grace + full count). The full
+    // payers' shares get scaled down to the remaining bps after grace
+    // covers its head share. Net result: 1/(N) for grace each, and the
+    // mode-driven distribution among full payers covers the rest.
+    const totalPayerCount = gracePayers.length + fullPayers.length;
+    const graceShareEach = gracePayers.length > 0
+      ? Math.floor(10000 / totalPayerCount)
+      : 0;
+    const graceTotalBps = graceShareEach * gracePayers.length;
+    const fullScaleBps = 10000 - graceTotalBps;
+
+    // Combine into a single per-user map.
+    for (const m of gracePayers) sharesBps.set(m.user_id as string, graceShareEach);
+    for (const id of fullPayerIds) {
+      const raw = fullShareBps.get(id) ?? 0;
+      const scaled = Math.floor((raw * fullScaleBps) / 10000);
+      sharesBps.set(id, scaled);
+    }
   }
 
   // Round-off: distribute the residual bps to the largest-share payer
@@ -290,6 +305,15 @@ async function computeShareBps(
     out.set(p.user_id, Math.floor((a + b) / 2));
   }
   return out;
+}
+
+// Pull the present-human set the RoomVoiceDO stamped onto a voice turn's
+// audit metadata. Returns empty when absent/malformed so the caller can
+// fall back to billing the whole group.
+function presentUserIds(metadata: unknown): Set<string> {
+  const ids = (metadata as { present_user_ids?: unknown } | null)?.present_user_ids;
+  if (!Array.isArray(ids)) return new Set();
+  return new Set(ids.filter((x): x is string => typeof x === 'string'));
 }
 
 function perHead(payers: MemberRow[]): Map<string, number> {

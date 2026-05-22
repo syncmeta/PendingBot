@@ -954,6 +954,11 @@ export class RoomVoiceDO {
         room_id: ctx.roomId,
         turn_index: leg.turnIndex++,
         bot_id: leg.spec.botId,
+        // Humans in the room at this turn. splitAndDebit bills the turn
+        // per-head across them, so over the call each member's total tracks
+        // how long they were in it ("按在场时长分摊") — and nobody pays for
+        // turns before they joined or after they left.
+        present_user_ids: [...this.humans.keys()],
       },
     });
 
