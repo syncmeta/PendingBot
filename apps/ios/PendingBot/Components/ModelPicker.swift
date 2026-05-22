@@ -425,3 +425,193 @@ struct ModelPickerSheet: View {
         }
     }
 }
+
+/// Multi-select model picker for the arena. Same catalog as `ModelPickerSheet`
+/// but you can check MANY models: pick exactly one and it's a single model
+/// (原有逻辑); pick two or more and it's a 竞技场 (the bot randomises among
+/// them each turn). The price-range row (slider + exact numbers) is a FILTER
+/// over the list — "全选筛选结果" grabs everything currently shown so you can
+/// build a pool by price without tapping each row.
+///
+/// On done, hands back the selected slugs (deduped, openrouter ids). The
+/// caller decides single-vs-arena from the count.
+struct ArenaModelPickerSheet: View {
+    @Environment(\.api) private var api
+    @Environment(\.dismiss) private var dismiss
+
+    /// Currently-selected slugs (single model_id → [slug]; arena → its models).
+    let initial: [String]
+    var onDone: ([String]) -> Void
+
+    @State private var allModels: [OpenRouterModel] = []
+    @State private var loading = true
+    @State private var error: String?
+    @State private var query = ""
+    @State private var selected: Set<String> = []
+    // Price filter (blended USD / 1M). nil = unbounded that side.
+    @State private var priceMin: String = ""
+    @State private var priceMaxValue: Double = 0   // slider; 0 = treated as max/unbounded
+    @State private var priceCap: Double = 50        // slider upper bound from catalog
+
+    // Only openrouter-source chat models are arena-eligible (matches the edge
+    // pool — native twins are dropped to avoid double-weighting).
+    private var pool: [OpenRouterModel] {
+        allModels.filter { ($0.source ?? "openrouter") == "openrouter" }
+    }
+
+    private var filtered: [OpenRouterModel] {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        let lo = Double(priceMin.trimmingCharacters(in: .whitespaces))
+        let hi = priceMaxValue > 0 && priceMaxValue < priceCap ? priceMaxValue : nil
+        return pool.filter { m in
+            if !q.isEmpty {
+                let hay = "\(m.slug) \(m.display_name) \(m.provider)".lowercased()
+                if !hay.contains(q) { return false }
+            }
+            if let lo, (m.blended_usd_per_million ?? .infinity) < lo { return false }
+            if let hi, (m.blended_usd_per_million ?? .infinity) > hi { return false }
+            return true
+        }
+        .sorted { ($0.blended_usd_per_million ?? .infinity) < ($1.blended_usd_per_million ?? .infinity) }
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Theme.Palette.canvas.ignoresSafeArea()
+                if loading && allModels.isEmpty {
+                    ProgressView().tint(Theme.Palette.accent)
+                } else {
+                    VStack(spacing: 0) {
+                        filterBar
+                        list
+                    }
+                }
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text(selected.count >= 2 ? "竞技场 · 选了 \(selected.count) 个" : "选择模型")
+                        .font(Theme.Fonts.serif(size: 16, weight: .semibold))
+                        .foregroundStyle(Theme.Palette.ink)
+                }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }.foregroundStyle(Theme.Palette.inkMuted)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") { onDone(Array(selected)); dismiss() }
+                        .disabled(selected.isEmpty)
+                        .foregroundStyle(selected.isEmpty ? Theme.Palette.inkMuted : Theme.Palette.accent)
+                }
+            }
+        }
+        .task { await load() }
+        .tint(Theme.Palette.accent)
+    }
+
+    private var filterBar: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").foregroundStyle(Theme.Palette.inkMuted)
+                TextField("搜索 slug / 名字 / 厂商", text: $query)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    .font(Theme.Fonts.rounded(size: 14, weight: .regular))
+            }
+            HStack(spacing: 8) {
+                Text("价格 ≤").font(Theme.Fonts.caption).foregroundStyle(Theme.Palette.inkMuted)
+                Slider(value: $priceMaxValue, in: 0...priceCap)
+                    .tint(Theme.Palette.accent)
+                Text(priceMaxValue > 0 && priceMaxValue < priceCap
+                     ? ModelCatalog.formatMultiplier(priceMaxValue) : "不限")
+                    .font(Theme.Fonts.monoSmall).foregroundStyle(Theme.Palette.ink)
+                    .frame(width: 48, alignment: .trailing)
+            }
+            HStack(spacing: 8) {
+                Text("精确区间").font(Theme.Fonts.caption).foregroundStyle(Theme.Palette.inkMuted)
+                TextField("最低", text: $priceMin).keyboardType(.decimalPad)
+                    .frame(width: 60).multilineTextAlignment(.center)
+                    .font(Theme.Fonts.monoSmall)
+                Text("—").foregroundStyle(Theme.Palette.inkMuted)
+                TextField("最高", text: Binding(
+                    get: { priceMaxValue > 0 && priceMaxValue < priceCap ? String(format: "%.1f", priceMaxValue) : "" },
+                    set: { priceMaxValue = Double($0) ?? priceCap }
+                )).keyboardType(.decimalPad).frame(width: 60).multilineTextAlignment(.center)
+                    .font(Theme.Fonts.monoSmall)
+                Spacer()
+                Button("全选筛选结果") {
+                    for m in filtered { selected.insert(m.slug) }
+                    Haptics.tap()
+                }
+                .font(Theme.Fonts.rounded(size: 12, weight: .semibold))
+                .foregroundStyle(Theme.Palette.accent)
+            }
+        }
+        .padding(.horizontal, Theme.Metrics.gutter)
+        .padding(.vertical, 10)
+    }
+
+    private var list: some View {
+        List {
+            if !selected.isEmpty {
+                Section {
+                    Button("清空所选(\(selected.count))") { selected.removeAll(); Haptics.tap() }
+                        .font(Theme.Fonts.rounded(size: 13, weight: .medium))
+                        .foregroundStyle(.red)
+                } footer: {
+                    Text("勾 1 个 = 单模型;勾 2 个及以上 = 竞技场,机器人每轮在其中随机挑一个。")
+                        .font(Theme.Fonts.caption).foregroundStyle(Theme.Palette.inkMuted)
+                }
+                .listRowBackground(Theme.Palette.surface)
+            }
+            Section {
+                ForEach(filtered) { m in
+                    Button {
+                        if selected.contains(m.slug) { selected.remove(m.slug) }
+                        else { selected.insert(m.slug) }
+                        Haptics.tap()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: selected.contains(m.slug) ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(selected.contains(m.slug) ? Theme.Palette.accent : Theme.Palette.inkMuted.opacity(0.5))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(m.display_name).font(Theme.Fonts.rounded(size: 14, weight: .medium))
+                                    .foregroundStyle(Theme.Palette.ink).lineLimit(1)
+                                Text(m.slug).font(Theme.Fonts.monoSmall).foregroundStyle(Theme.Palette.inkMuted)
+                                    .lineLimit(1).truncationMode(.middle)
+                            }
+                            Spacer(minLength: 8)
+                            if let p = m.blended_usd_per_million {
+                                Text(ModelCatalog.formatMultiplier(p))
+                                    .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
+                                    .foregroundStyle(Theme.Palette.inkMuted)
+                                    .padding(.horizontal, 6).padding(.vertical, 3)
+                                    .background(Capsule().fill(Theme.Palette.surfaceMuted))
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .listRowBackground(Theme.Palette.surface)
+        }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(Theme.Palette.canvas)
+    }
+
+    private func load() async {
+        guard let api else { return }
+        loading = true; defer { loading = false }
+        do {
+            allModels = try await api.get("v1/models")
+            selected = Set(initial)
+            let maxP = pool.compactMap { $0.blended_usd_per_million }.max() ?? 50
+            priceCap = max(1, maxP)
+            priceMaxValue = priceCap   // start unbounded
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+}
