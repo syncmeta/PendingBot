@@ -1339,7 +1339,6 @@ private struct AddFriendChooserSheet: View {
                     .font(.system(size: 36, weight: .regular))
                     .foregroundStyle(Theme.Palette.accent)
                     .frame(width: 72, height: 72)
-                    .background(Circle().fill(Theme.Palette.accentBg))
                 Text(title)
                     .font(Theme.Fonts.serif(size: 16, weight: .semibold))
                     .foregroundStyle(Theme.Palette.ink)
