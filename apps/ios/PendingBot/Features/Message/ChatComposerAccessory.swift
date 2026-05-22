@@ -389,10 +389,18 @@ final class AccessoryOwnerController: UIViewController {
             name: UIResponder.keyboardWillHideNotification,
             object: nil
         )
+        // Dock the bar BEFORE the screen is visible so it's already in place
+        // when the push transition lands. Becoming first responder in
+        // viewDidAppear instead makes the bar visibly slide up after arrival.
+        if !isFirstResponder, !isTearingDown {
+            becomeFirstResponder()
+        }
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        // Fallback: if the view wasn't yet in the window during viewWillAppear
+        // and couldn't take first responder there, grab it now.
         if !isFirstResponder, !isTearingDown {
             becomeFirstResponder()
         }
