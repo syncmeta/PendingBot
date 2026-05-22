@@ -119,8 +119,7 @@ struct MessageTabView: View {
                 conversation_type: "group",
                 last_activity_at: Int(Date().timeIntervalSince1970),
                 round_count: 0, bot_name: nil,
-                last_message_content: nil, last_message_sender_type: nil,
-                model_override: nil, provider_override: nil,
+                last_message_content: nil, last_message_sender_type: nil
             )
             if sidebarLayout {
                 selected = .existing(stub)
@@ -145,8 +144,7 @@ struct MessageTabView: View {
                     conversation_type: "group",
                     last_activity_at: Int(Date().timeIntervalSince1970),
                     round_count: 0, bot_name: nil,
-                    last_message_content: nil, last_message_sender_type: nil,
-                    model_override: nil, provider_override: nil,
+                    last_message_content: nil, last_message_sender_type: nil
                 )
                 if sidebarLayout {
                     selected = .existing(stub)
@@ -315,9 +313,7 @@ struct MessageTabView: View {
             round_count: 0,
             bot_name: peer.kind == "bot" ? peer.displayName : nil,
             last_message_content: nil,
-            last_message_sender_type: nil,
-            model_override: nil,
-            provider_override: nil
+            last_message_sender_type: nil
         )
     }
 
@@ -522,8 +518,7 @@ struct MessageTabView: View {
             conversation_type: "group",
             last_activity_at: Int(Date().timeIntervalSince1970),
             round_count: 0, bot_name: nil,
-            last_message_content: nil, last_message_sender_type: nil,
-            model_override: nil, provider_override: nil
+            last_message_content: nil, last_message_sender_type: nil
         )
         Task { await load() }
         if sidebarLayout {
@@ -565,9 +560,7 @@ struct MessageTabView: View {
                     round_count: row.round_count,
                     bot_name: row.bot_name,
                     last_message_content: row.last_message_content,
-                    last_message_sender_type: row.last_message_sender_type,
-                    model_override: nil,
-                    provider_override: nil
+                    last_message_sender_type: row.last_message_sender_type
                 )
             }
             .sorted { l, r in
@@ -601,7 +594,6 @@ struct MessageTabView: View {
                 .from("conversations")
                 .select("""
                     id, bot_id, user_id, title, conversation_type, feature, round_count, updated_at,
-                    provider_override,
                     bot:bots!conversations_bot_id_fkey(display_name, model_id, visibility, creator_id),
                     unread:user_unread_counts!inner(last_message_at, last_message_preview, unread_count),
                     participants:conversation_participants(participant_type, participant_id)
@@ -821,7 +813,6 @@ struct MessageTabView: View {
         let feature: String?
         let round_count: Int?
         let updated_at: String? // ISO 8601
-        let provider_override: String?
         let bot: BotJoin?
         // PostgREST returns the embedded user_unread_counts as an array
         // (the FK has no unique constraint on conversation_id alone — one
@@ -866,9 +857,7 @@ struct MessageTabView: View {
                 round_count: round_count,
                 bot_name: bot?.display_name,
                 last_message_content: unreadRow?.last_message_preview,
-                last_message_sender_type: nil,
-                model_override: nil,
-                provider_override: provider_override
+                last_message_sender_type: nil
             )
         }
     }

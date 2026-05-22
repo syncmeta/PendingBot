@@ -307,14 +307,13 @@ export interface RunChatTurnInput {
   /// before the LLM call so the inventory section carries the description.
   /// Caller in routes/messages.ts forwards parsed.attachmentIds.
   currentAttachmentIds?: string[];
-  /// conversations.vision_model_override (0064). NULL = auto. Threaded
-  /// through to summarize + read_attachment so the per-conv pin actually
-  /// kicks in.
+  /// The bot's pinned vision model (bots.config.visionModel). NULL = auto.
+  /// Threaded through to summarize + read_attachment so the pin kicks in.
   visionModelOverride?: string | null;
-  /// Per-conversation provider pin (slug from llm_providers.slug, e.g.
-  /// 'worldrouter' / 'openrouter'). When set, passed to LLMRouter as
-  /// preferProvider; the existing fallback chain still kicks in if the
-  /// chosen provider 5xxs. NULL = follow the default routing.
+  /// The bot's provider pin (bots.model_provider, e.g. 'openai'). When
+  /// set, passed to LLMRouter as preferProvider; the existing fallback
+  /// chain still kicks in if the chosen provider 5xxs. NULL = follow the
+  /// default routing.
   providerOverride?: string | null;
   /// Lookback notes the client cached. Each is fed into the prompt as a
   /// private context block; the bot decides per turn whether to keep them.

@@ -18,7 +18,7 @@
 // Both (2) and (3) go through the standard router/withFallback so the
 // audit log captures cost. The vision-model selection layer
 // (pickVisionModel) decides which model to actually call:
-//   - explicit conversations.vision_model_override if set
+//   - the bot's pinned vision model (bots.config.visionModel) if set
 //   - else the conversation's main model if it has vision
 //   - else DEFAULT_VISION_MODEL
 //
@@ -98,9 +98,10 @@ function bytesToBase64(bytes: Uint8Array): string {
 }
 
 export interface PickVisionModelInput {
-  /// Conversation's effective main model (after model_slug_override).
+  /// The conversation's main model (the bot's bots.model_id).
   mainModelSlug: string;
-  /// conversations.vision_model_override — null/absent = auto.
+  /// The bot's pinned vision model (bots.config.visionModel) — null/absent
+  /// = auto.
   override: string | null;
 }
 
@@ -167,17 +168,16 @@ export async function loadAttachmentAsFilePart(
 interface VisionDeps {
   supa: SupabaseClient;
   env: Env;
-  /// Conversation context — used for audit_log attribution and to look
-  /// up the conversation's vision_model_override + main model slug.
+  /// Conversation context — used for audit_log attribution.
   conversationId: string | null;
   /// User on whose behalf we're making the call (for billing). May be
   /// null for system-triggered work like re-summarization sweeps.
   userId: string | null;
-  /// The conversation's effective main model slug (post override).
+  /// The conversation's main model slug (the bot's bots.model_id).
   /// Caller resolves this once and passes it down so we don't round-trip
-  /// the bots/conversations table inside every helper.
+  /// the bots table inside every helper.
   mainModelSlug: string;
-  /// conversations.vision_model_override — null = auto.
+  /// The bot's pinned vision model (bots.config.visionModel) — null = auto.
   visionOverride: string | null;
 }
 

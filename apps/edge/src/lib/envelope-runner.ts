@@ -82,8 +82,8 @@ export const DEFAULT_COLLABORATOR_MODEL = '~google/gemini-flash-latest';
 export const DEFAULT_TURN_CAP = 15;
 // Cap on (history + framing prompts) as a fraction of the bot's main
 // model context window. 35% leaves the rest for the loop's research
-// turns + tool replies + the writer-phase article. User-tunable per
-// conversation in envelope_settings.historyTokenBudgetPct.
+// turns + tool replies + the writer-phase article. User-tunable per bot
+// via bots.config.envelope.historyTokenBudgetPct.
 export const DEFAULT_HISTORY_TOKEN_BUDGET_PCT = 35;
 // If a bot's model_id isn't registered in llm_models we don't know its
 // context window. Fall through to a conservative central estimate so

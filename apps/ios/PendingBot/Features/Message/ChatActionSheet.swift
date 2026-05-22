@@ -13,8 +13,6 @@ import UIKit
 /// human chats go to ContactSettingsView, group chats to GroupSettingsView).
 /// The remaining tiles are the per-message attach actions: 图片 (library)
 /// and 拍照 (camera).
-enum ModelPickScope { case conversation, bot }
-
 struct ChatActionSheet: View {
     /// Tapping the "图片" tile calls this; the host presents `.photosPicker`.
     var onPickPhoto: () -> Void = {}

@@ -53,11 +53,10 @@ realtimeRoutes.use('*', requireSession());
 // shared helpers
 // =============================================================================
 
-// Default voice model slug — the fallback when neither the conversation
-// nor the bot has a realtime model pinned. The voice-model picker values
-// (bot / conversation settings) are model slugs (gpt-realtime-2 /
-// gpt-realtime-mini-2025-12-15) so a pinned model resolves and prices
-// directly.
+// Default voice model slug — the fallback when the bot has no realtime
+// model pinned. The bot voice-model picker values are model slugs
+// (gpt-realtime-2 / gpt-realtime-mini-2025-12-15) so a pinned model
+// resolves and prices directly.
 const DEFAULT_VOICE_MODEL_SLUG = 'gpt-realtime-2';
 
 interface SessionContext {
@@ -68,9 +67,6 @@ interface SessionContext {
     id: string;
     bot_id: string;
     user_id: string;
-    /// Per-conv realtime model pin (conversations.voice_model_override).
-    /// Wins over the bot-level default when set.
-    voice_model_override: string | null;
   };
   bot: {
     id: string;
@@ -118,7 +114,7 @@ async function loadSessionContext(
   const supaUser = userClient(env, userJwt);
   const { data: conv } = await supaUser
     .from('conversations')
-    .select('id, bot_id, user_id, conversation_type, voice_model_override')
+    .select('id, bot_id, user_id, conversation_type')
     .eq('id', conversationId)
     .maybeSingle();
   if (!conv || conv.user_id !== userId) {
@@ -165,7 +161,6 @@ async function loadSessionContext(
         id: conv.id,
         bot_id: conv.bot_id,
         user_id: conv.user_id,
-        voice_model_override: conv.voice_model_override ?? null,
       },
       bot: {
         id: bot.id,
@@ -324,14 +319,11 @@ realtimeRoutes.post('/session', async (c) => {
   // session.update. Either way it never touches the iOS device.
   const instructions = await assembleInstructions(c.env, ctx);
 
-  // Voice model is resolved entirely server-side: per-conversation pin
-  // wins, then the bot-level default, then the route fallback. There is
-  // no client-supplied model — the picker lives in the bot / conversation
-  // settings and is persisted, not sent per call.
-  const voiceModel =
-    ctx.conversation.voice_model_override ??
-    ctx.bot.voice_model ??
-    DEFAULT_VOICE_MODEL_SLUG;
+  // Voice model is resolved entirely server-side: the bot-level default
+  // (bots.config.voiceModel), then the route fallback. There is no
+  // client-supplied model — the picker lives in the bot settings and is
+  // persisted, not sent per call.
+  const voiceModel = ctx.bot.voice_model ?? DEFAULT_VOICE_MODEL_SLUG;
 
   // Route resolution keyed on the resolved voice model slug;
   // task_routing_rules can still override at admin discretion via

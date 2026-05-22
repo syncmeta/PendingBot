@@ -12,8 +12,8 @@
 //     groups stay on Supabase for the gate until we add a member cache.
 //
 // Invalidation:
-//   - Worker PATCH /v1/conversations/:id writes through (deletes the
-//     entry so the next read pulls fresh values).
+//   - The worker deletes the entry after any conversations-row write so
+//     the next read pulls fresh values.
 //   - iOS-direct INSERT/UPDATE on conversations (via Supabase RLS) is
 //     bounded by the 1h TTL on the KV entry.
 
@@ -29,9 +29,6 @@ export interface CachedConv {
   bot_id: string | null;
   user_id: string | null;
   round_count: number | null;
-  provider_override: string | null;
-  model_slug_override: string | null;
-  vision_model_override: string | null;
 }
 
 export async function getCachedConv(env: Env, convId: string): Promise<CachedConv | null> {
@@ -88,7 +85,7 @@ export async function resolveConv(
   // gate is authoritative. supaUser carries the user JWT.
   const { data, error } = await supaUser
     .from('conversations')
-    .select('id, conversation_type, bot_id, user_id, round_count, provider_override, model_slug_override, vision_model_override')
+    .select('id, conversation_type, bot_id, user_id, round_count')
     .eq('id', convId)
     .maybeSingle();
   if (error) throw error;
@@ -99,9 +96,6 @@ export async function resolveConv(
     bot_id: (data.bot_id ?? null) as string | null,
     user_id: (data.user_id ?? null) as string | null,
     round_count: (data.round_count ?? null) as number | null,
-    provider_override: (data.provider_override ?? null) as string | null,
-    model_slug_override: (data.model_slug_override ?? null) as string | null,
-    vision_model_override: (data.vision_model_override ?? null) as string | null,
   };
   waitUntil(putCachedConv(env, row));
   return row;

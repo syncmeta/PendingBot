@@ -11,10 +11,9 @@ import type { Json } from '../db/schema';
 // Envelope (来信) routes. Mounted at /v1/envelope/* — see
 // apps/edge/src/index.ts for the prefix.
 //
-// The trigger body carries the per-run config the user picked in
-// conversation settings (explorer/collaborator models, turn cap).
-// Caller-supplied settings win; otherwise we read whatever the
-// conversation has saved; otherwise defaults.
+// The trigger body may carry per-run config (explorer/collaborator
+// models, turn cap). Caller-supplied settings win over the bot's own
+// envelope defaults (bots.config.envelope); otherwise hard defaults.
 
 export const envelopeRoutes = new Hono<AppBindings>();
 envelopeRoutes.use('*', requireSession());
@@ -57,13 +56,11 @@ envelopeRoutes.post('/trigger', async (c) => {
   }
 
   // RLS-gate: confirm the caller participates in this conv and that it
-  // has a pinned bot we can run on its behalf. Also pull the saved
-  // envelope_settings so we can fall through body → conv defaults →
-  // hard defaults inside resolveEnvelopeSettings.
+  // has a pinned bot we can run on its behalf.
   const supaUser = userClient(c.env, userJwt);
   const { data: conv, error: convErr } = await supaUser
     .from('conversations')
-    .select('id, bot_id, envelope_settings')
+    .select('id, bot_id')
     .eq('id', parsed.conversationId)
     .maybeSingle();
   if (convErr) return jsonError(c, 500, 'database_error', { detail: convErr.message });
@@ -72,9 +69,8 @@ envelopeRoutes.post('/trigger', async (c) => {
     return jsonError(c, 400, 'conversation_has_no_bot', { message: 'conversation has no bot to write the envelope' });
   }
 
-  // Bot-level envelope defaults (bots.config.envelope) sit underneath
-  // the conversation's saved settings — a bot configured once applies
-  // to every conv with it that hasn't overridden anything itself.
+  // Bot-level envelope defaults (bots.config.envelope) are the baseline
+  // for every conversation with this bot.
   const { data: botRow } = await supaUser
     .from('bots')
     .select('config')
@@ -88,28 +84,12 @@ envelopeRoutes.post('/trigger', async (c) => {
       ? ((botRow.config as Record<string, unknown>).envelope as Record<string, unknown>)
       : null;
 
-  // Caller-supplied settings win; then the conversation's saved
-  // settings; then the bot's defaults; resolveEnvelopeSettings fills
-  // any remaining gaps with hard defaults.
-  const savedSettings =
-    conv.envelope_settings && typeof conv.envelope_settings === 'object'
-      ? (conv.envelope_settings as Record<string, unknown>)
-      : null;
+  // Caller-supplied per-run settings win over the bot's defaults;
+  // resolveEnvelopeSettings fills any remaining gaps with hard defaults.
   const settings = resolveEnvelopeSettings({
     ...(botEnvelopeDefaults ?? {}),
-    ...(savedSettings ?? {}),
     ...(parsed.settings ?? {}),
   });
-
-  // If the caller passed settings, persist them as the conversation's
-  // new defaults so the next manual trigger (and the auto-trigger when
-  // it lands) follows the same config without resending the body.
-  if (parsed.settings) {
-    await supaUser
-      .from('conversations')
-      .update({ envelope_settings: settings as unknown as Json })
-      .eq('id', parsed.conversationId);
-  }
 
   // Billing gate. An envelope is multi-step LLM work (probably the most
   // expensive single trigger we have); reject up-front when balance is
