@@ -345,7 +345,10 @@ extension ConversationView {
                     sender_id: r.role == "bot" ? (r.sender_bot_id ?? "") : (r.user_id ?? ""),
                     content: r.content ?? "",
                     created_at: r.created_at,
-                    attachments: nil
+                    attachments: nil,
+                    parent_message_id: r.parent_message_id,
+                    bubble_group_id: r.bubble_group_id,
+                    model_slug: r.model_slug
                 )
             }
         }
@@ -477,7 +480,10 @@ extension ConversationView {
                     role: r.role,
                     content: renderContent,
                     status: r.status,
-                    created_at: secs
+                    created_at: secs,
+                    parent_message_id: r.parent_message_id,
+                    bubble_group_id: r.bubble_group_id,
+                    model_slug: r.model_slug
                 ))
             }
             // Only reassign when the authoritative set actually differs from

@@ -232,6 +232,13 @@ struct ConversationView: View {
     @State var revealTask: Task<Void, Never>?
     @State var streamPaused: Bool = false
 
+    /// Collapsed/expanded state for each arena compare card, keyed by the
+    /// prompt (parent) message id. Owned here — not in the card — so the
+    /// default survives card recreation: a card with no entry is collapsed,
+    /// which makes every multi-answer turn open folded on re-entry. Freshly
+    /// regenerated turns set their id to `false` so they open expanded.
+    @State var arenaCollapsed: [String: Bool] = [:]
+
     /// This turn's bot-bubble message ids, in creation order. A bubble is
     /// born under a `live-<uuid>` id (the client splitter has no canonical
     /// id yet); when the SSE `bubble` event announces the server's
@@ -551,6 +558,9 @@ struct ConversationView: View {
                                     variants: variants,
                                     avatarSeed: avatarEmojiSeed,
                                     streamingGroupId: revealTargetId,
+                                    collapsed: Binding(
+                                        get: { arenaCollapsed[msg.id] ?? true },
+                                        set: { arenaCollapsed[msg.id] = $0 }),
                                     onRegenerate: { await regenerateArenaAnswer(parentId: msg.id) }
                                 )
                                 .id("arena:\(msg.id)")
@@ -2345,6 +2355,9 @@ extension ConversationView {
     /// then reloads so the canonical variant (with model_slug) replaces it.
     func regenerateArenaAnswer(parentId: String) async {
         guard let parent = messages.first(where: { $0.id == parentId }) else { return }
+        // Keep this turn expanded — the user is actively comparing, so the
+        // new answer must stream into view rather than fold away.
+        arenaCollapsed[parentId] = false
         let iso = ISO8601DateFormatter()
         let prior: [[String: Any]] = messages
             .filter { $0.created_at < parent.created_at && ($0.sender_type == "user" || $0.sender_type == "bot") }
@@ -2424,21 +2437,36 @@ struct ArenaCompareCard: View {
     /// The bubble_group_id of the variant currently streaming (a live
     /// regenerate), so its bubble shows a blinking cursor. nil = none.
     var streamingGroupId: String? = nil
+    /// Collapsed state, owned by the parent (keyed by prompt id) so the
+    /// folded-by-default behavior survives card recreation on re-entry.
+    @Binding var collapsed: Bool
     let onRegenerate: () async -> Void
 
     @State private var outcome: String?     // 'a' / 'b' once voted
     @State private var revealed = false
     @State private var voting = false
     @State private var regenerating = false
-    @State private var collapsed = false
 
     private var a: ArenaVariant { variants[variants.count - 2] }
     private var b: ArenaVariant { variants[variants.count - 1] }
     private var chosen: ArenaVariant { outcome == "b" ? b : a }
+    /// What the collapsed card shows: the voted answer, or the newest one
+    /// (last variant) when the turn hasn't been voted yet.
+    private var representative: ArenaVariant { outcome == nil ? b : chosen }
+
+    /// Caption under the collapsed bubble — always the answer count, plus
+    /// the model byline once the turn's been voted (and revealed).
+    private var collapsedFootnote: String {
+        let count = "共 \(variants.count) 个回答"
+        if revealed, let m = representative.modelSlug, !m.isEmpty {
+            return "by \(catalog.displayName(for: m)) · \(count)"
+        }
+        return count
+    }
 
     var body: some View {
         Group {
-            if collapsed, outcome != nil {
+            if collapsed {
                 collapsedStack
             } else {
                 VStack(alignment: .leading, spacing: 4) {
@@ -2537,39 +2565,35 @@ struct ArenaCompareCard: View {
                 Text("喜欢哪个点哪个")
                     .font(Theme.Fonts.caption)
                     .foregroundStyle(Theme.Palette.inkMuted)
-                regenInline
-            } else {
-                regenInline
-                Button { withAnimation(.easeOut(duration: 0.26)) { collapsed = true } } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "chevron.up")
-                        Text("收起")
-                    }
-                    .font(Theme.Fonts.rounded(size: 12, weight: .medium))
-                    .foregroundStyle(Theme.Palette.inkMuted)
-                }
-                .buttonStyle(.plain)
             }
+            regenInline
+            collapseButton
             Spacer(minLength: 32)
         }
         .padding(.horizontal, Theme.Metrics.gutter)
         .padding(.bottom, 2)
     }
 
-    // Collapsed: the chosen answer on top of a small offset card stack
-    // (iOS app-switcher feel, simple version). Tap anywhere to expand.
-    // The avatar mirrors the chosen variant's expanded state (only the first
-    // answer carries one), and the vertical metrics match variantRow, so
-    // expand/collapse doesn't jump the avatar or bubble around.
-    private var collapsedStack: some View {
-        let chosenHasAvatar = chosen.groupId == variants.first?.groupId
-        return HStack(alignment: .top, spacing: 8) {
-            if chosenHasAvatar {
-                BotAvatar(emojiSeed: avatarSeed.isEmpty ? conversationId : avatarSeed,
-                          colorSeed: conversationId, size: 30)
-            } else {
-                Color.clear.frame(width: 30, height: 1)
+    private var collapseButton: some View {
+        Button { withAnimation(.easeOut(duration: 0.26)) { collapsed = true } } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "chevron.up")
+                Text("收起")
             }
+            .font(Theme.Fonts.rounded(size: 12, weight: .medium))
+            .foregroundStyle(Theme.Palette.inkMuted)
+        }
+        .buttonStyle(.plain)
+    }
+
+    // Collapsed: the representative answer on top of a small offset card
+    // stack (iOS app-switcher feel, simple version). Tap anywhere to expand.
+    // Always carries the bot avatar (it's the bot's folded answer), and the
+    // vertical metrics match variantRow so expand/collapse doesn't jump it.
+    private var collapsedStack: some View {
+        HStack(alignment: .top, spacing: 8) {
+            BotAvatar(emojiSeed: avatarSeed.isEmpty ? conversationId : avatarSeed,
+                      colorSeed: conversationId, size: 30)
             ZStack(alignment: .top) {
                 RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
                     .fill(Theme.Palette.surface)
@@ -2582,14 +2606,12 @@ struct ArenaCompareCard: View {
                         .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5))
                     .offset(x: 3.5, y: 3.5)
                 VStack(alignment: .leading, spacing: 4) {
-                    MarkdownText(text: chosen.content.isEmpty ? "（空）" : chosen.content,
+                    MarkdownText(text: representative.content.isEmpty ? "（空）" : representative.content,
                                  allowCodeRun: false, citations: [])
                         .fixedSize(horizontal: false, vertical: true)
-                    if revealed, let m = chosen.modelSlug, !m.isEmpty {
-                        Text("by \(catalog.displayName(for: m)) · 共 \(variants.count) 个回答")
-                            .font(Theme.Fonts.caption)
-                            .foregroundStyle(Theme.Palette.inkMuted)
-                    }
+                    Text(collapsedFootnote)
+                        .font(Theme.Fonts.caption)
+                        .foregroundStyle(Theme.Palette.inkMuted)
                 }
                 .padding(.horizontal, 14).padding(.vertical, 10)
                 .frame(maxWidth: .infinity, alignment: .leading)
