@@ -349,6 +349,7 @@ final class AccessoryOwnerController: UIViewController {
     private lazy var host = UIHostingController(rootView: ComposerAccessoryRoot(model: model))
     private lazy var barContainer = ComposerBarContainerView(host: host)
     private var isTearingDown = false
+    private var observingKeyboardHide = false
 
     /// Set by the representable; receives the composer's content height
     /// (excluding the bottom safe-area strip) whenever it changes.
@@ -357,10 +358,24 @@ final class AccessoryOwnerController: UIViewController {
     override var canBecomeFirstResponder: Bool { !isTearingDown }
     override var inputAccessoryView: UIView? { barContainer }
 
+    override func loadView() {
+        let rootView = AccessoryOwnerRootView()
+        rootView.backgroundColor = .clear
+        rootView.isUserInteractionEnabled = false
+        rootView.onMoveToWindow = { [weak self] window in
+            guard let self else { return }
+            if window != nil {
+                self.startKeyboardHideObserver()
+                self.dockComposerIfPossible()
+            } else {
+                self.stopKeyboardHideObserver()
+            }
+        }
+        view = rootView
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .clear
-        view.isUserInteractionEnabled = false
         host.view.backgroundColor = .clear
         // Lets the hosting view's intrinsicContentSize track the SwiftUI
         // content so the container can self-size when the "+" panel opens.
@@ -372,6 +387,7 @@ final class AccessoryOwnerController: UIViewController {
     func push(_ content: ComposerAccessoryContent) {
         model.push(content)
         barContainer.contentDidChange()
+        dockComposerIfPossible()
     }
 
     func setKeyboardVisible(_ visible: Bool) {
@@ -383,35 +399,25 @@ final class AccessoryOwnerController: UIViewController {
         // Reset in case the view is returning after a presented sheet/cover
         // (camera, photo picker) temporarily took the screen.
         isTearingDown = false
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(keyboardWillHide(_:)),
-            name: UIResponder.keyboardWillHideNotification,
-            object: nil
-        )
+        startKeyboardHideObserver()
         // Dock the bar BEFORE the screen is visible so it's already in place
         // when the push transition lands. Becoming first responder in
         // viewDidAppear instead makes the bar visibly slide up after arrival.
-        if !isFirstResponder, !isTearingDown {
-            becomeFirstResponder()
-        }
+        dockComposerIfPossible()
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         // Fallback: if the view wasn't yet in the window during viewWillAppear
         // and couldn't take first responder there, grab it now.
-        if !isFirstResponder, !isTearingDown {
-            becomeFirstResponder()
-        }
+        dockComposerIfPossible()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         // Drop the bar when leaving the screen (navigation pop, or a sheet
         // covering us) so it doesn't linger over whatever comes next.
-        NotificationCenter.default.removeObserver(
-            self, name: UIResponder.keyboardWillHideNotification, object: nil)
+        stopKeyboardHideObserver()
         resignFirstResponder()
     }
 
@@ -422,16 +428,49 @@ final class AccessoryOwnerController: UIViewController {
         guard !isTearingDown, view.window != nil else { return }
         DispatchQueue.main.async { [weak self] in
             guard let self, !self.isTearingDown, self.view.window != nil else { return }
-            if !self.isFirstResponder {
-                self.becomeFirstResponder()
-            }
+            self.dockComposerIfPossible()
         }
     }
 
     func tearDown() {
         isTearingDown = true
-        NotificationCenter.default.removeObserver(self)
+        stopKeyboardHideObserver()
         resignFirstResponder()
+    }
+
+    private func dockComposerIfPossible() {
+        guard !isTearingDown, view.window != nil, !isFirstResponder else { return }
+        becomeFirstResponder()
+    }
+
+    private func startKeyboardHideObserver() {
+        guard !observingKeyboardHide else { return }
+        observingKeyboardHide = true
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(keyboardWillHide(_:)),
+            name: UIResponder.keyboardWillHideNotification,
+            object: nil
+        )
+    }
+
+    private func stopKeyboardHideObserver() {
+        guard observingKeyboardHide else { return }
+        observingKeyboardHide = false
+        NotificationCenter.default.removeObserver(
+            self,
+            name: UIResponder.keyboardWillHideNotification,
+            object: nil
+        )
+    }
+}
+
+private final class AccessoryOwnerRootView: UIView {
+    var onMoveToWindow: ((UIWindow?) -> Void)?
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        onMoveToWindow?(window)
     }
 }
 
