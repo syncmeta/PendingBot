@@ -371,6 +371,11 @@ extension ConversationView {
                 let created_at: String
                 let citations: [MessageCitation]?
                 let metadata: AnyJSON?
+                // Arena: link a bot answer to its prompt + identify the answer
+                // + record its model, for the inline blind A/B compare.
+                let parent_message_id: String?
+                let bubble_group_id: String?
+                let model_slug: String?
             }
             // Most role='log' rows are server-only (review step entries)
             // and never render. The one exception is log_kind='recall':
@@ -386,7 +391,7 @@ extension ConversationView {
             // "bottom" and land on an ancient message.
             let rowsDesc: [Row] = try await SupabaseStack.shared
                 .from("messages")
-                .select("id, client_message_id, conversation_id, user_id, sender_bot_id, role, log_kind, log_payload, attachments, content, status, created_at, citations, metadata")
+                .select("id, client_message_id, conversation_id, user_id, sender_bot_id, role, log_kind, log_payload, attachments, content, status, created_at, citations, metadata, parent_message_id, bubble_group_id, model_slug")
                 .eq("conversation_id", value: conversation.id)
                 .order("created_at", ascending: false)
                 .limit(200)
@@ -452,7 +457,10 @@ extension ConversationView {
                     sender_id: senderId,
                     content: renderContent,
                     created_at: secs,
-                    attachments: nil
+                    attachments: nil,
+                    parent_message_id: r.parent_message_id,
+                    bubble_group_id: r.bubble_group_id,
+                    model_slug: r.model_slug
                 ))
                 if let cites = r.citations, !cites.isEmpty {
                     citationsLoaded[r.id] = cites

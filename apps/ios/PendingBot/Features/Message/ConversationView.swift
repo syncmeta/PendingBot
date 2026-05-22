@@ -529,6 +529,20 @@ struct ConversationView: View {
                                 .id("trace:\(msg.id)")
                                 .transition(.opacity)
                             }
+                            // Arena: a prompt with ≥2 answers shows an inline
+                            // blind A/B compare card right under the prompt
+                            // (the variant bubbles are hidden in displayedMessages).
+                            if msg.sender_type == "user", let variants = arenaGroups[msg.id] {
+                                ArenaCompareCard(
+                                    conversationId: conversation.id,
+                                    parentMessageId: msg.id,
+                                    variants: variants,
+                                    onRegenerate: { await regenerateArenaAnswer(parentId: msg.id) }
+                                )
+                                .id("arena:\(msg.id)")
+                                .padding(.horizontal, Theme.Metrics.gutter)
+                                .transition(.opacity)
+                            }
                             }  // end else (non-recall_log branch)
                         }
 
@@ -890,9 +904,48 @@ struct ConversationView: View {
     /// timestamp are hidden — that's the user-facing rule "你看不到
     /// 自从达到上限之后的新消息".
     private var displayedMessages: [ChatMessage] {
-        guard let freezeAt = groupFreezeAt else { return messages }
+        let groups = arenaGroups
+        var base = messages
+        // Arena variant bubbles are hidden from the normal timeline — they're
+        // rendered together in the inline blind-compare card anchored to their
+        // prompt instead.
+        if !groups.isEmpty {
+            base = base.filter { m in
+                guard m.sender_type == "bot", let p = m.parent_message_id else { return true }
+                return groups[p] == nil
+            }
+        }
+        guard let freezeAt = groupFreezeAt else { return base }
         let cutoff = Int(freezeAt.timeIntervalSince1970)
-        return messages.filter { $0.created_at < cutoff }
+        return base.filter { $0.created_at < cutoff }
+    }
+
+    /// Arena blind-compare groups keyed by parent (user prompt) message id.
+    /// A prompt with ≥2 distinct bot answer groups (each carrying a model)
+    /// becomes a compare candidate. Variants are chronological.
+    var arenaGroups: [String: [ArenaVariant]] {
+        var contentByGroup: [String: [String: String]] = [:]   // parent → group → content
+        var modelByGroup: [String: [String: String]] = [:]
+        var order: [String: [String]] = [:]                    // parent → group order
+        for m in messages where m.sender_type == "bot" {
+            guard let parent = m.parent_message_id,
+                  let gid = m.bubble_group_id,
+                  let model = m.model_slug, !model.isEmpty else { continue }
+            if contentByGroup[parent]?[gid] == nil {
+                order[parent, default: []].append(gid)
+                modelByGroup[parent, default: [:]][gid] = model
+            }
+            contentByGroup[parent, default: [:]][gid, default: ""] += m.content
+        }
+        var result: [String: [ArenaVariant]] = [:]
+        for (parent, groupIds) in order where groupIds.count >= 2 {
+            result[parent] = groupIds.map { gid in
+                ArenaVariant(groupId: gid,
+                             content: contentByGroup[parent]?[gid] ?? "",
+                             modelSlug: modelByGroup[parent]?[gid] ?? "")
+            }
+        }
+        return result
     }
 
     /// Set of message ids that should have a centered time-separator
@@ -2254,5 +2307,208 @@ private struct PreChatActionButton: View {
             .shadow(color: Color.black.opacity(0.02), radius: 3, x: 0, y: 1.5)
         }
         .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Arena inline blind compare
+
+extension ConversationView {
+    /// Regenerate another answer to a prompt (arena 再生成). Streams the
+    /// regenerate SSE to completion, then reloads so the new variant — and
+    /// the inline compare card — appear. The bot's arena pool decides the
+    /// model (a different one when possible).
+    func regenerateArenaAnswer(parentId: String) async {
+        guard let parent = messages.first(where: { $0.id == parentId }) else { return }
+        let iso = ISO8601DateFormatter()
+        let prior: [[String: Any]] = messages
+            .filter { $0.created_at < parent.created_at && ($0.sender_type == "user" || $0.sender_type == "bot") }
+            .suffix(20)
+            .map { m in
+                [
+                    "role": m.sender_type == "bot" ? "bot" : "user",
+                    "content": m.content,
+                    "created_at": iso.string(from: Date(timeIntervalSince1970: TimeInterval(m.created_at))),
+                ]
+            }
+        let body: [String: Any] = ["conversationId": conversation.id, "recentContext": prior]
+        do {
+            let stream = ChatStream().send(body: body, path: "v1/messages/\(parentId)/regenerate")
+            for try await _ in stream { /* drain to completion */ }
+        } catch {
+            // Whatever landed shows on reload; a hard failure just yields no
+            // new variant.
+        }
+        await loadHistory()
+    }
+}
+
+/// One answer to a prompt (one bubble_group_id), with its model hidden until
+/// the user votes (client-side blind).
+struct ArenaVariant: Identifiable, Hashable {
+    let groupId: String
+    let content: String
+    let modelSlug: String
+    var id: String { groupId }
+}
+
+/// Inline blind A/B compare for an arena prompt with ≥2 answers. Compares the
+/// two most recent answers: shows them as 回答 A / 回答 B with the model name
+/// hidden, lets the user vote, then reveals + records the vote (feeds the
+/// personal leaderboard). Also offers 再生成 to add another contender.
+struct ArenaCompareCard: View {
+    @Environment(\.api) private var api
+    @EnvironmentObject private var catalog: ModelCatalog
+
+    let conversationId: String
+    let parentMessageId: String
+    let variants: [ArenaVariant]
+    let onRegenerate: () async -> Void
+
+    @State private var outcome: String?     // 'a' / 'b' / 'tie' once voted
+    @State private var revealed = false
+    @State private var voting = false
+    @State private var regenerating = false
+
+    private var a: ArenaVariant { variants[variants.count - 2] }
+    private var b: ArenaVariant { variants[variants.count - 1] }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "die.face.5")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.accent)
+                Text(variants.count > 2 ? "盲评 · 共 \(variants.count) 个回答(对比最新两个)" : "盲评 · 哪个回答更好?")
+                    .font(Theme.Fonts.rounded(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.inkMuted)
+            }
+            answer(label: "回答 A", v: a)
+            answer(label: "回答 B", v: b)
+            if let outcome {
+                Text(verdict(outcome))
+                    .font(Theme.Fonts.rounded(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.accent)
+            } else {
+                HStack(spacing: 8) {
+                    voteButton("A 更好", "a")
+                    voteButton("平", "tie")
+                    voteButton("B 更好", "b")
+                }
+            }
+            Button {
+                guard !regenerating else { return }
+                regenerating = true
+                Task { await onRegenerate(); regenerating = false }
+            } label: {
+                HStack(spacing: 6) {
+                    if regenerating { ProgressView().controlSize(.small) }
+                    else { Image(systemName: "arrow.triangle.2.circlepath") }
+                    Text(regenerating ? "生成中…" : "再生成一个回答")
+                }
+                .font(Theme.Fonts.rounded(size: 12, weight: .medium))
+                .foregroundStyle(Theme.Palette.inkMuted)
+            }
+            .buttonStyle(.plain)
+            .disabled(regenerating)
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Theme.Palette.surface))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Theme.Palette.hairline, lineWidth: 0.5))
+        .task { await loadExistingVote() }
+    }
+
+    private func answer(label: String, v: ArenaVariant) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text(label)
+                    .font(Theme.Fonts.rounded(size: 11, weight: .bold))
+                    .foregroundStyle(Theme.Palette.inkMuted)
+                if revealed {
+                    Text(catalog.displayName(for: v.modelSlug))
+                        .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.Palette.accent)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Capsule().fill(Theme.Palette.surfaceMuted))
+                }
+            }
+            Text(v.content.isEmpty ? "（空）" : v.content)
+                .font(Theme.Fonts.rounded(size: 14, weight: .regular))
+                .foregroundStyle(Theme.Palette.ink)
+                .lineLimit(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.Palette.surfaceMuted))
+        }
+    }
+
+    private func voteButton(_ title: String, _ value: String) -> some View {
+        Button { Task { await vote(value) } } label: {
+            Text(title)
+                .font(Theme.Fonts.rounded(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.Palette.accent)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Theme.Palette.accent.opacity(0.4), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .disabled(voting)
+    }
+
+    private func verdict(_ o: String) -> String {
+        let nameA = catalog.displayName(for: a.modelSlug)
+        let nameB = catalog.displayName(for: b.modelSlug)
+        switch o {
+        case "a": return "你选了 A · \(nameA) 胜 \(nameB)"
+        case "b": return "你选了 B · \(nameB) 胜 \(nameA)"
+        default:  return "平局 · \(nameA) vs \(nameB)"
+        }
+    }
+
+    private func vote(_ value: String) async {
+        guard let api, !voting else { return }
+        voting = true; defer { voting = false }
+        struct Body: Encodable {
+            let conversationId: String
+            let parentMessageId: String
+            let groupA: String
+            let groupB: String
+            let outcome: String
+        }
+        do {
+            let _: ArenaCompareResult = try await api.post(
+                "v1/arena/compare",
+                body: Body(conversationId: conversationId, parentMessageId: parentMessageId,
+                           groupA: a.groupId, groupB: b.groupId, outcome: value))
+            outcome = value
+            revealed = true
+            Haptics.success()
+        } catch {
+            Haptics.error()
+        }
+    }
+
+    private func loadExistingVote() async {
+        struct CmpRow: Decodable { let group_a_id: String; let group_b_id: String; let outcome: String }
+        do {
+            let rows: [CmpRow] = try await SupabaseStack.shared
+                .from("model_comparisons")
+                .select("group_a_id, group_b_id, outcome")
+                .eq("parent_message_id", value: parentMessageId)
+                .execute()
+                .value
+            // The endpoint normalises the pair (smaller group id stored as A),
+            // so de-normalise back to this card's A=a, B=b orientation.
+            if let r = rows.first(where: { Set([$0.group_a_id, $0.group_b_id]) == Set([a.groupId, b.groupId]) }) {
+                if r.group_a_id == a.groupId {
+                    outcome = r.outcome
+                } else {
+                    outcome = r.outcome == "a" ? "b" : r.outcome == "b" ? "a" : "tie"
+                }
+                revealed = true
+            }
+        } catch {
+            // No vote yet / read failed — leave blind.
+        }
     }
 }

@@ -72,6 +72,15 @@ struct ChatMessage: Codable, Identifiable, Hashable {
     /// step errored before the canonical row arrived (red bubble + alert).
     /// Drives the bubble background tint in BubbleView.
     let status: String?
+    /// Arena fields (loaded in loadHistory; nil on optimistic / realtime /
+    /// streamed rows until the next history load). `parent_message_id` links
+    /// a bot answer to the user prompt it answers; `bubble_group_id` is the
+    /// answer's identity (one answer = one group, possibly many bubbles);
+    /// `model_slug` is the model that produced this bot bubble. Together they
+    /// drive the inline blind A/B compare for arena turns.
+    var parent_message_id: String? = nil
+    var bubble_group_id: String? = nil
+    var model_slug: String? = nil
 
     /// True only for messages I sent. For user_bot, every sender_type=="user"
     /// row is mine by definition (the bot is the only other side). For
@@ -95,7 +104,10 @@ struct ChatMessage: Codable, Identifiable, Hashable {
          content: String,
          created_at: Int,
          attachments: [Attachment]?,
-         status: String? = nil) {
+         status: String? = nil,
+         parent_message_id: String? = nil,
+         bubble_group_id: String? = nil,
+         model_slug: String? = nil) {
         self.id = id
         self.conversation_id = conversation_id
         self.sender_type = sender_type
@@ -104,6 +116,9 @@ struct ChatMessage: Codable, Identifiable, Hashable {
         self.created_at = created_at
         self.attachments = attachments
         self.status = status
+        self.parent_message_id = parent_message_id
+        self.bubble_group_id = bubble_group_id
+        self.model_slug = model_slug
     }
 }
 
