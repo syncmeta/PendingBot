@@ -508,17 +508,14 @@ extension ConversationView {
                 }
             }
             // Reconcile the local cache against the server's authoritative
-            // view: drop any cached rows the server no longer returns
-            // (recall tombstones we skipped, voice-call recaps now
-            // hidden by RLS, etc.) before upserting the fresh set.
-            // Without the prune, a stale recap row already in the
-            // local SQLite cache would keep flashing on every conv-open
-            // before the network round-trip overwrites it.
-            LocalDatabase.shared.pruneMessages(
-                conversationId: conversation.id,
-                keepIds: cacheRows.map(\.id)
-            )
-            LocalDatabase.shared.upsertMessages(cacheRows)
+            // view in one atomic transaction: the cache for this conv
+            // becomes exactly the fetched set — no leftover recall
+            // tombstones / RLS-hidden recaps, no duplicates, and no window
+            // where the cache is empty or partial. Replaces the old
+            // prune-then-upsert split (two transactions, conflict-resolved
+            // on `id` rather than the cmid dedup key).
+            LocalDatabase.shared.replaceMessages(
+                conversationId: conversation.id, cacheRows)
         } catch {
             // Network down + we have a cache: stay quiet (cached msgs still
             // visible). Show the error only if we have nothing to display.

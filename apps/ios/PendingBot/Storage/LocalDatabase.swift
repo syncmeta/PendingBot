@@ -303,6 +303,33 @@ final class LocalDatabase {
         }
     }
 
+    /// Patch just the conv-list preview fields (last message text + sender
+    /// + activity time) for an existing cached conversation. Called at the
+    /// end of a chat turn so the message-list's first paint on next launch
+    /// isn't a turn behind. No-op when the row isn't cached yet (a brand
+    /// new conv the list refresh hasn't persisted) — the next list load
+    /// will create it. `last_activity_at` only moves forward so an
+    /// out-of-order write can't shuffle the row backward.
+    func touchConversationPreview(
+        id: String,
+        lastContent: String,
+        lastSenderType: String,
+        lastActivityAt: Int
+    ) {
+        try? dbQueue.write { db in
+            try db.execute(
+                sql: """
+                    UPDATE conversations
+                       SET last_message_content = ?,
+                           last_message_sender_type = ?,
+                           last_activity_at = MAX(last_activity_at, ?)
+                     WHERE id = ?
+                    """,
+                arguments: [lastContent, lastSenderType, lastActivityAt, id]
+            )
+        }
+    }
+
     func deleteConversation(id: String) {
         try? dbQueue.write { db in
             _ = try ConversationRow.deleteOne(db, key: id)
@@ -336,8 +363,44 @@ final class LocalDatabase {
         }) ?? []
     }
 
+    /// Incremental upsert for the realtime / prefetch paths. `save()` keys
+    /// on the primary key `id`, but a message's identity across the
+    /// optimistic→canonical handoff is its `client_message_id`: the same
+    /// logical row can arrive first under a `local-<uuid>` id and later
+    /// under its server id, both carrying the same cmid. A naive `save()`
+    /// of the canonical row would then INSERT (new id) and trip the
+    /// UNIQUE(client_message_id) constraint — `try?` swallows the throw and
+    /// the stale row lingers forever. So drop any same-cmid row under a
+    /// different id first, in the same transaction.
     func upsertMessages(_ rows: [MessageRow]) {
         try? dbQueue.write { db in
+            for r in rows {
+                if let cmid = r.client_message_id, !cmid.isEmpty {
+                    try db.execute(
+                        sql: "DELETE FROM messages WHERE client_message_id = ? AND id <> ?",
+                        arguments: [cmid, r.id]
+                    )
+                }
+                try r.save(db)
+            }
+        }
+    }
+
+    /// Atomic "this is the full message set for the conversation" — delete
+    /// every cached row for `conversationId`, then insert `rows`, in ONE
+    /// transaction. Used by loadHistory after a successful authoritative
+    /// fetch so the cache exactly mirrors the server view with no window
+    /// where it's empty or partial, and no chance of leftover duplicates /
+    /// stale rows (the old prune-then-upsert split ran as two separate
+    /// transactions and keyed conflict resolution off `id` while the dedup
+    /// contract is `client_message_id`). Matches the wholesale-replace
+    /// pattern already used for bots / contacts / group_members.
+    func replaceMessages(conversationId: String, _ rows: [MessageRow]) {
+        try? dbQueue.write { db in
+            try db.execute(
+                sql: "DELETE FROM messages WHERE conversation_id = ?",
+                arguments: [conversationId]
+            )
             for r in rows { try r.save(db) }
         }
     }
@@ -345,34 +408,6 @@ final class LocalDatabase {
     func deleteMessage(id: String) {
         try? dbQueue.write { db in
             _ = try MessageRow.deleteOne(db, key: id)
-        }
-    }
-
-    /// Drop any cached messages for `conversationId` whose id isn't in
-    /// `keepIds`. Used by loadHistory to reconcile the local cache with
-    /// the authoritative server response — wipes rows the server no
-    /// longer returns (recalled, RLS-hidden voice-call recaps, etc.) so
-    /// they don't keep flashing on the next conv-open before the
-    /// network round-trip overwrites them.
-    func pruneMessages(conversationId: String, keepIds: [String]) {
-        try? dbQueue.write { db in
-            if keepIds.isEmpty {
-                try db.execute(
-                    sql: "DELETE FROM messages WHERE conversation_id = ?",
-                    arguments: [conversationId]
-                )
-                return
-            }
-            // Parameter-binding the IN list keeps it safe and lets SQLite
-            // pick its own plan; the loadHistory cap (~200) keeps the
-            // list well under SQLITE_MAX_VARIABLE_NUMBER.
-            let placeholders = Array(repeating: "?", count: keepIds.count).joined(separator: ",")
-            var args: [DatabaseValueConvertible] = [conversationId]
-            args.append(contentsOf: keepIds)
-            try db.execute(
-                sql: "DELETE FROM messages WHERE conversation_id = ? AND id NOT IN (\(placeholders))",
-                arguments: StatementArguments(args)
-            )
         }
     }
 
