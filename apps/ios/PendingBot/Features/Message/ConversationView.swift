@@ -2469,7 +2469,7 @@ struct ArenaCompareCard: View {
 
     // Each answer is its own bot bubble — the regenerated ones drop the avatar
     // (a Color.clear keeps the bubble aligned) so they read as alternatives.
-    // The model name shows below in small gray text only after voting.
+    // The model name renders inside the bubble (last line) once voted.
     private func variantRow(_ v: ArenaVariant, index: Int) -> some View {
         HStack(alignment: .top, spacing: 8) {
             if index == 0 {
@@ -2478,15 +2478,7 @@ struct ArenaCompareCard: View {
             } else {
                 Color.clear.frame(width: 30, height: 1)
             }
-            VStack(alignment: .leading, spacing: 3) {
-                answerBubble(v)
-                if revealed, let m = v.modelSlug, !m.isEmpty {
-                    Text(catalog.displayName(for: m))
-                        .font(Theme.Fonts.caption)
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                        .padding(.leading, 4)
-                }
-            }
+            answerBubble(v)
             Spacer(minLength: 32)
         }
         .padding(.horizontal, Theme.Metrics.gutter)
@@ -2499,8 +2491,15 @@ struct ArenaCompareCard: View {
         let isStreaming = streamingGroupId == v.groupId
         let votable = outcome == nil && !isStreaming && sideFor(v) != nil
         let text = v.content.isEmpty ? (isStreaming ? " " : "（空）") : v.content
-        return MarkdownText(text: text, allowCodeRun: false, citations: [])
-            .fixedSize(horizontal: false, vertical: true)
+        return VStack(alignment: .leading, spacing: 4) {
+            MarkdownText(text: text, allowCodeRun: false, citations: [])
+                .fixedSize(horizontal: false, vertical: true)
+            if revealed, let m = v.modelSlug, !m.isEmpty {
+                Text("by \(catalog.displayName(for: m))")
+                    .font(Theme.Fonts.caption)
+                    .foregroundStyle(Theme.Palette.inkMuted)
+            }
+        }
             .padding(.horizontal, 14).padding(.vertical, 10)
             .background(RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
                 .fill(Theme.Palette.surface))
@@ -2541,7 +2540,7 @@ struct ArenaCompareCard: View {
                 regenInline
             } else {
                 regenInline
-                Button { withAnimation { collapsed = true } } label: {
+                Button { withAnimation(.easeOut(duration: 0.26)) { collapsed = true } } label: {
                     HStack(spacing: 3) {
                         Image(systemName: "chevron.up")
                         Text("收起")
@@ -2559,10 +2558,18 @@ struct ArenaCompareCard: View {
 
     // Collapsed: the chosen answer on top of a small offset card stack
     // (iOS app-switcher feel, simple version). Tap anywhere to expand.
+    // The avatar mirrors the chosen variant's expanded state (only the first
+    // answer carries one), and the vertical metrics match variantRow, so
+    // expand/collapse doesn't jump the avatar or bubble around.
     private var collapsedStack: some View {
-        HStack(alignment: .top, spacing: 8) {
-            BotAvatar(emojiSeed: avatarSeed.isEmpty ? conversationId : avatarSeed,
-                      colorSeed: conversationId, size: 30)
+        let chosenHasAvatar = chosen.groupId == variants.first?.groupId
+        return HStack(alignment: .top, spacing: 8) {
+            if chosenHasAvatar {
+                BotAvatar(emojiSeed: avatarSeed.isEmpty ? conversationId : avatarSeed,
+                          colorSeed: conversationId, size: 30)
+            } else {
+                Color.clear.frame(width: 30, height: 1)
+            }
             ZStack(alignment: .top) {
                 RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
                     .fill(Theme.Palette.surface)
@@ -2574,12 +2581,12 @@ struct ArenaCompareCard: View {
                     .overlay(RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
                         .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5))
                     .offset(x: 3.5, y: 3.5)
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 4) {
                     MarkdownText(text: chosen.content.isEmpty ? "（空）" : chosen.content,
                                  allowCodeRun: false, citations: [])
                         .fixedSize(horizontal: false, vertical: true)
                     if revealed, let m = chosen.modelSlug, !m.isEmpty {
-                        Text("\(catalog.displayName(for: m)) · 共 \(variants.count) 个回答")
+                        Text("by \(catalog.displayName(for: m)) · 共 \(variants.count) 个回答")
                             .font(Theme.Fonts.caption)
                             .foregroundStyle(Theme.Palette.inkMuted)
                     }
@@ -2592,11 +2599,11 @@ struct ArenaCompareCard: View {
                     .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5))
             }
             .contentShape(Rectangle())
-            .onTapGesture { withAnimation { collapsed = false } }
+            .onTapGesture { withAnimation(.easeOut(duration: 0.26)) { collapsed = false } }
             Spacer(minLength: 40)
         }
         .padding(.horizontal, Theme.Metrics.gutter)
-        .padding(.vertical, 4)
+        .padding(.bottom, 8)
     }
 
     private var regenInline: some View {
