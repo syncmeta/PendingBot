@@ -44,6 +44,25 @@ export interface RealtimeUsage {
   output_token_details?: { text_tokens?: number; audio_tokens?: number };
 }
 
+export interface MediaParticipantDiagnostic {
+  kind: 'human' | 'bot';
+  id: string;
+  speaking: boolean;
+  audioLevel: number;
+  source: 'container' | 'model';
+  playoutDepthMs?: number;
+  underruns?: number;
+  maxGapMs?: number;
+  streamConnected?: boolean;
+  ingestConnected?: boolean;
+  modelSessionReady?: boolean;
+}
+
+export interface MediaDiagnostics {
+  atMs: number;
+  participants: MediaParticipantDiagnostic[];
+}
+
 // ── DO -> container ──────────────────────────────────────────────────
 
 export type ControlCommand =
@@ -60,5 +79,6 @@ export type ControlEvent =
   | { t: 'ready' }
   | { t: 'bot-tool'; botId: string; name: string; callId: string; args?: string }
   | { t: 'turn-usage'; botId: string; usage: RealtimeUsage }
+  | { t: 'diagnostics'; diagnostics: MediaDiagnostics }
   | { t: 'leg-closed'; botId: string }
   | { t: 'stream-dropped'; humanId: string };

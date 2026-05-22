@@ -105,6 +105,8 @@ final class OpenAICallTransport: NSObject, CallTransport {
     private let factory: RTCPeerConnectionFactory
     private var dataChannel: RTCDataChannel?
     private var audioTrack: RTCAudioTrack?
+    private var diagnosticsSampler: WebRTCDiagnosticsSampler?
+    private let diagnosticsTransportName: String
     /// Pending continuation for the closing recap (requestSummary).
     private var summaryContinuation: CheckedContinuation<String?, Never>?
 
@@ -134,6 +136,7 @@ final class OpenAICallTransport: NSObject, CallTransport {
             // Direct transport: OpenAI's endpoint terminates the WebRTC
             // server-side, so no STUN/TURN candidates are needed.
             cfg.iceServers = []
+            self.diagnosticsTransportName = "WebRTC"
         } else {
             // 'webrtc_turn' transport: relay media through the Cloudflare
             // TURN servers the worker minted. Pin the policy to .relay so
@@ -147,6 +150,7 @@ final class OpenAICallTransport: NSObject, CallTransport {
                 )
             }
             cfg.iceTransportPolicy = .relay
+            self.diagnosticsTransportName = "Cloudflare TURN"
         }
         let constraints = RTCMediaConstraints(
             mandatoryConstraints: nil,
@@ -188,6 +192,7 @@ final class OpenAICallTransport: NSObject, CallTransport {
             let (answerSDP, callId) = try await exchangeSDP(offerSDP: offer.sdp)
             let answer = RTCSessionDescription(type: .answer, sdp: answerSDP)
             try await peerConnection.setRemoteDescription(answer)
+            startDiagnostics()
             // Hand the call_id to the worker so its RealtimeMeterDO can
             // open the server-side sideband and meter this call.
             if let callId {
@@ -223,6 +228,8 @@ final class OpenAICallTransport: NSObject, CallTransport {
     }
 
     func hangUp() async {
+        diagnosticsSampler?.stop()
+        diagnosticsSampler = nil
         resolveSummary(nil)
         dataChannel?.close()
         peerConnection.close()
@@ -233,6 +240,20 @@ final class OpenAICallTransport: NSObject, CallTransport {
             // Non-fatal — the session usually deactivates automatically
             // when the peer connection closes its capture units.
         }
+    }
+
+    private func startDiagnostics() {
+        if diagnosticsSampler == nil {
+            diagnosticsSampler = WebRTCDiagnosticsSampler(
+                peerConnection: peerConnection,
+                transportName: diagnosticsTransportName,
+                remoteLabel: "机器人",
+            ) { [weak self] snapshot in
+                guard let self else { return }
+                self.delegate?.transport(self, didUpdateDiagnostics: snapshot)
+            }
+        }
+        diagnosticsSampler?.start()
     }
 
     // MARK: - Setup
@@ -467,6 +488,7 @@ final class OpenAIWebSocketTransport: NSObject, CallTransport {
     private let playerNode = AVAudioPlayerNode()
     private var didSignalConnected = false
     private var stopped = false
+    private var diagnosticsTask: Task<Void, Never>?
     /// Pending continuation for the closing recap (requestSummary).
     private var summaryContinuation: CheckedContinuation<String?, Never>?
 
@@ -501,6 +523,7 @@ final class OpenAIWebSocketTransport: NSObject, CallTransport {
             receiveNext()
             print("[ws-voice] start: starting audio engine")
             try startAudio()
+            startDiagnostics()
             print("[ws-voice] start: done")
         } catch {
             print("[ws-voice] start FAILED:", error)
@@ -535,6 +558,8 @@ final class OpenAIWebSocketTransport: NSObject, CallTransport {
     func hangUp() async {
         resolveSummary(nil)
         stopped = true
+        diagnosticsTask?.cancel()
+        diagnosticsTask = nil
         task?.cancel(with: .goingAway, reason: nil)
         task = nil
         if engine.isRunning { engine.stop() }
@@ -674,6 +699,11 @@ final class OpenAIWebSocketTransport: NSObject, CallTransport {
     }
 
     private var sentFrameCount = 0
+    private var receivedAudioFrameCount = 0
+    private var previousSentFrameCount = 0
+    private var previousReceivedAudioFrameCount = 0
+    private var lastAudioDeltaAt: Date?
+    private var maxAudioDeltaGapMs = 0
 
     private func sendAudioFrame(_ base64: String) {
         guard let task, !stopped else {
@@ -708,7 +738,10 @@ final class OpenAIWebSocketTransport: NSObject, CallTransport {
         case "response.output_audio.delta":
             // GA /v1/realtime renamed the beta `response.audio.delta` event;
             // the audio chunk still rides base64 in `delta`.
-            if let b64 = obj["delta"] as? String { enqueuePlayback(b64) }
+            if let b64 = obj["delta"] as? String {
+                recordAudioDelta()
+                enqueuePlayback(b64)
+            }
         case "response.done":
             handleWSResponseDone(obj)
         case "error":
@@ -732,6 +765,74 @@ final class OpenAIWebSocketTransport: NSObject, CallTransport {
         else { return }
         playerNode.scheduleBuffer(buffer, completionHandler: nil)
         if !playerNode.isPlaying { playerNode.play() }
+    }
+
+    private func recordAudioDelta() {
+        receivedAudioFrameCount += 1
+        let now = Date()
+        if let lastAudioDeltaAt {
+            maxAudioDeltaGapMs = max(
+                maxAudioDeltaGapMs,
+                Int(now.timeIntervalSince(lastAudioDeltaAt) * 1000),
+            )
+        }
+        lastAudioDeltaAt = now
+    }
+
+    private func startDiagnostics() {
+        guard diagnosticsTask == nil else { return }
+        diagnosticsTask = Task { @MainActor [weak self] in
+            while let self, !Task.isCancelled {
+                self.emitDiagnostics()
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+        }
+    }
+
+    private func emitDiagnostics() {
+        let sentDelta = sentFrameCount - previousSentFrameCount
+        let receivedDelta = receivedAudioFrameCount - previousReceivedAudioFrameCount
+        previousSentFrameCount = sentFrameCount
+        previousReceivedAudioFrameCount = receivedAudioFrameCount
+
+        var snapshot = CallDiagnosticsSnapshot()
+        snapshot.updatedAt = Date()
+        snapshot.transport = "Worker WebSocket"
+        snapshot.connectionState = task == nil ? "closed" : "open"
+        snapshot.sentKbps = sentDelta > 0 ? sentDelta * 15 : 0
+        snapshot.receivedKbps = receivedDelta > 0 ? receivedDelta * 15 : 0
+        snapshot.quality = maxAudioDeltaGapMs >= 900 ? .fair : .good
+        snapshot.remoteSpeaking = receivedDelta > 0
+        snapshot.activeSpeaker = receivedDelta > 0 ? "机器人" : nil
+        snapshot.bottleneck = maxAudioDeltaGapMs >= 900
+            ? "模型音频增量间隔偏大，瓶颈更像语音模型或 Worker WebSocket 转发。"
+            : "WebSocket 传输正常；此路径无法读取 WebRTC RTT/丢包。"
+        snapshot.participants = [
+            CallParticipantDiagnostic(
+                kind: .local,
+                id: "local",
+                displayName: "我",
+                speaking: sentDelta > 0,
+                audioLevel: sentDelta > 0 ? 1 : 0,
+                playoutDepthMs: nil,
+                underruns: nil,
+                maxGapMs: nil,
+                connected: true,
+            ),
+            CallParticipantDiagnostic(
+                kind: .remote,
+                id: "remote",
+                displayName: "机器人",
+                speaking: receivedDelta > 0,
+                audioLevel: receivedDelta > 0 ? 1 : 0,
+                playoutDepthMs: nil,
+                underruns: nil,
+                maxGapMs: maxAudioDeltaGapMs,
+                connected: didSignalConnected,
+            ),
+        ]
+        maxAudioDeltaGapMs = 0
+        delegate?.transport(self, didUpdateDiagnostics: snapshot)
     }
 
     /// Decode OpenAI's 16-bit LE PCM into a Float32 engine buffer.

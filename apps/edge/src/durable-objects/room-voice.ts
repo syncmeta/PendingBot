@@ -9,6 +9,7 @@ import type {
   ContainerBotSpec,
   ControlCommand,
   ControlEvent,
+  MediaDiagnostics,
   RealtimeUsage,
 } from './room-media-protocol';
 
@@ -203,6 +204,7 @@ export class RoomVoiceDO {
   private humanEverJoined = false;
   private closed = false;
   private cumulativePnd = 0;
+  private latestDiagnostics: MediaDiagnostics | null = null;
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -369,6 +371,10 @@ export class RoomVoiceDO {
         return;
       case 'turn-usage':
         await this.settleTurn(ev.botId, ev.usage);
+        return;
+      case 'diagnostics':
+        this.latestDiagnostics = ev.diagnostics;
+        await this.broadcastState('state');
         return;
       case 'leg-closed':
         await this.onLegClosed(ev.botId);
@@ -551,6 +557,7 @@ export class RoomVoiceDO {
     bots: Array<{ botId: string; sfuSessionId: string; sfuTrackName: string }>;
     humans: Array<{ humanId: string; sfuSessionId: string; sfuTrackName: string }>;
     pending: Array<{ id: string; kind: 'human' | 'bot'; invitedAt: number; invitedBy: string }>;
+    diagnostics?: MediaDiagnostics;
   } {
     const bots: Array<{ botId: string; sfuSessionId: string; sfuTrackName: string }> = [];
     for (const leg of this.bots.values()) {
@@ -585,6 +592,7 @@ export class RoomVoiceDO {
       bots,
       humans,
       pending,
+      ...(this.latestDiagnostics && { diagnostics: this.latestDiagnostics }),
     };
   }
 
@@ -763,6 +771,7 @@ export class RoomVoiceDO {
         id: p.id,
         invited_by: p.invitedBy,
       })),
+      diagnostics: snapshot.diagnostics,
     };
     await publishToHub(this.env, `conv:${ctx.conversationId}`, payload).catch((err) =>
       console.warn('[room-voice] broadcast failed', err),

@@ -25,6 +25,7 @@ struct GroupCallView: View {
     @State private var showingRingHuman = false
     /// True while the "结束所有人的通话" confirmation alert is up.
     @State private var showingEndConfirm = false
+    @State private var showingDiagnostics = false
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -49,6 +50,7 @@ struct GroupCallView: View {
                 .frame(maxWidth: .infinity, alignment: .trailing)
                 .padding(.top, 44)
                 .padding(.trailing, 16)
+            diagnosticsLayer
         }
         .task { await session.start() }
         .onChange(of: session.phase) { _, new in handlePhaseChange(new) }
@@ -156,6 +158,24 @@ struct GroupCallView: View {
                 )
         }
         .accessibilityLabel("收起")
+    }
+
+    private var diagnosticsLayer: some View {
+        VStack(alignment: .trailing, spacing: 8) {
+            CallDiagnosticsButton(
+                snapshot: session.diagnostics,
+                isPresented: $showingDiagnostics,
+            )
+            .padding(.top, 44)
+            .padding(.trailing, 68)
+            if showingDiagnostics {
+                CallDiagnosticsPanel(snapshot: session.diagnostics)
+                    .padding(.trailing, 16)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
     /// Two invite CTAs sitting just above the toolbar, centered as a
@@ -292,6 +312,11 @@ struct GroupCallView: View {
         }
         .shadow(color: haloColor, radius: 6, x: 0, y: 0)
         .shadow(color: haloColor.opacity(0.7), radius: 12, x: 0, y: 0)
+        .overlay(
+            Circle()
+                .stroke(isSpeaking(sender: sender) ? Color.green : Color.clear, lineWidth: 3)
+                .frame(width: 64, height: 64)
+        )
 
         return Group {
             if showMenu, isCallLive {
@@ -306,6 +331,15 @@ struct GroupCallView: View {
             } else {
                 avatar
             }
+        }
+    }
+
+    private func isSpeaking(sender: GroupBubbleSender) -> Bool {
+        session.diagnostics.participants.contains {
+            $0.id == sender.id
+                && $0.speaking
+                && ($0.kind == (sender.kind == .bot ? .bot : .human)
+                    || (sender.id == session.currentUserId && $0.kind == .local))
         }
     }
 

@@ -47,6 +47,25 @@ export interface RealtimeUsage {
   output_token_details?: { text_tokens?: number; audio_tokens?: number };
 }
 
+export interface MediaParticipantDiagnostic {
+  kind: 'human' | 'bot';
+  id: string;
+  speaking: boolean;
+  audioLevel: number;
+  source: 'container' | 'model';
+  playoutDepthMs?: number;
+  underruns?: number;
+  maxGapMs?: number;
+  streamConnected?: boolean;
+  ingestConnected?: boolean;
+  modelSessionReady?: boolean;
+}
+
+export interface MediaDiagnostics {
+  atMs: number;
+  participants: MediaParticipantDiagnostic[];
+}
+
 // ── DO -> container ──────────────────────────────────────────────────
 
 export type ControlCommand =
@@ -70,6 +89,7 @@ export type ControlEvent =
   | { t: 'bot-tool'; botId: string; name: string; callId: string; args?: string }
   // One completed model turn — the DO bills it from OpenAI's own numbers.
   | { t: 'turn-usage'; botId: string; usage: RealtimeUsage }
+  | { t: 'diagnostics'; diagnostics: MediaDiagnostics }
   // The bot's OpenAI socket closed — the DO drops the leg + rebroadcasts.
   | { t: 'leg-closed'; botId: string }
   // A human's SFU stream-adapter socket closed. The DO decides whether to

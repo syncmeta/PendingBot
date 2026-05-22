@@ -36,6 +36,23 @@ export interface VoiceCallEvent {
   participants?: Array<{ kind: 'human' | 'bot'; id: string }>;
   // Invited but not joined yet.
   pending?: Array<{ kind: 'human' | 'bot'; id: string; invited_by: string }>;
+  // Optional live media diagnostics from the group-voice container.
+  diagnostics?: {
+    atMs: number;
+    participants: Array<{
+      kind: 'human' | 'bot';
+      id: string;
+      speaking: boolean;
+      audioLevel: number;
+      source: 'container' | 'model';
+      playoutDepthMs?: number;
+      underruns?: number;
+      maxGapMs?: number;
+      streamConnected?: boolean;
+      ingestConnected?: boolean;
+      modelSessionReady?: boolean;
+    }>;
+  };
 }
 
 // Per-turn voice call cost preview. Emitted by RealtimeMeterDO (1:1) and

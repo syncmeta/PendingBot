@@ -661,14 +661,25 @@ groupVoiceRoutes.post('/:id/voice/join', async (c) => {
     console.warn('[group-voice/join] room DO add-human failed', doResp.status);
     return jsonError(c, 502, 'voice_upstream_failed');
   }
-  const roster = (await doResp.json()) as { bots?: unknown; humans?: unknown };
+  const roster = (await doResp.json()) as {
+    startedAt?: unknown;
+    initiatorId?: unknown;
+    bots?: unknown;
+    humans?: unknown;
+    pending?: unknown;
+    diagnostics?: unknown;
+  };
 
   return c.json({
     ok: true,
     session_id: humanSessionId,
     answer: answerSdp,
+    startedAt: roster.startedAt,
+    initiatorId: roster.initiatorId,
     bots: roster.bots ?? [],
     humans: roster.humans ?? [],
+    pending: roster.pending ?? [],
+    diagnostics: roster.diagnostics,
   });
 });
 
@@ -736,11 +747,22 @@ groupVoiceRoutes.get('/:id/voice/roster', async (c) => {
     console.warn('[group-voice/roster] room DO failed', resp.status);
     return jsonError(c, 502, 'voice_upstream_failed');
   }
-  const roster = (await resp.json()) as { bots?: unknown; humans?: unknown };
+  const roster = (await resp.json()) as {
+    startedAt?: unknown;
+    initiatorId?: unknown;
+    bots?: unknown;
+    humans?: unknown;
+    pending?: unknown;
+    diagnostics?: unknown;
+  };
   return c.json({
     ok: true,
+    startedAt: roster.startedAt,
+    initiatorId: roster.initiatorId,
     bots: roster.bots ?? [],
     humans: roster.humans ?? [],
+    pending: roster.pending ?? [],
+    diagnostics: roster.diagnostics,
   });
 });
 

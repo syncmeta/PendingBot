@@ -32,6 +32,7 @@ struct VoiceCallFrame: Sendable {
     let initiatorId: String?
     let participants: [Participant]
     let pending: [Participant]
+    let diagnostics: GroupMediaDiagnostics?
 
     struct Participant: Sendable, Hashable {
         enum Kind: String, Sendable { case human, bot }
@@ -188,6 +189,7 @@ final class RealtimeSocket {
                 initiatorId: raw.initiator_id,
                 participants: participants,
                 pending: pending,
+                diagnostics: raw.diagnostics,
             )))
         case "voice_cost":
             guard let convId = raw.conversation_id,
@@ -222,6 +224,7 @@ final class RealtimeSocket {
         let initiator_id: String?
         let participants: [RawParticipant]?
         let pending: [RawParticipant]?
+        let diagnostics: GroupMediaDiagnostics?
         // voice-cost fields
         let session_id: String?
         let delta_pnd: Int?

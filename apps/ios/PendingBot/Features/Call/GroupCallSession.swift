@@ -66,6 +66,9 @@ final class GroupCallSession {
     /// the worker rejected with 403). The view clears it.
     var actionError: String?
 
+    /// Live WebRTC + media-container diagnostics for the call screen.
+    var diagnostics = CallDiagnosticsSnapshot()
+
     // MARK: - Inputs
 
     let conversationId: String
@@ -84,6 +87,8 @@ final class GroupCallSession {
     private var transport: GroupCallTransport?
     private var didInitiate = false
     private var groupRoleIsAdmin = false
+    private var latestTransportDiagnostics = CallDiagnosticsSnapshot()
+    private var latestMediaDiagnostics: GroupMediaDiagnostics?
 
     /// CallKit handle for this call. Two ways it gets populated:
     ///   • Incoming (PushKit-driven): start() claims the UUID that
@@ -523,6 +528,15 @@ final class GroupCallSession {
         let token = await RealtimeManager.shared.startConvChannel(
             conversationId: conversationId,
             onMessage: { _ in },
+            onVoiceCall: { [weak self] frame in
+                Task { @MainActor [weak self] in
+                    guard let self, frame.conversationId == self.conversationId else { return }
+                    if let diagnostics = frame.diagnostics {
+                        self.latestMediaDiagnostics = diagnostics
+                        self.mergeDiagnostics()
+                    }
+                }
+            },
             onVoiceCost: { [weak self] cost in
                 Task { @MainActor [weak self] in
                     guard let self else { return }
@@ -593,6 +607,16 @@ extension GroupCallSession: GroupCallTransportDelegate {
         roster = snapshot.bots
         humanRoster = snapshot.humans
         pendingInvites = snapshot.pending
+        if let diagnostics = snapshot.diagnostics {
+            latestMediaDiagnostics = diagnostics
+            mergeDiagnostics()
+        }
+    }
+
+    func transport(_ t: GroupCallTransport, didUpdateDiagnostics snapshot: CallDiagnosticsSnapshot) {
+        guard t === transport else { return }
+        latestTransportDiagnostics = snapshot
+        mergeDiagnostics()
     }
 
     func transport(
@@ -606,5 +630,65 @@ extension GroupCallSession: GroupCallTransportDelegate {
         // run the same teardown: best-effort leave + refresh the banner
         // store so a stuck "通话中" row clears as soon as the DO finalises.
         await terminate(reason: reason)
+    }
+
+    private func mergeDiagnostics() {
+        var snapshot = latestTransportDiagnostics
+        let mediaParticipants = (latestMediaDiagnostics?.participants ?? [])
+            .filter { !($0.kind == "human" && $0.id == currentUserId) }
+            .map(mediaParticipant)
+        let local = CallParticipantDiagnostic(
+            kind: .local,
+            id: currentUserId,
+            displayName: "我",
+            speaking: snapshot.localSpeaking,
+            audioLevel: snapshot.localAudioLevel,
+            playoutDepthMs: nil,
+            underruns: nil,
+            maxGapMs: nil,
+            connected: true,
+        )
+        snapshot.participants = [local] + mediaParticipants
+        if let active = snapshot.participants.first(where: \.speaking) {
+            snapshot.activeSpeaker = active.displayName
+        }
+        if let bottleneck = mediaBottleneck(mediaParticipants) {
+            snapshot.bottleneck = bottleneck
+            if snapshot.quality == .unknown || snapshot.quality == .good {
+                snapshot.quality = .fair
+            }
+        }
+        diagnostics = snapshot
+    }
+
+    private func mediaParticipant(_ p: GroupMediaDiagnostics.Participant) -> CallParticipantDiagnostic {
+        let kind: CallParticipantDiagnostic.Kind = p.kind == "bot" ? .bot : .human
+        let sender = members["\(p.kind == "bot" ? "bot" : "user"):\(p.id)"]
+        return CallParticipantDiagnostic(
+            kind: kind,
+            id: p.id,
+            displayName: sender?.displayName ?? String(p.id.prefix(6)),
+            speaking: p.speaking,
+            audioLevel: p.audioLevel ?? 0,
+            playoutDepthMs: p.playoutDepthMs,
+            underruns: p.underruns,
+            maxGapMs: p.maxGapMs,
+            connected: p.streamConnected ?? p.ingestConnected ?? p.modelSessionReady,
+        )
+    }
+
+    private func mediaBottleneck(_ participants: [CallParticipantDiagnostic]) -> String? {
+        for p in participants where p.kind == .bot {
+            if (p.underruns ?? 0) > 0 {
+                return "\(p.displayName) 的容器播放缓冲发生欠载，优先看语音模型输出或 CF container 调度。"
+            }
+            if (p.maxGapMs ?? 0) >= 700 {
+                return "\(p.displayName) 的模型音频增量间隔偏大，瓶颈更像语音模型输出。"
+            }
+            if let depth = p.playoutDepthMs, depth < 80, p.speaking {
+                return "\(p.displayName) 的容器播放缓冲偏浅，可能出现机器人声音卡顿。"
+            }
+        }
+        return nil
     }
 }

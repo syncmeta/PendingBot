@@ -59,6 +59,10 @@ final class CallSession {
     /// stale "0" doesn't sit next to the timer.
     var cumulativePnd: Int = 0
 
+    /// Best-effort live transport diagnostics shown behind the gauge
+    /// button on the call screen.
+    var diagnostics = CallDiagnosticsSnapshot()
+
     // MARK: - Inputs
 
     let conversationId: String
@@ -569,6 +573,8 @@ protocol CallTransportDelegate: AnyObject {
     /// Transport says we're done — either an error, remote close, or the
     /// upstream telling us the session is over.
     func transport(_ t: CallTransport, didFailWith reason: CallSession.TerminateReason) async
+    /// Best-effort live stats from the active transport.
+    func transport(_ t: CallTransport, didUpdateDiagnostics snapshot: CallDiagnosticsSnapshot)
     /// The bot invoked its `hang_up` tool — end the call as if the user
     /// had tapped hang up (the closing recap still runs).
     func transportRequestsHangUp(_ t: CallTransport) async
@@ -632,5 +638,10 @@ extension CallSession: CallTransportDelegate {
         // .connecting) is ignored.
         guard phase == .connected else { return }
         await terminate(reason: reason)
+    }
+
+    func transport(_ t: CallTransport, didUpdateDiagnostics snapshot: CallDiagnosticsSnapshot) {
+        guard t === transport else { return }
+        diagnostics = snapshot
     }
 }

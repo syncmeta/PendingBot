@@ -38,6 +38,7 @@ final class GroupCallTransport: NSObject {
     private let peerConnection: RTCPeerConnection
     private let factory: RTCPeerConnectionFactory
     private var audioTrack: RTCAudioTrack?
+    private var diagnosticsSampler: WebRTCDiagnosticsSampler?
 
     /// SFU session id the worker created for this human on /join. Needed
     /// for every later /subscribe and /renegotiate round-trip.
@@ -130,12 +131,14 @@ final class GroupCallTransport: NSObject {
             sfuSessionId = join.session_id
             let answer = RTCSessionDescription(type: .answer, sdp: join.answer)
             try await peerConnection.setRemoteDescription(answer)
+            startDiagnostics()
             delegate?.transport(
                 self,
                 didUpdateRoster: GroupRosterSnapshot(
                     bots: join.bots,
                     humans: join.humans,
                     pending: join.pending ?? [],
+                    diagnostics: join.diagnostics,
                 ),
             )
             try await subscribeToRoster(bots: join.bots, humans: join.humans)
@@ -157,6 +160,7 @@ final class GroupCallTransport: NSObject {
                     bots: roster.bots,
                     humans: roster.humans,
                     pending: roster.pending ?? [],
+                    diagnostics: roster.diagnostics,
                 ),
             )
             try await subscribeToRoster(bots: roster.bots, humans: roster.humans)
@@ -177,6 +181,8 @@ final class GroupCallTransport: NSObject {
     }
 
     func hangUp() {
+        diagnosticsSampler?.stop()
+        diagnosticsSampler = nil
         rosterTimer?.invalidate()
         rosterTimer = nil
         peerConnection.close()
@@ -187,6 +193,20 @@ final class GroupCallTransport: NSObject {
             // Non-fatal — usually deactivates when the peer connection
             // tears down its capture units.
         }
+    }
+
+    private func startDiagnostics() {
+        if diagnosticsSampler == nil {
+            diagnosticsSampler = WebRTCDiagnosticsSampler(
+                peerConnection: peerConnection,
+                transportName: "Cloudflare SFU",
+                remoteLabel: "房间",
+            ) { [weak self] snapshot in
+                guard let self else { return }
+                self.delegate?.transport(self, didUpdateDiagnostics: snapshot)
+            }
+        }
+        diagnosticsSampler?.start()
     }
 
     // MARK: - Subscribe / renegotiate
@@ -435,6 +455,7 @@ struct GroupRosterSnapshot: Sendable, Equatable {
     let bots: [GroupBotRosterEntry]
     let humans: [GroupHumanRosterEntry]
     let pending: [GroupPendingEntry]
+    let diagnostics: GroupMediaDiagnostics?
 }
 
 /// Callback surface the transport feeds events back through.
@@ -445,6 +466,8 @@ protocol GroupCallTransportDelegate: AnyObject {
     func transportDidConnect(_ t: GroupCallTransport)
     /// The roster (joined + pending) changed.
     func transport(_ t: GroupCallTransport, didUpdateRoster snapshot: GroupRosterSnapshot)
+    /// Best-effort live WebRTC stats from the SFU peer connection.
+    func transport(_ t: GroupCallTransport, didUpdateDiagnostics snapshot: CallDiagnosticsSnapshot)
     /// The transport failed — startup error or a mid-call drop.
     func transport(
         _ t: GroupCallTransport,

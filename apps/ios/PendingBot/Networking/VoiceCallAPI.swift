@@ -307,12 +307,13 @@ struct GroupVoiceJoinResponse: Decodable, Sendable {
     let bots: [GroupBotRosterEntry]
     let humans: [GroupHumanRosterEntry]
     let pending: [GroupPendingEntry]?
+    let diagnostics: GroupMediaDiagnostics?
 
     enum CodingKeys: String, CodingKey {
         case ok, session_id, answer
         case startedAt
         case initiatorId
-        case bots, humans, pending
+        case bots, humans, pending, diagnostics
     }
 }
 
@@ -333,6 +334,7 @@ struct GroupVoiceRosterResponse: Decodable, Sendable {
     let bots: [GroupBotRosterEntry]
     let humans: [GroupHumanRosterEntry]
     let pending: [GroupPendingEntry]?
+    let diagnostics: GroupMediaDiagnostics?
 }
 
 /// GET /v1/voice/active — current active voice calls across the user's

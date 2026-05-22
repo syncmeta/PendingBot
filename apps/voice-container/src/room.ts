@@ -21,6 +21,7 @@ import type {
   ContainerBotSpec,
   ControlCommand,
   ControlEvent,
+  MediaDiagnostics,
   RealtimeUsage,
 } from './protocol';
 import { decodePacket, encodePayloadPacket } from './proto';
@@ -105,6 +106,9 @@ interface HumanState {
   // 48 kHz stereo PCM samples buffered since the last input flush.
   pending: Int16Array[];
   downsampleState: DownsampleState;
+  audioLevel: number;
+  speaking: boolean;
+  lastFrameAt: number;
 }
 
 function totalLen(chunks: Int16Array[]): number {
@@ -137,6 +141,19 @@ function drainFront(
   const all = concatSamples(chunks);
   if (all.length <= n) return { taken: all, rest: [] };
   return { taken: all.subarray(0, n), rest: [new Int16Array(all.subarray(n))] };
+}
+
+function rmsLevel(samples: Int16Array): number {
+  if (samples.length === 0) return 0;
+  let sum = 0;
+  const stride = Math.max(1, Math.floor(samples.length / 2048));
+  let count = 0;
+  for (let i = 0; i < samples.length; i += stride) {
+    const normalized = samples[i] / 32768;
+    sum += normalized * normalized;
+    count++;
+  }
+  return Math.sqrt(sum / Math.max(1, count));
 }
 
 export class Room {
@@ -235,6 +252,21 @@ export class Room {
   // downstream (container→SFU→iOS). Reset the window counters after each.
   private emitStats(): void {
     if (this.closed) return;
+    const diagnostics: MediaDiagnostics = { atMs: Date.now(), participants: [] };
+    for (const [humanId, human] of this.humans) {
+      if (Date.now() - human.lastFrameAt > STATS_MS * 2) {
+        human.speaking = false;
+        human.audioLevel = 0;
+      }
+      diagnostics.participants.push({
+        kind: 'human',
+        id: humanId,
+        speaking: human.speaking,
+        audioLevel: human.audioLevel,
+        source: 'container',
+        streamConnected: human.streamWs !== null,
+      });
+    }
     for (const [botId, leg] of this.bots) {
       const depthMs = Math.round(totalLen(leg.playout) / (OPENAI_RATE / 1000));
       console.log(
@@ -242,11 +274,24 @@ export class Room {
           `underruns=${leg.underruns} maxGap=${leg.maxGapMs}ms ` +
           `voice=${leg.voiceFrames} silence=${leg.silenceFrames}`,
       );
+      diagnostics.participants.push({
+        kind: 'bot',
+        id: botId,
+        speaking: leg.voiceFrames > 0 || depthMs > 0,
+        audioLevel: leg.voiceFrames > 0 ? 1 : 0,
+        source: 'model',
+        playoutDepthMs: depthMs,
+        underruns: leg.underruns,
+        maxGapMs: leg.maxGapMs,
+        ingestConnected: leg.ingestWs !== null,
+        modelSessionReady: leg.sessionReady,
+      });
       leg.underruns = 0;
       leg.maxGapMs = 0;
       leg.voiceFrames = 0;
       leg.silenceFrames = 0;
     }
+    this.emit({ t: 'diagnostics', diagnostics });
   }
 
   // ── adapter sockets (SFU dials in via the worker) ──────────────────
@@ -258,12 +303,18 @@ export class Room {
         streamWs: ws,
         pending: [],
         downsampleState: newDownsampleState(),
+        audioLevel: 0,
+        speaking: false,
+        lastFrameAt: 0,
       };
       this.humans.set(humanId, human);
     } else {
       human.streamWs = ws;
       human.pending = [];
       human.downsampleState = newDownsampleState();
+      human.audioLevel = 0;
+      human.speaking = false;
+      human.lastFrameAt = 0;
     }
   }
 
@@ -296,7 +347,11 @@ export class Room {
     const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
     const packet = decodePacket(bytes);
     if (packet.payload.length === 0) return;
-    human.pending.push(bytesToSamples(packet.payload));
+    const samples = bytesToSamples(packet.payload);
+    human.audioLevel = rmsLevel(samples);
+    human.speaking = human.audioLevel > 0.025;
+    human.lastFrameAt = Date.now();
+    human.pending.push(samples);
   }
 
   // ── bots ───────────────────────────────────────────────────────────

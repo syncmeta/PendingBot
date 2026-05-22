@@ -26,6 +26,7 @@ struct CallView: View {
     // .terminated phase transition.
     @State private var regionAlert: RegionAlert?
     @State private var errorAlert: String?
+    @State private var showingDiagnostics = false
 
     private struct RegionAlert: Identifiable {
         let id = UUID()
@@ -55,6 +56,26 @@ struct CallView: View {
             minimizeButton
                 .padding(.top, 12)
                 .padding(.leading, 12)
+            VStack {
+                HStack {
+                    Spacer()
+                    CallDiagnosticsButton(
+                        snapshot: session.diagnostics,
+                        isPresented: $showingDiagnostics,
+                    )
+                    .padding(.top, 12)
+                    .padding(.trailing, 12)
+                }
+                if showingDiagnostics {
+                    HStack {
+                        Spacer()
+                        CallDiagnosticsPanel(snapshot: session.diagnostics)
+                            .padding(.trailing, 12)
+                    }
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+                Spacer()
+            }
         }
         .task {
             updateProximityMonitoring()
