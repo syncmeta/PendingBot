@@ -8,10 +8,13 @@ export interface RealtimeKitRoomState {
   startedAt: number;
   initiatorId: string;
   humanIds: string[];
+  botIds: string[];
 }
 
 type CachedRealtimeKitMeeting = Pick<RealtimeKitRoomState, 'id' | 'title'> &
-  Partial<Pick<RealtimeKitRoomState, 'startedAt' | 'initiatorId' | 'humanIds'>>;
+  Partial<
+    Pick<RealtimeKitRoomState, 'startedAt' | 'initiatorId' | 'humanIds' | 'botIds'>
+  >;
 
 export function addRealtimeKitHuman(
   state: CachedRealtimeKitMeeting,
@@ -19,12 +22,25 @@ export function addRealtimeKitHuman(
   nowMs: number,
 ): RealtimeKitRoomState {
   const humanIds = state.humanIds ?? [];
+  const botIds = state.botIds ?? [];
   return {
     id: state.id,
     title: state.title ?? null,
     startedAt: state.startedAt ?? nowMs,
     initiatorId: state.initiatorId ?? userId,
     humanIds: humanIds.includes(userId) ? humanIds : [...humanIds, userId],
+    botIds,
+  };
+}
+
+export function addRealtimeKitBot(
+  state: RealtimeKitRoomState,
+  botId: string,
+): RealtimeKitRoomState {
+  const botIds = state.botIds ?? [];
+  return {
+    ...state,
+    botIds: botIds.includes(botId) ? botIds : [...botIds, botId],
   };
 }
 
@@ -38,6 +54,16 @@ export function removeRealtimeKitHuman(
   };
 }
 
+export function removeRealtimeKitBot(
+  state: RealtimeKitRoomState,
+  botId: string,
+): RealtimeKitRoomState {
+  return {
+    ...state,
+    botIds: (state.botIds ?? []).filter((id) => id !== botId),
+  };
+}
+
 export function realtimeKitStateEvent(
   conversationId: string,
   state: RealtimeKitRoomState,
@@ -48,7 +74,10 @@ export function realtimeKitStateEvent(
     conversation_id: conversationId,
     started_at: state.startedAt,
     initiator_id: state.initiatorId,
-    participants: state.humanIds.map((id) => ({ kind: 'human' as const, id })),
+    participants: [
+      ...state.humanIds.map((id) => ({ kind: 'human' as const, id })),
+      ...(state.botIds ?? []).map((id) => ({ kind: 'bot' as const, id })),
+    ],
     pending: [],
   };
 }

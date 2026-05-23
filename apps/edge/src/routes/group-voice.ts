@@ -54,14 +54,17 @@ import {
   type SfuApp,
 } from '../lib/sfu';
 import {
+  addRealtimeKitParticipant,
   bootstrapRealtimeKitGroupVoice,
   kickAllRealtimeKitParticipants,
   realtimeKitAppFromEnv,
 } from '../lib/realtimekit';
 import {
+  addRealtimeKitBot,
   addRealtimeKitHuman,
   recordRealtimeKitEnded,
   recordRealtimeKitState,
+  removeRealtimeKitBot,
   removeRealtimeKitHuman,
   type RealtimeKitRoomState,
 } from '../lib/realtimekit-lifecycle';
@@ -89,6 +92,11 @@ interface BotSpec {
   model: string;
   instructions: string;
   voiceConfig: ResolvedVoiceConfig;
+  realtimeKit?: {
+    meetingId: string;
+    participantId: string;
+    authToken: string;
+  };
 }
 
 interface RealtimeKitCachedMeeting {
@@ -97,6 +105,7 @@ interface RealtimeKitCachedMeeting {
   startedAt?: number;
   initiatorId?: string;
   humanIds?: string[];
+  botIds?: string[];
 }
 
 // Pull a non-empty string field out of a bot's free-form `config` JSON.
@@ -228,6 +237,19 @@ function realtimeKitMeetingKey(conversationId: string): string {
   return `group-voice:realtimekit:${conversationId}`;
 }
 
+async function loadGroupAdminIds(
+  c: Context<AppBindings>,
+  conversationId: string,
+): Promise<string[]> {
+  const { data: adminRows } = await serviceClient(c.env)
+    .from('conversation_participants')
+    .select('participant_id')
+    .eq('conversation_id', conversationId)
+    .eq('participant_type', 'user')
+    .in('role', ['owner', 'admin']);
+  return (adminRows ?? []).map((r) => r.participant_id as string);
+}
+
 async function putRealtimeKitRoomState(
   c: Context<AppBindings>,
   conversationId: string,
@@ -271,6 +293,44 @@ async function controlRoom(
   });
 }
 
+async function startRealtimeKitRoomControl(
+  c: Context<AppBindings>,
+  loaded: GroupContext,
+  state: RealtimeKitRoomState,
+  bots: BotSpec[],
+): Promise<Response> {
+  const wsBase = `wss://${new URL(c.req.url).host}`;
+  return controlRoom(c, loaded.conversationId, '/control/realtimekit/start', {
+    room: {
+      mediaProvider: 'realtimekit',
+      roomId: loaded.conversationId,
+      conversationId: loaded.conversationId,
+      billUserId: loaded.billUserId,
+      initiatorUserId: state.initiatorId,
+      groupAdminIds: await loadGroupAdminIds(c, loaded.conversationId),
+      publicWsBase: wsBase,
+      adapterPath: ADAPTER_PATH,
+      adapterToken: crypto.randomUUID(),
+      realtimeKitMeetingId: state.id,
+      realtimeKitHumanIds: state.humanIds,
+    },
+    bots,
+  });
+}
+
+async function syncRealtimeKitRoomHumans(
+  c: Context<AppBindings>,
+  conversationId: string,
+  state: RealtimeKitRoomState,
+): Promise<void> {
+  const resp = await controlRoom(c, conversationId, '/control/realtimekit/sync-humans', {
+    humanIds: state.humanIds,
+  }).catch(() => null);
+  if (resp && !resp.ok && resp.status !== 400) {
+    console.warn('[group-voice/realtimekit] human sync failed', resp.status);
+  }
+}
+
 // =============================================================================
 // POST /:id/voice/start
 // =============================================================================
@@ -284,16 +344,9 @@ groupVoiceRoutes.post('/:id/voice/start', async (c) => {
   if (!loaded.ok) return loaded.res;
   const { conversationId, billUserId } = loaded.ctx;
 
-  const supaSvc = serviceClient(c.env);
   // Group owner + admins are privileged for the whole call. The caller
   // (initiator) is privileged too — passed separately below.
-  const { data: adminRows } = await supaSvc
-    .from('conversation_participants')
-    .select('participant_id')
-    .eq('conversation_id', conversationId)
-    .eq('participant_type', 'user')
-    .in('role', ['owner', 'admin']);
-  const groupAdminIds = (adminRows ?? []).map((r) => r.participant_id as string);
+  const groupAdminIds = await loadGroupAdminIds(c, conversationId);
 
   // wss:// origin the SFU dials back to reach this worker.
   const wsBase = `wss://${new URL(c.req.url).host}`;
@@ -433,12 +486,16 @@ groupVoiceRoutes.post('/:id/voice/realtimekit/bootstrap', async (c) => {
         startedAt: meeting.startedAt,
         initiatorId: meeting.initiatorId,
         humanIds: meeting.humanIds,
+        botIds: meeting.botIds,
       },
       c.var.userId!,
       Date.now(),
     );
     await putRealtimeKitRoomState(c, conversationId, state);
     await recordRealtimeKitState(c.env, conversationId, state);
+    await startRealtimeKitRoomControl(c, loaded.ctx, state, []).catch((err) =>
+      console.warn('[group-voice/realtimekit/bootstrap] room control sync failed', err),
+    );
 
     return c.json({
       ok: true,
@@ -487,6 +544,7 @@ groupVoiceRoutes.post('/:id/voice/realtimekit/leave', async (c) => {
   const state = await c.env.MEMORY.get<RealtimeKitRoomState>(meetingKey, 'json');
   if (!state?.id) {
     await recordRealtimeKitEnded(c.env, conversationId);
+    await controlRoom(c, conversationId, '/control/realtimekit/finalize', {}).catch(() => null);
     return c.json({ ok: true, ended: true });
   }
 
@@ -494,11 +552,15 @@ groupVoiceRoutes.post('/:id/voice/realtimekit/leave', async (c) => {
   if (next.humanIds.length === 0) {
     await c.env.MEMORY.delete(meetingKey);
     await recordRealtimeKitEnded(c.env, conversationId);
+    await controlRoom(c, conversationId, '/control/realtimekit/finalize', {}).catch((err) =>
+      console.warn('[group-voice/realtimekit/leave] room finalize failed', err),
+    );
     return c.json({ ok: true, ended: true });
   }
 
   await putRealtimeKitRoomState(c, conversationId, next);
   await recordRealtimeKitState(c.env, conversationId, next);
+  await syncRealtimeKitRoomHumans(c, conversationId, next);
   return c.json({ ok: true, ended: false });
 });
 
@@ -515,6 +577,7 @@ groupVoiceRoutes.post('/:id/voice/realtimekit/end', async (c) => {
   const state = await c.env.MEMORY.get<RealtimeKitRoomState>(meetingKey, 'json');
   if (!state?.id) {
     await recordRealtimeKitEnded(c.env, conversationId);
+    await controlRoom(c, conversationId, '/control/realtimekit/finalize', {}).catch(() => null);
     return c.json({ ok: true, ended: true });
   }
 
@@ -524,6 +587,9 @@ groupVoiceRoutes.post('/:id/voice/realtimekit/end', async (c) => {
 
   await c.env.MEMORY.delete(meetingKey);
   await recordRealtimeKitEnded(c.env, conversationId);
+  await controlRoom(c, conversationId, '/control/realtimekit/finalize', {}).catch((err) =>
+    console.warn('[group-voice/realtimekit/end] room finalize failed', err),
+  );
 
   const app = realtimeKitAppFromEnv(c.env);
   if (app) {
@@ -540,6 +606,91 @@ groupVoiceRoutes.post('/:id/voice/realtimekit/end', async (c) => {
 // =============================================================================
 
 const BotIdBody = z.object({ bot_id: z.string().uuid() });
+
+groupVoiceRoutes.post('/:id/voice/realtimekit/add-bot', async (c) => {
+  const loaded = await loadGroupContext(c);
+  if (!loaded.ok) return loaded.res;
+  const { conversationId, locale } = loaded.ctx;
+
+  let parsed: z.infer<typeof BotIdBody>;
+  try {
+    parsed = BotIdBody.parse(await c.req.json());
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+
+  const meetingKey = realtimeKitMeetingKey(conversationId);
+  const state = await c.env.MEMORY.get<RealtimeKitRoomState>(meetingKey, 'json');
+  if (!state?.id) {
+    return jsonError(c, 409, 'conflict', { detail: 'RealtimeKit room not started' });
+  }
+
+  const app = realtimeKitAppFromEnv(c.env);
+  if (!app) {
+    return jsonError(c, 503, 'upstream_unavailable', {
+      detail: 'RealtimeKit is not configured',
+    });
+  }
+
+  const supaSvc = serviceClient(c.env);
+  const [{ data: part }, { data: botRow }] = await Promise.all([
+    supaSvc
+      .from('conversation_participants')
+      .select('participant_id')
+      .eq('conversation_id', conversationId)
+      .eq('participant_type', 'bot')
+      .eq('participant_id', parsed.bot_id)
+      .maybeSingle(),
+    supaSvc
+      .from('bots')
+      .select('id, display_name, voice_call_enabled')
+      .eq('id', parsed.bot_id)
+      .maybeSingle(),
+  ]);
+  if (!part) return jsonError(c, 404, 'not_found', { detail: 'bot not in group' });
+  if (!botRow || !botRow.voice_call_enabled) {
+    return jsonError(c, 403, 'voice_bot_disabled');
+  }
+
+  const baseSpec = await buildBotSpec(c, parsed.bot_id, locale);
+  if (!baseSpec) return jsonError(c, 403, 'voice_bot_disabled');
+
+  try {
+    const participant = await addRealtimeKitParticipant(app, state.id, {
+      customParticipantId: `pendingbot:bot:${parsed.bot_id}:${crypto.randomUUID()}`,
+      displayName: (botRow.display_name as string | null | undefined) ?? null,
+      presetName:
+        c.env.REALTIMEKIT_BOT_PRESET ??
+        c.env.REALTIMEKIT_HUMAN_PRESET ??
+        DEFAULT_REALTIMEKIT_BOT_PRESET,
+    });
+    const spec: BotSpec = {
+      ...baseSpec,
+      realtimeKit: {
+        meetingId: state.id,
+        participantId: participant.id,
+        authToken: participant.token,
+      },
+    };
+    const next = addRealtimeKitBot(state, parsed.bot_id);
+    const roomResp = await startRealtimeKitRoomControl(c, loaded.ctx, next, [spec]);
+    if (!roomResp.ok) {
+      console.warn('[group-voice/realtimekit/add-bot] room DO failed', roomResp.status);
+      return jsonError(c, 502, 'voice_upstream_failed');
+    }
+
+    await putRealtimeKitRoomState(c, conversationId, next);
+    await recordRealtimeKitState(c.env, conversationId, next);
+    return c.json({
+      ok: true,
+      bot_id: parsed.bot_id,
+      participant_id: participant.id,
+    });
+  } catch (err) {
+    console.warn('[group-voice/realtimekit/add-bot] failed', err);
+    return jsonError(c, 502, 'voice_upstream_failed', { detail: String(err) });
+  }
+});
 
 groupVoiceRoutes.post('/:id/voice/add-bot', async (c) => {
   const loaded = await loadGroupContext(c);
@@ -749,6 +900,15 @@ groupVoiceRoutes.post('/:id/voice/kick', async (c) => {
   if (!resp.ok) {
     console.warn('[group-voice/kick] room DO failed', resp.status);
     return jsonError(c, 502, 'voice_upstream_failed');
+  }
+  if (parsed.target_type === 'bot') {
+    const meetingKey = realtimeKitMeetingKey(conversationId);
+    const state = await c.env.MEMORY.get<RealtimeKitRoomState>(meetingKey, 'json');
+    if (state?.id) {
+      const next = removeRealtimeKitBot(state, parsed.target_id);
+      await putRealtimeKitRoomState(c, conversationId, next);
+      await recordRealtimeKitState(c.env, conversationId, next);
+    }
   }
   return c.json({ ok: true });
 });

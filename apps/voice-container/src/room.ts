@@ -37,6 +37,7 @@ import {
   concatSamples,
   type DownsampleState,
 } from './pcm';
+import { RealtimeKitBridge } from './realtimekit-bridge';
 
 const DEFAULT_VOICE_MODEL_SLUG = 'gpt-realtime-2';
 
@@ -50,6 +51,7 @@ const OPENAI_RATE = 24_000;
 // latency helps the bot's VAD react. A real timer makes the window stable.
 const INPUT_FLUSH_MS = 40;
 const INPUT_STEREO_PER_FLUSH = (SFU_RATE * 2 * INPUT_FLUSH_MS) / 1000; // 3840
+const INPUT_MONO48_PER_FLUSH = (SFU_RATE * INPUT_FLUSH_MS) / 1000; // 1920
 const INPUT_OPENAI_SAMPLES = (OPENAI_RATE * INPUT_FLUSH_MS) / 1000; // 960
 
 // Bot voice playout cadence (OpenAI output → SFU ingest). A steady 20 ms
@@ -79,7 +81,8 @@ const STATS_MS = 2_000;
 export type WsData =
   | { kind: 'control' }
   | { kind: 'stream'; humanId: string }
-  | { kind: 'ingest'; botId: string };
+  | { kind: 'ingest'; botId: string }
+  | { kind: 'rtk-bot'; botId: string };
 
 interface BotLeg {
   spec: ContainerBotSpec;
@@ -88,6 +91,10 @@ interface BotLeg {
   // audio before the session's format/persona is configured.
   sessionReady: boolean;
   ingestWs: ServerWebSocket<WsData> | null;
+  rtkBridge: RealtimeKitBridge | null;
+  // RealtimeKit participant audio arrives as 48 kHz mono from the bridge.
+  rtkPending: Int16Array[];
+  rtkDownsampleState: DownsampleState;
   // Bot voice for humans — drained by the steady playout clock (24k mono).
   playout: Int16Array[];
   playoutState: 'buffering' | 'playing';
@@ -168,6 +175,7 @@ export class Room {
   private playoutTimer: ReturnType<typeof setInterval> | null = null;
   private statsTimer: ReturnType<typeof setInterval> | null = null;
   private closed = false;
+  private port = Number(process.env.PORT ?? 8080);
 
   // ── control plane (DO <-> container) ───────────────────────────────
 
@@ -283,7 +291,7 @@ export class Room {
         playoutDepthMs: depthMs,
         underruns: leg.underruns,
         maxGapMs: leg.maxGapMs,
-        ingestConnected: leg.ingestWs !== null,
+        ingestConnected: leg.ingestWs !== null || Boolean(leg.rtkBridge?.connected),
         modelSessionReady: leg.sessionReady,
       });
       leg.underruns = 0;
@@ -363,6 +371,9 @@ export class Room {
       openaiWs: null,
       sessionReady: false,
       ingestWs: null,
+      rtkBridge: null,
+      rtkPending: [],
+      rtkDownsampleState: newDownsampleState(),
       playout: [],
       playoutState: 'buffering',
       interbot: [],
@@ -373,6 +384,21 @@ export class Room {
       silenceFrames: 0,
     };
     this.bots.set(spec.botId, leg);
+    if (spec.realtimeKit) {
+      leg.rtkBridge = new RealtimeKitBridge({
+        botId: spec.botId,
+        meetingId: spec.realtimeKit.meetingId,
+        participantId: spec.realtimeKit.participantId,
+        authToken: spec.realtimeKit.authToken,
+        roomToken: this.token ?? '',
+        port: this.port,
+        onInput: (samples) => this.onRealtimeKitInput(spec.botId, samples),
+        onClosed: () => this.onRealtimeKitBridgeClosed(spec.botId),
+      });
+      void leg.rtkBridge.start().catch((err) =>
+        console.warn('[room] realtimekit bridge failed', spec.botId, err),
+      );
+    }
     this.connectOpenAI(leg);
   }
 
@@ -390,6 +416,40 @@ export class Room {
     } catch {
       // already closing
     }
+    leg.rtkBridge?.close();
+  }
+
+  realtimeKitBotPage(botId: string): Response {
+    const bridge = this.bots.get(botId)?.rtkBridge;
+    if (!bridge) return new Response('not found', { status: 404 });
+    return new Response(bridge.html(), {
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    });
+  }
+
+  attachRealtimeKitBot(botId: string, ws: ServerWebSocket<WsData>): boolean {
+    const bridge = this.bots.get(botId)?.rtkBridge;
+    if (!bridge) return false;
+    bridge.attach(ws);
+    return true;
+  }
+
+  detachRealtimeKitBot(botId: string, ws: ServerWebSocket<WsData>): void {
+    this.bots.get(botId)?.rtkBridge?.detach(ws);
+  }
+
+  onRealtimeKitBridgeMessage(botId: string, message: string): void {
+    this.bots.get(botId)?.rtkBridge?.onMessage(message);
+  }
+
+  private onRealtimeKitInput(botId: string, samples: Int16Array): void {
+    const leg = this.bots.get(botId);
+    if (!leg || samples.length === 0) return;
+    leg.rtkPending.push(samples);
+  }
+
+  private onRealtimeKitBridgeClosed(botId: string): void {
+    if (!this.closed) this.onLegClosed(botId);
   }
 
   private updateTools(botId: string, tools: unknown[]): void {
@@ -563,6 +623,7 @@ export class Room {
     } catch {
       // already closing
     }
+    leg.rtkBridge?.close();
     this.emit({ t: 'leg-closed', botId });
   }
 
@@ -595,14 +656,34 @@ export class Room {
     // this tick. Snapshot first — a bot must hear the others but never
     // itself.
     const botAudio = new Map<string, Int16Array | null>();
+    const botRealtimeKitAudio = new Map<string, Int16Array | null>();
     for (const [botId, leg] of this.bots) {
       if (leg.interbot.length === 0) {
         botAudio.set(botId, null);
-        continue;
+      } else {
+        const { taken, rest } = drainFront(leg.interbot, INPUT_OPENAI_SAMPLES);
+        leg.interbot = rest;
+        botAudio.set(botId, taken);
       }
-      const { taken, rest } = drainFront(leg.interbot, INPUT_OPENAI_SAMPLES);
-      leg.interbot = rest;
-      botAudio.set(botId, taken);
+
+      if (leg.rtkPending.length === 0) {
+        botRealtimeKitAudio.set(botId, null);
+      } else {
+        const drained = drainFront(leg.rtkPending, INPUT_MONO48_PER_FLUSH);
+        leg.rtkPending = drained.rest;
+        const mono48 =
+          drained.taken.length < INPUT_MONO48_PER_FLUSH
+            ? (() => {
+                const padded = new Int16Array(INPUT_MONO48_PER_FLUSH);
+                padded.set(drained.taken);
+                return padded;
+              })()
+            : drained.taken;
+        botRealtimeKitAudio.set(
+          botId,
+          downsample48to24(mono48, leg.rtkDownsampleState),
+        );
+      }
     }
 
     for (const [botId, leg] of this.bots) {
@@ -610,6 +691,8 @@ export class Room {
       if (!ws || !leg.sessionReady || ws.readyState !== WebSocket.OPEN) continue;
       const inputs: Int16Array[] = [];
       if (humanMix && humanMix.length > 0) inputs.push(humanMix);
+      const rtkAudio = botRealtimeKitAudio.get(botId);
+      if (rtkAudio && rtkAudio.length > 0) inputs.push(rtkAudio);
       for (const [otherId, audio] of botAudio) {
         if (otherId === botId || !audio || audio.length === 0) continue;
         inputs.push(audio);
@@ -640,7 +723,8 @@ export class Room {
     if (this.closed) return;
     for (const leg of this.bots.values()) {
       const ing = leg.ingestWs;
-      if (!ing) continue;
+      const rtkBridge = leg.rtkBridge;
+      if (!ing && !rtkBridge) continue;
 
       if (leg.playoutState === 'buffering') {
         if (totalLen(leg.playout) >= PREROLL_SAMPLES) {
@@ -648,7 +732,7 @@ export class Room {
         } else {
           // Keep the SFU track continuous with comfort silence while we
           // build the cushion.
-          this.sendIngest(ing, new Int16Array(PLAYOUT_SAMPLES));
+          this.sendOutput(leg, new Int16Array(PLAYOUT_SAMPLES));
           leg.silenceFrames++;
           continue;
         }
@@ -671,8 +755,13 @@ export class Room {
       } else {
         leg.voiceFrames++;
       }
-      this.sendIngest(ing, frame);
+      this.sendOutput(leg, frame);
     }
+  }
+
+  private sendOutput(leg: BotLeg, mono24: Int16Array): void {
+    if (leg.ingestWs) this.sendIngest(leg.ingestWs, mono24);
+    leg.rtkBridge?.sendAudio(mono24);
   }
 
   // Upsample a 24 kHz mono frame to 48 kHz stereo and push it to the SFU
@@ -711,6 +800,7 @@ export class Room {
       } catch {
         // already closing
       }
+      leg.rtkBridge?.close();
     }
     this.bots.clear();
     this.humans.clear();
