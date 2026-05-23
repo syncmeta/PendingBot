@@ -69,7 +69,7 @@ struct WalletView: View {
                     .font(Theme.Fonts.monoSmall)
                     .foregroundStyle(Color(hex: 0xB14B3C))
             } else {
-                Text("PND: Pending Name Dollar")
+                Text("PND: Pending Name Credit")
                     .font(Theme.Fonts.monoSmall)
                     .foregroundStyle(Theme.Palette.inkMuted)
             }
@@ -189,7 +189,7 @@ struct WalletView: View {
     private func logRow(_ entry: BillingService.LogEntry) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline) {
-                Text(Self.taskLabel(entry.taskType))
+                Text(entry.categoryLabel ?? Self.taskLabel(entry.taskType))
                     .font(Theme.Fonts.body)
                     .foregroundStyle(Theme.Palette.ink)
                 if let botName = entry.botName, !botName.isEmpty {

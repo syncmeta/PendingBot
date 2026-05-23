@@ -38,30 +38,33 @@ struct JoinRequestsInboxView: View {
 
     @ViewBuilder
     private func requestRow(_ r: PendingRequest) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(r.requesterLabel).font(Theme.Fonts.body)
-            if let m = r.message, !m.isEmpty {
-                Text(m).font(Theme.Fonts.caption).foregroundStyle(.secondary)
-            }
-            HStack {
-                Text(r.statusLabel).font(Theme.Fonts.caption2).foregroundStyle(.secondary)
-                Spacer()
-                if r.status == "pending" {
-                    if deciding.contains(r.id) {
-                        ProgressView()
-                    } else {
-                        Button {
-                            Task { await decide(r.id, approve: false) }
-                        } label: {
-                            Text("拒绝").foregroundStyle(.red)
+        HStack(alignment: .top, spacing: 12) {
+            UserAvatar(seed: r.avatarSeed, attachmentId: r.avatarPath, size: 40)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(r.requesterLabel).font(Theme.Fonts.body)
+                if let m = r.message, !m.isEmpty {
+                    Text(m).font(Theme.Fonts.caption).foregroundStyle(.secondary)
+                }
+                HStack {
+                    Text(r.statusLabel).font(Theme.Fonts.caption2).foregroundStyle(.secondary)
+                    Spacer()
+                    if r.status == "pending" {
+                        if deciding.contains(r.id) {
+                            ProgressView()
+                        } else {
+                            Button {
+                                Task { await decide(r.id, approve: false) }
+                            } label: {
+                                Text("拒绝").foregroundStyle(.red)
+                            }
+                            .buttonStyle(.bordered)
+                            Button {
+                                Task { await decide(r.id, approve: true) }
+                            } label: {
+                                Text("通过")
+                            }
+                            .buttonStyle(.borderedProminent)
                         }
-                        .buttonStyle(.bordered)
-                        Button {
-                            Task { await decide(r.id, approve: true) }
-                        } label: {
-                            Text("通过")
-                        }
-                        .buttonStyle(.borderedProminent)
                     }
                 }
             }
@@ -95,30 +98,15 @@ struct JoinRequestsInboxView: View {
             }
             let decoded = try JSONDecoder().decode(Response.self, from: data)
 
-            // Resolve requester display names in one extra read so the
-            // row shows "Alice" rather than a UUID.
-            let userIds = Array(Set(decoded.requests.map(\.requester_id)))
-            var nameMap: [String: String] = [:]
-            if !userIds.isEmpty {
-                do {
-                    let users: [UserName] = try await SupabaseStack.shared
-                        .from("users")
-                        .select("id, display_name")
-                        .in("id", values: userIds)
-                        .execute()
-                        .value
-                    for u in users { nameMap[u.id] = u.display_name }
-                } catch {
-                    // Don't fail the whole inbox over name resolution
-                    // — fall back to short ids.
-                }
-            }
-
             self.requests = decoded.requests.map { r in
                 PendingRequest(
                     id: r.id,
                     status: r.status,
-                    requesterLabel: nameMap[r.requester_id] ?? String(r.requester_id.prefix(8)),
+                    requesterLabel: r.requester_display_name.isEmpty
+                        ? String(r.requester_id.prefix(8))
+                        : r.requester_display_name,
+                    avatarPath: r.requester_avatar_path,
+                    avatarSeed: r.requester_avatar_seed ?? r.requester_id,
                     message: r.message,
                     createdAt: r.created_at,
                 )
@@ -161,6 +149,8 @@ struct JoinRequestsInboxView: View {
                     id: requests[idx].id,
                     status: approve ? "approved" : "rejected",
                     requesterLabel: requests[idx].requesterLabel,
+                    avatarPath: requests[idx].avatarPath,
+                    avatarSeed: requests[idx].avatarSeed,
                     message: requests[idx].message,
                     createdAt: requests[idx].createdAt,
                 )
@@ -176,6 +166,8 @@ struct JoinRequestsInboxView: View {
         let id: String
         let status: String
         let requesterLabel: String
+        let avatarPath: String?
+        let avatarSeed: String
         let message: String?
         let createdAt: String
 
@@ -203,11 +195,9 @@ struct JoinRequestsInboxView: View {
             let decided_by: String?
             let decided_at: String?
             let created_at: String
+            let requester_display_name: String
+            let requester_avatar_path: String?
+            let requester_avatar_seed: String?
         }
-    }
-
-    private struct UserName: Decodable {
-        let id: String
-        let display_name: String
     }
 }

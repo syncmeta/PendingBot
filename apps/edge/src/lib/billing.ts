@@ -7,7 +7,7 @@ import { kvConfig } from './kv-config';
 // 0034_billing_admin_rpcs.sql. This module is the single point that knows
 // about cost_credits, balance fields, and the billing_* RPCs.
 
-// $1 USD list price = 2700 PND (Pending Name Dollar, symbol ∂). This is
+// $1 USD list price = 2700 PND (Pending Name Credit, symbol ∂). This is
 // the user-facing display ratio — IAP / Stripe / redemption all sell at
 // the same headline rate. 2700 (vs a round 1000) gives larger nominal
 // numbers in-app (signup bonus, per-call drain) without changing real

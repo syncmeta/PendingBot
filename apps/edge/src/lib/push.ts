@@ -225,7 +225,7 @@ export async function notifyConversationUsers(input: {
   const supa = serviceClient(env);
   const { data: rows, error } = await supa
     .from('conversation_participants')
-    .select('participant_id')
+    .select('participant_id, muted')
     .eq('conversation_id', conversationId)
     .eq('participant_type', 'user');
   if (error) {
@@ -233,6 +233,7 @@ export async function notifyConversationUsers(input: {
     return;
   }
   const recipients = (rows ?? [])
+    .filter((r) => !r.muted)
     .map((r) => r.participant_id as string)
     .filter((id) => id !== excludeUserId);
   await Promise.all(

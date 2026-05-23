@@ -32,6 +32,7 @@ struct FriendsTabView: View {
     /// AddFriendSheet closes, since auto-accept paths can flip a request
     /// into a fresh contact).
     @State private var pendingFriendRequests: [PendingFriendRequest] = []
+    @State private var pendingGroupInvitations: [PendingGroupInvitation] = []
     @State private var loading = false
     @State private var error: String?
     @State private var addingFriend = false
@@ -253,6 +254,19 @@ struct FriendsTabView: View {
                         }
                     }
 
+                    if !pendingGroupInvitations.isEmpty {
+                        Section("群邀请") {
+                            ForEach(pendingGroupInvitations) { invite in
+                                GroupInvitationRow(
+                                    invitation: invite,
+                                    onAccept: { Task { await respondToGroupInvitation(invite, accept: true) } },
+                                    onDecline: { Task { await respondToGroupInvitation(invite, accept: false) } }
+                                )
+                                .listRowBackground(Theme.Palette.surface)
+                            }
+                        }
+                    }
+
                     // Single merged section — bots and humans interleaved in
                     // alphabetical order. Filter chips above narrow by type.
                     if !friendsForFilter.isEmpty {
@@ -420,6 +434,16 @@ struct FriendsTabView: View {
         let peerAvatarSeed: String
     }
 
+    struct PendingGroupInvitation: Identifiable, Hashable {
+        let id: String
+        let conversationId: String
+        let groupTitle: String
+        let inviterName: String
+        let inviterAvatarSeed: String
+        let inviterAvatarPath: String?
+        let billingText: String
+    }
+
     /// Unified row type so bots and humans share one alphabetically-sorted
     /// section. Filter chips already do the type-narrowing that separate
     /// sections used to.
@@ -553,6 +577,7 @@ struct FriendsTabView: View {
                 .value
             async let contactsResp: [HumanPick] = loadContactsWithProfiles()
             async let incomingFR: [PendingFriendRequest] = loadIncomingFriendRequests()
+            async let incomingGroupInvites: [PendingGroupInvitation] = loadIncomingGroupInvitations()
             // Recent-chat sort key. Non-fatal: an empty map just degrades the
             // "按最近聊天" order, it never blocks the list.
             async let activityResp: [ConvActivityRow] = loadConversationActivity()
@@ -604,7 +629,8 @@ struct FriendsTabView: View {
                 self.humans = []
             }
             self.lastActivity = buildActivityMap(await activityResp)
-            self.pendingFriendRequests = (try? await incomingFR) ?? []
+            self.pendingFriendRequests = await incomingFR
+            self.pendingGroupInvitations = await incomingGroupInvites
         } catch is CancellationError {
             // Tab switch / refreshable cancellation — silent. The Mac
             // shell rebuilds the active tab on every selection change, so
@@ -773,6 +799,76 @@ struct FriendsTabView: View {
         }
         // Always refresh — accept also adds a row to user_contacts which
         // the friends list needs to pick up.
+        await load()
+    }
+
+    private func loadIncomingGroupInvitations() async -> [PendingGroupInvitation] {
+        do {
+            let url = HostedConfig.environment.workerURL
+                .appendingPathComponent("v1/groups/invitations")
+            var req = URLRequest(url: url)
+            req.httpMethod = "GET"
+            let token = try await SupabaseStack.shared.auth.session.accessToken
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode)
+            else { return [] }
+            struct Payload: Decodable {
+                struct Row: Decodable {
+                    struct Inviter: Decodable {
+                        let display_name: String
+                        let avatar_path: String?
+                        let avatar_seed: String?
+                    }
+                    struct Billing: Decodable { let text: String? }
+                    let id: String
+                    let conversation_id: String
+                    let status: String
+                    let group_title: String
+                    let billing_snapshot: Billing?
+                    let inviter: Inviter
+                }
+                let invitations: [Row]
+            }
+            let payload = try JSONDecoder().decode(Payload.self, from: data)
+            return payload.invitations
+                .filter { $0.status == "pending" }
+                .map { row in
+                    PendingGroupInvitation(
+                        id: row.id,
+                        conversationId: row.conversation_id,
+                        groupTitle: row.group_title,
+                        inviterName: row.inviter.display_name.isEmpty ? "群成员" : row.inviter.display_name,
+                        inviterAvatarSeed: row.inviter.avatar_seed ?? row.conversation_id,
+                        inviterAvatarPath: row.inviter.avatar_path,
+                        billingText: row.billing_snapshot?.text ?? "接受后会按当前群设置参与机器人 Token 分摊。"
+                    )
+                }
+        } catch {
+            return []
+        }
+    }
+
+    private func respondToGroupInvitation(_ invitation: PendingGroupInvitation, accept: Bool) async {
+        pendingGroupInvitations.removeAll { $0.id == invitation.id }
+        struct Body: Encodable { let approve: Bool }
+        do {
+            let url = HostedConfig.environment.workerURL
+                .appendingPathComponent("v1/groups/invitations/\(invitation.id)/decide")
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            let token = try await SupabaseStack.shared.auth.session.accessToken
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            req.httpBody = try JSONEncoder().encode(Body(approve: accept))
+            let (_, resp) = try await URLSession.shared.data(for: req)
+            guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode)
+            else { throw URLError(.badServerResponse) }
+            Haptics.success()
+        } catch {
+            self.error = "处理群邀请失败: \(error.localizedDescription)"
+            Haptics.error()
+        }
         await load()
     }
 
@@ -1116,6 +1212,56 @@ private struct FriendRequestRow: View {
                         .font(Theme.Fonts.footnote)
                         .foregroundStyle(Theme.Palette.inkMuted)
                 }
+            }
+            Spacer(minLength: 8)
+            HStack(spacing: 8) {
+                Button(action: onDecline) {
+                    Text("拒绝")
+                        .font(Theme.Fonts.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(Theme.Palette.surfaceMuted))
+                }
+                .buttonStyle(.plain)
+                Button(action: onAccept) {
+                    Text("同意")
+                        .font(Theme.Fonts.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(Theme.Palette.accent))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+private struct GroupInvitationRow: View {
+    let invitation: FriendsTabView.PendingGroupInvitation
+    let onAccept: () -> Void
+    let onDecline: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            UserAvatar(seed: invitation.inviterAvatarSeed,
+                       attachmentId: invitation.inviterAvatarPath,
+                       size: 36)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(invitation.groupTitle)
+                    .font(Theme.Fonts.serif(size: 16, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.ink)
+                    .lineLimit(1)
+                Text("\(invitation.inviterName) 邀请你入群")
+                    .font(Theme.Fonts.footnote)
+                    .foregroundStyle(Theme.Palette.inkMuted)
+                    .lineLimit(1)
+                Text(invitation.billingText)
+                    .font(Theme.Fonts.caption)
+                    .foregroundStyle(Theme.Palette.inkMuted)
+                    .lineLimit(3)
             }
             Spacer(minLength: 8)
             HStack(spacing: 8) {

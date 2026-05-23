@@ -1233,6 +1233,50 @@ export type Database = {
           },
         ]
       }
+      group_member_invitations: {
+        Row: {
+          billing_snapshot: Json
+          conversation_id: string
+          created_at: string
+          decided_at: string | null
+          id: string
+          invitee_id: string
+          invitee_participates: boolean
+          inviter_id: string
+          status: Database["pendingbot"]["Enums"]["join_request_status"]
+        }
+        Insert: {
+          billing_snapshot?: Json
+          conversation_id: string
+          created_at?: string
+          decided_at?: string | null
+          id?: string
+          invitee_id: string
+          invitee_participates?: boolean
+          inviter_id: string
+          status?: Database["pendingbot"]["Enums"]["join_request_status"]
+        }
+        Update: {
+          billing_snapshot?: Json
+          conversation_id?: string
+          created_at?: string
+          decided_at?: string | null
+          id?: string
+          invitee_id?: string
+          invitee_participates?: boolean
+          inviter_id?: string
+          status?: Database["pendingbot"]["Enums"]["join_request_status"]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "group_member_invitations_conv_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       group_member_billing: {
         Row: {
           cap_credits: number | null
@@ -1588,6 +1632,78 @@ export type Database = {
           updated_at?: string
           updated_by?: string | null
           version?: number
+        }
+        Relationships: []
+      }
+      preset_conversation_templates: {
+        Row: {
+          base_ts: string
+          bot_slug: string
+          enabled: boolean
+          messages: Json
+          slug: string
+          sort_order: number
+          title: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          base_ts?: string
+          bot_slug: string
+          enabled?: boolean
+          messages?: Json
+          slug: string
+          sort_order?: number
+          title: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          base_ts?: string
+          bot_slug?: string
+          enabled?: boolean
+          messages?: Json
+          slug?: string
+          sort_order?: number
+          title?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
+      preset_group_templates: {
+        Row: {
+          bot_slugs: string[]
+          enabled: boolean
+          join_policy: Database["pendingbot"]["Enums"]["group_join_policy"]
+          messages: Json
+          slug: string
+          sort_order: number
+          title: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          bot_slugs?: string[]
+          enabled?: boolean
+          join_policy?: Database["pendingbot"]["Enums"]["group_join_policy"]
+          messages?: Json
+          slug: string
+          sort_order?: number
+          title: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          bot_slugs?: string[]
+          enabled?: boolean
+          join_policy?: Database["pendingbot"]["Enums"]["group_join_policy"]
+          messages?: Json
+          slug?: string
+          sort_order?: number
+          title?: string
+          updated_at?: string
+          updated_by?: string | null
         }
         Relationships: []
       }

@@ -15,19 +15,23 @@ struct GroupSettingsView: View {
     @State private var meta: GroupMeta?
     @State private var members: [Member] = []
     @State private var myNickname: String = ""
+    @State private var groupTitleInput: String = ""
     @State private var myMuted: Bool = false
     @State private var loading = false
     @State private var error: String?
     @State private var savingNickname = false
+    @State private var savingTitle = false
     @State private var leaving = false
     @State private var leaveConfirm = false
 
     // Admin-only state.
     @State private var isAdmin: Bool = false
+    @State private var myRole: String = ""
     @State private var savingPolicy: Bool = false
     @State private var showingBilling = false
     @State private var showingApprovals = false
     @State private var showingGroupQR = false
+    @State private var showingInviteMembers = false
 
     // Group identifier ('number' handle, auto-minted at creation).
     @State private var numberHandle: String = ""
@@ -44,6 +48,7 @@ struct GroupSettingsView: View {
     // Member-tap modal state.
     @State private var openingPeer: PendingPeer?
     @State private var addFriendTarget: Member?
+    @State private var roleActionTarget: Member?
 
     @Environment(\.dismiss) private var dismiss
 
@@ -55,7 +60,21 @@ struct GroupSettingsView: View {
 
             if let meta {
                 Section("群信息") {
-                    LabeledContent("群名", value: meta.title.isEmpty ? "未命名" : meta.title)
+                    if isAdmin {
+                        HStack {
+                            Text("群名")
+                            Spacer()
+                            TextField("未命名", text: $groupTitleInput)
+                                .multilineTextAlignment(.trailing)
+                                .submitLabel(.done)
+                                .onSubmit { Task { await saveTitle() } }
+                        }
+                        if savingTitle {
+                            HStack { Spacer(); ProgressView() }
+                        }
+                    } else {
+                        LabeledContent("群名", value: meta.title.isEmpty ? "未命名" : meta.title)
+                    }
                     groupNumberRow
                     LabeledContent("加群方式", value: policyLabel(meta.joinPolicy))
                     LabeledContent("成员上限", value: "\(meta.maxMembers)")
@@ -141,6 +160,21 @@ struct GroupSettingsView: View {
             }
             .presentationDetents([.medium, .large])
         }
+        .sheet(isPresented: $showingInviteMembers) {
+            NavigationStack {
+                GroupInviteMembersSheet(
+                    conversationId: conversationId,
+                    existingUserIds: Set(members.compactMap(\.userId)),
+                )
+                .navigationTitle("邀请好友入群")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("关闭") { showingInviteMembers = false }
+                    }
+                }
+            }
+        }
         .sheet(item: $openingPeer) { peer in
             NavigationStack {
                 ConversationView(
@@ -164,6 +198,42 @@ struct GroupSettingsView: View {
                 if ok { Task { await reloadFriends() } }
             }
             .presentationDetents([.medium])
+        }
+        .confirmationDialog(
+            roleActionTarget?.displayLabel ?? "成员",
+            isPresented: Binding(
+                get: { roleActionTarget != nil },
+                set: { if !$0 { roleActionTarget = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            if let target = roleActionTarget {
+                if friendUserIds.contains(target.userId ?? "") {
+                    Button("打开聊天") {
+                        openingPeer = PendingPeer(
+                            kind: "user",
+                            peerId: target.userId ?? "",
+                            displayName: target.displayLabel
+                        )
+                        roleActionTarget = nil
+                    }
+                } else {
+                    Button("加为好友") {
+                        addFriendTarget = target
+                        roleActionTarget = nil
+                    }
+                }
+                if target.role == "admin" {
+                    Button("取消管理员", role: .destructive) {
+                        Task { await setRole(target, role: "member") }
+                    }
+                } else {
+                    Button("设为管理员") {
+                        Task { await setRole(target, role: "admin") }
+                    }
+                }
+            }
+            Button("取消", role: .cancel) { roleActionTarget = nil }
         }
     }
 
@@ -244,6 +314,12 @@ struct GroupSettingsView: View {
                 showingApprovals = true
             } label: {
                 LabeledContent("加群请求", value: "查看待审批")
+            }
+
+            Button {
+                showingInviteMembers = true
+            } label: {
+                LabeledContent("邀请好友入群", value: "对方同意后加入")
             }
         }
     }
@@ -341,6 +417,11 @@ struct GroupSettingsView: View {
 
     private func handleMemberTap(_ m: Member) {
         guard !m.isBot, let uid = m.userId, uid != myUserId else { return }
+        if myRole == "owner" && !m.isOwner {
+            roleActionTarget = m
+            Haptics.tap()
+            return
+        }
         if friendUserIds.contains(uid) {
             // Already a contact — open the user_user chat directly.
             openingPeer = PendingPeer(
@@ -461,6 +542,7 @@ struct GroupSettingsView: View {
             self.meta = metas.first.map {
                 GroupMeta(title: $0.title ?? "", joinPolicy: $0.join_policy, maxMembers: $0.max_members)
             }
+            self.groupTitleInput = self.meta?.title ?? ""
             var cacheRows: [LocalDatabase.GroupMemberRow] = []
             self.members = parts.map { p in
                 let isBot = p.participant_type == "bot"
@@ -508,6 +590,7 @@ struct GroupSettingsView: View {
             }
             self.myNickname = me?.nickname ?? ""
             self.isAdmin = (me?.role == "owner" || me?.role == "admin")
+            self.myRole = me?.role ?? ""
             self.myMuted = billingByUser[myUserId]?.muted ?? false
             self.iAmFrozen = billingByUser[myUserId]?.overdrawn ?? false
 
@@ -579,9 +662,11 @@ struct GroupSettingsView: View {
             $0.participant_type == "user" && $0.participant_id == myUserId
         })?.role
         self.isAdmin = (myRole == "owner" || myRole == "admin")
+        self.myRole = myRole ?? ""
         self.myNickname = cachedMembers.first(where: {
             $0.participant_type == "user" && $0.participant_id == myUserId
         })?.nickname ?? ""
+        self.groupTitleInput = self.meta?.title ?? ""
     }
 
     private func reloadFriends() async {
@@ -611,9 +696,59 @@ struct GroupSettingsView: View {
                        body: Body(nickname: val.isEmpty ? nil : val))
     }
 
+    private func saveTitle() async {
+        let val = groupTitleInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !val.isEmpty else { return }
+        savingTitle = true
+        defer { savingTitle = false }
+        struct Body: Encodable { let title: String }
+        await postVoid(path: "v1/groups/\(conversationId)/title",
+                       body: Body(title: val))
+        if error == nil, let m = meta {
+            meta = GroupMeta(title: val, joinPolicy: m.joinPolicy, maxMembers: m.maxMembers)
+            LocalDatabase.shared.upsertGroupMeta(
+                LocalDatabase.GroupMetaRow(
+                    conversation_id: conversationId,
+                    title: val,
+                    join_policy: m.joinPolicy,
+                    max_members: m.maxMembers,
+                    number_handle: numberHandle
+                ))
+        }
+    }
+
     private func saveMute(_ muted: Bool) async {
         struct Body: Encodable { let muted: Bool }
         await postVoid(path: "v1/groups/\(conversationId)/mute", body: Body(muted: muted))
+    }
+
+    private func setRole(_ member: Member, role: String) async {
+        guard let uid = member.userId else { return }
+        struct Body: Encodable {
+            let userId: String
+            let role: String
+        }
+        await postVoid(path: "v1/groups/\(conversationId)/role",
+                       body: Body(userId: uid, role: role))
+        roleActionTarget = nil
+        if error == nil {
+            members = members.map { m in
+                guard m.userId == uid else { return m }
+                return Member(
+                    id: m.id,
+                    isBot: m.isBot,
+                    botId: m.botId,
+                    userId: m.userId,
+                    displayLabel: m.displayLabel,
+                    avatarPath: m.avatarPath,
+                    avatarSeed: m.avatarSeed,
+                    role: role,
+                    isOwner: m.isOwner,
+                    frozen: m.frozen
+                )
+            }
+            Haptics.success()
+        }
     }
 
     private func leave() async {
@@ -754,6 +889,105 @@ struct GroupSettingsView: View {
             })
         } catch {
             return [:]
+        }
+    }
+}
+
+// MARK: - Invite members sheet
+
+private struct GroupInviteMembersSheet: View {
+    let conversationId: String
+    let existingUserIds: Set<String>
+
+    @State private var contacts: [FriendsTabView.HumanPick] = []
+    @State private var inviting: Set<String> = []
+    @State private var noticeByUserId: [String: String] = [:]
+    @State private var error: String?
+
+    var body: some View {
+        List {
+            let inviteable = contacts.filter { !existingUserIds.contains($0.id) }
+            if inviteable.isEmpty {
+                Section {
+                    Text(contacts.isEmpty ? "没有可邀请的好友" : "好友都已经在群里")
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Section {
+                    ForEach(inviteable) { contact in
+                        HStack(spacing: 12) {
+                            UserAvatar(seed: contact.avatarSeed, attachmentId: contact.avatarPath, size: 36)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(contact.rowName)
+                                if let notice = noticeByUserId[contact.id] {
+                                    Text(notice)
+                                        .font(Theme.Fonts.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            Spacer()
+                            if inviting.contains(contact.id) {
+                                ProgressView()
+                            } else {
+                                Button("邀请") {
+                                    Task { await invite(contact) }
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        }
+                    }
+                } footer: {
+                    Text("邀请会先发给对方确认，并在确认前说明机器人 Token 的分摊情况。")
+                }
+            }
+
+            if let error {
+                Section { Text(error).foregroundStyle(.red) }
+            }
+        }
+        .task { await load() }
+        .refreshable { await load() }
+    }
+
+    private func load() async {
+        do {
+            contacts = try await ContactsAPI.fetchContacts()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func invite(_ contact: FriendsTabView.HumanPick) async {
+        inviting.insert(contact.id)
+        defer { inviting.remove(contact.id) }
+        struct Body: Encodable { let userId: String }
+        struct Response: Decodable {
+            struct Billing: Decodable { let text: String? }
+            let pending: Bool?
+            let billing: Billing?
+        }
+        do {
+            let url = HostedConfig.environment.workerURL
+                .appendingPathComponent("v1/groups/\(conversationId)/invite-user")
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            let token = try await SupabaseStack.shared.auth.session.accessToken
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            req.httpBody = try JSONEncoder().encode(Body(userId: contact.id))
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode)
+            else {
+                let msg = String(data: data, encoding: .utf8) ?? "HTTP error"
+                throw NSError(domain: "GroupInvite", code: (resp as? HTTPURLResponse)?.statusCode ?? -1,
+                              userInfo: [NSLocalizedDescriptionKey: msg])
+            }
+            let decoded = try? JSONDecoder().decode(Response.self, from: data)
+            noticeByUserId[contact.id] = decoded?.billing?.text ?? "已发送邀请，等待对方同意。"
+            Haptics.success()
+        } catch {
+            self.error = error.localizedDescription
+            Haptics.error()
         }
     }
 }
