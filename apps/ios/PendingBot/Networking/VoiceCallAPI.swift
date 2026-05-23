@@ -487,6 +487,16 @@ extension VoiceCallAPI {
         ) as OK
     }
 
+    /// Add one more bot to a RealtimeKit-backed live call.
+    func groupVoiceRealtimeKitAddBot(conversationId: String, botId: String) async throws {
+        struct Body: Encodable { let bot_id: String }
+        struct OK: Decodable { let ok: Bool }
+        _ = try await callDecoding(
+            path: "/v1/groups/\(conversationId)/voice/realtimekit/add-bot",
+            body: Body(bot_id: botId),
+        ) as OK
+    }
+
     /// Remove a bot or a human from the call. Privileged — the worker
     /// returns 403 (surfaced as `VoiceCallError.other`) otherwise.
     func groupVoiceKick(

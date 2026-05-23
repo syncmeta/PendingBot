@@ -7,6 +7,8 @@
 //   GET /control                       WS — RoomVoiceDO control plane
 //   GET /adapter/stream/<humanId>?t=   WS — SFU streams a human's mic in
 //   GET /adapter/ingest/<botId>?t=     WS — SFU pulls a bot's voice out
+//   GET /rtk/bot-page/<botId>?t=       HTML — headless bot participant
+//   GET /rtk/bot/<botId>?t=            WS — bot participant audio bridge
 //
 // The SFU dials the adapter endpoints with the per-room token in ?t=; the
 // worker forwards the upgrade here and Room verifies the token.
@@ -29,6 +31,22 @@ Bun.serve<WsData>({
 
     // /adapter/stream/<humanId> or /adapter/ingest/<botId>
     const parts = url.pathname.split('/').filter(Boolean);
+    if (parts[0] === 'rtk' && parts.length === 3) {
+      const slot = parts[1];
+      const botId = parts[2];
+      if (!room.tokenMatches(url.searchParams.get('t'))) {
+        return new Response('forbidden', { status: 403 });
+      }
+      if (slot === 'bot-page') return room.realtimeKitBotPage(botId);
+      if (slot === 'bot') {
+        if (server.upgrade(req, { data: { kind: 'rtk-bot', botId } })) {
+          return undefined;
+        }
+        return new Response('expected websocket', { status: 426 });
+      }
+      return new Response('bad realtimekit slot', { status: 400 });
+    }
+
     if (parts[0] === 'adapter' && parts.length === 3) {
       const kind = parts[1];
       const id = parts[2];
@@ -57,6 +75,8 @@ Bun.serve<WsData>({
         room.onControlOpen(ws);
       } else if (d.kind === 'ingest') {
         if (!room.attachIngest(d.botId, ws)) ws.close();
+      } else if (d.kind === 'rtk-bot') {
+        if (!room.attachRealtimeKitBot(d.botId, ws)) ws.close();
       } else {
         room.attachStream(d.humanId, ws);
       }
@@ -70,6 +90,8 @@ Bun.serve<WsData>({
       if (d.kind === 'stream') {
         if (typeof message === 'string') return; // expect binary PCM
         room.onHumanFrame(d.humanId, message);
+      } else if (d.kind === 'rtk-bot') {
+        if (typeof message === 'string') room.onRealtimeKitBridgeMessage(d.botId, message);
       }
       // ingest: the SFU pulls from us; no inbound frames expected.
     },
@@ -77,6 +99,7 @@ Bun.serve<WsData>({
       const d = ws.data;
       if (d.kind === 'control') room.onControlClose(ws);
       else if (d.kind === 'ingest') room.detachIngest(d.botId, ws);
+      else if (d.kind === 'rtk-bot') room.detachRealtimeKitBot(d.botId, ws);
       else room.detachStream(d.humanId, ws);
     },
   },

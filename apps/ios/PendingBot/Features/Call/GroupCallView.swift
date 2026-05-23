@@ -154,19 +154,38 @@ struct GroupCallView: View {
                 }
                 .padding(.top, 18)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .zIndex(0)
 
                 realtimeKitToolbar
                     .padding(.bottom, 28)
+                    .zIndex(10)
             }
             minimizeButton
                 .frame(maxWidth: .infinity, alignment: .trailing)
                 .padding(.top, 44)
                 .padding(.trailing, 16)
+                .zIndex(11)
         }
     }
 
     private var realtimeKitToolbar: some View {
         HStack(spacing: 28) {
+            if !session.addableBots.isEmpty {
+                labeledControl("机器人") {
+                    Button {
+                        Haptics.tap()
+                        showingAddBot = true
+                    } label: {
+                        Image(systemName: "sparkle")
+                            .font(Theme.Fonts.glyph(size: 22, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 64, height: 64)
+                            .background(Circle().fill(Self.botInviteInk))
+                    }
+                    .disabled(isHangUpDisabled)
+                    .accessibilityLabel("叫机器人")
+                }
+            }
             labeledControl("免提") { speakerButton }
             labeledControl("离开") { hangUpButton }
             if session.isPrivileged {
@@ -791,10 +810,10 @@ struct RealtimeKitPOCWebView: UIViewRepresentable {
           </style>
         </head>
         <body>
-          <h2>RealtimeKit POC</h2>
+          <h2>群语音</h2>
           <div class="muted">meeting: <span id="meeting"></span></div>
           <div class="card">
-            <button id="join">Join audio room</button>
+            <button id="join">重新连接音频</button>
           </div>
           <div class="card">
             <div id="state">idle</div>
@@ -806,11 +825,15 @@ struct RealtimeKitPOCWebView: UIViewRepresentable {
             const meetingId = \(encodedMeetingId);
             const state = document.getElementById('state');
             const log = document.getElementById('log');
+            let joining = false;
+            let joined = false;
             document.getElementById('meeting').textContent = meetingId;
             function append(msg) {
               log.textContent += "\\n" + new Date().toISOString().slice(11, 19) + " " + msg;
             }
             async function join() {
+              if (joining || joined) return;
+              joining = true;
               try {
                 state.textContent = 'initializing';
                 if (!window.RealtimeKitClient) {
@@ -830,13 +853,17 @@ struct RealtimeKitPOCWebView: UIViewRepresentable {
                   throw new Error('meeting has no join method');
                 }
                 state.textContent = 'joined';
+                joined = true;
                 append('joined');
               } catch (err) {
                 state.textContent = 'failed';
                 append(String(err && err.stack ? err.stack : err));
+              } finally {
+                joining = false;
               }
             }
             document.getElementById('join').addEventListener('click', join);
+            window.addEventListener('load', () => setTimeout(join, 100));
           </script>
         </body>
         </html>

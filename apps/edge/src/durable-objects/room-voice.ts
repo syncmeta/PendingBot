@@ -48,6 +48,7 @@ const PRESENCE_AUDIT_MS = 5 * 1000;
 
 // Room-level context — everything that is not per-bot.
 interface RoomContext {
+  mediaProvider?: 'sfu' | 'realtimekit';
   roomId: string;
   conversationId: string;
   // Whose balance the voice tokens bill to (group creator today; M6's
@@ -67,6 +68,8 @@ interface RoomContext {
   adapterToken: string;
   // Wall-clock ms when /control/start ran — surfaced via roster().
   startedAt: number;
+  realtimeKitMeetingId?: string;
+  realtimeKitHumanIds?: string[];
 }
 
 interface PendingInvite {
@@ -148,10 +151,23 @@ interface BotSpec {
           interrupt_response?: boolean;
         };
   };
+  realtimeKit?: {
+    meetingId: string;
+    participantId: string;
+    authToken: string;
+  };
 }
 
 interface StartPayload {
   room: RoomContext;
+  bots: BotSpec[];
+}
+
+interface RealtimeKitStartPayload {
+  room: Omit<RoomContext, 'startedAt'> & {
+    realtimeKitMeetingId: string;
+    realtimeKitHumanIds: string[];
+  };
   bots: BotSpec[];
 }
 
@@ -216,6 +232,15 @@ export class RoomVoiceDO {
     switch (url.pathname) {
       case '/control/start':
         return this.start((await request.json()) as StartPayload);
+      case '/control/realtimekit/start':
+        return this.startRealtimeKit((await request.json()) as RealtimeKitStartPayload);
+      case '/control/realtimekit/sync-humans': {
+        const { humanIds } = (await request.json()) as { humanIds: string[] };
+        return this.syncRealtimeKitHumans(humanIds);
+      }
+      case '/control/realtimekit/finalize':
+        await this.finalize();
+        return Response.json({ ok: true });
       case '/control/add-bot':
         return this.addBot((await request.json()) as BotSpec);
       case '/control/remove-bot': {
@@ -389,7 +414,11 @@ export class RoomVoiceDO {
 
   private async start(payload: StartPayload): Promise<Response> {
     if (this.ctx) return Response.json({ ok: true, already: true });
-    const ctx: RoomContext = { ...payload.room, startedAt: Date.now() };
+    const ctx: RoomContext = {
+      ...payload.room,
+      mediaProvider: payload.room.mediaProvider ?? 'sfu',
+      startedAt: Date.now(),
+    };
     this.ctx = ctx;
     await this.state.storage.put('ctx', ctx);
 
@@ -415,6 +444,54 @@ export class RoomVoiceDO {
     await this.upsertActiveIndex();
     await this.broadcastState('state');
     return Response.json({ ok: true, bots: [...this.bots.keys()] });
+  }
+
+  private async startRealtimeKit(payload: RealtimeKitStartPayload): Promise<Response> {
+    if (this.ctx) {
+      if (this.ctx.mediaProvider !== 'realtimekit') {
+        return new Response('room already started with another provider', { status: 409 });
+      }
+      this.ctx.realtimeKitHumanIds = [...new Set(payload.room.realtimeKitHumanIds)];
+      await this.state.storage.put('ctx', this.ctx);
+      for (const spec of payload.bots) {
+        await this.connectBot(spec).catch((err) =>
+          console.warn('[room-voice] realtimekit bot leg failed at sync', spec.botId, err),
+        );
+      }
+      await this.broadcastState('state');
+      return Response.json({ ok: true, already: true, bots: [...this.bots.keys()] });
+    }
+
+    const ctx: RoomContext = {
+      ...payload.room,
+      mediaProvider: 'realtimekit',
+      realtimeKitHumanIds: [...new Set(payload.room.realtimeKitHumanIds)],
+      startedAt: Date.now(),
+    };
+    this.ctx = ctx;
+    this.humanEverJoined = payload.room.realtimeKitHumanIds.length > 0;
+    await this.state.storage.put('ctx', ctx);
+
+    for (const spec of payload.bots) {
+      await this.connectBot(spec).catch((err) =>
+        console.warn('[room-voice] realtimekit bot leg failed at start', spec.botId, err),
+      );
+    }
+
+    await this.state.storage.setAlarm(Date.now() + MAX_CALL_MS);
+    await this.broadcastState('state');
+    return Response.json({ ok: true, bots: [...this.bots.keys()] });
+  }
+
+  private async syncRealtimeKitHumans(humanIds: string[]): Promise<Response> {
+    if (!this.ctx || this.ctx.mediaProvider !== 'realtimekit') {
+      return new Response('realtimekit room not started', { status: 400 });
+    }
+    this.ctx.realtimeKitHumanIds = [...new Set(humanIds)];
+    this.humanEverJoined = this.ctx.realtimeKitHumanIds.length > 0;
+    await this.state.storage.put('ctx', this.ctx);
+    await this.broadcastState('state');
+    return Response.json({ ok: true });
   }
 
   private async upsertActiveIndex(): Promise<void> {
@@ -525,6 +602,10 @@ export class RoomVoiceDO {
     await this.ensureMedia();
     this.sendMedia({ t: 'add-bot', spec: this.toContainerSpec(spec) });
 
+    if (ctx.mediaProvider === 'realtimekit') {
+      return;
+    }
+
     try {
       const ingest = await createIngestAdapter(this.sfuApp(), {
         trackName: `bot-${spec.botId}`,
@@ -548,6 +629,7 @@ export class RoomVoiceDO {
       voice: spec.voiceConfig.voice || 'marin',
       turnDetection: spec.voiceConfig.turnDetection,
       tools: this.toolsFor(spec.botId),
+      ...(spec.realtimeKit ? { realtimeKit: spec.realtimeKit } : {}),
     };
   }
 
@@ -566,6 +648,12 @@ export class RoomVoiceDO {
           botId: leg.spec.botId,
           sfuSessionId: leg.ingestSessionId,
           sfuTrackName: leg.ingestTrackName,
+        });
+      } else if (this.ctx?.mediaProvider === 'realtimekit') {
+        bots.push({
+          botId: leg.spec.botId,
+          sfuSessionId: '',
+          sfuTrackName: '',
         });
       }
     }
@@ -763,7 +851,9 @@ export class RoomVoiceDO {
       started_at: snapshot.startedAt,
       initiator_id: snapshot.initiatorId,
       participants: [
-        ...snapshot.humans.map((h) => ({ kind: 'human' as const, id: h.humanId })),
+        ...(ctx.mediaProvider === 'realtimekit'
+          ? (ctx.realtimeKitHumanIds ?? []).map((id) => ({ kind: 'human' as const, id }))
+          : snapshot.humans.map((h) => ({ kind: 'human' as const, id: h.humanId }))),
         ...snapshot.bots.map((b) => ({ kind: 'bot' as const, id: b.botId })),
       ],
       pending: snapshot.pending.map((p) => ({
@@ -967,7 +1057,10 @@ export class RoomVoiceDO {
         // per-head across them, so over the call each member's total tracks
         // how long they were in it ("按在场时长分摊") — and nobody pays for
         // turns before they joined or after they left.
-        present_user_ids: [...this.humans.keys()],
+        present_user_ids:
+          ctx.mediaProvider === 'realtimekit'
+            ? [...(ctx.realtimeKitHumanIds ?? [])]
+            : [...this.humans.keys()],
       },
     });
 

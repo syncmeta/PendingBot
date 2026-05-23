@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  addRealtimeKitBot,
   addRealtimeKitHuman,
+  removeRealtimeKitBot,
   removeRealtimeKitHuman,
   realtimeKitEndedEvent,
   realtimeKitStateEvent,
@@ -13,6 +15,7 @@ const baseState: RealtimeKitRoomState = {
   startedAt: 1_765_000_000_000,
   initiatorId: 'user-a',
   humanIds: ['user-a'],
+  botIds: [],
 };
 
 describe('RealtimeKit room lifecycle helpers', () => {
@@ -35,14 +38,26 @@ describe('RealtimeKit room lifecycle helpers', () => {
     expect(duplicate.humanIds).toEqual(['user-a', 'user-b']);
   });
 
+  it('adds and removes bots without duplicating them', () => {
+    const state = addRealtimeKitBot(baseState, 'bot-a');
+    const duplicate = addRealtimeKitBot(state, 'bot-a');
+
+    expect(duplicate.botIds).toEqual(['bot-a']);
+    expect(removeRealtimeKitBot(duplicate, 'bot-a').botIds).toEqual([]);
+  });
+
   it('turns the cached room state into the conv-channel voice_call snapshot', () => {
-    expect(realtimeKitStateEvent('conv-1', baseState)).toEqual({
+    const state = addRealtimeKitBot(baseState, 'bot-a');
+    expect(realtimeKitStateEvent('conv-1', state)).toEqual({
       type: 'voice_call',
       event: 'state',
       conversation_id: 'conv-1',
       started_at: 1_765_000_000_000,
       initiator_id: 'user-a',
-      participants: [{ kind: 'human', id: 'user-a' }],
+      participants: [
+        { kind: 'human', id: 'user-a' },
+        { kind: 'bot', id: 'bot-a' },
+      ],
       pending: [],
     });
   });

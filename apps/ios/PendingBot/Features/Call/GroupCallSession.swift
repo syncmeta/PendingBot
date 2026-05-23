@@ -467,9 +467,19 @@ final class GroupCallSession {
     /// to tap "叫机器人来" inside the call UI first.
     func addBot(id: String) async {
         do {
-            try await api.groupVoiceAddBot(conversationId: conversationId, botId: id)
+            if mediaProvider == .realtimeKit {
+                try await api.groupVoiceRealtimeKitAddBot(
+                    conversationId: conversationId,
+                    botId: id,
+                )
+            } else {
+                try await api.groupVoiceAddBot(conversationId: conversationId, botId: id)
+            }
         } catch {
             actionError = "添加机器人失败"
+            return
+        }
+        if mediaProvider == .realtimeKit {
             return
         }
         // The bot's SFU ingest track needs a moment to come up before it

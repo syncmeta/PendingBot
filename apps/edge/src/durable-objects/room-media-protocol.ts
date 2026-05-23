@@ -31,6 +31,12 @@ export interface ContainerBotSpec {
   turnDetection?: TurnDetection;
   /** Realtime function tools — the DO computes these (it owns permissions). */
   tools: unknown[];
+  /** Present when this bot should join Cloudflare RealtimeKit instead of SFU ingest. */
+  realtimeKit?: {
+    meetingId: string;
+    participantId: string;
+    authToken: string;
+  };
 }
 
 /** Usage block inside an OpenAI realtime `response.done` event. */
