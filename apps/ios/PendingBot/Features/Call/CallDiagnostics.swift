@@ -138,7 +138,7 @@ struct CallDiagnosticsPanel: View {
                 ],
                 spacing: 10,
             ) {
-                metric("延迟", value: formatMs(snapshot.rttMs))
+                metric("网络延迟", value: formatMs(snapshot.rttMs))
                 metric("抖动", value: formatMs(snapshot.jitterMs))
                 metric("丢包", value: formatPercent(snapshot.packetLossPercent))
                 metric("上行", value: formatKbps(snapshot.sentKbps))
@@ -161,12 +161,12 @@ struct CallDiagnosticsPanel: View {
                                 .lineLimit(1)
                             Spacer()
                             if let depth = p.playoutDepthMs {
-                                Text("\(depth)ms")
+                                Text("缓冲 \(formatDuration(depth))")
                                     .font(Theme.Fonts.caption)
                                     .monospacedDigit()
                                     .foregroundStyle(.secondary)
                             } else {
-                                Text(String(format: "%.2f", p.audioLevel))
+                                Text("音量 \(formatAudioLevel(p.audioLevel))")
                                     .font(Theme.Fonts.caption)
                                     .monospacedDigit()
                                     .foregroundStyle(.secondary)
@@ -234,6 +234,18 @@ struct CallDiagnosticsPanel: View {
         return "\(value)k"
     }
 
+    private func formatAudioLevel(_ value: Double) -> String {
+        let percent = Int((min(max(value, 0), 1) * 100).rounded())
+        return "\(percent)%"
+    }
+
+    private func formatDuration(_ ms: Int) -> String {
+        if ms >= 1000 {
+            return String(format: "%.1fs", Double(ms) / 1000)
+        }
+        return "\(ms)ms"
+    }
+
     private static let timeFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "HH:mm:ss"
@@ -252,12 +264,10 @@ final class WebRTCDiagnosticsSampler {
 
     private var task: Task<Void, Never>?
     private var previousAt: Date?
-    private var previousBytesSent = 0.0
-    private var previousBytesReceived = 0.0
-    private var previousInboundPackets = 0.0
-    private var previousInboundLost = 0.0
-    private var previousRemotePackets = 0.0
-    private var previousRemoteLost = 0.0
+    private var previousBytesSentById: [String: Double] = [:]
+    private var previousBytesReceivedById: [String: Double] = [:]
+    private var previousInboundPacketsById: [String: PacketCounters] = [:]
+    private var previousRemotePacketsById: [String: PacketCounters] = [:]
 
     init(
         peerConnection: RTCPeerConnection,
@@ -300,12 +310,14 @@ final class WebRTCDiagnosticsSampler {
         var rttMs: Int?
         var jitterMs: Int?
         var lossPercent: Double?
-        var bytesSent = 0.0
-        var bytesReceived = 0.0
-        var inboundPackets = 0.0
-        var inboundLost = 0.0
-        var remotePackets = 0.0
-        var remoteLost = 0.0
+        var sentByteDelta = 0.0
+        var receivedByteDelta = 0.0
+        var inboundPacketDelta = 0.0
+        var inboundLostDelta = 0.0
+        var remotePacketDelta = 0.0
+        var remoteLostDelta = 0.0
+        var sawInboundPacketDelta = false
+        var sawRemotePacketDelta = false
         var availableOutgoingKbps: Int?
         var route: String?
         var localAudioLevel = 0.0
@@ -314,6 +326,10 @@ final class WebRTCDiagnosticsSampler {
         var candidateTypes: [String: String] = [:]
         var selectedLocalCandidateId: String?
         var selectedRemoteCandidateId: String?
+        var observedBytesSentIds = Set<String>()
+        var observedBytesReceivedIds = Set<String>()
+        var observedInboundPacketIds = Set<String>()
+        var observedRemotePacketIds = Set<String>()
 
         for stat in report.statistics.values {
             if stat.type == "local-candidate" || stat.type == "remote-candidate" {
@@ -340,20 +356,54 @@ final class WebRTCDiagnosticsSampler {
                 selectedRemoteCandidateId = stringValue(stat.values["remoteCandidateId"])
             case "outbound-rtp":
                 guard isAudio(stat) else { continue }
-                bytesSent += doubleValue(stat.values["bytesSent"]) ?? 0
+                observedBytesSentIds.insert(stat.id)
+                if let bytes = doubleValue(stat.values["bytesSent"]),
+                   let delta = delta(
+                       id: stat.id,
+                       current: bytes,
+                       previous: &previousBytesSentById,
+                   ) {
+                    sentByteDelta += delta
+                }
             case "inbound-rtp":
                 guard isAudio(stat) else { continue }
-                bytesReceived += doubleValue(stat.values["bytesReceived"]) ?? 0
-                inboundPackets += doubleValue(stat.values["packetsReceived"]) ?? 0
-                inboundLost += doubleValue(stat.values["packetsLost"]) ?? 0
+                observedBytesReceivedIds.insert(stat.id)
+                if let bytes = doubleValue(stat.values["bytesReceived"]),
+                   let delta = delta(
+                       id: stat.id,
+                       current: bytes,
+                       previous: &previousBytesReceivedById,
+                   ) {
+                    receivedByteDelta += delta
+                }
+                observedInboundPacketIds.insert(stat.id)
+                if let counters = packetCounters(stat),
+                   let packetDelta = packetDelta(
+                       id: stat.id,
+                       current: counters,
+                       previous: &previousInboundPacketsById,
+                   ) {
+                    inboundPacketDelta += packetDelta.received
+                    inboundLostDelta += packetDelta.lost
+                    sawInboundPacketDelta = true
+                }
                 if let jitter = doubleValue(stat.values["jitter"]) {
                     jitterMs = max(jitterMs ?? 0, Int((jitter * 1000).rounded()))
                 }
                 remoteAudioLevel = max(remoteAudioLevel, doubleValue(stat.values["audioLevel"]) ?? 0)
             case "remote-inbound-rtp":
                 guard isAudio(stat) else { continue }
-                remotePackets += doubleValue(stat.values["packetsReceived"]) ?? 0
-                remoteLost += doubleValue(stat.values["packetsLost"]) ?? 0
+                observedRemotePacketIds.insert(stat.id)
+                if let counters = packetCounters(stat),
+                   let packetDelta = packetDelta(
+                       id: stat.id,
+                       current: counters,
+                       previous: &previousRemotePacketsById,
+                   ) {
+                    remotePacketDelta += packetDelta.received
+                    remoteLostDelta += packetDelta.lost
+                    sawRemotePacketDelta = true
+                }
                 if rttMs == nil, let rtt = doubleValue(stat.values["roundTripTime"]) {
                     rttMs = Int((rtt * 1000).rounded())
                 }
@@ -372,26 +422,20 @@ final class WebRTCDiagnosticsSampler {
         }
 
         let elapsed = previousAt.map { now.timeIntervalSince($0) } ?? 0
-        let sentKbps = rateKbps(bytes: bytesSent - previousBytesSent, elapsed: elapsed)
-        let receivedKbps = rateKbps(bytes: bytesReceived - previousBytesReceived, elapsed: elapsed)
+        let sentKbps = rateKbps(bytes: sentByteDelta, elapsed: elapsed)
+        let receivedKbps = rateKbps(bytes: receivedByteDelta, elapsed: elapsed)
 
-        let inboundDelta = inboundPackets - previousInboundPackets
-        let inboundLostDelta = inboundLost - previousInboundLost
-        let remoteDelta = remotePackets - previousRemotePackets
-        let remoteLostDelta = remoteLost - previousRemoteLost
-        if inboundDelta + inboundLostDelta > 0 {
-            lossPercent = max(0, inboundLostDelta) / max(1, inboundDelta + inboundLostDelta) * 100
-        } else if remoteDelta + remoteLostDelta > 0 {
-            lossPercent = max(0, remoteLostDelta) / max(1, remoteDelta + remoteLostDelta) * 100
+        if sawInboundPacketDelta, inboundPacketDelta + inboundLostDelta > 0 {
+            lossPercent = inboundLostDelta / max(1, inboundPacketDelta + inboundLostDelta) * 100
+        } else if sawRemotePacketDelta, remotePacketDelta + remoteLostDelta > 0 {
+            lossPercent = remoteLostDelta / max(1, remotePacketDelta + remoteLostDelta) * 100
         }
 
         previousAt = now
-        previousBytesSent = bytesSent
-        previousBytesReceived = bytesReceived
-        previousInboundPackets = inboundPackets
-        previousInboundLost = inboundLost
-        previousRemotePackets = remotePackets
-        previousRemoteLost = remoteLost
+        pruneMissing(from: &previousBytesSentById, keeping: observedBytesSentIds)
+        pruneMissing(from: &previousBytesReceivedById, keeping: observedBytesReceivedIds)
+        pruneMissing(from: &previousInboundPacketsById, keeping: observedInboundPacketIds)
+        pruneMissing(from: &previousRemotePacketsById, keeping: observedRemotePacketIds)
 
         let localSpeaking = localAudioLevel > 0.025
         let remoteSpeaking = remoteAudioLevel > 0.025
@@ -457,6 +501,46 @@ final class WebRTCDiagnosticsSampler {
     private func rateKbps(bytes: Double, elapsed: TimeInterval) -> Int? {
         guard elapsed > 0.2, bytes >= 0 else { return nil }
         return Int(((bytes * 8) / elapsed / 1000).rounded())
+    }
+
+    private struct PacketCounters {
+        let received: Double
+        let lost: Double
+    }
+
+    private func packetCounters(_ stat: RTCStatistics) -> PacketCounters? {
+        guard let received = doubleValue(stat.values["packetsReceived"]) else { return nil }
+        return PacketCounters(
+            received: received,
+            lost: doubleValue(stat.values["packetsLost"]) ?? 0,
+        )
+    }
+
+    private func delta(
+        id: String,
+        current: Double,
+        previous: inout [String: Double],
+    ) -> Double? {
+        defer { previous[id] = current }
+        guard let old = previous[id], current >= old else { return nil }
+        return current - old
+    }
+
+    private func packetDelta(
+        id: String,
+        current: PacketCounters,
+        previous: inout [String: PacketCounters],
+    ) -> PacketCounters? {
+        defer { previous[id] = current }
+        guard let old = previous[id] else { return nil }
+        let received = current.received - old.received
+        let lost = current.lost - old.lost
+        guard received >= 0, lost >= 0 else { return nil }
+        return PacketCounters(received: received, lost: lost)
+    }
+
+    private func pruneMissing<T>(from previous: inout [String: T], keeping observed: Set<String>) {
+        previous = previous.filter { observed.contains($0.key) }
     }
 
     private func quality(

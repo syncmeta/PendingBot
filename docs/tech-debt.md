@@ -47,6 +47,14 @@ _（暂无）_
 
 ## 🟢 不规范
 
+### 🟢 iOS 工程缺少测试 target，语音诊断只能靠构建兜底
+- **发现**: 2026-05-23 · codex/fix-group-voice-diagnostics
+- **位置**: apps/ios/PendingBot.xcodeproj、apps/ios/PendingBot/Features/Call/CallDiagnostics.swift
+- **问题**: 当前 iOS 工程只有应用 target，没有单元测试 target；WebRTC 统计差分、群语音诊断合并这类纯逻辑只能靠人工复现和 `xcodebuild build` 验证，无法先写一个失败用例锁住“新 RTP 轨道首次出现不能污染丢包率”这类回归。
+- **影响**: 群语音、多轨道、重协商等边界条件容易被编译通过但行为错误的改动重新引入。
+- **建议**: 给 iOS 工程补一个轻量 XCTest target，把诊断聚合逻辑抽到不依赖 WebRTC/SwiftUI 的小类型后覆盖轨道新增、轨道移除、负 delta、缓冲阈值等用例。
+- **状态**: 待办
+
 ### 🟢 OpenRouter 搜索 chip 无搜索词、引用不内联 [N]
 - **发现**: 2026-05-22 · feat/web-search-providers
 - **位置**: apps/edge/src/lib/bot-reply/index.ts（OpenRouter annotations 解析处）
