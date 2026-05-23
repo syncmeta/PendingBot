@@ -38,6 +38,7 @@ import {
   type DownsampleState,
 } from './pcm';
 import { RealtimeKitBridge } from './realtimekit-bridge';
+import { closeRealtimeKitBrowser } from './browser-manager';
 
 const DEFAULT_VOICE_MODEL_SLUG = 'gpt-realtime-2';
 
@@ -803,6 +804,7 @@ export class Room {
       leg.rtkBridge?.close();
     }
     this.bots.clear();
+    void closeRealtimeKitBrowser();
     this.humans.clear();
     this.token = null;
     this.openaiApiKey = null;

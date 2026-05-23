@@ -299,7 +299,6 @@ async function startRealtimeKitRoomControl(
   state: RealtimeKitRoomState,
   bots: BotSpec[],
 ): Promise<Response> {
-  const wsBase = `wss://${new URL(c.req.url).host}`;
   return controlRoom(c, loaded.conversationId, '/control/realtimekit/start', {
     room: {
       mediaProvider: 'realtimekit',
@@ -308,9 +307,7 @@ async function startRealtimeKitRoomControl(
       billUserId: loaded.billUserId,
       initiatorUserId: state.initiatorId,
       groupAdminIds: await loadGroupAdminIds(c, loaded.conversationId),
-      publicWsBase: wsBase,
-      adapterPath: ADAPTER_PATH,
-      adapterToken: crypto.randomUUID(),
+      mediaToken: crypto.randomUUID(),
       realtimeKitMeetingId: state.id,
       realtimeKitHumanIds: state.humanIds,
     },

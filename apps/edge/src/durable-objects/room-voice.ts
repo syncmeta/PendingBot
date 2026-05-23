@@ -5,6 +5,7 @@ import { resolveRoute, enqueueAudit, computeVoiceCost } from '../llm/router';
 import { getMarkup, usdToPnd } from '../lib/billing';
 import { publishToHub, type VoiceCallEvent } from '../lib/realtime-publish';
 import { createStreamAdapter, createIngestAdapter, closeAdapter, type SfuApp } from '../lib/sfu';
+import { roomMediaToken } from './room-voice-context';
 import type {
   ContainerBotSpec,
   ControlCommand,
@@ -46,9 +47,10 @@ const JOIN_GRACE_MS = 90 * 1000;
 const PRESENCE_TIMEOUT_MS = 30 * 1000;
 const PRESENCE_AUDIT_MS = 5 * 1000;
 
-// Room-level context — everything that is not per-bot.
-interface RoomContext {
-  mediaProvider?: 'sfu' | 'realtimekit';
+// Room-level context — everything that is not per-bot. Keep the RealtimeKit
+// shape free of old SFU adapter fields; the RTK container bridge only needs a
+// private media token for its localhost page/WS endpoints.
+interface BaseRoomContext {
   roomId: string;
   conversationId: string;
   // Whose balance the voice tokens bill to (group creator today; M6's
@@ -58,6 +60,12 @@ interface RoomContext {
   initiatorUserId: string;
   // Group owner + admin user IDs. Always privileged for the call's life.
   groupAdminIds: string[];
+  // Wall-clock ms when /control/start ran — surfaced via roster().
+  startedAt: number;
+}
+
+interface SfuRoomContext extends BaseRoomContext {
+  mediaProvider: 'sfu';
   // wss:// origin the SFU can dial back, e.g. "wss://api.pendingname.com".
   publicWsBase: string;
   // Route prefix on the edge worker that forwards adapter WS upgrades to
@@ -66,11 +74,16 @@ interface RoomContext {
   // Shared secret echoed in the adapter endpoint URL so only the SFU
   // dialling our published endpoint is accepted (the container checks it).
   adapterToken: string;
-  // Wall-clock ms when /control/start ran — surfaced via roster().
-  startedAt: number;
-  realtimeKitMeetingId?: string;
-  realtimeKitHumanIds?: string[];
 }
+
+interface RealtimeKitRoomContext extends BaseRoomContext {
+  mediaProvider: 'realtimekit';
+  mediaToken: string;
+  realtimeKitMeetingId: string;
+  realtimeKitHumanIds: string[];
+}
+
+type RoomContext = SfuRoomContext | RealtimeKitRoomContext;
 
 interface PendingInvite {
   kind: 'human' | 'bot';
@@ -159,14 +172,15 @@ interface BotSpec {
 }
 
 interface StartPayload {
-  room: RoomContext;
+  room: Omit<SfuRoomContext, 'startedAt' | 'mediaProvider'> & {
+    mediaProvider?: 'sfu';
+  };
   bots: BotSpec[];
 }
 
 interface RealtimeKitStartPayload {
-  room: Omit<RoomContext, 'startedAt'> & {
-    realtimeKitMeetingId: string;
-    realtimeKitHumanIds: string[];
+  room: Omit<RealtimeKitRoomContext, 'startedAt' | 'mediaProvider'> & {
+    mediaProvider?: 'realtimekit';
   };
   bots: BotSpec[];
 }
@@ -354,7 +368,7 @@ export class RoomVoiceDO {
       // OpenAI key (passed at runtime so it stays out of the image).
       this.sendMedia({
         t: 'start',
-        token: ctx.adapterToken,
+        token: roomMediaToken(ctx),
         openaiApiKey: this.env.OPENAI_API_KEY ?? '',
       });
     } catch (err) {
@@ -414,9 +428,9 @@ export class RoomVoiceDO {
 
   private async start(payload: StartPayload): Promise<Response> {
     if (this.ctx) return Response.json({ ok: true, already: true });
-    const ctx: RoomContext = {
+    const ctx: SfuRoomContext = {
       ...payload.room,
-      mediaProvider: payload.room.mediaProvider ?? 'sfu',
+      mediaProvider: 'sfu',
       startedAt: Date.now(),
     };
     this.ctx = ctx;
@@ -462,7 +476,7 @@ export class RoomVoiceDO {
       return Response.json({ ok: true, already: true, bots: [...this.bots.keys()] });
     }
 
-    const ctx: RoomContext = {
+    const ctx: RealtimeKitRoomContext = {
       ...payload.room,
       mediaProvider: 'realtimekit',
       realtimeKitHumanIds: [...new Set(payload.room.realtimeKitHumanIds)],
@@ -687,6 +701,9 @@ export class RoomVoiceDO {
   private async addHuman(track: HumanTrack): Promise<Response> {
     const ctx = this.ctx;
     if (!ctx) return new Response('room not started', { status: 400 });
+    if (ctx.mediaProvider !== 'sfu') {
+      return new Response('humans join RealtimeKit directly', { status: 400 });
+    }
 
     // Reconnect path: the human already has a HumanState but iOS minted a
     // NEW SFU session. Drop the old stream adapter and rebind. Clear
@@ -731,7 +748,7 @@ export class RoomVoiceDO {
     return Response.json({ ok: true, ...snapshot });
   }
 
-  private async connectHumanStream(humanId: string, ctx: RoomContext): Promise<void> {
+  private async connectHumanStream(humanId: string, ctx: SfuRoomContext): Promise<void> {
     const maxAttempts = 12;
     const delayMs = 1500;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -762,7 +779,7 @@ export class RoomVoiceDO {
   private handleStreamDropped(humanId: string): void {
     if (this.closed) return;
     const ctx = this.ctx;
-    if (!ctx) return;
+    if (!ctx || ctx.mediaProvider !== 'sfu') return;
     const human = this.humans.get(humanId);
     if (!human || human.adapterId === null) return;
     human.adapterId = null;
@@ -875,7 +892,7 @@ export class RoomVoiceDO {
     };
   }
 
-  private adapterEndpoint(ctx: RoomContext, slot: string): string {
+  private adapterEndpoint(ctx: SfuRoomContext, slot: string): string {
     return (
       `${ctx.publicWsBase}${ctx.adapterPath}/${ctx.roomId}/${slot}` +
       `?t=${encodeURIComponent(ctx.adapterToken)}`

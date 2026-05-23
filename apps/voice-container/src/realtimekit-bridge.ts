@@ -1,5 +1,6 @@
-import puppeteer, { type Browser, type Page } from 'puppeteer-core';
+import type { Page } from 'puppeteer-core';
 import type { ServerWebSocket } from 'bun';
+import { newRealtimeKitPage } from './browser-manager';
 import { bytesToSamples, samplesToBytes } from './pcm';
 import type { WsData } from './room';
 
@@ -22,26 +23,6 @@ interface BridgeMessage {
   message?: string;
 }
 
-let browserPromise: Promise<Browser> | null = null;
-
-async function browser(): Promise<Browser> {
-  if (!browserPromise) {
-    const executablePath = process.env.CHROMIUM_PATH ?? '/usr/bin/chromium';
-    browserPromise = puppeteer.launch({
-      executablePath,
-      headless: true,
-      args: [
-        '--autoplay-policy=no-user-gesture-required',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--no-sandbox',
-        '--use-fake-ui-for-media-stream',
-      ],
-    });
-  }
-  return browserPromise;
-}
-
 function jsString(value: string): string {
   return JSON.stringify(value);
 }
@@ -62,8 +43,7 @@ export class RealtimeKitBridge {
 
   async start(): Promise<void> {
     if (this.closed || this.page) return;
-    const b = await browser();
-    const page = await b.newPage();
+    const page = await newRealtimeKitPage();
     this.page = page;
     page.on('console', (msg) => {
       console.log(`[rtk-bridge ${this.opts.botId}] ${msg.type()} ${msg.text()}`);
