@@ -5,6 +5,8 @@
 //   POST /v1/groups/:id/voice/add-bot          add a bot to the call
 //   POST /v1/groups/:id/voice/ring             ring a human into the call
 //   POST /v1/groups/:id/voice/cancel-invite    drop a pending invite
+//   POST /v1/groups/:id/voice/realtimekit/bootstrap
+//                                                 POC: mint RealtimeKit tokens
 //   POST /v1/groups/:id/voice/join             a human joins the SFU room
 //   POST /v1/groups/:id/voice/subscribe        pull bot tracks to hear them
 //   POST /v1/groups/:id/voice/renegotiate      answer the SFU's offer
@@ -50,6 +52,10 @@ import {
   type SfuApp,
 } from '../lib/sfu';
 import {
+  bootstrapRealtimeKitGroupVoice,
+  realtimeKitAppFromEnv,
+} from '../lib/realtimekit';
+import {
   resolveVoiceConfig,
   type ResolvedVoiceConfig,
 } from '../lib/voice-config';
@@ -64,6 +70,8 @@ const DEFAULT_VOICE_MODEL_SLUG = 'gpt-realtime-2';
 
 // Path the SFU adapter WebSocket route is mounted on (see index.ts).
 const ADAPTER_PATH = '/v1/realtime-sfu';
+const DEFAULT_REALTIMEKIT_HUMAN_PRESET = 'group_call_host';
+const DEFAULT_REALTIMEKIT_BOT_PRESET = 'group_call_participant';
 
 interface BotSpec {
   botId: string;
@@ -273,6 +281,125 @@ groupVoiceRoutes.post('/:id/voice/start', async (c) => {
     initiated: !startData.already,
     ice_servers: iceServers ?? [],
   });
+});
+
+// =============================================================================
+// POST /:id/voice/realtimekit/bootstrap
+// =============================================================================
+//
+// Narrow POC path for testing Cloudflare RealtimeKit as the room layer. It
+// creates a fresh RealtimeKit meeting and returns participant tokens for the
+// caller plus, optionally, one bot. It does not replace the current SFU adapter
+// route yet; a later iOS/container experiment can use these tokens to join as
+// normal RealtimeKit WebRTC participants.
+
+const RealtimeKitBootstrapBody = z.object({
+  bot_id: z.string().uuid().optional(),
+});
+
+groupVoiceRoutes.post('/:id/voice/realtimekit/bootstrap', async (c) => {
+  const loaded = await loadGroupContext(c);
+  if (!loaded.ok) return loaded.res;
+  const { conversationId } = loaded.ctx;
+
+  let parsed: z.infer<typeof RealtimeKitBootstrapBody>;
+  try {
+    parsed = RealtimeKitBootstrapBody.parse(await c.req.json().catch(() => ({})));
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+
+  const app = realtimeKitAppFromEnv(c.env);
+  if (!app) {
+    return jsonError(c, 503, 'upstream_unavailable', {
+      detail: 'RealtimeKit is not configured',
+    });
+  }
+
+  const supaSvc = serviceClient(c.env);
+  const { data: userRow } = await supaSvc
+    .from('users')
+    .select('display_name')
+    .eq('id', c.var.userId!)
+    .maybeSingle();
+
+  let bot:
+    | {
+        botId: string;
+        displayName?: string | null;
+        presetName: string;
+      }
+    | undefined;
+  if (parsed.bot_id) {
+    const [{ data: part }, { data: botRow }] = await Promise.all([
+      supaSvc
+        .from('conversation_participants')
+        .select('participant_id')
+        .eq('conversation_id', conversationId)
+        .eq('participant_type', 'bot')
+        .eq('participant_id', parsed.bot_id)
+        .maybeSingle(),
+      supaSvc
+        .from('bots')
+        .select('id, display_name, voice_call_enabled')
+        .eq('id', parsed.bot_id)
+        .maybeSingle(),
+    ]);
+    if (!part) return jsonError(c, 404, 'not_found', { detail: 'bot not in group' });
+    if (!botRow || !botRow.voice_call_enabled) {
+      return jsonError(c, 403, 'voice_bot_disabled');
+    }
+    bot = {
+      botId: parsed.bot_id,
+      displayName: (botRow.display_name as string | null | undefined) ?? null,
+      presetName:
+        c.env.REALTIMEKIT_BOT_PRESET ??
+        c.env.REALTIMEKIT_HUMAN_PRESET ??
+        DEFAULT_REALTIMEKIT_BOT_PRESET,
+    };
+  }
+
+  try {
+    const boot = await bootstrapRealtimeKitGroupVoice(app, {
+      conversationId,
+      humanUserId: c.var.userId!,
+      humanDisplayName: (userRow?.display_name as string | null | undefined) ?? null,
+      humanPresetName:
+        c.env.REALTIMEKIT_HUMAN_PRESET ?? DEFAULT_REALTIMEKIT_HUMAN_PRESET,
+      bot,
+    });
+
+    return c.json({
+      ok: true,
+      provider: 'cloudflare_realtimekit',
+      app_id: app.appId,
+      meeting: {
+        id: boot.meeting.id,
+        title: boot.meeting.title ?? null,
+      },
+      human: {
+        id: boot.human.id,
+        custom_participant_id: boot.human.customParticipantId,
+        display_name: boot.human.displayName ?? null,
+        preset_name: boot.human.presetName,
+        token: boot.human.token,
+      },
+      ...(boot.bot
+        ? {
+            bot: {
+              id: boot.bot.id,
+              custom_participant_id: boot.bot.customParticipantId,
+              display_name: boot.bot.displayName ?? null,
+              preset_name: boot.bot.presetName,
+              token: boot.bot.token,
+            },
+          }
+        : {}),
+    });
+  } catch (err) {
+    console.warn('[group-voice/realtimekit/bootstrap] failed', err);
+    return jsonError(c, 502, 'voice_upstream_failed', { detail: String(err) });
+  }
 });
 
 // =============================================================================

@@ -37,6 +37,14 @@ _（暂无）_
 
 ## 🟡 拆东墙补西墙
 
+### 🟡 RealtimeKit POC 只发临时 meeting/token，尚未接入房间生命周期
+- **发现**: 2026-05-23 · codex/cf-realtimekit-poc
+- **位置**: apps/edge/src/routes/group-voice.ts、apps/edge/src/lib/realtimekit.ts
+- **问题**: `POST /v1/groups/:id/voice/realtimekit/bootstrap` 只是为验证 Cloudflare RealtimeKit 可行性创建 fresh meeting 和 participant token，没有把 RealtimeKit meeting_id 持久化到 RoomVoiceDO/数据库，也没有接入结束、踢人、计费、机器人 WebRTC participant 进程。
+- **影响**: 这个入口适合手动 POC，不适合直接接到正式群语音按钮；重复调用会产生多个 RealtimeKit meeting，且 PendingBot 还不知道这些 participant 的真实媒体生命周期。
+- **建议**: 如果 POC 网络质量达标，再把 meeting lifecycle 收进 RoomVoiceDO 或新的 room-state 表，并让 bot runtime 用 token 作为 WebRTC participant 入会、按 OpenAI usage 和 RealtimeKit session/participant minutes 双轨计费。
+- **状态**: 待办
+
 ### 🟡 跨 provider web search 解析路径未经真实流量验证
 - **发现**: 2026-05-22 · feat/web-search-providers
 - **位置**: apps/edge/src/llm/{responses,anthropic,gemini}-adapter.ts、apps/edge/src/lib/bot-reply/index.ts

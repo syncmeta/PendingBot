@@ -69,7 +69,13 @@
         "GOOGLE_BYOK_ALIAS": "byok-1",
         // Cloudflare Realtime SFU app for group voice. The id is not
         // sensitive; the paired SFU_APP_SECRET is set via wrangler secret.
-        "SFU_APP_ID": "a0d4007702e06eb9eb592bfa870c7722"
+        "SFU_APP_ID": "a0d4007702e06eb9eb592bfa870c7722",
+        // Cloudflare RealtimeKit POC for group voice. Set
+        // REALTIMEKIT_APP_ID here when testing; REALTIMEKIT_API_TOKEN is
+        // a secret with Realtime Admin permission. Presets live in the
+        // RealtimeKit app.
+        "REALTIMEKIT_HUMAN_PRESET": "group_call_host",
+        "REALTIMEKIT_BOT_PRESET": "group_call_participant"
       },
       "routes": [
         { "pattern": "api.pendingname.com", "custom_domain": true },
@@ -278,6 +284,9 @@
   //   SFU_APP_SECRET        (Cloudflare Realtime SFU app secret — bearer
   //                          for rtc.live.cloudflare.com; pairs with the
   //                          SFU_APP_ID var. Group voice only.)
+  //   REALTIMEKIT_API_TOKEN (Cloudflare API token with Realtime Admin for
+  //                          the experimental RealtimeKit bootstrap path;
+  //                          pairs with REALTIMEKIT_APP_ID when enabled.)
   //   TURN_KEY_ID           (Cloudflare Realtime TURN key id — create a
   //                          TURN key in the Realtime dashboard. Used by
   //                          the 'webrtc_turn' 1:1 voice transport.)

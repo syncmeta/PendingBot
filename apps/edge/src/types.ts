@@ -117,6 +117,17 @@ export interface Env {
   // SFU app secret — bearer token for rtc.live.cloudflare.com. Secret.
   SFU_APP_SECRET?: string;
 
+  // ── Group voice POC (CF RealtimeKit) ───────────────────────────
+  // RealtimeKit app id for the experimental room/participant-token path.
+  // The API token is secret; account id falls back to CF_ACCOUNT_ID.
+  REALTIMEKIT_ACCOUNT_ID?: string;
+  REALTIMEKIT_APP_ID?: string;
+  REALTIMEKIT_API_TOKEN?: string;
+  // Preset names are configured in the RealtimeKit dashboard. Defaults in
+  // routes/group-voice.ts match Cloudflare's starter group-call presets.
+  REALTIMEKIT_HUMAN_PRESET?: string;
+  REALTIMEKIT_BOT_PRESET?: string;
+
   // ── TURN relay (webrtc_turn voice transport) ───────────────────
   // Cloudflare Realtime TURN key. The worker mints short-lived ICE
   // relay credentials (lib/cf-turn.ts) so the iOS WebRTC client can
