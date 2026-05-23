@@ -1114,6 +1114,10 @@ struct BotConfigView: View {
     /// auto-respond / interrupt flags). Lives under `bots.config.voice`.
     @State private var voiceSettings: BotVoiceSettings = .defaults
     @State private var visionModel: String = ""   // "" = auto
+    /// Arena (竞技场) model set. Empty = single model (use `model`). Two or
+    /// more = arena: the bot randomises among these each turn. Lives under
+    /// `bots.config.arena.models`.
+    @State private var arenaModels: [String] = []
     @State private var envelope: EnvelopeSettings = .defaults
     /// Per-bot OpenRouter web-search knobs. Lives under
     /// `bots.config.webSearch`; only takes effect on the default
@@ -1134,6 +1138,7 @@ struct BotConfigView: View {
     private struct Snapshot: Equatable {
         let model: String
         let modelProvider: String?
+        let arenaModels: [String]
         let voiceEnabled: Bool
         let voiceModel: String
         let voiceSettings: BotVoiceSettings
@@ -1163,7 +1168,7 @@ struct BotConfigView: View {
 
     private var snapshot: Snapshot {
         Snapshot(
-            model: model, modelProvider: modelProvider,
+            model: model, modelProvider: modelProvider, arenaModels: arenaModels,
             voiceEnabled: voiceEnabled, voiceModel: voiceModel,
             voiceSettings: voiceSettings,
             visionModel: visionModel, envelope: envelope,
@@ -1243,8 +1248,9 @@ struct BotConfigView: View {
     @ViewBuilder
     private var modelSection: some View {
         Section {
-            pickerRow(icon: "cube.transparent", title: "主模型",
-                      value: model.isEmpty ? "—" : catalog.displayName(for: model),
+            pickerRow(icon: arenaModels.count >= 2 ? "die.face.5" : "cube.transparent",
+                      title: "主模型",
+                      value: mainModelLabel,
                       enabled: canEdit) {
                 pickerTarget = .main
             }
@@ -1255,7 +1261,14 @@ struct BotConfigView: View {
             }
         } header: {
             Text("模型")
+        } footer: {
+            Text("选一个模型就是固定用它;选两个及以上就是竞技场——每轮随机挑一个,对回答盲评后能在「我 → 模型竞技场榜单」看到你的偏好。")
         }
+    }
+
+    private var mainModelLabel: String {
+        if arenaModels.count >= 2 { return "竞技场 · \(arenaModels.count) 个模型" }
+        return model.isEmpty ? "—" : catalog.displayName(for: model)
     }
 
     @ViewBuilder
@@ -1397,10 +1410,21 @@ struct BotConfigView: View {
     private func modelPicker(for target: PickerTarget) -> some View {
         switch target {
         case .main:
-            ModelPickerSheet(initial: model, allowsClear: false) { picked in
-                if let picked, !picked.slug.isEmpty {
-                    model = picked.slug
-                    modelProvider = picked.model_provider
+            // Multi-select: 1 → single model; 2+ → 竞技场 (random pool).
+            let seed = arenaModels.count >= 2 ? arenaModels : (model.isEmpty ? [] : [model])
+            ArenaModelPickerSheet(initial: seed) { picked in
+                if picked.count >= 2 {
+                    arenaModels = picked
+                    model = picked.first ?? model   // keep a single fallback
+                    modelProvider = nil             // arena always routes openrouter
+                } else {
+                    arenaModels = []
+                    if let only = picked.first, !only.isEmpty {
+                        model = only
+                        // Look up the picked model's provider from the catalog
+                        // so native routes still pin correctly for a single pick.
+                        modelProvider = catalog.bySlug[only]?.model_provider
+                    }
                 }
                 pickerTarget = nil
             }
@@ -1456,6 +1480,9 @@ struct BotConfigView: View {
         voiceSettings = BotVoiceSettings.from(dict["voice"])
         envelope = EnvelopeSettings.from(dict["envelope"])
         webSearch = BotWebSearchSettings.from(dict["webSearch"])
+        if case let .object(arena)? = dict["arena"], case let .array(arr)? = arena["models"] {
+            arenaModels = arr.compactMap { if case let .string(s) = $0 { return s } else { return nil } }
+        }
         if case let .object(lb)? = dict["lookback"] {
             if case let .bool(b)? = lb["enabled"] { lookbackEnabled = b }
             if case let .integer(i)? = lb["roundInterval"], i > 0 {
@@ -1488,6 +1515,10 @@ struct BotConfigView: View {
                 "enabled": lookbackEnabled,
                 "roundInterval": lookbackInterval,
             ]
+            // Arena: 2+ models = on (store the explicit set); otherwise null
+            // = off (the bot uses its single model_id). The worker merges this
+            // key wholesale, so null clears it.
+            let arenaVal: Any = arenaModels.count >= 2 ? ["models": arenaModels] : NSNull()
             let cfg: [String: Any] = [
                 "lookback": lookbackCfg,
                 "envelope": envelopeCfg,
@@ -1495,6 +1526,7 @@ struct BotConfigView: View {
                 "voiceModel": voiceModel,
                 "voice": voiceSettings.toConfigDict(),
                 "webSearch": webSearch.toConfigDict(),
+                "arena": arenaVal,
             ]
             let body: [String: Any] = [
                 "model_id": model,

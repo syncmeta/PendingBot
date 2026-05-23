@@ -280,6 +280,16 @@ final class LocalDatabase {
                 t.add(column: "added_at", .integer).defaults(to: 0)
             }
         }
+        // Cache the arena fields so a multi-answer turn paints as its
+        // collapsed compare card on first hydrate, instead of flashing the
+        // raw variant bubbles until the server round-trip regroups them.
+        m.registerMigration("v8_message_arena_fields") { db in
+            try db.alter(table: "messages") { t in
+                t.add(column: "parent_message_id", .text)
+                t.add(column: "bubble_group_id", .text)
+                t.add(column: "model_slug", .text)
+            }
+        }
         return m
     }
 
@@ -373,6 +383,9 @@ final class LocalDatabase {
         var content: String?
         var status: String?
         var created_at: Int
+        var parent_message_id: String?
+        var bubble_group_id: String?
+        var model_slug: String?
 
         static let databaseTableName = "messages"
     }

@@ -44,7 +44,7 @@ interface OpenRouterCatalogModel {
 
 type CatalogSource = 'openrouter' | 'openai' | 'anthropic' | 'google-ai-studio';
 
-interface OpenRouterModelOut {
+export interface OpenRouterModelOut {
   slug: string;
   display_name: string;
   provider: string;
@@ -104,7 +104,7 @@ const NON_CHAT_MARKERS = [
   'moderation',
 ];
 
-function looksNonChat(tail: string): boolean {
+export function looksNonChat(tail: string): boolean {
   const t = tail.toLowerCase();
   return NON_CHAT_MARKERS.some((m) => t.includes(m));
 }
@@ -189,12 +189,22 @@ function deriveNative(
   return rows;
 }
 
-modelCatalogRoutes.get('/', async (c) => {
+export class CatalogUpstreamError extends Error {
+  constructor(public status: number) {
+    super(`OpenRouter catalog upstream returned ${status}`);
+    this.name = 'CatalogUpstreamError';
+  }
+}
+
+// Fetch + assemble the full model catalog (native twins first, then the
+// OpenRouter long tail) — the array the /v1/models route returns. Factored
+// out so the random-model resolver can reuse it off the route.
+export async function buildModelCatalog(): Promise<OpenRouterModelOut[]> {
   const res = await fetch('https://openrouter.ai/api/v1/models');
   if (!res.ok) {
     const body = (await res.text()).slice(0, 300);
     console.warn('[v1/models] upstream', res.status, body);
-    return jsonError(c, 502, 'upstream_error', { detail: { status: res.status } });
+    throw new CatalogUpstreamError(res.status);
   }
   const json = (await res.json()) as { data?: OpenRouterCatalogModel[] };
   const catalog = json.data ?? [];
@@ -221,5 +231,16 @@ modelCatalogRoutes.get('/', async (c) => {
   // (anthropic → google-ai-studio → openai). iOS pins these three groups
   // to the top of its picker.
   const nativeRows = NATIVE_DERIVATIONS.flatMap((d) => deriveNative(d, catalog));
-  return c.json([...nativeRows, ...openrouterRows]);
+  return [...nativeRows, ...openrouterRows];
+}
+
+modelCatalogRoutes.get('/', async (c) => {
+  try {
+    return c.json(await buildModelCatalog());
+  } catch (err) {
+    if (err instanceof CatalogUpstreamError) {
+      return jsonError(c, 502, 'upstream_error', { detail: { status: err.status } });
+    }
+    throw err;
+  }
 });

@@ -15,6 +15,7 @@ import { jsonError } from '../lib/http-error';
 import { deleteCachedAttachment, removeInventoryIds, resolveAttachmentOwnership } from '../lib/attachment-cache';
 import { resolveBot } from '../lib/bot-cache';
 import { resolveConv } from '../lib/conv-cache';
+import { parseRandomModelConfig, pickRandomModel } from '../llm/random-model';
 import { safeWaitUntil } from '../lib/safe-wait-until';
 import { startSseKeepalive } from '../lib/sse-keepalive';
 import { notifyConversationUsers, notifyUserMessage } from '../lib/push';
@@ -399,10 +400,23 @@ messageRoutes.post('/', async (c) => {
 
   // Provider routing is bot-level only — the bot's own default route
   // (bots.model_provider) drives preferProvider for the turn.
-  const effectiveProviderOverride: string | null = bot.model_provider ?? null;
+  let effectiveProviderOverride: string | null = bot.model_provider ?? null;
 
-  // Chat model is the bot's own default (bots.model_id).
-  const effectiveModelId: string = bot.model_id as string;
+  // Chat model is the bot's own default (bots.model_id) — unless the bot is
+  // in arena mode (bots.config.arena), in which case each turn draws a
+  // random model from the pool, routed via openrouter passthrough so every
+  // contender is reached identically (the personal leaderboard depends on
+  // that fairness). A null pick (empty pool / catalog miss) falls back to
+  // the pinned model.
+  let effectiveModelId: string = bot.model_id as string;
+  const arenaCfg = parseRandomModelConfig(botConfigArena(bot.config));
+  if (arenaCfg) {
+    const picked = await pickRandomModel(c.env, arenaCfg);
+    if (picked) {
+      effectiveModelId = picked.slug;
+      effectiveProviderOverride = picked.modelProvider ?? 'openrouter';
+    }
+  }
 
   const isSelfChat = conv.conversation_type === 'self';
 
@@ -722,8 +736,18 @@ messageRoutes.post('/start', async (c) => {
     );
   }
 
-  // Provider routing is bot-level only (bots.model_provider).
-  const effectiveProviderOverride: string | null = bot.model_provider ?? null;
+  // Provider routing is bot-level only (bots.model_provider). Arena mode
+  // (bots.config.arena) draws a random model per turn via openrouter.
+  let effectiveProviderOverride: string | null = bot.model_provider ?? null;
+  let effectiveModelId: string = bot.model_id;
+  const arenaCfg = parseRandomModelConfig(botConfigArena(bot.config));
+  if (arenaCfg) {
+    const picked = await pickRandomModel(c.env, arenaCfg);
+    if (picked) {
+      effectiveModelId = picked.slug;
+      effectiveProviderOverride = picked.modelProvider ?? 'openrouter';
+    }
+  }
 
   const encoder = new TextEncoder();
   const detachedAbort = new AbortController();
@@ -781,7 +805,7 @@ messageRoutes.post('/start', async (c) => {
             bot: {
               id: bot.id,
               display_name: bot.display_name,
-              model_id: bot.model_id,
+              model_id: effectiveModelId,
               output_mode: bot.output_mode === 'bubble' ? 'bubble' : 'single',
               tz: bot.tz,
             },
@@ -841,6 +865,191 @@ messageRoutes.post('/start', async (c) => {
               console.error('[messages/start] rollback delete failed', delErr);
             }
           }
+          stopKeepalive();
+          streamClosed = true;
+          try { controller.close(); } catch {}
+        }
+      })();
+      c.executionCtx.waitUntil(turnWork);
+    },
+    cancel() {
+      streamClosed = true;
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      'X-Accel-Buffering': 'no',
+    },
+  });
+});
+
+// POST /v1/messages/:id/regenerate
+//
+// Arena "再生成一个回答": produce ANOTHER bot answer to the same user prompt
+// (`:id` = the parent user message), so the client can show A/B variants and
+// the user can blind-vote (POST /v1/arena/compare). The new answer shares the
+// parent_message_id with the existing one(s) — that's how variants of one
+// prompt group — but gets its own bubble_group_id.
+//
+// Model: if the bot is in arena mode (bots.config.arena) draw a fresh model
+// EXCLUDING the ones already used under this parent (so the variant lands a
+// different contender when the pool allows). Otherwise re-run the pinned
+// model (a same-model alternative). Does NOT bump round_count or auto-rename.
+const RegenBody = z.object({
+  conversationId: z.string().uuid(),
+  recentContext: z
+    .array(
+      z.object({
+        role: z.enum(['user', 'bot', 'human', 'log']),
+        content: z.string().nullable().optional(),
+        created_at: z.string(),
+      }),
+    )
+    .max(50)
+    .optional(),
+  clientTz: z.string().max(64).optional(),
+});
+
+messageRoutes.post('/:id/regenerate', async (c) => {
+  const userId = c.var.userId!;
+  const userJwt = c.var.userJwt!;
+  const parentId = c.req.param('id');
+  if (!UUID_RE.test(parentId)) return jsonError(c, 400, 'invalid_id');
+
+  let parsed: z.infer<typeof RegenBody>;
+  try {
+    parsed = RegenBody.parse(await c.req.json());
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+
+  const supaUser = userClient(c.env, userJwt);
+  const supaService = serviceClient(c.env);
+
+  const convResolved = await resolveConv(c.env, supaUser, parsed.conversationId, userId, (p) =>
+    safeWaitUntil(c, p),
+  ).catch((err: { message?: string }) => ({ __error: err.message ?? 'database_error' }));
+  if (convResolved && typeof convResolved === 'object' && '__error' in convResolved) {
+    return jsonError(c, 500, 'database_error', { detail: convResolved.__error });
+  }
+  const conv = convResolved as {
+    id: string;
+    conversation_type: 'user_bot' | 'self' | 'group' | 'user_user';
+    bot_id: string | null;
+  } | null;
+  if (!conv) return jsonError(c, 404, 'conversation_no_access');
+  if (!conv.bot_id || conv.conversation_type === 'group') {
+    return jsonError(c, 400, 'conversation_has_no_bot');
+  }
+
+  const { data: parent, error: parentErr } = await supaService
+    .from('messages')
+    .select('id, conversation_id, role, content, attachments')
+    .eq('id', parentId)
+    .maybeSingle();
+  if (parentErr) return jsonError(c, 500, 'database_error', { detail: parentErr.message });
+  if (!parent || parent.conversation_id !== parsed.conversationId || parent.role !== 'user') {
+    return jsonError(c, 404, 'not_found', { message: 'parent prompt not found' });
+  }
+  const parentAttachmentIds: string[] | undefined = (() => {
+    const a = parent.attachments as { ids?: unknown } | null;
+    if (!a || !Array.isArray(a.ids)) return undefined;
+    const ids = a.ids.filter((x): x is string => typeof x === 'string');
+    return ids.length > 0 ? ids : undefined;
+  })();
+
+  const bot = await resolveBot(c.env, supaService, conv.bot_id, (p) => safeWaitUntil(c, p));
+  if (!bot) return jsonError(c, 500, 'database_error', { message: 'bot lookup failed' });
+  if (!bot.is_active) return jsonError(c, 400, 'forbidden', { message: 'bot inactive' });
+  if (!bot.model_id) return jsonError(c, 500, 'database_error', { message: 'bot has no model pinned' });
+  if (bot.visibility === 'private' && bot.creator_id !== userId) {
+    return jsonError(c, 403, 'forbidden', { message: '私有机器人只允许创建者使用' });
+  }
+
+  try {
+    await requireBalance(c.env, supaUser, userId);
+  } catch (err) {
+    if (err instanceof InsufficientBalanceError) {
+      return c.json(
+        { error: 'insufficient_balance', balance_credits: err.balance, min_threshold: err.threshold },
+        402,
+      );
+    }
+    throw err;
+  }
+
+  let effectiveProviderOverride: string | null = bot.model_provider ?? null;
+  let effectiveModelId: string = bot.model_id;
+  const arenaCfg = parseRandomModelConfig(botConfigArena(bot.config));
+  if (arenaCfg) {
+    const { data: usedRows } = await supaService
+      .from('messages')
+      .select('model_slug')
+      .eq('parent_message_id', parentId)
+      .eq('role', 'bot')
+      .not('model_slug', 'is', null);
+    const excludeSlugs = [
+      ...new Set(
+        (usedRows ?? [])
+          .map((r) => r.model_slug as string | null)
+          .filter((s): s is string => !!s),
+      ),
+    ];
+    const picked = await pickRandomModel(c.env, arenaCfg, { excludeSlugs });
+    if (picked) {
+      effectiveModelId = picked.slug;
+      effectiveProviderOverride = picked.modelProvider ?? 'openrouter';
+    }
+  }
+
+  const isSelfChat = conv.conversation_type === 'self';
+  const encoder = new TextEncoder();
+  const detachedAbort = new AbortController();
+  let streamClosed = false;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const emit = (event: string, data: unknown) => {
+        if (streamClosed) return;
+        try {
+          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+        } catch {
+          /* controller may already be closed */
+        }
+      };
+      const stopKeepalive = startSseKeepalive(controller, () => streamClosed);
+      const turnWork = (async () => {
+        try {
+          await runChatTurn({
+            env: c.env,
+            conversationId: parsed.conversationId,
+            userId,
+            parentMessageId: parentId,
+            bot: {
+              id: bot.id,
+              display_name: bot.display_name,
+              model_id: effectiveModelId,
+              output_mode: bot.output_mode === 'bubble' ? 'bubble' : 'single',
+              tz: bot.tz,
+            },
+            isSelfChat,
+            recentContext: parsed.recentContext ?? [],
+            newMessage: parent.content ?? '',
+            currentAttachmentIds: parentAttachmentIds,
+            visionModelOverride: botConfigString(bot.config, 'visionModel'),
+            webSearch: parseWebSearchConfig(bot.config),
+            providerOverride: effectiveProviderOverride,
+            clientTz: parsed.clientTz,
+            signal: detachedAbort.signal,
+            emit,
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message || err.name || 'Error' : String(err);
+          console.error('[messages/regenerate] turn error:', err);
+          emit('error', { message });
+        } finally {
           stopKeepalive();
           streamClosed = true;
           try { controller.close(); } catch {}
@@ -1146,6 +1355,13 @@ function botConfigString(config: unknown, key: string): string | null {
   if (!config || typeof config !== 'object') return null;
   const v = (config as Record<string, unknown>)[key];
   return typeof v === 'string' && v.length > 0 ? v : null;
+}
+
+// Pull the arena sub-object out of bots.config (config.arena). Returns the
+// raw value for parseRandomModelConfig to validate; null when absent.
+function botConfigArena(config: unknown): unknown {
+  if (!config || typeof config !== 'object') return null;
+  return (config as Record<string, unknown>).arena ?? null;
 }
 
 // Lookback cadence is keyed off a per (bot, user) counter that crosses

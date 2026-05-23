@@ -72,6 +72,15 @@ struct ChatMessage: Codable, Identifiable, Hashable {
     /// step errored before the canonical row arrived (red bubble + alert).
     /// Drives the bubble background tint in BubbleView.
     let status: String?
+    /// Arena fields (loaded in loadHistory; nil on optimistic / realtime /
+    /// streamed rows until the next history load). `parent_message_id` links
+    /// a bot answer to the user prompt it answers; `bubble_group_id` is the
+    /// answer's identity (one answer = one group, possibly many bubbles);
+    /// `model_slug` is the model that produced this bot bubble. Together they
+    /// drive the inline blind A/B compare for arena turns.
+    var parent_message_id: String? = nil
+    var bubble_group_id: String? = nil
+    var model_slug: String? = nil
 
     /// True only for messages I sent. For user_bot, every sender_type=="user"
     /// row is mine by definition (the bot is the only other side). For
@@ -95,7 +104,10 @@ struct ChatMessage: Codable, Identifiable, Hashable {
          content: String,
          created_at: Int,
          attachments: [Attachment]?,
-         status: String? = nil) {
+         status: String? = nil,
+         parent_message_id: String? = nil,
+         bubble_group_id: String? = nil,
+         model_slug: String? = nil) {
         self.id = id
         self.conversation_id = conversation_id
         self.sender_type = sender_type
@@ -104,6 +116,9 @@ struct ChatMessage: Codable, Identifiable, Hashable {
         self.created_at = created_at
         self.attachments = attachments
         self.status = status
+        self.parent_message_id = parent_message_id
+        self.bubble_group_id = bubble_group_id
+        self.model_slug = model_slug
     }
 }
 
@@ -226,4 +241,46 @@ struct SkillDetail: Codable, Identifiable, Hashable {
     let body_length: Int
     let updated_at: Int
     let body: String
+}
+
+// MARK: - Arena (随机模型 / 盲评 / 个人榜单)
+
+/// Bot-level arena config — mirrors the edge `bots.config.arena` jsonb.
+/// nil/absent = off (the bot uses its single model_id). Present = arena: each
+/// turn draws a random model from the price-range pool ∪ explicit `models`,
+/// minus `exclude`.
+struct RandomModelConfig: Codable, Equatable, Hashable {
+    var price_min: Double?
+    var price_max: Double?
+    var models: [String]?
+    var exclude: [String]?
+}
+
+/// One row of the personal leaderboard (GET /v1/arena/leaderboard).
+struct ArenaStanding: Codable, Identifiable, Hashable {
+    let model_slug: String
+    let rating: Int
+    let games: Int
+    let wins: Int
+    let losses: Int
+    let ties: Int
+    var id: String { model_slug }
+}
+
+struct ArenaLeaderboard: Codable {
+    let standings: [ArenaStanding]
+    let total_comparisons: Int
+}
+
+/// Model identity behind one bubble group, revealed by POST /v1/arena/compare
+/// after the (client-side blind) vote lands.
+struct ArenaRevealedModel: Codable, Hashable {
+    let model_slug: String
+    let model_provider: String?
+}
+
+struct ArenaCompareResult: Codable {
+    let ok: Bool
+    /// Keyed by the bubble_group_id the client submitted.
+    let models: [String: ArenaRevealedModel]
 }
