@@ -4,6 +4,14 @@ import OSLog
 
 private let log = Logger.category("LocalDatabase")
 
+private enum LocalDatabaseEncryptionError: LocalizedError {
+    case sqlCipherUnavailable
+
+    var errorDescription: String? {
+        "SQLCipher is required but the active GRDB build is not linked against it."
+    }
+}
+
 /// On-device SQLite cache for the current user's conversations + messages.
 ///
 /// Per plan/04: mirrors the Supabase schema's hot tables so the app
@@ -20,21 +28,14 @@ private let log = Logger.category("LocalDatabase")
 ///
 /// `DatabaseQueue` is opened with a `prepareDatabase` hook that issues
 /// `PRAGMA key = '…'` against a 256-bit random passphrase stored in
-/// Keychain (device-only, no iCloud sync). The behaviour depends on
-/// which SQLite the GRDB SPM target is linked against:
+/// Keychain (device-only, no iCloud sync). The app links a SQLCipher-enabled
+/// GRDB SPM target, so the database file is encrypted at rest. The open path
+/// also checks `PRAGMA cipher_version` and fails closed if GRDB ever resolves
+/// back to plain SQLite.
 ///
-///   • Vanilla GRDB (current default — `groue/GRDB.swift`):
-///     `PRAGMA key` is silently ignored by upstream SQLite. The DB
-///     file stays plaintext. The keychain key is generated and held
-///     anyway, so flipping the dependency to a SQLCipher-enabled
-///     fork (e.g. `duckduckgo/GRDB.swift`) "lights up" encryption
-///     without further code changes.
-///
-///   • SQLCipher-enabled GRDB:
-///     `PRAGMA key` is the canonical setup call and must precede any
-///     other operation on the connection. After it succeeds the DB
-///     file on disk is AES-encrypted; without the key the file
-///     decodes as random noise.
+/// `PRAGMA key` is the canonical SQLCipher setup call and must precede any
+/// other operation on the connection. After it succeeds the DB file on disk is
+/// encrypted; without the key the file decodes as random noise.
 ///
 /// First-launch-after-flipping handling: when a pre-encryption plaintext
 /// DB file already exists on disk, SQLCipher will fail to open it with
@@ -57,8 +58,11 @@ final class LocalDatabase {
         do {
             let queue = try DatabaseQueue(path: url.path, configuration: config)
             try Self.migrator.migrate(queue)
+            Self.protectDatabaseFile(at: url)
             self.dbQueue = queue
             return
+        } catch LocalDatabaseEncryptionError.sqlCipherUnavailable {
+            fatalError("LocalDatabase: SQLCipher is not active; refusing to open an unencrypted on-disk cache")
         } catch {
             // First-resort recovery: nuke a possibly-corrupt OR
             // wrong-format file and retry. Triggers on the
@@ -70,8 +74,11 @@ final class LocalDatabase {
         do {
             let queue = try DatabaseQueue(path: url.path, configuration: config)
             try Self.migrator.migrate(queue)
+            Self.protectDatabaseFile(at: url)
             self.dbQueue = queue
             return
+        } catch LocalDatabaseEncryptionError.sqlCipherUnavailable {
+            fatalError("LocalDatabase: SQLCipher is not active; refusing to open an unencrypted on-disk cache")
         } catch {
             // Disk is genuinely broken (full disk, sandbox issue, etc.).
             // Fall back to an in-memory DB so the app still launches —
@@ -90,8 +97,23 @@ final class LocalDatabase {
 
     private static func databaseURL() -> URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(
+            at: dir,
+            withIntermediateDirectories: true,
+            attributes: [.protectionKey: FileProtectionType.completeUnlessOpen]
+        )
+        try? FileManager.default.setAttributes(
+            [.protectionKey: FileProtectionType.completeUnlessOpen],
+            ofItemAtPath: dir.path
+        )
         return dir.appendingPathComponent("pendingbot.sqlite")
+    }
+
+    private static func protectDatabaseFile(at url: URL) {
+        try? FileManager.default.setAttributes(
+            [.protectionKey: FileProtectionType.completeUnlessOpen],
+            ofItemAtPath: url.path
+        )
     }
 
     // MARK: - Encryption passphrase
@@ -143,10 +165,12 @@ final class LocalDatabase {
         var config = Configuration()
         config.prepareDatabase { db in
             // SQLCipher requires PRAGMA key BEFORE any other operation.
-            // Vanilla SQLite ignores this pragma, so the call is safe
-            // either way. Quoted with single quotes; passphrase is hex
-            // so no escaping needed.
+            // Quoted with single quotes; passphrase is hex so no escaping needed.
             try db.execute(sql: "PRAGMA key = '\(passphrase)'")
+            guard let cipherVersion = try String.fetchOne(db, sql: "PRAGMA cipher_version"),
+                  !cipherVersion.isEmpty else {
+                throw LocalDatabaseEncryptionError.sqlCipherUnavailable
+            }
         }
         return config
     }

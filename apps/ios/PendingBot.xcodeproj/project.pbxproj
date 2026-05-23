@@ -923,10 +923,10 @@
 		};
 		39ED438D5E50F60066F19A94 /* XCRemoteSwiftPackageReference "GRDB.swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/groue/GRDB.swift";
+			repositoryURL = "https://github.com/duckduckgo/GRDB.swift";
 			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 6.0.0;
+				kind = exactVersion;
+				version = "2.4.2-1";
 			};
 		};
 		96B306B367BFCB52C99F8552 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */ = {
