@@ -48,6 +48,9 @@ export interface VoiceCallEvent {
       playoutDepthMs?: number;
       underruns?: number;
       maxGapMs?: number;
+      inputLevel?: number;
+      inputFrames?: number;
+      quietFrames?: number;
       streamConnected?: boolean;
       ingestConnected?: boolean;
       modelSessionReady?: boolean;

@@ -54,6 +54,7 @@ const INPUT_FLUSH_MS = 40;
 const INPUT_STEREO_PER_FLUSH = (SFU_RATE * 2 * INPUT_FLUSH_MS) / 1000; // 3840
 const INPUT_MONO48_PER_FLUSH = (SFU_RATE * INPUT_FLUSH_MS) / 1000; // 1920
 const INPUT_OPENAI_SAMPLES = (OPENAI_RATE * INPUT_FLUSH_MS) / 1000; // 960
+const OPENAI_INPUT_TAIL_FLUSHES = Math.ceil(800 / INPUT_FLUSH_MS);
 
 // Bot voice playout cadence (OpenAI output → SFU ingest). A steady 20 ms
 // frame clock with a pre-roll cushion is what kills the choppiness.
@@ -96,11 +97,17 @@ interface BotLeg {
   // RealtimeKit participant audio arrives as 48 kHz mono from the bridge.
   rtkPending: Int16Array[];
   rtkDownsampleState: DownsampleState;
+  rtkInputLevel: number;
+  rtkInputFrames: number;
+  rtkQuietFrames: number;
   // Bot voice for humans — drained by the steady playout clock (24k mono).
   playout: Int16Array[];
   playoutState: 'buffering' | 'playing';
   // Bot voice for the OTHER bots' ears — drained by the input mixer.
   interbot: Int16Array[];
+  // Tail silence after real input lets OpenAI server VAD close the turn
+  // without keeping a silent room streaming forever.
+  inputTailFlushes: number;
   // Diagnostics for the current ~2s stats window (reset on emit).
   lastDeltaAt: number;
   maxGapMs: number;
@@ -281,7 +288,9 @@ export class Room {
       console.log(
         `[room] stats bot=${botId} depth=${depthMs}ms state=${leg.playoutState} ` +
           `underruns=${leg.underruns} maxGap=${leg.maxGapMs}ms ` +
-          `voice=${leg.voiceFrames} silence=${leg.silenceFrames}`,
+          `voice=${leg.voiceFrames} silence=${leg.silenceFrames} ` +
+          `rtkInput=${leg.rtkInputFrames} rtkQuiet=${leg.rtkQuietFrames} ` +
+          `rtkLevel=${leg.rtkInputLevel.toFixed(3)}`,
       );
       diagnostics.participants.push({
         kind: 'bot',
@@ -292,6 +301,9 @@ export class Room {
         playoutDepthMs: depthMs,
         underruns: leg.underruns,
         maxGapMs: leg.maxGapMs,
+        inputLevel: leg.rtkInputLevel,
+        inputFrames: leg.rtkInputFrames,
+        quietFrames: leg.rtkQuietFrames,
         ingestConnected: leg.ingestWs !== null || Boolean(leg.rtkBridge?.connected),
         modelSessionReady: leg.sessionReady,
       });
@@ -299,6 +311,9 @@ export class Room {
       leg.maxGapMs = 0;
       leg.voiceFrames = 0;
       leg.silenceFrames = 0;
+      leg.rtkInputLevel = 0;
+      leg.rtkInputFrames = 0;
+      leg.rtkQuietFrames = 0;
     }
     this.emit({ t: 'diagnostics', diagnostics });
   }
@@ -375,9 +390,13 @@ export class Room {
       rtkBridge: null,
       rtkPending: [],
       rtkDownsampleState: newDownsampleState(),
+      rtkInputLevel: 0,
+      rtkInputFrames: 0,
+      rtkQuietFrames: 0,
       playout: [],
       playoutState: 'buffering',
       interbot: [],
+      inputTailFlushes: 0,
       lastDeltaAt: 0,
       maxGapMs: 0,
       underruns: 0,
@@ -394,6 +413,7 @@ export class Room {
         roomToken: this.token ?? '',
         port: this.port,
         onInput: (samples) => this.onRealtimeKitInput(spec.botId, samples),
+        onQuietInput: (_rms, frames) => this.onRealtimeKitQuietInput(spec.botId, frames),
         onClosed: () => this.onRealtimeKitBridgeClosed(spec.botId),
       });
       void leg.rtkBridge.start().catch((err) =>
@@ -446,7 +466,15 @@ export class Room {
   private onRealtimeKitInput(botId: string, samples: Int16Array): void {
     const leg = this.bots.get(botId);
     if (!leg || samples.length === 0) return;
+    leg.rtkInputLevel = Math.max(leg.rtkInputLevel, rmsLevel(samples));
+    leg.rtkInputFrames++;
     leg.rtkPending.push(samples);
+  }
+
+  private onRealtimeKitQuietInput(botId: string, frames: number): void {
+    const leg = this.bots.get(botId);
+    if (!leg) return;
+    leg.rtkQuietFrames += frames;
   }
 
   private onRealtimeKitBridgeClosed(botId: string): void {
@@ -500,7 +528,8 @@ export class Room {
             audio: {
               input: {
                 format: { type: 'audio/pcm', rate: OPENAI_RATE },
-                // undefined → omit (OpenAI default semantic_vad);
+                noise_reduction: { type: 'far_field' },
+                // undefined → omit (OpenAI default server_vad);
                 // null → disable VAD (push-to-talk); object → apply.
                 ...(td !== undefined && { turn_detection: td }),
               },
@@ -698,13 +727,15 @@ export class Room {
         if (otherId === botId || !audio || audio.length === 0) continue;
         inputs.push(audio);
       }
-      // Always send a full frame, even pure silence: keeps the OpenAI WS
-      // warm and the input_audio_buffer timeline aligned with wall-clock
-      // so server VAD decides on a consistent cadence.
       let mixed: Int16Array;
-      if (inputs.length === 0) mixed = new Int16Array(INPUT_OPENAI_SAMPLES);
-      else if (inputs.length === 1) mixed = inputs[0];
-      else mixed = mixPcm(inputs);
+      if (inputs.length === 0) {
+        if (leg.inputTailFlushes <= 0) continue;
+        leg.inputTailFlushes--;
+        mixed = new Int16Array(INPUT_OPENAI_SAMPLES);
+      } else {
+        leg.inputTailFlushes = OPENAI_INPUT_TAIL_FLUSHES;
+        mixed = inputs.length === 1 ? inputs[0] : mixPcm(inputs);
+      }
       try {
         ws.send(
           JSON.stringify({

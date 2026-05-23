@@ -5,6 +5,10 @@ import { bytesToSamples, samplesToBytes } from './pcm';
 import type { WsData } from './room';
 
 const OPENAI_RATE = 24_000;
+const RTK_BROWSER_SDK_URL =
+  'https://cdn.jsdelivr.net/npm/@cloudflare/realtimekit@1.4.0/dist/browser.js';
+const RTK_INPUT_RMS_GATE = 0.008;
+const RTK_INPUT_TAIL_FRAMES = 24;
 
 interface RealtimeKitBridgeOptions {
   botId: string;
@@ -14,12 +18,15 @@ interface RealtimeKitBridgeOptions {
   roomToken: string;
   port: number;
   onInput: (samples: Int16Array) => void;
+  onQuietInput: (rms: number, frames: number) => void;
   onClosed: () => void;
 }
 
 interface BridgeMessage {
   t?: string;
   audio?: string;
+  rms?: number;
+  frames?: number;
   message?: string;
 }
 
@@ -57,25 +64,37 @@ export class RealtimeKitBridge {
   html(): string {
     const authToken = jsString(this.opts.authToken);
     const meetingId = jsString(this.opts.meetingId);
+    const botId = jsString(this.opts.botId);
     const participantId = jsString(this.opts.participantId);
     const wsUrl = jsString(this.wsUrl());
     return `<!doctype html>
 <html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body>
-<script src="https://cdn.jsdelivr.net/npm/@cloudflare/realtimekit@1.4.0/dist/browser.js"></script>
+<script src="${RTK_BROWSER_SDK_URL}"></script>
 <script>
 const authToken = ${authToken};
 const meetingId = ${meetingId};
+const botId = ${botId};
 const participantId = ${participantId};
 const wsUrl = ${wsUrl};
 const OPENAI_RATE = 24000;
+const INPUT_RMS_GATE = ${RTK_INPUT_RMS_GATE};
+const INPUT_TAIL_FRAMES = ${RTK_INPUT_TAIL_FRAMES};
 let meeting;
 let audioContext;
 let destination;
+let outputTrack;
 let nextPlayAt = 0;
+let inputFrames = 0;
+let sentInputFrames = 0;
+let suppressedInputFrames = 0;
+let lastQuietReportFrame = 0;
+let speechTailFrames = 0;
 const wiredTracks = new WeakSet();
 const watchedParticipants = new Set();
+let manualSubscriptionUnavailable = false;
+let manualSubscriptionNoticeLogged = false;
 
 function log(message) {
   console.log(String(message));
@@ -119,34 +138,115 @@ function participantArray(map) {
   return Object.values(map);
 }
 
+function participantIdentity(participant) {
+  if (!participant || typeof participant !== 'object') return [];
+  return [
+    participant.id,
+    participant.peerId,
+    participant.peer_id,
+    participant.userId,
+    participant.user_id,
+    participant.customParticipantId,
+    participant.custom_participant_id,
+    participant.clientSpecificId,
+    participant.client_specific_id,
+    participant.name,
+    participant.displayName,
+    participant.display_name,
+  ].filter((v) => v !== undefined && v !== null).map((v) => String(v));
+}
+
+function participantSummary(participant) {
+  return participantIdentity(participant).join('|') || 'unknown';
+}
+
+function isSelfParticipant(participant) {
+  const values = participantIdentity(participant);
+  if (values.includes(participantId)) return true;
+  return values.some((v) => v.startsWith('pendingbot:bot:' + botId + ':'));
+}
+
 function isBotParticipant(participant) {
-  const customId = String(
-    participant.customParticipantId || participant.clientSpecificId || participant.userId || '',
-  );
-  return customId.startsWith('pendingbot:bot:');
+  return participantIdentity(participant).some((v) => v.startsWith('pendingbot:bot:'));
+}
+
+function rmsFloat(samples) {
+  if (!samples || samples.length === 0) return 0;
+  let sum = 0;
+  for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
+  return Math.sqrt(sum / samples.length);
+}
+
+function sendInputFrame(input, rms) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return;
+  const out = new Int16Array(input.length);
+  for (let i = 0; i < input.length; i++) {
+    const v = Math.max(-1, Math.min(1, input[i]));
+    out[i] = v < 0 ? v * 32768 : v * 32767;
+  }
+  socket.send(JSON.stringify({ t: 'input', audio: i16ToB64(out), rate: audioContext.sampleRate }));
+  sentInputFrames++;
+  if (sentInputFrames === 1 || sentInputFrames % 100 === 0) {
+    log('input frames ' + sentInputFrames + ' rms ' + rms.toFixed(4));
+  }
+}
+
+function maybeSendInput(input) {
+  const rms = rmsFloat(input);
+  if (rms >= INPUT_RMS_GATE) {
+    speechTailFrames = INPUT_TAIL_FRAMES;
+    sendInputFrame(input, rms);
+    return;
+  }
+  if (speechTailFrames > 0) {
+    speechTailFrames--;
+    sendInputFrame(new Float32Array(input.length), 0);
+    return;
+  }
+  suppressedInputFrames++;
+  if (suppressedInputFrames === 1 || suppressedInputFrames % 250 === 0) {
+    const frames = suppressedInputFrames - lastQuietReportFrame;
+    lastQuietReportFrame = suppressedInputFrames;
+    try {
+      socket && socket.readyState === WebSocket.OPEN &&
+        socket.send(JSON.stringify({ t: 'quiet', rms, frames }));
+    } catch (_) {}
+    log('suppressed quiet input frames ' + suppressedInputFrames + ' rms ' + rms.toFixed(4));
+  }
 }
 
 function wireTrack(participant, track) {
-  if (!participant || participant.id === participantId) return;
-  if (isBotParticipant(participant)) return;
+  if (!participant || isSelfParticipant(participant)) return;
+  if (isBotParticipant(participant)) {
+    log('ignored bot participant audio ' + participantSummary(participant));
+    return;
+  }
   if (!track || wiredTracks.has(track)) return;
+  if (outputTrack && (track === outputTrack || track.id === outputTrack.id)) {
+    log('ignored local output audio track ' + participantSummary(participant));
+    return;
+  }
   wiredTracks.add(track);
   const stream = new MediaStream([track]);
   const source = audioContext.createMediaStreamSource(stream);
   const processor = audioContext.createScriptProcessor(2048, 1, 1);
+  const silentSink = audioContext.createGain();
+  silentSink.gain.value = 0;
   processor.onaudioprocess = (event) => {
-    if (!socket || socket.readyState !== WebSocket.OPEN) return;
-    const input = event.inputBuffer.getChannelData(0);
-    const out = new Int16Array(input.length);
-    for (let i = 0; i < input.length; i++) {
-      const v = Math.max(-1, Math.min(1, input[i]));
-      out[i] = v < 0 ? v * 32768 : v * 32767;
-    }
-    socket.send(JSON.stringify({ t: 'input', audio: i16ToB64(out), rate: audioContext.sampleRate }));
+    inputFrames++;
+    maybeSendInput(event.inputBuffer.getChannelData(0));
   };
   source.connect(processor);
-  processor.connect(audioContext.destination);
-  log('wired audio ' + participant.id);
+  processor.connect(silentSink);
+  silentSink.connect(audioContext.destination);
+  log('wired audio ' + participantSummary(participant));
+}
+
+function onParticipantAudioUpdate(participant, update) {
+  const payload = update || {};
+  const enabled = payload.audioEnabled !== undefined ? payload.audioEnabled : participant.audioEnabled;
+  const track = payload.audioTrack || participant.audioTrack;
+  if (enabled && track) wireTrack(participant, track);
 }
 
 async function watchParticipant(participant) {
@@ -159,10 +259,20 @@ async function watchParticipant(participant) {
         if (audioEnabled && audioTrack) wireTrack(participant, audioTrack);
       });
     }
-    try {
-      await meeting.participants.subscribe([participant.id], ['audio']);
-    } catch (err) {
-      log('subscribe failed ' + participant.id + ' ' + err);
+    if (!manualSubscriptionUnavailable) {
+      try {
+        await meeting.participants.subscribe([participant.id], ['audio']);
+      } catch (err) {
+        if (String(err).includes('ERR1206')) {
+          manualSubscriptionUnavailable = true;
+          if (!manualSubscriptionNoticeLogged) {
+            manualSubscriptionNoticeLogged = true;
+            log('manual subscription unavailable; using auto audio');
+          }
+        } else {
+          log('subscribe failed ' + participant.id + ' ' + err);
+        }
+      }
     }
   }
   if (participant.audioTrack) wireTrack(participant, participant.audioTrack);
@@ -191,14 +301,19 @@ socket.onopen = async () => {
   try {
     audioContext = new AudioContext({ sampleRate: 48000 });
     destination = audioContext.createMediaStreamDestination();
+    outputTrack = destination.stream.getAudioTracks()[0];
     if (!window.RealtimeKitClient) throw new Error('RealtimeKitClient global missing');
     meeting = await RealtimeKitClient.init({ authToken, defaults: { audio: false, video: false } });
     await meeting.join();
-    await meeting.self.enableAudio(destination.stream.getAudioTracks()[0]);
+    await meeting.self.enableAudio(outputTrack);
     meeting.participants.joined.on('participantJoined', wireAllParticipants);
     meeting.participants.joined.on('participantsUpdate', wireAllParticipants);
-    meeting.participants.audioSubscribed.on('participantJoined', wireAllParticipants);
-    meeting.participants.audioSubscribed.on('participantsUpdate', wireAllParticipants);
+    meeting.participants.joined.on('audioUpdate', onParticipantAudioUpdate);
+    if (meeting.participants.audioSubscribed) {
+      meeting.participants.audioSubscribed.on('participantJoined', wireAllParticipants);
+      meeting.participants.audioSubscribed.on('participantsUpdate', wireAllParticipants);
+      meeting.participants.audioSubscribed.on('audioUpdate', onParticipantAudioUpdate);
+    }
     wireAllParticipants();
     socket.send(JSON.stringify({ t: 'ready' }));
     log('joined ' + meetingId);
@@ -238,6 +353,8 @@ socket.onopen = async () => {
     }
     if (msg.t === 'input' && msg.audio) {
       this.opts.onInput(bytesToSamples(Buffer.from(msg.audio, 'base64')));
+    } else if (msg.t === 'quiet' && typeof msg.rms === 'number') {
+      this.opts.onQuietInput(msg.rms, Math.max(1, Math.round(msg.frames ?? 1)));
     } else if (msg.t === 'log' && msg.message) {
       console.log(`[rtk-bridge ${this.opts.botId}] ${msg.message}`);
     }

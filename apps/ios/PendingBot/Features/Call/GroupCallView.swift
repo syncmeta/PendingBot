@@ -85,16 +85,23 @@ struct GroupCallView: View {
 
     @ViewBuilder
     private var callContent: some View {
-        if session.mediaProvider == .realtimeKit {
-            realtimeKitContent
-        } else {
-            legacyContent
-        }
+        legacyContent
     }
 
     private var legacyContent: some View {
         ZStack(alignment: .topLeading) {
             Theme.Palette.canvas.ignoresSafeArea()
+            if session.mediaProvider == .realtimeKit, let room = session.realtimeKitRoom {
+                RealtimeKitPOCWebView(
+                    token: room.human.token,
+                    meetingId: room.meeting.id,
+                    allowsInteraction: false,
+                )
+                .frame(width: 1, height: 1)
+                .opacity(0.01)
+                .accessibilityHidden(true)
+                .allowsHitTesting(false)
+            }
             VStack(spacing: 0) {
                 topBar
                     .padding(.top, 44)
@@ -106,11 +113,8 @@ struct GroupCallView: View {
                         .padding(.top, 28)
                 }
                 Spacer(minLength: 0)
-                inviteRow
-                    .padding(.bottom, 18)
-                toolbar
-                    .padding(.bottom, 28)
             }
+            bottomControls
             minimizeButton
                 .frame(maxWidth: .infinity, alignment: .trailing)
                 .padding(.top, 44)
@@ -119,88 +123,16 @@ struct GroupCallView: View {
         }
     }
 
-    private var realtimeKitContent: some View {
-        ZStack(alignment: .topLeading) {
-            Theme.Palette.canvas.ignoresSafeArea()
-            VStack(spacing: 0) {
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Text(session.groupTitle.isEmpty ? "群语音" : session.groupTitle)
-                        .font(Theme.Fonts.title3).bold()
-                        .lineLimit(1)
-                    Text(realtimeKitStatusText)
-                        .font(Theme.Fonts.subheadline)
-                        .foregroundStyle(.secondary)
-                    Spacer(minLength: 0)
-                }
-                .padding(.top, 44)
-                .padding(.leading, 24)
-                .padding(.trailing, 76)
-
-                Group {
-                    if let room = session.realtimeKitRoom {
-                        RealtimeKitPOCWebView(
-                            token: room.human.token,
-                            meetingId: room.meeting.id,
-                        )
-                    } else {
-                        VStack(spacing: 12) {
-                            ProgressView()
-                            Text("RealtimeKit 准备中")
-                                .font(Theme.Fonts.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }
-                }
-                .padding(.top, 18)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .zIndex(0)
-
-                realtimeKitToolbar
-                    .padding(.bottom, 28)
-                    .zIndex(10)
-            }
-            minimizeButton
-                .frame(maxWidth: .infinity, alignment: .trailing)
-                .padding(.top, 44)
-                .padding(.trailing, 16)
-                .zIndex(11)
+    private var bottomControls: some View {
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+            inviteRow
+                .padding(.bottom, 18)
+            toolbar
+                .padding(.bottom, 28)
         }
-    }
-
-    private var realtimeKitToolbar: some View {
-        HStack(spacing: 28) {
-            if !session.addableBots.isEmpty {
-                labeledControl("机器人") {
-                    Button {
-                        Haptics.tap()
-                        showingAddBot = true
-                    } label: {
-                        Image(systemName: "sparkle")
-                            .font(Theme.Fonts.glyph(size: 22, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .frame(width: 64, height: 64)
-                            .background(Circle().fill(Self.botInviteInk))
-                    }
-                    .disabled(isHangUpDisabled)
-                    .accessibilityLabel("叫机器人")
-                }
-            }
-            labeledControl("免提") { speakerButton }
-            labeledControl("离开") { hangUpButton }
-            if session.isPrivileged {
-                labeledControl("散会") { endAllButton }
-            }
-        }
-    }
-
-    private var realtimeKitStatusText: String {
-        switch session.phase {
-        case .idle, .connecting: return "接通中"
-        case .connected: return "RealtimeKit"
-        case .hangingUp: return "结束中…"
-        case .terminated: return "已结束"
-        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        .zIndex(4)
     }
 
     // MARK: - Top bar
@@ -281,7 +213,6 @@ struct GroupCallView: View {
                     .padding(.trailing, 16)
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
-            Spacer()
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
     }
@@ -774,6 +705,7 @@ struct GroupCallView: View {
 struct RealtimeKitPOCWebView: UIViewRepresentable {
     let token: String
     let meetingId: String
+    var allowsInteraction: Bool = true
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -783,9 +715,11 @@ struct RealtimeKitPOCWebView: UIViewRepresentable {
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
+        config.userContentController.add(context.coordinator, name: "rtkLog")
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.uiDelegate = context.coordinator
         webView.navigationDelegate = context.coordinator
+        webView.isUserInteractionEnabled = allowsInteraction
         webView.loadHTMLString(html, baseURL: URL(string: "https://pendingbot.local"))
         return webView
     }
@@ -819,7 +753,7 @@ struct RealtimeKitPOCWebView: UIViewRepresentable {
             <div id="state">idle</div>
             <div id="log" class="muted"></div>
           </div>
-          <script src="https://cdn.jsdelivr.net/npm/@cloudflare/realtimekit@latest/dist/browser.js"></script>
+          <script src="https://cdn.jsdelivr.net/npm/@cloudflare/realtimekit@1.4.0/dist/browser.js"></script>
           <script>
             const authToken = \(encodedToken);
             const meetingId = \(encodedMeetingId);
@@ -827,9 +761,131 @@ struct RealtimeKitPOCWebView: UIViewRepresentable {
             const log = document.getElementById('log');
             let joining = false;
             let joined = false;
+            let manualSubscriptionUnavailable = false;
+            let manualSubscriptionNoticeLogged = false;
+            let meeting = null;
+            let localStream = null;
+            const remoteAudio = new Map();
+            const remoteTrackIds = new Map();
+            const subscribedParticipants = new Set();
             document.getElementById('meeting').textContent = meetingId;
             function append(msg) {
               log.textContent += "\\n" + new Date().toISOString().slice(11, 19) + " " + msg;
+              try {
+                window.webkit && window.webkit.messageHandlers.rtkLog.postMessage(String(msg));
+              } catch (_) {}
+            }
+            function participantArray(map) {
+              if (!map) return [];
+              if (typeof map.toArray === 'function') return map.toArray();
+              if (typeof map.values === 'function') return Array.from(map.values());
+              return Object.values(map);
+            }
+            function participantKey(participant) {
+              return String(participant && (participant.id || participant.peerId || participant.userId) || '');
+            }
+            function attachRemoteAudio(participant, audioTrack) {
+              const track = audioTrack || (participant && participant.audioTrack);
+              if (!track) return;
+              const key = participantKey(participant);
+              if (!key) return;
+              let audio = remoteAudio.get(key);
+              if (audio && remoteTrackIds.get(key) === track.id) return;
+              if (!audio) {
+                audio = document.createElement('audio');
+                audio.autoplay = true;
+                audio.playsInline = true;
+                audio.controls = false;
+                audio.muted = false;
+                audio.style.display = 'none';
+                document.body.appendChild(audio);
+                remoteAudio.set(key, audio);
+              }
+              audio.autoplay = true;
+              audio.playsInline = true;
+              audio.controls = false;
+              audio.muted = false;
+              audio.srcObject = new MediaStream([track]);
+              remoteTrackIds.set(key, track.id);
+              audio.play().then(() => {
+                append('remote audio attached ' + key);
+              }).catch((err) => {
+                append('remote audio play failed ' + key + ' ' + err);
+              });
+            }
+            function wireParticipant(participant) {
+              if (!participant) return;
+              if (participant.audioTrack) attachRemoteAudio(participant, participant.audioTrack);
+              if (participant.audioEnabled && participant.audioTrack) {
+                attachRemoteAudio(participant, participant.audioTrack);
+              }
+            }
+            async function subscribeParticipant(participant) {
+              if (!meeting || !participant) return;
+              const key = participantKey(participant);
+              if (!key) return;
+              if (
+                meeting.participants &&
+                typeof meeting.participants.subscribe === 'function' &&
+                !manualSubscriptionUnavailable &&
+                !subscribedParticipants.has(key)
+              ) {
+                try {
+                  subscribedParticipants.add(key);
+                  await meeting.participants.subscribe([key], ['audio']);
+                  append('subscribed audio ' + key);
+                } catch (err) {
+                  if (String(err).includes('ERR1206')) {
+                    manualSubscriptionUnavailable = true;
+                    if (!manualSubscriptionNoticeLogged) {
+                      manualSubscriptionNoticeLogged = true;
+                      append('manual subscription unavailable; using auto audio');
+                    }
+                  } else {
+                    subscribedParticipants.delete(key);
+                    append('subscribe failed ' + key + ' ' + err);
+                  }
+                }
+              }
+              wireParticipant(participant);
+            }
+            function wireAllParticipants() {
+              for (const p of participantArray(meeting && meeting.participants && meeting.participants.joined)) {
+                subscribeParticipant(p);
+              }
+              for (const p of participantArray(meeting && meeting.participants && meeting.participants.active)) {
+                subscribeParticipant(p);
+              }
+            }
+            function onAudioUpdate(participant, update) {
+              const payload = update || {};
+              const enabled = payload.audioEnabled !== undefined ? payload.audioEnabled : participant.audioEnabled;
+              const track = payload.audioTrack || participant.audioTrack;
+              if (enabled && track) attachRemoteAudio(participant, track);
+            }
+            async function enableLocalAudio() {
+              if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                append('getUserMedia unavailable; falling back to SDK audio');
+                await meeting.self.enableAudio();
+                return;
+              }
+              localStream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                  echoCancellation: true,
+                  noiseSuppression: true,
+                  autoGainControl: true
+                },
+                video: false
+              });
+              const track = localStream.getAudioTracks()[0];
+              if (!track) throw new Error('no local microphone track');
+              try {
+                await meeting.self.enableAudio(track);
+              } catch (err) {
+                append('enableAudio(track) failed; trying SDK default ' + err);
+                await meeting.self.enableAudio();
+              }
+              append('local audio enabled');
             }
             async function join() {
               if (joining || joined) return;
@@ -839,9 +895,9 @@ struct RealtimeKitPOCWebView: UIViewRepresentable {
                 if (!window.RealtimeKitClient) {
                   throw new Error('RealtimeKitClient global missing');
                 }
-                const meeting = await RealtimeKitClient.init({
+                meeting = await RealtimeKitClient.init({
                   authToken,
-                  defaults: { audio: true, video: false }
+                  defaults: { audio: false, video: false }
                 });
                 window.__rtkMeeting = meeting;
                 state.textContent = 'joining';
@@ -852,6 +908,18 @@ struct RealtimeKitPOCWebView: UIViewRepresentable {
                 } else {
                   throw new Error('meeting has no join method');
                 }
+                await enableLocalAudio();
+                if (meeting.participants && meeting.participants.joined) {
+                  meeting.participants.joined.on('participantJoined', wireAllParticipants);
+                  meeting.participants.joined.on('participantsUpdate', wireAllParticipants);
+                  meeting.participants.joined.on('audioUpdate', onAudioUpdate);
+                }
+                if (meeting.participants && meeting.participants.active) {
+                  meeting.participants.active.on('participantJoined', wireAllParticipants);
+                  meeting.participants.active.on('participantsUpdate', wireAllParticipants);
+                  meeting.participants.active.on('audioUpdate', onAudioUpdate);
+                }
+                wireAllParticipants();
                 state.textContent = 'joined';
                 joined = true;
                 append('joined');
@@ -876,7 +944,16 @@ struct RealtimeKitPOCWebView: UIViewRepresentable {
         return String(array.dropFirst().dropLast())
     }
 
-    final class Coordinator: NSObject, WKUIDelegate, WKNavigationDelegate {
+    final class Coordinator: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMessageHandler {
+        func userContentController(
+            _ userContentController: WKUserContentController,
+            didReceive message: WKScriptMessage,
+        ) {
+            if message.name == "rtkLog" {
+                print("[rtk-webview]", message.body)
+            }
+        }
+
         @available(iOS 15.0, *)
         func webView(
             _ webView: WKWebView,

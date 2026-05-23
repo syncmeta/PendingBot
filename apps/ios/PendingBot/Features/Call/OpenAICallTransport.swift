@@ -817,6 +817,9 @@ final class OpenAIWebSocketTransport: NSObject, CallTransport {
                 playoutDepthMs: nil,
                 underruns: nil,
                 maxGapMs: nil,
+                inputLevel: nil,
+                inputFrames: nil,
+                quietFrames: nil,
                 connected: true,
             ),
             CallParticipantDiagnostic(
@@ -828,6 +831,9 @@ final class OpenAIWebSocketTransport: NSObject, CallTransport {
                 playoutDepthMs: nil,
                 underruns: nil,
                 maxGapMs: maxAudioDeltaGapMs,
+                inputLevel: nil,
+                inputFrames: nil,
+                quietFrames: nil,
                 connected: didSignalConnected,
             ),
         ]

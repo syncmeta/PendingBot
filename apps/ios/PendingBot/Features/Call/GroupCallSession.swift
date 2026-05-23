@@ -750,6 +750,9 @@ extension GroupCallSession: GroupCallTransportDelegate {
             playoutDepthMs: nil,
             underruns: nil,
             maxGapMs: nil,
+            inputLevel: nil,
+            inputFrames: nil,
+            quietFrames: nil,
             connected: true,
         )
         snapshot.participants = [local] + mediaParticipants
@@ -777,6 +780,9 @@ extension GroupCallSession: GroupCallTransportDelegate {
             playoutDepthMs: p.playoutDepthMs,
             underruns: p.underruns,
             maxGapMs: p.maxGapMs,
+            inputLevel: p.inputLevel,
+            inputFrames: p.inputFrames,
+            quietFrames: p.quietFrames,
             connected: p.streamConnected ?? p.ingestConnected ?? p.modelSessionReady,
         )
     }

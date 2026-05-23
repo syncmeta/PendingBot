@@ -20,6 +20,9 @@ struct CallParticipantDiagnostic: Sendable, Equatable, Identifiable {
     let playoutDepthMs: Int?
     let underruns: Int?
     let maxGapMs: Int?
+    let inputLevel: Double?
+    let inputFrames: Int?
+    let quietFrames: Int?
     let connected: Bool?
 
     var identityKey: String { "\(kind.rawValue):\(id)" }
@@ -86,6 +89,9 @@ struct GroupMediaDiagnostics: Sendable, Equatable, Decodable {
         let playoutDepthMs: Int?
         let underruns: Int?
         let maxGapMs: Int?
+        let inputLevel: Double?
+        let inputFrames: Int?
+        let quietFrames: Int?
         let streamConnected: Bool?
         let ingestConnected: Bool?
         let modelSessionReady: Bool?
@@ -160,7 +166,12 @@ struct CallDiagnosticsPanel: View {
                                 .font(Theme.Fonts.subheadline)
                                 .lineLimit(1)
                             Spacer()
-                            if let depth = p.playoutDepthMs {
+                            if let inputFrames = p.inputFrames, let quietFrames = p.quietFrames {
+                                Text("入 \(inputFrames) 静 \(quietFrames)")
+                                    .font(Theme.Fonts.caption)
+                                    .monospacedDigit()
+                                    .foregroundStyle(.secondary)
+                            } else if let depth = p.playoutDepthMs {
                                 Text("缓冲 \(formatDuration(depth))")
                                     .font(Theme.Fonts.caption)
                                     .monospacedDigit()
@@ -475,6 +486,9 @@ final class WebRTCDiagnosticsSampler {
                 playoutDepthMs: nil,
                 underruns: nil,
                 maxGapMs: nil,
+                inputLevel: nil,
+                inputFrames: nil,
+                quietFrames: nil,
                 connected: true,
             ),
             CallParticipantDiagnostic(
@@ -486,6 +500,9 @@ final class WebRTCDiagnosticsSampler {
                 playoutDepthMs: nil,
                 underruns: nil,
                 maxGapMs: nil,
+                inputLevel: nil,
+                inputFrames: nil,
+                quietFrames: nil,
                 connected: nil,
             ),
         ]
