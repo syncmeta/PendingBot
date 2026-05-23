@@ -61,6 +61,8 @@ interface RealtimeKitApiError {
 interface RealtimeKitApiResponse<T> {
   success?: boolean;
   data?: T;
+  token?: string;
+  authToken?: string;
   error?: RealtimeKitApiError;
   errors?: RealtimeKitApiError[];
 }
@@ -75,7 +77,16 @@ interface ParticipantData {
   custom_participant_id?: string;
   name?: string | null;
   preset_name?: string;
+  preset_id?: string;
   token?: string;
+  authToken?: string;
+  auth_token?: string;
+}
+
+interface ParticipantTokenData {
+  token?: string;
+  authToken?: string;
+  auth_token?: string;
 }
 
 export function realtimeKitAppFromEnv(env: Env): RealtimeKitApp | null {
@@ -130,6 +141,17 @@ async function realtimeKitFetch<T>(
   if (!json.data) {
     throw new Error(`RealtimeKit ${method} ${path} failed: missing data`);
   }
+  if (
+    typeof json.data === 'object' &&
+    json.data !== null &&
+    (json.token || json.authToken)
+  ) {
+    return {
+      ...(json.data as Record<string, unknown>),
+      ...(json.token ? { token: json.token } : {}),
+      ...(json.authToken ? { authToken: json.authToken } : {}),
+    } as T;
+  }
   return json.data;
 }
 
@@ -175,16 +197,34 @@ export async function addRealtimeKitParticipant(
     },
     fetcher,
   );
-  if (!data.id || !data.custom_participant_id || !data.preset_name || !data.token) {
-    throw new Error(`RealtimeKit POST ${path} failed: missing participant token`);
+  const token = data.token ?? data.authToken ?? data.auth_token;
+  if (!data.id || !data.custom_participant_id) {
+    throw new Error(`RealtimeKit POST ${path} failed: missing participant data`);
   }
+  const resolvedToken =
+    token ?? (await refreshRealtimeKitParticipantToken(app, meetingId, data.id, fetcher));
   return {
     id: data.id,
     customParticipantId: data.custom_participant_id,
     displayName: data.name,
-    presetName: data.preset_name,
-    token: data.token,
+    presetName: data.preset_name ?? opts.presetName,
+    token: resolvedToken,
   };
+}
+
+async function refreshRealtimeKitParticipantToken(
+  app: RealtimeKitApp,
+  meetingId: string,
+  participantId: string,
+  fetcher: Fetcher,
+): Promise<string> {
+  const path = `/meetings/${meetingId}/participants/${participantId}/token`;
+  const data = await realtimeKitFetch<ParticipantTokenData>(app, 'POST', path, {}, fetcher);
+  const token = data.token ?? data.authToken ?? data.auth_token;
+  if (!token) {
+    throw new Error(`RealtimeKit POST ${path} failed: missing participant token`);
+  }
+  return token;
 }
 
 export async function bootstrapRealtimeKitGroupVoice(

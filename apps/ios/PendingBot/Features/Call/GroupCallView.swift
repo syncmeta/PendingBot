@@ -677,7 +677,7 @@ struct GroupCallView: View {
 }
 
 #if DEBUG
-private struct RealtimeKitPOCWebView: UIViewRepresentable {
+struct RealtimeKitPOCWebView: UIViewRepresentable {
     let token: String
     let meetingId: String
 

@@ -37,6 +37,14 @@ _（暂无）_
 
 ## 🟡 拆东墙补西墙
 
+### 🟡 RealtimeKit POC 入口绕过了正式群语音 presentation
+- **发现**: 2026-05-23 · codex/cf-realtimekit-poc
+- **位置**: apps/ios/PendingBot/Features/Message/ConversationView.swift、apps/ios/PendingBot/Features/Call/GroupCallView.swift
+- **问题**: 为了在两个模拟器上验证 RealtimeKit 房间，Conversation DEBUG header 临时加了 `RealtimeKit POC` 按钮直接请求 bootstrap 并弹 WebView；正式群语音按钮/active call banner 到 `GroupCallView` 的 presentation 在验证时没有稳定打开。
+- **影响**: POC 验证路径和正式用户路径分叉，容易出现“调试入口可用、正式入口不可用”的假阳性；后续接 bot participant 和计费前必须把正式入口的状态机、sheet/fullScreenCover 归一。
+- **建议**: 把正式群语音入口收敛到同一个 room state coordinator，由它负责创建/恢复房间、展示通话 UI、挂接 RealtimeKit/OpenAI participant 与计费状态；DEBUG 入口只保留为同一 coordinator 的诊断开关。
+- **状态**: 待办
+
 ### 🟡 RealtimeKit POC 仍未接入正式房间生命周期
 - **发现**: 2026-05-23 · codex/cf-realtimekit-poc
 - **位置**: apps/edge/src/routes/group-voice.ts、apps/edge/src/lib/realtimekit.ts

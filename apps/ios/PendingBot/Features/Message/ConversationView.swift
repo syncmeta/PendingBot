@@ -171,6 +171,11 @@ struct ConversationView: View {
     /// In-flight / done state for the pre-chat 请它写信 action.
     @State private var triggeringLetter = false
     @State private var letterTriggered = false
+    #if DEBUG
+    @State private var showingRealtimeKitPOC = false
+    @State private var realtimeKitPOC: GroupVoiceRealtimeKitBootstrapResponse?
+    @State private var realtimeKitStatus: String?
+    #endif
     @State private var saveAsSkillBody: String?
     /// Body of a message the user wants to partial-copy. The bubble's
     /// own `.textSelection(.enabled)` is shadowed by SwiftUI's
@@ -837,6 +842,11 @@ struct ConversationView: View {
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
+        #if DEBUG
+        .sheet(isPresented: $showingRealtimeKitPOC) {
+            realtimeKitPOCSheet
+        }
+        #endif
         .onChange(of: photoPickerItems) { _, items in
             guard !items.isEmpty else { return }
             uploadTasks.append(Task { await ingestPhotos(items) })
@@ -861,6 +871,55 @@ struct ConversationView: View {
             Button("好") { error = nil }
         } message: { Text(error ?? "") }
     }
+
+    #if DEBUG
+    private var realtimeKitPOCSheet: some View {
+        NavigationStack {
+            Group {
+                if let realtimeKitPOC {
+                    RealtimeKitPOCWebView(
+                        token: realtimeKitPOC.human.token,
+                        meetingId: realtimeKitPOC.meeting.id,
+                    )
+                    .ignoresSafeArea(edges: .bottom)
+                } else {
+                    VStack(spacing: 12) {
+                        ProgressView()
+                        Text(realtimeKitStatus ?? "RealtimeKit 准备中")
+                            .font(Theme.Fonts.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .navigationTitle("RealtimeKit POC")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") {
+                        showingRealtimeKitPOC = false
+                        realtimeKitPOC = nil
+                    }
+                }
+            }
+        }
+    }
+
+    private func openRealtimeKitPOC() async {
+        realtimeKitStatus = "创建 RealtimeKit participant…"
+        realtimeKitPOC = nil
+        showingRealtimeKitPOC = true
+        do {
+            realtimeKitPOC = try await VoiceCallAPI().groupVoiceRealtimeKitBootstrap(
+                conversationId: conversation.id,
+                botId: nil,
+            )
+            realtimeKitStatus = nil
+        } catch {
+            showingRealtimeKitPOC = false
+            self.error = "RealtimeKit POC 启动失败：\(error.localizedDescription)"
+        }
+    }
+    #endif
 
     /// The composer + its banners (freeze / continue / @-mention picker),
     /// mounted as a UIKit inputAccessoryView so it tracks the keyboard
@@ -1221,6 +1280,19 @@ struct ConversationView: View {
                 .accessibilityLabel("语音通话")
             }
             if canStartGroupCall {
+                #if DEBUG
+                Button {
+                    Haptics.tap()
+                    Task { await openRealtimeKitPOC() }
+                } label: {
+                    Image(systemName: "antenna.radiowaves.left.and.right")
+                        .font(Theme.Fonts.glyph(size: 17, weight: .regular))
+                        .foregroundStyle(.blue)
+                        .frame(width: 32, height: 32)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("RealtimeKit POC")
+                #endif
                 Button {
                     Haptics.tap()
                     startGroupCall()

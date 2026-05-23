@@ -150,6 +150,131 @@ describe('addRealtimeKitParticipant', () => {
       ),
     ).rejects.toThrow('RealtimeKit POST /meetings/meeting-1/participants failed: 10020 unknown preset');
   });
+
+  it('accepts the authToken shape returned by older RealtimeKit docs', async () => {
+    const fetcher = vi.fn(async () =>
+      Response.json({
+        success: true,
+        data: {
+          id: 'participant-1',
+          custom_participant_id: 'user:u1',
+          name: 'Alice',
+          preset_name: 'group_call_host',
+          authToken: 'join-token',
+        },
+      }, { status: 201 }),
+    );
+
+    await expect(
+      addRealtimeKitParticipant(
+        { accountId: 'acct-1', appId: 'app-1', apiToken: 'secret-1' },
+        'meeting-1',
+        {
+          customParticipantId: 'user:u1',
+          displayName: 'Alice',
+          presetName: 'group_call_host',
+        },
+        fetcher,
+      ),
+    ).resolves.toMatchObject({ token: 'join-token' });
+  });
+
+  it('accepts a top-level token from the participant response envelope', async () => {
+    const fetcher = vi.fn(async () =>
+      Response.json({
+        success: true,
+        token: 'join-token',
+        data: {
+          id: 'participant-1',
+          custom_participant_id: 'user:u1',
+          name: 'Alice',
+          preset_name: 'group_call_host',
+        },
+      }, { status: 201 }),
+    );
+
+    await expect(
+      addRealtimeKitParticipant(
+        { accountId: 'acct-1', appId: 'app-1', apiToken: 'secret-1' },
+        'meeting-1',
+        {
+          customParticipantId: 'user:u1',
+          displayName: 'Alice',
+          presetName: 'group_call_host',
+        },
+        fetcher,
+      ),
+    ).resolves.toMatchObject({ token: 'join-token' });
+  });
+
+  it('refreshes a participant token when add participant omits it', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({
+          success: true,
+          data: {
+            id: 'participant-1',
+            custom_participant_id: 'user:u1',
+            name: 'Alice',
+            preset_name: 'group_call_host',
+          },
+        }, { status: 201 }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          success: true,
+          data: { token: 'refreshed-token' },
+        }, { status: 200 }),
+      );
+
+    const participant = await addRealtimeKitParticipant(
+      { accountId: 'acct-1', appId: 'app-1', apiToken: 'secret-1' },
+      'meeting-1',
+      {
+        customParticipantId: 'user:u1',
+        displayName: 'Alice',
+        presetName: 'group_call_host',
+      },
+      fetcher,
+    );
+
+    expect(participant.token).toBe('refreshed-token');
+    expect(fetchCall(fetcher, 1)[0]).toBe(
+      'https://api.cloudflare.com/client/v4/accounts/acct-1/realtime/kit/app-1/meetings/meeting-1/participants/participant-1/token',
+    );
+  });
+
+  it('uses the requested preset when the live API returns preset_id instead of preset_name', async () => {
+    const fetcher = vi.fn(async () =>
+      Response.json({
+        success: true,
+        data: {
+          id: 'participant-1',
+          custom_participant_id: 'user:u1',
+          name: 'Alice',
+          preset_id: 'preset-uuid',
+          token: 'join-token',
+        },
+      }, { status: 201 }),
+    );
+
+    await expect(
+      addRealtimeKitParticipant(
+        { accountId: 'acct-1', appId: 'app-1', apiToken: 'secret-1' },
+        'meeting-1',
+        {
+          customParticipantId: 'user:u1',
+          displayName: 'Alice',
+          presetName: 'group_call_host',
+        },
+        fetcher,
+      ),
+    ).resolves.toMatchObject({
+      presetName: 'group_call_host',
+      token: 'join-token',
+    });
+  });
 });
 
 describe('bootstrapRealtimeKitGroupVoice', () => {

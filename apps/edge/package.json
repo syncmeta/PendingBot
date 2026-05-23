@@ -22,7 +22,7 @@
     "hono": "^4",
     "jose": "^5",
     "openai": "^4",
-    "zod": "^3",
+    "zod": "^4",
     "@modelcontextprotocol/sdk": "^1.29.0"
   },
   "devDependencies": {
