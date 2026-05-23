@@ -22,7 +22,7 @@ export function fmtUsd(n: number | string | null | undefined): string {
   return `$${v.toFixed(4)}`;
 }
 
-// PND (Pending Name Dollar, ∂) — user-facing accounting unit. $1 list
+// PND (Pending Name Credit, ∂) — user-facing accounting unit. $1 list
 // price = 2700 ∂. DB columns and SQL RPCs still say `*_credits`; that
 // stored value IS the PND amount (legacy naming, see usdToPnd() in
 // apps/edge/src/lib/billing.ts).

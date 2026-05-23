@@ -12,9 +12,9 @@ struct GroupBillingSheet: View {
 
     @Environment(\.dismiss) private var dismiss
 
-    @State private var mode: SplitMode = .hybrid
-    @State private var loadedMode: SplitMode = .hybrid
-    @State private var windowSeconds: Int = 86_400
+    @State private var payerMode: PayerMode = .all
+    @State private var members: [BillingMember] = []
+    @State private var payerIds: Set<String> = []
     @State private var capCredits: String = ""
     @State private var capEnabled: Bool = false
 
@@ -22,60 +22,35 @@ struct GroupBillingSheet: View {
     @State private var saving = false
     @State private var error: String?
 
-    private static let modeLabel: [SplitMode: String] = [
-        .hybrid: "条数 50% + token 50%(默认)",
-        .perHead: "按人头平分",
-        .perMessage: "按发言条数",
-        .perToken: "按发言 token",
-        .custom: "自定义比例(暂不支持编辑)",
-    ]
-
-    private static let windowOptions: [(Int, String)] = [
-        (3_600, "最近 1 小时"),
-        (86_400, "最近 1 天"),
-        (7 * 86_400, "最近 7 天"),
-    ]
-
-    private var modeOptions: [SplitMode] {
-        var modes: [SplitMode] = [.hybrid, .perHead, .perMessage, .perToken]
-        if mode == .custom {
-            modes.insert(.custom, at: 0)
-        }
-        return modes
-    }
-
     var body: some View {
         NavigationStack {
             Form {
                 if isAdmin {
-                    Section("分摊方式") {
-                        Picker("模式", selection: $mode) {
-                            ForEach(modeOptions, id: \.self) { m in
-                                Text(Self.modeLabel[m] ?? m.rawValue).tag(m)
-                                    .disabled(m == .custom)
-                            }
+                    Section {
+                        Picker("模式", selection: $payerMode) {
+                            Text("所有人 A").tag(PayerMode.all)
+                            Text("部分人 A").tag(PayerMode.some)
+                            Text("群主全包").tag(PayerMode.owner)
                         }
                         .pickerStyle(.inline)
                         .labelsHidden()
+                    } header: {
+                        Text("分摊方式")
+                    } footer: {
+                        Text("底层统一按人头分摊；差别只是谁参与 A 这笔费用。")
                     }
 
-                    if mode == .perMessage || mode == .perToken || mode == .hybrid {
-                        Section("统计窗口") {
-                            Picker("窗口", selection: $windowSeconds) {
-                                ForEach(Self.windowOptions, id: \.0) { (sec, label) in
-                                    Text(label).tag(sec)
-                                }
+                    if payerMode == .some {
+                        Section("参与 A 的成员") {
+                            ForEach(members) { member in
+                                Toggle(member.name, isOn: Binding(
+                                    get: { payerIds.contains(member.id) },
+                                    set: { on in
+                                        if on { payerIds.insert(member.id) }
+                                        else { payerIds.remove(member.id) }
+                                    }
+                                ))
                             }
-                            .pickerStyle(.inline)
-                            .labelsHidden()
-                        }
-                    }
-
-                    if mode == .custom {
-                        Section {
-                            Text("当前为自定义比例。要修改分摊方式,请选择上面的其他模式。")
-                                .font(Theme.Fonts.caption)
-                                .foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -126,24 +101,48 @@ struct GroupBillingSheet: View {
         defer { loading = false }
         do {
             let meId = (try? await SupabaseStack.shared.auth.session.user.id.uuidString.lowercased()) ?? ""
-            async let cfgResp: [BillingConfigDecodable] = SupabaseStack.shared
-                .from("group_billing_config")
-                .select("mode, window_seconds")
+            async let partResp: [ParticipantDecodable] = SupabaseStack.shared
+                .from("conversation_participants")
+                .select("participant_id, role, nickname")
                 .eq("conversation_id", value: conversationId)
+                .eq("participant_type", value: "user")
                 .execute()
                 .value
             async let mineResp: [MineDecodable] = SupabaseStack.shared
                 .from("group_member_billing")
-                .select("user_id, cap_credits")
+                .select("user_id, cap_credits, participates")
                 .eq("conversation_id", value: conversationId)
                 .eq("user_id", value: meId)
                 .execute()
                 .value
-            if let cfg = (try await cfgResp).first {
-                let loaded = SplitMode(rawValue: cfg.mode) ?? .hybrid
-                mode = loaded
-                loadedMode = loaded
-                windowSeconds = cfg.window_seconds
+            async let billingResp: [MemberBillingDecodable] = SupabaseStack.shared
+                .from("group_member_billing")
+                .select("user_id, participates")
+                .eq("conversation_id", value: conversationId)
+                .execute()
+                .value
+            let parts = try await partResp
+            let billings = try await billingResp
+            let profiles = await fetchMemberProfiles(userIds: parts.map(\.participant_id))
+            members = parts.map { p in
+                let nick = p.nickname?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let profileName = profiles[p.participant_id] ?? ""
+                let name = (nick?.isEmpty == false ? nick! : profileName)
+                return BillingMember(
+                    id: p.participant_id,
+                    name: name.isEmpty ? String(p.participant_id.prefix(8)) : name,
+                    role: p.role
+                )
+            }
+            payerIds = Set(billings.filter { $0.participates }.map(\.user_id))
+            let allIds = Set(members.map(\.id))
+            let ownerIds = Set(members.filter { $0.role == "owner" }.map(\.id))
+            if payerIds == ownerIds, !ownerIds.isEmpty {
+                payerMode = .owner
+            } else if payerIds != allIds {
+                payerMode = .some
+            } else {
+                payerMode = .all
             }
             if let mine = (try await mineResp).first {
                 if let cap = mine.cap_credits {
@@ -170,19 +169,40 @@ struct GroupBillingSheet: View {
                 let windowSeconds: Int
                 let customShares: [String]?
             }
-            if mode != .custom {
+            await postVoid(
+                path: "v1/groups/\(conversationId)/billing",
+                body: BillingBody(
+                    mode: "per_head",
+                    windowSeconds: 86_400,
+                    customShares: nil,
+                ),
+            )
+            if error != nil { return }
+
+            let targetPayers: Set<String> = {
+                switch payerMode {
+                case .all: return Set(members.map(\.id))
+                case .some: return payerIds
+                case .owner: return Set(members.filter { $0.role == "owner" }.map(\.id))
+                }
+            }()
+            if targetPayers.isEmpty {
+                error = "至少要有一个成员参与 A"
+                return
+            }
+            struct ParticipatesBody: Encodable {
+                let userId: String
+                let participates: Bool
+            }
+            for member in members {
                 await postVoid(
-                    path: "v1/groups/\(conversationId)/billing",
-                    body: BillingBody(
-                        mode: mode.rawValue,
-                        windowSeconds: windowSeconds,
-                        customShares: nil,
+                    path: "v1/groups/\(conversationId)/participates",
+                    body: ParticipatesBody(
+                        userId: member.id,
+                        participates: targetPayers.contains(member.id),
                     ),
                 )
                 if error != nil { return }
-            } else if loadedMode != .custom {
-                error = "自定义比例编辑还没开放。请选择其他分摊方式。"
-                return
             }
         }
 
@@ -222,17 +242,64 @@ struct GroupBillingSheet: View {
 
     // MARK: - Models
 
-    enum SplitMode: String, CaseIterable, Hashable {
-        case custom, perHead = "per_head", perMessage = "per_message", perToken = "per_token", hybrid
+    enum PayerMode: Hashable {
+        case all, some, owner
     }
 
-    private struct BillingConfigDecodable: Decodable {
-        let mode: String
-        let window_seconds: Int
+    struct BillingMember: Identifiable, Hashable {
+        let id: String
+        let name: String
+        let role: String
     }
 
     private struct MineDecodable: Decodable {
         let user_id: String
         let cap_credits: Int?
+        let participates: Bool
+    }
+
+    private struct ParticipantDecodable: Decodable {
+        let participant_id: String
+        let role: String
+        let nickname: String?
+    }
+
+    private struct MemberBillingDecodable: Decodable {
+        let user_id: String
+        let participates: Bool
+    }
+
+    private func fetchMemberProfiles(userIds: [String]) async -> [String: String] {
+        guard !userIds.isEmpty else { return [:] }
+        do {
+            let url = HostedConfig.environment.workerURL
+                .appendingPathComponent("v1/contacts/profiles")
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            let token = try await SupabaseStack.shared.auth.session.accessToken
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            req.httpBody = try JSONSerialization.data(withJSONObject: [
+                "conversationId": conversationId,
+                "userIds": userIds,
+            ])
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                return [:]
+            }
+            struct Payload: Decodable {
+                struct Row: Decodable {
+                    let userId: String
+                    let displayName: String
+                }
+                let profiles: [Row]
+            }
+            let payload = try JSONDecoder().decode(Payload.self, from: data)
+            return Dictionary(uniqueKeysWithValues: payload.profiles.map {
+                ($0.userId, $0.displayName)
+            })
+        } catch {
+            return [:]
+        }
     }
 }

@@ -16,6 +16,22 @@ import type { AppBindings } from '../types';
 export const meRoutes = new Hono<AppBindings>();
 meRoutes.use('*', requireSession());
 
+function billingCategory(taskType: string, metadata: unknown): { key: string; label: string } {
+  const source = metadata && typeof metadata === 'object'
+    ? (metadata as Record<string, unknown>).source
+    : null;
+  if (taskType === 'message_reply') return { key: 'chat.reply', label: '聊天回复' };
+  if (taskType === 'group_router') return { key: 'group.routing', label: '群聊路由' };
+  if (taskType === 'voice_call') return { key: 'voice.call', label: '语音通话' };
+  if (taskType === 'envelope' || taskType === 'scroll') return { key: 'envelope.write', label: '来信生成' };
+  if (taskType === 'title') return { key: 'system.title', label: '自动标题' };
+  if (taskType === 'lookback') return { key: 'memory.lookback', label: '记忆回看' };
+  if (taskType === 'chat_memo') return { key: 'memory.memo', label: '聊天备忘' };
+  if (taskType === 'bot_note') return { key: 'memory.bot_note', label: '机器人笔记' };
+  if (taskType === 'tool' || source === 'web_tool') return { key: 'tool.web', label: '工具调用' };
+  return { key: `other.${taskType || 'unknown'}`, label: taskType || '未知' };
+}
+
 // GET /v1/me/profile — read-side for app-wide user preferences. Today
 // only exposes notification_preview_mode (lock-screen privacy knob); add
 // other preference fields here as they appear rather than scattering them
@@ -207,10 +223,13 @@ meRoutes.get('/billing/log', async (c) => {
       r.metadata && typeof r.metadata === 'object'
         ? ((r.metadata as Record<string, unknown>).bot_id as unknown)
         : null;
+    const category = billingCategory(r.task_type, r.metadata);
     return {
       id: r.id,
       created_at: r.created_at,
       task_type: r.task_type,
+      category_key: category.key,
+      category_label: category.label,
       model_id: r.model_id,
       cost_credits: Number(r.cost_credits) || 0,
       billing_status: r.billing_status,
@@ -250,6 +269,7 @@ meRoutes.get('/billing/summary', async (c) => {
   const byDay = new Map<string, number>();
   const byModel = new Map<string, number>();
   const byTask = new Map<string, number>();
+  const byCategory = new Map<string, { label: string; credits: number }>();
   const byBot = new Map<string, number>();
   for (const r of rows ?? []) {
     const credits = Number(r.cost_credits) || 0;
@@ -258,6 +278,10 @@ meRoutes.get('/billing/summary', async (c) => {
     const model = r.model_id || '(未知)';
     byModel.set(model, (byModel.get(model) ?? 0) + credits);
     byTask.set(r.task_type, (byTask.get(r.task_type) ?? 0) + credits);
+    const category = billingCategory(r.task_type, r.metadata);
+    const existing = byCategory.get(category.key) ?? { label: category.label, credits: 0 };
+    existing.credits += credits;
+    byCategory.set(category.key, existing);
     const botId =
       r.metadata && typeof r.metadata === 'object'
         ? (r.metadata as Record<string, unknown>).bot_id
@@ -287,6 +311,9 @@ meRoutes.get('/billing/summary', async (c) => {
       .sort((a, b) => (a.day < b.day ? -1 : 1)),
     by_model: ranked(byModel),
     by_task: ranked(byTask),
+    by_category: [...byCategory.entries()]
+      .map(([key, v]) => ({ key, label: v.label, credits: v.credits }))
+      .sort((a, b) => b.credits - a.credits),
     by_bot: ranked(byBot).map((e) => ({
       key: e.key,
       label: botName.get(e.key) ?? e.key.slice(0, 8),

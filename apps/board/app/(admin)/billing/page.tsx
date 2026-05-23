@@ -14,6 +14,23 @@ const USD_TO_PND = 2700;
 // source of truth at runtime.
 const DEFAULT_MARKUP = 2.5;
 
+function billingCategory(taskType: string, metadata?: unknown): { key: string; label: string } {
+  const source =
+    metadata && typeof metadata === 'object'
+      ? (metadata as Record<string, unknown>).source
+      : null;
+  if (taskType === 'message_reply') return { key: 'chat.reply', label: '聊天回复' };
+  if (taskType === 'group_router') return { key: 'group.routing', label: '群聊路由' };
+  if (taskType === 'voice_call') return { key: 'voice.call', label: '语音通话' };
+  if (taskType === 'envelope' || taskType === 'scroll') return { key: 'envelope.write', label: '来信生成' };
+  if (taskType === 'title') return { key: 'system.title', label: '自动标题' };
+  if (taskType === 'lookback') return { key: 'memory.lookback', label: '记忆回看' };
+  if (taskType === 'chat_memo') return { key: 'memory.memo', label: '聊天备忘' };
+  if (taskType === 'bot_note') return { key: 'memory.bot_note', label: '机器人笔记' };
+  if (taskType === 'tool' || source === 'web_tool') return { key: 'tool.web', label: '工具调用' };
+  return { key: `other.${taskType || 'unknown'}`, label: taskType || '未知' };
+}
+
 export default async function BillingDashboardPage() {
   const supa = supabaseAdmin();
   const since7d = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
@@ -124,12 +141,21 @@ export default async function BillingDashboardPage() {
   // scale this is fine (500 users × ~10 calls/day = 5k rows).
   const { data: spendRows } = await supa
     .from('audit_log')
-    .select('user_id, cost_credits')
+    .select('user_id, task_type, metadata, cost_credits')
     .gte('created_at', since7d)
-    .in('billing_status', ['billed', 'unbilled'])
-    .not('user_id', 'is', null);
+    .in('billing_status', ['billed', 'unbilled']);
   const spendByUser = new Map<string, number>();
+  const spendByCategory = new Map<string, { label: string; count: number; credits: number }>();
   for (const row of spendRows ?? []) {
+    const category = billingCategory(row.task_type ?? '', row.metadata);
+    const cat = spendByCategory.get(category.key) ?? {
+      label: category.label,
+      count: 0,
+      credits: 0,
+    };
+    cat.count += 1;
+    cat.credits += Number(row.cost_credits ?? 0);
+    spendByCategory.set(category.key, cat);
     if (!row.user_id) continue;
     spendByUser.set(
       row.user_id,
@@ -139,6 +165,9 @@ export default async function BillingDashboardPage() {
   const topSpenderIds = [...spendByUser.entries()]
     .sort((a, b) => b[1] - a[1])
     .slice(0, 10);
+  const allCategories = [...spendByCategory.entries()]
+    .map(([key, v]) => ({ key, ...v }))
+    .sort((a, b) => b.credits - a.credits);
   const { data: topUserRows } = topSpenderIds.length
     ? await supa
         .from('users')
@@ -334,6 +363,42 @@ export default async function BillingDashboardPage() {
               </tbody>
             </table>
           </div>
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-sm font-medium">
+          7d 消费分类
+          <span className="ml-2 text-xs text-muted-foreground">所有分类</span>
+        </h2>
+        <div className="overflow-x-auto rounded-lg border bg-card">
+          <table className="w-full text-sm">
+            <thead className="border-b text-left text-xs uppercase text-muted-foreground">
+              <tr>
+                <th className="px-4 py-2 font-medium">分类</th>
+                <th className="px-4 py-2 font-medium">key</th>
+                <th className="px-4 py-2 font-medium text-right">次数</th>
+                <th className="px-4 py-2 font-medium text-right">PND</th>
+              </tr>
+            </thead>
+            <tbody>
+              {allCategories.map((c) => (
+                <tr key={c.key} className="border-b last:border-0">
+                  <td className="px-4 py-2">{c.label}</td>
+                  <td className="px-4 py-2 font-mono text-xs text-muted-foreground">{c.key}</td>
+                  <td className="px-4 py-2 text-right tabular-nums">{fmtNumber(c.count)}</td>
+                  <td className="px-4 py-2 text-right tabular-nums">{fmtPnd(c.credits)}</td>
+                </tr>
+              ))}
+              {allCategories.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="px-4 py-6 text-center text-muted-foreground">
+                    最近 7 天没有计费消费
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </section>
 

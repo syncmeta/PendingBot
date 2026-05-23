@@ -12,6 +12,7 @@ const LINKS: { href: string; label: string }[] = [
   { href: '/mcp-servers', label: 'MCP servers' },
   { href: '/tools', label: 'Tools' },
   { href: '/prompts', label: 'Prompts' },
+  { href: '/presets', label: 'Presets' },
   { href: '/letters', label: 'Letters' },
   { href: '/users', label: 'Users' },
   { href: '/audit', label: 'Audit' },

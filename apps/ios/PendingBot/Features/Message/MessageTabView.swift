@@ -65,6 +65,8 @@ struct MessageTabView: View {
     /// carries the slug so AddBotSheet opens straight on the preview.
     @State private var addingBot = false
     @State private var addBotPrefill: String = ""
+    @State private var pendingScannedFriendHandle: String?
+    @State private var pendingScannedBotSlug: String?
     // Path-based nav for compact: keyed to .toolbar(.hidden, for: .tabBar)
     // so the bottom tab bar slides out alongside the push transition (rather
     // than snapping back in *after* the back transition finishes, which is
@@ -163,27 +165,31 @@ struct MessageTabView: View {
             .presentationDetents([.medium])
             .presentationDragIndicator(.visible)
         }
-        .sheet(isPresented: $scanning) {
+        .sheet(isPresented: $scanning, onDismiss: {
+            if let token = pendingScannedFriendHandle {
+                pendingScannedFriendHandle = nil
+                addFriendPrefill = token
+                addingFriend = true
+            } else if let slug = pendingScannedBotSlug {
+                pendingScannedBotSlug = nil
+                addBotPrefill = slug
+                addingBot = true
+            }
+        }) {
             ScanQRSheet(
                 onAdded: { Task { await load() } },
                 onScannedUserHandle: { token in
                     // Scanned a known user handle — flip to the add-friend
                     // preview page with the token pre-loaded, matching the
                     // 输号码 → 查找 review screen.
+                    pendingScannedFriendHandle = token
                     scanning = false
-                    addFriendPrefill = token
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                        addingFriend = true
-                    }
                 },
                 onScannedBotSlug: { slug in
                     // Scanned a bot-share QR — open the add-bot preview
                     // with the slug pre-loaded.
+                    pendingScannedBotSlug = slug
                     scanning = false
-                    addBotPrefill = slug
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                        addingBot = true
-                    }
                 }
             )
         }
@@ -1408,9 +1414,16 @@ private struct CreateGroupView: View {
 
     private struct BotDecodable: Decodable {
         let id: String
+        let slug: String?
         let display_name: String
         let model_id: String?
         let visibility: String?
+        let is_active: Bool?
+    }
+
+    private struct BotContactDecodable: Decodable {
+        let added_at: String?
+        let bot: BotDecodable
     }
 
     @State private var title = ""
@@ -1516,21 +1529,24 @@ private struct CreateGroupView: View {
     private func load() async {
         loading = true; defer { loading = false }
         do {
-            async let botRowsResp: [BotDecodable] = SupabaseStack.shared
-                .from("bots")
-                .select("id, display_name, model_id, visibility")
-                .eq("is_active", value: true)
+            async let botRowsResp: [BotContactDecodable] = SupabaseStack.shared
+                .from("user_bot_contacts")
+                .select("added_at, bot:bots!user_bot_contacts_bot_id_fkey!inner(id, slug, display_name, model_id, visibility, is_active)")
+                .order("added_at", ascending: true)
                 .execute()
                 .value
             async let humanRowsResp: [FriendsTabView.HumanPick] = ContactsAPI.fetchContacts()
-            // Drop private bots — open_group_conv RPC rejects them
-            // server-side, so showing them in the picker just leads to
-            // a confusing failure.
+            // Bot choices must match the user's bot contacts, not the
+            // global public bot table. Drop private and self bots because
+            // open_group_conv rejects private bots and self-chat is not a
+            // group participant.
             let bots = try await botRowsResp
-                .filter { $0.visibility != "private" }
+                .filter { $0.bot.is_active != false }
+                .filter { $0.bot.visibility != "private" }
+                .filter { !($0.bot.slug?.hasPrefix("self-") ?? false) }
                 .map { Member(
-                    id: $0.id, kind: .bot, name: $0.display_name,
-                    modelId: $0.model_id, avatarSeed: $0.id, avatarPath: nil
+                    id: $0.bot.id, kind: .bot, name: $0.bot.display_name,
+                    modelId: $0.bot.model_id, avatarSeed: $0.bot.id, avatarPath: nil
                 ) }
             let humans = try await humanRowsResp.map { h in
                 Member(

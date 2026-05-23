@@ -1,6 +1,6 @@
 import Foundation
 
-/// Wallet endpoints. PND (Pending Name Dollar, ∂) is the user-facing
+/// Wallet endpoints. PND (Pending Name Credit, ∂) is the user-facing
 /// accounting unit; the wire format still uses the legacy `*_credits`
 /// field names (cf. apps/edge/src/lib/billing.ts and the migration
 /// note in apps/board/lib/format.ts).
@@ -192,6 +192,8 @@ enum BillingService {
         let id: String
         let createdAt: String
         let taskType: String
+        let categoryKey: String?
+        let categoryLabel: String?
         let modelId: String
         let costCredits: Int
         let billingStatus: String
@@ -202,6 +204,8 @@ enum BillingService {
             case id
             case createdAt = "created_at"
             case taskType = "task_type"
+            case categoryKey = "category_key"
+            case categoryLabel = "category_label"
             case modelId = "model_id"
             case costCredits = "cost_credits"
             case billingStatus = "billing_status"

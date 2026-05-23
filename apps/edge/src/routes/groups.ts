@@ -52,6 +52,53 @@ function rpcError(err: unknown, fallback = 'database error') {
   return { status: 500 as const, body: { error: 'database', detail: msg } };
 }
 
+async function requireGroupAdmin(c: Parameters<typeof jsonError>[0], convId: string, userId: string) {
+  const supa = serviceClient(c.env);
+  const { data, error } = await supa
+    .from('conversation_participants')
+    .select('role')
+    .eq('conversation_id', convId)
+    .eq('participant_type', 'user')
+    .eq('participant_id', userId)
+    .maybeSingle();
+  if (error) return { error, role: null as string | null };
+  return { error: null, role: data?.role as string | null };
+}
+
+async function groupBillingInviteSnapshot(c: Parameters<typeof jsonError>[0], convId: string) {
+  const supa = serviceClient(c.env);
+  const { data: humanRows, error } = await supa
+    .from('conversation_participants')
+    .select('participant_id')
+    .eq('conversation_id', convId)
+    .eq('participant_type', 'user');
+  if (error) throw error;
+  const humanIds = (humanRows ?? []).map((r) => r.participant_id as string);
+  const { data: billingRows, error: billingErr } = await supa
+    .from('group_member_billing')
+    .select('user_id, participates')
+    .eq('conversation_id', convId);
+  if (billingErr) throw billingErr;
+  const participates = new Set(
+    (billingRows ?? [])
+      .filter((r) => r.participates !== false)
+      .map((r) => r.user_id as string),
+  );
+  const everyoneParticipates = humanIds.length === 0 || humanIds.every((id) => participates.has(id));
+  const inviteeParticipates = everyoneParticipates;
+  const payerCountAfter = participates.size + (inviteeParticipates ? 1 : 0);
+  const modeLabel = everyoneParticipates ? '所有人 A' : '部分人 A / 群主全包';
+  const text = inviteeParticipates
+    ? `接受邀请后会加入当前「${modeLabel}」分摊，预计 ${payerCountAfter} 人共同承担机器人 Token。`
+    : `当前群不是所有人分摊；接受邀请后默认不承担机器人 Token，管理员可在群设置里调整。`;
+  return {
+    mode_label: modeLabel,
+    invitee_participates: inviteeParticipates,
+    payer_count_after: payerCountAfter,
+    text,
+  };
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // Create
 // ─────────────────────────────────────────────────────────────────────
@@ -81,7 +128,66 @@ groupRoutes.post('/', async (c) => {
     const e = rpcError(error);
     return c.json(e.body, e.status);
   }
+  if (data) {
+    const supaSvc = serviceClient(c.env);
+    await supaSvc
+      .from('messages')
+      .insert({
+        client_message_id: crypto.randomUUID(),
+        conversation_id: data,
+        user_id: c.var.userId!,
+        role: 'user',
+        content: '群聊已创建',
+        status: 'done',
+        metadata: { source: 'group_system', event: 'created' },
+      });
+  }
   return c.json({ conversationId: data });
+});
+
+const TitleBody = z.object({
+  title: z.string().trim().min(1).max(80),
+});
+groupRoutes.post('/:id/title', async (c) => {
+  const convId = c.req.param('id');
+  let parsed: z.infer<typeof TitleBody>;
+  try {
+    parsed = TitleBody.parse(await c.req.json());
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+
+  const userId = c.var.userId!;
+  const supa = serviceClient(c.env);
+  const { data: member, error: memberErr } = await supa
+    .from('conversation_participants')
+    .select('role')
+    .eq('conversation_id', convId)
+    .eq('participant_type', 'user')
+    .eq('participant_id', userId)
+    .maybeSingle();
+  if (memberErr) return jsonError(c, 500, 'database_error', { detail: memberErr.message });
+  if (!member) return jsonError(c, 403, 'not_a_participant');
+  if (member.role !== 'owner' && member.role !== 'admin') {
+    return jsonError(c, 403, 'forbidden', { message: '只有群主或管理员可以修改群名' });
+  }
+
+  const title = parsed.title;
+  const now = new Date().toISOString();
+  const [{ error: metaErr }, { error: convErr }] = await Promise.all([
+    supa
+      .from('conversation_group_meta')
+      .update({ title, updated_at: now })
+      .eq('conversation_id', convId),
+    supa
+      .from('conversations')
+      .update({ title, updated_at: now })
+      .eq('id', convId),
+  ]);
+  if (metaErr || convErr) {
+    return jsonError(c, 500, 'database_error', { detail: metaErr?.message ?? convErr?.message });
+  }
+  return c.json({ ok: true, title });
 });
 
 // GET /v1/groups/random-name — returns a random place-name suggestion so
@@ -112,16 +218,179 @@ groupRoutes.post('/:id/invite-user', async (c) => {
     return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
-  const supa = userClient(c.env, c.var.userJwt!);
-  const { error } = await supa.rpc('group_invite_user', {
-    p_conv_id: convId,
-    p_target_user_id: parsed.userId,
-  });
-  if (error) {
-    const e = rpcError(error);
-    return c.json(e.body, e.status);
+  const inviterId = c.var.userId!;
+  const roleCheck = await requireGroupAdmin(c, convId, inviterId);
+  if (roleCheck.error) return jsonError(c, 500, 'database_error', { detail: roleCheck.error.message });
+  if (!roleCheck.role) return jsonError(c, 403, 'not_a_participant');
+  if (roleCheck.role !== 'owner' && roleCheck.role !== 'admin') {
+    return jsonError(c, 403, 'forbidden', { message: '只有群主或管理员可以邀请成员' });
   }
-  return c.json({ ok: true });
+
+  const supa = serviceClient(c.env);
+  const [{ data: target }, { data: existing }] = await Promise.all([
+    supa.from('users').select('id').eq('id', parsed.userId).maybeSingle(),
+    supa
+      .from('conversation_participants')
+      .select('participant_id')
+      .eq('conversation_id', convId)
+      .eq('participant_type', 'user')
+      .eq('participant_id', parsed.userId)
+      .maybeSingle(),
+  ]);
+  if (!target) return jsonError(c, 404, 'peer_not_found', { message: '用户不存在' });
+  if (existing) return jsonError(c, 409, 'conflict', { message: '对方已经在群里' });
+
+  let snapshot: Awaited<ReturnType<typeof groupBillingInviteSnapshot>>;
+  try {
+    snapshot = await groupBillingInviteSnapshot(c, convId);
+  } catch (err) {
+    return jsonError(c, 500, 'database_error', { detail: err instanceof Error ? err.message : String(err) });
+  }
+
+  const { data: pendingExisting, error: pendingErr } = await supa
+    .from('group_member_invitations')
+    .select('id')
+    .eq('conversation_id', convId)
+    .eq('invitee_id', parsed.userId)
+    .eq('status', 'pending')
+    .maybeSingle();
+  if (pendingErr) return jsonError(c, 500, 'database_error', { detail: pendingErr.message });
+
+  const { data, error } = pendingExisting
+    ? { data: pendingExisting, error: null }
+    : await supa
+      .from('group_member_invitations')
+      .insert({
+        conversation_id: convId,
+        inviter_id: inviterId,
+        invitee_id: parsed.userId,
+        status: 'pending',
+        billing_snapshot: snapshot,
+        invitee_participates: snapshot.invitee_participates,
+        decided_at: null,
+      })
+      .select('id')
+      .single();
+  if (error || !data) return jsonError(c, 500, 'database_error', { detail: error?.message });
+
+  return c.json({
+    ok: true,
+    pending: true,
+    invitationId: data.id,
+    billing: snapshot,
+  });
+});
+
+groupRoutes.get('/invitations', async (c) => {
+  const userId = c.var.userId!;
+  const supa = serviceClient(c.env);
+  const { data, error } = await supa
+    .from('group_member_invitations')
+    .select('id, conversation_id, inviter_id, invitee_id, status, billing_snapshot, invitee_participates, created_at, decided_at')
+    .eq('invitee_id', userId)
+    .order('created_at', { ascending: false });
+  if (error) return jsonError(c, 500, 'database_error', { detail: error.message });
+
+  const convIds = Array.from(new Set((data ?? []).map((r) => r.conversation_id as string)));
+  const inviterIds = Array.from(new Set((data ?? []).map((r) => r.inviter_id as string)));
+  const [{ data: metas, error: metaErr }, { data: inviters, error: inviterErr }] = await Promise.all([
+    convIds.length
+      ? supa.from('conversation_group_meta').select('conversation_id, title').in('conversation_id', convIds)
+      : Promise.resolve({ data: [], error: null }),
+    inviterIds.length
+      ? supa.from('users').select('id, display_name, avatar_path, custom_fields').in('id', inviterIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (metaErr || inviterErr) {
+    return jsonError(c, 500, 'database_error', { detail: metaErr?.message ?? inviterErr?.message });
+  }
+  const titleByConv = new Map((metas ?? []).map((m) => [m.conversation_id as string, (m.title as string | null) ?? '群聊']));
+  const inviterById = new Map((inviters ?? []).map((u) => {
+    const cf = u.custom_fields as Record<string, unknown> | null;
+    return [u.id as string, {
+      display_name: (u.display_name as string | null) ?? '',
+      avatar_path: (u.avatar_path as string | null) ?? null,
+      avatar_seed: typeof cf?.avatar_seed === 'string' ? cf.avatar_seed : (u.id as string),
+    }];
+  }));
+
+  return c.json({
+    invitations: (data ?? []).map((r) => ({
+      ...r,
+      group_title: titleByConv.get(r.conversation_id as string) ?? '群聊',
+      inviter: inviterById.get(r.inviter_id as string) ?? {
+        display_name: '',
+        avatar_path: null,
+        avatar_seed: r.inviter_id,
+      },
+    })),
+  });
+});
+
+const InvitationDecisionBody = z.object({ approve: z.boolean() });
+groupRoutes.post('/invitations/:inviteId/decide', async (c) => {
+  const inviteId = c.req.param('inviteId');
+  let parsed: z.infer<typeof InvitationDecisionBody>;
+  try {
+    parsed = InvitationDecisionBody.parse(await c.req.json());
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+
+  const userId = c.var.userId!;
+  const supa = serviceClient(c.env);
+  const { data: invite, error: inviteErr } = await supa
+    .from('group_member_invitations')
+    .select('id, conversation_id, invitee_id, status, invitee_participates')
+    .eq('id', inviteId)
+    .maybeSingle();
+  if (inviteErr) return jsonError(c, 500, 'database_error', { detail: inviteErr.message });
+  if (!invite) return jsonError(c, 404, 'request_not_found');
+  if (invite.invitee_id !== userId) return jsonError(c, 403, 'request_not_yours');
+  if (invite.status !== 'pending') return jsonError(c, 409, 'conflict', { message: '邀请已处理' });
+
+  const decidedStatus = parsed.approve ? 'approved' : 'rejected';
+  const now = new Date().toISOString();
+  if (parsed.approve) {
+    const { data: meta, error: metaErr } = await supa
+      .from('conversation_group_meta')
+      .select('max_members')
+      .eq('conversation_id', invite.conversation_id)
+      .maybeSingle();
+    if (metaErr) return jsonError(c, 500, 'database_error', { detail: metaErr.message });
+    const { count, error: countErr } = await supa
+      .from('conversation_participants')
+      .select('participant_id', { count: 'exact', head: true })
+      .eq('conversation_id', invite.conversation_id);
+    if (countErr) return jsonError(c, 500, 'database_error', { detail: countErr.message });
+    if ((count ?? 0) >= (meta?.max_members ?? 100)) {
+      return jsonError(c, 400, 'conflict', { message: '群成员已满' });
+    }
+    const [{ error: partErr }, { error: billingErr }] = await Promise.all([
+      supa.from('conversation_participants').insert({
+        conversation_id: invite.conversation_id,
+        participant_type: 'user',
+        participant_id: userId,
+        role: 'member',
+      }),
+      supa.from('group_member_billing').insert({
+        conversation_id: invite.conversation_id,
+        user_id: userId,
+        participates: invite.invitee_participates,
+      }),
+    ]);
+    if (partErr || billingErr) {
+      return jsonError(c, 500, 'database_error', { detail: partErr?.message ?? billingErr?.message });
+    }
+  }
+
+  const { error: updateErr } = await supa
+    .from('group_member_invitations')
+    .update({ status: decidedStatus, decided_at: now })
+    .eq('id', inviteId);
+  if (updateErr) return jsonError(c, 500, 'database_error', { detail: updateErr.message });
+
+  return c.json({ ok: true, status: decidedStatus, conversationId: invite.conversation_id });
 });
 
 const InviteBotBody = z.object({ botId: z.string().uuid() });
@@ -573,7 +842,42 @@ groupRoutes.get('/:id/join-requests', async (c) => {
     .eq('conversation_id', convId)
     .order('created_at', { ascending: false });
   if (error) return jsonError(c, 500, 'database_error', { detail: error.message });
-  return c.json({ requests: data ?? [] });
+  const requesterIds = Array.from(new Set((data ?? []).map((r) => r.requester_id as string)));
+  let profilesById = new Map<string, {
+    display_name: string | null;
+    avatar_path: string | null;
+    avatar_seed: string;
+  }>();
+  if (requesterIds.length > 0) {
+    const supaSvc = serviceClient(c.env);
+    const { data: profiles, error: profileErr } = await supaSvc
+      .from('users')
+      .select('id, display_name, avatar_path, custom_fields')
+      .in('id', requesterIds);
+    if (profileErr) return jsonError(c, 500, 'database_error', { detail: profileErr.message });
+    profilesById = new Map((profiles ?? []).map((p) => {
+      const cf = p.custom_fields as Record<string, unknown> | null;
+      const seed = typeof cf?.avatar_seed === 'string' && cf.avatar_seed.length > 0
+        ? cf.avatar_seed
+        : (p.id as string);
+      return [p.id as string, {
+        display_name: (p.display_name as string | null) ?? null,
+        avatar_path: (p.avatar_path as string | null) ?? null,
+        avatar_seed: seed,
+      }];
+    }));
+  }
+  return c.json({
+    requests: (data ?? []).map((r) => {
+      const profile = profilesById.get(r.requester_id as string);
+      return {
+        ...r,
+        requester_display_name: profile?.display_name ?? '',
+        requester_avatar_path: profile?.avatar_path ?? null,
+        requester_avatar_seed: profile?.avatar_seed ?? (r.requester_id as string),
+      };
+    }),
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────
