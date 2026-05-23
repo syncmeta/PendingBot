@@ -34,6 +34,7 @@ export interface AddRealtimeKitParticipantOptions {
 
 export interface BootstrapRealtimeKitGroupVoiceOptions {
   conversationId: string;
+  meeting?: RealtimeKitMeeting;
   humanUserId: string;
   humanDisplayName?: string | null;
   humanPresetName: string;
@@ -191,19 +192,22 @@ export async function bootstrapRealtimeKitGroupVoice(
   opts: BootstrapRealtimeKitGroupVoiceOptions,
   fetcher: Fetcher = fetch,
 ): Promise<BootstrapRealtimeKitGroupVoiceResult> {
-  const meeting = await createRealtimeKitMeeting(
-    app,
-    {
-      title: `PendingBot group voice ${opts.conversationId}`,
-      sessionKeepAliveSeconds: 60,
-    },
-    fetcher,
-  );
+  const meeting =
+    opts.meeting ??
+    (await createRealtimeKitMeeting(
+      app,
+      {
+        title: `PendingBot group voice ${opts.conversationId}`,
+        sessionKeepAliveSeconds: 60,
+      },
+      fetcher,
+    ));
+  const participantNonce = crypto.randomUUID();
   const human = await addRealtimeKitParticipant(
     app,
     meeting.id,
     {
-      customParticipantId: `pendingbot:user:${opts.humanUserId}`,
+      customParticipantId: `pendingbot:user:${opts.humanUserId}:${participantNonce}`,
       displayName: opts.humanDisplayName,
       presetName: opts.humanPresetName,
     },
@@ -214,7 +218,7 @@ export async function bootstrapRealtimeKitGroupVoice(
         app,
         meeting.id,
         {
-          customParticipantId: `pendingbot:bot:${opts.bot.botId}`,
+          customParticipantId: `pendingbot:bot:${opts.bot.botId}:${participantNonce}`,
           displayName: opts.bot.displayName,
           presetName: opts.bot.presetName,
         },

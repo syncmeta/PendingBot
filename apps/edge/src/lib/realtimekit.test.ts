@@ -167,7 +167,7 @@ describe('bootstrapRealtimeKitGroupVoice', () => {
           success: true,
           data: {
             id: 'participant-human',
-            custom_participant_id: 'pendingbot:user:u1',
+            custom_participant_id: 'pendingbot:user:u1:nonce',
             name: 'Alice',
             preset_name: 'group_call_host',
             token: 'human-token',
@@ -179,7 +179,7 @@ describe('bootstrapRealtimeKitGroupVoice', () => {
           success: true,
           data: {
             id: 'participant-bot',
-            custom_participant_id: 'pendingbot:bot:b1',
+            custom_participant_id: 'pendingbot:bot:b1:nonce',
             name: 'Marin',
             preset_name: 'group_call_participant',
             token: 'bot-token',
@@ -203,31 +203,68 @@ describe('bootstrapRealtimeKitGroupVoice', () => {
       fetcher,
     );
 
-    expect(result).toEqual({
-      meeting: { id: 'meeting-1', title: 'PendingBot group voice c1' },
+    expect(result.meeting).toEqual({ id: 'meeting-1', title: 'PendingBot group voice c1' });
+    expect(result.human).toMatchObject({
+      id: 'participant-human',
+      displayName: 'Alice',
+      presetName: 'group_call_host',
+      token: 'human-token',
+    });
+    expect(result.human.customParticipantId).toMatch(/^pendingbot:user:u1:/);
+    expect(result.bot).toMatchObject({
+      id: 'participant-bot',
+      displayName: 'Marin',
+      presetName: 'group_call_participant',
+      token: 'bot-token',
+    });
+    expect(result.bot?.customParticipantId).toMatch(/^pendingbot:bot:b1:/);
+
+    expect(JSON.parse(fetchCall(fetcher, 1)[1].body as string)).toMatchObject({
+      custom_participant_id: expect.stringMatching(/^pendingbot:user:u1:/),
+      preset_name: 'group_call_host',
+    });
+    expect(JSON.parse(fetchCall(fetcher, 2)[1].body as string)).toMatchObject({
+      custom_participant_id: expect.stringMatching(/^pendingbot:bot:b1:/),
+      preset_name: 'group_call_participant',
+    });
+  });
+
+  it('reuses an existing meeting id when supplied', async () => {
+    const fetcher = vi.fn(async () =>
+      Response.json({
+        success: true,
+        data: {
+          id: 'participant-human',
+          custom_participant_id: 'pendingbot:user:u1:nonce',
+          name: 'Alice',
+          preset_name: 'group_call_host',
+          token: 'human-token',
+        },
+      }, { status: 201 }),
+    );
+
+    const result = await bootstrapRealtimeKitGroupVoice(
+      { accountId: 'acct-1', appId: 'app-1', apiToken: 'secret-1' },
+      {
+        conversationId: 'c1',
+        meeting: { id: 'meeting-existing', title: 'Existing' },
+        humanUserId: 'u1',
+        humanDisplayName: 'Alice',
+        humanPresetName: 'group_call_host',
+      },
+      fetcher,
+    );
+
+    expect(result).toMatchObject({
+      meeting: { id: 'meeting-existing', title: 'Existing' },
       human: {
         id: 'participant-human',
-        customParticipantId: 'pendingbot:user:u1',
         displayName: 'Alice',
         presetName: 'group_call_host',
         token: 'human-token',
       },
-      bot: {
-        id: 'participant-bot',
-        customParticipantId: 'pendingbot:bot:b1',
-        displayName: 'Marin',
-        presetName: 'group_call_participant',
-        token: 'bot-token',
-      },
     });
-
-    expect(JSON.parse(fetchCall(fetcher, 1)[1].body as string)).toMatchObject({
-      custom_participant_id: 'pendingbot:user:u1',
-      preset_name: 'group_call_host',
-    });
-    expect(JSON.parse(fetchCall(fetcher, 2)[1].body as string)).toMatchObject({
-      custom_participant_id: 'pendingbot:bot:b1',
-      preset_name: 'group_call_participant',
-    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetchCall(fetcher, 0)[0]).toContain('/meetings/meeting-existing/participants');
   });
 });

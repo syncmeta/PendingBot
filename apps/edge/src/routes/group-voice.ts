@@ -72,12 +72,18 @@ const DEFAULT_VOICE_MODEL_SLUG = 'gpt-realtime-2';
 const ADAPTER_PATH = '/v1/realtime-sfu';
 const DEFAULT_REALTIMEKIT_HUMAN_PRESET = 'group_call_host';
 const DEFAULT_REALTIMEKIT_BOT_PRESET = 'group_call_participant';
+const REALTIMEKIT_POC_MEETING_TTL_SECONDS = 2 * 60 * 60;
 
 interface BotSpec {
   botId: string;
   model: string;
   instructions: string;
   voiceConfig: ResolvedVoiceConfig;
+}
+
+interface RealtimeKitCachedMeeting {
+  id: string;
+  title?: string | null;
 }
 
 // Pull a non-empty string field out of a bot's free-form `config` JSON.
@@ -360,14 +366,31 @@ groupVoiceRoutes.post('/:id/voice/realtimekit/bootstrap', async (c) => {
   }
 
   try {
+    const meetingKey = `group-voice:realtimekit-poc:${conversationId}`;
+    let meeting = await c.env.MEMORY.get<RealtimeKitCachedMeeting>(meetingKey, 'json');
+    if (!meeting?.id) {
+      const title = `PendingBot group voice ${conversationId}`;
+      meeting = { id: '', title };
+    }
     const boot = await bootstrapRealtimeKitGroupVoice(app, {
       conversationId,
+      meeting: meeting.id ? meeting : undefined,
       humanUserId: c.var.userId!,
       humanDisplayName: (userRow?.display_name as string | null | undefined) ?? null,
       humanPresetName:
         c.env.REALTIMEKIT_HUMAN_PRESET ?? DEFAULT_REALTIMEKIT_HUMAN_PRESET,
       bot,
     });
+    if (!meeting.id) {
+      await c.env.MEMORY.put(
+        meetingKey,
+        JSON.stringify({
+          id: boot.meeting.id,
+          title: boot.meeting.title ?? null,
+        } satisfies RealtimeKitCachedMeeting),
+        { expirationTtl: REALTIMEKIT_POC_MEETING_TTL_SECONDS },
+      );
+    }
 
     return c.json({
       ok: true,

@@ -1,4 +1,7 @@
 import SwiftUI
+#if DEBUG
+import WebKit
+#endif
 
 /// Full-screen group voice call surface. The room is born empty —
 /// /voice/start no longer auto-pulls every bot and no longer rings any
@@ -26,6 +29,11 @@ struct GroupCallView: View {
     /// True while the "结束所有人的通话" confirmation alert is up.
     @State private var showingEndConfirm = false
     @State private var showingDiagnostics = false
+    #if DEBUG
+    @State private var showingRealtimeKitPOC = false
+    @State private var realtimeKitPOC: GroupVoiceRealtimeKitBootstrapResponse?
+    @State private var realtimeKitStatus: String?
+    #endif
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -59,6 +67,11 @@ struct GroupCallView: View {
         }
         .sheet(isPresented: $showingAddBot) { addBotSheet }
         .sheet(isPresented: $showingRingHuman) { ringHumanSheet }
+        #if DEBUG
+        .sheet(isPresented: $showingRealtimeKitPOC) {
+            realtimeKitPOCSheet
+        }
+        #endif
         .alert(
             "提示",
             isPresented: Binding(
@@ -198,6 +211,16 @@ struct GroupCallView: View {
                 Haptics.tap()
                 showingRingHuman = true
             }
+            #if DEBUG
+            inviteButton(
+                title: "RTK",
+                systemImage: "antenna.radiowaves.left.and.right",
+                tint: .blue,
+            ) {
+                Haptics.tap()
+                Task { await openRealtimeKitPOC() }
+            }
+            #endif
         }
     }
 
@@ -559,6 +582,52 @@ struct GroupCallView: View {
         .presentationDetents([.medium])
     }
 
+    #if DEBUG
+    private var realtimeKitPOCSheet: some View {
+        NavigationStack {
+            Group {
+                if let realtimeKitPOC {
+                    RealtimeKitPOCWebView(
+                        token: realtimeKitPOC.human.token,
+                        meetingId: realtimeKitPOC.meeting.id,
+                    )
+                    .ignoresSafeArea(edges: .bottom)
+                } else {
+                    VStack(spacing: 12) {
+                        ProgressView()
+                        Text(realtimeKitStatus ?? "RealtimeKit 准备中")
+                            .font(Theme.Fonts.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .navigationTitle("RealtimeKit POC")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") {
+                        showingRealtimeKitPOC = false
+                        realtimeKitPOC = nil
+                    }
+                }
+            }
+        }
+    }
+
+    private func openRealtimeKitPOC() async {
+        realtimeKitStatus = "创建 RealtimeKit participant…"
+        realtimeKitPOC = nil
+        showingRealtimeKitPOC = true
+        do {
+            realtimeKitPOC = try await session.realtimeKitBootstrap()
+            realtimeKitStatus = nil
+        } catch {
+            showingRealtimeKitPOC = false
+            actionAlert = "RealtimeKit POC 启动失败：\(error.localizedDescription)"
+        }
+    }
+    #endif
+
     // MARK: - Phase
 
     private var statusText: String {
@@ -606,3 +675,116 @@ struct GroupCallView: View {
         }
     }
 }
+
+#if DEBUG
+private struct RealtimeKitPOCWebView: UIViewRepresentable {
+    let token: String
+    let meetingId: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeUIView(context: Context) -> WKWebView {
+        let config = WKWebViewConfiguration()
+        config.allowsInlineMediaPlayback = true
+        config.mediaTypesRequiringUserActionForPlayback = []
+        let webView = WKWebView(frame: .zero, configuration: config)
+        webView.uiDelegate = context.coordinator
+        webView.navigationDelegate = context.coordinator
+        webView.loadHTMLString(html, baseURL: URL(string: "https://pendingbot.local"))
+        return webView
+    }
+
+    func updateUIView(_ webView: WKWebView, context: Context) {}
+
+    private var html: String {
+        let encodedToken = Self.jsString(token)
+        let encodedMeetingId = Self.jsString(meetingId)
+        return """
+        <!doctype html>
+        <html>
+        <head>
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <style>
+            :root { color-scheme: light dark; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+            body { margin: 0; padding: 20px; background: #0b1220; color: #f8fafc; }
+            button { width: 100%; border: 0; border-radius: 12px; padding: 14px; font-size: 17px; font-weight: 650; }
+            .card { border: 1px solid rgba(255,255,255,.18); border-radius: 12px; padding: 14px; margin-top: 14px; background: rgba(255,255,255,.08); }
+            .muted { color: #94a3b8; font-size: 13px; overflow-wrap: anywhere; }
+            #log { white-space: pre-wrap; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+          </style>
+        </head>
+        <body>
+          <h2>RealtimeKit POC</h2>
+          <div class="muted">meeting: <span id="meeting"></span></div>
+          <div class="card">
+            <button id="join">Join audio room</button>
+          </div>
+          <div class="card">
+            <div id="state">idle</div>
+            <div id="log" class="muted"></div>
+          </div>
+          <script src="https://cdn.jsdelivr.net/npm/@cloudflare/realtimekit@latest/dist/browser.js"></script>
+          <script>
+            const authToken = \(encodedToken);
+            const meetingId = \(encodedMeetingId);
+            const state = document.getElementById('state');
+            const log = document.getElementById('log');
+            document.getElementById('meeting').textContent = meetingId;
+            function append(msg) {
+              log.textContent += "\\n" + new Date().toISOString().slice(11, 19) + " " + msg;
+            }
+            async function join() {
+              try {
+                state.textContent = 'initializing';
+                if (!window.RealtimeKitClient) {
+                  throw new Error('RealtimeKitClient global missing');
+                }
+                const meeting = await RealtimeKitClient.init({
+                  authToken,
+                  defaults: { audio: true, video: false }
+                });
+                window.__rtkMeeting = meeting;
+                state.textContent = 'joining';
+                if (typeof meeting.join === 'function') {
+                  await meeting.join();
+                } else if (typeof meeting.joinRoom === 'function') {
+                  await meeting.joinRoom();
+                } else {
+                  throw new Error('meeting has no join method');
+                }
+                state.textContent = 'joined';
+                append('joined');
+              } catch (err) {
+                state.textContent = 'failed';
+                append(String(err && err.stack ? err.stack : err));
+              }
+            }
+            document.getElementById('join').addEventListener('click', join);
+          </script>
+        </body>
+        </html>
+        """
+    }
+
+    private static func jsString(_ value: String) -> String {
+        let data = (try? JSONSerialization.data(withJSONObject: [value])) ?? Data("[\"\"]".utf8)
+        let array = String(data: data, encoding: .utf8) ?? "[\"\"]"
+        return String(array.dropFirst().dropLast())
+    }
+
+    final class Coordinator: NSObject, WKUIDelegate, WKNavigationDelegate {
+        @available(iOS 15.0, *)
+        func webView(
+            _ webView: WKWebView,
+            requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+            initiatedByFrame frame: WKFrameInfo,
+            type: WKMediaCaptureType,
+            decisionHandler: @escaping (WKPermissionDecision) -> Void,
+        ) {
+            decisionHandler(.grant)
+        }
+    }
+}
+#endif

@@ -37,11 +37,11 @@ _（暂无）_
 
 ## 🟡 拆东墙补西墙
 
-### 🟡 RealtimeKit POC 只发临时 meeting/token，尚未接入房间生命周期
+### 🟡 RealtimeKit POC 仍未接入正式房间生命周期
 - **发现**: 2026-05-23 · codex/cf-realtimekit-poc
 - **位置**: apps/edge/src/routes/group-voice.ts、apps/edge/src/lib/realtimekit.ts
-- **问题**: `POST /v1/groups/:id/voice/realtimekit/bootstrap` 只是为验证 Cloudflare RealtimeKit 可行性创建 fresh meeting 和 participant token，没有把 RealtimeKit meeting_id 持久化到 RoomVoiceDO/数据库，也没有接入结束、踢人、计费、机器人 WebRTC participant 进程。
-- **影响**: 这个入口适合手动 POC，不适合直接接到正式群语音按钮；重复调用会产生多个 RealtimeKit meeting，且 PendingBot 还不知道这些 participant 的真实媒体生命周期。
+- **问题**: `POST /v1/groups/:id/voice/realtimekit/bootstrap` 现在会按 conversation_id 在 KV 里短期复用一个 RealtimeKit meeting，方便两个模拟器进同一 POC 房间；但它仍没有把 meeting lifecycle 纳入 RoomVoiceDO/数据库，也没有接入结束、踢人、计费、机器人 WebRTC participant 进程。
+- **影响**: 这个入口适合手动 POC，不适合直接接到正式群语音按钮；KV TTL 到期、Worker 部署切换、手动结束等场景下 PendingBot 还不知道这些 participant 的真实媒体生命周期。
 - **建议**: 如果 POC 网络质量达标，再把 meeting lifecycle 收进 RoomVoiceDO 或新的 room-state 表，并让 bot runtime 用 token 作为 WebRTC participant 入会、按 OpenAI usage 和 RealtimeKit session/participant minutes 双轨计费。
 - **状态**: 待办
 

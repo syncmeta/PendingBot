@@ -415,6 +415,15 @@ final class GroupCallSession {
         }
     }
 
+    #if DEBUG
+    /// POC-only: returns a Cloudflare RealtimeKit participant token for
+    /// the caller. The debug WebView uses it to join the same meeting from
+    /// multiple simulators without touching the production SFU path.
+    func realtimeKitBootstrap() async throws -> GroupVoiceRealtimeKitBootstrapResponse {
+        try await api.groupVoiceRealtimeKitBootstrap(conversationId: conversationId)
+    }
+    #endif
+
     /// Add another group bot to the live call. Any participant may call
     /// this — bots no longer auto-join on /voice/start, so a human has
     /// to tap "叫机器人来" inside the call UI first.

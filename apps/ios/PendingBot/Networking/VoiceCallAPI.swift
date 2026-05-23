@@ -337,6 +337,31 @@ struct GroupVoiceRosterResponse: Decodable, Sendable {
     let diagnostics: GroupMediaDiagnostics?
 }
 
+/// POC-only: Cloudflare RealtimeKit bootstrap. Returns a meeting id plus
+/// participant auth token for the caller; DEBUG UI uses this to join the
+/// same RealtimeKit room from two simulators.
+struct GroupVoiceRealtimeKitBootstrapResponse: Decodable, Sendable {
+    let ok: Bool
+    let provider: String
+    let app_id: String
+    let meeting: Meeting
+    let human: Participant
+    let bot: Participant?
+
+    struct Meeting: Decodable, Sendable {
+        let id: String
+        let title: String?
+    }
+
+    struct Participant: Decodable, Sendable {
+        let id: String
+        let custom_participant_id: String
+        let display_name: String?
+        let preset_name: String
+        let token: String
+    }
+}
+
 /// GET /v1/voice/active — current active voice calls across the user's
 /// groups. Polled by the message list on tab focus to render a phone
 /// icon on rows whose conversation has a live call.
@@ -415,6 +440,20 @@ extension VoiceCallAPI {
         conversationId: String,
     ) async throws -> GroupVoiceRosterResponse {
         try await api.get("/v1/groups/\(conversationId)/voice/roster")
+    }
+
+    /// POC-only: bootstrap a Cloudflare RealtimeKit meeting/participant.
+    /// `botId` is optional; human-only is enough to validate two simulator
+    /// participants in the same room.
+    func groupVoiceRealtimeKitBootstrap(
+        conversationId: String,
+        botId: String? = nil,
+    ) async throws -> GroupVoiceRealtimeKitBootstrapResponse {
+        struct Body: Encodable { let bot_id: String? }
+        return try await callDecoding(
+            path: "/v1/groups/\(conversationId)/voice/realtimekit/bootstrap",
+            body: Body(bot_id: botId),
+        )
     }
 
     /// Add one more bot to a live call.
