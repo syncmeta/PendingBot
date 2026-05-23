@@ -1,7 +1,5 @@
-import SwiftUI
-#if DEBUG
 import WebKit
-#endif
+import SwiftUI
 
 /// Full-screen group voice call surface. The room is born empty —
 /// /voice/start no longer auto-pulls every bot and no longer rings any
@@ -36,6 +34,65 @@ struct GroupCallView: View {
     #endif
 
     var body: some View {
+        callContent
+            .task { await session.start() }
+            .onChange(of: session.phase) { _, new in handlePhaseChange(new) }
+            .onChange(of: session.actionError) { _, new in
+                if let new { actionAlert = new; session.actionError = nil }
+            }
+            .sheet(isPresented: $showingAddBot) { addBotSheet }
+            .sheet(isPresented: $showingRingHuman) { ringHumanSheet }
+            #if DEBUG
+            .sheet(isPresented: $showingRealtimeKitPOC) {
+                realtimeKitPOCSheet
+            }
+            #endif
+            .alert(
+                "提示",
+                isPresented: Binding(
+                    get: { actionAlert != nil },
+                    set: { if !$0 { actionAlert = nil } },
+                ),
+                actions: { Button("好") {} },
+                message: { Text(actionAlert ?? "") },
+            )
+            .alert(
+                "通话结束",
+                isPresented: Binding(
+                    get: { fatalAlert != nil },
+                    set: { if !$0 { fatalAlert = nil } },
+                ),
+                actions: { Button("好") { callCenter.clearGroupCall() } },
+                message: { Text(fatalAlert ?? "") },
+            )
+            .alert(
+                "结束所有人的通话？",
+                isPresented: $showingEndConfirm,
+                actions: {
+                    Button("取消", role: .cancel) {}
+                    Button("结束", role: .destructive) {
+                        Task {
+                            await session.endCall()
+                            // .terminated phase clears the slot via handlePhaseChange.
+                        }
+                    }
+                },
+                message: {
+                    Text("通话中的所有人都会被断开。")
+                },
+            )
+    }
+
+    @ViewBuilder
+    private var callContent: some View {
+        if session.mediaProvider == .realtimeKit {
+            realtimeKitContent
+        } else {
+            legacyContent
+        }
+    }
+
+    private var legacyContent: some View {
         ZStack(alignment: .topLeading) {
             Theme.Palette.canvas.ignoresSafeArea()
             VStack(spacing: 0) {
@@ -60,52 +117,57 @@ struct GroupCallView: View {
                 .padding(.trailing, 16)
             diagnosticsLayer
         }
-        .task { await session.start() }
-        .onChange(of: session.phase) { _, new in handlePhaseChange(new) }
-        .onChange(of: session.actionError) { _, new in
-            if let new { actionAlert = new; session.actionError = nil }
-        }
-        .sheet(isPresented: $showingAddBot) { addBotSheet }
-        .sheet(isPresented: $showingRingHuman) { ringHumanSheet }
-        #if DEBUG
-        .sheet(isPresented: $showingRealtimeKitPOC) {
-            realtimeKitPOCSheet
-        }
-        #endif
-        .alert(
-            "提示",
-            isPresented: Binding(
-                get: { actionAlert != nil },
-                set: { if !$0 { actionAlert = nil } },
-            ),
-            actions: { Button("好") {} },
-            message: { Text(actionAlert ?? "") },
-        )
-        .alert(
-            "通话结束",
-            isPresented: Binding(
-                get: { fatalAlert != nil },
-                set: { if !$0 { fatalAlert = nil } },
-            ),
-            actions: { Button("好") { callCenter.clearGroupCall() } },
-            message: { Text(fatalAlert ?? "") },
-        )
-        .alert(
-            "结束所有人的通话？",
-            isPresented: $showingEndConfirm,
-            actions: {
-                Button("取消", role: .cancel) {}
-                Button("结束", role: .destructive) {
-                    Task {
-                        await session.endCall()
-                        // .terminated phase clears the slot via handlePhaseChange.
+    }
+
+    private var realtimeKitContent: some View {
+        ZStack(alignment: .topLeading) {
+            Theme.Palette.canvas.ignoresSafeArea()
+            VStack(spacing: 0) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text(session.groupTitle.isEmpty ? "群语音" : session.groupTitle)
+                        .font(Theme.Fonts.title3).bold()
+                        .lineLimit(1)
+                    Text(realtimeKitStatusText)
+                        .font(Theme.Fonts.subheadline)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                }
+                .padding(.top, 44)
+                .padding(.leading, 24)
+                .padding(.trailing, 76)
+
+                Group {
+                    if let room = session.realtimeKitRoom {
+                        RealtimeKitPOCWebView(
+                            token: room.human.token,
+                            meetingId: room.meeting.id,
+                        )
+                    } else {
+                        VStack(spacing: 12) {
+                            ProgressView()
+                            Text("RealtimeKit 准备中")
+                                .font(Theme.Fonts.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                 }
-            },
-            message: {
-                Text("通话中的所有人都会被断开。")
-            },
-        )
+                .padding(.top, 18)
+            }
+            minimizeButton
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.top, 44)
+                .padding(.trailing, 16)
+        }
+    }
+
+    private var realtimeKitStatusText: String {
+        switch session.phase {
+        case .idle, .connecting: return "接通中"
+        case .connected: return "RealtimeKit"
+        case .hangingUp: return "结束中…"
+        case .terminated: return "已结束"
+        }
     }
 
     // MARK: - Top bar
@@ -676,7 +738,6 @@ struct GroupCallView: View {
     }
 }
 
-#if DEBUG
 struct RealtimeKitPOCWebView: UIViewRepresentable {
     let token: String
     let meetingId: String
@@ -787,4 +848,3 @@ struct RealtimeKitPOCWebView: UIViewRepresentable {
         }
     }
 }
-#endif

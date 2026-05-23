@@ -30,6 +30,11 @@ final class GroupCallSession {
         case startupError(String)
     }
 
+    enum MediaProvider: Equatable, Sendable {
+        case legacySfu
+        case realtimeKit
+    }
+
     var phase: Phase = .idle
 
     /// Wall-clock moment the call connected — `GroupCallView`'s timer
@@ -69,6 +74,10 @@ final class GroupCallSession {
     /// Live WebRTC + media-container diagnostics for the call screen.
     var diagnostics = CallDiagnosticsSnapshot()
 
+    /// RealtimeKit bootstrap payload for the experimental provider. nil
+    /// while the meeting participant is being minted.
+    var realtimeKitRoom: GroupVoiceRealtimeKitBootstrapResponse?
+
     // MARK: - Inputs
 
     let conversationId: String
@@ -76,6 +85,7 @@ final class GroupCallSession {
     /// Group conversation's display title — shown as the call screen
     /// header. Empty string falls back to a generic "群语音" in the view.
     let groupTitle: String
+    let mediaProvider: MediaProvider
     /// Group members keyed "bot:<id>" / "user:<id>" — name + avatar
     /// lookup for the participant list. Sourced from the conversation's
     /// `groupSenders` map.
@@ -121,12 +131,14 @@ final class GroupCallSession {
         conversationId: String,
         currentUserId: String,
         groupTitle: String,
+        mediaProvider: MediaProvider = .legacySfu,
         members: [String: GroupBubbleSender],
         api: VoiceCallAPI,
     ) {
         self.conversationId = conversationId
         self.currentUserId = currentUserId
         self.groupTitle = groupTitle
+        self.mediaProvider = mediaProvider
         self.members = members
         self.api = api
     }
@@ -217,6 +229,10 @@ final class GroupCallSession {
     func start() async {
         guard phase == .idle else { return }
         phase = .connecting
+        if mediaProvider == .realtimeKit {
+            await startRealtimeKit()
+            return
+        }
 
         // Hook into CallKit. If we got here because a VoIP push fired
         // and the user accepted on the CallKit incoming UI, the
@@ -288,6 +304,20 @@ final class GroupCallSession {
         }
 
         await transport.start()
+    }
+
+    private func startRealtimeKit() async {
+        do {
+            realtimeKitRoom = try await api.groupVoiceRealtimeKitBootstrap(
+                conversationId: conversationId,
+            )
+            connectedAt = Date()
+            phase = .connected
+        } catch let err as VoiceCallError {
+            await terminate(reason: translate(err))
+        } catch {
+            await terminate(reason: .startupError(error.localizedDescription))
+        }
     }
 
     private func startHeartbeat() {
@@ -364,6 +394,10 @@ final class GroupCallSession {
     /// it with 403 otherwise (surfaced via `actionError`).
     func endCall() async {
         guard !isTerminal(phase) else { return }
+        if mediaProvider == .realtimeKit {
+            await terminate(reason: .ended)
+            return
+        }
         phase = .hangingUp
         let transport = self.transport
         self.transport = nil

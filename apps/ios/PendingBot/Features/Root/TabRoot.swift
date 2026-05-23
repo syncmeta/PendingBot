@@ -36,6 +36,11 @@ struct TabRoot: View {
     // flash back to the previous tab. Stays nil until the first switch so
     // the initial render still honours the persisted tab without a flash.
     @State private var liveTab: TopTab?
+    /// Local presentation state for the active call cover. It mirrors
+    /// `CallCenter` instead of deriving a custom Binding directly from
+    /// the observable object, which avoids SwiftUI dropping presentation
+    /// updates when the session is installed from a deeply nested view.
+    @State private var isShowingCallCover = false
 
     private var selected: Binding<TopTab> {
         Binding(
@@ -79,15 +84,14 @@ struct TabRoot: View {
                         value: callCenter.groupCall != nil,
                     )
             }
-            .fullScreenCover(isPresented: voiceCoverBinding) {
-                if let session = callCenter.voiceCall {
-                    CallView(session: session)
-                }
+            .fullScreenCover(isPresented: $isShowingCallCover, onDismiss: handleCallCoverDismiss) {
+                callCover
             }
-            .fullScreenCover(isPresented: groupCoverBinding) {
-                if let session = callCenter.groupCall {
-                    GroupCallView(session: session)
-                }
+            .onChange(of: callCenter.hasActiveCall, initial: true) { _, _ in
+                syncCallCoverPresentation()
+            }
+            .onChange(of: callCenter.isMinimized, initial: true) { _, _ in
+                syncCallCoverPresentation()
             }
             .onChange(of: store.current) { _, _ in Haptics.tap() }
             // A bot-share link landed — make sure the friends tab is the
@@ -104,35 +108,27 @@ struct TabRoot: View {
 
     // MARK: - Call cover bindings
 
-    /// Drives the 1:1 voice call full-screen cover: shown iff a voice
-    /// session is active AND the user hasn't minimized it. Set to
-    /// false (the SwiftUI dismiss path) means "user wants to minimize"
-    /// rather than "kill the session" — the session keeps running and
-    /// the floating pill takes the surface's place.
-    private var voiceCoverBinding: Binding<Bool> {
-        Binding(
-            get: { callCenter.voiceCall != nil && !callCenter.isMinimized },
-            set: { showing in
-                if !showing, callCenter.voiceCall != nil {
-                    // Cover dismissal while a call is still live —
-                    // treat as minimize. Slot-clear only happens when
-                    // the session itself reaches .terminated and the
-                    // call surface calls `clearVoiceCall`.
-                    callCenter.minimize()
-                }
-            },
-        )
+    @ViewBuilder
+    private var callCover: some View {
+        if let session = callCenter.voiceCall {
+            CallView(session: session)
+        } else if let session = callCenter.groupCall {
+            GroupCallView(session: session)
+        }
     }
 
-    private var groupCoverBinding: Binding<Bool> {
-        Binding(
-            get: { callCenter.groupCall != nil && !callCenter.isMinimized },
-            set: { showing in
-                if !showing, callCenter.groupCall != nil {
-                    callCenter.minimize()
-                }
-            },
-        )
+    private func syncCallCoverPresentation() {
+        let shouldShow = callCenter.hasActiveCall && !callCenter.isMinimized
+        if isShowingCallCover != shouldShow {
+            isShowingCallCover = shouldShow
+        }
+    }
+
+    private func handleCallCoverDismiss() {
+        if callCenter.hasActiveCall && !callCenter.isMinimized {
+            callCenter.minimize()
+        }
+        syncCallCoverPresentation()
     }
 
     // ── Compact (iPhone) ────────────────────────────────────────────────────
