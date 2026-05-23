@@ -74,6 +74,7 @@
         // REALTIMEKIT_APP_ID here when testing; REALTIMEKIT_API_TOKEN is
         // a secret with Realtime Admin permission. Presets live in the
         // RealtimeKit app.
+        "REALTIMEKIT_APP_ID": "57f4dddb-be49-4b99-9168-1c3b2c350b64",
         "REALTIMEKIT_HUMAN_PRESET": "group_call_host",
         "REALTIMEKIT_BOT_PRESET": "group_call_participant"
       },
