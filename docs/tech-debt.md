@@ -45,12 +45,12 @@ _（暂无）_
 - **建议**: 把正式群语音入口收敛到同一个 room state coordinator，由它负责创建/恢复房间、展示通话 UI、挂接 RealtimeKit/OpenAI participant 与计费状态；DEBUG 入口只保留为同一 coordinator 的诊断开关。
 - **状态**: 已解决（013d037 之后的 codex/realtimekit-formal-entry，2026-05-23：DEBUG 群语音按钮进入 `GroupCallView` 的 RealtimeKit provider，删除 Conversation header 临时入口）
 
-### 🟡 RealtimeKit POC 仍未接入正式房间生命周期
+### 🟡 RealtimeKit 仍未接入 bot participant 和双轨计费
 - **发现**: 2026-05-23 · codex/cf-realtimekit-poc
 - **位置**: apps/edge/src/routes/group-voice.ts、apps/edge/src/lib/realtimekit.ts
-- **问题**: `POST /v1/groups/:id/voice/realtimekit/bootstrap` 现在会按 conversation_id 在 KV 里短期复用一个 RealtimeKit meeting，方便两个模拟器进同一 POC 房间；DEBUG 群语音入口已可用它进入 `GroupCallView`，但它仍没有把 meeting lifecycle 纳入 RoomVoiceDO/数据库，也没有接入结束、踢人、计费、机器人 WebRTC participant 进程。
-- **影响**: 这个入口适合手动 POC 和 Debug 体验验证，不适合直接放到 Release；KV TTL 到期、Worker 部署切换、手动结束等场景下 PendingBot 还不知道这些 participant 的真实媒体生命周期。
-- **建议**: 如果 POC 网络质量达标，再把 meeting lifecycle 收进 RoomVoiceDO 或新的 room-state 表，并让 bot runtime 用 token 作为 WebRTC participant 入会、按 OpenAI usage 和 RealtimeKit session/participant minutes 双轨计费。
+- **问题**: RealtimeKit bootstrap/leave/end 已经接入 `voice_active_calls` 和 `voice_call` conv-channel 生命周期，但 bot runtime 还没有作为 WebRTC participant 入会，RealtimeKit 房间成本也还没有和 OpenAI Realtime usage 一起进入正式计费。
+- **影响**: 两个真人可以走 RealtimeKit 调通房间生命周期，但“机器人像真人一样参会”仍缺一个受控 WebRTC client/mixer，且正式 Release 前还缺双轨计费口径；否则容易出现媒体成本不透明或机器人音频绕开 PendingBot 的预算控制。
+- **建议**: 下一步把 bot runtime 做成 RealtimeKit participant，由服务端负责混音/输入 OpenAI Realtime、按会话维度汇总 OpenAI usage + RealtimeKit participant/session minutes，再落到现有 `voice_cost`/audit billing 体系。
 - **状态**: 待办
 
 ### 🟡 跨 provider web search 解析路径未经真实流量验证

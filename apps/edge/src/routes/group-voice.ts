@@ -6,7 +6,9 @@
 //   POST /v1/groups/:id/voice/ring             ring a human into the call
 //   POST /v1/groups/:id/voice/cancel-invite    drop a pending invite
 //   POST /v1/groups/:id/voice/realtimekit/bootstrap
-//                                                 POC: mint RealtimeKit tokens
+//                                                 mint RealtimeKit tokens
+//   POST /v1/groups/:id/voice/realtimekit/leave caller leaves RealtimeKit
+//   POST /v1/groups/:id/voice/realtimekit/end   end RealtimeKit for everyone
 //   POST /v1/groups/:id/voice/join             a human joins the SFU room
 //   POST /v1/groups/:id/voice/subscribe        pull bot tracks to hear them
 //   POST /v1/groups/:id/voice/renegotiate      answer the SFU's offer
@@ -53,8 +55,16 @@ import {
 } from '../lib/sfu';
 import {
   bootstrapRealtimeKitGroupVoice,
+  kickAllRealtimeKitParticipants,
   realtimeKitAppFromEnv,
 } from '../lib/realtimekit';
+import {
+  addRealtimeKitHuman,
+  recordRealtimeKitEnded,
+  recordRealtimeKitState,
+  removeRealtimeKitHuman,
+  type RealtimeKitRoomState,
+} from '../lib/realtimekit-lifecycle';
 import {
   resolveVoiceConfig,
   type ResolvedVoiceConfig,
@@ -72,7 +82,7 @@ const DEFAULT_VOICE_MODEL_SLUG = 'gpt-realtime-2';
 const ADAPTER_PATH = '/v1/realtime-sfu';
 const DEFAULT_REALTIMEKIT_HUMAN_PRESET = 'group_call_host';
 const DEFAULT_REALTIMEKIT_BOT_PRESET = 'group_call_participant';
-const REALTIMEKIT_POC_MEETING_TTL_SECONDS = 2 * 60 * 60;
+const REALTIMEKIT_MEETING_TTL_SECONDS = 2 * 60 * 60;
 
 interface BotSpec {
   botId: string;
@@ -84,6 +94,9 @@ interface BotSpec {
 interface RealtimeKitCachedMeeting {
   id: string;
   title?: string | null;
+  startedAt?: number;
+  initiatorId?: string;
+  humanIds?: string[];
 }
 
 // Pull a non-empty string field out of a bot's free-form `config` JSON.
@@ -211,6 +224,40 @@ function sfuApp(c: Context<AppBindings>): SfuApp {
   };
 }
 
+function realtimeKitMeetingKey(conversationId: string): string {
+  return `group-voice:realtimekit:${conversationId}`;
+}
+
+async function putRealtimeKitRoomState(
+  c: Context<AppBindings>,
+  conversationId: string,
+  state: RealtimeKitRoomState,
+): Promise<void> {
+  await c.env.MEMORY.put(
+    realtimeKitMeetingKey(conversationId),
+    JSON.stringify(state),
+    { expirationTtl: REALTIMEKIT_MEETING_TTL_SECONDS },
+  );
+}
+
+async function isRealtimeKitEndAllowed(
+  c: Context<AppBindings>,
+  conversationId: string,
+  state: RealtimeKitRoomState,
+): Promise<boolean> {
+  const userId = c.var.userId!;
+  if (state.initiatorId === userId) return true;
+
+  const { data: membership } = await serviceClient(c.env)
+    .from('conversation_participants')
+    .select('role')
+    .eq('conversation_id', conversationId)
+    .eq('participant_type', 'user')
+    .eq('participant_id', userId)
+    .maybeSingle();
+  return membership?.role === 'owner' || membership?.role === 'admin';
+}
+
 async function controlRoom(
   c: Context<AppBindings>,
   conversationId: string,
@@ -293,11 +340,9 @@ groupVoiceRoutes.post('/:id/voice/start', async (c) => {
 // POST /:id/voice/realtimekit/bootstrap
 // =============================================================================
 //
-// Narrow POC path for testing Cloudflare RealtimeKit as the room layer. It
-// creates a fresh RealtimeKit meeting and returns participant tokens for the
-// caller plus, optionally, one bot. It does not replace the current SFU adapter
-// route yet; a later iOS/container experiment can use these tokens to join as
-// normal RealtimeKit WebRTC participants.
+// Cloudflare RealtimeKit room layer. It creates/reuses a meeting, returns a
+// participant token, and mirrors the room lifecycle into the same active-call
+// index + conv-channel frames that the legacy RoomVoiceDO owns for the SFU path.
 
 const RealtimeKitBootstrapBody = z.object({
   bot_id: z.string().uuid().optional(),
@@ -366,7 +411,7 @@ groupVoiceRoutes.post('/:id/voice/realtimekit/bootstrap', async (c) => {
   }
 
   try {
-    const meetingKey = `group-voice:realtimekit-poc:${conversationId}`;
+    const meetingKey = realtimeKitMeetingKey(conversationId);
     let meeting = await c.env.MEMORY.get<RealtimeKitCachedMeeting>(meetingKey, 'json');
     if (!meeting?.id) {
       const title = `PendingBot group voice ${conversationId}`;
@@ -381,20 +426,24 @@ groupVoiceRoutes.post('/:id/voice/realtimekit/bootstrap', async (c) => {
         c.env.REALTIMEKIT_HUMAN_PRESET ?? DEFAULT_REALTIMEKIT_HUMAN_PRESET,
       bot,
     });
-    if (!meeting.id) {
-      await c.env.MEMORY.put(
-        meetingKey,
-        JSON.stringify({
-          id: boot.meeting.id,
-          title: boot.meeting.title ?? null,
-        } satisfies RealtimeKitCachedMeeting),
-        { expirationTtl: REALTIMEKIT_POC_MEETING_TTL_SECONDS },
-      );
-    }
+    const state = addRealtimeKitHuman(
+      {
+        id: boot.meeting.id,
+        title: boot.meeting.title ?? meeting.title ?? null,
+        startedAt: meeting.startedAt,
+        initiatorId: meeting.initiatorId,
+        humanIds: meeting.humanIds,
+      },
+      c.var.userId!,
+      Date.now(),
+    );
+    await putRealtimeKitRoomState(c, conversationId, state);
+    await recordRealtimeKitState(c.env, conversationId, state);
 
     return c.json({
       ok: true,
       provider: 'cloudflare_realtimekit',
+      initiated: state.initiatorId === c.var.userId!,
       app_id: app.appId,
       meeting: {
         id: boot.meeting.id,
@@ -423,6 +472,67 @@ groupVoiceRoutes.post('/:id/voice/realtimekit/bootstrap', async (c) => {
     console.warn('[group-voice/realtimekit/bootstrap] failed', err);
     return jsonError(c, 502, 'voice_upstream_failed', { detail: String(err) });
   }
+});
+
+// =============================================================================
+// POST /:id/voice/realtimekit/leave — the caller leaves the RealtimeKit call
+// =============================================================================
+
+groupVoiceRoutes.post('/:id/voice/realtimekit/leave', async (c) => {
+  const loaded = await loadGroupContext(c);
+  if (!loaded.ok) return loaded.res;
+  const { conversationId } = loaded.ctx;
+
+  const meetingKey = realtimeKitMeetingKey(conversationId);
+  const state = await c.env.MEMORY.get<RealtimeKitRoomState>(meetingKey, 'json');
+  if (!state?.id) {
+    await recordRealtimeKitEnded(c.env, conversationId);
+    return c.json({ ok: true, ended: true });
+  }
+
+  const next = removeRealtimeKitHuman(state, c.var.userId!);
+  if (next.humanIds.length === 0) {
+    await c.env.MEMORY.delete(meetingKey);
+    await recordRealtimeKitEnded(c.env, conversationId);
+    return c.json({ ok: true, ended: true });
+  }
+
+  await putRealtimeKitRoomState(c, conversationId, next);
+  await recordRealtimeKitState(c.env, conversationId, next);
+  return c.json({ ok: true, ended: false });
+});
+
+// =============================================================================
+// POST /:id/voice/realtimekit/end — end the RealtimeKit call for everyone
+// =============================================================================
+
+groupVoiceRoutes.post('/:id/voice/realtimekit/end', async (c) => {
+  const loaded = await loadGroupContext(c);
+  if (!loaded.ok) return loaded.res;
+  const { conversationId } = loaded.ctx;
+
+  const meetingKey = realtimeKitMeetingKey(conversationId);
+  const state = await c.env.MEMORY.get<RealtimeKitRoomState>(meetingKey, 'json');
+  if (!state?.id) {
+    await recordRealtimeKitEnded(c.env, conversationId);
+    return c.json({ ok: true, ended: true });
+  }
+
+  if (!(await isRealtimeKitEndAllowed(c, conversationId, state))) {
+    return jsonError(c, 403, 'forbidden');
+  }
+
+  await c.env.MEMORY.delete(meetingKey);
+  await recordRealtimeKitEnded(c.env, conversationId);
+
+  const app = realtimeKitAppFromEnv(c.env);
+  if (app) {
+    await kickAllRealtimeKitParticipants(app, state.id).catch((err) =>
+      console.warn('[group-voice/realtimekit/end] kick-all failed', err),
+    );
+  }
+
+  return c.json({ ok: true, ended: true });
 });
 
 // =============================================================================

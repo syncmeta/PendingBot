@@ -307,10 +307,14 @@ final class GroupCallSession {
     }
 
     private func startRealtimeKit() async {
+        await loadGroupRole()
         do {
             realtimeKitRoom = try await api.groupVoiceRealtimeKitBootstrap(
                 conversationId: conversationId,
             )
+            didInitiate = realtimeKitRoom?.initiated ?? false
+            isPrivileged = didInitiate || groupRoleIsAdmin
+            await subscribeToCost()
             connectedAt = Date()
             phase = .connected
         } catch let err as VoiceCallError {
@@ -395,7 +399,7 @@ final class GroupCallSession {
     func endCall() async {
         guard !isTerminal(phase) else { return }
         if mediaProvider == .realtimeKit {
-            await terminate(reason: .ended)
+            await endRealtimeKitCall()
             return
         }
         phase = .hangingUp
@@ -538,7 +542,11 @@ final class GroupCallSession {
             // retry, the DO is left holding a stale human and the
             // in-conv banner stays stuck until the 30-min alarm.
             if reason != .ended {
-                await self.bestEffortLeave()
+                if self.mediaProvider == .realtimeKit {
+                    await self.bestEffortRealtimeKitLeave()
+                } else {
+                    await self.bestEffortLeave()
+                }
             }
             // Refresh the active-calls index so the in-conv banner
             // reflects server truth — if the DO finalised (we were the
@@ -563,6 +571,44 @@ final class GroupCallSession {
         }
     }
 
+    /// POST /voice/realtimekit/leave with the same retry policy as the
+    /// legacy SFU leave path. This keeps the active-call index and
+    /// conv-channel lifecycle in sync even though the media room is
+    /// hosted by Cloudflare RealtimeKit.
+    private func bestEffortRealtimeKitLeave() async {
+        for attempt in 0..<2 {
+            do {
+                try await api.groupVoiceRealtimeKitLeave(conversationId: conversationId)
+                return
+            } catch {
+                if attempt == 0 {
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                }
+            }
+        }
+    }
+
+    private func endRealtimeKitCall() async {
+        phase = .hangingUp
+        stopHeartbeat()
+        await unsubscribeFromCost()
+        if let uuid = callKitUUID {
+            callKitUUID = nil
+            CallKitManager.shared.endCall(uuid: uuid)
+        }
+        Task { @MainActor in
+            do {
+                try await self.api.groupVoiceRealtimeKitEnd(conversationId: self.conversationId)
+            } catch {
+                // Best-effort — dropping the view also closes the WebView
+                // participant; other clients clear through the ended frame
+                // when the worker accepts the request.
+            }
+            await ActiveVoiceCallStore.shared.refresh()
+        }
+        phase = .terminated(.ended)
+    }
+
     /// Open a conv-hub subscription that feeds `cumulativePnd` from the
     /// server's voice_cost events. Other observers on the same channel
     /// (banners, message stream) keep working through this token —
@@ -574,6 +620,11 @@ final class GroupCallSession {
             onVoiceCall: { [weak self] frame in
                 Task { @MainActor [weak self] in
                     guard let self, frame.conversationId == self.conversationId else { return }
+                    ActiveVoiceCallStore.shared.apply(frame)
+                    if frame.event == .ended {
+                        await self.terminate(reason: .ended)
+                        return
+                    }
                     if let diagnostics = frame.diagnostics {
                         self.latestMediaDiagnostics = diagnostics
                         self.mergeDiagnostics()

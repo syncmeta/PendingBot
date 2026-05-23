@@ -153,11 +153,25 @@ struct GroupCallView: View {
                     }
                 }
                 .padding(.top, 18)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                realtimeKitToolbar
+                    .padding(.bottom, 28)
             }
             minimizeButton
                 .frame(maxWidth: .infinity, alignment: .trailing)
                 .padding(.top, 44)
                 .padding(.trailing, 16)
+        }
+    }
+
+    private var realtimeKitToolbar: some View {
+        HStack(spacing: 28) {
+            labeledControl("免提") { speakerButton }
+            labeledControl("离开") { hangUpButton }
+            if session.isPrivileged {
+                labeledControl("散会") { endAllButton }
+            }
         }
     }
 

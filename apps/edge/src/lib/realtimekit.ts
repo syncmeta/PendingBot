@@ -61,6 +61,7 @@ interface RealtimeKitApiError {
 interface RealtimeKitApiResponse<T> {
   success?: boolean;
   data?: T;
+  result?: T;
   token?: string;
   authToken?: string;
   error?: RealtimeKitApiError;
@@ -87,6 +88,11 @@ interface ParticipantTokenData {
   token?: string;
   authToken?: string;
   auth_token?: string;
+}
+
+interface KickAllData {
+  kicked_participants_count?: number;
+  kickedParticipantsCount?: number;
 }
 
 export function realtimeKitAppFromEnv(env: Env): RealtimeKitApp | null {
@@ -138,21 +144,22 @@ async function realtimeKitFetch<T>(
   if (!resp.ok || json.success === false) {
     throw new Error(`RealtimeKit ${method} ${path} failed: ${formatApiError(json, resp.status)}`);
   }
-  if (!json.data) {
+  const data = json.data ?? json.result;
+  if (!data) {
     throw new Error(`RealtimeKit ${method} ${path} failed: missing data`);
   }
   if (
-    typeof json.data === 'object' &&
-    json.data !== null &&
+    typeof data === 'object' &&
+    data !== null &&
     (json.token || json.authToken)
   ) {
     return {
-      ...(json.data as Record<string, unknown>),
+      ...(data as Record<string, unknown>),
       ...(json.token ? { token: json.token } : {}),
       ...(json.authToken ? { authToken: json.authToken } : {}),
     } as T;
   }
-  return json.data;
+  return data;
 }
 
 export async function createRealtimeKitMeeting(
@@ -267,4 +274,14 @@ export async function bootstrapRealtimeKitGroupVoice(
     : undefined;
 
   return { meeting, human, ...(bot ? { bot } : {}) };
+}
+
+export async function kickAllRealtimeKitParticipants(
+  app: RealtimeKitApp,
+  meetingId: string,
+  fetcher: Fetcher = fetch,
+): Promise<number> {
+  const path = `/meetings/${meetingId}/active-session/kick-all`;
+  const data = await realtimeKitFetch<KickAllData>(app, 'POST', path, {}, fetcher);
+  return data.kicked_participants_count ?? data.kickedParticipantsCount ?? 0;
 }

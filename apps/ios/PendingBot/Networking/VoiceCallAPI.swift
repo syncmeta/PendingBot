@@ -343,6 +343,7 @@ struct GroupVoiceRosterResponse: Decodable, Sendable {
 struct GroupVoiceRealtimeKitBootstrapResponse: Decodable, Sendable {
     let ok: Bool
     let provider: String
+    let initiated: Bool?
     let app_id: String
     let meeting: Meeting
     let human: Participant
@@ -454,6 +455,26 @@ extension VoiceCallAPI {
             path: "/v1/groups/\(conversationId)/voice/realtimekit/bootstrap",
             body: Body(bot_id: botId),
         )
+    }
+
+    /// The caller leaves the RealtimeKit-backed group call.
+    func groupVoiceRealtimeKitLeave(conversationId: String) async throws {
+        struct Body: Encodable {}
+        struct OK: Decodable { let ok: Bool }
+        _ = try await callDecoding(
+            path: "/v1/groups/\(conversationId)/voice/realtimekit/leave",
+            body: Body(),
+        ) as OK
+    }
+
+    /// End the RealtimeKit-backed group call for everyone. Privileged.
+    func groupVoiceRealtimeKitEnd(conversationId: String) async throws {
+        struct Body: Encodable {}
+        struct OK: Decodable { let ok: Bool }
+        _ = try await callDecoding(
+            path: "/v1/groups/\(conversationId)/voice/realtimekit/end",
+            body: Body(),
+        ) as OK
     }
 
     /// Add one more bot to a live call.

@@ -3,6 +3,7 @@ import {
   addRealtimeKitParticipant,
   bootstrapRealtimeKitGroupVoice,
   createRealtimeKitMeeting,
+  kickAllRealtimeKitParticipants,
   realtimeKitAppFromEnv,
 } from './realtimekit';
 import type { Env } from '../types';
@@ -391,5 +392,31 @@ describe('bootstrapRealtimeKitGroupVoice', () => {
     });
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(fetchCall(fetcher, 0)[0]).toContain('/meetings/meeting-existing/participants');
+  });
+});
+
+describe('kickAllRealtimeKitParticipants', () => {
+  it('kicks every participant from an active RealtimeKit meeting session', async () => {
+    const fetcher = vi.fn(async () =>
+      Response.json({
+        success: true,
+        data: { kicked_participants_count: 2 },
+      }, { status: 200 }),
+    );
+
+    const kicked = await kickAllRealtimeKitParticipants(
+      { accountId: 'acct-1', appId: 'app-1', apiToken: 'secret-1' },
+      'meeting-1',
+      fetcher,
+    );
+
+    expect(kicked).toBe(2);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const call = fetchCall(fetcher, 0);
+    expect(call[0]).toBe(
+      'https://api.cloudflare.com/client/v4/accounts/acct-1/realtime/kit/app-1/meetings/meeting-1/active-session/kick-all',
+    );
+    expect(call[1].method).toBe('POST');
+    expect(JSON.parse(call[1].body as string)).toEqual({});
   });
 });
