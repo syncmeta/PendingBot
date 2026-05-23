@@ -29,7 +29,7 @@ const PostBody = z.object({
   clientMessageId: z.string().uuid(),         // UUID v7 from client (idempotency key)
   // newMessage is optional ONLY when autoLookback is true (the client is
   // auto-firing because a lookback note arrived and 30s of silence passed).
-  newMessage: z.string().min(1).max(64_000).optional(),
+  newMessage: z.string().max(64_000).optional(),
   attachmentIds: z.array(z.string().uuid()).optional(),
   // Recent history from the client's local cache (typically last 20 msgs).
   recentContext: z
@@ -619,7 +619,7 @@ const StartBody = z.object({
   clientMessageId: z.string().uuid(),
   // Optional: an attachment-only first turn (image with no caption) is
   // valid. The handler rejects the both-empty case below.
-  newMessage: z.string().min(1).max(64_000).optional(),
+  newMessage: z.string().max(64_000).optional(),
   attachmentIds: z.array(z.string().uuid()).optional(),
   recentContext: z
     .array(

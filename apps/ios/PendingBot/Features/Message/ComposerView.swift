@@ -193,6 +193,7 @@ struct ComposerView: View {
                             .fill(Theme.Palette.surfaceMuted)
                             .frame(width: 64, height: 64)
                             .overlay(pendingCellContent(att))
+                            .overlay(pendingUploadOverlay(att))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                                     .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
@@ -220,13 +221,25 @@ struct ComposerView: View {
     @ViewBuilder
     private func pendingCellContent(_ att: PendingAttachment) -> some View {
         if att.isImage {
-            ServerImage(
-                path: "/v1/uploads/\(att.id)",
-                serverURL: HostedConfig.environment.workerURL,
-                contentMode: .fill
-            )
-            .frame(width: 64, height: 64)
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            if let data = att.localPreviewData, let image = UIImage(data: data) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 64, height: 64)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            } else if let remoteId = att.uploadedAttachmentId {
+                ServerImage(
+                    path: "/v1/uploads/\(remoteId)",
+                    serverURL: HostedConfig.environment.workerURL,
+                    contentMode: .fill
+                )
+                .frame(width: 64, height: 64)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            } else {
+                Image(systemName: "photo")
+                    .font(Theme.Fonts.glyph(size: 22))
+                    .foregroundStyle(Theme.Palette.inkMuted)
+            }
         } else {
             VStack(spacing: 3) {
                 Image(systemName: "doc.fill")
@@ -240,6 +253,40 @@ struct ComposerView: View {
                     .truncationMode(.middle)
             }
             .padding(.horizontal, 4)
+        }
+    }
+
+    @ViewBuilder
+    private func pendingUploadOverlay(_ att: PendingAttachment) -> some View {
+        switch att.uploadState {
+        case .uploaded:
+            EmptyView()
+        case .uploading:
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(.black.opacity(0.35))
+                VStack(spacing: 5) {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(.white)
+                    Text("上传中")
+                        .font(Theme.Fonts.system(size: 9, weight: .medium))
+                        .foregroundStyle(.white)
+                }
+            }
+        case .failed:
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(.black.opacity(0.48))
+                VStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(Theme.Fonts.glyph(size: 16, weight: .semibold))
+                        .foregroundStyle(.white)
+                    Text("上传失败")
+                        .font(Theme.Fonts.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.white)
+                }
+            }
         }
     }
 }

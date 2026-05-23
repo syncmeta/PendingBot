@@ -8,7 +8,7 @@
 //   .select(cols, { count?, head? })
 //   .eq(col, val) / .neq(col, val) / .in(col, vals) / .is(col, val)
 //   .filter(jsonbPath, 'cs', JSON.stringify([id]))   — jsonb array contains
-//   .update(patch) / .delete() / .insert(row)
+//   .update(patch) / .delete() / .insert(row) / .upsert(row, opts?)
 //   .maybeSingle() / .single() / await (then)
 //
 // Not a real Postgres — every query is a JS filter over an in-memory
@@ -108,7 +108,7 @@ function matches(row: Row, f: Filter): boolean {
 function makeClient(db: FakeDb): unknown {
   const builder = (table: string) => {
     const filters: Filter[] = [];
-    let mode: 'select' | 'update' | 'delete' | 'insert' = 'select';
+    let mode: 'select' | 'update' | 'delete' | 'insert' | 'upsert' = 'select';
     let cols = '*';
     let selectOpts: { count?: 'exact'; head?: boolean } | undefined;
     let patch: Row | null = null;
@@ -171,6 +171,26 @@ function makeClient(db: FakeDb): unknown {
         insertError = err ?? null;
         return api;
       },
+      upsert(r: Row, opts?: { onConflict?: string; ignoreDuplicates?: boolean }) {
+        mode = 'upsert';
+        insertRow = r;
+        const err = db.errors?.insert?.(table, r);
+        if (!err) {
+          const tableRows = (db.rows[table] ??= []);
+          const conflictCol = opts?.onConflict;
+          const existing = conflictCol
+            ? tableRows.find((row) => row[conflictCol] === r[conflictCol])
+            : undefined;
+          if (existing) {
+            if (!opts?.ignoreDuplicates) Object.assign(existing, r);
+          } else {
+            tableRows.push({ ...r });
+            db.inserts.push({ table, row: { ...r } });
+          }
+        }
+        insertError = err ?? null;
+        return api;
+      },
       async maybeSingle() {
         if (mode === 'insert') {
           if (insertError) return { data: null, error: insertError };
@@ -225,7 +245,8 @@ function makeClient(db: FakeDb): unknown {
               db.deletes.push({ table, filters: [...filters], count: before - keep.length });
               return { data: null, error: null };
             }
-            case 'insert': {
+            case 'insert':
+            case 'upsert': {
               if (insertError) return { data: null, error: insertError };
               return { data: insertRow ? { ...insertRow } : null, error: null };
             }

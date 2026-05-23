@@ -2,6 +2,7 @@ import PhotosUI
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
+import CoreTransferable
 
 // Attachment upload helpers extracted from ConversationView. Photos,
 // camera captures and arbitrary files all end at the same place: append
@@ -15,14 +16,55 @@ import UniformTypeIdentifiers
 /// server's 413.
 private let maxUploadBytes = 25 * 1024 * 1024
 
+private struct PickedImageData: Transferable {
+    let data: Data
+
+    static var transferRepresentation: some TransferRepresentation {
+        DataRepresentation(importedContentType: .image) { data in
+            PickedImageData(data: data)
+        }
+    }
+}
+
 extension ConversationView {
 
-    /// Record an uploaded attachment: append it to the composer tray and
-    /// stash its metadata so AttachmentGrid can render loaded/realtime
-    /// copies of the message later.
-    private func registerUpload(_ pending: PendingAttachment) {
-        pendingAttachments.append(pending)
-        attachmentMetaById[pending.id] = pending.asAttachment()
+    /// Add a local placeholder before the network upload starts so the
+    /// composer reflects the user's selection immediately.
+    private func startUploadPlaceholder(
+        mime: String,
+        size: Int,
+        filename: String? = nil,
+        previewData: Data? = nil
+    ) -> String {
+        let localId = "local-upload-\(UUID().uuidString)"
+        pendingAttachments.append(PendingAttachment(
+            id: localId,
+            mime: mime,
+            size: size,
+            filename: filename,
+            uploadState: .uploading,
+            localPreviewData: previewData
+        ))
+        return localId
+    }
+
+    /// Record an uploaded attachment: replace its local placeholder (if any)
+    /// and stash metadata so AttachmentGrid can render loaded/realtime copies.
+    private func registerUpload(_ pending: PendingAttachment, replacing localId: String? = nil) {
+        if let localId, let idx = pendingAttachments.firstIndex(where: { $0.id == localId }) {
+            pendingAttachments[idx] = pending
+        } else {
+            pendingAttachments.append(pending)
+        }
+        if let remoteId = pending.uploadedAttachmentId {
+            attachmentMetaById[remoteId] = pending.asAttachment()
+        }
+    }
+
+    private func markUploadFailed(_ localId: String, message: String) {
+        guard let idx = pendingAttachments.firstIndex(where: { $0.id == localId }) else { return }
+        pendingAttachments[idx].uploadState = .failed
+        pendingAttachments[idx].errorMessage = message
     }
 
     /// Downscale to a 2048 px long edge and JPEG-encode at 0.85. Full-res
@@ -55,7 +97,28 @@ extension ConversationView {
     func ingestPhotos(_ items: [PhotosPickerItem]) async {
         guard let api else { return }
         for item in items {
-            guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
+            let data: Data?
+            if let imageData = try? await item.loadTransferable(type: PickedImageData.self) {
+                data = imageData.data
+            } else if let raw = try? await item.loadTransferable(type: Data.self) {
+                data = raw
+            } else if let url = try? await item.loadTransferable(type: URL.self),
+                      let raw = try? Data(contentsOf: url) {
+                data = raw
+            } else {
+                data = nil
+            }
+            guard let data else {
+                let localId = startUploadPlaceholder(
+                    mime: "image/jpeg",
+                    size: 0,
+                    filename: "图片"
+                )
+                markUploadFailed(localId, message: "读取图片失败")
+                self.error = "读取图片失败"
+                Haptics.error()
+                continue
+            }
             // Library photos are typically HEIC. The edge attachment
             // classifier and the vision models only handle jpeg/png/gif/
             // webp — a HEIC upload lands as a generic 'file', so the bot
@@ -75,6 +138,11 @@ extension ConversationView {
                 mime = item.supportedContentTypes.first?.preferredMIMEType ?? "image/jpeg"
                 ext = mime.split(separator: "/").last.map(String.init) ?? "jpg"
             }
+            let localId = startUploadPlaceholder(
+                mime: mime,
+                size: uploadData.count,
+                previewData: uploadData
+            )
             do {
                 let response: UploadResponse = try await api.upload(
                     "v1/upload",
@@ -84,11 +152,17 @@ extension ConversationView {
                     extraFields: ["conversationId": conversation.id]
                 )
                 registerUpload(PendingAttachment(
-                    id: response.id, mime: response.mime, size: response.size
-                ))
+                    id: localId,
+                    remoteId: response.id,
+                    mime: response.mime,
+                    size: response.size,
+                    uploadState: .uploaded
+                ), replacing: localId)
                 Haptics.tap()
             } catch {
-                self.error = "上传失败: \(error.localizedDescription)"
+                let message = "上传失败: \(error.localizedDescription)"
+                markUploadFailed(localId, message: message)
+                self.error = message
                 Haptics.error()
             }
         }
@@ -101,6 +175,11 @@ extension ConversationView {
     func ingestCameraImage(_ image: UIImage) async {
         defer { cameraImage = nil }
         guard let api, let data = encodeImageForUpload(image) else { return }
+        let localId = startUploadPlaceholder(
+            mime: "image/jpeg",
+            size: data.count,
+            previewData: data
+        )
         do {
             let response: UploadResponse = try await api.upload(
                 "v1/upload",
@@ -110,11 +189,17 @@ extension ConversationView {
                 extraFields: ["conversationId": conversation.id]
             )
             registerUpload(PendingAttachment(
-                id: response.id, mime: response.mime, size: response.size
-            ))
+                id: localId,
+                remoteId: response.id,
+                mime: response.mime,
+                size: response.size,
+                uploadState: .uploaded
+            ), replacing: localId)
             Haptics.tap()
         } catch {
-            self.error = "上传失败: \(error.localizedDescription)"
+            let message = "上传失败: \(error.localizedDescription)"
+            markUploadFailed(localId, message: message)
+            self.error = message
             Haptics.error()
         }
     }
@@ -143,6 +228,11 @@ extension ConversationView {
             }
             let mime = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType
                 ?? "application/octet-stream"
+            let localId = startUploadPlaceholder(
+                mime: mime,
+                size: data.count,
+                filename: filename
+            )
             do {
                 let response: UploadResponse = try await api.upload(
                     "v1/upload",
@@ -152,14 +242,18 @@ extension ConversationView {
                     extraFields: ["conversationId": conversation.id]
                 )
                 registerUpload(PendingAttachment(
-                    id: response.id,
+                    id: localId,
+                    remoteId: response.id,
                     mime: response.mime,
                     size: response.size,
-                    filename: response.filename ?? filename
-                ))
+                    filename: response.filename ?? filename,
+                    uploadState: .uploaded
+                ), replacing: localId)
                 Haptics.tap()
             } catch {
-                self.error = "上传失败: \(error.localizedDescription)"
+                let message = "上传失败: \(error.localizedDescription)"
+                markUploadFailed(localId, message: message)
+                self.error = message
                 Haptics.error()
             }
         }

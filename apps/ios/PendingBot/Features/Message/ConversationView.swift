@@ -683,7 +683,8 @@ struct ConversationView: View {
         .photosPicker(
             isPresented: $showPhotoPicker,
             selection: $photoPickerItems,
-            matching: .images
+            matching: .images,
+            preferredItemEncoding: .compatible
         )
         .fullScreenCover(isPresented: $showCamera) {
             CameraPicker { image in
@@ -911,7 +912,8 @@ struct ConversationView: View {
 
     private var canSend: Bool {
         guard !iAmFrozen else { return false }
-        return !input.trimmingCharacters(in: .whitespaces).isEmpty || !pendingAttachments.isEmpty
+        return !input.trimmingCharacters(in: .whitespaces).isEmpty
+            || pendingAttachments.contains(where: \.isUploaded)
     }
 
     /// True iff this is a group conv and the caller has been frozen out
@@ -1424,9 +1426,9 @@ struct ConversationView: View {
             uploadTasks = []
             for t in inflight { await t.value }
         }
-        let attachIds = pendingAttachments.map(\.id)
-        let attachmentSnapshot = pendingAttachments
-        pendingAttachments = []
+        let attachmentSnapshot = pendingAttachments.filter(\.isUploaded)
+        let attachIds = attachmentSnapshot.compactMap(\.uploadedAttachmentId)
+        pendingAttachments.removeAll(where: \.isUploaded)
         photoPickerItems = []
         Haptics.send()
 
@@ -1465,7 +1467,7 @@ struct ConversationView: View {
             // here; rekeyed to the canonical id when Realtime resolves
             // (see the live-* → canonical swap below).
             if !attachmentSnapshot.isEmpty {
-                attachmentIdsByMsgId[localId] = attachmentSnapshot.map { $0.id }
+                attachmentIdsByMsgId[localId] = attachIds
             }
             // Don't light the typing indicator here — TypingDots is gated
             // on the first bot token now, and the "sending" (light green)
@@ -2146,21 +2148,36 @@ struct ConversationView: View {
 
 struct PendingAttachment: Identifiable, Hashable {
     let id: String
+    var remoteId: String? = nil
     let mime: String
     let size: Int
     /// Original filename — set for non-image files, nil for images.
     var filename: String? = nil
+    var uploadState: UploadState = .uploaded
+    /// Local bytes used for immediate thumbnail preview while the upload is
+    /// still in flight. Cleared for server-backed attachments.
+    var localPreviewData: Data? = nil
+    var errorMessage: String? = nil
+
+    enum UploadState: String, Hashable {
+        case uploading
+        case uploaded
+        case failed
+    }
 
     var isImage: Bool { mime.lowercased().hasPrefix("image/") }
+    var isUploaded: Bool { uploadState == .uploaded && uploadedAttachmentId != nil }
+    var uploadedAttachmentId: String? { remoteId ?? (uploadState == .uploaded ? id : nil) }
 
     /// Materialise into an `Attachment` for an optimistic bubble. The
     /// worker-served path is `/v1/uploads/<id>` (the auth-gated route);
     /// `kind` is left to the renderer, which classifies by `mime`.
     func asAttachment() -> Attachment {
-        Attachment(
-            id: id, kind: isImage ? "image" : "file", mime: mime,
+        let attachmentId = uploadedAttachmentId ?? id
+        return Attachment(
+            id: attachmentId, kind: isImage ? "image" : "file", mime: mime,
             size: size, width: nil, height: nil,
-            url: "/v1/uploads/\(id)", filename: filename
+            url: "/v1/uploads/\(attachmentId)", filename: filename
         )
     }
 }
