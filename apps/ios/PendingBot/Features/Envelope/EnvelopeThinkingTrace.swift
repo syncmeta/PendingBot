@@ -30,7 +30,7 @@ struct EnvelopeThinkingTrace: View {
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "brain")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(Theme.Fonts.glyph(size: 12, weight: .medium))
                         .foregroundStyle(Theme.Palette.inkMuted)
                     Text("思考过程（\(turns.count) 轮）")
                         .font(Theme.Fonts.footnote)
@@ -84,7 +84,7 @@ struct EnvelopeThinkingTrace: View {
                         .truncationMode(.tail)
                     Spacer(minLength: 4)
                     Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(Theme.Fonts.glyph(size: 10, weight: .semibold))
                         .foregroundStyle(Theme.Palette.inkMuted)
                 }
                 .contentShape(Rectangle())

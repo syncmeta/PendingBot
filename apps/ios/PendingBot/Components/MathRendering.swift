@@ -244,7 +244,7 @@ final class MathImageRenderer {
 
     private static func textFallback(_ source: String, color: UIColor, fontSize: CGFloat) -> UIImage {
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: UIFont.monospacedSystemFont(ofSize: fontSize * 0.92, weight: .regular),
+            .font: Theme.Fonts.uiResolvedMonospaced(size: fontSize * 0.92, weight: .regular),
             .foregroundColor: color,
         ]
         let string = NSAttributedString(string: source, attributes: attrs)

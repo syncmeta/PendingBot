@@ -284,14 +284,14 @@ struct OptionRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Text(title)
-                .font(.system(size: 15, weight: .medium))
+                .font(Theme.Fonts.system(size: 15, weight: .medium))
                 .foregroundStyle(role == .destructive
                                  ? Color(hex: 0xB14B3C)
                                  : Theme.Palette.ink)
             Spacer(minLength: 0)
             if showsChevron {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(Theme.Fonts.glyph(size: 12, weight: .medium))
                     .foregroundStyle(Theme.Palette.inkMuted.opacity(0.55))
             }
         }

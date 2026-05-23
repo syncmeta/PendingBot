@@ -41,9 +41,9 @@ struct CallView: View {
                 Spacer()
                 avatar
                 Text(session.botDisplayName)
-                    .font(.title2).bold()
+                    .font(Theme.Fonts.title2).bold()
                 Text(statusText)
-                    .font(.subheadline)
+                    .font(Theme.Fonts.subheadline)
                     .foregroundStyle(.secondary)
                 Spacer()
                 metrics
@@ -152,18 +152,18 @@ struct CallView: View {
             if let start = session.connectedAt {
                 TimelineView(.periodic(from: start, by: 1.0)) { ctx in
                     Text(Self.formatElapsed(ctx.date.timeIntervalSince(start)))
-                        .font(.title3)
+                        .font(Theme.Fonts.title3)
                         .monospacedDigit()
                 }
             } else {
                 Text("00:00")
-                    .font(.title3)
+                    .font(Theme.Fonts.title3)
                     .monospacedDigit()
                     .opacity(0)
             }
             if session.cumulativePnd > 0 {
                 Text("本次通话的费用：\(session.cumulativePnd) PND")
-                    .font(.subheadline)
+                    .font(Theme.Fonts.subheadline)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
             }
@@ -187,7 +187,7 @@ struct CallView: View {
             callCenter.minimize()
         } label: {
             Image(systemName: "chevron.down")
-                .font(.system(size: 18, weight: .semibold))
+                .font(Theme.Fonts.glyph(size: 18, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .frame(width: 44, height: 44)
                 .background(
@@ -210,7 +210,7 @@ struct CallView: View {
             Haptics.tap()
         } label: {
             Image(systemName: session.isSpeakerOn ? "speaker.wave.2.fill" : "speaker.fill")
-                .font(.system(size: 24))
+                .font(Theme.Fonts.glyph(size: 24))
                 .foregroundStyle(session.isSpeakerOn ? Color.white : Color.primary)
                 .frame(width: 64, height: 64)
                 .background(
@@ -235,7 +235,7 @@ struct CallView: View {
             Task { await session.hangUp() }
         } label: {
             Image(systemName: "phone.down.fill")
-                .font(.system(size: 28))
+                .font(Theme.Fonts.glyph(size: 28))
                 .foregroundStyle(.white)
                 .frame(width: 76, height: 76)
                 .background(

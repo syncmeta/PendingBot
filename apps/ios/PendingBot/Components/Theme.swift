@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// One place to change the look. Mirrors the design language used across
 /// the PendingBot reference + the web `tokens.css`: deep-jade accent on
@@ -71,25 +72,66 @@ enum Theme {
         /// sides look mismatched).
         static func scaled(_ pt: CGFloat) -> CGFloat { sized(pt) }
 
+        static func system(
+            size: CGFloat,
+            weight: Font.Weight = .regular,
+            design: Font.Design = .default
+        ) -> Font {
+            .system(size: sized(size), weight: weight, design: design)
+        }
+
+        static func monospaced(size: CGFloat, weight: Font.Weight = .regular) -> Font {
+            system(size: size, weight: weight, design: .monospaced)
+        }
+
+        /// Unscaled font-sized glyphs: SF Symbols, emoji avatars, and icon-like
+        /// marks whose size is tied to a fixed visual container rather than text.
+        static func glyph(
+            size: CGFloat,
+            weight: Font.Weight = .regular,
+            design: Font.Design = .default
+        ) -> Font {
+            .system(size: size, weight: weight, design: design)
+        }
+
+        static func uiSystem(size: CGFloat, weight: UIFont.Weight = .regular) -> UIFont {
+            .systemFont(ofSize: sized(size), weight: weight)
+        }
+
+        static func uiMonospaced(size: CGFloat, weight: UIFont.Weight = .regular) -> UIFont {
+            .monospacedSystemFont(ofSize: sized(size), weight: weight)
+        }
+
+        /// UIKit font from an already-resolved point size. Use when the
+        /// caller receives a size from another scaled renderer, such as math.
+        static func uiResolvedMonospaced(size: CGFloat, weight: UIFont.Weight = .regular) -> UIFont {
+            .monospacedSystemFont(ofSize: size, weight: weight)
+        }
+
         /// Serif display (system New York). Used for titles, header marks,
         /// avatar initials. Feels editorial vs the regular SF Pro UI.
         static func serif(size: CGFloat, weight: Font.Weight = .semibold) -> Font {
-            .system(size: sized(size), weight: weight, design: .serif)
+            system(size: size, weight: weight, design: .serif)
         }
 
         /// Rounded sans — softer than SF Pro, used for buttons, chip labels,
         /// nav, counters. Matches the warm palette.
         static func rounded(size: CGFloat, weight: Font.Weight = .regular) -> Font {
-            .system(size: sized(size), weight: weight, design: .rounded)
+            system(size: size, weight: weight, design: .rounded)
         }
 
-        static let body            = Font.system(size: sized(16), weight: .regular)
-        static let bodyEmphasized  = Font.system(size: sized(16), weight: .medium)
-        static let footnote        = Font.system(size: sized(13), weight: .regular)
-        static let caption         = Font.system(size: sized(12), weight: .regular)
-        static let title           = Font.system(size: sized(28), weight: .semibold, design: .serif)
-        static let sectionTitle    = Font.system(size: sized(20), weight: .semibold, design: .serif)
-        static let monoSmall       = Font.system(size: sized(12), design: .monospaced)
+        static let body            = system(size: 16)
+        static let bodyEmphasized  = system(size: 16, weight: .medium)
+        static let subheadline     = system(size: 15)
+        static let headline        = system(size: 17, weight: .semibold)
+        static let footnote        = system(size: 13)
+        static let caption         = system(size: 12)
+        static let caption2        = system(size: 11)
+        static let title           = serif(size: 28, weight: .semibold)
+        static let title2          = system(size: 22)
+        static let title3          = system(size: 20)
+        static let sectionTitle    = serif(size: 20, weight: .semibold)
+        static let monoSmall       = monospaced(size: 12)
     }
 
     // ── Spacing / radii ─────────────────────────────────────────────────────

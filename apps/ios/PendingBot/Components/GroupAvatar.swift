@@ -48,7 +48,7 @@ struct GroupAvatar: View {
             ]
             ForEach(0..<3, id: \.self) { i in
                 Text(chosen[i])
-                    .font(.system(size: glyphSize))
+                    .font(Theme.Fonts.glyph(size: glyphSize))
                     .offset(x: offsets[i].0, y: offsets[i].1)
             }
         }

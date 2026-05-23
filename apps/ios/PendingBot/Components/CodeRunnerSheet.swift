@@ -63,7 +63,7 @@ struct CodeRunnerSheet: View {
     private var sourceHeader: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             Text(content)
-                .font(.system(size: 12.5, design: .monospaced))
+                .font(Theme.Fonts.monospaced(size: 12.5))
                 .foregroundStyle(Theme.Palette.ink)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
@@ -90,7 +90,7 @@ struct CodeRunnerSheet: View {
                 } else {
                     ForEach(lines) { line in
                         Text(line.text)
-                            .font(.system(size: 13, design: .monospaced))
+                            .font(Theme.Fonts.monospaced(size: 13))
                             .foregroundStyle(line.isError ? Color(hex: 0xB14B3C) : Theme.Palette.ink)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .textSelection(.enabled)

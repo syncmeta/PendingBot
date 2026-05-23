@@ -62,11 +62,11 @@ struct SidebarTabBar: View {
                 } label: {
                     VStack(spacing: 3) {
                         Image(systemName: tab.systemImage)
-                            .font(.system(size: 20, weight: .regular))
+                            .font(Theme.Fonts.glyph(size: 20, weight: .regular))
                             .overlay(alignment: .topTrailing) {
                                 if tab == .message, unread.totalUnreadCount > 0 {
                                     Text(unread.totalUnreadCount > 99 ? "99+" : "\(unread.totalUnreadCount)")
-                                        .font(.system(size: 11, weight: .semibold))
+                                        .font(Theme.Fonts.system(size: 11, weight: .semibold))
                                         .foregroundStyle(.white)
                                         .padding(.horizontal, 5)
                                         .frame(minWidth: 17, minHeight: 17)
@@ -85,7 +85,7 @@ struct SidebarTabBar: View {
                                 }
                             }
                         Text(tab.label)
-                            .font(.system(size: 10, weight: .medium))
+                            .font(Theme.Fonts.system(size: 10, weight: .medium))
                     }
                     .foregroundStyle(
                         selection == tab

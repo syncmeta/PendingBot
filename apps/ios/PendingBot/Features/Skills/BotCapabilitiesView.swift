@@ -59,7 +59,7 @@ struct BotCapabilitiesView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(p.displayName)
                 Text(p.subtitle)
-                    .font(.footnote)
+                    .font(Theme.Fonts.footnote)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
@@ -111,7 +111,7 @@ struct MCPServersStubView: View {
             Theme.Palette.canvas.ignoresSafeArea()
             VStack(spacing: 14) {
                 Image(systemName: "wrench.and.screwdriver")
-                    .font(.system(size: 32, weight: .light))
+                    .font(Theme.Fonts.glyph(size: 32, weight: .light))
                     .foregroundStyle(Theme.Palette.inkMuted.opacity(0.7))
                 Text("暂未实现")
                     .font(Theme.Fonts.rounded(size: 16, weight: .medium))

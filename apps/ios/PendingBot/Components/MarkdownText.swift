@@ -470,7 +470,7 @@ private struct ChatCodeBlock: View {
             toolbar
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(content)
-                    .font(.system(size: codeFontSize, design: .monospaced))
+                    .font(AppTheme.Fonts.monospaced(size: codeFontSize))
                     .foregroundStyle(AppTheme.Palette.ink)
                     .lineSpacing(variant == .article ? 3 : 1)
                     .padding(.horizontal, horizontalPadding)
@@ -503,7 +503,7 @@ private struct ChatCodeBlock: View {
             if let lang = language, !lang.isEmpty {
                 HStack(spacing: 0) {
                     Text(lang.lowercased())
-                        .font(.system(size: 10.5, design: .monospaced))
+                        .font(AppTheme.Fonts.monospaced(size: 10.5))
                         .foregroundStyle(AppTheme.Palette.inkMuted)
                         .tracking(0.4)
                     Spacer(minLength: 0)
@@ -516,7 +516,7 @@ private struct ChatCodeBlock: View {
             HStack(spacing: 10) {
                 if let lang = language, !lang.isEmpty {
                     Text(lang.lowercased())
-                        .font(.system(size: 11, design: .monospaced))
+                        .font(AppTheme.Fonts.monospaced(size: 11))
                         .foregroundStyle(AppTheme.Palette.inkMuted)
                 }
                 Spacer(minLength: 0)

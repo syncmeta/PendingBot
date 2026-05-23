@@ -113,7 +113,7 @@ struct CreateBotSheet: View {
                                     .foregroundStyle(visibility == v
                                                      ? Theme.Palette.accent
                                                      : Theme.Palette.inkMuted)
-                                    .font(.system(size: 18, weight: .medium))
+                                    .font(Theme.Fonts.system(size: 18, weight: .medium))
                                     .padding(.top, 2)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(v.label)
@@ -1179,7 +1179,7 @@ struct BotConfigView: View {
             }
 
             if let error {
-                Section { Text(error).foregroundStyle(.red).font(.footnote) }
+                Section { Text(error).foregroundStyle(.red).font(Theme.Fonts.footnote) }
             }
         }
         .disabled(!loaded)
@@ -1350,7 +1350,7 @@ struct BotConfigView: View {
                     .truncationMode(.middle)
                 if enabled {
                     Image(systemName: "chevron.right")
-                        .font(.caption)
+                        .font(Theme.Fonts.caption)
                         .foregroundStyle(.tertiary)
                 }
             }
@@ -2033,7 +2033,7 @@ struct BotSharePage: View {
 
                 VStack(spacing: 12) {
                     Text(displayURL)
-                        .font(.footnote.monospaced())
+                        .font(Theme.Fonts.monospaced(size: 13))
                         .foregroundStyle(Theme.Palette.inkMuted)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -2047,7 +2047,7 @@ struct BotSharePage: View {
                         } label: {
                             Label(copied ? "已复制" : "复制链接",
                                   systemImage: copied ? "checkmark" : "doc.on.doc")
-                                .font(.system(size: 14, weight: .semibold))
+                                .font(Theme.Fonts.system(size: 14, weight: .semibold))
                                 .padding(.horizontal, 16)
                                 .padding(.vertical, 10)
                                 .background(Capsule().fill(Theme.Palette.accentBg))
@@ -2058,7 +2058,7 @@ struct BotSharePage: View {
                         if let shareURL {
                             ShareLink(item: shareURL) {
                                 Label("分享", systemImage: "square.and.arrow.up")
-                                    .font(.system(size: 14, weight: .semibold))
+                                    .font(Theme.Fonts.system(size: 14, weight: .semibold))
                                     .padding(.horizontal, 16)
                                     .padding(.vertical, 10)
                                     .background(Capsule().fill(Theme.Palette.accentBg))
@@ -2070,7 +2070,7 @@ struct BotSharePage: View {
                 }
 
                 Text("把这个链接、二维码,或者标识 @\(slug) 发给别人。对方点开链接、扫码,或在「加机器人」里输入这个标识,就能加这个机器人。")
-                    .font(.footnote)
+                    .font(Theme.Fonts.footnote)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal)
@@ -2106,7 +2106,7 @@ struct BotQRCard: View {
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
                 Text("@\(slug) · 扫码加我")
-                    .font(.footnote)
+                    .font(Theme.Fonts.footnote)
                     .foregroundStyle(.secondary)
             }
         }

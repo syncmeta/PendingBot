@@ -74,7 +74,7 @@ struct GroupBillingSheet: View {
                     if mode == .custom {
                         Section {
                             Text("当前为自定义比例。要修改分摊方式,请选择上面的其他模式。")
-                                .font(.caption)
+                                .font(Theme.Fonts.caption)
                                 .foregroundStyle(.secondary)
                         }
                     }

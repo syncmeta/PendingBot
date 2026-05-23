@@ -103,7 +103,7 @@ struct CallDiagnosticsButton: View {
             Haptics.tap()
         } label: {
             Image(systemName: "gauge.with.dots.needle.67percent")
-                .font(.system(size: 18, weight: .semibold))
+                .font(Theme.Fonts.glyph(size: 18, weight: .semibold))
                 .foregroundStyle(snapshot.quality.tint)
                 .frame(width: 44, height: 44)
                 .background(Circle().fill(Color(.secondarySystemBackground)))
@@ -120,15 +120,15 @@ struct CallDiagnosticsPanel: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Text("通话诊断")
-                    .font(.headline)
+                    .font(Theme.Fonts.headline)
                 Spacer()
                 Text(snapshot.quality.title)
-                    .font(.caption)
+                    .font(Theme.Fonts.caption)
                     .fontWeight(.semibold)
                     .foregroundStyle(snapshot.quality.tint)
             }
             Text(snapshot.bottleneck)
-                .font(.subheadline)
+                .font(Theme.Fonts.subheadline)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             LazyVGrid(
@@ -148,7 +148,7 @@ struct CallDiagnosticsPanel: View {
             if !snapshot.participants.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("说话状态")
-                        .font(.caption)
+                        .font(Theme.Fonts.caption)
                         .fontWeight(.semibold)
                         .foregroundStyle(.secondary)
                     ForEach(snapshot.participants, id: \.identityKey) { p in
@@ -157,17 +157,17 @@ struct CallDiagnosticsPanel: View {
                                 .fill(p.speaking ? Color.green : Color.secondary.opacity(0.35))
                                 .frame(width: 8, height: 8)
                             Text(p.displayName)
-                                .font(.subheadline)
+                                .font(Theme.Fonts.subheadline)
                                 .lineLimit(1)
                             Spacer()
                             if let depth = p.playoutDepthMs {
                                 Text("\(depth)ms")
-                                    .font(.caption)
+                                    .font(Theme.Fonts.caption)
                                     .monospacedDigit()
                                     .foregroundStyle(.secondary)
                             } else {
                                 Text(String(format: "%.2f", p.audioLevel))
-                                    .font(.caption)
+                                    .font(Theme.Fonts.caption)
                                     .monospacedDigit()
                                     .foregroundStyle(.secondary)
                             }
@@ -183,7 +183,7 @@ struct CallDiagnosticsPanel: View {
                     Text(Self.timeFormatter.string(from: updatedAt))
                 }
             }
-            .font(.caption2)
+            .font(Theme.Fonts.caption2)
             .foregroundStyle(.tertiary)
         }
         .padding(16)
@@ -202,10 +202,10 @@ struct CallDiagnosticsPanel: View {
     private func metric(_ label: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label)
-                .font(.caption2)
+                .font(Theme.Fonts.caption2)
                 .foregroundStyle(.secondary)
             Text(value)
-                .font(.subheadline)
+                .font(Theme.Fonts.subheadline)
                 .monospacedDigit()
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)

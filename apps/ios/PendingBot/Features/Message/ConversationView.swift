@@ -960,7 +960,7 @@ struct ConversationView: View {
                     .font(Theme.Fonts.rounded(size: 13, weight: .semibold))
                     .monospacedDigit()
                 Image(systemName: "arrow.down")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(Theme.Fonts.glyph(size: 11, weight: .bold))
             }
             .foregroundStyle(Theme.Palette.surface)
             .padding(.horizontal, 11)
@@ -1093,7 +1093,7 @@ struct ConversationView: View {
                     dismiss()
                 } label: {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 17, weight: .semibold))
+                        .font(Theme.Fonts.glyph(size: 17, weight: .semibold))
                         .foregroundStyle(Theme.Palette.ink)
                         .padding(.trailing, 2)
                 }
@@ -1132,7 +1132,7 @@ struct ConversationView: View {
                     startVoiceCall()
                 } label: {
                     Image(systemName: "phone.fill")
-                        .font(.system(size: 17, weight: .regular))
+                        .font(Theme.Fonts.glyph(size: 17, weight: .regular))
                         .foregroundStyle(Theme.Palette.ink)
                         .frame(width: 32, height: 32)
                 }
@@ -1145,7 +1145,7 @@ struct ConversationView: View {
                     startGroupCall()
                 } label: {
                     Image(systemName: "phone.fill")
-                        .font(.system(size: 17, weight: .regular))
+                        .font(Theme.Fonts.glyph(size: 17, weight: .regular))
                         .foregroundStyle(Theme.Palette.ink)
                         .frame(width: 32, height: 32)
                 }
@@ -1158,7 +1158,7 @@ struct ConversationView: View {
                     Task { await startNewBotConv() }
                 } label: {
                     Image(systemName: "square.and.pencil")
-                        .font(.system(size: 17, weight: .regular))
+                        .font(Theme.Fonts.glyph(size: 17, weight: .regular))
                         .foregroundStyle(Theme.Palette.ink)
                         .frame(width: 32, height: 32)
                 }
@@ -1170,7 +1170,7 @@ struct ConversationView: View {
                 showingSettings = true
             } label: {
                 Image(systemName: "gearshape")
-                    .font(.system(size: 17, weight: .regular))
+                    .font(Theme.Fonts.glyph(size: 17, weight: .regular))
                     .foregroundStyle(Theme.Palette.ink)
                     .frame(width: 32, height: 32)
             }
@@ -2198,7 +2198,7 @@ struct RecallTombstoneView: View {
 
     var body: some View {
         Text(label)
-            .font(.caption2)
+            .font(Theme.Fonts.caption2)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 4)
@@ -2229,7 +2229,7 @@ private struct PreChatActionButton: View {
             VStack(spacing: 8) {
                 ZStack {
                     Image(systemName: systemImage)
-                        .font(.system(size: 22, weight: .light))
+                        .font(Theme.Fonts.glyph(size: 22, weight: .light))
                         .opacity(busy ? 0 : 1)
                     if busy {
                         ProgressView()

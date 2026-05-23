@@ -453,7 +453,7 @@ struct SkillEditorSheet: View {
     private var bodyCard: some View {
         labeledCard(title: "正文（Markdown）", footer: "启用后，正文会作为技能指令拼进系统提示词。") {
             TextEditor(text: $skillBody)
-                .font(.system(size: 14, design: .monospaced))
+                .font(Theme.Fonts.monospaced(size: 14))
                 .foregroundStyle(Theme.Palette.ink)
                 .scrollContentBackground(.hidden)
                 .frame(minHeight: 220)

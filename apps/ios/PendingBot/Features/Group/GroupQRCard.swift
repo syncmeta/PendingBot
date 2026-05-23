@@ -41,7 +41,7 @@ struct GroupQRCard: View {
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
                 Text("扫这个码加群")
-                    .font(.footnote)
+                    .font(Theme.Fonts.footnote)
                     .foregroundStyle(.secondary)
             }
             if isAdmin {
@@ -49,7 +49,7 @@ struct GroupQRCard: View {
             }
             if let error {
                 Text(error)
-                    .font(.footnote)
+                    .font(Theme.Fonts.footnote)
                     .foregroundStyle(.red)
             }
         }
@@ -131,7 +131,7 @@ struct GroupQRCard: View {
                 }
                 Text("刷新（旧码作废）")
             }
-            .font(.system(size: 14, weight: .semibold))
+            .font(Theme.Fonts.system(size: 14, weight: .semibold))
             .foregroundStyle(Theme.Palette.accent)
             .padding(.horizontal, 18)
             .padding(.vertical, 10)

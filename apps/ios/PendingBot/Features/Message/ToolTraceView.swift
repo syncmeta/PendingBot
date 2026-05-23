@@ -212,7 +212,7 @@ struct ToolTraceView: View {
                     TypingDots()
                 } else {
                     Image(systemName: headerIcon)
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(Theme.Fonts.glyph(size: 11, weight: .semibold))
                         .foregroundStyle(Theme.Palette.accent)
                         .frame(width: 22, height: 22)
                         .background(Theme.Palette.accentBg, in: Circle())
@@ -223,7 +223,7 @@ struct ToolTraceView: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(Theme.Fonts.glyph(size: 9, weight: .semibold))
                     .foregroundStyle(Theme.Palette.inkMuted)
                     .rotationEffect(.degrees(expanded ? 90 : 0))
                 Spacer(minLength: 0)
@@ -289,7 +289,7 @@ struct ToolTraceView: View {
             ForEach(events) { ev in
                 HStack(alignment: .top, spacing: 9) {
                     Image(systemName: ev.iconName)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(Theme.Fonts.glyph(size: 12, weight: .semibold))
                         .foregroundStyle(ev.resultError == nil ? Theme.Palette.accent : Color(hex: 0xB14B3C))
                         .frame(width: 24, height: 24)
                         .background(
@@ -334,13 +334,13 @@ struct ToolTraceView: View {
                             } label: {
                                 HStack(spacing: 4) {
                                     Image(systemName: "bubble.left.and.bubble.right")
-                                        .font(.system(size: 10, weight: .semibold))
+                                        .font(Theme.Fonts.glyph(size: 10, weight: .semibold))
                                         .foregroundStyle(Theme.Palette.accent)
                                     Text("看子对话")
                                         .font(Theme.Fonts.rounded(size: 11, weight: .medium))
                                         .foregroundStyle(Theme.Palette.accent)
                                     Image(systemName: "chevron.right")
-                                        .font(.system(size: 8, weight: .bold))
+                                        .font(Theme.Fonts.glyph(size: 8, weight: .bold))
                                         .foregroundStyle(Theme.Palette.accent.opacity(0.7))
                                 }
                                 .padding(.horizontal, 8)

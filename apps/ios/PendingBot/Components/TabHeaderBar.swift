@@ -70,7 +70,7 @@ struct HeaderActionIcon: View {
     var glyphWeight: Font.Weight = .regular
     var body: some View {
         Image(systemName: systemImage)
-            .font(.system(size: glyphPointSize, weight: glyphWeight))
+            .font(Theme.Fonts.glyph(size: glyphPointSize, weight: glyphWeight))
             .foregroundStyle(Theme.Palette.accent)
             .frame(width: size, height: size)
             .contentShape(Capsule())
@@ -160,10 +160,10 @@ struct PlusActionPopover: View {
                     } label: {
                         HStack(spacing: 14) {
                             Image(systemName: item.systemImage)
-                                .font(.system(size: 15, weight: .regular))
+                                .font(Theme.Fonts.glyph(size: 15, weight: .regular))
                                 .frame(width: 22, alignment: .center)
                             Text(item.title)
-                                .font(.system(size: 15))
+                                .font(Theme.Fonts.system(size: 15))
                             Spacer(minLength: 0)
                         }
                         .foregroundStyle(Theme.Palette.ink)

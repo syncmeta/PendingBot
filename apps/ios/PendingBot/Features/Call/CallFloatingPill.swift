@@ -67,7 +67,7 @@ struct CallFloatingPill: View {
                         .fill(Theme.Palette.accentBg)
                         .frame(width: 32, height: 32)
                     Image(systemName: "person.3.fill")
-                        .font(.system(size: 14))
+                        .font(Theme.Fonts.glyph(size: 14))
                         .foregroundStyle(Theme.Palette.accent)
                 },
             ),
@@ -111,7 +111,7 @@ struct CallFloatingPill: View {
                     avatar
                     VStack(alignment: .leading, spacing: 1) {
                         Text(title)
-                            .font(.subheadline).fontWeight(.semibold)
+                            .font(Theme.Fonts.subheadline).fontWeight(.semibold)
                             .foregroundStyle(.primary)
                             .lineLimit(1)
                         elapsedLabel(
@@ -135,7 +135,7 @@ struct CallFloatingPill: View {
                 onHangUp()
             }) {
                 Image(systemName: "phone.down.fill")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(Theme.Fonts.glyph(size: 14, weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(width: 44, height: 44)
                     .background(Circle().fill(.red))
@@ -167,13 +167,13 @@ struct CallFloatingPill: View {
         if let start = connectedAt {
             TimelineView(.periodic(from: start, by: 1.0)) { ctx in
                 Text(format(elapsed: ctx.date.timeIntervalSince(start)))
-                    .font(.caption)
+                    .font(Theme.Fonts.caption)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
             }
         } else {
             Text(fallback)
-                .font(.caption)
+                .font(Theme.Fonts.caption)
                 .foregroundStyle(.secondary)
         }
     }

@@ -32,7 +32,7 @@ struct BotAvatar: View {
             Circle()
                 .fill(ColorHash.softBackground(for: colorSeed))
             Text(ColorHash.emoji(for: emojiSeed))
-                .font(.system(size: size * 0.55))
+                .font(Theme.Fonts.glyph(size: size * 0.55))
         }
         .frame(width: size, height: size)
         .overlay(

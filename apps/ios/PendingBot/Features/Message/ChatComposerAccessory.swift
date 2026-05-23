@@ -105,10 +105,10 @@ private struct FrozenComposerBannerView: View {
                 .padding(.top, 1)
             VStack(alignment: .leading, spacing: 2) {
                 Text("已达本群 PND 上限,新消息和发送已暂停")
-                    .font(.footnote.weight(.semibold))
+                    .font(Theme.Fonts.footnote.weight(.semibold))
                     .foregroundStyle(Theme.Palette.ink)
                 Text("提高上限或为账户充值后会自动恢复")
-                    .font(.caption)
+                    .font(Theme.Fonts.caption)
                     .foregroundStyle(Theme.Palette.inkMuted)
             }
             Spacer(minLength: 0)
@@ -439,7 +439,11 @@ final class AccessoryOwnerController: UIViewController {
     }
 
     private func dockComposerIfPossible() {
-        guard !isTearingDown, view.window != nil, !isFirstResponder else { return }
+        guard !isTearingDown,
+              view.window != nil,
+              !isFirstResponder,
+              !barContainer.containsFirstResponder
+        else { return }
         becomeFirstResponder()
     }
 
@@ -471,6 +475,13 @@ private final class AccessoryOwnerRootView: UIView {
     override func didMoveToWindow() {
         super.didMoveToWindow()
         onMoveToWindow?(window)
+    }
+}
+
+private extension UIView {
+    var containsFirstResponder: Bool {
+        if isFirstResponder { return true }
+        return subviews.contains { $0.containsFirstResponder }
     }
 }
 

@@ -48,13 +48,13 @@ struct MyQRBusinessCard: View {
             }
             if let saveStatus {
                 Text(saveStatus)
-                    .font(.footnote)
+                    .font(Theme.Fonts.footnote)
                     .foregroundStyle(.secondary)
                     .transition(.opacity)
             }
             if let error {
                 Text(error)
-                    .font(.footnote)
+                    .font(Theme.Fonts.footnote)
                     .foregroundStyle(.red)
             }
         }
@@ -157,7 +157,7 @@ struct MyQRBusinessCard: View {
             confirmRefresh = true
         } label: {
             Image(systemName: "arrow.clockwise")
-                .font(.system(size: 16, weight: .semibold))
+                .font(Theme.Fonts.glyph(size: 16, weight: .semibold))
                 .foregroundStyle(Theme.Palette.accent)
                 .frame(width: 44, height: 44)
                 .background(Circle().fill(Theme.Palette.accentBg))
@@ -190,7 +190,7 @@ struct MyQRBusinessCard: View {
                     copyId(presetId)
                 } label: {
                     Image(systemName: idCopied ? "checkmark" : "doc.on.doc")
-                        .font(.footnote)
+                        .font(Theme.Fonts.footnote)
                         .foregroundStyle(idCopied ? Theme.Palette.accent : Theme.Palette.inkMuted)
                 }
                 .buttonStyle(.plain)

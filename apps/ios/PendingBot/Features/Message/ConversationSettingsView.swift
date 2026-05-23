@@ -128,7 +128,7 @@ struct ContactSettingsView: View {
                         Text("给 TA 写信")
                         Spacer()
                         Image(systemName: "chevron.right")
-                            .font(.caption)
+                            .font(Theme.Fonts.caption)
                             .foregroundStyle(.tertiary)
                     }
                 }
@@ -163,7 +163,7 @@ struct ContactSettingsView: View {
 
             if let error {
                 Section {
-                    Text(error).foregroundStyle(.red).font(.footnote)
+                    Text(error).foregroundStyle(.red).font(Theme.Fonts.footnote)
                 }
             }
         }
@@ -470,7 +470,7 @@ struct LetterSettingsView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Image(systemName: "chevron.right")
-                    .font(.caption)
+                    .font(Theme.Fonts.caption)
                     .foregroundStyle(.tertiary)
             }
         }

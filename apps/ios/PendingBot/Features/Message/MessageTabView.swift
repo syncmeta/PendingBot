@@ -1007,7 +1007,7 @@ private struct ConversationListRow: View {
                         .lineLimit(1)
                     if ActiveVoiceCallStore.shared.calls[conv.id] != nil {
                         Image(systemName: "phone.fill")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(Theme.Fonts.glyph(size: 12, weight: .semibold))
                             .foregroundStyle(.green)
                             .accessibilityLabel("通话中")
                     }
@@ -1088,7 +1088,7 @@ private struct ConversationListRow: View {
     private var unreadBadge: some View {
         if unreadCount > 0 {
             Text(unreadCount > 99 ? "99+" : "\(unreadCount)")
-                .font(.system(size: 11, weight: .bold))
+                .font(Theme.Fonts.system(size: 11, weight: .bold))
                 .foregroundStyle(.white)
                 .padding(.horizontal, 5)
                 .frame(minWidth: 18)
@@ -1135,7 +1135,7 @@ private struct ScanQRSheet: View {
                 Color.black.ignoresSafeArea()
                 if let displayText {
                     Text(displayText)
-                        .font(.system(size: 22, weight: .regular, design: .serif))
+                        .font(Theme.Fonts.system(size: 22, weight: .regular, design: .serif))
                         .foregroundStyle(.white)
                         .multilineTextAlignment(.center)
                         .lineSpacing(10)
@@ -1160,7 +1160,7 @@ private struct ScanQRSheet: View {
                 } else if let error {
                     VStack(spacing: 12) {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 40))
+                            .font(Theme.Fonts.glyph(size: 40))
                             .foregroundStyle(.yellow)
                         Text(error)
                             .foregroundStyle(.white)
@@ -1184,7 +1184,7 @@ private struct ScanQRSheet: View {
                         Spacer()
                         PhotosPicker(selection: $pickedPhoto, matching: .images, photoLibrary: .shared()) {
                             Label("扫相册里的码", systemImage: "photo.on.rectangle")
-                                .font(.system(size: 15, weight: .semibold))
+                                .font(Theme.Fonts.system(size: 15, weight: .semibold))
                                 .foregroundStyle(.white)
                                 .padding(.horizontal, 18)
                                 .padding(.vertical, 12)
@@ -1325,7 +1325,7 @@ private struct AddFriendChooserSheet: View {
         Button(action: action) {
             VStack(spacing: 12) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 36, weight: .regular))
+                    .font(Theme.Fonts.glyph(size: 36, weight: .regular))
                     .foregroundStyle(Theme.Palette.accent)
                     .frame(width: 72, height: 72)
                 Text(title)
@@ -1428,7 +1428,7 @@ private struct CreateGroupView: View {
                         Task { await regenerateTitle() }
                     } label: {
                         Image(systemName: generatingName ? "hourglass" : "arrow.clockwise")
-                            .font(.system(size: 15, weight: .semibold))
+                            .font(Theme.Fonts.glyph(size: 15, weight: .semibold))
                             .foregroundStyle(Theme.Palette.accent)
                             .frame(width: 32, height: 32)
                             .background(Circle().fill(Theme.Palette.accentBg))
@@ -1449,7 +1449,7 @@ private struct CreateGroupView: View {
                 }
             }
             if let error {
-                Section { Text(error).foregroundStyle(.red).font(.footnote) }
+                Section { Text(error).foregroundStyle(.red).font(Theme.Fonts.footnote) }
             }
         }
         .navigationTitle("发起群聊")

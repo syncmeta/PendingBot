@@ -22,7 +22,7 @@ struct ModelPickerButton: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "cube.transparent")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(Theme.Fonts.glyph(size: 11, weight: .semibold))
                     .foregroundStyle(slug.isEmpty ? Theme.Palette.inkMuted : Theme.Palette.accent)
                 Text(slug.isEmpty ? placeholder : catalog.displayName(for: slug))
                     .font(Theme.Fonts.rounded(size: 13, weight: .medium))
@@ -30,7 +30,7 @@ struct ModelPickerButton: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(Theme.Fonts.glyph(size: 9, weight: .semibold))
                     .foregroundStyle(Theme.Palette.inkMuted.opacity(0.6))
             }
             .padding(.horizontal, 10)
@@ -216,7 +216,7 @@ struct ModelPickerSheet: View {
     private var searchField: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 13, weight: .medium))
+                .font(Theme.Fonts.glyph(size: 13, weight: .medium))
                 .foregroundStyle(Theme.Palette.inkMuted)
             TextField("搜索 slug / 名字 / 厂商", text: $query)
                 .textInputAutocapitalization(.never)
@@ -253,7 +253,7 @@ struct ModelPickerSheet: View {
                     } label: {
                         HStack(spacing: 8) {
                             Image(systemName: "arrow.uturn.backward")
-                                .font(.system(size: 13, weight: .semibold))
+                                .font(Theme.Fonts.glyph(size: 13, weight: .semibold))
                                 .foregroundStyle(Theme.Palette.accent)
                             Text(clearLabel)
                                 .font(Theme.Fonts.rounded(size: 14, weight: .medium))
@@ -261,7 +261,7 @@ struct ModelPickerSheet: View {
                             Spacer(minLength: 8)
                             if initial.isEmpty {
                                 Image(systemName: "checkmark")
-                                    .font(.system(size: 13, weight: .semibold))
+                                    .font(Theme.Fonts.glyph(size: 13, weight: .semibold))
                                     .foregroundStyle(Theme.Palette.accent)
                             }
                         }
@@ -318,7 +318,7 @@ struct ModelPickerSheet: View {
                                     }
                                     if m.slug == initial {
                                         Image(systemName: "checkmark")
-                                            .font(.system(size: 13, weight: .semibold))
+                                            .font(Theme.Fonts.glyph(size: 13, weight: .semibold))
                                             .foregroundStyle(Theme.Palette.accent)
                                     }
                                 }
@@ -339,7 +339,7 @@ struct ModelPickerSheet: View {
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                                .font(.system(size: 10, weight: .semibold))
+                                .font(Theme.Fonts.glyph(size: 10, weight: .semibold))
                                 .foregroundStyle(Theme.Palette.inkMuted)
                             Text(vendorLabel(group.provider))
                                 .font(Theme.Fonts.rounded(size: 12, weight: .semibold))

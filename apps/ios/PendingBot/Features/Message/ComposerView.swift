@@ -75,7 +75,7 @@ struct ComposerView: View {
                     }
                 } label: {
                     Image(systemName: showActions ? "xmark" : "plus")
-                        .font(.system(size: 18, weight: .medium))
+                        .font(Theme.Fonts.glyph(size: 18, weight: .medium))
                         .foregroundStyle(Theme.Palette.inkMuted)
                         .frame(width: 38, height: 38)
                         .floatingComposerSurface(shape: Circle())
@@ -107,7 +107,7 @@ struct ComposerView: View {
 
                     Button(action: { isStreaming ? onStop() : onSend() }) {
                         Image(systemName: isStreaming ? "stop.fill" : "arrow.up")
-                            .font(.system(size: isStreaming ? 12 : 15, weight: .bold))
+                            .font(Theme.Fonts.glyph(size: isStreaming ? 12 : 15, weight: .bold))
                             // Subtle SF Symbol "fly up & replace" when the
                             // arrow morphs into the stop glyph (and back) —
                             // the old symbol lifts up and out, the new one
@@ -202,7 +202,7 @@ struct ComposerView: View {
                             Haptics.tap()
                         } label: {
                             Image(systemName: "xmark.circle.fill")
-                                .font(.body)
+                                .font(Theme.Fonts.body)
                                 .foregroundStyle(.white, .black.opacity(0.55))
                         }
                         .offset(x: 6, y: -6)
@@ -230,10 +230,10 @@ struct ComposerView: View {
         } else {
             VStack(spacing: 3) {
                 Image(systemName: "doc.fill")
-                    .font(.system(size: 20))
+                    .font(Theme.Fonts.glyph(size: 20))
                     .foregroundStyle(Theme.Palette.accent)
                 Text(att.filename ?? "文件")
-                    .font(.system(size: 9))
+                    .font(Theme.Fonts.system(size: 9))
                     .foregroundStyle(Theme.Palette.inkMuted)
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
@@ -388,6 +388,7 @@ struct ComposerTextField: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: ComposerUITextView, context: Context) {
+        context.coordinator.requestedFocus = isFocused
         if uiView.text != text {
             uiView.text = text
             context.coordinator.refreshPlaceholder(uiView)
@@ -395,9 +396,15 @@ struct ComposerTextField: UIViewRepresentable {
         }
         // Sync focus state both ways: SwiftUI → UIKit.
         if isFocused, !uiView.isFirstResponder {
-            DispatchQueue.main.async { uiView.becomeFirstResponder() }
+            DispatchQueue.main.async { [weak coordinator = context.coordinator, weak uiView] in
+                guard coordinator?.requestedFocus == true, let uiView, !uiView.isFirstResponder else { return }
+                uiView.becomeFirstResponder()
+            }
         } else if !isFocused, uiView.isFirstResponder {
-            DispatchQueue.main.async { uiView.resignFirstResponder() }
+            DispatchQueue.main.async { [weak coordinator = context.coordinator, weak uiView] in
+                guard coordinator?.requestedFocus == false, let uiView, uiView.isFirstResponder else { return }
+                uiView.resignFirstResponder()
+            }
         }
     }
 
@@ -419,6 +426,7 @@ struct ComposerTextField: UIViewRepresentable {
     final class Coordinator: NSObject, UITextViewDelegate {
         var parent: ComposerTextField
         weak var placeholder: UILabel?
+        var requestedFocus = false
 
         init(_ parent: ComposerTextField) { self.parent = parent }
 

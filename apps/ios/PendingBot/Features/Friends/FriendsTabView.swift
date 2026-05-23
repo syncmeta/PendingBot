@@ -1005,7 +1005,7 @@ private struct SelfRow: View {
             Spacer(minLength: 8)
             Button(action: onQR) {
                 Image(systemName: "qrcode")
-                    .font(.system(size: 18, weight: .regular))
+                    .font(Theme.Fonts.glyph(size: 18, weight: .regular))
                     .foregroundStyle(Theme.Palette.accent)
                     .frame(width: 32, height: 32)
                     .contentShape(Rectangle())
@@ -1121,7 +1121,7 @@ private struct FriendRequestRow: View {
             HStack(spacing: 8) {
                 Button(action: onDecline) {
                     Text("拒绝")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(Theme.Fonts.system(size: 13, weight: .semibold))
                         .foregroundStyle(Theme.Palette.inkMuted)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
@@ -1130,7 +1130,7 @@ private struct FriendRequestRow: View {
                 .buttonStyle(.plain)
                 Button(action: onAccept) {
                     Text("同意")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(Theme.Fonts.system(size: 13, weight: .semibold))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
@@ -1146,7 +1146,7 @@ private struct FriendRequestRow: View {
 private struct HumanKindTag: View {
     var body: some View {
         Text("人类")
-            .font(.system(size: 10, weight: .semibold))
+            .font(Theme.Fonts.system(size: 10, weight: .semibold))
             .foregroundStyle(Theme.Palette.accent)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
@@ -1271,7 +1271,7 @@ private struct FilterPill: View {
     var body: some View {
         Button(action: action) {
             Text(filter.label)
-                .font(.system(size: 12, weight: .semibold))
+                .font(Theme.Fonts.system(size: 12, weight: .semibold))
                 .foregroundStyle(filter.fg.opacity(active ? 1.0 : 0.55))
                 .padding(.horizontal, 12)
                 .padding(.vertical, 7)
@@ -1364,7 +1364,7 @@ struct AddFriendSheet: View {
                 }
                 if let lookupError {
                     Section {
-                        Text(lookupError).foregroundStyle(.red).font(.footnote)
+                        Text(lookupError).foregroundStyle(.red).font(Theme.Fonts.footnote)
                     }
                 }
             }
@@ -1448,12 +1448,12 @@ private struct AddFriendPreviewPage: View {
             }
             if let successHint {
                 Section {
-                    Text(successHint).foregroundStyle(Theme.Palette.accent).font(.footnote)
+                    Text(successHint).foregroundStyle(Theme.Palette.accent).font(Theme.Fonts.footnote)
                 }
             }
             if let error {
                 Section {
-                    Text(error).foregroundStyle(.red).font(.footnote)
+                    Text(error).foregroundStyle(.red).font(Theme.Fonts.footnote)
                 }
             }
         }
@@ -1474,20 +1474,20 @@ private struct AddFriendPreviewPage: View {
         case .loading:
             HStack(spacing: 12) {
                 ProgressView()
-                Text("正在查找…").foregroundStyle(.secondary).font(.footnote)
+                Text("正在查找…").foregroundStyle(.secondary).font(Theme.Fonts.footnote)
             }
         case .loaded(let userId, let displayName, let avatarPath, let avatarSeed):
             HStack(spacing: 12) {
                 UserAvatar(seed: avatarSeed, attachmentId: avatarPath, size: 44)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(displayName.isEmpty ? String(userId.prefix(8)) : displayName)
-                        .font(.body)
-                    Text("可以添加为好友").foregroundStyle(.secondary).font(.footnote)
+                        .font(Theme.Fonts.body)
+                    Text("可以添加为好友").foregroundStyle(.secondary).font(Theme.Fonts.footnote)
                 }
             }
             .padding(.vertical, 2)
         case .notFound(let message):
-            Text(message).foregroundStyle(.red).font(.footnote)
+            Text(message).foregroundStyle(.red).font(Theme.Fonts.footnote)
         }
     }
 
@@ -1649,7 +1649,7 @@ struct AddBotSheet: View {
                 }
                 if let lookupError {
                     Section {
-                        Text(lookupError).foregroundStyle(.red).font(.footnote)
+                        Text(lookupError).foregroundStyle(.red).font(Theme.Fonts.footnote)
                     }
                 }
             }
@@ -1721,7 +1721,7 @@ private struct AddBotPreviewPage: View {
             }
             if let error {
                 Section {
-                    Text(error).foregroundStyle(.red).font(.footnote)
+                    Text(error).foregroundStyle(.red).font(Theme.Fonts.footnote)
                 }
             }
         }
@@ -1742,7 +1742,7 @@ private struct AddBotPreviewPage: View {
         case .loading:
             HStack(spacing: 12) {
                 ProgressView()
-                Text("正在查找…").foregroundStyle(.secondary).font(.footnote)
+                Text("正在查找…").foregroundStyle(.secondary).font(Theme.Fonts.footnote)
             }
         case .loaded(let bot, let foundSlug):
             HStack(spacing: 12) {
@@ -1753,22 +1753,22 @@ private struct AddBotPreviewPage: View {
                     Text(bot.display_name.isEmpty
                          ? (foundSlug ?? bot.id.prefix(8).description)
                          : bot.display_name)
-                        .font(.body)
+                        .font(Theme.Fonts.body)
                     HStack(spacing: 6) {
                         if let v = bot.visibility {
                             Text(visibilityLabel(v))
-                                .font(.caption2)
+                                .font(Theme.Fonts.caption2)
                                 .foregroundStyle(.secondary)
                         }
                         if let m = bot.model_id, !m.isEmpty {
-                            Text(m).font(.caption2).foregroundStyle(.secondary)
+                            Text(m).font(Theme.Fonts.caption2).foregroundStyle(.secondary)
                         }
                     }
                 }
             }
             .padding(.vertical, 2)
         case .notFound(let message):
-            Text(message).foregroundStyle(.red).font(.footnote)
+            Text(message).foregroundStyle(.red).font(Theme.Fonts.footnote)
         }
     }
 
@@ -1906,7 +1906,7 @@ struct ContactAliasSheet: View {
                     Text("只有你能看到这个备注。留空则恢复对方自己的昵称。")
                 }
                 if let error {
-                    Section { Text(error).foregroundStyle(.red).font(.footnote) }
+                    Section { Text(error).foregroundStyle(.red).font(Theme.Fonts.footnote) }
                 }
             }
             .navigationTitle("设置备注")

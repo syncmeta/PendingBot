@@ -87,7 +87,7 @@ struct ChatActionSheet: View {
     private func actionTileLabel(icon: String, label: String) -> some View {
         VStack(spacing: 6) {
             Image(systemName: icon)
-                .font(.system(size: 22, weight: .regular))
+                .font(Theme.Fonts.glyph(size: 22, weight: .regular))
                 .foregroundStyle(Theme.Palette.accent)
                 .frame(width: 56, height: 56)
                 .background(

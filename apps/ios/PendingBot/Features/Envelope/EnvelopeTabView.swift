@@ -271,7 +271,7 @@ private struct EmptyState: View {
                         Circle().strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
                     )
                 Image(systemName: "envelope")
-                    .font(.system(size: 34, weight: .light))
+                    .font(Theme.Fonts.glyph(size: 34, weight: .light))
                     .foregroundStyle(Theme.Palette.accent)
             }
             VStack(spacing: 8) {

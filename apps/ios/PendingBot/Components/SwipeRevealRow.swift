@@ -221,7 +221,7 @@ struct SwipeRevealRow<Content: View>: View {
             let armed = leadingProgress >= 0.999
             HStack(spacing: 8) {
                 Image(systemName: trigger.systemImage)
-                    .font(.system(size: armed ? 18 : 15, weight: .semibold))
+                    .font(Theme.Fonts.glyph(size: armed ? 18 : 15, weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(width: 32, height: 32)
                     .background(Circle().fill(trigger.tint))
@@ -285,7 +285,7 @@ struct SwipeRevealRow<Content: View>: View {
                     // alongside the staggered reveal — no shadow trailing
                     // the disc before the disc itself is visible.
                     Image(systemName: action.systemImage)
-                        .font(.system(size: 19, weight: .semibold))
+                        .font(Theme.Fonts.glyph(size: 19, weight: .semibold))
                         .foregroundStyle(action.tint)
                         .frame(width: buttonSize, height: buttonSize)
                         .glassDisc()

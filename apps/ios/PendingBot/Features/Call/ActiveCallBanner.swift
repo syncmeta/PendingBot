@@ -17,17 +17,17 @@ struct ActiveCallBanner: View {
         Button(action: onTap) {
             HStack(spacing: 10) {
                 Image(systemName: "phone.fill")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(Theme.Fonts.glyph(size: 14, weight: .semibold))
                 Text(elapsed)
                     .monospacedDigit()
-                    .font(.subheadline.weight(.medium))
+                    .font(Theme.Fonts.subheadline.weight(.medium))
                 Text("·")
                     .foregroundStyle(.secondary.opacity(0.6))
                 Text("\(snapshot.participantCount) 人")
-                    .font(.subheadline)
+                    .font(Theme.Fonts.subheadline)
                 Spacer()
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(Theme.Fonts.glyph(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)
             }
             .foregroundStyle(.white)

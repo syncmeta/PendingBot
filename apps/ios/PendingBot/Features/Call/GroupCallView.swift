@@ -101,7 +101,7 @@ struct GroupCallView: View {
     private var topBar: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             Text(session.groupTitle.isEmpty ? "群语音" : session.groupTitle)
-                .font(.title3).bold()
+                .font(Theme.Fonts.title3).bold()
                 .lineLimit(1)
             inlineStatus
             Spacer(minLength: 0)
@@ -114,20 +114,20 @@ struct GroupCallView: View {
             HStack(spacing: 8) {
                 TimelineView(.periodic(from: start, by: 1.0)) { ctx in
                     Text(Self.formatElapsed(ctx.date.timeIntervalSince(start)))
-                        .font(.subheadline)
+                        .font(Theme.Fonts.subheadline)
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                 }
                 if session.cumulativePnd > 0 {
                     Text("\(session.cumulativePnd) PND")
-                        .font(.subheadline)
+                        .font(Theme.Fonts.subheadline)
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                 }
             }
         } else {
             Text(statusText)
-                .font(.subheadline)
+                .font(Theme.Fonts.subheadline)
                 .foregroundStyle(.secondary)
         }
     }
@@ -146,7 +146,7 @@ struct GroupCallView: View {
             callCenter.minimize()
         } label: {
             Image(systemName: "chevron.down")
-                .font(.system(size: 18, weight: .semibold))
+                .font(Theme.Fonts.glyph(size: 18, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .frame(width: 44, height: 44)
                 .background(
@@ -215,9 +215,9 @@ struct GroupCallView: View {
         Button(action: action) {
             HStack(spacing: 6) {
                 Image(systemName: systemImage)
-                    .font(.subheadline)
+                    .font(Theme.Fonts.subheadline)
                 Text(title)
-                    .font(.subheadline).fontWeight(.medium)
+                    .font(Theme.Fonts.subheadline).fontWeight(.medium)
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
             }
@@ -364,15 +364,15 @@ struct GroupCallView: View {
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(sender.displayName)
-                    .font(.body)
+                    .font(Theme.Fonts.body)
                 Text(statusText)
-                    .font(.caption)
+                    .font(Theme.Fonts.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer()
             Button(action: cancelInviteAction) {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 22))
+                    .font(Theme.Fonts.glyph(size: 22))
                     .foregroundStyle(.secondary)
             }
             .accessibilityLabel("取消邀请")
@@ -381,7 +381,7 @@ struct GroupCallView: View {
 
     private func sectionHeader(text: String) -> some View {
         Text(text)
-            .font(.footnote).fontWeight(.semibold)
+            .font(Theme.Fonts.footnote).fontWeight(.semibold)
             .foregroundStyle(.secondary)
             .textCase(.uppercase)
     }
@@ -406,7 +406,7 @@ struct GroupCallView: View {
         VStack(spacing: 6) {
             content()
             Text(label)
-                .font(.caption2)
+                .font(Theme.Fonts.caption2)
                 .foregroundStyle(.secondary)
         }
     }
@@ -430,7 +430,7 @@ struct GroupCallView: View {
             }
         } label: {
             Image(systemName: "phone.down.fill")
-                .font(.system(size: 26))
+                .font(Theme.Fonts.glyph(size: 26))
                 .foregroundStyle(.white)
                 .frame(width: 64, height: 64)
                 .background(Circle().fill(.red))
@@ -445,7 +445,7 @@ struct GroupCallView: View {
     ) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: 22))
+                .font(Theme.Fonts.glyph(size: 22))
                 .foregroundStyle(active ? Color.white : Color.primary)
                 .frame(width: 56, height: 56)
                 .background(
@@ -466,7 +466,7 @@ struct GroupCallView: View {
             showingEndConfirm = true
         } label: {
             Image(systemName: "xmark")
-                .font(.system(size: 22, weight: .semibold))
+                .font(Theme.Fonts.glyph(size: 22, weight: .semibold))
                 .foregroundStyle(.white)
                 .frame(width: 64, height: 64)
                 .background(Circle().fill(.orange))
@@ -518,7 +518,7 @@ struct GroupCallView: View {
             List {
                 Section {
                     Text("被选中的人会收到一条来电提醒；没被选中的群成员不会响铃。")
-                        .font(.footnote)
+                        .font(Theme.Fonts.footnote)
                         .foregroundStyle(.secondary)
                 }
                 Section {

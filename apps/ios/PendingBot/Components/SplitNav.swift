@@ -30,7 +30,7 @@ struct EmptyDetailHint: View {
         VStack(spacing: 14) {
             if let systemImage {
                 Image(systemName: systemImage)
-                    .font(.system(size: 36, weight: .light))
+                    .font(Theme.Fonts.glyph(size: 36, weight: .light))
                     .foregroundStyle(Theme.Palette.inkMuted.opacity(0.55))
             }
             Text(text)

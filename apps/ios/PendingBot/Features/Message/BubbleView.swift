@@ -184,7 +184,7 @@ struct BubbleView<Menu: View>: View {
                                 onRetry?()
                             } label: {
                                 Image(systemName: "exclamationmark.circle.fill")
-                                    .font(.system(size: 18))
+                                    .font(Theme.Fonts.glyph(size: 18))
                                     .foregroundStyle(Color.red.opacity(0.85))
                             }
                             .buttonStyle(.plain)
@@ -349,18 +349,18 @@ struct FileAttachmentChip: View {
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: iconName)
-                    .font(.system(size: 22))
+                    .font(Theme.Fonts.glyph(size: 22))
                     .foregroundStyle(Theme.Palette.accent)
                     .frame(width: 30)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(displayName)
-                        .font(.system(size: 14, weight: .medium))
+                        .font(Theme.Fonts.system(size: 14, weight: .medium))
                         .foregroundStyle(Theme.Palette.ink)
                         .lineLimit(2)
                         .truncationMode(.middle)
                     if let sizeText {
                         Text(sizeText)
-                            .font(.system(size: 11))
+                            .font(Theme.Fonts.system(size: 11))
                             .foregroundStyle(Theme.Palette.inkMuted)
                     }
                 }
@@ -369,7 +369,7 @@ struct FileAttachmentChip: View {
                     ProgressView().controlSize(.small)
                 } else {
                     Image(systemName: loadError ? "exclamationmark.triangle" : "square.and.arrow.up")
-                        .font(.system(size: 13))
+                        .font(Theme.Fonts.glyph(size: 13))
                         .foregroundStyle(Theme.Palette.inkMuted)
                 }
             }

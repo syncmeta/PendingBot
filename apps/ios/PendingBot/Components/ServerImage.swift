@@ -123,7 +123,7 @@ struct ImageViewer: View {
         .overlay(alignment: .topTrailing) {
             Button { dismiss() } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(Theme.Fonts.glyph(size: 16, weight: .semibold))
                     .foregroundStyle(.white)
                     .padding(10)
                     .background(.black.opacity(0.4), in: Circle())

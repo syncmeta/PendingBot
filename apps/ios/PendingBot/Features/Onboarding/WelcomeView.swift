@@ -144,7 +144,7 @@ struct WelcomeView: View {
     private var enteringEmailBody: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("登录 / 注册：")
-                .font(.system(size: 15, weight: .semibold))
+                .font(Theme.Fonts.system(size: 15, weight: .semibold))
                 .foregroundStyle(Theme.Palette.ink)
                 .padding(.leading, 4)
                 .padding(.bottom, 22)
@@ -166,7 +166,7 @@ struct WelcomeView: View {
     private var humanCheckBody: some View {
         VStack(alignment: .leading, spacing: 22) {
             Text("你是？")
-                .font(.system(size: 26, weight: .semibold, design: .serif))
+                .font(Theme.Fonts.system(size: 26, weight: .semibold, design: .serif))
                 .foregroundStyle(Theme.Palette.ink)
                 .padding(.leading, 4)
 
@@ -234,7 +234,7 @@ struct WelcomeView: View {
     private var backButton: some View {
         Button { backToEmailEntry() } label: {
             Image(systemName: "chevron.left")
-                .font(.system(size: 16, weight: .semibold))
+                .font(Theme.Fonts.glyph(size: 16, weight: .semibold))
                 .foregroundStyle(Theme.Palette.ink)
                 .frame(width: 38, height: 38)
                 .glassCircle()
@@ -265,7 +265,7 @@ struct WelcomeView: View {
 
     private func choicePill(text: String, filled: Bool) -> some View {
         Text(text)
-            .font(.system(size: 17, weight: .medium))
+            .font(Theme.Fonts.system(size: 17, weight: .medium))
             .foregroundStyle(filled ? .white : Theme.Palette.ink)
             .frame(maxWidth: .infinity)
             .frame(height: 52)
@@ -336,7 +336,7 @@ struct WelcomeView: View {
     private var codeStatusRow: some View {
         HStack(spacing: 8) {
             Image(systemName: "envelope")
-                .font(.system(size: 13))
+                .font(Theme.Fonts.glyph(size: 13))
                 .foregroundStyle(Theme.Palette.inkMuted)
             Text("\(otpSent ? "码已发至：" : "码将发至：")\(email)")
                 .font(Theme.Fonts.footnote)
@@ -398,7 +398,7 @@ struct WelcomeView: View {
     private var robotEasterEgg: some View {
         VStack(spacing: 22) {
             Text("😲😲😲")
-                .font(.system(size: 56))
+                .font(Theme.Fonts.system(size: 56))
             VStack(spacing: 10) {
                 Text("尊敬的机器人您好，请联系 kipper_yonder.0u@icloud.com")
                 Text("我会稳稳地接住你")
@@ -485,7 +485,7 @@ struct WelcomeView: View {
         HStack(spacing: 10) {
             logo.frame(width: 19, height: 19)
             Text(text)
-                .font(.system(size: 19, weight: .medium))
+                .font(Theme.Fonts.system(size: 19, weight: .medium))
                 .foregroundStyle(textColor)
         }
     }
@@ -525,7 +525,7 @@ struct WelcomeView: View {
     ) -> some View {
         HStack(spacing: 0) {
             field()
-                .font(.system(size: 17))
+                .font(Theme.Fonts.system(size: 17))
                 .padding(.leading, 20)
                 .padding(.vertical, 14)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -551,7 +551,7 @@ struct WelcomeView: View {
                         .tint(.white)
                 } else {
                     Image(systemName: "arrow.right")
-                        .font(.system(size: 15, weight: .bold))
+                        .font(Theme.Fonts.glyph(size: 15, weight: .bold))
                         .foregroundStyle(.white)
                 }
             }

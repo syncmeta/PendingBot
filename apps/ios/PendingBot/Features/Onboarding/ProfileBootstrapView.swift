@@ -106,7 +106,7 @@ struct ProfileBootstrapView: View {
                     dismiss()
                 } label: {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 17, weight: .semibold))
+                        .font(Theme.Fonts.glyph(size: 17, weight: .semibold))
                         .foregroundStyle(Theme.Palette.ink)
                         .frame(width: 40, height: 40)
                         // Native iOS "glass" — ultraThinMaterial circle
@@ -192,7 +192,7 @@ struct ProfileBootstrapView: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "pencil")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(Theme.Fonts.glyph(size: 13, weight: .medium))
                 Text("我不懒 我就要自己填名字和头像")
                     .font(Theme.Fonts.rounded(size: 13, weight: .medium))
             }
@@ -224,7 +224,7 @@ struct ProfileBootstrapView: View {
                         ProgressView().tint(Theme.Palette.accent)
                     } else {
                         Image(systemName: "arrow.right")
-                            .font(.system(size: 22, weight: .semibold))
+                            .font(Theme.Fonts.glyph(size: 22, weight: .semibold))
                             .foregroundStyle(canSave
                                 ? Theme.Palette.accent
                                 : Theme.Palette.accent.opacity(0.5))
@@ -491,7 +491,7 @@ private struct CustomizeSheet: View {
     private func actionChip(systemImage: String, label: String) -> some View {
         HStack(spacing: 6) {
             Image(systemName: systemImage)
-                .font(.system(size: 13, weight: .medium))
+                .font(Theme.Fonts.glyph(size: 13, weight: .medium))
             Text(label)
                 .font(Theme.Fonts.rounded(size: 13, weight: .medium))
         }

@@ -77,7 +77,7 @@ private struct HandlesSection: View {
                     } else {
                         Text("还没创建过隐私号，点右上角「新建」")
                             .foregroundStyle(.secondary)
-                            .font(.footnote)
+                            .font(Theme.Fonts.footnote)
                     }
                 } else {
                     ForEach(handles) { h in
@@ -100,7 +100,7 @@ private struct HandlesSection: View {
                     } label: {
                         Label("新建", systemImage: "plus")
                             .labelStyle(.titleAndIcon)
-                            .font(.footnote.weight(.medium))
+                            .font(Theme.Fonts.footnote.weight(.medium))
                     }
                     .disabled(atLimit)
                     .textCase(nil)
@@ -117,7 +117,7 @@ private struct HandlesSection: View {
 
             if let error {
                 Section {
-                    Text(error).foregroundStyle(.red).font(.footnote)
+                    Text(error).foregroundStyle(.red).font(Theme.Fonts.footnote)
                 }
             }
         }
@@ -199,10 +199,10 @@ private struct HandleCardRow: View {
             HStack(spacing: 6) {
                 if let t = relativeCreated {
                     Text("创建于 \(t)")
-                        .font(.footnote)
+                        .font(Theme.Fonts.footnote)
                         .foregroundStyle(.secondary)
                 }
-                Text("·").foregroundStyle(.secondary).font(.footnote)
+                Text("·").foregroundStyle(.secondary).font(Theme.Fonts.footnote)
                 StatusPill(active: handle.is_active)
             }
         }
@@ -214,7 +214,7 @@ private struct StatusPill: View {
     let active: Bool
     var body: some View {
         Text(active ? "启用中" : "已撤销")
-            .font(.caption.weight(.medium))
+            .font(Theme.Fonts.caption.weight(.medium))
             .padding(.horizontal, 8)
             .padding(.vertical, 2)
             .background(
@@ -268,7 +268,7 @@ private struct MintHandleSheet: View {
 
                 if let error {
                     Section {
-                        Text(error).foregroundStyle(.red).font(.footnote)
+                        Text(error).foregroundStyle(.red).font(Theme.Fonts.footnote)
                     }
                 }
             }
@@ -372,7 +372,7 @@ private struct HandleContactsView: View {
                         }
                     } label: {
                         Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                            .font(.footnote)
+                            .font(Theme.Fonts.footnote)
                             .foregroundStyle(copied ? Theme.Palette.accent : Theme.Palette.inkMuted)
                     }
                     .buttonStyle(.plain)
@@ -402,11 +402,11 @@ private struct HandleContactsView: View {
                         Text("加载中…").foregroundStyle(.secondary)
                     }
                 } else if let error {
-                    Text(error).foregroundStyle(.red).font(.footnote)
+                    Text(error).foregroundStyle(.red).font(Theme.Fonts.footnote)
                 } else if contacts.isEmpty {
                     Text("还没有人通过这个号加过你")
                         .foregroundStyle(.secondary)
-                        .font(.footnote)
+                        .font(Theme.Fonts.footnote)
                 } else {
                     ForEach(contacts) { c in
                         HStack(spacing: 10) {

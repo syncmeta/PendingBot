@@ -173,10 +173,10 @@ struct GroupSettingsView: View {
         Section {
             VStack(alignment: .leading, spacing: 6) {
                 Text("你已达到本群的 PND 上限")
-                    .font(.subheadline.weight(.semibold))
+                    .font(Theme.Fonts.subheadline.weight(.semibold))
                     .foregroundStyle(Theme.Palette.amber)
                 Text("从超出之后的新消息你看不到,也无法在群里发消息。提高上限或充值后恢复。")
-                    .font(.footnote)
+                    .font(Theme.Fonts.footnote)
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -207,7 +207,7 @@ struct GroupSettingsView: View {
                     }
                 } label: {
                     Image(systemName: copiedNumber ? "checkmark" : "doc.on.doc")
-                        .font(.footnote)
+                        .font(Theme.Fonts.footnote)
                         .foregroundStyle(copiedNumber ? Theme.Palette.accent : Theme.Palette.inkMuted)
                 }
                 .buttonStyle(.plain)
@@ -320,7 +320,7 @@ struct GroupSettingsView: View {
 
     private func statusPill(text: String, fg: Color, bg: Color) -> some View {
         Text(text)
-            .font(.caption2.weight(.medium))
+            .font(Theme.Fonts.caption2.weight(.medium))
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .background(Capsule().fill(bg))
@@ -791,7 +791,7 @@ private struct GroupAddFriendSheet: View {
 
                 if let error {
                     Section {
-                        Text(error).foregroundStyle(.red).font(.footnote)
+                        Text(error).foregroundStyle(.red).font(Theme.Fonts.footnote)
                     }
                 }
 

@@ -13,7 +13,7 @@ struct AccountsView: View {
                 if let current = store.current {
                     HStack(spacing: 12) {
                         Image(systemName: "person.crop.circle.fill")
-                            .font(.system(size: 28))
+                            .font(Theme.Fonts.glyph(size: 28))
                             .foregroundStyle(Theme.Palette.accent)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(current.displayName)

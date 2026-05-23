@@ -13,7 +13,7 @@ struct BotVisibilityTag: View {
         let fg: Color = isPrivate ? Theme.Palette.plum : Theme.Palette.amber
         let bg: Color = isPrivate ? Theme.Palette.plumBg : Theme.Palette.amberBg
         Text(text)
-            .font(.system(size: 10, weight: .semibold))
+            .font(Theme.Fonts.system(size: 10, weight: .semibold))
             .foregroundStyle(fg)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
@@ -36,7 +36,7 @@ struct GroupChatTag: View {
 
     var body: some View {
         Text("群聊")
-            .font(.system(size: 10, weight: .semibold))
+            .font(Theme.Fonts.system(size: 10, weight: .semibold))
             .foregroundStyle(Theme.Palette.inkMuted)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)

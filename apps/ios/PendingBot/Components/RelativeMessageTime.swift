@@ -120,7 +120,7 @@ struct TimeSeparatorPill: View {
 
     var body: some View {
         Text(RelativeMessageTime.format(date, style: .pill))
-            .font(.caption2)
+            .font(Theme.Fonts.caption2)
             .foregroundStyle(.secondary)
             .padding(.vertical, 2)
             .accessibilityLabel("时间:\(RelativeMessageTime.format(date, style: .pill))")

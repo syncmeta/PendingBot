@@ -100,7 +100,7 @@ struct SubConversationView: View {
     private var disclaimer: some View {
         HStack(spacing: 6) {
             Image(systemName: "info.circle")
-                .font(.system(size: 11, weight: .semibold))
+                .font(Theme.Fonts.glyph(size: 11, weight: .semibold))
                 .foregroundStyle(Theme.Palette.inkMuted)
             Text("这是父机器人为了完成你的请求开启的专家子对话；它不会出现在主聊天列表里。")
                 .font(Theme.Fonts.caption)

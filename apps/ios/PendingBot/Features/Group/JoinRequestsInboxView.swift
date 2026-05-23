@@ -39,12 +39,12 @@ struct JoinRequestsInboxView: View {
     @ViewBuilder
     private func requestRow(_ r: PendingRequest) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(r.requesterLabel).font(.body)
+            Text(r.requesterLabel).font(Theme.Fonts.body)
             if let m = r.message, !m.isEmpty {
-                Text(m).font(.caption).foregroundStyle(.secondary)
+                Text(m).font(Theme.Fonts.caption).foregroundStyle(.secondary)
             }
             HStack {
-                Text(r.statusLabel).font(.caption2).foregroundStyle(.secondary)
+                Text(r.statusLabel).font(Theme.Fonts.caption2).foregroundStyle(.secondary)
                 Spacer()
                 if r.status == "pending" {
                     if deciding.contains(r.id) {
