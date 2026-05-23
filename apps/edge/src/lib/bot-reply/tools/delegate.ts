@@ -13,21 +13,11 @@ import {
 } from '../../../llm/router';
 import { openAnthropicStream } from '../../../llm/anthropic-adapter';
 import { openGeminiStream } from '../../../llm/gemini-adapter';
+import {
+  chatMessagesToResponsesInput,
+  openResponsesStream,
+} from '../../../llm/responses-adapter';
 import type { ToolCtx } from '../tool-runner';
-
-// Specialist registry — fixed enum the parent bot picks from. We keep
-// the surface narrow (claude / openai / gemini) so the bot doesn't have
-// to learn arbitrary bot ids. At dispatch time we resolve each key to
-// the user's first bot using that native provider.
-const SPECIALIST_PROVIDERS: Record<SpecialistKey, string> = {
-  claude: 'anthropic',
-  openai: 'openai',
-  gemini: 'google-ai-studio',
-};
-
-export type SpecialistKey = 'claude' | 'openai' | 'gemini';
-
-const SPECIALIST_KEYS = new Set<string>(Object.keys(SPECIALIST_PROVIDERS));
 
 // One specialist turn is bounded by this internal cap. The cap is
 // generous because the parent bot's runChatTurn runs detached from the
@@ -51,53 +41,122 @@ interface BotRow {
   model_id: string;
   model_provider: string | null;
   config: Record<string, unknown> | null;
+  is_active?: boolean;
 }
 
-// Look up the user's native-API bots, keyed by provider slug. Each user
-// can register at most one bot per provider for delegation; if they have
-// several the first by creation order wins (most users will only have
-// one of each anyway).
-async function listSpecialists(
+export interface DelegateTarget {
+  id: string;
+  displayName: string;
+  modelId: string;
+  modelProvider: string | null;
+}
+
+interface ContactBotRow {
+  bot: BotRow | null;
+}
+
+// Look up the user's bot contacts as delegate targets. Contacts already
+// encode the app-level visibility gate (private owner, invitee, preset, or
+// public-open), so the tool can offer any model-backed bot the user can
+// actually chat with, not just a fixed provider trio.
+export async function delegateTargetsForUser(
   env: Env,
   userId: string,
-): Promise<Record<string, BotRow | undefined>> {
+  callerBotId?: string | null,
+): Promise<DelegateTarget[]> {
   const supa = serviceClient(env);
-  const { data } = await supa
-    .from('bots')
-    .select('id, display_name, model_id, model_provider, config, created_at')
-    .eq('is_active', true)
-    .eq('creator_id', userId)
-    .in('model_provider', Object.values(SPECIALIST_PROVIDERS))
-    .order('created_at', { ascending: true });
-  const out: Record<string, BotRow | undefined> = {};
-  for (const row of (data ?? []) as Array<BotRow & { created_at: string }>) {
-    const provider = row.model_provider;
-    if (!provider) continue;
-    if (out[provider]) continue;
-    out[provider] = {
-      id: row.id,
-      display_name: row.display_name,
-      model_id: row.model_id,
-      model_provider: provider,
-      config: row.config ?? null,
-    };
+  const { data, error } = await supa
+    .from('user_bot_contacts')
+    .select(`
+      bot:bots!user_bot_contacts_bot_id_fkey!inner(
+        id,
+        display_name,
+        model_id,
+        model_provider,
+        config,
+        is_active
+      )
+    `)
+    .eq('user_id', userId)
+    .order('added_at', { ascending: false });
+  if (error) throw error;
+
+  const out: DelegateTarget[] = [];
+  const seen = new Set<string>();
+  for (const row of (data ?? []) as unknown as ContactBotRow[]) {
+    const bot = row.bot;
+    if (!bot || bot.is_active === false || bot.id === callerBotId || seen.has(bot.id)) continue;
+    seen.add(bot.id);
+    out.push({
+      id: bot.id,
+      displayName: bot.display_name || bot.model_id,
+      modelId: bot.model_id,
+      modelProvider: bot.model_provider ?? null,
+    });
   }
   return out;
 }
 
-// Public: which specialist providers does this user have a bot for?
-// Drives whether `delegate_to_specialist` shows up on the turn's tool
-// list, and which enum values its `target` parameter accepts.
-export async function specialistTargetsForUser(
+async function resolveDelegateBot(
   env: Env,
   userId: string,
-): Promise<SpecialistKey[]> {
-  const map = await listSpecialists(env, userId);
-  const targets: SpecialistKey[] = [];
-  for (const key of Object.keys(SPECIALIST_PROVIDERS) as SpecialistKey[]) {
-    if (map[SPECIALIST_PROVIDERS[key]]) targets.push(key);
+  targetBotId: string,
+  callerBotId?: string | null,
+): Promise<BotRow | null> {
+  const supa = serviceClient(env);
+  const { data, error } = await supa
+    .from('user_bot_contacts')
+    .select(`
+      bot:bots!user_bot_contacts_bot_id_fkey!inner(
+        id,
+        display_name,
+        model_id,
+        model_provider,
+        config,
+        is_active
+      )
+    `)
+    .eq('user_id', userId)
+    .eq('bot_id', targetBotId)
+    .maybeSingle();
+  if (error) throw error;
+  const bot = ((data as unknown as ContactBotRow | null)?.bot) ?? null;
+  if (!bot || bot.is_active === false || bot.id === callerBotId) return null;
+  return {
+    id: bot.id,
+    display_name: bot.display_name,
+    model_id: bot.model_id,
+    model_provider: bot.model_provider ?? null,
+    config: bot.config ?? null,
+  };
+}
+
+async function insertSubConversationParticipants(
+  env: Env,
+  subConvId: string,
+  userId: string,
+  specialistBotId: string,
+): Promise<string | null> {
+  const supa = serviceClient(env);
+  const { error } = await supa.from('conversation_participants').insert([
+    {
+      conversation_id: subConvId,
+      participant_type: 'user',
+      participant_id: userId,
+      role: 'owner',
+    },
+    {
+      conversation_id: subConvId,
+      participant_type: 'bot',
+      participant_id: specialistBotId,
+      role: 'member',
+    },
+  ]);
+  if (error) {
+    console.warn('[delegate] sub-conv participant insert failed:', error.message);
+    return error.message;
   }
-  return targets;
+  return null;
 }
 
 // Dispatch one delegate call. Creates a sub-conversation pinned to the
@@ -110,39 +169,40 @@ export async function delegateToSpecialistTool(
   args: Record<string, unknown>,
   ctx: ToolCtx,
 ): Promise<string> {
-  const target = typeof args.target === 'string' ? args.target.trim() : '';
+  const targetBotId =
+    typeof args.target_bot_id === 'string'
+      ? args.target_bot_id.trim()
+      : typeof args.bot_id === 'string'
+        ? args.bot_id.trim()
+        : typeof args.target === 'string'
+          ? args.target.trim()
+          : '';
   const prompt = typeof args.prompt === 'string' ? args.prompt.trim() : '';
-  if (!SPECIALIST_KEYS.has(target)) {
-    return JSON.stringify({
-      error: `unknown specialist target "${target}". allowed: claude / openai / gemini`,
-    });
-  }
+  if (!targetBotId) return JSON.stringify({ error: 'empty target_bot_id' });
   if (!prompt) return JSON.stringify({ error: 'empty prompt' });
   if (prompt.length > PROMPT_MAX) {
     return JSON.stringify({ error: `prompt exceeds ${PROMPT_MAX} chars` });
   }
 
-  const specialists = await listSpecialists(env, ctx.userId);
-  const providerSlug = SPECIALIST_PROVIDERS[target as SpecialistKey];
-  const specialist = specialists[providerSlug];
+  const specialist = await resolveDelegateBot(env, ctx.userId, targetBotId, ctx.botId);
   if (!specialist) {
     return JSON.stringify({
-      error: `you do not have a "${target}" specialist bot registered. ` +
-        `create a bot with model_provider="${providerSlug}" first.`,
+      error: `target bot "${targetBotId}" is not one of your available bot contacts`,
     });
   }
 
   ctx.emit('tool_call', {
     name: 'delegate_to_specialist',
-    target,
+    target: specialist.display_name,
     specialist_bot_id: specialist.id,
+    target_bot_id: specialist.id,
   });
 
   const supa = serviceClient(env);
 
   // 1. Create the sub-conversation. parent_message_id pins it to the
-  //    parent bot's just-emitted message; spawner_bot_id attributes the
-  //    delegation in the UI; bot_id is the specialist being called.
+  //    user message that triggered this parent turn; spawner_bot_id
+  //    attributes the delegation in the UI; bot_id is the specialist.
   const subConvId = uuidv7();
   const subUserMessageId = uuidv7();
   const subBotMessageId = uuidv7();
@@ -151,7 +211,7 @@ export async function delegateToSpecialistTool(
     conversation_type: 'subagent',
     user_id: ctx.userId,
     bot_id: specialist.id,
-    parent_message_id: ctx.parentMessageId ?? null,
+    parent_message_id: ctx.parentMessageId || null,
     spawner_bot_id: ctx.botId,
     title: `delegate→${specialist.display_name}`,
   });
@@ -212,10 +272,10 @@ export async function delegateToSpecialistTool(
           { role: 'user' as const, content: prompt },
         ];
         // Anthropic / Gemini specialists go through their native adapters
-        // (raw fetch on the AI Gateway native passthrough). The adapters
-        // return a single-burst async iterable; collect text + usage from
-        // it. OpenAI specialists use the Chat Completions endpoint on the
-        // openai passthrough (also fine on Unified Billing).
+        // (raw fetch on the AI Gateway native passthrough). OpenAI-native
+        // specialists use Responses. OpenRouter/default specialists use
+        // Chat Completions. Delegate turns intentionally get no tools of
+        // their own; the parent bot must ask a self-contained question.
         if (route.provider.apiStyle === 'anthropic' || route.provider.apiStyle === 'gemini') {
           const stream =
             route.provider.apiStyle === 'anthropic'
@@ -238,6 +298,30 @@ export async function delegateToSpecialistTool(
             if (delta) text += delta;
             if (chunk.usage) {
               const usage = usageFromCompletion(chunk.usage);
+              bytesIn = usage.inputTokens ?? 0;
+              bytesOut = usage.outputTokens ?? 0;
+            }
+          }
+          return { text };
+        }
+        if (route.provider.apiStyle === 'responses') {
+          const { instructions, input } = chatMessagesToResponsesInput(messages);
+          const stream = await openResponsesStream(
+            route.client,
+            {
+              model: route.modelToCall,
+              instructions,
+              input,
+              tools: [],
+            },
+            ac.signal,
+          );
+          let text = '';
+          for await (const chunk of stream) {
+            const delta = chunk.choices?.[0]?.delta?.content;
+            if (delta) text += delta;
+            if (chunk.usage) {
+              const usage = usageFromCompletion(chunk.usage, chunk);
               bytesIn = usage.inputTokens ?? 0;
               bytesOut = usage.outputTokens ?? 0;
             }
@@ -271,11 +355,12 @@ export async function delegateToSpecialistTool(
       auditId: turnId,
       startedAt,
       status: 'success',
-      tag: target,
+      tag: specialist.display_name,
       inputTokens: bytesIn,
       outputTokens: bytesOut,
       metadata: {
-        delegate_target: target,
+        delegate_target_bot_id: specialist.id,
+        delegate_target_name: specialist.display_name,
         spawner_bot_id: ctx.botId,
         parent_conversation_id: ctx.conversationId,
       },
@@ -299,10 +384,17 @@ export async function delegateToSpecialistTool(
       content: '',
       status: 'error',
     });
+    const participantError = await insertSubConversationParticipants(
+      env,
+      subConvId,
+      ctx.userId,
+      specialist.id,
+    );
     ctx.emit('tool_result', {
       name: 'delegate_to_specialist',
-      target,
+      target: specialist.display_name,
       sub_conversation_id: subConvId,
+      target_bot_id: specialist.id,
       error: aborted ? 'specialist timeout' : errMsg,
     });
     return JSON.stringify({
@@ -310,6 +402,7 @@ export async function delegateToSpecialistTool(
         ? `specialist timed out after ${Math.round(SPECIALIST_TIMEOUT_MS / 1000)}s`
         : errMsg,
       sub_conversation_id: subConvId,
+      participant_error: participantError ?? undefined,
     });
   } finally {
     clearTimeout(timer);
@@ -328,12 +421,20 @@ export async function delegateToSpecialistTool(
     content: answer,
     status: 'done',
   });
+  const participantError = await insertSubConversationParticipants(
+    env,
+    subConvId,
+    ctx.userId,
+    specialist.id,
+  );
 
   ctx.emit('tool_result', {
     name: 'delegate_to_specialist',
-    target,
+    target: specialist.display_name,
     sub_conversation_id: subConvId,
+    target_bot_id: specialist.id,
     chars: answer.length,
+    ...(participantError ? { warning: `sub-conversation participant insert failed: ${participantError}` } : {}),
   });
 
   // 5. Return the specialist's answer to the parent bot. Include the
@@ -343,7 +444,9 @@ export async function delegateToSpecialistTool(
   return JSON.stringify({
     answer,
     sub_conversation_id: subConvId,
-    specialist: target,
+    specialist: specialist.display_name,
+    specialist_bot_id: specialist.id,
+    participant_error: participantError ?? undefined,
   });
 }
 

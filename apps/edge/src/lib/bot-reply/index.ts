@@ -59,7 +59,7 @@ import {
   REQUEST_EXECUTE_CODE_TOOL,
   type WebSearchConfig,
 } from './tool-defs';
-import { specialistTargetsForUser } from './tools/delegate';
+import { delegateTargetsForUser } from './tools/delegate';
 import {
   type Citation,
   type ToolCtx,
@@ -364,12 +364,12 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   // resolution + prompt assembly instead of sitting serially in front
   // of the LLM call.
   const allowedRegistryPromise = loadToolRegistry(env, 'chat');
-  // Specialist enumeration is also independent of the prompt; the
-  // delegate tool only joins the per-turn list when at least one
-  // registered specialist exists. Resolved lazily — failure here
-  // shouldn't block the turn, so we swallow and treat as "no targets".
-  const delegateTargetsPromise = specialistTargetsForUser(env, userId).catch(
-    () => [] as Array<'claude' | 'openai' | 'gemini'>,
+  // Delegate target enumeration is also independent of the prompt; the
+  // delegate tool only joins the per-turn list when the user has at least
+  // one other bot contact. Resolved lazily — failure here shouldn't block
+  // the turn, so we swallow and treat as "no targets".
+  const delegateTargetsPromise = delegateTargetsForUser(env, userId, bot.id).catch(
+    () => [],
   );
 
   const locale = await resolveLocale(null, supa, userId, env);
@@ -761,21 +761,16 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   // from the provider's own server-side tools — OpenRouter native
   // plugins on the Chat Completions path, OpenAI built-ins on the
   // Responses path — added to the request below per provider.
+  const delegateTargets = await delegateTargetsPromise;
+  const delegateTool = delegateTargets.length > 0 ? buildDelegateTool(delegateTargets) : null;
+
   const turnToolsRaw: ChatCompletionTool[] = [
     ...CHAT_TOOLS,
     REQUEST_EXECUTE_CODE_TOOL,
   ];
   if (allowedTools.has('execute_code')) turnToolsRaw.push(EXECUTE_CODE_TOOL);
   if (input.inGroup) turnToolsRaw.push(...GROUP_BOT_TOOLS);
-  // Subagent delegation. Only the OpenRouter routing path gets this tool
-  // — native-provider bots are the targets, not the callers, so giving
-  // a native bot the tool would either no-op (no one to delegate to) or
-  // invite recursion. The dynamic enum is the user's actual specialist
-  // set; with no specialists registered, the tool simply doesn't ship.
-  const delegateTargets = await delegateTargetsPromise;
-  if (turnProviderSlug === 'openrouter' && delegateTargets.length > 0) {
-    turnToolsRaw.push(buildDelegateTool(delegateTargets));
-  }
+  if (delegateTool) turnToolsRaw.push(delegateTool);
 
   // Strict allowlist from the tools registry — disabling a row in the
   // board "Tools" page strips it here within ~1 min (60s isolate
@@ -795,6 +790,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   // is the internal surface only: no request_execute_code / execute_code.
   const nativeFnToolsRaw: ChatCompletionTool[] = [...CHAT_TOOLS];
   if (input.inGroup) nativeFnToolsRaw.push(...GROUP_BOT_TOOLS);
+  if (delegateTool) nativeFnToolsRaw.push(delegateTool);
   const nativeFnTools: ChatCompletionTool[] = applyToolRegistry(
     nativeFnToolsRaw,
     toolRegistry,

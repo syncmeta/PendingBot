@@ -1,4 +1,5 @@
 import type { ChatCompletionTool } from 'openai/resources/chat/completions';
+import type { DelegateTarget } from './tools/delegate';
 
 // JSON-schema descriptors for every tool the chat bot can call. Split
 // from the rest of bot-reply/ because:
@@ -283,27 +284,17 @@ export const EXECUTE_CODE_TOOL: ChatCompletionTool = {
   },
 };
 
-// Subagent delegation tool. Only added to the per-turn tool list when:
-//   1. The calling bot uses the default (OpenRouter) routing — native-
-//      provider bots don't get this tool so we avoid infinite recursion.
-//   2. The user owns at least one specialist bot (a bot whose
-//      model_provider is anthropic / openai / google-ai-studio).
-//
-// The `target` enum is generated dynamically against the user's actually-
-// registered specialists so the model can't ask for a target that won't
-// resolve. Tool description (model_description) lives in the tools
-// registry; the strings below are just the seed values for the board.
-//
-// Specialist capability summary (also surfaced in model_description so
-// the board admin can refine):
-//   claude — Anthropic Claude. Best engineering reasoning + tool-use.
-//            Expensive; reserve for hard problems / multi-step thinking.
-//   openai — OpenAI. Strong at image generation, transcription, and
-//            general "do this task" delegation. Solid all-rounder.
-//   gemini — Google Gemini. Native Google Search grounding + Maps,
-//            and ~1M-token context. Use for fresh-information lookups,
-//            map/place queries, and very long document review.
-export function buildDelegateTool(targets: ReadonlyArray<'claude' | 'openai' | 'gemini'>): ChatCompletionTool {
+// Subagent delegation tool. Added to the per-turn tool list when the user
+// has at least one bot contact other than the caller. The target enum is
+// generated from those actual bot ids so the model can delegate to any
+// model-backed bot the user can chat with, regardless of provider.
+export function buildDelegateTool(targets: ReadonlyArray<DelegateTarget>): ChatCompletionTool {
+  const targetDescription = targets
+    .map((t) => {
+      const provider = t.modelProvider ?? 'openrouter';
+      return `${t.id} = ${t.displayName} (${t.modelId}, ${provider})`;
+    })
+    .join('\n');
   return {
     type: 'function',
     function: {
@@ -311,14 +302,10 @@ export function buildDelegateTool(targets: ReadonlyArray<'claude' | 'openai' | '
       parameters: {
         type: 'object',
         properties: {
-          target: {
+          target_bot_id: {
             type: 'string',
-            enum: [...targets],
-            description:
-              'Which specialist to delegate to. ' +
-              'claude=Anthropic Claude (engineering, tool-use, deep reasoning — expensive). ' +
-              'openai=OpenAI (image generation, transcription, general task execution). ' +
-              'gemini=Google Gemini (Google Search grounding, Maps, very long context).',
+            enum: targets.map((t) => t.id),
+            description: `Bot id to delegate to. Available targets:\n${targetDescription}`,
           },
           prompt: {
             type: 'string',
@@ -326,7 +313,7 @@ export function buildDelegateTool(targets: ReadonlyArray<'claude' | 'openai' | '
               '完整、自包含的任务描述 — 专家看不到你这边的对话历史，必须把它需要的所有上下文写进来。1–8000 字。',
           },
         },
-        required: ['target', 'prompt'],
+        required: ['target_bot_id', 'prompt'],
       },
     },
   };

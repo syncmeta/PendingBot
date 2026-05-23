@@ -13,9 +13,9 @@ struct SubConversationView: View {
     /// The pendingbot.conversations row id stamped onto the parent's
     /// tool_result event (`sub_conversation:<uuid>` in resultDetail).
     let subConversationId: String
-    /// Specialist target as the parent bot phrased it — "claude" / "openai"
-    /// / "gemini". Drives the nav title chip; we keep it as a String so
-    /// future targets need no enum bump.
+    /// Specialist label emitted by the parent turn's tool trace. Usually the
+    /// target bot's display name; kept as String so new target kinds need no
+    /// enum bump.
     let target: String?
 
     @Environment(\.dismiss) private var dismiss

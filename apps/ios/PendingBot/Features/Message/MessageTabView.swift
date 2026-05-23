@@ -598,6 +598,10 @@ struct MessageTabView: View {
                     unread:user_unread_counts!inner(last_message_at, last_message_preview, unread_count),
                     participants:conversation_participants(participant_type, participant_id)
                 """)
+                // Subagent child conversations are opened from the parent
+                // tool trace only; they should never appear as top-level
+                // message-list rows even though the user is a participant.
+                .neq("conversation_type", value: "subagent")
                 .order("updated_at", ascending: false)
                 // Tie-break: ascending id so the order is deterministic when
                 // multiple convs share an updated_at timestamp (e.g. all
