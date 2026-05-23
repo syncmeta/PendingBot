@@ -121,7 +121,7 @@ groupRoutes.post('/', async (c) => {
   const supa = userClient(c.env, userJwt);
   const { data, error } = await supa.rpc('open_group_conv', {
     p_title: parsed.title ?? '',
-    p_initial_user_ids: parsed.memberUserIds,
+    p_initial_user_ids: [],
     p_initial_bot_ids: parsed.memberBotIds,
   });
   if (error) {
@@ -142,7 +142,36 @@ groupRoutes.post('/', async (c) => {
         metadata: { source: 'group_system', event: 'created' },
       });
   }
-  return c.json({ conversationId: data });
+  const invitationIds: string[] = [];
+  if (data && parsed.memberUserIds.length > 0) {
+    const supaSvc = serviceClient(c.env);
+    let snapshot: Awaited<ReturnType<typeof groupBillingInviteSnapshot>> | null = null;
+    try {
+      snapshot = await groupBillingInviteSnapshot(c, data as string);
+    } catch (err) {
+      return jsonError(c, 500, 'database_error', { detail: err instanceof Error ? err.message : String(err) });
+    }
+    for (const inviteeId of parsed.memberUserIds) {
+      if (inviteeId === c.var.userId!) continue;
+      const { data: invite, error: inviteErr } = await supaSvc
+        .from('group_member_invitations')
+        .insert({
+          conversation_id: data as string,
+          inviter_id: c.var.userId!,
+          invitee_id: inviteeId,
+          status: 'pending',
+          billing_snapshot: snapshot,
+          invitee_participates: snapshot.invitee_participates,
+        })
+        .select('id')
+        .single();
+      if (inviteErr) {
+        return jsonError(c, 500, 'database_error', { detail: inviteErr.message });
+      }
+      if (invite?.id) invitationIds.push(invite.id as string);
+    }
+  }
+  return c.json({ conversationId: data, invitationIds });
 });
 
 const TitleBody = z.object({

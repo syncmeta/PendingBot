@@ -26,6 +26,7 @@ struct GroupSettingsView: View {
 
     // Admin-only state.
     @State private var isAdmin: Bool = false
+    @State private var myRole: String = ""
     @State private var savingPolicy: Bool = false
     @State private var showingBilling = false
     @State private var showingApprovals = false
@@ -47,6 +48,7 @@ struct GroupSettingsView: View {
     // Member-tap modal state.
     @State private var openingPeer: PendingPeer?
     @State private var addFriendTarget: Member?
+    @State private var roleActionTarget: Member?
 
     @Environment(\.dismiss) private var dismiss
 
@@ -196,6 +198,42 @@ struct GroupSettingsView: View {
                 if ok { Task { await reloadFriends() } }
             }
             .presentationDetents([.medium])
+        }
+        .confirmationDialog(
+            roleActionTarget?.displayLabel ?? "成员",
+            isPresented: Binding(
+                get: { roleActionTarget != nil },
+                set: { if !$0 { roleActionTarget = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            if let target = roleActionTarget {
+                if friendUserIds.contains(target.userId ?? "") {
+                    Button("打开聊天") {
+                        openingPeer = PendingPeer(
+                            kind: "user",
+                            peerId: target.userId ?? "",
+                            displayName: target.displayLabel
+                        )
+                        roleActionTarget = nil
+                    }
+                } else {
+                    Button("加为好友") {
+                        addFriendTarget = target
+                        roleActionTarget = nil
+                    }
+                }
+                if target.role == "admin" {
+                    Button("取消管理员", role: .destructive) {
+                        Task { await setRole(target, role: "member") }
+                    }
+                } else {
+                    Button("设为管理员") {
+                        Task { await setRole(target, role: "admin") }
+                    }
+                }
+            }
+            Button("取消", role: .cancel) { roleActionTarget = nil }
         }
     }
 
@@ -379,6 +417,11 @@ struct GroupSettingsView: View {
 
     private func handleMemberTap(_ m: Member) {
         guard !m.isBot, let uid = m.userId, uid != myUserId else { return }
+        if myRole == "owner" && !m.isOwner {
+            roleActionTarget = m
+            Haptics.tap()
+            return
+        }
         if friendUserIds.contains(uid) {
             // Already a contact — open the user_user chat directly.
             openingPeer = PendingPeer(
@@ -547,6 +590,7 @@ struct GroupSettingsView: View {
             }
             self.myNickname = me?.nickname ?? ""
             self.isAdmin = (me?.role == "owner" || me?.role == "admin")
+            self.myRole = me?.role ?? ""
             self.myMuted = billingByUser[myUserId]?.muted ?? false
             self.iAmFrozen = billingByUser[myUserId]?.overdrawn ?? false
 
@@ -618,6 +662,7 @@ struct GroupSettingsView: View {
             $0.participant_type == "user" && $0.participant_id == myUserId
         })?.role
         self.isAdmin = (myRole == "owner" || myRole == "admin")
+        self.myRole = myRole ?? ""
         self.myNickname = cachedMembers.first(where: {
             $0.participant_type == "user" && $0.participant_id == myUserId
         })?.nickname ?? ""
@@ -675,6 +720,35 @@ struct GroupSettingsView: View {
     private func saveMute(_ muted: Bool) async {
         struct Body: Encodable { let muted: Bool }
         await postVoid(path: "v1/groups/\(conversationId)/mute", body: Body(muted: muted))
+    }
+
+    private func setRole(_ member: Member, role: String) async {
+        guard let uid = member.userId else { return }
+        struct Body: Encodable {
+            let userId: String
+            let role: String
+        }
+        await postVoid(path: "v1/groups/\(conversationId)/role",
+                       body: Body(userId: uid, role: role))
+        roleActionTarget = nil
+        if error == nil {
+            members = members.map { m in
+                guard m.userId == uid else { return m }
+                return Member(
+                    id: m.id,
+                    isBot: m.isBot,
+                    botId: m.botId,
+                    userId: m.userId,
+                    displayLabel: m.displayLabel,
+                    avatarPath: m.avatarPath,
+                    avatarSeed: m.avatarSeed,
+                    role: role,
+                    isOwner: m.isOwner,
+                    frozen: m.frozen
+                )
+            }
+            Haptics.success()
+        }
     }
 
     private func leave() async {

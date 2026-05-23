@@ -293,7 +293,7 @@ struct MessageTabView: View {
         case .composeGroup:
             CreateGroupView(
                 recentOrder: recentParticipantOrder,
-                onCreated: { convId in groupCreated(convId: convId) }
+                onCreated: { convId, title in groupCreated(convId: convId, title: title) }
             )
         }
     }
@@ -516,11 +516,11 @@ struct MessageTabView: View {
     /// Land the newly-created group's conversation in place of the
     /// compose page so the back button returns to the conv list rather
     /// than to the empty compose UI.
-    private func groupCreated(convId: String) {
+    private func groupCreated(convId: String, title: String) {
         let userId = AccountStore.shared.current?.id ?? ""
         let stub = Conversation(
             id: convId, bot_id: "", user_id: userId,
-            title: nil, feature_type: "message",
+            title: title.isEmpty ? nil : title, feature_type: "message",
             conversation_type: "group",
             last_activity_at: Int(Date().timeIntervalSince1970),
             round_count: 0, bot_name: nil,
@@ -1397,7 +1397,7 @@ private struct CreateGroupView: View {
     /// MessageTabView from its already-sorted conversations list so this
     /// view doesn't re-query.
     let recentOrder: [String: Int]
-    var onCreated: (String) -> Void
+    var onCreated: (String, String) -> Void
 
     enum MemberKind { case bot, human }
     struct Member: Identifiable, Hashable {
@@ -1609,7 +1609,10 @@ private struct CreateGroupView: View {
                 let memberUserIds: [String]
                 let memberBotIds: [String]
             }
-            struct Response: Decodable { let conversationId: String }
+            struct Response: Decodable {
+                let conversationId: String
+                let invitationIds: [String]?
+            }
 
             let url = HostedConfig.environment.workerURL
                 .appendingPathComponent("v1/groups")
@@ -1635,7 +1638,10 @@ private struct CreateGroupView: View {
             }
             let decoded = try JSONDecoder().decode(Response.self, from: data)
             Haptics.success()
-            onCreated(decoded.conversationId)
+            if let sent = decoded.invitationIds, !sent.isEmpty {
+                self.error = "已创建群聊，并发送 \(sent.count) 个入群邀请。"
+            }
+            onCreated(decoded.conversationId, trimmedTitle)
         } catch {
             self.error = error.localizedDescription
         }
