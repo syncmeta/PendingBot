@@ -47,21 +47,41 @@ enum BotSlugRule {
 
 struct CreateBotSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var catalog: ModelCatalog
     /// Called with the freshly-inserted bot so the parent can prepend it
     /// to its own list without a re-fetch.
     var onCreated: (FriendsTabView.BotPick) -> Void
 
+    @State private var step: CreateStep = .models
+    @State private var modelMode: CreateModelMode = .single
     @State private var displayName: String = ""
     @State private var modelSlug: String = ""
     /// API route pin for the picked model — nil = default routing,
     /// 'openai' = native Responses route.
     @State private var modelProvider: String?
+    @State private var arenaSelection = ArenaModelSelection()
+    @State private var showingArenaPicker = false
     @State private var visibility: Visibility = .privateBot
     /// User-chosen public handle. Only required (and only sent) when the
     /// bot is public — private bots keep the synthetic `u_<random>` slug.
     @State private var slug: String = ""
     @State private var creating = false
     @State private var error: String?
+
+    private enum CreateStep {
+        case models, settings
+    }
+
+    private enum CreateModelMode: String, CaseIterable, Identifiable {
+        case single, arena
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .single: return "单模型"
+            case .arena: return "价格区间"
+            }
+        }
+    }
 
     enum Visibility: String, CaseIterable, Identifiable {
         case privateBot     = "private"
@@ -90,69 +110,10 @@ struct CreateBotSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    TextField("机器人名字", text: $displayName)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled(true)
-                    HStack {
-                        Text("模型").foregroundStyle(Theme.Palette.inkMuted)
-                        Spacer()
-                        ModelPickerButton(slug: $modelSlug,
-                                          modelProvider: $modelProvider,
-                                          placeholder: "选择模型")
-                    }
-                }
-
-                Section {
-                    ForEach(Visibility.allCases) { v in
-                        Button { visibility = v; Haptics.tap() } label: {
-                            HStack(alignment: .top, spacing: 10) {
-                                Image(systemName: visibility == v
-                                      ? "largecircle.fill.circle"
-                                      : "circle")
-                                    .foregroundStyle(visibility == v
-                                                     ? Theme.Palette.accent
-                                                     : Theme.Palette.inkMuted)
-                                    .font(Theme.Fonts.system(size: 18, weight: .medium))
-                                    .padding(.top, 2)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(v.label)
-                                        .font(Theme.Fonts.rounded(size: 14, weight: .semibold))
-                                        .foregroundStyle(Theme.Palette.ink)
-                                    Text(v.subtitle)
-                                        .font(Theme.Fonts.caption)
-                                        .foregroundStyle(Theme.Palette.inkMuted)
-                                }
-                            }
-                            .padding(.vertical, 2)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                } header: {
-                    Text("公开程度")
-                }
-
-                // Public bots need a human-chosen slug — it's the handle
-                // others type in 加机器人 and the payload of the share
-                // link / QR. Private bots don't (can't be added by anyone
-                // else), so the field only shows for public visibilities.
-                if visibility != .privateBot {
-                    Section {
-                        HStack(spacing: 4) {
-                            Text("@").foregroundStyle(Theme.Palette.inkMuted)
-                            TextField("机器人标识(slug)", text: $slug)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled(true)
-                                .onChange(of: slug) { _, v in
-                                    let n = BotSlugRule.normalize(v)
-                                    if n != v { slug = n }
-                                }
-                        }
-                    } header: {
-                        Text("机器人标识")
-                    } footer: {
-                        Text("别人按这个标识、链接或二维码加你的机器人。\(BotSlugRule.helpText)。建好后可在管理里修改。")
-                    }
+                if step == .models {
+                    modelSelectionSections
+                } else {
+                    settingsSections
                 }
 
                 if let error {
@@ -161,20 +122,161 @@ struct CreateBotSheet: View {
                     }
                 }
             }
-            .navigationTitle("新建机器人")
+            .navigationTitle(step == .models ? "选择模型" : "机器人设置")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { dismiss() }
+                    if step == .models {
+                        Button("取消") { dismiss() }
+                    } else {
+                        Button("上一步") { step = .models }
+                    }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(creating ? "创建中…" : "创建") {
-                        Task { await create() }
+                    if step == .models {
+                        Button("下一步") {
+                            step = .settings
+                            Haptics.tap()
+                        }
+                        .disabled(!canAdvanceFromModels)
+                    } else {
+                        Button(creating ? "创建中…" : "创建") {
+                            Task { await create() }
+                        }
+                        .disabled(creating || !canCreate)
                     }
-                    .disabled(creating || !canCreate)
                 }
             }
-            .task { await seedDefaultName() }
+            .task {
+                catalog.loadIfNeeded()
+                await seedDefaultName()
+            }
+            .sheet(isPresented: $showingArenaPicker) {
+                ArenaModelPickerSheet(initial: arenaSelection) { selection in
+                    arenaSelection = selection
+                    if let fallback = selection.fallbackModel {
+                        modelSlug = fallback
+                    }
+                    modelProvider = nil
+                }
+                .presentationDragIndicator(.visible)
+                .tint(Theme.Palette.accent)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var modelSelectionSections: some View {
+        Section {
+            Picker("创建方式", selection: $modelMode) {
+                ForEach(CreateModelMode.allCases) { mode in
+                    Text(mode.label).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            if modelMode == .single {
+                HStack {
+                    Text("模型").foregroundStyle(Theme.Palette.inkMuted)
+                    Spacer()
+                    ModelPickerButton(slug: $modelSlug,
+                                      modelProvider: $modelProvider,
+                                      placeholder: "选择模型")
+                }
+            } else {
+                Button {
+                    showingArenaPicker = true
+                    Haptics.tap()
+                } label: {
+                    HStack {
+                        Image(systemName: "slider.horizontal.2.square")
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("价格区间模型池")
+                                .font(Theme.Fonts.rounded(size: 14, weight: .semibold))
+                            Text(arenaSelection.fallbackModel == nil
+                                 ? "选择双端价格区间,再加减模型和厂商"
+                                 : arenaSelection.summary)
+                                .font(Theme.Fonts.caption)
+                                .foregroundStyle(Theme.Palette.inkMuted)
+                                .lineLimit(2)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(Theme.Fonts.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .foregroundStyle(Theme.Palette.ink)
+            }
+        } header: {
+            Text("模型")
+        } footer: {
+            Text("价格区间模式下,一个机器人不是固定一个模型;每轮会从你选出的模型池里随机挑一个。")
+        }
+    }
+
+    @ViewBuilder
+    private var settingsSections: some View {
+        Section {
+            TextField("机器人名字", text: $displayName)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled(true)
+            HStack {
+                Text("模型").foregroundStyle(Theme.Palette.inkMuted)
+                Spacer()
+                Text(modelSummary)
+                    .font(Theme.Fonts.rounded(size: 13, weight: .medium))
+                    .foregroundStyle(Theme.Palette.inkMuted)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        }
+
+        Section {
+            ForEach(Visibility.allCases) { v in
+                Button { visibility = v; Haptics.tap() } label: {
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: visibility == v
+                              ? "largecircle.fill.circle"
+                              : "circle")
+                            .foregroundStyle(visibility == v
+                                             ? Theme.Palette.accent
+                                             : Theme.Palette.inkMuted)
+                            .font(Theme.Fonts.system(size: 18, weight: .medium))
+                            .padding(.top, 2)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(v.label)
+                                .font(Theme.Fonts.rounded(size: 14, weight: .semibold))
+                                .foregroundStyle(Theme.Palette.ink)
+                            Text(v.subtitle)
+                                .font(Theme.Fonts.caption)
+                                .foregroundStyle(Theme.Palette.inkMuted)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+                .buttonStyle(.plain)
+            }
+        } header: {
+            Text("公开程度")
+        }
+
+        if visibility != .privateBot {
+            Section {
+                HStack(spacing: 4) {
+                    Text("@").foregroundStyle(Theme.Palette.inkMuted)
+                    TextField("机器人标识(slug)", text: $slug)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled(true)
+                        .onChange(of: slug) { _, v in
+                            let n = BotSlugRule.normalize(v)
+                            if n != v { slug = n }
+                        }
+                }
+            } header: {
+                Text("机器人标识")
+            } footer: {
+                Text("别人按这个标识、链接或二维码加你的机器人。\(BotSlugRule.helpText)。建好后可在管理里修改。")
+            }
         }
     }
 
@@ -210,16 +312,47 @@ struct CreateBotSheet: View {
 
     private var canCreate: Bool {
         let nameOK = !displayName.trimmingCharacters(in: .whitespaces).isEmpty
-        let modelOK = !modelSlug.isEmpty
+        let modelOK = selectedModelSlug != nil
         // Public bots additionally require a valid slug.
         if visibility == .privateBot { return nameOK && modelOK }
         return nameOK && modelOK && BotSlugRule.isValid(slug)
     }
 
+    private var canAdvanceFromModels: Bool {
+        switch modelMode {
+        case .single:
+            return !modelSlug.isEmpty
+        case .arena:
+            return arenaSelection.resolvedCount >= 2 && arenaSelection.fallbackModel != nil
+        }
+    }
+
+    private var selectedModelSlug: String? {
+        switch modelMode {
+        case .single:
+            return modelSlug.isEmpty ? nil : modelSlug
+        case .arena:
+            return arenaSelection.fallbackModel
+        }
+    }
+
+    private var selectedModelProvider: String? {
+        modelMode == .arena ? nil : modelProvider
+    }
+
+    private var modelSummary: String {
+        switch modelMode {
+        case .single:
+            return modelSlug.isEmpty ? "未选择" : catalog.displayName(for: modelSlug)
+        case .arena:
+            return arenaSelection.summary
+        }
+    }
+
     private func create() async {
         guard let userId = AccountStore.shared.current?.id else { return }
         let trimmedName = displayName.trimmingCharacters(in: .whitespaces)
-        guard !trimmedName.isEmpty, !modelSlug.isEmpty else { return }
+        guard !trimmedName.isEmpty, let createModelSlug = selectedModelSlug else { return }
         creating = true; defer { creating = false }
         do {
             // bots.slug is NOT NULL UNIQUE. Public bots use the creator's
@@ -227,12 +360,22 @@ struct CreateBotSheet: View {
             // bots mint a synthetic slug from a fresh UUID so the unique
             // constraint stays satisfied without leaking creator info and
             // without burning a nice handle no one can reach anyway.
+            struct BotCreateConfig: Encodable {
+                let arena: RandomModelConfig?
+                enum CodingKeys: String, CodingKey { case arena }
+                func encode(to encoder: Encoder) throws {
+                    guard let arena else { return }
+                    var c = encoder.container(keyedBy: CodingKeys.self)
+                    try c.encode(arena, forKey: .arena)
+                }
+            }
             struct BotInsert: Encodable {
                 let creator_id: String
                 let visibility: String
                 let display_name: String
                 let model_id: String
                 let model_provider: String?
+                let config: BotCreateConfig
                 let slug: String
                 /// IANA tz on the bot row. Public bots default to the
                 /// creator's device tz at creation; private bots stay
@@ -256,8 +399,10 @@ struct CreateBotSheet: View {
                     creator_id: userId,
                     visibility: visibility.rawValue,
                     display_name: trimmedName,
-                    model_id: modelSlug,
-                    model_provider: modelProvider,
+                    model_id: createModelSlug,
+                    model_provider: selectedModelProvider,
+                    config: BotCreateConfig(
+                        arena: modelMode == .arena ? arenaSelection.persistedConfig : nil),
                     slug: finalSlug,
                     tz: visibility == .privateBot ? nil : TimeZone.current.identifier
                 ))
@@ -1114,10 +1259,9 @@ struct BotConfigView: View {
     /// auto-respond / interrupt flags). Lives under `bots.config.voice`.
     @State private var voiceSettings: BotVoiceSettings = .defaults
     @State private var visionModel: String = ""   // "" = auto
-    /// Arena (竞技场) model set. Empty = single model (use `model`). Two or
-    /// more = arena: the bot randomises among these each turn. Lives under
-    /// `bots.config.arena.models`.
-    @State private var arenaModels: [String] = []
+    /// Arena (竞技场) config. nil = single model (use `model`). Non-nil =
+    /// each turn randomises from price range ∪ explicit models - excludes.
+    @State private var arenaConfig: RandomModelConfig?
     @State private var envelope: EnvelopeSettings = .defaults
     /// Per-bot OpenRouter web-search knobs. Lives under
     /// `bots.config.webSearch`; only takes effect on the default
@@ -1138,7 +1282,7 @@ struct BotConfigView: View {
     private struct Snapshot: Equatable {
         let model: String
         let modelProvider: String?
-        let arenaModels: [String]
+        let arenaConfig: RandomModelConfig?
         let voiceEnabled: Bool
         let voiceModel: String
         let voiceSettings: BotVoiceSettings
@@ -1168,7 +1312,7 @@ struct BotConfigView: View {
 
     private var snapshot: Snapshot {
         Snapshot(
-            model: model, modelProvider: modelProvider, arenaModels: arenaModels,
+            model: model, modelProvider: modelProvider, arenaConfig: arenaConfig,
             voiceEnabled: voiceEnabled, voiceModel: voiceModel,
             voiceSettings: voiceSettings,
             visionModel: visionModel, envelope: envelope,
@@ -1248,7 +1392,7 @@ struct BotConfigView: View {
     @ViewBuilder
     private var modelSection: some View {
         Section {
-            pickerRow(icon: arenaModels.count >= 2 ? "die.face.5" : "cube.transparent",
+            pickerRow(icon: arenaConfig == nil ? "cube.transparent" : "die.face.5",
                       title: "主模型",
                       value: mainModelLabel,
                       enabled: canEdit) {
@@ -1267,7 +1411,9 @@ struct BotConfigView: View {
     }
 
     private var mainModelLabel: String {
-        if arenaModels.count >= 2 { return "竞技场 · \(arenaModels.count) 个模型" }
+        if let arenaConfig {
+            return ArenaModelSelection.arena(arenaConfig, fallbackModel: model).summary
+        }
         return model.isEmpty ? "—" : catalog.displayName(for: model)
     }
 
@@ -1410,16 +1556,15 @@ struct BotConfigView: View {
     private func modelPicker(for target: PickerTarget) -> some View {
         switch target {
         case .main:
-            // Multi-select: 1 → single model; 2+ → 竞技场 (random pool).
-            let seed = arenaModels.count >= 2 ? arenaModels : (model.isEmpty ? [] : [model])
+            let seed = ArenaModelSelection.arena(arenaConfig, fallbackModel: model.isEmpty ? nil : model)
             ArenaModelPickerSheet(initial: seed) { picked in
-                if picked.count >= 2 {
-                    arenaModels = picked
-                    model = picked.first ?? model   // keep a single fallback
+                if let cfg = picked.persistedConfig {
+                    arenaConfig = cfg
+                    model = picked.fallbackModel ?? model   // keep a single fallback
                     modelProvider = nil             // arena always routes openrouter
                 } else {
-                    arenaModels = []
-                    if let only = picked.first, !only.isEmpty {
+                    arenaConfig = nil
+                    if let only = picked.fallbackModel ?? picked.models.first, !only.isEmpty {
                         model = only
                         // Look up the picked model's provider from the catalog
                         // so native routes still pin correctly for a single pick.
@@ -1480,8 +1625,16 @@ struct BotConfigView: View {
         voiceSettings = BotVoiceSettings.from(dict["voice"])
         envelope = EnvelopeSettings.from(dict["envelope"])
         webSearch = BotWebSearchSettings.from(dict["webSearch"])
-        if case let .object(arena)? = dict["arena"], case let .array(arr)? = arena["models"] {
-            arenaModels = arr.compactMap { if case let .string(s) = $0 { return s } else { return nil } }
+        if case let .object(arena)? = dict["arena"] {
+            let cfg = RandomModelConfig(
+                price_min: Self.jsonDouble(arena["price_min"]),
+                price_max: Self.jsonDouble(arena["price_max"]),
+                models: Self.jsonStringArray(arena["models"]),
+                exclude: Self.jsonStringArray(arena["exclude"]))
+            if cfg.price_min != nil || cfg.price_max != nil
+                || cfg.models?.isEmpty == false || cfg.exclude?.isEmpty == false {
+                arenaConfig = cfg
+            }
         }
         if case let .object(lb)? = dict["lookback"] {
             if case let .bool(b)? = lb["enabled"] { lookbackEnabled = b }
@@ -1491,6 +1644,32 @@ struct BotConfigView: View {
                 lookbackInterval = Int(d)
             }
         }
+    }
+
+    private static func jsonDouble(_ value: AnyJSON?) -> Double? {
+        switch value {
+        case let .double(d)?: return d
+        case let .integer(i)?: return Double(i)
+        default: return nil
+        }
+    }
+
+    private static func jsonStringArray(_ value: AnyJSON?) -> [String]? {
+        guard case let .array(arr)? = value else { return nil }
+        let strings = arr.compactMap { item -> String? in
+            if case let .string(s) = item, !s.isEmpty { return s }
+            return nil
+        }
+        return strings.isEmpty ? nil : strings
+    }
+
+    private static func arenaConfigDict(_ cfg: RandomModelConfig) -> [String: Any] {
+        var out: [String: Any] = [:]
+        if let v = cfg.price_min { out["price_min"] = v }
+        if let v = cfg.price_max { out["price_max"] = v }
+        if let v = cfg.models, !v.isEmpty { out["models"] = v }
+        if let v = cfg.exclude, !v.isEmpty { out["exclude"] = v }
+        return out
     }
 
     private func save() async {
@@ -1515,10 +1694,9 @@ struct BotConfigView: View {
                 "enabled": lookbackEnabled,
                 "roundInterval": lookbackInterval,
             ]
-            // Arena: 2+ models = on (store the explicit set); otherwise null
-            // = off (the bot uses its single model_id). The worker merges this
-            // key wholesale, so null clears it.
-            let arenaVal: Any = arenaModels.count >= 2 ? ["models": arenaModels] : NSNull()
+            // Arena config replaces the whole key; null clears it so the bot
+            // goes back to its single model_id.
+            let arenaVal: Any = arenaConfig.map(Self.arenaConfigDict) ?? NSNull()
             let cfg: [String: Any] = [
                 "lookback": lookbackCfg,
                 "envelope": envelopeCfg,
