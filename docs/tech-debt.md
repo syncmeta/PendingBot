@@ -33,9 +33,55 @@
 
 ## 🔴 根基级
 
-_（暂无）_
+### 🔴 线上 `pendingbot` exposed schema 有 `SECURITY DEFINER` 函数对 anon 可执行
+- **发现**: 2026-05-24 · codex/security-architecture-audit
+- **位置**: supabase/migrations/0033_billing.sql、supabase/migrations/0034_billing_admin_rpcs.sql、Supabase live advisors
+- **问题**: 线上库里多组 `SECURITY DEFINER` 函数在暴露给 PostgREST 的 `pendingbot` schema 下仍允许 `anon`/`authenticated` 执行，包括 `billing_admin_grant`、`billing_credit`、`billing_debit`、`billing_issue_codes`、`start_user_bot_turn`、`open_self_conv` 等。Supabase advisor 和 `has_function_privilege()` 查询都确认这不是静态误报。
+- **影响**: 任何漏掉内部鉴权的 definer RPC 都会绕过 RLS 直接以 owner 权限写账本、开会话或改业务状态；这违反最小权限原则，是计费和越权面的最高优先级风险。
+- **建议**: 新增权限收敛迁移：先 `REVOKE EXECUTE ON FUNCTION ... FROM PUBLIC, anon, authenticated`，只给确需客户端调用的 RPC 授权；内部/触发器/worker-only 函数移到未暴露 schema 或仅授予 `service_role`；同时为 definer 函数固定 `search_path` 并跑 Supabase security advisors 验证清零。
+- **状态**: 待办
+
+### 🔴 设备授权审批可由客户端请求体放大 scope
+- **发现**: 2026-05-24 · codex/security-architecture-audit
+- **位置**: apps/edge/src/routes/device-login.ts:52、apps/edge/src/routes/device-login.ts:237、apps/edge/src/lib/device-grants.ts:83、supabase/migrations/20260524122559_subject_device_login_grants.sql
+- **问题**: `/device-login/challenges/:id/approve` 只按 `grantKind` 调 `subject_can_authorize_device_grant`，但最终写入的 `requested_scopes` 直接来自 approve 请求体。`pendingcrew_control` 这类授权通过后，客户端仍可提交 `runner:write` / `runner:read`，后续 `requireSubjectAuth()` 只信任 grant row 的 scopes。
+- **影响**: 用户只具备 crew 控制能力时，可能铸出 runner 能力 token，越过 `subject_can_manage_runners` 的意图边界。
+- **建议**: 服务端按 `grantKind` 和 subject role 派生允许的 scope 集合，拒绝任何超集；或把 scope 校验下沉到 `subject_can_authorize_device_grant` / consume RPC，保证数据库里永远不会落入过宽 grant。
+- **状态**: 待办
+
+### 🔴 群聊计费跳过用户后没有落库排除状态
+- **发现**: 2026-05-24 · codex/security-architecture-audit
+- **位置**: apps/edge/src/lib/group-billing.ts:17、apps/edge/src/lib/group-billing.ts:183、supabase/migrations/0045_group_chat_rpcs.sql:1046
+- **问题**: TypeScript 注释声明 `skipped_overdrawn` / `skipped_capped` 用户会经 RPC 标记 `group_member_billing.overdrawn=true`，但 `apply_audit_split` 只在 `status_text = 'debited' and debited > 0` 时更新 `group_member_billing`；跳过状态只写 `audit_log_splits`，不改变下次 payer 集合。
+- **影响**: 余额不足或触顶用户会在下一轮继续参与 split、继续被跳过，未扣部分也不会重新分摊，形成长期漏计费和 UI 状态不一致。
+- **建议**: 在 `apply_audit_split` 里对 `skipped_overdrawn` / `skipped_capped` 显式更新 `overdrawn` 或独立的 `billing_blocked_reason`，并补测试覆盖“跳过后下一轮不再进入 payer 集合”。
+- **状态**: 待办
+
+### 🔴 附件 RLS 与 Worker 下载口径不一致，可能泄露附件元数据
+- **发现**: 2026-05-24 · codex/security-architecture-audit
+- **位置**: apps/edge/src/routes/upload.ts:331、supabase/migrations/0063_attachments_rls_avatar_visibility.sql:18
+- **问题**: Worker 下载路径要求“上传者或当前参与者且存在未删除消息引用该附件”，但最新附件 RLS 允许任意当前会话参与者按 `attachments.conversation_id` 读取 attachment 行，和消息引用/删除状态无关。
+- **影响**: 直接 PostgREST 读取可能暴露附件文件名、mime、大小、摘要、tags、`r2_key` 等元数据；消息撤回/删除后 raw bytes 仍由 Worker 挡住，但 DB 元数据隐私语义已经漂移。
+- **建议**: 恢复 chat attachment 的 DB 读取为 uploader-only 或基于未删除 message reference 的 policy；头像可拆独立公开字段/头像表，不要把头像例外扩大到所有 conversation-bound 附件。
+- **状态**: 待办
+
+### 🔴 Crew / 临时群 subject 钱包尚未接入 LLM 审计扣费分支
+- **发现**: 2026-05-24 · codex/security-architecture-audit
+- **位置**: apps/edge/src/llm/router.ts:386、docs/superpowers/specs/2026-05-24-crew-temporary-groups-design.md
+- **问题**: 审计扣费当前只识别 `conversation_type = 'group'` 走 split，或 `opts.userId` 走单用户扣费；`temporary_group` / `crew` 的 `responsible_subject_id` 与 `billing_debit_subject` 尚未进入统一 audit billing 分支。
+- **影响**: 如果 Crew / 临时群的模型或工具调用只带 `conversationId` 而不带 `userId`，初始状态会落到 `free`；如果临时补传某个人类 `userId`，又会绕过 subject wallet 的责任主体设计。
+- **建议**: audit 层解析 billable subject：1v1 user、普通群 split、Crew/临时群 responsible subject 三类互斥；账本行记录 subject snapshot，避免以后靠调用方散落传参兜底。
+- **状态**: 待办
 
 ## 🟡 拆东墙补西墙
+
+### 🟡 JWT 验证只校验签名和形状，未绑定 issuer/audience/role
+- **发现**: 2026-05-24 · codex/security-architecture-audit
+- **位置**: packages/identity/src/jwt.ts:42、packages/identity/src/schema.ts:8
+- **问题**: Edge 端 `jwtVerify` 允许 Supabase JWKS 的非 HS256 签名算法，但没有传 `issuer` / `audience`，payload schema 也只把 `role` 当 optional 字段，不要求 `role = authenticated`。
+- **影响**: 目前同项目 JWKS 已经挡住大多数伪造，但认证边界比 Supabase Auth 语义更宽；未来多 audience、服务 token 或 Auth 配置变化时，可能把不该当用户会话的 token 接进 `requireSession()`。
+- **建议**: 把 `issuer` 固定为 `${SUPABASE_URL}/auth/v1`，`audience` 固定到期望值，并在 middleware 中要求 `role === 'authenticated'`。
+- **状态**: 待办
 
 ### 🟡 iOS 模型池的 Artificial Analysis 排序是静态快照
 - **发现**: 2026-05-24 · codex/bot-model-pool-ui
