@@ -107,7 +107,7 @@ struct CreateBotSheet: View {
                     }
                 }
             }
-            .navigationTitle(step == .models ? "模型池" : "机器人设置")
+            .navigationTitle("新建机器人")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
