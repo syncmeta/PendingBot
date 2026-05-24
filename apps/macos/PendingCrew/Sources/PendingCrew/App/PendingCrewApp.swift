@@ -35,6 +35,25 @@ struct PendingCrewApp: App {
 final class PendingCrewAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
+        configureOpenWindows()
+        DispatchQueue.main.async {
+            self.configureOpenWindows()
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            self.configureOpenWindows()
+        }
+    }
+
+    private func configureOpenWindows() {
+        for window in NSApp.windows where window.isVisible {
+            window.sharingType = .readOnly
+            if window.title.isEmpty {
+                window.title = "PendingCrew"
+            }
+            if window.canBecomeKey {
+                window.makeKeyAndOrderFront(nil)
+            }
+        }
     }
 }
