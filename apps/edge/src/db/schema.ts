@@ -2495,38 +2495,6 @@ export type Database = {
           },
         ]
       }
-      subject_wallets: {
-        Row: {
-          balance_credits: number
-          balance_updated_at: string | null
-          lifetime_spent_credits: number
-          lifetime_topup_credits: number
-          subject_id: string
-        }
-        Insert: {
-          balance_credits?: number
-          balance_updated_at?: string | null
-          lifetime_spent_credits?: number
-          lifetime_topup_credits?: number
-          subject_id: string
-        }
-        Update: {
-          balance_credits?: number
-          balance_updated_at?: string | null
-          lifetime_spent_credits?: number
-          lifetime_topup_credits?: number
-          subject_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "subject_wallets_subject_id_fkey"
-            columns: ["subject_id"]
-            isOneToOne: true
-            referencedRelation: "subjects"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       subject_device_grants: {
         Row: {
           app_kind: string
@@ -2580,13 +2548,6 @@ export type Database = {
           token_hash?: string
         }
         Relationships: [
-          {
-            foreignKeyName: "subject_device_grants_granted_by_user_id_fkey"
-            columns: ["granted_by_user_id"]
-            isOneToOne: false
-            referencedRelation: "users"
-            referencedColumns: ["id"]
-          },
           {
             foreignKeyName: "subject_device_grants_subject_id_fkey"
             columns: ["subject_id"]
@@ -2656,13 +2617,6 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "subject_device_login_challenges_approved_by_user_id_fkey"
-            columns: ["approved_by_user_id"]
-            isOneToOne: false
-            referencedRelation: "users"
-            referencedColumns: ["id"]
-          },
-          {
             foreignKeyName: "subject_device_login_challenges_approved_subject_id_fkey"
             columns: ["approved_subject_id"]
             isOneToOne: false
@@ -2674,6 +2628,38 @@ export type Database = {
             columns: ["issued_grant_id"]
             isOneToOne: false
             referencedRelation: "subject_device_grants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      subject_wallets: {
+        Row: {
+          balance_credits: number
+          balance_updated_at: string | null
+          lifetime_spent_credits: number
+          lifetime_topup_credits: number
+          subject_id: string
+        }
+        Insert: {
+          balance_credits?: number
+          balance_updated_at?: string | null
+          lifetime_spent_credits?: number
+          lifetime_topup_credits?: number
+          subject_id: string
+        }
+        Update: {
+          balance_credits?: number
+          balance_updated_at?: string | null
+          lifetime_spent_credits?: number
+          lifetime_topup_credits?: number
+          subject_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subject_wallets_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: true
+            referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
         ]
@@ -3393,6 +3379,31 @@ export type Database = {
         Args: { p_request_id: string; p_user_id: string }
         Returns: undefined
       }
+      append_crew_session_event_from_runner: {
+        Args: {
+          p_crew_session_id: string
+          p_event_type: string
+          p_payload?: Json
+          p_progress_summary?: string
+          p_runner_host_id: string
+          p_summary?: string
+          p_visibility?: string
+        }
+        Returns: string
+      }
+      append_crew_session_event_from_runner_for_subject: {
+        Args: {
+          p_crew_session_id: string
+          p_event_type: string
+          p_payload?: Json
+          p_progress_summary?: string
+          p_responsible_subject_id: string
+          p_runner_host_id: string
+          p_summary?: string
+          p_visibility?: string
+        }
+        Returns: string
+      }
       apply_audit_split: {
         Args: { p_audit_log_id: string; p_splits: Json }
         Returns: undefined
@@ -3467,6 +3478,27 @@ export type Database = {
         Returns: boolean
       }
       cancel_account_deletion: { Args: never; Returns: boolean }
+      claim_next_crew_session: {
+        Args: { p_runner_host_id: string; p_runner_kinds?: Json }
+        Returns: Json
+      }
+      claim_next_crew_session_for_subject: {
+        Args: {
+          p_responsible_subject_id: string
+          p_runner_host_id: string
+          p_runner_kinds?: Json
+        }
+        Returns: Json
+      }
+      consume_subject_device_login_challenge: {
+        Args: {
+          p_challenge_id: string
+          p_challenge_secret_hash: string
+          p_grant_id: string
+          p_token_hash: string
+        }
+        Returns: Json
+      }
       decide_human_help_request: {
         Args: { p_decision: string; p_request_id: string }
         Returns: boolean
@@ -3481,6 +3513,29 @@ export type Database = {
       finalize_account_deletion: {
         Args: { p_force?: boolean; p_uid: string }
         Returns: undefined
+      }
+      finish_crew_session_from_runner: {
+        Args: {
+          p_crew_session_id: string
+          p_payload?: Json
+          p_progress_summary?: string
+          p_runner_host_id: string
+          p_status: string
+          p_summary?: string
+        }
+        Returns: boolean
+      }
+      finish_crew_session_from_runner_for_subject: {
+        Args: {
+          p_crew_session_id: string
+          p_payload?: Json
+          p_progress_summary?: string
+          p_responsible_subject_id: string
+          p_runner_host_id: string
+          p_status: string
+          p_summary?: string
+        }
+        Returns: boolean
       }
       gen_preset_handle_value: { Args: never; Returns: string }
       group_continue_decide: {
@@ -3593,66 +3648,6 @@ export type Database = {
         Args: { p_conversation_id: string; p_user_id: string }
         Returns: boolean
       }
-      claim_next_crew_session: {
-        Args: { p_runner_host_id: string; p_runner_kinds?: Json }
-        Returns: Json
-      }
-      claim_next_crew_session_for_subject: {
-        Args: {
-          p_responsible_subject_id: string
-          p_runner_host_id: string
-          p_runner_kinds?: Json
-        }
-        Returns: Json
-      }
-      append_crew_session_event_from_runner: {
-        Args: {
-          p_crew_session_id: string
-          p_event_type: string
-          p_payload?: Json
-          p_progress_summary?: string | null
-          p_runner_host_id: string
-          p_summary?: string
-          p_visibility?: string
-        }
-        Returns: string
-      }
-      append_crew_session_event_from_runner_for_subject: {
-        Args: {
-          p_crew_session_id: string
-          p_event_type: string
-          p_payload?: Json
-          p_progress_summary?: string | null
-          p_responsible_subject_id: string
-          p_runner_host_id: string
-          p_summary?: string
-          p_visibility?: string
-        }
-        Returns: string
-      }
-      finish_crew_session_from_runner: {
-        Args: {
-          p_crew_session_id: string
-          p_payload?: Json
-          p_progress_summary?: string | null
-          p_runner_host_id: string
-          p_status: string
-          p_summary?: string
-        }
-        Returns: boolean
-      }
-      finish_crew_session_from_runner_for_subject: {
-        Args: {
-          p_crew_session_id: string
-          p_payload?: Json
-          p_progress_summary?: string | null
-          p_responsible_subject_id: string
-          p_runner_host_id: string
-          p_status: string
-          p_summary?: string
-        }
-        Returns: boolean
-      }
       list_bot_invitees: {
         Args: { p_bot_id: string }
         Returns: {
@@ -3711,15 +3706,6 @@ export type Database = {
         }
         Returns: string
       }
-      consume_subject_device_login_challenge: {
-        Args: {
-          p_challenge_id: string
-          p_challenge_secret_hash: string
-          p_grant_id: string
-          p_token_hash: string
-        }
-        Returns: Json
-      }
       request_account_deletion: {
         Args: { p_sentiment: string }
         Returns: undefined
@@ -3760,16 +3746,12 @@ export type Database = {
         }
         Returns: Json
       }
-      subject_can_create_crew: {
-        Args: { p_subject_id: string; p_user_id: string }
+      subject_can_authorize_device_grant: {
+        Args: { p_grant_kind: string; p_subject_id: string; p_user_id: string }
         Returns: boolean
       }
-      subject_can_authorize_device_grant: {
-        Args: {
-          p_grant_kind: string
-          p_subject_id: string
-          p_user_id: string
-        }
+      subject_can_create_crew: {
+        Args: { p_subject_id: string; p_user_id: string }
         Returns: boolean
       }
       subject_can_manage_runners: {

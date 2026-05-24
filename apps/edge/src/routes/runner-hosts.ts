@@ -238,7 +238,7 @@ runnerHostRoutes.post('/:id/sessions/:sessionId/events', requireSubjectAuth(['ru
       p_visibility: parsed.visibility,
       p_summary: parsed.summary ?? '',
       p_payload: parsed.payload as Json,
-      p_progress_summary: parsed.progressSummary ?? null,
+      p_progress_summary: parsed.progressSummary,
     } as never);
     if (error) return mapRpcError(c, error);
     return c.json({ eventId: data });
@@ -253,7 +253,7 @@ runnerHostRoutes.post('/:id/sessions/:sessionId/events', requireSubjectAuth(['ru
     p_visibility: parsed.visibility,
     p_summary: parsed.summary ?? '',
     p_payload: parsed.payload as Json,
-    p_progress_summary: parsed.progressSummary ?? null,
+    p_progress_summary: parsed.progressSummary,
   });
   if (error) return mapRpcError(c, error);
   return c.json({ eventId: data });
@@ -279,7 +279,7 @@ runnerHostRoutes.post('/:id/sessions/:sessionId/finish', requireSubjectAuth(['ru
       p_status: parsed.status,
       p_summary: parsed.summary ?? '',
       p_payload: parsed.payload as Json,
-      p_progress_summary: parsed.progressSummary ?? null,
+      p_progress_summary: parsed.progressSummary,
     } as never);
     if (error) return mapRpcError(c, error);
     return c.json({ ok: data === true });
@@ -293,7 +293,7 @@ runnerHostRoutes.post('/:id/sessions/:sessionId/finish', requireSubjectAuth(['ru
     p_status: parsed.status,
     p_summary: parsed.summary ?? '',
     p_payload: parsed.payload as Json,
-    p_progress_summary: parsed.progressSummary ?? null,
+    p_progress_summary: parsed.progressSummary,
   });
   if (error) return mapRpcError(c, error);
   return c.json({ ok: data === true });
