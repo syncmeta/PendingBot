@@ -413,6 +413,113 @@ describe('GET /v1/crew/:id/sessions', () => {
   });
 });
 
+describe('POST /v1/crew/:id/announcements', () => {
+  it('creates a human announcement with session and member mentions', async () => {
+    const sessionId = '33333333-3333-4333-8333-333333333333';
+    const memberId = '44444444-4444-4444-8444-444444444444';
+    const db = makeFakeDb();
+    db.rpcs = {
+      create_crew_announcement: (args) => {
+        expect(args).toEqual({
+          p_crew_conversation_id: 'crew-1',
+          p_recipient_session_ids: [sessionId],
+          p_recipient_member_ids: [memberId],
+          p_message_kind: 'instruction',
+          p_summary: '只处理 API 层',
+          p_payload: {},
+          p_board_visible: true,
+        });
+        return { data: 'announcement-1', error: null };
+      },
+    };
+
+    const res = await appFor(db).request('/v1/crew/crew-1/announcements', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-test-user-id': 'user-1',
+      },
+      body: JSON.stringify({
+        recipientSessionIds: [sessionId],
+        recipientMemberIds: [memberId],
+        messageKind: 'instruction',
+        summary: '只处理 API 层',
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ announcementId: 'announcement-1' });
+  });
+
+  it('creates an all-session broadcast when no mentions are supplied', async () => {
+    const db = makeFakeDb();
+    db.rpcs = {
+      create_crew_announcement: (args) => {
+        expect(args).toMatchObject({
+          p_recipient_session_ids: [],
+          p_recipient_member_ids: [],
+          p_summary: '全员同步一下状态',
+        });
+        return { data: 'announcement-2', error: null };
+      },
+    };
+
+    const res = await appFor(db).request('/v1/crew/crew-1/announcements', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-test-user-id': 'user-1',
+      },
+      body: JSON.stringify({ summary: '全员同步一下状态' }),
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ announcementId: 'announcement-2' });
+  });
+});
+
+describe('GET /v1/crew/:id/announcements', () => {
+  it('returns board-visible announcements with mention rows', async () => {
+    const db = makeFakeDb({
+      crew_announcements: [
+        {
+          id: 'announcement-1',
+          crew_conversation_id: 'crew-1',
+          responsible_subject_id: 'subject-1',
+          sender_kind: 'session',
+          sender_member_id: null,
+          sender_session_id: 'session-1',
+          recipient_mode: 'mentioned_targets',
+          message_kind: 'question',
+          board_visible: true,
+          summary: '需要你确认权限',
+          payload: {},
+          created_at: '2026-05-24T00:00:00Z',
+        },
+      ],
+      crew_announcement_mentions: [
+        {
+          id: 'mention-1',
+          announcement_id: 'announcement-1',
+          target_kind: 'member',
+          target_session_id: null,
+          target_member_id: 'member-1',
+          created_at: '2026-05-24T00:00:01Z',
+        },
+      ],
+    });
+
+    const res = await appFor(db).request('/v1/crew/crew-1/announcements', {
+      headers: { 'x-test-user-id': 'user-1' },
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { items: Array<{ mentions: unknown[] }> };
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0].mentions).toHaveLength(1);
+  });
+});
+
 describe('GET /v1/crew/sessions/:sessionId/events', () => {
   it('lists session events in chronological order', async () => {
     const db = makeFakeDb({

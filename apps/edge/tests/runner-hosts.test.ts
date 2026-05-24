@@ -425,6 +425,66 @@ describe('POST /v1/runner-hosts/:id/sessions/:sessionId/events', () => {
   });
 });
 
+describe('POST /v1/runner-hosts/:id/sessions/:sessionId/announcements', () => {
+  it('lets a claimed runner post targeted announcements through a device grant', async () => {
+    const token = 'pdg_runner_announcement_token';
+    const subjectId = '11111111-1111-4111-8111-111111111111';
+    const sessionId = '33333333-3333-4333-8333-333333333333';
+    const targetSessionId = '44444444-4444-4444-8444-444444444444';
+    const memberId = '55555555-5555-4555-8555-555555555555';
+    const db = makeFakeDb();
+    await seedDeviceGrant(db, token, subjectId, ['runner:write']);
+    db.rpcs = {
+      create_crew_announcement_from_runner_for_subject: (args) => {
+        expect(args).toEqual({
+          p_runner_host_id: 'host-1',
+          p_responsible_subject_id: subjectId,
+          p_crew_session_id: sessionId,
+          p_recipient_session_ids: [targetSessionId],
+          p_recipient_member_ids: [memberId],
+          p_message_kind: 'question',
+          p_summary: '需要确认权限',
+          p_payload: {},
+          p_board_visible: true,
+        });
+        return { data: 'announcement-1', error: null };
+      },
+    };
+
+    const res = await appFor(db).request(`/v1/runner-hosts/host-1/sessions/${sessionId}/announcements`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        recipientSessionIds: [targetSessionId],
+        recipientMemberIds: [memberId],
+        messageKind: 'question',
+        summary: '需要确认权限',
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ announcementId: 'announcement-1' });
+  });
+
+  it('rejects runner announcements from normal user JWTs', async () => {
+    const db = makeFakeDb();
+
+    const res = await appFor(db).request('/v1/runner-hosts/host-1/sessions/session-1/announcements', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-test-user-id': 'user-1',
+      },
+      body: JSON.stringify({ summary: '状态同步' }),
+    });
+
+    expect(res.status).toBe(403);
+  });
+});
+
 describe('POST /v1/runner-hosts/:id/sessions/:sessionId/finish', () => {
   it('marks a claimed crew session as succeeded', async () => {
     const db = makeFakeDb();

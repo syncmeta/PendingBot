@@ -7,6 +7,8 @@ struct CrewDetailView: View {
     @State private var runnerKind: RunnerKind = .localCodex
     @State private var taskBrief = ""
     @State private var selectedSessionId: String?
+    @State private var announcementText = ""
+    @State private var mentionedSessionIds: Set<String> = []
 
     private var crew: Crew? {
         model.crews.first { $0.id == crewId }
@@ -16,11 +18,20 @@ struct CrewDetailView: View {
         model.sessionsByCrew[crewId] ?? []
     }
 
+    private var members: [CrewMember] {
+        model.membersByCrew[crewId] ?? []
+    }
+
+    private var announcements: [CrewAnnouncement] {
+        model.announcementsByCrew[crewId] ?? []
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 header
                 createSessionBox
+                announcementsBox
                 sessionsBox
                 if let selectedSessionId {
                     SessionEventsView(sessionId: selectedSessionId)
@@ -109,6 +120,176 @@ struct CrewDetailView: View {
             }
         }
     }
+
+    private var announcementsBox: some View {
+        GroupBox("公告板") {
+            VStack(alignment: .leading, spacing: 12) {
+                if announcements.isEmpty {
+                    ContentUnavailableView("还没有公告", systemImage: "bubble.left.and.bubble.right")
+                } else {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(announcements) { announcement in
+                            AnnouncementRow(
+                                announcement: announcement,
+                                sessions: sessions,
+                                members: members,
+                                onReplyToSession: { sessionId in
+                                    mentionedSessionIds = [sessionId]
+                                    announcementText = ""
+                                }
+                            )
+                        }
+                    }
+                }
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("发送公告")
+                        .font(.headline)
+                    MentionSessionPicker(sessions: sessions, selectedSessionIds: $mentionedSessionIds)
+                    TextEditor(text: $announcementText)
+                        .font(.body)
+                        .frame(minHeight: 70)
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(.quaternary)
+                        }
+                    HStack {
+                        Text(mentionedSessionIds.isEmpty ? "未 @ session：全员广播" : "已 @ \(mentionedSessionIds.count) 个 session")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button {
+                            Task {
+                                await model.createAnnouncement(
+                                    crewId: crewId,
+                                    summary: announcementText,
+                                    recipientSessionIds: mentionedSessionIds
+                                )
+                                announcementText = ""
+                                mentionedSessionIds = []
+                            }
+                        } label: {
+                            Label("发送", systemImage: "paperplane")
+                        }
+                        .disabled(announcementText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct MentionSessionPicker: View {
+    let sessions: [CrewSession]
+    @Binding var selectedSessionIds: Set<String>
+
+    var body: some View {
+        if sessions.isEmpty {
+            Text("当前没有可 @ 的 session")
+                .foregroundStyle(.secondary)
+        } else {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    Button {
+                        selectedSessionIds = []
+                    } label: {
+                        Label("全员", systemImage: selectedSessionIds.isEmpty ? "checkmark.circle.fill" : "circle")
+                    }
+                    ForEach(sessions) { session in
+                        Button {
+                            if selectedSessionIds.contains(session.id) {
+                                selectedSessionIds.remove(session.id)
+                            } else {
+                                selectedSessionIds.insert(session.id)
+                            }
+                        } label: {
+                            Label(
+                                session.runnerKind,
+                                systemImage: selectedSessionIds.contains(session.id) ? "checkmark.circle.fill" : "circle"
+                            )
+                        }
+                        .help(session.id)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct AnnouncementRow: View {
+    let announcement: CrewAnnouncement
+    let sessions: [CrewSession]
+    let members: [CrewMember]
+    let onReplyToSession: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(senderLabel)
+                    .font(.headline)
+                Text(targetLabel)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(announcement.createdAt)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Text(announcement.summary)
+            if let senderSessionId = announcement.senderSessionId {
+                Button {
+                    onReplyToSession(senderSessionId)
+                } label: {
+                    Label("回复", systemImage: "arrowshape.turn.up.left")
+                }
+                .controlSize(.small)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private var senderLabel: String {
+        if let senderSessionId = announcement.senderSessionId {
+            return sessionLabel(senderSessionId)
+        }
+        switch announcement.senderKind {
+        case "human": return "人类"
+        case "master_bot": return "Master Bot"
+        case "system": return "系统"
+        default: return announcement.senderKind
+        }
+    }
+
+    private var targetLabel: String {
+        if announcement.recipientMode == "all_sessions" {
+            return "@全员"
+        }
+        let targets = announcement.mentions.map { mention -> String in
+            if let sessionId = mention.targetSessionId {
+                return "@\(sessionLabel(sessionId))"
+            }
+            if let memberId = mention.targetMemberId {
+                return "@\(memberLabel(memberId))"
+            }
+            return "@?"
+        }
+        return targets.isEmpty ? "@-" : targets.joined(separator: " ")
+    }
+
+    private func sessionLabel(_ sessionId: String) -> String {
+        guard let session = sessions.first(where: { $0.id == sessionId }) else {
+            return "session:\(sessionId.prefix(8))"
+        }
+        return "\(session.runnerKind):\(session.id.prefix(8))"
+    }
+
+    private func memberLabel(_ memberId: String) -> String {
+        guard let member = members.first(where: { $0.id == memberId }) else {
+            return "member:\(memberId.prefix(8))"
+        }
+        return member.displayName
+    }
 }
 
 private struct SessionEventsView: View {
@@ -119,12 +300,30 @@ private struct SessionEventsView: View {
         model.eventsBySession[sessionId] ?? []
     }
 
+    private var mailbox: [SessionMailboxItem] {
+        model.mailboxBySession[sessionId] ?? []
+    }
+
     var body: some View {
-        GroupBox("事件") {
-            if events.isEmpty {
+        GroupBox("事件与收件箱") {
+            if events.isEmpty && mailbox.isEmpty {
                 ContentUnavailableView("还没有事件", systemImage: "list.bullet.rectangle")
             } else {
                 VStack(alignment: .leading, spacing: 10) {
+                    ForEach(mailbox) { item in
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: "tray.full")
+                                .foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("mailbox · \(item.messageKind)")
+                                    .font(.headline)
+                                Text(item.summary)
+                                Text(item.createdAt)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
                     ForEach(events) { event in
                         HStack(alignment: .top, spacing: 10) {
                             Image(systemName: "smallcircle.filled.circle")
@@ -147,4 +346,3 @@ private struct SessionEventsView: View {
         }
     }
 }
-

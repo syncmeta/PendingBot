@@ -14,7 +14,10 @@ final class AppModel: ObservableObject {
     @Published var subjectResponse: SubjectResponse?
     @Published var crews: [Crew] = []
     @Published var sessionsByCrew: [String: [CrewSession]] = [:]
+    @Published var membersByCrew: [String: [CrewMember]] = [:]
     @Published var eventsBySession: [String: [SessionEvent]] = [:]
+    @Published var announcementsByCrew: [String: [CrewAnnouncement]] = [:]
+    @Published var mailboxBySession: [String: [SessionMailboxItem]] = [:]
     @Published var runnerHosts: [RunnerHost] = []
     @Published var activeRunnerHostId: String?
     @Published var activeRunnerLeaseId: String?
@@ -113,7 +116,10 @@ final class AppModel: ObservableObject {
         subjectResponse = nil
         crews = []
         sessionsByCrew = [:]
+        membersByCrew = [:]
         eventsBySession = [:]
+        announcementsByCrew = [:]
+        mailboxBySession = [:]
         runnerHosts = []
         helpRequests = []
         statusMessage = "已退出登录"
@@ -176,14 +182,22 @@ final class AppModel: ObservableObject {
     func refreshCrew(_ crewId: String) async {
         await run("Crew 已刷新") {
             guard let api else { throw LocalError.missingAuth }
-            sessionsByCrew[crewId] = try await api.listSessions(crewId: crewId)
+            async let sessions = api.listSessions(crewId: crewId)
+            async let announcements = api.listAnnouncements(crewId: crewId)
+            async let members = api.listMembers(crewId: crewId)
+            sessionsByCrew[crewId] = try await sessions
+            announcementsByCrew[crewId] = try await announcements
+            membersByCrew[crewId] = try await members
         }
     }
 
     func refreshEvents(sessionId: String) async {
         await run("事件已刷新") {
             guard let api else { throw LocalError.missingAuth }
-            eventsBySession[sessionId] = try await api.listEvents(sessionId: sessionId)
+            async let events = api.listEvents(sessionId: sessionId)
+            async let mailbox = api.listMailbox(sessionId: sessionId)
+            eventsBySession[sessionId] = try await events
+            mailboxBySession[sessionId] = try await mailbox
         }
     }
 
@@ -194,7 +208,12 @@ final class AppModel: ObservableObject {
             let id = try await api.createCrew(responsibleSubjectId: subjectId, title: title)
             selection = .crew(id)
             crews = try await api.listCrews()
-            sessionsByCrew[id] = try await api.listSessions(crewId: id)
+            async let sessions = api.listSessions(crewId: id)
+            async let announcements = api.listAnnouncements(crewId: id)
+            async let members = api.listMembers(crewId: id)
+            sessionsByCrew[id] = try await sessions
+            announcementsByCrew[id] = try await announcements
+            membersByCrew[id] = try await members
         }
     }
 
@@ -202,8 +221,31 @@ final class AppModel: ObservableObject {
         await run("Session 已排队") {
             guard let api else { throw LocalError.missingAuth }
             let sessionId = try await api.createSession(crewId: crewId, runnerKind: runnerKind, taskBrief: taskBrief)
-            sessionsByCrew[crewId] = try await api.listSessions(crewId: crewId)
+            async let sessions = api.listSessions(crewId: crewId)
+            async let announcements = api.listAnnouncements(crewId: crewId)
+            async let members = api.listMembers(crewId: crewId)
+            sessionsByCrew[crewId] = try await sessions
+            announcementsByCrew[crewId] = try await announcements
+            membersByCrew[crewId] = try await members
             eventsBySession[sessionId] = try await api.listEvents(sessionId: sessionId)
+        }
+    }
+
+    func createAnnouncement(crewId: String, summary: String, recipientSessionIds: Set<String>) async {
+        await run("公告已发送") {
+            guard let api else { throw LocalError.missingAuth }
+            _ = try await api.createAnnouncement(
+                crewId: crewId,
+                summary: summary,
+                recipientSessionIds: Array(recipientSessionIds)
+            )
+            announcementsByCrew[crewId] = try await api.listAnnouncements(crewId: crewId)
+            let sessions = try await api.listSessions(crewId: crewId)
+            sessionsByCrew[crewId] = sessions
+            let deliveredSessionIds = recipientSessionIds.isEmpty ? Set(sessions.map(\.id)) : recipientSessionIds
+            for sessionId in deliveredSessionIds {
+                mailboxBySession[sessionId] = try await api.listMailbox(sessionId: sessionId)
+            }
         }
     }
 
@@ -259,7 +301,10 @@ final class AppModel: ObservableObject {
                 throw LocalError.unsupportedLocalRunner
             }
 
-            let command = profile.renderCommand(for: session)
+            let mailbox = try await api.listMailbox(sessionId: session.id)
+            mailboxBySession[session.id] = mailbox
+            let taskPrompt = LocalCodingAgentContextPacket.render(session: session, mailbox: mailbox)
+            let command = profile.renderCommand(for: session, taskPrompt: taskPrompt)
             _ = try await api.appendRunnerEvent(
                 hostId: hostId,
                 sessionId: session.id,

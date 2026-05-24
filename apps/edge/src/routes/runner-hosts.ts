@@ -130,6 +130,15 @@ const RunnerEventBody = z.object({
   progressSummary: z.string().trim().max(1_000).optional(),
 });
 
+const RunnerAnnouncementBody = z.object({
+  recipientSessionIds: z.array(z.string().uuid()).default([]),
+  recipientMemberIds: z.array(z.string().uuid()).default([]),
+  messageKind: z.enum(['announcement', 'instruction', 'status', 'question', 'handoff', 'result', 'blocker']).default('announcement'),
+  summary: z.string().trim().min(1).max(2_000),
+  payload: JsonObject.default({}),
+  boardVisible: z.boolean().default(true),
+});
+
 const FinishBody = z.object({
   status: z.enum(['completed', 'failed', 'cancelled']),
   summary: z.string().trim().max(1_000).optional(),
@@ -257,6 +266,39 @@ runnerHostRoutes.post('/:id/sessions/:sessionId/events', requireSubjectAuth(['ru
   });
   if (error) return mapRpcError(c, error);
   return c.json({ eventId: data });
+});
+
+runnerHostRoutes.post('/:id/sessions/:sessionId/announcements', requireSubjectAuth(['runner:write']), async (c) => {
+  const runnerHostId = c.req.param('id');
+  const sessionId = c.req.param('sessionId');
+  let parsed: z.infer<typeof RunnerAnnouncementBody>;
+  try {
+    parsed = RunnerAnnouncementBody.parse(await c.req.json());
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+
+  if (c.var.authKind === 'device_grant') {
+    const deviceGrant = c.var.deviceGrant;
+    if (!deviceGrant) return jsonError(c, 401, 'unauthorized');
+    const { data, error } = await serviceClient(c.env).rpc('create_crew_announcement_from_runner_for_subject', {
+      p_runner_host_id: runnerHostId,
+      p_responsible_subject_id: deviceGrant.subjectId,
+      p_crew_session_id: sessionId,
+      p_recipient_session_ids: parsed.recipientSessionIds as Json,
+      p_recipient_member_ids: parsed.recipientMemberIds as Json,
+      p_message_kind: parsed.messageKind,
+      p_summary: parsed.summary,
+      p_payload: parsed.payload as Json,
+      p_board_visible: parsed.boardVisible,
+    } as never);
+    if (error) return mapRpcError(c, error);
+    return c.json({ announcementId: data });
+  }
+
+  return jsonError(c, 403, 'forbidden', {
+    message: 'runner announcements require a subject device grant',
+  });
 });
 
 runnerHostRoutes.post('/:id/sessions/:sessionId/finish', requireSubjectAuth(['runner:write']), async (c) => {

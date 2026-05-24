@@ -32,6 +32,10 @@ struct CreateSessionResponse: Decodable {
     let sessionId: String
 }
 
+struct CreateAnnouncementResponse: Decodable {
+    let announcementId: String
+}
+
 struct RegisterRunnerHostResponse: Decodable {
     let runnerHostId: String
 }
@@ -86,6 +90,20 @@ struct CrewSession: Decodable, Identifiable {
     let finishedAt: String?
 }
 
+struct CrewMember: Decodable, Identifiable {
+    let id: String
+    let conversationId: String
+    let memberKind: String
+    let userId: String?
+    let botId: String?
+    let codeSessionId: String?
+    let displayName: String
+    let role: String
+    let capabilities: JSONValue
+    let status: String
+    let createdAt: String
+}
+
 struct SessionEvent: Decodable, Identifiable {
     let id: String
     let crewSessionId: String
@@ -94,6 +112,48 @@ struct SessionEvent: Decodable, Identifiable {
     let summary: String?
     let payload: JSONValue
     let createdAt: String
+}
+
+struct CrewAnnouncement: Decodable, Identifiable {
+    let id: String
+    let crewConversationId: String
+    let responsibleSubjectId: String
+    let senderKind: String
+    let senderMemberId: String?
+    let senderSessionId: String?
+    let recipientMode: String
+    let messageKind: String
+    let boardVisible: Bool
+    let summary: String
+    let payload: JSONValue
+    let createdAt: String
+    let mentions: [CrewAnnouncementMention]
+}
+
+struct CrewAnnouncementMention: Decodable, Identifiable {
+    let id: String
+    let announcementId: String
+    let targetKind: String
+    let targetSessionId: String?
+    let targetMemberId: String?
+    let createdAt: String
+}
+
+struct SessionMailboxItem: Decodable, Identifiable {
+    let id: String
+    let announcementId: String?
+    let crewConversationId: String
+    let responsibleSubjectId: String
+    let senderKind: String?
+    let senderMemberId: String?
+    let senderSessionId: String?
+    let recipientSessionId: String?
+    let messageKind: String
+    let summary: String
+    let payload: JSONValue
+    let status: String
+    let createdAt: String
+    let readAt: String?
 }
 
 struct RunnerHost: Decodable, Identifiable {
