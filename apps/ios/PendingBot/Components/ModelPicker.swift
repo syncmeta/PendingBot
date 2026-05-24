@@ -534,16 +534,131 @@ private enum ArenaPriceRangeScale {
     }
 }
 
-/// Multi-select model picker for the arena. A two-handle price range defines
-/// the base pool; rows and vendor actions then add out-of-range models or
-/// remove in-range models. The persisted shape is:
-/// `(price_min...price_max) union models minus exclude`.
+private enum ArtificialAnalysisIntelligenceIndex {
+    private static let scoresByName: [String: Double] = [
+        "gpt55xhigh": 60,
+        "gpt55high": 59,
+        "claudeopus47adaptivereasoningmaxeffort": 57,
+        "claudeopus47max": 57,
+        "gemini31propreview": 57,
+        "gpt54xhigh": 57,
+        "gpt55medium": 57,
+        "qwen37max": 57,
+        "gemini35flash": 56,
+        "kimik26": 54,
+        "mimov25pro": 54,
+        "gpt53codexxhigh": 54,
+        "grok43high": 53,
+        "musespark": 52,
+        "claudeopus47nonreasoninghigh": 52,
+        "claudesonnet46max": 52,
+        "deepseekv4promax": 52,
+        "glm51": 51,
+        "gpt55low": 51,
+        "qwen36plus": 50,
+        "deepseekv4prohigh": 50,
+        "glm5": 50,
+        "minimaxm27": 50,
+        "mimov25": 49,
+        "gpt54minixhigh": 49,
+        "grok43medium": 49,
+        "gpt54low": 48,
+        "glm5turbo": 47,
+        "deepseekv4flashmax": 47,
+        "deepseekv4flashhigh": 46,
+        "qwen3627b": 46,
+        "qwen35397ba17b": 45,
+        "mimov2omni0327": 45,
+        "claudesonnet46nonreasoning": 44,
+        "gpt54nanoxhigh": 44,
+        "grok43low": 44,
+        "qwen3635ba3b": 43,
+        "gpt55nonreasoning": 41,
+        "deepseekv4pro": 39,
+        "o3": 38,
+        "gpt54nano": 38,
+        "gpt54minimedium": 38,
+    ]
+
+    static func score(for model: OpenRouterModel) -> Double? {
+        let key = normalized(model.display_name)
+        if let exact = scoresByName[key] { return exact }
+        return scoresByName
+            .filter { key.contains($0.key) || $0.key.contains(key) }
+            .map(\.value)
+            .max()
+    }
+
+    static func sorted(_ models: [OpenRouterModel]) -> [OpenRouterModel] {
+        models.sorted { lhs, rhs in
+            let leftScore = score(for: lhs)
+            let rightScore = score(for: rhs)
+            switch (leftScore, rightScore) {
+            case let (l?, r?) where l != r:
+                return l > r
+            case (_?, nil):
+                return true
+            case (nil, _?):
+                return false
+            default:
+                let leftPrice = lhs.blended_usd_per_million ?? .infinity
+                let rightPrice = rhs.blended_usd_per_million ?? .infinity
+                if leftPrice != rightPrice { return leftPrice < rightPrice }
+                return lhs.display_name.localizedCaseInsensitiveCompare(rhs.display_name) == .orderedAscending
+            }
+        }
+    }
+
+    private static func normalized(_ value: String) -> String {
+        value.lowercased().filter { $0.isLetter || $0.isNumber }
+    }
+}
+
+/// Multi-select model pool editor for the arena. A two-handle price range
+/// defines the base pool; row checkboxes then add or remove individual models.
+/// The persisted shape is `(price_min...price_max) union models minus exclude`.
 struct ArenaModelPickerSheet: View {
-    @Environment(\.api) private var api
     @Environment(\.dismiss) private var dismiss
 
     let initial: ArenaModelSelection
     var onDone: (ArenaModelSelection) -> Void
+
+    @State private var selection: ArenaModelSelection
+
+    init(initial: ArenaModelSelection, onDone: @escaping (ArenaModelSelection) -> Void) {
+        self.initial = initial
+        self.onDone = onDone
+        _selection = State(initialValue: initial)
+    }
+
+    var body: some View {
+        NavigationStack {
+            ArenaModelPoolEditor(selection: $selection)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .principal) {
+                        Text(selection.resolvedCount >= 2 ? "价格模型池 · \(selection.resolvedCount) 个" : "选择模型池")
+                            .font(Theme.Fonts.serif(size: 16, weight: .semibold))
+                            .foregroundStyle(Theme.Palette.ink)
+                    }
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("取消") { dismiss() }.foregroundStyle(Theme.Palette.inkMuted)
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("完成") { onDone(selection); dismiss() }
+                            .disabled(selection.fallbackModel == nil)
+                            .foregroundStyle(selection.fallbackModel == nil ? Theme.Palette.inkMuted : Theme.Palette.accent)
+                    }
+                }
+        }
+        .tint(Theme.Palette.accent)
+    }
+}
+
+struct ArenaModelPoolEditor: View {
+    @Environment(\.api) private var api
+
+    @Binding var selection: ArenaModelSelection
 
     @State private var allModels: [OpenRouterModel] = []
     @State private var loading = true
@@ -568,27 +683,20 @@ struct ArenaModelPickerSheet: View {
     }
 
     private var effectiveModels: [OpenRouterModel] {
-        pool.filter { isEffective($0) }
-            .sorted { ($0.blended_usd_per_million ?? .infinity) < ($1.blended_usd_per_million ?? .infinity) }
+        ArtificialAnalysisIntelligenceIndex.sorted(pool.filter { isEffective($0) })
     }
 
     private var filtered: [OpenRouterModel] {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        return pool.filter { m in
+        return ArtificialAnalysisIntelligenceIndex.sorted(pool.filter { m in
             if !q.isEmpty {
                 let hay = "\(m.slug) \(m.display_name) \(m.provider)".lowercased()
                 if !hay.contains(q) { return false }
+            } else if !isInPriceRange(m) && !include.contains(m.slug) && !exclude.contains(m.slug) {
+                return false
             }
             return true
-        }
-        .sorted { ($0.blended_usd_per_million ?? .infinity) < ($1.blended_usd_per_million ?? .infinity) }
-    }
-
-    private var groupedFiltered: [(provider: String, models: [OpenRouterModel])] {
-        Dictionary(grouping: filtered, by: \.provider)
-            .keys
-            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
-            .map { ($0, Dictionary(grouping: filtered, by: \.provider)[$0] ?? []) }
+        })
     }
 
     private var priceMinBound: Double? {
@@ -606,51 +714,52 @@ struct ArenaModelPickerSheet: View {
             priceMax: priceMaxBound,
             models: Array(include).sorted(),
             exclude: Array(exclude).sorted(),
-            fallbackModel: effective.first?.slug ?? include.sorted().first ?? initial.fallbackModel,
+            fallbackModel: effective.first?.slug ?? include.sorted().first ?? selection.fallbackModel,
             resolvedCount: effective.count)
     }
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                Theme.Palette.canvas.ignoresSafeArea()
-                if loading && allModels.isEmpty {
-                    ProgressView().tint(Theme.Palette.accent)
-                } else {
-                    VStack(spacing: 0) {
-                        filterBar
-                        list
-                    }
-                }
-            }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    Text(draft.resolvedCount >= 2 ? "价格模型池 · \(draft.resolvedCount) 个" : "选择模型池")
-                        .font(Theme.Fonts.serif(size: 16, weight: .semibold))
+        ZStack {
+            Theme.Palette.canvas.ignoresSafeArea()
+            if loading && allModels.isEmpty {
+                ProgressView().tint(Theme.Palette.accent)
+            } else if let error, allModels.isEmpty {
+                VStack(spacing: 8) {
+                    Text("加载模型列表失败")
+                        .font(Theme.Fonts.rounded(size: 14, weight: .medium))
                         .foregroundStyle(Theme.Palette.ink)
+                    Text(error)
+                        .font(Theme.Fonts.caption)
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                    Button("重试") { Task { await load() } }
+                        .foregroundStyle(Theme.Palette.accent)
                 }
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { dismiss() }.foregroundStyle(Theme.Palette.inkMuted)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") { onDone(draft); dismiss() }
-                        .disabled(draft.fallbackModel == nil)
-                        .foregroundStyle(draft.fallbackModel == nil ? Theme.Palette.inkMuted : Theme.Palette.accent)
+            } else {
+                VStack(spacing: 0) {
+                    filterBar
+                    list
                 }
             }
         }
         .task { await load() }
-        .tint(Theme.Palette.accent)
+        .onChange(of: priceMinValue) { _, _ in syncSelection() }
+        .onChange(of: priceMaxValue) { _, _ in syncSelection() }
     }
 
     private var filterBar: some View {
         VStack(spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass").foregroundStyle(Theme.Palette.inkMuted)
-                TextField("搜索 slug / 名字 / 厂商", text: $query)
+                TextField("搜索模型 / 厂商", text: $query)
                     .textInputAutocapitalization(.never).autocorrectionDisabled()
                     .font(Theme.Fonts.rounded(size: 14, weight: .regular))
+                if !query.isEmpty {
+                    Button { query = "" } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(Theme.Palette.inkMuted.opacity(0.6))
+                    }
+                    .buttonStyle(.plain)
+                }
             }
             PriceRangeSlider(
                 lower: $priceMinValue,
@@ -666,22 +775,6 @@ struct ArenaModelPickerSheet: View {
                     .font(Theme.Fonts.caption)
                     .foregroundStyle(Theme.Palette.inkMuted)
             }
-            HStack(spacing: 8) {
-                Button {
-                    for m in filtered { include.insert(m.slug); exclude.remove(m.slug) }
-                    Haptics.tap()
-                } label: {
-                    Label("加入当前列表", systemImage: "plus.circle")
-                }
-                Spacer()
-                Button(role: .destructive) {
-                    for m in filtered { exclude.insert(m.slug); include.remove(m.slug) }
-                    Haptics.tap()
-                } label: {
-                    Label("去除当前列表", systemImage: "minus.circle")
-                }
-            }
-            .font(Theme.Fonts.rounded(size: 12, weight: .semibold))
         }
         .padding(.horizontal, Theme.Metrics.gutter)
         .padding(.vertical, 10)
@@ -689,84 +782,45 @@ struct ArenaModelPickerSheet: View {
 
     private var list: some View {
         List {
-            if draft.resolvedCount > 0 {
+            if filtered.isEmpty {
                 Section {
-                    Button("清空手动调整") {
-                        include.removeAll()
-                        exclude.removeAll()
-                        Haptics.tap()
-                    }
+                    Text(query.trimmingCharacters(in: .whitespaces).isEmpty ? "当前区间没有可选模型" : "没有匹配的模型")
                         .font(Theme.Fonts.rounded(size: 13, weight: .medium))
-                        .foregroundStyle(.red)
-                } footer: {
-                    Text("价格区间是基础池；滑块两端分别表示包含最小和包含最大，中间固定为 0x-5x。加号会把区间外模型加入池子，减号会把区间内模型排除。")
-                        .font(Theme.Fonts.caption).foregroundStyle(Theme.Palette.inkMuted)
+                        .foregroundStyle(Theme.Palette.inkMuted)
                 }
                 .listRowBackground(Theme.Palette.surface)
             }
-            ForEach(groupedFiltered, id: \.provider) { group in
-                Section {
-                    ForEach(group.models) { m in
-                        Button {
-                            toggle(m)
-                            Haptics.tap()
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: rowIcon(for: m))
-                                    .foregroundStyle(rowTint(for: m))
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(m.display_name).font(Theme.Fonts.rounded(size: 14, weight: .medium))
-                                        .foregroundStyle(Theme.Palette.ink).lineLimit(1)
-                                    Text(m.slug).font(Theme.Fonts.monoSmall).foregroundStyle(Theme.Palette.inkMuted)
-                                        .lineLimit(1).truncationMode(.middle)
-                                }
-                                Spacer(minLength: 8)
-                                if let p = m.blended_usd_per_million {
-                                    Text(ModelCatalog.formatMultiplier(p))
-                                        .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
-                                        .foregroundStyle(Theme.Palette.inkMuted)
-                                        .padding(.horizontal, 6).padding(.vertical, 3)
-                                        .background(Capsule().fill(Theme.Palette.surfaceMuted))
-                                }
+            Section {
+                ForEach(filtered) { m in
+                    Button {
+                        toggle(m)
+                        Haptics.tap()
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: rowIcon(for: m))
+                                .font(Theme.Fonts.glyph(size: 17, weight: .semibold))
+                                .foregroundStyle(rowTint(for: m))
+                                .frame(width: 22)
+                            Text(m.display_name)
+                                .font(Theme.Fonts.rounded(size: 14, weight: .medium))
+                                .foregroundStyle(Theme.Palette.ink)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                            Spacer(minLength: 8)
+                            if let p = m.blended_usd_per_million {
+                                Text(ModelCatalog.formatMultiplier(p))
+                                    .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
+                                    .foregroundStyle(Theme.Palette.inkMuted)
+                                    .padding(.horizontal, 6).padding(.vertical, 3)
+                                    .background(Capsule().fill(Theme.Palette.surfaceMuted))
                             }
-                            .padding(.vertical, 4)
                         }
-                        .buttonStyle(.plain)
+                        .padding(.vertical, 5)
                     }
-                } header: {
-                    HStack(spacing: 8) {
-                        Text(group.provider)
-                            .font(Theme.Fonts.rounded(size: 12, weight: .semibold))
-                            .foregroundStyle(Theme.Palette.ink)
-                        Text("\(group.models.count)")
-                            .font(Theme.Fonts.caption)
-                            .foregroundStyle(Theme.Palette.inkMuted)
-                        Spacer()
-                        Button {
-                            for m in group.models {
-                                include.insert(m.slug)
-                                exclude.remove(m.slug)
-                            }
-                            Haptics.tap()
-                        } label: {
-                            Image(systemName: "plus.circle")
-                        }
-                        .buttonStyle(.plain)
-                        Button {
-                            for m in group.models {
-                                exclude.insert(m.slug)
-                                include.remove(m.slug)
-                            }
-                            Haptics.tap()
-                        } label: {
-                            Image(systemName: "minus.circle")
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .textCase(nil)
+                    .buttonStyle(.plain)
                 }
-                .listRowBackground(Theme.Palette.surface)
             }
+            .listRowBackground(Theme.Palette.surface)
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
@@ -789,21 +843,22 @@ struct ArenaModelPickerSheet: View {
         loading = true; defer { loading = false }
         do {
             allModels = try await api.get("v1/models")
-            include = Set(initial.models)
-            exclude = Set(initial.exclude)
-            if initial.priceMin == nil,
-               initial.priceMax == nil,
-               initial.models.isEmpty,
-               initial.exclude.isEmpty {
+            include = Set(selection.models)
+            exclude = Set(selection.exclude)
+            if selection.priceMin == nil,
+               selection.priceMax == nil,
+               selection.models.isEmpty,
+               selection.exclude.isEmpty {
                 priceMinValue = ArenaPriceRangeScale.numericMin
                 priceMaxValue = ArenaPriceRangeScale.numericMax
             } else {
-                priceMinValue = ArenaPriceRangeScale.sliderLower(fromPriceMin: initial.priceMin)
+                priceMinValue = ArenaPriceRangeScale.sliderLower(fromPriceMin: selection.priceMin)
                 priceMaxValue = max(
                     priceMinValue,
-                    ArenaPriceRangeScale.sliderUpper(fromPriceMax: initial.priceMax))
+                    ArenaPriceRangeScale.sliderUpper(fromPriceMax: selection.priceMax))
             }
             error = nil
+            syncSelection()
         } catch {
             self.error = error.localizedDescription
         }
@@ -829,16 +884,18 @@ struct ArenaModelPickerSheet: View {
             exclude.remove(model.slug)
             include.insert(model.slug)
         }
+        syncSelection()
+    }
+
+    private func syncSelection() {
+        selection = draft
     }
 
     private func rowIcon(for model: OpenRouterModel) -> String {
-        if exclude.contains(model.slug) { return "minus.circle.fill" }
-        if include.contains(model.slug) { return "plus.circle.fill" }
-        return isInPriceRange(model) ? "checkmark.circle.fill" : "circle"
+        isEffective(model) ? "checkmark.square.fill" : "square"
     }
 
     private func rowTint(for model: OpenRouterModel) -> Color {
-        if exclude.contains(model.slug) { return .red.opacity(0.75) }
         if isEffective(model) { return Theme.Palette.accent }
         return Theme.Palette.inkMuted.opacity(0.5)
     }

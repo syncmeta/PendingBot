@@ -55,7 +55,6 @@ struct CreateBotSheet: View {
     @State private var step: CreateStep = .models
     @State private var displayName: String = ""
     @State private var arenaSelection = ArenaModelSelection(priceMin: 0, priceMax: 5)
-    @State private var showingArenaPicker = false
     @State private var visibility: Visibility = .privateBot
     /// User-chosen public handle. Only required (and only sent) when the
     /// bot is public — private bots keep the synthetic `u_<random>` slug.
@@ -93,20 +92,22 @@ struct CreateBotSheet: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            Group {
                 if step == .models {
-                    modelSelectionSections
+                    ArenaModelPoolEditor(selection: $arenaSelection)
                 } else {
-                    settingsSections
-                }
+                    Form {
+                        settingsSections
 
-                if let error {
-                    Section {
-                        Text(error).foregroundStyle(.red)
+                        if let error {
+                            Section {
+                                Text(error).foregroundStyle(.red)
+                            }
+                        }
                     }
                 }
             }
-            .navigationTitle(step == .models ? "选择模型" : "机器人设置")
+            .navigationTitle(step == .models ? "模型池" : "机器人设置")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -135,46 +136,6 @@ struct CreateBotSheet: View {
                 catalog.loadIfNeeded()
                 await seedDefaultName()
             }
-            .sheet(isPresented: $showingArenaPicker) {
-                ArenaModelPickerSheet(initial: arenaSelection) { selection in
-                    arenaSelection = selection
-                }
-                .presentationDragIndicator(.visible)
-                .tint(Theme.Palette.accent)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var modelSelectionSections: some View {
-        Section {
-            Button {
-                showingArenaPicker = true
-                Haptics.tap()
-            } label: {
-                HStack {
-                    Image(systemName: "slider.horizontal.2.square")
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("价格区间模型池")
-                            .font(Theme.Fonts.rounded(size: 14, weight: .semibold))
-                        Text(arenaSelection.fallbackModel == nil
-                             ? "选择 0x-5x 区间,再加减模型和厂商"
-                             : arenaSelection.summary)
-                            .font(Theme.Fonts.caption)
-                            .foregroundStyle(Theme.Palette.inkMuted)
-                            .lineLimit(2)
-                    }
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(Theme.Fonts.caption)
-                        .foregroundStyle(.tertiary)
-                }
-            }
-            .foregroundStyle(Theme.Palette.ink)
-        } header: {
-            Text("模型")
-        } footer: {
-            Text("新建机器人使用价格区间模型池；每轮会从你选出的多个模型里随机挑一个。")
         }
     }
 
