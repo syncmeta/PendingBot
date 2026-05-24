@@ -1359,6 +1359,64 @@ export type Database = {
           },
         ]
       }
+      human_help_requests: {
+        Row: {
+          created_at: string
+          decided_at: string | null
+          id: string
+          reason: string | null
+          requested_user_id: string
+          requester_member_id: string
+          responsible_subject_id: string
+          status: string
+          temporary_group_id: string
+        }
+        Insert: {
+          created_at?: string
+          decided_at?: string | null
+          id?: string
+          reason?: string | null
+          requested_user_id: string
+          requester_member_id: string
+          responsible_subject_id: string
+          status?: string
+          temporary_group_id: string
+        }
+        Update: {
+          created_at?: string
+          decided_at?: string | null
+          id?: string
+          reason?: string | null
+          requested_user_id?: string
+          requester_member_id?: string
+          responsible_subject_id?: string
+          status?: string
+          temporary_group_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "human_help_requests_requester_member_id_fkey"
+            columns: ["requester_member_id"]
+            isOneToOne: false
+            referencedRelation: "temporary_group_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "human_help_requests_responsible_subject_id_fkey"
+            columns: ["responsible_subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "human_help_requests_temporary_group_id_fkey"
+            columns: ["temporary_group_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       i18n_prompts: {
         Row: {
           body_md: string
@@ -2040,6 +2098,170 @@ export type Database = {
           },
         ]
       }
+      temporary_group_members: {
+        Row: {
+          bot_id: string | null
+          capabilities: Json
+          code_session_id: string | null
+          conversation_id: string
+          created_at: string
+          display_name: string
+          ephemeral_spec: Json
+          id: string
+          invited_by_member_id: string | null
+          member_kind: string
+          role: string
+          status: string
+          user_id: string | null
+        }
+        Insert: {
+          bot_id?: string | null
+          capabilities?: Json
+          code_session_id?: string | null
+          conversation_id: string
+          created_at?: string
+          display_name: string
+          ephemeral_spec?: Json
+          id?: string
+          invited_by_member_id?: string | null
+          member_kind: string
+          role?: string
+          status?: string
+          user_id?: string | null
+        }
+        Update: {
+          bot_id?: string | null
+          capabilities?: Json
+          code_session_id?: string | null
+          conversation_id?: string
+          created_at?: string
+          display_name?: string
+          ephemeral_spec?: Json
+          id?: string
+          invited_by_member_id?: string | null
+          member_kind?: string
+          role?: string
+          status?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "temporary_group_members_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "bots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "temporary_group_members_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "temporary_group_members_invited_by_member_id_fkey"
+            columns: ["invited_by_member_id"]
+            isOneToOne: false
+            referencedRelation: "temporary_group_members"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      temporary_group_meta: {
+        Row: {
+          closed_at: string | null
+          conversation_id: string
+          created_at: string
+          initiator_bot_id: string | null
+          initiator_type: string
+          initiator_user_id: string | null
+          parent_temporary_group_id: string | null
+          responsible_subject_id: string
+          root_temporary_group_id: string | null
+          source_conversation_id: string | null
+          status: string
+          temporary_kind: string
+          title: string | null
+          updated_at: string
+        }
+        Insert: {
+          closed_at?: string | null
+          conversation_id: string
+          created_at?: string
+          initiator_bot_id?: string | null
+          initiator_type: string
+          initiator_user_id?: string | null
+          parent_temporary_group_id?: string | null
+          responsible_subject_id: string
+          root_temporary_group_id?: string | null
+          source_conversation_id?: string | null
+          status?: string
+          temporary_kind: string
+          title?: string | null
+          updated_at?: string
+        }
+        Update: {
+          closed_at?: string | null
+          conversation_id?: string
+          created_at?: string
+          initiator_bot_id?: string | null
+          initiator_type?: string
+          initiator_user_id?: string | null
+          parent_temporary_group_id?: string | null
+          responsible_subject_id?: string
+          root_temporary_group_id?: string | null
+          source_conversation_id?: string | null
+          status?: string
+          temporary_kind?: string
+          title?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "temporary_group_meta_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: true
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "temporary_group_meta_initiator_bot_id_fkey"
+            columns: ["initiator_bot_id"]
+            isOneToOne: false
+            referencedRelation: "bots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "temporary_group_meta_parent_temporary_group_id_fkey"
+            columns: ["parent_temporary_group_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "temporary_group_meta_responsible_subject_id_fkey"
+            columns: ["responsible_subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "temporary_group_meta_root_temporary_group_id_fkey"
+            columns: ["root_temporary_group_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "temporary_group_meta_source_conversation_id_fkey"
+            columns: ["source_conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       test_account_log: {
         Row: {
           id: string
@@ -2603,6 +2825,10 @@ export type Database = {
         Args: { p_bot: string; p_interval: number; p_user: string }
         Returns: boolean
       }
+      can_view_temporary_group: {
+        Args: { p_conversation_id: string; p_user_id: string }
+        Returns: boolean
+      }
       cancel_account_deletion: { Args: never; Returns: boolean }
       ensure_group_subject_for_conversation: {
         Args: { p_conversation_id: string }
@@ -2722,6 +2948,10 @@ export type Database = {
         Returns: boolean
       }
       is_participant: { Args: { conv_id: string }; Returns: boolean }
+      is_temporary_group_human_member: {
+        Args: { p_conversation_id: string; p_user_id: string }
+        Returns: boolean
+      }
       list_bot_invitees: {
         Args: { p_bot_id: string }
         Returns: {
