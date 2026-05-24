@@ -5,13 +5,11 @@
 // Endpoints (all reached through the worker, never the public internet):
 //   GET /ping                          health check (Container pingEndpoint)
 //   GET /control                       WS — RoomVoiceDO control plane
-//   GET /adapter/stream/<humanId>?t=   WS — SFU streams a human's mic in
-//   GET /adapter/ingest/<botId>?t=     WS — SFU pulls a bot's voice out
 //   GET /rtk/bot-page/<botId>?t=       HTML — headless bot participant
 //   GET /rtk/bot/<botId>?t=            WS — bot participant audio bridge
 //
-// The SFU dials the adapter endpoints with the per-room token in ?t=; the
-// worker forwards the upgrade here and Room verifies the token.
+// The headless RealtimeKit page connects with the per-room token in ?t=;
+// the worker forwards the upgrade here and Room verifies the token.
 
 import { Room, type WsData } from './room';
 
@@ -29,7 +27,6 @@ Bun.serve<WsData>({
       return new Response('expected websocket', { status: 426 });
     }
 
-    // /adapter/stream/<humanId> or /adapter/ingest/<botId>
     const parts = url.pathname.split('/').filter(Boolean);
     if (parts[0] === 'rtk' && parts.length === 3) {
       const slot = parts[1];
@@ -47,38 +44,17 @@ Bun.serve<WsData>({
       return new Response('bad realtimekit slot', { status: 400 });
     }
 
-    if (parts[0] === 'adapter' && parts.length === 3) {
-      const kind = parts[1];
-      const id = parts[2];
-      if (kind !== 'stream' && kind !== 'ingest') {
-        return new Response('bad adapter slot', { status: 400 });
-      }
-      if (!room.tokenMatches(url.searchParams.get('t'))) {
-        return new Response('forbidden', { status: 403 });
-      }
-      const data: WsData =
-        kind === 'stream'
-          ? { kind: 'stream', humanId: id }
-          : { kind: 'ingest', botId: id };
-      if (server.upgrade(req, { data })) return undefined;
-      return new Response('expected websocket', { status: 426 });
-    }
-
     return new Response('not found', { status: 404 });
   },
   websocket: {
-    // SFU adapter frames are binary PCM — no point compressing them.
+    // Audio control frames are already compact — no point compressing them.
     perMessageDeflate: false,
     open(ws) {
       const d = ws.data;
       if (d.kind === 'control') {
         room.onControlOpen(ws);
-      } else if (d.kind === 'ingest') {
-        if (!room.attachIngest(d.botId, ws)) ws.close();
       } else if (d.kind === 'rtk-bot') {
         if (!room.attachRealtimeKitBot(d.botId, ws)) ws.close();
-      } else {
-        room.attachStream(d.humanId, ws);
       }
     },
     message(ws, message) {
@@ -87,20 +63,14 @@ Bun.serve<WsData>({
         if (typeof message === 'string') void room.onControlMessage(message);
         return;
       }
-      if (d.kind === 'stream') {
-        if (typeof message === 'string') return; // expect binary PCM
-        room.onHumanFrame(d.humanId, message);
-      } else if (d.kind === 'rtk-bot') {
+      if (d.kind === 'rtk-bot') {
         if (typeof message === 'string') room.onRealtimeKitBridgeMessage(d.botId, message);
       }
-      // ingest: the SFU pulls from us; no inbound frames expected.
     },
     close(ws) {
       const d = ws.data;
       if (d.kind === 'control') room.onControlClose(ws);
-      else if (d.kind === 'ingest') room.detachIngest(d.botId, ws);
       else if (d.kind === 'rtk-bot') room.detachRealtimeKitBot(d.botId, ws);
-      else room.detachStream(d.humanId, ws);
     },
   },
 });

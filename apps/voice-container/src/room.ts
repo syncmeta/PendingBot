@@ -1,12 +1,12 @@
 // The media engine for one group-voice room. One container instance per
 // room (keyed by conversation_id), so this is a process-level singleton.
 //
-//   humans (WebRTC) ─▶ SFU ─▶ Stream adapter (Opus→PCM) ─▶ stream WS ─┐
-//                                                                     │
-//   per bot: ears = mix(all humans + every OTHER bot) ───────────────▶ OpenAI
-//            voice ◀── OpenAI Realtime ─────────────────────────────┘
+//   humans + bots are Cloudflare RealtimeKit WebRTC participants.
+//
+//   per bot: RTK remote audio + every OTHER bot ───────────────▶ OpenAI
+//            voice ◀── OpenAI Realtime ───────────────────────┘
 //              │
-//              ├─▶ playout buffer ─(steady 20ms clock)─▶ ingest WS ─▶ SFU ─▶ humans
+//              ├─▶ playout buffer ─(steady 20ms clock)─▶ RTK participant
 //              └─▶ inter-bot buffer ─(input mixer)─▶ other bots' ears
 //
 // Why this lives in a container and not the Durable Object: real-time
@@ -24,13 +24,9 @@ import type {
   MediaDiagnostics,
   RealtimeUsage,
 } from './protocol';
-import { decodePacket, encodePayloadPacket } from './proto';
 import {
   bytesToSamples,
   samplesToBytes,
-  stereoToMono,
-  monoToStereo,
-  resample,
   mixPcm,
   downsample48to24,
   newDownsampleState,
@@ -43,58 +39,42 @@ import { closeRealtimeKitBrowser } from './browser-manager';
 const DEFAULT_VOICE_MODEL_SLUG = 'gpt-realtime-2';
 const REALTIME_MAX_OUTPUT_TOKENS = 512;
 
-// Audio rates. The SFU WebSocket adapter is fixed at 48 kHz stereo;
-// OpenAI Realtime speaks 24 kHz mono.
-const SFU_RATE = 48_000;
+// Audio rates. RealtimeKit bridge audio is 48 kHz mono; OpenAI Realtime
+// speaks 24 kHz mono.
+const REALTIMEKIT_RATE = 48_000;
 const OPENAI_RATE = 24_000;
 
-// Input mixer cadence (human mic + inter-bot → each bot's OpenAI input).
+// Input mixer cadence (RealtimeKit remote audio + inter-bot → each bot's OpenAI input).
 // 40 ms is finer than the old in-DO 100 ms — cheap here, and lower input
 // latency helps the bot's VAD react. A real timer makes the window stable.
 const INPUT_FLUSH_MS = 40;
-const INPUT_STEREO_PER_FLUSH = (SFU_RATE * 2 * INPUT_FLUSH_MS) / 1000; // 3840
-const INPUT_MONO48_PER_FLUSH = (SFU_RATE * INPUT_FLUSH_MS) / 1000; // 1920
+const INPUT_MONO48_PER_FLUSH = (REALTIMEKIT_RATE * INPUT_FLUSH_MS) / 1000; // 1920
 const INPUT_OPENAI_SAMPLES = (OPENAI_RATE * INPUT_FLUSH_MS) / 1000; // 960
 const OPENAI_INPUT_TAIL_FLUSHES = Math.ceil(800 / INPUT_FLUSH_MS);
 
-// Bot voice playout cadence (OpenAI output → SFU ingest). A steady 20 ms
+// Bot voice playout cadence (OpenAI output → RealtimeKit). A steady 20 ms
 // frame clock with a pre-roll cushion is what kills the choppiness.
 const PLAYOUT_TICK_MS = 20;
 const PLAYOUT_SAMPLES = (OPENAI_RATE * PLAYOUT_TICK_MS) / 1000; // 480 mono@24k
-// Build this much cushion before starting playout (and rebuild it after a
-// genuine underrun). Latency doesn't matter for this product; smoothness
-// does — so buffer generously.
-const PREROLL_MS = 240;
-const PREROLL_SAMPLES = (OPENAI_RATE * PREROLL_MS) / 1000; // 5760
 // RealtimeKit already gives us a real WebRTC participant and the browser
-// bridge has its own WebAudio scheduler. Keeping the old SFU-sized cushion
-// here adds audible bot latency, so RTK uses a much tighter queue.
+// bridge has its own WebAudio scheduler, so keep the queue tight.
 const RTK_PREROLL_MS = 80;
 const RTK_PREROLL_SAMPLES = (OPENAI_RATE * RTK_PREROLL_MS) / 1000; // 1920
 // Cap the inter-bot buffer so a continuously-talking bot can't grow it
 // without bound if another leg stalls. 2 s is plenty for "bots hear each
 // other"; older audio is dropped.
 const INTERBOT_CAP_SAMPLES = OPENAI_RATE * 2;
-// Cap the playout buffer too: if the SFU ingest socket is slow to connect
-// (or never does), the bot can produce audio with nowhere to drain it.
-// 5 s keeps a greeting buffered for a normal ingest connect while bounding
-// memory + latency; older audio is dropped.
-const PLAYOUT_CAP_SAMPLES = OPENAI_RATE * 5;
 // In a live room stale bot speech is worse than clipped bot speech. RTK
 // output can arrive faster than wall-clock audio, so bound queued speech to
 // a short, conversational window.
 const RTK_PLAYOUT_CAP_MS = 1_500;
 const RTK_PLAYOUT_CAP_SAMPLES = (OPENAI_RATE * RTK_PLAYOUT_CAP_MS) / 1000;
 
-const MAX_INGEST_PAYLOAD = 28_000;
-
 // How often to emit per-bot playout diagnostics over the control channel.
 const STATS_MS = 2_000;
 
 export type WsData =
   | { kind: 'control' }
-  | { kind: 'stream'; humanId: string }
-  | { kind: 'ingest'; botId: string }
   | { kind: 'rtk-bot'; botId: string };
 
 interface BotLeg {
@@ -103,7 +83,6 @@ interface BotLeg {
   // Set once we've sent session.update — gates input so we never append
   // audio before the session's format/persona is configured.
   sessionReady: boolean;
-  ingestWs: ServerWebSocket<WsData> | null;
   rtkBridge: RealtimeKitBridge | null;
   // RealtimeKit participant audio arrives as 48 kHz mono from the bridge.
   rtkPending: Int16Array[];
@@ -126,16 +105,6 @@ interface BotLeg {
   underruns: number;
   voiceFrames: number;
   silenceFrames: number;
-}
-
-interface HumanState {
-  streamWs: ServerWebSocket<WsData> | null;
-  // 48 kHz stereo PCM samples buffered since the last input flush.
-  pending: Int16Array[];
-  downsampleState: DownsampleState;
-  audioLevel: number;
-  speaking: boolean;
-  lastFrameAt: number;
 }
 
 function totalLen(chunks: Int16Array[]): number {
@@ -187,13 +156,11 @@ function rmsLevel(samples: Int16Array): number {
   return Math.sqrt(sum / Math.max(1, count));
 }
 
-export function playoutLimitsForRealtimeKit(hasRealtimeKit: boolean): {
+export function realtimeKitPlayoutLimits(): {
   prerollSamples: number;
   capSamples: number;
 } {
-  return hasRealtimeKit
-    ? { prerollSamples: RTK_PREROLL_SAMPLES, capSamples: RTK_PLAYOUT_CAP_SAMPLES }
-    : { prerollSamples: PREROLL_SAMPLES, capSamples: PLAYOUT_CAP_SAMPLES };
+  return { prerollSamples: RTK_PREROLL_SAMPLES, capSamples: RTK_PLAYOUT_CAP_SAMPLES };
 }
 
 export class Room {
@@ -202,7 +169,6 @@ export class Room {
   private controlWs: ServerWebSocket<WsData> | null = null;
 
   private bots = new Map<string, BotLeg>();
-  private humans = new Map<string, HumanState>();
 
   private inputTimer: ReturnType<typeof setInterval> | null = null;
   private playoutTimer: ReturnType<typeof setInterval> | null = null;
@@ -260,7 +226,7 @@ export class Room {
     }
   }
 
-  /** True once the DO has armed the room — gates adapter-WS auth. */
+  /** True once the DO has armed the room — gates RTK page/WS auth. */
   isArmed(): boolean {
     return this.token !== null;
   }
@@ -290,24 +256,10 @@ export class Room {
   // routing these through the control channel was invisible. Read these
   // when tuning choppiness: underruns>0 or large maxGap ⇒ upstream (OpenAI
   // delivery) is gappy; healthy depth + 0 underruns but still choppy ⇒
-  // downstream (container→SFU→iOS). Reset the window counters after each.
+  // downstream (RTK browser/WebRTC). Reset the window counters after each.
   private emitStats(): void {
     if (this.closed) return;
     const diagnostics: MediaDiagnostics = { atMs: Date.now(), participants: [] };
-    for (const [humanId, human] of this.humans) {
-      if (Date.now() - human.lastFrameAt > STATS_MS * 2) {
-        human.speaking = false;
-        human.audioLevel = 0;
-      }
-      diagnostics.participants.push({
-        kind: 'human',
-        id: humanId,
-        speaking: human.speaking,
-        audioLevel: human.audioLevel,
-        source: 'container',
-        streamConnected: human.streamWs !== null,
-      });
-    }
     for (const [botId, leg] of this.bots) {
       const depthMs = Math.round(totalLen(leg.playout) / (OPENAI_RATE / 1000));
       console.log(
@@ -331,7 +283,7 @@ export class Room {
         inputLevel: leg.rtkInputLevel,
         inputFrames: leg.rtkInputFrames,
         quietFrames: leg.rtkQuietFrames,
-        ingestConnected: leg.ingestWs !== null || Boolean(leg.rtkBridge?.connected),
+        realtimeKitConnected: Boolean(leg.rtkBridge?.connected),
         modelSessionReady: leg.sessionReady,
       });
       leg.underruns = 0;
@@ -346,66 +298,6 @@ export class Room {
     this.emit({ t: 'diagnostics', diagnostics });
   }
 
-  // ── adapter sockets (SFU dials in via the worker) ──────────────────
-
-  attachStream(humanId: string, ws: ServerWebSocket<WsData>): void {
-    let human = this.humans.get(humanId);
-    if (!human) {
-      human = {
-        streamWs: ws,
-        pending: [],
-        downsampleState: newDownsampleState(),
-        audioLevel: 0,
-        speaking: false,
-        lastFrameAt: 0,
-      };
-      this.humans.set(humanId, human);
-    } else {
-      human.streamWs = ws;
-      human.pending = [];
-      human.downsampleState = newDownsampleState();
-      human.audioLevel = 0;
-      human.speaking = false;
-      human.lastFrameAt = 0;
-    }
-  }
-
-  detachStream(humanId: string, ws: ServerWebSocket<WsData>): void {
-    const human = this.humans.get(humanId);
-    if (!human || human.streamWs !== ws) return;
-    // Presence (whether the human is really gone) is the DO's job via the
-    // iOS heartbeat. Here we just stop mixing a socket that closed and tell
-    // the DO; the DO decides whether to recreate the SFU adapter (it owns
-    // the SFU API + the adapterId intent guard).
-    this.humans.delete(humanId);
-    this.emit({ t: 'stream-dropped', humanId });
-  }
-
-  attachIngest(botId: string, ws: ServerWebSocket<WsData>): boolean {
-    const leg = this.bots.get(botId);
-    if (!leg) return false;
-    leg.ingestWs = ws;
-    return true;
-  }
-
-  detachIngest(botId: string, ws: ServerWebSocket<WsData>): void {
-    const leg = this.bots.get(botId);
-    if (leg && leg.ingestWs === ws) leg.ingestWs = null;
-  }
-
-  onHumanFrame(humanId: string, data: ArrayBuffer | Uint8Array): void {
-    const human = this.humans.get(humanId);
-    if (!human) return;
-    const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
-    const packet = decodePacket(bytes);
-    if (packet.payload.length === 0) return;
-    const samples = bytesToSamples(packet.payload);
-    human.audioLevel = rmsLevel(samples);
-    human.speaking = human.audioLevel > 0.025;
-    human.lastFrameAt = Date.now();
-    human.pending.push(samples);
-  }
-
   // ── bots ───────────────────────────────────────────────────────────
 
   private async addBot(spec: ContainerBotSpec): Promise<void> {
@@ -414,7 +306,6 @@ export class Room {
       spec,
       openaiWs: null,
       sessionReady: false,
-      ingestWs: null,
       rtkBridge: null,
       rtkPending: [],
       rtkDownsampleState: newDownsampleState(),
@@ -458,11 +349,6 @@ export class Room {
     this.bots.delete(botId);
     try {
       leg.openaiWs?.close();
-    } catch {
-      // already closing
-    }
-    try {
-      leg.ingestWs?.close();
     } catch {
       // already closing
     }
@@ -649,9 +535,9 @@ export class Room {
     leg.lastDeltaAt = now;
     leg.playout.push(mono24);
     leg.interbot.push(mono24);
-    // Bound both buffers; drop oldest beyond the caps. Playout is capped in
-    // case the ingest socket is slow/never connects; inter-bot in case a
-    // continuously-talking bot outruns another leg's drain.
+    // Bound both buffers; drop oldest beyond the caps. Playout is capped
+    // so stale speech does not lag behind the live RTK room; inter-bot is
+    // capped in case a continuously-talking bot outruns another leg's drain.
     const cap = this.playoutCapSamples(leg);
     const dropped = trimOldest(leg.playout, cap);
     if (dropped > 0) {
@@ -685,39 +571,14 @@ export class Room {
     const leg = this.bots.get(botId);
     if (!leg) return;
     this.bots.delete(botId);
-    try {
-      leg.ingestWs?.close();
-    } catch {
-      // already closing
-    }
     leg.rtkBridge?.close();
     this.emit({ t: 'leg-closed', botId });
   }
 
-  // ── input mixer: humans + inter-bot -> each bot's OpenAI input ──────
+  // ── input mixer: RealtimeKit + inter-bot -> each bot's OpenAI input ─
 
   private inputFlush(): void {
     if (this.closed || this.bots.size === 0) return;
-
-    const humanStreams: Int16Array[] = [];
-    for (const human of this.humans.values()) {
-      if (human.pending.length === 0) continue;
-      const { taken, rest } = drainFront(human.pending, INPUT_STEREO_PER_FLUSH);
-      human.pending = rest;
-      if (taken.length === 0) continue;
-      // Pad short windows to a full frame so the downsample state and the
-      // OpenAI input timeline stay aligned with wall-clock cadence.
-      let stereo = taken;
-      if (taken.length < INPUT_STEREO_PER_FLUSH) {
-        const padded = new Int16Array(INPUT_STEREO_PER_FLUSH);
-        padded.set(taken);
-        stereo = padded;
-      }
-      humanStreams.push(
-        downsample48to24(stereoToMono(stereo), human.downsampleState),
-      );
-    }
-    const humanMix = humanStreams.length > 0 ? mixPcm(humanStreams) : null;
 
     // Snapshot + drain each bot's inter-bot buffer so the others hear it
     // this tick. Snapshot first — a bot must hear the others but never
@@ -757,7 +618,6 @@ export class Room {
       const ws = leg.openaiWs;
       if (!ws || !leg.sessionReady || ws.readyState !== WebSocket.OPEN) continue;
       const inputs: Int16Array[] = [];
-      if (humanMix && humanMix.length > 0) inputs.push(humanMix);
       const rtkAudio = botRealtimeKitAudio.get(botId);
       if (rtkAudio && rtkAudio.length > 0) inputs.push(rtkAudio);
       for (const [otherId, audio] of botAudio) {
@@ -786,21 +646,20 @@ export class Room {
     }
   }
 
-  // ── playout clock: bot voice -> SFU ingest (anti-stutter) ──────────
+  // ── playout clock: bot voice -> RealtimeKit ───────────────────────
 
   private playoutTick(): void {
     if (this.closed) return;
     for (const leg of this.bots.values()) {
-      const ing = leg.ingestWs;
       const rtkBridge = leg.rtkBridge;
-      if (!ing && !rtkBridge) continue;
+      if (!rtkBridge) continue;
 
       if (leg.playoutState === 'buffering') {
         if (totalLen(leg.playout) >= this.prerollSamples(leg)) {
           leg.playoutState = 'playing';
         } else {
-          // Keep the SFU track continuous with comfort silence while we
-          // build the cushion.
+          // Keep the RTK participant clock continuous while we build the
+          // cushion.
           this.sendOutput(leg, new Int16Array(PLAYOUT_SAMPLES));
           leg.silenceFrames++;
           continue;
@@ -829,30 +688,15 @@ export class Room {
   }
 
   private sendOutput(leg: BotLeg, mono24: Int16Array): void {
-    if (leg.ingestWs) this.sendIngest(leg.ingestWs, mono24);
     leg.rtkBridge?.sendAudio(mono24);
   }
 
   private prerollSamples(leg: BotLeg): number {
-    return playoutLimitsForRealtimeKit(Boolean(leg.rtkBridge)).prerollSamples;
+    return realtimeKitPlayoutLimits().prerollSamples;
   }
 
   private playoutCapSamples(leg: BotLeg): number {
-    return playoutLimitsForRealtimeKit(Boolean(leg.rtkBridge)).capSamples;
-  }
-
-  // Upsample a 24 kHz mono frame to 48 kHz stereo and push it to the SFU
-  // ingest adapter, chunked under the adapter's per-message cap.
-  private sendIngest(ws: ServerWebSocket<WsData>, mono24: Int16Array): void {
-    const stereo48 = monoToStereo(resample(mono24, OPENAI_RATE, SFU_RATE));
-    const bytes = samplesToBytes(stereo48);
-    for (let off = 0; off < bytes.length; off += MAX_INGEST_PAYLOAD) {
-      try {
-        ws.send(encodePayloadPacket(bytes.subarray(off, off + MAX_INGEST_PAYLOAD)));
-      } catch {
-        return;
-      }
-    }
+    return realtimeKitPlayoutLimits().capSamples;
   }
 
   // ── teardown ───────────────────────────────────────────────────────
@@ -872,16 +716,10 @@ export class Room {
       } catch {
         // already closing
       }
-      try {
-        leg.ingestWs?.close();
-      } catch {
-        // already closing
-      }
       leg.rtkBridge?.close();
     }
     this.bots.clear();
     void closeRealtimeKitBrowser();
-    this.humans.clear();
     this.token = null;
     this.openaiApiKey = null;
   }

@@ -4,7 +4,6 @@ import { serviceClient } from '../lib/supabase';
 import { resolveRoute, enqueueAudit, computeVoiceCost } from '../llm/router';
 import { getMarkup, usdToPnd } from '../lib/billing';
 import { publishToHub, type VoiceCallEvent } from '../lib/realtime-publish';
-import { createStreamAdapter, createIngestAdapter, closeAdapter, type SfuApp } from '../lib/sfu';
 import { roomMediaToken } from './room-voice-context';
 import type {
   ContainerBotSpec,
@@ -15,31 +14,15 @@ import type {
 } from './room-media-protocol';
 
 // RoomVoiceDO — the group-voice control plane. One instance per group call
-// (keyed by conversation_id). It owns everything EXCEPT the real-time audio
-// loop, which it delegates to a media container (apps/voice-container,
-// reached via env.ROOM_MEDIA). The container does the choppy-sensitive work
-// — SFU adapter PCM, mixing, the OpenAI Realtime sockets, and a steady
-// bot-voice playout clock — in a real OS process with reliable timers,
-// instead of in a workerd isolate whose scheduling jitter caused the
-// stutter. See apps/voice-container/src/{index,room,protocol}.ts.
-//
-//   humans (WebRTC) ─▶ SFU ─▶ adapters ─▶ media container ─▶ OpenAI
-//   bot voice ◀── container (playout clock) ◀── OpenAI ───────┘
-//
-// What stays here: lifecycle, permissions/roles, presence (heartbeat),
-// roster + realtime broadcast, billing, and the SFU adapter HTTP lifecycle
-// (create/close — the adapter `endpoint` points at the container). The DO
-// and container speak a small JSON protocol over one control WebSocket:
-// the DO sends commands (start / add-bot / ...), the container reports the
-// two things it learns from the OpenAI leg — tool calls and per-turn usage.
+// (keyed by conversation_id). Humans and bots are Cloudflare RealtimeKit
+// participants; the media container runs the bot's headless WebRTC client,
+// OpenAI Realtime sockets, audio mixing and playout clock. The DO keeps
+// lifecycle, permissions/roles, presence, roster, realtime broadcasts and
+// billing.
 
 // Hard wall-clock cap, mirrors RealtimeMeterDO / lib/realtime-sessions.ts.
 const MAX_CALL_MS = 30 * 60 * 1000;
 const DEFAULT_VOICE_MODEL_SLUG = 'gpt-realtime-2';
-
-// A voice room exists only for its humans. If nobody joins within this
-// window after start, end the call.
-const JOIN_GRACE_MS = 90 * 1000;
 
 // iOS posts /control/heartbeat while the call is up. A human whose last
 // heartbeat is older than PRESENCE_TIMEOUT_MS is swept; once the last admin
@@ -47,10 +30,10 @@ const JOIN_GRACE_MS = 90 * 1000;
 const PRESENCE_TIMEOUT_MS = 30 * 1000;
 const PRESENCE_AUDIT_MS = 5 * 1000;
 
-// Room-level context — everything that is not per-bot. Keep the RealtimeKit
-// shape free of old SFU adapter fields; the RTK container bridge only needs a
-// private media token for its localhost page/WS endpoints.
-interface BaseRoomContext {
+// Room-level context — everything that is not per-bot. The RTK container
+// bridge only needs a private media token for its localhost page/WS
+// endpoints.
+interface RoomContext {
   roomId: string;
   conversationId: string;
   // Whose balance the voice tokens bill to (group creator today; M6's
@@ -62,28 +45,10 @@ interface BaseRoomContext {
   groupAdminIds: string[];
   // Wall-clock ms when /control/start ran — surfaced via roster().
   startedAt: number;
-}
-
-interface SfuRoomContext extends BaseRoomContext {
-  mediaProvider: 'sfu';
-  // wss:// origin the SFU can dial back, e.g. "wss://api.pendingname.com".
-  publicWsBase: string;
-  // Route prefix on the edge worker that forwards adapter WS upgrades to
-  // the media container, e.g. "/v1/realtime-sfu".
-  adapterPath: string;
-  // Shared secret echoed in the adapter endpoint URL so only the SFU
-  // dialling our published endpoint is accepted (the container checks it).
-  adapterToken: string;
-}
-
-interface RealtimeKitRoomContext extends BaseRoomContext {
-  mediaProvider: 'realtimekit';
   mediaToken: string;
   realtimeKitMeetingId: string;
   realtimeKitHumanIds: string[];
 }
-
-type RoomContext = SfuRoomContext | RealtimeKitRoomContext;
 
 interface PendingInvite {
   kind: 'human' | 'bot';
@@ -172,43 +137,20 @@ interface BotSpec {
 }
 
 interface StartPayload {
-  room: Omit<SfuRoomContext, 'startedAt' | 'mediaProvider'> & {
-    mediaProvider?: 'sfu';
-  };
+  room: Omit<RoomContext, 'startedAt'>;
   bots: BotSpec[];
 }
 
-interface RealtimeKitStartPayload {
-  room: Omit<RealtimeKitRoomContext, 'startedAt' | 'mediaProvider'> & {
-    mediaProvider?: 'realtimekit';
-  };
-  bots: BotSpec[];
-}
-
-interface HumanTrack {
-  humanId: string;
-  sfuSessionId: string;
-  sfuTrackName: string;
-}
-
-// Per-bot control-plane state. The audio (OpenAI socket, ingest socket,
+// Per-bot control-plane state. The audio (OpenAI socket, RTK socket,
 // playout) lives in the container — here we keep only what the DO needs:
-// the spec, the SFU ingest identity for the roster, the adapter id to
-// close, and the audit turn counter.
+// the spec and the audit turn counter.
 interface BotLeg {
   spec: BotSpec;
-  ingestAdapterId: string | null;
-  ingestSessionId: string | null;
-  ingestTrackName: string | null;
   turnIndex: number;
 }
 
 interface HumanState {
-  track: HumanTrack;
-  // The SFU stream adapter the DO created for this human. Doubles as the
-  // intent guard: a `stream-dropped` event recreates the adapter only while
-  // this is non-null (a DO-initiated close nulls it first).
-  adapterId: string | null;
+  humanId: string;
   // Wall-clock ms of the last /control/heartbeat (or initial add-human).
   lastSeenAt: number;
 }
@@ -229,7 +171,6 @@ export class RoomVoiceDO {
   private mediaWs: WebSocket | null = null;
   private mediaOpening: Promise<void> | null = null;
 
-  private joinGraceTimer: ReturnType<typeof setTimeout> | null = null;
   private presenceAuditTimer: ReturnType<typeof setTimeout> | null = null;
   private humanEverJoined = false;
   private closed = false;
@@ -246,13 +187,11 @@ export class RoomVoiceDO {
     switch (url.pathname) {
       case '/control/start':
         return this.start((await request.json()) as StartPayload);
-      case '/control/realtimekit/start':
-        return this.startRealtimeKit((await request.json()) as RealtimeKitStartPayload);
-      case '/control/realtimekit/sync-humans': {
+      case '/control/sync-humans': {
         const { humanIds } = (await request.json()) as { humanIds: string[] };
-        return this.syncRealtimeKitHumans(humanIds);
+        return this.syncHumans(humanIds);
       }
-      case '/control/realtimekit/finalize':
+      case '/control/finalize':
         await this.finalize();
         return Response.json({ ok: true });
       case '/control/add-bot':
@@ -262,8 +201,6 @@ export class RoomVoiceDO {
         await this.removeBot(botId);
         return Response.json({ ok: true });
       }
-      case '/control/add-human':
-        return this.addHuman((await request.json()) as HumanTrack);
       case '/control/invite': {
         const body = (await request.json()) as {
           kind: 'human' | 'bot';
@@ -278,11 +215,6 @@ export class RoomVoiceDO {
       }
       case '/control/roster':
         return Response.json(this.roster());
-      case '/control/leave': {
-        const { humanId } = (await request.json()) as { humanId: string };
-        await this.removeHuman(humanId);
-        return Response.json({ ok: true });
-      }
       case '/control/heartbeat': {
         const { humanId } = (await request.json()) as { humanId: string };
         const human = this.humans.get(humanId);
@@ -364,7 +296,7 @@ export class RoomVoiceDO {
           this.onMediaClosed();
         }
       });
-      // Arm the container: the adapter token it must see in ?t=, and the
+      // Arm the container: the RTK bridge token it must see in ?t=, and the
       // OpenAI key (passed at runtime so it stays out of the image).
       this.sendMedia({
         t: 'start',
@@ -418,29 +350,35 @@ export class RoomVoiceDO {
       case 'leg-closed':
         await this.onLegClosed(ev.botId);
         return;
-      case 'stream-dropped':
-        this.handleStreamDropped(ev.humanId);
-        return;
     }
   }
 
   // ── lifecycle ──────────────────────────────────────────────────────
 
   private async start(payload: StartPayload): Promise<Response> {
-    if (this.ctx) return Response.json({ ok: true, already: true });
-    const ctx: SfuRoomContext = {
+    if (this.ctx) {
+      this.ctx.realtimeKitHumanIds = [...new Set(payload.room.realtimeKitHumanIds)];
+      await this.state.storage.put('ctx', this.ctx);
+      this.syncHumanPresence(this.ctx.realtimeKitHumanIds);
+      for (const spec of payload.bots) {
+        await this.connectBot(spec).catch((err) =>
+          console.warn('[room-voice] bot leg failed at sync', spec.botId, err),
+        );
+      }
+      await this.broadcastState('state');
+      return Response.json({ ok: true, already: true, ...this.roster() });
+    }
+
+    const ctx: RoomContext = {
       ...payload.room,
-      mediaProvider: 'sfu',
+      realtimeKitHumanIds: [...new Set(payload.room.realtimeKitHumanIds)],
       startedAt: Date.now(),
     };
     this.ctx = ctx;
+    this.syncHumanPresence(ctx.realtimeKitHumanIds);
     await this.state.storage.put('ctx', ctx);
-
-    // Open the media channel + arm the container before any bot joins.
     await this.ensureMedia();
 
-    // Bring any prefilled bot up. The invite flow leaves this empty: bots
-    // only join when a human taps "叫机器人来".
     for (const spec of payload.bots) {
       await this.connectBot(spec).catch((err) =>
         console.warn('[room-voice] bot leg failed at start', spec.botId, err),
@@ -448,64 +386,31 @@ export class RoomVoiceDO {
     }
 
     this.schedulePresenceAudit();
-    this.joinGraceTimer = setTimeout(() => {
-      if (!this.humanEverJoined) {
-        console.warn('[room-voice] no human joined within grace window');
-        void this.finalize();
-      }
-    }, JOIN_GRACE_MS);
     await this.state.storage.setAlarm(Date.now() + MAX_CALL_MS);
     await this.upsertActiveIndex();
     await this.broadcastState('state');
-    return Response.json({ ok: true, bots: [...this.bots.keys()] });
+    return Response.json({ ok: true, ...this.roster() });
   }
 
-  private async startRealtimeKit(payload: RealtimeKitStartPayload): Promise<Response> {
-    if (this.ctx) {
-      if (this.ctx.mediaProvider !== 'realtimekit') {
-        return new Response('room already started with another provider', { status: 409 });
-      }
-      this.ctx.realtimeKitHumanIds = [...new Set(payload.room.realtimeKitHumanIds)];
-      await this.state.storage.put('ctx', this.ctx);
-      for (const spec of payload.bots) {
-        await this.connectBot(spec).catch((err) =>
-          console.warn('[room-voice] realtimekit bot leg failed at sync', spec.botId, err),
-        );
-      }
-      await this.broadcastState('state');
-      return Response.json({ ok: true, already: true, bots: [...this.bots.keys()] });
-    }
-
-    const ctx: RealtimeKitRoomContext = {
-      ...payload.room,
-      mediaProvider: 'realtimekit',
-      realtimeKitHumanIds: [...new Set(payload.room.realtimeKitHumanIds)],
-      startedAt: Date.now(),
-    };
-    this.ctx = ctx;
-    this.humanEverJoined = payload.room.realtimeKitHumanIds.length > 0;
-    await this.state.storage.put('ctx', ctx);
-
-    for (const spec of payload.bots) {
-      await this.connectBot(spec).catch((err) =>
-        console.warn('[room-voice] realtimekit bot leg failed at start', spec.botId, err),
-      );
-    }
-
-    await this.state.storage.setAlarm(Date.now() + MAX_CALL_MS);
-    await this.broadcastState('state');
-    return Response.json({ ok: true, bots: [...this.bots.keys()] });
-  }
-
-  private async syncRealtimeKitHumans(humanIds: string[]): Promise<Response> {
-    if (!this.ctx || this.ctx.mediaProvider !== 'realtimekit') {
-      return new Response('realtimekit room not started', { status: 400 });
-    }
+  private async syncHumans(humanIds: string[]): Promise<Response> {
+    if (!this.ctx) return new Response('room not started', { status: 400 });
     this.ctx.realtimeKitHumanIds = [...new Set(humanIds)];
-    this.humanEverJoined = this.ctx.realtimeKitHumanIds.length > 0;
+    this.syncHumanPresence(this.ctx.realtimeKitHumanIds);
     await this.state.storage.put('ctx', this.ctx);
     await this.broadcastState('state');
     return Response.json({ ok: true });
+  }
+
+  private syncHumanPresence(humanIds: string[]): void {
+    const now = Date.now();
+    const active = new Set(humanIds);
+    for (const id of active) {
+      this.humans.set(id, { humanId: id, lastSeenAt: this.humans.get(id)?.lastSeenAt ?? now });
+    }
+    for (const id of this.humans.keys()) {
+      if (!active.has(id)) this.humans.delete(id);
+    }
+    this.humanEverJoined = this.humans.size > 0;
   }
 
   private async upsertActiveIndex(): Promise<void> {
@@ -585,52 +490,27 @@ export class RoomVoiceDO {
     if (!leg) return;
     this.bots.delete(botId);
     this.callAdminIds.delete(botId);
-    // Tell the container to drop the bot's OpenAI + ingest sockets.
+    // Tell the container to drop the bot's OpenAI + RealtimeKit sockets.
     this.sendMedia({ t: 'remove-bot', botId });
-    if (leg.ingestAdapterId) {
-      await closeAdapter(this.sfuApp(), leg.ingestAdapterId);
-    }
     // A human-only call is fine — the room ends with its last human, not
     // its last bot (see removeHuman).
     await this.broadcastState('state');
   }
 
-  // Bring up one bot: register it in the container (which opens its OpenAI
-  // Realtime socket) and create the SFU ingest adapter that turns its voice
-  // into a WebRTC track. The adapter's endpoint points at the container, so
-  // the SFU dials the container (via the worker route) for this bot's PCM.
+  // Bring up one bot: register it in the container, which joins the same
+  // RealtimeKit meeting as a headless WebRTC participant and opens its
+  // OpenAI Realtime socket.
   private async connectBot(spec: BotSpec): Promise<void> {
-    const ctx = this.ctx;
-    if (!ctx) throw new Error('room not started');
+    if (!this.ctx) throw new Error('room not started');
 
     const leg: BotLeg = {
       spec,
-      ingestAdapterId: null,
-      ingestSessionId: null,
-      ingestTrackName: null,
       turnIndex: 0,
     };
     this.bots.set(spec.botId, leg);
 
-    // Container leg first, so it exists when the SFU dials the ingest WS.
     await this.ensureMedia();
     this.sendMedia({ t: 'add-bot', spec: this.toContainerSpec(spec) });
-
-    if (ctx.mediaProvider === 'realtimekit') {
-      return;
-    }
-
-    try {
-      const ingest = await createIngestAdapter(this.sfuApp(), {
-        trackName: `bot-${spec.botId}`,
-        endpoint: this.adapterEndpoint(ctx, `ingest/${spec.botId}`),
-      });
-      leg.ingestAdapterId = ingest.adapterId;
-      leg.ingestSessionId = ingest.sessionId ?? null;
-      leg.ingestTrackName = ingest.trackName ?? `bot-${spec.botId}`;
-    } catch (err) {
-      console.warn('[room-voice] ingest adapter failed', spec.botId, err);
-    }
   }
 
   // Translate the DO's BotSpec into the container's wire spec — flattening
@@ -650,35 +530,13 @@ export class RoomVoiceDO {
   private roster(): {
     startedAt: number;
     initiatorId: string;
-    bots: Array<{ botId: string; sfuSessionId: string; sfuTrackName: string }>;
-    humans: Array<{ humanId: string; sfuSessionId: string; sfuTrackName: string }>;
+    bots: Array<{ botId: string }>;
+    humans: Array<{ humanId: string }>;
     pending: Array<{ id: string; kind: 'human' | 'bot'; invitedAt: number; invitedBy: string }>;
     diagnostics?: MediaDiagnostics;
   } {
-    const bots: Array<{ botId: string; sfuSessionId: string; sfuTrackName: string }> = [];
-    for (const leg of this.bots.values()) {
-      if (leg.ingestSessionId && leg.ingestTrackName) {
-        bots.push({
-          botId: leg.spec.botId,
-          sfuSessionId: leg.ingestSessionId,
-          sfuTrackName: leg.ingestTrackName,
-        });
-      } else if (this.ctx?.mediaProvider === 'realtimekit') {
-        bots.push({
-          botId: leg.spec.botId,
-          sfuSessionId: '',
-          sfuTrackName: '',
-        });
-      }
-    }
-    const humans: Array<{ humanId: string; sfuSessionId: string; sfuTrackName: string }> = [];
-    for (const h of this.humans.values()) {
-      humans.push({
-        humanId: h.track.humanId,
-        sfuSessionId: h.track.sfuSessionId,
-        sfuTrackName: h.track.sfuTrackName,
-      });
-    }
+    const bots = [...this.bots.values()].map((leg) => ({ botId: leg.spec.botId }));
+    const humans = [...this.humans.values()].map((h) => ({ humanId: h.humanId }));
     const pending: Array<{
       id: string;
       kind: 'human' | 'bot';
@@ -698,102 +556,10 @@ export class RoomVoiceDO {
     };
   }
 
-  private async addHuman(track: HumanTrack): Promise<Response> {
-    const ctx = this.ctx;
-    if (!ctx) return new Response('room not started', { status: 400 });
-    if (ctx.mediaProvider !== 'sfu') {
-      return new Response('humans join RealtimeKit directly', { status: 400 });
-    }
-
-    // Reconnect path: the human already has a HumanState but iOS minted a
-    // NEW SFU session. Drop the old stream adapter and rebind. Clear
-    // adapterId BEFORE closeAdapter so the resulting `stream-dropped` event
-    // sees our side already nulled and skips the auto-recreate (we start a
-    // fresh stream below ourselves).
-    const existing = this.humans.get(track.humanId);
-    if (existing) {
-      const oldAdapter = existing.adapterId;
-      existing.track = track;
-      existing.adapterId = null;
-      existing.lastSeenAt = Date.now();
-      if (oldAdapter) {
-        await closeAdapter(this.sfuApp(), oldAdapter).catch(() => {});
-      }
-      void this.connectHumanStream(track.humanId, ctx);
-      const snapshot = this.roster();
-      await this.broadcastState('state');
-      return Response.json({ ok: true, rebound: true, ...snapshot });
-    }
-
-    const human: HumanState = {
-      track,
-      adapterId: null,
-      lastSeenAt: Date.now(),
-    };
-    this.humans.set(track.humanId, human);
-    this.pendingInvites.delete(track.humanId);
-    this.humanEverJoined = true;
-    if (this.joinGraceTimer) {
-      clearTimeout(this.joinGraceTimer);
-      this.joinGraceTimer = null;
-    }
-
-    // Bring the stream adapter up in the background with retries — iOS
-    // connects ICE/DTLS a beat after it gets the SFU answer, so a one-shot
-    // create loses the race with not_found_track_error.
-    void this.connectHumanStream(track.humanId, ctx);
-
-    const snapshot = this.roster();
-    await this.broadcastState('state');
-    return Response.json({ ok: true, ...snapshot });
-  }
-
-  private async connectHumanStream(humanId: string, ctx: SfuRoomContext): Promise<void> {
-    const maxAttempts = 12;
-    const delayMs = 1500;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      const human = this.humans.get(humanId);
-      if (!human) return; // left before the adapter came up
-      if (human.adapterId) return; // already connected
-      try {
-        const adapter = await createStreamAdapter(this.sfuApp(), {
-          sessionId: human.track.sfuSessionId,
-          trackName: human.track.sfuTrackName,
-          endpoint: this.adapterEndpoint(ctx, `stream/${humanId}`),
-        });
-        human.adapterId = adapter.adapterId;
-        return;
-      } catch (err) {
-        if (attempt === maxAttempts) {
-          console.warn('[room-voice] stream adapter gave up', humanId, err);
-          return;
-        }
-        await new Promise((r) => setTimeout(r, delayMs));
-      }
-    }
-  }
-
-  // The container reports a human's stream adapter socket closed. Recreate
-  // it only if we still believe the human is live (adapterId set) — a
-  // DO-initiated close (leave / rebind / finalize) nulls adapterId first.
-  private handleStreamDropped(humanId: string): void {
-    if (this.closed) return;
-    const ctx = this.ctx;
-    if (!ctx || ctx.mediaProvider !== 'sfu') return;
-    const human = this.humans.get(humanId);
-    if (!human || human.adapterId === null) return;
-    human.adapterId = null;
-    console.warn('[room-voice] stream adapter dropped, recreating', humanId);
-    void this.connectHumanStream(humanId, ctx);
-  }
-
   private async removeHuman(humanId: string): Promise<void> {
     const human = this.humans.get(humanId);
     if (!human) return;
     this.humans.delete(humanId);
-    if (human.adapterId) {
-      await closeAdapter(this.sfuApp(), human.adapterId);
-    }
     // A voice room must always have a human admin. Once none remains the
     // call ends.
     if (this.humanEverJoined && !this.humanAdminPresent()) {
@@ -868,9 +634,7 @@ export class RoomVoiceDO {
       started_at: snapshot.startedAt,
       initiator_id: snapshot.initiatorId,
       participants: [
-        ...(ctx.mediaProvider === 'realtimekit'
-          ? (ctx.realtimeKitHumanIds ?? []).map((id) => ({ kind: 'human' as const, id }))
-          : snapshot.humans.map((h) => ({ kind: 'human' as const, id: h.humanId }))),
+        ...snapshot.humans.map((h) => ({ kind: 'human' as const, id: h.humanId })),
         ...snapshot.bots.map((b) => ({ kind: 'bot' as const, id: b.botId })),
       ],
       pending: snapshot.pending.map((p) => ({
@@ -882,20 +646,6 @@ export class RoomVoiceDO {
     };
     await publishToHub(this.env, `conv:${ctx.conversationId}`, payload).catch((err) =>
       console.warn('[room-voice] broadcast failed', err),
-    );
-  }
-
-  private sfuApp(): SfuApp {
-    return {
-      appId: this.env.SFU_APP_ID ?? '',
-      appSecret: this.env.SFU_APP_SECRET ?? '',
-    };
-  }
-
-  private adapterEndpoint(ctx: SfuRoomContext, slot: string): string {
-    return (
-      `${ctx.publicWsBase}${ctx.adapterPath}/${ctx.roomId}/${slot}` +
-      `?t=${encodeURIComponent(ctx.adapterToken)}`
     );
   }
 
@@ -919,17 +669,14 @@ export class RoomVoiceDO {
     });
   }
 
-  // The container's media leg for a bot closed (its OpenAI socket died).
-  // Drop the leg + close its ingest adapter. A bot leg dying doesn't end
-  // the call — humans can still talk; the room ends with its last human.
+  // The container's media leg for a bot closed (its OpenAI or RTK socket
+  // died). A bot leg dying doesn't end the call — humans can still talk;
+  // the room ends with its last human.
   private async onLegClosed(botId: string): Promise<void> {
     const leg = this.bots.get(botId);
     if (!leg) return;
     this.bots.delete(botId);
     this.callAdminIds.delete(botId);
-    if (leg.ingestAdapterId) {
-      await closeAdapter(this.sfuApp(), leg.ingestAdapterId);
-    }
     await this.broadcastState('state');
   }
 
@@ -1074,10 +821,7 @@ export class RoomVoiceDO {
         // per-head across them, so over the call each member's total tracks
         // how long they were in it ("按在场时长分摊") — and nobody pays for
         // turns before they joined or after they left.
-        present_user_ids:
-          ctx.mediaProvider === 'realtimekit'
-            ? [...(ctx.realtimeKitHumanIds ?? [])]
-            : [...this.humans.keys()],
+        present_user_ids: [...this.humans.keys()],
       },
     });
 
@@ -1126,8 +870,6 @@ export class RoomVoiceDO {
     // meaningless.
     await this.broadcastState('ended');
     await this.clearActiveIndex();
-    if (this.joinGraceTimer) clearTimeout(this.joinGraceTimer);
-    this.joinGraceTimer = null;
     if (this.presenceAuditTimer) clearTimeout(this.presenceAuditTimer);
     this.presenceAuditTimer = null;
 
@@ -1139,15 +881,6 @@ export class RoomVoiceDO {
       // already closing
     }
     this.mediaWs = null;
-
-    const app = this.sfuApp();
-    const adapterIds: Array<string | null> = [
-      ...[...this.bots.values()].map((b) => b.ingestAdapterId),
-      ...[...this.humans.values()].map((h) => h.adapterId),
-    ];
-    for (const id of adapterIds) {
-      if (id) await closeAdapter(app, id);
-    }
 
     this.bots.clear();
     this.humans.clear();

@@ -94,8 +94,7 @@ struct GroupMediaDiagnostics: Sendable, Equatable, Decodable {
         let inputLevel: Double?
         let inputFrames: Int?
         let quietFrames: Int?
-        let streamConnected: Bool?
-        let ingestConnected: Bool?
+        let realtimeKitConnected: Bool?
         let modelSessionReady: Bool?
     }
 }

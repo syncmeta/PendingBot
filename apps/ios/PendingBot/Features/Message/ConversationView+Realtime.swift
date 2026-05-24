@@ -399,7 +399,6 @@ extension ConversationView {
             conversationId: conversation.id,
             currentUserId: userId,
             groupTitle: conversation.displayTitle,
-            mediaProvider: groupCallMediaProvider,
             members: groupSenders,
             api: VoiceCallAPI(),
         )
@@ -442,13 +441,5 @@ extension ConversationView {
             api: VoiceCallAPI(),
         )
         callCenter.startVoiceCall(session)
-    }
-
-    private var groupCallMediaProvider: GroupCallSession.MediaProvider {
-        #if DEBUG
-        return .realtimeKit
-        #else
-        return .legacySfu
-        #endif
     }
 }

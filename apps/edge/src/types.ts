@@ -34,16 +34,15 @@ export interface Env {
   /// client. See src/durable-objects/realtime-meter.ts.
   REALTIME_METER: DurableObjectNamespace;
   /// Group-voice bridge DO — one instance per group call (keyed by
-  /// conversation_id). Bridges humans on the Cloudflare Realtime SFU to
-  /// OpenAI Realtime via the SFU's WebSocket adapter: no WebRTC stack in
-  /// the worker. See src/durable-objects/room-voice.ts.
+  /// conversation_id). Coordinates RealtimeKit participants, bot
+  /// lifecycle, billing and diagnostics. See src/durable-objects/room-voice.ts.
   ROOM_VOICE: DurableObjectNamespace;
   /// Container-backed media engine for group voice — one instance per
   /// room (keyed by conversation_id via getContainer(env.ROOM_MEDIA, id)).
-  /// RoomVoiceDO delegates the real-time audio path (SFU adapter PCM, mix,
-  /// OpenAI socket, bot-voice playout) to it so the work runs in a real OS
-  /// process with reliable timers instead of a workerd isolate. See
-  /// src/durable-objects/room-media.ts + apps/voice-container.
+  /// RoomVoiceDO delegates the real-time audio path (RTK browser client,
+  /// mix, OpenAI socket, bot-voice playout) to it so the work runs in a
+  /// real OS process with reliable timers instead of a workerd isolate.
+  /// See src/durable-objects/room-media.ts + apps/voice-container.
   ROOM_MEDIA: DurableObjectNamespace<RoomMediaContainerDO>;
   /// Cloudflare ratelimit binding for handle-enumeration endpoints
   /// (friend-request /lookup, group /join, friend-request POST /).
@@ -110,15 +109,8 @@ export interface Env {
   // for the iOS WebRTC handshake; the API key never leaves the worker.
   OPENAI_API_KEY?: string;
 
-  // ── Group voice (CF Realtime SFU) ──────────────────────────────
-  // SFU app id — pairs with SFU_APP_SECRET to authenticate the SFU API
-  // (sessions, tracks, WebSocket adapters). The id is not sensitive.
-  SFU_APP_ID?: string;
-  // SFU app secret — bearer token for rtc.live.cloudflare.com. Secret.
-  SFU_APP_SECRET?: string;
-
-  // ── Group voice POC (CF RealtimeKit) ───────────────────────────
-  // RealtimeKit app id for the experimental room/participant-token path.
+  // ── Group voice (CF RealtimeKit) ───────────────────────────────
+  // RealtimeKit app id for the group call room/participant-token path.
   // The API token is secret; account id falls back to CF_ACCOUNT_ID.
   REALTIMEKIT_ACCOUNT_ID?: string;
   REALTIMEKIT_APP_ID?: string;

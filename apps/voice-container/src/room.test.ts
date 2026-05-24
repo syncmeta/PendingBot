@@ -1,15 +1,12 @@
 import { describe, expect, it } from 'bun:test';
-import { playoutLimitsForRealtimeKit, trimOldest } from './room';
+import { realtimeKitPlayoutLimits, trimOldest } from './room';
 
 describe('Room audio queue limits', () => {
   it('uses a low-latency playout window for RealtimeKit bot participants', () => {
-    const rtk = playoutLimitsForRealtimeKit(true);
-    const legacy = playoutLimitsForRealtimeKit(false);
+    const rtk = realtimeKitPlayoutLimits();
 
     expect(rtk.prerollSamples).toBe(1_920);
     expect(rtk.capSamples).toBe(36_000);
-    expect(legacy.prerollSamples).toBe(5_760);
-    expect(legacy.capSamples).toBe(120_000);
   });
 
   it('reports how much stale audio was dropped when trimming a queue', () => {

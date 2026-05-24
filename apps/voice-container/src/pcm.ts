@@ -1,9 +1,8 @@
 // PCM audio helpers for the group-voice media container.
 //
-// Vendored from apps/edge/src/lib/pcm.ts — the container is a separate
-// Bun process and can't import worker source. Kept byte-compatible so the
-// SFU<->container wire (48 kHz interleaved stereo) and the OpenAI leg
-// (24 kHz mono) behave identically to the old in-DO path.
+// The container is a separate Bun process and can't import worker source.
+// RealtimeKit bridge audio is 48 kHz mono; OpenAI Realtime audio is
+// 24 kHz mono.
 //
 // All PCM here is 16-bit signed little-endian.
 
@@ -24,49 +23,6 @@ export function samplesToBytes(samples: Int16Array): Uint8Array {
   const out = new Uint8Array(samples.length * 2);
   const dv = new DataView(out.buffer);
   for (let i = 0; i < samples.length; i++) dv.setInt16(i * 2, samples[i], true);
-  return out;
-}
-
-/** Interleaved stereo -> mono by averaging the two channels. */
-export function stereoToMono(stereo: Int16Array): Int16Array {
-  const out = new Int16Array(stereo.length >> 1);
-  for (let i = 0; i < out.length; i++) {
-    out[i] = (stereo[2 * i] + stereo[2 * i + 1]) >> 1;
-  }
-  return out;
-}
-
-/** Mono -> interleaved stereo by duplicating each sample into L and R. */
-export function monoToStereo(mono: Int16Array): Int16Array {
-  const out = new Int16Array(mono.length * 2);
-  for (let i = 0; i < mono.length; i++) {
-    out[2 * i] = mono[i];
-    out[2 * i + 1] = mono[i];
-  }
-  return out;
-}
-
-/**
- * Linear-interpolation resampler. Used for the 24 kHz -> 48 kHz upsample
- * (bot voice -> SFU ingest). Cheap on purpose — upsampling has imaging
- * artifacts but no aliasing, and the SFU's Opus encoder lowpasses anyway.
- */
-export function resample(
-  input: Int16Array,
-  fromRate: number,
-  toRate: number,
-): Int16Array {
-  if (fromRate === toRate || input.length === 0) return input;
-  const ratio = fromRate / toRate;
-  const outLen = Math.max(1, Math.round(input.length / ratio));
-  const out = new Int16Array(outLen);
-  for (let i = 0; i < outLen; i++) {
-    const pos = i * ratio;
-    const lo = Math.floor(pos);
-    const hi = Math.min(lo + 1, input.length - 1);
-    const frac = pos - lo;
-    out[i] = (input[lo] * (1 - frac) + input[hi] * frac) | 0;
-  }
   return out;
 }
 

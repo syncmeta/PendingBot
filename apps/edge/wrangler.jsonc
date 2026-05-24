@@ -67,11 +67,7 @@
         // Google rides a stored BYOK key saved under this alias; the
         // gemini adapter sends it as cf-aig-byok-alias. See types.ts.
         "GOOGLE_BYOK_ALIAS": "byok-1",
-        // Cloudflare Realtime SFU app for group voice. The id is not
-        // sensitive; the paired SFU_APP_SECRET is set via wrangler secret.
-        "SFU_APP_ID": "a0d4007702e06eb9eb592bfa870c7722",
-        // Cloudflare RealtimeKit POC for group voice. Set
-        // REALTIMEKIT_APP_ID here when testing; REALTIMEKIT_API_TOKEN is
+        // Cloudflare RealtimeKit group voice app. REALTIMEKIT_API_TOKEN is
         // a secret with Realtime Admin permission. Presets live in the
         // RealtimeKit app.
         "REALTIMEKIT_APP_ID": "57f4dddb-be49-4b99-9168-1c3b2c350b64",
@@ -282,12 +278,8 @@
   //   --- voice call (optional; per-bot opt-in via bots.voice_call_enabled) ---
   //   OPENAI_API_KEY        (mint Realtime ephemeral client_secret; also
   //                          the group-voice RoomVoiceDO's OpenAI leg)
-  //   SFU_APP_SECRET        (Cloudflare Realtime SFU app secret — bearer
-  //                          for rtc.live.cloudflare.com; pairs with the
-  //                          SFU_APP_ID var. Group voice only.)
   //   REALTIMEKIT_API_TOKEN (Cloudflare API token with Realtime Admin for
-  //                          the experimental RealtimeKit bootstrap path;
-  //                          pairs with REALTIMEKIT_APP_ID when enabled.)
+  //                          group voice; pairs with REALTIMEKIT_APP_ID.)
   //   TURN_KEY_ID           (Cloudflare Realtime TURN key id — create a
   //                          TURN key in the Realtime dashboard. Used by
   //                          the 'webrtc_turn' 1:1 voice transport.)

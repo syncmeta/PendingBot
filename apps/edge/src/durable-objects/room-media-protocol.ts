@@ -31,7 +31,7 @@ export interface ContainerBotSpec {
   turnDetection?: TurnDetection;
   /** Realtime function tools — the DO computes these (it owns permissions). */
   tools: unknown[];
-  /** Present when this bot should join Cloudflare RealtimeKit instead of SFU ingest. */
+  /** RealtimeKit participant credentials for the headless bot client. */
   realtimeKit?: {
     meetingId: string;
     participantId: string;
@@ -63,8 +63,7 @@ export interface MediaParticipantDiagnostic {
   inputLevel?: number;
   inputFrames?: number;
   quietFrames?: number;
-  streamConnected?: boolean;
-  ingestConnected?: boolean;
+  realtimeKitConnected?: boolean;
   modelSessionReady?: boolean;
 }
 
@@ -90,5 +89,4 @@ export type ControlEvent =
   | { t: 'bot-tool'; botId: string; name: string; callId: string; args?: string }
   | { t: 'turn-usage'; botId: string; usage: RealtimeUsage }
   | { t: 'diagnostics'; diagnostics: MediaDiagnostics }
-  | { t: 'leg-closed'; botId: string }
-  | { t: 'stream-dropped'; humanId: string };
+  | { t: 'leg-closed'; botId: string };

@@ -6,7 +6,7 @@
 //   container -> DO  : ControlEvent    (bot-tool / turn-usage / leg-closed)
 //
 // The DO keeps ALL policy: permissions, billing, presence, roster. The
-// container only does media (mix, OpenAI socket, SFU adapter PCM) and
+// container only does media (RTK WebRTC client, mix, OpenAI socket) and
 // forwards the two things it learns from the OpenAI leg — tool calls and
 // per-turn usage — back to the DO. Keep this file byte-identical to the
 // edge-side copy at apps/edge/src/durable-objects/room-media-protocol.ts.
@@ -34,7 +34,7 @@ export interface ContainerBotSpec {
   turnDetection?: TurnDetection;
   /** Realtime function tools — the DO computes these (it owns permissions). */
   tools: unknown[];
-  /** Present when this bot should join Cloudflare RealtimeKit instead of SFU ingest. */
+  /** RealtimeKit participant credentials for the headless bot client. */
   realtimeKit?: {
     meetingId: string;
     participantId: string;
@@ -66,8 +66,7 @@ export interface MediaParticipantDiagnostic {
   inputLevel?: number;
   inputFrames?: number;
   quietFrames?: number;
-  streamConnected?: boolean;
-  ingestConnected?: boolean;
+  realtimeKitConnected?: boolean;
   modelSessionReady?: boolean;
 }
 
@@ -79,7 +78,7 @@ export interface MediaDiagnostics {
 // ── DO -> container ──────────────────────────────────────────────────
 
 export type ControlCommand =
-  // Arm the room: the adapterToken the SFU echoes in ?t=, and the OpenAI
+  // Arm the room: the RTK bridge token it echoes in ?t=, and the OpenAI
   // key (passed at runtime so it stays out of the image).
   | { t: 'start'; token: string; openaiApiKey: string }
   | { t: 'add-bot'; spec: ContainerBotSpec }
@@ -101,8 +100,4 @@ export type ControlEvent =
   | { t: 'turn-usage'; botId: string; usage: RealtimeUsage }
   | { t: 'diagnostics'; diagnostics: MediaDiagnostics }
   // The bot's OpenAI socket closed — the DO drops the leg + rebroadcasts.
-  | { t: 'leg-closed'; botId: string }
-  // A human's SFU stream-adapter socket closed. The DO decides whether to
-  // recreate the adapter (only if it still believes the human is live —
-  // the adapterId guard), mirroring the old in-DO reconnect.
-  | { t: 'stream-dropped'; humanId: string };
+  | { t: 'leg-closed'; botId: string };

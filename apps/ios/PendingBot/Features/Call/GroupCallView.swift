@@ -1,10 +1,10 @@
 import WebKit
 import SwiftUI
 
-/// Full-screen group voice call surface. The room is born empty —
-/// /voice/start no longer auto-pulls every bot and no longer rings any
-/// human. The caller invites others by tapping "叫机器人来" / "叫真人来"
-/// from this screen; everyone else stays silent until explicitly rung.
+/// Full-screen group voice call surface. The room is a Cloudflare
+/// RealtimeKit meeting; this view embeds the user's WebRTC participant
+/// and keeps the native controls, roster, diagnostics and billing chrome
+/// around it.
 ///
 /// Layout (top → bottom):
 ///   * Header  — group title + status ("等其他人进" / "通话中" / elapsed)
@@ -27,11 +27,6 @@ struct GroupCallView: View {
     /// True while the "结束所有人的通话" confirmation alert is up.
     @State private var showingEndConfirm = false
     @State private var showingDiagnostics = false
-    #if DEBUG
-    @State private var showingRealtimeKitPOC = false
-    @State private var realtimeKitPOC: GroupVoiceRealtimeKitBootstrapResponse?
-    @State private var realtimeKitStatus: String?
-    #endif
 
     var body: some View {
         callContent
@@ -42,11 +37,6 @@ struct GroupCallView: View {
             }
             .sheet(isPresented: $showingAddBot) { addBotSheet }
             .sheet(isPresented: $showingRingHuman) { ringHumanSheet }
-            #if DEBUG
-            .sheet(isPresented: $showingRealtimeKitPOC) {
-                realtimeKitPOCSheet
-            }
-            #endif
             .alert(
                 "提示",
                 isPresented: Binding(
@@ -85,14 +75,10 @@ struct GroupCallView: View {
 
     @ViewBuilder
     private var callContent: some View {
-        legacyContent
-    }
-
-    private var legacyContent: some View {
         ZStack(alignment: .topLeading) {
             Theme.Palette.canvas.ignoresSafeArea()
-            if session.mediaProvider == .realtimeKit, let room = session.realtimeKitRoom {
-                RealtimeKitPOCWebView(
+            if let room = session.realtimeKitRoom {
+                RealtimeKitParticipantView(
                     token: room.human.token,
                     meetingId: room.meeting.id,
                     allowsInteraction: false,
@@ -179,7 +165,7 @@ struct GroupCallView: View {
 
     /// Top-leading collapse button — see `CallView.minimizeButton` for
     /// the rationale. Hides the full-screen surface but keeps the
-    /// SFU connection / CallKit handle alive.
+    /// RealtimeKit participant alive.
     private var minimizeButton: some View {
         Button {
             Haptics.tap()
@@ -237,16 +223,6 @@ struct GroupCallView: View {
                 Haptics.tap()
                 showingRingHuman = true
             }
-            #if DEBUG
-            inviteButton(
-                title: "RTK",
-                systemImage: "antenna.radiowaves.left.and.right",
-                tint: .blue,
-            ) {
-                Haptics.tap()
-                Task { await openRealtimeKitPOC() }
-            }
-            #endif
         }
     }
 
@@ -608,52 +584,6 @@ struct GroupCallView: View {
         .presentationDetents([.medium])
     }
 
-    #if DEBUG
-    private var realtimeKitPOCSheet: some View {
-        NavigationStack {
-            Group {
-                if let realtimeKitPOC {
-                    RealtimeKitPOCWebView(
-                        token: realtimeKitPOC.human.token,
-                        meetingId: realtimeKitPOC.meeting.id,
-                    )
-                    .ignoresSafeArea(edges: .bottom)
-                } else {
-                    VStack(spacing: 12) {
-                        ProgressView()
-                        Text(realtimeKitStatus ?? "RealtimeKit 准备中")
-                            .font(Theme.Fonts.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .navigationTitle("RealtimeKit POC")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("关闭") {
-                        showingRealtimeKitPOC = false
-                        realtimeKitPOC = nil
-                    }
-                }
-            }
-        }
-    }
-
-    private func openRealtimeKitPOC() async {
-        realtimeKitStatus = "创建 RealtimeKit participant…"
-        realtimeKitPOC = nil
-        showingRealtimeKitPOC = true
-        do {
-            realtimeKitPOC = try await session.realtimeKitBootstrap()
-            realtimeKitStatus = nil
-        } catch {
-            showingRealtimeKitPOC = false
-            actionAlert = "RealtimeKit POC 启动失败：\(error.localizedDescription)"
-        }
-    }
-    #endif
-
     // MARK: - Phase
 
     private var statusText: String {
@@ -702,7 +632,7 @@ struct GroupCallView: View {
     }
 }
 
-struct RealtimeKitPOCWebView: UIViewRepresentable {
+struct RealtimeKitParticipantView: UIViewRepresentable {
     let token: String
     let meetingId: String
     var allowsInteraction: Bool = true
