@@ -15,6 +15,8 @@ struct CrewTabView: View {
     @State private var selectedRunnerKind: CrewRunnerKind = .cloudSandbox
     @State private var loading = false
     @State private var error: String?
+    @State private var notice: String?
+    @State private var scanningDeviceLogin = false
 
     var body: some View {
         Group {
@@ -64,10 +66,24 @@ struct CrewTabView: View {
             }
         }
         .task { await loadAll() }
+        .sheet(isPresented: $scanningDeviceLogin) {
+            QRScannerView { value in
+                scanningDeviceLogin = false
+                Task { await approveDeviceLogin(from: value) }
+            } onError: { err in
+                error = err.localizedDescription
+            }
+            .ignoresSafeArea()
+        }
         .alert("出错", isPresented: .constant(error != nil)) {
             Button("好") { error = nil }
         } message: {
             Text(error ?? "")
+        }
+        .alert("完成", isPresented: .constant(notice != nil)) {
+            Button("好") { notice = nil }
+        } message: {
+            Text(notice ?? "")
         }
     }
 
@@ -79,6 +95,11 @@ struct CrewTabView: View {
     private var sidebarContent: some View {
         VStack(spacing: 0) {
             TabHeaderBar(title: "Crew") {
+                Button {
+                    scanningDeviceLogin = true
+                } label: {
+                    HeaderActionIcon(systemImage: "qrcode.viewfinder")
+                }
                 Button {
                     Task { await loadAll() }
                 } label: {
@@ -312,6 +333,28 @@ struct CrewTabView: View {
             self.error = error.localizedDescription
         }
     }
+
+    private func approveDeviceLogin(from scannedValue: String) async {
+        guard let api else { return }
+        guard let subject else {
+            error = "还没有加载账号主体"
+            return
+        }
+        guard let payload = DeviceLoginLink.parse(scannedValue) else {
+            error = "这不是 PendingCrew 登录二维码"
+            return
+        }
+        do {
+            let response = try await api.approvePendingCrewDeviceLogin(
+                challengeId: payload.challengeId,
+                secret: payload.secret,
+                subjectId: subject.id
+            )
+            notice = response.ok ? "已确认 PendingCrew 登录" : "扫码登录状态：\(response.status)"
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
 }
 
 private struct RunnerCapabilityRow: View {
@@ -484,4 +527,3 @@ private struct CrewDetailPane: View {
         runnerHosts.filter { $0.platform == "macos" && $0.status == "online" }.count
     }
 }
-

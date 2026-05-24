@@ -2527,6 +2527,157 @@ export type Database = {
           },
         ]
       }
+      subject_device_grants: {
+        Row: {
+          app_kind: string
+          created_at: string
+          device_name: string
+          device_public_key: string
+          expires_at: string | null
+          grant_kind: string
+          granted_by_user_id: string | null
+          id: string
+          last_used_at: string | null
+          platform: string
+          revoked_at: string | null
+          scopes: Json
+          status: string
+          subject_id: string
+          token_hash: string
+        }
+        Insert: {
+          app_kind: string
+          created_at?: string
+          device_name: string
+          device_public_key: string
+          expires_at?: string | null
+          grant_kind: string
+          granted_by_user_id?: string | null
+          id?: string
+          last_used_at?: string | null
+          platform?: string
+          revoked_at?: string | null
+          scopes?: Json
+          status?: string
+          subject_id: string
+          token_hash: string
+        }
+        Update: {
+          app_kind?: string
+          created_at?: string
+          device_name?: string
+          device_public_key?: string
+          expires_at?: string | null
+          grant_kind?: string
+          granted_by_user_id?: string | null
+          id?: string
+          last_used_at?: string | null
+          platform?: string
+          revoked_at?: string | null
+          scopes?: Json
+          status?: string
+          subject_id?: string
+          token_hash?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subject_device_grants_granted_by_user_id_fkey"
+            columns: ["granted_by_user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subject_device_grants_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      subject_device_login_challenges: {
+        Row: {
+          app_kind: string
+          approved_at: string | null
+          approved_by_user_id: string | null
+          approved_subject_id: string | null
+          challenge_secret_hash: string
+          code: string
+          consumed_at: string | null
+          created_at: string
+          device_name: string
+          device_public_key: string
+          expires_at: string
+          grant_kind: string | null
+          id: string
+          issued_grant_id: string | null
+          platform: string
+          requested_scopes: Json
+          status: string
+        }
+        Insert: {
+          app_kind: string
+          approved_at?: string | null
+          approved_by_user_id?: string | null
+          approved_subject_id?: string | null
+          challenge_secret_hash: string
+          code: string
+          consumed_at?: string | null
+          created_at?: string
+          device_name: string
+          device_public_key: string
+          expires_at?: string
+          grant_kind?: string | null
+          id?: string
+          issued_grant_id?: string | null
+          platform?: string
+          requested_scopes?: Json
+          status?: string
+        }
+        Update: {
+          app_kind?: string
+          approved_at?: string | null
+          approved_by_user_id?: string | null
+          approved_subject_id?: string | null
+          challenge_secret_hash?: string
+          code?: string
+          consumed_at?: string | null
+          created_at?: string
+          device_name?: string
+          device_public_key?: string
+          expires_at?: string
+          grant_kind?: string | null
+          id?: string
+          issued_grant_id?: string | null
+          platform?: string
+          requested_scopes?: Json
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subject_device_login_challenges_approved_by_user_id_fkey"
+            columns: ["approved_by_user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subject_device_login_challenges_approved_subject_id_fkey"
+            columns: ["approved_subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subject_device_login_challenges_issued_grant_fkey"
+            columns: ["issued_grant_id"]
+            isOneToOne: false
+            referencedRelation: "subject_device_grants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       subjects: {
         Row: {
           created_at: string
@@ -3509,6 +3660,15 @@ export type Database = {
         }
         Returns: string
       }
+      consume_subject_device_login_challenge: {
+        Args: {
+          p_challenge_id: string
+          p_challenge_secret_hash: string
+          p_grant_id: string
+          p_token_hash: string
+        }
+        Returns: Json
+      }
       request_account_deletion: {
         Args: { p_sentiment: string }
         Returns: undefined
@@ -3542,6 +3702,14 @@ export type Database = {
       }
       subject_can_create_crew: {
         Args: { p_subject_id: string; p_user_id: string }
+        Returns: boolean
+      }
+      subject_can_authorize_device_grant: {
+        Args: {
+          p_grant_kind: string
+          p_subject_id: string
+          p_user_id: string
+        }
         Returns: boolean
       }
       subject_can_manage_runners: {

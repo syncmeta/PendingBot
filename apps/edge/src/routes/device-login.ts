@@ -1,0 +1,260 @@
+import { Hono } from 'hono';
+import { z } from 'zod';
+import { requireSession } from '@pendingbot/identity';
+import { serviceClient } from '../lib/supabase';
+import { jsonError } from '../lib/http-error';
+import type { Json } from '../db/schema';
+import type { AppBindings } from '../types';
+
+export const deviceLoginRoutes = new Hono<AppBindings>();
+
+type DbError = { message: string };
+type DbResult<T> = Promise<{ data: T | null; error: DbError | null }>;
+type UntypedDb = {
+  from(table: string): {
+    insert(row: Record<string, unknown>): Promise<{ error: DbError | null }>;
+    select(columns: string): {
+      eq(column: string, value: unknown): {
+        maybeSingle(): DbResult<Record<string, unknown>>;
+        eq(column: string, value: unknown): Promise<{ error: DbError | null }>;
+      };
+    };
+    update(patch: Record<string, unknown>): {
+      eq(column: string, value: unknown): {
+        eq(column: string, value: unknown): Promise<{ error: DbError | null }>;
+      } & Promise<{ error: DbError | null }>;
+    };
+  };
+  rpc(fn: string, args: Record<string, unknown>): Promise<{ data: unknown; error: DbError | null }>;
+};
+
+function untypedDb(env: AppBindings['Bindings']): UntypedDb {
+  return serviceClient(env) as unknown as UntypedDb;
+}
+
+const AppKind = z.enum(['pendingbot_macos', 'pendingcrew_macos']);
+const GrantKind = z.enum(['pendingbot_client', 'pendingcrew_control', 'pendingcrew_runner']);
+const Scope = z.enum([
+  'subject:read',
+  'crew:read',
+  'crew:write',
+  'runner:read',
+  'runner:write',
+]);
+
+const CreateChallengeBody = z.object({
+  appKind: AppKind,
+  deviceName: z.string().trim().min(1).max(120),
+  devicePublicKey: z.string().trim().min(16).max(4096),
+  scopes: z.array(Scope).default(['subject:read']),
+});
+
+const ApproveChallengeBody = z.object({
+  secret: z.string().trim().min(16).max(256),
+  subjectId: z.string().uuid(),
+  grantKind: GrantKind,
+  scopes: z.array(Scope).default(['subject:read']),
+});
+
+const byteAlphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+
+function randomText(length: number): string {
+  const bytes = new Uint8Array(length);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byteAlphabet[byte % byteAlphabet.length]).join('');
+}
+
+function randomToken(prefix: string): string {
+  return `${prefix}_${randomText(48)}`;
+}
+
+function challengeCode(): string {
+  return randomText(8).toUpperCase();
+}
+
+async function sha256Hex(input: string): Promise<string> {
+  const bytes = new TextEncoder().encode(input);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function appGrantCompatible(appKind: z.infer<typeof AppKind>, grantKind: z.infer<typeof GrantKind>): boolean {
+  if (appKind === 'pendingbot_macos') return grantKind === 'pendingbot_client';
+  return grantKind === 'pendingcrew_control' || grantKind === 'pendingcrew_runner';
+}
+
+function qrPayload(challengeId: string, secret: string): string {
+  return `https://bot.pendingname.com/d/${challengeId}?s=${encodeURIComponent(secret)}`;
+}
+
+function isExpired(expiresAt: string): boolean {
+  return new Date(expiresAt).getTime() <= Date.now();
+}
+
+function rpcMessage(err: unknown): string {
+  if (typeof err === 'string') return err;
+  if (err && typeof err === 'object' && typeof (err as { message?: unknown }).message === 'string') {
+    return (err as { message: string }).message;
+  }
+  return err == null ? 'database error' : String(err);
+}
+
+deviceLoginRoutes.post('/challenges', async (c) => {
+  let parsed: z.infer<typeof CreateChallengeBody>;
+  try {
+    parsed = CreateChallengeBody.parse(await c.req.json());
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+
+  const id = crypto.randomUUID();
+  const secret = randomToken('pdc');
+  const code = challengeCode();
+  const secretHash = await sha256Hex(secret);
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+
+  const svc = untypedDb(c.env);
+  const { error } = await svc.from('subject_device_login_challenges').insert({
+    id,
+    challenge_secret_hash: secretHash,
+    code,
+    app_kind: parsed.appKind,
+    platform: 'macos',
+    device_name: parsed.deviceName,
+    device_public_key: parsed.devicePublicKey,
+    requested_scopes: parsed.scopes as Json,
+    status: 'pending',
+    expires_at: expiresAt,
+  });
+  if (error) {
+    return jsonError(c, 500, 'database_error', { detail: error.message });
+  }
+
+  return c.json({
+    challengeId: id,
+    secret,
+    code,
+    qrPayload: qrPayload(id, secret),
+    expiresAt,
+    status: 'pending',
+  });
+});
+
+deviceLoginRoutes.get('/challenges/:id', async (c) => {
+  const challengeId = c.req.param('id');
+  const secret = c.req.query('secret') ?? c.req.query('s') ?? '';
+  if (!secret) {
+    return jsonError(c, 400, 'invalid_query', { message: 'missing secret' });
+  }
+
+  const svc = untypedDb(c.env);
+  const { data: challenge, error } = await svc
+    .from('subject_device_login_challenges')
+    .select('id, challenge_secret_hash, app_kind, platform, device_name, device_public_key, requested_scopes, status, approved_subject_id, approved_by_user_id, grant_kind, issued_grant_id, expires_at')
+    .eq('id', challengeId)
+    .maybeSingle();
+  if (error) return jsonError(c, 500, 'database_error', { detail: error.message });
+  if (!challenge) return jsonError(c, 404, 'not_found');
+
+  const secretHash = await sha256Hex(secret);
+  if (secretHash !== challenge.challenge_secret_hash) {
+    return jsonError(c, 403, 'forbidden', { message: 'invalid secret' });
+  }
+
+  if ((challenge.status === 'pending' || challenge.status === 'approved') && isExpired(String(challenge.expires_at))) {
+    await svc.from('subject_device_login_challenges').update({ status: 'expired' }).eq('id', challengeId);
+    return c.json({ status: 'expired', deviceGrantToken: null });
+  }
+
+  if (challenge.status !== 'approved') {
+    return c.json({ status: challenge.status, deviceGrantToken: null });
+  }
+
+  const grantToken = randomToken('pdg');
+  const grantId = crypto.randomUUID();
+  const tokenHash = await sha256Hex(grantToken);
+  const { data: grant, error: consumeErr } = await svc.rpc('consume_subject_device_login_challenge', {
+    p_challenge_id: challengeId,
+    p_challenge_secret_hash: secretHash,
+    p_grant_id: grantId,
+    p_token_hash: tokenHash,
+  });
+  if (consumeErr) {
+    const message = rpcMessage(consumeErr);
+    if (/expired/i.test(message)) return jsonError(c, 410, 'session_expired', { message });
+    if (/not approved/i.test(message)) return jsonError(c, 409, 'conflict', { message });
+    if (/invalid secret|forbidden/i.test(message)) return jsonError(c, 403, 'forbidden', { message });
+    return jsonError(c, 500, 'database_error', { detail: message });
+  }
+
+  const grantRow = grant && typeof grant === 'object' ? grant as Record<string, unknown> : {};
+  const scopes = Array.isArray(grantRow.scopes) ? grantRow.scopes : [];
+
+  return c.json({
+    status: 'approved',
+    deviceGrantToken: grantToken,
+    grantId: typeof grantRow.grant_id === 'string' ? grantRow.grant_id : grantId,
+    subjectId: typeof grantRow.subject_id === 'string' ? grantRow.subject_id : null,
+    grantKind: typeof grantRow.grant_kind === 'string' ? grantRow.grant_kind : null,
+    scopes,
+  });
+});
+
+deviceLoginRoutes.post('/challenges/:id/approve', requireSession(), async (c) => {
+  const challengeId = c.req.param('id');
+  const userId = c.var.userId!;
+  let parsed: z.infer<typeof ApproveChallengeBody>;
+  try {
+    parsed = ApproveChallengeBody.parse(await c.req.json());
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+
+  const svc = untypedDb(c.env);
+  const { data: challenge, error } = await svc
+    .from('subject_device_login_challenges')
+    .select('id, challenge_secret_hash, app_kind, status, expires_at')
+    .eq('id', challengeId)
+    .maybeSingle();
+  if (error) return jsonError(c, 500, 'database_error', { detail: error.message });
+  if (!challenge) return jsonError(c, 404, 'not_found');
+
+  const secretHash = await sha256Hex(parsed.secret);
+  if (secretHash !== challenge.challenge_secret_hash) {
+    return jsonError(c, 403, 'forbidden', { message: 'invalid secret' });
+  }
+  if (challenge.status !== 'pending') {
+    return jsonError(c, 409, 'conflict', { detail: { status: challenge.status } });
+  }
+  if (isExpired(String(challenge.expires_at))) {
+    await svc.from('subject_device_login_challenges').update({ status: 'expired' }).eq('id', challengeId);
+    return jsonError(c, 410, 'session_expired', { message: 'challenge expired' });
+  }
+  if (!appGrantCompatible(challenge.app_kind as z.infer<typeof AppKind>, parsed.grantKind)) {
+    return jsonError(c, 400, 'invalid_body', { message: 'grant kind does not match app kind' });
+  }
+
+  const { data: allowed, error: allowedErr } = await svc.rpc('subject_can_authorize_device_grant', {
+    p_subject_id: parsed.subjectId,
+    p_user_id: userId,
+    p_grant_kind: parsed.grantKind,
+  });
+  if (allowedErr) return jsonError(c, 500, 'database_error', { detail: allowedErr.message });
+  if (allowed !== true) return jsonError(c, 403, 'forbidden');
+
+  const { error: updateErr } = await svc
+    .from('subject_device_login_challenges')
+    .update({
+      status: 'approved',
+      approved_subject_id: parsed.subjectId,
+      approved_by_user_id: userId,
+      grant_kind: parsed.grantKind,
+      requested_scopes: parsed.scopes as Json,
+      approved_at: new Date().toISOString(),
+    })
+    .eq('id', challengeId)
+    .eq('status', 'pending');
+  if (updateErr) return jsonError(c, 500, 'database_error', { detail: updateErr.message });
+
+  return c.json({ ok: true, status: 'approved' });
+});

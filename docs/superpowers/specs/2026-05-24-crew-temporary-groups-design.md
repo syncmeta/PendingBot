@@ -631,6 +631,15 @@ iOS 不能在手机本地执行 coding agent。
 
 ## iOS 与 macOS 产品表面
 
+### macOS 双 App 边界
+
+macOS 需要两个原生 SwiftUI App，而不是一个 App 塞下所有模式：
+
+- `PendingBot` macOS 主应用：PendingBot 的桌面主端，负责 Messages、普通群、好友/联系人、Bots、Wallet、Settings、通知、“有求于你”和日常聊天操作。它和 iOS 主应用属于同一产品线，只是不走 Catalyst。
+- `PendingCrew` 独立 App：专业 Crew 工作台，负责 Crew、runner host、本机 workspace 授权、coding session 编排、权限审批、artifact/patch、session events。它可以向开源软件方向演进，但账号、subject、钱包、资源、bot 控制权和云端 API 仍属于 PendingBot 平台。
+
+两个 App 共享账号体系、扫码登录、subject grant、附件/资源 API 和基础设计语言，但不共享窗口结构。主应用可以通过 deep link 打开 `PendingCrew` 中的 Crew；`PendingCrew` 不承载普通聊天主流程。
+
 ### 共享 Crew 产品面
 
 Crew 是跨端产品能力，但不是每个端都嵌在 PendingBot 主应用里。

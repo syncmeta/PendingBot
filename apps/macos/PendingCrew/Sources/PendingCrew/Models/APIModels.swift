@@ -40,6 +40,24 @@ struct OkResponse: Decodable {
     let ok: Bool
 }
 
+struct DeviceLoginChallenge: Decodable {
+    let challengeId: String
+    let secret: String
+    let code: String
+    let qrPayload: String
+    let expiresAt: String
+    let status: String
+}
+
+struct DeviceLoginPollResponse: Decodable {
+    let status: String
+    let deviceGrantToken: String?
+    let grantId: String?
+    let subjectId: String?
+    let grantKind: String?
+    let scopes: [String]?
+}
+
 struct RunnerClaimResponse: Decodable {
     let leaseId: String?
     let session: CrewSession?

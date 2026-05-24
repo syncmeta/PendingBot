@@ -35,6 +35,11 @@ struct CrewRunnerHost: Decodable, Identifiable, Hashable {
     let last_seen_at: String?
 }
 
+struct DeviceLoginApprovalResponse: Decodable, Hashable {
+    let ok: Bool
+    let status: String
+}
+
 struct CrewSessionSummary: Decodable, Identifiable, Hashable {
     let id: String
     let crew_conversation_id: String
@@ -122,5 +127,23 @@ extension APIClient {
         let response: CrewListResponse<CrewRunnerHost> = try await get("v1/runner-hosts")
         return response.items
     }
-}
 
+    func approvePendingCrewDeviceLogin(
+        challengeId: String,
+        secret: String,
+        subjectId: String,
+        grantKind: String = "pendingcrew_control",
+        scopes: [String] = ["subject:read", "crew:read", "crew:write", "runner:read", "runner:write"]
+    ) async throws -> DeviceLoginApprovalResponse {
+        struct Body: Encodable {
+            let secret: String
+            let subjectId: String
+            let grantKind: String
+            let scopes: [String]
+        }
+        return try await post(
+            "v1/device-login/challenges/\(challengeId)/approve",
+            body: Body(secret: secret, subjectId: subjectId, grantKind: grantKind, scopes: scopes)
+        )
+    }
+}

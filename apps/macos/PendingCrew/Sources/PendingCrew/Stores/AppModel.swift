@@ -20,6 +20,8 @@ final class AppModel: ObservableObject {
     @Published var activeRunnerLeaseId: String?
     @Published var activeRunnerSession: CrewSession?
     @Published var helpRequests: [HumanHelpRequest] = []
+    @Published var deviceLoginChallenge: DeviceLoginChallenge?
+    @Published var deviceGrantToken: String?
     @Published var selection: Selection? = .crews
     @Published var isLoading = false
     @Published var statusMessage = ""
@@ -28,6 +30,7 @@ final class AppModel: ObservableObject {
     init() {
         apiBaseURL = UserDefaults.standard.string(forKey: "apiBaseURL") ?? "https://api.pendingname.com"
         authToken = KeychainStore.get(account: "worker-jwt") ?? ""
+        deviceGrantToken = KeychainStore.get(account: "device-grant")
     }
 
     var api: PendingBotAPI? {
@@ -58,6 +61,35 @@ final class AppModel: ObservableObject {
                 try KeychainStore.set(authToken, account: "worker-jwt")
             } catch {
                 errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func startDeviceLogin() async {
+        await run("扫码登录已创建") {
+            guard let url = URL(string: apiBaseURL) else { throw APIError.badURL }
+            let api = PendingBotAPI(baseURL: url, authToken: "")
+            let name = Host.current().localizedName ?? "Mac"
+            deviceLoginChallenge = try await api.createDeviceLoginChallenge(deviceName: name)
+            deviceGrantToken = nil
+        }
+    }
+
+    func pollDeviceLogin() async {
+        await run("扫码登录状态已更新") {
+            guard let url = URL(string: apiBaseURL) else { throw APIError.badURL }
+            guard let challenge = deviceLoginChallenge else { throw LocalError.missingDeviceLoginChallenge }
+            let api = PendingBotAPI(baseURL: url, authToken: "")
+            let response = try await api.pollDeviceLoginChallenge(
+                challengeId: challenge.challengeId,
+                secret: challenge.secret
+            )
+            if let token = response.deviceGrantToken {
+                deviceGrantToken = token
+                try KeychainStore.set(token, account: "device-grant")
+                statusMessage = "设备 grant 已保存"
+            } else {
+                statusMessage = "扫码登录状态：\(response.status)"
             }
         }
     }
@@ -213,6 +245,7 @@ enum LocalError: LocalizedError {
     case missingAuth
     case missingSubject
     case missingRunnerSession
+    case missingDeviceLoginChallenge
 
     var errorDescription: String? {
         switch self {
@@ -222,6 +255,8 @@ enum LocalError: LocalizedError {
             "还没有加载到当前账号的 subject"
         case .missingRunnerSession:
             "当前没有已认领的 runner session"
+        case .missingDeviceLoginChallenge:
+            "请先创建扫码登录"
         }
     }
 }

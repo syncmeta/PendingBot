@@ -13,6 +13,7 @@
 ## 当前能力
 
 - 配置 API 地址和登录 JWT，并把 JWT 存到 Keychain。
+- 生成 PendingCrew 扫码登录 challenge，并在手机确认后保存 subject-scoped device grant。
 - 读取当前 subject，用于确认个人账号或群账号归因。
 - 创建和查看 Crew。
 - 在 Crew 内创建 session，并查看 session event。
@@ -22,7 +23,7 @@
 
 ## 还没有做
 
-- 手机扫码登录。
+- 使用 device grant 直接访问所有 Crew / runner API；当前 JWT 登录仍作为兼容路径保留。
 - 群账号登录到 Mac 的完整流程。
 - 本机 Codex / Claude Code / opencode 等 runner 进程启动、权限隔离和日志采集。
 - 云端 Cloudflare Sandbox runner 的执行适配。

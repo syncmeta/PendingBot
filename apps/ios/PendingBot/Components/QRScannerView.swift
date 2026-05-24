@@ -136,6 +136,30 @@ enum BotShareLink {
     }
 }
 
+enum DeviceLoginLink {
+    static let host = "bot.pendingname.com"
+    static let pathPrefix = "/d/"
+    private static let urlHostSuffix = "pendingname.com"
+
+    struct Payload: Equatable {
+        let challengeId: String
+        let secret: String
+    }
+
+    static func parse(_ raw: String) -> Payload? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed),
+              url.host?.lowercased().hasSuffix(urlHostSuffix) == true,
+              url.path.hasPrefix(pathPrefix) else { return nil }
+        let challengeId = String(url.path.dropFirst(pathPrefix.count))
+        guard !challengeId.isEmpty,
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let secret = components.queryItems?.first(where: { $0.name == "s" || $0.name == "secret" })?.value,
+              !secret.isEmpty else { return nil }
+        return Payload(challengeId: challengeId, secret: secret)
+    }
+}
+
 /// SwiftUI wrapper around AVCaptureSession for QR-code scanning. The
 /// preview fills the parent; first valid QR detection fires `onScan`
 /// with the decoded string and stops the session.

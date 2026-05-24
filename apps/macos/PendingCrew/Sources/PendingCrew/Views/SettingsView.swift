@@ -25,8 +25,32 @@ struct SettingsView: View {
                     model.saveSettings()
                 }
             }
+
+            Section("扫码登录") {
+                Button("生成 PendingCrew 登录二维码") {
+                    Task { await model.startDeviceLogin() }
+                }
+
+                if let challenge = model.deviceLoginChallenge {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("验证码：\(challenge.code)")
+                            .font(.headline)
+                        Text(challenge.qrPayload)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                    }
+
+                    Button("检查手机确认结果") {
+                        Task { await model.pollDeviceLogin() }
+                    }
+                }
+
+                if let token = model.deviceGrantToken {
+                    Text("已保存设备 grant：\(token.prefix(12))…")
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
         .padding(20)
     }
 }
-

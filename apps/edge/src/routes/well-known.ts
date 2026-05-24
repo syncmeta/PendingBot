@@ -17,6 +17,7 @@ import type { AppBindings } from '../types';
 //   /g/*  group invite (see Features/Group/GroupJoinView.swift)
 //   /b/*  bot share (see Components/BotShareLink.swift) — slug-based,
 //         non-rotating: a public bot's slug is its public identity.
+//   /d/*  device login QR for approving Mac apps from the signed-in iOS app.
 const AASA = {
   applinks: {
     details: [
@@ -26,6 +27,7 @@ const AASA = {
           { '/': '/c/*', comment: 'contact share' },
           { '/': '/g/*', comment: 'group invite' },
           { '/': '/b/*', comment: 'bot share' },
+          { '/': '/d/*', comment: 'device login' },
         ],
       },
     ],

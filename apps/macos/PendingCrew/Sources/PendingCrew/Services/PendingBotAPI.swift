@@ -9,6 +9,23 @@ struct PendingBotAPI {
         try await get("/v1/me/subject")
     }
 
+    func createDeviceLoginChallenge(deviceName: String) async throws -> DeviceLoginChallenge {
+        try await postUnauthenticated(
+            "/v1/device-login/challenges",
+            body: DeviceLoginChallengeBody(
+                appKind: "pendingcrew_macos",
+                deviceName: deviceName,
+                devicePublicKey: "pendingcrew-bootstrap-\(UUID().uuidString)",
+                scopes: ["subject:read", "crew:read", "crew:write", "runner:read", "runner:write"]
+            )
+        )
+    }
+
+    func pollDeviceLoginChallenge(challengeId: String, secret: String) async throws -> DeviceLoginPollResponse {
+        let encoded = secret.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? secret
+        return try await getUnauthenticated("/v1/device-login/challenges/\(challengeId)?secret=\(encoded)")
+    }
+
     func listCrews() async throws -> [Crew] {
         let response: ListResponse<Crew> = try await get("/v1/crew")
         return response.items
@@ -139,8 +156,16 @@ struct PendingBotAPI {
         try await send(makeRequest(method: "GET", path: path, body: Optional<String>.none))
     }
 
+    private func getUnauthenticated<T: Decodable>(_ path: String) async throws -> T {
+        try await send(makeUnauthenticatedRequest(method: "GET", path: path, body: Optional<String>.none))
+    }
+
     private func post<Body: Encodable, T: Decodable>(_ path: String, body: Body) async throws -> T {
         try await send(makeRequest(method: "POST", path: path, body: body))
+    }
+
+    private func postUnauthenticated<Body: Encodable, T: Decodable>(_ path: String, body: Body) async throws -> T {
+        try await send(makeUnauthenticatedRequest(method: "POST", path: path, body: body))
     }
 
     private func makeRequest<Body: Encodable>(method: String, path: String, body: Body?) async throws -> URLRequest {
@@ -150,6 +175,20 @@ struct PendingBotAPI {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let body {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONEncoder().encode(body)
+        }
+        return request
+    }
+
+    private func makeUnauthenticatedRequest<Body: Encodable>(method: String, path: String, body: Body?) throws -> URLRequest {
+        guard let url = URL(string: path, relativeTo: baseURL)?.absoluteURL else {
+            throw APIError.badURL
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if let body {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -185,6 +224,13 @@ private struct RegisterRunnerHostBody: Encodable {
     let displayName: String
     let capabilities: [String: String]
     let allowedRunnerKinds: [String]
+}
+
+private struct DeviceLoginChallengeBody: Encodable {
+    let appKind: String
+    let deviceName: String
+    let devicePublicKey: String
+    let scopes: [String]
 }
 
 private struct RunnerHeartbeatBody: Encodable {
