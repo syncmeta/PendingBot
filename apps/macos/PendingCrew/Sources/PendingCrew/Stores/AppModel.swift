@@ -29,15 +29,18 @@ final class AppModel: ObservableObject {
     @Published var errorMessage: String?
 
     init() {
+        let isUITestMode = ProcessInfo.processInfo.arguments.contains("--pendingcrew-ui-test")
         apiBaseURL = UserDefaults.standard.string(forKey: "apiBaseURL") ?? "https://api.pendingname.com"
 #if DEBUG
-        debugUserJWT = KeychainStore.get(account: "debug-worker-jwt")
-            ?? KeychainStore.get(account: "worker-jwt")
-            ?? ""
+        debugUserJWT = isUITestMode
+            ? ""
+            : (KeychainStore.get(account: "debug-worker-jwt")
+                ?? KeychainStore.get(account: "worker-jwt")
+                ?? "")
 #else
         debugUserJWT = ""
 #endif
-        deviceGrantToken = KeychainStore.get(account: "device-grant")
+        deviceGrantToken = isUITestMode ? nil : KeychainStore.get(account: "device-grant")
         localWorkspacePath = UserDefaults.standard.string(forKey: "localWorkspacePath") ?? FileManager.default.homeDirectoryForCurrentUser.path
     }
 
