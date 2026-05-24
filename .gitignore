@@ -38,6 +38,7 @@ apps/scroll-lab/runs/
 # Claude Code
 .claude/
 .codex/
+.superpowers/
 AGENTS.md
 
 # Deploy script (contains prod infra defaults)
