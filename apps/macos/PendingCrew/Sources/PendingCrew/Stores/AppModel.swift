@@ -34,10 +34,25 @@ final class AppModel: ObservableObject {
     }
 
     var api: PendingBotAPI? {
-        guard let url = URL(string: apiBaseURL), !authToken.isEmpty else {
+        guard let url = URL(string: apiBaseURL) else {
             return nil
         }
-        return PendingBotAPI(baseURL: url, authToken: authToken)
+        let token = effectiveAuthToken
+        guard !token.isEmpty else {
+            return nil
+        }
+        return PendingBotAPI(baseURL: url, authToken: token)
+    }
+
+    private var effectiveAuthToken: String {
+        if !authToken.isEmpty {
+            return authToken
+        }
+        return deviceGrantToken ?? ""
+    }
+
+    private var isDeviceGrantOnly: Bool {
+        authToken.isEmpty && !(deviceGrantToken ?? "").isEmpty
     }
 
     var personalSubjectId: String? {
@@ -46,7 +61,7 @@ final class AppModel: ObservableObject {
 
     func bootstrap() async {
         guard api != nil else {
-            statusMessage = "请先在设置里填写 API URL 和登录 JWT"
+            statusMessage = "请先扫码登录，或在设置里填写 API URL 和登录 JWT"
             return
         }
         await refreshAll()
@@ -87,6 +102,7 @@ final class AppModel: ObservableObject {
             if let token = response.deviceGrantToken {
                 deviceGrantToken = token
                 try KeychainStore.set(token, account: "device-grant")
+                await refreshAll()
                 statusMessage = "设备 grant 已保存"
             } else {
                 statusMessage = "扫码登录状态：\(response.status)"
@@ -100,11 +116,14 @@ final class AppModel: ObservableObject {
             async let subject = api.getSubject()
             async let crews = api.listCrews()
             async let hosts = api.listRunnerHosts()
-            async let help = api.listHumanHelpRequests()
             subjectResponse = try await subject
             self.crews = try await crews
             runnerHosts = try await hosts
-            helpRequests = try await help
+            if isDeviceGrantOnly {
+                helpRequests = []
+            } else {
+                helpRequests = try await api.listHumanHelpRequests()
+            }
         }
     }
 
@@ -250,7 +269,7 @@ enum LocalError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingAuth:
-            "请先填写 API URL 和登录 JWT"
+            "请先扫码登录，或填写 API URL 和登录 JWT"
         case .missingSubject:
             "还没有加载到当前账号的 subject"
         case .missingRunnerSession:

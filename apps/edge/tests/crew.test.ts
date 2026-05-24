@@ -40,6 +40,30 @@ function appFor(db: FakeDb) {
   };
 }
 
+async function sha256Hex(input: string): Promise<string> {
+  const bytes = new TextEncoder().encode(input);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function seedDeviceGrant(db: FakeDb, token: string, subjectId = 'subject-1', scopes = ['crew:read']) {
+  db.rows.subject_device_grants = [
+    ...(db.rows.subject_device_grants ?? []),
+    {
+      id: `grant-${db.rows.subject_device_grants?.length ?? 0}`,
+      subject_id: subjectId,
+      granted_by_user_id: 'user-1',
+      token_hash: await sha256Hex(token),
+      grant_kind: 'pendingcrew_control',
+      scopes,
+      app_kind: 'pendingcrew_macos',
+      status: 'active',
+      expires_at: '2099-01-01T00:00:00Z',
+      last_used_at: null,
+    },
+  ];
+}
+
 describe('POST /v1/crew', () => {
   it('creates a crew through the database RPC', async () => {
     const subjectId = '11111111-1111-4111-8111-111111111111';
@@ -98,6 +122,39 @@ describe('POST /v1/crew', () => {
       },
     });
   });
+
+  it('creates a crew with a device grant for the granted subject', async () => {
+    const token = 'pdg_crew_write_token';
+    const subjectId = '11111111-1111-4111-8111-111111111111';
+    const convId = '22222222-2222-4222-8222-222222222222';
+    const db = makeFakeDb();
+    await seedDeviceGrant(db, token, subjectId, ['crew:write']);
+    db.rpcs = {
+      open_crew_conv_for_subject: (args) => {
+        expect(args).toEqual({
+          p_responsible_subject_id: subjectId,
+          p_actor_user_id: 'user-1',
+          p_title: '工程 Crew',
+        });
+        return { data: convId, error: null };
+      },
+    };
+
+    const res = await appFor(db).request('/v1/crew', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        responsibleSubjectId: subjectId,
+        title: '工程 Crew',
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ conversationId: convId });
+  });
 });
 
 describe('POST /v1/crew/:id/sessions', () => {
@@ -154,6 +211,41 @@ describe('POST /v1/crew/:id/sessions', () => {
 
     expect(res.status).toBe(404);
   });
+
+  it('queues a crew session with a device grant for the granted subject', async () => {
+    const token = 'pdg_crew_session_write_token';
+    const subjectId = '11111111-1111-4111-8111-111111111111';
+    const sessionId = '33333333-3333-4333-8333-333333333333';
+    const db = makeFakeDb();
+    await seedDeviceGrant(db, token, subjectId, ['crew:write']);
+    db.rpcs = {
+      open_crew_session_for_subject: (args) => {
+        expect(args).toEqual({
+          p_crew_conversation_id: 'crew-1',
+          p_responsible_subject_id: subjectId,
+          p_actor_user_id: 'user-1',
+          p_runner_kind: 'local_codex',
+          p_task_brief: '整理临时群地基',
+        });
+        return { data: sessionId, error: null };
+      },
+    };
+
+    const res = await appFor(db).request('/v1/crew/crew-1/sessions', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        runnerKind: 'local_codex',
+        taskBrief: '整理临时群地基',
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ sessionId });
+  });
 });
 
 describe('GET /v1/crew', () => {
@@ -198,6 +290,55 @@ describe('GET /v1/crew', () => {
       ],
     });
   });
+
+  it('lists only the granted subject crews for a device grant', async () => {
+    const token = 'pdg_crew_read_token';
+    const db = makeFakeDb({
+      temporary_group_meta: [
+        {
+          conversation_id: 'crew-1',
+          temporary_kind: 'crew',
+          responsible_subject_id: 'subject-1',
+          status: 'active',
+          title: '自己的 Crew',
+          created_at: '2026-05-24T00:00:00Z',
+          updated_at: '2026-05-24T00:01:00Z',
+        },
+        {
+          conversation_id: 'crew-2',
+          temporary_kind: 'crew',
+          responsible_subject_id: 'subject-2',
+          status: 'active',
+          title: '别人的 Crew',
+          created_at: '2026-05-24T00:00:00Z',
+          updated_at: '2026-05-24T00:01:00Z',
+        },
+      ],
+      conversations: [
+        {
+          id: 'crew-1',
+          title: '自己的 Crew',
+          created_at: '2026-05-24T00:00:00Z',
+          updated_at: '2026-05-24T00:01:00Z',
+        },
+        {
+          id: 'crew-2',
+          title: '别人的 Crew',
+          created_at: '2026-05-24T00:00:00Z',
+          updated_at: '2026-05-24T00:01:00Z',
+        },
+      ],
+    });
+    await seedDeviceGrant(db, token);
+
+    const res = await appFor(db).request('/v1/crew', {
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { items: Array<Record<string, unknown>> };
+    expect(body.items.map((item) => item.conversation_id)).toEqual(['crew-1']);
+  });
 });
 
 describe('GET /v1/crew/:id/sessions', () => {
@@ -231,6 +372,44 @@ describe('GET /v1/crew/:id/sessions', () => {
       runner_kind: 'local_codex',
       status: 'queued',
     });
+  });
+
+  it('rejects a device grant when the crew belongs to another subject', async () => {
+    const token = 'pdg_crew_session_token';
+    const db = makeFakeDb({
+      temporary_group_meta: [
+        {
+          conversation_id: 'crew-2',
+          temporary_kind: 'crew',
+          responsible_subject_id: 'subject-2',
+          status: 'active',
+          title: '别人的 Crew',
+          created_at: '2026-05-24T00:00:00Z',
+          updated_at: '2026-05-24T00:01:00Z',
+        },
+      ],
+      crew_sessions: [
+        {
+          id: 'session-2',
+          crew_conversation_id: 'crew-2',
+          responsible_subject_id: 'subject-2',
+          runner_kind: 'local_codex',
+          status: 'queued',
+          task_brief: '整理地基',
+          progress_summary: '已排队',
+          created_at: '2026-05-24T00:00:00Z',
+          started_at: null,
+          finished_at: null,
+        },
+      ],
+    });
+    await seedDeviceGrant(db, token, 'subject-1');
+
+    const res = await appFor(db).request('/v1/crew/crew-2/sessions', {
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.status).toBe(404);
   });
 });
 
