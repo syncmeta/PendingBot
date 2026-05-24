@@ -1,7 +1,9 @@
+import AppKit
 import SwiftUI
 
 @main
 struct PendingCrewApp: App {
+    @NSApplicationDelegateAdaptor(PendingCrewAppDelegate.self) private var appDelegate
     @StateObject private var model = AppModel()
 
     var body: some Scene {
@@ -27,5 +29,12 @@ struct PendingCrewApp: App {
                 .environmentObject(model)
                 .frame(width: 520)
         }
+    }
+}
+
+final class PendingCrewAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
     }
 }
