@@ -234,7 +234,7 @@ final class CallKitManager: NSObject {
         }
     }
 
-    /// GroupCallSession calls this when the SFU transport reaches
+    /// GroupCallSession calls this when the group call reaches
     /// connected. Flips the CallKit UI from "answering" to "in call"
     /// against the incoming-pending UUID we surfaced earlier.
     /// `reportOutgoingCall(connectedAt:)` also works for an answered
@@ -314,7 +314,7 @@ extension CallKitManager: CXProviderDelegate {
     }
 
     /// User tapped Accept on the CallKit incoming UI. Fulfil
-    /// immediately so the system flips its UI; the actual SFU join is
+    /// immediately so the system flips its UI; the actual RTK join is
     /// kicked off via `onIncomingAnswer`, which navigates the app into
     /// the conv and lets GroupCallSession.start() do the network work.
     nonisolated func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {

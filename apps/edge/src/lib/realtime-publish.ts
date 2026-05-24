@@ -52,8 +52,7 @@ export interface VoiceCallEvent {
       inputLevel?: number;
       inputFrames?: number;
       quietFrames?: number;
-      streamConnected?: boolean;
-      ingestConnected?: boolean;
+      realtimeKitConnected?: boolean;
       modelSessionReady?: boolean;
     }>;
   };

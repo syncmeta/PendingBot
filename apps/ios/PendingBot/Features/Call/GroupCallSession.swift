@@ -3,10 +3,9 @@ import AVFoundation
 import Supabase
 
 /// State container for a group voice call. `GroupCallView` owns one and
-/// binds its UI to the @Observable state. Parallels `CallSession` (1:1)
-/// but the transport is `GroupCallTransport` (SFU WebRTC) and the bots
-/// live server-side in a RoomVoiceDO — so there is no closing recap and
-/// no transport chain, just one SFU peer connection.
+/// binds its UI to the @Observable state. Humans and bots join the same
+/// Cloudflare RealtimeKit meeting as WebRTC participants; the edge room
+/// DO owns lifecycle, permissions, billing and diagnostics.
 @MainActor
 @Observable
 final class GroupCallSession {
@@ -30,11 +29,6 @@ final class GroupCallSession {
         case startupError(String)
     }
 
-    enum MediaProvider: Equatable, Sendable {
-        case legacySfu
-        case realtimeKit
-    }
-
     var phase: Phase = .idle
 
     /// Wall-clock moment the call connected — `GroupCallView`'s timer
@@ -49,8 +43,8 @@ final class GroupCallSession {
     /// until then so an empty "0 PND" doesn't sit on the screen.
     var cumulativePnd: Int = 0
 
-    /// Current bot roster, as the transport learns it from /join and
-    /// any later re-sync. Drives the participant list.
+    /// Current bot roster from the room control plane. Drives the
+    /// participant list.
     var roster: [GroupBotRosterEntry] = []
 
     /// Other humans currently in the call (peers). The caller themselves
@@ -74,9 +68,9 @@ final class GroupCallSession {
     /// Live WebRTC + media-container diagnostics for the call screen.
     var diagnostics = CallDiagnosticsSnapshot()
 
-    /// RealtimeKit bootstrap payload for the experimental provider. nil
-    /// while the meeting participant is being minted.
-    var realtimeKitRoom: GroupVoiceRealtimeKitBootstrapResponse?
+    /// RealtimeKit bootstrap payload for this user's WebRTC participant.
+    /// nil while the meeting participant is being minted.
+    var realtimeKitRoom: GroupVoiceBootstrapResponse?
 
     // MARK: - Inputs
 
@@ -85,7 +79,6 @@ final class GroupCallSession {
     /// Group conversation's display title — shown as the call screen
     /// header. Empty string falls back to a generic "群语音" in the view.
     let groupTitle: String
-    let mediaProvider: MediaProvider
     /// Group members keyed "bot:<id>" / "user:<id>" — name + avatar
     /// lookup for the participant list. Sourced from the conversation's
     /// `groupSenders` map.
@@ -94,10 +87,8 @@ final class GroupCallSession {
     // MARK: - Dependencies
 
     private let api: VoiceCallAPI
-    private var transport: GroupCallTransport?
     private var didInitiate = false
     private var groupRoleIsAdmin = false
-    private var latestTransportDiagnostics = CallDiagnosticsSnapshot()
     private var latestMediaDiagnostics: GroupMediaDiagnostics?
 
     /// CallKit handle for this call. Two ways it gets populated:
@@ -131,14 +122,12 @@ final class GroupCallSession {
         conversationId: String,
         currentUserId: String,
         groupTitle: String,
-        mediaProvider: MediaProvider = .legacySfu,
         members: [String: GroupBubbleSender],
         api: VoiceCallAPI,
     ) {
         self.conversationId = conversationId
         self.currentUserId = currentUserId
         self.groupTitle = groupTitle
-        self.mediaProvider = mediaProvider
         self.members = members
         self.api = api
     }
@@ -229,94 +218,23 @@ final class GroupCallSession {
     func start() async {
         guard phase == .idle else { return }
         phase = .connecting
-        if mediaProvider == .realtimeKit {
-            await startRealtimeKit()
-            return
-        }
-
-        // Hook into CallKit. If we got here because a VoIP push fired
-        // and the user accepted on the CallKit incoming UI, the
-        // manager already has an active call UUID for this conv — claim
-        // it. Otherwise (manual join from the in-conv banner) mint a
-        // fresh outgoing CallKit call. Either way the CallKit teardown
-        // path lands on hangUp(), so the in-app and system controls
-        // converge on one teardown.
-        let cxManager = CallKitManager.shared
-        if let claimed = cxManager.claimIncoming(forConversation: conversationId) {
-            callKitUUID = claimed
-            cxManager.setOnSystemEnd(claimed) { [weak self] in
-                guard let self else { return }
-                self.callKitUUID = nil
-                Task { @MainActor in await self.hangUp() }
-            }
-        } else {
-            let display = groupTitle.isEmpty ? "群语音" : groupTitle
-            callKitUUID = cxManager.startOutgoingCall(
-                displayName: display,
-                onSystemEnd: { [weak self] in
-                    guard let self else { return }
-                    self.callKitUUID = nil
-                    Task { @MainActor in await self.hangUp() }
-                },
-            )
-        }
-
-        await loadGroupRole()
-
-        // Open the empty room (idempotent — a no-op if the call is
-        // already running). Bots and other humans are NOT auto-pulled;
-        // the caller invites them from the call UI. `initiated` tells us
-        // if we're the one who opened it (and is thus privileged).
-        let iceServers: [VoiceCallAPI.SessionResponse.IceServer]
-        do {
-            let started = try await api.groupVoiceStart(conversationId: conversationId)
-            didInitiate = started.initiated ?? false
-            iceServers = started.ice_servers ?? []
-        } catch let err as VoiceCallError {
-            await terminate(reason: translate(err))
-            return
-        } catch {
-            await terminate(reason: .startupError(error.localizedDescription))
-            return
-        }
-        if isTerminal(phase) { return }
-        isPrivileged = didInitiate || groupRoleIsAdmin
-
-        // Subscribe to the conv hub for `voice_cost` previews — every
-        // bot's settleTurn fans out a delta + cumulative PND to every
-        // joined human. The view reads cumulativePnd off this observer.
-        await subscribeToCost()
-
-        let transport = GroupCallTransport(
-            conversationId: conversationId,
-            api: api,
-            iceServers: iceServers,
-            delegate: self,
-        )
-        self.transport = transport
-
-        // Watchdog — a transport that neither connects nor fails (ICE
-        // silently stalls) shouldn't hang the connecting screen forever.
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: Self.connectTimeoutNanos)
-            guard let self, self.phase == .connecting else { return }
-            await self.terminate(reason: .network)
-        }
-
-        await transport.start()
-    }
-
-    private func startRealtimeKit() async {
         await loadGroupRole()
         do {
-            realtimeKitRoom = try await api.groupVoiceRealtimeKitBootstrap(
+            let room = try await api.groupVoiceBootstrap(
                 conversationId: conversationId,
             )
+            realtimeKitRoom = room
             didInitiate = realtimeKitRoom?.initiated ?? false
             isPrivileged = didInitiate || groupRoleIsAdmin
+            applyRoster(
+                bots: realtimeKitRoom?.bots ?? [],
+                humans: realtimeKitRoom?.humans ?? [],
+                pending: realtimeKitRoom?.pending ?? [],
+            )
             await subscribeToCost()
             connectedAt = Date()
             phase = .connected
+            startHeartbeat()
         } catch let err as VoiceCallError {
             await terminate(reason: translate(err))
         } catch {
@@ -398,13 +316,7 @@ final class GroupCallSession {
     /// it with 403 otherwise (surfaced via `actionError`).
     func endCall() async {
         guard !isTerminal(phase) else { return }
-        if mediaProvider == .realtimeKit {
-            await endRealtimeKitCall()
-            return
-        }
         phase = .hangingUp
-        let transport = self.transport
-        self.transport = nil
         stopHeartbeat()
         await unsubscribeFromCost()
         if let uuid = callKitUUID {
@@ -417,7 +329,6 @@ final class GroupCallSession {
             } catch {
                 // Best-effort — we're tearing down locally regardless.
             }
-            transport?.hangUp()
             // Reflect the room-gone state in the banner store right
             // away — endCall finalised the DO, and other clients will
             // pick it up via the broadcast 'ended' frame on their own.
@@ -435,7 +346,7 @@ final class GroupCallSession {
                 targetId: id,
             )
             // Reflect the removal — a re-sync re-reads the roster.
-            await transport?.resyncRoster()
+            await refreshRoster()
         } catch {
             actionError = kickErrorText(error)
         }
@@ -453,39 +364,17 @@ final class GroupCallSession {
         }
     }
 
-    #if DEBUG
-    /// POC-only: returns a Cloudflare RealtimeKit participant token for
-    /// the caller. The debug WebView uses it to join the same meeting from
-    /// multiple simulators without touching the production SFU path.
-    func realtimeKitBootstrap() async throws -> GroupVoiceRealtimeKitBootstrapResponse {
-        try await api.groupVoiceRealtimeKitBootstrap(conversationId: conversationId)
-    }
-    #endif
-
     /// Add another group bot to the live call. Any participant may call
-    /// this — bots no longer auto-join on /voice/start, so a human has
+    /// this — bots do not auto-join on /voice/bootstrap, so a human has
     /// to tap "叫机器人来" inside the call UI first.
     func addBot(id: String) async {
         do {
-            if mediaProvider == .realtimeKit {
-                try await api.groupVoiceRealtimeKitAddBot(
-                    conversationId: conversationId,
-                    botId: id,
-                )
-            } else {
-                try await api.groupVoiceAddBot(conversationId: conversationId, botId: id)
-            }
+            try await api.groupVoiceAddBot(conversationId: conversationId, botId: id)
         } catch {
             actionError = "添加机器人失败"
             return
         }
-        if mediaProvider == .realtimeKit {
-            return
-        }
-        // The bot's SFU ingest track needs a moment to come up before it
-        // appears in the roster — give it a beat, then re-sync.
-        try? await Task.sleep(nanoseconds: 2_000_000_000)
-        await transport?.resyncRoster()
+        await refreshRoster()
     }
 
     /// Ring a group human into the call. Sends an APNs push so their
@@ -529,8 +418,6 @@ final class GroupCallSession {
     private func terminate(reason: TerminateReason) async {
         guard !isTerminal(phase) else { return }
         phase = .hangingUp
-        let transport = self.transport
-        self.transport = nil
         stopHeartbeat()
         await unsubscribeFromCost()
         // Tell CallKit the call is done. Skipped when CallKit *drove*
@@ -541,7 +428,6 @@ final class GroupCallSession {
             CallKitManager.shared.endCall(uuid: uuid)
         }
         Task { @MainActor in
-            transport?.hangUp()
             // Tell the worker we left so the room's human-admin invariant
             // and participant set stay correct. Skipped for `.ended` —
             // endCall already finalized the whole room.
@@ -552,11 +438,7 @@ final class GroupCallSession {
             // retry, the DO is left holding a stale human and the
             // in-conv banner stays stuck until the 30-min alarm.
             if reason != .ended {
-                if self.mediaProvider == .realtimeKit {
-                    await self.bestEffortRealtimeKitLeave()
-                } else {
-                    await self.bestEffortLeave()
-                }
+                await self.bestEffortLeave()
             }
             // Refresh the active-calls index so the in-conv banner
             // reflects server truth — if the DO finalised (we were the
@@ -581,44 +463,6 @@ final class GroupCallSession {
         }
     }
 
-    /// POST /voice/realtimekit/leave with the same retry policy as the
-    /// legacy SFU leave path. This keeps the active-call index and
-    /// conv-channel lifecycle in sync even though the media room is
-    /// hosted by Cloudflare RealtimeKit.
-    private func bestEffortRealtimeKitLeave() async {
-        for attempt in 0..<2 {
-            do {
-                try await api.groupVoiceRealtimeKitLeave(conversationId: conversationId)
-                return
-            } catch {
-                if attempt == 0 {
-                    try? await Task.sleep(nanoseconds: 1_500_000_000)
-                }
-            }
-        }
-    }
-
-    private func endRealtimeKitCall() async {
-        phase = .hangingUp
-        stopHeartbeat()
-        await unsubscribeFromCost()
-        if let uuid = callKitUUID {
-            callKitUUID = nil
-            CallKitManager.shared.endCall(uuid: uuid)
-        }
-        Task { @MainActor in
-            do {
-                try await self.api.groupVoiceRealtimeKitEnd(conversationId: self.conversationId)
-            } catch {
-                // Best-effort — dropping the view also closes the WebView
-                // participant; other clients clear through the ended frame
-                // when the worker accepts the request.
-            }
-            await ActiveVoiceCallStore.shared.refresh()
-        }
-        phase = .terminated(.ended)
-    }
-
     /// Open a conv-hub subscription that feeds `cumulativePnd` from the
     /// server's voice_cost events. Other observers on the same channel
     /// (banners, message stream) keep working through this token —
@@ -635,6 +479,7 @@ final class GroupCallSession {
                         await self.terminate(reason: .ended)
                         return
                     }
+                    self.applyVoiceCallFrame(frame)
                     if let diagnostics = frame.diagnostics {
                         self.latestMediaDiagnostics = diagnostics
                         self.mergeDiagnostics()
@@ -651,6 +496,53 @@ final class GroupCallSession {
             },
         )
         costSubscription = token
+    }
+
+    private func refreshRoster() async {
+        do {
+            let snapshot = try await api.groupVoiceRoster(conversationId: conversationId)
+            applyRoster(
+                bots: snapshot.bots,
+                humans: snapshot.humans,
+                pending: snapshot.pending ?? [],
+            )
+            if let diagnostics = snapshot.diagnostics {
+                latestMediaDiagnostics = diagnostics
+                mergeDiagnostics()
+            }
+        } catch {
+            // Realtime voice_call frames are the source of truth; a failed
+            // immediate re-sync should not interrupt the live call.
+        }
+    }
+
+    private func applyVoiceCallFrame(_ frame: VoiceCallFrame) {
+        applyRoster(
+            bots: frame.participants.compactMap {
+                $0.kind == .bot ? GroupBotRosterEntry(botId: $0.id) : nil
+            },
+            humans: frame.participants.compactMap {
+                $0.kind == .human ? GroupHumanRosterEntry(humanId: $0.id) : nil
+            },
+            pending: frame.pending.map {
+                GroupPendingEntry(
+                    id: $0.id,
+                    kind: $0.kind == .bot ? "bot" : "human",
+                    invitedAt: Date().timeIntervalSince1970 * 1000,
+                    invitedBy: frame.initiatorId ?? "",
+                )
+            },
+        )
+    }
+
+    private func applyRoster(
+        bots: [GroupBotRosterEntry],
+        humans: [GroupHumanRosterEntry],
+        pending: [GroupPendingEntry],
+    ) {
+        roster = bots
+        humanRoster = humans
+        pendingInvites = pending
     }
 
     private func unsubscribeFromCost() async {
@@ -687,57 +579,9 @@ final class GroupCallSession {
             return .remoteError(m.isEmpty ? "通话失败" : m)
         }
     }
-}
-
-// MARK: - GroupCallTransportDelegate
-
-extension GroupCallSession: GroupCallTransportDelegate {
-    func transportDidConnect(_ t: GroupCallTransport) {
-        guard t === transport, phase == .connecting else { return }
-        connectedAt = Date()
-        phase = .connected
-        // /voice/join has landed by now (addHuman ran on the DO), so the
-        // first heartbeat is safe to send — it'll find us in the room.
-        startHeartbeat()
-        // Flip the CallKit lock-screen UI to "in call" so the timer
-        // starts and Control Center shows green.
-        if let uuid = callKitUUID {
-            CallKitManager.shared.reportCallConnected(uuid: uuid)
-        }
-    }
-
-    func transport(_ t: GroupCallTransport, didUpdateRoster snapshot: GroupRosterSnapshot) {
-        guard t === transport else { return }
-        roster = snapshot.bots
-        humanRoster = snapshot.humans
-        pendingInvites = snapshot.pending
-        if let diagnostics = snapshot.diagnostics {
-            latestMediaDiagnostics = diagnostics
-            mergeDiagnostics()
-        }
-    }
-
-    func transport(_ t: GroupCallTransport, didUpdateDiagnostics snapshot: CallDiagnosticsSnapshot) {
-        guard t === transport else { return }
-        latestTransportDiagnostics = snapshot
-        mergeDiagnostics()
-    }
-
-    func transport(
-        _ t: GroupCallTransport,
-        didFailWith reason: TerminateReason,
-    ) async {
-        guard t === transport else { return }
-        if isTerminal(phase) { return }
-        // Whether we failed during `connecting` (e.g. /voice/join 502'd
-        // or ICE never completed) or mid-call (.disconnected → .failed),
-        // run the same teardown: best-effort leave + refresh the banner
-        // store so a stuck "通话中" row clears as soon as the DO finalises.
-        await terminate(reason: reason)
-    }
 
     private func mergeDiagnostics() {
-        var snapshot = latestTransportDiagnostics
+        var snapshot = CallDiagnosticsSnapshot()
         let mediaParticipants = (latestMediaDiagnostics?.participants ?? [])
             .filter { !($0.kind == "human" && $0.id == currentUserId) }
             .map(mediaParticipant)
@@ -785,7 +629,7 @@ extension GroupCallSession: GroupCallTransportDelegate {
             inputLevel: p.inputLevel,
             inputFrames: p.inputFrames,
             quietFrames: p.quietFrames,
-            connected: p.streamConnected ?? p.ingestConnected ?? p.modelSessionReady,
+            connected: p.realtimeKitConnected ?? p.modelSessionReady,
         )
     }
 

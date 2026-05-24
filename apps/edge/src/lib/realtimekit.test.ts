@@ -45,7 +45,7 @@ describe('realtimeKitAppFromEnv', () => {
 });
 
 describe('createRealtimeKitMeeting', () => {
-  it('creates an audio POC meeting through the Cloudflare RealtimeKit API', async () => {
+  it('creates an audio meeting through the Cloudflare RealtimeKit API', async () => {
     const fetcher = vi.fn(async () =>
       Response.json({
         success: true,

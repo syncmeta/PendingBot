@@ -249,26 +249,18 @@ struct VoiceCallAPI {
 //
 // Wire-types + methods for the group-voice control surface on the worker
 // (`/v1/groups/:id/voice/*`). Distinct from the 1:1 realtime endpoints
-// above: a group call routes humans through the Cloudflare Realtime SFU
-// and the bots live server-side in a RoomVoiceDO. iOS is a plain WebRTC
-// peer of the SFU — it posts its SDP offer to /join, pulls bot tracks via
-// /subscribe, and answers the SFU's renegotiation offer via /renegotiate.
+// above: a group call is a Cloudflare RealtimeKit meeting. iOS joins as
+// a WebRTC participant through the embedded RealtimeKit client; bots join
+// as headless RealtimeKit participants in the media container.
 
-/// One bot in the call's roster — the SFU session + track a human
-/// subscribes to in order to hear it. Keys are camelCase: the worker
-/// passes the RoomVoiceDO's roster object straight through.
+/// One bot in the call's roster.
 struct GroupBotRosterEntry: Decodable, Sendable, Equatable {
     let botId: String
-    let sfuSessionId: String
-    let sfuTrackName: String
 }
 
-/// One human in the call's roster — their own published mic session +
-/// track. Peers subscribe to these to hear each other.
+/// One human in the call's roster.
 struct GroupHumanRosterEntry: Decodable, Sendable, Equatable {
     let humanId: String
-    let sfuSessionId: String
-    let sfuTrackName: String
 }
 
 /// A participant the call invited but hasn't joined yet. Surfaced from
@@ -282,50 +274,6 @@ struct GroupPendingEntry: Decodable, Sendable, Equatable {
     let invitedBy: String
 }
 
-/// POST /voice/start — opens an empty room. The caller follows up with
-/// /voice/join. `initiated` is true when this caller opened the call (and
-/// is privileged for its lifetime). `ice_servers` carries the Cloudflare
-/// TURN/STUN credentials the SFU's WebRTC peer connection needs — without
-/// them iOS can only gather host candidates and ICE never completes
-/// behind any NAT.
-struct GroupVoiceStartResponse: Decodable, Sendable {
-    let ok: Bool
-    let room_id: String
-    let initiated: Bool?
-    let ice_servers: [VoiceCallAPI.SessionResponse.IceServer]?
-}
-
-/// POST /voice/join — the worker negotiated the human's RTCPeerConnection
-/// against the SFU. Carries the SFU answer SDP + the current roster (bots
-/// + peers + pending invites).
-struct GroupVoiceJoinResponse: Decodable, Sendable {
-    let ok: Bool
-    let session_id: String
-    let answer: String
-    let startedAt: Double?
-    let initiatorId: String?
-    let bots: [GroupBotRosterEntry]
-    let humans: [GroupHumanRosterEntry]
-    let pending: [GroupPendingEntry]?
-    let diagnostics: GroupMediaDiagnostics?
-
-    enum CodingKeys: String, CodingKey {
-        case ok, session_id, answer
-        case startedAt
-        case initiatorId
-        case bots, humans, pending, diagnostics
-    }
-}
-
-/// POST /voice/subscribe — added the bot tracks to the caller's SFU
-/// session. The SFU replies with an offer the client must answer when
-/// `requires_renegotiation` is set.
-struct GroupVoiceSubscribeResponse: Decodable, Sendable {
-    let ok: Bool
-    let offer: String?
-    let requires_renegotiation: Bool
-}
-
 /// GET /voice/roster — current roster, for mid-call re-sync.
 struct GroupVoiceRosterResponse: Decodable, Sendable {
     let ok: Bool
@@ -337,10 +285,9 @@ struct GroupVoiceRosterResponse: Decodable, Sendable {
     let diagnostics: GroupMediaDiagnostics?
 }
 
-/// POC-only: Cloudflare RealtimeKit bootstrap. Returns a meeting id plus
-/// participant auth token for the caller; DEBUG UI uses this to join the
-/// same RealtimeKit room from two simulators.
-struct GroupVoiceRealtimeKitBootstrapResponse: Decodable, Sendable {
+/// POST /voice/bootstrap. Returns a RealtimeKit meeting id plus the
+/// participant token for this user.
+struct GroupVoiceBootstrapResponse: Decodable, Sendable {
     let ok: Bool
     let provider: String
     let initiated: Bool?
@@ -348,6 +295,9 @@ struct GroupVoiceRealtimeKitBootstrapResponse: Decodable, Sendable {
     let meeting: Meeting
     let human: Participant
     let bot: Participant?
+    let bots: [GroupBotRosterEntry]?
+    let humans: [GroupHumanRosterEntry]?
+    let pending: [GroupPendingEntry]?
 
     struct Meeting: Decodable, Sendable {
         let id: String
@@ -379,63 +329,6 @@ struct ActiveVoiceCallsResponse: Decodable, Sendable {
 
 extension VoiceCallAPI {
 
-    /// Open the call's empty room. Bots and other humans are NOT auto-
-    /// pulled — the caller invites them via /add-bot or /ring afterward.
-    func groupVoiceStart(
-        conversationId: String,
-    ) async throws -> GroupVoiceStartResponse {
-        struct Body: Encodable {}
-        return try await callDecoding(
-            path: "/v1/groups/\(conversationId)/voice/start",
-            body: Body(),
-        )
-    }
-
-    /// Join the call's SFU room. `sdp` is the local WebRTC offer; the
-    /// response carries the SFU answer + the bot roster to subscribe to.
-    func groupVoiceJoin(
-        conversationId: String,
-        sdp: String,
-    ) async throws -> GroupVoiceJoinResponse {
-        struct Body: Encodable { let sdp: String }
-        return try await callDecoding(
-            path: "/v1/groups/\(conversationId)/voice/join",
-            body: Body(sdp: sdp),
-        )
-    }
-
-    /// Subscribe to SFU tracks (bots and/or other humans) so the caller
-    /// can hear them. Each ref is an (SFU session id, track name) pair.
-    func groupVoiceSubscribe(
-        conversationId: String,
-        sessionId: String,
-        tracks: [(session: String, track: String)],
-    ) async throws -> GroupVoiceSubscribeResponse {
-        struct Track: Encodable { let session_id: String; let track_name: String }
-        struct Body: Encodable { let session_id: String; let tracks: [Track] }
-        return try await callDecoding(
-            path: "/v1/groups/\(conversationId)/voice/subscribe",
-            body: Body(
-                session_id: sessionId,
-                tracks: tracks.map { Track(session_id: $0.session, track_name: $0.track) },
-            ),
-        )
-    }
-
-    /// Answer the SFU's renegotiation offer (`sdp` is the local answer).
-    func groupVoiceRenegotiate(
-        conversationId: String,
-        sessionId: String,
-        sdp: String,
-    ) async throws {
-        struct Body: Encodable { let session_id: String; let sdp: String }
-        struct OK: Decodable { let ok: Bool }
-        _ = try await callDecoding(
-            path: "/v1/groups/\(conversationId)/voice/renegotiate",
-            body: Body(session_id: sessionId, sdp: sdp),
-        ) as OK
-    }
-
     /// Current bot roster — used to re-sync after add-bot.
     func groupVoiceRoster(
         conversationId: String,
@@ -443,38 +336,16 @@ extension VoiceCallAPI {
         try await api.get("/v1/groups/\(conversationId)/voice/roster")
     }
 
-    /// POC-only: bootstrap a Cloudflare RealtimeKit meeting/participant.
-    /// `botId` is optional; human-only is enough to validate two simulator
-    /// participants in the same room.
-    func groupVoiceRealtimeKitBootstrap(
+    /// Bootstrap a Cloudflare RealtimeKit meeting/participant.
+    func groupVoiceBootstrap(
         conversationId: String,
         botId: String? = nil,
-    ) async throws -> GroupVoiceRealtimeKitBootstrapResponse {
+    ) async throws -> GroupVoiceBootstrapResponse {
         struct Body: Encodable { let bot_id: String? }
         return try await callDecoding(
-            path: "/v1/groups/\(conversationId)/voice/realtimekit/bootstrap",
+            path: "/v1/groups/\(conversationId)/voice/bootstrap",
             body: Body(bot_id: botId),
         )
-    }
-
-    /// The caller leaves the RealtimeKit-backed group call.
-    func groupVoiceRealtimeKitLeave(conversationId: String) async throws {
-        struct Body: Encodable {}
-        struct OK: Decodable { let ok: Bool }
-        _ = try await callDecoding(
-            path: "/v1/groups/\(conversationId)/voice/realtimekit/leave",
-            body: Body(),
-        ) as OK
-    }
-
-    /// End the RealtimeKit-backed group call for everyone. Privileged.
-    func groupVoiceRealtimeKitEnd(conversationId: String) async throws {
-        struct Body: Encodable {}
-        struct OK: Decodable { let ok: Bool }
-        _ = try await callDecoding(
-            path: "/v1/groups/\(conversationId)/voice/realtimekit/end",
-            body: Body(),
-        ) as OK
     }
 
     /// Add one more bot to a live call.
@@ -483,16 +354,6 @@ extension VoiceCallAPI {
         struct OK: Decodable { let ok: Bool }
         _ = try await callDecoding(
             path: "/v1/groups/\(conversationId)/voice/add-bot",
-            body: Body(bot_id: botId),
-        ) as OK
-    }
-
-    /// Add one more bot to a RealtimeKit-backed live call.
-    func groupVoiceRealtimeKitAddBot(conversationId: String, botId: String) async throws {
-        struct Body: Encodable { let bot_id: String }
-        struct OK: Decodable { let ok: Bool }
-        _ = try await callDecoding(
-            path: "/v1/groups/\(conversationId)/voice/realtimekit/add-bot",
             body: Body(bot_id: botId),
         ) as OK
     }
