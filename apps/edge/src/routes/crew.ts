@@ -21,6 +21,14 @@ const CreateCrewBody = z.object({
   title: z.string().trim().max(80).optional(),
 });
 
+const RunnerKind = z.enum([
+  'cloud_sandbox',
+  'local_claude_code',
+  'local_codex',
+  'local_opencode',
+  'local_kilo',
+]);
+
 crewRoutes.post('/', async (c) => {
   const userJwt = c.var.userJwt!;
   let parsed: z.infer<typeof CreateCrewBody>;
@@ -50,6 +58,71 @@ crewRoutes.post('/', async (c) => {
   }
 
   return c.json({ conversationId: data });
+});
+
+const CreateSessionBody = z.object({
+  runnerKind: RunnerKind,
+  taskBrief: z.string().trim().min(1).max(12_000),
+});
+
+crewRoutes.post('/:id/sessions', async (c) => {
+  const crewConversationId = c.req.param('id');
+  const userJwt = c.var.userJwt!;
+  let parsed: z.infer<typeof CreateSessionBody>;
+  try {
+    parsed = CreateSessionBody.parse(await c.req.json());
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+
+  const supa = userClient(c.env, userJwt);
+  const { data, error } = await supa.rpc('open_crew_session', {
+    p_crew_conversation_id: crewConversationId,
+    p_runner_kind: parsed.runnerKind,
+    p_task_brief: parsed.taskBrief,
+  });
+  if (error) {
+    const message = rpcMessage(error);
+    if (/auth required/i.test(message)) return jsonError(c, 401, 'unauthorized', { message });
+    if (/forbidden|not an active crew member/i.test(message)) return jsonError(c, 403, 'forbidden', { message });
+    if (/not found/i.test(message)) return jsonError(c, 404, 'not_found', { message });
+    if (/invalid|required/i.test(message)) return jsonError(c, 400, 'invalid_body', { message });
+    return jsonError(c, 500, 'database_error', { detail: message });
+  }
+
+  return c.json({ sessionId: data });
+});
+
+crewRoutes.get('/:id/sessions', async (c) => {
+  const crewConversationId = c.req.param('id');
+  const userJwt = c.var.userJwt!;
+  const supa = userClient(c.env, userJwt);
+  const { data, error } = await supa
+    .from('crew_sessions')
+    .select('id, crew_conversation_id, responsible_subject_id, runner_kind, status, task_brief, progress_summary, created_at, started_at, finished_at')
+    .eq('crew_conversation_id', crewConversationId)
+    .order('created_at', { ascending: false })
+    .limit(100);
+  if (error) {
+    return jsonError(c, 500, 'database_error', { detail: error.message });
+  }
+  return c.json({ items: data ?? [] });
+});
+
+crewRoutes.get('/sessions/:sessionId/events', async (c) => {
+  const sessionId = c.req.param('sessionId');
+  const userJwt = c.var.userJwt!;
+  const supa = userClient(c.env, userJwt);
+  const { data, error } = await supa
+    .from('session_events')
+    .select('id, crew_session_id, event_type, visibility, summary, payload, created_at')
+    .eq('crew_session_id', sessionId)
+    .order('created_at', { ascending: true })
+    .limit(200);
+  if (error) {
+    return jsonError(c, 500, 'database_error', { detail: error.message });
+  }
+  return c.json({ items: data ?? [] });
 });
 
 crewRoutes.get('/', async (c) => {
@@ -96,4 +169,3 @@ crewRoutes.get('/', async (c) => {
     }),
   });
 });
-

@@ -100,6 +100,62 @@ describe('POST /v1/crew', () => {
   });
 });
 
+describe('POST /v1/crew/:id/sessions', () => {
+  it('queues a crew session through the database RPC', async () => {
+    const sessionId = '33333333-3333-4333-8333-333333333333';
+    const db = makeFakeDb();
+    db.rpcs = {
+      open_crew_session: (args) => {
+        expect(args).toEqual({
+          p_crew_conversation_id: 'crew-1',
+          p_runner_kind: 'local_codex',
+          p_task_brief: '整理临时群地基',
+        });
+        return { data: sessionId, error: null };
+      },
+    };
+
+    const res = await appFor(db).request('/v1/crew/crew-1/sessions', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-test-user-id': 'user-1',
+      },
+      body: JSON.stringify({
+        runnerKind: 'local_codex',
+        taskBrief: '整理临时群地基',
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ sessionId });
+  });
+
+  it('maps non-crew or inactive crew failures to 404', async () => {
+    const db = makeFakeDb();
+    db.rpcs = {
+      open_crew_session: () => ({
+        data: null,
+        error: { message: 'crew not found or inactive' },
+      }),
+    };
+
+    const res = await appFor(db).request('/v1/crew/not-crew/sessions', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-test-user-id': 'user-1',
+      },
+      body: JSON.stringify({
+        runnerKind: 'local_codex',
+        taskBrief: 'do work',
+      }),
+    });
+
+    expect(res.status).toBe(404);
+  });
+});
+
 describe('GET /v1/crew', () => {
   it('lists visible crews with conversation titles as fallback', async () => {
     const db = makeFakeDb({
@@ -144,3 +200,71 @@ describe('GET /v1/crew', () => {
   });
 });
 
+describe('GET /v1/crew/:id/sessions', () => {
+  it('lists queued sessions for a crew', async () => {
+    const db = makeFakeDb({
+      crew_sessions: [
+        {
+          id: 'session-1',
+          crew_conversation_id: 'crew-1',
+          responsible_subject_id: 'subject-1',
+          runner_kind: 'local_codex',
+          status: 'queued',
+          task_brief: '整理地基',
+          progress_summary: '已排队',
+          created_at: '2026-05-24T00:00:00Z',
+          started_at: null,
+          finished_at: null,
+        },
+      ],
+    });
+
+    const res = await appFor(db).request('/v1/crew/crew-1/sessions', {
+      headers: { 'x-test-user-id': 'user-1' },
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { items: Array<Record<string, unknown>> };
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0]).toMatchObject({
+      id: 'session-1',
+      runner_kind: 'local_codex',
+      status: 'queued',
+    });
+  });
+});
+
+describe('GET /v1/crew/sessions/:sessionId/events', () => {
+  it('lists session events in chronological order', async () => {
+    const db = makeFakeDb({
+      session_events: [
+        {
+          id: 'event-2',
+          crew_session_id: 'session-1',
+          event_type: 'status',
+          visibility: 'crew_members',
+          summary: '开始',
+          payload: {},
+          created_at: '2026-05-24T00:01:00Z',
+        },
+        {
+          id: 'event-1',
+          crew_session_id: 'session-1',
+          event_type: 'queued',
+          visibility: 'crew_members',
+          summary: '排队',
+          payload: {},
+          created_at: '2026-05-24T00:00:00Z',
+        },
+      ],
+    });
+
+    const res = await appFor(db).request('/v1/crew/sessions/session-1/events', {
+      headers: { 'x-test-user-id': 'user-1' },
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { items: Array<{ id: string }> };
+    expect(body.items.map((item) => item.id)).toEqual(['event-1', 'event-2']);
+  });
+});

@@ -3450,6 +3450,14 @@ export type Database = {
         Args: { p_responsible_subject_id: string; p_title?: string }
         Returns: string
       }
+      open_crew_session: {
+        Args: {
+          p_crew_conversation_id: string
+          p_runner_kind: string
+          p_task_brief: string
+        }
+        Returns: string
+      }
       open_group_conv: {
         Args: {
           p_initial_bot_ids: string[]
