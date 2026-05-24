@@ -489,8 +489,8 @@ private enum ModelCatalogFilters {
 private enum ArenaPriceRangeScale {
     static let numericMin: Double = 0
     static let numericMax: Double = 5
-    private static let lowerSentinel: Double = -0.5
-    private static let upperSentinel: Double = 5.5
+    private static let lowerSentinel: Double = -0.05
+    private static let upperSentinel: Double = 5.05
     static let sliderBounds: ClosedRange<Double> = lowerSentinel...upperSentinel
 
     static func sliderLower(fromPriceMin priceMin: Double?) -> Double {
@@ -504,22 +504,22 @@ private enum ArenaPriceRangeScale {
     }
 
     static func priceMin(fromSliderLower value: Double) -> Double? {
-        guard value >= numericMin else { return nil }
+        guard value > lowerSentinel else { return nil }
         return rounded(min(max(value, numericMin), numericMax))
     }
 
     static func priceMax(fromSliderUpper value: Double) -> Double? {
-        guard value <= numericMax else { return nil }
+        guard value < upperSentinel else { return nil }
         return rounded(min(max(value, numericMin), numericMax))
     }
 
     static func lowerLabel(_ value: Double) -> String {
-        guard value >= numericMin else { return "最小" }
+        guard value > lowerSentinel else { return "最小" }
         return formatMultiplier(value)
     }
 
     static func upperLabel(_ value: Double) -> String {
-        guard value <= numericMax else { return "最大" }
+        guard value < upperSentinel else { return "最大" }
         return formatMultiplier(value)
     }
 
@@ -868,10 +868,10 @@ private struct PriceRangeSlider: View {
                     .fill(Theme.Palette.accent.opacity(0.75))
                     .frame(width: max(0, highX - lowX), height: 6)
                     .offset(x: 14 + lowX)
-                handle(label: "左")
+                handle(label: "廉")
                     .offset(x: lowX)
                     .gesture(drag(width: width, isLower: true))
-                handle(label: "右")
+                handle(label: "奢")
                     .offset(x: highX)
                     .gesture(drag(width: width, isLower: false))
             }
