@@ -83,10 +83,14 @@ struct ModelPickerSheet: View {
     @State private var query: String = ""
     @State private var expandedProviders: Set<String> = []
 
+    private var catalogModels: [OpenRouterModel] {
+        allModels.filter { !ModelCatalogFilters.isNativeBackedOpenRouterRow($0) }
+    }
+
     private var filtered: [OpenRouterModel] {
         let visionFiltered = visionOnly
-            ? allModels.filter { $0.supports_vision == true }
-            : allModels
+            ? catalogModels.filter { $0.supports_vision == true }
+            : catalogModels
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
         guard !q.isEmpty else { return visionFiltered }
         return visionFiltered.filter {
@@ -159,10 +163,6 @@ struct ModelPickerSheet: View {
 
     private func vendorLabel(_ provider: String) -> String {
         Self.vendorDisplayName[provider] ?? provider
-    }
-
-    private static func isNativeKey(_ key: String) -> Bool {
-        key == nativeAnthropicKey || key == nativeGeminiKey || key == nativeOpenAIKey
     }
 
     var body: some View {
@@ -278,15 +278,8 @@ struct ModelPickerSheet: View {
             // visible without the user having to tap each header.
             let searching = !query.trimmingCharacters(in: .whitespaces).isEmpty
             let groups = groupedFiltered
-            // Index of the first OpenRouter (non-native) group, used to slot
-            // the "native above / OpenRouter below" note right at the seam.
-            // Only when there's at least one native group ahead of it.
-            let orSeam: Int? = searching ? nil : groups.firstIndex { !Self.isNativeKey($0.provider) }.flatMap { $0 > 0 ? $0 : nil }
             ForEach(Array(groups.enumerated()), id: \.element.provider) { item in
                 let group = item.element
-                if item.offset == orSeam {
-                    nativeVsOpenRouterNote
-                }
                 let expanded = searching || expandedProviders.contains(group.provider)
                 Section {
                     if expanded {
@@ -394,19 +387,6 @@ struct ModelPickerSheet: View {
         .listRowBackground(Theme.Palette.surface)
     }
 
-    /// Sits at the seam between the native sections and the OpenRouter long
-    /// tail, calling out that picking a native vendor's model from below
-    /// (via OpenRouter) breaks prompt caching.
-    private var nativeVsOpenRouterNote: some View {
-        Section {
-            Text("以上三家是原生调用，下面走 OpenRouter。如果在下面选以上三家的模型，账单会爆，因为提示词缓存没配置好。")
-                .font(Theme.Fonts.caption)
-                .foregroundStyle(Theme.Palette.inkMuted)
-                .padding(.vertical, 2)
-        }
-        .listRowBackground(Theme.Palette.surface)
-    }
-
     private func load() async {
         guard let api else { return }
         loading = true; defer { loading = false }
@@ -417,7 +397,7 @@ struct ModelPickerSheet: View {
             // so the user lands on something visible instead of an all-collapsed
             // wall.
             if !initial.isEmpty,
-               let match = allModels.first(where: { $0.slug == initial }) {
+               let match = catalogModels.first(where: { $0.slug == initial }) {
                 expandedProviders.insert(groupKey(match))
             }
         } catch {
@@ -477,9 +457,9 @@ struct ArenaModelSelection: Equatable, Hashable {
     }
 
     var summary: String {
-        if hasPriceRange {
-            let lo = priceMin.map(Self.formatMultiplier) ?? "不限"
-            let hi = priceMax.map(Self.formatMultiplier) ?? "不限"
+        if hasPriceRange || resolvedCount >= 2 {
+            let lo = priceMin.map(Self.formatMultiplier) ?? "最小"
+            let hi = priceMax.map(Self.formatMultiplier) ?? "最大"
             let count = resolvedCount > 0 ? " · \(resolvedCount) 个" : ""
             return "价格 \(lo) - \(hi)\(count)"
         }
@@ -492,6 +472,65 @@ struct ArenaModelSelection: Equatable, Hashable {
         let s = String(format: "%.1f", value)
         let trimmed = s.hasSuffix(".0") ? String(s.dropLast(2)) : s
         return "\(trimmed)x"
+    }
+}
+
+private enum ModelCatalogFilters {
+    private static let nativeBackedOpenRouterVendors: Set<String> = ["openai", "anthropic", "google"]
+
+    static func isNativeBackedOpenRouterRow(_ model: OpenRouterModel) -> Bool {
+        guard (model.source ?? "openrouter") == "openrouter" else { return false }
+        let slug = model.slug.hasPrefix("~") ? String(model.slug.dropFirst()) : model.slug
+        guard let vendor = slug.split(separator: "/", maxSplits: 1).first else { return false }
+        return nativeBackedOpenRouterVendors.contains(String(vendor))
+    }
+}
+
+private enum ArenaPriceRangeScale {
+    static let numericMin: Double = 0
+    static let numericMax: Double = 5
+    private static let lowerSentinel: Double = -0.5
+    private static let upperSentinel: Double = 5.5
+    static let sliderBounds: ClosedRange<Double> = lowerSentinel...upperSentinel
+
+    static func sliderLower(fromPriceMin priceMin: Double?) -> Double {
+        guard let priceMin else { return lowerSentinel }
+        return min(max(priceMin, numericMin), numericMax)
+    }
+
+    static func sliderUpper(fromPriceMax priceMax: Double?) -> Double {
+        guard let priceMax else { return upperSentinel }
+        return min(max(priceMax, numericMin), numericMax)
+    }
+
+    static func priceMin(fromSliderLower value: Double) -> Double? {
+        guard value >= numericMin else { return nil }
+        return rounded(min(max(value, numericMin), numericMax))
+    }
+
+    static func priceMax(fromSliderUpper value: Double) -> Double? {
+        guard value <= numericMax else { return nil }
+        return rounded(min(max(value, numericMin), numericMax))
+    }
+
+    static func lowerLabel(_ value: Double) -> String {
+        guard value >= numericMin else { return "最小" }
+        return formatMultiplier(value)
+    }
+
+    static func upperLabel(_ value: Double) -> String {
+        guard value <= numericMax else { return "最大" }
+        return formatMultiplier(value)
+    }
+
+    private static func rounded(_ value: Double) -> Double {
+        (value * 10).rounded() / 10
+    }
+
+    private static func formatMultiplier(_ value: Double) -> String {
+        let rounded = rounded(value)
+        let s = String(format: "%.1f", rounded)
+        return "\(s.hasSuffix(".0") ? String(s.dropLast(2)) : s)x"
     }
 }
 
@@ -512,14 +551,16 @@ struct ArenaModelPickerSheet: View {
     @State private var query = ""
     @State private var include: Set<String> = []
     @State private var exclude: Set<String> = []
-    @State private var priceMinValue: Double = 0
-    @State private var priceMaxValue: Double = 5
-    @State private var priceCap: Double = 50
+    @State private var priceMinValue: Double = ArenaPriceRangeScale.numericMin
+    @State private var priceMaxValue: Double = ArenaPriceRangeScale.numericMax
 
-    // Only openrouter-source chat models are arena-eligible (matches the edge
-    // pool — native twins are dropped to avoid double-weighting).
+    // Only OpenRouter chat models without native-backed duplicates are
+    // arena-eligible, matching the edge pool.
     private var pool: [OpenRouterModel] {
-        allModels.filter { ($0.source ?? "openrouter") == "openrouter" }
+        allModels.filter {
+            ($0.source ?? "openrouter") == "openrouter"
+            && !ModelCatalogFilters.isNativeBackedOpenRouterRow($0)
+        }
     }
 
     private var rangeModels: [OpenRouterModel] {
@@ -550,11 +591,19 @@ struct ArenaModelPickerSheet: View {
             .map { ($0, Dictionary(grouping: filtered, by: \.provider)[$0] ?? []) }
     }
 
+    private var priceMinBound: Double? {
+        ArenaPriceRangeScale.priceMin(fromSliderLower: priceMinValue)
+    }
+
+    private var priceMaxBound: Double? {
+        ArenaPriceRangeScale.priceMax(fromSliderUpper: priceMaxValue)
+    }
+
     private var draft: ArenaModelSelection {
         let effective = effectiveModels
         return ArenaModelSelection(
-            priceMin: priceMinValue,
-            priceMax: priceMaxValue >= priceCap ? nil : priceMaxValue,
+            priceMin: priceMinBound,
+            priceMax: priceMaxBound,
             models: Array(include).sorted(),
             exclude: Array(exclude).sorted(),
             fallbackModel: effective.first?.slug ?? include.sorted().first ?? initial.fallbackModel,
@@ -606,12 +655,12 @@ struct ArenaModelPickerSheet: View {
             PriceRangeSlider(
                 lower: $priceMinValue,
                 upper: $priceMaxValue,
-                bounds: 0...priceCap
+                bounds: ArenaPriceRangeScale.sliderBounds
             )
             .frame(height: 34)
             HStack(spacing: 8) {
-                rangeEndpoint("左", value: $priceMinValue)
-                rangeEndpoint("右", value: $priceMaxValue)
+                rangeEndpoint("下限", value: ArenaPriceRangeScale.lowerLabel(priceMinValue))
+                rangeEndpoint("上限", value: ArenaPriceRangeScale.upperLabel(priceMaxValue))
                 Spacer()
                 Text("区间内 \(rangeModels.count), 实际 \(draft.resolvedCount)")
                     .font(Theme.Fonts.caption)
@@ -650,7 +699,7 @@ struct ArenaModelPickerSheet: View {
                         .font(Theme.Fonts.rounded(size: 13, weight: .medium))
                         .foregroundStyle(.red)
                 } footer: {
-                    Text("价格区间是基础池；加号会把区间外模型加入池子，减号会把区间内模型排除。创建后机器人每轮从池子随机挑一个模型。")
+                    Text("价格区间是基础池；滑块两端分别表示包含最小和包含最大，中间固定为 0x-5x。加号会把区间外模型加入池子，减号会把区间内模型排除。")
                         .font(Theme.Fonts.caption).foregroundStyle(Theme.Palette.inkMuted)
                 }
                 .listRowBackground(Theme.Palette.surface)
@@ -724,24 +773,13 @@ struct ArenaModelPickerSheet: View {
         .background(Theme.Palette.canvas)
     }
 
-    private func rangeEndpoint(_ title: String, value: Binding<Double>) -> some View {
+    private func rangeEndpoint(_ title: String, value: String) -> some View {
         HStack(spacing: 4) {
             Text(title).foregroundStyle(Theme.Palette.inkMuted)
-            TextField(title, text: Binding(
-                get: { String(format: "%.1f", value.wrappedValue) },
-                set: { raw in
-                    guard let n = Double(raw) else { return }
-                    value.wrappedValue = min(max(0, n), priceCap)
-                    if priceMinValue > priceMaxValue {
-                        if title == "左" { priceMaxValue = priceMinValue }
-                        else { priceMinValue = priceMaxValue }
-                    }
-                }
-            ))
-            .keyboardType(.decimalPad)
-            .frame(width: 56)
-            .multilineTextAlignment(.center)
-            .font(Theme.Fonts.monoSmall)
+            Text(value)
+                .font(Theme.Fonts.monoSmall)
+                .foregroundStyle(Theme.Palette.ink)
+                .frame(minWidth: 42)
         }
         .font(Theme.Fonts.caption)
     }
@@ -753,10 +791,18 @@ struct ArenaModelPickerSheet: View {
             allModels = try await api.get("v1/models")
             include = Set(initial.models)
             exclude = Set(initial.exclude)
-            let maxP = pool.compactMap { $0.blended_usd_per_million }.max() ?? 50
-            priceCap = max(1, maxP)
-            priceMinValue = min(max(0, initial.priceMin ?? 0), priceCap)
-            priceMaxValue = min(max(priceMinValue, initial.priceMax ?? min(priceCap, 5)), priceCap)
+            if initial.priceMin == nil,
+               initial.priceMax == nil,
+               initial.models.isEmpty,
+               initial.exclude.isEmpty {
+                priceMinValue = ArenaPriceRangeScale.numericMin
+                priceMaxValue = ArenaPriceRangeScale.numericMax
+            } else {
+                priceMinValue = ArenaPriceRangeScale.sliderLower(fromPriceMin: initial.priceMin)
+                priceMaxValue = max(
+                    priceMinValue,
+                    ArenaPriceRangeScale.sliderUpper(fromPriceMax: initial.priceMax))
+            }
             error = nil
         } catch {
             self.error = error.localizedDescription
@@ -765,7 +811,9 @@ struct ArenaModelPickerSheet: View {
 
     private func isInPriceRange(_ model: OpenRouterModel) -> Bool {
         guard let price = model.blended_usd_per_million else { return false }
-        return price >= priceMinValue && price <= priceMaxValue
+        if let priceMinBound, price < priceMinBound { return false }
+        if let priceMaxBound, price > priceMaxBound { return false }
+        return true
     }
 
     private func isEffective(_ model: OpenRouterModel) -> Bool {
@@ -826,7 +874,7 @@ private struct PriceRangeSlider: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("价格区间")
-        .accessibilityValue("\(ModelCatalog.formatMultiplier(lower)) 到 \(ModelCatalog.formatMultiplier(upper))")
+        .accessibilityValue("\(ArenaPriceRangeScale.lowerLabel(lower)) 到 \(ArenaPriceRangeScale.upperLabel(upper))")
     }
 
     private func handle(label: String) -> some View {
@@ -849,9 +897,9 @@ private struct PriceRangeSlider: View {
             .onChanged { dragValue in
                 let next = value(for: dragValue.location.x - 14, width: width)
                 if isLower {
-                    lower = min(max(bounds.lowerBound, next), upper)
+                    lower = min(max(bounds.lowerBound, next), min(upper, ArenaPriceRangeScale.numericMax))
                 } else {
-                    upper = max(min(bounds.upperBound, next), lower)
+                    upper = max(min(bounds.upperBound, next), max(lower, ArenaPriceRangeScale.numericMin))
                 }
             }
     }

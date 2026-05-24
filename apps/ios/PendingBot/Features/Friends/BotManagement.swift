@@ -53,13 +53,8 @@ struct CreateBotSheet: View {
     var onCreated: (FriendsTabView.BotPick) -> Void
 
     @State private var step: CreateStep = .models
-    @State private var modelMode: CreateModelMode = .single
     @State private var displayName: String = ""
-    @State private var modelSlug: String = ""
-    /// API route pin for the picked model — nil = default routing,
-    /// 'openai' = native Responses route.
-    @State private var modelProvider: String?
-    @State private var arenaSelection = ArenaModelSelection()
+    @State private var arenaSelection = ArenaModelSelection(priceMin: 0, priceMax: 5)
     @State private var showingArenaPicker = false
     @State private var visibility: Visibility = .privateBot
     /// User-chosen public handle. Only required (and only sent) when the
@@ -70,17 +65,6 @@ struct CreateBotSheet: View {
 
     private enum CreateStep {
         case models, settings
-    }
-
-    private enum CreateModelMode: String, CaseIterable, Identifiable {
-        case single, arena
-        var id: String { rawValue }
-        var label: String {
-            switch self {
-            case .single: return "单模型"
-            case .arena: return "价格区间"
-            }
-        }
     }
 
     enum Visibility: String, CaseIterable, Identifiable {
@@ -154,10 +138,6 @@ struct CreateBotSheet: View {
             .sheet(isPresented: $showingArenaPicker) {
                 ArenaModelPickerSheet(initial: arenaSelection) { selection in
                     arenaSelection = selection
-                    if let fallback = selection.fallbackModel {
-                        modelSlug = fallback
-                    }
-                    modelProvider = nil
                 }
                 .presentationDragIndicator(.visible)
                 .tint(Theme.Palette.accent)
@@ -168,49 +148,33 @@ struct CreateBotSheet: View {
     @ViewBuilder
     private var modelSelectionSections: some View {
         Section {
-            Picker("创建方式", selection: $modelMode) {
-                ForEach(CreateModelMode.allCases) { mode in
-                    Text(mode.label).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-            if modelMode == .single {
+            Button {
+                showingArenaPicker = true
+                Haptics.tap()
+            } label: {
                 HStack {
-                    Text("模型").foregroundStyle(Theme.Palette.inkMuted)
-                    Spacer()
-                    ModelPickerButton(slug: $modelSlug,
-                                      modelProvider: $modelProvider,
-                                      placeholder: "选择模型")
-                }
-            } else {
-                Button {
-                    showingArenaPicker = true
-                    Haptics.tap()
-                } label: {
-                    HStack {
-                        Image(systemName: "slider.horizontal.2.square")
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("价格区间模型池")
-                                .font(Theme.Fonts.rounded(size: 14, weight: .semibold))
-                            Text(arenaSelection.fallbackModel == nil
-                                 ? "选择双端价格区间,再加减模型和厂商"
-                                 : arenaSelection.summary)
-                                .font(Theme.Fonts.caption)
-                                .foregroundStyle(Theme.Palette.inkMuted)
-                                .lineLimit(2)
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.right")
+                    Image(systemName: "slider.horizontal.2.square")
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("价格区间模型池")
+                            .font(Theme.Fonts.rounded(size: 14, weight: .semibold))
+                        Text(arenaSelection.fallbackModel == nil
+                             ? "选择 0x-5x 区间,再加减模型和厂商"
+                             : arenaSelection.summary)
                             .font(Theme.Fonts.caption)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(Theme.Palette.inkMuted)
+                            .lineLimit(2)
                     }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(Theme.Fonts.caption)
+                        .foregroundStyle(.tertiary)
                 }
-                .foregroundStyle(Theme.Palette.ink)
             }
+            .foregroundStyle(Theme.Palette.ink)
         } header: {
             Text("模型")
         } footer: {
-            Text("价格区间模式下,一个机器人不是固定一个模型;每轮会从你选出的模型池里随机挑一个。")
+            Text("新建机器人使用价格区间模型池；每轮会从你选出的多个模型里随机挑一个。")
         }
     }
 
@@ -319,34 +283,19 @@ struct CreateBotSheet: View {
     }
 
     private var canAdvanceFromModels: Bool {
-        switch modelMode {
-        case .single:
-            return !modelSlug.isEmpty
-        case .arena:
-            return arenaSelection.resolvedCount >= 2 && arenaSelection.fallbackModel != nil
-        }
+        arenaSelection.resolvedCount >= 2 && arenaSelection.fallbackModel != nil
     }
 
     private var selectedModelSlug: String? {
-        switch modelMode {
-        case .single:
-            return modelSlug.isEmpty ? nil : modelSlug
-        case .arena:
-            return arenaSelection.fallbackModel
-        }
+        arenaSelection.fallbackModel
     }
 
     private var selectedModelProvider: String? {
-        modelMode == .arena ? nil : modelProvider
+        nil
     }
 
     private var modelSummary: String {
-        switch modelMode {
-        case .single:
-            return modelSlug.isEmpty ? "未选择" : catalog.displayName(for: modelSlug)
-        case .arena:
-            return arenaSelection.summary
-        }
+        arenaSelection.summary
     }
 
     private func create() async {
@@ -402,7 +351,7 @@ struct CreateBotSheet: View {
                     model_id: createModelSlug,
                     model_provider: selectedModelProvider,
                     config: BotCreateConfig(
-                        arena: modelMode == .arena ? arenaSelection.persistedConfig : nil),
+                        arena: arenaSelection.persistedConfig),
                     slug: finalSlug,
                     tz: visibility == .privateBot ? nil : TimeZone.current.identifier
                 ))

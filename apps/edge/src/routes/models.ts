@@ -24,6 +24,11 @@ import type { AppBindings } from '../types';
 // blended_usd_per_million is a 7:2:1 (cache_hit/input/output) reference
 // price from the OpenRouter row's own pricing — same number on the native
 // twin and its OpenRouter origin so the "Nx" badge matches across rows.
+//
+// The OpenRouter long tail intentionally drops OpenAI / Anthropic / Google
+// rows because those providers already appear as native sections. This also
+// removes OpenRouter's `~vendor/...-latest` aliases, keeping both the picker
+// and arena random pool from selecting the same native-backed families twice.
 
 export const modelCatalogRoutes = new Hono<AppBindings>();
 modelCatalogRoutes.use('*', requireSession());
@@ -146,6 +151,15 @@ const NATIVE_DERIVATIONS: readonly NativeDerivation[] = [
   },
 ];
 
+const NATIVE_BACKED_OPENROUTER_VENDORS = new Set(['openai', 'anthropic', 'google']);
+
+export function isNativeBackedOpenRouterSlug(slug: string): boolean {
+  const normalized = slug.startsWith('~') ? slug.slice(1) : slug;
+  const slash = normalized.indexOf('/');
+  if (slash <= 0) return false;
+  return NATIVE_BACKED_OPENROUTER_VENDORS.has(normalized.slice(0, slash));
+}
+
 function stripVendorPrefix(name?: string): string | null {
   if (!name) return null;
   const idx = name.indexOf(': ');
@@ -209,23 +223,25 @@ export async function buildModelCatalog(): Promise<OpenRouterModelOut[]> {
   const json = (await res.json()) as { data?: OpenRouterCatalogModel[] };
   const catalog = json.data ?? [];
 
-  const openrouterRows: OpenRouterModelOut[] = catalog.map((m) => {
-    const slash = m.id.indexOf('/');
-    const provider = slash > 0 ? m.id.slice(0, slash) : 'unknown';
-    const tail = slash > 0 ? m.id.slice(slash + 1) : m.id;
-    const baseName = stripVendorPrefix(m.name) ?? prettifyTail(tail);
-    const inputModalities = m.architecture?.input_modalities ?? [];
-    return {
-      slug: m.id,
-      display_name: baseName,
-      provider,
-      context_length: typeof m.context_length === 'number' ? m.context_length : null,
-      supports_vision: inputModalities.includes('image'),
-      blended_usd_per_million: blendedFromCatalog(m.pricing),
-      source: 'openrouter' as const,
-      model_provider: null,
-    };
-  });
+  const openrouterRows: OpenRouterModelOut[] = catalog
+    .filter((m) => !isNativeBackedOpenRouterSlug(m.id))
+    .map((m) => {
+      const slash = m.id.indexOf('/');
+      const provider = slash > 0 ? m.id.slice(0, slash) : 'unknown';
+      const tail = slash > 0 ? m.id.slice(slash + 1) : m.id;
+      const baseName = stripVendorPrefix(m.name) ?? prettifyTail(tail);
+      const inputModalities = m.architecture?.input_modalities ?? [];
+      return {
+        slug: m.id,
+        display_name: baseName,
+        provider,
+        context_length: typeof m.context_length === 'number' ? m.context_length : null,
+        supports_vision: inputModalities.includes('image'),
+        blended_usd_per_million: blendedFromCatalog(m.pricing),
+        source: 'openrouter' as const,
+        model_provider: null,
+      };
+    });
 
   // Native sections lead the response, in NATIVE_DERIVATIONS order
   // (anthropic → google-ai-studio → openai). iOS pins these three groups
