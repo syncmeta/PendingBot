@@ -49,6 +49,7 @@ struct MessageTabView: View {
     /// hitting the worker on its own.
     @State private var userPeers: [String: UserUserPeer] = [:]
     @State private var loading = false
+    @State private var pullRefreshing = false
     @State private var error: String?
     @State private var joiningGroup = false
     @State private var addingFriend = false
@@ -375,6 +376,9 @@ struct MessageTabView: View {
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 8) {
+                            if pullRefreshing {
+                                pullRefreshIndicator
+                            }
                             ForEach(conversations) { conv in
                                 SwipeRevealRow(
                                     actions: [
@@ -413,10 +417,22 @@ struct MessageTabView: View {
                         // rows further from the trailing edge.
                         .readableColumnWidth(sidebarLayout ? .infinity : Theme.Metrics.readableColumn)
                     }
-                    .refreshable { await load() }
+                    .refreshable { await refreshFromPull() }
                 }
             }
         }
+    }
+
+    private var pullRefreshIndicator: some View {
+        HStack {
+            Spacer()
+            ProgressView()
+                .controlSize(.small)
+                .tint(Theme.Palette.accent)
+                .accessibilityLabel("刷新中")
+            Spacer()
+        }
+        .frame(height: 28)
     }
 
     /// Right-swipe-to-create-new — only available on bot conversations
@@ -543,6 +559,26 @@ struct MessageTabView: View {
     }
 
     private func reload() { Task { await load() } }
+
+    @MainActor
+    private func refreshFromPull() async {
+        guard !pullRefreshing else { return }
+        pullRefreshing = true
+        let started = DispatchTime.now().uptimeNanoseconds
+        defer { pullRefreshing = false }
+
+        await load()
+
+        // SwiftUI keeps the native refresh control visible only while this
+        // async action is suspended. Fast no-op refreshes otherwise snap back
+        // before the user sees any spinner, which makes a real reload feel
+        // like a decorative pull gesture.
+        let minimumVisibleNanos: UInt64 = 650_000_000
+        let elapsed = DispatchTime.now().uptimeNanoseconds - started
+        if elapsed < minimumVisibleNanos {
+            try? await Task.sleep(nanoseconds: minimumVisibleNanos - elapsed)
+        }
+    }
 
     private func load() async {
         // Hydrate from local cache instantly — UI shows last-known state
