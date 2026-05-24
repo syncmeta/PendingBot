@@ -795,6 +795,99 @@ export type Database = {
           },
         ]
       }
+      crew_sessions: {
+        Row: {
+          assigned_to_member_id: string | null
+          created_at: string
+          crew_conversation_id: string
+          final_result_message_id: string | null
+          finished_at: string | null
+          id: string
+          initiating_member_id: string
+          last_context_cursor: string | null
+          progress_summary: string | null
+          responsible_subject_id: string
+          runner_host_id: string | null
+          runner_kind: string
+          started_at: string | null
+          status: string
+          task_brief: string
+          updated_at: string
+        }
+        Insert: {
+          assigned_to_member_id?: string | null
+          created_at?: string
+          crew_conversation_id: string
+          final_result_message_id?: string | null
+          finished_at?: string | null
+          id?: string
+          initiating_member_id: string
+          last_context_cursor?: string | null
+          progress_summary?: string | null
+          responsible_subject_id: string
+          runner_host_id?: string | null
+          runner_kind: string
+          started_at?: string | null
+          status?: string
+          task_brief: string
+          updated_at?: string
+        }
+        Update: {
+          assigned_to_member_id?: string | null
+          created_at?: string
+          crew_conversation_id?: string
+          final_result_message_id?: string | null
+          finished_at?: string | null
+          id?: string
+          initiating_member_id?: string
+          last_context_cursor?: string | null
+          progress_summary?: string | null
+          responsible_subject_id?: string
+          runner_host_id?: string | null
+          runner_kind?: string
+          started_at?: string | null
+          status?: string
+          task_brief?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crew_sessions_assigned_to_member_id_fkey"
+            columns: ["assigned_to_member_id"]
+            isOneToOne: false
+            referencedRelation: "temporary_group_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crew_sessions_crew_conversation_id_fkey"
+            columns: ["crew_conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crew_sessions_final_result_message_id_fkey"
+            columns: ["final_result_message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crew_sessions_initiating_member_id_fkey"
+            columns: ["initiating_member_id"]
+            isOneToOne: false
+            referencedRelation: "temporary_group_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crew_sessions_responsible_subject_id_fkey"
+            columns: ["responsible_subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       device_tokens: {
         Row: {
           created_at: string
@@ -1689,6 +1782,60 @@ export type Database = {
           },
         ]
       }
+      permission_requests: {
+        Row: {
+          crew_session_id: string
+          decided_at: string | null
+          decided_by_user_id: string | null
+          detail: Json
+          id: string
+          requested_action: string
+          requested_at: string
+          responsible_subject_id: string
+          risk_level: string
+          status: string
+        }
+        Insert: {
+          crew_session_id: string
+          decided_at?: string | null
+          decided_by_user_id?: string | null
+          detail?: Json
+          id?: string
+          requested_action: string
+          requested_at?: string
+          responsible_subject_id: string
+          risk_level: string
+          status?: string
+        }
+        Update: {
+          crew_session_id?: string
+          decided_at?: string | null
+          decided_by_user_id?: string | null
+          detail?: Json
+          id?: string
+          requested_action?: string
+          requested_at?: string
+          responsible_subject_id?: string
+          risk_level?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "permission_requests_crew_session_id_fkey"
+            columns: ["crew_session_id"]
+            isOneToOne: false
+            referencedRelation: "crew_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "permission_requests_responsible_subject_id_fkey"
+            columns: ["responsible_subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       place_names: {
         Row: {
           name: string
@@ -1886,6 +2033,204 @@ export type Database = {
           status?: string
         }
         Relationships: []
+      }
+      session_dependencies: {
+        Row: {
+          created_at: string
+          crew_session_id: string
+          dependency_type: string
+          depends_on_session_id: string | null
+          id: string
+          note: string | null
+          resolved_at: string | null
+          status: string
+        }
+        Insert: {
+          created_at?: string
+          crew_session_id: string
+          dependency_type: string
+          depends_on_session_id?: string | null
+          id?: string
+          note?: string | null
+          resolved_at?: string | null
+          status?: string
+        }
+        Update: {
+          created_at?: string
+          crew_session_id?: string
+          dependency_type?: string
+          depends_on_session_id?: string | null
+          id?: string
+          note?: string | null
+          resolved_at?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_dependencies_crew_session_id_fkey"
+            columns: ["crew_session_id"]
+            isOneToOne: false
+            referencedRelation: "crew_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_dependencies_depends_on_session_id_fkey"
+            columns: ["depends_on_session_id"]
+            isOneToOne: false
+            referencedRelation: "crew_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      session_events: {
+        Row: {
+          created_at: string
+          crew_session_id: string
+          event_type: string
+          id: string
+          payload: Json
+          summary: string | null
+          visibility: string
+        }
+        Insert: {
+          created_at?: string
+          crew_session_id: string
+          event_type: string
+          id?: string
+          payload?: Json
+          summary?: string | null
+          visibility?: string
+        }
+        Update: {
+          created_at?: string
+          crew_session_id?: string
+          event_type?: string
+          id?: string
+          payload?: Json
+          summary?: string | null
+          visibility?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_events_crew_session_id_fkey"
+            columns: ["crew_session_id"]
+            isOneToOne: false
+            referencedRelation: "crew_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      session_file_claims: {
+        Row: {
+          claim_type: string
+          created_at: string
+          crew_session_id: string
+          id: string
+          path_pattern: string
+          released_at: string | null
+          status: string
+          workspace_root: string
+        }
+        Insert: {
+          claim_type: string
+          created_at?: string
+          crew_session_id: string
+          id?: string
+          path_pattern: string
+          released_at?: string | null
+          status?: string
+          workspace_root: string
+        }
+        Update: {
+          claim_type?: string
+          created_at?: string
+          crew_session_id?: string
+          id?: string
+          path_pattern?: string
+          released_at?: string | null
+          status?: string
+          workspace_root?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_file_claims_crew_session_id_fkey"
+            columns: ["crew_session_id"]
+            isOneToOne: false
+            referencedRelation: "crew_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      session_mailbox_items: {
+        Row: {
+          created_at: string
+          crew_conversation_id: string
+          id: string
+          message_kind: string
+          payload: Json
+          read_at: string | null
+          recipient_session_id: string | null
+          responsible_subject_id: string
+          sender_session_id: string | null
+          status: string
+          summary: string
+        }
+        Insert: {
+          created_at?: string
+          crew_conversation_id: string
+          id?: string
+          message_kind?: string
+          payload?: Json
+          read_at?: string | null
+          recipient_session_id?: string | null
+          responsible_subject_id: string
+          sender_session_id?: string | null
+          status?: string
+          summary: string
+        }
+        Update: {
+          created_at?: string
+          crew_conversation_id?: string
+          id?: string
+          message_kind?: string
+          payload?: Json
+          read_at?: string | null
+          recipient_session_id?: string | null
+          responsible_subject_id?: string
+          sender_session_id?: string | null
+          status?: string
+          summary?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_mailbox_items_crew_conversation_id_fkey"
+            columns: ["crew_conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_mailbox_items_recipient_session_id_fkey"
+            columns: ["recipient_session_id"]
+            isOneToOne: false
+            referencedRelation: "crew_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_mailbox_items_responsible_subject_id_fkey"
+            columns: ["responsible_subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_mailbox_items_sender_session_id_fkey"
+            columns: ["sender_session_id"]
+            isOneToOne: false
+            referencedRelation: "crew_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       skill_subscriptions: {
         Row: {
@@ -2823,6 +3168,14 @@ export type Database = {
       }
       bump_lookback_counter: {
         Args: { p_bot: string; p_interval: number; p_user: string }
+        Returns: boolean
+      }
+      can_control_crew_session: {
+        Args: { p_crew_session_id: string; p_user_id: string }
+        Returns: boolean
+      }
+      can_view_crew_session: {
+        Args: { p_crew_session_id: string; p_user_id: string }
         Returns: boolean
       }
       can_view_temporary_group: {
