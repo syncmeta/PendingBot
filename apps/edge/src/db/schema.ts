@@ -3446,6 +3446,10 @@ export type Database = {
           user_id: string
         }[]
       }
+      open_crew_conv: {
+        Args: { p_responsible_subject_id: string; p_title?: string }
+        Returns: string
+      }
       open_group_conv: {
         Args: {
           p_initial_bot_ids: string[]
@@ -3479,6 +3483,10 @@ export type Database = {
           p_content: string
         }
         Returns: Json
+      }
+      subject_can_create_crew: {
+        Args: { p_subject_id: string; p_user_id: string }
+        Returns: boolean
       }
       subject_has_user_access: {
         Args: { p_subject_id: string; p_user_id: string }

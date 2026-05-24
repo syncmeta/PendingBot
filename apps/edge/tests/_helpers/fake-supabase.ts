@@ -25,6 +25,7 @@ export interface FakeDb {
   inserts: Array<{ table: string; row: Row }>;
   updates: Array<{ table: string; patch: Row; filters: Filter[] }>;
   deletes: Array<{ table: string; filters: Filter[]; count: number }>;
+  rpcs?: Record<string, (args: Record<string, unknown>) => { data?: unknown; error?: { code?: string; message: string } | null }>;
   /// Optional per-table error injection. When a function returns
   /// non-null for a given operation, that error replaces the result.
   errors?: {
@@ -114,6 +115,8 @@ function makeClient(db: FakeDb): unknown {
     let patch: Row | null = null;
     let insertRow: Row | null = null;
     let insertError: { code?: string; message: string } | null = null;
+    let orderBy: { col: string; ascending: boolean } | null = null;
+    let limitCount: number | null = null;
 
     const api = {
       select(c: string = '*', opts?: { count?: 'exact'; head?: boolean }) {
@@ -143,6 +146,14 @@ function makeClient(db: FakeDb): unknown {
         } else {
           throw new Error(`fake-supabase: unsupported .filter op "${op}"`);
         }
+        return api;
+      },
+      order(col: string, opts?: { ascending?: boolean }) {
+        orderBy = { col, ascending: opts?.ascending !== false };
+        return api;
+      },
+      limit(n: number) {
+        limitCount = n;
         return api;
       },
       update(p: Row) {
@@ -253,7 +264,17 @@ function makeClient(db: FakeDb): unknown {
             case 'select': {
               const err = db.errors?.select?.(table);
               if (err) return { data: null, error: err };
-              const rs = rowsForFilters(db.rows[table] ?? [], filters);
+              let rs = rowsForFilters(db.rows[table] ?? [], filters);
+              if (orderBy) {
+                rs = [...rs].sort((a, b) => {
+                  const av = a[orderBy!.col];
+                  const bv = b[orderBy!.col];
+                  if (av === bv) return 0;
+                  const cmp = String(av ?? '') < String(bv ?? '') ? -1 : 1;
+                  return orderBy!.ascending ? cmp : -cmp;
+                });
+              }
+              if (limitCount != null) rs = rs.slice(0, limitCount);
               if (selectOpts?.count === 'exact' && selectOpts.head) {
                 return { data: null, count: rs.length, error: null };
               }
@@ -277,5 +298,10 @@ function makeClient(db: FakeDb): unknown {
       return { from: builder };
     },
     from: builder,
+    async rpc(fn: string, args: Record<string, unknown>) {
+      const handler = db.rpcs?.[fn];
+      if (!handler) return { data: null, error: null };
+      return handler(args);
+    },
   };
 }
