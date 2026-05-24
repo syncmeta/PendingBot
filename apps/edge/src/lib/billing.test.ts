@@ -5,8 +5,10 @@ import {
   _resetMarkupCache,
   _resetThresholdCache,
   getMarkup,
+  getSubjectBalance,
   redeemCode,
   requireBalance,
+  billingDebitSubject,
   usdToPnd,
 } from './billing';
 import type { SupabaseClient } from './supabase';
@@ -35,6 +37,9 @@ function stubSupa(
     users: (
       userId: string,
     ) => { data: { balance_credits: number; lifetime_topup_credits?: number; lifetime_spent_credits?: number } | null };
+    subject_wallets: (
+      subjectId: string,
+    ) => { data: { balance_credits: number; lifetime_topup_credits?: number; lifetime_spent_credits?: number } | null };
     rpc: (fn: string, args: Record<string, unknown>) => { data?: unknown; error?: { code?: string; message?: string } | null };
   }>,
 ): SupabaseClient {
@@ -55,6 +60,9 @@ function stubSupa(
           }
           if (table === 'users' && handlers.users) {
             return handlers.users((this as { _eq?: string })._eq as string);
+          }
+          if (table === 'subject_wallets' && handlers.subject_wallets) {
+            return handlers.subject_wallets((this as { _eq?: string })._eq as string);
           }
           return { data: null, error: null };
         },
@@ -200,6 +208,62 @@ describe('requireBalance', () => {
       billing_config: () => ({ data: { value: 1 }, error: null }),
     });
     await expect(requireBalance(fakeEnv(), supa, 'u1')).rejects.toBeInstanceOf(InsufficientBalanceError);
+  });
+});
+
+describe('subject billing helpers', () => {
+  it('reads a subject wallet balance', async () => {
+    const supa = stubSupa({
+      subject_wallets: (subjectId) => {
+        expect(subjectId).toBe('subject-1');
+        return {
+          data: {
+            balance_credits: 1200,
+            lifetime_topup_credits: 2000,
+            lifetime_spent_credits: 800,
+          },
+          error: null,
+        };
+      },
+    });
+
+    await expect(getSubjectBalance(supa, 'subject-1')).resolves.toEqual({
+      balance_credits: 1200,
+      lifetime_topup_credits: 2000,
+      lifetime_spent_credits: 800,
+    });
+  });
+
+  it('returns null when a subject wallet is not visible', async () => {
+    const supa = stubSupa({
+      subject_wallets: () => ({ data: null, error: null }),
+    });
+
+    await expect(getSubjectBalance(supa, 'subject-1')).resolves.toBeNull();
+  });
+
+  it('debits a subject through the subject billing RPC', async () => {
+    const supa = stubSupa({
+      rpc: (fn, args) => {
+        expect(fn).toBe('billing_debit_subject');
+        expect(args).toEqual({
+          p_subject_id: 'subject-1',
+          p_audit_log_id: 'audit-1',
+          p_credits: 17,
+        });
+        return { data: 983, error: null };
+      },
+    });
+
+    await expect(billingDebitSubject(supa, 'subject-1', 'audit-1', 17)).resolves.toBe(983);
+  });
+
+  it('swallows subject debit RPC errors', async () => {
+    const supa = stubSupa({
+      rpc: () => ({ data: null, error: { message: 'db unavailable' } }),
+    });
+
+    await expect(billingDebitSubject(supa, 'subject-1', 'audit-1', 17)).resolves.toBeNull();
   });
 });
 

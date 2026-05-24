@@ -119,6 +119,8 @@ export interface BalanceInfo {
   lifetime_spent_credits: number;
 }
 
+export type SubjectBalanceInfo = BalanceInfo;
+
 /**
  * Read the user's current balance + lifetime totals. Uses whichever
  * client is passed (user-scoped JWT for RLS-checked reads from /me, or
@@ -133,6 +135,31 @@ export async function getBalance(
     .from('users')
     .select('balance_credits, lifetime_topup_credits, lifetime_spent_credits')
     .eq('id', userId)
+    .maybeSingle();
+  if (error || !data) return null;
+  return {
+    balance_credits: Number(data.balance_credits) || 0,
+    lifetime_topup_credits: Number(data.lifetime_topup_credits) || 0,
+    lifetime_spent_credits: Number(data.lifetime_spent_credits) || 0,
+  };
+}
+
+/**
+ * Read a responsibility subject's wallet balance + lifetime totals.
+ *
+ * This is the subject-account mirror of getBalance. It intentionally
+ * does not infer the subject from a user: callers must pass the already
+ * resolved billing subject so temporary groups, group accounts, and
+ * future Crew sessions cannot silently fall back to the wrong owner.
+ */
+export async function getSubjectBalance(
+  supa: SupabaseClient,
+  subjectId: string,
+): Promise<SubjectBalanceInfo | null> {
+  const { data, error } = await supa
+    .from('subject_wallets')
+    .select('balance_credits, lifetime_topup_credits, lifetime_spent_credits')
+    .eq('subject_id', subjectId)
     .maybeSingle();
   if (error || !data) return null;
   return {
@@ -248,6 +275,31 @@ export async function billingDebit(
   });
   if (error) {
     console.warn('[billing_debit]', error.message ?? String(error));
+    return null;
+  }
+  return typeof data === 'number' ? data : null;
+}
+
+/**
+ * Apply the post-call debit to a responsibility subject wallet.
+ *
+ * Temporary groups and Crew sessions should call this after resolving
+ * their immutable billing subject. Existing user-wallet billing stays on
+ * billingDebit until each old call path is deliberately migrated.
+ */
+export async function billingDebitSubject(
+  supa: SupabaseClient,
+  subjectId: string,
+  auditLogId: string,
+  credits: number,
+): Promise<number | null> {
+  const { data, error } = await supa.rpc('billing_debit_subject', {
+    p_subject_id: subjectId,
+    p_audit_log_id: auditLogId,
+    p_credits: credits,
+  });
+  if (error) {
+    console.warn('[billing_debit_subject]', error.message ?? String(error));
     return null;
   }
   return typeof data === 'number' ? data : null;
