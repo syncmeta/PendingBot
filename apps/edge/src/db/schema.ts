@@ -3469,9 +3469,26 @@ export type Database = {
       open_self_conv: { Args: never; Returns: string }
       open_user_bot_conv: { Args: { p_bot_id: string }; Returns: string }
       random_place_name: { Args: never; Returns: string }
+      register_runner_host: {
+        Args: {
+          p_allowed_runner_kinds?: Json
+          p_capabilities?: Json
+          p_display_name: string
+          p_responsible_subject_id: string
+        }
+        Returns: string
+      }
       request_account_deletion: {
         Args: { p_sentiment: string }
         Returns: undefined
+      }
+      runner_host_heartbeat: {
+        Args: {
+          p_allowed_runner_kinds?: Json
+          p_capabilities?: Json
+          p_runner_host_id: string
+        }
+        Returns: boolean
       }
       seed_example_letter: { Args: { p_user_id: string }; Returns: undefined }
       seed_sample_dialogue: {
@@ -3493,6 +3510,10 @@ export type Database = {
         Returns: Json
       }
       subject_can_create_crew: {
+        Args: { p_subject_id: string; p_user_id: string }
+        Returns: boolean
+      }
+      subject_can_manage_runners: {
         Args: { p_subject_id: string; p_user_id: string }
         Returns: boolean
       }
