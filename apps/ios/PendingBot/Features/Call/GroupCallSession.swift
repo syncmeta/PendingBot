@@ -90,6 +90,9 @@ final class GroupCallSession {
     private var didInitiate = false
     private var groupRoleIsAdmin = false
     private var latestMediaDiagnostics: GroupMediaDiagnostics?
+    private var realtimeKitJoined = false
+    private var realtimeKitLocalAudioEnabled = false
+    private var realtimeKitRemoteAudioIds = Set<String>()
 
     /// CallKit handle for this call. Two ways it gets populated:
     ///   • Incoming (PushKit-driven): start() claims the UUID that
@@ -377,6 +380,20 @@ final class GroupCallSession {
         await refreshRoster()
     }
 
+    func handleRealtimeKitParticipantEvent(_ event: RealtimeKitParticipantEvent) {
+        switch event {
+        case .joined:
+            realtimeKitJoined = true
+        case .localAudioEnabled:
+            realtimeKitLocalAudioEnabled = true
+        case .remoteAudioAttached(let participantId):
+            realtimeKitRemoteAudioIds.insert(participantId)
+        case .failed(let message):
+            actionError = message.isEmpty ? "RealtimeKit 音频连接失败" : message
+        }
+        mergeDiagnostics()
+    }
+
     /// Ring a group human into the call. Sends an APNs push so their
     /// phone actually rings, and stages them in the pending set so the
     /// UI shows them as "正在拉".
@@ -543,6 +560,7 @@ final class GroupCallSession {
         roster = bots
         humanRoster = humans
         pendingInvites = pending
+        mergeDiagnostics()
     }
 
     private func unsubscribeFromCost() async {
@@ -582,6 +600,18 @@ final class GroupCallSession {
 
     private func mergeDiagnostics() {
         var snapshot = CallDiagnosticsSnapshot()
+        snapshot.transport = "RealtimeKit"
+        snapshot.updatedAt = Date()
+        if realtimeKitJoined {
+            snapshot.connectionState = "已连接"
+            snapshot.quality = .good
+            snapshot.bottleneck = realtimeKitRemoteAudioIds.isEmpty && !humanParticipants.isEmpty
+                ? "RealtimeKit 已连接，等待远端音频。"
+                : "RealtimeKit 已连接。"
+        } else {
+            snapshot.connectionState = phase == .connecting ? "连接中" : "未连接"
+            snapshot.bottleneck = "等待 RealtimeKit 连接。"
+        }
         let mediaParticipants = (latestMediaDiagnostics?.participants ?? [])
             .filter { !($0.kind == "human" && $0.id == currentUserId) }
             .map(mediaParticipant)
@@ -598,9 +628,26 @@ final class GroupCallSession {
             inputLevel: nil,
             inputFrames: nil,
             quietFrames: nil,
-            connected: true,
+            connected: realtimeKitJoined || realtimeKitLocalAudioEnabled,
         )
-        snapshot.participants = [local] + mediaParticipants
+        let humanDiagnostics = humanParticipants.map { sender in
+            CallParticipantDiagnostic(
+                kind: .human,
+                id: sender.id,
+                displayName: sender.displayName,
+                speaking: false,
+                audioLevel: 0,
+                playoutDepthMs: nil,
+                underruns: nil,
+                maxGapMs: nil,
+                droppedOutputMs: nil,
+                inputLevel: nil,
+                inputFrames: nil,
+                quietFrames: nil,
+                connected: realtimeKitRemoteAudioIds.isEmpty ? nil : true,
+            )
+        }
+        snapshot.participants = [local] + humanDiagnostics + mediaParticipants
         if let active = snapshot.participants.first(where: \.speaking) {
             snapshot.activeSpeaker = active.displayName
         }

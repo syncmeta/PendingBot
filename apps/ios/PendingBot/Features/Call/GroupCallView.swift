@@ -82,6 +82,9 @@ struct GroupCallView: View {
                     token: room.human.token,
                     meetingId: room.meeting.id,
                     allowsInteraction: false,
+                    onEvent: { event in
+                        session.handleRealtimeKitParticipantEvent(event)
+                    },
                 )
                 .frame(width: 1, height: 1)
                 .opacity(0.01)
@@ -632,13 +635,21 @@ struct GroupCallView: View {
     }
 }
 
+enum RealtimeKitParticipantEvent: Sendable {
+    case joined
+    case localAudioEnabled
+    case remoteAudioAttached(String)
+    case failed(String)
+}
+
 struct RealtimeKitParticipantView: UIViewRepresentable {
     let token: String
     let meetingId: String
     var allowsInteraction: Bool = true
+    var onEvent: (RealtimeKitParticipantEvent) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator()
+        Coordinator(onEvent: onEvent)
     }
 
     func makeUIView(context: Context) -> WKWebView {
@@ -654,7 +665,9 @@ struct RealtimeKitParticipantView: UIViewRepresentable {
         return webView
     }
 
-    func updateUIView(_ webView: WKWebView, context: Context) {}
+    func updateUIView(_ webView: WKWebView, context: Context) {
+        context.coordinator.onEvent = onEvent
+    }
 
     private var html: String {
         let encodedToken = Self.jsString(token)
@@ -699,11 +712,17 @@ struct RealtimeKitParticipantView: UIViewRepresentable {
             const remoteTrackIds = new Map();
             const subscribedParticipants = new Set();
             document.getElementById('meeting').textContent = meetingId;
+            function post(type, payload = {}) {
+              try {
+                window.webkit && window.webkit.messageHandlers.rtkLog.postMessage({
+                  type,
+                  ...payload
+                });
+              } catch (_) {}
+            }
             function append(msg) {
               log.textContent += "\\n" + new Date().toISOString().slice(11, 19) + " " + msg;
-              try {
-                window.webkit && window.webkit.messageHandlers.rtkLog.postMessage(String(msg));
-              } catch (_) {}
+              post('log', { message: String(msg) });
             }
             function participantArray(map) {
               if (!map) return [];
@@ -739,6 +758,7 @@ struct RealtimeKitParticipantView: UIViewRepresentable {
               remoteTrackIds.set(key, track.id);
               audio.play().then(() => {
                 append('remote audio attached ' + key);
+                post('remote-audio-attached', { participantId: key });
               }).catch((err) => {
                 append('remote audio play failed ' + key + ' ' + err);
               });
@@ -816,6 +836,7 @@ struct RealtimeKitParticipantView: UIViewRepresentable {
                 await meeting.self.enableAudio();
               }
               append('local audio enabled');
+              post('local-audio-enabled');
             }
             async function join() {
               if (joining || joined) return;
@@ -853,9 +874,12 @@ struct RealtimeKitParticipantView: UIViewRepresentable {
                 state.textContent = 'joined';
                 joined = true;
                 append('joined');
+                post('joined');
               } catch (err) {
                 state.textContent = 'failed';
-                append(String(err && err.stack ? err.stack : err));
+                const message = String(err && err.stack ? err.stack : err);
+                append(message);
+                post('failed', { message });
               } finally {
                 joining = false;
               }
@@ -875,12 +899,35 @@ struct RealtimeKitParticipantView: UIViewRepresentable {
     }
 
     final class Coordinator: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMessageHandler {
+        var onEvent: (RealtimeKitParticipantEvent) -> Void
+
+        init(onEvent: @escaping (RealtimeKitParticipantEvent) -> Void) {
+            self.onEvent = onEvent
+        }
+
         func userContentController(
             _ userContentController: WKUserContentController,
             didReceive message: WKScriptMessage,
         ) {
             if message.name == "rtkLog" {
                 print("[rtk-webview]", message.body)
+                guard let body = message.body as? [String: Any],
+                      let type = body["type"] as? String
+                else { return }
+                Task { @MainActor [onEvent] in
+                    switch type {
+                    case "joined":
+                        onEvent(.joined)
+                    case "local-audio-enabled":
+                        onEvent(.localAudioEnabled)
+                    case "remote-audio-attached":
+                        onEvent(.remoteAudioAttached(body["participantId"] as? String ?? ""))
+                    case "failed":
+                        onEvent(.failed(body["message"] as? String ?? ""))
+                    default:
+                        break
+                    }
+                }
             }
         }
 
