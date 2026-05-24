@@ -36,8 +36,8 @@ const PRESENCE_AUDIT_MS = 5 * 1000;
 interface RoomContext {
   roomId: string;
   conversationId: string;
-  // Whose balance the voice tokens bill to (group creator today; M6's
-  // splitAndDebit will replace it with a real split).
+  // Legacy route metadata context. Audit billing uses conversationId
+  // and splits voice turns across present group members.
   billUserId: string;
   // The user who started this call. Always privileged.
   initiatorUserId: string;

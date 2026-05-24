@@ -102,8 +102,8 @@ function configString(config: unknown, key: string): string | null {
 // A group conversation the caller is a confirmed participant of.
 interface GroupContext {
   conversationId: string;
-  // Group creator — voice tokens bill to this user, matching how group
-  // text turns attribute cost today. M6's splitAndDebit replaces it.
+  // Legacy caller context for route metadata. Audit billing uses
+  // conversationId and splits group voice turns across present members.
   billUserId: string;
   locale: Awaited<ReturnType<typeof resolveLocale>>;
 }
@@ -142,8 +142,8 @@ async function loadGroupContext(
     return { ok: false, res: jsonError(c, 403, 'not_a_participant') };
   }
 
-  // Group creator owns the cost. Prefer conversation_group_meta.created_by,
-  // fall back to conversations.user_id when the meta row predates that col.
+  // Prefer the group creator as route metadata context; billing ownership
+  // is resolved later from conversationId by the audit layer.
   const { data: meta } = await supaSvc
     .from('conversation_group_meta')
     .select('created_by')

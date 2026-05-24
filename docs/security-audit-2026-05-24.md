@@ -52,13 +52,13 @@ Risk: raw bytes stay Worker-gated, but direct PostgREST reads can expose filenam
 
 Recommended fix: keep chat attachments uploader-only at the DB layer or base participant access on non-deleted message references. Split avatar visibility into a separate policy path that does not widen all attachments.
 
-### P1: Crew and temporary-group billing responsibility is not wired into the audit layer
+### P1: Crew and temporary-group billing responsibility was not wired into the audit layer
 
 The audit debit branch in `apps/edge/src/llm/router.ts` handles normal groups and single `userId` billing. It does not resolve `temporary_group` / `crew` conversations to `responsible_subject_id` and `billing_debit_subject`.
 
 Risk: Crew or bot-created temporary-group model calls can become free if only `conversationId` is supplied, or can charge the wrong user if callers pass `userId` as a local workaround.
 
-Recommended fix: make the audit layer resolve a single billable target from conversation type: user, group split, or responsible subject. Persist the chosen target snapshot on the audit row.
+Fixed on 2026-05-25 in `apps/edge/src/llm/router.ts`: audit persistence now resolves a single billable target from conversation type: group split, responsible subject, or legacy user. Crew and temporary-group turns debit `billing_debit_subject`, and the audit row metadata records the chosen subject target.
 
 ## Medium Priority Findings
 
@@ -69,6 +69,12 @@ Recommended fix: make the audit layer resolve a single billable target from conv
 Risk: the current signature check is strong, but the token semantics are looser than the app expects.
 
 Recommended fix: enforce expected issuer, audience, and `role === 'authenticated'` in the auth middleware.
+
+### Definer helper RPCs should not let callers probe another user id
+
+Several RLS helper functions accept a `p_user_id` parameter and are executable by `authenticated` because policies call them. That is fine when policies pass `auth.uid()`, but direct RPC callers could pass another user's id and probe subject, Crew, temporary-group, or runner visibility.
+
+Fixed on 2026-05-25 in `supabase/migrations/20260524180643_bind_definer_helpers_to_auth_uid.sql`: the helper functions now return false unless `auth.uid()` is null (service role) or `p_user_id = auth.uid()`.
 
 ### Admin support powers are well-gated but highly sensitive
 

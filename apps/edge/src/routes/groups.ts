@@ -444,7 +444,7 @@ groupRoutes.post('/:id/invite-bot', async (c) => {
   // Kick off the first-description LLM call in the background. The
   // RPC has already added the bot to the group; the description is
   // an enhancement for the router and shouldn't block the invite UI.
-  // The cost lands on the conv creator until M6 wires splitAndDebit.
+  // Audit billing resolves the group split from conversationId.
   c.executionCtx.waitUntil(
     generateInitialBotDescription({
       env: c.env,

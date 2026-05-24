@@ -34,9 +34,9 @@ function botConfigVisionModel(config: unknown): string | null {
 //    the previous bot's reply. Realtime streams each completed turn to
 //    iOS as it lands.
 //
-// Cost split is M6's job. For M3 (placeholder), each bot turn books
-// audit_log under the group's creator (`conversations.user_id`); M6
-// will replace that single user_id with multi-row audit_log_splits.
+// Billing is resolved in the audit layer from `conversationId`: group
+// conversations split across eligible members there, so this dispatcher
+// only needs a user id for legacy caller context and route metadata.
 
 export interface DispatchGroupTurnInput {
   env: Env;
@@ -123,9 +123,8 @@ export async function dispatchGroupTurn(
   const filtered = wakeBotIds.filter((id) => stillIds.has(id));
   if (filtered.length === 0) return { status: 'no_bots', bubblesPerBot: [] };
 
-  // 3. Resolve the conv creator for the cost-to-creator placeholder.
-  //    M6 will replace this with a real splitAndDebit hook; until
-  //    then runChatTurn's recordAudit writes user_id = creator.
+  // 3. Resolve the conv creator for legacy caller context. Audit billing
+  //    uses the conversation id and ignores this user id for group split.
   const { data: convRow } = await supa
     .from('conversations')
     .select('user_id, round_count')

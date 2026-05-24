@@ -43,8 +43,8 @@ export interface GroupRouterInput {
 export interface GroupRouterDecision {
   wakeBots: string[];
   rationale: string;
-  /// audit_log.id of the routing call itself, so callers can split
-  /// THIS call's cost too (M6).
+  /// audit_log.id of the routing call itself. Persisted audit billing
+  /// resolves the split from the conversation id.
   auditLogId: string | null;
 }
 

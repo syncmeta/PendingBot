@@ -55,7 +55,7 @@ describe('POST /v1/messages attachments', () => {
     const db = makeFakeDb({
       conversations: [
         {
-          id: '11111111-1111-1111-1111-111111111111',
+          id: '11111111-1111-7111-8111-111111111111',
           conversation_type: 'group',
           bot_id: null,
           user_id: null,
@@ -64,9 +64,9 @@ describe('POST /v1/messages attachments', () => {
       ],
       attachments: [
         {
-          id: '22222222-2222-2222-2222-222222222222',
+          id: '22222222-2222-7222-8222-222222222222',
           user_id: 'alice',
-          conversation_id: '11111111-1111-1111-1111-111111111111',
+          conversation_id: '11111111-1111-7111-8111-111111111111',
           mime_type: 'image/jpeg',
           filename: 'photo.jpg',
         },
@@ -83,10 +83,10 @@ describe('POST /v1/messages attachments', () => {
           'x-test-user-id': 'alice',
         },
         body: JSON.stringify({
-          conversationId: '11111111-1111-1111-1111-111111111111',
-          clientMessageId: '33333333-3333-3333-3333-333333333333',
+          conversationId: '11111111-1111-7111-8111-111111111111',
+          clientMessageId: '33333333-3333-7333-8333-333333333333',
           newMessage: '',
-          attachmentIds: ['22222222-2222-2222-2222-222222222222'],
+          attachmentIds: ['22222222-2222-7222-8222-222222222222'],
         }),
       },
       envWith(db),

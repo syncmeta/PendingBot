@@ -43,4 +43,22 @@ describe('security-sensitive migrations', () => {
     expect(sql).toMatch(/m\.attachments\s*->\s*'ids'\s*\?\s*attachments\.id::text/i);
     expect(sql).toMatch(/pendingbot\.is_participant\(m\.conversation_id\)/i);
   });
+
+  it('binds definer helper user parameters to auth.uid for direct authenticated RPC calls', () => {
+    const sql = readMigration('supabase/migrations/20260524180643_bind_definer_helpers_to_auth_uid.sql');
+
+    for (const name of [
+      'subject_has_user_access',
+      'subject_user_has_role',
+      'subject_can_create_crew',
+      'subject_can_manage_runners',
+      'subject_can_authorize_device_grant',
+      'is_temporary_group_human_member',
+      'can_view_temporary_group',
+    ]) {
+      expect(sql).toMatch(new RegExp(`function\\s+pendingbot\\.${name}\\s*\\(`, 'i'));
+    }
+    expect(sql.match(/auth\.uid\(\)\s+IS\s+NULL\s+OR\s+p_user_id\s*=\s*auth\.uid\(\)/gi)?.length)
+      .toBeGreaterThanOrEqual(7);
+  });
 });
