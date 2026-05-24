@@ -6,6 +6,7 @@ import { userClient } from '../lib/supabase';
 import {
   getBalance,
   getConfigInt,
+  getSubjectBalance,
   redeemCode,
   RedemptionError,
 } from '../lib/billing';
@@ -124,6 +125,43 @@ meRoutes.get('/balance', async (c) => {
     lifetime_topup_credits: balance?.lifetime_topup_credits ?? 0,
     lifetime_spent_credits: balance?.lifetime_spent_credits ?? 0,
     min_threshold: threshold ?? 0,
+  });
+});
+
+// GET /v1/me/subject — personal responsibility subject + subject wallet
+// compatibility read. Crew/temporary-group creation can use this as the
+// bridge from the signed-in user to the billing/control subject without
+// switching the existing wallet UI in one step.
+meRoutes.get('/subject', async (c) => {
+  const userJwt = c.var.userJwt!;
+  const userId = c.var.userId!;
+  const supa = userClient(c.env, userJwt);
+
+  const { data: subject, error } = await supa
+    .from('subjects')
+    .select('id, subject_type, display_name, status, created_at, updated_at')
+    .eq('subject_type', 'user_account')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (error) {
+    console.error('[me/subject] subject read failed', error);
+    return jsonError(c, 500, 'internal_error');
+  }
+  if (!subject) {
+    return jsonError(c, 404, 'subject_not_found', {
+      message: '个人责任主体尚未初始化',
+    });
+  }
+
+  const wallet = await getSubjectBalance(supa, subject.id);
+  return c.json({
+    subject,
+    wallet: {
+      balance_credits: wallet?.balance_credits ?? 0,
+      lifetime_topup_credits: wallet?.lifetime_topup_credits ?? 0,
+      lifetime_spent_credits: wallet?.lifetime_spent_credits ?? 0,
+    },
   });
 });
 

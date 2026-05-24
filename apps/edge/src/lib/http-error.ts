@@ -42,6 +42,7 @@ export type ApiErrorCode =
   // ── Billing ───────────────────────────────────────────────
   | 'insufficient_balance'
   | 'quota_exceeded'
+  | 'subject_not_found'
   | 'redemption_not_found'
   | 'redemption_already_used'
 
