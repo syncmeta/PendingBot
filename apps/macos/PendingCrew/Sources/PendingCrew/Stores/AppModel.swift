@@ -22,6 +22,7 @@ final class AppModel: ObservableObject {
     @Published var helpRequests: [HumanHelpRequest] = []
     @Published var deviceLoginChallenge: DeviceLoginChallenge?
     @Published var deviceGrantToken: String?
+    @Published var localWorkspacePath: String
     @Published var selection: Selection? = .crews
     @Published var isLoading = false
     @Published var statusMessage = ""
@@ -37,6 +38,7 @@ final class AppModel: ObservableObject {
         debugUserJWT = ""
 #endif
         deviceGrantToken = KeychainStore.get(account: "device-grant")
+        localWorkspacePath = UserDefaults.standard.string(forKey: "localWorkspacePath") ?? FileManager.default.homeDirectoryForCurrentUser.path
     }
 
     var api: PendingBotAPI? {
@@ -83,6 +85,7 @@ final class AppModel: ObservableObject {
 
     func saveSettings() {
         UserDefaults.standard.set(apiBaseURL, forKey: "apiBaseURL")
+        UserDefaults.standard.set(localWorkspacePath, forKey: "localWorkspacePath")
 #if DEBUG
         if debugUserJWT.isEmpty {
             KeychainStore.delete(account: "debug-worker-jwt")
@@ -240,6 +243,62 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func runActiveSessionLocally() async {
+        await run("本机执行已结束") {
+            guard let api else { throw LocalError.missingAuth }
+            guard let hostId = activeRunnerHostId, let session = activeRunnerSession else {
+                throw LocalError.missingRunnerSession
+            }
+            guard let profile = LocalCodingAgentProfile.defaultProfile(
+                for: session.runnerKind,
+                workingDirectoryPath: localWorkspacePath
+            ) else {
+                throw LocalError.unsupportedLocalRunner
+            }
+
+            let command = profile.renderCommand(for: session)
+            _ = try await api.appendRunnerEvent(
+                hostId: hostId,
+                sessionId: session.id,
+                eventType: "status",
+                summary: "本机执行已启动",
+                progressSummary: "本机执行中"
+            )
+
+            let runner = LocalCodingAgentProcessRunner()
+            let result: LocalCodingAgentProcessResult
+            do {
+                result = try await Task.detached {
+                    try await runner.run(command)
+                }.value
+            } catch {
+                let summary = "本机执行启动失败：\(error.localizedDescription)"
+                try? await api.finishRunnerSession(
+                    hostId: hostId,
+                    sessionId: session.id,
+                    status: "failed",
+                    summary: summary,
+                    progressSummary: summary
+                )
+                throw error
+            }
+
+            let summary = LocalCodingAgentOutput.finalSummary(result)
+            try await api.finishRunnerSession(
+                hostId: hostId,
+                sessionId: session.id,
+                status: result.exitCode == 0 ? "completed" : "failed",
+                summary: summary,
+                progressSummary: result.exitCode == 0 ? "本机执行完成" : "本机执行失败"
+            )
+            sessionsByCrew[session.crewConversationId] = try await api.listSessions(crewId: session.crewConversationId)
+            eventsBySession[session.id] = try await api.listEvents(sessionId: session.id)
+            activeRunnerLeaseId = nil
+            activeRunnerSession = nil
+            runnerHosts = try await api.listRunnerHosts()
+        }
+    }
+
     func appendRunnerStatus(summary: String) async {
         await run("已上报进度") {
             guard let api else { throw LocalError.missingAuth }
@@ -305,6 +364,7 @@ enum LocalError: LocalizedError {
     case missingSubject
     case missingRunnerSession
     case missingDeviceLoginChallenge
+    case unsupportedLocalRunner
 
     var errorDescription: String? {
         switch self {
@@ -316,6 +376,8 @@ enum LocalError: LocalizedError {
             "当前没有已认领的 runner session"
         case .missingDeviceLoginChallenge:
             "请先创建扫码登录"
+        case .unsupportedLocalRunner:
+            "这个 session 不是本机 runner 类型"
         }
     }
 }

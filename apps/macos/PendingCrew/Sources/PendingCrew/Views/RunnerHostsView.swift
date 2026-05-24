@@ -25,6 +25,12 @@ struct RunnerHostsView: View {
                 TextField("显示名称", text: $displayName)
                     .textFieldStyle(.roundedBorder)
 
+                TextField("工作目录", text: $model.localWorkspacePath)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit {
+                        model.saveSettings()
+                    }
+
                 RunnerKindPicker(selectedKinds: $selectedKinds)
 
                 Button {
@@ -93,6 +99,14 @@ struct RunnerHostsView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+
+                    Button {
+                        model.saveSettings()
+                        Task { await model.runActiveSessionLocally() }
+                    } label: {
+                        Label("本机执行", systemImage: "terminal")
+                    }
+                    .disabled(model.localWorkspacePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
                     TextField("进度摘要", text: $progressSummary)
                         .textFieldStyle(.roundedBorder)
