@@ -547,10 +547,9 @@ private enum ArenaModelSort {
             case (nil, _?):
                 return false
             default:
-                let leftPrice = lhs.blended_usd_per_million ?? .infinity
-                let rightPrice = rhs.blended_usd_per_million ?? .infinity
-                if leftPrice != rightPrice { return leftPrice < rightPrice }
-                return lhs.display_name.localizedCaseInsensitiveCompare(rhs.display_name) == .orderedAscending
+                let nameOrder = lhs.display_name.localizedCaseInsensitiveCompare(rhs.display_name)
+                if nameOrder != .orderedSame { return nameOrder == .orderedAscending }
+                return lhs.slug.localizedCaseInsensitiveCompare(rhs.slug) == .orderedAscending
             }
         }
     }
