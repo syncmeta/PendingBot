@@ -41,6 +41,7 @@ import { RealtimeKitBridge } from './realtimekit-bridge';
 import { closeRealtimeKitBrowser } from './browser-manager';
 
 const DEFAULT_VOICE_MODEL_SLUG = 'gpt-realtime-2';
+const REALTIME_MAX_OUTPUT_TOKENS = 512;
 
 // Audio rates. The SFU WebSocket adapter is fixed at 48 kHz stereo;
 // OpenAI Realtime speaks 24 kHz mono.
@@ -65,6 +66,11 @@ const PLAYOUT_SAMPLES = (OPENAI_RATE * PLAYOUT_TICK_MS) / 1000; // 480 mono@24k
 // does — so buffer generously.
 const PREROLL_MS = 240;
 const PREROLL_SAMPLES = (OPENAI_RATE * PREROLL_MS) / 1000; // 5760
+// RealtimeKit already gives us a real WebRTC participant and the browser
+// bridge has its own WebAudio scheduler. Keeping the old SFU-sized cushion
+// here adds audible bot latency, so RTK uses a much tighter queue.
+const RTK_PREROLL_MS = 80;
+const RTK_PREROLL_SAMPLES = (OPENAI_RATE * RTK_PREROLL_MS) / 1000; // 1920
 // Cap the inter-bot buffer so a continuously-talking bot can't grow it
 // without bound if another leg stalls. 2 s is plenty for "bots hear each
 // other"; older audio is dropped.
@@ -74,6 +80,11 @@ const INTERBOT_CAP_SAMPLES = OPENAI_RATE * 2;
 // 5 s keeps a greeting buffered for a normal ingest connect while bounding
 // memory + latency; older audio is dropped.
 const PLAYOUT_CAP_SAMPLES = OPENAI_RATE * 5;
+// In a live room stale bot speech is worse than clipped bot speech. RTK
+// output can arrive faster than wall-clock audio, so bound queued speech to
+// a short, conversational window.
+const RTK_PLAYOUT_CAP_MS = 1_500;
+const RTK_PLAYOUT_CAP_SAMPLES = (OPENAI_RATE * RTK_PLAYOUT_CAP_MS) / 1000;
 
 const MAX_INGEST_PAYLOAD = 28_000;
 
@@ -111,6 +122,7 @@ interface BotLeg {
   // Diagnostics for the current ~2s stats window (reset on emit).
   lastDeltaAt: number;
   maxGapMs: number;
+  droppedOutputMs: number;
   underruns: number;
   voiceFrames: number;
   silenceFrames: number;
@@ -133,18 +145,22 @@ function totalLen(chunks: Int16Array[]): number {
 }
 
 // Drop oldest samples so a chunk list stays under `cap` total samples.
-function trimOldest(chunks: Int16Array[], cap: number): void {
+export function trimOldest(chunks: Int16Array[], cap: number): number {
   let over = totalLen(chunks) - cap;
+  let dropped = 0;
   while (over > 0 && chunks.length > 0) {
     const head = chunks[0];
     if (head.length <= over) {
       over -= head.length;
+      dropped += head.length;
       chunks.shift();
     } else {
       chunks[0] = new Int16Array(head.subarray(over));
+      dropped += over;
       over = 0;
     }
   }
+  return dropped;
 }
 
 // Take up to `n` samples off the front of a chunk list; return the taken
@@ -169,6 +185,15 @@ function rmsLevel(samples: Int16Array): number {
     count++;
   }
   return Math.sqrt(sum / Math.max(1, count));
+}
+
+export function playoutLimitsForRealtimeKit(hasRealtimeKit: boolean): {
+  prerollSamples: number;
+  capSamples: number;
+} {
+  return hasRealtimeKit
+    ? { prerollSamples: RTK_PREROLL_SAMPLES, capSamples: RTK_PLAYOUT_CAP_SAMPLES }
+    : { prerollSamples: PREROLL_SAMPLES, capSamples: PLAYOUT_CAP_SAMPLES };
 }
 
 export class Room {
@@ -288,6 +313,7 @@ export class Room {
       console.log(
         `[room] stats bot=${botId} depth=${depthMs}ms state=${leg.playoutState} ` +
           `underruns=${leg.underruns} maxGap=${leg.maxGapMs}ms ` +
+          `dropped=${leg.droppedOutputMs}ms ` +
           `voice=${leg.voiceFrames} silence=${leg.silenceFrames} ` +
           `rtkInput=${leg.rtkInputFrames} rtkQuiet=${leg.rtkQuietFrames} ` +
           `rtkLevel=${leg.rtkInputLevel.toFixed(3)}`,
@@ -301,6 +327,7 @@ export class Room {
         playoutDepthMs: depthMs,
         underruns: leg.underruns,
         maxGapMs: leg.maxGapMs,
+        droppedOutputMs: leg.droppedOutputMs,
         inputLevel: leg.rtkInputLevel,
         inputFrames: leg.rtkInputFrames,
         quietFrames: leg.rtkQuietFrames,
@@ -309,6 +336,7 @@ export class Room {
       });
       leg.underruns = 0;
       leg.maxGapMs = 0;
+      leg.droppedOutputMs = 0;
       leg.voiceFrames = 0;
       leg.silenceFrames = 0;
       leg.rtkInputLevel = 0;
@@ -399,6 +427,7 @@ export class Room {
       inputTailFlushes: 0,
       lastDeltaAt: 0,
       maxGapMs: 0,
+      droppedOutputMs: 0,
       underruns: 0,
       voiceFrames: 0,
       silenceFrames: 0,
@@ -522,6 +551,7 @@ export class Room {
           session: {
             type: 'realtime',
             instructions: leg.spec.instructions,
+            max_output_tokens: REALTIME_MAX_OUTPUT_TOKENS,
             output_modalities: ['audio'],
             tools: leg.spec.tools,
             tool_choice: 'auto',
@@ -622,7 +652,14 @@ export class Room {
     // Bound both buffers; drop oldest beyond the caps. Playout is capped in
     // case the ingest socket is slow/never connects; inter-bot in case a
     // continuously-talking bot outruns another leg's drain.
-    trimOldest(leg.playout, PLAYOUT_CAP_SAMPLES);
+    const cap = this.playoutCapSamples(leg);
+    const dropped = trimOldest(leg.playout, cap);
+    if (dropped > 0) {
+      leg.droppedOutputMs += Math.round(dropped / (OPENAI_RATE / 1000));
+      // After trimming stale audio, keep playing from the new head instead of
+      // rebuilding a large cushion and adding more latency.
+      leg.playoutState = 'playing';
+    }
     trimOldest(leg.interbot, INTERBOT_CAP_SAMPLES);
   }
 
@@ -759,7 +796,7 @@ export class Room {
       if (!ing && !rtkBridge) continue;
 
       if (leg.playoutState === 'buffering') {
-        if (totalLen(leg.playout) >= PREROLL_SAMPLES) {
+        if (totalLen(leg.playout) >= this.prerollSamples(leg)) {
           leg.playoutState = 'playing';
         } else {
           // Keep the SFU track continuous with comfort silence while we
@@ -794,6 +831,14 @@ export class Room {
   private sendOutput(leg: BotLeg, mono24: Int16Array): void {
     if (leg.ingestWs) this.sendIngest(leg.ingestWs, mono24);
     leg.rtkBridge?.sendAudio(mono24);
+  }
+
+  private prerollSamples(leg: BotLeg): number {
+    return playoutLimitsForRealtimeKit(Boolean(leg.rtkBridge)).prerollSamples;
+  }
+
+  private playoutCapSamples(leg: BotLeg): number {
+    return playoutLimitsForRealtimeKit(Boolean(leg.rtkBridge)).capSamples;
   }
 
   // Upsample a 24 kHz mono frame to 48 kHz stereo and push it to the SFU

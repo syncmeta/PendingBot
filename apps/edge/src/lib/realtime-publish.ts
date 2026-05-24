@@ -48,6 +48,7 @@ export interface VoiceCallEvent {
       playoutDepthMs?: number;
       underruns?: number;
       maxGapMs?: number;
+      droppedOutputMs?: number;
       inputLevel?: number;
       inputFrames?: number;
       quietFrames?: number;

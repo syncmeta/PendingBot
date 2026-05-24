@@ -20,6 +20,7 @@ struct CallParticipantDiagnostic: Sendable, Equatable, Identifiable {
     let playoutDepthMs: Int?
     let underruns: Int?
     let maxGapMs: Int?
+    let droppedOutputMs: Int?
     let inputLevel: Double?
     let inputFrames: Int?
     let quietFrames: Int?
@@ -89,6 +90,7 @@ struct GroupMediaDiagnostics: Sendable, Equatable, Decodable {
         let playoutDepthMs: Int?
         let underruns: Int?
         let maxGapMs: Int?
+        let droppedOutputMs: Int?
         let inputLevel: Double?
         let inputFrames: Int?
         let quietFrames: Int?
@@ -167,7 +169,12 @@ struct CallDiagnosticsPanel: View {
                                 .lineLimit(1)
                             Spacer()
                             if let inputFrames = p.inputFrames, let quietFrames = p.quietFrames {
-                                Text("入 \(inputFrames) 静 \(quietFrames)")
+                                Text(inputQuietText(inputFrames: inputFrames, quietFrames: quietFrames, dropped: p.droppedOutputMs))
+                                    .font(Theme.Fonts.caption)
+                                    .monospacedDigit()
+                                    .foregroundStyle(.secondary)
+                            } else if let dropped = p.droppedOutputMs, dropped > 0 {
+                                Text("丢弃 \(formatDuration(dropped))")
                                     .font(Theme.Fonts.caption)
                                     .monospacedDigit()
                                     .foregroundStyle(.secondary)
@@ -255,6 +262,14 @@ struct CallDiagnosticsPanel: View {
             return String(format: "%.1fs", Double(ms) / 1000)
         }
         return "\(ms)ms"
+    }
+
+    private func inputQuietText(inputFrames: Int, quietFrames: Int, dropped: Int?) -> String {
+        var text = "入 \(inputFrames) 静 \(quietFrames)"
+        if let dropped, dropped > 0 {
+            text += " 丢 \(formatDuration(dropped))"
+        }
+        return text
     }
 
     private static let timeFormatter: DateFormatter = {
@@ -486,6 +501,7 @@ final class WebRTCDiagnosticsSampler {
                 playoutDepthMs: nil,
                 underruns: nil,
                 maxGapMs: nil,
+                droppedOutputMs: nil,
                 inputLevel: nil,
                 inputFrames: nil,
                 quietFrames: nil,
@@ -500,6 +516,7 @@ final class WebRTCDiagnosticsSampler {
                 playoutDepthMs: nil,
                 underruns: nil,
                 maxGapMs: nil,
+                droppedOutputMs: nil,
                 inputLevel: nil,
                 inputFrames: nil,
                 quietFrames: nil,
