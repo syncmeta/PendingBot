@@ -886,6 +886,13 @@ export type Database = {
             referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "crew_sessions_runner_host_fkey"
+            columns: ["runner_host_id"]
+            isOneToOne: false
+            referencedRelation: "runner_hosts"
+            referencedColumns: ["id"]
+          },
         ]
       }
       device_tokens: {
@@ -2034,6 +2041,124 @@ export type Database = {
         }
         Relationships: []
       }
+      runner_hosts: {
+        Row: {
+          allowed_runner_kinds: Json
+          capabilities: Json
+          created_at: string
+          device_id: string | null
+          display_name: string
+          id: string
+          last_seen_at: string | null
+          platform: string
+          responsible_subject_id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          allowed_runner_kinds?: Json
+          capabilities?: Json
+          created_at?: string
+          device_id?: string | null
+          display_name: string
+          id?: string
+          last_seen_at?: string | null
+          platform: string
+          responsible_subject_id: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          allowed_runner_kinds?: Json
+          capabilities?: Json
+          created_at?: string
+          device_id?: string | null
+          display_name?: string
+          id?: string
+          last_seen_at?: string | null
+          platform?: string
+          responsible_subject_id?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "runner_hosts_device_id_fkey"
+            columns: ["device_id"]
+            isOneToOne: false
+            referencedRelation: "device_tokens"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "runner_hosts_responsible_subject_id_fkey"
+            columns: ["responsible_subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      runner_leases: {
+        Row: {
+          created_at: string
+          crew_session_id: string
+          expires_at: string
+          granted_by_user_id: string | null
+          id: string
+          lease_status: string
+          lease_token_hash: string
+          released_at: string | null
+          responsible_subject_id: string
+          runner_host_id: string
+        }
+        Insert: {
+          created_at?: string
+          crew_session_id: string
+          expires_at: string
+          granted_by_user_id?: string | null
+          id?: string
+          lease_status?: string
+          lease_token_hash: string
+          released_at?: string | null
+          responsible_subject_id: string
+          runner_host_id: string
+        }
+        Update: {
+          created_at?: string
+          crew_session_id?: string
+          expires_at?: string
+          granted_by_user_id?: string | null
+          id?: string
+          lease_status?: string
+          lease_token_hash?: string
+          released_at?: string | null
+          responsible_subject_id?: string
+          runner_host_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "runner_leases_crew_session_id_fkey"
+            columns: ["crew_session_id"]
+            isOneToOne: false
+            referencedRelation: "crew_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "runner_leases_responsible_subject_id_fkey"
+            columns: ["responsible_subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "runner_leases_runner_host_id_fkey"
+            columns: ["runner_host_id"]
+            isOneToOne: false
+            referencedRelation: "runner_hosts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       session_dependencies: {
         Row: {
           created_at: string
@@ -3176,6 +3301,14 @@ export type Database = {
       }
       can_view_crew_session: {
         Args: { p_crew_session_id: string; p_user_id: string }
+        Returns: boolean
+      }
+      can_view_runner_host: {
+        Args: { p_runner_host_id: string; p_user_id: string }
+        Returns: boolean
+      }
+      can_view_runner_lease: {
+        Args: { p_runner_lease_id: string; p_user_id: string }
         Returns: boolean
       }
       can_view_temporary_group: {
