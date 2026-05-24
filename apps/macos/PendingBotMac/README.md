@@ -16,6 +16,7 @@
 - 创建和查看 Crew。
 - 在 Crew 内创建 session，并查看 session event。
 - 注册和心跳 runner host。
+- runner host 可以认领一个排队中的 Crew session、上报结构化进度事件、把 session 标记为完成或失败。
 - 查看并处理机器人发起的“有求于你”请求。
 
 ## 还没有做
@@ -31,4 +32,3 @@
 ```bash
 swift build --package-path apps/macos/PendingBotMac
 ```
-

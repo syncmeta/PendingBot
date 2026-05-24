@@ -4,12 +4,15 @@ struct RunnerHostsView: View {
     @EnvironmentObject private var model: AppModel
     @State private var displayName = Host.current().localizedName ?? "Mac Runner"
     @State private var selectedKinds: Set<RunnerKind> = [.localCodex]
+    @State private var progressSummary = "正在处理"
+    @State private var finalSummary = "已完成"
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 registerBox
                 hostsBox
+                activeSessionBox
             }
             .padding()
         }
@@ -62,10 +65,60 @@ struct RunnerHostsView: View {
                                 Label("心跳", systemImage: "waveform.path.ecg")
                             }
                             .disabled(selectedKinds.isEmpty)
+
+                            Button {
+                                Task { await model.claimNextSession(hostId: host.id, kinds: selectedKinds) }
+                            } label: {
+                                Label("认领", systemImage: "tray.and.arrow.down")
+                            }
+                            .disabled(selectedKinds.isEmpty)
                         }
                         Divider()
                     }
                 }
+            }
+        }
+    }
+
+    private var activeSessionBox: some View {
+        GroupBox("当前认领") {
+            if let session = model.activeRunnerSession {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(session.taskBrief)
+                        .font(.headline)
+                    Text("\(session.runnerKind) · \(session.status)")
+                        .foregroundStyle(.secondary)
+                    if let leaseId = model.activeRunnerLeaseId {
+                        Text("lease: \(leaseId)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    TextField("进度摘要", text: $progressSummary)
+                        .textFieldStyle(.roundedBorder)
+                    HStack {
+                        Button {
+                            Task { await model.appendRunnerStatus(summary: progressSummary) }
+                        } label: {
+                            Label("上报进度", systemImage: "dot.radiowaves.left.and.right")
+                        }
+
+                        TextField("结束摘要", text: $finalSummary)
+                            .textFieldStyle(.roundedBorder)
+                        Button {
+                            Task { await model.finishActiveRunnerSession(status: "completed", summary: finalSummary) }
+                        } label: {
+                            Label("完成", systemImage: "checkmark.circle")
+                        }
+                        Button(role: .destructive) {
+                            Task { await model.finishActiveRunnerSession(status: "failed", summary: finalSummary) }
+                        } label: {
+                            Label("失败", systemImage: "xmark.circle")
+                        }
+                    }
+                }
+            } else {
+                ContentUnavailableView("还没有认领 session", systemImage: "tray")
             }
         }
     }
@@ -106,4 +159,3 @@ private struct FlowLayout<Content: View>: View {
         }
     }
 }
-

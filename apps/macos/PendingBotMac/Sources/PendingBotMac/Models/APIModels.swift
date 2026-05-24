@@ -40,6 +40,11 @@ struct OkResponse: Decodable {
     let ok: Bool
 }
 
+struct RunnerClaimResponse: Decodable {
+    let leaseId: String?
+    let session: CrewSession?
+}
+
 struct Crew: Decodable, Identifiable {
     var id: String { conversationId }
     let conversationId: String
@@ -167,4 +172,3 @@ enum JSONValue: Codable, Equatable {
         }
     }
 }
-

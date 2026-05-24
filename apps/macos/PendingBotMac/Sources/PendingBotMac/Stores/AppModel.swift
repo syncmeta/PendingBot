@@ -16,6 +16,9 @@ final class AppModel: ObservableObject {
     @Published var sessionsByCrew: [String: [CrewSession]] = [:]
     @Published var eventsBySession: [String: [SessionEvent]] = [:]
     @Published var runnerHosts: [RunnerHost] = []
+    @Published var activeRunnerHostId: String?
+    @Published var activeRunnerLeaseId: String?
+    @Published var activeRunnerSession: CrewSession?
     @Published var helpRequests: [HumanHelpRequest] = []
     @Published var selection: Selection? = .crews
     @Published var isLoading = false
@@ -128,6 +131,62 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func claimNextSession(hostId: String, kinds: Set<RunnerKind>) async {
+        await run("已检查队列") {
+            guard let api else { throw LocalError.missingAuth }
+            let claim = try await api.claimNextSession(hostId: hostId, runnerKinds: Array(kinds))
+            activeRunnerHostId = hostId
+            activeRunnerLeaseId = claim.leaseId
+            activeRunnerSession = claim.session
+            if let session = claim.session {
+                sessionsByCrew[session.crewConversationId] = try await api.listSessions(crewId: session.crewConversationId)
+                eventsBySession[session.id] = try await api.listEvents(sessionId: session.id)
+                statusMessage = "已认领 session"
+            } else {
+                statusMessage = "没有可认领的 session"
+            }
+            runnerHosts = try await api.listRunnerHosts()
+        }
+    }
+
+    func appendRunnerStatus(summary: String) async {
+        await run("已上报进度") {
+            guard let api else { throw LocalError.missingAuth }
+            guard let hostId = activeRunnerHostId, let session = activeRunnerSession else {
+                throw LocalError.missingRunnerSession
+            }
+            _ = try await api.appendRunnerEvent(
+                hostId: hostId,
+                sessionId: session.id,
+                eventType: "status",
+                summary: summary,
+                progressSummary: summary
+            )
+            eventsBySession[session.id] = try await api.listEvents(sessionId: session.id)
+            sessionsByCrew[session.crewConversationId] = try await api.listSessions(crewId: session.crewConversationId)
+        }
+    }
+
+    func finishActiveRunnerSession(status: String, summary: String) async {
+        await run("Session 已结束") {
+            guard let api else { throw LocalError.missingAuth }
+            guard let hostId = activeRunnerHostId, let session = activeRunnerSession else {
+                throw LocalError.missingRunnerSession
+            }
+            try await api.finishRunnerSession(
+                hostId: hostId,
+                sessionId: session.id,
+                status: status,
+                summary: summary,
+                progressSummary: summary
+            )
+            sessionsByCrew[session.crewConversationId] = try await api.listSessions(crewId: session.crewConversationId)
+            eventsBySession[session.id] = try await api.listEvents(sessionId: session.id)
+            activeRunnerLeaseId = nil
+            activeRunnerSession = nil
+        }
+    }
+
     func decideHelpRequest(id: String, accepted: Bool) async {
         await run(accepted ? "已接受请求" : "已拒绝请求") {
             guard let api else { throw LocalError.missingAuth }
@@ -153,6 +212,7 @@ final class AppModel: ObservableObject {
 enum LocalError: LocalizedError {
     case missingAuth
     case missingSubject
+    case missingRunnerSession
 
     var errorDescription: String? {
         switch self {
@@ -160,7 +220,8 @@ enum LocalError: LocalizedError {
             "请先填写 API URL 和登录 JWT"
         case .missingSubject:
             "还没有加载到当前账号的 subject"
+        case .missingRunnerSession:
+            "当前没有已认领的 runner session"
         }
     }
 }
-

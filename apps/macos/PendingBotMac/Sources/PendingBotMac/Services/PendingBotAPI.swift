@@ -78,6 +78,51 @@ struct PendingBotAPI {
         )
     }
 
+    func claimNextSession(hostId: String, runnerKinds: [RunnerKind]) async throws -> RunnerClaimResponse {
+        try await post(
+            "/v1/runner-hosts/\(hostId)/claim-next",
+            body: ClaimNextBody(runnerKinds: runnerKinds.map(\.rawValue))
+        )
+    }
+
+    func appendRunnerEvent(
+        hostId: String,
+        sessionId: String,
+        eventType: String,
+        summary: String,
+        progressSummary: String?
+    ) async throws -> String {
+        let response: AppendRunnerEventResponse = try await post(
+            "/v1/runner-hosts/\(hostId)/sessions/\(sessionId)/events",
+            body: RunnerEventBody(
+                eventType: eventType,
+                visibility: "crew_members",
+                summary: summary,
+                payload: [:],
+                progressSummary: progressSummary
+            )
+        )
+        return response.eventId
+    }
+
+    func finishRunnerSession(
+        hostId: String,
+        sessionId: String,
+        status: String,
+        summary: String,
+        progressSummary: String?
+    ) async throws {
+        let _: OkResponse = try await post(
+            "/v1/runner-hosts/\(hostId)/sessions/\(sessionId)/finish",
+            body: FinishRunnerSessionBody(
+                status: status,
+                summary: summary,
+                payload: [:],
+                progressSummary: progressSummary
+            )
+        )
+    }
+
     func listHumanHelpRequests() async throws -> [HumanHelpRequest] {
         let response: ListResponse<HumanHelpRequest> = try await get("/v1/human-help-requests")
         return response.items
@@ -145,6 +190,29 @@ private struct RegisterRunnerHostBody: Encodable {
 private struct RunnerHeartbeatBody: Encodable {
     let capabilities: [String: String]
     let allowedRunnerKinds: [String]
+}
+
+private struct ClaimNextBody: Encodable {
+    let runnerKinds: [String]
+}
+
+private struct RunnerEventBody: Encodable {
+    let eventType: String
+    let visibility: String
+    let summary: String
+    let payload: [String: String]
+    let progressSummary: String?
+}
+
+private struct AppendRunnerEventResponse: Decodable {
+    let eventId: String
+}
+
+private struct FinishRunnerSessionBody: Encodable {
+    let status: String
+    let summary: String
+    let payload: [String: String]
+    let progressSummary: String?
 }
 
 private struct ServerErrorEnvelope: Decodable {

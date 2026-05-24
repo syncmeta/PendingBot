@@ -79,6 +79,36 @@ const HeartbeatBody = z.object({
   allowedRunnerKinds: z.array(RunnerKind).optional(),
 });
 
+const ClaimNextBody = z.object({
+  runnerKinds: z.array(RunnerKind).optional(),
+});
+
+const RunnerEventBody = z.object({
+  eventType: z.enum([
+    'started',
+    'context_injected',
+    'status',
+    'tool_call',
+    'tool_result',
+    'permission_requested',
+    'permission_resolved',
+    'artifact_created',
+    'posted_to_crew',
+    'blocked',
+  ]),
+  visibility: z.enum(['controllers', 'crew_members', 'private_system']).default('crew_members'),
+  summary: z.string().trim().max(1_000).optional(),
+  payload: JsonObject.default({}),
+  progressSummary: z.string().trim().max(1_000).optional(),
+});
+
+const FinishBody = z.object({
+  status: z.enum(['completed', 'failed', 'cancelled']),
+  summary: z.string().trim().max(1_000).optional(),
+  payload: JsonObject.default({}),
+  progressSummary: z.string().trim().max(1_000).optional(),
+});
+
 runnerHostRoutes.post('/:id/heartbeat', async (c) => {
   const userJwt = c.var.userJwt!;
   const runnerHostId = c.req.param('id');
@@ -94,6 +124,82 @@ runnerHostRoutes.post('/:id/heartbeat', async (c) => {
     p_runner_host_id: runnerHostId,
     p_capabilities: (parsed.capabilities ?? null) as Json,
     p_allowed_runner_kinds: (parsed.allowedRunnerKinds ?? null) as Json,
+  });
+  if (error) return mapRpcError(c, error);
+  return c.json({ ok: data === true });
+});
+
+runnerHostRoutes.post('/:id/claim-next', async (c) => {
+  const userJwt = c.var.userJwt!;
+  const runnerHostId = c.req.param('id');
+  let parsed: z.infer<typeof ClaimNextBody>;
+  try {
+    parsed = ClaimNextBody.parse(await c.req.json().catch(() => ({})));
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+
+  const supa = userClient(c.env, userJwt);
+  const { data, error } = await supa.rpc('claim_next_crew_session', {
+    p_runner_host_id: runnerHostId,
+    p_runner_kinds: (parsed.runnerKinds ?? null) as Json,
+  });
+  if (error) return mapRpcError(c, error);
+  if (!data || typeof data !== 'object') {
+    return c.json({ leaseId: null, session: null });
+  }
+
+  const claim = data as { lease_id?: unknown; session?: unknown };
+  return c.json({
+    leaseId: typeof claim.lease_id === 'string' ? claim.lease_id : null,
+    session: claim.session ?? null,
+  });
+});
+
+runnerHostRoutes.post('/:id/sessions/:sessionId/events', async (c) => {
+  const userJwt = c.var.userJwt!;
+  const runnerHostId = c.req.param('id');
+  const sessionId = c.req.param('sessionId');
+  let parsed: z.infer<typeof RunnerEventBody>;
+  try {
+    parsed = RunnerEventBody.parse(await c.req.json());
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+
+  const supa = userClient(c.env, userJwt);
+  const { data, error } = await supa.rpc('append_crew_session_event_from_runner', {
+    p_runner_host_id: runnerHostId,
+    p_crew_session_id: sessionId,
+    p_event_type: parsed.eventType,
+    p_visibility: parsed.visibility,
+    p_summary: parsed.summary ?? '',
+    p_payload: parsed.payload as Json,
+    p_progress_summary: parsed.progressSummary ?? null,
+  });
+  if (error) return mapRpcError(c, error);
+  return c.json({ eventId: data });
+});
+
+runnerHostRoutes.post('/:id/sessions/:sessionId/finish', async (c) => {
+  const userJwt = c.var.userJwt!;
+  const runnerHostId = c.req.param('id');
+  const sessionId = c.req.param('sessionId');
+  let parsed: z.infer<typeof FinishBody>;
+  try {
+    parsed = FinishBody.parse(await c.req.json());
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+
+  const supa = userClient(c.env, userJwt);
+  const { data, error } = await supa.rpc('finish_crew_session_from_runner', {
+    p_runner_host_id: runnerHostId,
+    p_crew_session_id: sessionId,
+    p_status: parsed.status,
+    p_summary: parsed.summary ?? '',
+    p_payload: parsed.payload as Json,
+    p_progress_summary: parsed.progressSummary ?? null,
   });
   if (error) return mapRpcError(c, error);
   return c.json({ ok: data === true });

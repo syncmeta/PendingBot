@@ -3442,6 +3442,33 @@ export type Database = {
         Args: { p_conversation_id: string; p_user_id: string }
         Returns: boolean
       }
+      claim_next_crew_session: {
+        Args: { p_runner_host_id: string; p_runner_kinds?: Json }
+        Returns: Json
+      }
+      append_crew_session_event_from_runner: {
+        Args: {
+          p_crew_session_id: string
+          p_event_type: string
+          p_payload?: Json
+          p_progress_summary?: string | null
+          p_runner_host_id: string
+          p_summary?: string
+          p_visibility?: string
+        }
+        Returns: string
+      }
+      finish_crew_session_from_runner: {
+        Args: {
+          p_crew_session_id: string
+          p_payload?: Json
+          p_progress_summary?: string | null
+          p_runner_host_id: string
+          p_status: string
+          p_summary?: string
+        }
+        Returns: boolean
+      }
       list_bot_invitees: {
         Args: { p_bot_id: string }
         Returns: {
