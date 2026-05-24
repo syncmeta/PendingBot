@@ -14,6 +14,7 @@
 		6B465E361DADBBAF05CCB8FA /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5112B6C375E93818660DC6DC /* KeychainStore.swift */; };
 		7B172D9259AC7D39C08F3020 /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61CC36C1FE9AB4F3FD08C5ED /* SidebarView.swift */; };
 		86803874A280D0FA2D0B163B /* RunnerHostsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 807CE636FE351CFCE27C10ED /* RunnerHostsView.swift */; };
+		89BA401194611066C03B2E64 /* PendingCrewUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76707800097175EA13A9CAAC /* PendingCrewUITests.swift */; };
 		A871D96E8C52B07002FEB740 /* CrewDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 664583303767891E11FD2D80 /* CrewDetailView.swift */; };
 		AED42DF5793522DB0D24DFDF /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 228DD3F05A797FFDC92BB79C /* SettingsView.swift */; };
 		B2ADAD98570319F04C6A744E /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56CB04114FF7553B6D634DF6 /* AppModel.swift */; };
@@ -26,6 +27,13 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		08E5CBA33E90811E1E4993EE /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 46486E5D9B6F8EB4F6C9754B /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 638308E3A5DC58D720A92FEE;
+			remoteInfo = PendingCrew;
+		};
 		0D15AD7AC67DFD784AE3FD77 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 46486E5D9B6F8EB4F6C9754B /* Project object */;
@@ -37,6 +45,7 @@
 
 /* Begin PBXFileReference section */
 		042BA0E6280106B1C549068A /* PendingCrewAuthCredentialTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingCrewAuthCredentialTests.swift; sourceTree = "<group>"; };
+		13CC15B1823BCCF1AD56842B /* PendingCrewUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PendingCrewUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		228DD3F05A797FFDC92BB79C /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		32E48B4031B3DD2E34398974 /* PendingCrewApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingCrewApp.swift; sourceTree = "<group>"; };
 		39C266361795E586A346F8B9 /* APIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIModels.swift; sourceTree = "<group>"; };
@@ -46,6 +55,7 @@
 		56CB04114FF7553B6D634DF6 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		61CC36C1FE9AB4F3FD08C5ED /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
 		664583303767891E11FD2D80 /* CrewDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewDetailView.swift; sourceTree = "<group>"; };
+		76707800097175EA13A9CAAC /* PendingCrewUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingCrewUITests.swift; sourceTree = "<group>"; };
 		807CE636FE351CFCE27C10ED /* RunnerHostsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunnerHostsView.swift; sourceTree = "<group>"; };
 		999645D71F474617B2A1CA3C /* PendingBotAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingBotAPI.swift; sourceTree = "<group>"; };
 		AF1050766B25F50A640A709F /* PendingCrew.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PendingCrew.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -84,8 +94,17 @@
 			isa = PBXGroup;
 			children = (
 				BFF736D6527EF937B780BFBE /* PendingCrewTests */,
+				291DD5A183D834B71290DF4C /* PendingCrewUITests */,
 			);
 			path = Tests;
+			sourceTree = "<group>";
+		};
+		291DD5A183D834B71290DF4C /* PendingCrewUITests */ = {
+			isa = PBXGroup;
+			children = (
+				76707800097175EA13A9CAAC /* PendingCrewUITests.swift */,
+			);
+			path = PendingCrewUITests;
 			sourceTree = "<group>";
 		};
 		7ABF5BCA393F55B9ABAFBBEA /* Support */ = {
@@ -102,6 +121,7 @@
 			children = (
 				AF1050766B25F50A640A709F /* PendingCrew.app */,
 				3BAF2A68B9A8EB6894BB8AB8 /* PendingCrewTests.xctest */,
+				13CC15B1823BCCF1AD56842B /* PendingCrewUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -207,6 +227,24 @@
 			productReference = AF1050766B25F50A640A709F /* PendingCrew.app */;
 			productType = "com.apple.product-type.application";
 		};
+		E1A61A590CF51D972FA3DDC9 /* PendingCrewUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AB5013817A437F38D4B0D8D6 /* Build configuration list for PBXNativeTarget "PendingCrewUITests" */;
+			buildPhases = (
+				D743F003D8724A4FAAE9DF5F /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				166FBEC153147C7E7BA39343 /* PBXTargetDependency */,
+			);
+			name = PendingCrewUITests;
+			packageProductDependencies = (
+			);
+			productName = PendingCrewUITests;
+			productReference = 13CC15B1823BCCF1AD56842B /* PendingCrewUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -216,6 +254,9 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					E1A61A590CF51D972FA3DDC9 = {
+						TestTargetID = 638308E3A5DC58D720A92FEE;
+					};
 				};
 			};
 			buildConfigurationList = 10AB45F6E98A64A048D5EA27 /* Build configuration list for PBXProject "PendingCrew" */;
@@ -234,6 +275,7 @@
 			targets = (
 				638308E3A5DC58D720A92FEE /* PendingCrew */,
 				286CF038A4A874509A579C2F /* PendingCrewTests */,
+				E1A61A590CF51D972FA3DDC9 /* PendingCrewUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -269,9 +311,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		D743F003D8724A4FAAE9DF5F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				89BA401194611066C03B2E64 /* PendingCrewUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		166FBEC153147C7E7BA39343 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 638308E3A5DC58D720A92FEE /* PendingCrew */;
+			targetProxy = 08E5CBA33E90811E1E4993EE /* PBXContainerItemProxy */;
+		};
 		6D2D9A70F9BD3276B35073B2 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 638308E3A5DC58D720A92FEE /* PendingCrew */;
@@ -280,6 +335,23 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		12264C5E287AEFFCB63E713A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.pendingname.pendingcrew.uitests;
+				SDKROOT = macosx;
+				TEST_TARGET_NAME = PendingCrew;
+			};
+			name = Release;
+		};
 		80DC3E3131D9A4D408131B29 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -396,12 +468,13 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.pendingname.PendingCrewTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.pendingname.pendingcrew.tests;
 				SDKROOT = macosx;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PendingCrew.app/Contents/MacOS/PendingCrew";
 			};
@@ -412,16 +485,34 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.pendingname.PendingCrewTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.pendingname.pendingcrew.tests;
 				SDKROOT = macosx;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PendingCrew.app/Contents/MacOS/PendingCrew";
 			};
 			name = Release;
+		};
+		E471B0AED548E8B2B8D0371F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.pendingname.pendingcrew.uitests;
+				SDKROOT = macosx;
+				TEST_TARGET_NAME = PendingCrew;
+			};
+			name = Debug;
 		};
 		F6427DD3B86962FA7125BF09 /* Release */ = {
 			isa = XCBuildConfiguration;
@@ -496,6 +587,15 @@
 			buildConfigurations = (
 				8A4A6BDFB1F96E716B8C809A /* Debug */,
 				80DC3E3131D9A4D408131B29 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		AB5013817A437F38D4B0D8D6 /* Build configuration list for PBXNativeTarget "PendingCrewUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E471B0AED548E8B2B8D0371F /* Debug */,
+				12264C5E287AEFFCB63E713A /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

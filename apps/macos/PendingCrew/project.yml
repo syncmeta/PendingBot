@@ -34,3 +34,19 @@ targets:
       - path: Tests/PendingCrewTests
     dependencies:
       - target: PendingCrew
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.pendingname.pendingcrew.tests
+        GENERATE_INFOPLIST_FILE: YES
+  PendingCrewUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - path: Tests/PendingCrewUITests
+    dependencies:
+      - target: PendingCrew
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.pendingname.pendingcrew.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: PendingCrew

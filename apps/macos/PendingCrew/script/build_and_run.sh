@@ -16,6 +16,42 @@ stop_running_app() {
   pkill -x "$APP_NAME" >/dev/null 2>&1 || true
 }
 
+run_tests() {
+  cd "$ROOT_DIR"
+  if [[ -d "$XCODE_PROJECT" ]]; then
+    xcodebuild \
+      -quiet \
+      -project "$XCODE_PROJECT" \
+      -scheme "$APP_NAME" \
+      -configuration Debug \
+      -destination "platform=macOS,arch=arm64" \
+      -derivedDataPath "$DIST_DIR/DerivedDataTests" \
+      SYMROOT="$DIST_DIR/XcodeBuildTests" \
+      test
+  else
+    swift test
+  fi
+}
+
+run_ui_smoke_test() {
+  cd "$ROOT_DIR"
+  if [[ ! -d "$XCODE_PROJECT" ]]; then
+    echo "UI smoke test requires $XCODE_PROJECT" >&2
+    exit 2
+  fi
+
+  xcodebuild \
+    -quiet \
+    -project "$XCODE_PROJECT" \
+    -scheme "$APP_NAME" \
+    -configuration Debug \
+    -destination "platform=macOS,arch=arm64" \
+    -derivedDataPath "$DIST_DIR/DerivedDataUITests" \
+    SYMROOT="$DIST_DIR/XcodeBuildUITests" \
+    -only-testing:PendingCrewUITests/PendingCrewUITests/testLaunchShowsDisconnectedCrewWorkspace \
+    test
+}
+
 stage_xcode_app_bundle() {
   cd "$ROOT_DIR"
   xcodebuild \
@@ -103,6 +139,17 @@ open_app() {
   /usr/bin/open -n "$APP_BUNDLE"
 }
 
+case "$MODE" in
+  --test|test)
+    run_tests
+    exit 0
+    ;;
+  --ui-test|ui-test)
+    run_ui_smoke_test
+    exit 0
+    ;;
+esac
+
 stop_running_app
 stage_app_bundle
 
@@ -127,7 +174,7 @@ case "$MODE" in
     pgrep -x "$APP_NAME" >/dev/null
     ;;
   *)
-    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify]" >&2
+    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify|--test|--ui-test]" >&2
     exit 2
     ;;
 esac
