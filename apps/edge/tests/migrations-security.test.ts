@@ -61,4 +61,21 @@ describe('security-sensitive migrations', () => {
     expect(sql.match(/auth\.uid\(\)\s+IS\s+NULL\s+OR\s+p_user_id\s*=\s*auth\.uid\(\)/gi)?.length)
       .toBeGreaterThanOrEqual(7);
   });
+
+  it('pins search_path on legacy helper and trigger functions flagged by Supabase advisors', () => {
+    const sql = readMigration('supabase/migrations/20260524181807_pin_legacy_function_search_path.sql');
+
+    for (const name of [
+      'gen_preset_handle_value',
+      'uuidv7',
+      'bootstrap_new_user_trigger',
+      'check_handle_limit',
+      'random_place_name',
+      'bots_guard_public_update',
+      'guard_preset_handle',
+      '_group_member_billing_freeze_trigger',
+    ]) {
+      expect(sql).toMatch(new RegExp(`alter\\s+function\\s+pendingbot\\.${name}\\s*\\(\\)\\s+set\\s+search_path`, 'i'));
+    }
+  });
 });

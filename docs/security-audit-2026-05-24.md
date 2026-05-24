@@ -76,6 +76,12 @@ Several RLS helper functions accept a `p_user_id` parameter and are executable b
 
 Fixed on 2026-05-25 in `supabase/migrations/20260524180643_bind_definer_helpers_to_auth_uid.sql`: the helper functions now return false unless `auth.uid()` is null (service role) or `p_user_id = auth.uid()`.
 
+### Legacy helper functions have mutable search_path
+
+Supabase advisors flagged several legacy helper/trigger functions with role-mutable `search_path`, including `uuidv7`, preset handle helpers, and group-billing freeze triggers.
+
+Fixed on 2026-05-25 in `supabase/migrations/20260524181807_pin_legacy_function_search_path.sql`: these functions now pin `search_path` explicitly.
+
 ### Admin support powers are well-gated but highly sensitive
 
 The board consistently gates admin pages and server actions through `requireAdmin()`, and sensitive support actions are audited. `generateLoginCode()` correctly avoids logging the OTP itself.

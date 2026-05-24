@@ -81,6 +81,14 @@
 - **建议**: helper 内部绑定调用者：service_role 允许显式 user id；普通 authenticated 调用必须满足 `p_user_id = auth.uid()`。
 - **状态**: 已修复（2026-05-25 · `20260524180643_bind_definer_helpers_to_auth_uid.sql`）
 
+### ✅ legacy helper / trigger 函数缺少固定 search_path
+- **发现**: 2026-05-25 · codex/security-architecture-audit
+- **位置**: `uuidv7`、preset handle helpers、`bootstrap_new_user_trigger`、group billing freeze trigger 等 Supabase advisor 报告项
+- **问题**: 部分早期函数没有 `SET search_path`，执行时受 role-level search_path 影响。
+- **影响**: 对 definer/trigger 函数来说这是对象解析劫持面；当前多数函数体已 schema-qualified，但 advisor 仍会持续报警，且未来函数体改动容易踩坑。
+- **建议**: 对存量函数统一 `ALTER FUNCTION ... SET search_path`，新函数默认在定义里写死 search_path。
+- **状态**: 已修复（2026-05-25 · `20260524181807_pin_legacy_function_search_path.sql`）
+
 ## 🟡 拆东墙补西墙
 
 ### 🟡 JWT 验证只校验签名和形状，未绑定 issuer/audience/role
