@@ -8,9 +8,6 @@ struct SettingsView: View {
             Section("连接") {
                 TextField("API URL", text: $model.apiBaseURL)
                     .textFieldStyle(.roundedBorder)
-
-                SecureField("登录 JWT", text: $model.authToken)
-                    .textFieldStyle(.roundedBorder)
             }
 
             HStack {
@@ -20,9 +17,8 @@ struct SettingsView: View {
                 }
                 .keyboardShortcut(.defaultAction)
 
-                Button("清空 Token") {
-                    model.authToken = ""
-                    model.saveSettings()
+                Button("退出登录") {
+                    model.clearDeviceGrant()
                 }
             }
 
@@ -50,6 +46,17 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+
+#if DEBUG
+            Section("调试") {
+                SecureField("调试用户 JWT", text: $model.debugUserJWT)
+                    .textFieldStyle(.roundedBorder)
+
+                Button("清空调试 JWT") {
+                    model.clearDebugUserJWT()
+                }
+            }
+#endif
         }
         .padding(20)
     }

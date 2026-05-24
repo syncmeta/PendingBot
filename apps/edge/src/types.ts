@@ -145,6 +145,15 @@ export interface Env {
 export interface HonoVars {
   userId?: string;
   userJwt?: string;
+  authKind?: 'supabase_jwt' | 'device_grant';
+  deviceGrant?: {
+    id: string;
+    subjectId: string;
+    grantedByUserId: string | null;
+    grantKind: string;
+    scopes: string[];
+    appKind: string;
+  };
   isAdmin?: boolean;
   clientVersion?: ClientVersion;
   clientPlatform?: 'ios' | 'web' | 'unknown';

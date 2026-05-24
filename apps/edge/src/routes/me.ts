@@ -1,8 +1,9 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
+import { requireSubjectAuth } from '../lib/device-grants';
 import { getUserMemory } from '../lib/memory';
-import { userClient } from '../lib/supabase';
+import { serviceClient, userClient } from '../lib/supabase';
 import {
   getBalance,
   getConfigInt,
@@ -15,7 +16,11 @@ import { jsonError } from '../lib/http-error';
 import type { AppBindings } from '../types';
 
 export const meRoutes = new Hono<AppBindings>();
-meRoutes.use('*', requireSession());
+meRoutes.use('/profile', requireSession());
+meRoutes.use('/memory', requireSession());
+meRoutes.use('/balance', requireSession());
+meRoutes.use('/redeem', requireSession());
+meRoutes.use('/billing/*', requireSession());
 
 function billingCategory(taskType: string, metadata: unknown): { key: string; label: string } {
   const source = metadata && typeof metadata === 'object'
@@ -132,17 +137,20 @@ meRoutes.get('/balance', async (c) => {
 // compatibility read. Crew/temporary-group creation can use this as the
 // bridge from the signed-in user to the billing/control subject without
 // switching the existing wallet UI in one step.
-meRoutes.get('/subject', async (c) => {
-  const userJwt = c.var.userJwt!;
-  const userId = c.var.userId!;
-  const supa = userClient(c.env, userJwt);
+meRoutes.get('/subject', requireSubjectAuth(['subject:read']), async (c) => {
+  const isDeviceGrant = c.var.authKind === 'device_grant';
+  const deviceGrant = c.var.deviceGrant;
+  if (isDeviceGrant && !deviceGrant) return jsonError(c, 401, 'unauthorized');
+  const supa = isDeviceGrant ? serviceClient(c.env) : userClient(c.env, c.var.userJwt!);
 
-  const { data: subject, error } = await supa
+  let subjectQuery = supa
     .from('subjects')
-    .select('id, subject_type, display_name, status, created_at, updated_at')
-    .eq('subject_type', 'user_account')
-    .eq('user_id', userId)
-    .maybeSingle();
+    .select('id, subject_type, display_name, status, created_at, updated_at');
+  subjectQuery = isDeviceGrant
+    ? subjectQuery.eq('id', deviceGrant!.subjectId)
+    : subjectQuery.eq('subject_type', 'user_account').eq('user_id', c.var.userId!);
+
+  const { data: subject, error } = await subjectQuery.maybeSingle();
 
   if (error) {
     console.error('[me/subject] subject read failed', error);

@@ -3597,6 +3597,14 @@ export type Database = {
         Args: { p_runner_host_id: string; p_runner_kinds?: Json }
         Returns: Json
       }
+      claim_next_crew_session_for_subject: {
+        Args: {
+          p_responsible_subject_id: string
+          p_runner_host_id: string
+          p_runner_kinds?: Json
+        }
+        Returns: Json
+      }
       append_crew_session_event_from_runner: {
         Args: {
           p_crew_session_id: string
@@ -3609,11 +3617,36 @@ export type Database = {
         }
         Returns: string
       }
+      append_crew_session_event_from_runner_for_subject: {
+        Args: {
+          p_crew_session_id: string
+          p_event_type: string
+          p_payload?: Json
+          p_progress_summary?: string | null
+          p_responsible_subject_id: string
+          p_runner_host_id: string
+          p_summary?: string
+          p_visibility?: string
+        }
+        Returns: string
+      }
       finish_crew_session_from_runner: {
         Args: {
           p_crew_session_id: string
           p_payload?: Json
           p_progress_summary?: string | null
+          p_runner_host_id: string
+          p_status: string
+          p_summary?: string
+        }
+        Returns: boolean
+      }
+      finish_crew_session_from_runner_for_subject: {
+        Args: {
+          p_crew_session_id: string
+          p_payload?: Json
+          p_progress_summary?: string | null
+          p_responsible_subject_id: string
           p_runner_host_id: string
           p_status: string
           p_summary?: string
@@ -3632,9 +3665,27 @@ export type Database = {
         Args: { p_responsible_subject_id: string; p_title?: string }
         Returns: string
       }
+      open_crew_conv_for_subject: {
+        Args: {
+          p_actor_user_id: string
+          p_responsible_subject_id: string
+          p_title?: string
+        }
+        Returns: string
+      }
       open_crew_session: {
         Args: {
           p_crew_conversation_id: string
+          p_runner_kind: string
+          p_task_brief: string
+        }
+        Returns: string
+      }
+      open_crew_session_for_subject: {
+        Args: {
+          p_actor_user_id: string
+          p_crew_conversation_id: string
+          p_responsible_subject_id: string
           p_runner_kind: string
           p_task_brief: string
         }
@@ -3677,6 +3728,15 @@ export type Database = {
         Args: {
           p_allowed_runner_kinds?: Json
           p_capabilities?: Json
+          p_runner_host_id: string
+        }
+        Returns: boolean
+      }
+      runner_host_heartbeat_for_subject: {
+        Args: {
+          p_allowed_runner_kinds?: Json
+          p_capabilities?: Json
+          p_responsible_subject_id: string
           p_runner_host_id: string
         }
         Returns: boolean

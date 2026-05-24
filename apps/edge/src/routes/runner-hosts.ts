@@ -1,13 +1,13 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
-import { userClient } from '../lib/supabase';
+import { requireSubjectAuth } from '../lib/device-grants';
+import { serviceClient, userClient } from '../lib/supabase';
 import { jsonError } from '../lib/http-error';
 import type { Json } from '../db/schema';
 import type { AppBindings } from '../types';
 
 export const runnerHostRoutes = new Hono<AppBindings>();
-runnerHostRoutes.use('*', requireSession());
 
 const RunnerKind = z.enum([
   'cloud_sandbox',
@@ -42,8 +42,7 @@ const RegisterBody = z.object({
   allowedRunnerKinds: z.array(RunnerKind).default([]),
 });
 
-runnerHostRoutes.post('/', async (c) => {
-  const userJwt = c.var.userJwt!;
+runnerHostRoutes.post('/', requireSubjectAuth(['runner:write']), async (c) => {
   let parsed: z.infer<typeof RegisterBody>;
   try {
     parsed = RegisterBody.parse(await c.req.json());
@@ -51,6 +50,31 @@ runnerHostRoutes.post('/', async (c) => {
     return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
+  if (c.var.authKind === 'device_grant') {
+    const deviceGrant = c.var.deviceGrant;
+    if (!deviceGrant) return jsonError(c, 401, 'unauthorized');
+    if (parsed.responsibleSubjectId !== deviceGrant.subjectId) {
+      return jsonError(c, 403, 'forbidden');
+    }
+    const now = new Date().toISOString();
+    const runnerHostId = crypto.randomUUID();
+    const { error } = await serviceClient(c.env).from('runner_hosts').insert({
+      id: runnerHostId,
+      responsible_subject_id: parsed.responsibleSubjectId,
+      platform: 'macos',
+      display_name: parsed.displayName ?? '',
+      capabilities: parsed.capabilities as Json,
+      allowed_runner_kinds: parsed.allowedRunnerKinds as Json,
+      status: 'online',
+      last_seen_at: now,
+      created_at: now,
+      updated_at: now,
+    });
+    if (error) return jsonError(c, 500, 'database_error', { detail: error.message });
+    return c.json({ runnerHostId });
+  }
+
+  const userJwt = c.var.userJwt!;
   const supa = userClient(c.env, userJwt);
   const { data, error } = await supa.rpc('register_runner_host', {
     p_responsible_subject_id: parsed.responsibleSubjectId,
@@ -62,14 +86,18 @@ runnerHostRoutes.post('/', async (c) => {
   return c.json({ runnerHostId: data });
 });
 
-runnerHostRoutes.get('/', async (c) => {
-  const userJwt = c.var.userJwt!;
-  const supa = userClient(c.env, userJwt);
-  const { data, error } = await supa
+runnerHostRoutes.get('/', requireSubjectAuth(['runner:read']), async (c) => {
+  const supa = c.var.authKind === 'device_grant' ? serviceClient(c.env) : userClient(c.env, c.var.userJwt!);
+  let query = supa
     .from('runner_hosts')
     .select('id, responsible_subject_id, platform, display_name, capabilities, allowed_runner_kinds, status, last_seen_at, created_at, updated_at')
-    .order('updated_at', { ascending: false })
-    .limit(100);
+    .order('updated_at', { ascending: false });
+  if (c.var.authKind === 'device_grant') {
+    const deviceGrant = c.var.deviceGrant;
+    if (!deviceGrant) return jsonError(c, 401, 'unauthorized');
+    query = query.eq('responsible_subject_id', deviceGrant.subjectId);
+  }
+  const { data, error } = await query.limit(100);
   if (error) return jsonError(c, 500, 'database_error', { detail: error.message });
   return c.json({ items: data ?? [] });
 });
@@ -109,8 +137,7 @@ const FinishBody = z.object({
   progressSummary: z.string().trim().max(1_000).optional(),
 });
 
-runnerHostRoutes.post('/:id/heartbeat', async (c) => {
-  const userJwt = c.var.userJwt!;
+runnerHostRoutes.post('/:id/heartbeat', requireSubjectAuth(['runner:write']), async (c) => {
   const runnerHostId = c.req.param('id');
   let parsed: z.infer<typeof HeartbeatBody>;
   try {
@@ -119,6 +146,20 @@ runnerHostRoutes.post('/:id/heartbeat', async (c) => {
     return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
+  if (c.var.authKind === 'device_grant') {
+    const deviceGrant = c.var.deviceGrant;
+    if (!deviceGrant) return jsonError(c, 401, 'unauthorized');
+    const { data, error } = await serviceClient(c.env).rpc('runner_host_heartbeat_for_subject', {
+      p_runner_host_id: runnerHostId,
+      p_responsible_subject_id: deviceGrant.subjectId,
+      p_capabilities: (parsed.capabilities ?? null) as Json,
+      p_allowed_runner_kinds: (parsed.allowedRunnerKinds ?? null) as Json,
+    } as never);
+    if (error) return mapRpcError(c, error);
+    return c.json({ ok: data === true });
+  }
+
+  const userJwt = c.var.userJwt!;
   const supa = userClient(c.env, userJwt);
   const { data, error } = await supa.rpc('runner_host_heartbeat', {
     p_runner_host_id: runnerHostId,
@@ -129,8 +170,7 @@ runnerHostRoutes.post('/:id/heartbeat', async (c) => {
   return c.json({ ok: data === true });
 });
 
-runnerHostRoutes.post('/:id/claim-next', async (c) => {
-  const userJwt = c.var.userJwt!;
+runnerHostRoutes.post('/:id/claim-next', requireSubjectAuth(['runner:write']), async (c) => {
   const runnerHostId = c.req.param('id');
   let parsed: z.infer<typeof ClaimNextBody>;
   try {
@@ -139,6 +179,27 @@ runnerHostRoutes.post('/:id/claim-next', async (c) => {
     return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
+  if (c.var.authKind === 'device_grant') {
+    const deviceGrant = c.var.deviceGrant;
+    if (!deviceGrant) return jsonError(c, 401, 'unauthorized');
+    const { data, error } = await serviceClient(c.env).rpc('claim_next_crew_session_for_subject', {
+      p_runner_host_id: runnerHostId,
+      p_responsible_subject_id: deviceGrant.subjectId,
+      p_runner_kinds: (parsed.runnerKinds ?? null) as Json,
+    } as never);
+    if (error) return mapRpcError(c, error);
+    if (!data || typeof data !== 'object') {
+      return c.json({ leaseId: null, session: null });
+    }
+
+    const claim = data as { lease_id?: unknown; session?: unknown };
+    return c.json({
+      leaseId: typeof claim.lease_id === 'string' ? claim.lease_id : null,
+      session: claim.session ?? null,
+    });
+  }
+
+  const userJwt = c.var.userJwt!;
   const supa = userClient(c.env, userJwt);
   const { data, error } = await supa.rpc('claim_next_crew_session', {
     p_runner_host_id: runnerHostId,
@@ -156,8 +217,7 @@ runnerHostRoutes.post('/:id/claim-next', async (c) => {
   });
 });
 
-runnerHostRoutes.post('/:id/sessions/:sessionId/events', async (c) => {
-  const userJwt = c.var.userJwt!;
+runnerHostRoutes.post('/:id/sessions/:sessionId/events', requireSubjectAuth(['runner:write']), async (c) => {
   const runnerHostId = c.req.param('id');
   const sessionId = c.req.param('sessionId');
   let parsed: z.infer<typeof RunnerEventBody>;
@@ -167,6 +227,24 @@ runnerHostRoutes.post('/:id/sessions/:sessionId/events', async (c) => {
     return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
+  if (c.var.authKind === 'device_grant') {
+    const deviceGrant = c.var.deviceGrant;
+    if (!deviceGrant) return jsonError(c, 401, 'unauthorized');
+    const { data, error } = await serviceClient(c.env).rpc('append_crew_session_event_from_runner_for_subject', {
+      p_runner_host_id: runnerHostId,
+      p_responsible_subject_id: deviceGrant.subjectId,
+      p_crew_session_id: sessionId,
+      p_event_type: parsed.eventType,
+      p_visibility: parsed.visibility,
+      p_summary: parsed.summary ?? '',
+      p_payload: parsed.payload as Json,
+      p_progress_summary: parsed.progressSummary ?? null,
+    } as never);
+    if (error) return mapRpcError(c, error);
+    return c.json({ eventId: data });
+  }
+
+  const userJwt = c.var.userJwt!;
   const supa = userClient(c.env, userJwt);
   const { data, error } = await supa.rpc('append_crew_session_event_from_runner', {
     p_runner_host_id: runnerHostId,
@@ -181,8 +259,7 @@ runnerHostRoutes.post('/:id/sessions/:sessionId/events', async (c) => {
   return c.json({ eventId: data });
 });
 
-runnerHostRoutes.post('/:id/sessions/:sessionId/finish', async (c) => {
-  const userJwt = c.var.userJwt!;
+runnerHostRoutes.post('/:id/sessions/:sessionId/finish', requireSubjectAuth(['runner:write']), async (c) => {
   const runnerHostId = c.req.param('id');
   const sessionId = c.req.param('sessionId');
   let parsed: z.infer<typeof FinishBody>;
@@ -192,6 +269,23 @@ runnerHostRoutes.post('/:id/sessions/:sessionId/finish', async (c) => {
     return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
+  if (c.var.authKind === 'device_grant') {
+    const deviceGrant = c.var.deviceGrant;
+    if (!deviceGrant) return jsonError(c, 401, 'unauthorized');
+    const { data, error } = await serviceClient(c.env).rpc('finish_crew_session_from_runner_for_subject', {
+      p_runner_host_id: runnerHostId,
+      p_responsible_subject_id: deviceGrant.subjectId,
+      p_crew_session_id: sessionId,
+      p_status: parsed.status,
+      p_summary: parsed.summary ?? '',
+      p_payload: parsed.payload as Json,
+      p_progress_summary: parsed.progressSummary ?? null,
+    } as never);
+    if (error) return mapRpcError(c, error);
+    return c.json({ ok: data === true });
+  }
+
+  const userJwt = c.var.userJwt!;
   const supa = userClient(c.env, userJwt);
   const { data, error } = await supa.rpc('finish_crew_session_from_runner', {
     p_runner_host_id: runnerHostId,
