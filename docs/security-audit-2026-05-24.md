@@ -36,13 +36,13 @@ Risk: a user who is allowed to approve `pendingcrew_control` may still send `run
 
 Recommended fix: derive scopes server-side from `grantKind` and subject role, or reject any scope outside a database-checked allowed set before storing the challenge approval.
 
-### P0: Group billing skipped users are not excluded from future splits
+### Resolved: group billing skipped users are excluded from future splits
 
-`apps/edge/src/lib/group-billing.ts` says skipped users get marked overdrawn by the RPC. The actual `pendingbot.apply_audit_split` body in `supabase/migrations/0045_group_chat_rpcs.sql` only updates `group_member_billing` when the split status is `debited`.
+Initial review of `supabase/migrations/0045_group_chat_rpcs.sql` made this look unfixed, but later migration `supabase/migrations/0066_group_member_freeze_and_default_handle.sql` replaces `pendingbot.apply_audit_split` and handles both `skipped_overdrawn` and `skipped_capped`.
 
-Risk: users with insufficient balance or exhausted caps remain in the payer set forever, get skipped every turn, and their share is never reallocated or billed.
+Live verification on 2026-05-25 confirmed the linked database function body contains the skipped-state branch and sets `group_member_billing.overdrawn = true`.
 
-Recommended fix: update `group_member_billing` for `skipped_overdrawn` and `skipped_capped`, and cover this with a regression test.
+Residual action: keep a regression test so future migrations do not accidentally restore the older 0045 behavior.
 
 ### P1: Attachment DB read policy is broader than the Worker download policy
 
@@ -85,6 +85,7 @@ Risk: this is reasonable for diagnostics, but it needs a retention/redaction pol
 ## Positive Findings
 
 - All current `pendingbot` tables in the linked database have RLS enabled.
+- Linked `pendingbot.apply_audit_split` already persists skipped group-billing states through the later `0066` migration.
 - Edge CORS defaults to deny-all when `ALLOWED_ORIGIN` is not configured.
 - The board admin surface uses a route layout gate plus server-action rechecks before service-role access.
 - Raw attachment bytes are private R2 objects served through Worker authorization.

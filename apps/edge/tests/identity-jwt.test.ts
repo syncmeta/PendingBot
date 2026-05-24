@@ -132,10 +132,35 @@ describe('verifyJwtWithJwks', () => {
     const token = await signEs256(privateKey, {
       sub: '00000000-0000-0000-0000-000000000005',
       aud: ['authenticated', 'service'],
+      role: 'authenticated',
       exp: Math.floor(Date.now() / 1000) + 3600,
     });
     const payload = await verifyJwtWithJwks(token, jwks);
     expect(payload.aud).toEqual(['authenticated', 'service']);
+  });
+
+  it('rejects tokens whose audience does not include authenticated', async () => {
+    const { privateKey, jwks } = await setupJwks();
+    const token = await signEs256(privateKey, {
+      sub: '00000000-0000-0000-0000-000000000008',
+      aud: 'service_role',
+      role: 'authenticated',
+      exp: Math.floor(Date.now() / 1000) + 3600,
+    });
+
+    await expect(verifyJwtWithJwks(token, jwks)).rejects.toThrow();
+  });
+
+  it('rejects tokens without the authenticated role', async () => {
+    const { privateKey, jwks } = await setupJwks();
+    const token = await signEs256(privateKey, {
+      sub: '00000000-0000-0000-0000-000000000009',
+      aud: 'authenticated',
+      role: 'anon',
+      exp: Math.floor(Date.now() / 1000) + 3600,
+    });
+
+    await expect(verifyJwtWithJwks(token, jwks)).rejects.toThrow();
   });
 
   it('rejects tampered tokens (body changed after signing)', async () => {

@@ -51,11 +51,11 @@
 
 ### 🔴 群聊计费跳过用户后没有落库排除状态
 - **发现**: 2026-05-24 · codex/security-architecture-audit
-- **位置**: apps/edge/src/lib/group-billing.ts:17、apps/edge/src/lib/group-billing.ts:183、supabase/migrations/0045_group_chat_rpcs.sql:1046
-- **问题**: TypeScript 注释声明 `skipped_overdrawn` / `skipped_capped` 用户会经 RPC 标记 `group_member_billing.overdrawn=true`，但 `apply_audit_split` 只在 `status_text = 'debited' and debited > 0` 时更新 `group_member_billing`；跳过状态只写 `audit_log_splits`，不改变下次 payer 集合。
-- **影响**: 余额不足或触顶用户会在下一轮继续参与 split、继续被跳过，未扣部分也不会重新分摊，形成长期漏计费和 UI 状态不一致。
-- **建议**: 在 `apply_audit_split` 里对 `skipped_overdrawn` / `skipped_capped` 显式更新 `overdrawn` 或独立的 `billing_blocked_reason`，并补测试覆盖“跳过后下一轮不再进入 payer 集合”。
-- **状态**: 待办
+- **位置**: apps/edge/src/lib/group-billing.ts:17、apps/edge/src/lib/group-billing.ts:183、supabase/migrations/0045_group_chat_rpcs.sql:1046、supabase/migrations/0066_group_member_freeze_and_default_handle.sql
+- **问题**: 初次审计只看了 0045 里的旧函数体，那里 `apply_audit_split` 确实只在 `debited` 时更新 `group_member_billing`；但后续 0066 已用 `CREATE OR REPLACE FUNCTION` 覆盖该函数，并在 `skipped_overdrawn` / `skipped_capped` 时设置 `overdrawn=true`。
+- **影响**: 已核实线上函数体包含 skipped 分支，当前不再是 live 风险；保留该条作为“旧函数体容易误判/回归”的历史记录。
+- **建议**: 保留回归测试覆盖“迁移历史最终函数体包含 skipped 状态处理”，后续如果重写 `apply_audit_split` 必须同时保留这个分支。
+- **状态**: 已解决（0066 已覆盖；2026-05-25 线上 `pg_get_functiondef` 确认）
 
 ### 🔴 附件 RLS 与 Worker 下载口径不一致，可能泄露附件元数据
 - **发现**: 2026-05-24 · codex/security-architecture-audit

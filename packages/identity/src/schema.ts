@@ -8,8 +8,9 @@ import { z } from 'zod';
 export const SupabaseJwtPayload = z.object({
   sub: z.string().uuid(),               // auth.users.id
   email: z.string().email().optional(),
-  role: z.string().optional(),          // 'authenticated' for normal users
-  aud: z.string().or(z.array(z.string())),
+  role: z.literal('authenticated'),     // only normal user sessions enter Edge routes
+  aud: z.string().or(z.array(z.string()))
+    .refine((aud) => Array.isArray(aud) ? aud.includes('authenticated') : aud === 'authenticated'),
   exp: z.number(),
   iat: z.number().optional(),
 });
