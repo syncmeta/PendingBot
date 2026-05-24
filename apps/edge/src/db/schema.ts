@@ -3316,6 +3316,10 @@ export type Database = {
         Returns: boolean
       }
       cancel_account_deletion: { Args: never; Returns: boolean }
+      decide_human_help_request: {
+        Args: { p_decision: string; p_request_id: string }
+        Returns: boolean
+      }
       ensure_group_subject_for_conversation: {
         Args: { p_conversation_id: string }
         Returns: string
