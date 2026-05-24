@@ -1,0 +1,36 @@
+name: PendingCrew
+options:
+  bundleIdPrefix: com.pendingname
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+targets:
+  PendingCrew:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/PendingCrew
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.pendingname.pendingcrew
+        PRODUCT_NAME: PendingCrew
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: PendingCrew
+        INFOPLIST_KEY_CFBundleShortVersionString: "0.1.0"
+        INFOPLIST_KEY_CFBundleVersion: "1"
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        INFOPLIST_KEY_LSMinimumSystemVersion: "14.0"
+        INFOPLIST_KEY_LSUIElement: NO
+        INFOPLIST_KEY_NSHighResolutionCapable: YES
+        INFOPLIST_KEY_NSSupportsAutomaticGraphicsSwitching: YES
+  PendingCrewTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/PendingCrewTests
+    dependencies:
+      - target: PendingCrew
