@@ -95,6 +95,9 @@ export interface Env {
   // subscribable skill — not exposed by default on the chat surface.
   EXA_API_KEY?: string;
   TAVILY_API_KEY?: string;
+  /// Artificial Analysis free Data API key. Used only server-side by
+  /// /v1/models to cache and expose benchmark scores for model sorting.
+  ARTIFICIAL_ANALYSIS_API_KEY?: string;
   // APNS: token-based auth, two .p8 keys (Apple recommends per-environment).
   // Topic = the iOS app bundle id (key is restricted to it).
   APNS_TEAM_ID: string;

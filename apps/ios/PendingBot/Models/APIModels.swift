@@ -176,6 +176,9 @@ struct OpenRouterModel: Codable, Identifiable, Hashable {
     /// USD per 1M tokens, blended 7:2:1 (cache_hit/input/output). nil when
     /// no priced alias is registered. Surfaced as the "Nx" price multiplier.
     let blended_usd_per_million: Double?
+    /// Artificial Analysis Intelligence Index. nil when AA does not have a
+    /// matching benchmark row or the server-side API key is unavailable.
+    let artificial_analysis_intelligence_index: Double?
     /// Unique across both catalogs — the same model can appear once per
     /// source (e.g. OpenRouter "openai/gpt-5.5" and native "gpt-5.5").
     var id: String { "\(source ?? "openrouter"):\(slug)" }

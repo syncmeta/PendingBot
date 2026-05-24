@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { requireSession } from '@pendingbot/identity';
 import { jsonError } from '../lib/http-error';
-import type { AppBindings } from '../types';
+import type { AppBindings, Env } from '../types';
 
 // GET /v1/models — aggregated model catalog for the iOS picker.
 //
@@ -56,6 +56,7 @@ export interface OpenRouterModelOut {
   context_length: number | null;
   supports_vision: boolean;
   blended_usd_per_million: number | null;
+  artificial_analysis_intelligence_index: number | null;
   /// Which catalog this row came from. The picker shows one collapsible
   /// section per source; native sources lead the response.
   source: CatalogSource;
@@ -68,6 +69,21 @@ export interface OpenRouterModelOut {
 const BLEND_WEIGHT_CACHE_HIT = 0.7;
 const BLEND_WEIGHT_INPUT = 0.2;
 const BLEND_WEIGHT_OUTPUT = 0.1;
+const ARTIFICIAL_ANALYSIS_URL = 'https://artificialanalysis.ai/api/v2/data/llms/models';
+const ARTIFICIAL_ANALYSIS_CACHE_KEY = 'model_catalog:artificial_analysis:v1';
+const ARTIFICIAL_ANALYSIS_CACHE_TTL_SEC = 6 * 60 * 60;
+
+export interface ArtificialAnalysisModelRow {
+  name?: string;
+  slug?: string;
+  model_creator?: {
+    slug?: string;
+    name?: string;
+  };
+  evaluations?: {
+    artificial_analysis_intelligence_index?: number | null;
+  };
+}
 
 function blendedFromCatalog(p: OpenRouterCatalogModel['pricing']): number | null {
   if (!p) return null;
@@ -196,6 +212,7 @@ function deriveNative(
       context_length: typeof m.context_length === 'number' ? m.context_length : null,
       supports_vision: inputModalities.includes('image'),
       blended_usd_per_million: blendedFromCatalog(m.pricing),
+      artificial_analysis_intelligence_index: null,
       source: d.source,
       model_provider: d.source,
     });
@@ -210,10 +227,128 @@ export class CatalogUpstreamError extends Error {
   }
 }
 
+function normalizedKey(value: string | undefined): string | null {
+  if (!value) return null;
+  const normalized = value.toLowerCase().replace(/[^a-z0-9]+/g, '');
+  return normalized || null;
+}
+
+function uniqueKeys(values: Array<string | undefined>): string[] {
+  return [...new Set(values.flatMap((v) => {
+    const key = normalizedKey(v);
+    return key ? [key] : [];
+  }))];
+}
+
+function providerAliases(provider: string): string[] {
+  switch (provider) {
+    case 'google-ai-studio':
+      return ['google', 'google-ai-studio'];
+    case 'x-ai':
+      return ['x-ai', 'xai'];
+    case 'moonshotai':
+      return ['moonshotai', 'kimi'];
+    case 'z-ai':
+      return ['z-ai', 'zai', 'z ai'];
+    default:
+      return [provider];
+  }
+}
+
+function modelTail(slug: string): string {
+  const withoutAlias = slug.startsWith('~') ? slug.slice(1) : slug;
+  const slash = withoutAlias.indexOf('/');
+  return slash > 0 ? withoutAlias.slice(slash + 1) : withoutAlias;
+}
+
+function modelNameKeys(model: OpenRouterModelOut): string[] {
+  return uniqueKeys([model.display_name, model.slug, modelTail(model.slug)]);
+}
+
+function modelCreatorKeys(model: OpenRouterModelOut): string[] {
+  return uniqueKeys(providerAliases(model.provider));
+}
+
+function aaScore(row: ArtificialAnalysisModelRow): number | null {
+  const score = row.evaluations?.artificial_analysis_intelligence_index;
+  return typeof score === 'number' && Number.isFinite(score) ? score : null;
+}
+
+export function attachArtificialAnalysisScores(
+  catalog: OpenRouterModelOut[],
+  rows: ArtificialAnalysisModelRow[],
+): OpenRouterModelOut[] {
+  const byCreatorAndName = new Map<string, number>();
+  const byUniqueName = new Map<string, number | null>();
+
+  for (const row of rows) {
+    const score = aaScore(row);
+    if (score == null) continue;
+    const creatorKeys = uniqueKeys([row.model_creator?.slug, row.model_creator?.name]);
+    const nameKeys = uniqueKeys([row.name, row.slug]);
+    for (const creator of creatorKeys) {
+      for (const name of nameKeys) byCreatorAndName.set(`${creator}:${name}`, score);
+    }
+    for (const name of nameKeys) {
+      const existing = byUniqueName.get(name);
+      byUniqueName.set(name, existing === undefined || existing === score ? score : null);
+    }
+  }
+
+  return catalog.map((model) => {
+    for (const creator of modelCreatorKeys(model)) {
+      for (const name of modelNameKeys(model)) {
+        const score = byCreatorAndName.get(`${creator}:${name}`);
+        if (score != null) return { ...model, artificial_analysis_intelligence_index: score };
+      }
+    }
+    for (const name of modelNameKeys(model)) {
+      const score = byUniqueName.get(name);
+      if (score != null) return { ...model, artificial_analysis_intelligence_index: score };
+    }
+    return model;
+  });
+}
+
+async function fetchArtificialAnalysisRows(env: Env): Promise<ArtificialAnalysisModelRow[]> {
+  const cached = await env.MEMORY.get<ArtificialAnalysisModelRow[]>(
+    ARTIFICIAL_ANALYSIS_CACHE_KEY,
+    'json',
+  ).catch(() => null);
+  if (cached && Array.isArray(cached)) return cached;
+
+  const apiKey = env.ARTIFICIAL_ANALYSIS_API_KEY;
+  if (!apiKey) return [];
+
+  let res: Response;
+  try {
+    res = await fetch(ARTIFICIAL_ANALYSIS_URL, {
+      headers: { 'x-api-key': apiKey },
+    });
+    if (!res.ok) {
+      const body = (await res.text()).slice(0, 300);
+      console.warn('[v1/models] artificial analysis upstream', res.status, body);
+      return [];
+    }
+  } catch (err) {
+    console.warn('[v1/models] artificial analysis fetch failed', err);
+    return [];
+  }
+
+  const json = (await res.json()) as { data?: ArtificialAnalysisModelRow[] };
+  const rows = Array.isArray(json.data) ? json.data : [];
+  await env.MEMORY.put(ARTIFICIAL_ANALYSIS_CACHE_KEY, JSON.stringify(rows), {
+    expirationTtl: ARTIFICIAL_ANALYSIS_CACHE_TTL_SEC,
+  }).catch((err) => console.warn('[v1/models] artificial analysis cache write failed', err));
+  return rows;
+}
+
 // Fetch + assemble the full model catalog (native twins first, then the
 // OpenRouter long tail) — the array the /v1/models route returns. Factored
 // out so the random-model resolver can reuse it off the route.
-export async function buildModelCatalog(): Promise<OpenRouterModelOut[]> {
+export async function buildModelCatalog(
+  artificialAnalysisRows: ArtificialAnalysisModelRow[] = [],
+): Promise<OpenRouterModelOut[]> {
   const res = await fetch('https://openrouter.ai/api/v1/models');
   if (!res.ok) {
     const body = (await res.text()).slice(0, 300);
@@ -238,6 +373,7 @@ export async function buildModelCatalog(): Promise<OpenRouterModelOut[]> {
         context_length: typeof m.context_length === 'number' ? m.context_length : null,
         supports_vision: inputModalities.includes('image'),
         blended_usd_per_million: blendedFromCatalog(m.pricing),
+        artificial_analysis_intelligence_index: null,
         source: 'openrouter' as const,
         model_provider: null,
       };
@@ -247,12 +383,13 @@ export async function buildModelCatalog(): Promise<OpenRouterModelOut[]> {
   // (anthropic → google-ai-studio → openai). iOS pins these three groups
   // to the top of its picker.
   const nativeRows = NATIVE_DERIVATIONS.flatMap((d) => deriveNative(d, catalog));
-  return [...nativeRows, ...openrouterRows];
+  return attachArtificialAnalysisScores([...nativeRows, ...openrouterRows], artificialAnalysisRows);
 }
 
 modelCatalogRoutes.get('/', async (c) => {
   try {
-    return c.json(await buildModelCatalog());
+    const artificialAnalysisRows = await fetchArtificialAnalysisRows(c.env);
+    return c.json(await buildModelCatalog(artificialAnalysisRows));
   } catch (err) {
     if (err instanceof CatalogUpstreamError) {
       return jsonError(c, 502, 'upstream_error', { detail: { status: err.status } });

@@ -534,65 +534,11 @@ private enum ArenaPriceRangeScale {
     }
 }
 
-private enum ArtificialAnalysisIntelligenceIndex {
-    private static let scoresByName: [String: Double] = [
-        "gpt55xhigh": 60,
-        "gpt55high": 59,
-        "claudeopus47adaptivereasoningmaxeffort": 57,
-        "claudeopus47max": 57,
-        "gemini31propreview": 57,
-        "gpt54xhigh": 57,
-        "gpt55medium": 57,
-        "qwen37max": 57,
-        "gemini35flash": 56,
-        "kimik26": 54,
-        "mimov25pro": 54,
-        "gpt53codexxhigh": 54,
-        "grok43high": 53,
-        "musespark": 52,
-        "claudeopus47nonreasoninghigh": 52,
-        "claudesonnet46max": 52,
-        "deepseekv4promax": 52,
-        "glm51": 51,
-        "gpt55low": 51,
-        "qwen36plus": 50,
-        "deepseekv4prohigh": 50,
-        "glm5": 50,
-        "minimaxm27": 50,
-        "mimov25": 49,
-        "gpt54minixhigh": 49,
-        "grok43medium": 49,
-        "gpt54low": 48,
-        "glm5turbo": 47,
-        "deepseekv4flashmax": 47,
-        "deepseekv4flashhigh": 46,
-        "qwen3627b": 46,
-        "qwen35397ba17b": 45,
-        "mimov2omni0327": 45,
-        "claudesonnet46nonreasoning": 44,
-        "gpt54nanoxhigh": 44,
-        "grok43low": 44,
-        "qwen3635ba3b": 43,
-        "gpt55nonreasoning": 41,
-        "deepseekv4pro": 39,
-        "o3": 38,
-        "gpt54nano": 38,
-        "gpt54minimedium": 38,
-    ]
-
-    static func score(for model: OpenRouterModel) -> Double? {
-        let key = normalized(model.display_name)
-        if let exact = scoresByName[key] { return exact }
-        return scoresByName
-            .filter { key.contains($0.key) || $0.key.contains(key) }
-            .map(\.value)
-            .max()
-    }
-
+private enum ArenaModelSort {
     static func sorted(_ models: [OpenRouterModel]) -> [OpenRouterModel] {
         models.sorted { lhs, rhs in
-            let leftScore = score(for: lhs)
-            let rightScore = score(for: rhs)
+            let leftScore = lhs.artificial_analysis_intelligence_index
+            let rightScore = rhs.artificial_analysis_intelligence_index
             switch (leftScore, rightScore) {
             case let (l?, r?) where l != r:
                 return l > r
@@ -607,10 +553,6 @@ private enum ArtificialAnalysisIntelligenceIndex {
                 return lhs.display_name.localizedCaseInsensitiveCompare(rhs.display_name) == .orderedAscending
             }
         }
-    }
-
-    private static func normalized(_ value: String) -> String {
-        value.lowercased().filter { $0.isLetter || $0.isNumber }
     }
 }
 
@@ -683,12 +625,12 @@ struct ArenaModelPoolEditor: View {
     }
 
     private var effectiveModels: [OpenRouterModel] {
-        ArtificialAnalysisIntelligenceIndex.sorted(pool.filter { isEffective($0) })
+        ArenaModelSort.sorted(pool.filter { isEffective($0) })
     }
 
     private var filtered: [OpenRouterModel] {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        return ArtificialAnalysisIntelligenceIndex.sorted(pool.filter { m in
+        return ArenaModelSort.sorted(pool.filter { m in
             if !q.isEmpty {
                 let hay = "\(m.slug) \(m.display_name) \(m.provider)".lowercased()
                 if !hay.contains(q) { return false }
@@ -772,6 +714,12 @@ struct ArenaModelPoolEditor: View {
                 rangeEndpoint("上限", value: ArenaPriceRangeScale.upperLabel(priceMaxValue))
                 Spacer()
                 Text("区间内 \(rangeModels.count), 实际 \(draft.resolvedCount)")
+                    .font(Theme.Fonts.caption)
+                    .foregroundStyle(Theme.Palette.inkMuted)
+            }
+            HStack {
+                Spacer()
+                Text("Intelligence Index: Artificial Analysis")
                     .font(Theme.Fonts.caption)
                     .foregroundStyle(Theme.Palette.inkMuted)
             }
