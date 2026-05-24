@@ -1,10 +1,11 @@
-# PendingBot Mac
+# PendingBot Crew
 
-这是 PendingBot 的原生 macOS 客户端入口，面向 Crew / coding agent session / runner host 管理场景。
+这是 PendingBot 账号体系下的独立 Crew App，面向 Crew / coding agent session / runner host 管理场景。
 
 ## 定位
 
-- 使用 SwiftUI 原生 macOS 应用形态构建，不走 Mac Catalyst。
+- 使用 SwiftUI 原生 macOS 应用形态构建，不走 Mac Catalyst，也不作为 PendingBot 主应用的 macOS 变体。
+- 可以独立开源；账号、subject、附件、资源、钱包和云端 API 由 PendingBot 平台提供。
 - Crew 是调用 coding agent session 的临时群入口。用户只有进入 Crew，才会触发本机或云端 runner 能力。
 - iOS 和 macOS 在产品概念上共用 Crew；区别是 iOS 不能直接本地运行 coding agent，但可以在 Mac 在线时作为遥控器使用。
 - 当前工程先建立 macOS 端基础壳、登录配置、Crew 列表、session 事件、runner host 和“有求于你”入口。
@@ -30,5 +31,5 @@
 ## 构建
 
 ```bash
-swift build --package-path apps/macos/PendingBotMac
+swift build --package-path apps/macos/PendingBotCrew
 ```

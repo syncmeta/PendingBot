@@ -79,6 +79,8 @@
 		7441BBB82513354F86E2D12E /* ChatActionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37E2067C1C372EB858B6A6DC /* ChatActionSheet.swift */; };
 		756AB114C3C20E0E06623B83 /* MessageTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E68B229EDD3BD50361009601 /* MessageTabView.swift */; };
 		7D1661C95F98D7DCA6F08419 /* ContactsAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 734AE1910A15CE782A2C0BE5 /* ContactsAPI.swift */; };
+		C0DEC0010000000000000001 /* CrewAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0010000000000000002 /* CrewAPI.swift */; };
+		C0DEC0010000000000000003 /* CrewTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0010000000000000004 /* CrewTabView.swift */; };
 		7EC924CCEF279940B5934910 /* ConversationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C99F8DD8956403453040B34E /* ConversationSettingsView.swift */; };
 		83035210F6619E0993F92CEE /* CodeRunnerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A573816C9B62D5FDB2747B1 /* CodeRunnerSheet.swift */; };
 		88978249B3DE9BBB9F495363 /* SwipeRevealRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = E08EA5C0C04D043A83FDCB72 /* SwipeRevealRow.swift */; };
@@ -222,6 +224,8 @@
 		F22DAAC2BF897900CBB54FCD /* APIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIModels.swift; sourceTree = "<group>"; };
 		F932206D62405FD4C1F0143B /* BubbleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BubbleView.swift; sourceTree = "<group>"; };
 		F9E90A433CF0CAC8986218C6 /* ConversationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationView.swift; sourceTree = "<group>"; };
+		C0DEC0010000000000000002 /* CrewAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewAPI.swift; sourceTree = "<group>"; };
+		C0DEC0010000000000000004 /* CrewTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewTabView.swift; sourceTree = "<group>"; };
 		D177F1FF6ADC5CEEAFB768F9 /* ConversationView+Recall.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConversationView+Recall.swift"; sourceTree = "<group>"; };
 		3EFC3D34959391E94AB90B70 /* ConversationView+Attachments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConversationView+Attachments.swift"; sourceTree = "<group>"; };
 		1EA52C7EA043EF86CACA0231 /* ConversationView+Loading.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConversationView+Loading.swift"; sourceTree = "<group>"; };
@@ -291,6 +295,15 @@
 				1B4F2D0E0001000000000002 /* BotCapabilitiesView.swift */,
 			);
 			path = Skills;
+			sourceTree = "<group>";
+		};
+		C0DEC0010000000000000005 /* Crew */ = {
+			isa = PBXGroup;
+			children = (
+				C0DEC0010000000000000002 /* CrewAPI.swift */,
+				C0DEC0010000000000000004 /* CrewTabView.swift */,
+			);
+			path = Crew;
 			sourceTree = "<group>";
 		};
 		5499C93C9DF42D382007DFA9 /* Products */ = {
@@ -413,6 +426,7 @@
 			isa = PBXGroup;
 			children = (
 				DF1E5D2F65F12DCFC67FA944 /* Call */,
+				C0DEC0010000000000000005 /* Crew */,
 				76824A9D530FFA016676E1FC /* Friends */,
 				7C8F43BFF0DF7BD238083405 /* Group */,
 				958326C719A4CEB4774C6166 /* Me */,
@@ -626,6 +640,8 @@
 				F21D3DA278967B87BA15A3EF /* ComposerView.swift in Sources */,
 				CA11AC0E55051C0DE0000001 /* ChatComposerAccessory.swift in Sources */,
 				7D1661C95F98D7DCA6F08419 /* ContactsAPI.swift in Sources */,
+				C0DEC0010000000000000001 /* CrewAPI.swift in Sources */,
+				C0DEC0010000000000000003 /* CrewTabView.swift in Sources */,
 				7EC924CCEF279940B5934910 /* ConversationSettingsView.swift in Sources */,
 				091D2F4E1050EAF98F72B1B1 /* ConversationView.swift in Sources */,
 				22BC48E752651922053AA03D /* ConversationView+Recall.swift in Sources */,

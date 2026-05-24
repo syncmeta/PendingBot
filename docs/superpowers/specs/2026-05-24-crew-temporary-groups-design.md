@@ -631,11 +631,14 @@ iOS 不能在手机本地执行 coding agent。
 
 ## iOS 与 macOS 产品表面
 
-### 共享 Crew 表面
+### 共享 Crew 产品面
 
-iOS 和 macOS 都有 Crew tab。
+Crew 是跨端产品能力，但不是每个端都嵌在 PendingBot 主应用里。
 
-Crew tab 显示：
+- iOS：在 PendingBot 主应用里提供单独 `Crew` tab，用来创建 Crew、远程控制在线 Mac runner，或直接使用云端 runner。
+- macOS：提供独立 `PendingBotCrew` App，登录 PendingBot 账号后访问同一套 subject、Crew、附件、资源、钱包和云端 API。
+
+Crew 表面显示：
 
 - 活跃 Crew；
 - 按状态分组的 sessions；
@@ -647,29 +650,34 @@ Crew tab 显示：
 
 ### macOS 表面
 
-使用原生 SwiftUI，不用 Catalyst。
+macOS 使用单独的原生 SwiftUI App，不用 Catalyst，也不作为 PendingBot 主应用的 macOS 变体。
+
+这个 App 可以向开源软件方向演进。它的边界是：
+
+- 账号体系、subject、附件、资源、钱包、bot 控制权和云端 API 仍属于 PendingBot 平台；
+- 本机 runner host、工作区授权、session 看板、权限审批和 coding-agent 编排属于 Crew App；
+- 普通聊天、普通群、好友和非 Crew 的消息体验不放进这个 App 的核心路径。
 
 推荐结构：
 
 - `WindowGroup` 作为主窗口；
-- Crew 使用 `NavigationSplitView`；
-- 左侧：Crew 列表和 saved views；
+- 使用 `NavigationSplitView`；
+- 左侧：Crew 列表、saved views 和 runner 状态；
 - 中间：session 看板和选中 Crew 的公告板；
 - 右侧 inspector：选中 session 的事件、产物、权限请求；
 - toolbar：新建 Crew、新建 session、暂停/取消、runner 选择；
 - Commands menu：常用动作和快捷键；
 - Settings scene：runner 配置、账号和设备管理。
 
-Mac tabs：
+独立 Crew App 的主要区域：
 
-- `Messages`
 - `Crew`
-- `Bots`
 - `Runners`
 - `Wallet`
+- `Resources`
 - `Settings`
 
-`Runners` 可以是 Mac-only；`Crew` 是 iOS/macOS 共享。
+`Runners` 可以是 Mac-only；`Crew`、`Wallet`、`Resources` 和权限审批是 iOS/macOS 共享能力的不同端面。
 
 ### iOS 表面
 
@@ -791,7 +799,7 @@ UI：
 ### Phase 5：产品表面
 
 - iOS Crew tab。
-- macOS 原生 SwiftUI Crew tab。
+- macOS 独立原生 SwiftUI Crew App。
 - macOS Runner tab 和 settings。
 - bot 求助人类的“有求于你”入口。
 - 临时群树状检查器。

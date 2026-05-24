@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Four-tab root: 消息 / 好友 / 来信 / 我.
+/// Five-tab root: 消息 / 好友 / Crew / 来信 / 我.
 ///
 /// 来信 (Envelopes) hosts a feed of articles each bot has written for
 /// the user; new envelopes are triggered from each conversation's
@@ -147,6 +147,10 @@ struct TabRoot: View {
                 .tabItem { Label(TopTab.friends.label, systemImage: TopTab.friends.systemImage) }
                 .tag(TopTab.friends)
 
+            CrewTabView()
+                .tabItem { Label(TopTab.crew.label, systemImage: TopTab.crew.systemImage) }
+                .tag(TopTab.crew)
+
             EnvelopeTabView()
                 .tabItem { Label(TopTab.envelope.label, systemImage: TopTab.envelope.systemImage) }
                 // System tab badge doesn't have a dot-only variant — a
@@ -167,6 +171,7 @@ struct TabRoot: View {
         switch selected.wrappedValue {
         case .message: MessageTabView()
         case .friends: FriendsTabView()
+        case .crew:    CrewTabView()
         case .envelope: EnvelopeTabView()
         case .me:      MeTabView()
         }

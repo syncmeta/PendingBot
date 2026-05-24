@@ -1,12 +1,13 @@
 import SwiftUI
 
-/// One of the four top-level tabs. Used by TabRoot to drive its
+/// One of the top-level tabs. Used by TabRoot to drive its
 /// regular-size-class layout (where we replace the system bottom tab bar
 /// with a `SidebarTabBar` rendered at the bottom of each tab's left
 /// column — the WeChat / QQ iPad pattern).
 enum TopTab: String, Hashable, CaseIterable {
     case message
     case friends
+    case crew
     case envelope
     case me
 
@@ -14,6 +15,7 @@ enum TopTab: String, Hashable, CaseIterable {
         switch self {
         case .message:  return "消息"
         case .friends:  return "好友"
+        case .crew:     return "Crew"
         case .envelope: return "来信"
         case .me:       return "我"
         }
@@ -23,6 +25,7 @@ enum TopTab: String, Hashable, CaseIterable {
         switch self {
         case .message:  return "bubble.left"
         case .friends:  return "person.2"
+        case .crew:     return "command"
         case .envelope: return "envelope.open"
         case .me:       return "person.crop.circle"
         }

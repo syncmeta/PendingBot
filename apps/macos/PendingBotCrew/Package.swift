@@ -3,18 +3,17 @@
 import PackageDescription
 
 let package = Package(
-    name: "PendingBotMac",
+    name: "PendingBotCrew",
     platforms: [
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "PendingBotMac", targets: ["PendingBotMac"])
+        .executable(name: "PendingBotCrew", targets: ["PendingBotCrew"])
     ],
     targets: [
         .executableTarget(
-            name: "PendingBotMac",
-            path: "Sources/PendingBotMac"
+            name: "PendingBotCrew",
+            path: "Sources/PendingBotCrew"
         )
     ]
 )
-

@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct PendingBotMacApp: App {
+struct PendingBotCrewApp: App {
     @StateObject private var model = AppModel()
 
     var body: some Scene {
@@ -29,4 +29,3 @@ struct PendingBotMacApp: App {
         }
     }
 }
-
