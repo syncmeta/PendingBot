@@ -31,6 +31,9 @@ final class UnreadStore: ObservableObject {
 
     /// Server-truth unread message counts, keyed by conversation id.
     @Published private(set) var serverCounts: [String: Int] = [:]
+    private var serverLastMessageIds: [String: String] = [:]
+    private var pendingReadWatermarks: [String: String] = [:]
+    private var pendingUnscopedClears: Set<String> = []
 
     /// The conversation currently open in the foreground, if any. While
     /// set, its unread count is pinned to 0: any server-side +1 (a message
@@ -93,6 +96,10 @@ final class UnreadStore: ObservableObject {
         }
         accountId = account?.id
         serverCounts = [:]
+        serverLastMessageIds = [:]
+        pendingReadWatermarks = [:]
+        pendingUnscopedClears = []
+        activeConversationId = nil
         currentEnvelopeIds = []
         guard let accountId = account?.id else {
             unread = []
@@ -119,11 +126,42 @@ final class UnreadStore: ObservableObject {
     /// user is reading would otherwise resurface as unread the moment they
     /// back out. If the server row still says >0, persist a clear so other
     /// devices and the next fetch agree.
-    func setServerCounts(_ counts: [String: Int]) {
+    func setServerCounts(_ counts: [String: Int], lastMessageIds: [String: String] = [:]) {
         var counts = counts
-        if let active = activeConversationId, (counts[active] ?? 0) > 0 {
-            counts[active] = 0
-            pushClear(active)
+        serverLastMessageIds = lastMessageIds
+
+        if let active = activeConversationId {
+            let watermark = lastMessageIds[active]
+            rememberLocalRead(active, throughLastMessageId: watermark)
+            if (counts[active] ?? 0) > 0 {
+                counts[active] = 0
+                pushClear(active, throughLastMessageId: watermark)
+            }
+        }
+
+        for (conversationId, watermark) in Array(pendingReadWatermarks) {
+            guard counts[conversationId] != nil else { continue }
+            let serverLast = lastMessageIds[conversationId]
+            if serverLast == watermark {
+                if (counts[conversationId] ?? 0) > 0 {
+                    counts[conversationId] = 0
+                    pushClear(conversationId, throughLastMessageId: watermark)
+                } else {
+                    pendingReadWatermarks.removeValue(forKey: conversationId)
+                }
+            } else if serverLast != nil {
+                pendingReadWatermarks.removeValue(forKey: conversationId)
+            }
+        }
+
+        for conversationId in Array(pendingUnscopedClears) {
+            guard counts[conversationId] != nil else { continue }
+            if (counts[conversationId] ?? 0) > 0 {
+                counts[conversationId] = 0
+                pushClear(conversationId, throughLastMessageId: nil)
+            } else {
+                pendingUnscopedClears.remove(conversationId)
+            }
         }
         serverCounts = counts
         syncAppIconBadge()
@@ -132,15 +170,16 @@ final class UnreadStore: ObservableObject {
     // ── Active conversation ───────────────────────────────────────────────────
 
     /// The user opened a conversation — pin it read and clear any backlog.
-    func enterConversation(_ conversationId: String) {
+    func enterConversation(_ conversationId: String, throughLastMessageId: String? = nil) {
         activeConversationId = conversationId
-        markRead(conversationId)
+        markRead(conversationId, throughLastMessageId: throughLastMessageId)
     }
 
     /// The user left a conversation — stop pinning it. Guarded so a fast
     /// switch (new view's onAppear before old view's onDisappear) doesn't
     /// clear the id the newly-opened conversation just set.
-    func leaveConversation(_ conversationId: String) {
+    func leaveConversation(_ conversationId: String, throughLastMessageId: String? = nil) {
+        markRead(conversationId, throughLastMessageId: throughLastMessageId)
         if activeConversationId == conversationId {
             activeConversationId = nil
         }
@@ -159,31 +198,59 @@ final class UnreadStore: ObservableObject {
     /// server unread count (optimistically, plus a persisted Supabase
     /// UPDATE so other devices and the next fetch agree). Called when the
     /// user opens a conversation, or when they delete it.
-    func markRead(_ conversationId: String) {
+    func markRead(_ conversationId: String, throughLastMessageId: String? = nil) {
         if unread.contains(conversationId) {
             unread.remove(conversationId)
             flush()
         }
-        clearServerCount(conversationId)
+        let watermark = throughLastMessageId ?? serverLastMessageIds[conversationId]
+        rememberLocalRead(conversationId, throughLastMessageId: watermark)
+        clearServerCount(conversationId, throughLastMessageId: watermark, forceRemote: true)
     }
 
-    private func clearServerCount(_ conversationId: String) {
-        guard (serverCounts[conversationId] ?? 0) > 0 else { return }
-        serverCounts[conversationId] = 0
-        syncAppIconBadge()
-        pushClear(conversationId)
+    private func rememberLocalRead(_ conversationId: String, throughLastMessageId: String?) {
+        if let throughLastMessageId, !throughLastMessageId.isEmpty {
+            pendingReadWatermarks[conversationId] = throughLastMessageId
+            pendingUnscopedClears.remove(conversationId)
+        } else {
+            pendingUnscopedClears.insert(conversationId)
+        }
+    }
+
+    private func clearServerCount(
+        _ conversationId: String,
+        throughLastMessageId: String?,
+        forceRemote: Bool = false
+    ) {
+        let hadCount = (serverCounts[conversationId] ?? 0) > 0
+        if hadCount {
+            serverCounts[conversationId] = 0
+            syncAppIconBadge()
+        }
+        if hadCount || forceRemote {
+            pushClear(conversationId, throughLastMessageId: throughLastMessageId)
+        }
     }
 
     /// Persist unread_count = 0 for one conversation. RLS on
     /// user_unread_counts scopes UPDATE to user_id = auth.uid(), so
     /// matching conversation_id alone hits exactly this user's row.
-    private func pushClear(_ conversationId: String) {
+    private func pushClear(_ conversationId: String, throughLastMessageId: String?) {
         Task {
-            try? await SupabaseStack.shared
-                .from("user_unread_counts")
-                .update(["unread_count": 0])
-                .eq("conversation_id", value: conversationId)
-                .execute()
+            if let throughLastMessageId, !throughLastMessageId.isEmpty {
+                try? await SupabaseStack.shared
+                    .from("user_unread_counts")
+                    .update(["unread_count": 0])
+                    .eq("conversation_id", value: conversationId)
+                    .eq("last_message_id", value: throughLastMessageId)
+                    .execute()
+            } else {
+                try? await SupabaseStack.shared
+                    .from("user_unread_counts")
+                    .update(["unread_count": 0])
+                    .eq("conversation_id", value: conversationId)
+                    .execute()
+            }
         }
     }
 

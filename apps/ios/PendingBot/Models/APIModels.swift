@@ -42,6 +42,8 @@ struct Conversation: Codable, Identifiable, Hashable {
     /// Both nil when the conversation has no messages yet.
     let last_message_content: String?
     let last_message_sender_type: String?
+    /// Most recent message row id from `user_unread_counts`.
+    var last_message_id: String? = nil
 
     var displayTitle: String { title?.isEmpty == false ? title! : "未命名" }
 

@@ -729,7 +729,10 @@ struct ConversationView: View {
                 // Pin this conv read while it's on screen — any message
                 // that arrives now stays read no matter which realtime
                 // path (or refetch) reports it.
-                UnreadStore.shared.enterConversation(conversation.id)
+                UnreadStore.shared.enterConversation(
+                    conversation.id,
+                    throughLastMessageId: conversation.last_message_id
+                )
             }
         }
         .task {
@@ -776,7 +779,10 @@ struct ConversationView: View {
             if PushService.shared.activeConversationId == conversation.id {
                 PushService.shared.activeConversationId = nil
             }
-            UnreadStore.shared.leaveConversation(conversation.id)
+            UnreadStore.shared.leaveConversation(
+                conversation.id,
+                throughLastMessageId: messages.last?.id ?? conversation.last_message_id
+            )
             if let token = realtimeToken {
                 Task { await RealtimeManager.shared.stopConvChannel(token) }
                 realtimeToken = nil

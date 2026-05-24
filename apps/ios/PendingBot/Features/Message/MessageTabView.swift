@@ -281,7 +281,7 @@ struct MessageTabView: View {
             ConversationView(conversation: conv, bot: bot(for: conv), pendingPeer: pending) {
                 reload()
             }
-            .onAppear { unread.markRead(conv.id) }
+            .onAppear { unread.markRead(conv.id, throughLastMessageId: conv.last_message_id) }
         case .pending(let peer):
             ConversationView(
                 conversation: pendingConversation(for: peer),
@@ -601,7 +601,7 @@ struct MessageTabView: View {
                 .select("""
                     id, bot_id, user_id, title, conversation_type, feature, round_count, updated_at,
                     bot:bots!conversations_bot_id_fkey(display_name, model_id, visibility, creator_id),
-                    unread:user_unread_counts!inner(last_message_at, last_message_preview, unread_count),
+                    unread:user_unread_counts!inner(last_message_id, last_message_at, last_message_preview, unread_count),
                     participants:conversation_participants(participant_type, participant_id)
                 """)
                 // Subagent child conversations are opened from the parent
@@ -646,10 +646,14 @@ struct MessageTabView: View {
             // time (migration 20260520020753), so we just trust the server
             // count here — no epoch-year guard needed.
             var counts: [String: Int] = [:]
+            var lastMessageIds: [String: String] = [:]
             for row in convFetched {
                 counts[row.id] = row.unread?.first?.unread_count ?? 0
+                if let lastMessageId = row.unread?.first?.last_message_id {
+                    lastMessageIds[row.id] = lastMessageId
+                }
             }
-            unread.setServerCounts(counts)
+            unread.setServerCounts(counts, lastMessageIds: lastMessageIds)
 
             // Build the user_user peer map. Only convs of that type carry
             // a meaningful peer; bot/group/self rows skip the lookup.
@@ -836,6 +840,7 @@ struct MessageTabView: View {
             let creator_id: String?
         }
         struct UnreadJoin: Decodable {
+            let last_message_id: String?
             let last_message_at: String?
             let last_message_preview: String?
             let unread_count: Int?
@@ -867,7 +872,8 @@ struct MessageTabView: View {
                 round_count: round_count,
                 bot_name: bot?.display_name,
                 last_message_content: unreadRow?.last_message_preview,
-                last_message_sender_type: nil
+                last_message_sender_type: nil,
+                last_message_id: unreadRow?.last_message_id
             )
         }
     }
