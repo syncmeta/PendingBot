@@ -44,6 +44,37 @@ struct PendingBotAPI {
         return response.items
     }
 
+    func listMembers(crewId: String) async throws -> [CrewMember] {
+        let response: ListResponse<CrewMember> = try await get("/v1/crew/\(crewId)/members")
+        return response.items
+    }
+
+    func listAnnouncements(crewId: String) async throws -> [CrewAnnouncement] {
+        let response: ListResponse<CrewAnnouncement> = try await get("/v1/crew/\(crewId)/announcements")
+        return response.items
+    }
+
+    func createAnnouncement(
+        crewId: String,
+        summary: String,
+        recipientSessionIds: [String],
+        recipientMemberIds: [String] = [],
+        messageKind: String = "announcement"
+    ) async throws -> String {
+        let response: CreateAnnouncementResponse = try await post(
+            "/v1/crew/\(crewId)/announcements",
+            body: AnnouncementBody(
+                recipientSessionIds: recipientSessionIds,
+                recipientMemberIds: recipientMemberIds,
+                messageKind: messageKind,
+                summary: summary,
+                payload: [:],
+                boardVisible: true
+            )
+        )
+        return response.announcementId
+    }
+
     func createSession(crewId: String, runnerKind: RunnerKind, taskBrief: String) async throws -> String {
         let response: CreateSessionResponse = try await post(
             "/v1/crew/\(crewId)/sessions",
@@ -54,6 +85,11 @@ struct PendingBotAPI {
 
     func listEvents(sessionId: String) async throws -> [SessionEvent] {
         let response: ListResponse<SessionEvent> = try await get("/v1/crew/sessions/\(sessionId)/events")
+        return response.items
+    }
+
+    func listMailbox(sessionId: String) async throws -> [SessionMailboxItem] {
+        let response: ListResponse<SessionMailboxItem> = try await get("/v1/crew/sessions/\(sessionId)/mailbox")
         return response.items
     }
 
@@ -120,6 +156,28 @@ struct PendingBotAPI {
             )
         )
         return response.eventId
+    }
+
+    func postRunnerAnnouncement(
+        hostId: String,
+        sessionId: String,
+        summary: String,
+        recipientSessionIds: [String],
+        recipientMemberIds: [String] = [],
+        messageKind: String = "announcement"
+    ) async throws -> String {
+        let response: CreateAnnouncementResponse = try await post(
+            "/v1/runner-hosts/\(hostId)/sessions/\(sessionId)/announcements",
+            body: AnnouncementBody(
+                recipientSessionIds: recipientSessionIds,
+                recipientMemberIds: recipientMemberIds,
+                messageKind: messageKind,
+                summary: summary,
+                payload: [:],
+                boardVisible: true
+            )
+        )
+        return response.announcementId
     }
 
     func finishRunnerSession(
@@ -248,6 +306,15 @@ private struct RunnerEventBody: Encodable {
     let summary: String
     let payload: [String: String]
     let progressSummary: String?
+}
+
+private struct AnnouncementBody: Encodable {
+    let recipientSessionIds: [String]
+    let recipientMemberIds: [String]
+    let messageKind: String
+    let summary: String
+    let payload: [String: String]
+    let boardVisible: Bool
 }
 
 private struct AppendRunnerEventResponse: Decodable {

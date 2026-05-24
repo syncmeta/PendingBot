@@ -4,6 +4,7 @@ import { requireSession } from '@pendingbot/identity';
 import { requireSubjectAuth } from '../lib/device-grants';
 import { serviceClient, userClient } from '../lib/supabase';
 import { jsonError } from '../lib/http-error';
+import type { Json } from '../db/schema';
 import type { AppBindings } from '../types';
 
 export const crewRoutes = new Hono<AppBindings>();
@@ -28,6 +29,17 @@ const RunnerKind = z.enum([
   'local_opencode',
   'local_kilo',
 ]);
+
+const JsonObject = z.record(z.string(), z.unknown());
+
+const AnnouncementBody = z.object({
+  recipientSessionIds: z.array(z.string().uuid()).default([]),
+  recipientMemberIds: z.array(z.string().uuid()).default([]),
+  messageKind: z.enum(['announcement', 'instruction', 'status', 'question', 'handoff', 'result', 'blocker']).default('announcement'),
+  summary: z.string().trim().min(1).max(2_000),
+  payload: JsonObject.default({}),
+  boardVisible: z.boolean().default(true),
+});
 
 crewRoutes.post('/', requireSubjectAuth(['crew:write']), async (c) => {
   let parsed: z.infer<typeof CreateCrewBody>;
@@ -168,6 +180,130 @@ crewRoutes.get('/:id/sessions', requireSubjectAuth(['crew:read']), async (c) => 
   return c.json({ items: data ?? [] });
 });
 
+crewRoutes.post('/:id/announcements', requireSubjectAuth(['crew:write']), async (c) => {
+  const crewConversationId = c.req.param('id');
+  let parsed: z.infer<typeof AnnouncementBody>;
+  try {
+    parsed = AnnouncementBody.parse(await c.req.json());
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+
+  if (c.var.authKind === 'device_grant') {
+    const deviceGrant = c.var.deviceGrant;
+    if (!deviceGrant?.grantedByUserId) return jsonError(c, 403, 'forbidden');
+    const { data, error } = await serviceClient(c.env).rpc('create_crew_announcement_for_subject', {
+      p_crew_conversation_id: crewConversationId,
+      p_responsible_subject_id: deviceGrant.subjectId,
+      p_actor_user_id: deviceGrant.grantedByUserId,
+      p_recipient_session_ids: parsed.recipientSessionIds as Json,
+      p_recipient_member_ids: parsed.recipientMemberIds as Json,
+      p_message_kind: parsed.messageKind,
+      p_summary: parsed.summary,
+      p_payload: parsed.payload as Json,
+      p_board_visible: parsed.boardVisible,
+    } as never);
+    if (error) {
+      const message = rpcMessage(error);
+      if (/forbidden|not an active crew member/i.test(message)) return jsonError(c, 403, 'forbidden', { message });
+      if (/not found/i.test(message)) return jsonError(c, 404, 'not_found', { message });
+      if (/invalid|required|recipient/i.test(message)) return jsonError(c, 400, 'invalid_body', { message });
+      return jsonError(c, 500, 'database_error', { detail: message });
+    }
+    return c.json({ announcementId: data });
+  }
+
+  const userJwt = c.var.userJwt!;
+  const supa = userClient(c.env, userJwt);
+  const { data, error } = await supa.rpc('create_crew_announcement', {
+    p_crew_conversation_id: crewConversationId,
+    p_recipient_session_ids: parsed.recipientSessionIds as Json,
+    p_recipient_member_ids: parsed.recipientMemberIds as Json,
+    p_message_kind: parsed.messageKind,
+    p_summary: parsed.summary,
+    p_payload: parsed.payload as Json,
+    p_board_visible: parsed.boardVisible,
+  });
+  if (error) {
+    const message = rpcMessage(error);
+    if (/auth required/i.test(message)) return jsonError(c, 401, 'unauthorized', { message });
+    if (/forbidden|not an active crew member/i.test(message)) return jsonError(c, 403, 'forbidden', { message });
+    if (/not found/i.test(message)) return jsonError(c, 404, 'not_found', { message });
+    if (/invalid|required|recipient/i.test(message)) return jsonError(c, 400, 'invalid_body', { message });
+    return jsonError(c, 500, 'database_error', { detail: message });
+  }
+
+  return c.json({ announcementId: data });
+});
+
+crewRoutes.get('/:id/announcements', requireSubjectAuth(['crew:read']), async (c) => {
+  const crewConversationId = c.req.param('id');
+  const denied = await deviceGrantCanReadCrew(c, crewConversationId);
+  if (denied) return denied;
+  const supa = c.var.authKind === 'device_grant' ? serviceClient(c.env) : userClient(c.env, c.var.userJwt!);
+  const { data, error } = await supa
+    .from('crew_announcements')
+    .select('id, crew_conversation_id, responsible_subject_id, sender_kind, sender_member_id, sender_session_id, recipient_mode, message_kind, board_visible, summary, payload, created_at')
+    .eq('crew_conversation_id', crewConversationId)
+    .eq('board_visible', true)
+    .order('created_at', { ascending: true })
+    .limit(200);
+  if (error) {
+    return jsonError(c, 500, 'database_error', { detail: error.message });
+  }
+  const announcements = data ?? [];
+  const announcementIds = announcements.map((row) => row.id);
+  type AnnouncementMentionRow = {
+    id: string;
+    announcement_id: string;
+    target_kind: string;
+    target_session_id: string | null;
+    target_member_id: string | null;
+    created_at: string;
+  };
+  const mentionResult = announcementIds.length
+    ? await supa
+      .from('crew_announcement_mentions')
+      .select('id, announcement_id, target_kind, target_session_id, target_member_id, created_at')
+      .in('announcement_id', announcementIds)
+      .order('created_at', { ascending: true })
+    : { data: [], error: null };
+  const mentionRows = (mentionResult.data ?? []) as AnnouncementMentionRow[];
+  const mentionErr = mentionResult.error;
+  if (mentionErr) {
+    return jsonError(c, 500, 'database_error', { detail: mentionErr.message });
+  }
+  const mentionsByAnnouncement = new Map<string, AnnouncementMentionRow[]>();
+  for (const mention of mentionRows) {
+    const list = mentionsByAnnouncement.get(mention.announcement_id) ?? [];
+    list.push(mention);
+    mentionsByAnnouncement.set(mention.announcement_id, list);
+  }
+  return c.json({
+    items: announcements.map((announcement) => ({
+      ...announcement,
+      mentions: mentionsByAnnouncement.get(announcement.id) ?? [],
+    })),
+  });
+});
+
+crewRoutes.get('/:id/members', requireSubjectAuth(['crew:read']), async (c) => {
+  const crewConversationId = c.req.param('id');
+  const denied = await deviceGrantCanReadCrew(c, crewConversationId);
+  if (denied) return denied;
+  const supa = c.var.authKind === 'device_grant' ? serviceClient(c.env) : userClient(c.env, c.var.userJwt!);
+  const { data, error } = await supa
+    .from('temporary_group_members')
+    .select('id, conversation_id, member_kind, user_id, bot_id, code_session_id, display_name, role, capabilities, status, created_at')
+    .eq('conversation_id', crewConversationId)
+    .eq('status', 'active')
+    .order('created_at', { ascending: true });
+  if (error) {
+    return jsonError(c, 500, 'database_error', { detail: error.message });
+  }
+  return c.json({ items: data ?? [] });
+});
+
 crewRoutes.get('/sessions/:sessionId/events', requireSubjectAuth(['crew:read']), async (c) => {
   const sessionId = c.req.param('sessionId');
   const supa = c.var.authKind === 'device_grant' ? serviceClient(c.env) : userClient(c.env, c.var.userJwt!);
@@ -187,6 +323,33 @@ crewRoutes.get('/sessions/:sessionId/events', requireSubjectAuth(['crew:read']),
     .from('session_events')
     .select('id, crew_session_id, event_type, visibility, summary, payload, created_at')
     .eq('crew_session_id', sessionId)
+    .order('created_at', { ascending: true })
+    .limit(200);
+  if (error) {
+    return jsonError(c, 500, 'database_error', { detail: error.message });
+  }
+  return c.json({ items: data ?? [] });
+});
+
+crewRoutes.get('/sessions/:sessionId/mailbox', requireSubjectAuth(['crew:read']), async (c) => {
+  const sessionId = c.req.param('sessionId');
+  const supa = c.var.authKind === 'device_grant' ? serviceClient(c.env) : userClient(c.env, c.var.userJwt!);
+  if (c.var.authKind === 'device_grant') {
+    const deviceGrant = c.var.deviceGrant;
+    if (!deviceGrant) return jsonError(c, 401, 'unauthorized');
+    const { data: session, error: sessionErr } = await supa
+      .from('crew_sessions')
+      .select('id, responsible_subject_id')
+      .eq('id', sessionId)
+      .eq('responsible_subject_id', deviceGrant.subjectId)
+      .maybeSingle();
+    if (sessionErr) return jsonError(c, 500, 'database_error', { detail: sessionErr.message });
+    if (!session) return jsonError(c, 404, 'not_found');
+  }
+  const { data, error } = await supa
+    .from('session_mailbox_items')
+    .select('id, announcement_id, crew_conversation_id, responsible_subject_id, sender_kind, sender_member_id, sender_session_id, recipient_session_id, message_kind, summary, payload, status, created_at, read_at')
+    .eq('recipient_session_id', sessionId)
     .order('created_at', { ascending: true })
     .limit(200);
   if (error) {

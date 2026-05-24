@@ -93,6 +93,14 @@ Crew 是跨端能力：
 
 Crew 不是 Mac 专属功能。Mac 是更强的控制端和可选 runner host；iOS 是控制端。
 
+每个由 PendingBot 里的 bot 创建或调用的 Crew，可以有一个 `master bot`。
+
+- `master bot` 对应 PendingBot 里创建或调用这个 Crew 的那个 bot。
+- Crew 内的 master bot 是成员和控制入口，不承担费用责任；费用仍归因到个人或群 subject。
+- 本机 master bot 能力可以开关，默认关闭。关闭时，Crew 仍可存在，但不会把本机 agent 能力暴露给 master bot。
+- 人类可以单独和 master bot 私聊；私聊是普通 `user_bot` 会话，和 Crew 公告板分开，只通过 metadata/linkage 关联。
+- 人类直接创建、没有 bot 参与的 Crew，可以没有 master bot。
+
 ## 会话类型
 
 新增：
@@ -497,8 +505,8 @@ dispatch 层是状态机和事件总线，不是单个 supervisor bot。
 每次 coding agent 继续执行前，coordinator 生成一个紧凑上下文包：
 
 - Crew 任务 brief；
-- 相关 Crew 消息；
-- 上次 cursor 之后的新消息；
+- 只投递给当前 session 的 Crew 消息；
+- 上次 cursor 之后、当前 session 应接收的新 mailbox 项；
 - 当前 session 状态；
 - 其他活跃 session 摘要；
 - 依赖状态；
@@ -514,18 +522,25 @@ dispatch 层是状态机和事件总线，不是单个 supervisor bot。
 
 - 原始进程输出写 `session_events`；
 - 状态摘要更新 `crew_sessions.progress_summary`；
-- 只有 session 显式调用 `post_to_crew` 才写入 Crew 会话消息；
+- 只有 session 显式调用公告工具才写入 Crew 公告板；
+- 公告可以 `@` 一个或多个 session / 人类成员；
+- 有 `@` 时，只投递给被 `@` 的 session；没有 `@` 时视为全员广播，所有 session 都收到；
+- 人类在 Crew 公告板发消息遵循同一规则；
+- 人类回复某条 session 发出的消息时，客户端默认自动 `@` 该发送 session；
 - 最终结果交回发起 member 或指定负责人。
 
 Crew 会话消息流不能变成终端日志。
 
 ### Mailbox
 
-需要支持 session 间 mailbox：
+需要支持 IM 风格的 Crew 公告板和 session mailbox：
 
-- session A 可以向 session B 发状态或问题；
-- coordinator 把相关 mailbox 项注入 context packet；
-- 人类可以在 Crew UI 中查看和介入。
+- `crew_announcements` 是公告本体，像群聊消息一样展示；
+- `crew_announcement_mentions` 记录这条消息 `@` 了哪些 session 或人类成员；
+- `session_mailbox_items` 是对 session 的投递队列，只保存 session 应该收到的消息；
+- session 默认只读自己的 mailbox，不扫整个 Crew 公告板；
+- 没有 `@` 的公告会 fan-out 到所有 session mailbox；
+- 人类面板展示完整 IM 流，可以看到谁发给谁、谁 `@` 谁，并可对单条消息回复。
 
 这借鉴成熟多 agent / team 系统，但不要求所有 session 共用一个巨大上下文。
 

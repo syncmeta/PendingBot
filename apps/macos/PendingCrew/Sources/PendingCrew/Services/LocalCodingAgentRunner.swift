@@ -42,12 +42,13 @@ struct LocalCodingAgentProfile: Equatable {
         }
     }
 
-    func renderCommand(for session: CrewSession) -> LocalCodingAgentCommand {
-        LocalCodingAgentCommand(
+    func renderCommand(for session: CrewSession, taskPrompt: String? = nil) -> LocalCodingAgentCommand {
+        let prompt = taskPrompt ?? session.taskBrief
+        return LocalCodingAgentCommand(
             executableURL: URL(fileURLWithPath: executablePath),
             arguments: arguments.map { argument in
                 argument
-                    .replacingOccurrences(of: "{taskBrief}", with: session.taskBrief)
+                    .replacingOccurrences(of: "{taskBrief}", with: prompt)
                     .replacingOccurrences(of: "{sessionId}", with: session.id)
                     .replacingOccurrences(of: "{crewConversationId}", with: session.crewConversationId)
             },
@@ -57,6 +58,40 @@ struct LocalCodingAgentProfile: Equatable {
                     : URL(fileURLWithPath: path)
             }
         )
+    }
+}
+
+enum LocalCodingAgentContextPacket {
+    static func render(session: CrewSession, mailbox: [SessionMailboxItem]) -> String {
+        var sections: [String] = []
+        sections.append("""
+        Crew session id: \(session.id)
+        Crew conversation id: \(session.crewConversationId)
+
+        任务:
+        \(session.taskBrief)
+        """)
+
+        let unread = mailbox.filter { $0.status != "archived" }
+        if !unread.isEmpty {
+            let lines = unread.map { item in
+                let sender = item.senderSessionId.map { "session:\($0)" } ?? item.senderKind ?? "crew"
+                return "- [\(item.messageKind)] from \(sender): \(item.summary)"
+            }.joined(separator: "\n")
+            sections.append("""
+            本次注入的 Crew 消息:
+            \(lines)
+            """)
+        }
+
+        sections.append("""
+        输出规则:
+        - 不要把过程日志刷到 Crew 群聊。
+        - 需要同步给其他 session 或人类时，发一条简短公告并明确 @ 对象。
+        - 最终只输出可执行结论、变更摘要和验证结果。
+        """)
+
+        return sections.joined(separator: "\n\n")
     }
 }
 
