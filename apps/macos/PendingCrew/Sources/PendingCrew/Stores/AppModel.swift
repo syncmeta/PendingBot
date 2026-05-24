@@ -10,7 +10,7 @@ final class AppModel: ObservableObject {
     }
 
     @Published var apiBaseURL: String
-    @Published var authToken: String
+    @Published var debugUserJWT: String
     @Published var subjectResponse: SubjectResponse?
     @Published var crews: [Crew] = []
     @Published var sessionsByCrew: [String: [CrewSession]] = [:]
@@ -29,7 +29,13 @@ final class AppModel: ObservableObject {
 
     init() {
         apiBaseURL = UserDefaults.standard.string(forKey: "apiBaseURL") ?? "https://api.pendingname.com"
-        authToken = KeychainStore.get(account: "worker-jwt") ?? ""
+#if DEBUG
+        debugUserJWT = KeychainStore.get(account: "debug-worker-jwt")
+            ?? KeychainStore.get(account: "worker-jwt")
+            ?? ""
+#else
+        debugUserJWT = ""
+#endif
         deviceGrantToken = KeychainStore.get(account: "device-grant")
     }
 
@@ -37,22 +43,30 @@ final class AppModel: ObservableObject {
         guard let url = URL(string: apiBaseURL) else {
             return nil
         }
-        let token = effectiveAuthToken
-        guard !token.isEmpty else {
+        guard let credential = authCredential else {
             return nil
         }
-        return PendingBotAPI(baseURL: url, authToken: token)
+        return PendingBotAPI(baseURL: url, authToken: credential.token)
     }
 
-    private var effectiveAuthToken: String {
-        if !authToken.isEmpty {
-            return authToken
-        }
-        return deviceGrantToken ?? ""
+    private static var allowDebugUserJWT: Bool {
+#if DEBUG
+        true
+#else
+        false
+#endif
+    }
+
+    private var authCredential: PendingCrewAuthCredential? {
+        PendingCrewAuthCredential.resolve(
+            deviceGrantToken: deviceGrantToken,
+            debugUserJWT: debugUserJWT,
+            allowDebugUserJWT: Self.allowDebugUserJWT
+        )
     }
 
     private var isDeviceGrantOnly: Bool {
-        authToken.isEmpty && !(deviceGrantToken ?? "").isEmpty
+        authCredential?.kind == .deviceGrant
     }
 
     var personalSubjectId: String? {
@@ -61,7 +75,7 @@ final class AppModel: ObservableObject {
 
     func bootstrap() async {
         guard api != nil else {
-            statusMessage = "请先扫码登录，或在设置里填写 API URL 和登录 JWT"
+            statusMessage = "请先扫码登录"
             return
         }
         await refreshAll()
@@ -69,15 +83,40 @@ final class AppModel: ObservableObject {
 
     func saveSettings() {
         UserDefaults.standard.set(apiBaseURL, forKey: "apiBaseURL")
-        if authToken.isEmpty {
+#if DEBUG
+        if debugUserJWT.isEmpty {
+            KeychainStore.delete(account: "debug-worker-jwt")
             KeychainStore.delete(account: "worker-jwt")
         } else {
             do {
-                try KeychainStore.set(authToken, account: "worker-jwt")
+                try KeychainStore.set(debugUserJWT, account: "debug-worker-jwt")
+                KeychainStore.delete(account: "worker-jwt")
             } catch {
                 errorMessage = error.localizedDescription
             }
         }
+#else
+        KeychainStore.delete(account: "debug-worker-jwt")
+        KeychainStore.delete(account: "worker-jwt")
+#endif
+    }
+
+    func clearDeviceGrant() {
+        deviceGrantToken = nil
+        KeychainStore.delete(account: "device-grant")
+        subjectResponse = nil
+        crews = []
+        sessionsByCrew = [:]
+        eventsBySession = [:]
+        runnerHosts = []
+        helpRequests = []
+        statusMessage = "已退出登录"
+    }
+
+    func clearDebugUserJWT() {
+        debugUserJWT = ""
+        KeychainStore.delete(account: "debug-worker-jwt")
+        KeychainStore.delete(account: "worker-jwt")
     }
 
     func startDeviceLogin() async {
@@ -87,6 +126,7 @@ final class AppModel: ObservableObject {
             let name = Host.current().localizedName ?? "Mac"
             deviceLoginChallenge = try await api.createDeviceLoginChallenge(deviceName: name)
             deviceGrantToken = nil
+            KeychainStore.delete(account: "device-grant")
         }
     }
 
@@ -269,7 +309,7 @@ enum LocalError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingAuth:
-            "请先扫码登录，或填写 API URL 和登录 JWT"
+            "请先扫码登录"
         case .missingSubject:
             "还没有加载到当前账号的 subject"
         case .missingRunnerSession:
