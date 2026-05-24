@@ -1233,6 +1233,50 @@ export type Database = {
           },
         ]
       }
+      group_member_billing: {
+        Row: {
+          cap_credits: number | null
+          conversation_id: string
+          frozen_at: string | null
+          joined_at: string
+          muted: boolean
+          overdrawn: boolean
+          participates: boolean
+          spent_credits: number
+          user_id: string
+        }
+        Insert: {
+          cap_credits?: number | null
+          conversation_id: string
+          frozen_at?: string | null
+          joined_at?: string
+          muted?: boolean
+          overdrawn?: boolean
+          participates?: boolean
+          spent_credits?: number
+          user_id: string
+        }
+        Update: {
+          cap_credits?: number | null
+          conversation_id?: string
+          frozen_at?: string | null
+          joined_at?: string
+          muted?: boolean
+          overdrawn?: boolean
+          participates?: boolean
+          spent_credits?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "group_member_billing_conv_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       group_member_invitations: {
         Row: {
           billing_snapshot: Json
@@ -1277,46 +1321,40 @@ export type Database = {
           },
         ]
       }
-      group_member_billing: {
+      group_subject_members: {
         Row: {
-          cap_credits: number | null
-          conversation_id: string
-          frozen_at: string | null
-          joined_at: string
-          muted: boolean
-          overdrawn: boolean
-          participates: boolean
-          spent_credits: number
+          can_create_crew: boolean
+          can_manage_runners: boolean
+          can_manage_wallet: boolean
+          created_at: string
+          role: string
+          subject_id: string
           user_id: string
         }
         Insert: {
-          cap_credits?: number | null
-          conversation_id: string
-          frozen_at?: string | null
-          joined_at?: string
-          muted?: boolean
-          overdrawn?: boolean
-          participates?: boolean
-          spent_credits?: number
+          can_create_crew?: boolean
+          can_manage_runners?: boolean
+          can_manage_wallet?: boolean
+          created_at?: string
+          role: string
+          subject_id: string
           user_id: string
         }
         Update: {
-          cap_credits?: number | null
-          conversation_id?: string
-          frozen_at?: string | null
-          joined_at?: string
-          muted?: boolean
-          overdrawn?: boolean
-          participates?: boolean
-          spent_credits?: number
+          can_create_crew?: boolean
+          can_manage_runners?: boolean
+          can_manage_wallet?: boolean
+          created_at?: string
+          role?: string
+          subject_id?: string
           user_id?: string
         }
         Relationships: [
           {
-            foreignKeyName: "group_member_billing_conv_fkey"
-            columns: ["conversation_id"]
+            foreignKeyName: "group_subject_members_subject_id_fkey"
+            columns: ["subject_id"]
             isOneToOne: false
-            referencedRelation: "conversations"
+            referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
         ]
@@ -1605,36 +1643,6 @@ export type Database = {
         }
         Relationships: []
       }
-      preset_letters: {
-        Row: {
-          body_md: string
-          slug: string
-          summary: string
-          title: string
-          updated_at: string
-          updated_by: string | null
-          version: number
-        }
-        Insert: {
-          body_md: string
-          slug: string
-          summary: string
-          title: string
-          updated_at?: string
-          updated_by?: string | null
-          version?: number
-        }
-        Update: {
-          body_md?: string
-          slug?: string
-          summary?: string
-          title?: string
-          updated_at?: string
-          updated_by?: string | null
-          version?: number
-        }
-        Relationships: []
-      }
       preset_conversation_templates: {
         Row: {
           base_ts: string
@@ -1704,6 +1712,36 @@ export type Database = {
           title?: string
           updated_at?: string
           updated_by?: string | null
+        }
+        Relationships: []
+      }
+      preset_letters: {
+        Row: {
+          body_md: string
+          slug: string
+          summary: string
+          title: string
+          updated_at: string
+          updated_by: string | null
+          version: number
+        }
+        Insert: {
+          body_md: string
+          slug: string
+          summary: string
+          title: string
+          updated_at?: string
+          updated_by?: string | null
+          version?: number
+        }
+        Update: {
+          body_md?: string
+          slug?: string
+          summary?: string
+          title?: string
+          updated_at?: string
+          updated_by?: string | null
+          version?: number
         }
         Relationships: []
       }
@@ -1925,6 +1963,79 @@ export type Database = {
             columns: ["forked_from"]
             isOneToOne: false
             referencedRelation: "skills"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      subject_wallets: {
+        Row: {
+          balance_credits: number
+          balance_updated_at: string | null
+          lifetime_spent_credits: number
+          lifetime_topup_credits: number
+          subject_id: string
+        }
+        Insert: {
+          balance_credits?: number
+          balance_updated_at?: string | null
+          lifetime_spent_credits?: number
+          lifetime_topup_credits?: number
+          subject_id: string
+        }
+        Update: {
+          balance_credits?: number
+          balance_updated_at?: string | null
+          lifetime_spent_credits?: number
+          lifetime_topup_credits?: number
+          subject_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subject_wallets_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: true
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      subjects: {
+        Row: {
+          created_at: string
+          display_name: string
+          group_conversation_id: string | null
+          id: string
+          status: string
+          subject_type: string
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          display_name: string
+          group_conversation_id?: string | null
+          id?: string
+          status?: string
+          subject_type: string
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          display_name?: string
+          group_conversation_id?: string | null
+          id?: string
+          status?: string
+          subject_type?: string
+          updated_at?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subjects_group_conversation_id_fkey"
+            columns: ["group_conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
             referencedColumns: ["id"]
           },
         ]
@@ -2427,6 +2538,14 @@ export type Database = {
         Args: { p_conv_id: string; p_handle_type: string }
         Returns: undefined
       }
+      _resolve_preset_bot_for_user: {
+        Args: { p_slug: string; p_uid: string }
+        Returns: string
+      }
+      _seed_preset_group_dialogue: {
+        Args: { p_conv_id: string; p_messages: Json; p_user_id: string }
+        Returns: undefined
+      }
       accept_friend_request: {
         Args: { p_request_id: string; p_user_id: string }
         Returns: undefined
@@ -2458,6 +2577,14 @@ export type Database = {
         Args: { p_audit_log_id: string; p_credits: number; p_user_id: string }
         Returns: number
       }
+      billing_debit_subject: {
+        Args: {
+          p_audit_log_id: string
+          p_credits: number
+          p_subject_id: string
+        }
+        Returns: number
+      }
       billing_issue_codes: {
         Args: { p_count: number; p_credits: number; p_label?: string }
         Returns: string[]
@@ -2477,8 +2604,13 @@ export type Database = {
         Returns: boolean
       }
       cancel_account_deletion: { Args: never; Returns: boolean }
+      ensure_group_subject_for_conversation: {
+        Args: { p_conversation_id: string }
+        Returns: string
+      }
       ensure_preset_handle: { Args: { p_uid: string }; Returns: undefined }
       ensure_self_conv: { Args: { p_uid: string }; Returns: string }
+      ensure_user_subject: { Args: { p_user_id: string }; Returns: string }
       finalize_account_deletion: {
         Args: { p_force?: boolean; p_uid: string }
         Returns: undefined
@@ -2631,6 +2763,14 @@ export type Database = {
           p_content: string
         }
         Returns: Json
+      }
+      subject_has_user_access: {
+        Args: { p_subject_id: string; p_user_id: string }
+        Returns: boolean
+      }
+      subject_user_has_role: {
+        Args: { p_roles: string[]; p_subject_id: string; p_user_id: string }
+        Returns: boolean
       }
       user_has_conv_with_bot: {
         Args: { p_bot_id: string; p_user_id: string }
