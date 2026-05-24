@@ -636,7 +636,7 @@ iOS 不能在手机本地执行 coding agent。
 Crew 是跨端产品能力，但不是每个端都嵌在 PendingBot 主应用里。
 
 - iOS：在 PendingBot 主应用里提供单独 `Crew` tab，用来创建 Crew、远程控制在线 Mac runner，或直接使用云端 runner。
-- macOS：提供独立 `PendingBotCrew` App，登录 PendingBot 账号后访问同一套 subject、Crew、附件、资源、钱包和云端 API。
+- macOS：提供独立 `PendingCrew` App，登录 PendingBot 账号后访问同一套 subject、Crew、附件、资源、钱包和云端 API。
 
 Crew 表面显示：
 

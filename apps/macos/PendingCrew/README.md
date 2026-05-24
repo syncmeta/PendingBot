@@ -1,4 +1,4 @@
-# PendingBot Crew
+# PendingCrew
 
 这是 PendingBot 账号体系下的独立 Crew App，面向 Crew / coding agent session / runner host 管理场景。
 
@@ -31,5 +31,5 @@
 ## 构建
 
 ```bash
-swift build --package-path apps/macos/PendingBotCrew
+swift build --package-path apps/macos/PendingCrew
 ```

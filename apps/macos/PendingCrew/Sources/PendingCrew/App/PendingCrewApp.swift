@@ -1,11 +1,11 @@
 import SwiftUI
 
 @main
-struct PendingBotCrewApp: App {
+struct PendingCrewApp: App {
     @StateObject private var model = AppModel()
 
     var body: some Scene {
-        WindowGroup("PendingBot Crew") {
+        WindowGroup("PendingCrew") {
             RootView()
                 .environmentObject(model)
                 .frame(minWidth: 1040, minHeight: 680)
