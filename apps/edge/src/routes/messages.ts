@@ -372,25 +372,11 @@ messageRoutes.post('/', async (c) => {
     return jsonError(c, 403, 'forbidden', { message: '没有权限和这个机器人聊天,可能已被取消邀请' });
   }
 
-  // Provider routing is bot-level only — the bot's own default route
-  // (bots.model_provider) drives preferProvider for the turn.
-  let effectiveProviderOverride: string | null = bot.model_provider ?? null;
-
-  // Chat model is the bot's own default (bots.model_id) — unless the bot is
-  // in arena mode (bots.config.arena), in which case each turn draws a
-  // random model from the pool, routed via openrouter passthrough so every
-  // contender is reached identically (the personal leaderboard depends on
-  // that fairness). A null pick (empty pool / catalog miss) falls back to
-  // the pinned model.
-  let effectiveModelId: string = bot.model_id as string;
-  const arenaCfg = parseRandomModelConfig(botConfigArena(bot.config));
-  if (arenaCfg) {
-    const picked = await pickRandomModel(c.env, arenaCfg);
-    if (picked) {
-      effectiveModelId = picked.slug;
-      effectiveProviderOverride = picked.modelProvider ?? 'openrouter';
-    }
-  }
+  const turnRoute = await resolveMessageBotTurnRoute(c.env, {
+    model_id: bot.model_id as string,
+    model_provider: bot.model_provider,
+    config: bot.config,
+  });
 
   const isSelfChat = conv.conversation_type === 'self';
 
@@ -450,7 +436,7 @@ messageRoutes.post('/', async (c) => {
             bot: {
               id: bot.id,
               display_name: bot.display_name,
-              model_id: effectiveModelId,
+              model_id: turnRoute.modelId,
               // CHECK constraint guarantees one of these two; types can't see it.
               output_mode: bot.output_mode === 'bubble' ? 'bubble' : 'single',
               tz: bot.tz,
@@ -464,7 +450,7 @@ messageRoutes.post('/', async (c) => {
             visionModelOverride: botConfigString(bot.config, 'visionModel'),
             webSearch: parseWebSearchConfig(bot.config),
             activeLookbacks: parsed.activeLookbacks ?? [],
-            providerOverride: effectiveProviderOverride,
+            providerOverride: turnRoute.providerOverride,
             clientTz: parsed.clientTz,
             signal: detachedAbort.signal,
             emit,
@@ -711,18 +697,7 @@ messageRoutes.post('/start', async (c) => {
     );
   }
 
-  // Provider routing is bot-level only (bots.model_provider). Arena mode
-  // (bots.config.arena) draws a random model per turn via openrouter.
-  let effectiveProviderOverride: string | null = bot.model_provider ?? null;
-  let effectiveModelId: string = bot.model_id;
-  const arenaCfg = parseRandomModelConfig(botConfigArena(bot.config));
-  if (arenaCfg) {
-    const picked = await pickRandomModel(c.env, arenaCfg);
-    if (picked) {
-      effectiveModelId = picked.slug;
-      effectiveProviderOverride = picked.modelProvider ?? 'openrouter';
-    }
-  }
+  const turnRoute = await resolveMessageBotTurnRoute(c.env, bot);
 
   const encoder = new TextEncoder();
   const detachedAbort = new AbortController();
@@ -780,7 +755,7 @@ messageRoutes.post('/start', async (c) => {
             bot: {
               id: bot.id,
               display_name: bot.display_name,
-              model_id: effectiveModelId,
+              model_id: turnRoute.modelId,
               output_mode: bot.output_mode === 'bubble' ? 'bubble' : 'single',
               tz: bot.tz,
             },
@@ -792,7 +767,7 @@ messageRoutes.post('/start', async (c) => {
             visionModelOverride: botConfigString(bot.config, 'visionModel'),
             webSearch: parseWebSearchConfig(bot.config),
             activeLookbacks: [],
-            providerOverride: effectiveProviderOverride,
+            providerOverride: turnRoute.providerOverride,
             clientTz: parsed.clientTz,
             signal: detachedAbort.signal,
             emit,
@@ -960,9 +935,8 @@ messageRoutes.post('/:id/regenerate', async (c) => {
     throw err;
   }
 
-  let effectiveProviderOverride: string | null = bot.model_provider ?? null;
-  let effectiveModelId: string = bot.model_id;
   const arenaCfg = parseRandomModelConfig(botConfigArena(bot.config));
+  let excludeSlugs: string[] = [];
   if (arenaCfg) {
     const { data: usedRows } = await supaService
       .from('messages')
@@ -970,19 +944,23 @@ messageRoutes.post('/:id/regenerate', async (c) => {
       .eq('parent_message_id', parentId)
       .eq('role', 'bot')
       .not('model_slug', 'is', null);
-    const excludeSlugs = [
+    excludeSlugs = [
       ...new Set(
         (usedRows ?? [])
           .map((r) => r.model_slug as string | null)
           .filter((s): s is string => !!s),
       ),
     ];
-    const picked = await pickRandomModel(c.env, arenaCfg, { excludeSlugs });
-    if (picked) {
-      effectiveModelId = picked.slug;
-      effectiveProviderOverride = picked.modelProvider ?? 'openrouter';
-    }
   }
+  const turnRoute = await resolveMessageBotTurnRoute(
+    c.env,
+    {
+      model_id: bot.model_id,
+      model_provider: bot.model_provider,
+      config: bot.config,
+    },
+    { excludeSlugs },
+  );
 
   const isSelfChat = conv.conversation_type === 'self';
   const encoder = new TextEncoder();
@@ -1009,7 +987,7 @@ messageRoutes.post('/:id/regenerate', async (c) => {
             bot: {
               id: bot.id,
               display_name: bot.display_name,
-              model_id: effectiveModelId,
+              model_id: turnRoute.modelId,
               output_mode: bot.output_mode === 'bubble' ? 'bubble' : 'single',
               tz: bot.tz,
             },
@@ -1019,7 +997,7 @@ messageRoutes.post('/:id/regenerate', async (c) => {
             currentAttachmentIds: parentAttachmentIds,
             visionModelOverride: botConfigString(bot.config, 'visionModel'),
             webSearch: parseWebSearchConfig(bot.config),
-            providerOverride: effectiveProviderOverride,
+            providerOverride: turnRoute.providerOverride,
             clientTz: parsed.clientTz,
             signal: detachedAbort.signal,
             emit,
@@ -1317,6 +1295,38 @@ function botConfigString(config: unknown, key: string): string | null {
 function botConfigArena(config: unknown): unknown {
   if (!config || typeof config !== 'object') return null;
   return (config as Record<string, unknown>).arena ?? null;
+}
+
+async function resolveMessageBotTurnRoute(
+  env: AppBindings['Bindings'],
+  bot: {
+    model_id: string;
+    model_provider: string | null;
+    config: unknown;
+  },
+  opts?: { excludeSlugs?: string[] },
+): Promise<{ modelId: string; providerOverride: string | null }> {
+  // Provider routing is bot-level only (bots.model_provider). Arena mode
+  // draws a random model per turn via the OpenRouter passthrough so every
+  // contender is reached identically; a null pick falls back to the pinned
+  // model and provider.
+  const arenaCfg = parseRandomModelConfig(botConfigArena(bot.config));
+  if (arenaCfg) {
+    const picked = await pickRandomModel(env, arenaCfg, {
+      excludeSlugs: opts?.excludeSlugs ?? [],
+    });
+    if (picked) {
+      return {
+        modelId: picked.slug,
+        providerOverride: picked.modelProvider ?? 'openrouter',
+      };
+    }
+  }
+
+  return {
+    modelId: bot.model_id,
+    providerOverride: bot.model_provider ?? null,
+  };
 }
 
 // Lookback cadence is keyed off a per (bot, user) counter that crosses
