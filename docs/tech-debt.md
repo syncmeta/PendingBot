@@ -123,13 +123,13 @@
 - **建议**: 抽出共享的 voice metering/billing primitive：usage 归一、cost preview、audit enqueue、log redaction、hangup policy 共用；DO 只保留 transport/room lifecycle 差异。
 - **状态**: 部分修复（2026-05-25 · 新增 `apps/edge/src/lib/voice-metering.ts` 和 `voice-metering.test.ts`，两套 DO 共用 realtime usage 拆分与事件脱敏摘要；cost preview / audit enqueue / hangup policy 仍可继续收敛。）
 
-### 🟡 JWT 验证只校验签名和形状，未绑定 issuer/audience/role
+### ✅ JWT 验证只校验签名和形状，未绑定 issuer/audience/role
 - **发现**: 2026-05-24 · codex/security-architecture-audit
 - **位置**: packages/identity/src/jwt.ts:42、packages/identity/src/schema.ts:8
 - **问题**: Edge 端 `jwtVerify` 允许 Supabase JWKS 的非 HS256 签名算法，但没有传 `issuer` / `audience`，payload schema 也只把 `role` 当 optional 字段，不要求 `role = authenticated`。
 - **影响**: 目前同项目 JWKS 已经挡住大多数伪造，但认证边界比 Supabase Auth 语义更宽；未来多 audience、服务 token 或 Auth 配置变化时，可能把不该当用户会话的 token 接进 `requireSession()`。
 - **建议**: 把 `issuer` 固定为 `${SUPABASE_URL}/auth/v1`，`audience` 固定到期望值，并在 middleware 中要求 `role === 'authenticated'`。
-- **状态**: 待办
+- **状态**: 已修复（2026-05-25 · `packages/identity/src/jwt.ts` 在 `jwtVerify` 层绑定 `issuer = ${SUPABASE_URL}/auth/v1` 与 `audience = authenticated`，payload schema 要求 `role = authenticated`；`identity-jwt.test.ts` 覆盖错误 issuer / audience / role。）
 
 ### 🟡 iOS 模型池的 Artificial Analysis 排序是静态快照
 - **发现**: 2026-05-24 · codex/bot-model-pool-ui

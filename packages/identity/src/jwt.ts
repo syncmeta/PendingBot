@@ -26,6 +26,14 @@ function getJwks(supabaseUrl: string): JWTVerifyGetKey {
   return jwks;
 }
 
+interface VerifyJwtOptions {
+  issuer?: string;
+}
+
+function authIssuer(supabaseUrl: string): string {
+  return new URL('/auth/v1', supabaseUrl).toString();
+}
+
 /**
  * Inner verification: given a resolved JWKS, verify signature + algorithm
  * + payload shape. Exposed so tests can pass a local JWKS without hitting
@@ -38,11 +46,14 @@ function getJwks(supabaseUrl: string): JWTVerifyGetKey {
 export async function verifyJwtWithJwks(
   token: string,
   jwks: JWTVerifyGetKey,
+  opts: VerifyJwtOptions = {},
 ): Promise<SupabaseJwtPayload> {
   const { payload } = await jwtVerify(token, jwks, {
     // Allow whichever asymmetric algorithm the project's signing key uses.
     // Locking to ES256/RS256/EdDSA blocks the deprecated HS256 path.
     algorithms: [...ALLOWED_JWT_ALGS],
+    audience: 'authenticated',
+    issuer: opts.issuer,
   });
   return SupabaseJwtPayload.parse(payload);
 }
@@ -51,5 +62,7 @@ export async function verifySupabaseJwt(
   token: string,
   supabaseUrl: string,
 ): Promise<SupabaseJwtPayload> {
-  return verifyJwtWithJwks(token, getJwks(supabaseUrl));
+  return verifyJwtWithJwks(token, getJwks(supabaseUrl), {
+    issuer: authIssuer(supabaseUrl),
+  });
 }

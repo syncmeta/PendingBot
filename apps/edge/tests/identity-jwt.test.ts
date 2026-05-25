@@ -49,15 +49,35 @@ describe('verifyJwtWithJwks', () => {
     const token = await signEs256(privateKey, {
       sub: '00000000-0000-0000-0000-000000000001',
       aud: 'authenticated',
+      iss: 'https://example.supabase.co/auth/v1',
       role: 'authenticated',
       email: 'a@b.example',
       iat: Math.floor(Date.now() / 1000),
       exp: Math.floor(Date.now() / 1000) + 3600,
     });
-    const payload = await verifyJwtWithJwks(token, jwks);
+    const payload = await verifyJwtWithJwks(token, jwks, {
+      issuer: 'https://example.supabase.co/auth/v1',
+    });
     expect(payload.sub).toBe('00000000-0000-0000-0000-000000000001');
     expect(payload.email).toBe('a@b.example');
     expect(payload.role).toBe('authenticated');
+  });
+
+  it('rejects tokens whose issuer is not the project auth issuer', async () => {
+    const { privateKey, jwks } = await setupJwks();
+    const token = await signEs256(privateKey, {
+      sub: '00000000-0000-0000-0000-000000000010',
+      aud: 'authenticated',
+      iss: 'https://other-project.supabase.co/auth/v1',
+      role: 'authenticated',
+      exp: Math.floor(Date.now() / 1000) + 3600,
+    });
+
+    await expect(
+      verifyJwtWithJwks(token, jwks, {
+        issuer: 'https://example.supabase.co/auth/v1',
+      }),
+    ).rejects.toThrow();
   });
 
   it('rejects HS256 tokens (algorithm allowlist blocks the legacy path)', async () => {
