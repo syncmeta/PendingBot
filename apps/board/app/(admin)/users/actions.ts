@@ -253,8 +253,17 @@ export async function cancelPendingDeletion(
 /// minted a code for this target.
 export async function generateLoginCode(
   userId: string,
+  reason: string,
 ): Promise<{ code?: string; email?: string; error?: string }> {
   const admin = await requireAdmin();
+  const supportReason = reason.trim();
+  if (supportReason.length < 8) {
+    return { error: '必须填写至少 8 个字符的支援原因' };
+  }
+  if (supportReason.length > 500) {
+    return { error: '支援原因最多 500 个字符' };
+  }
+
   const supa = supabaseAdmin();
 
   const { data: row } = await supa
@@ -277,7 +286,7 @@ export async function generateLoginCode(
     action: 'user.generate_login_code',
     targetId: userId,
     before: null,
-    after: { email: row.email },
+    after: { email: row.email, reason: supportReason },
     actorId: admin.id,
   });
 

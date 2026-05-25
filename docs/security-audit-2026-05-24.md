@@ -86,7 +86,7 @@ Fixed on 2026-05-25 in `supabase/migrations/20260524181807_pin_legacy_function_s
 
 The board consistently gates admin pages and server actions through `requireAdmin()`, and sensitive support actions are audited. `generateLoginCode()` correctly avoids logging the OTP itself.
 
-Residual risk: login-code generation is effectively account takeover by support. Keep it admin-only, short-lived, audited, and consider a break-glass reason field before wider operational use.
+Fixed on 2026-05-25: login-code generation now requires a support reason before minting the OTP, and the reason is stored in `admin_audit.after`. The OTP itself is still never written to audit logs.
 
 ### Test-account request logging was a privacy liability
 
