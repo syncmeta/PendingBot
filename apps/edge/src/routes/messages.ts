@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
 import { serviceClient, userClient } from '../lib/supabase';
@@ -168,12 +168,7 @@ messageRoutes.post('/', async (c) => {
   // in parallel. INSERT runs detached (waitUntil) using the
   // pre-generated id, so the pre-stream path holds no write RTT.
   const balancePromise: Promise<InsufficientBalanceError | null> = needsBotPath
-    ? requireBalance(c.env, supaUser, userId)
-        .then(() => null)
-        .catch((err) => {
-          if (err instanceof InsufficientBalanceError) return err;
-          throw err;
-        })
+    ? requireMessageBalance(c.env, supaUser, userId)
     : Promise.resolve(null);
 
   const botPromise = needsBotPath
@@ -181,17 +176,7 @@ messageRoutes.post('/', async (c) => {
     : Promise.resolve(null);
 
   const parentLookupPromise: Promise<string | null> = parsed.autoLookback
-    ? (async () => {
-        const { data } = await supaService
-          .from('messages')
-          .select('id')
-          .eq('conversation_id', parsed.conversationId)
-          .eq('role', 'user')
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        return (data?.id as string | undefined) ?? null;
-      })()
+    ? lookupLatestUserMessageId(supaService, parsed.conversationId)
     : Promise.resolve(userMessageId);
 
   // Detached user-message INSERT. Idempotent on client_message_id, so a
@@ -246,14 +231,7 @@ messageRoutes.post('/', async (c) => {
   ]);
 
   if (balanceErr) {
-    return c.json(
-      {
-        error: 'insufficient_balance',
-        balance_credits: balanceErr.balance,
-        min_threshold: balanceErr.threshold,
-      },
-      402,
-    );
+    return insufficientBalanceResponse(c, balanceErr);
   }
 
   // Group branch — wake decisions go to the GroupRouterDO. The DO
@@ -625,14 +603,7 @@ messageRoutes.post('/start', async (c) => {
     await requireBalance(c.env, supaUser, userId);
   } catch (err) {
     if (err instanceof InsufficientBalanceError) {
-      return c.json(
-        {
-          error: 'insufficient_balance',
-          balance_credits: err.balance,
-          min_threshold: err.threshold,
-        },
-        402,
-      );
+      return insufficientBalanceResponse(c, err);
     }
     throw err;
   }
@@ -927,10 +898,7 @@ messageRoutes.post('/:id/regenerate', async (c) => {
     await requireBalance(c.env, supaUser, userId);
   } catch (err) {
     if (err instanceof InsufficientBalanceError) {
-      return c.json(
-        { error: 'insufficient_balance', balance_credits: err.balance, min_threshold: err.threshold },
-        402,
-      );
+      return insufficientBalanceResponse(c, err);
     }
     throw err;
   }
@@ -1295,6 +1263,48 @@ function botConfigString(config: unknown, key: string): string | null {
 function botConfigArena(config: unknown): unknown {
   if (!config || typeof config !== 'object') return null;
   return (config as Record<string, unknown>).arena ?? null;
+}
+
+async function requireMessageBalance(
+  env: AppBindings['Bindings'],
+  supaUser: ReturnType<typeof userClient>,
+  userId: string,
+): Promise<InsufficientBalanceError | null> {
+  return requireBalance(env, supaUser, userId)
+    .then(() => null)
+    .catch((err) => {
+      if (err instanceof InsufficientBalanceError) return err;
+      throw err;
+    });
+}
+
+function insufficientBalanceResponse(
+  c: Context<AppBindings>,
+  err: InsufficientBalanceError,
+): Response {
+  return c.json(
+    {
+      error: 'insufficient_balance',
+      balance_credits: err.balance,
+      min_threshold: err.threshold,
+    },
+    402,
+  );
+}
+
+async function lookupLatestUserMessageId(
+  supa: ReturnType<typeof serviceClient>,
+  conversationId: string,
+): Promise<string | null> {
+  const { data } = await supa
+    .from('messages')
+    .select('id')
+    .eq('conversation_id', conversationId)
+    .eq('role', 'user')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return (data?.id as string | undefined) ?? null;
 }
 
 async function resolveMessageBotTurnRoute(
