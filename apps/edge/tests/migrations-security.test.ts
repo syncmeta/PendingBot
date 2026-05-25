@@ -93,6 +93,8 @@ describe('security-sensitive migrations', () => {
   it('keeps legacy runner execution RPCs off the authenticated PostgREST surface', () => {
     const sql = readMigration('supabase/migrations/20260525170500_revoke_legacy_runner_user_rpcs.sql');
 
+    expect(sql).toMatch(/revoke\s+execute\s+on\s+function\s+pendingbot\.register_runner_host\(uuid,\s*text,\s*jsonb,\s*jsonb\)\s+from\s+authenticated,\s*anon,\s*public/i);
+    expect(sql).toMatch(/revoke\s+execute\s+on\s+function\s+pendingbot\.runner_host_heartbeat\(uuid,\s*jsonb,\s*jsonb\)\s+from\s+authenticated,\s*anon,\s*public/i);
     expect(sql).toMatch(/revoke\s+execute\s+on\s+function\s+pendingbot\.claim_next_crew_session\(uuid,\s*jsonb\)\s+from\s+authenticated,\s*anon,\s*public/i);
     expect(sql).toMatch(/revoke\s+execute\s+on\s+function\s+pendingbot\.append_crew_session_event_from_runner\(\s*uuid,\s*uuid,\s*text,\s*text,\s*text,\s*jsonb,\s*text\s*\)\s+from\s+authenticated,\s*anon,\s*public/i);
     expect(sql).toMatch(/revoke\s+execute\s+on\s+function\s+pendingbot\.finish_crew_session_from_runner\(\s*uuid,\s*uuid,\s*text,\s*text,\s*jsonb,\s*text\s*\)\s+from\s+authenticated,\s*anon,\s*public/i);
