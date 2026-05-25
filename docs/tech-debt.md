@@ -65,13 +65,13 @@
 - **建议**: 保留回归测试覆盖“迁移历史最终函数体包含 skipped 状态处理”，后续如果重写 `apply_audit_split` 必须同时保留这个分支。
 - **状态**: 已解决（0066 已覆盖；2026-05-25 线上 `pg_get_functiondef` 确认）
 
-### 🔴 附件 RLS 与 Worker 下载口径不一致，可能泄露附件元数据
+### ✅ 附件 RLS 与 Worker 下载口径不一致，可能泄露附件元数据
 - **发现**: 2026-05-24 · codex/security-architecture-audit
 - **位置**: apps/edge/src/routes/upload.ts:331、supabase/migrations/0063_attachments_rls_avatar_visibility.sql:18
 - **问题**: Worker 下载路径要求“上传者或当前参与者且存在未删除消息引用该附件”，但最新附件 RLS 允许任意当前会话参与者按 `attachments.conversation_id` 读取 attachment 行，和消息引用/删除状态无关。
 - **影响**: 直接 PostgREST 读取可能暴露附件文件名、mime、大小、摘要、tags、`r2_key` 等元数据；消息撤回/删除后 raw bytes 仍由 Worker 挡住，但 DB 元数据隐私语义已经漂移。
 - **建议**: 恢复 chat attachment 的 DB 读取为 uploader-only 或基于未删除 message reference 的 policy；头像可拆独立公开字段/头像表，不要把头像例外扩大到所有 conversation-bound 附件。
-- **状态**: 待办
+- **状态**: 已修复（2026-05-25 · `20260524175919_tighten_attachment_read_policy.sql` 将 DB metadata SELECT 收敛到 uploader、头像引用、或当前参与者可见的未删除消息引用；`migrations-security.test.ts` 覆盖 message reference / non-deleted / participant 条件。仍需部署后复核现网 policy。）
 
 ### ✅ Crew / 临时群 subject 钱包尚未接入 LLM 审计扣费分支
 - **发现**: 2026-05-24 · codex/security-architecture-audit
