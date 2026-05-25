@@ -557,7 +557,13 @@ async function mintOpenAISession(
   const clientSecret = data.value ?? data.client_secret?.value;
   const expiresAt = data.expires_at ?? data.client_secret?.expires_at ?? null;
   if (!clientSecret) {
-    console.warn('[realtime/session] openai response missing client_secret', data);
+    console.warn('[realtime/session] openai response missing client_secret', {
+      id: data.id,
+      session_id: data.session?.id,
+      model: data.model ?? data.session?.model,
+      has_value: typeof data.value === 'string',
+      has_nested_secret: typeof data.client_secret?.value === 'string',
+    });
     return jsonError(502, 'upstream_error', t('voice.upstream_failed', locale));
 
   }

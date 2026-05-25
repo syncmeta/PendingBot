@@ -193,7 +193,10 @@ export async function runGroupRouter(
     try {
       decision = JSON.parse(raw);
     } catch (err) {
-      console.warn('[group-router] non-JSON response from small model', raw, err);
+      console.warn('[group-router] non-JSON response from small model', {
+        length: raw.length,
+        error: (err as Error)?.name ?? 'parse_error',
+      });
     }
 
     auditLogId = await enqueueAudit(env, route, {
