@@ -118,7 +118,7 @@ Fixed on 2026-05-25: workspace constraints now require patched Next/PostCSS/Hono
 ## Dead Code and Temporary Design Notes
 
 - Historical `discuss_settings`, `surf_runs`, and `review_runs` tables are dropped or renamed by migrations and do not appear as active app code.
-- `apps/envelope-lab` contains intentional stubs and fixture switches for a lab/replay surface, not production dead code.
+- `apps/envelope-lab` was removed on 2026-05-25; envelope production logic now lives only in Edge/iOS paths.
 - `supabase/migrations/0025_dolor_preset_wip_stub.sql` is historical seed migration text, not current runtime logic.
 - The remaining temporary-design risk is not dead code; it is unfinished foundation around Crew/temporary-group billing, runner permissions, and subject wallets.
 

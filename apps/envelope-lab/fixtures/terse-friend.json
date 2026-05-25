@@ -1,9 +1,0 @@
-{
-  "_doc": "极简对话——测试 loop 在材料稀薄时会不会硬写一篇文章 vs 返回 [SILENT] / 空奏折。production 行为应是删掉行不写。",
-  "model": "anthropic/claude-opus-latest",
-  "history": [
-    { "role": "user", "content": "在吗" },
-    { "role": "bot", "content": "在。" },
-    { "role": "user", "content": "嗯..." }
-  ]
-}
