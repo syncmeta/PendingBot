@@ -4,6 +4,13 @@ import { resolveRoute, enqueueAudit, computeVoiceCost } from '../llm/router';
 import { getBalance, getConfigInt, getMarkup, usdToPnd } from '../lib/billing';
 import { publishToHub } from '../lib/realtime-publish';
 import { endRealtimeSession, REALTIME_HANG_UP_TOOL } from '../lib/realtime-sessions';
+import {
+  safeRealtimeErrorSummary,
+  safeRealtimeEventSummary,
+  splitRealtimeUsage,
+  type RealtimeUsage,
+  type VoiceTurnUsage,
+} from '../lib/voice-metering';
 
 // RealtimeMeterDO — server-side, tamper-proof metering for a voice call.
 //
@@ -75,39 +82,24 @@ interface MeterContext {
   };
 }
 
-// Usage object inside an OpenAI realtime `response.done` event.
-// input_token_details.{text,audio}_tokens are TOTALS (cached included);
-// cached_tokens_details breaks the cached slice into text vs audio.
-interface RealtimeUsage {
-  input_token_details?: {
-    text_tokens?: number;
-    audio_tokens?: number;
-    cached_tokens?: number;
-    cached_tokens_details?: {
-      text_tokens?: number;
-      audio_tokens?: number;
-    };
-  };
-  output_token_details?: {
-    text_tokens?: number;
-    audio_tokens?: number;
-  };
-}
-
 interface RealtimeEvent {
   type?: string;
   error?: {
     type?: string;
     code?: string;
+    [key: string]: unknown;
   };
   response?: {
     usage?: RealtimeUsage;
     status?: string;
+    [key: string]: unknown;
   };
   session?: {
     id?: string;
     model?: string;
+    [key: string]: unknown;
   };
+  [key: string]: unknown;
 }
 
 export class RealtimeMeterDO {
@@ -411,17 +403,10 @@ export class RealtimeMeterDO {
     // generated instructions and other private bot/user context.
     console.log('[realtime-meter] event', msg.type ?? '(no type)');
     if (msg.type === 'session.created' || msg.type === 'session.updated') {
-      console.log('[realtime-meter] session event', {
-        type: msg.type,
-        session_id: msg.session?.id,
-        model: msg.session?.model,
-      });
+      console.log('[realtime-meter] session event', safeRealtimeEventSummary(msg));
     }
     if (msg.type === 'error') {
-      console.warn('[realtime-meter] realtime error event', {
-        type: msg.error?.type,
-        code: msg.error?.code,
-      });
+      console.warn('[realtime-meter] realtime error event', safeRealtimeErrorSummary(msg));
     }
     // Every completed model response carries a usage block — one audit
     // row per turn, billed from OpenAI's own numbers over this socket.
@@ -432,19 +417,6 @@ export class RealtimeMeterDO {
   private async settleTurn(usage: RealtimeUsage): Promise<void> {
     const ctx = this.ctx;
     if (!ctx || this.closed) return;
-
-    // Split the input usage into the three billable buckets. text_tokens
-    // and audio_tokens are TOTALS (cached included); cached_tokens_details
-    // says how much of the cache hit was text vs audio. computeVoiceCost
-    // charges cacheReadTokens at the cached rate and inputTokens /
-    // audioInputTokens at full rate, so the full-rate buckets must be the
-    // NON-cached remainder — otherwise the cached slice is billed twice.
-    const inDetails = usage.input_token_details;
-    const cachedText = inDetails?.cached_tokens_details?.text_tokens ?? 0;
-    const cachedAudio = inDetails?.cached_tokens_details?.audio_tokens ?? 0;
-    const cacheReadTokens = inDetails?.cached_tokens ?? 0;
-    const inputTokens = Math.max(0, (inDetails?.text_tokens ?? 0) - cachedText);
-    const audioInputTokens = Math.max(0, (inDetails?.audio_tokens ?? 0) - cachedAudio);
 
     const supa = serviceClient(this.env);
     let route;
@@ -461,13 +433,7 @@ export class RealtimeMeterDO {
       return;
     }
 
-    const turnUsage = {
-      inputTokens,
-      outputTokens: usage.output_token_details?.text_tokens ?? 0,
-      audioInputTokens,
-      audioOutputTokens: usage.output_token_details?.audio_tokens ?? 0,
-      cacheReadTokens,
-    } as const;
+    const turnUsage = splitRealtimeUsage(usage);
 
     await enqueueAudit(this.env, route, {
       userId: ctx.userId,
@@ -501,13 +467,7 @@ export class RealtimeMeterDO {
     ctx: MeterContext,
     modelToCall: string | undefined,
     supa: ReturnType<typeof serviceClient>,
-    usage: {
-      inputTokens: number;
-      outputTokens: number;
-      audioInputTokens: number;
-      audioOutputTokens: number;
-      cacheReadTokens: number;
-    },
+    usage: VoiceTurnUsage,
   ): Promise<void> {
     const usd = computeVoiceCost(modelToCall, usage);
     if (usd == null) return;

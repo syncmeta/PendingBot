@@ -4,6 +4,7 @@ import { serviceClient } from '../lib/supabase';
 import { resolveRoute, enqueueAudit, computeVoiceCost } from '../llm/router';
 import { getMarkup, usdToPnd } from '../lib/billing';
 import { publishToHub, type VoiceCallEvent } from '../lib/realtime-publish';
+import { splitRealtimeUsage, type VoiceTurnUsage } from '../lib/voice-metering';
 import { roomMediaToken } from './room-voice-context';
 import type {
   ContainerBotSpec,
@@ -777,13 +778,6 @@ export class RoomVoiceDO {
     const leg = this.bots.get(botId);
     if (!leg) return;
 
-    const inDetails = usage.input_token_details;
-    const cachedText = inDetails?.cached_tokens_details?.text_tokens ?? 0;
-    const cachedAudio = inDetails?.cached_tokens_details?.audio_tokens ?? 0;
-    const cacheReadTokens = inDetails?.cached_tokens ?? 0;
-    const inputTokens = Math.max(0, (inDetails?.text_tokens ?? 0) - cachedText);
-    const audioInputTokens = Math.max(0, (inDetails?.audio_tokens ?? 0) - cachedAudio);
-
     const supa = serviceClient(this.env);
     let route;
     try {
@@ -797,13 +791,7 @@ export class RoomVoiceDO {
       return;
     }
 
-    const turnUsage = {
-      inputTokens,
-      outputTokens: usage.output_token_details?.text_tokens ?? 0,
-      audioInputTokens,
-      audioOutputTokens: usage.output_token_details?.audio_tokens ?? 0,
-      cacheReadTokens,
-    } as const;
+    const turnUsage = splitRealtimeUsage(usage);
 
     await enqueueAudit(this.env, route, {
       userId: ctx.billUserId,
@@ -831,13 +819,7 @@ export class RoomVoiceDO {
   private async broadcastCost(
     supa: ReturnType<typeof serviceClient>,
     modelToCall: string | undefined,
-    usage: {
-      inputTokens: number;
-      outputTokens: number;
-      audioInputTokens: number;
-      audioOutputTokens: number;
-      cacheReadTokens: number;
-    },
+    usage: VoiceTurnUsage,
   ): Promise<void> {
     const ctx = this.ctx;
     if (!ctx) return;
