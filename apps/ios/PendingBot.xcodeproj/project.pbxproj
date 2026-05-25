@@ -31,6 +31,8 @@
 		2C4C6BB79FF77588C3D8D502 /* BotManagement.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FB18020603674A7F6885245 /* BotManagement.swift */; };
 		2DD9CFB972517A81A546329E /* CallSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA46A65B33759B4EC85F985D /* CallSession.swift */; };
 		7D1A2B3C4D5E6F708192A3B4 /* CallDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D1A2B3C4D5E6F708192A3B3 /* CallDiagnostics.swift */; };
+		9A0000000000000000000001 /* CallDiagnosticsLogic.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A0000000000000000000003 /* CallDiagnosticsLogic.swift */; };
+		9A0000000000000000000002 /* CallDiagnosticsLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A0000000000000000000006 /* CallDiagnosticsLogicTests.swift */; };
 		7A1B2C3D4E5F60AABBCC1A02 /* CallCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1B2C3D4E5F60AABBCC1A01 /* CallCenter.swift */; };
 		7A1B2C3D4E5F60AABBCC1B02 /* CallFloatingPill.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1B2C3D4E5F60AABBCC1B01 /* CallFloatingPill.swift */; };
 		A1B2C3D4E5F60718293A4B5C /* GroupCallTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F1E2D3C4B5A69788796A5B4 /* GroupCallTransport.swift */; };
@@ -124,6 +126,16 @@
 		CA11AC0E55051C0DE0000001 /* ChatComposerAccessory.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA11AC0E55051C0DE0000002 /* ChatComposerAccessory.swift */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		9A000000000000000000000E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 742AE513BA55E25659A573B4 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 0FB9E4A40FB8B7F37D091079;
+			remoteInfo = PendingBot;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		0424B09389C21A9BB73F1069 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		07DE2357BDB2124C1A2ED08F /* RealtimeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeManager.swift; sourceTree = "<group>"; };
@@ -197,6 +209,9 @@
 		B1DB7B76BE5141EDA731228F /* EnvelopeThinkingTrace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvelopeThinkingTrace.swift; sourceTree = "<group>"; };
 		BA46A65B33759B4EC85F985D /* CallSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallSession.swift; sourceTree = "<group>"; };
 		7D1A2B3C4D5E6F708192A3B3 /* CallDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallDiagnostics.swift; sourceTree = "<group>"; };
+		9A0000000000000000000003 /* CallDiagnosticsLogic.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallDiagnosticsLogic.swift; sourceTree = "<group>"; };
+		9A0000000000000000000004 /* PendingBotTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PendingBotTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		9A0000000000000000000006 /* CallDiagnosticsLogicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallDiagnosticsLogicTests.swift; sourceTree = "<group>"; };
 		7A1B2C3D4E5F60AABBCC1A01 /* CallCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallCenter.swift; sourceTree = "<group>"; };
 		7A1B2C3D4E5F60AABBCC1B01 /* CallFloatingPill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallFloatingPill.swift; sourceTree = "<group>"; };
 		0F1E2D3C4B5A69788796A5B4 /* GroupCallTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupCallTransport.swift; sourceTree = "<group>"; };
@@ -239,6 +254,13 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		9A0000000000000000000007 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		98B97DDECE2DD7036F70C709 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -310,6 +332,7 @@
 			isa = PBXGroup;
 			children = (
 				42A11830F64F80977210B443 /* PendingBot.app */,
+				9A0000000000000000000004 /* PendingBotTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -387,8 +410,17 @@
 			isa = PBXGroup;
 			children = (
 				8EECA9539CEAF3AEAFBBB643 /* PendingBot */,
+				9A0000000000000000000005 /* PendingBotTests */,
 				5499C93C9DF42D382007DFA9 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		9A0000000000000000000005 /* PendingBotTests */ = {
+			isa = PBXGroup;
+			children = (
+				9A0000000000000000000006 /* CallDiagnosticsLogicTests.swift */,
+			);
+			path = PendingBotTests;
 			sourceTree = "<group>";
 		};
 		A64EF4A1A55D8F31CC3F2244 /* Onboarding */ = {
@@ -444,6 +476,7 @@
 			children = (
 				BA46A65B33759B4EC85F985D /* CallSession.swift */,
 				7D1A2B3C4D5E6F708192A3B3 /* CallDiagnostics.swift */,
+				9A0000000000000000000003 /* CallDiagnosticsLogic.swift */,
 				ABDADB4EF94D06B74B02EE8F /* CallView.swift */,
 				7A1B2C3D4E5F60AABBCC1A01 /* CallCenter.swift */,
 				7A1B2C3D4E5F60AABBCC1B01 /* CallFloatingPill.swift */,
@@ -544,6 +577,25 @@
 			productReference = 42A11830F64F80977210B443 /* PendingBot.app */;
 			productType = "com.apple.product-type.application";
 		};
+		9A0000000000000000000009 /* PendingBotTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9A000000000000000000000C /* Build configuration list for PBXNativeTarget "PendingBotTests" */;
+			buildPhases = (
+				9A0000000000000000000008 /* Sources */,
+				9A0000000000000000000007 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				9A000000000000000000000D /* PBXTargetDependency */,
+			);
+			name = PendingBotTests;
+			packageProductDependencies = (
+			);
+			productName = PendingBotTests;
+			productReference = 9A0000000000000000000004 /* PendingBotTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -556,6 +608,11 @@
 					0FB9E4A40FB8B7F37D091079 = {
 						DevelopmentTeam = M42BKJN82S;
 						ProvisioningStyle = Automatic;
+					};
+					9A0000000000000000000009 = {
+						CreatedOnToolsVersion = 15.0;
+						DevelopmentTeam = M42BKJN82S;
+						TestTargetID = 0FB9E4A40FB8B7F37D091079;
 					};
 				};
 			};
@@ -582,6 +639,7 @@
 			projectRoot = "";
 			targets = (
 				0FB9E4A40FB8B7F37D091079 /* PendingBot */,
+				9A0000000000000000000009 /* PendingBotTests */,
 			);
 		};
 /* End PBXProject section */
@@ -622,6 +680,7 @@
 				38FCC07405D2C9B619FFC027 /* BubbleView.swift in Sources */,
 				2DD9CFB972517A81A546329E /* CallSession.swift in Sources */,
 				7D1A2B3C4D5E6F708192A3B4 /* CallDiagnostics.swift in Sources */,
+				9A0000000000000000000001 /* CallDiagnosticsLogic.swift in Sources */,
 				7A1B2C3D4E5F60AABBCC1A02 /* CallCenter.swift in Sources */,
 				7A1B2C3D4E5F60AABBCC1B02 /* CallFloatingPill.swift in Sources */,
 				A1B2C3D4E5F60718293A4B5C /* GroupCallTransport.swift in Sources */,
@@ -713,9 +772,71 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		9A0000000000000000000008 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9A0000000000000000000002 /* CallDiagnosticsLogicTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		9A000000000000000000000D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 0FB9E4A40FB8B7F37D091079 /* PendingBot */;
+			targetProxy = 9A000000000000000000000E /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		9A000000000000000000000A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = M42BKJN82S;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.pendingname.pendingbot.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = "1,2,6";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PendingBot.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/PendingBot";
+			};
+			name = Debug;
+		};
+		9A000000000000000000000B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = M42BKJN82S;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.pendingname.pendingbot.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = "1,2,6";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PendingBot.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/PendingBot";
+			};
+			name = Release;
+		};
 		5F78C3397FB9D7E73D134061 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -900,6 +1021,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		9A000000000000000000000C /* Build configuration list for PBXNativeTarget "PendingBotTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9A000000000000000000000A /* Debug */,
+				9A000000000000000000000B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		C2C2521DE8AAF2696FC3F88B /* Build configuration list for PBXProject "PendingBot" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

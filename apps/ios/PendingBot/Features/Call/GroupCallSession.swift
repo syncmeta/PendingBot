@@ -651,7 +651,7 @@ final class GroupCallSession {
         if let active = snapshot.participants.first(where: \.speaking) {
             snapshot.activeSpeaker = active.displayName
         }
-        if let bottleneck = mediaBottleneck(mediaParticipants) {
+        if let bottleneck = CallDiagnosticsLogic.mediaBottleneck(mediaParticipants) {
             snapshot.bottleneck = bottleneck
             if snapshot.quality == .unknown || snapshot.quality == .good {
                 snapshot.quality = .fair
@@ -680,24 +680,4 @@ final class GroupCallSession {
         )
     }
 
-    private func mediaBottleneck(_ participants: [CallParticipantDiagnostic]) -> String? {
-        for p in participants where p.kind == .bot {
-            if (p.underruns ?? 0) > 0 {
-                return "\(p.displayName) 的容器播放缓冲发生欠载，优先看语音模型输出或 CF container 调度。"
-            }
-            if (p.maxGapMs ?? 0) >= 700 {
-                return "\(p.displayName) 的模型音频增量间隔偏大，瓶颈更像语音模型输出。"
-            }
-            if let dropped = p.droppedOutputMs, dropped > 0 {
-                return "\(p.displayName) 的机器人输出太长，已丢弃 \(dropped)ms 旧音频来降低延迟。"
-            }
-            if let depth = p.playoutDepthMs, depth >= 1200 {
-                return "\(p.displayName) 的播放缓冲积压 \(depth)ms，会表现为机器人出声延迟；这不是本机网络丢包。"
-            }
-            if let depth = p.playoutDepthMs, depth < 80, p.speaking {
-                return "\(p.displayName) 的容器播放缓冲偏浅，可能出现机器人声音卡顿。"
-            }
-        }
-        return nil
-    }
 }
