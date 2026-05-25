@@ -69,21 +69,9 @@ async function seedDeviceGrant(
 }
 
 describe('POST /v1/runner-hosts', () => {
-  it('registers a macOS runner host under a responsible subject', async () => {
+  it('rejects normal user JWTs for runner host registration', async () => {
     const subjectId = '11111111-1111-4111-8111-111111111111';
-    const hostId = '22222222-2222-4222-8222-222222222222';
     const db = makeFakeDb();
-    db.rpcs = {
-      register_runner_host: (args) => {
-        expect(args).toEqual({
-          p_responsible_subject_id: subjectId,
-          p_display_name: 'MacBook Pro',
-          p_capabilities: { local: true },
-          p_allowed_runner_kinds: ['local_codex', 'local_claude_code'],
-        });
-        return { data: hostId, error: null };
-      },
-    };
 
     const res = await appFor(db).request('/v1/runner-hosts', {
       method: 'POST',
@@ -99,8 +87,8 @@ describe('POST /v1/runner-hosts', () => {
       }),
     });
 
-    expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual({ runnerHostId: hostId });
+    expect(res.status).toBe(403);
+    expect(db.inserts).toHaveLength(0);
   });
 
   it('registers a runner host with a device grant for the granted subject', async () => {
@@ -163,18 +151,8 @@ describe('POST /v1/runner-hosts', () => {
 });
 
 describe('POST /v1/runner-hosts/:id/heartbeat', () => {
-  it('updates runner heartbeat through the database RPC', async () => {
+  it('rejects normal user JWTs for runner heartbeat', async () => {
     const db = makeFakeDb();
-    db.rpcs = {
-      runner_host_heartbeat: (args) => {
-        expect(args).toEqual({
-          p_runner_host_id: 'host-1',
-          p_capabilities: { shell: true },
-          p_allowed_runner_kinds: ['local_codex'],
-        });
-        return { data: true, error: null };
-      },
-    };
 
     const res = await appFor(db).request('/v1/runner-hosts/host-1/heartbeat', {
       method: 'POST',
@@ -188,8 +166,7 @@ describe('POST /v1/runner-hosts/:id/heartbeat', () => {
       }),
     });
 
-    expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual({ ok: true });
+    expect(res.status).toBe(403);
   });
 
   it('updates runner heartbeat with a device grant for the granted subject', async () => {
@@ -227,34 +204,8 @@ describe('POST /v1/runner-hosts/:id/heartbeat', () => {
 });
 
 describe('POST /v1/runner-hosts/:id/claim-next', () => {
-  it('claims the next queued crew session for this runner host', async () => {
+  it('rejects normal user JWTs for runner session claims', async () => {
     const db = makeFakeDb();
-    db.rpcs = {
-      claim_next_crew_session: (args) => {
-        expect(args).toEqual({
-          p_runner_host_id: 'host-1',
-          p_runner_kinds: ['local_codex'],
-        });
-        return {
-          data: {
-            lease_id: 'lease-1',
-            session: {
-              id: 'session-1',
-              crew_conversation_id: 'crew-1',
-              responsible_subject_id: 'subject-1',
-              runner_kind: 'local_codex',
-              status: 'running',
-              task_brief: '整理临时群地基',
-              progress_summary: '正在运行',
-              created_at: '2026-05-24T00:00:00Z',
-              started_at: '2026-05-24T00:01:00Z',
-              finished_at: null,
-            },
-          },
-          error: null,
-        };
-      },
-    };
 
     const res = await appFor(db).request('/v1/runner-hosts/host-1/claim-next', {
       method: 'POST',
@@ -265,22 +216,7 @@ describe('POST /v1/runner-hosts/:id/claim-next', () => {
       body: JSON.stringify({ runnerKinds: ['local_codex'] }),
     });
 
-    expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual({
-      leaseId: 'lease-1',
-      session: {
-        id: 'session-1',
-        crew_conversation_id: 'crew-1',
-        responsible_subject_id: 'subject-1',
-        runner_kind: 'local_codex',
-        status: 'running',
-        task_brief: '整理临时群地基',
-        progress_summary: '正在运行',
-        created_at: '2026-05-24T00:00:00Z',
-        started_at: '2026-05-24T00:01:00Z',
-        finished_at: null,
-      },
-    });
+    expect(res.status).toBe(403);
   });
 
   it('claims the next queued session with a device grant for the granted subject', async () => {
@@ -333,13 +269,14 @@ describe('POST /v1/runner-hosts/:id/claim-next', () => {
 
   it('returns an empty claim when there is no matching session', async () => {
     const db = makeFakeDb();
+    await seedDeviceGrant(db, 'pdg_runner_no_claim_token', '11111111-1111-4111-8111-111111111111', ['runner:write']);
     db.rpcs = {
-      claim_next_crew_session: () => ({ data: null, error: null }),
+      claim_next_crew_session_for_subject: () => ({ data: null, error: null }),
     };
 
     const res = await appFor(db).request('/v1/runner-hosts/host-1/claim-next', {
       method: 'POST',
-      headers: { 'x-test-user-id': 'user-1' },
+      headers: { authorization: 'Bearer pdg_runner_no_claim_token' },
     });
 
     expect(res.status).toBe(200);
@@ -348,22 +285,8 @@ describe('POST /v1/runner-hosts/:id/claim-next', () => {
 });
 
 describe('POST /v1/runner-hosts/:id/sessions/:sessionId/events', () => {
-  it('appends a runner-visible progress event to an active session', async () => {
+  it('rejects normal user JWTs for runner progress events', async () => {
     const db = makeFakeDb();
-    db.rpcs = {
-      append_crew_session_event_from_runner: (args) => {
-        expect(args).toEqual({
-          p_runner_host_id: 'host-1',
-          p_crew_session_id: 'session-1',
-          p_event_type: 'status',
-          p_visibility: 'crew_members',
-          p_summary: '完成依赖安装',
-          p_payload: { step: 'deps' },
-          p_progress_summary: '依赖已安装',
-        });
-        return { data: 'event-1', error: null };
-      },
-    };
 
     const res = await appFor(db).request('/v1/runner-hosts/host-1/sessions/session-1/events', {
       method: 'POST',
@@ -380,8 +303,7 @@ describe('POST /v1/runner-hosts/:id/sessions/:sessionId/events', () => {
       }),
     });
 
-    expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual({ eventId: 'event-1' });
+    expect(res.status).toBe(403);
   });
 
   it('appends a progress event with a device grant for the granted subject', async () => {
@@ -486,21 +408,8 @@ describe('POST /v1/runner-hosts/:id/sessions/:sessionId/announcements', () => {
 });
 
 describe('POST /v1/runner-hosts/:id/sessions/:sessionId/finish', () => {
-  it('marks a claimed crew session as succeeded', async () => {
+  it('rejects normal user JWTs for runner session finish', async () => {
     const db = makeFakeDb();
-    db.rpcs = {
-      finish_crew_session_from_runner: (args) => {
-        expect(args).toEqual({
-          p_runner_host_id: 'host-1',
-          p_crew_session_id: 'session-1',
-          p_status: 'completed',
-          p_summary: '已完成',
-          p_payload: { result: 'ok' },
-          p_progress_summary: '已完成',
-        });
-        return { data: true, error: null };
-      },
-    };
 
     const res = await appFor(db).request('/v1/runner-hosts/host-1/sessions/session-1/finish', {
       method: 'POST',
@@ -516,8 +425,7 @@ describe('POST /v1/runner-hosts/:id/sessions/:sessionId/finish', () => {
       }),
     });
 
-    expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual({ ok: true });
+    expect(res.status).toBe(403);
   });
 
   it('finishes a claimed session with a device grant for the granted subject', async () => {

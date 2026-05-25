@@ -89,4 +89,12 @@ describe('security-sensitive migrations', () => {
     expect(sql).toMatch(/from\s+pendingbot\.user_contacts/i);
     expect(sql).toMatch(/grant\s+execute\s+on\s+function\s+pendingbot\.open_user_user_conv\(uuid\)\s+to\s+authenticated,\s*service_role/i);
   });
+
+  it('keeps legacy runner execution RPCs off the authenticated PostgREST surface', () => {
+    const sql = readMigration('supabase/migrations/20260525170500_revoke_legacy_runner_user_rpcs.sql');
+
+    expect(sql).toMatch(/revoke\s+execute\s+on\s+function\s+pendingbot\.claim_next_crew_session\(uuid,\s*jsonb\)\s+from\s+authenticated,\s*anon,\s*public/i);
+    expect(sql).toMatch(/revoke\s+execute\s+on\s+function\s+pendingbot\.append_crew_session_event_from_runner\(\s*uuid,\s*uuid,\s*text,\s*text,\s*text,\s*jsonb,\s*text\s*\)\s+from\s+authenticated,\s*anon,\s*public/i);
+    expect(sql).toMatch(/revoke\s+execute\s+on\s+function\s+pendingbot\.finish_crew_session_from_runner\(\s*uuid,\s*uuid,\s*text,\s*text,\s*jsonb,\s*text\s*\)\s+from\s+authenticated,\s*anon,\s*public/i);
+  });
 });
