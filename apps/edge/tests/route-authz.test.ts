@@ -178,4 +178,40 @@ describe('route authorization helpers', () => {
       ),
     ).resolves.toEqual({ ok: true, participantId: 'user-1' });
   });
+
+  it('finds the singleton user_user conversation shared by two users', async () => {
+    const { findSharedUserUserConversation } = await import('../src/lib/route-authz');
+    const db = makeFakeDb({
+      conversation_participants: [
+        {
+          conversation_id: '11111111-1111-4111-8111-111111111111',
+          'conversations.conversation_type': 'user_user',
+          participant_type: 'user',
+          participant_id: 'user-1',
+        },
+        {
+          conversation_id: '22222222-2222-4222-8222-222222222222',
+          'conversations.conversation_type': 'group',
+          participant_type: 'user',
+          participant_id: 'user-1',
+        },
+        {
+          conversation_id: '11111111-1111-4111-8111-111111111111',
+          participant_type: 'user',
+          participant_id: 'user-2',
+        },
+      ],
+    });
+
+    await expect(
+      findSharedUserUserConversation(makeFakeEnv(db), 'user-1', 'user-2'),
+    ).resolves.toEqual({
+      ok: true,
+      conversationId: '11111111-1111-4111-8111-111111111111',
+    });
+
+    await expect(
+      findSharedUserUserConversation(makeFakeEnv(db), 'user-1', 'user-3'),
+    ).resolves.toEqual({ ok: true, conversationId: null });
+  });
 });

@@ -135,3 +135,34 @@ export async function listGroupAdminUserIds(
     userIds: (data ?? []).map((row) => row.participant_id),
   };
 }
+
+export async function findSharedUserUserConversation(
+  env: Env,
+  userId: string,
+  otherUserId: string,
+): Promise<AuthzResult<{ conversationId: string | null }>> {
+  const supa = serviceClient(env);
+  const { data: mine, error: mineErr } = await supa
+    .from('conversation_participants')
+    .select('conversation_id, conversations!inner(conversation_type)')
+    .eq('participant_type', 'user')
+    .eq('participant_id', userId)
+    .eq('conversations.conversation_type', 'user_user');
+  if (mineErr) return { ok: false, code: 'database_error', detail: mineErr.message };
+
+  const myConvIds = (mine ?? []).map((row) => row.conversation_id);
+  if (myConvIds.length === 0) return { ok: true, conversationId: null };
+
+  const { data: theirs, error: theirsErr } = await supa
+    .from('conversation_participants')
+    .select('conversation_id')
+    .eq('participant_type', 'user')
+    .eq('participant_id', otherUserId)
+    .in('conversation_id', myConvIds);
+  if (theirsErr) return { ok: false, code: 'database_error', detail: theirsErr.message };
+
+  return {
+    ok: true,
+    conversationId: (theirs ?? [])[0]?.conversation_id ?? null,
+  };
+}
