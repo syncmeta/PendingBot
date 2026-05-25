@@ -1,3 +1,5 @@
+import 'server-only';
+
 import { redirect } from 'next/navigation';
 import { supabaseServer } from './supabase/server';
 import { supabaseAdmin } from './supabase/admin';
