@@ -1,5 +1,5 @@
-import type OpenAI from 'openai';
 import type {
+  ChatCompletion,
   ChatCompletionMessageParam,
   ChatCompletionMessageToolCall,
   ChatCompletionCreateParamsNonStreaming,
@@ -179,8 +179,18 @@ export interface ResumeState {
   collaboratorUsage?: UsageStats;
 }
 
+export interface ChatCompletionClient {
+  chat: {
+    completions: {
+      create(
+        request: ChatCompletionCreateParamsNonStreaming,
+      ): PromiseLike<ChatCompletion>;
+    };
+  };
+}
+
 export interface EnvelopeLoopDeps {
-  openai: OpenAI;
+  openai: ChatCompletionClient;
   modelId: string;
   systemPrompt: string;
   initialUserContent: string;
@@ -411,10 +421,9 @@ export function buildEnvelopeInitialUserContent(input: {
   ].join('\n\n');
 }
 
-// Pure agent loop — no Supabase, no audit, no row mutation. Both the
-// production worker (runEnvelope in envelope-runner.ts) and the
-// offline replay harness in apps/envelope-lab call this with their own
-// deps.
+// Pure agent loop — no Supabase, no audit, no row mutation. The production
+// worker shell in envelope-runner.ts supplies persistence, billing, and
+// runtime tool dependencies around this core loop.
 export async function runEnvelopeLoop(deps: EnvelopeLoopDeps): Promise<EnvelopeLoopResult> {
   const {
     openai,

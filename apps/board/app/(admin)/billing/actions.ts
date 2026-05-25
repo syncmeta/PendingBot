@@ -10,6 +10,7 @@ import { supabaseAdmin } from '@/lib/supabase/admin';
 // billing_config table and could be added here later.
 
 export type MarkupFormState = { error?: string; ok?: boolean };
+export type RealtimeKitPriceFormState = { error?: string; ok?: boolean };
 
 export async function setMarkup(
   _prev: MarkupFormState,
@@ -57,5 +58,52 @@ export async function setMarkup(
 
   revalidatePath('/billing');
   revalidatePath('/web-tool-prices');
+  return { ok: true };
+}
+
+export async function setRealtimeKitAudioPrice(
+  _prev: RealtimeKitPriceFormState,
+  formData: FormData,
+): Promise<RealtimeKitPriceFormState> {
+  const admin = await requireAdmin();
+  const raw = String(formData.get('price') ?? '').trim();
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0) {
+    return { error: '价格必须是 >= 0 的数字' };
+  }
+  if (value > 0.01) {
+    return { error: '每 participant-minute > $0.01 看起来像误输入，请确认' };
+  }
+
+  const key = 'cloudflare_realtimekit_audio_participant_usd_per_minute';
+  const supa = supabaseAdmin();
+  const { data: before } = await supa
+    .from('billing_config')
+    .select('value')
+    .eq('key', key)
+    .maybeSingle();
+  const previous = before?.value ?? null;
+
+  const { error } = await supa
+    .from('billing_config')
+    .upsert(
+      { key, value: value as unknown as never, updated_at: new Date().toISOString() },
+      { onConflict: 'key' },
+    );
+  if (error) return { error: error.message };
+
+  const h = await headers();
+  await supa.from('admin_audit').insert({
+    actor_id: admin.id,
+    action: 'billing_config.update',
+    target_kind: 'billing_config',
+    target_id: key,
+    before: { value: previous } as never,
+    after: { value } as never,
+    ip: h.get('x-forwarded-for') ?? null,
+    user_agent: h.get('user-agent') ?? null,
+  });
+
+  revalidatePath('/billing');
   return { ok: true };
 }

@@ -92,17 +92,23 @@ export async function splitAndDebit(input: SplitInput): Promise<void> {
   // 2. Compute share_bps.
   const sharesBps = new Map<string, number>();
   if (audit.task_type === 'voice_call') {
-    // Group voice splits "按在场时长": each bot turn is borne equally by the
-    // humans in the room at that turn (the DO ships that set in metadata),
-    // so over the call a member's total tracks how long they were in it —
-    // and nobody pays for turns before they joined or after they left. The
-    // group's configured text mode (per_message/token/…) doesn't apply: a
-    // voice turn has no per-sender text to weight by.
-    const present = presentUserIds(audit.metadata);
-    const inCall = present.size > 0
-      ? allMembers.filter((m) => present.has(m.user_id as string))
-      : allMembers; // transient: nobody present maps to a payer — bill the group
-    for (const [id, bps] of perHead(inCall)) sharesBps.set(id, bps);
+    const secondWeights = voicePayerSecondWeights(audit.metadata);
+    if (secondWeights.size > 0) {
+      const weighted = weightedSplit(allMembers, secondWeights);
+      for (const [id, bps] of weighted) sharesBps.set(id, bps);
+    } else {
+      // Group voice splits "按在场时长": each bot turn is borne equally by the
+      // humans in the room at that turn (the DO ships that set in metadata),
+      // so over the call a member's total tracks how long they were in it —
+      // and nobody pays for turns before they joined or after they left. The
+      // group's configured text mode (per_message/token/…) doesn't apply: a
+      // voice turn has no per-sender text to weight by.
+      const present = presentUserIds(audit.metadata);
+      const inCall = present.size > 0
+        ? allMembers.filter((m) => present.has(m.user_id as string))
+        : allMembers; // transient: nobody present maps to a payer — bill the group
+      for (const [id, bps] of perHead(inCall)) sharesBps.set(id, bps);
+    }
   } else {
     // Decide grace-period vs full-mode payers.
     const graceMs = (cfg.new_member_grace_seconds as number) * 1000;
@@ -314,6 +320,17 @@ function presentUserIds(metadata: unknown): Set<string> {
   const ids = (metadata as { present_user_ids?: unknown } | null)?.present_user_ids;
   if (!Array.isArray(ids)) return new Set();
   return new Set(ids.filter((x): x is string => typeof x === 'string'));
+}
+
+export function voicePayerSecondWeights(metadata: unknown): Map<string, number> {
+  const raw = (metadata as { present_user_seconds?: unknown } | null)?.present_user_seconds;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return new Map();
+  const out = new Map<string, number>();
+  for (const [userId, seconds] of Object.entries(raw)) {
+    const n = typeof seconds === 'number' ? seconds : Number(seconds);
+    if (userId && Number.isFinite(n) && n > 0) out.set(userId, n);
+  }
+  return out;
 }
 
 function perHead(payers: MemberRow[]): Map<string, number> {

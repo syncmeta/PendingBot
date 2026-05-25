@@ -1,9 +1,19 @@
 import { getContainer } from '@cloudflare/containers';
 import type { Env } from '../types';
 import { serviceClient } from '../lib/supabase';
-import { resolveRoute, enqueueAudit, computeVoiceCost } from '../llm/router';
-import { getMarkup, usdToPnd } from '../lib/billing';
+import { resolveRoute } from '../llm/router';
 import { publishToHub, type VoiceCallEvent } from '../lib/realtime-publish';
+import {
+  broadcastVoiceCostPreview,
+  computeRealtimeKitParticipantCostUsd,
+  enqueueVoiceTurnAudit,
+  getRealtimeKitAudioParticipantUsdPerMinute,
+  splitRealtimeUsage,
+  type VoiceTurnUsage,
+} from '../lib/voice-metering';
+import { getMarkup, usdToPnd } from '../lib/billing';
+import { splitAndDebit } from '../lib/group-billing';
+import { uuidv7 } from '../lib/ids';
 import { roomMediaToken } from './room-voice-context';
 import type {
   ContainerBotSpec,
@@ -12,6 +22,7 @@ import type {
   MediaDiagnostics,
   RealtimeUsage,
 } from './room-media-protocol';
+import { isCallAdminTargetPresent } from './room-voice-policy';
 
 // RoomVoiceDO — the group-voice control plane. One instance per group call
 // (keyed by conversation_id). Humans and bots are Cloudflare RealtimeKit
@@ -36,8 +47,8 @@ const PRESENCE_AUDIT_MS = 5 * 1000;
 interface RoomContext {
   roomId: string;
   conversationId: string;
-  // Whose balance the voice tokens bill to (group creator today; M6's
-  // splitAndDebit will replace it with a real split).
+  // Legacy route metadata context. Audit billing uses conversationId
+  // and splits voice turns across present group members.
   billUserId: string;
   // The user who started this call. Always privileged.
   initiatorUserId: string;
@@ -147,12 +158,14 @@ interface StartPayload {
 interface BotLeg {
   spec: BotSpec;
   turnIndex: number;
+  joinedAt: number;
 }
 
 interface HumanState {
   humanId: string;
   // Wall-clock ms of the last /control/heartbeat (or initial add-human).
   lastSeenAt: number;
+  joinedAt: number;
 }
 
 export class RoomVoiceDO {
@@ -176,6 +189,8 @@ export class RoomVoiceDO {
   private closed = false;
   private cumulativePnd = 0;
   private latestDiagnostics: MediaDiagnostics | null = null;
+  private accumulatedHumanMs = new Map<string, number>();
+  private accumulatedBotMs = new Map<string, number>();
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -405,12 +420,20 @@ export class RoomVoiceDO {
     const now = Date.now();
     const active = new Set(humanIds);
     for (const id of active) {
-      this.humans.set(id, { humanId: id, lastSeenAt: this.humans.get(id)?.lastSeenAt ?? now });
+      const existing = this.humans.get(id);
+      this.humans.set(id, {
+        humanId: id,
+        lastSeenAt: existing?.lastSeenAt ?? now,
+        joinedAt: existing?.joinedAt ?? now,
+      });
     }
     for (const id of this.humans.keys()) {
-      if (!active.has(id)) this.humans.delete(id);
+      if (!active.has(id)) {
+        this.finishHumanParticipant(id, now);
+        this.humans.delete(id);
+      }
     }
-    this.humanEverJoined = this.humans.size > 0;
+    if (this.humans.size > 0) this.humanEverJoined = true;
   }
 
   private async upsertActiveIndex(): Promise<void> {
@@ -488,6 +511,7 @@ export class RoomVoiceDO {
   private async removeBot(botId: string): Promise<void> {
     const leg = this.bots.get(botId);
     if (!leg) return;
+    this.finishBotParticipant(botId, Date.now());
     this.bots.delete(botId);
     this.callAdminIds.delete(botId);
     // Tell the container to drop the bot's OpenAI + RealtimeKit sockets.
@@ -506,6 +530,7 @@ export class RoomVoiceDO {
     const leg: BotLeg = {
       spec,
       turnIndex: 0,
+      joinedAt: Date.now(),
     };
     this.bots.set(spec.botId, leg);
 
@@ -559,6 +584,7 @@ export class RoomVoiceDO {
   private async removeHuman(humanId: string): Promise<void> {
     const human = this.humans.get(humanId);
     if (!human) return;
+    this.finishHumanParticipant(humanId, Date.now());
     this.humans.delete(humanId);
     // A voice room must always have a human admin. Once none remains the
     // call ends.
@@ -616,6 +642,9 @@ export class RoomVoiceDO {
   private designateAdmin(actorId: string, targetId: string): Response {
     if (!this.isPrivileged(actorId)) {
       return new Response('forbidden', { status: 403 });
+    }
+    if (!isCallAdminTargetPresent(targetId, this.humans.keys(), this.bots.keys())) {
+      return new Response('target is not in the room', { status: 404 });
     }
     this.callAdminIds.add(targetId);
     const leg = this.bots.get(targetId);
@@ -675,6 +704,7 @@ export class RoomVoiceDO {
   private async onLegClosed(botId: string): Promise<void> {
     const leg = this.bots.get(botId);
     if (!leg) return;
+    this.finishBotParticipant(botId, Date.now());
     this.bots.delete(botId);
     this.callAdminIds.delete(botId);
     await this.broadcastState('state');
@@ -731,8 +761,13 @@ export class RoomVoiceDO {
       }
       case 'designate_admin': {
         const targetId = typeof args.target_id === 'string' ? args.target_id : '';
-        if (!targetId) {
-          this.sendMedia({ t: 'tool-result', botId, callId, output: 'refused: missing target_id' });
+        if (!isCallAdminTargetPresent(targetId, this.humans.keys(), this.bots.keys())) {
+          this.sendMedia({
+            t: 'tool-result',
+            botId,
+            callId,
+            output: 'refused: target is not in the room',
+          });
           return;
         }
         this.callAdminIds.add(targetId);
@@ -771,18 +806,47 @@ export class RoomVoiceDO {
 
   // ── billing ────────────────────────────────────────────────────────
 
+  private finishHumanParticipant(humanId: string, atMs: number): void {
+    const human = this.humans.get(humanId);
+    if (!human) return;
+    this.addParticipantMs(this.accumulatedHumanMs, humanId, atMs - human.joinedAt);
+  }
+
+  private finishBotParticipant(botId: string, atMs: number): void {
+    const leg = this.bots.get(botId);
+    if (!leg) return;
+    this.addParticipantMs(this.accumulatedBotMs, botId, atMs - leg.joinedAt);
+  }
+
+  private addParticipantMs(target: Map<string, number>, id: string, deltaMs: number): void {
+    if (!Number.isFinite(deltaMs) || deltaMs <= 0) return;
+    target.set(id, (target.get(id) ?? 0) + deltaMs);
+  }
+
+  private humanParticipantSeconds(atMs: number): Map<string, number> {
+    const out = new Map<string, number>();
+    for (const [userId, ms] of this.accumulatedHumanMs) {
+      if (ms > 0) out.set(userId, ms / 1000);
+    }
+    for (const [userId, human] of this.humans) {
+      const seconds = Math.max(0, atMs - human.joinedAt) / 1000;
+      if (seconds > 0) out.set(userId, (out.get(userId) ?? 0) + seconds);
+    }
+    return out;
+  }
+
+  private botParticipantSeconds(atMs: number): number {
+    let totalMs = 0;
+    for (const ms of this.accumulatedBotMs.values()) totalMs += Math.max(0, ms);
+    for (const leg of this.bots.values()) totalMs += Math.max(0, atMs - leg.joinedAt);
+    return totalMs / 1000;
+  }
+
   private async settleTurn(botId: string, usage: RealtimeUsage): Promise<void> {
     const ctx = this.ctx;
     if (!ctx || this.closed) return;
     const leg = this.bots.get(botId);
     if (!leg) return;
-
-    const inDetails = usage.input_token_details;
-    const cachedText = inDetails?.cached_tokens_details?.text_tokens ?? 0;
-    const cachedAudio = inDetails?.cached_tokens_details?.audio_tokens ?? 0;
-    const cacheReadTokens = inDetails?.cached_tokens ?? 0;
-    const inputTokens = Math.max(0, (inDetails?.text_tokens ?? 0) - cachedText);
-    const audioInputTokens = Math.max(0, (inDetails?.audio_tokens ?? 0) - cachedAudio);
 
     const supa = serviceClient(this.env);
     let route;
@@ -797,32 +861,23 @@ export class RoomVoiceDO {
       return;
     }
 
-    const turnUsage = {
-      inputTokens,
-      outputTokens: usage.output_token_details?.text_tokens ?? 0,
-      audioInputTokens,
-      audioOutputTokens: usage.output_token_details?.audio_tokens ?? 0,
-      cacheReadTokens,
-    } as const;
+    const turnUsage = splitRealtimeUsage(usage);
 
-    await enqueueAudit(this.env, route, {
+    await enqueueVoiceTurnAudit({
+      env: this.env,
+      route,
       userId: ctx.billUserId,
       conversationId: ctx.conversationId,
-      taskType: 'voice_call',
-      startedAt: Date.now(),
-      status: 'success',
-      ...turnUsage,
-      metadata: {
-        source: 'group_voice_call',
-        room_id: ctx.roomId,
-        turn_index: leg.turnIndex++,
-        bot_id: leg.spec.botId,
-        // Humans in the room at this turn. splitAndDebit bills the turn
-        // per-head across them, so over the call each member's total tracks
-        // how long they were in it ("按在场时长分摊") — and nobody pays for
-        // turns before they joined or after they left.
-        present_user_ids: [...this.humans.keys()],
-      },
+      usage: turnUsage,
+      source: 'group_voice_call',
+      roomId: ctx.roomId,
+      turnIndex: leg.turnIndex++,
+      botId: leg.spec.botId,
+      // Humans in the room at this turn. splitAndDebit bills the turn
+      // per-head across them, so over the call each member's total tracks
+      // how long they were in it ("按在场时长分摊") — and nobody pays for
+      // turns before they joined or after they left.
+      presentUserIds: [...this.humans.keys()],
     });
 
     void this.broadcastCost(supa, route?.modelToCall, turnUsage);
@@ -831,33 +886,94 @@ export class RoomVoiceDO {
   private async broadcastCost(
     supa: ReturnType<typeof serviceClient>,
     modelToCall: string | undefined,
-    usage: {
-      inputTokens: number;
-      outputTokens: number;
-      audioInputTokens: number;
-      audioOutputTokens: number;
-      cacheReadTokens: number;
-    },
+    usage: VoiceTurnUsage,
   ): Promise<void> {
     const ctx = this.ctx;
     if (!ctx) return;
-    const usd = computeVoiceCost(modelToCall, usage);
-    if (usd == null) return;
-    try {
-      const markup = await getMarkup(supa);
-      const delta = usdToPnd(usd, markup);
-      if (delta <= 0) return;
-      this.cumulativePnd += delta;
-      await publishToHub(this.env, `conv:${ctx.conversationId}`, {
-        type: 'voice_cost',
-        conversation_id: ctx.conversationId,
-        session_id: ctx.roomId,
-        delta_pnd: delta,
-        cumulative_pnd: this.cumulativePnd,
-        at_ms: Date.now(),
-      });
-    } catch (err) {
-      console.warn('[room-voice] broadcast cost failed', err);
+    this.cumulativePnd = await broadcastVoiceCostPreview({
+      env: this.env,
+      supa,
+      conversationId: ctx.conversationId,
+      sessionId: ctx.roomId,
+      modelToCall,
+      usage,
+      cumulativePnd: this.cumulativePnd,
+      logPrefix: '[room-voice]',
+    });
+  }
+
+  private async settleRealtimeKitMediaCost(): Promise<void> {
+    const ctx = this.ctx;
+    if (!ctx) return;
+
+    const atMs = Date.now();
+    const userSeconds = this.humanParticipantSeconds(atMs);
+    let humanSeconds = 0;
+    for (const seconds of userSeconds.values()) humanSeconds += seconds;
+    if (humanSeconds <= 0) return;
+
+    const botSeconds = this.botParticipantSeconds(atMs);
+    const participantSeconds = humanSeconds + botSeconds;
+    if (participantSeconds <= 0) return;
+
+    const supa = serviceClient(this.env);
+    const price = await getRealtimeKitAudioParticipantUsdPerMinute(supa);
+    const costUsd = computeRealtimeKitParticipantCostUsd(participantSeconds, price);
+    const markup = await getMarkup(supa);
+    const pnd = usdToPnd(costUsd, markup);
+    const auditId = uuidv7();
+
+    const metadata = {
+      source: 'cloudflare_realtimekit_media',
+      billing_target_kind: 'group',
+      room_id: ctx.roomId,
+      realtimekit_meeting_id: ctx.realtimeKitMeetingId,
+      participant_seconds: participantSeconds,
+      human_participant_seconds: humanSeconds,
+      bot_participant_seconds: botSeconds,
+      participant_minute_price_usd: price,
+      present_user_seconds: Object.fromEntries(userSeconds),
+    };
+
+    const { data, error } = await supa
+      .from('audit_log')
+      .upsert(
+        {
+          id: auditId,
+          user_id: ctx.billUserId,
+          conversation_id: ctx.conversationId,
+          task_type: 'voice_call',
+          model_id: 'cloudflare_realtimekit:audio_only',
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_read_tokens: 0,
+          cache_write_tokens: 0,
+          audio_input_tokens: 0,
+          audio_output_tokens: 0,
+          total_tokens: 0,
+          cost_usd: costUsd > 0 ? costUsd : null,
+          tool_cost_usd: null,
+          cost_credits: pnd,
+          billing_status: pnd > 0 ? 'pending' : 'skipped',
+          generation_id: null,
+          latency_ms: Math.max(0, atMs - ctx.startedAt),
+          status: 'success',
+          error_class: null,
+          route_trace: null,
+          tag: 'cloudflare_realtimekit_media',
+          metadata,
+        },
+        { onConflict: 'id', ignoreDuplicates: true },
+      )
+      .select('id');
+    if (error) {
+      console.warn('[room-voice] realtimekit media audit failed', error.message);
+      return;
+    }
+    if (pnd > 0 && data && data.length > 0) {
+      await splitAndDebit({ env: this.env, auditLogId: auditId }).catch((err) =>
+        console.warn('[room-voice] realtimekit media split failed', err),
+      );
     }
   }
 
@@ -866,6 +982,7 @@ export class RoomVoiceDO {
   private async finalize(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    await this.settleRealtimeKitMediaCost();
     // Notify the conv channel first — once we tear down the snapshot is
     // meaningless.
     await this.broadcastState('ended');

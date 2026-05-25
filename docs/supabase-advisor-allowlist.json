@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "reviewed_at": "2026-05-25",
+  "notes": [
+    "Security WARN/ERROR lints are release blockers unless listed in allowed_security_warnings with an expiry.",
+    "Security INFO lints are allowed only when they document service-role-only deny-all tables."
+  ],
+  "allowed_security_info": [
+    {
+      "cache_key": "rls_enabled_no_policy_pendingbot_account_deletion_log",
+      "reason": "Service-role/auth-trigger audit table; authenticated users should have no direct row access."
+    },
+    {
+      "cache_key": "rls_enabled_no_policy_pendingbot_admin_audit",
+      "reason": "Admin board reads through server service-role after requireAdmin; client roles should have no direct row access."
+    },
+    {
+      "cache_key": "rls_enabled_no_policy_pendingbot_bot_code_exec_requests",
+      "reason": "Worker/runner coordination table; access is mediated by Edge/device grants."
+    },
+    {
+      "cache_key": "rls_enabled_no_policy_pendingbot_bot_user_lookback_counter",
+      "reason": "Internal bot scheduling counter; only service-role RPC/Worker code should read or mutate it."
+    },
+    {
+      "cache_key": "rls_enabled_no_policy_pendingbot_disposable_email_domains",
+      "reason": "Server-side email validation table; public clients should not query the raw blocklist."
+    },
+    {
+      "cache_key": "rls_enabled_no_policy_pendingbot_i18n_prompts",
+      "reason": "Prompt override table managed by admin board and read by service-role code."
+    },
+    {
+      "cache_key": "rls_enabled_no_policy_pendingbot_invites",
+      "reason": "Legacy/internal invite artifact; client invite flows use Edge/RPC surfaces."
+    },
+    {
+      "cache_key": "rls_enabled_no_policy_pendingbot_mcp_servers",
+      "reason": "Admin-managed tool server registry; clients receive filtered tool definitions through Edge."
+    },
+    {
+      "cache_key": "rls_enabled_no_policy_pendingbot_preset_conversation_templates",
+      "reason": "Server/admin seed template table; not a user data surface."
+    },
+    {
+      "cache_key": "rls_enabled_no_policy_pendingbot_preset_group_templates",
+      "reason": "Server/admin seed template table; not a user data surface."
+    },
+    {
+      "cache_key": "rls_enabled_no_policy_pendingbot_preset_letters",
+      "reason": "Server/admin seed template table; not a user data surface."
+    },
+    {
+      "cache_key": "rls_enabled_no_policy_pendingbot_subject_device_login_challenges",
+      "reason": "Device challenge polling is served by Edge after challenge-secret verification, not direct PostgREST."
+    },
+    {
+      "cache_key": "rls_enabled_no_policy_pendingbot_tools",
+      "reason": "Tool registry is exposed through Edge allowlist filtering, not direct table reads."
+    },
+    {
+      "cache_key": "rls_enabled_no_policy_pendingbot_web_tool_prices",
+      "reason": "Pricing config is read by server billing code and managed by admin board."
+    }
+  ],
+  "allowed_security_warnings": []
+}

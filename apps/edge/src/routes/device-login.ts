@@ -83,6 +83,25 @@ function appGrantCompatible(appKind: z.infer<typeof AppKind>, grantKind: z.infer
   return grantKind === 'pendingcrew_control' || grantKind === 'pendingcrew_runner';
 }
 
+function allowedScopesForGrant(grantKind: z.infer<typeof GrantKind>): Set<z.infer<typeof Scope>> {
+  switch (grantKind) {
+    case 'pendingbot_client':
+      return new Set(['subject:read']);
+    case 'pendingcrew_control':
+      return new Set(['subject:read', 'crew:read', 'crew:write']);
+    case 'pendingcrew_runner':
+      return new Set(['subject:read', 'runner:read', 'runner:write']);
+  }
+}
+
+function scopesSubsetOf(requested: readonly z.infer<typeof Scope>[], allowed: ReadonlySet<string>): boolean {
+  return requested.every((scope) => allowed.has(scope));
+}
+
+function normalizeStoredScopes(value: unknown): Set<string> {
+  return new Set(Array.isArray(value) ? value.filter((scope): scope is string => typeof scope === 'string') : []);
+}
+
 function qrPayload(challengeId: string, secret: string): string {
   return `https://bot.pendingname.com/d/${challengeId}?s=${encodeURIComponent(secret)}`;
 }
@@ -213,7 +232,7 @@ deviceLoginRoutes.post('/challenges/:id/approve', requireSession(), async (c) =>
   const svc = untypedDb(c.env);
   const { data: challenge, error } = await svc
     .from('subject_device_login_challenges')
-    .select('id, challenge_secret_hash, app_kind, status, expires_at')
+    .select('id, challenge_secret_hash, app_kind, requested_scopes, status, expires_at')
     .eq('id', challengeId)
     .maybeSingle();
   if (error) return jsonError(c, 500, 'database_error', { detail: error.message });
@@ -232,6 +251,14 @@ deviceLoginRoutes.post('/challenges/:id/approve', requireSession(), async (c) =>
   }
   if (!appGrantCompatible(challenge.app_kind as z.infer<typeof AppKind>, parsed.grantKind)) {
     return jsonError(c, 400, 'invalid_body', { message: 'grant kind does not match app kind' });
+  }
+  const allowedScopes = allowedScopesForGrant(parsed.grantKind);
+  if (!scopesSubsetOf(parsed.scopes, allowedScopes)) {
+    return jsonError(c, 400, 'invalid_body', { message: 'requested scopes exceed grant kind' });
+  }
+  const originalScopes = normalizeStoredScopes(challenge.requested_scopes);
+  if (!scopesSubsetOf(parsed.scopes, originalScopes)) {
+    return jsonError(c, 400, 'invalid_body', { message: 'approved scopes exceed original challenge request' });
   }
 
   const { data: allowed, error: allowedErr } = await svc.rpc('subject_can_authorize_device_grant', {

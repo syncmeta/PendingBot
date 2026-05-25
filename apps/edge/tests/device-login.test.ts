@@ -119,6 +119,39 @@ describe('POST /v1/device-login/challenges/:id/approve', () => {
     });
   });
 
+  it('rejects runner scopes on a control-only grant', async () => {
+    const db = makeFakeDb();
+    const challenge = await createChallenge(db);
+    const subjectId = '11111111-1111-4111-8111-111111111111';
+    db.rpcs = {
+      subject_can_authorize_device_grant: () => ({ data: true, error: null }),
+    };
+
+    const res = await appFor(db).request(`/v1/device-login/challenges/${challenge.challengeId}/approve`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-test-user-id': 'user-1',
+      },
+      body: JSON.stringify({
+        secret: challenge.secret,
+        subjectId,
+        grantKind: 'pendingcrew_control',
+        scopes: ['subject:read', 'crew:read', 'runner:write'],
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      error: { code: 'invalid_body' },
+    });
+    expect(db.rows.subject_device_login_challenges[0]).toMatchObject({
+      status: 'pending',
+      requested_scopes: ['subject:read', 'crew:read', 'runner:write'],
+    });
+    expect(db.rows.subject_device_login_challenges[0]).not.toHaveProperty('grant_kind');
+  });
+
   it('rejects an app/grant mismatch', async () => {
     const db = makeFakeDb();
     const res = await appFor(db).request('/v1/device-login/challenges', {

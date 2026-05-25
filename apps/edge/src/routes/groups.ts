@@ -5,6 +5,7 @@ import { userClient, serviceClient } from '../lib/supabase';
 import { generateInitialBotDescription } from '../lib/group-bot-intro';
 import { rateLimitOrBlock } from '../lib/rate-limit';
 import { jsonError } from '../lib/http-error';
+import { isGroupHumanParticipant, requireGroupRole } from '../lib/route-authz';
 import type { AppBindings } from '../types';
 
 // All group endpoints sit under /v1/groups. Schema + RPCs live in
@@ -50,19 +51,6 @@ function rpcError(err: unknown, fallback = 'database error') {
     return { status: 400 as const, body: { error: msg } };
   }
   return { status: 500 as const, body: { error: 'database', detail: msg } };
-}
-
-async function requireGroupAdmin(c: Parameters<typeof jsonError>[0], convId: string, userId: string) {
-  const supa = serviceClient(c.env);
-  const { data, error } = await supa
-    .from('conversation_participants')
-    .select('role')
-    .eq('conversation_id', convId)
-    .eq('participant_type', 'user')
-    .eq('participant_id', userId)
-    .maybeSingle();
-  if (error) return { error, role: null as string | null };
-  return { error: null, role: data?.role as string | null };
 }
 
 async function groupBillingInviteSnapshot(c: Parameters<typeof jsonError>[0], convId: string) {
@@ -187,20 +175,18 @@ groupRoutes.post('/:id/title', async (c) => {
   }
 
   const userId = c.var.userId!;
-  const supa = serviceClient(c.env);
-  const { data: member, error: memberErr } = await supa
-    .from('conversation_participants')
-    .select('role')
-    .eq('conversation_id', convId)
-    .eq('participant_type', 'user')
-    .eq('participant_id', userId)
-    .maybeSingle();
-  if (memberErr) return jsonError(c, 500, 'database_error', { detail: memberErr.message });
-  if (!member) return jsonError(c, 403, 'not_a_participant');
-  if (member.role !== 'owner' && member.role !== 'admin') {
+  const role = await requireGroupRole(c.env, convId, userId, ['owner', 'admin']);
+  if (!role.ok && role.code === 'database_error') {
+    return jsonError(c, 500, 'database_error', { detail: role.detail });
+  }
+  if (!role.ok && role.code === 'forbidden' && role.role == null) {
+    return jsonError(c, 403, 'not_a_participant');
+  }
+  if (!role.ok) {
     return jsonError(c, 403, 'forbidden', { message: '只有群主或管理员可以修改群名' });
   }
 
+  const supa = serviceClient(c.env);
   const title = parsed.title;
   const now = new Date().toISOString();
   const [{ error: metaErr }, { error: convErr }] = await Promise.all([
@@ -248,10 +234,14 @@ groupRoutes.post('/:id/invite-user', async (c) => {
   }
 
   const inviterId = c.var.userId!;
-  const roleCheck = await requireGroupAdmin(c, convId, inviterId);
-  if (roleCheck.error) return jsonError(c, 500, 'database_error', { detail: roleCheck.error.message });
-  if (!roleCheck.role) return jsonError(c, 403, 'not_a_participant');
-  if (roleCheck.role !== 'owner' && roleCheck.role !== 'admin') {
+  const roleCheck = await requireGroupRole(c.env, convId, inviterId, ['owner', 'admin']);
+  if (!roleCheck.ok && roleCheck.code === 'database_error') {
+    return jsonError(c, 500, 'database_error', { detail: roleCheck.detail });
+  }
+  if (!roleCheck.ok && roleCheck.code === 'forbidden' && roleCheck.role == null) {
+    return jsonError(c, 403, 'not_a_participant');
+  }
+  if (!roleCheck.ok) {
     return jsonError(c, 403, 'forbidden', { message: '只有群主或管理员可以邀请成员' });
   }
 
@@ -444,7 +434,7 @@ groupRoutes.post('/:id/invite-bot', async (c) => {
   // Kick off the first-description LLM call in the background. The
   // RPC has already added the bot to the group; the description is
   // an enhancement for the router and shouldn't block the invite UI.
-  // The cost lands on the conv creator until M6 wires splitAndDebit.
+  // Audit billing resolves the group split from conversationId.
   c.executionCtx.waitUntil(
     generateInitialBotDescription({
       env: c.env,
@@ -951,15 +941,11 @@ groupRoutes.post('/:id/continue-decision', async (c) => {
   // requests outside the user's groups, but the lookup above uses
   // service-role for a consistent 404 vs 403 surface, so we re-prove
   // membership here before writing a message attributed to the user.
-  const { data: membership, error: memberErr } = await supaSvc
-    .from('conversation_participants')
-    .select('participant_id')
-    .eq('conversation_id', convId)
-    .eq('participant_type', 'user')
-    .eq('participant_id', userId)
-    .maybeSingle();
-  if (memberErr) return jsonError(c, 500, 'database_error', { detail: memberErr.message });
-  if (!membership) return jsonError(c, 403, 'not_a_participant');
+  const membership = await isGroupHumanParticipant(c.env, convId, userId);
+  if (!membership.ok && membership.code === 'database_error') {
+    return jsonError(c, 500, 'database_error', { detail: membership.detail });
+  }
+  if (!membership.ok) return jsonError(c, 403, 'not_a_participant');
 
   const decisionText = parsed.decision === 'allowed' ? '✅ 让机器人继续' : '❌ 让机器人闭嘴';
 

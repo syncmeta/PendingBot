@@ -209,6 +209,16 @@ interface GeminiResponse {
   error?: { status?: string; message?: string };
 }
 
+function isSearchFunctionToolConflict(
+  status: number,
+  body: string,
+  params: { tools: ChatCompletionTool[]; webSearch?: boolean },
+): boolean {
+  if (status !== 400 || !params.webSearch || params.tools.length === 0) return false;
+  return /google_search|functionDeclarations|function calling|tool/i.test(body) &&
+    /unsupported|not supported|cannot|invalid|unknown|combination/i.test(body);
+}
+
 // POST one generateContent request to the AI Gateway google-ai-studio
 // passthrough and adapt the JSON response into Chat-Completions-shaped
 // chunks. Throws on non-2xx so withFallback can classify + re-resolve.
@@ -228,7 +238,7 @@ export async function openGeminiStream(
   // gateway forwards keyless and Google answers 403 "unregistered callers".
   byokAlias?: string,
 ): Promise<AsyncIterable<LlmStreamChunk>> {
-  const body = toGeminiRequest(params.messages, params.tools, params.webSearch);
+  let body = toGeminiRequest(params.messages, params.tools, params.webSearch);
   // Must be `/v1beta/…`, NOT `/v1/…`: Google's stable `v1`
   // generateContent proto has no `systemInstruction` / `tools` fields and
   // rejects them ("Unknown name … Cannot find field"). Those live on
@@ -236,7 +246,7 @@ export async function openGeminiStream(
   // gateway injects the upstream key); do NOT also send x-goog-api-key,
   // the gateway forwards it upstream and Google rejects it as invalid.
   const url = `${baseURL}/v1beta/models/${params.model}:generateContent`;
-  const res = await fetch(url, {
+  let res = await fetch(url, {
     method: 'POST',
     signal,
     headers: {
@@ -248,6 +258,26 @@ export async function openGeminiStream(
   });
   if (!res.ok) {
     const text = (await res.text()).slice(0, 500);
+    if (isSearchFunctionToolConflict(res.status, text, params)) {
+      body = toGeminiRequest(params.messages, [], params.webSearch);
+      res = await fetch(url, {
+        method: 'POST',
+        signal,
+        headers: {
+          'Content-Type': 'application/json',
+          'cf-aig-authorization': `Bearer ${aigToken}`,
+          ...(byokAlias ? { 'cf-aig-byok-alias': byokAlias } : {}),
+        },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        const json = (await res.json()) as GeminiResponse;
+        if (json.error) {
+          throw new Error(`gemini ${json.error.status ?? 'error'}: ${json.error.message ?? ''}`);
+        }
+        return mapGeminiResponse(json);
+      }
+    }
     const err = new Error(`gemini ${res.status}: ${text}`);
     (err as { status?: number }).status = res.status;
     throw err;

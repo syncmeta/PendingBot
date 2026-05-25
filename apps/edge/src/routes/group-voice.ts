@@ -56,6 +56,13 @@ import {
   resolveVoiceConfig,
   type ResolvedVoiceConfig,
 } from '../lib/voice-config';
+import {
+  isGroupBotParticipant,
+  isGroupHumanParticipant,
+  listGroupAdminUserIds,
+  loadGroupConversationForUser,
+  requireGroupRole,
+} from '../lib/route-authz';
 import type { AppBindings } from '../types';
 
 export const groupVoiceRoutes = new Hono<AppBindings>();
@@ -102,8 +109,8 @@ function configString(config: unknown, key: string): string | null {
 // A group conversation the caller is a confirmed participant of.
 interface GroupContext {
   conversationId: string;
-  // Group creator — voice tokens bill to this user, matching how group
-  // text turns attribute cost today. M6's splitAndDebit replaces it.
+  // Legacy caller context for route metadata. Audit billing uses
+  // conversationId and splits group voice turns across present members.
   billUserId: string;
   locale: Awaited<ReturnType<typeof resolveLocale>>;
 }
@@ -121,35 +128,31 @@ async function loadGroupContext(
   const supaUser = userClient(c.env, c.var.userJwt!);
   const locale = await resolveLocale(c.req.raw, supaUser, userId);
 
-  const { data: conv } = await supaUser
-    .from('conversations')
-    .select('id, conversation_type, user_id')
-    .eq('id', conversationId)
-    .maybeSingle();
-  if (!conv || conv.conversation_type !== 'group') {
+  const loaded = await loadGroupConversationForUser(
+    c.env,
+    c.var.userJwt!,
+    userId,
+    conversationId,
+  );
+  if (!loaded.ok && loaded.code === 'database_error') {
+    return { ok: false, res: jsonError(c, 500, 'database_error', { detail: loaded.detail }) };
+  }
+  if (!loaded.ok && loaded.code === 'not_found') {
     return { ok: false, res: jsonError(c, 404, 'conversation_not_found') };
   }
-
-  const supaSvc = serviceClient(c.env);
-  const { data: membership } = await supaSvc
-    .from('conversation_participants')
-    .select('participant_id')
-    .eq('conversation_id', conversationId)
-    .eq('participant_type', 'user')
-    .eq('participant_id', userId)
-    .maybeSingle();
-  if (!membership) {
+  if (!loaded.ok) {
     return { ok: false, res: jsonError(c, 403, 'not_a_participant') };
   }
 
-  // Group creator owns the cost. Prefer conversation_group_meta.created_by,
-  // fall back to conversations.user_id when the meta row predates that col.
+  // Prefer the group creator as route metadata context; billing ownership
+  // is resolved later from conversationId by the audit layer.
+  const supaSvc = serviceClient(c.env);
   const { data: meta } = await supaSvc
     .from('conversation_group_meta')
     .select('created_by')
     .eq('conversation_id', conversationId)
     .maybeSingle();
-  const billUserId = meta?.created_by ?? conv.user_id ?? userId;
+  const billUserId = meta?.created_by ?? loaded.conversation.user_id ?? userId;
 
   return { ok: true, ctx: { conversationId, billUserId, locale } };
 }
@@ -215,13 +218,12 @@ async function loadGroupAdminIds(
   c: Context<AppBindings>,
   conversationId: string,
 ): Promise<string[]> {
-  const { data: adminRows } = await serviceClient(c.env)
-    .from('conversation_participants')
-    .select('participant_id')
-    .eq('conversation_id', conversationId)
-    .eq('participant_type', 'user')
-    .in('role', ['owner', 'admin']);
-  return (adminRows ?? []).map((r) => r.participant_id as string);
+  const result = await listGroupAdminUserIds(c.env, conversationId);
+  if (!result.ok) {
+    console.warn('[group-voice] admin lookup failed', result.detail ?? result.code);
+    return [];
+  }
+  return result.userIds;
 }
 
 async function putRealtimeKitRoomState(
@@ -244,14 +246,8 @@ async function isRealtimeKitEndAllowed(
   const userId = c.var.userId!;
   if (state.initiatorId === userId) return true;
 
-  const { data: membership } = await serviceClient(c.env)
-    .from('conversation_participants')
-    .select('role')
-    .eq('conversation_id', conversationId)
-    .eq('participant_type', 'user')
-    .eq('participant_id', userId)
-    .maybeSingle();
-  return membership?.role === 'owner' || membership?.role === 'admin';
+  const role = await requireGroupRole(c.env, conversationId, userId, ['owner', 'admin']);
+  return role.ok;
 }
 
 async function controlRoom(
@@ -347,21 +343,15 @@ groupVoiceRoutes.post('/:id/voice/bootstrap', async (c) => {
       }
     | undefined;
   if (parsed.bot_id) {
-    const [{ data: part }, { data: botRow }] = await Promise.all([
-      supaSvc
-        .from('conversation_participants')
-        .select('participant_id')
-        .eq('conversation_id', conversationId)
-        .eq('participant_type', 'bot')
-        .eq('participant_id', parsed.bot_id)
-        .maybeSingle(),
+    const [part, { data: botRow }] = await Promise.all([
+      isGroupBotParticipant(c.env, conversationId, parsed.bot_id),
       supaSvc
         .from('bots')
         .select('id, display_name, voice_call_enabled')
         .eq('id', parsed.bot_id)
         .maybeSingle(),
     ]);
-    if (!part) return jsonError(c, 404, 'not_found', { detail: 'bot not in group' });
+    if (!part.ok) return jsonError(c, 404, 'not_found', { detail: 'bot not in group' });
     if (!botRow || !botRow.voice_call_enabled) {
       return jsonError(c, 403, 'voice_bot_disabled');
     }
@@ -557,21 +547,15 @@ groupVoiceRoutes.post('/:id/voice/add-bot', async (c) => {
   }
 
   const supaSvc = serviceClient(c.env);
-  const [{ data: part }, { data: botRow }] = await Promise.all([
-    supaSvc
-      .from('conversation_participants')
-      .select('participant_id')
-      .eq('conversation_id', conversationId)
-      .eq('participant_type', 'bot')
-      .eq('participant_id', parsed.bot_id)
-      .maybeSingle(),
+  const [part, { data: botRow }] = await Promise.all([
+    isGroupBotParticipant(c.env, conversationId, parsed.bot_id),
     supaSvc
       .from('bots')
       .select('id, display_name, voice_call_enabled')
       .eq('id', parsed.bot_id)
       .maybeSingle(),
   ]);
-  if (!part) return jsonError(c, 404, 'not_found', { detail: 'bot not in group' });
+  if (!part.ok) return jsonError(c, 404, 'not_found', { detail: 'bot not in group' });
   if (!botRow || !botRow.voice_call_enabled) {
     return jsonError(c, 403, 'voice_bot_disabled');
   }
@@ -645,17 +629,12 @@ groupVoiceRoutes.post('/:id/voice/ring', async (c) => {
   }
 
   // The target must be a human participant of this group.
-  const supaSvc = serviceClient(c.env);
-  const { data: part } = await supaSvc
-    .from('conversation_participants')
-    .select('participant_id')
-    .eq('conversation_id', conversationId)
-    .eq('participant_type', 'user')
-    .eq('participant_id', parsed.user_id)
-    .maybeSingle();
-  if (!part) {
+  const part = await isGroupHumanParticipant(c.env, conversationId, parsed.user_id);
+  if (!part.ok) {
     return jsonError(c, 404, 'not_found', { detail: 'user not in group' });
   }
+
+  const supaSvc = serviceClient(c.env);
 
   const doResp = await controlRoom(c, conversationId, '/control/invite', {
     kind: 'human',
@@ -826,6 +805,9 @@ groupVoiceRoutes.post('/:id/voice/designate-admin', async (c) => {
     targetId: parsed.target_id,
   });
   if (resp.status === 403) return jsonError(c, 403, 'forbidden');
+  if (resp.status === 404) {
+    return jsonError(c, 404, 'not_found', { detail: 'target not in room' });
+  }
   if (!resp.ok) {
     console.warn('[group-voice/designate-admin] room DO failed', resp.status);
     return jsonError(c, 502, 'voice_upstream_failed');

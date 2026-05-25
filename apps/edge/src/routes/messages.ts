@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
 import { serviceClient, userClient } from '../lib/supabase';
@@ -12,13 +12,20 @@ import { resolveGroupMentions } from '../lib/group-mentions';
 import { summarizeAttachments, DEFAULT_VISION_MODEL } from '../llm/vision';
 import { UUID_RE } from '../lib/ids';
 import { jsonError } from '../lib/http-error';
-import { deleteCachedAttachment, removeInventoryIds, resolveAttachmentOwnership } from '../lib/attachment-cache';
+import { deleteCachedAttachment, removeInventoryIds } from '../lib/attachment-cache';
 import { resolveBot } from '../lib/bot-cache';
 import { resolveConv } from '../lib/conv-cache';
 import { parseRandomModelConfig, pickRandomModel } from '../llm/random-model';
 import { safeWaitUntil } from '../lib/safe-wait-until';
 import { startSseKeepalive } from '../lib/sse-keepalive';
 import { notifyConversationUsers, notifyUserMessage } from '../lib/push';
+import {
+  authorizeAttachmentOwnership,
+  authorizeBotUse,
+  authorizeMessageDelete,
+  authorizeMessageRecall,
+  authorizeMessageSendConversation,
+} from '../lib/route-authz';
 import type { AppBindings } from '../types';
 
 export const messageRoutes = new Hono<AppBindings>();
@@ -106,54 +113,33 @@ messageRoutes.post('/', async (c) => {
   // ownership in parallel. Both must succeed before any state change.
   // The conv resolver does a local user_id check for single-owner conv
   // types and only round-trips Supabase for groups / cold reads.
-  const convPromise = resolveConv(c.env, supaUser, parsed.conversationId, userId, (p) =>
-    safeWaitUntil(c, p),
-  ).catch((err: { message?: string }) => ({ __error: err.message ?? 'database_error' as const }));
+  const convPromise = authorizeMessageSendConversation(
+    c.env,
+    userJwt,
+    userId,
+    parsed.conversationId,
+    (p) => safeWaitUntil(c, p),
+  );
 
   const hasAttachments = (parsed.attachmentIds?.length ?? 0) > 0;
   const attCheckPromise = hasAttachments
-    ? resolveAttachmentOwnership(c.env, supaService, parsed.attachmentIds!, (p) =>
+    ? authorizeAttachmentOwnership(c.env, userId, parsed.attachmentIds!, (p) =>
         safeWaitUntil(c, p),
       )
-    : Promise.resolve([] as Array<{ id: string; user_id: string; conversation_id: string | null }>);
+    : Promise.resolve({ ok: true as const, attachments: [] });
 
   const [convResolved, attRows] = await Promise.all([convPromise, attCheckPromise]);
 
-  if (convResolved && typeof convResolved === 'object' && '__error' in convResolved) {
-    return jsonError(c, 500, 'database_error', { detail: convResolved.__error });
-  }
-  // Narrow the conversation_type literal — schema.ts types it as the full
-  // set the CHECK constraint allows; this route only handles the message
-  // surface, so we treat the others (discuss/surf/portrait) the same as
-  // user_bot for routing purposes.
-  const conv = convResolved as {
-    id: string;
-    conversation_type: 'user_bot' | 'self' | 'group' | 'user_user';
-    bot_id: string | null;
-    round_count: number | null;
-  } | null;
-  if (!conv) return jsonError(c, 404, 'conversation_no_access');
-
-  // user_user peer-existence gate. When a user hard-deletes their account
-  // the auth-delete trigger drops their conversation_participants rows but
-  // leaves any conversation the *other* side owns intact — a one-sided
-  // orphan. resolveConv only proves the caller's own access, so without
-  // this check a send into that orphan would silently 200. Reject it so
-  // the client can tell the user the peer is gone.
-  if (conv.conversation_type === 'user_user') {
-    const { data: peer, error: peerErr } = await supaService
-      .from('conversation_participants')
-      .select('participant_id')
-      .eq('conversation_id', parsed.conversationId)
-      .eq('participant_type', 'user')
-      .neq('participant_id', userId)
-      .limit(1)
-      .maybeSingle();
-    if (peerErr) return jsonError(c, 500, 'database_error', { detail: peerErr.message });
-    if (!peer) {
+  if (!convResolved.ok) {
+    if (convResolved.code === 'database_error') {
+      return jsonError(c, 500, 'database_error', { detail: convResolved.detail });
+    }
+    if (convResolved.code === 'gone') {
       return jsonError(c, 410, 'peer_account_deleted', { message: '对方账号已注销' });
     }
+    return jsonError(c, 404, 'conversation_no_access');
   }
+  const conv = convResolved.conversation;
 
   // Attachment ownership gate. attachmentIds rides in the body uncontrolled —
   // verify each row's user_id matches the sender so a caller can't pin
@@ -163,13 +149,11 @@ messageRoutes.post('/', async (c) => {
   // shares one row across convs). GET /v1/uploads/:id still gates reads via
   // message references + membership.
   if (hasAttachments) {
-    if (!attRows) {
+    if (!attRows.ok && attRows.code === 'not_found') {
       return jsonError(c, 403, 'attachment_not_found');
     }
-    for (const r of attRows) {
-      if (r.user_id !== userId) {
-        return jsonError(c, 403, 'attachment_not_owned');
-      }
+    if (!attRows.ok) {
+      return jsonError(c, 403, 'attachment_not_owned');
     }
   }
 
@@ -184,12 +168,7 @@ messageRoutes.post('/', async (c) => {
   // in parallel. INSERT runs detached (waitUntil) using the
   // pre-generated id, so the pre-stream path holds no write RTT.
   const balancePromise: Promise<InsufficientBalanceError | null> = needsBotPath
-    ? requireBalance(c.env, supaUser, userId)
-        .then(() => null)
-        .catch((err) => {
-          if (err instanceof InsufficientBalanceError) return err;
-          throw err;
-        })
+    ? requireMessageBalance(c.env, supaUser, userId)
     : Promise.resolve(null);
 
   const botPromise = needsBotPath
@@ -197,17 +176,7 @@ messageRoutes.post('/', async (c) => {
     : Promise.resolve(null);
 
   const parentLookupPromise: Promise<string | null> = parsed.autoLookback
-    ? (async () => {
-        const { data } = await supaService
-          .from('messages')
-          .select('id')
-          .eq('conversation_id', parsed.conversationId)
-          .eq('role', 'user')
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        return (data?.id as string | undefined) ?? null;
-      })()
+    ? lookupLatestUserMessageId(supaService, parsed.conversationId)
     : Promise.resolve(userMessageId);
 
   // Detached user-message INSERT. Idempotent on client_message_id, so a
@@ -262,14 +231,7 @@ messageRoutes.post('/', async (c) => {
   ]);
 
   if (balanceErr) {
-    return c.json(
-      {
-        error: 'insufficient_balance',
-        balance_credits: balanceErr.balance,
-        min_threshold: balanceErr.threshold,
-      },
-      402,
-    );
+    return insufficientBalanceResponse(c, balanceErr);
   }
 
   // Group branch — wake decisions go to the GroupRouterDO. The DO
@@ -377,46 +339,22 @@ messageRoutes.post('/', async (c) => {
     return c.json({ message: { id: parentMessageId }, botReplyScheduled: false });
   }
 
-  // Visibility gate: is_participant() lets the user keep reading the conv
-  // even after the creator un-invites them, and the worker uses the
-  // service role to fetch the bot — both of which would otherwise let a
-  // dropped invitee keep chatting on the creator's tab. Re-check here.
-  // Every private bot is owned — preset private bots are per-user clones,
-  // not a shared system row — so a private bot is usable only by its creator.
-  if (bot.visibility === 'private' && bot.creator_id !== userId) {
-    return jsonError(c, 403, 'forbidden', { message: '私有机器人只允许创建者使用' });
-  }
-  if (bot.visibility === 'public_invite' && bot.creator_id !== userId) {
-    const { data: invite } = await supaService
-      .from('bot_invites')
-      .select('user_id')
-      .eq('bot_id', bot.id)
-      .eq('user_id', userId)
-      .maybeSingle();
-    if (!invite) {
-      return jsonError(c, 403, 'forbidden', { message: '没有权限和这个机器人聊天,可能已被取消邀请' });
+  // Visibility gate: resolveConv can let the user keep reading an existing
+  // conversation after the creator un-invites them from a public_invite bot.
+  // Re-check bot use on every new paid turn.
+  const botUse = await authorizeBotUse(c.env, bot, userId);
+  if (!botUse.ok) {
+    if (botUse.code === 'database_error') {
+      return jsonError(c, 500, 'database_error', { detail: botUse.detail });
     }
+    return jsonError(c, 403, 'forbidden', { message: '没有权限和这个机器人聊天,可能已被取消邀请' });
   }
 
-  // Provider routing is bot-level only — the bot's own default route
-  // (bots.model_provider) drives preferProvider for the turn.
-  let effectiveProviderOverride: string | null = bot.model_provider ?? null;
-
-  // Chat model is the bot's own default (bots.model_id) — unless the bot is
-  // in arena mode (bots.config.arena), in which case each turn draws a
-  // random model from the pool, routed via openrouter passthrough so every
-  // contender is reached identically (the personal leaderboard depends on
-  // that fairness). A null pick (empty pool / catalog miss) falls back to
-  // the pinned model.
-  let effectiveModelId: string = bot.model_id as string;
-  const arenaCfg = parseRandomModelConfig(botConfigArena(bot.config));
-  if (arenaCfg) {
-    const picked = await pickRandomModel(c.env, arenaCfg);
-    if (picked) {
-      effectiveModelId = picked.slug;
-      effectiveProviderOverride = picked.modelProvider ?? 'openrouter';
-    }
-  }
+  const turnRoute = await resolveMessageBotTurnRoute(c.env, {
+    model_id: bot.model_id as string,
+    model_provider: bot.model_provider,
+    config: bot.config,
+  });
 
   const isSelfChat = conv.conversation_type === 'self';
 
@@ -476,7 +414,7 @@ messageRoutes.post('/', async (c) => {
             bot: {
               id: bot.id,
               display_name: bot.display_name,
-              model_id: effectiveModelId,
+              model_id: turnRoute.modelId,
               // CHECK constraint guarantees one of these two; types can't see it.
               output_mode: bot.output_mode === 'bubble' ? 'bubble' : 'single',
               tz: bot.tz,
@@ -490,7 +428,7 @@ messageRoutes.post('/', async (c) => {
             visionModelOverride: botConfigString(bot.config, 'visionModel'),
             webSearch: parseWebSearchConfig(bot.config),
             activeLookbacks: parsed.activeLookbacks ?? [],
-            providerOverride: effectiveProviderOverride,
+            providerOverride: turnRoute.providerOverride,
             clientTz: parsed.clientTz,
             signal: detachedAbort.signal,
             emit,
@@ -637,6 +575,7 @@ const StartBody = z.object({
 messageRoutes.post('/start', async (c) => {
   const userId = c.var.userId!;
   const userJwt = c.var.userJwt!;
+  const supaUser = userClient(c.env, userJwt);
 
   let parsed: z.infer<typeof StartBody>;
   try {
@@ -648,7 +587,6 @@ messageRoutes.post('/start', async (c) => {
     return jsonError(c, 400, 'invalid_body', { message: 'newMessage or attachment required' });
   }
 
-  const supaUser = userClient(c.env, userJwt);
   const supaService = serviceClient(c.env);
 
   // Bot row needed for runChatTurn (model_id / output_mode / config).
@@ -665,14 +603,7 @@ messageRoutes.post('/start', async (c) => {
     await requireBalance(c.env, supaUser, userId);
   } catch (err) {
     if (err instanceof InsufficientBalanceError) {
-      return c.json(
-        {
-          error: 'insufficient_balance',
-          balance_credits: err.balance,
-          min_threshold: err.threshold,
-        },
-        402,
-      );
+      return insufficientBalanceResponse(c, err);
     }
     throw err;
   }
@@ -683,16 +614,17 @@ messageRoutes.post('/start', async (c) => {
   // convs, so a first turn legitimately reuses an attachment already bound
   // to an earlier conv.
   if (parsed.attachmentIds && parsed.attachmentIds.length > 0) {
-    const { data: rows, error: attErr } = await supaService
-      .from('attachments')
-      .select('id, user_id')
-      .in('id', parsed.attachmentIds);
-    if (attErr) return jsonError(c, 500, 'database_error', { detail: attErr.message });
-    if (!rows || rows.length !== parsed.attachmentIds.length) {
+    const attAuthz = await authorizeAttachmentOwnership(c.env, userId, parsed.attachmentIds, (p) =>
+      safeWaitUntil(c, p),
+    );
+    if (!attAuthz.ok && attAuthz.code === 'database_error') {
+      return jsonError(c, 500, 'database_error', { detail: attAuthz.detail });
+    }
+    if (!attAuthz.ok && attAuthz.code === 'not_found') {
       return jsonError(c, 403, 'attachment_not_found');
     }
-    for (const r of rows) {
-      if (r.user_id !== userId) return jsonError(c, 403, 'attachment_not_owned');
+    if (!attAuthz.ok) {
+      return jsonError(c, 403, 'attachment_not_owned');
     }
   }
 
@@ -736,18 +668,7 @@ messageRoutes.post('/start', async (c) => {
     );
   }
 
-  // Provider routing is bot-level only (bots.model_provider). Arena mode
-  // (bots.config.arena) draws a random model per turn via openrouter.
-  let effectiveProviderOverride: string | null = bot.model_provider ?? null;
-  let effectiveModelId: string = bot.model_id;
-  const arenaCfg = parseRandomModelConfig(botConfigArena(bot.config));
-  if (arenaCfg) {
-    const picked = await pickRandomModel(c.env, arenaCfg);
-    if (picked) {
-      effectiveModelId = picked.slug;
-      effectiveProviderOverride = picked.modelProvider ?? 'openrouter';
-    }
-  }
+  const turnRoute = await resolveMessageBotTurnRoute(c.env, bot);
 
   const encoder = new TextEncoder();
   const detachedAbort = new AbortController();
@@ -805,7 +726,7 @@ messageRoutes.post('/start', async (c) => {
             bot: {
               id: bot.id,
               display_name: bot.display_name,
-              model_id: effectiveModelId,
+              model_id: turnRoute.modelId,
               output_mode: bot.output_mode === 'bubble' ? 'bubble' : 'single',
               tz: bot.tz,
             },
@@ -817,7 +738,7 @@ messageRoutes.post('/start', async (c) => {
             visionModelOverride: botConfigString(bot.config, 'visionModel'),
             webSearch: parseWebSearchConfig(bot.config),
             activeLookbacks: [],
-            providerOverride: effectiveProviderOverride,
+            providerOverride: turnRoute.providerOverride,
             clientTz: parsed.clientTz,
             signal: detachedAbort.signal,
             emit,
@@ -965,25 +886,25 @@ messageRoutes.post('/:id/regenerate', async (c) => {
   if (!bot) return jsonError(c, 500, 'database_error', { message: 'bot lookup failed' });
   if (!bot.is_active) return jsonError(c, 400, 'forbidden', { message: 'bot inactive' });
   if (!bot.model_id) return jsonError(c, 500, 'database_error', { message: 'bot has no model pinned' });
-  if (bot.visibility === 'private' && bot.creator_id !== userId) {
-    return jsonError(c, 403, 'forbidden', { message: '私有机器人只允许创建者使用' });
+  const botUse = await authorizeBotUse(c.env, bot, userId);
+  if (!botUse.ok) {
+    if (botUse.code === 'database_error') {
+      return jsonError(c, 500, 'database_error', { detail: botUse.detail });
+    }
+    return jsonError(c, 403, 'forbidden', { message: '没有权限和这个机器人聊天,可能已被取消邀请' });
   }
 
   try {
     await requireBalance(c.env, supaUser, userId);
   } catch (err) {
     if (err instanceof InsufficientBalanceError) {
-      return c.json(
-        { error: 'insufficient_balance', balance_credits: err.balance, min_threshold: err.threshold },
-        402,
-      );
+      return insufficientBalanceResponse(c, err);
     }
     throw err;
   }
 
-  let effectiveProviderOverride: string | null = bot.model_provider ?? null;
-  let effectiveModelId: string = bot.model_id;
   const arenaCfg = parseRandomModelConfig(botConfigArena(bot.config));
+  let excludeSlugs: string[] = [];
   if (arenaCfg) {
     const { data: usedRows } = await supaService
       .from('messages')
@@ -991,19 +912,23 @@ messageRoutes.post('/:id/regenerate', async (c) => {
       .eq('parent_message_id', parentId)
       .eq('role', 'bot')
       .not('model_slug', 'is', null);
-    const excludeSlugs = [
+    excludeSlugs = [
       ...new Set(
         (usedRows ?? [])
           .map((r) => r.model_slug as string | null)
           .filter((s): s is string => !!s),
       ),
     ];
-    const picked = await pickRandomModel(c.env, arenaCfg, { excludeSlugs });
-    if (picked) {
-      effectiveModelId = picked.slug;
-      effectiveProviderOverride = picked.modelProvider ?? 'openrouter';
-    }
   }
+  const turnRoute = await resolveMessageBotTurnRoute(
+    c.env,
+    {
+      model_id: bot.model_id,
+      model_provider: bot.model_provider,
+      config: bot.config,
+    },
+    { excludeSlugs },
+  );
 
   const isSelfChat = conv.conversation_type === 'self';
   const encoder = new TextEncoder();
@@ -1030,7 +955,7 @@ messageRoutes.post('/:id/regenerate', async (c) => {
             bot: {
               id: bot.id,
               display_name: bot.display_name,
-              model_id: effectiveModelId,
+              model_id: turnRoute.modelId,
               output_mode: bot.output_mode === 'bubble' ? 'bubble' : 'single',
               tz: bot.tz,
             },
@@ -1040,7 +965,7 @@ messageRoutes.post('/:id/regenerate', async (c) => {
             currentAttachmentIds: parentAttachmentIds,
             visionModelOverride: botConfigString(bot.config, 'visionModel'),
             webSearch: parseWebSearchConfig(bot.config),
-            providerOverride: effectiveProviderOverride,
+            providerOverride: turnRoute.providerOverride,
             clientTz: parsed.clientTz,
             signal: detachedAbort.signal,
             emit,
@@ -1099,30 +1024,19 @@ messageRoutes.post('/:id/recall', async (c) => {
 
   const supa = serviceClient(c.env);
 
-  const { data: msg, error: fetchErr } = await supa
-    .schema('pendingbot')
-    .from('messages')
-    .select('id, user_id, sender_bot_id, conversation_id, status, attachments, created_at')
-    .eq('id', id)
-    .maybeSingle();
-  if (fetchErr) return jsonError(c, 500, 'database_error', { detail: fetchErr.message });
-  if (!msg) return jsonError(c, 404, 'not_found');
-
-  // Only the original sender may recall. Bot rows have user_id=null /
-  // sender_bot_id set; they cannot be recalled by anyone via this path.
-  if (msg.user_id !== userId) return jsonError(c, 403, 'forbidden');
+  const authz = await authorizeMessageRecall(c.env, id, userId);
+  if (!authz.ok) {
+    if (authz.code === 'database_error') {
+      return jsonError(c, 500, 'database_error', { detail: authz.detail });
+    }
+    if (authz.code === 'not_found') return jsonError(c, 404, 'not_found');
+    return jsonError(c, 403, 'forbidden');
+  }
+  const msg = authz.target;
 
   // Idempotent: already recalled → ok.
-  if (msg.status === 'deleted') return c.json({ ok: true, already: true });
-
-  const { data: conv, error: convErr } = await supa
-    .schema('pendingbot')
-    .from('conversations')
-    .select('conversation_type')
-    .eq('id', msg.conversation_id)
-    .maybeSingle();
-  if (convErr) return jsonError(c, 500, 'database_error', { detail: convErr.message });
-  const convType = (conv as { conversation_type?: string } | null)?.conversation_type ?? 'user_bot';
+  if (msg.alreadyDeleted) return c.json({ ok: true, already: true });
+  const convType = msg.conversationType ?? 'user_bot';
 
   // Collect attachment ids before we clear the column so we can purge
   // them after. Shape: attachments = { ids: [uuid, ...] }
@@ -1142,7 +1056,7 @@ messageRoutes.post('/:id/recall', async (c) => {
       content: null,
       attachments: null,
     })
-    .eq('id', id);
+    .eq('id', msg.messageId);
   if (updErr) return jsonError(c, 500, 'database_error', { detail: updErr.message });
 
   // 2) Purge attachment rows + R2 objects.
@@ -1187,7 +1101,7 @@ messageRoutes.post('/:id/recall', async (c) => {
         c,
         Promise.all([
           ...rows.map((r) => deleteCachedAttachment(c.env, r.id)),
-          removeInventoryIds(c.env, msg.conversation_id, rows.map((r) => r.id)),
+          removeInventoryIds(c.env, msg.conversationId, rows.map((r) => r.id)),
         ]).then(() => undefined),
       );
     }
@@ -1222,14 +1136,14 @@ messageRoutes.post('/:id/recall', async (c) => {
       .from('messages')
       .insert({
         client_message_id: crypto.randomUUID(),
-        conversation_id: msg.conversation_id,
+        conversation_id: msg.conversationId,
         user_id: userId,
         role: 'log',
         status: 'done',
         log_kind: 'recall',
         log_payload: {
           original_message_id: id,
-          original_created_at: msg.created_at,
+          original_created_at: msg.createdAt,
           recaller_user_id: userId,
         },
       });
@@ -1257,27 +1171,14 @@ messageRoutes.delete('/:id', async (c) => {
 
   const supa = serviceClient(c.env);
 
-  const { data: msg, error: fetchErr } = await supa
-    .schema('pendingbot')
-    .from('messages')
-    .select('id, user_id, conversation_id')
-    .eq('id', id)
-    .maybeSingle();
-  if (fetchErr) return jsonError(c, 500, 'database_error', { detail: fetchErr.message });
-  if (!msg) return jsonError(c, 404, 'not_found');
-
-  let allowed = msg.user_id === userId;
-  if (!allowed) {
-    const { data: conv, error: convErr } = await supa
-      .schema('pendingbot')
-      .from('conversations')
-      .select('user_id')
-      .eq('id', msg.conversation_id)
-      .maybeSingle();
-    if (convErr) return jsonError(c, 500, 'database_error', { detail: convErr.message });
-    allowed = !!conv && conv.user_id === userId;
+  const authz = await authorizeMessageDelete(c.env, id, userId);
+  if (!authz.ok) {
+    if (authz.code === 'database_error') {
+      return jsonError(c, 500, 'database_error', { detail: authz.detail });
+    }
+    if (authz.code === 'not_found') return jsonError(c, 404, 'not_found');
+    return jsonError(c, 403, 'forbidden');
   }
-  if (!allowed) return jsonError(c, 403, 'forbidden');
 
   const { error: delErr } = await supa
     .schema('pendingbot')
@@ -1362,6 +1263,80 @@ function botConfigString(config: unknown, key: string): string | null {
 function botConfigArena(config: unknown): unknown {
   if (!config || typeof config !== 'object') return null;
   return (config as Record<string, unknown>).arena ?? null;
+}
+
+async function requireMessageBalance(
+  env: AppBindings['Bindings'],
+  supaUser: ReturnType<typeof userClient>,
+  userId: string,
+): Promise<InsufficientBalanceError | null> {
+  return requireBalance(env, supaUser, userId)
+    .then(() => null)
+    .catch((err) => {
+      if (err instanceof InsufficientBalanceError) return err;
+      throw err;
+    });
+}
+
+function insufficientBalanceResponse(
+  c: Context<AppBindings>,
+  err: InsufficientBalanceError,
+): Response {
+  return c.json(
+    {
+      error: 'insufficient_balance',
+      balance_credits: err.balance,
+      min_threshold: err.threshold,
+    },
+    402,
+  );
+}
+
+async function lookupLatestUserMessageId(
+  supa: ReturnType<typeof serviceClient>,
+  conversationId: string,
+): Promise<string | null> {
+  const { data } = await supa
+    .from('messages')
+    .select('id')
+    .eq('conversation_id', conversationId)
+    .eq('role', 'user')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return (data?.id as string | undefined) ?? null;
+}
+
+async function resolveMessageBotTurnRoute(
+  env: AppBindings['Bindings'],
+  bot: {
+    model_id: string;
+    model_provider: string | null;
+    config: unknown;
+  },
+  opts?: { excludeSlugs?: string[] },
+): Promise<{ modelId: string; providerOverride: string | null }> {
+  // Provider routing is bot-level only (bots.model_provider). Arena mode
+  // draws a random model per turn via the OpenRouter passthrough so every
+  // contender is reached identically; a null pick falls back to the pinned
+  // model and provider.
+  const arenaCfg = parseRandomModelConfig(botConfigArena(bot.config));
+  if (arenaCfg) {
+    const picked = await pickRandomModel(env, arenaCfg, {
+      excludeSlugs: opts?.excludeSlugs ?? [],
+    });
+    if (picked) {
+      return {
+        modelId: picked.slug,
+        providerOverride: picked.modelProvider ?? 'openrouter',
+      };
+    }
+  }
+
+  return {
+    modelId: bot.model_id,
+    providerOverride: bot.model_provider ?? null,
+  };
 }
 
 // Lookback cadence is keyed off a per (bot, user) counter that crosses

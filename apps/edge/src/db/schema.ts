@@ -3081,56 +3081,6 @@ export type Database = {
           },
         ]
       }
-      test_account_log: {
-        Row: {
-          id: string
-          kind: string
-          latency_ms: number | null
-          method: string | null
-          note: string | null
-          occurred_at: string
-          payload: Json
-          request_id: string | null
-          route: string | null
-          status: number | null
-          user_id: string
-        }
-        Insert: {
-          id?: string
-          kind: string
-          latency_ms?: number | null
-          method?: string | null
-          note?: string | null
-          occurred_at?: string
-          payload?: Json
-          request_id?: string | null
-          route?: string | null
-          status?: number | null
-          user_id: string
-        }
-        Update: {
-          id?: string
-          kind?: string
-          latency_ms?: number | null
-          method?: string | null
-          note?: string | null
-          occurred_at?: string
-          payload?: Json
-          request_id?: string | null
-          route?: string | null
-          status?: number | null
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "test_account_log_user_fkey"
-            columns: ["user_id"]
-            isOneToOne: false
-            referencedRelation: "users"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       tools: {
         Row: {
           created_at: string
@@ -3433,7 +3383,6 @@ export type Database = {
           email: string | null
           id: string
           is_admin: boolean
-          is_test_account: boolean
           lifetime_spent_credits: number
           lifetime_topup_credits: number
           pending_deletion_at: string | null
@@ -3451,7 +3400,6 @@ export type Database = {
           email?: string | null
           id: string
           is_admin?: boolean
-          is_test_account?: boolean
           lifetime_spent_credits?: number
           lifetime_topup_credits?: number
           pending_deletion_at?: string | null
@@ -3469,7 +3417,6 @@ export type Database = {
           email?: string | null
           id?: string
           is_admin?: boolean
-          is_test_account?: boolean
           lifetime_spent_credits?: number
           lifetime_topup_credits?: number
           pending_deletion_at?: string | null
@@ -3948,6 +3895,10 @@ export type Database = {
       }
       open_self_conv: { Args: never; Returns: string }
       open_user_bot_conv: { Args: { p_bot_id: string }; Returns: string }
+      open_user_user_conv: {
+        Args: { p_other_user_id: string }
+        Returns: Json
+      }
       random_place_name: { Args: never; Returns: string }
       register_runner_host: {
         Args: {

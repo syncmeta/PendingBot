@@ -2,7 +2,8 @@ import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { fmtPnd, fmtNumber, fmtUsd } from '@/lib/format';
 import { MarkupEditor } from './markup-editor';
-import { setMarkup } from './actions';
+import { RealtimeKitPriceEditor } from './realtimekit-price-editor';
+import { setMarkup, setRealtimeKitAudioPrice } from './actions';
 
 // Display ratio — must match USD_TO_PND in apps/edge/src/lib/billing.ts.
 // Used here only to render USD-equivalent next to PND for the "ops
@@ -13,6 +14,7 @@ const USD_TO_PND = 2700;
 // DEFAULT_MARKUP in apps/edge/src/lib/billing.ts. The DB value is the
 // source of truth at runtime.
 const DEFAULT_MARKUP = 2.5;
+const DEFAULT_REALTIMEKIT_AUDIO_PRICE = 0.0005;
 
 function billingCategory(taskType: string, metadata?: unknown): { key: string; label: string } {
   const source =
@@ -21,6 +23,9 @@ function billingCategory(taskType: string, metadata?: unknown): { key: string; l
       : null;
   if (taskType === 'message_reply') return { key: 'chat.reply', label: '聊天回复' };
   if (taskType === 'group_router') return { key: 'group.routing', label: '群聊路由' };
+  if (taskType === 'voice_call' && source === 'cloudflare_realtimekit_media') {
+    return { key: 'voice.realtimekit', label: 'RealtimeKit 媒体' };
+  }
   if (taskType === 'voice_call') return { key: 'voice.call', label: '语音通话' };
   if (taskType === 'envelope' || taskType === 'scroll') return { key: 'envelope.write', label: '来信生成' };
   if (taskType === 'title') return { key: 'system.title', label: '自动标题' };
@@ -37,7 +42,7 @@ export default async function BillingDashboardPage() {
   const since24h = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
 
   // ── Snapshot: balance/lifetime sums + low-balance count ────────────
-  const [usersAgg, threshold, markupRow] = await Promise.all([
+  const [usersAgg, threshold, markupRow, rtkAudioPriceRow] = await Promise.all([
     supa.from('users').select(
       'balance_credits, lifetime_topup_credits, lifetime_spent_credits',
     ),
@@ -51,11 +56,21 @@ export default async function BillingDashboardPage() {
       .select('value')
       .eq('key', 'markup')
       .maybeSingle(),
+    supa
+      .from('billing_config')
+      .select('value')
+      .eq('key', 'cloudflare_realtimekit_audio_participant_usd_per_minute')
+      .maybeSingle(),
   ]);
   const markup = ((): number => {
     const raw = markupRow.data?.value;
     const n = typeof raw === 'number' ? raw : Number(raw);
     return Number.isFinite(n) && n > 0 ? n : DEFAULT_MARKUP;
+  })();
+  const realtimeKitAudioPrice = ((): number => {
+    const raw = rtkAudioPriceRow.data?.value;
+    const n = typeof raw === 'number' ? raw : Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : DEFAULT_REALTIMEKIT_AUDIO_PRICE;
   })();
   const users = usersAgg.data ?? [];
   const totalBalance = users.reduce((s, u) => s + Number(u.balance_credits ?? 0), 0);
@@ -218,7 +233,13 @@ export default async function BillingDashboardPage() {
         </div>
       </header>
 
-      <MarkupEditor current={markup} action={setMarkup} />
+      <section className="space-y-3">
+        <MarkupEditor current={markup} action={setMarkup} />
+        <RealtimeKitPriceEditor
+          current={realtimeKitAudioPrice}
+          action={setRealtimeKitAudioPrice}
+        />
+      </section>
 
       {/* Snapshot cards */}
       <section className="grid grid-cols-2 gap-3 md:grid-cols-4">

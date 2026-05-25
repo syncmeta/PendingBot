@@ -1,9 +1,17 @@
 import type { Env } from '../types';
 import { serviceClient } from '../lib/supabase';
-import { resolveRoute, enqueueAudit, computeVoiceCost } from '../llm/router';
-import { getBalance, getConfigInt, getMarkup, usdToPnd } from '../lib/billing';
-import { publishToHub } from '../lib/realtime-publish';
+import { resolveRoute } from '../llm/router';
+import { getBalanceGateState } from '../lib/billing';
 import { endRealtimeSession, REALTIME_HANG_UP_TOOL } from '../lib/realtime-sessions';
+import {
+  broadcastVoiceCostPreview,
+  enqueueVoiceTurnAudit,
+  safeRealtimeErrorSummary,
+  safeRealtimeEventSummary,
+  splitRealtimeUsage,
+  type RealtimeUsage,
+  type VoiceTurnUsage,
+} from '../lib/voice-metering';
 
 // RealtimeMeterDO — server-side, tamper-proof metering for a voice call.
 //
@@ -75,23 +83,24 @@ interface MeterContext {
   };
 }
 
-// Usage object inside an OpenAI realtime `response.done` event.
-// input_token_details.{text,audio}_tokens are TOTALS (cached included);
-// cached_tokens_details breaks the cached slice into text vs audio.
-interface RealtimeUsage {
-  input_token_details?: {
-    text_tokens?: number;
-    audio_tokens?: number;
-    cached_tokens?: number;
-    cached_tokens_details?: {
-      text_tokens?: number;
-      audio_tokens?: number;
-    };
+interface RealtimeEvent {
+  type?: string;
+  error?: {
+    type?: string;
+    code?: string;
+    [key: string]: unknown;
   };
-  output_token_details?: {
-    text_tokens?: number;
-    audio_tokens?: number;
+  response?: {
+    usage?: RealtimeUsage;
+    status?: string;
+    [key: string]: unknown;
   };
+  session?: {
+    id?: string;
+    model?: string;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
 }
 
 export class RealtimeMeterDO {
@@ -385,27 +394,20 @@ export class RealtimeMeterDO {
 
   private async onUpstreamMessage(ev: MessageEvent): Promise<void> {
     if (typeof ev.data !== 'string') return;
-    let msg: { type?: string; response?: { usage?: RealtimeUsage } };
+    let msg: RealtimeEvent;
     try {
       msg = JSON.parse(ev.data);
     } catch {
       return;
     }
-    // Diagnostic — surface the realtime event stream server-side via the
-    // sideband so `wrangler tail` shows what the session is doing.
+    // Keep diagnostics to a field allowlist: session events can contain
+    // generated instructions and other private bot/user context.
     console.log('[realtime-meter] event', msg.type ?? '(no type)');
     if (msg.type === 'session.created' || msg.type === 'session.updated') {
-      console.log(
-        '[realtime-meter]',
-        msg.type,
-        JSON.stringify(msg).slice(0, 900),
-      );
+      console.log('[realtime-meter] session event', safeRealtimeEventSummary(msg));
     }
     if (msg.type === 'error') {
-      console.warn(
-        '[realtime-meter] realtime error event',
-        JSON.stringify(msg).slice(0, 600),
-      );
+      console.warn('[realtime-meter] realtime error event', safeRealtimeErrorSummary(msg));
     }
     // Every completed model response carries a usage block — one audit
     // row per turn, billed from OpenAI's own numbers over this socket.
@@ -416,19 +418,6 @@ export class RealtimeMeterDO {
   private async settleTurn(usage: RealtimeUsage): Promise<void> {
     const ctx = this.ctx;
     if (!ctx || this.closed) return;
-
-    // Split the input usage into the three billable buckets. text_tokens
-    // and audio_tokens are TOTALS (cached included); cached_tokens_details
-    // says how much of the cache hit was text vs audio. computeVoiceCost
-    // charges cacheReadTokens at the cached rate and inputTokens /
-    // audioInputTokens at full rate, so the full-rate buckets must be the
-    // NON-cached remainder — otherwise the cached slice is billed twice.
-    const inDetails = usage.input_token_details;
-    const cachedText = inDetails?.cached_tokens_details?.text_tokens ?? 0;
-    const cachedAudio = inDetails?.cached_tokens_details?.audio_tokens ?? 0;
-    const cacheReadTokens = inDetails?.cached_tokens ?? 0;
-    const inputTokens = Math.max(0, (inDetails?.text_tokens ?? 0) - cachedText);
-    const audioInputTokens = Math.max(0, (inDetails?.audio_tokens ?? 0) - cachedAudio);
 
     const supa = serviceClient(this.env);
     let route;
@@ -445,27 +434,18 @@ export class RealtimeMeterDO {
       return;
     }
 
-    const turnUsage = {
-      inputTokens,
-      outputTokens: usage.output_token_details?.text_tokens ?? 0,
-      audioInputTokens,
-      audioOutputTokens: usage.output_token_details?.audio_tokens ?? 0,
-      cacheReadTokens,
-    } as const;
+    const turnUsage = splitRealtimeUsage(usage);
 
-    await enqueueAudit(this.env, route, {
+    await enqueueVoiceTurnAudit({
+      env: this.env,
+      route,
       userId: ctx.userId,
       conversationId: ctx.conversationId,
-      taskType: 'voice_call',
-      startedAt: Date.now(),
-      status: 'success',
-      ...turnUsage,
-      metadata: {
-        source: 'voice_call',
-        session_id: ctx.sessionId,
-        turn_index: this.turnIndex++,
-        bot_id: ctx.botId,
-      },
+      usage: turnUsage,
+      source: 'voice_call',
+      sessionId: ctx.sessionId,
+      turnIndex: this.turnIndex++,
+      botId: ctx.botId,
     });
 
     // Mirror the queue consumer's pricing locally so the in-call UI
@@ -485,36 +465,22 @@ export class RealtimeMeterDO {
     ctx: MeterContext,
     modelToCall: string | undefined,
     supa: ReturnType<typeof serviceClient>,
-    usage: {
-      inputTokens: number;
-      outputTokens: number;
-      audioInputTokens: number;
-      audioOutputTokens: number;
-      cacheReadTokens: number;
-    },
+    usage: VoiceTurnUsage,
   ): Promise<void> {
-    const usd = computeVoiceCost(modelToCall, usage);
-    if (usd == null) return;
-    try {
-      const markup = await getMarkup(supa);
-      const delta = usdToPnd(usd, markup);
-      if (delta <= 0) return;
-      this.cumulativePnd += delta;
-      // Route through the conv hub — same channel iOS already opens for
-      // the conversation, and a 1:1 conv has only the caller subscribed
-      // so the figure stays private without needing a separate user-hub
-      // path. Group voice fans out on the same key in room-voice.ts.
-      await publishToHub(this.env, `conv:${ctx.conversationId}`, {
-        type: 'voice_cost',
-        conversation_id: ctx.conversationId,
-        session_id: ctx.sessionId,
-        delta_pnd: delta,
-        cumulative_pnd: this.cumulativePnd,
-        at_ms: Date.now(),
-      });
-    } catch (err) {
-      console.warn('[realtime-meter] broadcast cost failed', err);
-    }
+    // Route through the conv hub — same channel iOS already opens for
+    // the conversation, and a 1:1 conv has only the caller subscribed
+    // so the figure stays private without needing a separate user-hub
+    // path. Group voice fans out on the same key in room-voice.ts.
+    this.cumulativePnd = await broadcastVoiceCostPreview({
+      env: this.env,
+      supa,
+      conversationId: ctx.conversationId,
+      sessionId: ctx.sessionId,
+      modelToCall,
+      usage,
+      cumulativePnd: this.cumulativePnd,
+      logPrefix: '[realtime-meter]',
+    });
   }
 
   // After a turn is billed, drop the call if the user can't afford it.
@@ -522,12 +488,8 @@ export class RealtimeMeterDO {
   // turn — acceptable. 0/null threshold disables the gate.
   private async enforceBalance(ctx: MeterContext): Promise<void> {
     const supa = serviceClient(this.env);
-    const [balance, threshold] = await Promise.all([
-      getBalance(supa, ctx.userId),
-      getConfigInt(supa, 'min_balance_threshold'),
-    ]);
-    const minThreshold = threshold ?? 0;
-    if (minThreshold > 0 && (balance?.balance_credits ?? 0) < minThreshold) {
+    const gate = await getBalanceGateState(this.env, supa, ctx.userId);
+    if (!gate.allowed) {
       await this.endCall();
     }
   }

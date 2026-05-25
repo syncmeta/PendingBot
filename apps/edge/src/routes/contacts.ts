@@ -1,9 +1,10 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
-import { serviceClient } from '../lib/supabase';
+import { serviceClient, userClient } from '../lib/supabase';
 import { UUID_RE } from '../lib/ids';
 import { jsonError } from '../lib/http-error';
+import { findSharedUserUserConversation } from '../lib/route-authz';
 import type { AppBindings } from '../types';
 
 export const contactRoutes = new Hono<AppBindings>();
@@ -105,6 +106,7 @@ function extractAvatarSeed(customFields: unknown, userId: string): string {
 const OpenChatBody = z.object({ contactUserId: z.string().uuid() });
 contactRoutes.post('/open-chat', async (c) => {
   const userId = c.var.userId!;
+  const userJwt = c.var.userJwt!;
   let parsed: z.infer<typeof OpenChatBody>;
   try {
     parsed = OpenChatBody.parse(await c.req.json());
@@ -114,62 +116,28 @@ contactRoutes.post('/open-chat', async (c) => {
   const otherId = parsed.contactUserId;
   if (otherId === userId) return jsonError(c, 400, 'self_chat_not_allowed', { message: 'cannot open chat with yourself' });
 
-  const supa = serviceClient(c.env);
-
-  // Gate: caller must already have the other user as a contact. The
-  // friend-request flow writes both user_contacts rows on accept, so
-  // this also implicitly proves the other side opted in. iOS surfaces
-  // the 403 as a hint to send a friend request first.
-  const { data: contact } = await supa
-    .from('user_contacts')
-    .select('contact_user_id')
-    .eq('user_id', userId)
-    .eq('contact_user_id', otherId)
-    .maybeSingle();
-  if (!contact) {
-    return jsonError(c, 403, 'forbidden', { message: '还不是好友,先发送好友申请' });
+  const supaUser = userClient(c.env, userJwt);
+  const { data, error } = await supaUser.rpc('open_user_user_conv', {
+    p_other_user_id: otherId,
+  });
+  if (error) {
+    if (/not contacts/i.test(error.message)) {
+      return jsonError(c, 403, 'forbidden', { message: '还不是好友,先发送好友申请' });
+    }
+    if (/auth required|cannot open self/i.test(error.message)) {
+      return jsonError(c, 400, 'invalid_body', { detail: error.message });
+    }
+    return jsonError(c, 500, 'database_error', { detail: error.message });
   }
 
-  // Find an existing user_user conv where both users participate. We can
-  // do this with two participant-row reads + intersection, but the most
-  // efficient single query is: pull all my user_user conv ids, then
-  // check which one has the other user as a participant.
-  const { data: mine } = await supa
-    .from('conversation_participants')
-    .select('conversation_id, conversations!inner(conversation_type)')
-    .eq('participant_type', 'user')
-    .eq('participant_id', userId)
-    .eq('conversations.conversation_type', 'user_user');
-  const myConvIds = (mine ?? []).map((r) => r.conversation_id as string);
-  if (myConvIds.length > 0) {
-    const { data: theirs } = await supa
-      .from('conversation_participants')
-      .select('conversation_id')
-      .eq('participant_type', 'user')
-      .eq('participant_id', otherId)
-      .in('conversation_id', myConvIds);
-    const shared = (theirs ?? []).map((r) => r.conversation_id as string)[0];
-    if (shared) return c.json({ conversationId: shared, created: false });
+  const payload = data as { conversationId?: string; created?: boolean } | null;
+  if (!payload?.conversationId) {
+    return jsonError(c, 500, 'database_error', { detail: 'open_user_user_conv returned malformed payload' });
   }
-
-  // Not found — create.
-  const { data: conv, error: convErr } = await supa
-    .from('conversations')
-    .insert({
-      conversation_type: 'user_user',
-      feature: 'message',
-      user_id: userId,
-      title: null,
-    })
-    .select('id')
-    .single();
-  if (convErr || !conv) return jsonError(c, 500, 'database_error', { detail: convErr?.message });
-  const convId = conv.id as string;
-  await supa.from('conversation_participants').insert([
-    { conversation_id: convId, participant_type: 'user', participant_id: userId, role: 'owner' },
-    { conversation_id: convId, participant_type: 'user', participant_id: otherId, role: 'member' },
-  ]);
-  return c.json({ conversationId: convId, created: true });
+  return c.json({
+    conversationId: payload.conversationId,
+    created: payload.created === true,
+  });
 });
 
 // POST /v1/contacts/profiles — bulk profile lookup gated on shared
@@ -291,29 +259,14 @@ contactRoutes.post('/:contactUserId/mute', async (c) => {
     .maybeSingle();
   if (!contact) return jsonError(c, 403, 'forbidden', { message: '还不是好友' });
 
-  // Find the singleton user_user conv between the two — same intersect
-  // pattern as /open-chat. Empty result is fine: nothing to mute yet.
-  const { data: mine } = await supa
-    .from('conversation_participants')
-    .select('conversation_id, conversations!inner(conversation_type)')
-    .eq('participant_type', 'user')
-    .eq('participant_id', userId)
-    .eq('conversations.conversation_type', 'user_user');
-  const myConvIds = (mine ?? []).map((r) => r.conversation_id as string);
-  if (myConvIds.length === 0) return c.json({ ok: true, muted: parsed.muted });
-  const { data: theirs } = await supa
-    .from('conversation_participants')
-    .select('conversation_id')
-    .eq('participant_type', 'user')
-    .eq('participant_id', contactUserId)
-    .in('conversation_id', myConvIds);
-  const sharedId = (theirs ?? []).map((r) => r.conversation_id as string)[0];
-  if (!sharedId) return c.json({ ok: true, muted: parsed.muted });
+  const shared = await findSharedUserUserConversation(c.env, userId, contactUserId);
+  if (!shared.ok) return jsonError(c, 500, 'database_error', { detail: shared.detail });
+  if (!shared.conversationId) return c.json({ ok: true, muted: parsed.muted });
 
   const { error } = await supa
     .from('conversation_participants')
     .update({ muted: parsed.muted })
-    .eq('conversation_id', sharedId)
+    .eq('conversation_id', shared.conversationId)
     .eq('participant_type', 'user')
     .eq('participant_id', userId);
   if (error) return jsonError(c, 500, 'database_error', { detail: error.message });
@@ -337,34 +290,20 @@ contactRoutes.get('/:contactUserId', async (c) => {
     .maybeSingle();
   if (!contact) return jsonError(c, 404, 'not_found', { message: '不是好友' });
 
-  // Look up the conv (same intersect) and read the caller's muted flag.
+  // Look up the conv and read the caller's muted flag.
   // Missing conv → default false; the row gets created on first chat.
-  const { data: mine } = await supa
-    .from('conversation_participants')
-    .select('conversation_id, conversations!inner(conversation_type)')
-    .eq('participant_type', 'user')
-    .eq('participant_id', userId)
-    .eq('conversations.conversation_type', 'user_user');
-  const myConvIds = (mine ?? []).map((r) => r.conversation_id as string);
+  const shared = await findSharedUserUserConversation(c.env, userId, contactUserId);
+  if (!shared.ok) return jsonError(c, 500, 'database_error', { detail: shared.detail });
   let muted = false;
-  if (myConvIds.length > 0) {
-    const { data: theirs } = await supa
+  if (shared.conversationId) {
+    const { data: myRow } = await supa
       .from('conversation_participants')
-      .select('conversation_id, muted')
+      .select('muted')
+      .eq('conversation_id', shared.conversationId)
       .eq('participant_type', 'user')
-      .eq('participant_id', contactUserId)
-      .in('conversation_id', myConvIds);
-    const sharedConvId = (theirs ?? []).map((r) => r.conversation_id as string)[0];
-    if (sharedConvId) {
-      const { data: myRow } = await supa
-        .from('conversation_participants')
-        .select('muted')
-        .eq('conversation_id', sharedConvId)
-        .eq('participant_type', 'user')
-        .eq('participant_id', userId)
-        .maybeSingle();
-      muted = Boolean(myRow?.muted);
-    }
+      .eq('participant_id', userId)
+      .maybeSingle();
+    muted = Boolean(myRow?.muted);
   }
   return c.json({
     contactUserId,
@@ -397,36 +336,20 @@ contactRoutes.delete('/:contactUserId', async (c) => {
     );
   if (deleteErr) return jsonError(c, 500, 'database_error', { detail: deleteErr.message });
 
-  // Find the shared user_user conv (if any) and remove it. Same intersect
-  // pattern as /open-chat / /mute.
-  const { data: mine } = await supa
-    .from('conversation_participants')
-    .select('conversation_id, conversations!inner(conversation_type)')
-    .eq('participant_type', 'user')
-    .eq('participant_id', userId)
-    .eq('conversations.conversation_type', 'user_user');
-  const myConvIds = (mine ?? []).map((r) => r.conversation_id as string);
-  if (myConvIds.length > 0) {
-    const { data: theirs } = await supa
-      .from('conversation_participants')
-      .select('conversation_id')
-      .eq('participant_type', 'user')
-      .eq('participant_id', contactUserId)
-      .in('conversation_id', myConvIds);
-    const sharedConvIds = (theirs ?? []).map((r) => r.conversation_id as string);
-    if (sharedConvIds.length > 0) {
-      // audit_log FK has no CASCADE — null its conversation_id first so
-      // the DELETE on conversations doesn't trip the constraint.
-      await supa
-        .from('audit_log')
-        .update({ conversation_id: null })
-        .in('conversation_id', sharedConvIds);
-      const { error: convErr } = await supa
-        .from('conversations')
-        .delete()
-        .in('id', sharedConvIds);
-      if (convErr) return jsonError(c, 500, 'database_error', { detail: convErr.message });
-    }
+  const shared = await findSharedUserUserConversation(c.env, userId, contactUserId);
+  if (!shared.ok) return jsonError(c, 500, 'database_error', { detail: shared.detail });
+  if (shared.conversationId) {
+    // audit_log FK has no CASCADE — null its conversation_id first so
+    // the DELETE on conversations doesn't trip the constraint.
+    await supa
+      .from('audit_log')
+      .update({ conversation_id: null })
+      .eq('conversation_id', shared.conversationId);
+    const { error: convErr } = await supa
+      .from('conversations')
+      .delete()
+      .eq('id', shared.conversationId);
+    if (convErr) return jsonError(c, 500, 'database_error', { detail: convErr.message });
   }
 
   return c.json({ ok: true });

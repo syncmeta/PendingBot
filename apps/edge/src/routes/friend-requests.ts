@@ -4,6 +4,7 @@ import { requireSession } from '@pendingbot/identity';
 import { serviceClient } from '../lib/supabase';
 import { rateLimitOrBlock } from '../lib/rate-limit';
 import { jsonError } from '../lib/http-error';
+import { isGroupHumanParticipant, loadGroupConversationForUser } from '../lib/route-authz';
 import type { AppBindings } from '../types';
 
 // /v1/friend-requests — request/accept gate for human-to-human chat.
@@ -36,7 +37,9 @@ friendRequestRoutes.use('*', requireSession());
 // Either path: classic handle-based add (`handleValue`) for QR / number
 // scans, or peer-id-based add (`peerUserId`) for the in-group "加他好友"
 // flow where iOS already knows the user_id from the participants list.
-// Exactly one must be provided.
+// Exactly one must be provided. The peer-id path must also carry the source
+// group conversation so the server can prove both users are in that group;
+// otherwise a guessed UUID would be enough to send unsolicited requests.
 //
 // `message` is the verification text the recipient sees before accepting
 // (WeChat-style). `remark` is the legacy field that became the sender's
@@ -46,12 +49,17 @@ const CreateBody = z
   .object({
     handleValue: z.string().min(4).max(64).optional(),
     peerUserId: z.string().uuid().optional(),
+    sourceConversationId: z.string().uuid().optional(),
     message: z.string().max(200).optional(),
     remark: z.string().max(64).optional(),
   })
   .refine(
     (v) => (v.handleValue ? 1 : 0) + (v.peerUserId ? 1 : 0) === 1,
     { message: 'must specify exactly one of handleValue or peerUserId' },
+  )
+  .refine(
+    (v) => (v.peerUserId ? !!v.sourceConversationId : !v.sourceConversationId),
+    { message: 'sourceConversationId is required only for peerUserId requests' },
   );
 
 // Preview a user by handle. Used by the iOS 加好友 page after the user
@@ -133,6 +141,25 @@ friendRequestRoutes.post('/', async (c) => {
     viaHandleId = handle.id as string;
   } else {
     targetUserId = parsed.peerUserId!;
+    const source = await loadGroupConversationForUser(
+      c.env,
+      c.var.userJwt!,
+      userId,
+      parsed.sourceConversationId!,
+    );
+    if (!source.ok) {
+      if (source.code === 'database_error') {
+        return jsonError(c, 500, 'database_error', { detail: source.detail });
+      }
+      return jsonError(c, 403, 'source_group_forbidden', { message: '只能从共同群聊里加好友' });
+    }
+    const targetInGroup = await isGroupHumanParticipant(c.env, parsed.sourceConversationId!, targetUserId);
+    if (!targetInGroup.ok) {
+      if (targetInGroup.code === 'database_error') {
+        return jsonError(c, 500, 'database_error', { detail: targetInGroup.detail });
+      }
+      return jsonError(c, 403, 'peer_not_in_source_group', { message: '只能添加同群成员' });
+    }
     const { data: peer, error: peerErr } = await supa
       .from('users')
       .select('id')

@@ -4,6 +4,7 @@ import {
   RedemptionError,
   _resetMarkupCache,
   _resetThresholdCache,
+  getBalanceGateState,
   getMarkup,
   getSubjectBalance,
   redeemCode,
@@ -161,6 +162,45 @@ describe('getMarkup', () => {
 });
 
 describe('requireBalance', () => {
+  it('returns a balance gate snapshot and warms the balance cache on miss', async () => {
+    const put = vi.fn(async () => undefined);
+    const env = {
+      MEMORY: {
+        get: async () => null,
+        put,
+        delete: async () => undefined,
+      },
+    } as unknown as Env;
+    const supa = stubSupa({
+      users: () => ({ data: { balance_credits: 120 } }),
+      billing_config: () => ({ data: { value: 100 }, error: null }),
+    });
+
+    await expect(
+      getBalanceGateState(env, supa, 'u1', { readBalanceWhenDisabled: true }),
+    ).resolves.toEqual({
+      balance_credits: 120,
+      min_threshold: 100,
+      allowed: true,
+    });
+    expect(put).toHaveBeenCalled();
+  });
+
+  it('can read balance snapshots even when the gate is disabled', async () => {
+    const supa = stubSupa({
+      users: () => ({ data: { balance_credits: -50 } }),
+      billing_config: () => ({ data: { value: 0 }, error: null }),
+    });
+
+    await expect(
+      getBalanceGateState(fakeEnv(), supa, 'u1', { readBalanceWhenDisabled: true }),
+    ).resolves.toEqual({
+      balance_credits: -50,
+      min_threshold: 0,
+      allowed: true,
+    });
+  });
+
   it('passes when balance >= threshold', async () => {
     const supa = stubSupa({
       users: () => ({ data: { balance_credits: 1000 } }),

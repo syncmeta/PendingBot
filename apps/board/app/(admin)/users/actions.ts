@@ -251,63 +251,19 @@ export async function cancelPendingDeletion(
 /// access to the table; the code is a one-shot session credential and
 /// shouldn't sit in a log. The audit entry just records that an admin
 /// minted a code for this target.
-export type SetTestAccountResult = { ok?: true; error?: string; message?: string };
-
-/// Flip pendingbot.users.is_test_account. When true, the edge worker
-/// starts dropping every authenticated request from this user into
-/// pendingbot.test_account_log (see apps/edge/src/lib/test-account-log.ts).
-///
-/// The edge worker caches the flag in KV for ~60s, so it can take up
-/// to a minute for the next request to honour the new value — there's
-/// no cross-system invalidation path from board into the worker's KV,
-/// and a short TTL is the simplest gate.
-export async function setTestAccount(
-  userId: string,
-  isTest: boolean,
-): Promise<SetTestAccountResult> {
-  const admin = await requireAdmin();
-  const supa = supabaseAdmin();
-
-  const { data: before } = await supa
-    .from('users')
-    .select('is_test_account')
-    .eq('id', userId)
-    .maybeSingle();
-  if (!before) return { error: '用户不存在' };
-  if (Boolean(before.is_test_account) === isTest) {
-    return { ok: true, message: isTest ? '已是测试账号' : '已不是测试账号' };
-  }
-
-  const { error } = await supa
-    .from('users')
-    .update({
-      is_test_account: isTest,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', userId);
-  if (error) return { error: error.message };
-
-  await audit({
-    action: isTest ? 'user.mark_test_account' : 'user.unmark_test_account',
-    targetId: userId,
-    before: { is_test_account: before.is_test_account },
-    after: { is_test_account: isTest },
-    actorId: admin.id,
-  });
-  revalidatePath('/users');
-  revalidatePath(`/users/${userId}`);
-  return {
-    ok: true,
-    message: isTest
-      ? '已标记为测试账号 — 详细日志在 /users/<id>/test-logs（最长 60s 生效）'
-      : '已取消测试账号标记（最长 60s 生效）',
-  };
-}
-
 export async function generateLoginCode(
   userId: string,
+  reason: string,
 ): Promise<{ code?: string; email?: string; error?: string }> {
   const admin = await requireAdmin();
+  const supportReason = reason.trim();
+  if (supportReason.length < 8) {
+    return { error: '必须填写至少 8 个字符的支援原因' };
+  }
+  if (supportReason.length > 500) {
+    return { error: '支援原因最多 500 个字符' };
+  }
+
   const supa = supabaseAdmin();
 
   const { data: row } = await supa
@@ -330,7 +286,7 @@ export async function generateLoginCode(
     action: 'user.generate_login_code',
     targetId: userId,
     before: null,
-    after: { email: row.email },
+    after: { email: row.email, reason: supportReason },
     actorId: admin.id,
   });
 

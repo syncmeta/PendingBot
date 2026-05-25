@@ -1,0 +1,17 @@
+name: Security gates
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  supabase-advisor-gate:
+    name: Supabase advisor gate fixtures
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run supabase:advisor:test

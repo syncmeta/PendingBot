@@ -9,8 +9,8 @@ import { uuidv7 } from './ids';
 import type { Env } from '../types';
 
 // First-version "call me when..." description, generated immediately
-// after group_invite_bot succeeds. The cost is billed to the group
-// (M6 will replace the conv-creator placeholder with splitAndDebit).
+// after group_invite_bot succeeds. The audit layer bills this against
+// the group conversation target.
 //
 // Why generate at invite time rather than on first message: the spec
 // requires the bot to introduce itself immediately so the small-model

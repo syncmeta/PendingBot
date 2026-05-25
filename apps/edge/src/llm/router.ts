@@ -3,7 +3,7 @@ import type { Env } from '../types';
 import type { SupabaseClient } from '../lib/supabase';
 import { serviceClient } from '../lib/supabase';
 import type { Json } from '../db/schema';
-import { billingDebit, getMarkup, usdToPnd } from '../lib/billing';
+import { billingDebit, billingDebitSubject, getMarkup, usdToPnd } from '../lib/billing';
 import { putCachedBalance } from '../lib/balance-cache';
 import { splitAndDebit } from '../lib/group-billing';
 import type { WebToolUsage } from '../lib/web-meter';
@@ -383,9 +383,11 @@ export async function persistAuditMessage(
     (opts.audioInputTokens ?? 0) +
     (opts.audioOutputTokens ?? 0);
 
-  const isGroupTarget = opts.conversationId
-    ? await isGroupConversation(supa, opts.conversationId)
-    : false;
+  const conversationBillingTarget = opts.conversationId
+    ? await resolveConversationBillingTarget(supa, opts.conversationId)
+    : { kind: 'none' as const };
+  const hasBillableTarget =
+    conversationBillingTarget.kind !== 'none' || opts.userId != null;
 
   // Billing status preview. The actual billed/unbilled flip happens in
   // billing_debit (when called below); we plant a sensible initial value
@@ -395,7 +397,7 @@ export async function persistAuditMessage(
   //   - 'skipped' : has billable target but pnd == 0 (error / no usage / no
   //                 cost AND no tool spend)
   //   - 'pending' : will be flipped to billed/unbilled by billing_debit
-  const initialBilling: 'free' | 'skipped' | 'pending' = !opts.userId && !isGroupTarget
+  const initialBilling: 'free' | 'skipped' | 'pending' = !hasBillableTarget
     ? 'free'
     : pnd <= 0
       ? 'skipped'
@@ -406,6 +408,16 @@ export async function persistAuditMessage(
   // task_type. Both zero for text-only turns.
   const audioInputTokens = opts.audioInputTokens ?? 0;
   const audioOutputTokens = opts.audioOutputTokens ?? 0;
+
+  const auditMetadata = opts.metadata
+    ? { ...(opts.metadata as Record<string, Json>) }
+    : {};
+  if (conversationBillingTarget.kind === 'subject') {
+    auditMetadata.billing_target_kind = 'subject';
+    auditMetadata.billing_subject_id = conversationBillingTarget.subjectId;
+  } else if (conversationBillingTarget.kind === 'group') {
+    auditMetadata.billing_target_kind = 'group';
+  }
 
   const insertRow = {
     // Producer-generated uuidv7. Explicit (not DB-defaulted) so it
@@ -437,7 +449,7 @@ export async function persistAuditMessage(
     error_class: opts.errorClass ?? null,
     route_trace: (opts.routeTrace as Json | null) ?? null,
     tag: opts.tag ?? null,
-    ...(opts.metadata ? { metadata: opts.metadata as Json } : {}),
+    ...(Object.keys(auditMetadata).length > 0 ? { metadata: auditMetadata as Json } : {}),
   };
 
   // Upsert (not plain insert) so a duplicate queue delivery — the
@@ -490,11 +502,19 @@ export async function persistAuditMessage(
   // next-turn exclusion). Runs only on the fresh-insert path above, so
   // a duplicate delivery never double-debits.
   if (initialBilling === 'pending') {
-    // Branch on conv type: groups split across all participating
-    // members, 1v1 / system tasks debit a single user.
-    if (isGroupTarget) {
+    // Branch on conv billing target: groups split across participating
+    // members; temporary groups / Crew debit their responsibility subject;
+    // legacy 1v1 / system tasks debit a single user.
+    if (conversationBillingTarget.kind === 'group') {
       await splitAndDebit({ env, auditLogId: auditId }).catch((err) =>
         console.warn('[persistAuditMessage] splitAndDebit failed', err),
+      );
+    } else if (conversationBillingTarget.kind === 'subject') {
+      await billingDebitSubject(
+        supa,
+        conversationBillingTarget.subjectId,
+        auditId,
+        pnd,
       );
     } else if (opts.userId) {
       const newBalance = await billingDebit(supa, opts.userId, auditId, pnd);
@@ -508,21 +528,43 @@ export async function persistAuditMessage(
   }
 }
 
-// Cheap conv-type check used by persistAuditMessage. We could push this
-// into the caller (let them pass `isGroup`) but the conv type
-// branch is genuinely the audit layer's concern: 1v1 means a single
-// debit, group means a multi-user split, and the right place to
-// decide is right where the audit row gets inserted.
-async function isGroupConversation(
+type ConversationBillingTarget =
+  | { kind: 'group' }
+  | { kind: 'subject'; subjectId: string }
+  | { kind: 'none' };
+
+// Cheap conv-target resolver used by persistAuditMessage. We could push
+// this into callers, but billing ownership is the audit layer's concern:
+// group conversations split, temporary group / Crew conversations debit
+// their immutable responsibility subject, and old 1v1/system tasks keep
+// using the caller user id.
+async function resolveConversationBillingTarget(
   supa: SupabaseClient,
   conversationId: string,
-): Promise<boolean> {
+): Promise<ConversationBillingTarget> {
   const { data } = await supa
     .from('conversations')
     .select('conversation_type')
     .eq('id', conversationId)
     .maybeSingle();
-  return data?.conversation_type === 'group';
+  if (data?.conversation_type === 'group') {
+    return { kind: 'group' };
+  }
+  if (
+    data?.conversation_type !== 'temporary_group' &&
+    data?.conversation_type !== 'crew'
+  ) {
+    return { kind: 'none' };
+  }
+  const { data: meta } = await supa
+    .from('temporary_group_meta')
+    .select('responsible_subject_id')
+    .eq('conversation_id', conversationId)
+    .maybeSingle();
+  const subjectId = meta?.responsible_subject_id;
+  return typeof subjectId === 'string' && subjectId.length > 0
+    ? { kind: 'subject', subjectId }
+    : { kind: 'none' };
 }
 
 // ============================================================

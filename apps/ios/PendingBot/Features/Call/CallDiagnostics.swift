@@ -145,12 +145,12 @@ struct CallDiagnosticsPanel: View {
                 ],
                 spacing: 10,
             ) {
-                metric("网络延迟", value: formatMs(snapshot.rttMs))
-                metric("抖动", value: formatMs(snapshot.jitterMs))
-                metric("丢包", value: formatPercent(snapshot.packetLossPercent))
-                metric("上行", value: formatKbps(snapshot.sentKbps))
-                metric("下行", value: formatKbps(snapshot.receivedKbps))
-                metric("可用上行", value: formatKbps(snapshot.availableOutgoingKbps))
+                metric("网络延迟", value: CallDiagnosticsLogic.formatMs(snapshot.rttMs))
+                metric("抖动", value: CallDiagnosticsLogic.formatMs(snapshot.jitterMs))
+                metric("丢包", value: CallDiagnosticsLogic.formatPercent(snapshot.packetLossPercent))
+                metric("上行", value: CallDiagnosticsLogic.formatKbps(snapshot.sentKbps))
+                metric("下行", value: CallDiagnosticsLogic.formatKbps(snapshot.receivedKbps))
+                metric("可用上行", value: CallDiagnosticsLogic.formatKbps(snapshot.availableOutgoingKbps))
             }
             if !snapshot.participants.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
@@ -168,22 +168,22 @@ struct CallDiagnosticsPanel: View {
                                 .lineLimit(1)
                             Spacer()
                             if let inputFrames = p.inputFrames, let quietFrames = p.quietFrames {
-                                Text(inputQuietText(inputFrames: inputFrames, quietFrames: quietFrames, dropped: p.droppedOutputMs))
+                                Text(CallDiagnosticsLogic.inputQuietText(inputFrames: inputFrames, quietFrames: quietFrames, dropped: p.droppedOutputMs))
                                     .font(Theme.Fonts.caption)
                                     .monospacedDigit()
                                     .foregroundStyle(.secondary)
                             } else if let dropped = p.droppedOutputMs, dropped > 0 {
-                                Text("丢弃 \(formatDuration(dropped))")
+                                Text("丢弃 \(CallDiagnosticsLogic.formatDuration(dropped))")
                                     .font(Theme.Fonts.caption)
                                     .monospacedDigit()
                                     .foregroundStyle(.secondary)
                             } else if let depth = p.playoutDepthMs {
-                                Text("缓冲 \(formatDuration(depth))")
+                                Text("缓冲 \(CallDiagnosticsLogic.formatDuration(depth))")
                                     .font(Theme.Fonts.caption)
                                     .monospacedDigit()
                                     .foregroundStyle(.secondary)
                             } else {
-                                Text("音量 \(formatAudioLevel(p.audioLevel))")
+                                Text("音量 \(CallDiagnosticsLogic.formatAudioLevel(p.audioLevel))")
                                     .font(Theme.Fonts.caption)
                                     .monospacedDigit()
                                     .foregroundStyle(.secondary)
@@ -234,41 +234,6 @@ struct CallDiagnosticsPanel: View {
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color(.secondarySystemBackground))
         )
-    }
-
-    private func formatMs(_ value: Int?) -> String {
-        guard let value else { return "--" }
-        return "\(value)ms"
-    }
-
-    private func formatPercent(_ value: Double?) -> String {
-        guard let value else { return "--" }
-        return String(format: "%.1f%%", value)
-    }
-
-    private func formatKbps(_ value: Int?) -> String {
-        guard let value else { return "--" }
-        return "\(value)k"
-    }
-
-    private func formatAudioLevel(_ value: Double) -> String {
-        let percent = Int((min(max(value, 0), 1) * 100).rounded())
-        return "\(percent)%"
-    }
-
-    private func formatDuration(_ ms: Int) -> String {
-        if ms >= 1000 {
-            return String(format: "%.1fs", Double(ms) / 1000)
-        }
-        return "\(ms)ms"
-    }
-
-    private func inputQuietText(inputFrames: Int, quietFrames: Int, dropped: Int?) -> String {
-        var text = "入 \(inputFrames) 静 \(quietFrames)"
-        if let dropped, dropped > 0 {
-            text += " 丢 \(formatDuration(dropped))"
-        }
-        return text
     }
 
     private static let timeFormatter: DateFormatter = {
@@ -480,8 +445,8 @@ final class WebRTCDiagnosticsSampler {
         snapshot.localSpeaking = localSpeaking
         snapshot.remoteSpeaking = remoteSpeaking
         snapshot.activeSpeaker = localSpeaking ? "我" : (remoteSpeaking ? remoteLabel : nil)
-        snapshot.quality = quality(rttMs: rttMs, jitterMs: jitterMs, lossPercent: lossPercent)
-        snapshot.bottleneck = bottleneck(
+        snapshot.quality = CallDiagnosticsLogic.quality(rttMs: rttMs, jitterMs: jitterMs, lossPercent: lossPercent)
+        snapshot.bottleneck = CallDiagnosticsLogic.networkBottleneck(
             rttMs: rttMs,
             jitterMs: jitterMs,
             lossPercent: lossPercent,
@@ -574,53 +539,6 @@ final class WebRTCDiagnosticsSampler {
 
     private func pruneMissing<T>(from previous: inout [String: T], keeping observed: Set<String>) {
         previous = previous.filter { observed.contains($0.key) }
-    }
-
-    private func quality(
-        rttMs: Int?,
-        jitterMs: Int?,
-        lossPercent: Double?,
-    ) -> CallDiagnosticsSnapshot.Quality {
-        if (lossPercent ?? 0) >= 8 || (jitterMs ?? 0) >= 80 || (rttMs ?? 0) >= 600 {
-            return .poor
-        }
-        if (lossPercent ?? 0) >= 3 || (jitterMs ?? 0) >= 40 || (rttMs ?? 0) >= 250 {
-            return .fair
-        }
-        if rttMs != nil || jitterMs != nil || lossPercent != nil {
-            return .good
-        }
-        return .unknown
-    }
-
-    private func bottleneck(
-        rttMs: Int?,
-        jitterMs: Int?,
-        lossPercent: Double?,
-        sentKbps: Int?,
-        receivedKbps: Int?,
-        availableOutgoingKbps: Int?,
-        localSpeaking: Bool,
-    ) -> String {
-        if let lossPercent, lossPercent >= 8 {
-            return "丢包偏高，优先检查当前网络或中间链路。"
-        }
-        if let jitterMs, jitterMs >= 80 {
-            return "抖动偏高，音频卡顿多半来自网络不稳定。"
-        }
-        if let rttMs, rttMs >= 600 {
-            return "延迟很高，瓶颈在你到语音服务之间的网络路径。"
-        }
-        if localSpeaking, let sentKbps, sentKbps < 8 {
-            return "你在说话但上行音频码率偏低，优先看麦克风权限、采集或上行网络。"
-        }
-        if let availableOutgoingKbps, availableOutgoingKbps < 30 {
-            return "可用上行带宽偏低，我这边上行可能是瓶颈。"
-        }
-        if let receivedKbps, receivedKbps < 8 {
-            return "下行音频很少，可能是对方/模型没出声，也可能是下行链路问题。"
-        }
-        return "当前未看到明显瓶颈。"
     }
 
     private func doubleValue(_ value: NSObject?) -> Double? {

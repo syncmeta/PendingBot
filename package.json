@@ -15,10 +15,20 @@
     "build": "bun --filter '*' build",
     "typecheck": "bun --filter '*' typecheck",
     "test": "bun --filter '*' test",
+    "supabase:advisor:gate": "bun scripts/supabase-advisor-gate.ts --allowlist docs/supabase-advisor-allowlist.json",
+    "supabase:advisor:test": "bun scripts/test-supabase-advisor-gate.ts",
     "prepare": "lefthook install"
   },
   "devDependencies": {
     "lefthook": "^2.1.6",
     "typescript": "^6.0.3"
+  },
+  "overrides": {
+    "esbuild": "0.25.12",
+    "hono": "4.12.22",
+    "postcss": "8.5.15",
+    "qs": "6.15.2",
+    "vite": "6.4.2",
+    "ws": "8.21.0"
   }
 }

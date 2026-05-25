@@ -11,15 +11,17 @@ export function GenerateLoginCodeButton({
   action,
   userId,
 }: {
-  action: (userId: string) => Promise<GenerateResult>;
+  action: (userId: string, reason: string) => Promise<GenerateResult>;
   userId: string;
 }) {
   const [pending, startTransition] = useTransition();
   const [shown, setShown] = useState<{ code: string } | null>(null);
 
   const onClick = () => {
+    const reason = window.prompt('填写生成登录码的支援原因（会写入 admin_audit）')?.trim();
+    if (!reason) return;
     startTransition(async () => {
-      const res = await action(userId);
+      const res = await action(userId, reason);
       if (res.error || !res.code) {
         window.alert(`生成失败: ${res.error ?? '未知错误'}`);
         return;

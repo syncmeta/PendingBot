@@ -20,7 +20,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
 import { userClient, serviceClient } from '../lib/supabase';
-import { getBalance, getConfigInt } from '../lib/billing';
+import { getBalanceGateState } from '../lib/billing';
 import { resolveRoute } from '../llm/router';
 import { buildSystemPrompt, type BuildSystemPromptInput } from '../llm/builder';
 import { getBotMemory, getChatMemo } from '../lib/memory';
@@ -296,20 +296,18 @@ realtimeRoutes.post('/session', async (c) => {
   if (!loaded.ok) return c.json(loaded.body, loaded.status);
   const ctx = loaded.ctx;
 
-  // Balance gate. Compare integer credits to the configured threshold;
-  // 0 / null disables the gate (matches text-turn behavior).
-  const [balance, threshold] = await Promise.all([
-    getBalance(supaUser, userId),
-    getConfigInt(supaUser, 'min_balance_threshold'),
-  ]);
-  const minThreshold = threshold ?? 0;
-  const balanceCredits = balance?.balance_credits ?? 0;
-  if (minThreshold > 0 && balanceCredits < minThreshold) {
+  // Balance gate. Uses the same cached threshold/balance path as text
+  // turns, while still returning the current balance snapshot for the
+  // in-call UI.
+  const balanceGate = await getBalanceGateState(c.env, supaUser, userId, {
+    readBalanceWhenDisabled: true,
+  });
+  if (!balanceGate.allowed) {
     return routeJsonError(c, 402, 'insufficient_balance', {
       message: t('voice.insufficient_balance', locale),
       detail: {
-        balance_credits: balanceCredits,
-        min_threshold: minThreshold,
+        balance_credits: balanceGate.balance_credits,
+        min_threshold: balanceGate.min_threshold,
       },
     });
   }
@@ -385,8 +383,8 @@ realtimeRoutes.post('/session', async (c) => {
       transport: 'websocket',
       ws_path: `/v1/realtime/ws?session_id=${sessionId}`,
       model: route.modelToCall,
-      min_threshold: minThreshold,
-      balance_credits: balanceCredits,
+      min_threshold: balanceGate.min_threshold,
+      balance_credits: balanceGate.balance_credits,
     });
   }
 
@@ -436,8 +434,8 @@ realtimeRoutes.post('/session', async (c) => {
     botId: ctx.bot.id,
     route,
     instructions,
-    balanceCredits,
-    minThreshold,
+    balanceCredits: balanceGate.balance_credits,
+    minThreshold: balanceGate.min_threshold,
     // The server-resolved voice model (conv pin → bot default → fallback).
     modelOverride: voiceModel,
     iceServers,
@@ -559,7 +557,13 @@ async function mintOpenAISession(
   const clientSecret = data.value ?? data.client_secret?.value;
   const expiresAt = data.expires_at ?? data.client_secret?.expires_at ?? null;
   if (!clientSecret) {
-    console.warn('[realtime/session] openai response missing client_secret', data);
+    console.warn('[realtime/session] openai response missing client_secret', {
+      id: data.id,
+      session_id: data.session?.id,
+      model: data.model ?? data.session?.model,
+      has_value: typeof data.value === 'string',
+      has_nested_secret: typeof data.client_secret?.value === 'string',
+    });
     return jsonError(502, 'upstream_error', t('voice.upstream_failed', locale));
 
   }
