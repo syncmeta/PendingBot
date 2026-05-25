@@ -94,6 +94,8 @@ The test-account logger is opt-in by user flag and service-role only, but it sto
 
 Risk: this is reasonable for diagnostics, but it needs a retention/redaction policy before it becomes a silent privacy dataset.
 
+Fixed on 2026-05-25: request logs no longer store IP addresses or query values; they retain only query keys plus client version/platform/country, and the daily cron deletes `test_account_log` rows older than 14 days.
+
 ### Realtime metering logs must stay allowlist-only
 
 `apps/edge/src/durable-objects/realtime-meter.ts` previously logged full upstream `session.created` / `session.updated` event payloads for diagnostics. Those events can include generated realtime instructions assembled from bot memory, notes, skills, and conversation context.

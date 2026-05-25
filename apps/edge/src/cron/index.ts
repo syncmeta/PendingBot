@@ -2,13 +2,14 @@ import type { Env } from '../types';
 import { cleanupOrphanUploads } from './uploads-cleanup';
 import { reapStuckEnvelopes } from './envelope-reaper';
 import { finalizeExpiredAccountDeletions } from './account-deletion-sweep';
+import { cleanupTestAccountLogs } from './test-account-log-cleanup';
 
 // Workers cron entrypoint. wrangler.jsonc declares `triggers.crons` with
 // each schedule pattern; the same handler routes by `controller.cron`.
 //
 // Wired schedules (must agree with wrangler.jsonc):
-//   "0 4 * * *"    daily 04:00 UTC — orphan upload sweep + finalize
-//                  expired account-deletion tombstones (28d cooldown)
+//   "0 4 * * *"    daily 04:00 UTC — orphan upload sweep, test-account
+//                  log retention, and expired deletion tombstones
 //   "*/5 * * * *"  every 5 min — envelope-run watchdog (force-fail
 //                  envelope_runs rows stuck in 'running' past the loop's
 //                  4-min wall budget)
@@ -32,6 +33,7 @@ export async function handleScheduled(
   // each task — they run concurrently from the runtime's perspective.
   if (cron === '0 4 * * *') {
     ctx.waitUntil(safe('uploads-cleanup', () => cleanupOrphanUploads(env)));
+    ctx.waitUntil(safe('test-account-log-cleanup', () => cleanupTestAccountLogs(env)));
     ctx.waitUntil(
       safe('deletion-sweep', () => finalizeExpiredAccountDeletions(env)),
     );

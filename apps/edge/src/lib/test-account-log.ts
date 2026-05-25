@@ -26,6 +26,7 @@ const FLAG_PREFIX = 'test-account:';
 // down (1 DB round-trip per user per minute) while staying responsive
 // to admins watching test-account_log fill in.
 const FLAG_TTL_SEC = 60;
+export const TEST_ACCOUNT_LOG_RETENTION_DAYS = 14;
 
 type FlagCache = { is_test_account: boolean };
 
@@ -60,6 +61,10 @@ export interface TestEvent {
   requestId?: string;
   note?: string;
   payload?: Record<string, unknown>;
+}
+
+export function summarizeQueryKeys(query: Record<string, unknown>): string[] {
+  return Object.keys(query).filter(Boolean).sort();
 }
 
 async function insertEvent(env: Env, userId: string, event: TestEvent): Promise<void> {
@@ -131,10 +136,10 @@ export function testAccountLogger(): MiddlewareHandler<AppBindings> {
                 requestId,
                 note: errMessage,
                 payload: {
-                  query: c.req.query(),
+                  query_keys: summarizeQueryKeys(c.req.query()),
                   client_version: c.req.header('x-client-version') ?? null,
                   client_platform: c.req.header('x-client-platform') ?? null,
-                  ip: c.req.header('cf-connecting-ip') ?? null,
+                  country: c.req.header('cf-ipcountry') ?? null,
                 },
               });
             } catch (err) {
