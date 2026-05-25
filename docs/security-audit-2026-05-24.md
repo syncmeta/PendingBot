@@ -100,6 +100,12 @@ Risk: this is reasonable for diagnostics, but it needs a retention/redaction pol
 
 Fixed on 2026-05-25: the meter now logs only event type, session id, model, and error code/type, and `apps/edge/tests/privacy-logging.test.ts` locks out future `JSON.stringify(msg)` logging of realtime events.
 
+### Dependency advisories were present in the lockfile
+
+`bun audit` on 2026-05-25 reported 9 advisories, including a high-severity Next.js App Router middleware/proxy bypass advisory and moderate advisories in PostCSS, Vite, ws, esbuild, Hono, and qs.
+
+Fixed on 2026-05-25: workspace constraints now require patched Next/PostCSS/Hono/Vite versions, root overrides force patched transitive `qs`, `ws`, and `esbuild`, and `bun audit` returns `No vulnerabilities found`.
+
 ## Positive Findings
 
 - All current `pendingbot` tables in the linked database have RLS enabled.

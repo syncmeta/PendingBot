@@ -1,5 +1,5 @@
-import type OpenAI from 'openai';
 import type {
+  ChatCompletion,
   ChatCompletionMessageParam,
   ChatCompletionMessageToolCall,
   ChatCompletionCreateParamsNonStreaming,
@@ -179,8 +179,18 @@ export interface ResumeState {
   collaboratorUsage?: UsageStats;
 }
 
+export interface ChatCompletionClient {
+  chat: {
+    completions: {
+      create(
+        request: ChatCompletionCreateParamsNonStreaming,
+      ): PromiseLike<ChatCompletion>;
+    };
+  };
+}
+
 export interface EnvelopeLoopDeps {
-  openai: OpenAI;
+  openai: ChatCompletionClient;
   modelId: string;
   systemPrompt: string;
   initialUserContent: string;
