@@ -14,6 +14,15 @@ export interface GroupMembership {
   role: GroupRole | null;
 }
 
+export interface MessageDeleteTarget {
+  messageId: string;
+  conversationId: string;
+  authoredByCaller: boolean;
+  conversationOwnedByCaller: boolean;
+  conversationType: string | null;
+  isBotReply: boolean;
+}
+
 type AuthzCode = 'database_error' | 'forbidden' | 'not_found';
 
 export type AuthzResult<T> =
@@ -164,5 +173,68 @@ export async function findSharedUserUserConversation(
   return {
     ok: true,
     conversationId: (theirs ?? [])[0]?.conversation_id ?? null,
+  };
+}
+
+export async function authorizeMessageDelete(
+  env: Env,
+  messageId: string,
+  userId: string,
+): Promise<AuthzResult<{ target: MessageDeleteTarget }>> {
+  const supa = serviceClient(env);
+  const { data: msg, error: msgErr } = await supa
+    .schema('pendingbot')
+    .from('messages')
+    .select('id, user_id, sender_bot_id, conversation_id')
+    .eq('id', messageId)
+    .maybeSingle();
+  if (msgErr) return { ok: false, code: 'database_error', detail: msgErr.message };
+  if (!msg) return { ok: false, code: 'not_found' };
+
+  const authoredByCaller = msg.user_id === userId;
+  if (authoredByCaller) {
+    return {
+      ok: true,
+      target: {
+        messageId: msg.id,
+        conversationId: msg.conversation_id,
+        authoredByCaller: true,
+        conversationOwnedByCaller: false,
+        conversationType: null,
+        isBotReply: !!msg.sender_bot_id,
+      },
+    };
+  }
+
+  const { data: conv, error: convErr } = await supa
+    .schema('pendingbot')
+    .from('conversations')
+    .select('conversation_type, user_id')
+    .eq('id', msg.conversation_id)
+    .maybeSingle();
+  if (convErr) return { ok: false, code: 'database_error', detail: convErr.message };
+
+  const conversationType = (conv?.conversation_type as string | undefined) ?? null;
+  const conversationOwnedByCaller = !!conv && conv.user_id === userId;
+  const isBotReply = !!msg.sender_bot_id && !msg.user_id;
+  const ownerMayDeletePresentationRow =
+    conversationOwnedByCaller &&
+    isBotReply &&
+    (conversationType === 'user_bot' || conversationType === 'self');
+
+  if (!ownerMayDeletePresentationRow) {
+    return { ok: false, code: 'forbidden' };
+  }
+
+  return {
+    ok: true,
+    target: {
+      messageId: msg.id,
+      conversationId: msg.conversation_id,
+      authoredByCaller: false,
+      conversationOwnedByCaller,
+      conversationType,
+      isBotReply,
+    },
   };
 }

@@ -19,6 +19,7 @@ import { parseRandomModelConfig, pickRandomModel } from '../llm/random-model';
 import { safeWaitUntil } from '../lib/safe-wait-until';
 import { startSseKeepalive } from '../lib/sse-keepalive';
 import { notifyConversationUsers, notifyUserMessage } from '../lib/push';
+import { authorizeMessageDelete } from '../lib/route-authz';
 import type { AppBindings } from '../types';
 
 export const messageRoutes = new Hono<AppBindings>();
@@ -1257,27 +1258,14 @@ messageRoutes.delete('/:id', async (c) => {
 
   const supa = serviceClient(c.env);
 
-  const { data: msg, error: fetchErr } = await supa
-    .schema('pendingbot')
-    .from('messages')
-    .select('id, user_id, conversation_id')
-    .eq('id', id)
-    .maybeSingle();
-  if (fetchErr) return jsonError(c, 500, 'database_error', { detail: fetchErr.message });
-  if (!msg) return jsonError(c, 404, 'not_found');
-
-  let allowed = msg.user_id === userId;
-  if (!allowed) {
-    const { data: conv, error: convErr } = await supa
-      .schema('pendingbot')
-      .from('conversations')
-      .select('user_id')
-      .eq('id', msg.conversation_id)
-      .maybeSingle();
-    if (convErr) return jsonError(c, 500, 'database_error', { detail: convErr.message });
-    allowed = !!conv && conv.user_id === userId;
+  const authz = await authorizeMessageDelete(c.env, id, userId);
+  if (!authz.ok) {
+    if (authz.code === 'database_error') {
+      return jsonError(c, 500, 'database_error', { detail: authz.detail });
+    }
+    if (authz.code === 'not_found') return jsonError(c, 404, 'not_found');
+    return jsonError(c, 403, 'forbidden');
   }
-  if (!allowed) return jsonError(c, 403, 'forbidden');
 
   const { error: delErr } = await supa
     .schema('pendingbot')

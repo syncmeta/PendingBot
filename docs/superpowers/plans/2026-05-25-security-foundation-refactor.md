@@ -102,3 +102,32 @@ Change the service-role boundary and voice-metering entries from raw findings to
 - [x] **Step 3: Verify docs**
 
 Run `git diff --check`.
+
+### Task 4: Message And Friend-Request Authorization Tightening
+
+**Files:**
+- Modify: `apps/edge/src/lib/route-authz.ts`
+- Modify: `apps/edge/src/routes/messages.ts`
+- Modify: `apps/edge/src/routes/friend-requests.ts`
+- Modify: `apps/ios/PendingBot/Features/Group/GroupSettingsView.swift`
+- Test: `apps/edge/tests/messages-recall.test.ts`
+- Test: `apps/edge/tests/friend-requests.test.ts`
+- Test: `apps/edge/tests/route-authz.test.ts`
+
+- [x] **Step 1: Pin message delete boundary**
+
+Add regression coverage that a group owner cannot hard-delete another human participant's message, while a user_bot conversation owner can still delete a bot reply presentation row.
+
+- [x] **Step 2: Move delete authorization into helper**
+
+Add `authorizeMessageDelete()` to `route-authz.ts` and use it from `DELETE /v1/messages/:id`.
+
+- [x] **Step 3: Require source group for peer-id friend requests**
+
+Change the peer-id add-friend path so a request by UUID must include `sourceConversationId`, and Edge verifies both users are human members of that group. Update iOS `GroupAddFriendSheet` to send the source group id.
+
+- [x] **Step 4: Verify**
+
+Run:
+- `bun --filter='@pendingbot/edge' run test -- tests/messages-recall.test.ts tests/route-authz.test.ts`
+- `bun --filter='@pendingbot/edge' run test -- tests/friend-requests.test.ts`

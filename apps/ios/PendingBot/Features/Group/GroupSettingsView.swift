@@ -193,7 +193,8 @@ struct GroupSettingsView: View {
             // Sheet only opens for tappable human members, all of which
             // carry a non-nil userId — `??""` is a defensive fallback
             // that the edge will reject as "用户不存在".
-            GroupAddFriendSheet(targetUserId: target.userId ?? "",
+            GroupAddFriendSheet(conversationId: conversationId,
+                                targetUserId: target.userId ?? "",
                                 targetDisplayName: target.displayLabel) { ok in
                 if ok { Task { await reloadFriends() } }
             }
@@ -999,6 +1000,7 @@ private struct GroupInviteMembersSheet: View {
 /// / button copy spelled out by product: 标题 "加他好友？", 文本框占位符
 /// "备注", 按钮 "发送加好友请求".
 private struct GroupAddFriendSheet: View {
+    let conversationId: String
     let targetUserId: String
     let targetDisplayName: String
     let onClose: (_ sentSuccessfully: Bool) -> Void
@@ -1058,12 +1060,12 @@ private struct GroupAddFriendSheet: View {
 
     private func send() async {
         sending = true; defer { sending = false }
-        // We have the peer's user id, not their handle, so this skips the
-        // /v1/friend-requests `handleValue` flow and posts directly with
-        // a `peerUserId` key. Edge needs to accept that shape — see the
-        // /v1/friend-requests POST handler in apps/edge/src/routes/.
+        // We have the peer's user id, not their handle. The source group id
+        // lets Edge prove both users are in the same group before it sends
+        // an unsolicited friend request by UUID.
         struct Body: Encodable {
             let peerUserId: String
+            let sourceConversationId: String
             let message: String?
         }
         do {
@@ -1077,6 +1079,7 @@ private struct GroupAddFriendSheet: View {
             let trimmed = verifyMessage.trimmingCharacters(in: .whitespaces)
             req.httpBody = try JSONEncoder().encode(Body(
                 peerUserId: targetUserId,
+                sourceConversationId: conversationId,
                 message: trimmed.isEmpty ? nil : trimmed,
             ))
             let (data, resp) = try await URLSession.shared.data(for: req)

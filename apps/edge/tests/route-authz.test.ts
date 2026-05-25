@@ -214,4 +214,69 @@ describe('route authorization helpers', () => {
       findSharedUserUserConversation(makeFakeEnv(db), 'user-1', 'user-3'),
     ).resolves.toEqual({ ok: true, conversationId: null });
   });
+
+  it('authorizes message delete only for authored rows or owned bot presentation rows', async () => {
+    const { authorizeMessageDelete } = await import('../src/lib/route-authz');
+    const db = makeFakeDb({
+      messages: [
+        {
+          id: '11111111-1111-4111-8111-111111111111',
+          user_id: 'user-1',
+          sender_bot_id: null,
+          conversation_id: 'conv-user',
+        },
+        {
+          id: '22222222-2222-4222-8222-222222222222',
+          user_id: null,
+          sender_bot_id: 'bot-1',
+          conversation_id: 'conv-user',
+        },
+        {
+          id: '33333333-3333-4333-8333-333333333333',
+          user_id: 'user-2',
+          sender_bot_id: null,
+          conversation_id: 'conv-group',
+        },
+      ],
+      conversations: [
+        {
+          id: 'conv-user',
+          conversation_type: 'user_bot',
+          user_id: 'user-1',
+        },
+        {
+          id: 'conv-group',
+          conversation_type: 'group',
+          user_id: 'user-1',
+        },
+      ],
+    });
+    const env = makeFakeEnv(db);
+
+    await expect(
+      authorizeMessageDelete(env, '11111111-1111-4111-8111-111111111111', 'user-1'),
+    ).resolves.toMatchObject({
+      ok: true,
+      target: {
+        authoredByCaller: true,
+        conversationId: 'conv-user',
+      },
+    });
+
+    await expect(
+      authorizeMessageDelete(env, '22222222-2222-4222-8222-222222222222', 'user-1'),
+    ).resolves.toMatchObject({
+      ok: true,
+      target: {
+        authoredByCaller: false,
+        conversationOwnedByCaller: true,
+        conversationType: 'user_bot',
+        isBotReply: true,
+      },
+    });
+
+    await expect(
+      authorizeMessageDelete(env, '33333333-3333-4333-8333-333333333333', 'user-1'),
+    ).resolves.toEqual({ ok: false, code: 'forbidden' });
+  });
 });

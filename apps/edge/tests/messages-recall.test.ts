@@ -67,7 +67,7 @@ let r2Deleted: string[];
 let env: ReturnType<typeof makeFakeEnv>;
 
 async function call(
-  method: 'POST',
+  method: 'POST' | 'DELETE',
   path: string,
   userId: string,
 ): Promise<{ status: number; body: { ok?: boolean; already?: boolean; error?: { code?: string; message?: string } } }> {
@@ -129,10 +129,29 @@ function freshSeed(): FakeDb {
         status: 'deleted',
         attachments: null,
       }),
+      // group conversation owned by alice, but the row belongs to bob.
+      // DELETE must not treat group ownership as permission to remove
+      // another human's message.
+      mkMessage({
+        id: '66666666-6666-4666-8666-666666666666',
+        user_id: 'bob',
+        conversation_id: 'conv-group',
+        attachments: null,
+      }),
+      // bot reply in alice's user_bot conversation. The conversation owner
+      // may delete this presentation row even though msg.user_id is null.
+      mkMessage({
+        id: '77777777-7777-4777-8777-777777777777',
+        user_id: null,
+        sender_bot_id: 'bot-1',
+        conversation_id: 'conv-userbot',
+        attachments: null,
+      }),
     ],
     conversations: [
-      { id: 'conv-userbot', conversation_type: 'user_bot' },
+      { id: 'conv-userbot', conversation_type: 'user_bot', user_id: 'alice' },
       { id: 'conv-useruser', conversation_type: 'user_user' },
+      { id: 'conv-group', conversation_type: 'group', user_id: 'alice' },
     ],
     attachments: [
       { id: 'att-1', user_id: 'alice', r2_key: 'blobs/h1.png' },
@@ -281,5 +300,27 @@ describe('POST /v1/messages/:id/recall — R2 ref counting', () => {
     expect(db.rows.attachments.find((a) => a.id === 'att-shared-2')).toBeDefined();
     // R2 object NOT deleted — bob's row still claims it
     expect(r2Deleted).toEqual([]);
+  });
+});
+
+describe('DELETE /v1/messages/:id — auth boundaries', () => {
+  it('does not let a group owner hard-delete another human participant message', async () => {
+    env = envWith(freshSeed());
+    const r = await call('DELETE', '/v1/messages/66666666-6666-4666-8666-666666666666', 'alice');
+    expect(r.status).toBe(403);
+    expect(r.body.error?.code).toBe('forbidden');
+
+    const db = (env as unknown as { __fakeDb: FakeDb }).__fakeDb;
+    expect(db.rows.messages.find((m) => m.id === '66666666-6666-4666-8666-666666666666')).toBeDefined();
+  });
+
+  it('lets a user_bot conversation owner delete a bot reply presentation row', async () => {
+    env = envWith(freshSeed());
+    const r = await call('DELETE', '/v1/messages/77777777-7777-4777-8777-777777777777', 'alice');
+    expect(r.status).toBe(200);
+    expect(r.body.ok).toBe(true);
+
+    const db = (env as unknown as { __fakeDb: FakeDb }).__fakeDb;
+    expect(db.rows.messages.find((m) => m.id === '77777777-7777-4777-8777-777777777777')).toBeUndefined();
   });
 });
