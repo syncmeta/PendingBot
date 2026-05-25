@@ -1,7 +1,7 @@
 import type { Env } from '../types';
 import { serviceClient } from '../lib/supabase';
 import { resolveRoute } from '../llm/router';
-import { getBalance, getConfigInt } from '../lib/billing';
+import { getBalanceGateState } from '../lib/billing';
 import { endRealtimeSession, REALTIME_HANG_UP_TOOL } from '../lib/realtime-sessions';
 import {
   broadcastVoiceCostPreview,
@@ -488,12 +488,8 @@ export class RealtimeMeterDO {
   // turn — acceptable. 0/null threshold disables the gate.
   private async enforceBalance(ctx: MeterContext): Promise<void> {
     const supa = serviceClient(this.env);
-    const [balance, threshold] = await Promise.all([
-      getBalance(supa, ctx.userId),
-      getConfigInt(supa, 'min_balance_threshold'),
-    ]);
-    const minThreshold = threshold ?? 0;
-    if (minThreshold > 0 && (balance?.balance_credits ?? 0) < minThreshold) {
+    const gate = await getBalanceGateState(this.env, supa, ctx.userId);
+    if (!gate.allowed) {
       await this.endCall();
     }
   }
