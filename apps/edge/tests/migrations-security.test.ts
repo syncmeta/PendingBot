@@ -78,4 +78,15 @@ describe('security-sensitive migrations', () => {
       expect(sql).toMatch(new RegExp(`alter\\s+function\\s+pendingbot\\.${name}\\s*\\(\\)\\s+set\\s+search_path`, 'i'));
     }
   });
+
+  it('opens user_user conversations atomically under auth.uid and a pair advisory lock', () => {
+    const sql = readMigration('supabase/migrations/20260525093000_open_user_user_conversation_rpc.sql');
+
+    expect(sql).toMatch(/function\s+pendingbot\.open_user_user_conv\s*\(\s*p_other_user_id\s+uuid\s*\)/i);
+    expect(sql).toMatch(/v_user_id\s+uuid\s*:=\s*auth\.uid\(\)/i);
+    expect(sql).toMatch(/pg_advisory_xact_lock/i);
+    expect(sql).toMatch(/hashtextextended\(v_pair_a::text\s*\|\|\s*':'\s*\|\|\s*v_pair_b::text,\s*0\)/i);
+    expect(sql).toMatch(/from\s+pendingbot\.user_contacts/i);
+    expect(sql).toMatch(/grant\s+execute\s+on\s+function\s+pendingbot\.open_user_user_conv\(uuid\)\s+to\s+authenticated,\s*service_role/i);
+  });
 });

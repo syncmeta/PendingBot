@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
-import { serviceClient } from '../lib/supabase';
+import { serviceClient, userClient } from '../lib/supabase';
 import { UUID_RE } from '../lib/ids';
 import { jsonError } from '../lib/http-error';
 import { findSharedUserUserConversation } from '../lib/route-authz';
@@ -106,6 +106,7 @@ function extractAvatarSeed(customFields: unknown, userId: string): string {
 const OpenChatBody = z.object({ contactUserId: z.string().uuid() });
 contactRoutes.post('/open-chat', async (c) => {
   const userId = c.var.userId!;
+  const userJwt = c.var.userJwt!;
   let parsed: z.infer<typeof OpenChatBody>;
   try {
     parsed = OpenChatBody.parse(await c.req.json());
@@ -115,46 +116,28 @@ contactRoutes.post('/open-chat', async (c) => {
   const otherId = parsed.contactUserId;
   if (otherId === userId) return jsonError(c, 400, 'self_chat_not_allowed', { message: 'cannot open chat with yourself' });
 
-  const supa = serviceClient(c.env);
-
-  // Gate: caller must already have the other user as a contact. The
-  // friend-request flow writes both user_contacts rows on accept, so
-  // this also implicitly proves the other side opted in. iOS surfaces
-  // the 403 as a hint to send a friend request first.
-  const { data: contact } = await supa
-    .from('user_contacts')
-    .select('contact_user_id')
-    .eq('user_id', userId)
-    .eq('contact_user_id', otherId)
-    .maybeSingle();
-  if (!contact) {
-    return jsonError(c, 403, 'forbidden', { message: '还不是好友,先发送好友申请' });
+  const supaUser = userClient(c.env, userJwt);
+  const { data, error } = await supaUser.rpc('open_user_user_conv', {
+    p_other_user_id: otherId,
+  });
+  if (error) {
+    if (/not contacts/i.test(error.message)) {
+      return jsonError(c, 403, 'forbidden', { message: '还不是好友,先发送好友申请' });
+    }
+    if (/auth required|cannot open self/i.test(error.message)) {
+      return jsonError(c, 400, 'invalid_body', { detail: error.message });
+    }
+    return jsonError(c, 500, 'database_error', { detail: error.message });
   }
 
-  const shared = await findSharedUserUserConversation(c.env, userId, otherId);
-  if (!shared.ok) {
-    return jsonError(c, 500, 'database_error', { detail: shared.detail });
+  const payload = data as { conversationId?: string; created?: boolean } | null;
+  if (!payload?.conversationId) {
+    return jsonError(c, 500, 'database_error', { detail: 'open_user_user_conv returned malformed payload' });
   }
-  if (shared.conversationId) return c.json({ conversationId: shared.conversationId, created: false });
-
-  // Not found — create.
-  const { data: conv, error: convErr } = await supa
-    .from('conversations')
-    .insert({
-      conversation_type: 'user_user',
-      feature: 'message',
-      user_id: userId,
-      title: null,
-    })
-    .select('id')
-    .single();
-  if (convErr || !conv) return jsonError(c, 500, 'database_error', { detail: convErr?.message });
-  const convId = conv.id as string;
-  await supa.from('conversation_participants').insert([
-    { conversation_id: convId, participant_type: 'user', participant_id: userId, role: 'owner' },
-    { conversation_id: convId, participant_type: 'user', participant_id: otherId, role: 'member' },
-  ]);
-  return c.json({ conversationId: convId, created: true });
+  return c.json({
+    conversationId: payload.conversationId,
+    created: payload.created === true,
+  });
 });
 
 // POST /v1/contacts/profiles — bulk profile lookup gated on shared

@@ -3948,6 +3948,10 @@ export type Database = {
       }
       open_self_conv: { Args: never; Returns: string }
       open_user_bot_conv: { Args: { p_bot_id: string }; Returns: string }
+      open_user_user_conv: {
+        Args: { p_other_user_id: string }
+        Returns: Json
+      }
       random_place_name: { Args: never; Returns: string }
       register_runner_host: {
         Args: {
