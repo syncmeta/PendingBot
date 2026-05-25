@@ -1,6 +1,7 @@
 import type { Env } from '../types';
 import { serviceClient, userClient } from './supabase';
 import { resolveConv, type CachedConv } from './conv-cache';
+import { resolveAttachmentOwnership, type AttachmentOwnership } from './attachment-cache';
 
 export type GroupRole = 'owner' | 'admin' | 'member' | string;
 
@@ -53,6 +54,31 @@ export type MessageSendAuthzResult<T> =
 export type MessageSendConversation = CachedConv & {
   conversation_type: 'user_bot' | 'self' | 'group' | 'user_user';
 };
+
+export async function authorizeAttachmentOwnership(
+  env: Env,
+  userId: string,
+  attachmentIds: readonly string[],
+  waitUntil: (p: Promise<unknown>) => void,
+): Promise<AuthzResult<{ attachments: AttachmentOwnership[] }>> {
+  if (attachmentIds.length === 0) return { ok: true, attachments: [] };
+  const supa = serviceClient(env);
+  let rows: AttachmentOwnership[] | null;
+  try {
+    rows = await resolveAttachmentOwnership(env, supa, attachmentIds, waitUntil);
+  } catch (err) {
+    return {
+      ok: false,
+      code: 'database_error',
+      detail: (err as { message?: string }).message ?? 'attachment lookup failed',
+    };
+  }
+  if (!rows) return { ok: false, code: 'not_found' };
+  for (const row of rows) {
+    if (row.user_id !== userId) return { ok: false, code: 'forbidden' };
+  }
+  return { ok: true, attachments: rows };
+}
 
 export async function authorizeMessageSendConversation(
   env: Env,

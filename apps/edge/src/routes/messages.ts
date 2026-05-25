@@ -12,7 +12,7 @@ import { resolveGroupMentions } from '../lib/group-mentions';
 import { summarizeAttachments, DEFAULT_VISION_MODEL } from '../llm/vision';
 import { UUID_RE } from '../lib/ids';
 import { jsonError } from '../lib/http-error';
-import { deleteCachedAttachment, removeInventoryIds, resolveAttachmentOwnership } from '../lib/attachment-cache';
+import { deleteCachedAttachment, removeInventoryIds } from '../lib/attachment-cache';
 import { resolveBot } from '../lib/bot-cache';
 import { resolveConv } from '../lib/conv-cache';
 import { parseRandomModelConfig, pickRandomModel } from '../llm/random-model';
@@ -20,6 +20,7 @@ import { safeWaitUntil } from '../lib/safe-wait-until';
 import { startSseKeepalive } from '../lib/sse-keepalive';
 import { notifyConversationUsers, notifyUserMessage } from '../lib/push';
 import {
+  authorizeAttachmentOwnership,
   authorizeBotUse,
   authorizeMessageDelete,
   authorizeMessageRecall,
@@ -122,10 +123,10 @@ messageRoutes.post('/', async (c) => {
 
   const hasAttachments = (parsed.attachmentIds?.length ?? 0) > 0;
   const attCheckPromise = hasAttachments
-    ? resolveAttachmentOwnership(c.env, supaService, parsed.attachmentIds!, (p) =>
+    ? authorizeAttachmentOwnership(c.env, userId, parsed.attachmentIds!, (p) =>
         safeWaitUntil(c, p),
       )
-    : Promise.resolve([] as Array<{ id: string; user_id: string; conversation_id: string | null }>);
+    : Promise.resolve({ ok: true as const, attachments: [] });
 
   const [convResolved, attRows] = await Promise.all([convPromise, attCheckPromise]);
 
@@ -148,13 +149,11 @@ messageRoutes.post('/', async (c) => {
   // shares one row across convs). GET /v1/uploads/:id still gates reads via
   // message references + membership.
   if (hasAttachments) {
-    if (!attRows) {
+    if (!attRows.ok && attRows.code === 'not_found') {
       return jsonError(c, 403, 'attachment_not_found');
     }
-    for (const r of attRows) {
-      if (r.user_id !== userId) {
-        return jsonError(c, 403, 'attachment_not_owned');
-      }
+    if (!attRows.ok) {
+      return jsonError(c, 403, 'attachment_not_owned');
     }
   }
 
@@ -658,16 +657,17 @@ messageRoutes.post('/start', async (c) => {
   // convs, so a first turn legitimately reuses an attachment already bound
   // to an earlier conv.
   if (parsed.attachmentIds && parsed.attachmentIds.length > 0) {
-    const { data: rows, error: attErr } = await supaService
-      .from('attachments')
-      .select('id, user_id')
-      .in('id', parsed.attachmentIds);
-    if (attErr) return jsonError(c, 500, 'database_error', { detail: attErr.message });
-    if (!rows || rows.length !== parsed.attachmentIds.length) {
+    const attAuthz = await authorizeAttachmentOwnership(c.env, userId, parsed.attachmentIds, (p) =>
+      safeWaitUntil(c, p),
+    );
+    if (!attAuthz.ok && attAuthz.code === 'database_error') {
+      return jsonError(c, 500, 'database_error', { detail: attAuthz.detail });
+    }
+    if (!attAuthz.ok && attAuthz.code === 'not_found') {
       return jsonError(c, 403, 'attachment_not_found');
     }
-    for (const r of rows) {
-      if (r.user_id !== userId) return jsonError(c, 403, 'attachment_not_owned');
+    if (!attAuthz.ok) {
+      return jsonError(c, 403, 'attachment_not_owned');
     }
   }
 

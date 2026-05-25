@@ -317,7 +317,8 @@ export async function resolveAttachmentOwnership(
     .from('attachments')
     .select('id, user_id, conversation_id, mime_type, filename')
     .in('id', misses);
-  if (error || !data) return null;
+  if (error) throw error;
+  if (!data) return null;
   const dbMap = new Map(
     (data as Array<{
       id: string;

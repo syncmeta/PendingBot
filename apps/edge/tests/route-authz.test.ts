@@ -8,6 +8,70 @@ import {
 installFakeSupabaseMock();
 
 describe('route authorization helpers', () => {
+  it('authorizes attachment ownership through the shared cache/DB gate', async () => {
+    const { authorizeAttachmentOwnership } = await import('../src/lib/route-authz');
+    const db = makeFakeDb({
+      attachments: [
+        {
+          id: '11111111-1111-4111-8111-111111111111',
+          user_id: 'user-1',
+          conversation_id: null,
+          mime_type: 'image/png',
+          filename: 'own.png',
+        },
+        {
+          id: '22222222-2222-4222-8222-222222222222',
+          user_id: 'user-2',
+          conversation_id: null,
+          mime_type: 'image/png',
+          filename: 'other.png',
+        },
+      ],
+    });
+    const env = makeFakeEnv(db);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (env as any).MEMORY = {
+      get: async () => null,
+      put: async () => undefined,
+      delete: async () => undefined,
+    };
+
+    await expect(
+      authorizeAttachmentOwnership(
+        env,
+        'user-1',
+        ['11111111-1111-4111-8111-111111111111'],
+        () => undefined,
+      ),
+    ).resolves.toMatchObject({
+      ok: true,
+      attachments: [
+        {
+          id: '11111111-1111-4111-8111-111111111111',
+          user_id: 'user-1',
+        },
+      ],
+    });
+
+    await expect(
+      authorizeAttachmentOwnership(
+        env,
+        'user-1',
+        ['22222222-2222-4222-8222-222222222222'],
+        () => undefined,
+      ),
+    ).resolves.toEqual({ ok: false, code: 'forbidden' });
+
+    await expect(
+      authorizeAttachmentOwnership(
+        env,
+        'user-1',
+        ['33333333-3333-4333-8333-333333333333'],
+        () => undefined,
+      ),
+    ).resolves.toEqual({ ok: false, code: 'not_found' });
+  });
+
   it('authorizes message send conversations and rejects orphaned user_user peers', async () => {
     const { authorizeMessageSendConversation } = await import('../src/lib/route-authz');
     const db = makeFakeDb({
