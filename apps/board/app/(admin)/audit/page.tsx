@@ -6,7 +6,7 @@ import { fmtMs, fmtTokens, fmtUsd } from '@/lib/format';
 // every user. This is the detailed call log; the iOS wallet only shows
 // a summary now. Filter to one user with ?user_id=, narrow by task with
 // ?task_type=, page size via ?limit=. Linked from the user detail page
-// ("完整 audit →") and the test-logs page.
+// ("完整 audit →").
 
 type SearchParams = {
   user_id?: string;

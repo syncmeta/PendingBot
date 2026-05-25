@@ -88,13 +88,13 @@ The board consistently gates admin pages and server actions through `requireAdmi
 
 Residual risk: login-code generation is effectively account takeover by support. Keep it admin-only, short-lived, audited, and consider a break-glass reason field before wider operational use.
 
-### Test-account request logging needs retention and redaction policy
+### Test-account request logging was a privacy liability
 
-The test-account logger is opt-in by user flag and service-role only, but it stores request metadata including IP, route, query, client version, and platform.
+The test-account logger was opt-in by user flag and service-role only, but it stored request metadata and created a separate diagnostic dataset.
 
-Risk: this is reasonable for diagnostics, but it needs a retention/redaction policy before it becomes a silent privacy dataset.
+Risk: this was reasonable for diagnostics, but not worth carrying as a long-term user-privacy surface.
 
-Fixed on 2026-05-25: request logs no longer store IP addresses or query values; they retain only query keys plus client version/platform/country, and the daily cron deletes `test_account_log` rows older than 14 days.
+Removed on 2026-05-25: Edge no longer has `testAccountLogger`, Board no longer exposes test-account marking or log viewing, and migration `20260525084751_remove_test_account_logging.sql` drops `pendingbot.test_account_log` plus `users.is_test_account`.
 
 ### Realtime metering logs must stay allowlist-only
 

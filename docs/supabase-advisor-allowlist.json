@@ -55,10 +55,6 @@
       "reason": "Device challenge polling is served by Edge after challenge-secret verification, not direct PostgREST."
     },
     {
-      "cache_key": "rls_enabled_no_policy_pendingbot_test_account_log",
-      "reason": "Operational test-account log; admin/server-only."
-    },
-    {
       "cache_key": "rls_enabled_no_policy_pendingbot_tools",
       "reason": "Tool registry is exposed through Edge allowlist filtering, not direct table reads."
     },
