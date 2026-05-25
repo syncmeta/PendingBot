@@ -19,7 +19,7 @@ import { parseRandomModelConfig, pickRandomModel } from '../llm/random-model';
 import { safeWaitUntil } from '../lib/safe-wait-until';
 import { startSseKeepalive } from '../lib/sse-keepalive';
 import { notifyConversationUsers, notifyUserMessage } from '../lib/push';
-import { authorizeBotUse, authorizeMessageDelete } from '../lib/route-authz';
+import { authorizeBotUse, authorizeMessageDelete, authorizeMessageRecall } from '../lib/route-authz';
 import type { AppBindings } from '../types';
 
 export const messageRoutes = new Hono<AppBindings>();
@@ -1094,30 +1094,19 @@ messageRoutes.post('/:id/recall', async (c) => {
 
   const supa = serviceClient(c.env);
 
-  const { data: msg, error: fetchErr } = await supa
-    .schema('pendingbot')
-    .from('messages')
-    .select('id, user_id, sender_bot_id, conversation_id, status, attachments, created_at')
-    .eq('id', id)
-    .maybeSingle();
-  if (fetchErr) return jsonError(c, 500, 'database_error', { detail: fetchErr.message });
-  if (!msg) return jsonError(c, 404, 'not_found');
-
-  // Only the original sender may recall. Bot rows have user_id=null /
-  // sender_bot_id set; they cannot be recalled by anyone via this path.
-  if (msg.user_id !== userId) return jsonError(c, 403, 'forbidden');
+  const authz = await authorizeMessageRecall(c.env, id, userId);
+  if (!authz.ok) {
+    if (authz.code === 'database_error') {
+      return jsonError(c, 500, 'database_error', { detail: authz.detail });
+    }
+    if (authz.code === 'not_found') return jsonError(c, 404, 'not_found');
+    return jsonError(c, 403, 'forbidden');
+  }
+  const msg = authz.target;
 
   // Idempotent: already recalled → ok.
-  if (msg.status === 'deleted') return c.json({ ok: true, already: true });
-
-  const { data: conv, error: convErr } = await supa
-    .schema('pendingbot')
-    .from('conversations')
-    .select('conversation_type')
-    .eq('id', msg.conversation_id)
-    .maybeSingle();
-  if (convErr) return jsonError(c, 500, 'database_error', { detail: convErr.message });
-  const convType = (conv as { conversation_type?: string } | null)?.conversation_type ?? 'user_bot';
+  if (msg.alreadyDeleted) return c.json({ ok: true, already: true });
+  const convType = msg.conversationType ?? 'user_bot';
 
   // Collect attachment ids before we clear the column so we can purge
   // them after. Shape: attachments = { ids: [uuid, ...] }
@@ -1137,7 +1126,7 @@ messageRoutes.post('/:id/recall', async (c) => {
       content: null,
       attachments: null,
     })
-    .eq('id', id);
+    .eq('id', msg.messageId);
   if (updErr) return jsonError(c, 500, 'database_error', { detail: updErr.message });
 
   // 2) Purge attachment rows + R2 objects.
@@ -1182,7 +1171,7 @@ messageRoutes.post('/:id/recall', async (c) => {
         c,
         Promise.all([
           ...rows.map((r) => deleteCachedAttachment(c.env, r.id)),
-          removeInventoryIds(c.env, msg.conversation_id, rows.map((r) => r.id)),
+          removeInventoryIds(c.env, msg.conversationId, rows.map((r) => r.id)),
         ]).then(() => undefined),
       );
     }
@@ -1217,14 +1206,14 @@ messageRoutes.post('/:id/recall', async (c) => {
       .from('messages')
       .insert({
         client_message_id: crypto.randomUUID(),
-        conversation_id: msg.conversation_id,
+        conversation_id: msg.conversationId,
         user_id: userId,
         role: 'log',
         status: 'done',
         log_kind: 'recall',
         log_payload: {
           original_message_id: id,
-          original_created_at: msg.created_at,
+          original_created_at: msg.createdAt,
           recaller_user_id: userId,
         },
       });

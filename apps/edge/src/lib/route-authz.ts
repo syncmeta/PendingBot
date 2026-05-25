@@ -23,6 +23,15 @@ export interface MessageDeleteTarget {
   isBotReply: boolean;
 }
 
+export interface MessageRecallTarget {
+  messageId: string;
+  conversationId: string;
+  conversationType: string | null;
+  attachments: unknown;
+  createdAt: string | null;
+  alreadyDeleted: boolean;
+}
+
 export interface BotUseTarget {
   id: string;
   visibility: string | null;
@@ -241,6 +250,60 @@ export async function authorizeMessageDelete(
       conversationOwnedByCaller,
       conversationType,
       isBotReply,
+    },
+  };
+}
+
+export async function authorizeMessageRecall(
+  env: Env,
+  messageId: string,
+  userId: string,
+): Promise<AuthzResult<{ target: MessageRecallTarget }>> {
+  const supa = serviceClient(env);
+  const { data: msg, error: msgErr } = await supa
+    .schema('pendingbot')
+    .from('messages')
+    .select('id, user_id, sender_bot_id, conversation_id, status, attachments, created_at')
+    .eq('id', messageId)
+    .maybeSingle();
+  if (msgErr) return { ok: false, code: 'database_error', detail: msgErr.message };
+  if (!msg) return { ok: false, code: 'not_found' };
+
+  // Bot rows have user_id=null / sender_bot_id set; they cannot be
+  // recalled by anyone through the sender-initiated recall path.
+  if (msg.user_id !== userId) return { ok: false, code: 'forbidden' };
+
+  if (msg.status === 'deleted') {
+    return {
+      ok: true,
+      target: {
+        messageId: msg.id,
+        conversationId: msg.conversation_id,
+        conversationType: null,
+        attachments: msg.attachments,
+        createdAt: msg.created_at ?? null,
+        alreadyDeleted: true,
+      },
+    };
+  }
+
+  const { data: conv, error: convErr } = await supa
+    .schema('pendingbot')
+    .from('conversations')
+    .select('conversation_type')
+    .eq('id', msg.conversation_id)
+    .maybeSingle();
+  if (convErr) return { ok: false, code: 'database_error', detail: convErr.message };
+
+  return {
+    ok: true,
+    target: {
+      messageId: msg.id,
+      conversationId: msg.conversation_id,
+      conversationType: (conv?.conversation_type as string | undefined) ?? 'user_bot',
+      attachments: msg.attachments,
+      createdAt: msg.created_at ?? null,
+      alreadyDeleted: false,
     },
   };
 }

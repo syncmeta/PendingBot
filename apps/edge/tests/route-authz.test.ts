@@ -280,6 +280,81 @@ describe('route authorization helpers', () => {
     ).resolves.toEqual({ ok: false, code: 'forbidden' });
   });
 
+  it('authorizes message recall only for the original human sender', async () => {
+    const { authorizeMessageRecall } = await import('../src/lib/route-authz');
+    const db = makeFakeDb({
+      messages: [
+        {
+          id: '11111111-1111-4111-8111-111111111111',
+          user_id: 'user-1',
+          sender_bot_id: null,
+          conversation_id: 'conv-user',
+          status: 'done',
+          attachments: { ids: ['att-1'] },
+          created_at: '2026-05-25T00:00:00Z',
+        },
+        {
+          id: '22222222-2222-4222-8222-222222222222',
+          user_id: null,
+          sender_bot_id: 'bot-1',
+          conversation_id: 'conv-user',
+          status: 'done',
+          attachments: null,
+          created_at: '2026-05-25T00:01:00Z',
+        },
+        {
+          id: '33333333-3333-4333-8333-333333333333',
+          user_id: 'user-1',
+          sender_bot_id: null,
+          conversation_id: 'conv-user',
+          status: 'deleted',
+          attachments: null,
+          created_at: '2026-05-25T00:02:00Z',
+        },
+      ],
+      conversations: [
+        {
+          id: 'conv-user',
+          conversation_type: 'user_user',
+          user_id: null,
+        },
+      ],
+    });
+    const env = makeFakeEnv(db);
+
+    await expect(
+      authorizeMessageRecall(env, '11111111-1111-4111-8111-111111111111', 'user-1'),
+    ).resolves.toEqual({
+      ok: true,
+      target: {
+        messageId: '11111111-1111-4111-8111-111111111111',
+        conversationId: 'conv-user',
+        conversationType: 'user_user',
+        attachments: { ids: ['att-1'] },
+        createdAt: '2026-05-25T00:00:00Z',
+        alreadyDeleted: false,
+      },
+    });
+
+    await expect(
+      authorizeMessageRecall(env, '11111111-1111-4111-8111-111111111111', 'user-2'),
+    ).resolves.toEqual({ ok: false, code: 'forbidden' });
+
+    await expect(
+      authorizeMessageRecall(env, '22222222-2222-4222-8222-222222222222', 'user-1'),
+    ).resolves.toEqual({ ok: false, code: 'forbidden' });
+
+    await expect(
+      authorizeMessageRecall(env, '33333333-3333-4333-8333-333333333333', 'user-1'),
+    ).resolves.toMatchObject({
+      ok: true,
+      target: {
+        alreadyDeleted: true,
+        conversationType: null,
+      },
+    });
+  });
+
   it('authorizes bot use for private ownership and public invites', async () => {
     const { authorizeBotUse } = await import('../src/lib/route-authz');
     const db = makeFakeDb({
