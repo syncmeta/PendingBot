@@ -94,6 +94,12 @@ The test-account logger is opt-in by user flag and service-role only, but it sto
 
 Risk: this is reasonable for diagnostics, but it needs a retention/redaction policy before it becomes a silent privacy dataset.
 
+### Realtime metering logs must stay allowlist-only
+
+`apps/edge/src/durable-objects/realtime-meter.ts` previously logged full upstream `session.created` / `session.updated` event payloads for diagnostics. Those events can include generated realtime instructions assembled from bot memory, notes, skills, and conversation context.
+
+Fixed on 2026-05-25: the meter now logs only event type, session id, model, and error code/type, and `apps/edge/tests/privacy-logging.test.ts` locks out future `JSON.stringify(msg)` logging of realtime events.
+
 ## Positive Findings
 
 - All current `pendingbot` tables in the linked database have RLS enabled.
@@ -109,3 +115,9 @@ Risk: this is reasonable for diagnostics, but it needs a retention/redaction pol
 - `apps/envelope-lab` contains intentional stubs and fixture switches for a lab/replay surface, not production dead code.
 - `supabase/migrations/0025_dolor_preset_wip_stub.sql` is historical seed migration text, not current runtime logic.
 - The remaining temporary-design risk is not dead code; it is unfinished foundation around Crew/temporary-group billing, runner permissions, and subject wallets.
+
+## Architecture Notes Added on 2026-05-25
+
+- User-facing Edge routes use `serviceClient()` heavily after `requireSession()`, with authorization proven inline per handler. This is workable but hard to audit; the next structural step is a shared authorization layer that resolves resources under user identity before service-role writes.
+- Supabase advisors are still too noisy to serve as a crisp release gate. Keep an allowlist for intentional service-role-only tables and accepted performance warnings, then fail on any new security warning outside that list.
+- Voice metering is split between 1v1 Realtime and group voice DOs. Shared cost/audit/log-redaction primitives would reduce billing drift and prevent privacy fixes from landing in only one voice path.

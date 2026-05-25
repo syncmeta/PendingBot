@@ -94,6 +94,22 @@ interface RealtimeUsage {
   };
 }
 
+interface RealtimeEvent {
+  type?: string;
+  error?: {
+    type?: string;
+    code?: string;
+  };
+  response?: {
+    usage?: RealtimeUsage;
+    status?: string;
+  };
+  session?: {
+    id?: string;
+    model?: string;
+  };
+}
+
 export class RealtimeMeterDO {
   private state: DurableObjectState;
   private env: Env;
@@ -385,27 +401,27 @@ export class RealtimeMeterDO {
 
   private async onUpstreamMessage(ev: MessageEvent): Promise<void> {
     if (typeof ev.data !== 'string') return;
-    let msg: { type?: string; response?: { usage?: RealtimeUsage } };
+    let msg: RealtimeEvent;
     try {
       msg = JSON.parse(ev.data);
     } catch {
       return;
     }
-    // Diagnostic — surface the realtime event stream server-side via the
-    // sideband so `wrangler tail` shows what the session is doing.
+    // Keep diagnostics to a field allowlist: session events can contain
+    // generated instructions and other private bot/user context.
     console.log('[realtime-meter] event', msg.type ?? '(no type)');
     if (msg.type === 'session.created' || msg.type === 'session.updated') {
-      console.log(
-        '[realtime-meter]',
-        msg.type,
-        JSON.stringify(msg).slice(0, 900),
-      );
+      console.log('[realtime-meter] session event', {
+        type: msg.type,
+        session_id: msg.session?.id,
+        model: msg.session?.model,
+      });
     }
     if (msg.type === 'error') {
-      console.warn(
-        '[realtime-meter] realtime error event',
-        JSON.stringify(msg).slice(0, 600),
-      );
+      console.warn('[realtime-meter] realtime error event', {
+        type: msg.error?.type,
+        code: msg.error?.code,
+      });
     }
     // Every completed model response carries a usage block — one audit
     // row per turn, billed from OpenAI's own numbers over this socket.
