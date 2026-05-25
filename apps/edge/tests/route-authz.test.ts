@@ -8,6 +8,93 @@ import {
 installFakeSupabaseMock();
 
 describe('route authorization helpers', () => {
+  it('authorizes message send conversations and rejects orphaned user_user peers', async () => {
+    const { authorizeMessageSendConversation } = await import('../src/lib/route-authz');
+    const db = makeFakeDb({
+      conversations: [
+        {
+          id: '11111111-1111-4111-8111-111111111111',
+          conversation_type: 'user_user',
+          bot_id: null,
+          user_id: 'user-1',
+          round_count: 3,
+        },
+        {
+          id: '22222222-2222-4222-8222-222222222222',
+          conversation_type: 'discuss',
+          bot_id: 'bot-1',
+          user_id: 'user-1',
+          round_count: 0,
+        },
+      ],
+      conversation_participants: [
+        {
+          conversation_id: '11111111-1111-4111-8111-111111111111',
+          participant_type: 'user',
+          participant_id: 'user-1',
+        },
+        {
+          conversation_id: '11111111-1111-4111-8111-111111111111',
+          participant_type: 'user',
+          participant_id: 'user-2',
+        },
+      ],
+    });
+    const env = makeFakeEnv(db);
+    // authorizeMessageSendConversation goes through resolveConv, whose first
+    // step is the KV-backed conversation cache.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (env as any).MEMORY = {
+      get: async () => null,
+      put: async () => undefined,
+      delete: async () => undefined,
+    };
+
+    await expect(
+      authorizeMessageSendConversation(
+        env,
+        'test-jwt',
+        'user-1',
+        '11111111-1111-4111-8111-111111111111',
+        () => undefined,
+      ),
+    ).resolves.toMatchObject({
+      ok: true,
+      conversation: {
+        id: '11111111-1111-4111-8111-111111111111',
+        conversation_type: 'user_user',
+      },
+    });
+
+    db.rows.conversation_participants = db.rows.conversation_participants.filter(
+      (row) => row.participant_id !== 'user-2',
+    );
+    await expect(
+      authorizeMessageSendConversation(
+        env,
+        'test-jwt',
+        'user-1',
+        '11111111-1111-4111-8111-111111111111',
+        () => undefined,
+      ),
+    ).resolves.toEqual({ ok: false, code: 'gone' });
+
+    await expect(
+      authorizeMessageSendConversation(
+        env,
+        'test-jwt',
+        'user-1',
+        '22222222-2222-4222-8222-222222222222',
+        () => undefined,
+      ),
+    ).resolves.toMatchObject({
+      ok: true,
+      conversation: {
+        conversation_type: 'user_bot',
+      },
+    });
+  });
+
   it('loads a group conversation only when the caller can see it and is a participant', async () => {
     const { loadGroupConversationForUser } = await import('../src/lib/route-authz');
     const db = makeFakeDb({

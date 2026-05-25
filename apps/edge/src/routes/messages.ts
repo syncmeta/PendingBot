@@ -19,7 +19,12 @@ import { parseRandomModelConfig, pickRandomModel } from '../llm/random-model';
 import { safeWaitUntil } from '../lib/safe-wait-until';
 import { startSseKeepalive } from '../lib/sse-keepalive';
 import { notifyConversationUsers, notifyUserMessage } from '../lib/push';
-import { authorizeBotUse, authorizeMessageDelete, authorizeMessageRecall } from '../lib/route-authz';
+import {
+  authorizeBotUse,
+  authorizeMessageDelete,
+  authorizeMessageRecall,
+  authorizeMessageSendConversation,
+} from '../lib/route-authz';
 import type { AppBindings } from '../types';
 
 export const messageRoutes = new Hono<AppBindings>();
@@ -107,9 +112,13 @@ messageRoutes.post('/', async (c) => {
   // ownership in parallel. Both must succeed before any state change.
   // The conv resolver does a local user_id check for single-owner conv
   // types and only round-trips Supabase for groups / cold reads.
-  const convPromise = resolveConv(c.env, supaUser, parsed.conversationId, userId, (p) =>
-    safeWaitUntil(c, p),
-  ).catch((err: { message?: string }) => ({ __error: err.message ?? 'database_error' as const }));
+  const convPromise = authorizeMessageSendConversation(
+    c.env,
+    userJwt,
+    userId,
+    parsed.conversationId,
+    (p) => safeWaitUntil(c, p),
+  );
 
   const hasAttachments = (parsed.attachmentIds?.length ?? 0) > 0;
   const attCheckPromise = hasAttachments
@@ -120,41 +129,16 @@ messageRoutes.post('/', async (c) => {
 
   const [convResolved, attRows] = await Promise.all([convPromise, attCheckPromise]);
 
-  if (convResolved && typeof convResolved === 'object' && '__error' in convResolved) {
-    return jsonError(c, 500, 'database_error', { detail: convResolved.__error });
-  }
-  // Narrow the conversation_type literal — schema.ts types it as the full
-  // set the CHECK constraint allows; this route only handles the message
-  // surface, so we treat the others (discuss/surf/portrait) the same as
-  // user_bot for routing purposes.
-  const conv = convResolved as {
-    id: string;
-    conversation_type: 'user_bot' | 'self' | 'group' | 'user_user';
-    bot_id: string | null;
-    round_count: number | null;
-  } | null;
-  if (!conv) return jsonError(c, 404, 'conversation_no_access');
-
-  // user_user peer-existence gate. When a user hard-deletes their account
-  // the auth-delete trigger drops their conversation_participants rows but
-  // leaves any conversation the *other* side owns intact — a one-sided
-  // orphan. resolveConv only proves the caller's own access, so without
-  // this check a send into that orphan would silently 200. Reject it so
-  // the client can tell the user the peer is gone.
-  if (conv.conversation_type === 'user_user') {
-    const { data: peer, error: peerErr } = await supaService
-      .from('conversation_participants')
-      .select('participant_id')
-      .eq('conversation_id', parsed.conversationId)
-      .eq('participant_type', 'user')
-      .neq('participant_id', userId)
-      .limit(1)
-      .maybeSingle();
-    if (peerErr) return jsonError(c, 500, 'database_error', { detail: peerErr.message });
-    if (!peer) {
+  if (!convResolved.ok) {
+    if (convResolved.code === 'database_error') {
+      return jsonError(c, 500, 'database_error', { detail: convResolved.detail });
+    }
+    if (convResolved.code === 'gone') {
       return jsonError(c, 410, 'peer_account_deleted', { message: '对方账号已注销' });
     }
+    return jsonError(c, 404, 'conversation_no_access');
   }
+  const conv = convResolved.conversation;
 
   // Attachment ownership gate. attachmentIds rides in the body uncontrolled —
   // verify each row's user_id matches the sender so a caller can't pin
@@ -628,6 +612,7 @@ const StartBody = z.object({
 messageRoutes.post('/start', async (c) => {
   const userId = c.var.userId!;
   const userJwt = c.var.userJwt!;
+  const supaUser = userClient(c.env, userJwt);
 
   let parsed: z.infer<typeof StartBody>;
   try {
@@ -639,7 +624,6 @@ messageRoutes.post('/start', async (c) => {
     return jsonError(c, 400, 'invalid_body', { message: 'newMessage or attachment required' });
   }
 
-  const supaUser = userClient(c.env, userJwt);
   const supaService = serviceClient(c.env);
 
   // Bot row needed for runChatTurn (model_id / output_mode / config).

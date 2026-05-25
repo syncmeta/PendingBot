@@ -1,5 +1,6 @@
 import type { Env } from '../types';
 import { serviceClient, userClient } from './supabase';
+import { resolveConv, type CachedConv } from './conv-cache';
 
 export type GroupRole = 'owner' | 'admin' | 'member' | string;
 
@@ -39,10 +40,71 @@ export interface BotUseTarget {
 }
 
 type AuthzCode = 'database_error' | 'forbidden' | 'not_found';
+type MessageSendAuthzCode = AuthzCode | 'gone';
 
 export type AuthzResult<T> =
   | ({ ok: true } & T)
   | { ok: false; code: AuthzCode; detail?: string; role?: GroupRole | null };
+
+export type MessageSendAuthzResult<T> =
+  | ({ ok: true } & T)
+  | { ok: false; code: MessageSendAuthzCode; detail?: string };
+
+export type MessageSendConversation = CachedConv & {
+  conversation_type: 'user_bot' | 'self' | 'group' | 'user_user';
+};
+
+export async function authorizeMessageSendConversation(
+  env: Env,
+  userJwt: string,
+  userId: string,
+  conversationId: string,
+  waitUntil: (p: Promise<unknown>) => void,
+): Promise<MessageSendAuthzResult<{ conversation: MessageSendConversation }>> {
+  const supaUser = userClient(env, userJwt);
+  let conv: CachedConv | null;
+  try {
+    conv = await resolveConv(env, supaUser, conversationId, userId, waitUntil);
+  } catch (err) {
+    return {
+      ok: false,
+      code: 'database_error',
+      detail: (err as { message?: string }).message ?? 'resolveConv failed',
+    };
+  }
+  if (!conv) return { ok: false, code: 'not_found' };
+
+  if (conv.conversation_type === 'user_user') {
+    const supa = serviceClient(env);
+    const { data: peer, error: peerErr } = await supa
+      .from('conversation_participants')
+      .select('participant_id')
+      .eq('conversation_id', conversationId)
+      .eq('participant_type', 'user')
+      .neq('participant_id', userId)
+      .limit(1)
+      .maybeSingle();
+    if (peerErr) return { ok: false, code: 'database_error', detail: peerErr.message };
+    if (!peer) return { ok: false, code: 'gone' };
+  }
+
+  return {
+    ok: true,
+    conversation: {
+      ...conv,
+      conversation_type: normalizeMessageConversationType(conv.conversation_type),
+    },
+  };
+}
+
+function normalizeMessageConversationType(
+  conversationType: string,
+): MessageSendConversation['conversation_type'] {
+  if (conversationType === 'self' || conversationType === 'group' || conversationType === 'user_user') {
+    return conversationType;
+  }
+  return 'user_bot';
+}
 
 export async function loadGroupConversationForUser(
   env: Env,
