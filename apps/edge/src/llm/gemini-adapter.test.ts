@@ -102,4 +102,43 @@ describe('openGeminiStream grounding parsing', () => {
     expect(chunks.some((c) => c.builtinTool)).toBe(false);
     expect(chunks.some((c) => c.citations)).toBe(false);
   });
+
+  it('retries search-only when a model rejects google_search plus function declarations', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error: {
+              status: 'INVALID_ARGUMENT',
+              message: 'google_search with functionDeclarations is not supported',
+            },
+          }),
+          { status: 400 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: 'searched answer' }] } }],
+            usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 2 },
+          }),
+          { status: 200 },
+        ),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const stream = await openGeminiStream(
+      'https://gw',
+      'tok',
+      { model: 'gemini-old', messages: MSGS, tools: FN_TOOL, webSearch: true },
+      new AbortController().signal,
+    );
+    const chunks = await collect(stream);
+    const firstBody = JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string);
+    const retryBody = JSON.parse(fetchMock.mock.calls[1]?.[1]?.body as string);
+
+    expect(firstBody.tools).toHaveLength(2);
+    expect(retryBody.tools).toEqual([{ google_search: {} }]);
+    expect(chunks).toContainEqual({ choices: [{ delta: { content: 'searched answer' } }] });
+  });
 });
