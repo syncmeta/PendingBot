@@ -805,6 +805,9 @@ groupVoiceRoutes.post('/:id/voice/designate-admin', async (c) => {
     targetId: parsed.target_id,
   });
   if (resp.status === 403) return jsonError(c, 403, 'forbidden');
+  if (resp.status === 404) {
+    return jsonError(c, 404, 'not_found', { detail: 'target not in room' });
+  }
   if (!resp.ok) {
     console.warn('[group-voice/designate-admin] room DO failed', resp.status);
     return jsonError(c, 502, 'voice_upstream_failed');

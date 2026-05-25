@@ -5,8 +5,11 @@ import {
   enqueueAudit,
   type ResolvedRoute,
 } from '../llm/router';
-import { getMarkup, usdToPnd } from './billing';
+import { getConfigInt, getMarkup, usdToPnd } from './billing';
 import { publishToHub } from './realtime-publish';
+
+export const DEFAULT_REALTIMEKIT_AUDIO_PARTICIPANT_USD_PER_MINUTE = 0.0005;
+const REALTIMEKIT_AUDIO_PRICE_KEY = 'cloudflare_realtimekit_audio_participant_usd_per_minute';
 
 export interface RealtimeUsage {
   input_token_details?: {
@@ -86,6 +89,24 @@ export function safeRealtimeErrorSummary(msg: RealtimeEventLike): {
     type: stringField(msg.error?.type),
     code: stringField(msg.error?.code),
   };
+}
+
+export async function getRealtimeKitAudioParticipantUsdPerMinute(
+  supa: SupabaseClient,
+): Promise<number> {
+  const configured = await getConfigInt(supa, REALTIMEKIT_AUDIO_PRICE_KEY);
+  return configured != null && configured >= 0
+    ? configured
+    : DEFAULT_REALTIMEKIT_AUDIO_PARTICIPANT_USD_PER_MINUTE;
+}
+
+export function computeRealtimeKitParticipantCostUsd(
+  participantSeconds: number,
+  usdPerParticipantMinute: number,
+): number {
+  if (!Number.isFinite(participantSeconds) || participantSeconds <= 0) return 0;
+  if (!Number.isFinite(usdPerParticipantMinute) || usdPerParticipantMinute <= 0) return 0;
+  return (participantSeconds / 60) * usdPerParticipantMinute;
 }
 
 export async function enqueueVoiceTurnAudit(input: {

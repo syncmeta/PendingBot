@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { _resetMarkupCache } from './billing';
 import {
   broadcastVoiceCostPreview,
+  computeRealtimeKitParticipantCostUsd,
   enqueueVoiceTurnAudit,
+  getRealtimeKitAudioParticipantUsdPerMinute,
   safeRealtimeErrorSummary,
   safeRealtimeEventSummary,
   splitRealtimeUsage,
@@ -96,6 +98,32 @@ describe('voice metering helpers', () => {
       type: 'invalid_request_error',
       code: 'bad_request',
     });
+  });
+
+  it('computes RealtimeKit participant-minute media cost', () => {
+    expect(computeRealtimeKitParticipantCostUsd(120, 0.0005)).toBe(0.001);
+    expect(computeRealtimeKitParticipantCostUsd(0, 0.0005)).toBe(0);
+    expect(computeRealtimeKitParticipantCostUsd(120, 0)).toBe(0);
+  });
+
+  it('reads configured RealtimeKit media price and falls back to the GA audio-only price', async () => {
+    const configured = {
+      from: vi.fn(() => ({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn(async () => ({ data: { value: 0.001 }, error: null })),
+      })),
+    };
+    await expect(getRealtimeKitAudioParticipantUsdPerMinute(configured as never)).resolves.toBe(0.001);
+
+    const missing = {
+      from: vi.fn(() => ({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn(async () => ({ data: null, error: null })),
+      })),
+    };
+    await expect(getRealtimeKitAudioParticipantUsdPerMinute(missing as never)).resolves.toBe(0.0005);
   });
 
   it('enqueues voice audit rows with shared realtime metadata shape', async () => {
