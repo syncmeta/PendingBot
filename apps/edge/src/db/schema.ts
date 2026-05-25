@@ -795,6 +795,75 @@ export type Database = {
           },
         ]
       }
+      crew_announcement_mentions: {
+        Row: {
+          announcement_id: string
+          created_at: string
+          crew_conversation_id: string
+          id: string
+          responsible_subject_id: string
+          target_kind: string
+          target_member_id: string | null
+          target_session_id: string | null
+        }
+        Insert: {
+          announcement_id: string
+          created_at?: string
+          crew_conversation_id: string
+          id?: string
+          responsible_subject_id: string
+          target_kind: string
+          target_member_id?: string | null
+          target_session_id?: string | null
+        }
+        Update: {
+          announcement_id?: string
+          created_at?: string
+          crew_conversation_id?: string
+          id?: string
+          responsible_subject_id?: string
+          target_kind?: string
+          target_member_id?: string | null
+          target_session_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crew_announcement_mentions_announcement_id_fkey"
+            columns: ["announcement_id"]
+            isOneToOne: false
+            referencedRelation: "crew_announcements"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crew_announcement_mentions_crew_conversation_id_fkey"
+            columns: ["crew_conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crew_announcement_mentions_responsible_subject_id_fkey"
+            columns: ["responsible_subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crew_announcement_mentions_target_member_id_fkey"
+            columns: ["target_member_id"]
+            isOneToOne: false
+            referencedRelation: "temporary_group_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crew_announcement_mentions_target_session_id_fkey"
+            columns: ["target_session_id"]
+            isOneToOne: false
+            referencedRelation: "crew_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       crew_announcements: {
         Row: {
           board_visible: boolean
@@ -878,75 +947,6 @@ export type Database = {
             columns: ["source_message_id"]
             isOneToOne: false
             referencedRelation: "messages"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      crew_announcement_mentions: {
-        Row: {
-          announcement_id: string
-          created_at: string
-          crew_conversation_id: string
-          id: string
-          responsible_subject_id: string
-          target_kind: string
-          target_member_id: string | null
-          target_session_id: string | null
-        }
-        Insert: {
-          announcement_id: string
-          created_at?: string
-          crew_conversation_id: string
-          id?: string
-          responsible_subject_id: string
-          target_kind: string
-          target_member_id?: string | null
-          target_session_id?: string | null
-        }
-        Update: {
-          announcement_id?: string
-          created_at?: string
-          crew_conversation_id?: string
-          id?: string
-          responsible_subject_id?: string
-          target_kind?: string
-          target_member_id?: string | null
-          target_session_id?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "crew_announcement_mentions_announcement_id_fkey"
-            columns: ["announcement_id"]
-            isOneToOne: false
-            referencedRelation: "crew_announcements"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "crew_announcement_mentions_crew_conversation_id_fkey"
-            columns: ["crew_conversation_id"]
-            isOneToOne: false
-            referencedRelation: "conversations"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "crew_announcement_mentions_responsible_subject_id_fkey"
-            columns: ["responsible_subject_id"]
-            isOneToOne: false
-            referencedRelation: "subjects"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "crew_announcement_mentions_target_member_id_fkey"
-            columns: ["target_member_id"]
-            isOneToOne: false
-            referencedRelation: "temporary_group_members"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "crew_announcement_mentions_target_session_id_fkey"
-            columns: ["target_session_id"]
-            isOneToOne: false
-            referencedRelation: "crew_sessions"
             referencedColumns: ["id"]
           },
         ]
@@ -3649,6 +3649,15 @@ export type Database = {
         }
         Returns: Json
       }
+      consume_subject_device_login_challenge: {
+        Args: {
+          p_challenge_id: string
+          p_challenge_secret_hash: string
+          p_grant_id: string
+          p_token_hash: string
+        }
+        Returns: Json
+      }
       create_crew_announcement: {
         Args: {
           p_board_visible?: boolean
@@ -3688,15 +3697,6 @@ export type Database = {
           p_summary?: string
         }
         Returns: string
-      }
-      consume_subject_device_login_challenge: {
-        Args: {
-          p_challenge_id: string
-          p_challenge_secret_hash: string
-          p_grant_id: string
-          p_token_hash: string
-        }
-        Returns: Json
       }
       decide_human_help_request: {
         Args: { p_decision: string; p_request_id: string }
@@ -3895,10 +3895,7 @@ export type Database = {
       }
       open_self_conv: { Args: never; Returns: string }
       open_user_bot_conv: { Args: { p_bot_id: string }; Returns: string }
-      open_user_user_conv: {
-        Args: { p_other_user_id: string }
-        Returns: Json
-      }
+      open_user_user_conv: { Args: { p_other_user_id: string }; Returns: Json }
       random_place_name: { Args: never; Returns: string }
       register_runner_host: {
         Args: {
