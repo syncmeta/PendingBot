@@ -1,10 +1,10 @@
 import type { Env } from '../types';
 import { serviceClient } from '../lib/supabase';
-import { resolveRoute, enqueueAudit, computeVoiceCost } from '../llm/router';
-import { getBalance, getConfigInt, getMarkup, usdToPnd } from '../lib/billing';
-import { publishToHub } from '../lib/realtime-publish';
+import { resolveRoute, enqueueAudit } from '../llm/router';
+import { getBalance, getConfigInt } from '../lib/billing';
 import { endRealtimeSession, REALTIME_HANG_UP_TOOL } from '../lib/realtime-sessions';
 import {
+  broadcastVoiceCostPreview,
   safeRealtimeErrorSummary,
   safeRealtimeEventSummary,
   splitRealtimeUsage,
@@ -469,28 +469,20 @@ export class RealtimeMeterDO {
     supa: ReturnType<typeof serviceClient>,
     usage: VoiceTurnUsage,
   ): Promise<void> {
-    const usd = computeVoiceCost(modelToCall, usage);
-    if (usd == null) return;
-    try {
-      const markup = await getMarkup(supa);
-      const delta = usdToPnd(usd, markup);
-      if (delta <= 0) return;
-      this.cumulativePnd += delta;
-      // Route through the conv hub — same channel iOS already opens for
-      // the conversation, and a 1:1 conv has only the caller subscribed
-      // so the figure stays private without needing a separate user-hub
-      // path. Group voice fans out on the same key in room-voice.ts.
-      await publishToHub(this.env, `conv:${ctx.conversationId}`, {
-        type: 'voice_cost',
-        conversation_id: ctx.conversationId,
-        session_id: ctx.sessionId,
-        delta_pnd: delta,
-        cumulative_pnd: this.cumulativePnd,
-        at_ms: Date.now(),
-      });
-    } catch (err) {
-      console.warn('[realtime-meter] broadcast cost failed', err);
-    }
+    // Route through the conv hub — same channel iOS already opens for
+    // the conversation, and a 1:1 conv has only the caller subscribed
+    // so the figure stays private without needing a separate user-hub
+    // path. Group voice fans out on the same key in room-voice.ts.
+    this.cumulativePnd = await broadcastVoiceCostPreview({
+      env: this.env,
+      supa,
+      conversationId: ctx.conversationId,
+      sessionId: ctx.sessionId,
+      modelToCall,
+      usage,
+      cumulativePnd: this.cumulativePnd,
+      logPrefix: '[realtime-meter]',
+    });
   }
 
   // After a turn is billed, drop the call if the user can't afford it.

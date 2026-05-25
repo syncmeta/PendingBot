@@ -1,10 +1,13 @@
 import { getContainer } from '@cloudflare/containers';
 import type { Env } from '../types';
 import { serviceClient } from '../lib/supabase';
-import { resolveRoute, enqueueAudit, computeVoiceCost } from '../llm/router';
-import { getMarkup, usdToPnd } from '../lib/billing';
+import { resolveRoute, enqueueAudit } from '../llm/router';
 import { publishToHub, type VoiceCallEvent } from '../lib/realtime-publish';
-import { splitRealtimeUsage, type VoiceTurnUsage } from '../lib/voice-metering';
+import {
+  broadcastVoiceCostPreview,
+  splitRealtimeUsage,
+  type VoiceTurnUsage,
+} from '../lib/voice-metering';
 import { roomMediaToken } from './room-voice-context';
 import type {
   ContainerBotSpec,
@@ -823,24 +826,16 @@ export class RoomVoiceDO {
   ): Promise<void> {
     const ctx = this.ctx;
     if (!ctx) return;
-    const usd = computeVoiceCost(modelToCall, usage);
-    if (usd == null) return;
-    try {
-      const markup = await getMarkup(supa);
-      const delta = usdToPnd(usd, markup);
-      if (delta <= 0) return;
-      this.cumulativePnd += delta;
-      await publishToHub(this.env, `conv:${ctx.conversationId}`, {
-        type: 'voice_cost',
-        conversation_id: ctx.conversationId,
-        session_id: ctx.roomId,
-        delta_pnd: delta,
-        cumulative_pnd: this.cumulativePnd,
-        at_ms: Date.now(),
-      });
-    } catch (err) {
-      console.warn('[room-voice] broadcast cost failed', err);
-    }
+    this.cumulativePnd = await broadcastVoiceCostPreview({
+      env: this.env,
+      supa,
+      conversationId: ctx.conversationId,
+      sessionId: ctx.roomId,
+      modelToCall,
+      usage,
+      cumulativePnd: this.cumulativePnd,
+      logPrefix: '[room-voice]',
+    });
   }
 
   // ── teardown ───────────────────────────────────────────────────────

@@ -1,11 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { _resetMarkupCache } from './billing';
 import {
+  broadcastVoiceCostPreview,
   safeRealtimeErrorSummary,
   safeRealtimeEventSummary,
   splitRealtimeUsage,
 } from './voice-metering';
 
 describe('voice metering helpers', () => {
+  beforeEach(() => {
+    _resetMarkupCache();
+  });
+
   it('splits cached realtime usage out of full-rate text and audio buckets', () => {
     expect(
       splitRealtimeUsage({
@@ -89,5 +95,127 @@ describe('voice metering helpers', () => {
       type: 'invalid_request_error',
       code: 'bad_request',
     });
+  });
+
+  it('broadcasts a live PND cost preview for known realtime models', async () => {
+    const fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ delivered: 1 }),
+    }));
+    const env = {
+      REALTIME_HUB: {
+        idFromName: vi.fn((name: string) => name),
+        get: vi.fn(() => ({ fetch })),
+      },
+    };
+    const supa = {
+      from: vi.fn(() => ({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn(async () => ({ data: { value: 2 }, error: null })),
+      })),
+    };
+
+    const cumulative = await broadcastVoiceCostPreview({
+      env: env as never,
+      supa: supa as never,
+      conversationId: 'conv_123',
+      sessionId: 'sess_123',
+      modelToCall: 'gpt-realtime-mini-2025-12-15',
+      usage: {
+        inputTokens: 1_000_000,
+        outputTokens: 0,
+        audioInputTokens: 0,
+        audioOutputTokens: 0,
+        cacheReadTokens: 0,
+      },
+      cumulativePnd: 10,
+      logPrefix: '[test]',
+      atMs: 12345,
+    });
+
+    expect(cumulative).toBe(3250);
+    expect(fetch).toHaveBeenCalledWith('https://hub.internal/publish', {
+      method: 'POST',
+      body: JSON.stringify({
+        type: 'voice_cost',
+        conversation_id: 'conv_123',
+        session_id: 'sess_123',
+        delta_pnd: 3240,
+        cumulative_pnd: 3250,
+        at_ms: 12345,
+      }),
+    });
+  });
+
+  it('does not publish or advance cumulative cost for unknown realtime models', async () => {
+    const fetch = vi.fn();
+    const env = {
+      REALTIME_HUB: {
+        idFromName: vi.fn((name: string) => name),
+        get: vi.fn(() => ({ fetch })),
+      },
+    };
+    const supa = { from: vi.fn() };
+
+    await expect(
+      broadcastVoiceCostPreview({
+        env: env as never,
+        supa: supa as never,
+        conversationId: 'conv_123',
+        sessionId: 'sess_123',
+        modelToCall: 'unknown-model',
+        usage: {
+          inputTokens: 1_000_000,
+          outputTokens: 0,
+          audioInputTokens: 0,
+          audioOutputTokens: 0,
+          cacheReadTokens: 0,
+        },
+        cumulativePnd: 10,
+        logPrefix: '[test]',
+      }),
+    ).resolves.toBe(10);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('keeps the previous cumulative cost if the realtime hub is unavailable', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const env = {
+      REALTIME_HUB: {
+        idFromName: vi.fn((name: string) => name),
+        get: vi.fn(() => {
+          throw new Error('hub unavailable');
+        }),
+      },
+    };
+    const supa = {
+      from: vi.fn(() => ({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn(async () => ({ data: { value: 2 }, error: null })),
+      })),
+    };
+
+    await expect(
+      broadcastVoiceCostPreview({
+        env: env as never,
+        supa: supa as never,
+        conversationId: 'conv_123',
+        sessionId: 'sess_123',
+        modelToCall: 'gpt-realtime-mini-2025-12-15',
+        usage: {
+          inputTokens: 1_000_000,
+          outputTokens: 0,
+          audioInputTokens: 0,
+          audioOutputTokens: 0,
+          cacheReadTokens: 0,
+        },
+        cumulativePnd: 10,
+        logPrefix: '[test]',
+      }),
+    ).resolves.toBe(10);
+    expect(warn).toHaveBeenCalledWith('[test] broadcast cost failed', expect.any(Error));
+    warn.mockRestore();
   });
 });

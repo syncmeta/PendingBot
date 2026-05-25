@@ -1,3 +1,9 @@
+import type { Env } from '../types';
+import type { SupabaseClient } from './supabase';
+import { computeVoiceCost } from '../llm/router';
+import { getMarkup, usdToPnd } from './billing';
+import { publishToHub } from './realtime-publish';
+
 export interface RealtimeUsage {
   input_token_details?: {
     text_tokens?: number;
@@ -74,4 +80,38 @@ export function safeRealtimeErrorSummary(msg: RealtimeEventLike): {
     type: stringField(msg.error?.type),
     code: stringField(msg.error?.code),
   };
+}
+
+export async function broadcastVoiceCostPreview(input: {
+  env: Env;
+  supa: SupabaseClient;
+  conversationId: string;
+  sessionId: string;
+  modelToCall: string | undefined;
+  usage: VoiceTurnUsage;
+  cumulativePnd: number;
+  logPrefix: string;
+  atMs?: number;
+}): Promise<number> {
+  const usd = computeVoiceCost(input.modelToCall, input.usage);
+  if (usd == null) return input.cumulativePnd;
+
+  try {
+    const markup = await getMarkup(input.supa);
+    const delta = usdToPnd(usd, markup);
+    if (delta <= 0) return input.cumulativePnd;
+    const cumulativePnd = input.cumulativePnd + delta;
+    await publishToHub(input.env, `conv:${input.conversationId}`, {
+      type: 'voice_cost',
+      conversation_id: input.conversationId,
+      session_id: input.sessionId,
+      delta_pnd: delta,
+      cumulative_pnd: cumulativePnd,
+      at_ms: input.atMs ?? Date.now(),
+    });
+    return cumulativePnd;
+  } catch (err) {
+    console.warn(`${input.logPrefix} broadcast cost failed`, err);
+    return input.cumulativePnd;
+  }
 }
