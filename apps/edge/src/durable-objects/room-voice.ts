@@ -1,10 +1,11 @@
 import { getContainer } from '@cloudflare/containers';
 import type { Env } from '../types';
 import { serviceClient } from '../lib/supabase';
-import { resolveRoute, enqueueAudit } from '../llm/router';
+import { resolveRoute } from '../llm/router';
 import { publishToHub, type VoiceCallEvent } from '../lib/realtime-publish';
 import {
   broadcastVoiceCostPreview,
+  enqueueVoiceTurnAudit,
   splitRealtimeUsage,
   type VoiceTurnUsage,
 } from '../lib/voice-metering';
@@ -796,24 +797,21 @@ export class RoomVoiceDO {
 
     const turnUsage = splitRealtimeUsage(usage);
 
-    await enqueueAudit(this.env, route, {
+    await enqueueVoiceTurnAudit({
+      env: this.env,
+      route,
       userId: ctx.billUserId,
       conversationId: ctx.conversationId,
-      taskType: 'voice_call',
-      startedAt: Date.now(),
-      status: 'success',
-      ...turnUsage,
-      metadata: {
-        source: 'group_voice_call',
-        room_id: ctx.roomId,
-        turn_index: leg.turnIndex++,
-        bot_id: leg.spec.botId,
-        // Humans in the room at this turn. splitAndDebit bills the turn
-        // per-head across them, so over the call each member's total tracks
-        // how long they were in it ("按在场时长分摊") — and nobody pays for
-        // turns before they joined or after they left.
-        present_user_ids: [...this.humans.keys()],
-      },
+      usage: turnUsage,
+      source: 'group_voice_call',
+      roomId: ctx.roomId,
+      turnIndex: leg.turnIndex++,
+      botId: leg.spec.botId,
+      // Humans in the room at this turn. splitAndDebit bills the turn
+      // per-head across them, so over the call each member's total tracks
+      // how long they were in it ("按在场时长分摊") — and nobody pays for
+      // turns before they joined or after they left.
+      presentUserIds: [...this.humans.keys()],
     });
 
     void this.broadcastCost(supa, route?.modelToCall, turnUsage);

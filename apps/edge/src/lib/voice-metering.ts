@@ -1,6 +1,10 @@
 import type { Env } from '../types';
 import type { SupabaseClient } from './supabase';
-import { computeVoiceCost } from '../llm/router';
+import {
+  computeVoiceCost,
+  enqueueAudit,
+  type ResolvedRoute,
+} from '../llm/router';
 import { getMarkup, usdToPnd } from './billing';
 import { publishToHub } from './realtime-publish';
 
@@ -27,6 +31,8 @@ export interface VoiceTurnUsage {
   audioOutputTokens: number;
   cacheReadTokens: number;
 }
+
+export type VoiceAuditSource = 'voice_call' | 'group_voice_call';
 
 interface RealtimeEventLike {
   type?: unknown;
@@ -80,6 +86,38 @@ export function safeRealtimeErrorSummary(msg: RealtimeEventLike): {
     type: stringField(msg.error?.type),
     code: stringField(msg.error?.code),
   };
+}
+
+export async function enqueueVoiceTurnAudit(input: {
+  env: Env;
+  route: ResolvedRoute;
+  userId: string;
+  conversationId: string;
+  usage: VoiceTurnUsage;
+  source: VoiceAuditSource;
+  botId: string;
+  turnIndex: number;
+  startedAt?: number;
+  sessionId?: string;
+  roomId?: string;
+  presentUserIds?: string[];
+}): Promise<string> {
+  return enqueueAudit(input.env, input.route, {
+    userId: input.userId,
+    conversationId: input.conversationId,
+    taskType: 'voice_call',
+    startedAt: input.startedAt ?? Date.now(),
+    status: 'success',
+    ...input.usage,
+    metadata: {
+      source: input.source,
+      ...(input.sessionId ? { session_id: input.sessionId } : {}),
+      ...(input.roomId ? { room_id: input.roomId } : {}),
+      turn_index: input.turnIndex,
+      bot_id: input.botId,
+      ...(input.presentUserIds ? { present_user_ids: [...input.presentUserIds] } : {}),
+    },
+  });
 }
 
 export async function broadcastVoiceCostPreview(input: {

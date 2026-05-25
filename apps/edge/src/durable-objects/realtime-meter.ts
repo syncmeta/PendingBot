@@ -1,10 +1,11 @@
 import type { Env } from '../types';
 import { serviceClient } from '../lib/supabase';
-import { resolveRoute, enqueueAudit } from '../llm/router';
+import { resolveRoute } from '../llm/router';
 import { getBalance, getConfigInt } from '../lib/billing';
 import { endRealtimeSession, REALTIME_HANG_UP_TOOL } from '../lib/realtime-sessions';
 import {
   broadcastVoiceCostPreview,
+  enqueueVoiceTurnAudit,
   safeRealtimeErrorSummary,
   safeRealtimeEventSummary,
   splitRealtimeUsage,
@@ -435,19 +436,16 @@ export class RealtimeMeterDO {
 
     const turnUsage = splitRealtimeUsage(usage);
 
-    await enqueueAudit(this.env, route, {
+    await enqueueVoiceTurnAudit({
+      env: this.env,
+      route,
       userId: ctx.userId,
       conversationId: ctx.conversationId,
-      taskType: 'voice_call',
-      startedAt: Date.now(),
-      status: 'success',
-      ...turnUsage,
-      metadata: {
-        source: 'voice_call',
-        session_id: ctx.sessionId,
-        turn_index: this.turnIndex++,
-        bot_id: ctx.botId,
-      },
+      usage: turnUsage,
+      source: 'voice_call',
+      sessionId: ctx.sessionId,
+      turnIndex: this.turnIndex++,
+      botId: ctx.botId,
     });
 
     // Mirror the queue consumer's pricing locally so the in-call UI

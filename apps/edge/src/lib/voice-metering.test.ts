@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { _resetMarkupCache } from './billing';
 import {
   broadcastVoiceCostPreview,
+  enqueueVoiceTurnAudit,
   safeRealtimeErrorSummary,
   safeRealtimeEventSummary,
   splitRealtimeUsage,
@@ -95,6 +96,66 @@ describe('voice metering helpers', () => {
       type: 'invalid_request_error',
       code: 'bad_request',
     });
+  });
+
+  it('enqueues voice audit rows with shared realtime metadata shape', async () => {
+    const send = vi.fn(async () => undefined);
+    const env = { AUDIT_QUEUE: { send } };
+    const route = {
+      modelToCall: 'gpt-realtime-2',
+      provider: { slug: 'openai', apiStyle: 'responses' },
+      client: {},
+    };
+
+    const auditId = await enqueueVoiceTurnAudit({
+      env: env as never,
+      route: route as never,
+      userId: 'user_123',
+      conversationId: 'conv_123',
+      usage: {
+        inputTokens: 1,
+        outputTokens: 2,
+        audioInputTokens: 3,
+        audioOutputTokens: 4,
+        cacheReadTokens: 5,
+      },
+      source: 'group_voice_call',
+      roomId: 'room_123',
+      turnIndex: 7,
+      botId: 'bot_123',
+      presentUserIds: ['user_123', 'user_456'],
+      startedAt: Date.now(),
+    });
+
+    expect(auditId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        route: {
+          modelToCall: 'gpt-realtime-2',
+          provider: { slug: 'openai', apiStyle: 'responses' },
+        },
+        opts: expect.objectContaining({
+          userId: 'user_123',
+          conversationId: 'conv_123',
+          taskType: 'voice_call',
+          status: 'success',
+          inputTokens: 1,
+          outputTokens: 2,
+          audioInputTokens: 3,
+          audioOutputTokens: 4,
+          cacheReadTokens: 5,
+          metadata: {
+            source: 'group_voice_call',
+            room_id: 'room_123',
+            turn_index: 7,
+            bot_id: 'bot_123',
+            present_user_ids: ['user_123', 'user_456'],
+          },
+        }),
+      }),
+    );
   });
 
   it('broadcasts a live PND cost preview for known realtime models', async () => {
