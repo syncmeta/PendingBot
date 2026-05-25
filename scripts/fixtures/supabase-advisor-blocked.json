@@ -1,0 +1,14 @@
+{
+  "result": {
+    "lints": [
+      {
+        "name": "auth_leaked_password_protection",
+        "title": "Leaked Password Protection Disabled",
+        "level": "WARN",
+        "categories": ["SECURITY"],
+        "detail": "Leaked password protection is currently disabled.",
+        "cache_key": "auth_leaked_password_protection"
+      }
+    ]
+  }
+}

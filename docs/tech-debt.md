@@ -113,7 +113,7 @@
 - **问题**: 当前 advisors 同时报告真实待部署安全问题、service-role-only 表的 `RLS Enabled No Policy`、大量缺索引外键、多条 permissive policy、以及可解释的管理/触发器函数。没有 repo 内 allowlist 和“必须清零 vs 可接受噪音”的分层，导致每次审计都要重新判断哪些是风险、哪些是预期。
 - **影响**: 真问题容易被噪音淹没；也会让“部署后 advisors clean”这个安全门槛变得不明确。尤其是 service-role-only 日志/配置表、管理 RPC、subject helper 这几类需要可机器检查的例外。
 - **建议**: 建一个 `docs/supabase-advisor-allowlist.md` 或测试 fixture：记录每条可接受 advisor 的理由、owner、复核日期；CI/本地脚本把非 allowlist 的 security warning 当失败，performance warning 至少生成待办清单。
-- **状态**: 待办
+- **状态**: 部分修复（2026-05-25 · 新增 `docs/supabase-advisor-allowlist.json` 与 `scripts/supabase-advisor-gate.ts`，安全 advisor 现在默认 fail-closed，只有列明理由的 service-role-only INFO 可通过；未列入的 WARN/ERROR 会阻塞。live 上仍需部署本分支 Supabase 迁移并处理 Auth leaked-password / MFA 设置后再把 gate 接入 CI。）
 
 ### 🟡 1v1 Realtime 和群语音的 metering / billing 逻辑重复
 - **发现**: 2026-05-25 · codex/security-architecture-audit

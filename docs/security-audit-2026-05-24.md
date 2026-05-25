@@ -125,5 +125,5 @@ Fixed on 2026-05-25: workspace constraints now require patched Next/PostCSS/Hono
 ## Architecture Notes Added on 2026-05-25
 
 - User-facing Edge routes use `serviceClient()` heavily after `requireSession()`, with authorization proven inline per handler. This is workable but hard to audit; the next structural step is a shared authorization layer that resolves resources under user identity before service-role writes.
-- Supabase advisors are still too noisy to serve as a crisp release gate. Keep an allowlist for intentional service-role-only tables and accepted performance warnings, then fail on any new security warning outside that list.
+- Supabase advisors now have a repo gate: `scripts/supabase-advisor-gate.ts` with `docs/supabase-advisor-allowlist.json`. The gate allows only documented service-role-only security INFO entries and fails unlisted security WARN/ERROR findings. Live remains blocked until the pending security migrations are deployed and Auth leaked-password/MFA settings are resolved.
 - Voice metering is split between 1v1 Realtime and group voice DOs. Shared cost/audit/log-redaction primitives would reduce billing drift and prevent privacy fixes from landing in only one voice path.

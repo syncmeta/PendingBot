@@ -15,6 +15,7 @@
     "build": "bun --filter '*' build",
     "typecheck": "bun --filter '*' typecheck",
     "test": "bun --filter '*' test",
+    "supabase:advisor:gate": "bun scripts/supabase-advisor-gate.ts --allowlist docs/supabase-advisor-allowlist.json",
     "prepare": "lefthook install"
   },
   "devDependencies": {
