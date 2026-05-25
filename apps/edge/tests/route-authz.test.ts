@@ -279,4 +279,37 @@ describe('route authorization helpers', () => {
       authorizeMessageDelete(env, '33333333-3333-4333-8333-333333333333', 'user-1'),
     ).resolves.toEqual({ ok: false, code: 'forbidden' });
   });
+
+  it('authorizes bot use for private ownership and public invites', async () => {
+    const { authorizeBotUse } = await import('../src/lib/route-authz');
+    const db = makeFakeDb({
+      bot_invites: [
+        {
+          bot_id: 'bot-public',
+          user_id: 'invited-user',
+        },
+      ],
+    });
+    const env = makeFakeEnv(db);
+
+    await expect(
+      authorizeBotUse(env, { id: 'bot-private', visibility: 'private', creator_id: 'owner-user' }, 'owner-user'),
+    ).resolves.toEqual({ ok: true, allowed: true });
+
+    await expect(
+      authorizeBotUse(env, { id: 'bot-private', visibility: 'private', creator_id: 'owner-user' }, 'other-user'),
+    ).resolves.toEqual({ ok: false, code: 'forbidden' });
+
+    await expect(
+      authorizeBotUse(env, { id: 'bot-public', visibility: 'public_invite', creator_id: 'owner-user' }, 'invited-user'),
+    ).resolves.toEqual({ ok: true, allowed: true });
+
+    await expect(
+      authorizeBotUse(env, { id: 'bot-public', visibility: 'public_invite', creator_id: 'owner-user' }, 'other-user'),
+    ).resolves.toEqual({ ok: false, code: 'forbidden' });
+
+    await expect(
+      authorizeBotUse(env, { id: 'bot-public', visibility: 'public_invite', creator_id: 'owner-user' }, 'owner-user'),
+    ).resolves.toEqual({ ok: true, allowed: true });
+  });
 });

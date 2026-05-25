@@ -23,6 +23,12 @@ export interface MessageDeleteTarget {
   isBotReply: boolean;
 }
 
+export interface BotUseTarget {
+  id: string;
+  visibility: string | null;
+  creator_id: string | null;
+}
+
 type AuthzCode = 'database_error' | 'forbidden' | 'not_found';
 
 export type AuthzResult<T> =
@@ -237,4 +243,28 @@ export async function authorizeMessageDelete(
       isBotReply,
     },
   };
+}
+
+export async function authorizeBotUse(
+  env: Env,
+  bot: BotUseTarget,
+  userId: string,
+): Promise<AuthzResult<{ allowed: true }>> {
+  if (bot.visibility === 'private' && bot.creator_id !== userId) {
+    return { ok: false, code: 'forbidden' };
+  }
+
+  if (bot.visibility === 'public_invite' && bot.creator_id !== userId) {
+    const supa = serviceClient(env);
+    const { data: invite, error } = await supa
+      .from('bot_invites')
+      .select('user_id')
+      .eq('bot_id', bot.id)
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (error) return { ok: false, code: 'database_error', detail: error.message };
+    if (!invite) return { ok: false, code: 'forbidden' };
+  }
+
+  return { ok: true, allowed: true };
 }

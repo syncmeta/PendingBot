@@ -19,7 +19,7 @@ import { parseRandomModelConfig, pickRandomModel } from '../llm/random-model';
 import { safeWaitUntil } from '../lib/safe-wait-until';
 import { startSseKeepalive } from '../lib/sse-keepalive';
 import { notifyConversationUsers, notifyUserMessage } from '../lib/push';
-import { authorizeMessageDelete } from '../lib/route-authz';
+import { authorizeBotUse, authorizeMessageDelete } from '../lib/route-authz';
 import type { AppBindings } from '../types';
 
 export const messageRoutes = new Hono<AppBindings>();
@@ -378,25 +378,15 @@ messageRoutes.post('/', async (c) => {
     return c.json({ message: { id: parentMessageId }, botReplyScheduled: false });
   }
 
-  // Visibility gate: is_participant() lets the user keep reading the conv
-  // even after the creator un-invites them, and the worker uses the
-  // service role to fetch the bot — both of which would otherwise let a
-  // dropped invitee keep chatting on the creator's tab. Re-check here.
-  // Every private bot is owned — preset private bots are per-user clones,
-  // not a shared system row — so a private bot is usable only by its creator.
-  if (bot.visibility === 'private' && bot.creator_id !== userId) {
-    return jsonError(c, 403, 'forbidden', { message: '私有机器人只允许创建者使用' });
-  }
-  if (bot.visibility === 'public_invite' && bot.creator_id !== userId) {
-    const { data: invite } = await supaService
-      .from('bot_invites')
-      .select('user_id')
-      .eq('bot_id', bot.id)
-      .eq('user_id', userId)
-      .maybeSingle();
-    if (!invite) {
-      return jsonError(c, 403, 'forbidden', { message: '没有权限和这个机器人聊天,可能已被取消邀请' });
+  // Visibility gate: resolveConv can let the user keep reading an existing
+  // conversation after the creator un-invites them from a public_invite bot.
+  // Re-check bot use on every new paid turn.
+  const botUse = await authorizeBotUse(c.env, bot, userId);
+  if (!botUse.ok) {
+    if (botUse.code === 'database_error') {
+      return jsonError(c, 500, 'database_error', { detail: botUse.detail });
     }
+    return jsonError(c, 403, 'forbidden', { message: '没有权限和这个机器人聊天,可能已被取消邀请' });
   }
 
   // Provider routing is bot-level only — the bot's own default route
@@ -966,8 +956,12 @@ messageRoutes.post('/:id/regenerate', async (c) => {
   if (!bot) return jsonError(c, 500, 'database_error', { message: 'bot lookup failed' });
   if (!bot.is_active) return jsonError(c, 400, 'forbidden', { message: 'bot inactive' });
   if (!bot.model_id) return jsonError(c, 500, 'database_error', { message: 'bot has no model pinned' });
-  if (bot.visibility === 'private' && bot.creator_id !== userId) {
-    return jsonError(c, 403, 'forbidden', { message: '私有机器人只允许创建者使用' });
+  const botUse = await authorizeBotUse(c.env, bot, userId);
+  if (!botUse.ok) {
+    if (botUse.code === 'database_error') {
+      return jsonError(c, 500, 'database_error', { detail: botUse.detail });
+    }
+    return jsonError(c, 403, 'forbidden', { message: '没有权限和这个机器人聊天,可能已被取消邀请' });
   }
 
   try {

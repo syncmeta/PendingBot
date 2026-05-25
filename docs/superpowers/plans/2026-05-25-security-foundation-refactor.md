@@ -131,3 +131,24 @@ Change the peer-id add-friend path so a request by UUID must include `sourceConv
 Run:
 - `bun --filter='@pendingbot/edge' run test -- tests/messages-recall.test.ts tests/route-authz.test.ts`
 - `bun --filter='@pendingbot/edge' run test -- tests/friend-requests.test.ts`
+
+### Task 5: Bot Use Authorization Drift
+
+**Files:**
+- Modify: `apps/edge/src/lib/route-authz.ts`
+- Modify: `apps/edge/src/routes/messages.ts`
+- Test: `apps/edge/tests/route-authz.test.ts`
+
+- [x] **Step 1: Add shared bot-use helper**
+
+Add `authorizeBotUse()` so private creator checks and `public_invite` invite checks live in one helper.
+
+- [x] **Step 2: Use helper on all paid message turns**
+
+Use the helper from both normal message sends and regenerate. This closes the drift where normal sends rechecked revoked `public_invite` access but regenerate did not.
+
+- [x] **Step 3: Verify**
+
+Run:
+- `bun --filter='@pendingbot/edge' run test -- tests/route-authz.test.ts tests/messages-recall.test.ts`
+- `bun --filter='@pendingbot/edge' run typecheck`
