@@ -204,6 +204,50 @@ export class InsufficientBalanceError extends Error {
   }
 }
 
+export interface BalanceGateState {
+  balance_credits: number;
+  min_threshold: number;
+  allowed: boolean;
+}
+
+export async function getBalanceGateState(
+  env: Env,
+  supa: SupabaseClient,
+  userId: string,
+  opts?: { readBalanceWhenDisabled?: boolean },
+): Promise<BalanceGateState> {
+  const [cached, threshold] = await Promise.all([
+    getCachedBalance(env, userId),
+    getThreshold(supa, env),
+  ]);
+  const minThreshold = threshold;
+
+  if (cached) {
+    return {
+      balance_credits: cached.balance_credits,
+      min_threshold: minThreshold,
+      allowed: minThreshold <= 0 || cached.balance_credits >= minThreshold,
+    };
+  }
+
+  if (minThreshold <= 0 && !opts?.readBalanceWhenDisabled) {
+    return {
+      balance_credits: 0,
+      min_threshold: minThreshold,
+      allowed: true,
+    };
+  }
+
+  const bal = await getBalance(supa, userId);
+  const balance = bal?.balance_credits ?? 0;
+  putCachedBalance(env, userId, balance).catch(() => undefined);
+  return {
+    balance_credits: balance,
+    min_threshold: minThreshold,
+    allowed: minThreshold <= 0 || balance >= minThreshold,
+  };
+}
+
 /**
  * Throw InsufficientBalanceError when balance < min_balance_threshold.
  * Call this BEFORE issuing an LLM request from a user-initiated path
@@ -222,28 +266,10 @@ export async function requireBalance(
   supa: SupabaseClient,
   userId: string,
 ): Promise<void> {
-  const [cached, threshold] = await Promise.all([
-    getCachedBalance(env, userId),
-    getThreshold(supa, env),
-  ]);
-  if (threshold <= 0) return; // gate disabled globally — short-circuit
-
-  if (cached) {
-    if (cached.balance_credits < threshold) {
-      throw new InsufficientBalanceError(cached.balance_credits, threshold);
-    }
-    return;
+  const gate = await getBalanceGateState(env, supa, userId);
+  if (!gate.allowed) {
+    throw new InsufficientBalanceError(gate.balance_credits, gate.min_threshold);
   }
-
-  // Cache miss → Supabase. Warm KV with the result so the next call
-  // skips the round-trip.
-  const bal = await getBalance(supa, userId);
-  const balance = bal?.balance_credits ?? 0;
-  if (balance < threshold) {
-    throw new InsufficientBalanceError(balance, threshold);
-  }
-  // Fire-and-forget warm. Errors are non-fatal — next miss re-reads.
-  putCachedBalance(env, userId, balance).catch(() => undefined);
 }
 
 // ---------------------------------------------------------------------------
