@@ -28,27 +28,93 @@ struct CrewDetailView: View {
     }
 
     var body: some View {
+        HStack(spacing: 0) {
+            conversationPane
+
+            Divider()
+
+            inspectorPane
+        }
+        .frame(minWidth: 940, minHeight: 640)
+        .navigationTitle(crew?.title ?? "Crew")
+        .task {
+            await model.refreshCrew(crewId)
+            selectInitialSessionIfNeeded()
+        }
+        .onChange(of: sessions.map(\.id)) { _, _ in
+            selectInitialSessionIfNeeded()
+        }
+    }
+
+    private var conversationPane: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(crew?.title ?? "Crew")
+                        .font(.title2.weight(.semibold))
+                        .lineLimit(1)
+
+                    Text("\(members.count) members · \(sessions.count) sessions")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Button {
+                    Task { await model.refreshCrew(crewId) }
+                } label: {
+                    Label("刷新", systemImage: "arrow.clockwise")
+                }
+            }
+
+            CrewChatView(
+                announcements: announcements,
+                sessions: sessions,
+                members: members,
+                draftText: $announcementText,
+                mentionedSessionIds: $mentionedSessionIds,
+                mentionedMemberIds: $mentionedMemberIds,
+                onSend: {
+                    Task {
+                        await model.createAnnouncement(
+                            crewId: crewId,
+                            summary: announcementText,
+                            recipientSessionIds: mentionedSessionIds,
+                            recipientMemberIds: mentionedMemberIds
+                        )
+                        announcementText = ""
+                        mentionedSessionIds = []
+                        mentionedMemberIds = []
+                    }
+                }
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .padding(16)
+        .background(.regularMaterial)
+    }
+
+    private var inspectorPane: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 14) {
                 header
                 createSessionBox
-                announcementsBox
                 sessionsBox
+
                 if let selectedSessionId {
                     SessionEventsView(sessionId: selectedSessionId)
                 }
             }
-            .padding()
+            .padding(16)
         }
-        .navigationTitle(crew?.title ?? "Crew")
-        .task {
-            await model.refreshCrew(crewId)
-        }
+        .frame(width: 380)
+        .background(.background)
     }
 
     private var header: some View {
-        GroupBox("概览") {
-            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
+        InspectorSection(title: "概览") {
+            Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 8) {
                 GridRow {
                     Text("ID").foregroundStyle(.secondary)
                     Text(crewId).font(.system(.caption, design: .monospaced))
@@ -57,12 +123,16 @@ struct CrewDetailView: View {
                     Text("状态").foregroundStyle(.secondary)
                     Text(crew?.status ?? "-")
                 }
+                GridRow {
+                    Text("成员").foregroundStyle(.secondary)
+                    Text("\(members.count)")
+                }
             }
         }
     }
 
     private var createSessionBox: some View {
-        GroupBox("创建 Session") {
+        InspectorSection(title: "创建任务") {
             VStack(alignment: .leading, spacing: 10) {
                 Picker("Runner", selection: $runnerKind) {
                     ForEach(RunnerKind.allCases) { kind in
@@ -93,57 +163,107 @@ struct CrewDetailView: View {
     }
 
     private var sessionsBox: some View {
-        GroupBox("Sessions") {
+        InspectorSection(title: "Sessions") {
             if sessions.isEmpty {
                 ContentUnavailableView("还没有 session", systemImage: "terminal")
             } else {
-                Table(sessions, selection: $selectedSessionId) {
-                    TableColumn("状态") { session in
-                        Text(session.status)
-                    }
-                    TableColumn("Runner") { session in
-                        Text(session.runnerKind)
-                    }
-                    TableColumn("任务") { session in
-                        Text(session.taskBrief)
-                            .lineLimit(2)
-                    }
-                    TableColumn("创建时间") { session in
-                        Text(session.createdAt)
-                    }
-                }
-                .frame(minHeight: 220)
-                .onChange(of: selectedSessionId) { _, newValue in
-                    if let newValue {
-                        Task { await model.refreshEvents(sessionId: newValue) }
+                VStack(spacing: 6) {
+                    ForEach(sessions) { session in
+                        Button {
+                            selectedSessionId = session.id
+                            Task { await model.refreshEvents(sessionId: session.id) }
+                        } label: {
+                            SessionSummaryRow(
+                                session: session,
+                                isSelected: selectedSessionId == session.id
+                            )
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }
         }
     }
 
-    private var announcementsBox: some View {
-        CrewChatView(
-            announcements: announcements,
-            sessions: sessions,
-            members: members,
-            draftText: $announcementText,
-            mentionedSessionIds: $mentionedSessionIds,
-            mentionedMemberIds: $mentionedMemberIds,
-            onSend: {
-                Task {
-                    await model.createAnnouncement(
-                        crewId: crewId,
-                        summary: announcementText,
-                        recipientSessionIds: mentionedSessionIds,
-                        recipientMemberIds: mentionedMemberIds
-                    )
-                    announcementText = ""
-                    mentionedSessionIds = []
-                    mentionedMemberIds = []
+    private func selectInitialSessionIfNeeded() {
+        guard selectedSessionId == nil || sessions.contains(where: { $0.id == selectedSessionId }) == false else {
+            return
+        }
+        selectedSessionId = sessions.first?.id
+        if let selectedSessionId {
+            Task { await model.refreshEvents(sessionId: selectedSessionId) }
+        }
+    }
+}
+
+private struct InspectorSection<Content: View>: View {
+    let title: String
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.headline)
+            content
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+private struct SessionSummaryRow: View {
+    let session: CrewSession
+    let isSelected: Bool
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "terminal")
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(session.runnerKind)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                    StatusBadge(text: session.status)
+                }
+
+                Text(session.taskBrief)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+
+                if let progress = session.progressSummary, !progress.isEmpty {
+                    Text(progress)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
                 }
             }
+
+            Spacer(minLength: 0)
+        }
+        .padding(9)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(isSelected ? Color.accentColor.opacity(0.14) : Color.clear)
         )
+        .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+    }
+}
+
+private struct StatusBadge: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(.quaternary, in: Capsule())
     }
 }
 
@@ -160,7 +280,7 @@ private struct SessionEventsView: View {
     }
 
     var body: some View {
-        GroupBox("事件与收件箱") {
+        InspectorSection(title: "事件与收件箱") {
             if events.isEmpty && mailbox.isEmpty {
                 ContentUnavailableView("还没有事件", systemImage: "list.bullet.rectangle")
             } else {
