@@ -6,10 +6,15 @@ struct CrewChatView: View {
     let members: [CrewMember]
     @Binding var draftText: String
     @Binding var mentionedSessionIds: Set<String>
+    @Binding var mentionedMemberIds: Set<String>
     let onSend: () -> Void
 
     private var canSend: Bool {
         !draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var isBroadcast: Bool {
+        mentionedSessionIds.isEmpty && mentionedMemberIds.isEmpty
     }
 
     var body: some View {
@@ -43,6 +48,12 @@ struct CrewChatView: View {
                                 members: members,
                                 onReplyToSession: { sessionId in
                                     mentionedSessionIds = [sessionId]
+                                    mentionedMemberIds = []
+                                    draftText = ""
+                                },
+                                onReplyToMember: { memberId in
+                                    mentionedMemberIds = [memberId]
+                                    mentionedSessionIds = []
                                     draftText = ""
                                 }
                             )
@@ -63,13 +74,19 @@ struct CrewChatView: View {
 
     private var composer: some View {
         VStack(spacing: 8) {
-            MentionSessionPicker(sessions: sessions, selectedSessionIds: $mentionedSessionIds)
+            MentionTargetPicker(
+                sessions: sessions,
+                members: members,
+                selectedSessionIds: $mentionedSessionIds,
+                selectedMemberIds: $mentionedMemberIds
+            )
 
             HStack(alignment: .bottom, spacing: 8) {
                 Button {
                     mentionedSessionIds = []
+                    mentionedMemberIds = []
                 } label: {
-                    Image(systemName: mentionedSessionIds.isEmpty ? "at.circle.fill" : "at.circle")
+                    Image(systemName: isBroadcast ? "at.circle.fill" : "at.circle")
                         .font(.system(size: 18, weight: .medium))
                         .foregroundStyle(PendingBotChatStyle.inkMuted)
                         .frame(width: 38, height: 38)
@@ -77,7 +94,7 @@ struct CrewChatView: View {
                         .overlay(Circle().strokeBorder(PendingBotChatStyle.hairline, lineWidth: 0.5))
                 }
                 .buttonStyle(.plain)
-                .help(mentionedSessionIds.isEmpty ? "全员广播" : "清除 @，改为全员广播")
+                .help(isBroadcast ? "全员广播" : "清除 @，改为全员广播")
 
                 HStack(alignment: .bottom, spacing: 6) {
                     TextEditor(text: $draftText)
@@ -117,34 +134,92 @@ struct CrewChatView: View {
     }
 }
 
-private struct MentionSessionPicker: View {
+struct CrewChatMentionTarget: Identifiable, Hashable {
+    enum Kind: Hashable {
+        case all
+        case member
+        case session
+    }
+
+    let kind: Kind
+    let title: String
+    let systemImage: String
+    let sessionId: String?
+    let memberId: String?
+
+    var id: String {
+        if let sessionId { return "session:\(sessionId)" }
+        if let memberId { return "member:\(memberId)" }
+        return "all"
+    }
+
+    static func targets(sessions: [CrewSession], members: [CrewMember]) -> [CrewChatMentionTarget] {
+        let memberTargets = members
+            .filter { $0.status == "active" }
+            .map {
+                CrewChatMentionTarget(
+                    kind: .member,
+                    title: $0.displayName,
+                    systemImage: symbol(for: $0),
+                    sessionId: nil,
+                    memberId: $0.id
+                )
+            }
+        let sessionTargets = sessions.map {
+            CrewChatMentionTarget(
+                kind: .session,
+                title: sessionLabel($0),
+                systemImage: "terminal",
+                sessionId: $0.id,
+                memberId: nil
+            )
+        }
+        return [
+            CrewChatMentionTarget(
+                kind: .all,
+                title: "全员",
+                systemImage: "person.3",
+                sessionId: nil,
+                memberId: nil
+            )
+        ] + memberTargets + sessionTargets
+    }
+
+    private static func sessionLabel(_ session: CrewSession) -> String {
+        "\(session.runnerKind):\(session.id.prefix(7))"
+    }
+
+    private static func symbol(for member: CrewMember) -> String {
+        switch member.memberKind {
+        case "human": return "person.crop.circle"
+        case "bot", "master_bot": return "sparkles"
+        default: return "person.crop.square"
+        }
+    }
+}
+
+private struct MentionTargetPicker: View {
     let sessions: [CrewSession]
+    let members: [CrewMember]
     @Binding var selectedSessionIds: Set<String>
+    @Binding var selectedMemberIds: Set<String>
+
+    private var targets: [CrewChatMentionTarget] {
+        CrewChatMentionTarget.targets(sessions: sessions, members: members)
+    }
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                MentionChip(
-                    title: "全员",
-                    isSelected: selectedSessionIds.isEmpty,
-                    systemImage: "person.3"
-                ) {
-                    selectedSessionIds = []
-                }
-
-                ForEach(sessions) { session in
+                ForEach(targets) { target in
                     MentionChip(
-                        title: sessionLabel(session),
-                        isSelected: selectedSessionIds.contains(session.id),
-                        systemImage: "terminal"
+                        title: target.title,
+                        isSelected: isSelected(target),
+                        systemImage: target.systemImage
                     ) {
-                        if selectedSessionIds.contains(session.id) {
-                            selectedSessionIds.remove(session.id)
-                        } else {
-                            selectedSessionIds.insert(session.id)
-                        }
+                        toggle(target)
                     }
-                    .help(session.id)
+                    .help(target.id)
                 }
             }
             .padding(.horizontal, PendingBotChatStyle.gutter)
@@ -152,8 +227,37 @@ private struct MentionSessionPicker: View {
         .frame(height: 30)
     }
 
-    private func sessionLabel(_ session: CrewSession) -> String {
-        "\(session.runnerKind):\(session.id.prefix(6))"
+    private func isSelected(_ target: CrewChatMentionTarget) -> Bool {
+        switch target.kind {
+        case .all:
+            selectedSessionIds.isEmpty && selectedMemberIds.isEmpty
+        case .session:
+            target.sessionId.map { selectedSessionIds.contains($0) } ?? false
+        case .member:
+            target.memberId.map { selectedMemberIds.contains($0) } ?? false
+        }
+    }
+
+    private func toggle(_ target: CrewChatMentionTarget) {
+        switch target.kind {
+        case .all:
+            selectedSessionIds = []
+            selectedMemberIds = []
+        case .session:
+            guard let id = target.sessionId else { return }
+            if selectedSessionIds.contains(id) {
+                selectedSessionIds.remove(id)
+            } else {
+                selectedSessionIds.insert(id)
+            }
+        case .member:
+            guard let id = target.memberId else { return }
+            if selectedMemberIds.contains(id) {
+                selectedMemberIds.remove(id)
+            } else {
+                selectedMemberIds.insert(id)
+            }
+        }
     }
 }
 
@@ -188,6 +292,7 @@ private struct CrewAnnouncementBubble: View {
     let sessions: [CrewSession]
     let members: [CrewMember]
     let onReplyToSession: (String) -> Void
+    let onReplyToMember: (String) -> Void
 
     private var isMine: Bool {
         announcement.senderKind == "human"
@@ -239,6 +344,15 @@ private struct CrewAnnouncementBubble: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(PendingBotChatStyle.inkMuted)
+                } else if let senderMemberId = announcement.senderMemberId {
+                    Button {
+                        onReplyToMember(senderMemberId)
+                    } label: {
+                        Label("回复", systemImage: "arrowshape.turn.up.left")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(PendingBotChatStyle.inkMuted)
                 }
             }
         }
@@ -268,6 +382,10 @@ private struct CrewAnnouncementBubble: View {
     private var senderLabel: String {
         if let senderSessionId = announcement.senderSessionId {
             return sessionLabel(senderSessionId)
+        }
+        if let senderMemberId = announcement.senderMemberId,
+           let member = members.first(where: { $0.id == senderMemberId }) {
+            return member.displayName
         }
         switch announcement.senderKind {
         case "human": return "人类"

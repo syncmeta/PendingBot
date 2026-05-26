@@ -231,13 +231,19 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func createAnnouncement(crewId: String, summary: String, recipientSessionIds: Set<String>) async {
+    func createAnnouncement(
+        crewId: String,
+        summary: String,
+        recipientSessionIds: Set<String>,
+        recipientMemberIds: Set<String>
+    ) async {
         await run("公告已发送") {
             guard let api else { throw LocalError.missingAuth }
             _ = try await api.createAnnouncement(
                 crewId: crewId,
                 summary: summary,
-                recipientSessionIds: Array(recipientSessionIds)
+                recipientSessionIds: Array(recipientSessionIds),
+                recipientMemberIds: Array(recipientMemberIds)
             )
             announcementsByCrew[crewId] = try await api.listAnnouncements(crewId: crewId)
             let sessions = try await api.listSessions(crewId: crewId)

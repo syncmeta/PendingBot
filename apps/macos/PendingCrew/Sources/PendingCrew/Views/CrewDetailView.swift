@@ -9,6 +9,7 @@ struct CrewDetailView: View {
     @State private var selectedSessionId: String?
     @State private var announcementText = ""
     @State private var mentionedSessionIds: Set<String> = []
+    @State private var mentionedMemberIds: Set<String> = []
 
     private var crew: Crew? {
         model.crews.first { $0.id == crewId }
@@ -128,15 +129,18 @@ struct CrewDetailView: View {
             members: members,
             draftText: $announcementText,
             mentionedSessionIds: $mentionedSessionIds,
+            mentionedMemberIds: $mentionedMemberIds,
             onSend: {
                 Task {
                     await model.createAnnouncement(
                         crewId: crewId,
                         summary: announcementText,
-                        recipientSessionIds: mentionedSessionIds
+                        recipientSessionIds: mentionedSessionIds,
+                        recipientMemberIds: mentionedMemberIds
                     )
                     announcementText = ""
                     mentionedSessionIds = []
+                    mentionedMemberIds = []
                 }
             }
         )

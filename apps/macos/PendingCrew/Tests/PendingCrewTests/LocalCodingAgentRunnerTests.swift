@@ -2,6 +2,42 @@ import XCTest
 @testable import PendingCrew
 
 final class LocalCodingAgentRunnerTests: XCTestCase {
+    func testCrewChatMentionTargetsIncludeMembersAndSessions() {
+        let member = CrewMember(
+            id: "member-1",
+            conversationId: "crew-1",
+            memberKind: "human",
+            userId: "user-1",
+            botId: nil,
+            codeSessionId: nil,
+            displayName: "Yanze",
+            role: "owner",
+            capabilities: .object([:]),
+            status: "active",
+            createdAt: "2026-05-24T00:00:00Z"
+        )
+        let session = CrewSession(
+            id: "session-1",
+            crewConversationId: "crew-1",
+            responsibleSubjectId: "subject-1",
+            runnerKind: "local_codex",
+            status: "running",
+            taskBrief: "整理 Crew 地基",
+            progressSummary: nil,
+            createdAt: "2026-05-24T00:00:00Z",
+            startedAt: nil,
+            finishedAt: nil
+        )
+
+        let targets = CrewChatMentionTarget.targets(sessions: [session], members: [member])
+
+        XCTAssertEqual(targets.map(\.title), ["全员", "Yanze", "local_codex:session"])
+        XCTAssertEqual(targets[1].memberId, "member-1")
+        XCTAssertNil(targets[1].sessionId)
+        XCTAssertEqual(targets[2].sessionId, "session-1")
+        XCTAssertNil(targets[2].memberId)
+    }
+
     func testDefaultCodexProfileRendersSessionCommand() throws {
         let session = CrewSession(
             id: "session-1",
