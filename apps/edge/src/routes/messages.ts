@@ -14,8 +14,13 @@ import { UUID_RE } from '../lib/ids';
 import { jsonError } from '../lib/http-error';
 import { deleteCachedAttachment, removeInventoryIds } from '../lib/attachment-cache';
 import { resolveBot } from '../lib/bot-cache';
-import { resolveConv } from '../lib/conv-cache';
-import { parseRandomModelConfig, pickRandomModel } from '../llm/random-model';
+import { deleteCachedConv, resolveConv } from '../lib/conv-cache';
+import { pickRandomModel } from '../llm/random-model';
+import {
+  chooseCandidateModel,
+  chooseConversationMainModel,
+  type ConversationModelState,
+} from '../lib/conversation-model';
 import { safeWaitUntil } from '../lib/safe-wait-until';
 import { startSseKeepalive } from '../lib/sse-keepalive';
 import { notifyConversationUsers, notifyUserMessage } from '../lib/push';
@@ -354,6 +359,8 @@ messageRoutes.post('/', async (c) => {
     model_id: bot.model_id as string,
     model_provider: bot.model_provider,
     config: bot.config,
+    conversationId: parsed.conversationId,
+    conversation: conv,
   });
 
   const isSelfChat = conv.conversation_type === 'self';
@@ -668,7 +675,10 @@ messageRoutes.post('/start', async (c) => {
     );
   }
 
-  const turnRoute = await resolveMessageBotTurnRoute(c.env, bot);
+  const turnRoute = await resolveMessageBotTurnRoute(c.env, {
+    ...bot,
+    conversationId: convId,
+  });
 
   const encoder = new TextEncoder();
   const detachedAbort = new AbortController();
@@ -809,16 +819,14 @@ messageRoutes.post('/start', async (c) => {
 
 // POST /v1/messages/:id/regenerate
 //
-// Arena "再生成一个回答": produce ANOTHER bot answer to the same user prompt
-// (`:id` = the parent user message), so the client can show A/B variants and
-// the user can blind-vote (POST /v1/arena/compare). The new answer shares the
-// parent_message_id with the existing one(s) — that's how variants of one
-// prompt group — but gets its own bubble_group_id.
+// "再生成一个回答": produce ANOTHER bot answer to the same user prompt
+// (`:id` = the parent user message), so the client can show blind variants.
+// The new answer shares the parent_message_id with the existing one(s) —
+// that's how variants of one prompt group — but gets its own bubble_group_id.
 //
-// Model: if the bot is in arena mode (bots.config.arena) draw a fresh model
-// EXCLUDING the ones already used under this parent (so the variant lands a
-// different contender when the pool allows). Otherwise re-run the pinned
-// model (a same-model alternative). Does NOT bump round_count or auto-rename.
+// Model: draw a candidate from the bot model pool without changing the
+// conversation main model. Choosing an answer later switches the conversation
+// main model to that answer's model. Does NOT bump round_count or auto-rename.
 const RegenBody = z.object({
   conversationId: z.string().uuid(),
   recentContext: z
@@ -903,23 +911,6 @@ messageRoutes.post('/:id/regenerate', async (c) => {
     throw err;
   }
 
-  const arenaCfg = parseRandomModelConfig(botConfigArena(bot.config));
-  let excludeSlugs: string[] = [];
-  if (arenaCfg) {
-    const { data: usedRows } = await supaService
-      .from('messages')
-      .select('model_slug')
-      .eq('parent_message_id', parentId)
-      .eq('role', 'bot')
-      .not('model_slug', 'is', null);
-    excludeSlugs = [
-      ...new Set(
-        (usedRows ?? [])
-          .map((r) => r.model_slug as string | null)
-          .filter((s): s is string => !!s),
-      ),
-    ];
-  }
   const turnRoute = await resolveMessageBotTurnRoute(
     c.env,
     {
@@ -927,7 +918,7 @@ messageRoutes.post('/:id/regenerate', async (c) => {
       model_provider: bot.model_provider,
       config: bot.config,
     },
-    { excludeSlugs },
+    { candidateOnly: true },
   );
 
   const isSelfChat = conv.conversation_type === 'self';
@@ -1258,13 +1249,6 @@ function botConfigString(config: unknown, key: string): string | null {
   return typeof v === 'string' && v.length > 0 ? v : null;
 }
 
-// Pull the arena sub-object out of bots.config (config.arena). Returns the
-// raw value for parseRandomModelConfig to validate; null when absent.
-function botConfigArena(config: unknown): unknown {
-  if (!config || typeof config !== 'object') return null;
-  return (config as Record<string, unknown>).arena ?? null;
-}
-
 async function requireMessageBalance(
   env: AppBindings['Bindings'],
   supaUser: ReturnType<typeof userClient>,
@@ -1313,28 +1297,79 @@ async function resolveMessageBotTurnRoute(
     model_id: string;
     model_provider: string | null;
     config: unknown;
+    conversationId?: string;
+    conversation?: ConversationModelState | null;
   },
-  opts?: { excludeSlugs?: string[] },
+  opts?: { candidateOnly?: boolean },
 ): Promise<{ modelId: string; providerOverride: string | null }> {
-  // Arena mode draws a random model per turn. Native catalog rows carry their
-  // provider hint; OpenRouter rows use the passthrough route.
-  const arenaCfg = parseRandomModelConfig(botConfigArena(bot.config));
-  if (arenaCfg) {
-    const picked = await pickRandomModel(env, arenaCfg, {
-      excludeSlugs: opts?.excludeSlugs ?? [],
+  if (opts?.candidateOnly) {
+    const candidate = await chooseCandidateModel({
+      bot,
+      pickFromPool: (cfg, pickOpts) => pickRandomModel(env, cfg, pickOpts),
     });
-    if (picked) {
-      return {
-        modelId: picked.slug,
-        providerOverride: picked.modelProvider ?? 'openrouter',
-      };
-    }
+    return {
+      modelId: candidate.modelId,
+      providerOverride: candidate.providerOverride,
+    };
   }
 
+  let conversation = bot.conversation ?? null;
+  if (!conversation && bot.conversationId) {
+    conversation = await readConversationModelState(env, bot.conversationId);
+  }
+  const chosen = await chooseConversationMainModel({
+    bot,
+    conversation,
+    pickFromPool: (cfg, pickOpts) => pickRandomModel(env, cfg, pickOpts),
+  });
+  if (chosen.shouldPersist && bot.conversationId) {
+    await persistConversationMainModel(
+      env,
+      bot.conversationId,
+      chosen.modelId,
+      chosen.providerOverride,
+    );
+  }
   return {
-    modelId: bot.model_id,
-    providerOverride: bot.model_provider ?? null,
+    modelId: chosen.modelId,
+    providerOverride: chosen.providerOverride,
   };
+}
+
+async function readConversationModelState(
+  env: AppBindings['Bindings'],
+  conversationId: string,
+): Promise<ConversationModelState | null> {
+  const { data } = await serviceClient(env)
+    .from('conversations')
+    .select('current_model_slug, current_model_provider')
+    .eq('id', conversationId)
+    .maybeSingle();
+  if (!data) return null;
+  return {
+    current_model_slug: (data.current_model_slug ?? null) as string | null,
+    current_model_provider: (data.current_model_provider ?? null) as string | null,
+  };
+}
+
+async function persistConversationMainModel(
+  env: AppBindings['Bindings'],
+  conversationId: string,
+  modelId: string,
+  providerOverride: string | null,
+): Promise<void> {
+  const { error } = await serviceClient(env)
+    .from('conversations')
+    .update({
+      current_model_slug: modelId,
+      current_model_provider: providerOverride,
+    })
+    .eq('id', conversationId);
+  if (error) {
+    console.warn('[messages] persist conversation model failed', error.message);
+    return;
+  }
+  await deleteCachedConv(env, conversationId).catch(() => undefined);
 }
 
 // Lookback cadence is keyed off a per (bot, user) counter that crosses

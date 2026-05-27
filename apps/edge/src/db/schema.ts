@@ -727,6 +727,8 @@ export type Database = {
           bot_id: string | null
           conversation_type: string
           created_at: string
+          current_model_provider: string | null
+          current_model_slug: string | null
           feature: string
           id: string
           last_turn_status: string | null
@@ -743,6 +745,8 @@ export type Database = {
           bot_id?: string | null
           conversation_type?: string
           created_at?: string
+          current_model_provider?: string | null
+          current_model_slug?: string | null
           feature?: string
           id?: string
           last_turn_status?: string | null
@@ -759,6 +763,8 @@ export type Database = {
           bot_id?: string | null
           conversation_type?: string
           created_at?: string
+          current_model_provider?: string | null
+          current_model_slug?: string | null
           feature?: string
           id?: string
           last_turn_status?: string | null

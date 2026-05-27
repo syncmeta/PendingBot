@@ -33,9 +33,19 @@ const ConfigPatch = z
       .optional(),
     visionModel: z.string().max(200).nullable().optional(),
     voiceModel: z.string().max(200).nullable().optional(),
-    // Arena (类 arena.ai 随机模型). null = off (single bot.model_id). An
-    // object = on: each turn draws a random model from the pool defined by a
-    // price range (the slider) ∪ explicit `models`, minus `exclude`.
+    // Model pool. null = use only bot.model_id. An object means new
+    // conversations draw their main model from the pool defined by a price
+    // range (the slider) ∪ explicit `models`, minus `exclude`.
+    modelPool: z
+      .object({
+        price_min: z.number().nonnegative().nullable().optional(),
+        price_max: z.number().nonnegative().nullable().optional(),
+        models: z.array(z.string().min(1).max(200)).max(200).nullable().optional(),
+        exclude: z.array(z.string().min(1).max(200)).max(200).nullable().optional(),
+      })
+      .nullable()
+      .optional(),
+    // Legacy key read by older clients. New clients should write modelPool.
     arena: z
       .object({
         price_min: z.number().nonnegative().nullable().optional(),

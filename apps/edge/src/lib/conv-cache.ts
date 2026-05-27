@@ -29,6 +29,8 @@ export interface CachedConv {
   bot_id: string | null;
   user_id: string | null;
   round_count: number | null;
+  current_model_slug: string | null;
+  current_model_provider: string | null;
 }
 
 export async function getCachedConv(env: Env, convId: string): Promise<CachedConv | null> {
@@ -85,7 +87,7 @@ export async function resolveConv(
   // gate is authoritative. supaUser carries the user JWT.
   const { data, error } = await supaUser
     .from('conversations')
-    .select('id, conversation_type, bot_id, user_id, round_count')
+    .select('id, conversation_type, bot_id, user_id, round_count, current_model_slug, current_model_provider')
     .eq('id', convId)
     .maybeSingle();
   if (error) throw error;
@@ -96,6 +98,8 @@ export async function resolveConv(
     bot_id: (data.bot_id ?? null) as string | null,
     user_id: (data.user_id ?? null) as string | null,
     round_count: (data.round_count ?? null) as number | null,
+    current_model_slug: (data.current_model_slug ?? null) as string | null,
+    current_model_provider: (data.current_model_provider ?? null) as string | null,
   };
   waitUntil(putCachedConv(env, row));
   return row;

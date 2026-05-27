@@ -1,9 +1,8 @@
-// Random-model resolver for the arena feature. When a bot has
-// config.arena set, every turn picks a fresh model from the catalog instead
-// of the bot's pinned slug. The pool is defined by a price-multiplier window
-// (the slider) UNIONed with an explicit model allowlist, minus an exclude
-// list — so the price range is the "pool" and individual models can be
-// hand-added (out of range) or hand-removed (in range).
+// Model-pool resolver. A bot can define a pool with a price-multiplier window
+// (the slider) UNIONed with an explicit model allowlist, minus an exclude list.
+// A new conversation draws its main model from that pool once, while blind
+// regenerated answers can draw candidate models without changing the current
+// conversation model.
 //
 // Pool = native rows for OpenAI / Anthropic / Google plus the OpenRouter long
 // tail. The shared /v1/models catalog already removes OpenRouter rows for
@@ -49,12 +48,11 @@ interface PoolEntry {
   modelProvider: string | null;
 }
 
-const POOL_CACHE_KEY = 'arena:model_pool';
+const POOL_CACHE_KEY = 'model_pool:v1';
 const POOL_TTL_SEC = 3600;
 
-// Parse the jsonb blob stored on bots.config.arena into a validated config,
-// or null when the value isn't a usable arena config (absent / wrong shape
-// → "not in arena mode").
+// Parse the jsonb blob stored on bots.config.modelPool into a validated config,
+// or null when the value isn't a usable model-pool config.
 export function parseRandomModelConfig(raw: unknown): RandomModelConfig | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const o = raw as Record<string, unknown>;

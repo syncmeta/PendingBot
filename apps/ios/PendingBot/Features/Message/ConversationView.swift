@@ -2445,13 +2445,12 @@ struct ArenaVariant: Identifiable, Hashable {
     var id: String { groupId }
 }
 
-/// Inline blind A/B compare for an arena prompt with ≥2 answers. Compares the
-/// two most recent answers: shows them as 回答 A / 回答 B with the model name
-/// hidden, lets the user vote, then reveals + records the vote (feeds the
-/// personal leaderboard). Also offers 再生成 to add another contender.
+/// Inline blind A/B compare for a prompt with ≥2 answers. Compares the two
+/// most recent answers, keeps model identity hidden, and treats the user's
+/// choice as the current conversation model switch. Also offers 再生成 to add
+/// another contender.
 struct ArenaCompareCard: View {
     @Environment(\.api) private var api
-    @EnvironmentObject private var catalog: ModelCatalog
 
     let conversationId: String
     let parentMessageId: String
@@ -2466,7 +2465,6 @@ struct ArenaCompareCard: View {
     let onRegenerate: () async -> Void
 
     @State private var outcome: String?     // 'a' / 'b' once voted
-    @State private var revealed = false
     @State private var voting = false
     @State private var regenerating = false
 
@@ -2478,13 +2476,9 @@ struct ArenaCompareCard: View {
     private var representative: ArenaVariant { outcome == nil ? b : chosen }
 
     /// Caption under the collapsed bubble — always the answer count, plus
-    /// the model byline once the turn's been voted (and revealed).
+    /// the answer count only. Model identity stays hidden even after choice.
     private var collapsedFootnote: String {
-        let count = "共 \(variants.count) 个回答"
-        if revealed, let m = representative.modelSlug, !m.isEmpty {
-            return "by \(catalog.displayName(for: m)) · \(count)"
-        }
-        return count
+        "共 \(variants.count) 个回答"
     }
 
     var body: some View {
@@ -2520,7 +2514,6 @@ struct ArenaCompareCard: View {
 
     // Each answer is its own bot bubble — the regenerated ones drop the avatar
     // (a Color.clear keeps the bubble aligned) so they read as alternatives.
-    // The model name renders inside the bubble (last line) once voted.
     private func variantRow(_ v: ArenaVariant, index: Int) -> some View {
         HStack(alignment: .top, spacing: 8) {
             if index == 0 {
@@ -2545,11 +2538,6 @@ struct ArenaCompareCard: View {
         return VStack(alignment: .leading, spacing: 4) {
             MarkdownText(text: text, allowCodeRun: false, citations: [])
                 .fixedSize(horizontal: false, vertical: true)
-            if revealed, let m = v.modelSlug, !m.isEmpty {
-                Text("by \(catalog.displayName(for: m))")
-                    .font(Theme.Fonts.caption)
-                    .foregroundStyle(Theme.Palette.inkMuted)
-            }
         }
             .padding(.horizontal, 14).padding(.vertical, 10)
             .background(RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
@@ -2685,7 +2673,6 @@ struct ArenaCompareCard: View {
                 body: Body(conversationId: conversationId, parentMessageId: parentMessageId,
                            groupA: a.groupId, groupB: b.groupId, outcome: value))
             outcome = value
-            revealed = true
             Haptics.success()
         } catch {
             Haptics.error()
@@ -2709,12 +2696,10 @@ struct ArenaCompareCard: View {
                 } else {
                     outcome = r.outcome == "a" ? "b" : r.outcome == "b" ? "a" : "tie"
                 }
-                revealed = true
             } else {
                 // This pair (e.g. after a regenerate shifted a/b) has no vote —
                 // go blind so a stale outcome doesn't ring the wrong bubble.
                 outcome = nil
-                revealed = false
             }
         } catch {
             // Read failed — leave whatever state we have.

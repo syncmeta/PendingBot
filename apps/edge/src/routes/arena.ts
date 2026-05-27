@@ -2,22 +2,20 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
 import { serviceClient, userClient } from '../lib/supabase';
-import { resolveConv } from '../lib/conv-cache';
+import { deleteCachedConv, resolveConv } from '../lib/conv-cache';
 import { safeWaitUntil } from '../lib/safe-wait-until';
 import { computeLeaderboard, type Outcome } from '../lib/arena-elo';
 import { jsonError } from '../lib/http-error';
 import type { AppBindings } from '../types';
 
-// Arena: pairwise blind voting + a per-user model leaderboard (类 arena.ai).
+// Pairwise blind choice + a per-user model leaderboard.
 //
 //   POST /v1/arena/compare       — record one A/B vote
 //   GET  /v1/arena/leaderboard   — replay Elo over the caller's votes
 //
-// Blindness is enforced client-side (the picker hides the model name until
-// the vote lands) — this is a single-user personal-preference dataset, so
-// the only integrity risk is the user peeking at their own data, which only
-// degrades their own leaderboard. The compare response reveals the models so
-// the UI can show them post-vote.
+// Blindness is enforced client-side; choosing A/B also switches the current
+// conversation main model to the chosen answer's model. The response does not
+// reveal model identity to the client.
 
 export const arenaRoutes = new Hono<AppBindings>();
 arenaRoutes.use('*', requireSession());
@@ -37,6 +35,20 @@ interface GroupModel {
   model_provider: string | null;
   parent_message_id: string | null;
   conversation_id: string;
+}
+
+export function modelSwitchForOutcome(
+  outcome: Outcome,
+  modelA: GroupModel,
+  modelB: GroupModel,
+): { model_slug: string; model_provider: string | null } | null {
+  if (outcome === 'a') {
+    return { model_slug: modelA.model_slug, model_provider: modelA.model_provider };
+  }
+  if (outcome === 'b') {
+    return { model_slug: modelB.model_slug, model_provider: modelB.model_provider };
+  }
+  return null;
 }
 
 arenaRoutes.post('/compare', async (c) => {
@@ -94,12 +106,7 @@ arenaRoutes.post('/compare', async (c) => {
     }
   }
 
-  // Reveal map keyed by the ORIGINAL group ids the client showed, before
-  // we normalise pair ordering below.
-  const reveal: Record<string, { model_slug: string; model_provider: string | null }> = {
-    [parsed.groupA]: { model_slug: mA.model_slug, model_provider: mA.model_provider },
-    [parsed.groupB]: { model_slug: mB.model_slug, model_provider: mB.model_provider },
-  };
+  const selectedModel = modelSwitchForOutcome(parsed.outcome, mA, mB);
 
   // Normalise so the unordered pair maps to one row: store the lexically
   // smaller group id as A, flipping the outcome to match. Makes a re-vote
@@ -132,7 +139,19 @@ arenaRoutes.post('/compare', async (c) => {
   );
   if (error) return jsonError(c, 500, 'database_error', { detail: error.message });
 
-  return c.json({ ok: true, models: reveal });
+  if (selectedModel) {
+    const { error: switchErr } = await supaService
+      .from('conversations')
+      .update({
+        current_model_slug: selectedModel.model_slug,
+        current_model_provider: selectedModel.model_provider ?? 'openrouter',
+      })
+      .eq('id', parsed.conversationId);
+    if (switchErr) return jsonError(c, 500, 'database_error', { detail: switchErr.message });
+    await deleteCachedConv(c.env, parsed.conversationId).catch(() => undefined);
+  }
+
+  return c.json({ ok: true });
 });
 
 // GET /v1/arena/leaderboard — the caller's personal model standings.

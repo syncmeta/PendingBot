@@ -248,12 +248,12 @@ struct SkillDetail: Codable, Identifiable, Hashable {
     let body: String
 }
 
-// MARK: - Arena (随机模型 / 盲评 / 个人榜单)
+// MARK: - Model Pool (随机模型 / 盲选 / 个人榜单)
 
-/// Bot-level arena config — mirrors the edge `bots.config.arena` jsonb.
-/// nil/absent = off (the bot uses its single model_id). Present = arena: each
-/// turn draws a random model from the price-range pool ∪ explicit `models`,
-/// minus `exclude`.
+/// Bot-level model pool config — mirrors the edge `bots.config.modelPool` jsonb.
+/// nil/absent means the bot uses its single model_id. Present means new
+/// conversations draw a main model from the price-range pool ∪ explicit
+/// `models`, minus `exclude`.
 struct RandomModelConfig: Codable, Equatable, Hashable {
     var price_min: Double?
     var price_max: Double?
@@ -277,15 +277,6 @@ struct ArenaLeaderboard: Codable {
     let total_comparisons: Int
 }
 
-/// Model identity behind one bubble group, revealed by POST /v1/arena/compare
-/// after the (client-side blind) vote lands.
-struct ArenaRevealedModel: Codable, Hashable {
-    let model_slug: String
-    let model_provider: String?
-}
-
 struct ArenaCompareResult: Codable {
     let ok: Bool
-    /// Keyed by the bubble_group_id the client submitted.
-    let models: [String: ArenaRevealedModel]
 }

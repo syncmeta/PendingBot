@@ -272,12 +272,12 @@ struct CreateBotSheet: View {
             // constraint stays satisfied without leaking creator info and
             // without burning a nice handle no one can reach anyway.
             struct BotCreateConfig: Encodable {
-                let arena: RandomModelConfig?
-                enum CodingKeys: String, CodingKey { case arena }
+                let modelPool: RandomModelConfig?
+                enum CodingKeys: String, CodingKey { case modelPool }
                 func encode(to encoder: Encoder) throws {
-                    guard let arena else { return }
+                    guard let modelPool else { return }
                     var c = encoder.container(keyedBy: CodingKeys.self)
-                    try c.encode(arena, forKey: .arena)
+                    try c.encode(modelPool, forKey: .modelPool)
                 }
             }
             struct BotInsert: Encodable {
@@ -313,7 +313,7 @@ struct CreateBotSheet: View {
                     model_id: createModelSlug,
                     model_provider: selectedModelProvider,
                     config: BotCreateConfig(
-                        arena: arenaSelection.persistedConfig),
+                        modelPool: arenaSelection.persistedConfig),
                     slug: finalSlug,
                     tz: visibility == .privateBot ? nil : TimeZone.current.identifier
                 ))
@@ -1537,7 +1537,7 @@ struct BotConfigView: View {
         voiceSettings = BotVoiceSettings.from(dict["voice"])
         envelope = EnvelopeSettings.from(dict["envelope"])
         webSearch = BotWebSearchSettings.from(dict["webSearch"])
-        if case let .object(arena)? = dict["arena"] {
+        if case let .object(arena)? = dict["modelPool"] ?? dict["arena"] {
             let cfg = RandomModelConfig(
                 price_min: Self.jsonDouble(arena["price_min"]),
                 price_max: Self.jsonDouble(arena["price_max"]),
@@ -1606,8 +1606,8 @@ struct BotConfigView: View {
                 "enabled": lookbackEnabled,
                 "roundInterval": lookbackInterval,
             ]
-            // Arena config replaces the whole key; null clears it so the bot
-            // goes back to its single model_id.
+            // Model-pool config replaces the whole key; null clears it so the
+            // bot goes back to its single model_id.
             let arenaVal: Any = arenaConfig.map(Self.arenaConfigDict) ?? NSNull()
             let cfg: [String: Any] = [
                 "lookback": lookbackCfg,
@@ -1616,7 +1616,8 @@ struct BotConfigView: View {
                 "voiceModel": voiceModel,
                 "voice": voiceSettings.toConfigDict(),
                 "webSearch": webSearch.toConfigDict(),
-                "arena": arenaVal,
+                "modelPool": arenaVal,
+                "arena": NSNull(),
             ]
             let body: [String: Any] = [
                 "model_id": model,
