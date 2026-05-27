@@ -60,6 +60,26 @@ async function createChallenge(db: FakeDb) {
   };
 }
 
+async function createPendingBotMacChallenge(db: FakeDb, scopes = ['subject:read', 'crew:read', 'crew:write']) {
+  const res = await appFor(db).request('/v1/device-login/challenges', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      appKind: 'pendingbot_macos',
+      deviceName: 'PendingBot Mac',
+      devicePublicKey: 'pendingbot-public-key-material-long-enough',
+      scopes,
+    }),
+  });
+  expect(res.status).toBe(200);
+  return await res.json() as {
+    challengeId: string;
+    secret: string;
+    qrPayload: string;
+    status: string;
+  };
+}
+
 describe('POST /v1/device-login/challenges', () => {
   it('creates an unauthenticated QR login challenge without storing the raw secret', async () => {
     const db = makeFakeDb();
@@ -154,17 +174,7 @@ describe('POST /v1/device-login/challenges/:id/approve', () => {
 
   it('rejects an app/grant mismatch', async () => {
     const db = makeFakeDb();
-    const res = await appFor(db).request('/v1/device-login/challenges', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        appKind: 'pendingbot_macos',
-        deviceName: 'MacBook Pro',
-        devicePublicKey: 'public-key-material-long-enough',
-        scopes: ['subject:read'],
-      }),
-    });
-    const challenge = await res.json() as { challengeId: string; secret: string };
+    const challenge = await createPendingBotMacChallenge(db, ['subject:read']);
 
     const approve = await appFor(db).request(`/v1/device-login/challenges/${challenge.challengeId}/approve`, {
       method: 'POST',
@@ -184,6 +194,81 @@ describe('POST /v1/device-login/challenges/:id/approve', () => {
     await expect(approve.json()).resolves.toMatchObject({
       error: { code: 'invalid_body' },
     });
+  });
+
+  it('lets PendingBot Mac approve a client grant with crew read/write scopes', async () => {
+    const db = makeFakeDb();
+    const challenge = await createPendingBotMacChallenge(db);
+    const subjectId = '11111111-1111-4111-8111-111111111111';
+    db.rpcs = {
+      subject_can_authorize_device_grant: (args) => {
+        expect(args).toEqual({
+          p_subject_id: subjectId,
+          p_user_id: 'user-1',
+          p_grant_kind: 'pendingbot_client',
+        });
+        return { data: true, error: null };
+      },
+    };
+
+    const approve = await appFor(db).request(`/v1/device-login/challenges/${challenge.challengeId}/approve`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-test-user-id': 'user-1',
+      },
+      body: JSON.stringify({
+        secret: challenge.secret,
+        subjectId,
+        grantKind: 'pendingbot_client',
+        scopes: ['subject:read', 'crew:read', 'crew:write'],
+      }),
+    });
+
+    expect(approve.status).toBe(200);
+    await expect(approve.json()).resolves.toEqual({ ok: true, status: 'approved' });
+    expect(db.rows.subject_device_login_challenges[0]).toMatchObject({
+      status: 'approved',
+      app_kind: 'pendingbot_macos',
+      approved_subject_id: subjectId,
+      approved_by_user_id: 'user-1',
+      grant_kind: 'pendingbot_client',
+      requested_scopes: ['subject:read', 'crew:read', 'crew:write'],
+    });
+  });
+
+  it('rejects runner scopes on a PendingBot Mac client grant', async () => {
+    const db = makeFakeDb();
+    const challenge = await createPendingBotMacChallenge(db, ['subject:read', 'runner:write']);
+    const subjectId = '11111111-1111-4111-8111-111111111111';
+    db.rpcs = {
+      subject_can_authorize_device_grant: () => ({ data: true, error: null }),
+    };
+
+    const approve = await appFor(db).request(`/v1/device-login/challenges/${challenge.challengeId}/approve`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-test-user-id': 'user-1',
+      },
+      body: JSON.stringify({
+        secret: challenge.secret,
+        subjectId,
+        grantKind: 'pendingbot_client',
+        scopes: ['subject:read', 'runner:write'],
+      }),
+    });
+
+    expect(approve.status).toBe(400);
+    await expect(approve.json()).resolves.toMatchObject({
+      error: { code: 'invalid_body' },
+    });
+    expect(db.rows.subject_device_login_challenges[0]).toMatchObject({
+      status: 'pending',
+      app_kind: 'pendingbot_macos',
+      requested_scopes: ['subject:read', 'runner:write'],
+    });
+    expect(db.rows.subject_device_login_challenges[0]).not.toHaveProperty('grant_kind');
   });
 });
 
