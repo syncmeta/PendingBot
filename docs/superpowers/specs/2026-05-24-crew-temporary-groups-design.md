@@ -3,6 +3,8 @@
 日期：2026-05-24
 分支：`codex/temporary-groups-foundation`
 
+> 2026-05-27 更新：本文件中关于 Crew、master bot、父子关系和 PendingCrew/PendingBot 产品边界的部分，已被 `docs/superpowers/specs/2026-05-27-crew-organization-model-design.md` 和 `docs/superpowers/specs/2026-05-27-pendingbot-pendingcrew-product-design.md` 修正。新实现应使用「机组」和 `captain`/「机长」语义。
+
 ## 目的
 
 这份设计重建当前“子会话 / 临时协作 / coding agent 编排”这一块的地基。目标不是做最小验证，而是先把长期会稳定下来的模型定清楚。
