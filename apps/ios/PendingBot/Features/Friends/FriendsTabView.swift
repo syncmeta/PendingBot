@@ -1920,8 +1920,7 @@ private struct AddBotPreviewPage: View {
 
     private func visibilityLabel(_ v: String) -> String {
         switch v {
-        case "public_open":   return "公开"
-        case "public_invite": return "邀请制"
+        case "public_invite": return "公有"
         case "private":       return "私有"
         default:              return v
         }

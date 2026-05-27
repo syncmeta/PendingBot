@@ -69,13 +69,11 @@ struct CreateBotSheet: View {
     enum Visibility: String, CaseIterable, Identifiable {
         case privateBot     = "private"
         case publicInvite   = "public_invite"
-        case publicOpen     = "public_open"
         var id: String { rawValue }
         var label: String {
             switch self {
             case .privateBot:   return "私有"
             case .publicInvite: return "公有 · 邀请制"
-            case .publicOpen:   return "公有 · 公开可加"
             }
         }
         var subtitle: String {
@@ -84,8 +82,6 @@ struct CreateBotSheet: View {
                 return "只有你自己能聊。可以随时改设置、改名、删除。"
             case .publicInvite:
                 return "你邀请的人才能聊。建好后你还能改设置和改名,但不能删、不能转回私有。"
-            case .publicOpen:
-                return "任何人都能加好友聊。建好后你还能改设置和改名,但不能删、不能转回私有。"
             }
         }
     }
@@ -370,8 +366,9 @@ struct CreateBotSheet: View {
 /// Name, model and voice are editable regardless of visibility. The
 /// visibility-specific surface:
 ///   - private:       can promote to public, and can delete
-///   - public_invite: visibility toggle + invite list (no delete)
-///   - public_open:   visibility toggle only (no delete)
+///   - public_invite: invite list (no delete, no visibility toggle —
+///                    public_open was the only other tier and it's
+///                    gone, so toggling has nothing left to switch to)
 struct ManageBotSheet: View {
     @Environment(\.dismiss) private var dismiss
     /// Called after a mutation so the parent can refresh its list.
@@ -454,7 +451,6 @@ struct ManageBotSheet: View {
                             Text("私有").tag("private")
                         }
                         Text("公有 · 邀请制").tag("public_invite")
-                        Text("公有 · 公开可加").tag("public_open")
                     }
                     .pickerStyle(.inline)
                     .labelsHidden()
@@ -607,7 +603,7 @@ struct ManageBotSheet: View {
         .onAppear {
             displayName = initial.display_name
             modelSlug = initial.model_id ?? ""
-            visibility = initial.visibility ?? "public_open"
+            visibility = initial.visibility ?? "public_invite"
             voiceCallEnabled = initial.voice_call_enabled ?? false
         }
         .task { await loadModelProvider() }
@@ -656,7 +652,7 @@ struct ManageBotSheet: View {
         if modelProvider != initialModelProvider { return true }
         if voiceCallEnabled != (initial.voice_call_enabled ?? false) { return true }
         if outputBubble != initialOutputBubble { return true }
-        if visibility != (initial.visibility ?? "public_open") { return true }
+        if visibility != (initial.visibility ?? "public_invite") { return true }
         // slug renames only matter on public bots (private bots keep their
         // synthetic slug and never send it).
         if visibility != "private" && BotSlugRule.normalize(slug) != initialSlug { return true }
@@ -668,7 +664,7 @@ struct ManageBotSheet: View {
     }
 
     private func save() async {
-        let prevVisibility = initial.visibility ?? "public_open"
+        let prevVisibility = initial.visibility ?? "public_invite"
         let promoting = prevVisibility == "private" && visibility != "private"
         if promoting {
             // Promotion is one-way; gate on a confirmation dialog. The
