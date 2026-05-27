@@ -7,7 +7,6 @@ import { loadPrompt } from '../i18n/prompts';
 import { DEFAULT_LOCALE, type Locale } from '../i18n/types';
 import type { SupabaseClient } from '../lib/supabase';
 import type { Memory } from '../lib/memory';
-import { BOT_SOCIAL_GRAPH_SKILL_BODY } from './bot-social-skill';
 
 export interface BuildMessagesInput {
   bot: {
@@ -274,9 +273,6 @@ function buildSocialGraphStatsSection(
   return lines.join('\n');
 }
 
-function buildSocialGraphSkillSection(): string {
-  return BOT_SOCIAL_GRAPH_SKILL_BODY;
-}
 
 // Answers from prior ask_friend calls that finished while THIS conv
 // (the caller side) was active. submit_inquiry_answer parked them on
@@ -570,9 +566,14 @@ async function buildStablePersona(
   locale: Locale,
   surface: PromptSurface,
 ): Promise<string> {
-  const [platform, selfSection] = await Promise.all([
+  const [platform, selfSection, socialGraphSkillSection] = await Promise.all([
     loadPrompt(supa, PLATFORM_PROMPT_BY_SURFACE[surface], locale),
     buildSelfSection(supa, input.botMemory, locale),
+    // bot-social-graph skill body — always-on, board-editable via
+    // i18n_prompts. Loaded through the same prompt-loader cache as the
+    // platform prompt, so per-isolate this is a Map lookup after the
+    // first turn.
+    loadPrompt(supa, 'bot-social-graph', locale),
   ]);
   const identitySection = buildIdentitySection(input.bot.display_name);
   const botTzSection = buildBotTzSection(input.bot.tz);
@@ -580,7 +581,6 @@ async function buildStablePersona(
   const userModelSection = buildUserModelSection(input.botViewOfUser);       // ②
   const perceivedSelfSection = buildPerceivedSelfSection(input.userViewOfBot); // ④
   const skillsSection = buildSkillsSection(input.skills);
-  const socialGraphSkillSection = buildSocialGraphSkillSection();
   const botNoteSection = buildBotNoteSection(input.botNote);
   const chatMemoSection = buildChatMemoSection(input.chatMemo);
   // Bubble/single segmentation is a text-chat concept; voice (1:1 or group)
