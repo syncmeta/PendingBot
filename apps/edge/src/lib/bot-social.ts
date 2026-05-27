@@ -106,6 +106,97 @@ export async function loadBotSocialSnapshot(
   };
 }
 
+export interface PendingInquiryAnswer {
+  inquiry_id: string;
+  target_display_name: string;
+  question: string;
+  answer: string;
+}
+
+export interface OpenRelayInquiry {
+  inquiry_id: string;
+  question: string;
+}
+
+export interface InquiryContext {
+  pendingAnswers: PendingInquiryAnswer[];
+  openRelayInquiries: OpenRelayInquiry[];
+}
+
+/** Load + atomically claim the inquiry-side volatile context for one
+ *  per-turn run:
+ *    - pendingAnswers   : answered_pending rows where caller_conv is ours
+ *                         and caller_bot_id is us. Switched to
+ *                         answered_delivered before returning so they
+ *                         only surface once (lose-on-error trade is
+ *                         accepted — beats double-delivering).
+ *    - openRelayInquiries : open rows where relay_conv is ours and
+ *                           caller_bot_id is us. Read-only — they stay
+ *                           open until submit_inquiry_answer fires. */
+export async function loadInquiryContext(
+  supa: SupabaseClient,
+  botId: string,
+  conversationId: string,
+): Promise<InquiryContext> {
+  // Pending (caller side). Read first so we can immediately flip status
+  // to answered_delivered; the flip happens after we have the rows so
+  // the bot doesn't lose them if the SELECT fails.
+  const { data: pendingRows } = await supa
+    .from('bot_friend_inquiries')
+    .select('id, target_user_id, question, answer')
+    .eq('caller_bot_id', botId)
+    .eq('caller_conversation_id', conversationId)
+    .eq('status', 'answered_pending');
+
+  let pendingAnswers: PendingInquiryAnswer[] = [];
+  if (pendingRows && pendingRows.length > 0) {
+    const ids = pendingRows.map((r) => r.id as string);
+    // Resolve target display names. Service-role read of users; cheap
+    // batch.
+    const targetIds = Array.from(
+      new Set(pendingRows.map((r) => r.target_user_id as string)),
+    );
+    const { data: userRows } = await supa
+      .from('users')
+      .select('id, display_name')
+      .in('id', targetIds);
+    const nameById = new Map<string, string>();
+    for (const u of userRows ?? []) {
+      nameById.set(u.id as string, (u.display_name as string) ?? '');
+    }
+    pendingAnswers = pendingRows.map((r) => ({
+      inquiry_id: r.id as string,
+      target_display_name: nameById.get(r.target_user_id as string) ?? '某位好友',
+      question: (r.question as string) ?? '',
+      answer: (r.answer as string) ?? '',
+    }));
+    // Atomic-ish claim — flip status so the next turn doesn't re-show
+    // them. Failure to flip is logged but doesn't abort: the bot still
+    // sees the answer this turn; the duplicate next turn is benign
+    // (LLM will notice and not re-mention).
+    const { error: flipErr } = await supa
+      .from('bot_friend_inquiries')
+      .update({ status: 'answered_delivered' })
+      .in('id', ids);
+    if (flipErr) {
+      console.warn('[inquiry] pending → delivered flip failed', flipErr);
+    }
+  }
+
+  const { data: openRows } = await supa
+    .from('bot_friend_inquiries')
+    .select('id, question')
+    .eq('caller_bot_id', botId)
+    .eq('relay_conversation_id', conversationId)
+    .eq('status', 'open');
+  const openRelayInquiries: OpenRelayInquiry[] = (openRows ?? []).map((r) => ({
+    inquiry_id: r.id as string,
+    question: (r.question as string) ?? '',
+  }));
+
+  return { pendingAnswers, openRelayInquiries };
+}
+
 export async function getBotGroups(
   supa: SupabaseClient,
   botId: string,

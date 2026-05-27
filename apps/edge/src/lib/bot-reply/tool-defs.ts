@@ -314,6 +314,63 @@ export const DELEGATE_TO_SPECIALIST_TOOL: ChatCompletionTool = {
   },
 };
 
+// `ask_friend` — public bot reaches out to a named human friend with a
+// self-contained question. Async by design: the tool fires off the
+// outreach to the friend's 1v1 with this bot and returns immediately;
+// when the bot wraps up with the friend over there, it calls
+// `submit_inquiry_answer` to ship the answer back to the caller.
+// Public-only; gated in bot-reply/index.ts by bots.visibility.
+export const ASK_FRIEND_TOOL: ChatCompletionTool = {
+  type: 'function',
+  function: {
+    name: 'ask_friend',
+    parameters: {
+      type: 'object',
+      properties: {
+        target_display_name: {
+          type: 'string',
+          description:
+            '要问的好友名字 —— 必须严格匹配你好友列表里某个人的 display_name（不区分大小写）。出现在本回合社交圈快照的"最近的几位"里。重名会被拒。',
+        },
+        question: {
+          type: 'string',
+          description:
+            '完整、自包含的提问。这条会直接发给对方真人，对方什么时候看、什么时候回不在你掌控。1–4000 字。',
+        },
+      },
+      required: ['target_display_name', 'question'],
+    },
+  },
+};
+
+// `submit_inquiry_answer` — pair tool to ask_friend. Call this from the
+// relay conversation (bot ↔ friend 1v1) when you have a final answer
+// to deliver back to the caller. The router picks "inject into
+// caller's next turn" vs "speak up unprompted" based on caller_conv
+// activity.
+export const SUBMIT_INQUIRY_ANSWER_TOOL: ChatCompletionTool = {
+  type: 'function',
+  function: {
+    name: 'submit_inquiry_answer',
+    parameters: {
+      type: 'object',
+      properties: {
+        inquiry_id: {
+          type: 'string',
+          description:
+            '要收尾的 inquiry id —— 由 ask_friend 返回时给你；如果忘了，在系统提示的"待回的好友问询"段里也会列。',
+        },
+        answer: {
+          type: 'string',
+          description:
+            '要回给发起人的话。可以直接是答案正文，也可以是\"对方说不知道，需要查\"这类总结。1–6000 字。',
+        },
+      },
+      required: ['inquiry_id', 'answer'],
+    },
+  },
+};
+
 // Group-only tools — exposed by dispatchGroupTurn via input.inGroup.
 // Both write to the same conversation_id + bot_id the runner is acting
 // for, so they take just the new value as an argument. Description

@@ -51,15 +51,17 @@ import {
 import { resolveProviderSlug } from '../../llm/providers';
 import { WebToolMeter } from '../web-meter';
 import {
+  ASK_FRIEND_TOOL,
   buildOpenRouterServerTools,
   CHAT_TOOLS,
   DELEGATE_TO_SPECIALIST_TOOL,
   EXECUTE_CODE_TOOL,
   GROUP_BOT_TOOLS,
   REQUEST_EXECUTE_CODE_TOOL,
+  SUBMIT_INQUIRY_ANSWER_TOOL,
   type WebSearchConfig,
 } from './tool-defs';
-import { loadBotSocialSnapshot } from '../bot-social';
+import { loadBotSocialSnapshot, loadInquiryContext } from '../bot-social';
 import {
   type Citation,
   type ToolCtx,
@@ -401,6 +403,18 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       ? Promise.resolve(null)
       : loadBotSocialSnapshot(supa, bot.id).catch(() => null),
   ]);
+
+  // Inquiry context — pending answers from ask_friend that resolved
+  // while THIS conv was active (need to weave into next reply) +
+  // open inquiries this bot has sitting on THIS conv as the relay
+  // (need to expose inquiry_id so submit_inquiry_answer is callable
+  // across turns). Self-chat doesn't have inquiries.
+  const inquiryContext = input.isSelfChat
+    ? { pendingAnswers: [], openRelayInquiries: [] }
+    : await loadInquiryContext(supa, bot.id, conversationId).catch(() => ({
+        pendingAnswers: [],
+        openRelayInquiries: [],
+      }));
   const skills = subsBundle.skills.map((s) => ({
     name: s.name,
     description: s.description,
@@ -556,6 +570,12 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       currentFileParts,
       attachmentInventory: inventory,
       socialGraph: socialSnapshot ?? undefined,
+      pendingInquiryAnswers: inquiryContext.pendingAnswers.length > 0
+        ? inquiryContext.pendingAnswers
+        : undefined,
+      openRelayInquiries: inquiryContext.openRelayInquiries.length > 0
+        ? inquiryContext.openRelayInquiries
+        : undefined,
       clientTz: input.clientTz,
     },
     locale,
@@ -779,6 +799,17 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   ];
   if (allowedTools.has('execute_code')) turnToolsRaw.push(EXECUTE_CODE_TOOL);
   if (input.inGroup) turnToolsRaw.push(...GROUP_BOT_TOOLS);
+  // ask_friend / submit_inquiry_answer are public-bot-only. The
+  // visibility check piggybacks on socialSnapshot.isPublic — already
+  // fetched alongside the social graph data above. Private bots get
+  // neither (their only friend is the owner = the person they're
+  // already talking to). The submit tool is only useful inside a relay
+  // conversation, but we expose it on every public-bot turn rather than
+  // try to detect "we're in someone's relay" — the tool's own
+  // ownership check will reject misuse.
+  if (socialSnapshot?.isPublic) {
+    turnToolsRaw.push(ASK_FRIEND_TOOL, SUBMIT_INQUIRY_ANSWER_TOOL);
+  }
 
   // Strict allowlist from the tools registry — disabling a row in the
   // board "Tools" page strips it here within ~1 min (60s isolate
@@ -801,6 +832,9 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     DELEGATE_TO_SPECIALIST_TOOL,
   ];
   if (input.inGroup) nativeFnToolsRaw.push(...GROUP_BOT_TOOLS);
+  if (socialSnapshot?.isPublic) {
+    nativeFnToolsRaw.push(ASK_FRIEND_TOOL, SUBMIT_INQUIRY_ANSWER_TOOL);
+  }
   const nativeFnTools: ChatCompletionTool[] = applyToolRegistry(
     nativeFnToolsRaw,
     toolRegistry,

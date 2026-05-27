@@ -14,6 +14,8 @@ import {
   requestExecuteCodeTool,
 } from './tools/code-exec';
 import { delegateToSpecialistTool } from './tools/delegate';
+import { askFriendTool } from './tools/ask-friend';
+import { submitInquiryAnswerTool } from './tools/submit-inquiry-answer';
 
 /// Single web-search citation. Stored on each bubble row's `citations`
 /// jsonb so iOS can resolve inline `[N]` markers to a tappable link.
@@ -124,6 +126,12 @@ export async function runTool(
     }
     if (name === 'delegate_to_specialist') {
       return await delegateToSpecialistTool(env, args, ctx);
+    }
+    if (name === 'ask_friend') {
+      return await askFriendTool(env, args, ctx);
+    }
+    if (name === 'submit_inquiry_answer') {
+      return await submitInquiryAnswerTool(env, args, ctx);
     }
     return JSON.stringify({ error: `unknown tool: ${name}` });
   } catch (err) {

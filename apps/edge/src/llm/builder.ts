@@ -96,6 +96,27 @@ export interface BuildMessagesInput {
     mime?: string | null;
     filename?: string | null;
   }>;
+  // Pending answers from prior ask_friend calls that resolved while the
+  // caller_conv was "active" — submit_inquiry_answer parked them here
+  // instead of inserting a spontaneous message. The bot should weave
+  // them into its reply this turn. Marked answered_delivered the moment
+  // we read them, so they only surface once (lost if the turn errors,
+  // by design — beats double-delivering).
+  pendingInquiryAnswers?: Array<{
+    inquiry_id: string;
+    target_display_name: string;
+    question: string;
+    answer: string;
+  }>;
+  // Open inquiries this bot raised that now ride this conversation as
+  // the relay. Surfaces the inquiry_id so the bot can find it when it
+  // decides to call submit_inquiry_answer — without this, ask_friend's
+  // tool-result envelope only lives in the current turn's tool-call
+  // memory and is gone by the next turn.
+  openRelayInquiries?: Array<{
+    inquiry_id: string;
+    question: string;
+  }>;
   // Bot's own social graph — small per-turn snapshot used by the social
   // section. Counts + top-N display names for human friends and groups.
   // Refreshed each turn (cheap) and rendered into the *volatile* per-turn
@@ -255,6 +276,49 @@ function buildSocialGraphStatsSection(
 
 function buildSocialGraphSkillSection(): string {
   return BOT_SOCIAL_GRAPH_SKILL_BODY;
+}
+
+// Answers from prior ask_friend calls that finished while THIS conv
+// (the caller side) was active. submit_inquiry_answer parked them on
+// the inquiry row; bot-reply read + cleared them. The bot should weave
+// the contents into its current reply rather than dropping them as a
+// separate bubble — that's the whole point of the active-injection
+// path. Lives in volatile context (per-turn, never cached).
+function buildPendingInquiryAnswersSection(
+  pending: BuildMessagesInput['pendingInquiryAnswers'],
+): string {
+  if (!pending || pending.length === 0) return '';
+  const items = pending.map((p) => {
+    const target = p.target_display_name || '某位好友';
+    return `- 你之前问 ${target}「${p.question}」—— 对方那边的对话已经收尾，转述给你的答案是：\n  ${p.answer}`;
+  });
+  return [
+    '## 刚回来的好友问询',
+    '（这些是你之前用 ask_friend 问出去、submit_inquiry_answer 已经收尾的答案。caller 这边正活跃，所以没有作为独立消息发出，需要你在本回合的回复里自然融入。不必逐字转述，按对话氛围吸收即可。）',
+    '',
+    ...items,
+  ].join('\n');
+}
+
+// Reminder section when the current conv IS the relay side of one or
+// more open inquiries (i.e. you, the bot, are sitting in your 1v1 with
+// a human friend you ask_friend'd earlier). Just lists inquiry_id +
+// question so the bot has the id at hand when it wants to call
+// submit_inquiry_answer. Without this, the id is lost across turns —
+// tool-call envelopes don't carry into the next round's history.
+function buildOpenRelayInquiriesSection(
+  open: BuildMessagesInput['openRelayInquiries'],
+): string {
+  if (!open || open.length === 0) return '';
+  const items = open.map(
+    (q) => `- inquiry_id=\`${q.inquiry_id}\` — 原始提问：「${q.question}」`,
+  );
+  return [
+    '## 这个对话上挂着等回收尾的 inquiry',
+    '（你之前在另一个会话里发起的 ask_friend，目标就是当前这位好友。等你和对方对话清楚、有答案可以转述回去时，调 `submit_inquiry_answer(inquiry_id, answer)` 收尾。）',
+    '',
+    ...items,
+  ].join('\n');
 }
 
 function buildSkillsSection(skills: BuildMessagesInput['skills']): string {
@@ -479,6 +543,8 @@ export type BuildSystemPromptInput = Pick<
   | 'lookbacks'
   | 'attachmentInventory'
   | 'socialGraph'
+  | 'pendingInquiryAnswers'
+  | 'openRelayInquiries'
 >;
 
 // Which surface the prompt is for. Each maps to its own platform prompt:
@@ -543,7 +609,17 @@ function buildVolatileContext(input: BuildSystemPromptInput): string {
   const attachmentSection = buildAttachmentInventorySection(input.attachmentInventory);
   const lookbackSection = buildLookbackSection(input.lookbacks);
   const socialStatsSection = buildSocialGraphStatsSection(input.socialGraph);
-  return [attachmentSection, lookbackSection, socialStatsSection]
+  const pendingAnswersSection = buildPendingInquiryAnswersSection(
+    input.pendingInquiryAnswers,
+  );
+  const openRelaySection = buildOpenRelayInquiriesSection(input.openRelayInquiries);
+  return [
+    attachmentSection,
+    lookbackSection,
+    socialStatsSection,
+    pendingAnswersSection,
+    openRelaySection,
+  ]
     .filter(Boolean)
     .join('\n\n');
 }
