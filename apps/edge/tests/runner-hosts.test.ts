@@ -284,6 +284,73 @@ describe('POST /v1/runner-hosts/:id/claim-next', () => {
   });
 });
 
+describe('POST /v1/runner-hosts/:id/sessions/:sessionId/claim', () => {
+  it('claims the selected queued session with a device grant for the granted subject', async () => {
+    const token = 'pdg_runner_selected_claim_token';
+    const subjectId = '11111111-1111-4111-8111-111111111111';
+    const db = makeFakeDb();
+    await seedDeviceGrant(db, token, subjectId, ['runner:write']);
+    db.rpcs = {
+      claim_crew_session_for_subject: (args) => {
+        expect(args).toEqual({
+          p_runner_host_id: 'host-1',
+          p_responsible_subject_id: subjectId,
+          p_crew_session_id: 'session-1',
+          p_runner_kinds: ['local_codex'],
+        });
+        return {
+          data: {
+            lease_id: 'lease-1',
+            session: {
+              id: 'session-1',
+              crew_conversation_id: 'crew-1',
+              responsible_subject_id: subjectId,
+              runner_kind: 'local_codex',
+              status: 'running',
+              task_brief: '整理本地 session 工作台',
+              progress_summary: '正在运行',
+              created_at: '2026-05-27T00:00:00Z',
+              started_at: '2026-05-27T00:01:00Z',
+              finished_at: null,
+            },
+          },
+          error: null,
+        };
+      },
+    };
+
+    const res = await appFor(db).request('/v1/runner-hosts/host-1/sessions/session-1/claim', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ runnerKinds: ['local_codex'] }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { leaseId: string; session: { id: string } };
+    expect(body.leaseId).toBe('lease-1');
+    expect(body.session.id).toBe('session-1');
+  });
+
+  it('returns an empty claim when the selected session cannot be claimed', async () => {
+    const db = makeFakeDb();
+    await seedDeviceGrant(db, 'pdg_runner_selected_no_claim_token', '11111111-1111-4111-8111-111111111111', ['runner:write']);
+    db.rpcs = {
+      claim_crew_session_for_subject: () => ({ data: null, error: null }),
+    };
+
+    const res = await appFor(db).request('/v1/runner-hosts/host-1/sessions/session-1/claim', {
+      method: 'POST',
+      headers: { authorization: 'Bearer pdg_runner_selected_no_claim_token' },
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ leaseId: null, session: null });
+  });
+});
+
 describe('POST /v1/runner-hosts/:id/sessions/:sessionId/events', () => {
   it('rejects normal user JWTs for runner progress events', async () => {
     const db = makeFakeDb();

@@ -323,7 +323,11 @@ final class AppModel: ObservableObject {
 
         do {
             guard let api else { throw LocalError.missingAuth }
-            let claim = try await api.claimNextSession(hostId: hostId, runnerKinds: Array(kinds))
+            let claim = try await api.claimSession(
+                hostId: hostId,
+                sessionId: selectedSessionId,
+                runnerKinds: Array(kinds)
+            )
             activeRunnerHostId = hostId
             activeRunnerLeaseId = claim.leaseId
             activeRunnerSession = claim.session

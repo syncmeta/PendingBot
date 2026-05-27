@@ -175,3 +175,39 @@ Crew detail, Runner, and Settings now share the same policy so buttons and guida
 Run: `swift test --package-path apps/macos/PendingCrew --filter LocalCodingAgentRunnerTests`
 
 Expected: PASS.
+
+### Task 6: Exact Session Claim API
+
+**Files:**
+- Modify: `apps/edge/src/routes/runner-hosts.ts`
+- Modify: `apps/edge/src/db/schema.ts`
+- Modify: `apps/edge/tests/runner-hosts.test.ts`
+- Modify: `apps/macos/PendingCrew/Sources/PendingCrew/Services/PendingBotAPI.swift`
+- Modify: `apps/macos/PendingCrew/Sources/PendingCrew/Stores/AppModel.swift`
+- Create: `supabase/migrations/20260527160100_claim_specific_crew_session.sql`
+
+- [x] **Step 1: Write the failing Edge route test**
+
+Run: `npm test --workspace apps/edge -- runner-hosts.test.ts`
+
+Expected: FAIL with 404 for `POST /v1/runner-hosts/:id/sessions/:sessionId/claim`.
+
+- [x] **Step 2: Add the Edge route and RPC migration**
+
+The route calls `claim_crew_session_for_subject` with `p_crew_session_id`, so the workbench can claim the selected session instead of consuming the next arbitrary queued session.
+
+- [x] **Step 3: Update PendingCrew API client**
+
+`PendingBotAPI.claimSession(hostId:sessionId:runnerKinds:)` uses the exact claim route, and `AppModel.claimSelectedSession` calls it.
+
+- [x] **Step 4: Run Edge and PendingCrew checks**
+
+Run:
+
+```bash
+npm test --workspace apps/edge -- runner-hosts.test.ts
+npm run typecheck --workspace apps/edge
+swift test --package-path apps/macos/PendingCrew --filter LocalCodingAgentRunnerTests
+```
+
+Expected: PASS.

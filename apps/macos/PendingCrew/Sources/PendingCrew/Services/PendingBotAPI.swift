@@ -150,6 +150,13 @@ struct PendingBotAPI {
         )
     }
 
+    func claimSession(hostId: String, sessionId: String, runnerKinds: [RunnerKind]) async throws -> RunnerClaimResponse {
+        try await post(
+            "/v1/runner-hosts/\(hostId)/sessions/\(sessionId)/claim",
+            body: ClaimNextBody(runnerKinds: runnerKinds.map(\.rawValue))
+        )
+    }
+
     func appendRunnerEvent(
         hostId: String,
         sessionId: String,

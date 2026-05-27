@@ -3827,6 +3827,15 @@ export type Database = {
         }
         Returns: Json
       }
+      claim_crew_session_for_subject: {
+        Args: {
+          p_crew_session_id: string
+          p_responsible_subject_id: string
+          p_runner_host_id: string
+          p_runner_kinds?: Json
+        }
+        Returns: Json
+      }
       consume_subject_device_login_challenge: {
         Args: {
           p_challenge_id: string

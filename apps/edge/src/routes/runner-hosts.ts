@@ -195,6 +195,36 @@ runnerHostRoutes.post('/:id/claim-next', requireSubjectAuth(['runner:write']), a
   });
 });
 
+runnerHostRoutes.post('/:id/sessions/:sessionId/claim', requireSubjectAuth(['runner:write']), async (c) => {
+  const runnerHostId = c.req.param('id');
+  const sessionId = c.req.param('sessionId');
+  let parsed: z.infer<typeof ClaimNextBody>;
+  try {
+    parsed = ClaimNextBody.parse(await c.req.json().catch(() => ({})));
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+
+  const deviceGrant = runnerDeviceGrant(c);
+  if (!deviceGrant) return runnerDeviceGrantRequired(c);
+  const { data, error } = await serviceClient(c.env).rpc('claim_crew_session_for_subject', {
+    p_runner_host_id: runnerHostId,
+    p_responsible_subject_id: deviceGrant.subjectId,
+    p_crew_session_id: sessionId,
+    p_runner_kinds: (parsed.runnerKinds ?? null) as Json,
+  } as never);
+  if (error) return mapRpcError(c, error);
+  if (!data || typeof data !== 'object') {
+    return c.json({ leaseId: null, session: null });
+  }
+
+  const claim = data as { lease_id?: unknown; session?: unknown };
+  return c.json({
+    leaseId: typeof claim.lease_id === 'string' ? claim.lease_id : null,
+    session: claim.session ?? null,
+  });
+});
+
 runnerHostRoutes.post('/:id/sessions/:sessionId/events', requireSubjectAuth(['runner:write']), async (c) => {
   const runnerHostId = c.req.param('id');
   const sessionId = c.req.param('sessionId');
