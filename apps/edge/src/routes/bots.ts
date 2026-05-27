@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
-import { serviceClient } from '../lib/supabase';
+import { serviceClient, userClient } from '../lib/supabase';
 import { deleteCachedBot } from '../lib/bot-cache';
 import { UUID_RE } from '../lib/ids';
 import { jsonError } from '../lib/http-error';
@@ -225,4 +225,45 @@ botRoutes.patch('/:id', async (c) => {
   await deleteCachedBot(c.env, id).catch(() => undefined);
 
   return c.json({ ok: true });
+});
+
+// GET /v1/bots/:id/friends — list the bot's human friends.
+//
+// Thin wrapper over the get_bot_friends RPC: the access check (caller
+// is creator / friend / co-group-member) lives there. Used by the
+// "查看 bot 好友" surface on iOS. Returns shape parallel to
+// /v1/contacts so the iOS row component can be reused.
+botRoutes.get('/:id/friends', async (c) => {
+  const id = c.req.param('id');
+  if (!UUID_RE.test(id)) {
+    return jsonError(c, 400, 'invalid_id');
+  }
+  const userJwt = c.var.userJwt!;
+  const supa = userClient(c.env, userJwt);
+  const { data, error } = await supa.rpc('get_bot_friends', { p_bot_id: id });
+  if (error) {
+    // The RPC raises with a Chinese reason on access denial — surface
+    // as 403 so iOS distinguishes from 5xx infra errors.
+    if (/没有权限/.test(error.message)) {
+      return jsonError(c, 403, 'forbidden', { detail: error.message });
+    }
+    if (/not found/.test(error.message)) {
+      return jsonError(c, 404, 'not_found', { detail: error.message });
+    }
+    return jsonError(c, 500, 'database_error', { detail: error.message });
+  }
+  const rows = (data ?? []) as Array<{
+    user_id: string;
+    display_name: string;
+    avatar_path: string | null;
+    added_at: string;
+  }>;
+  return c.json({
+    friends: rows.map((r) => ({
+      user_id: r.user_id,
+      display_name: r.display_name,
+      avatar_path: r.avatar_path,
+      added_at: r.added_at,
+    })),
+  });
 });
