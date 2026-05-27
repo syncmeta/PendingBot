@@ -1,5 +1,4 @@
 import type { ChatCompletionTool } from 'openai/resources/chat/completions';
-import type { DelegateTarget } from './tools/delegate';
 
 // JSON-schema descriptors for every tool the chat bot can call. Split
 // from the rest of bot-reply/ because:
@@ -284,40 +283,36 @@ export const EXECUTE_CODE_TOOL: ChatCompletionTool = {
   },
 };
 
-// Subagent delegation tool. Added to the per-turn tool list when the user
-// has at least one bot contact other than the caller. The target enum is
-// generated from those actual bot ids so the model can delegate to any
-// model-backed bot the user can chat with, regardless of provider.
-export function buildDelegateTool(targets: ReadonlyArray<DelegateTarget>): ChatCompletionTool {
-  const targetDescription = targets
-    .map((t) => {
-      const provider = t.modelProvider ?? 'openrouter';
-      return `${t.id} = ${t.displayName} (${t.modelId}, ${provider})`;
-    })
-    .join('\n');
-  return {
-    type: 'function',
-    function: {
-      name: 'delegate_to_specialist',
-      parameters: {
-        type: 'object',
-        properties: {
-          target_bot_id: {
-            type: 'string',
-            enum: targets.map((t) => t.id),
-            description: `Bot id to delegate to. Available targets:\n${targetDescription}`,
-          },
-          prompt: {
-            type: 'string',
-            description:
-              '完整、自包含的任务描述 — 专家看不到你这边的对话历史，必须把它需要的所有上下文写进来。1–8000 字。',
-          },
+// `delegate_to_specialist` — fire one non-streaming completion against
+// an arbitrary model slug and return the answer. Always-on for every
+// bot (private + public); not gated by user_bot_contacts anymore.
+//
+// The model picks `model_slug` based on its subscribed skills (skill
+// bodies say things like "for complex math, use model='claude-opus-4.7'").
+// The tool is permissive: any slug the router can resolve works; the
+// fallback router surfaces upstream errors through the JSON envelope.
+export const DELEGATE_TO_SPECIALIST_TOOL: ChatCompletionTool = {
+  type: 'function',
+  function: {
+    name: 'delegate_to_specialist',
+    parameters: {
+      type: 'object',
+      properties: {
+        model_slug: {
+          type: 'string',
+          description:
+            '要委托的模型 slug（e.g. "claude-opus-4.7", "~google/gemini-2.5-pro"）。具体场景该用什么模型，看你订阅的 skill 里的说明。',
         },
-        required: ['target_bot_id', 'prompt'],
+        prompt: {
+          type: 'string',
+          description:
+            '完整、自包含的任务描述 —— 专家看不到你的对话历史，必须把它需要的全部上下文、约束、产出格式都写进来。1–8000 字。',
+        },
       },
+      required: ['model_slug', 'prompt'],
     },
-  };
-}
+  },
+};
 
 // Group-only tools — exposed by dispatchGroupTurn via input.inGroup.
 // Both write to the same conversation_id + bot_id the runner is acting
