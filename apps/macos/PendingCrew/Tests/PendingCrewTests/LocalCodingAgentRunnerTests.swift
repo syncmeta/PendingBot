@@ -175,6 +175,18 @@ final class LocalCodingAgentRunnerTests: XCTestCase {
         XCTAssertNil(LocalCodingAgentProfile.defaultProfile(for: "cloud_sandbox", workingDirectoryPath: "/tmp/work"))
     }
 
+    func testLocalWorkspacePolicyRequiresAbsoluteExistingDirectory() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pendingcrew-workspace-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+        XCTAssertTrue(LocalWorkspacePolicy(path: tempDirectory.path).canRunLocalAgent)
+        XCTAssertFalse(LocalWorkspacePolicy(path: "relative/path").canRunLocalAgent)
+        XCTAssertFalse(LocalWorkspacePolicy(path: tempDirectory.appendingPathComponent("missing").path).canRunLocalAgent)
+        XCTAssertFalse(LocalWorkspacePolicy(path: "   ").canRunLocalAgent)
+    }
+
     func testContextPacketInjectsMailboxIntoPrompt() {
         let session = CrewSession(
             id: "session-1",

@@ -61,6 +61,23 @@ struct LocalCodingAgentProfile: Equatable {
     }
 }
 
+struct LocalWorkspacePolicy: Equatable {
+    let path: String
+    var fileManager: FileManager = .default
+
+    var normalizedPath: String {
+        path.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var canRunLocalAgent: Bool {
+        guard !normalizedPath.isEmpty else { return false }
+        guard normalizedPath.hasPrefix("/") else { return false }
+
+        var isDirectory: ObjCBool = false
+        return fileManager.fileExists(atPath: normalizedPath, isDirectory: &isDirectory) && isDirectory.boolValue
+    }
+}
+
 enum LocalCodingAgentContextPacket {
     static func render(session: CrewSession, mailbox: [SessionMailboxItem]) -> String {
         var sections: [String] = []

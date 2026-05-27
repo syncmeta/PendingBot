@@ -346,10 +346,11 @@ struct CrewDetailView: View {
     }
 
     private func canRunLocalSession(_ session: CrewSession) -> Bool {
-        LocalCodingAgentProfile.defaultProfile(
+        let workspacePolicy = LocalWorkspacePolicy(path: model.localWorkspacePath)
+        return LocalCodingAgentProfile.defaultProfile(
             for: session.runnerKind,
-            workingDirectoryPath: model.localWorkspacePath
-        ) != nil && !model.localWorkspacePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            workingDirectoryPath: workspacePolicy.normalizedPath
+        ) != nil && workspacePolicy.canRunLocalAgent
     }
 
     private func selectInitialSessionIfNeeded() {

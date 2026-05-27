@@ -141,3 +141,37 @@ Expected: exit 0.
 Run: `git diff --check`
 
 Expected: no output.
+
+### Task 5: Local Workspace Execution Policy
+
+**Files:**
+- Modify: `apps/macos/PendingCrew/Sources/PendingCrew/Services/LocalCodingAgentRunner.swift`
+- Modify: `apps/macos/PendingCrew/Sources/PendingCrew/Stores/AppModel.swift`
+- Modify: `apps/macos/PendingCrew/Sources/PendingCrew/Views/CrewDetailView.swift`
+- Modify: `apps/macos/PendingCrew/Sources/PendingCrew/Views/RunnerHostsView.swift`
+- Modify: `apps/macos/PendingCrew/Sources/PendingCrew/Views/SettingsView.swift`
+- Test: `apps/macos/PendingCrew/Tests/PendingCrewTests/LocalCodingAgentRunnerTests.swift`
+
+- [x] **Step 1: Write the failing workspace policy test**
+
+Run: `swift test --package-path apps/macos/PendingCrew --filter LocalCodingAgentRunnerTests/testLocalWorkspacePolicyRequiresAbsoluteExistingDirectory`
+
+Expected: FAIL because `LocalWorkspacePolicy` does not exist.
+
+- [x] **Step 2: Add the minimal workspace policy**
+
+`LocalWorkspacePolicy` accepts only non-empty absolute paths that exist and are directories.
+
+- [x] **Step 3: Wire policy into local execution**
+
+`AppModel.runActiveSessionLocally()` now throws `LocalError.invalidLocalWorkspace` before launching a local process when the configured workspace is invalid.
+
+- [x] **Step 4: Expose policy in the UI**
+
+Crew detail, Runner, and Settings now share the same policy so buttons and guidance match the actual execution guard.
+
+- [x] **Step 5: Run focused tests**
+
+Run: `swift test --package-path apps/macos/PendingCrew --filter LocalCodingAgentRunnerTests`
+
+Expected: PASS.

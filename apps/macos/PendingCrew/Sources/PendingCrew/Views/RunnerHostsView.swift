@@ -7,6 +7,10 @@ struct RunnerHostsView: View {
     @State private var progressSummary = "正在处理"
     @State private var finalSummary = "已完成"
 
+    private var workspacePolicy: LocalWorkspacePolicy {
+        LocalWorkspacePolicy(path: model.localWorkspacePath)
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -106,7 +110,13 @@ struct RunnerHostsView: View {
                     } label: {
                         Label("本机执行", systemImage: "terminal")
                     }
-                    .disabled(model.localWorkspacePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(!workspacePolicy.canRunLocalAgent)
+
+                    if !workspacePolicy.canRunLocalAgent {
+                        Text("请先配置一个存在的绝对 workspace 目录。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
 
                     TextField("进度摘要", text: $progressSummary)
                         .textFieldStyle(.roundedBorder)

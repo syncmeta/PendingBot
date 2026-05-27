@@ -351,9 +351,13 @@ final class AppModel: ObservableObject {
             guard let hostId = activeRunnerHostId, let session = activeRunnerSession else {
                 throw LocalError.missingRunnerSession
             }
+            let workspacePolicy = LocalWorkspacePolicy(path: localWorkspacePath)
+            guard workspacePolicy.canRunLocalAgent else {
+                throw LocalError.invalidLocalWorkspace
+            }
             guard let profile = LocalCodingAgentProfile.defaultProfile(
                 for: session.runnerKind,
-                workingDirectoryPath: localWorkspacePath
+                workingDirectoryPath: workspacePolicy.normalizedPath
             ) else {
                 throw LocalError.unsupportedLocalRunner
             }
@@ -490,6 +494,7 @@ enum LocalError: LocalizedError {
     case missingRunnerSession
     case missingDeviceLoginChallenge
     case unsupportedLocalRunner
+    case invalidLocalWorkspace
 
     var errorDescription: String? {
         switch self {
@@ -503,6 +508,8 @@ enum LocalError: LocalizedError {
             "请先创建扫码登录"
         case .unsupportedLocalRunner:
             "这个 session 不是本机 runner 类型"
+        case .invalidLocalWorkspace:
+            "请先配置一个存在的绝对 workspace 目录"
         }
     }
 }

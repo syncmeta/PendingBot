@@ -11,6 +11,19 @@ struct SettingsView: View {
                     .textFieldStyle(.roundedBorder)
             }
 
+            Section("本地 Workspace") {
+                TextField("绝对路径", text: $model.localWorkspacePath)
+                    .textFieldStyle(.roundedBorder)
+
+                if LocalWorkspacePolicy(path: model.localWorkspacePath).canRunLocalAgent {
+                    Label("本机 runner 可以使用这个目录", systemImage: "checkmark.circle")
+                        .foregroundStyle(.secondary)
+                } else {
+                    Label("需要填写一个存在的绝对目录", systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             HStack {
                 Button("保存") {
                     model.saveSettings()
