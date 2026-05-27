@@ -12,6 +12,7 @@ struct CrewDetailView: View {
     @State private var mentionedSessionIds: Set<String> = []
     @State private var mentionedMemberIds: Set<String> = []
     @State private var childCrewTitle = ""
+    @State private var progressUpdateText = ""
 
     private var crew: Crew? {
         model.crews.first { $0.id == crewId }
@@ -121,8 +122,27 @@ struct CrewDetailView: View {
                 createSessionBox
                 sessionsBox
 
-                if let selectedSessionId {
-                    SessionEventsView(sessionId: selectedSessionId)
+                if let selectedSession {
+                    SelectedSessionWindow(
+                        session: selectedSession,
+                        events: model.eventsBySession[selectedSession.id] ?? [],
+                        mailbox: model.mailboxBySession[selectedSession.id] ?? [],
+                        progressUpdateText: $progressUpdateText,
+                        canReportProgress: model.activeRunnerSession?.id == selectedSession.id,
+                        onRefresh: {
+                            Task { await model.refreshEvents(sessionId: selectedSession.id) }
+                        },
+                        onReportProgress: {
+                            Task {
+                                await model.appendRunnerStatus(summary: progressUpdateText)
+                                progressUpdateText = ""
+                            }
+                        }
+                    )
+                } else {
+                    InspectorSection(title: "Session 窗口") {
+                        ContentUnavailableView("选择一个 session", systemImage: "macwindow")
+                    }
                 }
             }
             .padding(16)
@@ -261,6 +281,11 @@ struct CrewDetailView: View {
                 }
             }
         }
+    }
+
+    private var selectedSession: CrewSession? {
+        guard let selectedSessionId else { return nil }
+        return sessions.first { $0.id == selectedSessionId }
     }
 
     private func selectInitialSessionIfNeeded() {
@@ -413,57 +438,302 @@ private struct StatusBadge: View {
     }
 }
 
-private struct SessionEventsView: View {
-    @EnvironmentObject private var model: AppModel
-    let sessionId: String
+struct SessionInspectorModel {
+    let session: CrewSession
+    let sortedEvents: [SessionEvent]
+    let sortedMailbox: [SessionMailboxItem]
 
-    private var events: [SessionEvent] {
-        model.eventsBySession[sessionId] ?? []
+    init(session: CrewSession, events: [SessionEvent], mailbox: [SessionMailboxItem]) {
+        self.session = session
+        self.sortedEvents = events.sorted {
+            if $0.createdAt == $1.createdAt {
+                return $0.id < $1.id
+            }
+            return $0.createdAt > $1.createdAt
+        }
+        self.sortedMailbox = mailbox.sorted {
+            let lhsActive = Self.isActiveMailboxItem($0)
+            let rhsActive = Self.isActiveMailboxItem($1)
+            if lhsActive != rhsActive {
+                return lhsActive
+            }
+            if $0.createdAt == $1.createdAt {
+                return $0.id < $1.id
+            }
+            return $0.createdAt > $1.createdAt
+        }
     }
 
-    private var mailbox: [SessionMailboxItem] {
-        model.mailboxBySession[sessionId] ?? []
+    var shortSessionId: String {
+        String(session.id.prefix(9))
+    }
+
+    var progressText: String {
+        guard let progress = session.progressSummary?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !progress.isEmpty
+        else {
+            return "暂无进度"
+        }
+        return progress
+    }
+
+    var activeMailboxCount: Int {
+        sortedMailbox.filter(Self.isActiveMailboxItem).count
+    }
+
+    private static func isActiveMailboxItem(_ item: SessionMailboxItem) -> Bool {
+        item.status != "archived"
+    }
+}
+
+private struct SelectedSessionWindow: View {
+    let model: SessionInspectorModel
+    @Binding var progressUpdateText: String
+    let canReportProgress: Bool
+    let onRefresh: () -> Void
+    let onReportProgress: () -> Void
+
+    init(
+        session: CrewSession,
+        events: [SessionEvent],
+        mailbox: [SessionMailboxItem],
+        progressUpdateText: Binding<String>,
+        canReportProgress: Bool,
+        onRefresh: @escaping () -> Void,
+        onReportProgress: @escaping () -> Void
+    ) {
+        self.model = SessionInspectorModel(session: session, events: events, mailbox: mailbox)
+        self._progressUpdateText = progressUpdateText
+        self.canReportProgress = canReportProgress
+        self.onRefresh = onRefresh
+        self.onReportProgress = onReportProgress
+    }
+
+    private var canSubmitProgress: Bool {
+        canReportProgress && !progressUpdateText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
-        InspectorSection(title: "事件与收件箱") {
-            if events.isEmpty && mailbox.isEmpty {
-                ContentUnavailableView("还没有事件", systemImage: "list.bullet.rectangle")
-            } else {
-                VStack(alignment: .leading, spacing: 10) {
-                    ForEach(mailbox) { item in
-                        HStack(alignment: .top, spacing: 10) {
-                            Image(systemName: "tray.full")
-                                .foregroundStyle(.secondary)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text("mailbox · \(item.messageKind)")
-                                    .font(.headline)
-                                Text(item.summary)
-                                Text(item.createdAt)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                    ForEach(events) { event in
-                        HStack(alignment: .top, spacing: 10) {
-                            Image(systemName: "smallcircle.filled.circle")
-                                .foregroundStyle(.secondary)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(event.eventType)
-                                    .font(.headline)
-                                if let summary = event.summary {
-                                    Text(summary)
-                                }
-                                Text(event.createdAt)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
+        VStack(alignment: .leading, spacing: 12) {
+            windowHeader
+            taskBrief
+            statusProgress
+            progressControls
+            mailboxSection
+            eventsSection
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(Color.accentColor.opacity(0.28), lineWidth: 1)
+        }
+    }
+
+    private var windowHeader: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Label("Session 窗口", systemImage: "macwindow")
+                    .font(.headline)
+                Spacer(minLength: 8)
+                Button(action: onRefresh) {
+                    Image(systemName: "arrow.clockwise")
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .buttonStyle(.borderless)
+                .help("刷新 session 事件和收件箱")
+            }
+
+            HStack(spacing: 8) {
+                Text(model.session.runnerKind)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                StatusBadge(text: model.session.status)
+                Spacer(minLength: 8)
+                Text(model.shortSessionId)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.tertiary)
             }
         }
+    }
+
+    private var taskBrief: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("Task brief")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(model.session.taskBrief)
+                .font(.body)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(.background.opacity(0.65), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+    }
+
+    private var statusProgress: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Label(model.progressText, systemImage: "chart.line.uptrend.xyaxis")
+                    .font(.subheadline.weight(.medium))
+                    .lineLimit(2)
+                Spacer(minLength: 0)
+            }
+
+            Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 5) {
+                GridRow {
+                    Text("created").foregroundStyle(.secondary)
+                    Text(model.session.createdAt).lineLimit(1)
+                }
+                if let startedAt = model.session.startedAt {
+                    GridRow {
+                        Text("started").foregroundStyle(.secondary)
+                        Text(startedAt).lineLimit(1)
+                    }
+                }
+                if let finishedAt = model.session.finishedAt {
+                    GridRow {
+                        Text("finished").foregroundStyle(.secondary)
+                        Text(finishedAt).lineLimit(1)
+                    }
+                }
+            }
+            .font(.caption)
+        }
+    }
+
+    private var progressControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField("上报进度", text: $progressUpdateText)
+                .textFieldStyle(.roundedBorder)
+                .disabled(!canReportProgress)
+
+            HStack {
+                Button {
+                    onReportProgress()
+                } label: {
+                    Label("上报进度", systemImage: "dot.radiowaves.left.and.right")
+                }
+                .disabled(!canSubmitProgress)
+
+                if !canReportProgress {
+                    Text("只有本机已认领的 session 可直接上报")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(2)
+                }
+            }
+        }
+    }
+
+    private var mailboxSection: some View {
+        SessionWindowSection(
+            title: "Mailbox",
+            badge: model.activeMailboxCount == 0 ? nil : "\(model.activeMailboxCount)"
+        ) {
+            if model.sortedMailbox.isEmpty {
+                EmptyTimelineText(text: "没有收件箱消息")
+            } else {
+                ForEach(model.sortedMailbox) { item in
+                    TimelineRow(
+                        systemImage: item.status == "archived" ? "tray" : "tray.full",
+                        title: "\(item.messageKind) · \(item.status)",
+                        summary: item.summary,
+                        timestamp: item.createdAt
+                    )
+                }
+            }
+        }
+    }
+
+    private var eventsSection: some View {
+        SessionWindowSection(title: "Events", badge: "\(model.sortedEvents.count)") {
+            if model.sortedEvents.isEmpty {
+                EmptyTimelineText(text: "还没有事件")
+            } else {
+                ForEach(model.sortedEvents) { event in
+                    TimelineRow(
+                        systemImage: "smallcircle.filled.circle",
+                        title: event.eventType,
+                        summary: event.summary,
+                        timestamp: event.createdAt
+                    )
+                }
+            }
+        }
+    }
+}
+
+private struct SessionWindowSection<Content: View>: View {
+    let title: String
+    let badge: String?
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                if let badge {
+                    Text(badge)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(.quaternary, in: Capsule())
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 9) {
+                content
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+private struct TimelineRow: View {
+    let systemImage: String
+    let title: String
+    let summary: String?
+    let timestamp: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 9) {
+            Image(systemName: systemImage)
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.caption.weight(.medium))
+                    .lineLimit(1)
+
+                if let summary, !summary.isEmpty {
+                    Text(summary)
+                        .font(.caption)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Text(timestamp)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct EmptyTimelineText: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.tertiary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 4)
     }
 }

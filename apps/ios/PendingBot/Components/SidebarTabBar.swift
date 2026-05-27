@@ -15,7 +15,7 @@ enum TopTab: String, Hashable, CaseIterable {
         switch self {
         case .message:  return "消息"
         case .friends:  return "好友"
-        case .crew:     return "Crew"
+        case .crew:     return "机组"
         case .envelope: return "来信"
         case .me:       return "我"
         }

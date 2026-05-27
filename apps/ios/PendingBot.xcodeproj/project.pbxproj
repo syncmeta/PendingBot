@@ -33,6 +33,7 @@
 		7D1A2B3C4D5E6F708192A3B4 /* CallDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D1A2B3C4D5E6F708192A3B3 /* CallDiagnostics.swift */; };
 		9A0000000000000000000001 /* CallDiagnosticsLogic.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A0000000000000000000003 /* CallDiagnosticsLogic.swift */; };
 		9A0000000000000000000002 /* CallDiagnosticsLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A0000000000000000000006 /* CallDiagnosticsLogicTests.swift */; };
+		ABCDEF0123456789ABCDEF01 /* TopTabMetadataTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCDEF0123456789ABCDEF02 /* TopTabMetadataTests.swift */; };
 		7A1B2C3D4E5F60AABBCC1A02 /* CallCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1B2C3D4E5F60AABBCC1A01 /* CallCenter.swift */; };
 		7A1B2C3D4E5F60AABBCC1B02 /* CallFloatingPill.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1B2C3D4E5F60AABBCC1B01 /* CallFloatingPill.swift */; };
 		A1B2C3D4E5F60718293A4B5C /* GroupCallTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F1E2D3C4B5A69788796A5B4 /* GroupCallTransport.swift */; };
@@ -77,6 +78,7 @@
 		1A1E063912685C3FD3DA3678 /* SubConversationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 446917A16AE3FECF87E75365 /* SubConversationView.swift */; };
 		7217BF5AE561B0D4BA935711 /* GoogleSignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CEA9699F1801C4960BBE127 /* GoogleSignIn.swift */; };
 		725DDD43D66F38A339B6EE39 /* TabRoot.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB16E5402FB9F31D68B74165 /* TabRoot.swift */; };
+		1234567890ABCDEF12345678 /* PendingBotRegularRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1234567890ABCDEF12345679 /* PendingBotRegularRootView.swift */; };
 		73218F689FB323F50181FA6F /* PendingBotApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4230E5DEF138A3DC7320FD18 /* PendingBotApp.swift */; };
 		7441BBB82513354F86E2D12E /* ChatActionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37E2067C1C372EB858B6A6DC /* ChatActionSheet.swift */; };
 		756AB114C3C20E0E06623B83 /* MessageTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E68B229EDD3BD50361009601 /* MessageTabView.swift */; };
@@ -212,6 +214,7 @@
 		9A0000000000000000000003 /* CallDiagnosticsLogic.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallDiagnosticsLogic.swift; sourceTree = "<group>"; };
 		9A0000000000000000000004 /* PendingBotTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PendingBotTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		9A0000000000000000000006 /* CallDiagnosticsLogicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallDiagnosticsLogicTests.swift; sourceTree = "<group>"; };
+		ABCDEF0123456789ABCDEF02 /* TopTabMetadataTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopTabMetadataTests.swift; sourceTree = "<group>"; };
 		7A1B2C3D4E5F60AABBCC1A01 /* CallCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallCenter.swift; sourceTree = "<group>"; };
 		7A1B2C3D4E5F60AABBCC1B01 /* CallFloatingPill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallFloatingPill.swift; sourceTree = "<group>"; };
 		0F1E2D3C4B5A69788796A5B4 /* GroupCallTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupCallTransport.swift; sourceTree = "<group>"; };
@@ -251,6 +254,7 @@
 		FA76A59CB9DB38987FE36E33 /* WalletView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletView.swift; sourceTree = "<group>"; };
 		5E771065A0C0AAB4F6B05E02 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		FB16E5402FB9F31D68B74165 /* TabRoot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabRoot.swift; sourceTree = "<group>"; };
+		1234567890ABCDEF12345679 /* PendingBotRegularRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingBotRegularRootView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -375,6 +379,7 @@
 			isa = PBXGroup;
 			children = (
 				FB16E5402FB9F31D68B74165 /* TabRoot.swift */,
+				1234567890ABCDEF12345679 /* PendingBotRegularRootView.swift */,
 			);
 			path = Root;
 			sourceTree = "<group>";
@@ -419,6 +424,7 @@
 			isa = PBXGroup;
 			children = (
 				9A0000000000000000000006 /* CallDiagnosticsLogicTests.swift */,
+				ABCDEF0123456789ABCDEF02 /* TopTabMetadataTests.swift */,
 			);
 			path = PendingBotTests;
 			sourceTree = "<group>";
@@ -757,6 +763,7 @@
 				88978249B3DE9BBB9F495363 /* SwipeRevealRow.swift in Sources */,
 				18BC93D327B246AC5A5AB9B4 /* TabHeaderBar.swift in Sources */,
 				725DDD43D66F38A339B6EE39 /* TabRoot.swift in Sources */,
+				1234567890ABCDEF12345678 /* PendingBotRegularRootView.swift in Sources */,
 				642FBF31ECF09038C94D6065 /* TabTitle.swift in Sources */,
 				24896FE870AF890607D5C008 /* Theme.swift in Sources */,
 				71C3DA407ECD06012C91BBC2 /* ToolTraceView.swift in Sources */,
@@ -777,6 +784,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				9A0000000000000000000002 /* CallDiagnosticsLogicTests.swift in Sources */,
+				ABCDEF0123456789ABCDEF01 /* TopTabMetadataTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -41,7 +41,7 @@ struct CrewTabView: View {
                             onCreateSession: { Task { await createSession(in: crew.id) } }
                         )
                     } else {
-                        EmptyDetailHint(text: "选择一个 Crew", systemImage: "command")
+                        EmptyDetailHint(text: "选择一个机组", systemImage: "command")
                     }
                 }
             } else {
@@ -94,7 +94,7 @@ struct CrewTabView: View {
 
     private var sidebarContent: some View {
         VStack(spacing: 0) {
-            TabHeaderBar(title: "Crew") {
+            TabHeaderBar(title: "机组") {
                 Button {
                     scanningDeviceLogin = true
                 } label: {
@@ -173,7 +173,7 @@ struct CrewTabView: View {
                 Divider()
                 if runnerHosts.isEmpty {
                     RunnerCapabilityRow(
-                        title: "Mac Crew",
+                        title: "Mac 机组",
                         subtitle: "还没有已登录的 Mac runner",
                         systemImage: "desktopcomputer",
                         isOnline: false
@@ -205,7 +205,7 @@ struct CrewTabView: View {
                 .font(Theme.Fonts.rounded(size: 13, weight: .semibold))
                 .foregroundStyle(Theme.Palette.inkMuted)
             HStack(spacing: 10) {
-                TextField("Crew 名称", text: $newCrewTitle)
+                TextField("机组名称", text: $newCrewTitle)
                     .textFieldStyle(.roundedBorder)
                 Button {
                     Task { await createCrew() }
@@ -223,7 +223,7 @@ struct CrewTabView: View {
     private var crewListSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Crew")
+                Text("机组")
                     .font(Theme.Fonts.rounded(size: 13, weight: .semibold))
                     .foregroundStyle(Theme.Palette.inkMuted)
                 Spacer()
@@ -234,7 +234,7 @@ struct CrewTabView: View {
             }
 
             if crews.isEmpty && !loading {
-                ContentUnavailableView("还没有 Crew", systemImage: "command")
+                ContentUnavailableView("还没有机组", systemImage: "command")
                     .frame(minHeight: 140)
             } else {
                 VStack(spacing: 8) {
@@ -296,7 +296,7 @@ struct CrewTabView: View {
         do {
             let id = try await api.crewCreate(
                 responsibleSubjectId: subject.id,
-                title: title.isEmpty ? "Crew" : title
+                title: title.isEmpty ? "机组" : title
             )
             newCrewTitle = ""
             selectedCrewId = id

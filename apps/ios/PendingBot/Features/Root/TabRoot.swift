@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Five-tab root: 消息 / 好友 / Crew / 来信 / 我.
+/// Five-tab root: 消息 / 好友 / 机组 / 来信 / 我.
 ///
 /// 来信 (Envelopes) hosts a feed of articles each bot has written for
 /// the user; new envelopes are triggered from each conversation's
@@ -8,7 +8,7 @@ import SwiftUI
 ///
 /// Two layouts driven by horizontal size class:
 ///   • compact (iPhone): system `TabView` with the bottom tab bar
-///   • regular (iPad / Mac Catalyst): the active tab is rendered
+///   • regular (iPad): the active tab is rendered
 ///     directly (no system tab bar), and each tab embeds a
 ///     `SidebarTabBar` at the bottom of its left column — the
 ///     WeChat / QQ iPad placement.
@@ -56,7 +56,7 @@ struct TabRoot: View {
         if store.current != nil {
             Group {
                 if sidebarLayout {
-                    regularBody
+                    PendingBotRegularRootView(selection: selected)
                 } else {
                     compactBody
                 }
@@ -164,18 +164,6 @@ struct TabRoot: View {
         }
     }
 
-    // ── Regular (iPad landscape, Mac Catalyst) ──────────────────────────────
-
-    @ViewBuilder
-    private var regularBody: some View {
-        switch selected.wrappedValue {
-        case .message: MessageTabView()
-        case .friends: FriendsTabView()
-        case .crew:    CrewTabView()
-        case .envelope: EnvelopeTabView()
-        case .me:      MeTabView()
-        }
-    }
 }
 
 // ── EnvironmentValues ───────────────────────────────────────────────────────
