@@ -1,15 +1,13 @@
--- 12 个预置机器人（'Lorem ipsum' 词表）。幂等 —— 以 slug 为键。
+-- 6 个预置机器人（'Lorem ipsum' 词表）。幂等 —— 以 slug 为键。
 -- 每个用固定 UUID v7，跨环境的会话链接 / 预置会话标题才稳定。
 --
--- 可见性分两类：
---   private     — amet, consectetur, eiusmod, lorem, sit, tempor
---   public_open — adipiscing, dolor, elit, incididunt, ipsum, sed
+-- 全部 private —— 公开档已在 20260527091508_drop_public_open_visibility
+-- 中废除，原来的 6 个 public_open 共享行随之删除，不再 seed。
 --
 -- 私有预置 bot 的 creator_id-NULL 行是「模板」：RLS 对所有人不可见，
 -- 永不直接挂到会话上。bootstrap_user_id 在每个新用户 onboarding 时把
 -- 模板克隆成一份 creator_id = 该用户 的私有 bot（见迁移
--- 20260517134853_preset_bots_per_user）。公有预置 bot 则是共享行，
--- 所有用户的会话直接指向它。
+-- 20260517134853_preset_bots_per_user）。
 --
 -- ON CONFLICT 只刷 roster 字段（名字 / 模型 / 输出模式 / 启用 / 可见性），
 -- 不动 config 和时间戳，方便重跑刷新而不冲掉运行期改动。
@@ -21,11 +19,3 @@ INSERT INTO pendingbot.bots (id, slug, display_name, model_id, output_mode, is_a
 INSERT INTO pendingbot.bots (id, slug, display_name, model_id, output_mode, is_active, config, visibility, created_at, updated_at) VALUES ('019de705-aae5-75ee-9142-8be94b46e07d', 'lorem', 'Lorem', 'claude-opus-4.7', 'single', true, '{}', 'private', '2026-05-02 04:50:01.567472+00', '2026-05-02 04:50:01.567472+00') ON CONFLICT (slug) DO UPDATE SET display_name = EXCLUDED.display_name, model_id = EXCLUDED.model_id, output_mode = EXCLUDED.output_mode, is_active = EXCLUDED.is_active, visibility = EXCLUDED.visibility;
 INSERT INTO pendingbot.bots (id, slug, display_name, model_id, output_mode, is_active, config, visibility, created_at, updated_at) VALUES ('019de705-aaf4-7863-87bb-c7ba7caa7743', 'sit', 'Sit', 'kimi-k2.6', 'single', true, '{}', 'private', '2026-05-02 04:50:01.567472+00', '2026-05-02 04:50:01.567472+00') ON CONFLICT (slug) DO UPDATE SET display_name = EXCLUDED.display_name, model_id = EXCLUDED.model_id, output_mode = EXCLUDED.output_mode, is_active = EXCLUDED.is_active, visibility = EXCLUDED.visibility;
 INSERT INTO pendingbot.bots (id, slug, display_name, model_id, output_mode, is_active, config, visibility, created_at, updated_at) VALUES ('019de3f7-ccda-7a9f-a64a-3d42129ba479', 'tempor', 'Tempor', 'gemma-4-31b-it', 'single', true, '{}', 'private', '2026-05-01 14:36:01.101808+00', '2026-05-01 14:36:01.101808+00') ON CONFLICT (slug) DO UPDATE SET display_name = EXCLUDED.display_name, model_id = EXCLUDED.model_id, output_mode = EXCLUDED.output_mode, is_active = EXCLUDED.is_active, visibility = EXCLUDED.visibility;
-
--- ── public_open（共享行） ────────────────────────────────────────────
-INSERT INTO pendingbot.bots (id, slug, display_name, model_id, output_mode, is_active, config, visibility, created_at, updated_at) VALUES ('019de705-aaf5-7535-81cd-e77f67355834', 'adipiscing', 'Adipiscing', '~google/gemini-flash-latest', 'single', true, '{}', 'public_open', '2026-05-02 04:50:01.567472+00', '2026-05-02 04:50:01.567472+00') ON CONFLICT (slug) DO UPDATE SET display_name = EXCLUDED.display_name, model_id = EXCLUDED.model_id, output_mode = EXCLUDED.output_mode, is_active = EXCLUDED.is_active, visibility = EXCLUDED.visibility;
-INSERT INTO pendingbot.bots (id, slug, display_name, model_id, output_mode, is_active, config, visibility, created_at, updated_at) VALUES ('019de705-aaf4-74ec-b7f9-07a5d44bec86', 'dolor', 'Dolor', 'x-ai/grok-4.3', 'single', true, '{}', 'public_open', '2026-05-02 04:50:01.567472+00', '2026-05-02 04:50:01.567472+00') ON CONFLICT (slug) DO UPDATE SET display_name = EXCLUDED.display_name, model_id = EXCLUDED.model_id, output_mode = EXCLUDED.output_mode, is_active = EXCLUDED.is_active, visibility = EXCLUDED.visibility;
-INSERT INTO pendingbot.bots (id, slug, display_name, model_id, output_mode, is_active, config, visibility, created_at, updated_at) VALUES ('019de705-aaf5-7a0e-af32-610c8a00d50a', 'elit', 'Elit', 'minimax-m2.7', 'single', true, '{}', 'public_open', '2026-05-02 04:50:01.567472+00', '2026-05-02 04:50:01.567472+00') ON CONFLICT (slug) DO UPDATE SET display_name = EXCLUDED.display_name, model_id = EXCLUDED.model_id, output_mode = EXCLUDED.output_mode, is_active = EXCLUDED.is_active, visibility = EXCLUDED.visibility;
-INSERT INTO pendingbot.bots (id, slug, display_name, model_id, output_mode, is_active, config, visibility, created_at, updated_at) VALUES ('019de67e-ea73-78a8-892a-61746565a4dc', 'incididunt', 'Incididunt', 'google/gemini-3.1-pro-preview', 'single', true, '{}', 'public_open', '2026-05-02 02:22:50.463821+00', '2026-05-02 02:22:50.463821+00') ON CONFLICT (slug) DO UPDATE SET display_name = EXCLUDED.display_name, model_id = EXCLUDED.model_id, output_mode = EXCLUDED.output_mode, is_active = EXCLUDED.is_active, visibility = EXCLUDED.visibility;
-INSERT INTO pendingbot.bots (id, slug, display_name, model_id, output_mode, is_active, config, visibility, created_at, updated_at) VALUES ('019de705-aaf4-79a3-970a-9992c69eaa51', 'ipsum', 'Ipsum', 'deepseek/deepseek-v4-pro', 'single', true, '{}', 'public_open', '2026-05-02 04:50:01.567472+00', '2026-05-02 04:50:01.567472+00') ON CONFLICT (slug) DO UPDATE SET display_name = EXCLUDED.display_name, model_id = EXCLUDED.model_id, output_mode = EXCLUDED.output_mode, is_active = EXCLUDED.is_active, visibility = EXCLUDED.visibility;
-INSERT INTO pendingbot.bots (id, slug, display_name, model_id, output_mode, is_active, config, visibility, created_at, updated_at) VALUES ('019de67e-ea73-7b38-868d-2be53dc33989', 'sed', 'Sed', 'gpt-5.5', 'bubble', true, '{}', 'public_open', '2026-05-02 02:22:50.463821+00', '2026-05-02 02:22:50.463821+00') ON CONFLICT (slug) DO UPDATE SET display_name = EXCLUDED.display_name, model_id = EXCLUDED.model_id, output_mode = EXCLUDED.output_mode, is_active = EXCLUDED.is_active, visibility = EXCLUDED.visibility;
