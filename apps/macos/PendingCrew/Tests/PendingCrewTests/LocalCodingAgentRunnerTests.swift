@@ -182,6 +182,99 @@ final class LocalCodingAgentRunnerTests: XCTestCase {
         XCTAssertTrue(prompt.contains("不要把过程日志刷到 Crew 群聊"))
     }
 
+    func testSessionInspectorModelSortsMailboxAndEventsForOperatorScan() {
+        let session = CrewSession(
+            id: "session-1",
+            crewConversationId: "crew-1",
+            responsibleSubjectId: "subject-1",
+            runnerKind: "local_codex",
+            status: "running",
+            taskBrief: "把右侧 session 区推进成窗口",
+            progressSummary: "正在整理事件",
+            createdAt: "2026-05-27T00:00:00Z",
+            startedAt: "2026-05-27T00:02:00Z",
+            finishedAt: nil
+        )
+        let mailbox = [
+            SessionMailboxItem(
+                id: "mail-archived-new",
+                announcementId: "ann-3",
+                crewConversationId: "crew-1",
+                responsibleSubjectId: "subject-1",
+                senderKind: "human",
+                senderMemberId: "member-1",
+                senderSessionId: nil,
+                recipientSessionId: "session-1",
+                messageKind: "note",
+                summary: "已归档但更新",
+                payload: .object([:]),
+                status: "archived",
+                createdAt: "2026-05-27T00:06:00Z",
+                readAt: "2026-05-27T00:07:00Z"
+            ),
+            SessionMailboxItem(
+                id: "mail-unread-old",
+                announcementId: "ann-1",
+                crewConversationId: "crew-1",
+                responsibleSubjectId: "subject-1",
+                senderKind: "human",
+                senderMemberId: "member-1",
+                senderSessionId: nil,
+                recipientSessionId: "session-1",
+                messageKind: "instruction",
+                summary: "先读这条",
+                payload: .object([:]),
+                status: "unread",
+                createdAt: "2026-05-27T00:01:00Z",
+                readAt: nil
+            ),
+            SessionMailboxItem(
+                id: "mail-unread-new",
+                announcementId: "ann-2",
+                crewConversationId: "crew-1",
+                responsibleSubjectId: "subject-1",
+                senderKind: "session",
+                senderMemberId: nil,
+                senderSessionId: "session-2",
+                recipientSessionId: "session-1",
+                messageKind: "handoff",
+                summary: "最新交接",
+                payload: .object([:]),
+                status: "unread",
+                createdAt: "2026-05-27T00:05:00Z",
+                readAt: nil
+            )
+        ]
+        let events = [
+            SessionEvent(
+                id: "event-old",
+                crewSessionId: "session-1",
+                eventType: "status",
+                visibility: "crew",
+                summary: "启动",
+                payload: .object([:]),
+                createdAt: "2026-05-27T00:02:00Z"
+            ),
+            SessionEvent(
+                id: "event-new",
+                crewSessionId: "session-1",
+                eventType: "status",
+                visibility: "crew",
+                summary: "推进中",
+                payload: .object([:]),
+                createdAt: "2026-05-27T00:04:00Z"
+            )
+        ]
+
+        let model = SessionInspectorModel(session: session, events: events, mailbox: mailbox)
+
+        XCTAssertEqual(model.shortSessionId, "session-1")
+        XCTAssertEqual(model.progressText, "正在整理事件")
+        XCTAssertEqual(model.activeMailboxCount, 2)
+        XCTAssertEqual(model.sortedMailbox.map(\.id), ["mail-unread-new", "mail-unread-old", "mail-archived-new"])
+        XCTAssertEqual(model.sortedEvents.map(\.id), ["event-new", "event-old"])
+    }
+
     func testOutputSummaryPrefersStdoutAndTruncates() {
         let result = LocalCodingAgentProcessResult(
             exitCode: 0,
