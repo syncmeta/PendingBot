@@ -139,12 +139,19 @@ describe('POST /v1/device-login/challenges/:id/approve', () => {
     });
   });
 
-  it('rejects runner scopes on a control-only grant', async () => {
+  it('lets PendingCrew control approve crew and runner scopes for the operator client', async () => {
     const db = makeFakeDb();
     const challenge = await createChallenge(db);
     const subjectId = '11111111-1111-4111-8111-111111111111';
     db.rpcs = {
-      subject_can_authorize_device_grant: () => ({ data: true, error: null }),
+      subject_can_authorize_device_grant: (args) => {
+        expect(args).toEqual({
+          p_subject_id: subjectId,
+          p_user_id: 'user-1',
+          p_grant_kind: 'pendingcrew_control',
+        });
+        return { data: true, error: null };
+      },
     };
 
     const res = await appFor(db).request(`/v1/device-login/challenges/${challenge.challengeId}/approve`, {
@@ -161,15 +168,15 @@ describe('POST /v1/device-login/challenges/:id/approve', () => {
       }),
     });
 
-    expect(res.status).toBe(400);
-    await expect(res.json()).resolves.toMatchObject({
-      error: { code: 'invalid_body' },
-    });
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ ok: true, status: 'approved' });
     expect(db.rows.subject_device_login_challenges[0]).toMatchObject({
-      status: 'pending',
+      status: 'approved',
+      approved_subject_id: subjectId,
+      approved_by_user_id: 'user-1',
+      grant_kind: 'pendingcrew_control',
       requested_scopes: ['subject:read', 'crew:read', 'runner:write'],
     });
-    expect(db.rows.subject_device_login_challenges[0]).not.toHaveProperty('grant_kind');
   });
 
   it('rejects an app/grant mismatch', async () => {

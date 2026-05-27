@@ -2,11 +2,8 @@ import SwiftUI
 
 /// Regular-size PendingBot shell for iPad.
 ///
-/// `apps/shared/PendingBotShared` exists as a local SwiftPM package, but
-/// `PendingBot.xcodeproj` does not currently reference it. Keeping this
-/// bridge in the iOS target gives the future shared shell a single swap
-/// point without risking a hand-edited package dependency that breaks
-/// today's build.
+/// The Crew tab uses the shared SwiftUI big-screen surface; the other tabs
+/// keep their native iPad views until their shared surfaces exist.
 struct PendingBotRegularRootView: View {
     @Binding var selection: TopTab
 
@@ -32,7 +29,7 @@ private struct PendingBotBigScreenShellBridge: View {
         switch selection {
         case .message: MessageTabView()
         case .friends: FriendsTabView()
-        case .crew: CrewTabView()
+        case .crew: PendingBotRegularCrewView()
         case .envelope: EnvelopeTabView()
         case .me: MeTabView()
         }

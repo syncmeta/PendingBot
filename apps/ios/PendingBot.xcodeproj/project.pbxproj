@@ -79,6 +79,8 @@
 		7217BF5AE561B0D4BA935711 /* GoogleSignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CEA9699F1801C4960BBE127 /* GoogleSignIn.swift */; };
 		725DDD43D66F38A339B6EE39 /* TabRoot.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB16E5402FB9F31D68B74165 /* TabRoot.swift */; };
 		1234567890ABCDEF12345678 /* PendingBotRegularRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1234567890ABCDEF12345679 /* PendingBotRegularRootView.swift */; };
+		C0DEB0F00100000000000004 /* PendingBotRegularCrewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEB0F00100000000000005 /* PendingBotRegularCrewView.swift */; };
+		C0DEB0F00100000000000001 /* PendingBotShared in Frameworks */ = {isa = PBXBuildFile; productRef = C0DEB0F00100000000000003 /* PendingBotShared */; };
 		73218F689FB323F50181FA6F /* PendingBotApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4230E5DEF138A3DC7320FD18 /* PendingBotApp.swift */; };
 		7441BBB82513354F86E2D12E /* ChatActionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37E2067C1C372EB858B6A6DC /* ChatActionSheet.swift */; };
 		756AB114C3C20E0E06623B83 /* MessageTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E68B229EDD3BD50361009601 /* MessageTabView.swift */; };
@@ -255,6 +257,7 @@
 		5E771065A0C0AAB4F6B05E02 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		FB16E5402FB9F31D68B74165 /* TabRoot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabRoot.swift; sourceTree = "<group>"; };
 		1234567890ABCDEF12345679 /* PendingBotRegularRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingBotRegularRootView.swift; sourceTree = "<group>"; };
+		C0DEB0F00100000000000005 /* PendingBotRegularCrewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingBotRegularCrewView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -273,6 +276,7 @@
 				5A7D1E0066F40000A0000001 /* SwiftMath in Frameworks */,
 				68CC7CE5D41AC8BE5940E886 /* Supabase in Frameworks */,
 				A2E9CBC1BBEC585F2594DFAC /* GRDB in Frameworks */,
+				C0DEB0F00100000000000001 /* PendingBotShared in Frameworks */,
 				AE2E39CEFC00A4D6517ABAE9 /* GoogleSignIn in Frameworks */,
 				30E08775E0377B26A0398856 /* WebRTC in Frameworks */,
 			);
@@ -380,6 +384,7 @@
 			children = (
 				FB16E5402FB9F31D68B74165 /* TabRoot.swift */,
 				1234567890ABCDEF12345679 /* PendingBotRegularRootView.swift */,
+				C0DEB0F00100000000000005 /* PendingBotRegularCrewView.swift */,
 			);
 			path = Root;
 			sourceTree = "<group>";
@@ -578,6 +583,7 @@
 				11A77E911EA1D815E90E7BFD /* GRDB */,
 				58587B83E149045A770D0833 /* GoogleSignIn */,
 				BAA061523352F62354113E3C /* WebRTC */,
+				C0DEB0F00100000000000003 /* PendingBotShared */,
 			);
 			productName = PendingBot;
 			productReference = 42A11830F64F80977210B443 /* PendingBot.app */;
@@ -638,6 +644,7 @@
 				5A7D1E0066F40000A0000002 /* XCRemoteSwiftPackageReference "SwiftMath" */,
 				E22BFBEF3FFC995818D5FAF3 /* XCRemoteSwiftPackageReference "supabase-swift" */,
 				29D657BB797271F924E65A03 /* XCRemoteSwiftPackageReference "WebRTC" */,
+				C0DEB0F00100000000000002 /* XCLocalSwiftPackageReference "../shared/PendingBotShared" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 5499C93C9DF42D382007DFA9 /* Products */;
@@ -764,6 +771,7 @@
 				18BC93D327B246AC5A5AB9B4 /* TabHeaderBar.swift in Sources */,
 				725DDD43D66F38A339B6EE39 /* TabRoot.swift in Sources */,
 				1234567890ABCDEF12345678 /* PendingBotRegularRootView.swift in Sources */,
+				C0DEB0F00100000000000004 /* PendingBotRegularCrewView.swift in Sources */,
 				642FBF31ECF09038C94D6065 /* TabTitle.swift in Sources */,
 				24896FE870AF890607D5C008 /* Theme.swift in Sources */,
 				71C3DA407ECD06012C91BBC2 /* ToolTraceView.swift in Sources */,
@@ -1058,6 +1066,13 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		C0DEB0F00100000000000002 /* XCLocalSwiftPackageReference "../shared/PendingBotShared" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = "../shared/PendingBotShared";
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		27FF4C03EE683C1EF818DA87 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -1139,6 +1154,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 29D657BB797271F924E65A03 /* XCRemoteSwiftPackageReference "WebRTC" */;
 			productName = WebRTC;
+		};
+		C0DEB0F00100000000000003 /* PendingBotShared */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C0DEB0F00100000000000002 /* XCLocalSwiftPackageReference "../shared/PendingBotShared" */;
+			productName = PendingBotShared;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

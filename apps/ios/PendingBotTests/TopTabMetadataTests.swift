@@ -15,4 +15,23 @@ final class TopTabMetadataTests: XCTestCase {
             "person.crop.circle",
         ])
     }
+
+    func testDeviceLoginGrantFallbackRetriesPendingBotClientOnKindMismatch() {
+        XCTAssertEqual(
+            DeviceLoginGrantApproval.retryPlan(after: APIError.http(
+                status: 400,
+                code: "invalid_body",
+                message: "grant kind does not match app kind",
+                body: ""
+            )),
+            .pendingBotClient
+        )
+
+        XCTAssertNil(DeviceLoginGrantApproval.retryPlan(after: APIError.http(
+            status: 403,
+            code: "forbidden",
+            message: "forbidden",
+            body: ""
+        )))
+    }
 }

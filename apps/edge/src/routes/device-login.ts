@@ -88,7 +88,7 @@ function allowedScopesForGrant(grantKind: z.infer<typeof GrantKind>): Set<z.infe
     case 'pendingbot_client':
       return new Set(['subject:read', 'crew:read', 'crew:write']);
     case 'pendingcrew_control':
-      return new Set(['subject:read', 'crew:read', 'crew:write']);
+      return new Set(['subject:read', 'crew:read', 'crew:write', 'runner:read', 'runner:write']);
     case 'pendingcrew_runner':
       return new Set(['subject:read', 'runner:read', 'runner:write']);
   }

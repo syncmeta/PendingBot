@@ -9,9 +9,15 @@ struct CrewTabView: View {
     @State private var crews: [CrewSummary] = []
     @State private var runnerHosts: [CrewRunnerHost] = []
     @State private var sessionsByCrew: [String: [CrewSessionSummary]] = [:]
+    @State private var linksByCrew: [String: CrewLinksResponse] = [:]
+    @State private var membersByCrew: [String: [CrewMemberSummary]] = [:]
+    @State private var announcementsByCrew: [String: [CrewAnnouncementSummary]] = [:]
+    @State private var loadingDetailCrewIds: Set<String> = []
     @State private var selectedCrewId: String?
     @State private var newCrewTitle = ""
+    @State private var childCrewTitle = ""
     @State private var taskBrief = ""
+    @State private var announcementSummary = ""
     @State private var selectedRunnerKind: CrewRunnerKind = .cloudSandbox
     @State private var loading = false
     @State private var error: String?
@@ -33,12 +39,20 @@ struct CrewTabView: View {
                     if let crew = selectedCrew {
                         CrewDetailPane(
                             crew: crew,
+                            links: linksByCrew[crew.id],
+                            members: membersByCrew[crew.id] ?? [],
                             sessions: sessionsByCrew[crew.id] ?? [],
+                            announcements: announcementsByCrew[crew.id] ?? [],
                             runnerHosts: runnerHosts,
+                            loadingDetail: loadingDetailCrewIds.contains(crew.id),
                             selectedRunnerKind: $selectedRunnerKind,
                             taskBrief: $taskBrief,
-                            onRefresh: { Task { await loadSessions(for: crew.id) } },
-                            onCreateSession: { Task { await createSession(in: crew.id) } }
+                            childCrewTitle: $childCrewTitle,
+                            announcementSummary: $announcementSummary,
+                            onRefresh: { Task { await loadDetail(for: crew.id) } },
+                            onCreateSession: { Task { await createSession(in: crew.id) } },
+                            onCreateChildCrew: { Task { await createChildCrew(parentCrewId: crew.id) } },
+                            onSendAnnouncement: { Task { await sendAnnouncement(in: crew.id) } }
                         )
                     } else {
                         EmptyDetailHint(text: "选择一个机组", systemImage: "command")
@@ -51,14 +65,22 @@ struct CrewTabView: View {
                             if let crew = crews.first(where: { $0.id == crewId }) {
                                 CrewDetailPane(
                                     crew: crew,
+                                    links: linksByCrew[crew.id],
+                                    members: membersByCrew[crew.id] ?? [],
                                     sessions: sessionsByCrew[crew.id] ?? [],
+                                    announcements: announcementsByCrew[crew.id] ?? [],
                                     runnerHosts: runnerHosts,
+                                    loadingDetail: loadingDetailCrewIds.contains(crew.id),
                                     selectedRunnerKind: $selectedRunnerKind,
                                     taskBrief: $taskBrief,
-                                    onRefresh: { Task { await loadSessions(for: crew.id) } },
-                                    onCreateSession: { Task { await createSession(in: crew.id) } }
+                                    childCrewTitle: $childCrewTitle,
+                                    announcementSummary: $announcementSummary,
+                                    onRefresh: { Task { await loadDetail(for: crew.id) } },
+                                    onCreateSession: { Task { await createSession(in: crew.id) } },
+                                    onCreateChildCrew: { Task { await createChildCrew(parentCrewId: crew.id) } },
+                                    onSendAnnouncement: { Task { await sendAnnouncement(in: crew.id) } }
                                 )
-                                .task { await loadSessions(for: crew.id) }
+                                .task { await loadDetail(for: crew.id) }
                                 .toolbar(.hidden, for: .tabBar)
                             }
                         }
@@ -251,7 +273,7 @@ struct CrewTabView: View {
         if sidebarLayout {
             Button {
                 selectedCrewId = crew.id
-                Task { await loadSessions(for: crew.id) }
+                Task { await loadDetail(for: crew.id) }
             } label: {
                 CrewRowContent(crew: crew, isSelected: selectedCrew?.id == crew.id)
             }
@@ -282,7 +304,7 @@ struct CrewTabView: View {
                 selectedCrewId = self.crews.first?.id
             }
             if let selectedCrewId {
-                await loadSessions(for: selectedCrewId)
+                await loadDetail(for: selectedCrewId)
             }
         } catch is CancellationError {
         } catch {
@@ -301,16 +323,25 @@ struct CrewTabView: View {
             newCrewTitle = ""
             selectedCrewId = id
             crews = try await api.crewList()
-            await loadSessions(for: id)
+            await loadDetail(for: id)
         } catch {
             self.error = error.localizedDescription
         }
     }
 
-    private func loadSessions(for crewId: String) async {
+    private func loadDetail(for crewId: String) async {
         guard let api else { return }
+        loadingDetailCrewIds.insert(crewId)
+        defer { loadingDetailCrewIds.remove(crewId) }
         do {
-            sessionsByCrew[crewId] = try await api.crewSessions(crewId: crewId)
+            async let links = api.crewLinks(crewId: crewId)
+            async let members = api.crewMembers(crewId: crewId)
+            async let sessions = api.crewSessions(crewId: crewId)
+            async let announcements = api.crewAnnouncements(crewId: crewId)
+            linksByCrew[crewId] = try await links
+            membersByCrew[crewId] = try await members
+            sessionsByCrew[crewId] = try await sessions
+            announcementsByCrew[crewId] = try await announcements
         } catch is CancellationError {
         } catch {
             self.error = error.localizedDescription
@@ -328,7 +359,36 @@ struct CrewTabView: View {
                 taskBrief: brief
             )
             taskBrief = ""
-            sessionsByCrew[crewId] = try await api.crewSessions(crewId: crewId)
+            await loadDetail(for: crewId)
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func createChildCrew(parentCrewId: String) async {
+        guard let api else { return }
+        let title = childCrewTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return }
+        do {
+            _ = try await api.crewCreateChild(crewId: parentCrewId, title: title)
+            childCrewTitle = ""
+            async let updatedCrews = api.crewList()
+            async let updatedLinks = api.crewLinks(crewId: parentCrewId)
+            crews = try await updatedCrews
+            linksByCrew[parentCrewId] = try await updatedLinks
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func sendAnnouncement(in crewId: String) async {
+        guard let api else { return }
+        let summary = announcementSummary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !summary.isEmpty else { return }
+        do {
+            _ = try await api.crewCreateAnnouncement(crewId: crewId, summary: summary)
+            announcementSummary = ""
+            announcementsByCrew[crewId] = try await api.crewAnnouncements(crewId: crewId)
         } catch {
             self.error = error.localizedDescription
         }
@@ -345,12 +405,23 @@ struct CrewTabView: View {
             return
         }
         do {
-            let response = try await api.approvePendingCrewDeviceLogin(
-                challengeId: payload.challengeId,
-                secret: payload.secret,
-                subjectId: subject.id
-            )
-            notice = response.ok ? "已确认 PendingCrew 登录" : "扫码登录状态：\(response.status)"
+            let response: DeviceLoginApprovalResponse
+            do {
+                response = try await api.approvePendingCrewDeviceLogin(
+                    challengeId: payload.challengeId,
+                    secret: payload.secret,
+                    subjectId: subject.id
+                )
+            } catch {
+                guard let retry = DeviceLoginGrantApproval.retryPlan(after: error) else { throw error }
+                response = try await api.approvePendingCrewDeviceLogin(
+                    challengeId: payload.challengeId,
+                    secret: payload.secret,
+                    subjectId: subject.id,
+                    approval: retry
+                )
+            }
+            notice = response.ok ? "已确认桌面端登录" : "扫码登录状态：\(response.status)"
         } catch {
             self.error = error.localizedDescription
         }
@@ -415,18 +486,30 @@ private struct CrewRowContent: View {
 
 private struct CrewDetailPane: View {
     let crew: CrewSummary
+    let links: CrewLinksResponse?
+    let members: [CrewMemberSummary]
     let sessions: [CrewSessionSummary]
+    let announcements: [CrewAnnouncementSummary]
     let runnerHosts: [CrewRunnerHost]
+    let loadingDetail: Bool
     @Binding var selectedRunnerKind: CrewRunnerKind
     @Binding var taskBrief: String
+    @Binding var childCrewTitle: String
+    @Binding var announcementSummary: String
     let onRefresh: () -> Void
     let onCreateSession: () -> Void
+    let onCreateChildCrew: () -> Void
+    let onSendAnnouncement: () -> Void
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 header
-                composer
+                relationshipsSection
+                childCrewComposer
+                sessionComposer
+                announcementsSection
+                membersSection
                 sessionsSection
             }
             .padding(.horizontal, Theme.Metrics.gutter)
@@ -446,40 +529,126 @@ private struct CrewDetailPane: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(crew.title)
-                .font(Theme.Fonts.serif(size: 24, weight: .semibold))
-            Text("云端可用 · \(onlineMacRunnerCount) 台 Mac 在线")
-                .font(Theme.Fonts.system(size: 13, weight: .medium))
-                .foregroundStyle(Theme.Palette.inkMuted)
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(crew.title)
+                        .font(Theme.Fonts.serif(size: 24, weight: .semibold))
+                    Text("云端可用 · \(onlineMacRunnerCount) 台 Mac 在线 · \(crew.status)")
+                        .font(Theme.Fonts.system(size: 13, weight: .medium))
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                }
+                Spacer()
+                if loadingDetail {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
         }
     }
 
-    private var composer: some View {
+    private var relationshipsSection: some View {
+        CrewSectionCard(title: "关系与责任") {
+            VStack(alignment: .leading, spacing: 12) {
+                linkGroup(title: "上级机组", links: links?.parents ?? [], emptyText: "没有上级机组")
+                Divider()
+                linkGroup(title: "子机组", links: links?.children ?? [], emptyText: "还没有子机组")
+                Divider()
+                responsibilityShares
+            }
+        }
+    }
+
+    private var childCrewComposer: some View {
+        CrewSectionCard(title: "新建子机组") {
+            VStack(alignment: .leading, spacing: 10) {
+                TextField("子机组名称", text: $childCrewTitle)
+                    .textFieldStyle(.roundedBorder)
+                Button {
+                    onCreateChildCrew()
+                } label: {
+                    Label("创建子机组", systemImage: "plus.square.on.square")
+                }
+                .buttonStyle(.bordered)
+                .disabled(childCrewTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+    }
+
+    private var sessionComposer: some View {
+        CrewSectionCard(title: "创建 Session") {
+            VStack(alignment: .leading, spacing: 12) {
+                Picker("Runner", selection: $selectedRunnerKind) {
+                    ForEach(CrewRunnerKind.allCases) { kind in
+                        Text(kind.label).tag(kind)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                TextField("任务", text: $taskBrief, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(3...8)
+
+                Button {
+                    onCreateSession()
+                } label: {
+                    Label("创建 Session", systemImage: "play.circle")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(taskBrief.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+    }
+
+    private var announcementsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Picker("Runner", selection: $selectedRunnerKind) {
-                ForEach(CrewRunnerKind.allCases) { kind in
-                    Text(kind.label).tag(kind)
+            CrewSectionCard(title: "公告") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("发送范围：全部成员与所有 session")
+                        .font(Theme.Fonts.system(size: 12, weight: .medium))
+                        .foregroundStyle(Theme.Palette.inkMuted)
+
+                    TextField("同步一条公告", text: $announcementSummary, axis: .vertical)
+                        .textFieldStyle(.roundedBorder)
+                        .lineLimit(2...6)
+
+                    Button {
+                        onSendAnnouncement()
+                    } label: {
+                        Label("发送公告", systemImage: "paperplane")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(announcementSummary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
-            .pickerStyle(.menu)
 
-            TextField("任务", text: $taskBrief, axis: .vertical)
-                .textFieldStyle(.roundedBorder)
-                .lineLimit(3...8)
-
-            Button {
-                onCreateSession()
-            } label: {
-                Label("创建 Session", systemImage: "play.circle")
+            if announcements.isEmpty {
+                ContentUnavailableView("还没有公告", systemImage: "megaphone")
+                    .frame(minHeight: 120)
+            } else {
+                VStack(spacing: 10) {
+                    ForEach(announcements.reversed()) { announcement in
+                        AnnouncementRow(announcement: announcement)
+                    }
+                }
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(taskBrief.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Theme.Palette.surface)
-        )
+    }
+
+    private var membersSection: some View {
+        CrewSectionCard(title: "成员") {
+            if members.isEmpty {
+                Text("还没有成员")
+                    .font(Theme.Fonts.system(size: 13))
+                    .foregroundStyle(Theme.Palette.inkMuted)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(members) { member in
+                        CrewMemberRow(member: member)
+                        if member.id != members.last?.id { Divider() }
+                    }
+                }
+            }
+        }
     }
 
     private var sessionsSection: some View {
@@ -523,7 +692,148 @@ private struct CrewDetailPane: View {
         }
     }
 
+    @ViewBuilder
+    private func linkGroup(title: String, links: [CrewLinkSummary], emptyText: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(Theme.Fonts.system(size: 12, weight: .semibold))
+                .foregroundStyle(Theme.Palette.inkMuted)
+            if links.isEmpty {
+                Text(emptyText)
+                    .font(Theme.Fonts.system(size: 13))
+                    .foregroundStyle(Theme.Palette.inkMuted)
+            } else {
+                ForEach(links) { link in
+                    HStack(spacing: 8) {
+                        Image(systemName: "command")
+                            .foregroundStyle(Theme.Palette.accent)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(link.title)
+                                .font(Theme.Fonts.system(size: 14, weight: .semibold))
+                            Text("\(link.runtime_kind) · \(link.status)")
+                                .font(Theme.Fonts.system(size: 12))
+                                .foregroundStyle(Theme.Palette.inkMuted)
+                        }
+                        Spacer()
+                    }
+                }
+            }
+        }
+    }
+
+    private var responsibilityShares: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("责任份额")
+                .font(Theme.Fonts.system(size: 12, weight: .semibold))
+                .foregroundStyle(Theme.Palette.inkMuted)
+            let shares = links?.responsibilityShares ?? []
+            if shares.isEmpty {
+                Text("还没有责任份额")
+                    .font(Theme.Fonts.system(size: 13))
+                    .foregroundStyle(Theme.Palette.inkMuted)
+            } else {
+                ForEach(shares) { share in
+                    HStack {
+                        Text(share.subject_id)
+                            .font(Theme.Fonts.system(size: 13, weight: .medium))
+                            .lineLimit(1)
+                        Spacer()
+                        Text("\(share.share_bps / 100)% · \(share.source)")
+                            .font(Theme.Fonts.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Theme.Palette.inkMuted)
+                    }
+                }
+            }
+        }
+    }
+
     private var onlineMacRunnerCount: Int {
         runnerHosts.filter { $0.platform == "macos" && $0.status == "online" }.count
+    }
+}
+
+private struct CrewSectionCard<Content: View>: View {
+    let title: String
+    let content: Content
+
+    init(title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(Theme.Fonts.rounded(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.Palette.inkMuted)
+            content
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Theme.Palette.surface)
+        )
+    }
+}
+
+private struct CrewMemberRow: View {
+    let member: CrewMemberSummary
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: memberIcon)
+                .font(Theme.Fonts.glyph(size: 16, weight: .regular))
+                .foregroundStyle(Theme.Palette.accent)
+                .frame(width: 20)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(member.display_name)
+                    .font(Theme.Fonts.system(size: 14, weight: .semibold))
+                Text([member.member_kind, member.role, member.status].compactMap { $0 }.joined(separator: " · "))
+                    .font(Theme.Fonts.system(size: 12))
+                    .foregroundStyle(Theme.Palette.inkMuted)
+            }
+            Spacer()
+        }
+        .padding(.vertical, 8)
+    }
+
+    private var memberIcon: String {
+        switch member.member_kind {
+        case "bot": "sparkles"
+        case "code_session": "terminal"
+        case "crew_captain": "command"
+        default: "person.crop.circle"
+        }
+    }
+}
+
+private struct AnnouncementRow: View {
+    let announcement: CrewAnnouncementSummary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Label(announcement.message_kind, systemImage: "megaphone")
+                    .font(Theme.Fonts.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.inkMuted)
+                Spacer()
+                Text(announcement.recipient_mode)
+                    .font(Theme.Fonts.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.Palette.inkMuted)
+            }
+            Text(announcement.summary)
+                .font(Theme.Fonts.system(size: 14))
+                .fixedSize(horizontal: false, vertical: true)
+            if !announcement.mentions.isEmpty {
+                Text("\(announcement.mentions.count) 个指定目标")
+                    .font(Theme.Fonts.system(size: 12))
+                    .foregroundStyle(Theme.Palette.inkMuted)
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Theme.Palette.surface)
+        )
     }
 }
