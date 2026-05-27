@@ -951,6 +951,109 @@ export type Database = {
           },
         ]
       }
+      crew_parent_links: {
+        Row: {
+          child_crew_id: string
+          confirmed_at: string | null
+          created_at: string
+          created_by_bot_id: string | null
+          created_by_kind: string
+          created_by_user_id: string | null
+          id: string
+          link_kind: string
+          parent_crew_id: string
+          requires_human_confirmation: boolean
+          responsibility_mode: string
+        }
+        Insert: {
+          child_crew_id: string
+          confirmed_at?: string | null
+          created_at?: string
+          created_by_bot_id?: string | null
+          created_by_kind: string
+          created_by_user_id?: string | null
+          id?: string
+          link_kind?: string
+          parent_crew_id: string
+          requires_human_confirmation?: boolean
+          responsibility_mode?: string
+        }
+        Update: {
+          child_crew_id?: string
+          confirmed_at?: string | null
+          created_at?: string
+          created_by_bot_id?: string | null
+          created_by_kind?: string
+          created_by_user_id?: string | null
+          id?: string
+          link_kind?: string
+          parent_crew_id?: string
+          requires_human_confirmation?: boolean
+          responsibility_mode?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crew_parent_links_child_crew_id_fkey"
+            columns: ["child_crew_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crew_parent_links_created_by_bot_id_fkey"
+            columns: ["created_by_bot_id"]
+            isOneToOne: false
+            referencedRelation: "bots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crew_parent_links_parent_crew_id_fkey"
+            columns: ["parent_crew_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      crew_responsibility_shares: {
+        Row: {
+          created_at: string
+          crew_conversation_id: string
+          share_bps: number
+          source: string
+          subject_id: string
+        }
+        Insert: {
+          created_at?: string
+          crew_conversation_id: string
+          share_bps: number
+          source?: string
+          subject_id: string
+        }
+        Update: {
+          created_at?: string
+          crew_conversation_id?: string
+          share_bps?: number
+          source?: string
+          subject_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crew_responsibility_shares_crew_conversation_id_fkey"
+            columns: ["crew_conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crew_responsibility_shares_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       crew_sessions: {
         Row: {
           assigned_to_member_id: string | null
@@ -2906,6 +3009,7 @@ export type Database = {
           id: string
           invited_by_member_id: string | null
           member_kind: string
+          represents_crew_id: string | null
           role: string
           status: string
           user_id: string | null
@@ -2921,6 +3025,7 @@ export type Database = {
           id?: string
           invited_by_member_id?: string | null
           member_kind: string
+          represents_crew_id?: string | null
           role?: string
           status?: string
           user_id?: string | null
@@ -2936,6 +3041,7 @@ export type Database = {
           id?: string
           invited_by_member_id?: string | null
           member_kind?: string
+          represents_crew_id?: string | null
           role?: string
           status?: string
           user_id?: string | null
@@ -2962,10 +3068,19 @@ export type Database = {
             referencedRelation: "temporary_group_members"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "temporary_group_members_represents_crew_id_fkey"
+            columns: ["represents_crew_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
         ]
       }
       temporary_group_meta: {
         Row: {
+          captain_bot_id: string | null
+          cloud_machine_id: string | null
           closed_at: string | null
           conversation_id: string
           created_at: string
@@ -2977,7 +3092,9 @@ export type Database = {
           master_member_id: string | null
           parent_temporary_group_id: string | null
           responsible_subject_id: string
+          responsibility_mode: string
           root_temporary_group_id: string | null
+          runtime_kind: string
           source_conversation_id: string | null
           status: string
           temporary_kind: string
@@ -2985,6 +3102,8 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          captain_bot_id?: string | null
+          cloud_machine_id?: string | null
           closed_at?: string | null
           conversation_id: string
           created_at?: string
@@ -2996,7 +3115,9 @@ export type Database = {
           master_member_id?: string | null
           parent_temporary_group_id?: string | null
           responsible_subject_id: string
+          responsibility_mode?: string
           root_temporary_group_id?: string | null
+          runtime_kind?: string
           source_conversation_id?: string | null
           status?: string
           temporary_kind: string
@@ -3004,6 +3125,8 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          captain_bot_id?: string | null
+          cloud_machine_id?: string | null
           closed_at?: string | null
           conversation_id?: string
           created_at?: string
@@ -3015,7 +3138,9 @@ export type Database = {
           master_member_id?: string | null
           parent_temporary_group_id?: string | null
           responsible_subject_id?: string
+          responsibility_mode?: string
           root_temporary_group_id?: string | null
+          runtime_kind?: string
           source_conversation_id?: string | null
           status?: string
           temporary_kind?: string
@@ -3023,6 +3148,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "temporary_group_meta_captain_bot_id_fkey"
+            columns: ["captain_bot_id"]
+            isOneToOne: false
+            referencedRelation: "bots"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "temporary_group_meta_conversation_id_fkey"
             columns: ["conversation_id"]
@@ -3477,6 +3609,29 @@ export type Database = {
       }
     }
     Views: {
+      crew_link_summaries: {
+        Row: {
+          captain_bot_id: string | null
+          captain_member_id: string | null
+          created_at: string | null
+          current_crew_id: string | null
+          direction: string | null
+          linked_crew_id: string | null
+          runtime_kind: string | null
+          status: string | null
+          title: string | null
+        }
+        Relationships: []
+      }
+      crew_resolved_responsibility_shares: {
+        Row: {
+          crew_conversation_id: string | null
+          share_bps: number | null
+          source: string | null
+          subject_id: string | null
+        }
+        Relationships: []
+      }
       v_audit_daily: {
         Row: {
           avg_latency_ms: number | null
@@ -3637,6 +3792,29 @@ export type Database = {
         Returns: boolean
       }
       cancel_account_deletion: { Args: never; Returns: boolean }
+      create_child_crew_inheriting_responsibility: {
+        Args: { p_parent_crew_conversation_id: string; p_title?: string }
+        Returns: string
+      }
+      create_child_crew_inheriting_responsibility_for_actor: {
+        Args: {
+          p_actor_user_id: string
+          p_created_by_bot_id?: string
+          p_created_by_kind?: string
+          p_parent_crew_conversation_id: string
+          p_title?: string
+        }
+        Returns: string
+      }
+      create_child_crew_inheriting_responsibility_for_subject: {
+        Args: {
+          p_actor_user_id: string
+          p_granted_subject_id: string
+          p_parent_crew_conversation_id: string
+          p_title?: string
+        }
+        Returns: string
+      }
       claim_next_crew_session: {
         Args: { p_runner_host_id: string; p_runner_kinds?: Json }
         Returns: Json
@@ -3954,6 +4132,14 @@ export type Database = {
         Args: { p_subject_id: string; p_user_id: string }
         Returns: boolean
       }
+      resolve_crew_responsibility_shares: {
+        Args: { p_crew_conversation_id: string }
+        Returns: {
+          share_bps: number
+          source: string
+          subject_id: string
+        }[]
+      }
       subject_can_manage_runners: {
         Args: { p_subject_id: string; p_user_id: string }
         Returns: boolean
@@ -3964,6 +4150,10 @@ export type Database = {
       }
       subject_user_has_role: {
         Args: { p_roles: string[]; p_subject_id: string; p_user_id: string }
+        Returns: boolean
+      }
+      user_can_control_crew_by_responsibility: {
+        Args: { p_crew_conversation_id: string; p_user_id: string }
         Returns: boolean
       }
       user_has_conv_with_bot: {

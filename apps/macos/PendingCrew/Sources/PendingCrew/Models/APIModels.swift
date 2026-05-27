@@ -90,6 +90,30 @@ struct CrewSession: Decodable, Identifiable {
     let finishedAt: String?
 }
 
+struct CrewLink: Decodable, Identifiable {
+    var id: String { crewConversationId }
+    let crewConversationId: String
+    let title: String
+    let status: String
+    let runtimeKind: String
+    let captainBotId: String?
+    let captainMemberId: String?
+    let createdAt: String
+}
+
+struct CrewResponsibilityShare: Decodable, Identifiable {
+    var id: String { subjectId }
+    let subjectId: String
+    let shareBps: Int
+    let source: String
+}
+
+struct CrewLinksResponse: Decodable {
+    let parents: [CrewLink]
+    let children: [CrewLink]
+    let responsibilityShares: [CrewResponsibilityShare]
+}
+
 struct CrewMember: Decodable, Identifiable {
     let id: String
     let conversationId: String

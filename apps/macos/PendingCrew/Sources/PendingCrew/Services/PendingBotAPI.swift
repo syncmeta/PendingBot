@@ -39,6 +39,18 @@ struct PendingBotAPI {
         return response.conversationId
     }
 
+    func createChildCrew(crewId: String, title: String) async throws -> String {
+        let response: CreateCrewResponse = try await post(
+            "/v1/crew/\(crewId)/children",
+            body: ["title": title]
+        )
+        return response.conversationId
+    }
+
+    func listCrewLinks(crewId: String) async throws -> CrewLinksResponse {
+        try await get("/v1/crew/\(crewId)/links")
+    }
+
     func listSessions(crewId: String) async throws -> [CrewSession] {
         let response: ListResponse<CrewSession> = try await get("/v1/crew/\(crewId)/sessions")
         return response.items

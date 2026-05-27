@@ -22,6 +22,10 @@ const CreateCrewBody = z.object({
   title: z.string().trim().max(80).optional(),
 });
 
+const CreateChildCrewBody = z.object({
+  title: z.string().trim().min(1).max(80),
+});
+
 const RunnerKind = z.enum([
   'cloud_sandbox',
   'local_claude_code',
@@ -147,6 +151,54 @@ crewRoutes.post('/:id/sessions', requireSubjectAuth(['crew:write']), async (c) =
   return c.json({ sessionId: data });
 });
 
+crewRoutes.post('/:id/children', requireSubjectAuth(['crew:write']), async (c) => {
+  const parentCrewConversationId = c.req.param('id');
+  let parsed: z.infer<typeof CreateChildCrewBody>;
+  try {
+    parsed = CreateChildCrewBody.parse(await c.req.json());
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+
+  if (c.var.authKind === 'device_grant') {
+    const deviceGrant = c.var.deviceGrant;
+    if (!deviceGrant?.grantedByUserId) {
+      return jsonError(c, 403, 'forbidden');
+    }
+    const { data, error } = await serviceClient(c.env).rpc('create_child_crew_inheriting_responsibility_for_subject' as never, {
+      p_parent_crew_conversation_id: parentCrewConversationId,
+      p_granted_subject_id: deviceGrant.subjectId,
+      p_actor_user_id: deviceGrant.grantedByUserId,
+      p_title: parsed.title,
+    } as never);
+    if (error) {
+      const message = rpcMessage(error);
+      if (/forbidden/i.test(message)) return jsonError(c, 403, 'forbidden', { message });
+      if (/not found/i.test(message)) return jsonError(c, 404, 'not_found', { message });
+      if (/invalid|required/i.test(message)) return jsonError(c, 400, 'invalid_body', { message });
+      return jsonError(c, 500, 'database_error', { detail: message });
+    }
+    return c.json({ conversationId: data });
+  }
+
+  const userJwt = c.var.userJwt!;
+  const supa = userClient(c.env, userJwt);
+  const { data, error } = await supa.rpc('create_child_crew_inheriting_responsibility' as never, {
+    p_parent_crew_conversation_id: parentCrewConversationId,
+    p_title: parsed.title,
+  } as never);
+  if (error) {
+    const message = rpcMessage(error);
+    if (/auth required/i.test(message)) return jsonError(c, 401, 'unauthorized', { message });
+    if (/forbidden/i.test(message)) return jsonError(c, 403, 'forbidden', { message });
+    if (/not found/i.test(message)) return jsonError(c, 404, 'not_found', { message });
+    if (/invalid|required/i.test(message)) return jsonError(c, 400, 'invalid_body', { message });
+    return jsonError(c, 500, 'database_error', { detail: message });
+  }
+
+  return c.json({ conversationId: data });
+});
+
 async function deviceGrantCanReadCrew(c: Parameters<typeof jsonError>[0], crewConversationId: string): Promise<Response | null> {
   if (c.var.authKind !== 'device_grant') return null;
   const deviceGrant = c.var.deviceGrant;
@@ -160,8 +212,84 @@ async function deviceGrantCanReadCrew(c: Parameters<typeof jsonError>[0], crewCo
     .eq('responsible_subject_id', deviceGrant.subjectId)
     .maybeSingle();
   if (error) return jsonError(c, 500, 'database_error', { detail: error.message });
-  return data ? null : jsonError(c, 404, 'not_found');
+  if (data) return null;
+  const looseSvc = svc as { from: (table: string) => any };
+  const shareResult = await looseSvc
+    .from('crew_resolved_responsibility_shares')
+    .select('crew_conversation_id')
+    .eq('crew_conversation_id', crewConversationId)
+    .eq('subject_id', deviceGrant.subjectId)
+    .maybeSingle();
+  if (shareResult.error) return jsonError(c, 500, 'database_error', { detail: shareResult.error.message });
+  return shareResult.data ? null : jsonError(c, 404, 'not_found');
 }
+
+type CrewLinkSummaryRow = {
+  current_crew_id: string;
+  linked_crew_id: string;
+  direction: 'parent' | 'child';
+  title: string | null;
+  status: string;
+  runtime_kind: string;
+  captain_bot_id: string | null;
+  captain_member_id: string | null;
+  created_at: string;
+};
+
+type CrewResponsibilityShareRow = {
+  crew_conversation_id: string;
+  subject_id: string;
+  share_bps: number;
+  source: string;
+};
+
+function serializeCrewLink(row: CrewLinkSummaryRow) {
+  return {
+    crew_conversation_id: row.linked_crew_id,
+    title: row.title ?? 'Crew',
+    status: row.status,
+    runtime_kind: row.runtime_kind,
+    captain_bot_id: row.captain_bot_id,
+    captain_member_id: row.captain_member_id,
+    created_at: row.created_at,
+  };
+}
+
+crewRoutes.get('/:id/links', requireSubjectAuth(['crew:read']), async (c) => {
+  const crewConversationId = c.req.param('id');
+  const denied = await deviceGrantCanReadCrew(c, crewConversationId);
+  if (denied) return denied;
+  const supa = c.var.authKind === 'device_grant' ? serviceClient(c.env) : userClient(c.env, c.var.userJwt!);
+  const looseSupa = supa as { from: (table: string) => any };
+
+  const [linksResult, sharesResult] = await Promise.all([
+    looseSupa
+      .from('crew_link_summaries')
+      .select('current_crew_id, linked_crew_id, direction, title, status, runtime_kind, captain_bot_id, captain_member_id, created_at')
+      .eq('current_crew_id', crewConversationId)
+      .order('created_at', { ascending: true }),
+    looseSupa
+      .from('crew_resolved_responsibility_shares')
+      .select('crew_conversation_id, subject_id, share_bps, source')
+      .eq('crew_conversation_id', crewConversationId)
+      .order('subject_id', { ascending: true }),
+  ]);
+
+  if (linksResult.error) return jsonError(c, 500, 'database_error', { detail: linksResult.error.message });
+  if (sharesResult.error) return jsonError(c, 500, 'database_error', { detail: sharesResult.error.message });
+
+  const links = (linksResult.data ?? []) as CrewLinkSummaryRow[];
+  const shares = (sharesResult.data ?? []) as CrewResponsibilityShareRow[];
+  return c.json({
+    parents: links.filter((row) => row.direction === 'parent').map(serializeCrewLink),
+    children: links.filter((row) => row.direction === 'child').map(serializeCrewLink),
+    responsibilityShares: shares.map((row) => ({
+      subject_id: row.subject_id,
+      share_bps: row.share_bps,
+      source: row.source,
+    })),
+  });
+});
 
 crewRoutes.get('/:id/sessions', requireSubjectAuth(['crew:read']), async (c) => {
   const crewConversationId = c.req.param('id');

@@ -53,6 +53,30 @@ struct CrewSessionSummary: Decodable, Identifiable, Hashable {
     let finished_at: String?
 }
 
+struct CrewLinkSummary: Decodable, Identifiable, Hashable {
+    var id: String { crew_conversation_id }
+    let crew_conversation_id: String
+    let title: String
+    let status: String
+    let runtime_kind: String
+    let captain_bot_id: String?
+    let captain_member_id: String?
+    let created_at: String
+}
+
+struct CrewResponsibilityShareSummary: Decodable, Identifiable, Hashable {
+    var id: String { subject_id }
+    let subject_id: String
+    let share_bps: Int
+    let source: String
+}
+
+struct CrewLinksResponse: Decodable, Hashable {
+    let parents: [CrewLinkSummary]
+    let children: [CrewLinkSummary]
+    let responsibilityShares: [CrewResponsibilityShareSummary]
+}
+
 enum CrewRunnerKind: String, CaseIterable, Identifiable, Hashable {
     case cloudSandbox = "cloud_sandbox"
     case localClaudeCode = "local_claude_code"
@@ -97,6 +121,24 @@ extension APIClient {
             body: Body(responsibleSubjectId: responsibleSubjectId, title: title)
         )
         return response.conversationId
+    }
+
+    func crewCreateChild(crewId: String, title: String) async throws -> String {
+        struct Body: Encodable {
+            let title: String
+        }
+        struct Response: Decodable {
+            let conversationId: String
+        }
+        let response: Response = try await post(
+            "v1/crew/\(crewId)/children",
+            body: Body(title: title)
+        )
+        return response.conversationId
+    }
+
+    func crewLinks(crewId: String) async throws -> CrewLinksResponse {
+        try await get("v1/crew/\(crewId)/links")
     }
 
     func crewSessions(crewId: String) async throws -> [CrewSessionSummary] {

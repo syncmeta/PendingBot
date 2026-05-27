@@ -248,6 +248,120 @@ describe('POST /v1/crew/:id/sessions', () => {
   });
 });
 
+describe('POST /v1/crew/:id/children', () => {
+  it('creates a child crew by inheriting the parent responsibility split', async () => {
+    const db = makeFakeDb();
+    db.rpcs = {
+      create_child_crew_inheriting_responsibility: (args) => {
+        expect(args).toEqual({
+          p_parent_crew_conversation_id: 'crew-parent',
+          p_title: 'API 小组',
+        });
+        return { data: 'crew-child', error: null };
+      },
+    };
+
+    const res = await appFor(db).request('/v1/crew/crew-parent/children', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-test-user-id': 'user-1',
+      },
+      body: JSON.stringify({ title: 'API 小组' }),
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ conversationId: 'crew-child' });
+  });
+});
+
+describe('GET /v1/crew/:id/links', () => {
+  it('returns parent links, child links, and resolved responsibility shares', async () => {
+    const db = makeFakeDb({
+      crew_link_summaries: [
+        {
+          current_crew_id: 'crew-current',
+          linked_crew_id: 'crew-parent',
+          direction: 'parent',
+          title: '平台部',
+          status: 'active',
+          runtime_kind: 'local',
+          captain_bot_id: 'bot-parent',
+          captain_member_id: 'member-parent-captain',
+          created_at: '2026-05-27T00:00:00Z',
+        },
+        {
+          current_crew_id: 'crew-current',
+          linked_crew_id: 'crew-child',
+          direction: 'child',
+          title: 'API 小组',
+          status: 'active',
+          runtime_kind: 'local',
+          captain_bot_id: 'bot-child',
+          captain_member_id: 'member-child-captain',
+          created_at: '2026-05-27T00:01:00Z',
+        },
+      ],
+      crew_resolved_responsibility_shares: [
+        {
+          crew_conversation_id: 'crew-current',
+          subject_id: 'subject-a',
+          share_bps: 6000,
+          source: 'inherited',
+        },
+        {
+          crew_conversation_id: 'crew-current',
+          subject_id: 'subject-b',
+          share_bps: 4000,
+          source: 'inherited',
+        },
+      ],
+    });
+
+    const res = await appFor(db).request('/v1/crew/crew-current/links', {
+      headers: { 'x-test-user-id': 'user-1' },
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      parents: [
+        {
+          crew_conversation_id: 'crew-parent',
+          title: '平台部',
+          status: 'active',
+          runtime_kind: 'local',
+          captain_bot_id: 'bot-parent',
+          captain_member_id: 'member-parent-captain',
+          created_at: '2026-05-27T00:00:00Z',
+        },
+      ],
+      children: [
+        {
+          crew_conversation_id: 'crew-child',
+          title: 'API 小组',
+          status: 'active',
+          runtime_kind: 'local',
+          captain_bot_id: 'bot-child',
+          captain_member_id: 'member-child-captain',
+          created_at: '2026-05-27T00:01:00Z',
+        },
+      ],
+      responsibilityShares: [
+        {
+          subject_id: 'subject-a',
+          share_bps: 6000,
+          source: 'inherited',
+        },
+        {
+          subject_id: 'subject-b',
+          share_bps: 4000,
+          source: 'inherited',
+        },
+      ],
+    });
+  });
+});
+
 describe('GET /v1/crew', () => {
   it('lists visible crews with conversation titles as fallback', async () => {
     const db = makeFakeDb({
