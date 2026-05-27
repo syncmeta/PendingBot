@@ -224,6 +224,21 @@ async function deviceGrantCanReadCrew(c: Parameters<typeof jsonError>[0], crewCo
   return shareResult.data ? null : jsonError(c, 404, 'not_found');
 }
 
+async function subjectAuthCanReadCrew(c: Parameters<typeof jsonError>[0], crewConversationId: string): Promise<Response | null> {
+  if (c.var.authKind === 'device_grant') {
+    return deviceGrantCanReadCrew(c, crewConversationId);
+  }
+  const userId = c.var.userId;
+  const userJwt = c.var.userJwt;
+  if (!userId || !userJwt) return jsonError(c, 401, 'unauthorized');
+  const { data, error } = await userClient(c.env, userJwt).rpc('can_view_temporary_group' as never, {
+    p_conversation_id: crewConversationId,
+    p_user_id: userId,
+  } as never);
+  if (error) return jsonError(c, 500, 'database_error', { detail: rpcMessage(error) });
+  return data === true ? null : jsonError(c, 404, 'not_found');
+}
+
 type CrewLinkSummaryRow = {
   current_crew_id: string;
   linked_crew_id: string;
@@ -257,10 +272,9 @@ function serializeCrewLink(row: CrewLinkSummaryRow) {
 
 crewRoutes.get('/:id/links', requireSubjectAuth(['crew:read']), async (c) => {
   const crewConversationId = c.req.param('id');
-  const denied = await deviceGrantCanReadCrew(c, crewConversationId);
+  const denied = await subjectAuthCanReadCrew(c, crewConversationId);
   if (denied) return denied;
-  const supa = c.var.authKind === 'device_grant' ? serviceClient(c.env) : userClient(c.env, c.var.userJwt!);
-  const looseSupa = supa as { from: (table: string) => any };
+  const looseSupa = serviceClient(c.env) as { from: (table: string) => any };
 
   const [linksResult, sharesResult] = await Promise.all([
     looseSupa

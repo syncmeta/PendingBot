@@ -276,6 +276,43 @@ describe('POST /v1/crew/:id/children', () => {
 });
 
 describe('GET /v1/crew/:id/links', () => {
+  it('checks explicit crew visibility before returning link summaries to a user', async () => {
+    const db = makeFakeDb({
+      crew_link_summaries: [
+        {
+          current_crew_id: 'crew-secret',
+          linked_crew_id: 'crew-child',
+          direction: 'child',
+          title: 'Hidden Crew',
+          status: 'active',
+          runtime_kind: 'local',
+          captain_bot_id: null,
+          captain_member_id: null,
+          created_at: '2026-05-27T00:01:00Z',
+        },
+      ],
+    });
+    const calls: Array<Record<string, unknown>> = [];
+    db.rpcs = {
+      can_view_temporary_group: (args) => {
+        calls.push(args);
+        return { data: false, error: null };
+      },
+    };
+
+    const res = await appFor(db).request('/v1/crew/crew-secret/links', {
+      headers: { 'x-test-user-id': 'user-1' },
+    });
+
+    expect(res.status).toBe(404);
+    expect(calls).toEqual([
+      {
+        p_conversation_id: 'crew-secret',
+        p_user_id: 'user-1',
+      },
+    ]);
+  });
+
   it('returns parent links, child links, and resolved responsibility shares', async () => {
     const db = makeFakeDb({
       crew_link_summaries: [
@@ -317,6 +354,9 @@ describe('GET /v1/crew/:id/links', () => {
         },
       ],
     });
+    db.rpcs = {
+      can_view_temporary_group: () => ({ data: true, error: null }),
+    };
 
     const res = await appFor(db).request('/v1/crew/crew-current/links', {
       headers: { 'x-test-user-id': 'user-1' },
