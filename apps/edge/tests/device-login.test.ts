@@ -89,6 +89,7 @@ describe('POST /v1/device-login/challenges', () => {
     expect(body.secret).toMatch(/^pdc_/);
     expect(body.qrPayload).toContain(`/d/${body.challengeId}`);
     expect(body.qrPayload).toContain(encodeURIComponent(body.secret));
+    expect(body.qrPayload).toContain('k=pendingcrew_macos');
 
     const row = db.rows.subject_device_login_challenges[0];
     expect(row.id).toBe(body.challengeId);

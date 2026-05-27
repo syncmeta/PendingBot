@@ -102,8 +102,9 @@ function normalizeStoredScopes(value: unknown): Set<string> {
   return new Set(Array.isArray(value) ? value.filter((scope): scope is string => typeof scope === 'string') : []);
 }
 
-function qrPayload(challengeId: string, secret: string): string {
-  return `https://bot.pendingname.com/d/${challengeId}?s=${encodeURIComponent(secret)}`;
+function qrPayload(challengeId: string, secret: string, appKind: z.infer<typeof AppKind>): string {
+  const query = new URLSearchParams({ s: secret, k: appKind });
+  return `https://bot.pendingname.com/d/${challengeId}?${query.toString()}`;
 }
 
 function isExpired(expiresAt: string): boolean {
@@ -153,7 +154,7 @@ deviceLoginRoutes.post('/challenges', async (c) => {
     challengeId: id,
     secret,
     code,
-    qrPayload: qrPayload(id, secret),
+    qrPayload: qrPayload(id, secret, parsed.appKind),
     expiresAt,
     status: 'pending',
   });

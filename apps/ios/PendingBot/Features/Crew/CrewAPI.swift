@@ -146,7 +146,11 @@ enum DeviceLoginGrantApproval: Equatable {
         else { return nil }
 
         let text = [message, body].compactMap { $0?.lowercased() }.joined(separator: "\n")
-        return text.contains("grant kind does not match app kind") ? .pendingBotClient : nil
+        if text.contains("grant kind does not match app kind")
+            || text.contains("requested scopes exceed grant kind") {
+            return .pendingBotClient
+        }
+        return nil
     }
 }
 

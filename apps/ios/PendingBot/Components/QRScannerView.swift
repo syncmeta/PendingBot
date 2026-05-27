@@ -141,9 +141,15 @@ enum DeviceLoginLink {
     static let pathPrefix = "/d/"
     private static let urlHostSuffix = "pendingname.com"
 
+    enum AppKind: String, Equatable {
+        case pendingBotMacOS = "pendingbot_macos"
+        case pendingCrewMacOS = "pendingcrew_macos"
+    }
+
     struct Payload: Equatable {
         let challengeId: String
         let secret: String
+        let appKind: AppKind?
     }
 
     static func parse(_ raw: String) -> Payload? {
@@ -156,7 +162,12 @@ enum DeviceLoginLink {
               let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               let secret = components.queryItems?.first(where: { $0.name == "s" || $0.name == "secret" })?.value,
               !secret.isEmpty else { return nil }
-        return Payload(challengeId: challengeId, secret: secret)
+        let appKindValue = components.queryItems?.first(where: { $0.name == "k" || $0.name == "appKind" })?.value
+        return Payload(
+            challengeId: challengeId,
+            secret: secret,
+            appKind: appKindValue.flatMap(AppKind.init(rawValue:))
+        )
     }
 }
 

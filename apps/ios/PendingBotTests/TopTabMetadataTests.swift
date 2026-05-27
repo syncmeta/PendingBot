@@ -27,11 +27,37 @@ final class TopTabMetadataTests: XCTestCase {
             .pendingBotClient
         )
 
+        XCTAssertEqual(
+            DeviceLoginGrantApproval.retryPlan(after: APIError.http(
+                status: 400,
+                code: "invalid_body",
+                message: "requested scopes exceed grant kind",
+                body: ""
+            )),
+            .pendingBotClient
+        )
+
         XCTAssertNil(DeviceLoginGrantApproval.retryPlan(after: APIError.http(
             status: 403,
             code: "forbidden",
             message: "forbidden",
             body: ""
         )))
+    }
+
+    func testDeviceLoginLinkParsesAppKindHint() {
+        XCTAssertEqual(
+            DeviceLoginLink.parse("https://bot.pendingname.com/d/challenge-1?s=secret-1&k=pendingbot_macos"),
+            DeviceLoginLink.Payload(
+                challengeId: "challenge-1",
+                secret: "secret-1",
+                appKind: .pendingBotMacOS
+            )
+        )
+
+        XCTAssertEqual(
+            DeviceLoginLink.parse("https://bot.pendingname.com/d/challenge-2?s=secret-2")?.appKind,
+            nil
+        )
     }
 }
