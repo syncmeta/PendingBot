@@ -7,6 +7,7 @@ import { loadPrompt } from '../i18n/prompts';
 import { DEFAULT_LOCALE, type Locale } from '../i18n/types';
 import type { SupabaseClient } from '../lib/supabase';
 import type { Memory } from '../lib/memory';
+import { BOT_SOCIAL_GRAPH_SKILL_BODY } from './bot-social-skill';
 
 export interface BuildMessagesInput {
   bot: {
@@ -95,6 +96,21 @@ export interface BuildMessagesInput {
     mime?: string | null;
     filename?: string | null;
   }>;
+  // Bot's own social graph — small per-turn snapshot used by the social
+  // section. Counts + top-N display names for human friends and groups.
+  // Refreshed each turn (cheap) and rendered into the *volatile* per-turn
+  // context, so adding/removing a friend doesn't bust the persona cache.
+  // The detailed rules (visibility, ask_friend semantics, etc.) live in
+  // the static bot-social-graph skill body in the stable prefix.
+  socialGraph?: {
+    friendsCount: number;
+    recentFriends: Array<{ display_name: string }>;
+    groupsCount: number;
+    recentGroups: Array<{ title: string | null }>;
+    /// True iff the bot is public_invite — gates whether the social
+    /// section mentions `ask_friend` (which only public bots have).
+    isPublic: boolean;
+  };
   // IANA timezone from the client (e.g. "Asia/Shanghai"). Used to format
   // the *current* user turn's timestamp (server only knows UTC for "now").
   // Historical messages carry their own offset in `created_at`, so we
@@ -192,6 +208,53 @@ function buildBotTzSection(tz: string | null | undefined): string {
   const t = tz?.trim();
   if (!t) return '';
   return `## 你所在的时区\n你所在的时区是 ${t}（IANA 名）。当对方说「明天 / 今早 / 周末」这类相对时间时，按这个时区理解。`;
+}
+
+// Per-turn snapshot of the bot's social graph — counts + a handful of
+// recent friends/groups by name. Lives in the volatile context so adding
+// or removing a friend doesn't bust the cached persona. The static rules
+// (visibility, ask_friend semantics, etc.) sit above in the persona via
+// buildSocialGraphSkillSection — this section just gives the bot today's
+// numbers and a few labels it can drop into conversation if asked.
+function buildSocialGraphStatsSection(
+  sg: BuildMessagesInput['socialGraph'],
+): string {
+  if (!sg) return '';
+  const friendLabels = sg.recentFriends
+    .map((f) => f.display_name.trim())
+    .filter((s) => s.length > 0)
+    .slice(0, 5);
+  const groupLabels = sg.recentGroups
+    .map((g) => (g.title ?? '').trim())
+    .filter((s) => s.length > 0)
+    .slice(0, 5);
+  const lines: string[] = ['## 我自己的社交圈（本回合快照）'];
+  if (sg.friendsCount === 0) {
+    lines.push('- 目前还没人加我为好友。');
+  } else {
+    const recent = friendLabels.length > 0
+      ? `，最近的几位：${friendLabels.join('、')}`
+      : '';
+    lines.push(`- 我有 ${sg.friendsCount} 个人类好友${recent}。`);
+  }
+  if (sg.groupsCount === 0) {
+    lines.push('- 我目前不在任何群里。');
+  } else {
+    const recent = groupLabels.length > 0
+      ? `，最近活跃的几个：${groupLabels.join('、')}`
+      : '';
+    lines.push(`- 我在 ${sg.groupsCount} 个群里${recent}。`);
+  }
+  if (sg.isPublic) {
+    lines.push('- 我是公有机器人，可以用 `ask_friend` 主动问其他好友（详见 skill `bot-social-graph`）。');
+  } else {
+    lines.push('- 我是私有机器人，没有 `ask_friend` —— 这套工具只对公有机器人开放。');
+  }
+  return lines.join('\n');
+}
+
+function buildSocialGraphSkillSection(): string {
+  return BOT_SOCIAL_GRAPH_SKILL_BODY;
 }
 
 function buildSkillsSection(skills: BuildMessagesInput['skills']): string {
@@ -415,6 +478,7 @@ export type BuildSystemPromptInput = Pick<
   | 'chatMemo'
   | 'lookbacks'
   | 'attachmentInventory'
+  | 'socialGraph'
 >;
 
 // Which surface the prompt is for. Each maps to its own platform prompt:
@@ -450,6 +514,7 @@ async function buildStablePersona(
   const userModelSection = buildUserModelSection(input.botViewOfUser);       // ②
   const perceivedSelfSection = buildPerceivedSelfSection(input.userViewOfBot); // ④
   const skillsSection = buildSkillsSection(input.skills);
+  const socialGraphSkillSection = buildSocialGraphSkillSection();
   const botNoteSection = buildBotNoteSection(input.botNote);
   const chatMemoSection = buildChatMemoSection(input.chatMemo);
   // Bubble/single segmentation is a text-chat concept; voice (1:1 or group)
@@ -464,6 +529,7 @@ async function buildStablePersona(
   return [
     platform, identitySection, botTzSection, modeInstr,
     selfSection, userModelSection, perceivedSelfSection,
+    socialGraphSkillSection,
     skillsSection, botNoteSection, chatMemoSection,
   ].filter(Boolean).join('\n\n');
 }
@@ -476,7 +542,10 @@ async function buildStablePersona(
 function buildVolatileContext(input: BuildSystemPromptInput): string {
   const attachmentSection = buildAttachmentInventorySection(input.attachmentInventory);
   const lookbackSection = buildLookbackSection(input.lookbacks);
-  return [attachmentSection, lookbackSection].filter(Boolean).join('\n\n');
+  const socialStatsSection = buildSocialGraphStatsSection(input.socialGraph);
+  return [attachmentSection, lookbackSection, socialStatsSection]
+    .filter(Boolean)
+    .join('\n\n');
 }
 
 export async function buildSystemPrompt(

@@ -74,6 +74,38 @@ export async function getBotFriends(
   });
 }
 
+export interface BotSocialSnapshot {
+  isPublic: boolean;
+  friendsCount: number;
+  recentFriends: Array<{ display_name: string }>;
+  groupsCount: number;
+  recentGroups: Array<{ title: string | null }>;
+}
+
+/** One-shot fetch shaped for the builder's `socialGraph` input. Combines
+ *  a single visibility read with the two reverse-lookups; safe to fire
+ *  alongside the rest of the per-turn parallel reads in bot-reply. Top-N
+ *  truncation happens here so the caller doesn't decide policy. */
+export async function loadBotSocialSnapshot(
+  supa: SupabaseClient,
+  botId: string,
+  topN = 5,
+): Promise<BotSocialSnapshot> {
+  const [visRow, friends, groups] = await Promise.all([
+    supa.from('bots').select('visibility').eq('id', botId).single(),
+    getBotFriends(supa, botId),
+    getBotGroups(supa, botId),
+  ]);
+  const visibility = (visRow.data?.visibility as string | undefined) ?? 'private';
+  return {
+    isPublic: visibility === 'public_invite',
+    friendsCount: friends.length,
+    recentFriends: friends.slice(0, topN).map((f) => ({ display_name: f.display_name })),
+    groupsCount: groups.length,
+    recentGroups: groups.slice(0, topN).map((g) => ({ title: g.title })),
+  };
+}
+
 export async function getBotGroups(
   supa: SupabaseClient,
   botId: string,

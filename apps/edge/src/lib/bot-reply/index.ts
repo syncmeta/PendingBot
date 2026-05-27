@@ -60,6 +60,7 @@ import {
   type WebSearchConfig,
 } from './tool-defs';
 import { delegateTargetsForUser } from './tools/delegate';
+import { loadBotSocialSnapshot } from '../bot-social';
 import {
   type Citation,
   type ToolCtx,
@@ -390,15 +391,24 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   // only make sense for a regular 1v1: a group has no single "you", and in a
   // self-chat the bot ≡ the user. Skip the KV reads otherwise.
   const relational = !input.isSelfChat && !(input.inGroup ?? false);
-  const [botMemory, subsBundle, botNote, chatMemo, botViewOfUser, userViewOfBot] =
-    await Promise.all([
-      input.isSelfChat ? getUserMemory(env, userId) : getBotMemory(env, bot.id),
-      resolveSubscriptions(env, supa, userId, conversationId, turnProviderSlug, noop),
-      resolveBotNote(env, supa, bot.id, userId, noop),
-      resolveChatMemo(env, supa, bot.id, conversationId, noop),
-      relational ? getBotViewOfUser(env, bot.id, userId) : Promise.resolve(null),
-      relational ? getUserViewOfBot(env, userId, bot.id) : Promise.resolve(null),
-    ]);
+  const [
+    botMemory, subsBundle, botNote, chatMemo, botViewOfUser, userViewOfBot,
+    socialSnapshot,
+  ] = await Promise.all([
+    input.isSelfChat ? getUserMemory(env, userId) : getBotMemory(env, bot.id),
+    resolveSubscriptions(env, supa, userId, conversationId, turnProviderSlug, noop),
+    resolveBotNote(env, supa, bot.id, userId, noop),
+    resolveChatMemo(env, supa, bot.id, conversationId, noop),
+    relational ? getBotViewOfUser(env, bot.id, userId) : Promise.resolve(null),
+    relational ? getUserViewOfBot(env, userId, bot.id) : Promise.resolve(null),
+    // Bot social-graph snapshot — feeds the per-turn "我的社交圈" volatile
+    // section. Self-chat skips it: bot ≡ user and the social graph isn't
+    // a frame the bot should reason about. Best-effort: any DB hiccup
+    // degrades to "no social section" rather than failing the turn.
+    input.isSelfChat
+      ? Promise.resolve(null)
+      : loadBotSocialSnapshot(supa, bot.id).catch(() => null),
+  ]);
   const skills = subsBundle.skills.map((s) => ({
     name: s.name,
     description: s.description,
@@ -553,6 +563,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       currentImageParts,
       currentFileParts,
       attachmentInventory: inventory,
+      socialGraph: socialSnapshot ?? undefined,
       clientTz: input.clientTz,
     },
     locale,
