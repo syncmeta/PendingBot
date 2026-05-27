@@ -3938,6 +3938,15 @@ export type Database = {
         Returns: boolean
       }
       gen_preset_handle_value: { Args: never; Returns: string }
+      get_bot_friends: {
+        Args: { p_bot_id: string }
+        Returns: {
+          added_at: string
+          avatar_path: string
+          display_name: string
+          user_id: string
+        }[]
+      }
       group_continue_decide: {
         Args: {
           p_decision: string
