@@ -31,7 +31,7 @@
 - 本地或云端运行形态；
 - 指向父机组的边；
 - 指向子机组的边；
-- 继承或显式指定的权限、所有者、token 分摊关系。
+- 继承或显式指定的责任主体比例。
 
 机组不是普通群聊的同义词。普通群聊解决 IM 协作；机组解决任务编排、session 成员和上传下达。
 
@@ -47,9 +47,9 @@
 - 将父机组的指令理解、拆解并按需带回本机组；
 - 自主创建继承当前权限和分摊关系的子机组；
 - 自主启动普通 session；
-- 在需要改变权限、所有者、token 分摊或云端成本边界时请求人类确认。
+- 在需要改变责任主体比例或云端成本边界时请求人类确认。
 
-机长不是费用责任主体。费用、权限和所有者关系始终归属于人类或群账号 subject。
+机长不是责任主体。权限、计费和分摊始终由继承或显式确认的 subject 比例决定。
 
 ### 机组 DAG
 
@@ -60,9 +60,10 @@
 - 一个机组可以有多个父机组。
 - 一个机组可以有多个子机组。
 - 不能形成环。
-- 父机组关系同时代表权限、所有者和 token 分摊关系。
-- 指定父机组就是指定父机组成员和 payer/split 关系可以覆盖到子机组。
-- 多父机组时，子机组继承所有父机组的权限和分摊来源。
+- 父机组关系同时代表责任主体比例继承。
+- 责任主体比例同时管权限、计费和分摊。
+- 指定父机组就是指定父机组的责任主体比例覆盖到子机组。
+- 多父机组时，子机组继承并合成所有父机组的责任主体比例。
 
 产品类比：
 
@@ -75,19 +76,19 @@
 
 ### 创建子机组
 
-机长可以自主创建子机组，只要子机组完全继承当前机组的权限、所有者和 token 分摊关系。
+机长可以自主创建子机组，只要子机组完全继承当前机组的责任主体比例。
 
 不需要人类确认的创建：
 
 - 子机组只有当前机组作为父机组；
-- 子机组继承当前机组的 subject、payer 和 split；
+- 子机组继承当前机组的责任主体比例；
 - 子机组使用本地机组运行形态；
 - 子机组成员都来自当前权限链允许的范围。
 
 需要人类确认的创建或修改：
 
 - 子机组增加另一个父机组；
-- 子机组修改 payer、owner 或 split；
+- 子机组修改责任主体比例；
 - 子机组邀请不在父机组权限链里的成员；
 - 子机组切到云端机组或绑定会产生 Fly 成本的 machine；
 - 子机组请求新 workspace 或更高本机执行权限。
@@ -123,33 +124,49 @@
 
 父机组人类成员可以直接进入子机组。这个能力来自父机组边本身代表的权限继承，而不是来自消息同步。
 
-## 权限、所有者和 token 分摊
+## 责任主体比例
 
-机组的权限、所有者和 token 分摊是同一条组织关系的不同表现，和临时群的语义保持一致。
+机组的责任主体逻辑和临时群一致。
+
+责任主体不是机组上单独拍脑袋指定的一个字段，而是一组 subject 比例。它同时决定：
+
+- 谁有权限看和进入这个机组；
+- 谁承担模型、工具、session 和 runner 成本；
+- 每笔 token 或云端成本如何分摊；
+- 哪些人类可以批准高风险操作。
+
+每次产生费用或权限判断时，服务端都必须解析当前机组的责任主体比例，并在审计行中保存 resolved snapshot。
 
 ### 继承规则
 
+根机组：
+
+- 如果从个人上下文创建，责任主体比例是该个人 subject 100%；
+- 如果从群账号上下文创建，责任主体比例继承该群账号/临时群当时的比例；
+- 如果创建时指定新的 explicit split，必须人类确认。
+
 单父机组：
 
-- 子机组继承父机组的可见性；
-- 子机组继承父机组的 owner/payer/split；
-- 父机组中有权限的人类可以进入子机组；
-- 子机组费用按父机组关系分摊。
+- 子机组继承父机组的责任主体比例；
+- 权限、计费、分摊全部随这组比例继承；
+- 父机组中由该比例覆盖的人类可以进入子机组；
+- 子机组费用按继承来的比例分摊。
 
 多父机组：
 
-- 子机组继承所有父机组的权限来源；
-- 去重后的 payer/split 形成子机组默认分摊池；
+- 子机组继承所有父机组的责任主体比例；
+- 相同 subject 的比例合并；
+- 合并后归一化为 100%；
 - 如果创建时指定 explicit split，则按 explicit split；
-- explicit split 本身是新的分摊关系，必须人类确认。
+- explicit split 本身是新的责任主体比例，必须人类确认。
 
 ### 默认分摊
 
 第一版默认规则：
 
-- 没有 explicit split 时，使用所有父机组继承来的 payer 集合；
-- payer 去重；
-- 默认均分；
+- 没有 explicit split 时，使用所有父机组继承来的责任主体比例；
+- 多父机组的相同 subject 比例先相加，再归一化；
+- 不做额外权重 UI；
 - 每次计费都持久化 resolved beneficiaries/split snapshot，保证审计可复现；
 - 禁止 DAG 环，避免继承和计费循环。
 
@@ -182,7 +199,7 @@
 - Fly Machine；
 - 一个用户可以管理多个 Fly Machine；
 - 一个 Fly Machine 上可以承载多个机组空间；
-- Fly 成本归到用户或群 subject；
+- Fly 成本归到机组解析出的责任主体比例；
 - 创建、唤醒、销毁或产生持续成本前必须有人类确认。
 
 第一阶段不做：
@@ -203,11 +220,12 @@
 captain_bot_id uuid not null references pendingbot.bots(id),
 runtime_kind text not null default 'local' check (runtime_kind in ('local', 'cloud')),
 cloud_machine_id uuid null,
+responsibility_mode text not null default 'inherit' check (responsibility_mode in ('inherit', 'explicit')),
 status text not null default 'active',
 title text not null
 ```
 
-`captain_bot_id` 取代旧的 `master_bot` / `supervisor bot` 语义。
+`captain_bot_id` 取代旧的 `master_bot` / `supervisor bot` 语义。`responsibility_mode` 描述责任主体比例来源；实际比例由父机组边或显式确认的 split 解析，不应简化成单个 subject。
 
 ### `crew_parent_links`
 
@@ -266,9 +284,9 @@ represents_crew_id uuid null references pendingbot.conversations(id)
 
 需要人类确认的 API：
 
-- 创建 explicit split；
+- 创建 explicit responsibility split；
 - 修改父机组集合；
-- 修改 payer/split；
+- 修改责任主体比例；
 - 绑定云端 machine；
 - 创建会产生云端成本的机组。
 
@@ -286,7 +304,7 @@ represents_crew_id uuid null references pendingbot.conversations(id)
 ## 自检
 
 - 术语统一：Crew 中文为机组，supervisor/master bot 改为 captain/机长。
-- 父子关系统一：DAG 边同时代表权限、所有者和 token 分摊继承。
+- 父子关系统一：DAG 边代表责任主体比例继承，责任主体比例同时管权限、计费和分摊。
 - 消息路由明确：父机组消息不自动进入子机组，由机长自行处理。
 - 范围明确：第一阶段做本地机组完整闭环，云端只预留。
-- 计费审计明确：每次计费持久化 resolved split snapshot，并禁止 DAG 环。
+- 计费审计明确：每次计费持久化 resolved responsibility split snapshot，并禁止 DAG 环。

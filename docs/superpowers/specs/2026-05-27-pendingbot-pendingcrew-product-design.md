@@ -29,6 +29,7 @@ PendingBot 是 IM 侧。
 - 显示子机组机长和摘要；
 - 进入子机组；
 - 从机组消息中触发创建 session 或子机组；
+- 展示机组责任主体比例摘要；
 - 在需要时打开 PendingCrew 查看 session 细节。
 
 PendingBot 不负责：
@@ -50,6 +51,7 @@ PendingCrew 是编排侧。
 - 管理 runner host；
 - 展示当前机组群聊；
 - 展示机组成员、机长、session；
+- 展示机组责任主体比例；
 - 在右侧显示一个选中的 session 窗口；
 - 启动、认领、重试、接管本机 session；
 - 展示 session mailbox、事件流、日志和结果；
@@ -159,6 +161,7 @@ pendingcrew://machine/<machine-id>
 - captain 状态；
 - session 运行状态计数；
 - 本地/云端 runtime 标识。
+- 责任主体比例摘要。
 
 多父节点下，同一个机组可以在多个父节点下面出现引用。引用指向同一个 crew id。
 
@@ -225,9 +228,9 @@ PendingCrew 的中间群聊可以比 PendingBot 多一些编排控件，但视�
 9. session 完成后结果由 session 或机长回写到机组。
 10. 如果这是子机组工作，机长向父机组汇报摘要。
 
-## Workspace 和权限
+## Workspace、权限和责任主体
 
-PendingCrew 管理 workspace 权限。
+PendingCrew 管理 workspace 权限。机组可见性、执行授权和成本分摊来自机组解析出的责任主体比例；这个比例和临时群一致，从父机组或创建来源继承。
 
 第一阶段规则：
 
@@ -236,6 +239,7 @@ PendingCrew 管理 workspace 权限。
 - workspace 路径必须在 PendingCrew 中显式配置；
 - 机长可以在已有权限范围内创建 session；
 - 请求新 workspace 或更高执行权限需要人类确认；
+- 修改责任主体比例需要人类确认；
 - PendingBot 不直接启动本机 runner。
 
 ## 云端预留
@@ -249,6 +253,7 @@ PendingCrew 左侧可以显示 Machines 分组，但状态为未启用或预留�
 - machine 名称；
 - runtime kind；
 - 预计成本提示；
+- 成本归属的责任主体比例；
 - 绑定机组数量；
 - 启用云端执行需要确认。
 
@@ -265,7 +270,7 @@ PendingCrew 左侧可以显示 Machines 分组，但状态为未启用或预留�
 - 父消息不自动进入子机组；
 - 多父机组 DAG 去重；
 - DAG 环检测；
-- 分摊继承和 snapshot。
+- 责任主体比例继承和 snapshot。
 
 ### PendingBot
 
