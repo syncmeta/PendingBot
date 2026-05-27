@@ -21,6 +21,7 @@ struct CrewSummary: Decodable, Identifiable, Hashable {
     let responsible_subject_id: String
     let status: String
     let title: String
+    let runtime_kind: String?
     let created_at: String
     let updated_at: String
 }
@@ -75,6 +76,78 @@ struct CrewLinksResponse: Decodable, Hashable {
     let parents: [CrewLinkSummary]
     let children: [CrewLinkSummary]
     let responsibilityShares: [CrewResponsibilityShareSummary]
+}
+
+struct CrewMemberSummary: Decodable, Identifiable, Hashable {
+    let id: String
+    let conversation_id: String
+    let member_kind: String
+    let user_id: String?
+    let bot_id: String?
+    let code_session_id: String?
+    let display_name: String
+    let role: String?
+    let status: String
+    let created_at: String
+}
+
+struct CrewAnnouncementMentionSummary: Decodable, Identifiable, Hashable {
+    let id: String
+    let announcement_id: String
+    let target_kind: String
+    let target_session_id: String?
+    let target_member_id: String?
+    let created_at: String
+}
+
+struct CrewAnnouncementSummary: Decodable, Identifiable, Hashable {
+    let id: String
+    let crew_conversation_id: String
+    let responsible_subject_id: String
+    let sender_kind: String
+    let sender_member_id: String?
+    let sender_session_id: String?
+    let recipient_mode: String
+    let message_kind: String
+    let board_visible: Bool
+    let summary: String
+    let created_at: String
+    let mentions: [CrewAnnouncementMentionSummary]
+}
+
+struct CrewAnnouncementCreateResponse: Decodable, Hashable {
+    let announcementId: String
+}
+
+enum DeviceLoginGrantApproval: Equatable {
+    case pendingCrewControl
+    case pendingBotClient
+
+    var grantKind: String {
+        switch self {
+        case .pendingCrewControl: "pendingcrew_control"
+        case .pendingBotClient: "pendingbot_client"
+        }
+    }
+
+    var scopes: [String] {
+        switch self {
+        case .pendingCrewControl:
+            ["subject:read", "crew:read", "crew:write", "runner:read", "runner:write"]
+        case .pendingBotClient:
+            ["subject:read", "crew:read", "crew:write"]
+        }
+    }
+
+    static func retryPlan(after error: Error) -> DeviceLoginGrantApproval? {
+        guard case let APIError.http(status, code, message, body) = error,
+              status == 400,
+              code == "invalid_body"
+        else { return nil }
+
+        let text = [message, body].compactMap { $0?.lowercased() }.joined(separator: "\n")
+        return text.contains("grant kind does not match app kind") ? .pendingBotClient : nil
+    }
 }
 
 enum CrewRunnerKind: String, CaseIterable, Identifiable, Hashable {
@@ -141,6 +214,43 @@ extension APIClient {
         try await get("v1/crew/\(crewId)/links")
     }
 
+    func crewMembers(crewId: String) async throws -> [CrewMemberSummary] {
+        let response: CrewListResponse<CrewMemberSummary> = try await get("v1/crew/\(crewId)/members")
+        return response.items
+    }
+
+    func crewAnnouncements(crewId: String) async throws -> [CrewAnnouncementSummary] {
+        let response: CrewListResponse<CrewAnnouncementSummary> = try await get("v1/crew/\(crewId)/announcements")
+        return response.items
+    }
+
+    func crewCreateAnnouncement(
+        crewId: String,
+        summary: String,
+        recipientSessionIds: [String] = [],
+        recipientMemberIds: [String] = []
+    ) async throws -> CrewAnnouncementCreateResponse {
+        struct Body: Encodable {
+            let recipientSessionIds: [String]
+            let recipientMemberIds: [String]
+            let messageKind: String
+            let summary: String
+            let payload: [String: String]
+            let boardVisible: Bool
+        }
+        return try await post(
+            "v1/crew/\(crewId)/announcements",
+            body: Body(
+                recipientSessionIds: recipientSessionIds,
+                recipientMemberIds: recipientMemberIds,
+                messageKind: "announcement",
+                summary: summary,
+                payload: [:],
+                boardVisible: true
+            )
+        )
+    }
+
     func crewSessions(crewId: String) async throws -> [CrewSessionSummary] {
         let response: CrewListResponse<CrewSessionSummary> = try await get("v1/crew/\(crewId)/sessions")
         return response.items
@@ -174,8 +284,7 @@ extension APIClient {
         challengeId: String,
         secret: String,
         subjectId: String,
-        grantKind: String = "pendingcrew_control",
-        scopes: [String] = ["subject:read", "crew:read", "crew:write", "runner:read", "runner:write"]
+        approval: DeviceLoginGrantApproval = .pendingCrewControl
     ) async throws -> DeviceLoginApprovalResponse {
         struct Body: Encodable {
             let secret: String
@@ -185,7 +294,7 @@ extension APIClient {
         }
         return try await post(
             "v1/device-login/challenges/\(challengeId)/approve",
-            body: Body(secret: secret, subjectId: subjectId, grantKind: grantKind, scopes: scopes)
+            body: Body(secret: secret, subjectId: subjectId, grantKind: approval.grantKind, scopes: approval.scopes)
         )
     }
 }

@@ -398,6 +398,7 @@ describe('GET /v1/crew', () => {
           responsible_subject_id: 'subject-1',
           status: 'active',
           title: '本机工程任务',
+          runtime_kind: 'local',
           created_at: '2026-05-24T00:00:00Z',
           updated_at: '2026-05-24T00:01:00Z',
         },

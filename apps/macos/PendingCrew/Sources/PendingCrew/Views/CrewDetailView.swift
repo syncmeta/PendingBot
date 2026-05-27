@@ -13,6 +13,7 @@ struct CrewDetailView: View {
     @State private var mentionedMemberIds: Set<String> = []
     @State private var childCrewTitle = ""
     @State private var progressUpdateText = ""
+    @State private var finalSummaryText = ""
 
     private var crew: Crew? {
         model.crews.first { $0.id == crewId }
@@ -55,7 +56,7 @@ struct CrewDetailView: View {
             inspectorPane
         }
         .frame(minWidth: 940, minHeight: 640)
-        .navigationTitle(crew?.title ?? "Crew")
+        .navigationTitle(crew?.title ?? "机组")
         .task {
             await model.refreshCrew(crewId)
             selectInitialSessionIfNeeded()
@@ -69,11 +70,11 @@ struct CrewDetailView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(crew?.title ?? "Crew")
+                    Text(crew?.title ?? "机组")
                         .font(.title2.weight(.semibold))
                         .lineLimit(1)
 
-                    Text("\(members.count) members · \(sessions.count) sessions")
+                    Text("\(members.count) 位成员 · \(sessions.count) 个 session")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -127,8 +128,9 @@ struct CrewDetailView: View {
                         session: selectedSession,
                         events: model.eventsBySession[selectedSession.id] ?? [],
                         mailbox: model.mailboxBySession[selectedSession.id] ?? [],
+                        activeRunnerSessionId: model.activeRunnerSession?.id,
                         progressUpdateText: $progressUpdateText,
-                        canReportProgress: model.activeRunnerSession?.id == selectedSession.id,
+                        finalSummaryText: $finalSummaryText,
                         onRefresh: {
                             Task { await model.refreshEvents(sessionId: selectedSession.id) }
                         },
@@ -136,6 +138,20 @@ struct CrewDetailView: View {
                             Task {
                                 await model.appendRunnerStatus(summary: progressUpdateText)
                                 progressUpdateText = ""
+                            }
+                        },
+                        onComplete: {
+                            let summary = finalSummaryText.trimmingCharacters(in: .whitespacesAndNewlines)
+                            Task {
+                                await model.finishActiveRunnerSession(status: "completed", summary: summary)
+                                finalSummaryText = ""
+                            }
+                        },
+                        onFail: {
+                            let summary = finalSummaryText.trimmingCharacters(in: .whitespacesAndNewlines)
+                            Task {
+                                await model.finishActiveRunnerSession(status: "failed", summary: summary)
+                                finalSummaryText = ""
                             }
                         }
                     )
@@ -230,7 +246,7 @@ struct CrewDetailView: View {
     }
 
     private var createSessionBox: some View {
-        InspectorSection(title: "创建任务") {
+        InspectorSection(title: "排队任务") {
             VStack(alignment: .leading, spacing: 10) {
                 Picker("Runner", selection: $runnerKind) {
                     ForEach(RunnerKind.allCases) { kind in
@@ -261,7 +277,7 @@ struct CrewDetailView: View {
     }
 
     private var sessionsBox: some View {
-        InspectorSection(title: "Sessions") {
+        InspectorSection(title: "Session 队列") {
             if sessions.isEmpty {
                 ContentUnavailableView("还没有 session", systemImage: "terminal")
             } else {
@@ -269,6 +285,8 @@ struct CrewDetailView: View {
                     ForEach(sessions) { session in
                         Button {
                             selectedSessionId = session.id
+                            progressUpdateText = ""
+                            finalSummaryText = ""
                             Task { await model.refreshEvents(sessionId: session.id) }
                         } label: {
                             SessionSummaryRow(
@@ -293,6 +311,8 @@ struct CrewDetailView: View {
             return
         }
         selectedSessionId = sessions.first?.id
+        progressUpdateText = ""
+        finalSummaryText = ""
         if let selectedSessionId {
             Task { await model.refreshEvents(sessionId: selectedSessionId) }
         }
@@ -409,7 +429,7 @@ private struct CrewRelationshipRow: View {
 
                 HStack(spacing: 6) {
                     Text(link.runtimeKind)
-                    if link.captainBotId != nil {
+                    if link.captainBotId != nil || link.captainMemberId != nil {
                         Text("机长")
                     }
                 }
@@ -438,13 +458,81 @@ private struct StatusBadge: View {
     }
 }
 
+enum SessionOperatorMode: Equatable {
+    case activeLocalRunner
+    case queuedClaimable
+    case observable
+}
+
+struct SessionOperatorState: Equatable {
+    let mode: SessionOperatorMode
+
+    init(session: CrewSession, activeRunnerSessionId: String?) {
+        if activeRunnerSessionId == session.id {
+            mode = .activeLocalRunner
+        } else if session.status == "queued" {
+            mode = .queuedClaimable
+        } else {
+            mode = .observable
+        }
+    }
+
+    var badgeText: String {
+        switch mode {
+        case .activeLocalRunner:
+            "本机执行中"
+        case .queuedClaimable:
+            "可认领 / 队列中"
+        case .observable:
+            "只读观察"
+        }
+    }
+
+    var systemImage: String {
+        switch mode {
+        case .activeLocalRunner:
+            "desktopcomputer"
+        case .queuedClaimable:
+            "tray.and.arrow.down"
+        case .observable:
+            "eye"
+        }
+    }
+
+    var detailText: String {
+        switch mode {
+        case .activeLocalRunner:
+            "这是当前本机 runner 认领的 session，可以直接上报进度或结束。"
+        case .queuedClaimable:
+            "这个 session 正在队列中等待 runner 认领；去 Runner 页认领后会切换成本机控制。"
+        case .observable:
+            "这个 session 不属于当前本机 runner，只能查看事件和收件箱。"
+        }
+    }
+
+    var canReportProgress: Bool {
+        mode == .activeLocalRunner
+    }
+
+    var canFinish: Bool {
+        mode == .activeLocalRunner
+    }
+}
+
 struct SessionInspectorModel {
     let session: CrewSession
+    let operatorState: SessionOperatorState
     let sortedEvents: [SessionEvent]
     let sortedMailbox: [SessionMailboxItem]
 
-    init(session: CrewSession, events: [SessionEvent], mailbox: [SessionMailboxItem]) {
+    init(
+        session: CrewSession,
+        events: [SessionEvent],
+        mailbox: [SessionMailboxItem],
+        activeRunnerSessionId: String? = nil
+    ) {
         self.session = session
+        self.operatorState = SessionOperatorState(session: session, activeRunnerSessionId: activeRunnerSessionId)
         self.sortedEvents = events.sorted {
             if $0.createdAt == $1.createdAt {
                 return $0.id < $1.id
@@ -489,36 +577,54 @@ struct SessionInspectorModel {
 private struct SelectedSessionWindow: View {
     let model: SessionInspectorModel
     @Binding var progressUpdateText: String
-    let canReportProgress: Bool
+    @Binding var finalSummaryText: String
     let onRefresh: () -> Void
     let onReportProgress: () -> Void
+    let onComplete: () -> Void
+    let onFail: () -> Void
 
     init(
         session: CrewSession,
         events: [SessionEvent],
         mailbox: [SessionMailboxItem],
+        activeRunnerSessionId: String?,
         progressUpdateText: Binding<String>,
-        canReportProgress: Bool,
+        finalSummaryText: Binding<String>,
         onRefresh: @escaping () -> Void,
-        onReportProgress: @escaping () -> Void
+        onReportProgress: @escaping () -> Void,
+        onComplete: @escaping () -> Void,
+        onFail: @escaping () -> Void
     ) {
-        self.model = SessionInspectorModel(session: session, events: events, mailbox: mailbox)
+        self.model = SessionInspectorModel(
+            session: session,
+            events: events,
+            mailbox: mailbox,
+            activeRunnerSessionId: activeRunnerSessionId
+        )
         self._progressUpdateText = progressUpdateText
-        self.canReportProgress = canReportProgress
+        self._finalSummaryText = finalSummaryText
         self.onRefresh = onRefresh
         self.onReportProgress = onReportProgress
+        self.onComplete = onComplete
+        self.onFail = onFail
     }
 
     private var canSubmitProgress: Bool {
-        canReportProgress && !progressUpdateText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        model.operatorState.canReportProgress && !progressUpdateText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var canFinishSession: Bool {
+        model.operatorState.canFinish && !finalSummaryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             windowHeader
+            operatorStateBanner
             taskBrief
             statusProgress
             progressControls
+            finishControls
             mailboxSection
             eventsSection
         }
@@ -538,7 +644,7 @@ private struct SelectedSessionWindow: View {
                     .font(.headline)
                 Spacer(minLength: 8)
                 Button(action: onRefresh) {
-                    Image(systemName: "arrow.clockwise")
+                    Label("刷新", systemImage: "arrow.clockwise")
                 }
                 .buttonStyle(.borderless)
                 .help("刷新 session 事件和收件箱")
@@ -555,6 +661,27 @@ private struct SelectedSessionWindow: View {
                     .foregroundStyle(.tertiary)
             }
         }
+    }
+
+    private var operatorStateBanner: some View {
+        HStack(alignment: .top, spacing: 9) {
+            Image(systemName: model.operatorState.systemImage)
+                .foregroundStyle(.secondary)
+                .frame(width: 18)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(model.operatorState.badgeText)
+                    .font(.subheadline.weight(.semibold))
+                Text(model.operatorState.detailText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .background(.background.opacity(0.65), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
     }
 
     private var taskBrief: some View {
@@ -607,7 +734,7 @@ private struct SelectedSessionWindow: View {
         VStack(alignment: .leading, spacing: 8) {
             TextField("上报进度", text: $progressUpdateText)
                 .textFieldStyle(.roundedBorder)
-                .disabled(!canReportProgress)
+                .disabled(!model.operatorState.canReportProgress)
 
             HStack {
                 Button {
@@ -617,12 +744,42 @@ private struct SelectedSessionWindow: View {
                 }
                 .disabled(!canSubmitProgress)
 
-                if !canReportProgress {
+                if !model.operatorState.canReportProgress {
                     Text("只有本机已认领的 session 可直接上报")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                         .lineLimit(2)
                 }
+            }
+        }
+    }
+
+    private var finishControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField("结束摘要", text: $finalSummaryText)
+                .textFieldStyle(.roundedBorder)
+                .disabled(!model.operatorState.canFinish)
+
+            HStack(spacing: 8) {
+                Button {
+                    onComplete()
+                } label: {
+                    Label("完成", systemImage: "checkmark.circle")
+                }
+                .disabled(!canFinishSession)
+
+                Button(role: .destructive) {
+                    onFail()
+                } label: {
+                    Label("失败", systemImage: "xmark.circle")
+                }
+                .disabled(!canFinishSession)
+            }
+
+            if model.operatorState.canFinish {
+                Text("填写结束摘要后可以完成或失败当前本机 session。")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
         }
     }

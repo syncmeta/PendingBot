@@ -86,9 +86,9 @@ function appGrantCompatible(appKind: z.infer<typeof AppKind>, grantKind: z.infer
 function allowedScopesForGrant(grantKind: z.infer<typeof GrantKind>): Set<z.infer<typeof Scope>> {
   switch (grantKind) {
     case 'pendingbot_client':
-      return new Set(['subject:read']);
-    case 'pendingcrew_control':
       return new Set(['subject:read', 'crew:read', 'crew:write']);
+    case 'pendingcrew_control':
+      return new Set(['subject:read', 'crew:read', 'crew:write', 'runner:read', 'runner:write']);
     case 'pendingcrew_runner':
       return new Set(['subject:read', 'runner:read', 'runner:write']);
   }

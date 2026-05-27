@@ -275,6 +275,59 @@ final class LocalCodingAgentRunnerTests: XCTestCase {
         XCTAssertEqual(model.sortedEvents.map(\.id), ["event-new", "event-old"])
     }
 
+    func testSessionOperatorStateDistinguishesActiveQueuedAndObservableSessions() {
+        let active = CrewSession(
+            id: "session-active",
+            crewConversationId: "crew-1",
+            responsibleSubjectId: "subject-1",
+            runnerKind: "local_codex",
+            status: "running",
+            taskBrief: "本机正在执行",
+            progressSummary: nil,
+            createdAt: "2026-05-27T00:00:00Z",
+            startedAt: "2026-05-27T00:02:00Z",
+            finishedAt: nil
+        )
+        let queued = CrewSession(
+            id: "session-queued",
+            crewConversationId: "crew-1",
+            responsibleSubjectId: "subject-1",
+            runnerKind: "local_codex",
+            status: "queued",
+            taskBrief: "等待认领",
+            progressSummary: nil,
+            createdAt: "2026-05-27T00:01:00Z",
+            startedAt: nil,
+            finishedAt: nil
+        )
+        let observable = CrewSession(
+            id: "session-observable",
+            crewConversationId: "crew-1",
+            responsibleSubjectId: "subject-1",
+            runnerKind: "cloud_sandbox",
+            status: "running",
+            taskBrief: "只能观察",
+            progressSummary: nil,
+            createdAt: "2026-05-27T00:03:00Z",
+            startedAt: "2026-05-27T00:04:00Z",
+            finishedAt: nil
+        )
+
+        let activeState = SessionOperatorState(session: active, activeRunnerSessionId: "session-active")
+        let queuedState = SessionOperatorState(session: queued, activeRunnerSessionId: "session-active")
+        let observableState = SessionOperatorState(session: observable, activeRunnerSessionId: "session-active")
+
+        XCTAssertEqual(activeState.mode, .activeLocalRunner)
+        XCTAssertTrue(activeState.canReportProgress)
+        XCTAssertTrue(activeState.canFinish)
+        XCTAssertEqual(queuedState.mode, .queuedClaimable)
+        XCTAssertFalse(queuedState.canReportProgress)
+        XCTAssertFalse(queuedState.canFinish)
+        XCTAssertEqual(observableState.mode, .observable)
+        XCTAssertFalse(observableState.canReportProgress)
+        XCTAssertFalse(observableState.canFinish)
+    }
+
     func testOutputSummaryPrefersStdoutAndTruncates() {
         let result = LocalCodingAgentProcessResult(
             exitCode: 0,

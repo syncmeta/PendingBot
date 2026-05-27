@@ -493,7 +493,7 @@ crewRoutes.get('/', requireSubjectAuth(['crew:read']), async (c) => {
 
   let metaQuery = supa
     .from('temporary_group_meta')
-    .select('conversation_id, responsible_subject_id, status, title, created_at, updated_at')
+    .select('conversation_id, responsible_subject_id, status, title, runtime_kind, created_at, updated_at')
     .eq('temporary_kind', 'crew')
     .order('created_at', { ascending: false });
   if (c.var.authKind === 'device_grant') {
@@ -528,6 +528,7 @@ crewRoutes.get('/', requireSubjectAuth(['crew:read']), async (c) => {
         responsible_subject_id: meta.responsible_subject_id,
         status: meta.status,
         title: meta.title ?? conv?.title ?? 'Crew',
+        runtime_kind: typeof meta.runtime_kind === 'string' ? meta.runtime_kind : 'local',
         created_at: meta.created_at,
         updated_at: meta.updated_at ?? conv?.updated_at ?? meta.created_at,
       };
