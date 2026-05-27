@@ -38,6 +38,9 @@ struct SidebarView: View {
 
                 Label("有求于你", systemImage: "tray.and.arrow.down")
                     .tag(AppModel.Selection.helpRequests)
+
+                Label("设置", systemImage: "gearshape")
+                    .tag(AppModel.Selection.settings)
             }
 
             Section("机组索引") {

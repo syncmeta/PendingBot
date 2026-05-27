@@ -42,6 +42,8 @@ private struct DetailRouter: View {
             RunnerHostsView()
         case .helpRequests:
             HumanHelpRequestsView()
+        case .settings:
+            SettingsView()
         }
     }
 }
@@ -75,4 +77,3 @@ private struct StatusBarView: View {
         .background(.bar)
     }
 }
-

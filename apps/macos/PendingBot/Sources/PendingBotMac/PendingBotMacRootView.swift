@@ -1,4 +1,5 @@
 import PendingBotShared
+import CoreImage.CIFilterBuiltins
 import SwiftUI
 
 struct PendingBotMacRootView: View {
@@ -128,23 +129,28 @@ struct PendingBotMacRootView: View {
             }
 
             if let challenge = store.loginChallenge {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("验证码")
-                        .font(.headline)
-                    Text(challenge.code)
-                        .font(.system(size: 34, weight: .semibold, design: .monospaced))
-                    Text("过期时间: \(challenge.expiresAt)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                HStack(alignment: .top, spacing: 18) {
+                    PendingBotMacQRCode(payload: challenge.qrPayload)
 
-                    Text("QR Payload")
-                        .font(.headline)
-                    Text(challenge.qrPayload)
-                        .font(.system(.body, design: .monospaced))
-                        .textSelection(.enabled)
-                        .padding(10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("验证码")
+                            .font(.headline)
+                        Text(challenge.code)
+                            .font(.system(size: 34, weight: .semibold, design: .monospaced))
+                        Text("过期时间: \(challenge.expiresAt)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Text("如果扫码失败，可复制 payload")
+                            .font(.headline)
+                        Text(challenge.qrPayload)
+                            .font(.system(.caption, design: .monospaced))
+                            .lineLimit(4)
+                            .textSelection(.enabled)
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(.quaternary, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
                 }
             }
 
@@ -157,5 +163,42 @@ struct PendingBotMacRootView: View {
         }
         .padding(24)
         .frame(maxWidth: 760, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+private struct PendingBotMacQRCode: View {
+    let payload: String
+
+    var body: some View {
+        if let image = makeQRCode(payload) {
+            Image(nsImage: image)
+                .interpolation(.none)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 220, height: 220)
+                .padding(14)
+                .background(.white, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(.quaternary)
+                }
+                .accessibilityLabel("PendingBot Mac 登录二维码")
+        } else {
+            ContentUnavailableView("二维码生成失败", systemImage: "qrcode")
+                .frame(width: 248, height: 248)
+        }
+    }
+
+    private func makeQRCode(_ payload: String) -> NSImage? {
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(payload.utf8)
+        filter.correctionLevel = "M"
+
+        guard let output = filter.outputImage else { return nil }
+        let scaled = output.transformed(by: CGAffineTransform(scaleX: 10, y: 10))
+        let representation = NSCIImageRep(ciImage: scaled)
+        let image = NSImage(size: representation.size)
+        image.addRepresentation(representation)
+        return image
     }
 }
