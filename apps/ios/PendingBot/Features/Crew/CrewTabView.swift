@@ -404,16 +404,21 @@ struct CrewTabView: View {
             error = "这不是 PendingCrew 登录二维码"
             return
         }
+        let initialApproval: DeviceLoginGrantApproval = payload.appKind == .pendingBotMacOS
+            ? .pendingBotClient
+            : .pendingCrewControl
         do {
             let response: DeviceLoginApprovalResponse
             do {
                 response = try await api.approvePendingCrewDeviceLogin(
                     challengeId: payload.challengeId,
                     secret: payload.secret,
-                    subjectId: subject.id
+                    subjectId: subject.id,
+                    approval: initialApproval
                 )
             } catch {
                 guard let retry = DeviceLoginGrantApproval.retryPlan(after: error) else { throw error }
+                guard retry != initialApproval else { throw error }
                 response = try await api.approvePendingCrewDeviceLogin(
                     challengeId: payload.challengeId,
                     secret: payload.secret,
