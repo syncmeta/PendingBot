@@ -114,6 +114,88 @@ struct CrewLinksResponse: Decodable {
     let responsibilityShares: [CrewResponsibilityShare]
 }
 
+struct CrewSidebarRow: Identifiable, Hashable {
+    var id: String { "\(parentCrewId ?? "root"):\(crewId)" }
+    let crewId: String
+    let parentCrewId: String?
+    let title: String
+    let status: String
+    let runtimeKind: String
+    let depth: Int
+    let captainBotId: String?
+    let captainMemberId: String?
+}
+
+enum CrewSidebarIndex {
+    static func flatten(
+        crews: [Crew],
+        linksByCrew: [String: CrewLinksResponse]
+    ) -> [CrewSidebarRow] {
+        let crewById = Dictionary(uniqueKeysWithValues: crews.map { ($0.id, $0) })
+        let childIds = Set(linksByCrew.values.flatMap { $0.children.map(\.crewConversationId) })
+        let roots = crews
+            .filter { !childIds.contains($0.id) }
+            .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+
+        var rows: [CrewSidebarRow] = []
+        for root in roots {
+            append(
+                crewId: root.id,
+                parentCrewId: nil,
+                link: nil,
+                crewById: crewById,
+                linksByCrew: linksByCrew,
+                depth: 0,
+                visitedPath: [],
+                rows: &rows
+            )
+        }
+        return rows
+    }
+
+    private static func append(
+        crewId: String,
+        parentCrewId: String?,
+        link: CrewLink?,
+        crewById: [String: Crew],
+        linksByCrew: [String: CrewLinksResponse],
+        depth: Int,
+        visitedPath: Set<String>,
+        rows: inout [CrewSidebarRow]
+    ) {
+        guard !visitedPath.contains(crewId) else { return }
+        let crew = crewById[crewId]
+        rows.append(
+            CrewSidebarRow(
+                crewId: crewId,
+                parentCrewId: parentCrewId,
+                title: link?.title ?? crew?.title ?? "Crew",
+                status: link?.status ?? crew?.status ?? "active",
+                runtimeKind: link?.runtimeKind ?? "local",
+                depth: depth,
+                captainBotId: link?.captainBotId,
+                captainMemberId: link?.captainMemberId
+            )
+        )
+
+        let nextVisited = visitedPath.union([crewId])
+        let children = (linksByCrew[crewId]?.children ?? [])
+            .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        for child in children {
+            append(
+                crewId: child.crewConversationId,
+                parentCrewId: crewId,
+                link: child,
+                crewById: crewById,
+                linksByCrew: linksByCrew,
+                depth: depth + 1,
+                visitedPath: nextVisited,
+                rows: &rows
+            )
+        }
+    }
+}
+
 struct CrewMember: Decodable, Identifiable {
     let id: String
     let conversationId: String

@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 struct CrewDetailView: View {
@@ -10,6 +11,7 @@ struct CrewDetailView: View {
     @State private var announcementText = ""
     @State private var mentionedSessionIds: Set<String> = []
     @State private var mentionedMemberIds: Set<String> = []
+    @State private var childCrewTitle = ""
 
     private var crew: Crew? {
         model.crews.first { $0.id == crewId }
@@ -25,6 +27,22 @@ struct CrewDetailView: View {
 
     private var announcements: [CrewAnnouncement] {
         model.announcementsByCrew[crewId] ?? []
+    }
+
+    private var links: CrewLinksResponse? {
+        model.linksByCrew[crewId]
+    }
+
+    private var parents: [CrewLink] {
+        links?.parents ?? []
+    }
+
+    private var children: [CrewLink] {
+        links?.children ?? []
+    }
+
+    private var responsibilityShares: [CrewResponsibilityShare] {
+        links?.responsibilityShares ?? []
     }
 
     var body: some View {
@@ -99,6 +117,7 @@ struct CrewDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 header
+                relationshipsBox
                 createSessionBox
                 sessionsBox
 
@@ -126,6 +145,65 @@ struct CrewDetailView: View {
                 GridRow {
                     Text("成员").foregroundStyle(.secondary)
                     Text("\(members.count)")
+                }
+                GridRow {
+                    Text("责任主体").foregroundStyle(.secondary)
+                    Text("\(responsibilityShares.count)")
+                }
+            }
+        }
+    }
+
+    private var relationshipsBox: some View {
+        InspectorSection(title: "机组关系") {
+            VStack(alignment: .leading, spacing: 12) {
+                relationshipGroup(title: "父机组", links: parents, emptyText: "没有父机组")
+                relationshipGroup(title: "子机组", links: children, emptyText: "还没有子机组")
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("新建子机组")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    HStack(spacing: 8) {
+                        TextField("子机组名称", text: $childCrewTitle)
+                            .textFieldStyle(.roundedBorder)
+
+                        Button {
+                            let title = childCrewTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+                            Task {
+                                await model.createChildCrew(parentCrewId: crewId, title: title)
+                                childCrewTitle = ""
+                            }
+                        } label: {
+                            Image(systemName: "plus")
+                        }
+                        .disabled(childCrewTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                }
+
+                if !responsibilityShares.isEmpty {
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text("责任分摊")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        ForEach(responsibilityShares) { share in
+                            HStack(spacing: 8) {
+                                Text(share.subjectId)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .lineLimit(1)
+
+                                Spacer(minLength: 0)
+
+                                Text(formatShare(share.shareBps))
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -194,6 +272,38 @@ struct CrewDetailView: View {
             Task { await model.refreshEvents(sessionId: selectedSessionId) }
         }
     }
+
+    private func formatShare(_ shareBps: Int) -> String {
+        let percent = Double(shareBps) / 100
+        if percent.rounded() == percent {
+            return "\(Int(percent))%"
+        }
+        return String(format: "%.2f%%", percent)
+    }
+
+    @ViewBuilder
+    private func relationshipGroup(title: String, links: [CrewLink], emptyText: String) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if links.isEmpty {
+                Text(emptyText)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            } else {
+                ForEach(links) { link in
+                    Button {
+                        model.selection = .crew(link.crewConversationId)
+                    } label: {
+                        CrewRelationshipRow(link: link)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
 }
 
 private struct InspectorSection<Content: View>: View {
@@ -251,6 +361,42 @@ private struct SessionSummaryRow: View {
                 .fill(isSelected ? Color.accentColor.opacity(0.14) : Color.clear)
         )
         .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+    }
+}
+
+private struct CrewRelationshipRow: View {
+    let link: CrewLink
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 9) {
+            Image(systemName: "arrow.branch")
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(link.title)
+                        .font(.subheadline.weight(.medium))
+                        .lineLimit(1)
+
+                    StatusBadge(text: link.status)
+                }
+
+                HStack(spacing: 6) {
+                    Text(link.runtimeKind)
+                    if link.captainBotId != nil {
+                        Text("机长")
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
     }
 }
 

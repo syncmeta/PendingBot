@@ -15,6 +15,7 @@ final class AppModel: ObservableObject {
     @Published var crews: [Crew] = []
     @Published var sessionsByCrew: [String: [CrewSession]] = [:]
     @Published var membersByCrew: [String: [CrewMember]] = [:]
+    @Published var linksByCrew: [String: CrewLinksResponse] = [:]
     @Published var eventsBySession: [String: [SessionEvent]] = [:]
     @Published var announcementsByCrew: [String: [CrewAnnouncement]] = [:]
     @Published var mailboxBySession: [String: [SessionMailboxItem]] = [:]
@@ -117,6 +118,7 @@ final class AppModel: ObservableObject {
         crews = []
         sessionsByCrew = [:]
         membersByCrew = [:]
+        linksByCrew = [:]
         eventsBySession = [:]
         announcementsByCrew = [:]
         mailboxBySession = [:]
@@ -171,6 +173,7 @@ final class AppModel: ObservableObject {
             subjectResponse = try await subject
             self.crews = try await crews
             runnerHosts = try await hosts
+            try await refreshLinksForVisibleCrews(api: api)
             if isDeviceGrantOnly {
                 helpRequests = []
             } else {
@@ -182,12 +185,7 @@ final class AppModel: ObservableObject {
     func refreshCrew(_ crewId: String) async {
         await run("Crew 已刷新") {
             guard let api else { throw LocalError.missingAuth }
-            async let sessions = api.listSessions(crewId: crewId)
-            async let announcements = api.listAnnouncements(crewId: crewId)
-            async let members = api.listMembers(crewId: crewId)
-            sessionsByCrew[crewId] = try await sessions
-            announcementsByCrew[crewId] = try await announcements
-            membersByCrew[crewId] = try await members
+            try await refreshCrewDetail(api: api, crewId: crewId)
         }
     }
 
@@ -208,12 +206,20 @@ final class AppModel: ObservableObject {
             let id = try await api.createCrew(responsibleSubjectId: subjectId, title: title)
             selection = .crew(id)
             crews = try await api.listCrews()
-            async let sessions = api.listSessions(crewId: id)
-            async let announcements = api.listAnnouncements(crewId: id)
-            async let members = api.listMembers(crewId: id)
-            sessionsByCrew[id] = try await sessions
-            announcementsByCrew[id] = try await announcements
-            membersByCrew[id] = try await members
+            try await refreshLinksForVisibleCrews(api: api)
+            try await refreshCrewDetail(api: api, crewId: id)
+        }
+    }
+
+    func createChildCrew(parentCrewId: String, title: String) async {
+        await run("子机组已创建") {
+            guard let api else { throw LocalError.missingAuth }
+            let id = try await api.createChildCrew(crewId: parentCrewId, title: title)
+            selection = .crew(id)
+            crews = try await api.listCrews()
+            try await refreshLinksForVisibleCrews(api: api)
+            try await refreshCrewDetail(api: api, crewId: id)
+            try await refreshCrewDetail(api: api, crewId: parentCrewId)
         }
     }
 
@@ -221,12 +227,7 @@ final class AppModel: ObservableObject {
         await run("Session 已排队") {
             guard let api else { throw LocalError.missingAuth }
             let sessionId = try await api.createSession(crewId: crewId, runnerKind: runnerKind, taskBrief: taskBrief)
-            async let sessions = api.listSessions(crewId: crewId)
-            async let announcements = api.listAnnouncements(crewId: crewId)
-            async let members = api.listMembers(crewId: crewId)
-            sessionsByCrew[crewId] = try await sessions
-            announcementsByCrew[crewId] = try await announcements
-            membersByCrew[crewId] = try await members
+            try await refreshCrewDetail(api: api, crewId: crewId)
             eventsBySession[sessionId] = try await api.listEvents(sessionId: sessionId)
         }
     }
@@ -397,7 +398,27 @@ final class AppModel: ObservableObject {
             try await api.decideHumanHelpRequest(id: id, decision: accepted ? "accepted" : "declined")
             helpRequests = try await api.listHumanHelpRequests()
             crews = try await api.listCrews()
+            try await refreshLinksForVisibleCrews(api: api)
         }
+    }
+
+    private func refreshLinksForVisibleCrews(api: PendingBotAPI) async throws {
+        var next: [String: CrewLinksResponse] = [:]
+        for crew in crews {
+            next[crew.id] = try await api.listCrewLinks(crewId: crew.id)
+        }
+        linksByCrew = next
+    }
+
+    private func refreshCrewDetail(api: PendingBotAPI, crewId: String) async throws {
+        async let sessions = api.listSessions(crewId: crewId)
+        async let announcements = api.listAnnouncements(crewId: crewId)
+        async let members = api.listMembers(crewId: crewId)
+        async let links = api.listCrewLinks(crewId: crewId)
+        sessionsByCrew[crewId] = try await sessions
+        announcementsByCrew[crewId] = try await announcements
+        membersByCrew[crewId] = try await members
+        linksByCrew[crewId] = try await links
     }
 
     private func run(_ successMessage: String, operation: () async throws -> Void) async {

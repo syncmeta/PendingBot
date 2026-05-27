@@ -2,6 +2,85 @@ import XCTest
 @testable import PendingCrew
 
 final class LocalCodingAgentRunnerTests: XCTestCase {
+    func testCrewSidebarIndexShowsSharedChildUnderEachParent() {
+        let platform = Crew(
+            conversationId: "crew-platform",
+            responsibleSubjectId: "subject-1",
+            status: "active",
+            title: "平台部",
+            createdAt: "2026-05-27T00:00:00Z",
+            updatedAt: "2026-05-27T00:00:00Z"
+        )
+        let mobile = Crew(
+            conversationId: "crew-mobile",
+            responsibleSubjectId: "subject-1",
+            status: "active",
+            title: "移动部",
+            createdAt: "2026-05-27T00:00:00Z",
+            updatedAt: "2026-05-27T00:00:00Z"
+        )
+        let api = Crew(
+            conversationId: "crew-api",
+            responsibleSubjectId: "subject-1",
+            status: "active",
+            title: "API 小组",
+            createdAt: "2026-05-27T00:00:00Z",
+            updatedAt: "2026-05-27T00:00:00Z"
+        )
+        let apiChildLink = CrewLink(
+            crewConversationId: "crew-api",
+            title: "API 小组",
+            status: "active",
+            runtimeKind: "local",
+            captainBotId: "bot-api",
+            captainMemberId: "captain-api",
+            createdAt: "2026-05-27T00:01:00Z"
+        )
+        let parentLinks = CrewLinksResponse(
+            parents: [],
+            children: [apiChildLink],
+            responsibilityShares: []
+        )
+        let childLinks = CrewLinksResponse(
+            parents: [
+                CrewLink(
+                    crewConversationId: "crew-platform",
+                    title: "平台部",
+                    status: "active",
+                    runtimeKind: "local",
+                    captainBotId: nil,
+                    captainMemberId: nil,
+                    createdAt: "2026-05-27T00:01:00Z"
+                ),
+                CrewLink(
+                    crewConversationId: "crew-mobile",
+                    title: "移动部",
+                    status: "active",
+                    runtimeKind: "local",
+                    captainBotId: nil,
+                    captainMemberId: nil,
+                    createdAt: "2026-05-27T00:01:00Z"
+                )
+            ],
+            children: [],
+            responsibilityShares: []
+        )
+
+        let rows = CrewSidebarIndex.flatten(
+            crews: [platform, mobile, api],
+            linksByCrew: [
+                "crew-platform": parentLinks,
+                "crew-mobile": parentLinks,
+                "crew-api": childLinks
+            ]
+        )
+
+        XCTAssertEqual(rows.map(\.title), ["平台部", "API 小组", "移动部", "API 小组"])
+        XCTAssertEqual(rows.map(\.depth), [0, 1, 0, 1])
+        XCTAssertEqual(rows.map(\.crewId), ["crew-platform", "crew-api", "crew-mobile", "crew-api"])
+        XCTAssertEqual(rows.filter { $0.crewId == "crew-api" }.count, 2)
+    }
+
     func testCrewChatMentionTargetsIncludeMembersAndSessions() {
         let member = CrewMember(
             id: "member-1",
