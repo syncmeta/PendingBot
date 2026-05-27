@@ -361,6 +361,57 @@ final class LocalCodingAgentRunnerTests: XCTestCase {
         XCTAssertFalse(observableState.canFinish)
     }
 
+    func testSessionWorkbenchActionsExposeClaimAndRunStates() {
+        let queued = Self.makeSession(id: "session-queued", status: "queued", runnerKind: .localCodex)
+        let active = Self.makeSession(id: "session-active", status: "running", runnerKind: .localCodex)
+        let finished = Self.makeSession(id: "session-finished", status: "completed", runnerKind: .localCodex)
+        var unsupported = Self.makeSession(id: "session-unsupported", status: "queued", runnerKind: .localCodex)
+        unsupported = CrewSession(
+            id: unsupported.id,
+            crewConversationId: unsupported.crewConversationId,
+            responsibleSubjectId: unsupported.responsibleSubjectId,
+            runnerKind: "future_runner",
+            status: unsupported.status,
+            taskBrief: unsupported.taskBrief,
+            progressSummary: unsupported.progressSummary,
+            createdAt: unsupported.createdAt,
+            startedAt: unsupported.startedAt,
+            finishedAt: unsupported.finishedAt
+        )
+
+        XCTAssertEqual(
+            SessionWorkbenchActionState(session: queued, activeRunnerSessionId: nil).primaryAction,
+            .claimAndRun
+        )
+        XCTAssertEqual(
+            SessionWorkbenchActionState(session: active, activeRunnerSessionId: "session-active").primaryAction,
+            .runActive
+        )
+        XCTAssertEqual(
+            SessionWorkbenchActionState(session: finished, activeRunnerSessionId: nil).primaryAction,
+            .none
+        )
+        XCTAssertEqual(
+            SessionWorkbenchActionState(session: unsupported, activeRunnerSessionId: nil).primaryAction,
+            .none
+        )
+    }
+
+    func testSelectedSessionClaimResultRequiresMatchingSession() {
+        let selected = Self.makeSession(id: "session-selected", status: "queued", runnerKind: .localCodex)
+        let other = Self.makeSession(id: "session-other", status: "queued", runnerKind: .localCodex)
+
+        XCTAssertTrue(
+            SelectedSessionClaimDecision(session: selected, selectedSessionId: "session-selected").matchesSelection
+        )
+        XCTAssertFalse(
+            SelectedSessionClaimDecision(session: other, selectedSessionId: "session-selected").matchesSelection
+        )
+        XCTAssertFalse(
+            SelectedSessionClaimDecision(session: nil, selectedSessionId: "session-selected").matchesSelection
+        )
+    }
+
     func testOutputSummaryPrefersStdoutAndTruncates() {
         let result = LocalCodingAgentProcessResult(
             exitCode: 0,
@@ -374,5 +425,20 @@ final class LocalCodingAgentRunnerTests: XCTestCase {
         XCTAssertTrue(summary.hasPrefix("本机执行完成"))
         XCTAssertTrue(summary.contains("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
         XCTAssertTrue(summary.hasSuffix("..."))
+    }
+
+    private static func makeSession(id: String, status: String, runnerKind: RunnerKind) -> CrewSession {
+        CrewSession(
+            id: id,
+            crewConversationId: "crew-1",
+            responsibleSubjectId: "subject-1",
+            runnerKind: runnerKind.rawValue,
+            status: status,
+            taskBrief: "本机执行",
+            progressSummary: nil,
+            createdAt: "2026-05-27T00:00:00Z",
+            startedAt: nil,
+            finishedAt: nil
+        )
     }
 }

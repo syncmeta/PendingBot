@@ -137,6 +137,30 @@ struct CrewDetailView: View {
                         onRefresh: {
                             Task { await model.refreshEvents(sessionId: selectedSession.id) }
                         },
+                        canClaimAndRun: workbenchRunnerHost(for: selectedSession) != nil && canRunLocalSession(selectedSession),
+                        canRunActive: canRunLocalSession(selectedSession),
+                        onClaimAndRun: {
+                            guard let host = workbenchRunnerHost(for: selectedSession),
+                                  let runnerKind = RunnerKind(rawValue: selectedSession.runnerKind)
+                            else { return }
+                            Task {
+                                model.saveSettings()
+                                await model.claimSelectedSession(
+                                    hostId: host.id,
+                                    kinds: [runnerKind],
+                                    selectedSessionId: selectedSession.id
+                                )
+                                if model.activeRunnerSession?.id == selectedSession.id {
+                                    await model.runActiveSessionLocally()
+                                }
+                            }
+                        },
+                        onRunActive: {
+                            Task {
+                                model.saveSettings()
+                                await model.runActiveSessionLocally()
+                            }
+                        },
                         onReportProgress: {
                             Task {
                                 await model.appendRunnerStatus(summary: progressUpdateText)
@@ -310,6 +334,24 @@ struct CrewDetailView: View {
         return sessions.first { $0.id == selectedSessionId }
     }
 
+    private func workbenchRunnerHost(for session: CrewSession) -> RunnerHost? {
+        guard let runnerKind = RunnerKind(rawValue: session.runnerKind) else { return nil }
+        if let activeHostId = model.activeRunnerHostId,
+           let activeHost = model.runnerHosts.first(where: { $0.id == activeHostId && $0.supports(runnerKind) }) {
+            return activeHost
+        }
+        return model.runnerHosts.first { host in
+            host.status == "online" && host.supports(runnerKind)
+        }
+    }
+
+    private func canRunLocalSession(_ session: CrewSession) -> Bool {
+        LocalCodingAgentProfile.defaultProfile(
+            for: session.runnerKind,
+            workingDirectoryPath: model.localWorkspacePath
+        ) != nil && !model.localWorkspacePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     private func selectInitialSessionIfNeeded() {
         if let focusedSessionId = model.focusedSessionIdsByCrew[crewId],
            sessions.contains(where: { $0.id == focusedSessionId }) {
@@ -476,6 +518,73 @@ enum SessionOperatorMode: Equatable {
     case observable
 }
 
+enum SessionWorkbenchPrimaryAction: Equatable {
+    case claimAndRun
+    case runActive
+    case none
+}
+
+struct SessionWorkbenchActionState: Equatable {
+    let primaryAction: SessionWorkbenchPrimaryAction
+
+    init(session: CrewSession, activeRunnerSessionId: String?) {
+        if activeRunnerSessionId == session.id {
+            primaryAction = .runActive
+        } else if session.status == "queued",
+                  LocalCodingAgentProfile.defaultProfile(for: session.runnerKind, workingDirectoryPath: nil) != nil {
+            primaryAction = .claimAndRun
+        } else {
+            primaryAction = .none
+        }
+    }
+}
+
+extension RunnerHost {
+    func supports(_ kind: RunnerKind) -> Bool {
+        allowedRunnerKinds.stringArray.contains(kind.rawValue)
+    }
+}
+
+extension JSONValue {
+    var stringArray: [String] {
+        switch self {
+        case .array(let values):
+            values.compactMap(\.stringValue)
+        case .object(let object):
+            object.compactMap { key, value in
+                value.boolValue == true ? key : nil
+            }
+        case .string(let value):
+            [value]
+        default:
+            []
+        }
+    }
+
+    private var stringValue: String? {
+        if case .string(let value) = self {
+            return value
+        }
+        return nil
+    }
+
+    private var boolValue: Bool? {
+        if case .bool(let value) = self {
+            return value
+        }
+        return nil
+    }
+}
+
+struct SelectedSessionClaimDecision {
+    let session: CrewSession?
+    let selectedSessionId: String
+
+    var matchesSelection: Bool {
+        session?.id == selectedSessionId
+    }
+}
+
 struct SessionOperatorState: Equatable {
     let mode: SessionOperatorMode
 
@@ -516,7 +625,7 @@ struct SessionOperatorState: Equatable {
         case .activeLocalRunner:
             "这是当前本机 runner 认领的 session，可以直接上报进度或结束。"
         case .queuedClaimable:
-            "这个 session 正在队列中等待 runner 认领；去 Runner 页认领后会切换成本机控制。"
+            "这个 session 正在队列中等待 runner 认领；可以直接从这里交给本机执行。"
         case .observable:
             "这个 session 不属于当前本机 runner，只能查看事件和收件箱。"
         }
@@ -534,6 +643,7 @@ struct SessionOperatorState: Equatable {
 struct SessionInspectorModel {
     let session: CrewSession
     let operatorState: SessionOperatorState
+    let actionState: SessionWorkbenchActionState
     let sortedEvents: [SessionEvent]
     let sortedMailbox: [SessionMailboxItem]
 
@@ -545,6 +655,7 @@ struct SessionInspectorModel {
     ) {
         self.session = session
         self.operatorState = SessionOperatorState(session: session, activeRunnerSessionId: activeRunnerSessionId)
+        self.actionState = SessionWorkbenchActionState(session: session, activeRunnerSessionId: activeRunnerSessionId)
         self.sortedEvents = events.sorted {
             if $0.createdAt == $1.createdAt {
                 return $0.id < $1.id
@@ -591,6 +702,10 @@ private struct SelectedSessionWindow: View {
     @Binding var progressUpdateText: String
     @Binding var finalSummaryText: String
     let onRefresh: () -> Void
+    let canClaimAndRun: Bool
+    let canRunActive: Bool
+    let onClaimAndRun: () -> Void
+    let onRunActive: () -> Void
     let onReportProgress: () -> Void
     let onComplete: () -> Void
     let onFail: () -> Void
@@ -603,6 +718,10 @@ private struct SelectedSessionWindow: View {
         progressUpdateText: Binding<String>,
         finalSummaryText: Binding<String>,
         onRefresh: @escaping () -> Void,
+        canClaimAndRun: Bool,
+        canRunActive: Bool,
+        onClaimAndRun: @escaping () -> Void,
+        onRunActive: @escaping () -> Void,
         onReportProgress: @escaping () -> Void,
         onComplete: @escaping () -> Void,
         onFail: @escaping () -> Void
@@ -616,6 +735,10 @@ private struct SelectedSessionWindow: View {
         self._progressUpdateText = progressUpdateText
         self._finalSummaryText = finalSummaryText
         self.onRefresh = onRefresh
+        self.canClaimAndRun = canClaimAndRun
+        self.canRunActive = canRunActive
+        self.onClaimAndRun = onClaimAndRun
+        self.onRunActive = onRunActive
         self.onReportProgress = onReportProgress
         self.onComplete = onComplete
         self.onFail = onFail
@@ -635,6 +758,7 @@ private struct SelectedSessionWindow: View {
             operatorStateBanner
             taskBrief
             statusProgress
+            primaryActionControls
             progressControls
             finishControls
             mailboxSection
@@ -694,6 +818,38 @@ private struct SelectedSessionWindow: View {
         }
         .padding(10)
         .background(.background.opacity(0.65), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+    }
+
+    @ViewBuilder
+    private var primaryActionControls: some View {
+        switch model.actionState.primaryAction {
+        case .claimAndRun:
+            VStack(alignment: .leading, spacing: 6) {
+                Button {
+                    onClaimAndRun()
+                } label: {
+                    Label("认领并运行", systemImage: "play.rectangle")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!canClaimAndRun)
+
+                if !canClaimAndRun {
+                    Text("需要一个在线且支持此 runner 的本机 host，并设置可用工作目录。")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        case .runActive:
+            Button {
+                onRunActive()
+            } label: {
+                Label("运行本机 session", systemImage: "terminal")
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!canRunActive)
+        case .none:
+            EmptyView()
+        }
     }
 
     private var taskBrief: some View {

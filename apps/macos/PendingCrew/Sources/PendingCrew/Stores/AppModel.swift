@@ -316,6 +316,35 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func claimSelectedSession(hostId: String, kinds: Set<RunnerKind>, selectedSessionId: String) async {
+        isLoading = true
+        errorMessage = nil
+        defer { isLoading = false }
+
+        do {
+            guard let api else { throw LocalError.missingAuth }
+            let claim = try await api.claimNextSession(hostId: hostId, runnerKinds: Array(kinds))
+            activeRunnerHostId = hostId
+            activeRunnerLeaseId = claim.leaseId
+            activeRunnerSession = claim.session
+            if let session = claim.session {
+                sessionsByCrew[session.crewConversationId] = try await api.listSessions(crewId: session.crewConversationId)
+                eventsBySession[session.id] = try await api.listEvents(sessionId: session.id)
+                let decision = SelectedSessionClaimDecision(session: session, selectedSessionId: selectedSessionId)
+                statusMessage = decision.matchesSelection
+                    ? "已认领所选 session"
+                    : "队列返回了另一个 session，未自动执行"
+            } else {
+                activeRunnerLeaseId = nil
+                activeRunnerSession = nil
+                statusMessage = "没有可认领的 session"
+            }
+            runnerHosts = try await api.listRunnerHosts()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     func runActiveSessionLocally() async {
         await run("本机执行已结束") {
             guard let api else { throw LocalError.missingAuth }
