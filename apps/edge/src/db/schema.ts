@@ -3086,8 +3086,8 @@ export type Database = {
       temporary_group_meta: {
         Row: {
           captain_bot_id: string | null
-          cloud_machine_id: string | null
           closed_at: string | null
+          cloud_machine_id: string | null
           conversation_id: string
           created_at: string
           initiator_bot_id: string | null
@@ -3097,8 +3097,8 @@ export type Database = {
           master_bot_id: string | null
           master_member_id: string | null
           parent_temporary_group_id: string | null
-          responsible_subject_id: string
           responsibility_mode: string
+          responsible_subject_id: string
           root_temporary_group_id: string | null
           runtime_kind: string
           source_conversation_id: string | null
@@ -3109,8 +3109,8 @@ export type Database = {
         }
         Insert: {
           captain_bot_id?: string | null
-          cloud_machine_id?: string | null
           closed_at?: string | null
+          cloud_machine_id?: string | null
           conversation_id: string
           created_at?: string
           initiator_bot_id?: string | null
@@ -3120,8 +3120,8 @@ export type Database = {
           master_bot_id?: string | null
           master_member_id?: string | null
           parent_temporary_group_id?: string | null
-          responsible_subject_id: string
           responsibility_mode?: string
+          responsible_subject_id: string
           root_temporary_group_id?: string | null
           runtime_kind?: string
           source_conversation_id?: string | null
@@ -3132,8 +3132,8 @@ export type Database = {
         }
         Update: {
           captain_bot_id?: string | null
-          cloud_machine_id?: string | null
           closed_at?: string | null
+          cloud_machine_id?: string | null
           conversation_id?: string
           created_at?: string
           initiator_bot_id?: string | null
@@ -3143,8 +3143,8 @@ export type Database = {
           master_bot_id?: string | null
           master_member_id?: string | null
           parent_temporary_group_id?: string | null
-          responsible_subject_id?: string
           responsibility_mode?: string
+          responsible_subject_id?: string
           root_temporary_group_id?: string | null
           runtime_kind?: string
           source_conversation_id?: string | null
@@ -3636,7 +3636,15 @@ export type Database = {
           source: string | null
           subject_id: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "temporary_group_meta_conversation_id_fkey"
+            columns: ["crew_conversation_id"]
+            isOneToOne: true
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       v_audit_daily: {
         Row: {
@@ -3798,6 +3806,36 @@ export type Database = {
         Returns: boolean
       }
       cancel_account_deletion: { Args: never; Returns: boolean }
+      claim_crew_session_for_subject: {
+        Args: {
+          p_crew_session_id: string
+          p_responsible_subject_id: string
+          p_runner_host_id: string
+          p_runner_kinds?: Json
+        }
+        Returns: Json
+      }
+      claim_next_crew_session: {
+        Args: { p_runner_host_id: string; p_runner_kinds?: Json }
+        Returns: Json
+      }
+      claim_next_crew_session_for_subject: {
+        Args: {
+          p_responsible_subject_id: string
+          p_runner_host_id: string
+          p_runner_kinds?: Json
+        }
+        Returns: Json
+      }
+      consume_subject_device_login_challenge: {
+        Args: {
+          p_challenge_id: string
+          p_challenge_secret_hash: string
+          p_grant_id: string
+          p_token_hash: string
+        }
+        Returns: Json
+      }
       create_child_crew_inheriting_responsibility: {
         Args: { p_parent_crew_conversation_id: string; p_title?: string }
         Returns: string
@@ -3820,36 +3858,6 @@ export type Database = {
           p_title?: string
         }
         Returns: string
-      }
-      claim_next_crew_session: {
-        Args: { p_runner_host_id: string; p_runner_kinds?: Json }
-        Returns: Json
-      }
-      claim_next_crew_session_for_subject: {
-        Args: {
-          p_responsible_subject_id: string
-          p_runner_host_id: string
-          p_runner_kinds?: Json
-        }
-        Returns: Json
-      }
-      claim_crew_session_for_subject: {
-        Args: {
-          p_crew_session_id: string
-          p_responsible_subject_id: string
-          p_runner_host_id: string
-          p_runner_kinds?: Json
-        }
-        Returns: Json
-      }
-      consume_subject_device_login_challenge: {
-        Args: {
-          p_challenge_id: string
-          p_challenge_secret_hash: string
-          p_grant_id: string
-          p_token_hash: string
-        }
-        Returns: Json
       }
       create_crew_announcement: {
         Args: {
@@ -4103,6 +4111,14 @@ export type Database = {
         Args: { p_sentiment: string }
         Returns: undefined
       }
+      resolve_crew_responsibility_shares: {
+        Args: { p_crew_conversation_id: string }
+        Returns: {
+          share_bps: number
+          source: string
+          subject_id: string
+        }[]
+      }
       runner_host_heartbeat: {
         Args: {
           p_allowed_runner_kinds?: Json
@@ -4146,14 +4162,6 @@ export type Database = {
       subject_can_create_crew: {
         Args: { p_subject_id: string; p_user_id: string }
         Returns: boolean
-      }
-      resolve_crew_responsibility_shares: {
-        Args: { p_crew_conversation_id: string }
-        Returns: {
-          share_bps: number
-          source: string
-          subject_id: string
-        }[]
       }
       subject_can_manage_runners: {
         Args: { p_subject_id: string; p_user_id: string }
