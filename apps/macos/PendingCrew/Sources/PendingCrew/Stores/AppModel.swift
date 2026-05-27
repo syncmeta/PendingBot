@@ -7,6 +7,7 @@ final class AppModel: ObservableObject {
         case crew(String)
         case runnerHosts
         case helpRequests
+        case settings
     }
 
     @Published var apiBaseURL: String
@@ -46,6 +47,9 @@ final class AppModel: ObservableObject {
 #endif
         deviceGrantToken = isUITestMode ? nil : KeychainStore.get(account: "device-grant")
         localWorkspacePath = UserDefaults.standard.string(forKey: "localWorkspacePath") ?? FileManager.default.homeDirectoryForCurrentUser.path
+        if authCredential == nil {
+            selection = .settings
+        }
     }
 
     var api: PendingBotAPI? {
@@ -84,7 +88,11 @@ final class AppModel: ObservableObject {
 
     func bootstrap() async {
         guard api != nil else {
+            selection = .settings
             statusMessage = "请先扫码登录"
+            if deviceLoginChallenge == nil {
+                await startDeviceLogin()
+            }
             return
         }
         await refreshAll()
