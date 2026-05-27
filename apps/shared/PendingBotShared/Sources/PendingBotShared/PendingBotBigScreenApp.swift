@@ -323,6 +323,8 @@ private struct PendingBotCrewList: View {
 }
 
 private struct PendingBotCrewDetailView: View {
+    @Environment(\.openURL) private var openURL
+
     let crew: PendingBotCrewSummary
     let detail: PendingBotCrewDetail?
     let isLoading: Bool
@@ -521,11 +523,24 @@ private struct PendingBotCrewDetailView: View {
                 PendingBotCrewEmptyLine(text: "还没有 Session。")
             } else {
                 ForEach(detail.displaySessions) { session in
-                    PendingBotCrewInfoRow(
-                        systemImage: "terminal",
-                        title: session.taskBrief,
-                        subtitle: "\(session.runnerKind.title) · \(session.status)\(session.progressSummary.map { " · \($0)" } ?? "")"
-                    )
+                    HStack(alignment: .top, spacing: 8) {
+                        PendingBotCrewInfoRow(
+                            systemImage: "terminal",
+                            title: session.taskBrief,
+                            subtitle: "\(session.runnerKind.title) · \(session.status)\(session.progressSummary.map { " · \($0)" } ?? "")"
+                        )
+
+                        if let deepLink = session.pendingCrewDeepLink {
+                            Button {
+                                openURL(deepLink)
+                            } label: {
+                                Image(systemName: "arrow.up.forward.app")
+                                    .frame(width: 30, height: 30)
+                            }
+                            .buttonStyle(.borderless)
+                            .help("在 PendingCrew 打开")
+                        }
+                    }
                 }
             }
         }

@@ -64,6 +64,9 @@ struct CrewDetailView: View {
         .onChange(of: sessions.map(\.id)) { _, _ in
             selectInitialSessionIfNeeded()
         }
+        .onChange(of: model.focusedSessionIdsByCrew[crewId]) { _, _ in
+            selectInitialSessionIfNeeded()
+        }
     }
 
     private var conversationPane: some View {
@@ -285,6 +288,7 @@ struct CrewDetailView: View {
                     ForEach(sessions) { session in
                         Button {
                             selectedSessionId = session.id
+                            model.focusedSessionIdsByCrew[crewId] = nil
                             progressUpdateText = ""
                             finalSummaryText = ""
                             Task { await model.refreshEvents(sessionId: session.id) }
@@ -307,6 +311,14 @@ struct CrewDetailView: View {
     }
 
     private func selectInitialSessionIfNeeded() {
+        if let focusedSessionId = model.focusedSessionIdsByCrew[crewId],
+           sessions.contains(where: { $0.id == focusedSessionId }) {
+            selectedSessionId = focusedSessionId
+            progressUpdateText = ""
+            finalSummaryText = ""
+            Task { await model.refreshEvents(sessionId: focusedSessionId) }
+            return
+        }
         guard selectedSessionId == nil || sessions.contains(where: { $0.id == selectedSessionId }) == false else {
             return
         }

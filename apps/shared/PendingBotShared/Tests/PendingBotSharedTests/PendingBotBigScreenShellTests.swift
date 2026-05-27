@@ -168,4 +168,24 @@ final class PendingBotBigScreenShellTests: XCTestCase {
         XCTAssertEqual(detail.displaySessions.map(\.id), ["session-new", "session-old"])
         XCTAssertEqual(detail.displayAnnouncements.map(\.id), ["announcement-old", "announcement-new"])
     }
+
+    func testCrewSessionBuildsPendingCrewDeepLink() {
+        let session = PendingBotCrewSession(
+            id: "session-1",
+            crewId: "crew-1",
+            responsibleSubjectId: "subject",
+            runnerKind: .localCodex,
+            status: "queued",
+            taskBrief: "接续本地机组工作台",
+            progressSummary: nil,
+            createdAt: "2026-05-27T09:00:00Z",
+            startedAt: nil,
+            finishedAt: nil
+        )
+
+        XCTAssertEqual(
+            session.pendingCrewDeepLink?.absoluteString,
+            "pendingcrew://crew/crew-1/session/session-1"
+        )
+    }
 }

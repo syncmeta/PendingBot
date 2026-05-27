@@ -2,6 +2,17 @@ import XCTest
 @testable import PendingCrew
 
 final class LocalCodingAgentRunnerTests: XCTestCase {
+    func testPendingCrewDeepLinkParsesCrewAndSessionRoute() throws {
+        let route = try XCTUnwrap(PendingCrewDeepLinkRoute(url: URL(string: "pendingcrew://crew/crew-1/session/session-1")!))
+
+        XCTAssertEqual(route.crewId, "crew-1")
+        XCTAssertEqual(route.sessionId, "session-1")
+    }
+
+    func testPendingCrewDeepLinkRejectsOtherSchemes() {
+        XCTAssertNil(PendingCrewDeepLinkRoute(url: URL(string: "https://pendingname.com/crew/crew-1")!))
+    }
+
     func testCrewSidebarIndexShowsSharedChildUnderEachParent() {
         let platform = Crew(
             conversationId: "crew-platform",

@@ -490,6 +490,8 @@ private struct CrewRowContent: View {
 }
 
 private struct CrewDetailPane: View {
+    @Environment(\.openURL) private var openURL
+
     let crew: CrewSummary
     let links: CrewLinksResponse?
     let members: [CrewMemberSummary]
@@ -673,6 +675,16 @@ private struct CrewDetailPane: View {
                                 Text(session.runner_kind)
                                     .font(Theme.Fonts.system(size: 13, weight: .semibold))
                                 Spacer()
+                                if let deepLink = pendingCrewDeepLink(for: session) {
+                                    Button {
+                                        openURL(deepLink)
+                                    } label: {
+                                        Image(systemName: "arrow.up.forward.app")
+                                            .frame(width: 28, height: 28)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel("在 PendingCrew 打开")
+                                }
                                 Text(session.status)
                                     .font(Theme.Fonts.system(size: 12, weight: .medium))
                                     .foregroundStyle(Theme.Palette.inkMuted)
@@ -754,6 +766,10 @@ private struct CrewDetailPane: View {
 
     private var onlineMacRunnerCount: Int {
         runnerHosts.filter { $0.platform == "macos" && $0.status == "online" }.count
+    }
+
+    private func pendingCrewDeepLink(for session: CrewSessionSummary) -> URL? {
+        URL(string: "pendingcrew://crew/\(crew.id)/session/\(session.id)")
     }
 }
 

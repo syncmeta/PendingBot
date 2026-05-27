@@ -211,6 +211,10 @@ public struct PendingBotCrewSession: Identifiable, Hashable, Codable {
         self.startedAt = startedAt
         self.finishedAt = finishedAt
     }
+
+    public var pendingCrewDeepLink: URL? {
+        URL(string: "pendingcrew://crew/\(crewId)/session/\(id)")
+    }
 }
 
 public struct PendingBotCrewMember: Identifiable, Hashable, Codable {

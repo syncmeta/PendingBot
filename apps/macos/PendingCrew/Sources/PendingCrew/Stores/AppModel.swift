@@ -24,6 +24,7 @@ final class AppModel: ObservableObject {
     @Published var activeRunnerHostId: String?
     @Published var activeRunnerLeaseId: String?
     @Published var activeRunnerSession: CrewSession?
+    @Published var focusedSessionIdsByCrew: [String: String] = [:]
     @Published var helpRequests: [HumanHelpRequest] = []
     @Published var deviceLoginChallenge: DeviceLoginChallenge?
     @Published var deviceGrantToken: String?
@@ -205,6 +206,18 @@ final class AppModel: ObservableObject {
             eventsBySession[sessionId] = try await events
             mailboxBySession[sessionId] = try await mailbox
         }
+    }
+
+    func openDeepLink(_ url: URL) {
+        guard let route = PendingCrewDeepLinkRoute(url: url) else {
+            statusMessage = "无法打开这个 PendingCrew 链接"
+            return
+        }
+        selection = .crew(route.crewId)
+        if let sessionId = route.sessionId {
+            focusedSessionIdsByCrew[route.crewId] = sessionId
+        }
+        Task { await refreshCrew(route.crewId) }
     }
 
     func createCrew(title: String) async {

@@ -17,6 +17,7 @@
 		86803874A280D0FA2D0B163B /* RunnerHostsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 807CE636FE351CFCE27C10ED /* RunnerHostsView.swift */; };
 		89BA401194611066C03B2E64 /* PendingCrewUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76707800097175EA13A9CAAC /* PendingCrewUITests.swift */; };
 		A871D96E8C52B07002FEB740 /* CrewDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 664583303767891E11FD2D80 /* CrewDetailView.swift */; };
+		ACD8E11AFABEE4C18A9F4215 /* PendingCrewDeepLinkRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACD8E119FABEE4C18A9F4215 /* PendingCrewDeepLinkRoute.swift */; };
 		AED42DF5793522DB0D24DFDF /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 228DD3F05A797FFDC92BB79C /* SettingsView.swift */; };
 		B2ADAD98570319F04C6A744E /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56CB04114FF7553B6D634DF6 /* AppModel.swift */; };
 		BF9F5C5B9D83A6707AA98BB4 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E800A2ADE1C702A571DE3C40 /* RootView.swift */; };
@@ -59,6 +60,7 @@
 		76707800097175EA13A9CAAC /* PendingCrewUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingCrewUITests.swift; sourceTree = "<group>"; };
 		807CE636FE351CFCE27C10ED /* RunnerHostsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunnerHostsView.swift; sourceTree = "<group>"; };
 		999645D71F474617B2A1CA3C /* PendingBotAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingBotAPI.swift; sourceTree = "<group>"; };
+		ACD8E119FABEE4C18A9F4215 /* PendingCrewDeepLinkRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingCrewDeepLinkRoute.swift; sourceTree = "<group>"; };
 		AF1050766B25F50A640A709F /* PendingCrew.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PendingCrew.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B2AEA1DAD54F4405867A8AA0 /* CrewHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewHomeView.swift; sourceTree = "<group>"; };
 		C9D4A17E5B3086F241E902AC /* CrewChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewChatView.swift; sourceTree = "<group>"; };
@@ -115,6 +117,7 @@
 			children = (
 				5112B6C375E93818660DC6DC /* KeychainStore.swift */,
 				F27D91805A869162FC867581 /* PendingCrewAuthCredential.swift */,
+				ACD8E119FABEE4C18A9F4215 /* PendingCrewDeepLinkRoute.swift */,
 			);
 			path = Support;
 			sourceTree = "<group>";
@@ -299,6 +302,7 @@
 				DD8D28EEA540235C4EAE0938 /* PendingBotAPI.swift in Sources */,
 				043E092AA9BA15CDCBD7D96E /* PendingCrewApp.swift in Sources */,
 				F77216A1F760424819C65DEC /* PendingCrewAuthCredential.swift in Sources */,
+				ACD8E11AFABEE4C18A9F4215 /* PendingCrewDeepLinkRoute.swift in Sources */,
 				BF9F5C5B9D83A6707AA98BB4 /* RootView.swift in Sources */,
 				86803874A280D0FA2D0B163B /* RunnerHostsView.swift in Sources */,
 				AED42DF5793522DB0D24DFDF /* SettingsView.swift in Sources */,
@@ -361,15 +365,8 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				COMBINE_HIDPI_IMAGES = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = PendingCrew;
-				INFOPLIST_KEY_CFBundleShortVersionString = 0.1.0;
-				INFOPLIST_KEY_CFBundleVersion = 1;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
-				INFOPLIST_KEY_LSMinimumSystemVersion = 14.0;
-				INFOPLIST_KEY_LSUIElement = NO;
-				INFOPLIST_KEY_NSHighResolutionCapable = YES;
-				INFOPLIST_KEY_NSSupportsAutomaticGraphicsSwitching = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = PendingCrewInfo.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -385,15 +382,8 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				COMBINE_HIDPI_IMAGES = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = PendingCrew;
-				INFOPLIST_KEY_CFBundleShortVersionString = 0.1.0;
-				INFOPLIST_KEY_CFBundleVersion = 1;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
-				INFOPLIST_KEY_LSMinimumSystemVersion = 14.0;
-				INFOPLIST_KEY_LSUIElement = NO;
-				INFOPLIST_KEY_NSHighResolutionCapable = YES;
-				INFOPLIST_KEY_NSSupportsAutomaticGraphicsSwitching = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = PendingCrewInfo.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

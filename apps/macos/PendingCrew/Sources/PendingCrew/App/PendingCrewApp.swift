@@ -14,6 +14,9 @@ struct PendingCrewApp: App {
                 .task {
                     await model.bootstrap()
                 }
+                .onOpenURL { url in
+                    model.openDeepLink(url)
+                }
         }
         .commands {
             CommandGroup(after: .newItem) {
