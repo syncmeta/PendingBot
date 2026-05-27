@@ -486,6 +486,80 @@ export type Database = {
           },
         ]
       }
+      bot_friend_inquiries: {
+        Row: {
+          answer: string | null
+          answered_at: string | null
+          caller_bot_id: string
+          caller_conversation_id: string
+          created_at: string
+          id: string
+          question: string
+          relay_conversation_id: string
+          relay_outreach_message_id: string | null
+          status: string
+          target_user_id: string
+          updated_at: string
+        }
+        Insert: {
+          answer?: string | null
+          answered_at?: string | null
+          caller_bot_id: string
+          caller_conversation_id: string
+          created_at?: string
+          id?: string
+          question: string
+          relay_conversation_id: string
+          relay_outreach_message_id?: string | null
+          status?: string
+          target_user_id: string
+          updated_at?: string
+        }
+        Update: {
+          answer?: string | null
+          answered_at?: string | null
+          caller_bot_id?: string
+          caller_conversation_id?: string
+          created_at?: string
+          id?: string
+          question?: string
+          relay_conversation_id?: string
+          relay_outreach_message_id?: string | null
+          status?: string
+          target_user_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bot_friend_inquiries_caller_bot_id_fkey"
+            columns: ["caller_bot_id"]
+            isOneToOne: false
+            referencedRelation: "bots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bot_friend_inquiries_caller_conversation_id_fkey"
+            columns: ["caller_conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bot_friend_inquiries_relay_conversation_id_fkey"
+            columns: ["relay_conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bot_friend_inquiries_relay_outreach_message_id_fkey"
+            columns: ["relay_outreach_message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       bot_invites: {
         Row: {
           bot_id: string
