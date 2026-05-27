@@ -15,7 +15,12 @@
 // caller can fall back to the bot's pinned model.
 
 import type { Env } from '../types';
-import { buildModelCatalog, isNativeBackedOpenRouterSlug, looksNonChat } from '../routes/models';
+import {
+  buildModelCatalog,
+  fetchLMArenaRows,
+  isNativeBackedOpenRouterSlug,
+  looksNonChat,
+} from '../routes/models';
 
 export interface RandomModelConfig {
   // Inclusive bounds on blended_usd_per_million (the same number the iOS
@@ -29,6 +34,10 @@ export interface RandomModelConfig {
   models: string[] | null;
   // Models to drop from the pool (hand-removed in-range rows). null/empty = none.
   exclude: string[] | null;
+  // Allowed vendors/providers. null = all vendors; [] = no vendors.
+  vendors: string[] | null;
+  // Relative release window in days. null = all release dates.
+  release_window_days: number | null;
 }
 
 export interface PickedModel {
@@ -45,10 +54,11 @@ interface PoolEntry {
   slug: string;
   vendor: string;
   price: number | null;
+  releaseDate: string | null;
   modelProvider: string | null;
 }
 
-const POOL_CACHE_KEY = 'model_pool:v1';
+const POOL_CACHE_KEY = 'model_pool:v2';
 const POOL_TTL_SEC = 3600;
 
 // Parse the jsonb blob stored on bots.config.modelPool into a validated config,
@@ -63,11 +73,17 @@ export function parseRandomModelConfig(raw: unknown): RandomModelConfig | null {
     const a = v.filter((x): x is string => typeof x === 'string' && x.length > 0);
     return a.length > 0 ? a : null;
   };
+  const vendorStrs = (v: unknown): string[] | null => {
+    if (!Array.isArray(v)) return null;
+    return v.filter((x): x is string => typeof x === 'string' && x.length > 0);
+  };
   return {
     price_min: num(o.price_min),
     price_max: num(o.price_max),
     models: strs(o.models),
     exclude: strs(o.exclude),
+    vendors: vendorStrs(o.vendors),
+    release_window_days: num(o.release_window_days),
   };
 }
 
@@ -83,6 +99,7 @@ export function poolFromCatalog(catalog: Awaited<ReturnType<typeof buildModelCat
       slug: m.slug,
       vendor: m.provider,
       price: m.blended_usd_per_million,
+      releaseDate: m.release_date,
       modelProvider: m.model_provider,
     });
   }
@@ -95,7 +112,7 @@ async function getPool(env: Env): Promise<PoolEntry[] | null> {
   const cached = await env.MEMORY.get<PoolEntry[]>(POOL_CACHE_KEY, 'json');
   if (cached && cached.length > 0) return cached;
   try {
-    const pool = poolFromCatalog(await buildModelCatalog());
+    const pool = poolFromCatalog(await buildModelCatalog(await fetchLMArenaRows(env)));
     if (pool.length > 0) {
       await env.MEMORY.put(POOL_CACHE_KEY, JSON.stringify(pool), {
         expirationTtl: POOL_TTL_SEC,
@@ -115,9 +132,13 @@ async function getPool(env: Env): Promise<PoolEntry[] | null> {
 export function filterPool(pool: PoolEntry[], cfg: RandomModelConfig): PoolEntry[] {
   const include = cfg.models ? new Set(cfg.models) : null;
   const exclude = cfg.exclude ? new Set(cfg.exclude) : null;
+  const vendors = cfg.vendors ? new Set(cfg.vendors) : null;
+  const releaseAfter = releaseCutoff(cfg.release_window_days);
   const hasPriceBound = cfg.price_min != null || cfg.price_max != null;
   return pool.filter((m) => {
     if (exclude?.has(m.slug)) return false;
+    if (vendors && !vendors.has(m.vendor)) return false;
+    if (releaseAfter && (!m.releaseDate || m.releaseDate < releaseAfter)) return false;
     if (include?.has(m.slug)) return true;
     if (cfg.price_min != null && (m.price == null || m.price < cfg.price_min)) return false;
     if (cfg.price_max != null && (m.price == null || m.price > cfg.price_max)) return false;
@@ -125,6 +146,13 @@ export function filterPool(pool: PoolEntry[], cfg: RandomModelConfig): PoolEntry
     if (include && !hasPriceBound) return false;
     return true;
   });
+}
+
+function releaseCutoff(releaseWindowDays: number | null): string | null {
+  if (releaseWindowDays == null || releaseWindowDays <= 0) return null;
+  const now = new Date();
+  const cutoff = new Date(now.getTime() - releaseWindowDays * 24 * 60 * 60 * 1000);
+  return cutoff.toISOString().slice(0, 10);
 }
 
 // Pick one random model satisfying the config. excludeSlugs drops models

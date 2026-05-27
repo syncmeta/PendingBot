@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { poolFromCatalog } from './random-model';
+import { filterPool, poolFromCatalog } from './random-model';
 import type { OpenRouterModelOut } from '../routes/models';
 
 function model(
@@ -11,10 +11,13 @@ function model(
     slug,
     display_name: slug,
     provider: source === 'openrouter' ? slug.split('/')[0] ?? 'unknown' : source,
+    release_date: '2026-05-01',
     context_length: 128000,
     supports_vision: false,
     blended_usd_per_million: 1,
-    artificial_analysis_intelligence_index: null,
+    lmarena_license: null,
+    lmarena_organization: null,
+    lmarena_scores: {},
     source,
     model_provider: modelProvider,
   };
@@ -37,5 +40,38 @@ describe('poolFromCatalog', () => {
       ['gemini-3-pro', 'google-ai-studio'],
       ['deepseek/deepseek-chat', null],
     ]);
+  });
+});
+
+describe('filterPool', () => {
+  it('applies vendor and release-window filters to the random pool', () => {
+    const pool = poolFromCatalog([
+      model('gpt-5.1', 'openai', 'openai'),
+      { ...model('claude-sonnet-4-6', 'anthropic', 'anthropic'), release_date: '2020-01-01' },
+      model('deepseek/deepseek-chat', 'openrouter', null),
+    ]);
+
+    const filtered = filterPool(pool, {
+      price_min: null,
+      price_max: null,
+      models: null,
+      exclude: null,
+      vendors: ['openai', 'deepseek'],
+      release_window_days: 183,
+    });
+
+    expect(filtered.map((m) => m.slug)).toEqual(['gpt-5.1', 'deepseek/deepseek-chat']);
+  });
+
+  it('treats an empty vendor list as selecting no models', () => {
+    const pool = poolFromCatalog([model('gpt-5.1', 'openai', 'openai')]);
+    expect(filterPool(pool, {
+      price_min: null,
+      price_max: null,
+      models: null,
+      exclude: null,
+      vendors: [],
+      release_window_days: null,
+    })).toEqual([]);
   });
 });

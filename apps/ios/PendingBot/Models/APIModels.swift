@@ -154,10 +154,19 @@ struct MessageCitation: Codable, Hashable, Identifiable {
 }
 
 
+struct LMArenaScore: Codable, Hashable {
+    let rating: Double?
+    let rank: Int?
+    let vote_count: Int?
+    let category: String?
+    let leaderboard_publish_date: String?
+}
+
 struct OpenRouterModel: Codable, Identifiable, Hashable {
     let slug: String
     let display_name: String
     let provider: String
+    let release_date: String?
     let context_length: Int?
     /// True when the model accepts image input. Server derives this from
     /// OpenRouter's architecture.input_modalities. Optional for backwards
@@ -176,9 +185,10 @@ struct OpenRouterModel: Codable, Identifiable, Hashable {
     /// USD per 1M tokens, blended 7:2:1 (cache_hit/input/output). nil when
     /// no priced alias is registered. Surfaced as the "Nx" price multiplier.
     let blended_usd_per_million: Double?
-    /// Artificial Analysis Intelligence Index. nil when AA does not have a
-    /// matching benchmark row or the server-side API key is unavailable.
-    let artificial_analysis_intelligence_index: Double?
+    /// LMArena metadata from lmarena-ai/leaderboard-dataset on Hugging Face.
+    let lmarena_license: String?
+    let lmarena_organization: String?
+    let lmarena_scores: [String: LMArenaScore]?
     /// Unique across both catalogs — the same model can appear once per
     /// source (e.g. OpenRouter "openai/gpt-5.5" and native "gpt-5.5").
     var id: String { "\(source ?? "openrouter"):\(slug)" }
@@ -259,6 +269,8 @@ struct RandomModelConfig: Codable, Equatable, Hashable {
     var price_max: Double?
     var models: [String]?
     var exclude: [String]?
+    var vendors: [String]?
+    var release_window_days: Int?
 }
 
 /// One row of the personal leaderboard (GET /v1/arena/leaderboard).

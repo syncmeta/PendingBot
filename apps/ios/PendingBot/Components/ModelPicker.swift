@@ -413,6 +413,8 @@ struct ModelPickerSheet: View {
 struct ArenaModelSelection: Equatable, Hashable {
     var priceMin: Double?
     var priceMax: Double?
+    var releaseWindowDays: Int? = nil
+    var vendors: [String]? = nil
     var models: [String] = []
     var exclude: [String] = []
     var fallbackModel: String?
@@ -435,6 +437,8 @@ struct ArenaModelSelection: Equatable, Hashable {
         return ArenaModelSelection(
             priceMin: config.price_min,
             priceMax: config.price_max,
+            releaseWindowDays: config.release_window_days,
+            vendors: config.vendors,
             models: config.models ?? [],
             exclude: config.exclude ?? [],
             fallbackModel: fallbackModel,
@@ -446,7 +450,7 @@ struct ArenaModelSelection: Equatable, Hashable {
     }
 
     var isArenaReady: Bool {
-        hasPriceRange || models.count >= 2 || resolvedCount >= 2
+        hasPriceRange || releaseWindowDays != nil || vendors != nil || models.count >= 2 || resolvedCount >= 2
     }
 
     var persistedConfig: RandomModelConfig? {
@@ -455,7 +459,9 @@ struct ArenaModelSelection: Equatable, Hashable {
             price_min: priceMin,
             price_max: priceMax,
             models: models.isEmpty ? nil : models,
-            exclude: exclude.isEmpty ? nil : exclude)
+            exclude: exclude.isEmpty ? nil : exclude,
+            vendors: vendors,
+            release_window_days: releaseWindowDays)
     }
 
     var summary: String {
@@ -463,7 +469,8 @@ struct ArenaModelSelection: Equatable, Hashable {
             let lo = priceMin.map(Self.formatMultiplier) ?? "最小"
             let hi = priceMax.map(Self.formatMultiplier) ?? "最大"
             let count = resolvedCount > 0 ? " · \(resolvedCount) 个" : ""
-            return "价格 \(lo) - \(hi)\(count)"
+            let release = releaseWindowDays.map { " · 近\(max(1, Int(round(Double($0) / 30.5))))个月" } ?? ""
+            return "价格 \(lo) - \(hi)\(release)\(count)"
         }
         if models.count >= 2 { return "竞技场 · \(models.count) 个模型" }
         return fallbackModel ?? models.first ?? ""
@@ -536,23 +543,135 @@ private enum ArenaPriceRangeScale {
     }
 }
 
+private enum ArenaReleaseRangeScale {
+    static let defaultDays = 183
+    static let numericMin: Double = 1
+    static let numericMax: Double = 24
+    private static let allSentinel: Double = 25
+    static let sliderBounds: ClosedRange<Double> = numericMin...allSentinel
+
+    static func sliderValue(fromDays days: Int?) -> Double {
+        guard let days else { return allSentinel }
+        return min(max(Double(days) / 30.5, numericMin), numericMax)
+    }
+
+    static func days(fromSlider value: Double) -> Int? {
+        guard value < allSentinel else { return nil }
+        return max(1, Int((value * 30.5).rounded()))
+    }
+
+    static func label(_ value: Double) -> String {
+        guard value < allSentinel else { return "全部" }
+        return "近\(Int(value.rounded()))个月"
+    }
+}
+
+private enum ArenaModelSortKey: Hashable, Identifiable {
+    static let lmarenaSubsets = [
+        "document",
+        "document_style_control",
+        "image_edit",
+        "image_to_video",
+        "search",
+        "search_style_control",
+        "text",
+        "text_style_control",
+        "text_to_image",
+        "text_to_video",
+        "video_edit",
+        "vision",
+        "vision_style_control",
+        "webdev",
+    ]
+
+    case releaseDate
+    case name
+    case price
+    case lmarena(String)
+
+    var id: String {
+        switch self {
+        case .releaseDate: return "release"
+        case .name: return "name"
+        case .price: return "price"
+        case let .lmarena(subset): return "lmarena:\(subset)"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .releaseDate: return "发行时间"
+        case .name: return "字母顺序"
+        case .price: return "价格顺序"
+        case let .lmarena(subset): return "LMArena \(subset.replacingOccurrences(of: "_", with: " "))"
+        }
+    }
+}
+
+private enum ArenaSortDirection: String, CaseIterable, Identifiable {
+    case ascending = "A-Z"
+    case descending = "Z-A"
+    var id: String { rawValue }
+}
+
 private enum ArenaModelSort {
-    static func sorted(_ models: [OpenRouterModel]) -> [OpenRouterModel] {
-        models.sorted { lhs, rhs in
-            let leftScore = lhs.artificial_analysis_intelligence_index
-            let rightScore = rhs.artificial_analysis_intelligence_index
-            switch (leftScore, rightScore) {
-            case let (l?, r?) where l != r:
-                return l > r
-            case (_?, nil):
-                return true
-            case (nil, _?):
-                return false
-            default:
-                let nameOrder = lhs.display_name.localizedCaseInsensitiveCompare(rhs.display_name)
-                if nameOrder != .orderedSame { return nameOrder == .orderedAscending }
-                return lhs.slug.localizedCaseInsensitiveCompare(rhs.slug) == .orderedAscending
+    static func sorted(
+        _ models: [OpenRouterModel],
+        key: ArenaModelSortKey,
+        direction: ArenaSortDirection,
+        vendorOrder: [String]
+    ) -> [OpenRouterModel] {
+        let vendorRank = Dictionary(uniqueKeysWithValues: vendorOrder.enumerated().map { ($1, $0) })
+        return models.sorted { lhs, rhs in
+            let leftVendor = vendorRank[lhs.provider] ?? Int.max
+            let rightVendor = vendorRank[rhs.provider] ?? Int.max
+            if leftVendor != rightVendor { return leftVendor < rightVendor }
+            if let ordered = compare(lhs, rhs, key: key, direction: direction) {
+                return ordered
             }
+            let nameOrder = lhs.display_name.localizedCaseInsensitiveCompare(rhs.display_name)
+            if nameOrder != .orderedSame { return nameOrder == .orderedAscending }
+            return lhs.slug.localizedCaseInsensitiveCompare(rhs.slug) == .orderedAscending
+        }
+    }
+
+    private static func compare(
+        _ lhs: OpenRouterModel,
+        _ rhs: OpenRouterModel,
+        key: ArenaModelSortKey,
+        direction: ArenaSortDirection
+    ) -> Bool? {
+        switch key {
+        case .releaseDate:
+            return compareOptionals(lhs.release_date, rhs.release_date, direction: direction)
+        case .name:
+            let result = lhs.display_name.localizedCaseInsensitiveCompare(rhs.display_name)
+            guard result != .orderedSame else { return nil }
+            return direction == .ascending ? result == .orderedAscending : result == .orderedDescending
+        case .price:
+            return compareOptionals(lhs.blended_usd_per_million, rhs.blended_usd_per_million, direction: direction)
+        case let .lmarena(subset):
+            return compareOptionals(
+                lhs.lmarena_scores?[subset]?.rating,
+                rhs.lmarena_scores?[subset]?.rating,
+                direction: direction)
+        }
+    }
+
+    private static func compareOptionals<T: Comparable>(
+        _ lhs: T?,
+        _ rhs: T?,
+        direction: ArenaSortDirection
+    ) -> Bool? {
+        switch (lhs, rhs) {
+        case let (l?, r?) where l != r:
+            return direction == .ascending ? l < r : l > r
+        case (_?, nil):
+            return true
+        case (nil, _?):
+            return false
+        default:
+            return nil
         }
     }
 }
@@ -609,8 +728,12 @@ struct ArenaModelPoolEditor: View {
     @State private var query = ""
     @State private var include: Set<String> = []
     @State private var exclude: Set<String> = []
+    @State private var selectedVendors: Set<String>?
+    @State private var releaseMonthsValue: Double = ArenaReleaseRangeScale.sliderValue(fromDays: ArenaReleaseRangeScale.defaultDays)
     @State private var priceMinValue: Double = ArenaPriceRangeScale.numericMin
     @State private var priceMaxValue: Double = ArenaPriceRangeScale.numericMax
+    @State private var sortKey: ArenaModelSortKey = .releaseDate
+    @State private var sortDirection: ArenaSortDirection = .descending
 
     // Arena uses native rows for OpenAI / Anthropic / Google, plus the
     // OpenRouter long tail. Drop only the native-backed OpenRouter duplicates
@@ -619,21 +742,42 @@ struct ArenaModelPoolEditor: View {
         allModels.filter { !ModelCatalogFilters.isNativeBackedOpenRouterRow($0) }
     }
 
+    private var availableVendors: [String] {
+        var seen = Set<String>()
+        return pool.compactMap { model in
+            guard !seen.contains(model.provider) else { return nil }
+            seen.insert(model.provider)
+            return model.provider
+        }
+    }
+
+    private var allowedVendors: Set<String> {
+        selectedVendors ?? Set(availableVendors)
+    }
+
+    private var lmarenaSortKeys: [ArenaModelSortKey] {
+        ArenaModelSortKey.lmarenaSubsets.map { .lmarena($0) }
+    }
+
+    private var sortKeys: [ArenaModelSortKey] {
+        [.releaseDate, .name, .price] + lmarenaSortKeys
+    }
+
     private var rangeModels: [OpenRouterModel] {
-        pool.filter { isInPriceRange($0) }
+        pool.filter { isInConfiguredRange($0) }
     }
 
     private var effectiveModels: [OpenRouterModel] {
-        ArenaModelSort.sorted(pool.filter { isEffective($0) })
+        sort(pool.filter { isEffective($0) })
     }
 
     private var filtered: [OpenRouterModel] {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        return ArenaModelSort.sorted(pool.filter { m in
+        return sort(pool.filter { m in
             if !q.isEmpty {
                 let hay = "\(m.slug) \(m.display_name) \(m.provider)".lowercased()
                 if !hay.contains(q) { return false }
-            } else if !isInPriceRange(m) && !include.contains(m.slug) && !exclude.contains(m.slug) {
+            } else if !isConfiguredCandidate(m) && !include.contains(m.slug) && !exclude.contains(m.slug) {
                 return false
             }
             return true
@@ -648,11 +792,17 @@ struct ArenaModelPoolEditor: View {
         ArenaPriceRangeScale.priceMax(fromSliderUpper: priceMaxValue)
     }
 
+    private var releaseWindowDays: Int? {
+        ArenaReleaseRangeScale.days(fromSlider: releaseMonthsValue)
+    }
+
     private var draft: ArenaModelSelection {
         let effective = effectiveModels
         return ArenaModelSelection(
             priceMin: priceMinBound,
             priceMax: priceMaxBound,
+            releaseWindowDays: releaseWindowDays,
+            vendors: selectedVendors.map { Array($0).sorted() },
             models: Array(include).sorted(),
             exclude: Array(exclude).sorted(),
             fallbackModel: effective.first?.slug ?? include.sorted().first ?? selection.fallbackModel,
@@ -686,6 +836,8 @@ struct ArenaModelPoolEditor: View {
         .task { await load() }
         .onChange(of: priceMinValue) { _, _ in syncSelection() }
         .onChange(of: priceMaxValue) { _, _ in syncSelection() }
+        .onChange(of: releaseMonthsValue) { _, _ in syncSelection() }
+        .onChange(of: selectedVendors) { _, _ in syncSelection() }
     }
 
     private var filterBar: some View {
@@ -717,15 +869,75 @@ struct ArenaModelPoolEditor: View {
                     .font(Theme.Fonts.caption)
                     .foregroundStyle(Theme.Palette.inkMuted)
             }
-            HStack {
+            HStack(spacing: 8) {
+                Text("发行")
+                    .font(Theme.Fonts.caption)
+                    .foregroundStyle(Theme.Palette.inkMuted)
+                Slider(value: $releaseMonthsValue, in: ArenaReleaseRangeScale.sliderBounds, step: 1)
+                    .tint(Theme.Palette.accent)
+                Text(ArenaReleaseRangeScale.label(releaseMonthsValue))
+                    .font(Theme.Fonts.monoSmall)
+                    .foregroundStyle(Theme.Palette.ink)
+                    .frame(width: 58, alignment: .trailing)
+            }
+            vendorBar
+            HStack(spacing: 8) {
+                Menu {
+                    ForEach(sortKeys) { key in
+                        Button(key.title) { sortKey = key }
+                    }
+                } label: {
+                    Label(sortKey.title, systemImage: "arrow.up.arrow.down")
+                        .font(Theme.Fonts.rounded(size: 12, weight: .medium))
+                }
+                .foregroundStyle(Theme.Palette.ink)
+                Picker("方向", selection: $sortDirection) {
+                    ForEach(ArenaSortDirection.allCases) { direction in
+                        Text(direction.rawValue).tag(direction)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 112)
                 Spacer()
-                Text("Intelligence Index: Artificial Analysis")
+                Text("LMArena / Hugging Face")
                     .font(Theme.Fonts.caption)
                     .foregroundStyle(Theme.Palette.inkMuted)
             }
         }
         .padding(.horizontal, Theme.Metrics.gutter)
         .padding(.vertical, 10)
+    }
+
+    private var vendorBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                Button("全选") {
+                    selectedVendors = nil
+                }
+                .font(Theme.Fonts.caption)
+                .foregroundStyle(Theme.Palette.accent)
+                Button("全不选") {
+                    selectedVendors = []
+                }
+                .font(Theme.Fonts.caption)
+                .foregroundStyle(Theme.Palette.inkMuted)
+                ForEach(availableVendors, id: \.self) { vendor in
+                    Button {
+                        toggleVendor(vendor)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: allowedVendors.contains(vendor) ? "checkmark.square.fill" : "square")
+                                .font(Theme.Fonts.glyph(size: 12, weight: .semibold))
+                            Text(vendor)
+                                .lineLimit(1)
+                        }
+                    }
+                    .font(Theme.Fonts.caption)
+                    .foregroundStyle(allowedVendors.contains(vendor) ? Theme.Palette.ink : Theme.Palette.inkMuted)
+                    .buttonStyle(.plain)
+                }
+            }
+        }
     }
 
     private var list: some View {
@@ -749,11 +961,17 @@ struct ArenaModelPoolEditor: View {
                                 .font(Theme.Fonts.glyph(size: 17, weight: .semibold))
                                 .foregroundStyle(rowTint(for: m))
                                 .frame(width: 22)
-                            Text(m.display_name)
-                                .font(Theme.Fonts.rounded(size: 14, weight: .medium))
-                                .foregroundStyle(Theme.Palette.ink)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(m.display_name)
+                                    .font(Theme.Fonts.rounded(size: 14, weight: .medium))
+                                    .foregroundStyle(Theme.Palette.ink)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                                Text(rowDetail(for: m))
+                                    .font(Theme.Fonts.caption)
+                                    .foregroundStyle(Theme.Palette.inkMuted)
+                                    .lineLimit(1)
+                            }
                             Spacer(minLength: 8)
                             if let p = m.blended_usd_per_million {
                                 Text(ModelCatalog.formatMultiplier(p))
@@ -793,17 +1011,22 @@ struct ArenaModelPoolEditor: View {
             allModels = try await api.get("v1/models")
             include = Set(selection.models)
             exclude = Set(selection.exclude)
+            selectedVendors = selection.vendors.map(Set.init)
             if selection.priceMin == nil,
                selection.priceMax == nil,
                selection.models.isEmpty,
-               selection.exclude.isEmpty {
+               selection.exclude.isEmpty,
+               selection.releaseWindowDays == nil,
+               selection.vendors == nil {
                 priceMinValue = ArenaPriceRangeScale.numericMin
                 priceMaxValue = ArenaPriceRangeScale.numericMax
+                releaseMonthsValue = ArenaReleaseRangeScale.sliderValue(fromDays: ArenaReleaseRangeScale.defaultDays)
             } else {
                 priceMinValue = ArenaPriceRangeScale.sliderLower(fromPriceMin: selection.priceMin)
                 priceMaxValue = max(
                     priceMinValue,
                     ArenaPriceRangeScale.sliderUpper(fromPriceMax: selection.priceMax))
+                releaseMonthsValue = ArenaReleaseRangeScale.sliderValue(fromDays: selection.releaseWindowDays)
             }
             error = nil
             syncSelection()
@@ -819,8 +1042,32 @@ struct ArenaModelPoolEditor: View {
         return true
     }
 
+    private func isInReleaseRange(_ model: OpenRouterModel) -> Bool {
+        guard let releaseWindowDays else { return true }
+        guard let release = model.release_date else { return false }
+        let cutoff = Calendar.current.date(
+            byAdding: .day,
+            value: -releaseWindowDays,
+            to: Date()) ?? Date()
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return release >= formatter.string(from: cutoff)
+    }
+
+    private func isConfiguredCandidate(_ model: OpenRouterModel) -> Bool {
+        allowedVendors.contains(model.provider) && isInPriceRange(model) && isInReleaseRange(model)
+    }
+
+    private func isInConfiguredRange(_ model: OpenRouterModel) -> Bool {
+        isConfiguredCandidate(model)
+    }
+
     private func isEffective(_ model: OpenRouterModel) -> Bool {
         if exclude.contains(model.slug) { return false }
+        if !allowedVendors.contains(model.provider) { return false }
+        if !isInReleaseRange(model) { return false }
         return include.contains(model.slug) || isInPriceRange(model)
     }
 
@@ -837,6 +1084,30 @@ struct ArenaModelPoolEditor: View {
 
     private func syncSelection() {
         selection = draft
+    }
+
+    private func sort(_ models: [OpenRouterModel]) -> [OpenRouterModel] {
+        ArenaModelSort.sorted(models, key: sortKey, direction: sortDirection, vendorOrder: availableVendors)
+    }
+
+    private func toggleVendor(_ vendor: String) {
+        var next = selectedVendors ?? Set(availableVendors)
+        if next.contains(vendor) {
+            next.remove(vendor)
+        } else {
+            next.insert(vendor)
+        }
+        selectedVendors = next == Set(availableVendors) ? nil : next
+    }
+
+    private func rowDetail(for model: OpenRouterModel) -> String {
+        var parts: [String] = [model.provider]
+        if let release = model.release_date { parts.append(release) }
+        if case let .lmarena(subset) = sortKey,
+           let rating = model.lmarena_scores?[subset]?.rating {
+            parts.append("\(subset) \(Int(rating.rounded()))")
+        }
+        return parts.joined(separator: " · ")
     }
 
     private func rowIcon(for model: OpenRouterModel) -> String {

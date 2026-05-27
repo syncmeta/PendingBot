@@ -254,10 +254,6 @@
   //                           shared client in apps/edge/src/mcp/client.ts)
   //   TAVILY_API_KEY         (declared but not wired by default — reserved
   //                           for the future skill-based Tavily exposure)
-  //   ARTIFICIAL_ANALYSIS_API_KEY
-  //                         (free Data API key; /v1/models uses it
-  //                           server-side, caches responses in KV, and
-  //                           returns Intelligence Index scores to iOS)
   //
   //   Legacy keys to delete in CF when convenient (no code reads them):
   //     BRAVE_API_KEY, FIRECRAWL_API_KEY, SERPER_API_KEY

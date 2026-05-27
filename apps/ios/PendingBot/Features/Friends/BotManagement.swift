@@ -1542,9 +1542,12 @@ struct BotConfigView: View {
                 price_min: Self.jsonDouble(arena["price_min"]),
                 price_max: Self.jsonDouble(arena["price_max"]),
                 models: Self.jsonStringArray(arena["models"]),
-                exclude: Self.jsonStringArray(arena["exclude"]))
+                exclude: Self.jsonStringArray(arena["exclude"]),
+                vendors: Self.jsonStringArray(arena["vendors"]),
+                release_window_days: Self.jsonInt(arena["release_window_days"]))
             if cfg.price_min != nil || cfg.price_max != nil
-                || cfg.models?.isEmpty == false || cfg.exclude?.isEmpty == false {
+                || cfg.models?.isEmpty == false || cfg.exclude?.isEmpty == false
+                || cfg.vendors != nil || cfg.release_window_days != nil {
                 arenaConfig = cfg
             }
         }
@@ -1566,6 +1569,14 @@ struct BotConfigView: View {
         }
     }
 
+    private static func jsonInt(_ value: AnyJSON?) -> Int? {
+        switch value {
+        case let .integer(i)?: return i
+        case let .double(d)?: return Int(d)
+        default: return nil
+        }
+    }
+
     private static func jsonStringArray(_ value: AnyJSON?) -> [String]? {
         guard case let .array(arr)? = value else { return nil }
         let strings = arr.compactMap { item -> String? in
@@ -1581,6 +1592,8 @@ struct BotConfigView: View {
         if let v = cfg.price_max { out["price_max"] = v }
         if let v = cfg.models, !v.isEmpty { out["models"] = v }
         if let v = cfg.exclude, !v.isEmpty { out["exclude"] = v }
+        if let v = cfg.vendors { out["vendors"] = v }
+        if let v = cfg.release_window_days { out["release_window_days"] = v }
         return out
     }
 

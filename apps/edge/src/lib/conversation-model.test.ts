@@ -10,11 +10,25 @@ describe('modelPoolConfigFromBotConfig', () => {
     expect(modelPoolConfigFromBotConfig({
       modelPool: { price_min: 1, price_max: 3, models: ['a'], exclude: ['b'] },
       arena: { price_min: 0, price_max: 5, models: ['legacy'], exclude: null },
-    })).toEqual({ price_min: 1, price_max: 3, models: ['a'], exclude: ['b'] });
+    })).toEqual({
+      price_min: 1,
+      price_max: 3,
+      models: ['a'],
+      exclude: ['b'],
+      vendors: null,
+      release_window_days: null,
+    });
 
     expect(modelPoolConfigFromBotConfig({
       arena: { price_min: 0, price_max: 5, models: ['legacy'], exclude: null },
-    })).toEqual({ price_min: 0, price_max: 5, models: ['legacy'], exclude: null });
+    })).toEqual({
+      price_min: 0,
+      price_max: 5,
+      models: ['legacy'],
+      exclude: null,
+      vendors: null,
+      release_window_days: null,
+    });
   });
 });
 

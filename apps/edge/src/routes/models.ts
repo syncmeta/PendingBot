@@ -36,6 +36,7 @@ modelCatalogRoutes.use('*', requireSession());
 interface OpenRouterCatalogModel {
   id: string;
   name?: string;
+  created?: number;
   context_length?: number;
   architecture?: {
     input_modalities?: string[];
@@ -53,10 +54,13 @@ export interface OpenRouterModelOut {
   slug: string;
   display_name: string;
   provider: string;
+  release_date: string | null;
   context_length: number | null;
   supports_vision: boolean;
   blended_usd_per_million: number | null;
-  artificial_analysis_intelligence_index: number | null;
+  lmarena_license: string | null;
+  lmarena_organization: string | null;
+  lmarena_scores: Record<string, LMArenaScoreOut>;
   /// Which catalog this row came from. The picker shows one collapsible
   /// section per source; native sources lead the response.
   source: CatalogSource;
@@ -66,24 +70,54 @@ export interface OpenRouterModelOut {
   model_provider: string | null;
 }
 
+export interface LMArenaScoreOut {
+  rating: number | null;
+  rank: number | null;
+  vote_count: number | null;
+  category: string | null;
+  leaderboard_publish_date: string | null;
+}
+
 const BLEND_WEIGHT_CACHE_HIT = 0.7;
 const BLEND_WEIGHT_INPUT = 0.2;
 const BLEND_WEIGHT_OUTPUT = 0.1;
-const ARTIFICIAL_ANALYSIS_URL = 'https://artificialanalysis.ai/api/v2/data/llms/models';
-const ARTIFICIAL_ANALYSIS_CACHE_KEY = 'model_catalog:artificial_analysis:v1';
-const ARTIFICIAL_ANALYSIS_CACHE_TTL_SEC = 6 * 60 * 60;
+const LMARENA_ROWS_URL = 'https://datasets-server.huggingface.co/rows';
+const LMARENA_CACHE_KEY = 'model_catalog:lmarena:latest:v1';
+const LMARENA_CACHE_TTL_SEC = 6 * 60 * 60;
+const LMARENA_PAGE_SIZE = 100;
+const LMARENA_MAX_ROWS_PER_SUBSET = 2_000;
 
-export interface ArtificialAnalysisModelRow {
-  name?: string;
-  slug?: string;
-  model_creator?: {
-    slug?: string;
-    name?: string;
-  };
-  evaluations?: {
-    artificial_analysis_intelligence_index?: number | null;
-  };
+export const LMARENA_SUBSETS = [
+  'document',
+  'document_style_control',
+  'image_edit',
+  'image_to_video',
+  'search',
+  'search_style_control',
+  'text',
+  'text_style_control',
+  'text_to_image',
+  'text_to_video',
+  'video_edit',
+  'vision',
+  'vision_style_control',
+  'webdev',
+] as const;
+
+type LMArenaSubset = typeof LMARENA_SUBSETS[number];
+
+export interface LMArenaLeaderboardRow {
+  model_name?: string;
+  organization?: string;
+  license?: string;
+  rating?: number | null;
+  rank?: number | null;
+  vote_count?: number | null;
+  category?: string | null;
+  leaderboard_publish_date?: string | null;
 }
+
+export type LMArenaRowsBySubset = Partial<Record<LMArenaSubset, LMArenaLeaderboardRow[]>>;
 
 function blendedFromCatalog(p: OpenRouterCatalogModel['pricing']): number | null {
   if (!p) return null;
@@ -97,6 +131,13 @@ function blendedFromCatalog(p: OpenRouterCatalogModel['pricing']): number | null
     BLEND_WEIGHT_INPUT * prompt +
     BLEND_WEIGHT_OUTPUT * completion;
   return perToken * 1_000_000;
+}
+
+function releaseDateFromCreated(created: unknown): string | null {
+  if (typeof created !== 'number' || !Number.isFinite(created) || created <= 0) return null;
+  const date = new Date(created * 1000);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().slice(0, 10);
 }
 
 // A native source: the OpenRouter vendor prefix it derives from, the
@@ -212,7 +253,10 @@ function deriveNative(
       context_length: typeof m.context_length === 'number' ? m.context_length : null,
       supports_vision: inputModalities.includes('image'),
       blended_usd_per_million: blendedFromCatalog(m.pricing),
-      artificial_analysis_intelligence_index: null,
+      release_date: releaseDateFromCreated(m.created),
+      lmarena_license: null,
+      lmarena_organization: null,
+      lmarena_scores: {},
       source: d.source,
       model_provider: d.source,
     });
@@ -269,85 +313,153 @@ function modelCreatorKeys(model: OpenRouterModelOut): string[] {
   return uniqueKeys(providerAliases(model.provider));
 }
 
-function aaScore(row: ArtificialAnalysisModelRow): number | null {
-  const score = row.evaluations?.artificial_analysis_intelligence_index;
-  return typeof score === 'number' && Number.isFinite(score) ? score : null;
+function lmarenaScore(row: LMArenaLeaderboardRow): LMArenaScoreOut | null {
+  const rating = typeof row.rating === 'number' && Number.isFinite(row.rating) ? row.rating : null;
+  const rank = typeof row.rank === 'number' && Number.isFinite(row.rank) ? row.rank : null;
+  if (rating == null && rank == null) return null;
+  return {
+    rating,
+    rank,
+    vote_count: typeof row.vote_count === 'number' && Number.isFinite(row.vote_count)
+      ? row.vote_count
+      : null,
+    category: typeof row.category === 'string' ? row.category : null,
+    leaderboard_publish_date: typeof row.leaderboard_publish_date === 'string'
+      ? row.leaderboard_publish_date.slice(0, 10)
+      : null,
+  };
 }
 
-export function attachArtificialAnalysisScores(
-  catalog: OpenRouterModelOut[],
-  rows: ArtificialAnalysisModelRow[],
-): OpenRouterModelOut[] {
-  const byCreatorAndName = new Map<string, number>();
-  const byUniqueName = new Map<string, number | null>();
+function preferLMArenaRow(next: LMArenaLeaderboardRow, current?: LMArenaLeaderboardRow): boolean {
+  if (!current) return true;
+  if ((next.category ?? '') === 'overall' && (current.category ?? '') !== 'overall') return true;
+  if ((next.category ?? '') !== 'overall' && (current.category ?? '') === 'overall') return false;
+  const nextRating = typeof next.rating === 'number' ? next.rating : -Infinity;
+  const currentRating = typeof current.rating === 'number' ? current.rating : -Infinity;
+  return nextRating > currentRating;
+}
 
-  for (const row of rows) {
-    const score = aaScore(row);
-    if (score == null) continue;
-    const creatorKeys = uniqueKeys([row.model_creator?.slug, row.model_creator?.name]);
-    const nameKeys = uniqueKeys([row.name, row.slug]);
-    for (const creator of creatorKeys) {
-      for (const name of nameKeys) byCreatorAndName.set(`${creator}:${name}`, score);
+export function attachLMArenaScores(
+  catalog: OpenRouterModelOut[],
+  rowsBySubset: LMArenaRowsBySubset,
+): OpenRouterModelOut[] {
+  const subsetIndexes = new Map<LMArenaSubset, {
+    byCreatorAndName: Map<string, LMArenaLeaderboardRow>;
+    byUniqueName: Map<string, LMArenaLeaderboardRow | null>;
+  }>();
+
+  for (const subset of LMARENA_SUBSETS) {
+    const rows = rowsBySubset[subset] ?? [];
+    const byCreatorAndName = new Map<string, LMArenaLeaderboardRow>();
+    const byUniqueName = new Map<string, LMArenaLeaderboardRow | null>();
+    for (const row of rows) {
+      if (!lmarenaScore(row)) continue;
+      const creatorKeys = uniqueKeys([row.organization]);
+      const nameKeys = uniqueKeys([row.model_name]);
+      for (const creator of creatorKeys) {
+        for (const name of nameKeys) {
+          const key = `${creator}:${name}`;
+          const existing = byCreatorAndName.get(key);
+          if (preferLMArenaRow(row, existing)) byCreatorAndName.set(key, row);
+        }
+      }
+      for (const name of nameKeys) {
+        const existing = byUniqueName.get(name);
+        if (existing === undefined || (existing && preferLMArenaRow(row, existing))) {
+          byUniqueName.set(name, row);
+        } else if (existing && normalizedKey(existing.organization) !== normalizedKey(row.organization)) {
+          byUniqueName.set(name, null);
+        }
+      }
     }
-    for (const name of nameKeys) {
-      const existing = byUniqueName.get(name);
-      byUniqueName.set(name, existing === undefined || existing === score ? score : null);
-    }
+    subsetIndexes.set(subset, { byCreatorAndName, byUniqueName });
   }
 
   return catalog.map((model) => {
-    for (const creator of modelCreatorKeys(model)) {
-      for (const name of modelNameKeys(model)) {
-        const score = byCreatorAndName.get(`${creator}:${name}`);
-        if (score != null) return { ...model, artificial_analysis_intelligence_index: score };
+    const lmarena_scores: Record<string, LMArenaScoreOut> = {};
+    let lmarena_license = model.lmarena_license;
+    let lmarena_organization = model.lmarena_organization;
+    let release_date = model.release_date;
+
+    for (const subset of LMARENA_SUBSETS) {
+      const index = subsetIndexes.get(subset);
+      if (!index) continue;
+      let matched: LMArenaLeaderboardRow | null | undefined;
+      for (const creator of modelCreatorKeys(model)) {
+        for (const name of modelNameKeys(model)) {
+          matched = index.byCreatorAndName.get(`${creator}:${name}`);
+          if (matched) break;
+        }
+        if (matched) break;
       }
+      if (!matched) {
+        for (const name of modelNameKeys(model)) {
+          matched = index.byUniqueName.get(name);
+          if (matched) break;
+        }
+      }
+      const score = matched ? lmarenaScore(matched) : null;
+      if (!score) continue;
+      lmarena_scores[subset] = score;
+      lmarena_license ??= typeof matched?.license === 'string' ? matched.license : null;
+      lmarena_organization ??= typeof matched?.organization === 'string' ? matched.organization : null;
+      release_date ??= score.leaderboard_publish_date;
     }
-    for (const name of modelNameKeys(model)) {
-      const score = byUniqueName.get(name);
-      if (score != null) return { ...model, artificial_analysis_intelligence_index: score };
-    }
-    return model;
+    return { ...model, release_date, lmarena_license, lmarena_organization, lmarena_scores };
   });
 }
 
-async function fetchArtificialAnalysisRows(env: Env): Promise<ArtificialAnalysisModelRow[]> {
-  const cached = await env.MEMORY.get<ArtificialAnalysisModelRow[]>(
-    ARTIFICIAL_ANALYSIS_CACHE_KEY,
-    'json',
-  ).catch(() => null);
-  if (cached && Array.isArray(cached)) return cached;
-
-  const apiKey = env.ARTIFICIAL_ANALYSIS_API_KEY;
-  if (!apiKey) return [];
-
-  let res: Response;
-  try {
-    res = await fetch(ARTIFICIAL_ANALYSIS_URL, {
-      headers: { 'x-api-key': apiKey },
-    });
+async function fetchLMArenaSubsetRows(subset: LMArenaSubset): Promise<LMArenaLeaderboardRow[]> {
+  const rows: LMArenaLeaderboardRow[] = [];
+  for (let offset = 0; offset < LMARENA_MAX_ROWS_PER_SUBSET; offset += LMARENA_PAGE_SIZE) {
+    const url = new URL(LMARENA_ROWS_URL);
+    url.searchParams.set('dataset', 'lmarena-ai/leaderboard-dataset');
+    url.searchParams.set('config', subset);
+    url.searchParams.set('split', 'latest');
+    url.searchParams.set('offset', String(offset));
+    url.searchParams.set('length', String(LMARENA_PAGE_SIZE));
+    const res = await fetch(url.toString());
     if (!res.ok) {
       const body = (await res.text()).slice(0, 300);
-      console.warn('[v1/models] artificial analysis upstream', res.status, body);
-      return [];
+      console.warn('[v1/models] lmarena upstream', subset, res.status, body);
+      break;
     }
-  } catch (err) {
-    console.warn('[v1/models] artificial analysis fetch failed', err);
-    return [];
+    const json = (await res.json()) as { rows?: Array<{ row?: LMArenaLeaderboardRow }> };
+    const page = Array.isArray(json.rows) ? json.rows.flatMap((r) => (r.row ? [r.row] : [])) : [];
+    rows.push(...page);
+    if (page.length < LMARENA_PAGE_SIZE) break;
   }
-
-  const json = (await res.json()) as { data?: ArtificialAnalysisModelRow[] };
-  const rows = Array.isArray(json.data) ? json.data : [];
-  await env.MEMORY.put(ARTIFICIAL_ANALYSIS_CACHE_KEY, JSON.stringify(rows), {
-    expirationTtl: ARTIFICIAL_ANALYSIS_CACHE_TTL_SEC,
-  }).catch((err) => console.warn('[v1/models] artificial analysis cache write failed', err));
   return rows;
+}
+
+export async function fetchLMArenaRows(env: Env): Promise<LMArenaRowsBySubset> {
+  const cached = await env.MEMORY.get<LMArenaRowsBySubset>(
+    LMARENA_CACHE_KEY,
+    'json',
+  ).catch(() => null);
+  if (cached && typeof cached === 'object') return cached;
+
+  const rowsBySubset: LMArenaRowsBySubset = {};
+  await Promise.all(LMARENA_SUBSETS.map(async (subset) => {
+    try {
+      rowsBySubset[subset] = await fetchLMArenaSubsetRows(subset);
+    } catch (err) {
+      console.warn('[v1/models] lmarena fetch failed', subset, err);
+      rowsBySubset[subset] = [];
+    }
+  }));
+
+  await env.MEMORY.put(LMARENA_CACHE_KEY, JSON.stringify(rowsBySubset), {
+    expirationTtl: LMARENA_CACHE_TTL_SEC,
+  }).catch((err) => console.warn('[v1/models] lmarena cache write failed', err));
+  return rowsBySubset;
 }
 
 // Fetch + assemble the full model catalog (native twins first, then the
 // OpenRouter long tail) — the array the /v1/models route returns. Factored
 // out so the random-model resolver can reuse it off the route.
 export async function buildModelCatalog(
-  artificialAnalysisRows: ArtificialAnalysisModelRow[] = [],
+  lmarenaRowsBySubset: LMArenaRowsBySubset = {},
 ): Promise<OpenRouterModelOut[]> {
   const res = await fetch('https://openrouter.ai/api/v1/models');
   if (!res.ok) {
@@ -373,7 +485,10 @@ export async function buildModelCatalog(
         context_length: typeof m.context_length === 'number' ? m.context_length : null,
         supports_vision: inputModalities.includes('image'),
         blended_usd_per_million: blendedFromCatalog(m.pricing),
-        artificial_analysis_intelligence_index: null,
+        release_date: releaseDateFromCreated(m.created),
+        lmarena_license: null,
+        lmarena_organization: null,
+        lmarena_scores: {},
         source: 'openrouter' as const,
         model_provider: null,
       };
@@ -383,13 +498,13 @@ export async function buildModelCatalog(
   // (anthropic → google-ai-studio → openai). iOS pins these three groups
   // to the top of its picker.
   const nativeRows = NATIVE_DERIVATIONS.flatMap((d) => deriveNative(d, catalog));
-  return attachArtificialAnalysisScores([...nativeRows, ...openrouterRows], artificialAnalysisRows);
+  return attachLMArenaScores([...nativeRows, ...openrouterRows], lmarenaRowsBySubset);
 }
 
 modelCatalogRoutes.get('/', async (c) => {
   try {
-    const artificialAnalysisRows = await fetchArtificialAnalysisRows(c.env);
-    return c.json(await buildModelCatalog(artificialAnalysisRows));
+    const lmarenaRows = await fetchLMArenaRows(c.env);
+    return c.json(await buildModelCatalog(lmarenaRows));
   } catch (err) {
     if (err instanceof CatalogUpstreamError) {
       return jsonError(c, 502, 'upstream_error', { detail: { status: err.status } });
