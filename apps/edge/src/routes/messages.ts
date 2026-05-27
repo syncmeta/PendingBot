@@ -1316,10 +1316,8 @@ async function resolveMessageBotTurnRoute(
   },
   opts?: { excludeSlugs?: string[] },
 ): Promise<{ modelId: string; providerOverride: string | null }> {
-  // Provider routing is bot-level only (bots.model_provider). Arena mode
-  // draws a random model per turn via the OpenRouter passthrough so every
-  // contender is reached identically; a null pick falls back to the pinned
-  // model and provider.
+  // Arena mode draws a random model per turn. Native catalog rows carry their
+  // provider hint; OpenRouter rows use the passthrough route.
   const arenaCfg = parseRandomModelConfig(botConfigArena(bot.config));
   if (arenaCfg) {
     const picked = await pickRandomModel(env, arenaCfg, {

@@ -5,14 +5,10 @@
 // list — so the price range is the "pool" and individual models can be
 // hand-added (out of range) or hand-removed (in range).
 //
-// Pool = the OpenRouter long tail only (catalog `source === 'openrouter'`),
-// deliberately NOT the synthesized native twins. Reasons:
-//   - the native rows are dot/dash twins of openrouter rows, so including
-//     both would double-weight those models in the random draw;
-//   - one uniform route (openrouter passthrough) keeps the arena fair —
-//     every contender is reached the same way, so the leaderboard reflects
-//     the model, not the routing path.
-// Every random pick therefore routes via openrouter (model_provider null).
+// Pool = native rows for OpenAI / Anthropic / Google plus the OpenRouter long
+// tail. The shared /v1/models catalog already removes OpenRouter rows for
+// native-backed providers, including their `~...latest` aliases, so these
+// families appear once and route through their native provider.
 //
 // The catalog is cached in KV (the OpenRouter fetch is ~hundreds of ms and
 // the turn path can't afford it every round). A cache miss falls back to a
@@ -20,7 +16,7 @@
 // caller can fall back to the bot's pinned model.
 
 import type { Env } from '../types';
-import { buildModelCatalog, looksNonChat } from '../routes/models';
+import { buildModelCatalog, isNativeBackedOpenRouterSlug, looksNonChat } from '../routes/models';
 
 export interface RandomModelConfig {
   // Inclusive bounds on blended_usd_per_million (the same number the iOS
@@ -38,9 +34,9 @@ export interface RandomModelConfig {
 
 export interface PickedModel {
   slug: string;
-  // Routing hint stored on the message + handed to the LLM router. Always
-  // null for random picks (openrouter passthrough).
-  modelProvider: null;
+  // Routing hint stored on the message + handed to the LLM router. Native
+  // rows carry their provider slug; OpenRouter rows stay null.
+  modelProvider: string | null;
   vendor: string;
   blendedUsdPerMillion: number | null;
 }
@@ -50,6 +46,7 @@ interface PoolEntry {
   slug: string;
   vendor: string;
   price: number | null;
+  modelProvider: string | null;
 }
 
 const POOL_CACHE_KEY = 'arena:model_pool';
@@ -76,15 +73,20 @@ export function parseRandomModelConfig(raw: unknown): RandomModelConfig | null {
   };
 }
 
-// Build the chat-only openrouter pool from the full catalog.
-function poolFromCatalog(catalog: Awaited<ReturnType<typeof buildModelCatalog>>): PoolEntry[] {
+// Build the chat-only arena pool from the full catalog.
+export function poolFromCatalog(catalog: Awaited<ReturnType<typeof buildModelCatalog>>): PoolEntry[] {
   const pool: PoolEntry[] = [];
   for (const m of catalog) {
-    if (m.source !== 'openrouter') continue;
+    if (m.source === 'openrouter' && isNativeBackedOpenRouterSlug(m.slug)) continue;
     const slash = m.slug.indexOf('/');
     const tail = slash > 0 ? m.slug.slice(slash + 1) : m.slug;
     if (looksNonChat(tail)) continue;
-    pool.push({ slug: m.slug, vendor: m.provider, price: m.blended_usd_per_million });
+    pool.push({
+      slug: m.slug,
+      vendor: m.provider,
+      price: m.blended_usd_per_million,
+      modelProvider: m.model_provider,
+    });
   }
   return pool;
 }
@@ -152,7 +154,7 @@ export async function pickRandomModel(
   const chosen = candidates[Math.floor(Math.random() * candidates.length)];
   return {
     slug: chosen.slug,
-    modelProvider: null,
+    modelProvider: chosen.modelProvider,
     vendor: chosen.vendor,
     blendedUsdPerMillion: chosen.price,
   };

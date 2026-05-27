@@ -252,7 +252,8 @@ struct CreateBotSheet: View {
     }
 
     private var selectedModelProvider: String? {
-        nil
+        arenaSelection.fallbackModelProvider
+            ?? selectedModelSlug.flatMap { catalog.bySlug[$0]?.model_provider }
     }
 
     private var modelSummary: String {
@@ -1471,7 +1472,8 @@ struct BotConfigView: View {
                 if let cfg = picked.persistedConfig {
                     arenaConfig = cfg
                     model = picked.fallbackModel ?? model   // keep a single fallback
-                    modelProvider = nil             // arena always routes openrouter
+                    modelProvider = picked.fallbackModelProvider
+                        ?? (model.isEmpty ? nil : catalog.bySlug[model]?.model_provider)
                 } else {
                     arenaConfig = nil
                     if let only = picked.fallbackModel ?? picked.models.first, !only.isEmpty {

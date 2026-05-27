@@ -407,14 +407,16 @@ struct ModelPickerSheet: View {
 }
 
 /// UI-only draft for the bot arena picker. It mirrors the persisted
-/// `RandomModelConfig`, plus a concrete fallback model_id and the currently
-/// resolved pool size so creation/settings screens can validate the choice.
+/// `RandomModelConfig`, plus a concrete fallback model_id/provider and the
+/// currently resolved pool size so creation/settings screens can validate the
+/// choice.
 struct ArenaModelSelection: Equatable, Hashable {
     var priceMin: Double?
     var priceMax: Double?
     var models: [String] = []
     var exclude: [String] = []
     var fallbackModel: String?
+    var fallbackModelProvider: String?
     var resolvedCount: Int = 0
 
     static func single(_ slug: String) -> ArenaModelSelection {
@@ -610,13 +612,11 @@ struct ArenaModelPoolEditor: View {
     @State private var priceMinValue: Double = ArenaPriceRangeScale.numericMin
     @State private var priceMaxValue: Double = ArenaPriceRangeScale.numericMax
 
-    // Only OpenRouter chat models without native-backed duplicates are
-    // arena-eligible, matching the edge pool.
+    // Arena uses native rows for OpenAI / Anthropic / Google, plus the
+    // OpenRouter long tail. Drop only the native-backed OpenRouter duplicates
+    // and their `~...latest` aliases.
     private var pool: [OpenRouterModel] {
-        allModels.filter {
-            ($0.source ?? "openrouter") == "openrouter"
-            && !ModelCatalogFilters.isNativeBackedOpenRouterRow($0)
-        }
+        allModels.filter { !ModelCatalogFilters.isNativeBackedOpenRouterRow($0) }
     }
 
     private var rangeModels: [OpenRouterModel] {
@@ -656,6 +656,7 @@ struct ArenaModelPoolEditor: View {
             models: Array(include).sorted(),
             exclude: Array(exclude).sorted(),
             fallbackModel: effective.first?.slug ?? include.sorted().first ?? selection.fallbackModel,
+            fallbackModelProvider: effective.first?.model_provider,
             resolvedCount: effective.count)
     }
 
