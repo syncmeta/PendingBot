@@ -16,6 +16,7 @@ import {
 import { delegateToSpecialistTool } from './tools/delegate';
 import { askFriendTool } from './tools/ask-friend';
 import { submitInquiryAnswerTool } from './tools/submit-inquiry-answer';
+import { sendImagesTool } from './tools/send-images';
 
 /// Single web-search citation. Stored on each bubble row's `citations`
 /// jsonb so iOS can resolve inline `[N]` markers to a tappable link.
@@ -55,6 +56,12 @@ export interface ToolCtx {
   /// scope the dialectic to this conversation (group → no private-1v1 leak)
   /// or pool across all the (bot, user) pair's sessions (private turn).
   inGroup: boolean;
+  /// Insert one bot message carrying these attachment ids (the
+  /// send_images tool's terminal effect). Returns true if the row
+  /// landed in messages. Implemented as a closure in runChatTurn so
+  /// the tool doesn't need to know about bubbleGroupId / sender_bot_id
+  /// / model_slug / model_provider plumbing.
+  emitImagesMessage: (attachmentIds: string[]) => Promise<boolean>;
 }
 
 /// Tolerant JSON parse for tool arg blobs. Models occasionally emit
@@ -132,6 +139,9 @@ export async function runTool(
     }
     if (name === 'submit_inquiry_answer') {
       return await submitInquiryAnswerTool(env, args, ctx);
+    }
+    if (name === 'send_images') {
+      return await sendImagesTool(env, args, ctx);
     }
     return JSON.stringify({ error: `unknown tool: ${name}` });
   } catch (err) {

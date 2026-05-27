@@ -42,7 +42,8 @@ import {
   getUserViewOfBot,
 } from '../memory';
 import { resolveInventory } from '../attachment-cache';
-import { classifyAttachment, sha256Hex, r2KeyForHash } from '../attachments';
+import { classifyAttachment } from '../attachments';
+import { persistAttachmentBytes } from '../attachments-persist';
 import {
   resolveBotNote,
   resolveChatMemo,
@@ -185,90 +186,20 @@ async function persistToolTraceMetadata(
     .eq('id', parentMessageId);
 }
 
-// Persist an image the OpenAI image_generation built-in tool produced:
-// base64 PNG → R2 (content-addressed, same scheme as user uploads) → an
-// attachments row owned by the conversation's user. Returns the new
-// attachment id, or null if anything failed (the turn carries on without
-// the image rather than aborting). Idempotent on (user_id, content_sha256).
+// Decode a base64 PNG payload from the OpenAI image_generation built-in
+// tool into raw bytes. Image-gen always returns PNG, so this is the only
+// MIME we need to handle on the encoded-input side; the persistence
+// itself goes through the generic persistAttachmentBytes helper now.
 //
-// Dedup pattern matches routes/upload.ts: SELECT-then-INSERT with a
-// 23505 race fallback. We can't use `.upsert(..., { onConflict })`
-// here because the dedup index `idx_attachments_user_sha256` is
-// *partial* (`WHERE content_sha256 IS NOT NULL`), and PostgREST's
-// `ON CONFLICT (cols)` syntax can't auto-arbitrate against a partial
-// index — PG returns "no unique or exclusion constraint matching the
-// ON CONFLICT specification" and the upsert silently fails, eating the
-// generated image. (Found 2026-05-20 after image_generation appeared to
-// hang in chat: turn completed cleanly in ~165s, base64 came back, but
-// the attachment row never landed and emitGeneratedImage early-returned
-// without inserting a bubble.)
-async function persistGeneratedImage(
-  env: Env,
-  supa: ReturnType<typeof serviceClient>,
-  userId: string,
-  conversationId: string,
-  base64: string,
-): Promise<string | null> {
-  try {
-    const bin = atob(base64);
-    const bytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    const sha = await sha256Hex(bytes);
-    const key = r2KeyForHash(sha, 'image/png');
-
-    // Fast path: this user already has a row for these bytes (e.g. the
-    // model regenerated an identical image). Reuse it; skip R2 write.
-    {
-      const { data: dup } = await supa
-        .from('attachments')
-        .select('id')
-        .eq('user_id', userId)
-        .eq('content_sha256', sha)
-        .maybeSingle();
-      if (dup) return (dup as { id: string }).id;
-    }
-
-    const existing = await env.UPLOADS.head(key).catch(() => null);
-    if (!existing) {
-      await env.UPLOADS.put(key, bytes, {
-        httpMetadata: { contentType: 'image/png' },
-      });
-    }
-
-    const { data, error } = await supa
-      .from('attachments')
-      .insert({
-        user_id: userId,
-        conversation_id: conversationId,
-        r2_key: key,
-        mime_type: 'image/png',
-        byte_size: bytes.length,
-        content_sha256: sha,
-      })
-      .select('id')
-      .single();
-
-    // Race fallback: a parallel turn (or a concurrent user upload of
-    // the same bytes) hit the partial UNIQUE between our SELECT and
-    // INSERT. Re-fetch the winner.
-    if (error) {
-      if ((error as { code?: string }).code === '23505') {
-        const { data: winner } = await supa
-          .from('attachments')
-          .select('id')
-          .eq('user_id', userId)
-          .eq('content_sha256', sha)
-          .maybeSingle();
-        if (winner) return (winner as { id: string }).id;
-      }
-      console.warn('[bot-reply] generated-image attachment insert', error.message);
-      return null;
-    }
-    return data.id as string;
-  } catch (err) {
-    console.warn('[bot-reply] persistGeneratedImage failed', err);
-    return null;
-  }
+// The 23505-partial-index race fallback was the historical footgun
+// here — see persistAttachmentBytes for the long-form comment. (Lost
+// roughly 165s once on 2026-05-20 when an upsert silently dropped a
+// generated PNG; the rewrite below makes that path explicit.)
+function decodeBase64Png(base64: string): Uint8Array {
+  const bin = atob(base64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
 }
 
 // Maximum agent-loop iterations (one LLM call + tool execution per iteration).
@@ -676,20 +607,6 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     emit(event, data);
   };
 
-  const toolCtx: ToolCtx = {
-    signal: ac.signal,
-    emit: emitToolEvent,
-    userId,
-    botId: bot.id,
-    parentMessageId,
-    botModelId: bot.model_id,
-    visionOverride,
-    conversationId,
-    citations,
-    webMeter,
-    inGroup: input.inGroup ?? false,
-  };
-
   const emitBubble = async (text: string) => {
     if (!text) return;
     bubbleIndex++;
@@ -720,8 +637,11 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     });
   };
 
-  // Persist an image the OpenAI image_generation built-in tool produced
-  // as its own bot message (attachments jsonb shape: { ids: [...] }).
+  // Insert one bot message carrying N attachment ids. Used by both
+  // image_generation (single PNG via emitGeneratedImage below) and the
+  // send_images tool (1–5 mixed-MIME). Shape: same bubble_group_id as
+  // this turn's text bubbles, empty content, attachments jsonb
+  // { ids: […] }.
   //
   // Deliberately does NOT emit an SSE `bubble` event or touch
   // `bubbleIndex`: that counter is kept in lockstep with the splitter's
@@ -729,25 +649,9 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   // bubble has no streamed counterpart. The inserted row reaches the
   // client through the Cloudflare realtime hub (messages-table AFTER
   // INSERT trigger → notify_realtime() → /v1/realtime-internal/notify →
-  // RealtimeHubDO WebSocket fan-out). The caller is responsible for
-  // resolving the corresponding `tool_result` SSE so the UI chip
-  // doesn't sit at "image_generation 中" forever.
-  //
-  // Returns: ok with the new attachment id, or failed with a reason
-  // string so the dispatch site can surface an error chip in the trace
-  // UI instead of silently swallowing the result. ("not-persisted"
-  // covers persistGeneratedImage returning null — R2 PUT or DB INSERT
-  // failed and was logged; "insert-failed" covers the messages.insert.)
-  type EmitImageResult =
-    | { ok: true; attachmentId: string }
-    | { ok: false; reason: string };
-  const emitGeneratedImage = async (
-    base64: string,
-  ): Promise<EmitImageResult> => {
-    const attachmentId = await persistGeneratedImage(
-      env, supa, userId, conversationId, base64,
-    );
-    if (!attachmentId) return { ok: false, reason: 'not-persisted' };
+  // RealtimeHubDO WebSocket fan-out).
+  const emitImagesMessage = async (attachmentIds: string[]): Promise<boolean> => {
+    if (attachmentIds.length === 0) return false;
     const { error } = await supa.from('messages').insert({
       id: randomUUID(),
       client_message_id: randomUUID(),
@@ -758,16 +662,55 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       content: '',
       parent_message_id: parentMessageId,
       bubble_group_id: bubbleGroupId,
-      attachments: { ids: [attachmentId] },
+      attachments: { ids: attachmentIds },
       model_slug: bot.model_id,
       model_provider: turnProviderSlug,
     });
     if (error) {
-      console.warn('[bot-reply] generated-image message insert', error.message);
-      return { ok: false, reason: 'insert-failed' };
+      console.warn('[bot-reply] images-message insert', error.message);
+      return false;
     }
     bubblesInserted++;
-    return { ok: true, attachmentId };
+    return true;
+  };
+
+  // Persist an image the OpenAI image_generation built-in tool
+  // produced into an attachments row + bot message. The caller is
+  // responsible for resolving the corresponding `tool_result` SSE so
+  // the UI chip doesn't sit at "image_generation 中" forever.
+  //
+  // Returns: ok with the new attachment id, or failed with a reason
+  // string so the dispatch site can surface an error chip in the
+  // trace UI instead of silently swallowing the result.
+  // ("not-persisted" = R2 PUT or attachments INSERT failed and was
+  // logged. "insert-failed" = the messages row insert failed.)
+  type EmitImageResult =
+    | { ok: true; attachmentId: string }
+    | { ok: false; reason: string };
+  const emitGeneratedImage = async (
+    base64: string,
+  ): Promise<EmitImageResult> => {
+    const attachmentId = await persistAttachmentBytes(
+      env, supa, userId, conversationId, decodeBase64Png(base64), 'image/png',
+    );
+    if (!attachmentId) return { ok: false, reason: 'not-persisted' };
+    const ok = await emitImagesMessage([attachmentId]);
+    return ok ? { ok: true, attachmentId } : { ok: false, reason: 'insert-failed' };
+  };
+
+  const toolCtx: ToolCtx = {
+    signal: ac.signal,
+    emit: emitToolEvent,
+    userId,
+    botId: bot.id,
+    parentMessageId,
+    botModelId: bot.model_id,
+    visionOverride,
+    conversationId,
+    citations,
+    webMeter,
+    inGroup: input.inGroup ?? false,
+    emitImagesMessage,
   };
 
   // Each round inside the agent loop runs its own withFallback — when
@@ -1142,13 +1085,24 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
         // are advertised by default — the envelope-runner still drives
         // Exa MCP directly, and this branch is the seam for a future
         // per-bot MCP opt-in). Everything else flows through runTool.
+        //
+        // send_images is the one *terminal* function tool we expose: its
+        // act of being called IS the bot's message (an attachment row),
+        // so we break the agent loop after it runs instead of feeding
+        // the result back for another LLM turn. Any text the model
+        // emitted alongside the tool call has already bubbled through
+        // the splitter, so the tail-emit at the bottom of runChatTurn
+        // takes care of the rest.
+        let terminalToolFired = false;
         for (const tc of toolCalls) {
           const args = safeParseArgs(tc.function.arguments);
           const result = mcpClient.owns(tc.function.name)
             ? await dispatchMcpTool(env, tc.function.name, args, toolCtx)
             : await runTool(env, tc.function.name, args, toolCtx);
           messages.push({ role: 'tool', tool_call_id: tc.id, content: result });
+          if (tc.function.name === 'send_images') terminalToolFired = true;
         }
+        if (terminalToolFired) break;
         // Loop: the model may want to call more tools or finally produce
         // user-visible content. Carry on.
         continue;

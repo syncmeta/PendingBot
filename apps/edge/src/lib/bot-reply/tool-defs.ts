@@ -222,6 +222,35 @@ export const CHAT_TOOLS: ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'send_images',
+      // Terminal "put these pictures into the chat" tool. The bot
+      // calls it with 1–5 URLs or data: URIs; the worker fetches /
+      // decodes each into R2 + an attachments row, then inserts one
+      // bot message carrying { attachments: { ids: […] } }. The
+      // turn ends after this tool runs — there is no follow-up LLM
+      // call. Description lives in pendingbot.tools.model_description
+      // and is swapped in by applyToolRegistry at turn-assembly time.
+      parameters: {
+        type: 'object',
+        properties: {
+          images: {
+            type: 'array',
+            description: '1–5 张图片。每一项要么是 `https://...` 公网 URL，要么是 `data:image/<png|jpeg|webp|gif>;base64,<base64>` 内联数据。',
+            minItems: 1,
+            maxItems: 5,
+            items: {
+              type: 'string',
+              description: 'URL 或 data: URI。单张 ≤ 25 MB。',
+            },
+          },
+        },
+        required: ['images'],
+      },
+    },
+  },
 ];
 
 // Frontmatter name regex — must match the DB CHECK in 0026.
