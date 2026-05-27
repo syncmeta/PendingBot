@@ -118,7 +118,7 @@ private struct CrewSidebarRowView: View {
                 HStack(spacing: 5) {
                     Text(row.status)
                     Text(row.runtimeKind)
-                    if row.captainBotId != nil {
+                    if row.hasCaptainRepresentative {
                         Text("机长")
                     }
                 }

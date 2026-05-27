@@ -67,6 +67,31 @@ final class PendingBotBigScreenShellTests: XCTestCase {
         XCTAssertEqual(rows.map(\.subtitle), ["上级 · 本地 · active", "下级 · 云端预留 · active"])
     }
 
+    func testCrewRelationshipRowsSurfaceCaptainRepresentative() {
+        let child = PendingBotCrewLink(
+            crewId: "child",
+            title: "子机组",
+            status: "active",
+            runtimeKind: .local,
+            captainBotId: "bot-captain",
+            captainMemberId: "member-captain",
+            createdAt: "2026-05-27T09:05:00Z"
+        )
+        let detail = PendingBotCrewDetail(
+            crewId: "crew",
+            parents: [],
+            children: [child],
+            responsibilityShares: [],
+            sessions: [],
+            members: [],
+            announcements: []
+        )
+
+        let rows = PendingBotCrewRelationshipRow.rows(for: detail)
+
+        XCTAssertEqual(rows.first?.subtitle, "下级 · 机长 · 本地 · active")
+    }
+
     func testResponsibilityShareFormatsBasisPointsAsPercent() {
         let share = PendingBotCrewResponsibilityShare(
             subjectId: "subject-1",

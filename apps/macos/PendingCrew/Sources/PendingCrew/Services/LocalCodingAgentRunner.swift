@@ -65,8 +65,8 @@ enum LocalCodingAgentContextPacket {
     static func render(session: CrewSession, mailbox: [SessionMailboxItem]) -> String {
         var sections: [String] = []
         sections.append("""
-        Crew session id: \(session.id)
-        Crew conversation id: \(session.crewConversationId)
+        机组 session id: \(session.id)
+        机组 conversation id: \(session.crewConversationId)
 
         任务:
         \(session.taskBrief)
@@ -75,18 +75,18 @@ enum LocalCodingAgentContextPacket {
         let unread = mailbox.filter { $0.status != "archived" }
         if !unread.isEmpty {
             let lines = unread.map { item in
-                let sender = item.senderSessionId.map { "session:\($0)" } ?? item.senderKind ?? "crew"
+                let sender = item.senderSessionId.map { "session:\($0)" } ?? item.senderKind ?? "机组"
                 return "- [\(item.messageKind)] from \(sender): \(item.summary)"
             }.joined(separator: "\n")
             sections.append("""
-            本次注入的 Crew 消息:
+            本次注入的机组消息:
             \(lines)
             """)
         }
 
         sections.append("""
         输出规则:
-        - 不要把过程日志刷到 Crew 群聊。
+        - 不要把过程日志刷到机组群聊。
         - 需要同步给其他 session 或人类时，发一条简短公告并明确 @ 对象。
         - 最终只输出可执行结论、变更摘要和验证结果。
         """)

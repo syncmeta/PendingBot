@@ -159,7 +159,7 @@ struct CrewChatMentionTarget: Identifiable, Hashable {
             .map {
                 CrewChatMentionTarget(
                     kind: .member,
-                    title: $0.displayName,
+                    title: $0.crewDisplayName,
                     systemImage: symbol(for: $0),
                     sessionId: nil,
                     memberId: $0.id
@@ -192,7 +192,7 @@ struct CrewChatMentionTarget: Identifiable, Hashable {
     private static func symbol(for member: CrewMember) -> String {
         switch member.memberKind {
         case "human": return "person.crop.circle"
-        case "bot", "master_bot": return "sparkles"
+        case "bot", "master_bot", "captain": return "sparkles"
         default: return "person.crop.square"
         }
     }
@@ -389,7 +389,7 @@ private struct CrewAnnouncementBubble: View {
         }
         switch announcement.senderKind {
         case "human": return "人类"
-        case "master_bot": return "Master Bot"
+        case "master_bot", "captain": return "机长"
         case "system": return "系统"
         default: return announcement.senderKind
         }
@@ -483,7 +483,7 @@ private struct SenderAvatar: View {
 
     private var symbol: String {
         switch kind {
-        case "master_bot": return "sparkles"
+        case "master_bot", "captain": return "sparkles"
         case "system": return "gearshape"
         default: return "terminal"
         }
@@ -491,7 +491,7 @@ private struct SenderAvatar: View {
 
     private var avatarFill: Color {
         switch kind {
-        case "master_bot": return PendingBotChatStyle.accentHover
+        case "master_bot", "captain": return PendingBotChatStyle.accentHover
         case "system": return PendingBotChatStyle.inkMuted
         default: return PendingBotChatStyle.accent
         }

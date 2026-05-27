@@ -429,7 +429,7 @@ private struct CrewRelationshipRow: View {
 
                 HStack(spacing: 6) {
                     Text(link.runtimeKind)
-                    if link.captainBotId != nil || link.captainMemberId != nil {
+                    if link.hasCaptainRepresentative {
                         Text("机长")
                     }
                 }

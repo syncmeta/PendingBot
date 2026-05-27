@@ -2,16 +2,16 @@ import SwiftUI
 
 struct CrewHomeView: View {
     @EnvironmentObject private var model: AppModel
-    @State private var title = "新的 Crew"
+    @State private var title = "新的机组"
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 SubjectSummaryView()
 
-                GroupBox("创建 Crew") {
+                GroupBox("创建机组") {
                     HStack {
-                        TextField("Crew 名称", text: $title)
+                        TextField("机组名称", text: $title)
                             .textFieldStyle(.roundedBorder)
                         Button {
                             Task { await model.createCrew(title: title) }
@@ -22,9 +22,9 @@ struct CrewHomeView: View {
                     }
                 }
 
-                GroupBox("最近 Crew") {
+                GroupBox("最近机组") {
                     if model.crews.isEmpty {
-                        ContentUnavailableView("还没有 Crew", systemImage: "person.3.sequence")
+                        ContentUnavailableView("还没有机组", systemImage: "person.3.sequence")
                     } else {
                         Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
                             GridRow {
@@ -50,7 +50,7 @@ struct CrewHomeView: View {
             }
             .padding()
         }
-        .navigationTitle("Crew")
+        .navigationTitle("机组")
     }
 }
 
@@ -81,4 +81,3 @@ private struct SubjectSummaryView: View {
         }
     }
 }
-

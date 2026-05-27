@@ -191,7 +191,7 @@ final class AppModel: ObservableObject {
     }
 
     func refreshCrew(_ crewId: String) async {
-        await run("Crew 已刷新") {
+        await run("机组已刷新") {
             guard let api else { throw LocalError.missingAuth }
             try await refreshCrewDetail(api: api, crewId: crewId)
         }
@@ -208,7 +208,7 @@ final class AppModel: ObservableObject {
     }
 
     func createCrew(title: String) async {
-        await run("Crew 已创建") {
+        await run("机组已创建") {
             guard let api else { throw LocalError.missingAuth }
             guard let subjectId = personalSubjectId else { throw LocalError.missingSubject }
             let id = try await api.createCrew(responsibleSubjectId: subjectId, title: title)

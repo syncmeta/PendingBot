@@ -117,6 +117,27 @@ final class LocalCodingAgentRunnerTests: XCTestCase {
         XCTAssertNil(targets[2].memberId)
     }
 
+    func testCrewChatMentionTargetsLabelCaptainMembers() {
+        let captain = CrewMember(
+            id: "member-captain",
+            conversationId: "crew-1",
+            memberKind: "master_bot",
+            userId: nil,
+            botId: "bot-captain",
+            codeSessionId: nil,
+            displayName: "API 机长",
+            role: "captain",
+            capabilities: .object([:]),
+            status: "active",
+            createdAt: "2026-05-27T00:00:00Z"
+        )
+
+        let targets = CrewChatMentionTarget.targets(sessions: [], members: [captain])
+
+        XCTAssertEqual(targets.map(\.title), ["全员", "机长 · API 机长"])
+        XCTAssertEqual(targets[1].systemImage, "sparkles")
+    }
+
     func testDefaultCodexProfileRendersSessionCommand() throws {
         let session = CrewSession(
             id: "session-1",
@@ -179,7 +200,8 @@ final class LocalCodingAgentRunnerTests: XCTestCase {
 
         XCTAssertTrue(prompt.contains("整理 Crew 地基"))
         XCTAssertTrue(prompt.contains("只处理 API 层"))
-        XCTAssertTrue(prompt.contains("不要把过程日志刷到 Crew 群聊"))
+        XCTAssertTrue(prompt.contains("本次注入的机组消息"))
+        XCTAssertTrue(prompt.contains("不要把过程日志刷到机组群聊"))
     }
 
     func testSessionInspectorModelSortsMailboxAndEventsForOperatorScan() {

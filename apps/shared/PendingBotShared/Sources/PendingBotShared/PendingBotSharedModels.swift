@@ -145,6 +145,10 @@ public struct PendingBotCrewLink: Identifiable, Hashable, Codable {
         self.captainMemberId = captainMemberId
         self.createdAt = createdAt
     }
+
+    public var hasCaptainRepresentative: Bool {
+        captainBotId != nil || captainMemberId != nil
+    }
 }
 
 public struct PendingBotCrewResponsibilityShare: Identifiable, Hashable, Codable {
@@ -374,11 +378,17 @@ public struct PendingBotCrewRelationshipRow: Identifiable, Hashable {
         directionId: String,
         systemImage: String
     ) -> PendingBotCrewRelationshipRow {
-        PendingBotCrewRelationshipRow(
+        var subtitleParts = [directionTitle]
+        if link.hasCaptainRepresentative {
+            subtitleParts.append("机长")
+        }
+        subtitleParts.append(contentsOf: [link.runtimeKind.title, link.status])
+
+        return PendingBotCrewRelationshipRow(
             id: "\(directionId):\(link.crewId)",
             crewId: link.crewId,
             title: link.title,
-            subtitle: "\(directionTitle) · \(link.runtimeKind.title) · \(link.status)",
+            subtitle: subtitleParts.joined(separator: " · "),
             systemImage: systemImage
         )
     }

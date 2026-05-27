@@ -99,6 +99,10 @@ struct CrewLink: Decodable, Identifiable {
     let captainBotId: String?
     let captainMemberId: String?
     let createdAt: String
+
+    var hasCaptainRepresentative: Bool {
+        captainBotId != nil || captainMemberId != nil
+    }
 }
 
 struct CrewResponsibilityShare: Decodable, Identifiable {
@@ -124,6 +128,10 @@ struct CrewSidebarRow: Identifiable, Hashable {
     let depth: Int
     let captainBotId: String?
     let captainMemberId: String?
+
+    var hasCaptainRepresentative: Bool {
+        captainBotId != nil || captainMemberId != nil
+    }
 }
 
 enum CrewSidebarIndex {
@@ -169,7 +177,7 @@ enum CrewSidebarIndex {
             CrewSidebarRow(
                 crewId: crewId,
                 parentCrewId: parentCrewId,
-                title: link?.title ?? crew?.title ?? "Crew",
+                title: link?.title ?? crew?.title ?? "机组",
                 status: link?.status ?? crew?.status ?? "active",
                 runtimeKind: link?.runtimeKind ?? "local",
                 depth: depth,
@@ -208,6 +216,14 @@ struct CrewMember: Decodable, Identifiable {
     let capabilities: JSONValue
     let status: String
     let createdAt: String
+
+    var isCaptainRepresentative: Bool {
+        memberKind == "captain" || memberKind == "master_bot" || role == "captain"
+    }
+
+    var crewDisplayName: String {
+        isCaptainRepresentative ? "机长 · \(displayName)" : displayName
+    }
 }
 
 struct SessionEvent: Decodable, Identifiable {
