@@ -1,5 +1,4 @@
 import type { ChatCompletionTool } from 'openai/resources/chat/completions';
-import type { DelegateTarget } from './tools/delegate';
 
 // JSON-schema descriptors for every tool the chat bot can call. Split
 // from the rest of bot-reply/ because:
@@ -284,40 +283,93 @@ export const EXECUTE_CODE_TOOL: ChatCompletionTool = {
   },
 };
 
-// Subagent delegation tool. Added to the per-turn tool list when the user
-// has at least one bot contact other than the caller. The target enum is
-// generated from those actual bot ids so the model can delegate to any
-// model-backed bot the user can chat with, regardless of provider.
-export function buildDelegateTool(targets: ReadonlyArray<DelegateTarget>): ChatCompletionTool {
-  const targetDescription = targets
-    .map((t) => {
-      const provider = t.modelProvider ?? 'openrouter';
-      return `${t.id} = ${t.displayName} (${t.modelId}, ${provider})`;
-    })
-    .join('\n');
-  return {
-    type: 'function',
-    function: {
-      name: 'delegate_to_specialist',
-      parameters: {
-        type: 'object',
-        properties: {
-          target_bot_id: {
-            type: 'string',
-            enum: targets.map((t) => t.id),
-            description: `Bot id to delegate to. Available targets:\n${targetDescription}`,
-          },
-          prompt: {
-            type: 'string',
-            description:
-              '完整、自包含的任务描述 — 专家看不到你这边的对话历史，必须把它需要的所有上下文写进来。1–8000 字。',
-          },
+// `delegate_to_specialist` — fire one non-streaming completion against
+// an arbitrary model slug and return the answer. Always-on for every
+// bot (private + public); not gated by user_bot_contacts anymore.
+//
+// The model picks `model_slug` based on its subscribed skills (skill
+// bodies say things like "for complex math, use model='claude-opus-4.7'").
+// The tool is permissive: any slug the router can resolve works; the
+// fallback router surfaces upstream errors through the JSON envelope.
+export const DELEGATE_TO_SPECIALIST_TOOL: ChatCompletionTool = {
+  type: 'function',
+  function: {
+    name: 'delegate_to_specialist',
+    parameters: {
+      type: 'object',
+      properties: {
+        model_slug: {
+          type: 'string',
+          description:
+            '要委托的模型 slug（e.g. "claude-opus-4.7", "~google/gemini-2.5-pro"）。具体场景该用什么模型，看你订阅的 skill 里的说明。',
         },
-        required: ['target_bot_id', 'prompt'],
+        prompt: {
+          type: 'string',
+          description:
+            '完整、自包含的任务描述 —— 专家看不到你的对话历史，必须把它需要的全部上下文、约束、产出格式都写进来。1–8000 字。',
+        },
       },
+      required: ['model_slug', 'prompt'],
     },
-  };
-}
+  },
+};
+
+// `ask_friend` — public bot reaches out to a named human friend with a
+// self-contained question. Async by design: the tool fires off the
+// outreach to the friend's 1v1 with this bot and returns immediately;
+// when the bot wraps up with the friend over there, it calls
+// `submit_inquiry_answer` to ship the answer back to the caller.
+// Public-only; gated in bot-reply/index.ts by bots.visibility.
+export const ASK_FRIEND_TOOL: ChatCompletionTool = {
+  type: 'function',
+  function: {
+    name: 'ask_friend',
+    parameters: {
+      type: 'object',
+      properties: {
+        target_display_name: {
+          type: 'string',
+          description:
+            '要问的好友名字 —— 必须严格匹配你好友列表里某个人的 display_name（不区分大小写）。出现在本回合社交圈快照的"最近的几位"里。重名会被拒。',
+        },
+        question: {
+          type: 'string',
+          description:
+            '完整、自包含的提问。这条会直接发给对方真人，对方什么时候看、什么时候回不在你掌控。1–4000 字。',
+        },
+      },
+      required: ['target_display_name', 'question'],
+    },
+  },
+};
+
+// `submit_inquiry_answer` — pair tool to ask_friend. Call this from the
+// relay conversation (bot ↔ friend 1v1) when you have a final answer
+// to deliver back to the caller. The router picks "inject into
+// caller's next turn" vs "speak up unprompted" based on caller_conv
+// activity.
+export const SUBMIT_INQUIRY_ANSWER_TOOL: ChatCompletionTool = {
+  type: 'function',
+  function: {
+    name: 'submit_inquiry_answer',
+    parameters: {
+      type: 'object',
+      properties: {
+        inquiry_id: {
+          type: 'string',
+          description:
+            '要收尾的 inquiry id —— 由 ask_friend 返回时给你；如果忘了，在系统提示的"待回的好友问询"段里也会列。',
+        },
+        answer: {
+          type: 'string',
+          description:
+            '要回给发起人的话。可以直接是答案正文，也可以是\"对方说不知道，需要查\"这类总结。1–6000 字。',
+        },
+      },
+      required: ['inquiry_id', 'answer'],
+    },
+  },
+};
 
 // Group-only tools — exposed by dispatchGroupTurn via input.inGroup.
 // Both write to the same conversation_id + bot_id the runner is acting

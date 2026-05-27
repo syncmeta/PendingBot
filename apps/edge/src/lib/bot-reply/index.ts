@@ -51,15 +51,17 @@ import {
 import { resolveProviderSlug } from '../../llm/providers';
 import { WebToolMeter } from '../web-meter';
 import {
-  buildDelegateTool,
+  ASK_FRIEND_TOOL,
   buildOpenRouterServerTools,
   CHAT_TOOLS,
+  DELEGATE_TO_SPECIALIST_TOOL,
   EXECUTE_CODE_TOOL,
   GROUP_BOT_TOOLS,
   REQUEST_EXECUTE_CODE_TOOL,
+  SUBMIT_INQUIRY_ANSWER_TOOL,
   type WebSearchConfig,
 } from './tool-defs';
-import { delegateTargetsForUser } from './tools/delegate';
+import { loadBotSocialSnapshot, loadInquiryContext } from '../bot-social';
 import {
   type Citation,
   type ToolCtx,
@@ -364,13 +366,6 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   // resolution + prompt assembly instead of sitting serially in front
   // of the LLM call.
   const allowedRegistryPromise = loadToolRegistry(env, 'chat');
-  // Delegate target enumeration is also independent of the prompt; the
-  // delegate tool only joins the per-turn list when the user has at least
-  // one other bot contact. Resolved lazily — failure here shouldn't block
-  // the turn, so we swallow and treat as "no targets".
-  const delegateTargetsPromise = delegateTargetsForUser(env, userId, bot.id).catch(
-    () => [],
-  );
 
   const locale = await resolveLocale(null, supa, userId, env);
 
@@ -390,15 +385,36 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   // only make sense for a regular 1v1: a group has no single "you", and in a
   // self-chat the bot ≡ the user. Skip the KV reads otherwise.
   const relational = !input.isSelfChat && !(input.inGroup ?? false);
-  const [botMemory, subsBundle, botNote, chatMemo, botViewOfUser, userViewOfBot] =
-    await Promise.all([
-      input.isSelfChat ? getUserMemory(env, userId) : getBotMemory(env, bot.id),
-      resolveSubscriptions(env, supa, userId, conversationId, turnProviderSlug, noop),
-      resolveBotNote(env, supa, bot.id, userId, noop),
-      resolveChatMemo(env, supa, bot.id, conversationId, noop),
-      relational ? getBotViewOfUser(env, bot.id, userId) : Promise.resolve(null),
-      relational ? getUserViewOfBot(env, userId, bot.id) : Promise.resolve(null),
-    ]);
+  const [
+    botMemory, subsBundle, botNote, chatMemo, botViewOfUser, userViewOfBot,
+    socialSnapshot,
+  ] = await Promise.all([
+    input.isSelfChat ? getUserMemory(env, userId) : getBotMemory(env, bot.id),
+    resolveSubscriptions(env, supa, userId, conversationId, turnProviderSlug, noop),
+    resolveBotNote(env, supa, bot.id, userId, noop),
+    resolveChatMemo(env, supa, bot.id, conversationId, noop),
+    relational ? getBotViewOfUser(env, bot.id, userId) : Promise.resolve(null),
+    relational ? getUserViewOfBot(env, userId, bot.id) : Promise.resolve(null),
+    // Bot social-graph snapshot — feeds the per-turn "我的社交圈" volatile
+    // section. Self-chat skips it: bot ≡ user and the social graph isn't
+    // a frame the bot should reason about. Best-effort: any DB hiccup
+    // degrades to "no social section" rather than failing the turn.
+    input.isSelfChat
+      ? Promise.resolve(null)
+      : loadBotSocialSnapshot(supa, bot.id).catch(() => null),
+  ]);
+
+  // Inquiry context — pending answers from ask_friend that resolved
+  // while THIS conv was active (need to weave into next reply) +
+  // open inquiries this bot has sitting on THIS conv as the relay
+  // (need to expose inquiry_id so submit_inquiry_answer is callable
+  // across turns). Self-chat doesn't have inquiries.
+  const inquiryContext = input.isSelfChat
+    ? { pendingAnswers: [], openRelayInquiries: [] }
+    : await loadInquiryContext(supa, bot.id, conversationId).catch(() => ({
+        pendingAnswers: [],
+        openRelayInquiries: [],
+      }));
   const skills = subsBundle.skills.map((s) => ({
     name: s.name,
     description: s.description,
@@ -553,6 +569,13 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       currentImageParts,
       currentFileParts,
       attachmentInventory: inventory,
+      socialGraph: socialSnapshot ?? undefined,
+      pendingInquiryAnswers: inquiryContext.pendingAnswers.length > 0
+        ? inquiryContext.pendingAnswers
+        : undefined,
+      openRelayInquiries: inquiryContext.openRelayInquiries.length > 0
+        ? inquiryContext.openRelayInquiries
+        : undefined,
       clientTz: input.clientTz,
     },
     locale,
@@ -765,16 +788,28 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   // from the provider's own server-side tools — OpenRouter native
   // plugins on the Chat Completions path, OpenAI built-ins on the
   // Responses path — added to the request below per provider.
-  const delegateTargets = await delegateTargetsPromise;
-  const delegateTool = delegateTargets.length > 0 ? buildDelegateTool(delegateTargets) : null;
-
+  // delegate_to_specialist: always-on now that it dispatches to an
+  // arbitrary model slug (not another bot), so visibility/contact gating
+  // is moot. The tools registry can still hide it from the model via
+  // applyToolRegistry below if an operator disables it on the board.
   const turnToolsRaw: ChatCompletionTool[] = [
     ...CHAT_TOOLS,
     REQUEST_EXECUTE_CODE_TOOL,
+    DELEGATE_TO_SPECIALIST_TOOL,
   ];
   if (allowedTools.has('execute_code')) turnToolsRaw.push(EXECUTE_CODE_TOOL);
   if (input.inGroup) turnToolsRaw.push(...GROUP_BOT_TOOLS);
-  if (delegateTool) turnToolsRaw.push(delegateTool);
+  // ask_friend / submit_inquiry_answer are public-bot-only. The
+  // visibility check piggybacks on socialSnapshot.isPublic — already
+  // fetched alongside the social graph data above. Private bots get
+  // neither (their only friend is the owner = the person they're
+  // already talking to). The submit tool is only useful inside a relay
+  // conversation, but we expose it on every public-bot turn rather than
+  // try to detect "we're in someone's relay" — the tool's own
+  // ownership check will reject misuse.
+  if (socialSnapshot?.isPublic) {
+    turnToolsRaw.push(ASK_FRIEND_TOOL, SUBMIT_INQUIRY_ANSWER_TOOL);
+  }
 
   // Strict allowlist from the tools registry — disabling a row in the
   // board "Tools" page strips it here within ~1 min (60s isolate
@@ -792,9 +827,14 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   // OpenAI's server-side built-in tools (added in the runner closure
   // below), not the Cloudflare sandbox — so their function-tool list
   // is the internal surface only: no request_execute_code / execute_code.
-  const nativeFnToolsRaw: ChatCompletionTool[] = [...CHAT_TOOLS];
+  const nativeFnToolsRaw: ChatCompletionTool[] = [
+    ...CHAT_TOOLS,
+    DELEGATE_TO_SPECIALIST_TOOL,
+  ];
   if (input.inGroup) nativeFnToolsRaw.push(...GROUP_BOT_TOOLS);
-  if (delegateTool) nativeFnToolsRaw.push(delegateTool);
+  if (socialSnapshot?.isPublic) {
+    nativeFnToolsRaw.push(ASK_FRIEND_TOOL, SUBMIT_INQUIRY_ANSWER_TOOL);
+  }
   const nativeFnTools: ChatCompletionTool[] = applyToolRegistry(
     nativeFnToolsRaw,
     toolRegistry,

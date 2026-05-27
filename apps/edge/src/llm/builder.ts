@@ -95,6 +95,42 @@ export interface BuildMessagesInput {
     mime?: string | null;
     filename?: string | null;
   }>;
+  // Pending answers from prior ask_friend calls that resolved while the
+  // caller_conv was "active" — submit_inquiry_answer parked them here
+  // instead of inserting a spontaneous message. The bot should weave
+  // them into its reply this turn. Marked answered_delivered the moment
+  // we read them, so they only surface once (lost if the turn errors,
+  // by design — beats double-delivering).
+  pendingInquiryAnswers?: Array<{
+    inquiry_id: string;
+    target_display_name: string;
+    question: string;
+    answer: string;
+  }>;
+  // Open inquiries this bot raised that now ride this conversation as
+  // the relay. Surfaces the inquiry_id so the bot can find it when it
+  // decides to call submit_inquiry_answer — without this, ask_friend's
+  // tool-result envelope only lives in the current turn's tool-call
+  // memory and is gone by the next turn.
+  openRelayInquiries?: Array<{
+    inquiry_id: string;
+    question: string;
+  }>;
+  // Bot's own social graph — small per-turn snapshot used by the social
+  // section. Counts + top-N display names for human friends and groups.
+  // Refreshed each turn (cheap) and rendered into the *volatile* per-turn
+  // context, so adding/removing a friend doesn't bust the persona cache.
+  // The detailed rules (visibility, ask_friend semantics, etc.) live in
+  // the static bot-social-graph skill body in the stable prefix.
+  socialGraph?: {
+    friendsCount: number;
+    recentFriends: Array<{ display_name: string }>;
+    groupsCount: number;
+    recentGroups: Array<{ title: string | null }>;
+    /// True iff the bot is public_invite — gates whether the social
+    /// section mentions `ask_friend` (which only public bots have).
+    isPublic: boolean;
+  };
   // IANA timezone from the client (e.g. "Asia/Shanghai"). Used to format
   // the *current* user turn's timestamp (server only knows UTC for "now").
   // Historical messages carry their own offset in `created_at`, so we
@@ -192,6 +228,93 @@ function buildBotTzSection(tz: string | null | undefined): string {
   const t = tz?.trim();
   if (!t) return '';
   return `## 你所在的时区\n你所在的时区是 ${t}（IANA 名）。当对方说「明天 / 今早 / 周末」这类相对时间时，按这个时区理解。`;
+}
+
+// Per-turn snapshot of the bot's social graph — counts + a handful of
+// recent friends/groups by name. Lives in the volatile context so adding
+// or removing a friend doesn't bust the cached persona. The static rules
+// (visibility, ask_friend semantics, etc.) sit above in the persona via
+// buildSocialGraphSkillSection — this section just gives the bot today's
+// numbers and a few labels it can drop into conversation if asked.
+function buildSocialGraphStatsSection(
+  sg: BuildMessagesInput['socialGraph'],
+): string {
+  if (!sg) return '';
+  const friendLabels = sg.recentFriends
+    .map((f) => f.display_name.trim())
+    .filter((s) => s.length > 0)
+    .slice(0, 5);
+  const groupLabels = sg.recentGroups
+    .map((g) => (g.title ?? '').trim())
+    .filter((s) => s.length > 0)
+    .slice(0, 5);
+  const lines: string[] = ['## 我自己的社交圈（本回合快照）'];
+  if (sg.friendsCount === 0) {
+    lines.push('- 目前还没人加我为好友。');
+  } else {
+    const recent = friendLabels.length > 0
+      ? `，最近的几位：${friendLabels.join('、')}`
+      : '';
+    lines.push(`- 我有 ${sg.friendsCount} 个人类好友${recent}。`);
+  }
+  if (sg.groupsCount === 0) {
+    lines.push('- 我目前不在任何群里。');
+  } else {
+    const recent = groupLabels.length > 0
+      ? `，最近活跃的几个：${groupLabels.join('、')}`
+      : '';
+    lines.push(`- 我在 ${sg.groupsCount} 个群里${recent}。`);
+  }
+  if (sg.isPublic) {
+    lines.push('- 我是公有机器人，可以用 `ask_friend` 主动问其他好友（详见 skill `bot-social-graph`）。');
+  } else {
+    lines.push('- 我是私有机器人，没有 `ask_friend` —— 这套工具只对公有机器人开放。');
+  }
+  return lines.join('\n');
+}
+
+
+// Answers from prior ask_friend calls that finished while THIS conv
+// (the caller side) was active. submit_inquiry_answer parked them on
+// the inquiry row; bot-reply read + cleared them. The bot should weave
+// the contents into its current reply rather than dropping them as a
+// separate bubble — that's the whole point of the active-injection
+// path. Lives in volatile context (per-turn, never cached).
+function buildPendingInquiryAnswersSection(
+  pending: BuildMessagesInput['pendingInquiryAnswers'],
+): string {
+  if (!pending || pending.length === 0) return '';
+  const items = pending.map((p) => {
+    const target = p.target_display_name || '某位好友';
+    return `- 你之前问 ${target}「${p.question}」—— 对方那边的对话已经收尾，转述给你的答案是：\n  ${p.answer}`;
+  });
+  return [
+    '## 刚回来的好友问询',
+    '（这些是你之前用 ask_friend 问出去、submit_inquiry_answer 已经收尾的答案。caller 这边正活跃，所以没有作为独立消息发出，需要你在本回合的回复里自然融入。不必逐字转述，按对话氛围吸收即可。）',
+    '',
+    ...items,
+  ].join('\n');
+}
+
+// Reminder section when the current conv IS the relay side of one or
+// more open inquiries (i.e. you, the bot, are sitting in your 1v1 with
+// a human friend you ask_friend'd earlier). Just lists inquiry_id +
+// question so the bot has the id at hand when it wants to call
+// submit_inquiry_answer. Without this, the id is lost across turns —
+// tool-call envelopes don't carry into the next round's history.
+function buildOpenRelayInquiriesSection(
+  open: BuildMessagesInput['openRelayInquiries'],
+): string {
+  if (!open || open.length === 0) return '';
+  const items = open.map(
+    (q) => `- inquiry_id=\`${q.inquiry_id}\` — 原始提问：「${q.question}」`,
+  );
+  return [
+    '## 这个对话上挂着等回收尾的 inquiry',
+    '（你之前在另一个会话里发起的 ask_friend，目标就是当前这位好友。等你和对方对话清楚、有答案可以转述回去时，调 `submit_inquiry_answer(inquiry_id, answer)` 收尾。）',
+    '',
+    ...items,
+  ].join('\n');
 }
 
 function buildSkillsSection(skills: BuildMessagesInput['skills']): string {
@@ -415,6 +538,9 @@ export type BuildSystemPromptInput = Pick<
   | 'chatMemo'
   | 'lookbacks'
   | 'attachmentInventory'
+  | 'socialGraph'
+  | 'pendingInquiryAnswers'
+  | 'openRelayInquiries'
 >;
 
 // Which surface the prompt is for. Each maps to its own platform prompt:
@@ -440,9 +566,14 @@ async function buildStablePersona(
   locale: Locale,
   surface: PromptSurface,
 ): Promise<string> {
-  const [platform, selfSection] = await Promise.all([
+  const [platform, selfSection, socialGraphSkillSection] = await Promise.all([
     loadPrompt(supa, PLATFORM_PROMPT_BY_SURFACE[surface], locale),
     buildSelfSection(supa, input.botMemory, locale),
+    // bot-social-graph skill body — always-on, board-editable via
+    // i18n_prompts. Loaded through the same prompt-loader cache as the
+    // platform prompt, so per-isolate this is a Map lookup after the
+    // first turn.
+    loadPrompt(supa, 'bot-social-graph', locale),
   ]);
   const identitySection = buildIdentitySection(input.bot.display_name);
   const botTzSection = buildBotTzSection(input.bot.tz);
@@ -464,6 +595,7 @@ async function buildStablePersona(
   return [
     platform, identitySection, botTzSection, modeInstr,
     selfSection, userModelSection, perceivedSelfSection,
+    socialGraphSkillSection,
     skillsSection, botNoteSection, chatMemoSection,
   ].filter(Boolean).join('\n\n');
 }
@@ -476,7 +608,20 @@ async function buildStablePersona(
 function buildVolatileContext(input: BuildSystemPromptInput): string {
   const attachmentSection = buildAttachmentInventorySection(input.attachmentInventory);
   const lookbackSection = buildLookbackSection(input.lookbacks);
-  return [attachmentSection, lookbackSection].filter(Boolean).join('\n\n');
+  const socialStatsSection = buildSocialGraphStatsSection(input.socialGraph);
+  const pendingAnswersSection = buildPendingInquiryAnswersSection(
+    input.pendingInquiryAnswers,
+  );
+  const openRelaySection = buildOpenRelayInquiriesSection(input.openRelayInquiries);
+  return [
+    attachmentSection,
+    lookbackSection,
+    socialStatsSection,
+    pendingAnswersSection,
+    openRelaySection,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
 }
 
 export async function buildSystemPrompt(

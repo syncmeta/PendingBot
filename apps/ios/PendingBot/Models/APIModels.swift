@@ -13,7 +13,8 @@ struct Bot: Codable, Identifiable, Hashable {
     /// name via `ModelCatalog`.
     let model: String?
     /// Visibility — drives the 私有/公有机器人 tag in friend + message lists.
-    /// `private` | `public_invite` | `public_open`. Optional so older
+    /// `private` | `public_invite`. (public_open was removed in
+    /// 20260527091508_drop_public_open_visibility.) Optional so older
     /// payloads that pre-date 0002_bot_visibility decode without breaking.
     let visibility: String?
     /// User who created this bot. NULL for system preset bots. Used to tell
