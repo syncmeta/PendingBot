@@ -35,6 +35,9 @@ import envelopeCollaborator_zh from '../../prompts/zh/envelope-collaborator.md';
 import title_zh from '../../prompts/zh/title.md';
 import groupRouter_zh from '../../prompts/zh/group-router.md';
 import botSocialGraph_zh from '../../prompts/zh/bot-social-graph.md';
+import sessionWorldModel_zh from '../../prompts/zh/session-world-model.md';
+
+import sessionWorldModel_en from '../../prompts/en/session-world-model.md';
 
 const PROMPTS_ZH = {
   'system': system_zh,
@@ -48,13 +51,16 @@ const PROMPTS_ZH = {
   'title': title_zh,
   'group-router': groupRouter_zh,
   'bot-social-graph': botSocialGraph_zh,
+  'session-world-model': sessionWorldModel_zh,
 } as const;
 
 export { PROMPT_NAMES, type PromptName } from './prompt-names';
 
 const PROMPTS_BY_LOCALE: Record<Locale, Partial<Record<PromptName, string>>> = {
   zh: PROMPTS_ZH,
-  en: {},
+  en: {
+    'session-world-model': sessionWorldModel_en,
+  },
 };
 
 // ── DB override cache ──────────────────────────────────────────────────
