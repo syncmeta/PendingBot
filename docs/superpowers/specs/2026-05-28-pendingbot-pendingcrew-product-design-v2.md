@@ -328,15 +328,47 @@ PendingBot 定位 = **人与 AI 协作的平台**。任何协作平台都需要�
 - ❌ ~~Kilo Code~~（不熟，砍掉降低复杂度，留 v1.x 再加）
 - ❌ ~~opencode~~（同上）
 
-### 8.2 本地 vs 云端
+### 8.2 Runtime Location（统一抽象）
 
-| | 本地 crew | 云端 crew |
-|---|---|---|
-| 跑在 | 用户 Mac（PendingCrew Mac runner） | Fly Machine |
-| 触发方 | PendingCrew Mac | PendingCrew Mac / iPad |
-| 工作目录 | 用户本机路径 | Fly machine 内路径，PendingCrew 自动 `mkdir` + 持久卷挂载 |
-| 计费 | 只有模型 token 走 subject 钱包（算力是用户自己 Mac） | 模型 token + **Fly 机器运行时长** 都走 subject 钱包 |
-| 未登录可用 | ✅ | ❌ |
+每个 crew 有一个 `runtime_location` 字段，决定 agent 实际跑在哪台机器上。
+
+#### 三种 location
+
+| | `local_host` | `peer_device` | `fly_machine` |
+|---|---|---|---|
+| 跑在 | 当前设备本身（PendingCrew 所在机器） | 同账户的另一台设备（主要是 Mac） | Fly cloud machine |
+| 适用场景 | Mac PendingCrew 直接跑本机 agent | iPad PendingCrew 把同账户 Mac 当云端 / Mac PendingCrew 遥控另一台 Mac | 任意端用云机器跑 agent |
+| 工作目录 | 本机路径 | peer 设备本地路径（peer 端配） | Fly machine 内路径，自动 `mkdir` + 持久卷 |
+| 算力计费 | 免费（用户自己的设备） | 免费（用户自己的设备） | Fly 时长走 `responsible_subject_id` 钱包 |
+| 模型 token | unified billing 或 BYOK | unified billing（必须登录态） | unified billing（必须登录态） |
+| 通信路径 | 本机 IPC | **edge 中转**（同 §9.6） | **edge 中转**（同 §9.6） |
+| 未登录可用 | ✅ | ❌（需要账号同步） | ❌ |
+| 阶段 | v1.0 | v1.0 | v1.1 |
+
+#### 关键洞察：`peer_device` 和 `fly_machine` 是同一种东西
+
+两者本质都是"**远程一台有 Process 能力的机器，本机只是控制面**"。复用同一套架构：
+
+- 身份验证（账号同步 / device grant）
+- 指令转发（edge channel + DO 或 realtime）
+- 状态同步（session 进度 / mailbox / 事件）
+- permission request 通道
+- 白板注入
+
+唯一区别：
+
+- **计费**：peer 算力免费 / Fly 按时长扣钱包
+- **机器生命周期**：peer 由用户开/关自己的 Mac / Fly 由用户在 PendingCrew 里开/关 machine
+
+→ **v1.0 做完 `peer_device` 时，`fly_machine` 的架构基础也铺好了**。v1.1 主要剩 Fly API 集成 + 按秒计费 + machine 管理 UI，通信层是现成的。这是 v1.0 → v1.1 过渡非常自然的根本原因。
+
+#### 选择 location 的产品入口
+
+创建 crew / 创建 session 时，用户在面板上选 location：
+
+- **Mac PendingCrew 用户**：默认 `local_host`，可选某台同账户 peer Mac 或（v1.1）`fly_machine`
+- **iPad PendingCrew 用户**：默认 `peer_device`（选哪台同账户 Mac），或（v1.1）`fly_machine`
+- **未登录 PendingCrew（BYOK）**：只能 `local_host`
 
 ### 8.3 工作目录模型
 
@@ -461,6 +493,13 @@ session 启动时注入的 system prompt 必须给一套**完整世界观**。�
 这份 system prompt 模板**是 v1 必交付物**，不能糊弄。
 
 ### 9.6 跨端遥控
+
+> 📐 **概念合并**：本节描述的"跨端遥控"，和 §8.2 中的 `peer_device` runtime location 是**同一件事的两个面**：
+>
+> - 从 PendingBot / iPad 的角度看：「我在遥控同账户 Mac」
+> - 从 crew 的角度看：「我跑在 `peer_device` 这个 location 上」
+>
+> v2 把这两种表达合并为同一个抽象，共享同一套 edge 通信架构。Fly Machine（`fly_machine` location）在 v1.1 复用这套架构，只多加 Fly API 集成和按时长计费。
 
 PendingBot 和 PendingCrew 是**账号同步**的关系。同一账号登录后，所有端的 crew/session 视图共享同一个事实源（后端 edge 服务 + 数据库）。
 
@@ -637,7 +676,7 @@ pendingcrew://machine/<machine-id>
 
 **必交付**：
 
-1. Fly Machine 集成：用户级 machine 开/关/销毁 / 规格选择 / 实时计费扣 subject 钱包
+1. Fly Machine 集成：用户级 machine 开/关/销毁 / 规格选择 / 实时计费扣 subject 钱包（**注**：架构层 —— edge 通信、状态同步、permission request 通道、白板注入 —— 在 v1.0 做 `peer_device` 时已铺好；这里主要是 Fly API 适配 + 按秒计费 + machine 管理 UI）
 2. 云端 crew 完整路径：crew 创建时选所在地、PendingCrew 在 machine 内 mkdir 工作目录 + 持久卷
 3. iPad PendingCrew 完整体验（基于云端 crew，三栏布局 + 妙控键盘适配）
 4. Machine 冷启动/休眠唤醒 UX
@@ -725,6 +764,7 @@ pendingcrew://machine/<machine-id>
 - [ ] v1.1 = Fly Machine 完整 + iPad PendingCrew
 - [ ] Fly 计费、machine 多 crew 共享、用户级管理
 - [ ] **跨端遥控**：PendingBot 任意端可遥控同账号 PendingCrew；PendingCrew iPad 可遥控同账号 PendingCrew Mac；走 edge 中转；BYOK 未登录态不参与
+- [ ] **Runtime Location 统一抽象**：`local_host` / `peer_device` / `fly_machine` 三种 location 共享同一套通信架构；v1.0 做完 peer 等于把 Fly 的通信层铺好
 
 ---
 
