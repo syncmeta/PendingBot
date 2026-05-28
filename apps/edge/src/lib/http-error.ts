@@ -82,7 +82,31 @@ export type ApiErrorCode =
   // ── Groups ────────────────────────────────────────────────
   | 'not_a_participant'
   | 'group_request_not_found'
-  | 'group_handle_invalid';
+  | 'group_handle_invalid'
+
+  // ── Crew (Phase 2) ────────────────────────────────────────
+  // Surfaced by /v1/crews/* and /v1/share-changes/*. The DB-side
+  // story:
+  //   * `crew_cycle`              — crew_attach_as_child would
+  //                                  introduce a cycle (cycle-guard
+  //                                  trigger fired).
+  //   * `crew_attach_forbidden`   — caller cannot act for the
+  //                                  child crew's responsible
+  //                                  subject (RPC 42501).
+  //   * `crew_share_invalid`      — share_bps outside 1..9999 or
+  //                                  malformed proposed_shares
+  //                                  payload.
+  //   * `crew_not_found`          — crew row missing or not visible
+  //                                  to caller (membership check
+  //                                  failed).
+  //   * `crew_share_change_forbidden` — caller cannot decide on a
+  //                                  share-change proposal as the
+  //                                  asserted subject.
+  | 'crew_cycle'
+  | 'crew_attach_forbidden'
+  | 'crew_share_invalid'
+  | 'crew_not_found'
+  | 'crew_share_change_forbidden';
 
 export interface ApiErrorBody {
   error: {
