@@ -671,6 +671,7 @@ export type Database = {
           model_id: string
           model_provider: string | null
           output_mode: string
+          responsible_subject_id: string | null
           slug: string
           tz: string | null
           updated_at: string
@@ -687,6 +688,7 @@ export type Database = {
           model_id: string
           model_provider?: string | null
           output_mode?: string
+          responsible_subject_id?: string | null
           slug: string
           tz?: string | null
           updated_at?: string
@@ -703,13 +705,22 @@ export type Database = {
           model_id?: string
           model_provider?: string | null
           output_mode?: string
+          responsible_subject_id?: string | null
           slug?: string
           tz?: string | null
           updated_at?: string
           visibility?: string
           voice_call_enabled?: boolean
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "bots_responsible_subject_id_fkey"
+            columns: ["responsible_subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       conversation_group_meta: {
         Row: {
@@ -809,6 +820,7 @@ export type Database = {
           metadata: Json
           parent_message_id: string | null
           random_model_config: Json | null
+          responsible_subject_id: string | null
           round_count: number
           spawner_bot_id: string | null
           title: string | null
@@ -827,6 +839,7 @@ export type Database = {
           metadata?: Json
           parent_message_id?: string | null
           random_model_config?: Json | null
+          responsible_subject_id?: string | null
           round_count?: number
           spawner_bot_id?: string | null
           title?: string | null
@@ -845,6 +858,7 @@ export type Database = {
           metadata?: Json
           parent_message_id?: string | null
           random_model_config?: Json | null
+          responsible_subject_id?: string | null
           round_count?: number
           spawner_bot_id?: string | null
           title?: string | null
@@ -864,6 +878,13 @@ export type Database = {
             columns: ["parent_message_id"]
             isOneToOne: false
             referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "conversations_responsible_subject_id_fkey"
+            columns: ["responsible_subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
           {
@@ -1766,6 +1787,8 @@ export type Database = {
           can_manage_runners: boolean
           can_manage_wallet: boolean
           created_at: string
+          granted_at: string
+          granted_by: string | null
           role: string
           subject_id: string
           user_id: string
@@ -1775,6 +1798,8 @@ export type Database = {
           can_manage_runners?: boolean
           can_manage_wallet?: boolean
           created_at?: string
+          granted_at?: string
+          granted_by?: string | null
           role: string
           subject_id: string
           user_id: string
@@ -1784,11 +1809,20 @@ export type Database = {
           can_manage_runners?: boolean
           can_manage_wallet?: boolean
           created_at?: string
+          granted_at?: string
+          granted_by?: string | null
           role?: string
           subject_id?: string
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "group_subject_members_granted_by_fkey"
+            columns: ["granted_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "group_subject_members_subject_id_fkey"
             columns: ["subject_id"]
@@ -3011,6 +3045,7 @@ export type Database = {
           lifetime_spent_credits: number
           lifetime_topup_credits: number
           subject_id: string
+          updated_at: string | null
         }
         Insert: {
           balance_credits?: number
@@ -3018,6 +3053,7 @@ export type Database = {
           lifetime_spent_credits?: number
           lifetime_topup_credits?: number
           subject_id: string
+          updated_at?: string | null
         }
         Update: {
           balance_credits?: number
@@ -3025,6 +3061,7 @@ export type Database = {
           lifetime_spent_credits?: number
           lifetime_topup_credits?: number
           subject_id?: string
+          updated_at?: string | null
         }
         Relationships: [
           {
@@ -3039,9 +3076,11 @@ export type Database = {
       subjects: {
         Row: {
           created_at: string
+          created_by: string | null
           display_name: string
           group_conversation_id: string | null
           id: string
+          kind: string
           status: string
           subject_type: string
           updated_at: string
@@ -3049,9 +3088,11 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          created_by?: string | null
           display_name: string
           group_conversation_id?: string | null
           id?: string
+          kind: string
           status?: string
           subject_type: string
           updated_at?: string
@@ -3059,15 +3100,24 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          created_by?: string | null
           display_name?: string
           group_conversation_id?: string | null
           id?: string
+          kind?: string
           status?: string
           subject_type?: string
           updated_at?: string
           user_id?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "subjects_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "subjects_group_conversation_id_fkey"
             columns: ["group_conversation_id"]
@@ -3765,6 +3815,15 @@ export type Database = {
       }
       _delete_account_internal: { Args: { p_uid: string }; Returns: undefined }
       _group_member_count: { Args: { p_conv_id: string }; Returns: number }
+      _grp_caller_role: {
+        Args: { p_caller: string; p_subject_id: string }
+        Returns: string
+      }
+      _grp_require_caller: { Args: never; Returns: string }
+      _grp_require_group_subject: {
+        Args: { p_subject_id: string }
+        Returns: undefined
+      }
       _mint_random_group_handle: {
         Args: { p_conv_id: string; p_handle_type: string }
         Returns: undefined
@@ -4120,6 +4179,34 @@ export type Database = {
       }
       group_set_member_role: {
         Args: { p_conv_id: string; p_role: string; p_target_user_id: string }
+        Returns: undefined
+      }
+      grp_add_member: {
+        Args: { p_group_subject_id: string; p_user_id: string }
+        Returns: undefined
+      }
+      grp_create_group_subject: {
+        Args: { p_display_name: string }
+        Returns: string
+      }
+      grp_demote_admin: {
+        Args: { p_group_subject_id: string; p_user_id: string }
+        Returns: undefined
+      }
+      grp_promote_to_admin: {
+        Args: { p_group_subject_id: string; p_user_id: string }
+        Returns: undefined
+      }
+      grp_remove_member: {
+        Args: { p_group_subject_id: string; p_user_id: string }
+        Returns: undefined
+      }
+      grp_topup_wallet: {
+        Args: { p_credits: number; p_group_subject_id: string }
+        Returns: number
+      }
+      grp_transfer_ownership: {
+        Args: { p_group_subject_id: string; p_to_user_id: string }
         Returns: undefined
       }
       is_bot_invitee: {
