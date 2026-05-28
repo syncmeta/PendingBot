@@ -1,4 +1,8 @@
-# Local Crew Captain Foundation Implementation Plan
+> ⚠️ **DEPRECATED — 2026-05-28**
+>
+> 这份 plan 已被 [`2026-05-28-v1-0-implementation-roadmap.md`](./2026-05-28-v1-0-implementation-roadmap.md)(roadmap T2.2 + T3.x)取代。保留作历史参考。后续 implementation 以新文件为准。
+
+# Local Crew Captain Foundation Implementation Plan(已废弃)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

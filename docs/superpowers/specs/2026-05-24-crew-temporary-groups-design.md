@@ -4,6 +4,13 @@
 分支：`codex/temporary-groups-foundation`
 
 > 2026-05-27 更新：本文件中关于 Crew、master bot、父子关系和 PendingCrew/PendingBot 产品边界的部分，已被 `docs/superpowers/specs/2026-05-27-crew-organization-model-design.md` 和 `docs/superpowers/specs/2026-05-27-pendingbot-pendingcrew-product-design.md` 修正。新实现应使用「机组」和 `captain`/「机长」语义。
+>
+> **2026-05-28 修订**:本文件随 [`2026-05-28-pendingbot-pendingcrew-product-design-v2.md`](./2026-05-28-pendingbot-pendingcrew-product-design-v2.md)(spec v2)做了术语对齐:
+>
+> 1. 全文 "workspace"(产品/语义层用法)改为 "工作目录(workspace)"。代码标识符(如 SQL 列名 `workspace_root`、`workspace_id`)保留英文不变。
+> 2. crew 的三属性分离:**所在地 / 标签 / 工作目录**,见 spec v2 §6.2。**注意 spec v2 把老 spec 中"项目"重命名为"标签"以避免与"工作目录"混淆**;本文件 v1 历史文本里没有"项目"这个术语,因此没有具体的"项目→标签"替换,但新实现按 spec v2 的命名走。
+> 3. 责任比例规则:任何冲突一律以 spec v2 §7.3 + `2026-05-27-crew-organization-model-design.md`(2026-05-28 修订版)为准。
+> 4. group_account 是**轻量化、可临时**的(出门旅游/家庭共享/公司团队同模型),跟 Notion workspace 重资产**完全不同**(spec v2 §4.2)。
 
 ## 目的
 
@@ -109,6 +116,8 @@ Crew 不是 Mac 专属功能。Mac 是更强的控制端和可选 runner host；
 
 - `temporary_group`：bot 创建的临时协作群。
 - `crew`：人类创建的 coding-agent 编排临时群。
+
+> **2026-05-28 校准**:`crew` 的三属性现在被明确**分离**:**所在地**(本地 / fly machine)、**标签**(轻量分类字符串)、**工作目录**(crew 默认 cwd)。详见 spec v2 §6.2。三者各自独立配置,不再混用 "workspace" 一个词代表多个语义。
 
 保留：
 
@@ -625,7 +634,7 @@ runner host 应该由 helper/bridge 承担，而不是绑死在某个窗口状�
 
 - auth secret 存 Keychain；
 - runner 只拿单 session lease；
-- workspace root 需要显式授权；
+- 工作目录(workspace root)需要显式授权；
 - 高风险操作必须走 permission request；
 - 本地 runner 不拿 service-role 凭据。
 
@@ -653,7 +662,7 @@ iOS 不能在手机本地执行 coding agent。
 macOS 需要两个原生 SwiftUI App，而不是一个 App 塞下所有模式：
 
 - `PendingBot` macOS 主应用：PendingBot 的桌面主端，负责 Messages、普通群、好友/联系人、Bots、Wallet、Settings、通知、“有求于你”和日常聊天操作。它和 iOS 主应用属于同一产品线，只是不走 Catalyst。
-- `PendingCrew` 独立 App：专业 Crew 工作台，负责 Crew、runner host、本机 workspace 授权、coding session 编排、权限审批、artifact/patch、session events。它可以向开源软件方向演进，但账号、subject、钱包、资源、bot 控制权和云端 API 仍属于 PendingBot 平台。
+- `PendingCrew` 独立 App：专业 Crew 工作台，负责 Crew、runner host、本机工作目录(workspace)授权、coding session 编排、权限审批、artifact/patch、session events。它可以向开源软件方向演进，但账号、subject、钱包、资源、bot 控制权和云端 API 仍属于 PendingBot 平台。
 
 两个 App 共享账号体系、扫码登录、subject grant、附件/资源 API 和基础设计语言，但不共享窗口结构。主应用可以通过 deep link 打开 `PendingCrew` 中的 Crew；`PendingCrew` 不承载普通聊天主流程。
 

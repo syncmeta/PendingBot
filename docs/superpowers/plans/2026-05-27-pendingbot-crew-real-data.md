@@ -1,4 +1,8 @@
-# PendingBot Crew Real Data Implementation Plan
+> ⚠️ **DEPRECATED — 2026-05-28**
+>
+> 这份 plan 已被 [`2026-05-28-v1-0-implementation-roadmap.md`](./2026-05-28-v1-0-implementation-roadmap.md)(完整取代:Crew real-data 路径并入 v1.0 路线图各 phase)取代。保留作历史参考。后续 implementation 以新文件为准。
+
+# PendingBot Crew Real Data Implementation Plan(已废弃)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
