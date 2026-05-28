@@ -8,11 +8,17 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    # Scaffold/dev 阶段不签名（macOS build 默认要求签名）
-    # 真正 deploy 时改成 Automatic + 设 DEVELOPMENT_TEAM
-    CODE_SIGNING_REQUIRED: "NO"
-    CODE_SIGNING_ALLOWED: "NO"
-    CODE_SIGN_IDENTITY: ""
+    # 签名策略:
+    # - iOS 真机(iphoneos):Automatic + dev team(用于装机 / TestFlight)
+    # - iOS Simulator + macOS:scaffold 阶段不签名(Mac 端目前只占位,不上 prod)
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: M42BKJN82S
+    "CODE_SIGNING_REQUIRED[sdk=iphonesimulator*]": "NO"
+    "CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]": "NO"
+    "CODE_SIGN_IDENTITY[sdk=iphonesimulator*]": ""
+    "CODE_SIGNING_REQUIRED[sdk=macosx*]": "NO"
+    "CODE_SIGNING_ALLOWED[sdk=macosx*]": "NO"
+    "CODE_SIGN_IDENTITY[sdk=macosx*]": ""
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
 packages:
