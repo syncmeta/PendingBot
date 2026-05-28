@@ -11,6 +11,7 @@
 		2DFC3899F9816634824C1EFF /* CrewSessionWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FFA131E8A46E341E75F7A01 /* CrewSessionWindowView.swift */; };
 		2F4C8E9B74443BE19546AC44 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DFC0F15C2EF325530543B30 /* LoginView.swift */; };
 		47D83B78734AEC171EAC5853 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4AB47EFABEEEDC3D1AA7F4D /* AppModel.swift */; };
+		4AC6269E4A657341E5773089 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 476A276CBDA4640936A8B817 /* Assets.xcassets */; };
 		50E92F718E5EC71E96ECD0F8 /* CrewCenterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 845C8C15B805012BF7FD6165 /* CrewCenterView.swift */; };
 		522751E374EB87F01B4A9528 /* LocalCodingAgentService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C657E83A90EF648972686C4 /* LocalCodingAgentService.swift */; };
 		5BBFB39FEFADFBC3E3A905C8 /* LocalCodingAgentSpec.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF8E8FC64275B7932540FB17 /* LocalCodingAgentSpec.swift */; };
@@ -49,6 +50,7 @@
 		2DFC0F15C2EF325530543B30 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
 		3BAF2A68B9A8EB6894BB8AB8 /* PendingCrewTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = PendingCrewTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		4452E801174262B66265E9B7 /* PendingCrewAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingCrewAPI.swift; sourceTree = "<group>"; };
+		476A276CBDA4640936A8B817 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		486ABCF7EEB8DF24CA6EDF11 /* CrewStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewStore.swift; sourceTree = "<group>"; };
 		5857EBAF956D4104D4FBCBB2 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		68DED4864DF441E88BAC0A24 /* LocalCodingAgentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalCodingAgentTests.swift; sourceTree = "<group>"; };
@@ -89,6 +91,7 @@
 		06B799E6079BEBE594387E1D = {
 			isa = PBXGroup;
 			children = (
+				4AD1CC10B8B6DC828B1B6894 /* Resources */,
 				9C62D8BCFC543E54564D379B /* Sources */,
 				23F40B7145FEE55D6C4A2106 /* Tests */,
 				7C4CB926626D9A2080B13B09 /* Products */,
@@ -132,6 +135,14 @@
 				D1A9FCA930C6487C96B9A211 /* MacRootView.swift */,
 			);
 			path = Views;
+			sourceTree = "<group>";
+		};
+		4AD1CC10B8B6DC828B1B6894 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				476A276CBDA4640936A8B817 /* Assets.xcassets */,
+			);
+			path = Resources;
 			sourceTree = "<group>";
 		};
 		6783BFF7A796E79A75BEB76A /* Support */ = {
@@ -236,6 +247,7 @@
 			buildConfigurationList = 55D3313EDB00121B7831C68A /* Build configuration list for PBXNativeTarget "PendingCrew" */;
 			buildPhases = (
 				BBCCC3B64E471289E68CB06C /* Sources */,
+				599ED971D55B5B34CD392AAA /* Resources */,
 			);
 			buildRules = (
 			);
@@ -286,6 +298,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		599ED971D55B5B34CD392AAA /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4AC6269E4A657341E5773089 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		BBCCC3B64E471289E68CB06C /* Sources */ = {
