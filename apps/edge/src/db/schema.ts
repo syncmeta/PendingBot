@@ -1055,6 +1055,7 @@ export type Database = {
       crew_parent_links: {
         Row: {
           child_crew_id: string
+          child_share_bps: number
           confirmed_at: string | null
           created_at: string
           created_by_bot_id: string | null
@@ -1068,6 +1069,7 @@ export type Database = {
         }
         Insert: {
           child_crew_id: string
+          child_share_bps: number
           confirmed_at?: string | null
           created_at?: string
           created_by_bot_id?: string | null
@@ -1081,6 +1083,7 @@ export type Database = {
         }
         Update: {
           child_crew_id?: string
+          child_share_bps?: number
           confirmed_at?: string | null
           created_at?: string
           created_by_bot_id?: string | null
@@ -1116,10 +1119,55 @@ export type Database = {
           },
         ]
       }
+      crew_pending_share_changes: {
+        Row: {
+          approvals: Json
+          created_at: string
+          crew_id: string
+          decided_at: string | null
+          id: string
+          proposal_payload: Json
+          proposed_by: string | null
+          requires_subject_approvals: string[]
+          status: string
+        }
+        Insert: {
+          approvals?: Json
+          created_at?: string
+          crew_id: string
+          decided_at?: string | null
+          id?: string
+          proposal_payload: Json
+          proposed_by?: string | null
+          requires_subject_approvals: string[]
+          status?: string
+        }
+        Update: {
+          approvals?: Json
+          created_at?: string
+          crew_id?: string
+          decided_at?: string | null
+          id?: string
+          proposal_payload?: Json
+          proposed_by?: string | null
+          requires_subject_approvals?: string[]
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crew_pending_share_changes_crew_id_fkey"
+            columns: ["crew_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       crew_responsibility_shares: {
         Row: {
           created_at: string
           crew_conversation_id: string
+          is_tiebreaker: boolean
           share_bps: number
           source: string
           subject_id: string
@@ -1127,6 +1175,7 @@ export type Database = {
         Insert: {
           created_at?: string
           crew_conversation_id: string
+          is_tiebreaker?: boolean
           share_bps: number
           source?: string
           subject_id: string
@@ -1134,6 +1183,7 @@ export type Database = {
         Update: {
           created_at?: string
           crew_conversation_id?: string
+          is_tiebreaker?: boolean
           share_bps?: number
           source?: string
           subject_id?: string
@@ -3224,6 +3274,7 @@ export type Database = {
           cloud_machine_id: string | null
           conversation_id: string
           created_at: string
+          fly_machine_id: string | null
           initiator_bot_id: string | null
           initiator_type: string
           initiator_user_id: string | null
@@ -3231,15 +3282,19 @@ export type Database = {
           master_bot_id: string | null
           master_member_id: string | null
           parent_temporary_group_id: string | null
+          peer_device_id: string | null
           responsibility_mode: string
           responsible_subject_id: string
           root_temporary_group_id: string | null
           runtime_kind: string
+          runtime_location: string
           source_conversation_id: string | null
           status: string
+          tag: string | null
           temporary_kind: string
           title: string | null
           updated_at: string
+          working_directory: string | null
         }
         Insert: {
           captain_bot_id?: string | null
@@ -3247,6 +3302,7 @@ export type Database = {
           cloud_machine_id?: string | null
           conversation_id: string
           created_at?: string
+          fly_machine_id?: string | null
           initiator_bot_id?: string | null
           initiator_type: string
           initiator_user_id?: string | null
@@ -3254,15 +3310,19 @@ export type Database = {
           master_bot_id?: string | null
           master_member_id?: string | null
           parent_temporary_group_id?: string | null
+          peer_device_id?: string | null
           responsibility_mode?: string
           responsible_subject_id: string
           root_temporary_group_id?: string | null
           runtime_kind?: string
+          runtime_location?: string
           source_conversation_id?: string | null
           status?: string
+          tag?: string | null
           temporary_kind: string
           title?: string | null
           updated_at?: string
+          working_directory?: string | null
         }
         Update: {
           captain_bot_id?: string | null
@@ -3270,6 +3330,7 @@ export type Database = {
           cloud_machine_id?: string | null
           conversation_id?: string
           created_at?: string
+          fly_machine_id?: string | null
           initiator_bot_id?: string | null
           initiator_type?: string
           initiator_user_id?: string | null
@@ -3277,15 +3338,19 @@ export type Database = {
           master_bot_id?: string | null
           master_member_id?: string | null
           parent_temporary_group_id?: string | null
+          peer_device_id?: string | null
           responsibility_mode?: string
           responsible_subject_id?: string
           root_temporary_group_id?: string | null
           runtime_kind?: string
+          runtime_location?: string
           source_conversation_id?: string | null
           status?: string
+          tag?: string | null
           temporary_kind?: string
           title?: string | null
           updated_at?: string
+          working_directory?: string | null
         }
         Relationships: [
           {
@@ -3823,6 +3888,15 @@ export type Database = {
         Args: { p_allowed_roles: string[]; p_conv_id: string }
         Returns: undefined
       }
+      _crew_bot_display_name: { Args: { p_bot_id: string }; Returns: string }
+      _crew_caller_can_act_for_subject: {
+        Args: { p_caller: string; p_subject_id: string }
+        Returns: boolean
+      }
+      _crew_caller_owns_bot: {
+        Args: { p_bot_id: string; p_caller: string }
+        Returns: boolean
+      }
       _delete_account_internal: { Args: { p_uid: string }; Returns: undefined }
       _group_member_count: { Args: { p_conv_id: string }; Returns: number }
       _grp_caller_role: {
@@ -4041,6 +4115,46 @@ export type Database = {
           p_summary?: string
         }
         Returns: string
+      }
+      create_crew_with_captain: {
+        Args: {
+          p_captain_bot_id?: string
+          p_captain_source?: string
+          p_captain_template_name?: string
+          p_fly_machine_id?: string
+          p_peer_device_id?: string
+          p_responsible_subject_id: string
+          p_runtime_location?: string
+          p_tag?: string
+          p_title: string
+          p_working_directory?: string
+        }
+        Returns: string
+      }
+      crew_approve_share_change: {
+        Args: { p_change_id: string; p_subject_id: string }
+        Returns: string
+      }
+      crew_attach_as_child: {
+        Args: { p_child: string; p_child_keeps_bps: number; p_parent: string }
+        Returns: undefined
+      }
+      crew_propose_share_change: {
+        Args: {
+          p_crew_id: string
+          p_proposal_payload: Json
+          p_requires_subject_approvals: string[]
+        }
+        Returns: string
+      }
+      crew_propose_split_distinct: {
+        Args: { p_seed?: number; p_shares: Json }
+        Returns: Json
+      }
+      crew_recompute_shares: { Args: { p_crew_id: string }; Returns: undefined }
+      crew_recompute_tiebreaker: {
+        Args: { p_crew_id: string }
+        Returns: undefined
       }
       decide_human_help_request: {
         Args: { p_decision: string; p_request_id: string }
