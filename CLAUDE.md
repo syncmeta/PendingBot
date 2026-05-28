@@ -58,7 +58,7 @@ Before merging into `main`, run typecheck on whatever was touched:
 
 - Edge changes: `bun --filter='@pendingbot/edge' run typecheck`
 - Edge tests: `cd apps/edge && ./node_modules/.bin/vitest run` (vitest tests sit under `apps/edge/src/lib/*.test.ts` + `apps/edge/tests/*.test.ts`)
-- iOS changes: `cd apps/ios && xcodebuild -project PendingBot.xcodeproj -scheme PendingBot -configuration Debug -sdk iphonesimulator build` (or whatever scheme the user has wired)
+- iOS / iPad / macOS changes: `cd apps/pendingbot && xcodebuild -project PendingBot.xcodeproj -scheme PendingBot -destination 'generic/platform=iOS Simulator' build`（Mac 端：`-destination 'platform=macOS'`）。改 `project.yml` 后跑 `xcodegen` 再编译。
 - Migrations: new files use a timestamp prefix (see "Before writing a new migration" below); legacy 4-digit files are fine left as-is
 
 If typecheck fails, fix on the branch and re-commit; don't merge red.

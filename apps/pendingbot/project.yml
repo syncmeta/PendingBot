@@ -1,0 +1,78 @@
+name: PendingBot
+options:
+  bundleIdPrefix: com.pendingname
+  deploymentTarget:
+    iOS: "17.0"
+    macOS: "14.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    # Scaffold/dev 阶段不签名（macOS build 默认要求签名）
+    # 真正 deploy 时改成 Automatic + 设 DEVELOPMENT_TEAM
+    CODE_SIGNING_REQUIRED: "NO"
+    CODE_SIGNING_ALLOWED: "NO"
+    CODE_SIGN_IDENTITY: ""
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+packages:
+  GRDB:
+    url: https://github.com/duckduckgo/GRDB.swift
+    exactVersion: 2.4.2-1
+  GoogleSignIn:
+    url: https://github.com/google/GoogleSignIn-iOS
+    minVersion: 8.0.0
+    maxVersion: 9.0.0
+  MarkdownUI:
+    url: https://github.com/gonzalezreal/swift-markdown-ui
+    minVersion: 2.4.0
+    maxVersion: 3.0.0
+  SwiftMath:
+    url: https://github.com/mgriebling/SwiftMath
+    minVersion: 1.0.0
+    maxVersion: 2.0.0
+  Supabase:
+    url: https://github.com/supabase/supabase-swift
+    minVersion: 2.0.0
+    maxVersion: 3.0.0
+  WebRTC:
+    url: https://github.com/stasel/WebRTC
+    minVersion: 130.0.0
+    maxVersion: 131.0.0
+targets:
+  PendingBot:
+    type: application
+    supportedDestinations: [iOS, macOS]
+    sources:
+      - path: Sources
+      - path: Resources
+        # Info.plist 是 INFOPLIST_FILE 引用，不能也 copy 进 bundle
+        excludes:
+          - "Info.plist"
+          - "PendingBot.entitlements"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.pendingname.pendingbot
+        PRODUCT_NAME: PendingBot
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Info.plist
+        CODE_SIGN_ENTITLEMENTS: Resources/PendingBot.entitlements
+        # 1 = iPhone, 2 = iPad
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ENABLE_PREVIEWS: YES
+        SUPPORTS_MACCATALYST: NO
+        # 不为 macOS 提供 Designed-for-iPad 模式（要真正的 SwiftUI macOS）
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+    dependencies:
+      - package: GRDB
+        product: GRDB
+      - package: GoogleSignIn
+        product: GoogleSignIn
+      - package: MarkdownUI
+        product: MarkdownUI
+      - package: SwiftMath
+        product: SwiftMath
+      - package: Supabase
+        product: Supabase
+      - package: WebRTC
+        product: WebRTC
