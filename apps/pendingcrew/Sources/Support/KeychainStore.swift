@@ -1,8 +1,9 @@
 import Foundation
 import Security
 
+/// PendingCrew 凭据存储。iOS 和 macOS 共用 Security framework，跨平台 OK。
 enum KeychainStore {
-    private static let service = "com.pendingname.pendingbot.mac"
+    private static let service = "com.pendingname.pendingcrew"
 
     static func set(_ value: String, account: String) throws {
         let data = Data(value.utf8)
@@ -62,4 +63,3 @@ struct KeychainError: LocalizedError {
         return "Keychain error \(status): \(message)"
     }
 }
-
