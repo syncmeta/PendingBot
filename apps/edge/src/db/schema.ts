@@ -2981,6 +2981,7 @@ export type Database = {
           issued_grant_id: string | null
           platform: string
           requested_scopes: Json
+          requested_subject_id: string | null
           status: string
         }
         Insert: {
@@ -3000,6 +3001,7 @@ export type Database = {
           issued_grant_id?: string | null
           platform?: string
           requested_scopes?: Json
+          requested_subject_id?: string | null
           status?: string
         }
         Update: {
@@ -3019,6 +3021,7 @@ export type Database = {
           issued_grant_id?: string | null
           platform?: string
           requested_scopes?: Json
+          requested_subject_id?: string | null
           status?: string
         }
         Relationships: [
@@ -3034,6 +3037,13 @@ export type Database = {
             columns: ["issued_grant_id"]
             isOneToOne: false
             referencedRelation: "subject_device_grants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subject_device_login_challenges_requested_subject_id_fkey"
+            columns: ["requested_subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
         ]

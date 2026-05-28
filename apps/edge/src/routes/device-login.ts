@@ -47,6 +47,13 @@ const CreateChallengeBody = z.object({
   deviceName: z.string().trim().min(1).max(120),
   devicePublicKey: z.string().trim().min(16).max(4096),
   scopes: z.array(Scope).default(['subject:read']),
+  // Optional hint: which subject the requester wants to log in as. The
+  // challenge creator is unauthenticated, so we do NOT verify permissions
+  // here — we only record the hint. The PendingBot user who approves the
+  // challenge sees this hint and, if non-null, MUST approve with the same
+  // subjectId (enforced in /challenges/:id/approve). This blocks the
+  // "trick the approver into signing for a different subject" attack.
+  subjectId: z.string().uuid().optional(),
 });
 
 const ApproveChallengeBody = z.object({
@@ -143,6 +150,7 @@ deviceLoginRoutes.post('/challenges', async (c) => {
     device_name: parsed.deviceName,
     device_public_key: parsed.devicePublicKey,
     requested_scopes: parsed.scopes as Json,
+    requested_subject_id: parsed.subjectId ?? null,
     status: 'pending',
     expires_at: expiresAt,
   });
@@ -170,7 +178,7 @@ deviceLoginRoutes.get('/challenges/:id', async (c) => {
   const svc = untypedDb(c.env);
   const { data: challenge, error } = await svc
     .from('subject_device_login_challenges')
-    .select('id, challenge_secret_hash, app_kind, platform, device_name, device_public_key, requested_scopes, status, approved_subject_id, approved_by_user_id, grant_kind, issued_grant_id, expires_at')
+    .select('id, challenge_secret_hash, app_kind, platform, device_name, device_public_key, requested_scopes, requested_subject_id, status, approved_subject_id, approved_by_user_id, grant_kind, issued_grant_id, expires_at')
     .eq('id', challengeId)
     .maybeSingle();
   if (error) return jsonError(c, 500, 'database_error', { detail: error.message });
@@ -233,7 +241,7 @@ deviceLoginRoutes.post('/challenges/:id/approve', requireSession(), async (c) =>
   const svc = untypedDb(c.env);
   const { data: challenge, error } = await svc
     .from('subject_device_login_challenges')
-    .select('id, challenge_secret_hash, app_kind, requested_scopes, status, expires_at')
+    .select('id, challenge_secret_hash, app_kind, requested_scopes, requested_subject_id, status, expires_at')
     .eq('id', challengeId)
     .maybeSingle();
   if (error) return jsonError(c, 500, 'database_error', { detail: error.message });
@@ -252,6 +260,17 @@ deviceLoginRoutes.post('/challenges/:id/approve', requireSession(), async (c) =>
   }
   if (!appGrantCompatible(challenge.app_kind as z.infer<typeof AppKind>, parsed.grantKind)) {
     return jsonError(c, 400, 'invalid_body', { message: 'grant kind does not match app kind' });
+  }
+  // Anti-spoof: if the requester pinned a subject at challenge-creation
+  // time, the approver must approve with that same subject. Otherwise an
+  // attacker could swap "I want to log in as my personal account" into
+  // "approver signs me in as their group account".
+  const requestedSubject = challenge.requested_subject_id;
+  if (typeof requestedSubject === 'string' && requestedSubject !== parsed.subjectId) {
+    return jsonError(c, 409, 'subject_mismatch', {
+      message: 'challenge was created for a different subject',
+      detail: { requestedSubjectId: requestedSubject },
+    });
   }
   const allowedScopes = allowedScopesForGrant(parsed.grantKind);
   if (!scopesSubsetOf(parsed.scopes, allowedScopes)) {

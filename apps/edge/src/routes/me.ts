@@ -21,6 +21,7 @@ meRoutes.use('/memory', requireSession());
 meRoutes.use('/balance', requireSession());
 meRoutes.use('/redeem', requireSession());
 meRoutes.use('/billing/*', requireSession());
+meRoutes.use('/subjects', requireSession());
 
 function billingCategory(taskType: string, metadata: unknown): { key: string; label: string } {
   const source = metadata && typeof metadata === 'object'
@@ -171,6 +172,80 @@ meRoutes.get('/subject', requireSubjectAuth(['subject:read']), async (c) => {
       lifetime_spent_credits: wallet?.lifetime_spent_credits ?? 0,
     },
   });
+});
+
+// GET /v1/me/subjects — every subject the caller can act on:
+//   1. their personal user_account subject
+//   2. group_account subjects where they are owner/admin (the only roles
+//      allowed to "log in as the group" per spec v2 §4.3 — member can use
+//      the group wallet for tasks but cannot mint a device-login grant for
+//      it)
+// Powers the iOS PendingBot "approve PendingCrew login → choose subject"
+// picker.
+meRoutes.get('/subjects', async (c) => {
+  const userJwt = c.var.userJwt!;
+  const userId = c.var.userId!;
+  const supa = userClient(c.env, userJwt);
+
+  // user_account subject — always exactly one row per user (subject_foundation
+  // backfill + signup trigger guarantee it).
+  const { data: personal, error: personalErr } = await supa
+    .from('subjects')
+    .select('id, subject_type, display_name, status')
+    .eq('subject_type', 'user_account')
+    .eq('user_id', userId)
+    .eq('status', 'active')
+    .maybeSingle();
+  if (personalErr) {
+    console.error('[me/subjects] personal read failed', personalErr);
+    return jsonError(c, 500, 'internal_error');
+  }
+
+  // group_account subjects via group_subject_members. RLS on
+  // group_subject_members already scopes membership to the calling user,
+  // and the join into subjects exposes only those rows. Filter to
+  // owner/admin here — the API contract is "subjects you can log in as",
+  // not "subjects you can spend from".
+  const { data: groupRows, error: groupErr } = await supa
+    .from('group_subject_members')
+    .select('role, subject:subjects!inner(id, subject_type, display_name, status)')
+    .eq('user_id', userId)
+    .in('role', ['owner', 'admin']);
+  if (groupErr) {
+    console.error('[me/subjects] group read failed', groupErr);
+    return jsonError(c, 500, 'internal_error');
+  }
+
+  type SubjectListItem = {
+    id: string;
+    kind: 'user_account' | 'group_account';
+    displayName: string;
+    role?: 'owner' | 'admin';
+  };
+  const items: SubjectListItem[] = [];
+  if (personal) {
+    items.push({
+      id: personal.id,
+      kind: 'user_account',
+      displayName: personal.display_name,
+    });
+  }
+  for (const row of groupRows ?? []) {
+    // PostgREST nested select returns either an object or an array
+    // depending on FK cardinality; group_subject_members has a single FK
+    // to subjects so the typed shape is an object, but be defensive.
+    const subj = Array.isArray(row.subject) ? row.subject[0] : row.subject;
+    if (!subj || subj.status !== 'active' || subj.subject_type !== 'group_account') continue;
+    const role = row.role === 'owner' || row.role === 'admin' ? row.role : undefined;
+    items.push({
+      id: subj.id,
+      kind: 'group_account',
+      displayName: subj.display_name,
+      role,
+    });
+  }
+
+  return c.json({ subjects: items });
 });
 
 // POST /v1/me/redeem — trade a redemption code for credits. Atomic in

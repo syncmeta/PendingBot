@@ -15,6 +15,25 @@ struct CrewSubject: Decodable, Identifiable, Hashable {
     let status: String
 }
 
+/// 一个 user 能 "代表登录" 的 subject。返回自
+/// `GET /v1/me/subjects` (apps/edge/src/routes/me.ts) — 个人
+/// user_account + 自己 owner/admin 的所有 group_account。member
+/// 没法代表群登录到 PendingCrew 跑本机 agent (spec v2 §4.3)。
+struct SubjectListItem: Decodable, Identifiable, Hashable {
+    let id: String
+    /// `"user_account"` 或 `"group_account"`
+    let kind: String
+    let displayName: String
+    /// 仅 group_account 有；`"owner"` / `"admin"`
+    let role: String?
+
+    var isGroupAccount: Bool { kind == "group_account" }
+}
+
+struct SubjectListResponse: Decodable {
+    let subjects: [SubjectListItem]
+}
+
 struct CrewSummary: Decodable, Identifiable, Hashable {
     var id: String { conversation_id }
     let conversation_id: String
@@ -178,6 +197,13 @@ extension APIClient {
     func crewCurrentSubject() async throws -> CrewSubject {
         let envelope: CrewSubjectEnvelope = try await get("v1/me/subject")
         return envelope.subject
+    }
+
+    /// Subjects the caller can act on (personal + owner/admin group
+    /// accounts). Powers the "approve device-login → which subject" picker.
+    func meSubjects() async throws -> [SubjectListItem] {
+        let response: SubjectListResponse = try await get("v1/me/subjects")
+        return response.subjects
     }
 
     func crewList() async throws -> [CrewSummary] {
