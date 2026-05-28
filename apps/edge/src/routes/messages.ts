@@ -12,6 +12,7 @@ import { resolveGroupMentions } from '../lib/group-mentions';
 import { summarizeAttachments, DEFAULT_VISION_MODEL } from '../llm/vision';
 import { UUID_RE } from '../lib/ids';
 import { jsonError } from '../lib/http-error';
+import type { Json } from '../db/schema';
 import { deleteCachedAttachment, removeInventoryIds } from '../lib/attachment-cache';
 import { resolveBot } from '../lib/bot-cache';
 import { deleteCachedConv, resolveConv } from '../lib/conv-cache';
@@ -1144,6 +1145,258 @@ messageRoutes.post('/:id/recall', async (c) => {
   }
 
   return c.json({ ok: true });
+});
+
+// POST /v1/messages/:id/crew-proposal/decide
+//
+// Human decides on a bot's start_crew proposal (spec v2 §6.4).
+//
+// `:id` is a log message id with role='log', log_kind='crew_proposal'
+// (filed by the start_crew tool in lib/bot-reply/tools/start-crew.ts).
+// Body: { decision: 'approve' | 'reject' }.
+//
+// Auth contract:
+//   * caller must be the conv's user_id (user_bot) OR a user-type
+//     conversation_participant (group). Bots calling this endpoint are
+//     refused outright — only humans approve crew spend.
+//   * iOS hits this through APIClient.post, which carries a supabase
+//     user JWT (requireSession middleware). Bot turns can't reach here.
+//
+// On approve:
+//   1. resolve responsible_subject_id from the enclosing conversation
+//      (created at conv setup time per migration 20260527073317);
+//   2. call create_crew_with_captain with captain_source='reuse_bot',
+//      captain_bot_id = the proposing bot, runtime_location='local_host'
+//      (peer/fly need a follow-up picker in iOS — out of scope here);
+//   3. if payload.proposed_parent_crew_id is set, call crew_attach_as_child
+//      with the new crew as child + a default 50/50 split (childKeepsBps
+//      = 5000). The split is provisional; the responsible-share-change
+//      flow exists separately for re-balancing.
+//   4. patch the log_payload to status='approved', crew_id=<new>,
+//      decided_by, decided_at.
+//
+// On reject: just patch status='rejected' + decided_by + decided_at —
+// no DB side-effects, no captain creation. The bot will see the updated
+// payload next time it reads conversation history.
+//
+// Idempotent: a second decide call on an already-decided proposal
+// returns 409 crew_proposal_already_decided with the existing decision
+// in `detail`. (We could 200 + already=true like recall, but a crew
+// is a real allocation — better to surface the conflict so the iOS
+// UI can refresh and disable the buttons.)
+messageRoutes.post('/:id/crew-proposal/decide', async (c) => {
+  const userId = c.var.userId!;
+  const userJwt = c.var.userJwt!;
+  const messageId = c.req.param('id');
+  if (!UUID_RE.test(messageId)) {
+    return jsonError(c, 400, 'invalid_id');
+  }
+
+  // We deliberately don't honour a bot-identity caller — only humans
+  // approve crew creation (spec v2 §6.4). The /v1/messages prefix is
+  // guarded by requireSession() which only mints sessions for users
+  // (bots don't have their own JWTs against this surface), but defend
+  // in depth: if userId is missing we 403 with the bot_caller code.
+  if (!userId) {
+    return jsonError(c, 403, 'crew_proposal_bot_caller_forbidden');
+  }
+
+  const Body = z.object({
+    decision: z.enum(['approve', 'reject']),
+  });
+  let parsed: z.infer<typeof Body>;
+  try {
+    parsed = Body.parse(await c.req.json());
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+
+  const supa = serviceClient(c.env);
+
+  // 1) Load the proposal row.
+  const { data: msgRow, error: msgErr } = await supa
+    .from('messages')
+    .select('id, conversation_id, role, log_kind, log_payload, sender_bot_id')
+    .eq('id', messageId)
+    .maybeSingle();
+  if (msgErr) return jsonError(c, 500, 'database_error', { detail: msgErr.message });
+  if (!msgRow || msgRow.role !== 'log' || msgRow.log_kind !== 'crew_proposal') {
+    return jsonError(c, 404, 'crew_proposal_not_found');
+  }
+  const payload = (msgRow.log_payload ?? {}) as Record<string, unknown>;
+  const currentStatus = typeof payload.status === 'string' ? payload.status : 'pending';
+  if (currentStatus !== 'pending') {
+    // Idempotent surface — return 409 with the existing decision so the
+    // iOS card can refresh status without refiring the button.
+    return jsonError(c, 409, 'crew_proposal_already_decided', {
+      detail: {
+        status: currentStatus,
+        crew_id: payload.crew_id ?? null,
+        decided_by: payload.decided_by ?? null,
+        decided_at: payload.decided_at ?? null,
+      },
+    });
+  }
+  const conversationId = msgRow.conversation_id as string;
+
+  // 2) Membership gate — caller must be a human in the proposal's conv.
+  //    user_bot: conv.user_id === caller. group: caller has a
+  //    participant_type='user' row. user_user / self: not supported (the
+  //    start_crew tool already refuses those, but be defensive).
+  const { data: convRow, error: convErr } = await supa
+    .from('conversations')
+    .select('id, conversation_type, user_id, responsible_subject_id')
+    .eq('id', conversationId)
+    .maybeSingle();
+  if (convErr) return jsonError(c, 500, 'database_error', { detail: convErr.message });
+  if (!convRow) return jsonError(c, 404, 'conversation_not_found');
+
+  const convType = (convRow.conversation_type as string | undefined) ?? '';
+  let memberOk = false;
+  if (convType === 'user_bot' || convType === 'self') {
+    memberOk = convRow.user_id === userId;
+  } else if (convType === 'group') {
+    const { data: part, error: partErr } = await supa
+      .from('conversation_participants')
+      .select('participant_id')
+      .eq('conversation_id', conversationId)
+      .eq('participant_type', 'user')
+      .eq('participant_id', userId)
+      .maybeSingle();
+    if (partErr) return jsonError(c, 500, 'database_error', { detail: partErr.message });
+    memberOk = !!part;
+  }
+  if (!memberOk) {
+    return jsonError(c, 403, 'crew_proposal_forbidden');
+  }
+
+  // 3) Decision branch.
+  if (parsed.decision === 'reject') {
+    const newPayload: Record<string, unknown> = {
+      ...payload,
+      status: 'rejected',
+      decided_by: userId,
+      decided_at: new Date().toISOString(),
+    };
+    const { error: updErr } = await supa
+      .from('messages')
+      .update({ log_payload: newPayload as Json })
+      .eq('id', messageId);
+    if (updErr) return jsonError(c, 500, 'database_error', { detail: updErr.message });
+    return c.json({ ok: true, status: 'rejected' });
+  }
+
+  // approve
+  const proposedByBotId = typeof payload.proposed_by_bot_id === 'string' ? payload.proposed_by_bot_id : null;
+  const proposedName = typeof payload.proposed_name === 'string' ? payload.proposed_name : '';
+  const proposedTag = typeof payload.proposed_tag === 'string' ? payload.proposed_tag : null;
+  const proposedWorkingDir = typeof payload.proposed_working_directory === 'string' ? payload.proposed_working_directory : null;
+  const proposedParentCrewId = typeof payload.proposed_parent_crew_id === 'string' ? payload.proposed_parent_crew_id : null;
+
+  if (!proposedByBotId || !proposedName) {
+    // Defensive — the start_crew tool always fills these, but a
+    // hand-edited payload could trip it. 500 because this is a server-
+    // side invariant, not a client problem.
+    return jsonError(c, 500, 'database_error', {
+      detail: 'crew_proposal payload missing proposed_by_bot_id / proposed_name',
+    });
+  }
+
+  // responsible_subject_id source of truth: the conversation row. Per
+  // migration 20260527084229 every active conv has it set (user_bot
+  // → caller's user_account; group → group_account if any else owner's
+  // user_account). If the column is somehow null on a legacy row, fall
+  // back to the caller's own user_account.
+  let responsibleSubjectId = convRow.responsible_subject_id as string | null;
+  if (!responsibleSubjectId) {
+    const { data: subjRow, error: subjErr } = await supa
+      .from('subjects')
+      .select('id')
+      .eq('subject_type', 'user_account')
+      .eq('user_id', userId)
+      .eq('status', 'active')
+      .maybeSingle();
+    if (subjErr) return jsonError(c, 500, 'database_error', { detail: subjErr.message });
+    if (!subjRow) {
+      return jsonError(c, 500, 'database_error', {
+        detail: 'no responsible subject available for caller',
+      });
+    }
+    responsibleSubjectId = subjRow.id as string;
+  }
+
+  // Use the user-scoped client for the RPC so auth.uid() = caller —
+  // create_crew_with_captain reads it for the owner-of-bot check.
+  const supaUser = userClient(c.env, userJwt);
+  const { data: newCrewIdRaw, error: rpcErr } = await supaUser.rpc('create_crew_with_captain', {
+    p_responsible_subject_id: responsibleSubjectId,
+    p_title: proposedName,
+    p_runtime_location: 'local_host',
+    p_working_directory: proposedWorkingDir ?? undefined,
+    p_tag: proposedTag ?? undefined,
+    p_captain_source: 'reuse_bot',
+    p_captain_bot_id: proposedByBotId,
+  });
+  if (rpcErr) {
+    const code = (rpcErr as { code?: string }).code;
+    const message = (rpcErr as { message?: string }).message ?? 'rpc failed';
+    if (code === '42501' || /forbidden/i.test(message)) {
+      // create_crew_with_captain rejects when the caller can't act for
+      // the responsible subject, or doesn't own the proposing bot. The
+      // canonical 'caller cannot act' case is rare here (the conv's
+      // responsible subject is the caller's own subject by construction),
+      // but the bot-ownership case can fire when the proposing bot was
+      // re-assigned out from under the user.
+      return jsonError(c, 403, 'forbidden', { message });
+    }
+    return jsonError(c, 500, 'database_error', { detail: message });
+  }
+  const newCrewId = newCrewIdRaw as string;
+
+  // Optional parent-attach. We use a 50/50 split as a placeholder; the
+  // user can re-propose via /v1/crews/:id/share-changes afterwards. We
+  // surface the attach failure but DON'T roll back the crew — the crew
+  // is still a valid standalone, and we record the attach error in the
+  // response payload so iOS can show a follow-up nudge.
+  let parentAttachError: string | null = null;
+  if (proposedParentCrewId) {
+    const { error: attachErr } = await supaUser.rpc('crew_attach_as_child', {
+      p_child: newCrewId,
+      p_parent: proposedParentCrewId,
+      p_child_keeps_bps: 5000,
+    });
+    if (attachErr) {
+      parentAttachError = (attachErr as { message?: string }).message ?? 'attach failed';
+      console.warn('[crew-proposal] parent attach failed; crew kept standalone', parentAttachError);
+    }
+  }
+
+  // 4) Stamp the proposal row.
+  const newPayload: Record<string, unknown> = {
+    ...payload,
+    status: 'approved',
+    crew_id: newCrewId,
+    decided_by: userId,
+    decided_at: new Date().toISOString(),
+    ...(parentAttachError ? { parent_attach_error: parentAttachError } : {}),
+  };
+  const { error: stampErr } = await supa
+    .from('messages')
+    .update({ log_payload: newPayload as Json })
+    .eq('id', messageId);
+  if (stampErr) {
+    // The crew exists but we couldn't stamp the proposal — log and
+    // continue. The iOS card will look stuck on pending until refreshed,
+    // but the crew itself is live.
+    console.warn('[crew-proposal] stamp update failed', stampErr.message);
+  }
+
+  return c.json({
+    ok: true,
+    status: 'approved',
+    crewId: newCrewId,
+    parentAttachError,
+  });
 });
 
 // DELETE /v1/messages/:id
