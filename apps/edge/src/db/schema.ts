@@ -2714,6 +2714,7 @@ export type Database = {
           announcement_id: string | null
           created_at: string
           crew_conversation_id: string
+          delivered_at: string | null
           id: string
           message_kind: string
           payload: Json
@@ -2731,6 +2732,7 @@ export type Database = {
           announcement_id?: string | null
           created_at?: string
           crew_conversation_id: string
+          delivered_at?: string | null
           id?: string
           message_kind?: string
           payload?: Json
@@ -2748,6 +2750,7 @@ export type Database = {
           announcement_id?: string | null
           created_at?: string
           crew_conversation_id?: string
+          delivered_at?: string | null
           id?: string
           message_kind?: string
           payload?: Json
@@ -4160,6 +4163,17 @@ export type Database = {
         Args: { p_decision: string; p_request_id: string }
         Returns: boolean
       }
+      enqueue_session_mailbox: {
+        Args: {
+          p_announcement_id?: string
+          p_message_kind: string
+          p_payload?: Json
+          p_session_id: string
+          p_source_message_id?: string
+          p_summary: string
+        }
+        Returns: string
+      }
       ensure_group_subject_for_conversation: {
         Args: { p_conversation_id: string }
         Returns: string
@@ -4203,6 +4217,10 @@ export type Database = {
           display_name: string
           user_id: string
         }[]
+      }
+      get_crew_whiteboard: {
+        Args: { p_crew_id: string; p_since?: string }
+        Returns: Json
       }
       group_continue_decide: {
         Args: {
@@ -4349,6 +4367,10 @@ export type Database = {
           invited_at: string
           user_id: string
         }[]
+      }
+      mark_session_mailbox_delivered: {
+        Args: { p_item_ids: string[]; p_session_id: string }
+        Returns: number
       }
       open_crew_conv: {
         Args: { p_responsible_subject_id: string; p_title?: string }
