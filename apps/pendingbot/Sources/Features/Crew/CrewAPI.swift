@@ -570,4 +570,90 @@ extension APIClient {
             body: Body(decision: decision)
         )
     }
+
+    // ─────────────────────────────────────────────────────────────
+    // MARK: Spec v2 §10 — Permission Request
+    //
+    // The `request_permission` agent tool drops a `role='log'` row with
+    // `log_kind='permission_request'` into the crew conversation
+    // (mirrors a parallel `crew_announcements` whiteboard card; both
+    // are written by `create_permission_request` RPC). PendingBot
+    // renders it as a card; tapping 批准 / 拒绝 hits this endpoint to
+    // bind the decision.
+    // ─────────────────────────────────────────────────────────────
+
+    /// Approve or reject decision for a `request_permission` card.
+    /// `reject` maps to status='denied' server-side.
+    enum PermissionRequestDecision: String, Encodable {
+        case approve
+        case reject
+    }
+
+    /// Server-shaped row returned by the decide endpoint. Only the
+    /// fields the iOS card needs are decoded; extra columns the server
+    /// may add later are ignored.
+    struct PermissionRequestRow: Decodable {
+        let id: String
+        let status: String
+        let decided_at: String?
+        let decided_by_user_id: String?
+    }
+
+    /// Response from `POST /v1/permission-requests/:id/decide`.
+    struct PermissionRequestDecisionResponse: Decodable {
+        let permissionRequest: PermissionRequestRow
+    }
+
+    /// POST /v1/permission-requests/:id/decide.
+    ///
+    /// `id` is the permission_requests.id (read from the card's
+    /// payload, not the host message_id). A 409 from the server with
+    /// code `permission_request_already_decided` surfaces as
+    /// `APIError.http` — the caller refreshes conversation history.
+    func decidePermissionRequest(
+        id: String,
+        decision: PermissionRequestDecision
+    ) async throws -> PermissionRequestDecisionResponse {
+        struct Body: Encodable { let decision: PermissionRequestDecision }
+        return try await post(
+            "v1/permission-requests/\(id)/decide",
+            body: Body(decision: decision)
+        )
+    }
+
+    /// PATCH /v1/crews/:crewId/permission-mode.
+    /// Body { mode: 'auto'|'manual' }. Caller must own / admin the
+    /// crew's responsible subject.
+    struct CrewPermissionModeResponse: Decodable {
+        let crewId: String
+        let permissionMode: String
+    }
+    func setCrewPermissionMode(
+        crewId: String,
+        mode: String
+    ) async throws -> CrewPermissionModeResponse {
+        struct Body: Encodable { let mode: String }
+        return try await patch(
+            "v1/crews/\(crewId)/permission-mode",
+            body: Body(mode: mode)
+        )
+    }
+
+    /// PATCH /v1/sessions/:sessionId/permission-mode.
+    /// Body { mode: 'auto'|'manual'|null }. null clears the override
+    /// (inherit crew default).
+    struct SessionPermissionModeResponse: Decodable {
+        let sessionId: String
+        let permissionModeOverride: String?
+    }
+    func setSessionPermissionMode(
+        sessionId: String,
+        mode: String?
+    ) async throws -> SessionPermissionModeResponse {
+        struct Body: Encodable { let mode: String? }
+        return try await patch(
+            "v1/sessions/\(sessionId)/permission-mode",
+            body: Body(mode: mode)
+        )
+    }
 }

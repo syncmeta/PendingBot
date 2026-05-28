@@ -216,6 +216,27 @@ BEGIN
     NULL
   );
 
+  -- Also drop a parallel messages.log row in the crew conversation so
+  -- the iOS PendingBot timeline (when it renders crew conversations in
+  -- T4.6) and any other messages-table consumer can pick up the card
+  -- without learning crew_announcements semantics. log_kind matches the
+  -- one iOS dispatches on in ConversationView+Loading.swift.
+  INSERT INTO pendingbot.messages(
+    conversation_id,
+    role,
+    log_kind,
+    log_payload,
+    content,
+    status
+  ) VALUES (
+    session_row.crew_conversation_id,
+    'log',
+    'permission_request',
+    announcement_payload,
+    summary_text,
+    'done'
+  );
+
   RETURN new_request_id;
 END $$;
 
@@ -345,6 +366,17 @@ BEGIN
                    )
    WHERE message_kind = 'permission_request'
      AND payload ->> 'permission_request_id' = p_id::text;
+
+  -- Same patch onto the parallel messages.log row (so iOS timeline
+  -- re-renders the card straight from log_payload).
+  UPDATE pendingbot.messages
+     SET log_payload = jsonb_set(
+                         jsonb_set(log_payload, '{status}', to_jsonb(new_status), true),
+                         '{decided_at}', to_jsonb(now()::text), true
+                       )
+   WHERE role = 'log'
+     AND log_kind = 'permission_request'
+     AND log_payload ->> 'permission_request_id' = p_id::text;
 END $$;
 
 ALTER FUNCTION pendingbot.decide_permission_request(uuid, text, uuid) OWNER TO postgres;
