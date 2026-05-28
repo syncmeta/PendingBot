@@ -1,4 +1,8 @@
-# PendingCrew Session Workbench Implementation Plan
+> ⚠️ **DEPRECATED — 2026-05-28**
+>
+> 这份 plan 已被 [`2026-05-28-v1-0-implementation-roadmap.md`](./2026-05-28-v1-0-implementation-roadmap.md)(`apps/pendingcrew/` 早期 workbench 已完成,后续 session 工作台演进归入 roadmap Phase 3)取代。保留作历史参考。后续 implementation 以新文件为准。
+
+# PendingCrew Session Workbench Implementation Plan(已废弃)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
