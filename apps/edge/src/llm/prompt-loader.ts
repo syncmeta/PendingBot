@@ -35,6 +35,7 @@ import envelopeCollaborator_zh from '../../prompts/zh/envelope-collaborator.md';
 import title_zh from '../../prompts/zh/title.md';
 import groupRouter_zh from '../../prompts/zh/group-router.md';
 import botSocialGraph_zh from '../../prompts/zh/bot-social-graph.md';
+import startCrewToolResult_zh from '../../prompts/zh/start-crew-tool-result.md';
 
 const PROMPTS_ZH = {
   'system': system_zh,
@@ -48,6 +49,7 @@ const PROMPTS_ZH = {
   'title': title_zh,
   'group-router': groupRouter_zh,
   'bot-social-graph': botSocialGraph_zh,
+  'start-crew-tool-result': startCrewToolResult_zh,
 } as const;
 
 export { PROMPT_NAMES, type PromptName } from './prompt-names';
