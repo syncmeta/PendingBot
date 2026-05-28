@@ -16,7 +16,18 @@ struct PendingCrewApp: App {
 }
 
 struct RootView: View {
+    @EnvironmentObject private var model: AppModel
+
     var body: some View {
+        if model.isAuthenticated {
+            authenticatedRoot
+        } else {
+            LoginView()
+        }
+    }
+
+    @ViewBuilder
+    private var authenticatedRoot: some View {
         #if os(iOS)
         IPadPlaceholderView()
         #else
