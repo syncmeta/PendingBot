@@ -32,6 +32,12 @@ final class AppModel: ObservableObject {
 
     private let defaults: UserDefaults
 
+    /// 两条 backend 实例,启动时一次性构造,mode 切换只是切引用。
+    /// 不在 each-call 时 new (避免 EdgeBackend 内每次重新解析 credential
+    /// 但 instance 不复用的浪费;LocalBackend.store 是 shared singleton)。
+    private lazy var edgeBackend: EdgeBackend = EdgeBackend(appModel: self)
+    private lazy var localBackend: LocalBackend = LocalBackend(store: .shared)
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         self.apiBaseURL = defaults.string(forKey: DefaultsKey.apiBaseURL) ?? "https://api.pendingname.com"
@@ -45,6 +51,16 @@ final class AppModel: ObservableObject {
             self.byokConfig = snapshot.hasAnyKey ? snapshot : nil
         } else {
             self.byokConfig = nil
+        }
+    }
+
+    /// 当前生效的 backend。WelcomeView 阶段(没凭据)返回 nil —— UI 层
+    /// 不应当在那个 phase 调任何数据方法。
+    var backend: PendingCrewBackend? {
+        switch mode {
+        case .logged: return edgeBackend
+        case .byok: return localBackend
+        case .none: return nil
         }
     }
 
