@@ -480,6 +480,45 @@ export const START_CREW_TOOL: ChatCompletionTool = {
   },
 };
 
+// `request_permission` — spec v2 §10. Agent (or captain bot acting in
+// the crew context) asks for human approval before performing a
+// high-risk action. Files a permission_requests row + writes a special
+// card (message_kind='permission_request') onto the crew whiteboard so
+// owner/admin humans can decide via the iOS/Mac card UI.
+//
+// In v1 this tool does NOT actually pause the agent (T4.5 peer_device
+// communication is what wires that round-trip). The tool just files the
+// card; the prompt-side note tells the model not to execute the
+// underlying action until status flips to 'approved' in a later turn.
+export const REQUEST_PERMISSION_TOOL: ChatCompletionTool = {
+  type: 'function',
+  function: {
+    name: 'request_permission',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          description:
+            '要请示批准的"高危操作"简短描述,1–400 字。会显示在卡片标题。例如「rm -rf node_modules」「向生产数据库写入」「调外部 API 付费」。',
+        },
+        details: {
+          type: 'object',
+          description:
+            '可选的结构化详情(任意 jsonb 对象)。卡片会把它折叠后展示给批准人 —— 命令、路径、影响范围、为何要做。',
+          additionalProperties: true,
+        },
+        risk_level: {
+          type: 'string',
+          enum: ['low', 'medium', 'high'],
+          description: '风险等级,默认 medium。卡片可据此染色 / 排序。',
+        },
+      },
+      required: ['action'],
+    },
+  },
+};
+
 // Group-only tools — exposed by dispatchGroupTurn via input.inGroup.
 // Both write to the same conversation_id + bot_id the runner is acting
 // for, so they take just the new value as an argument. Description

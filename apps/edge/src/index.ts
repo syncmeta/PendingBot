@@ -15,6 +15,11 @@ import { groupRoutes } from './routes/groups';
 import { crewRoutes } from './routes/crew';
 import { crewsRoutes } from './routes/crews';
 import { crewMessagesRoutes, sessionInboxRoutes } from './routes/crew-comms';
+import {
+  permissionRequestRoutes,
+  crewPermissionModeRoutes,
+  sessionPermissionModeRoutes,
+} from './routes/permission-requests';
 import { shareChangesRoutes } from './routes/share-changes';
 import { groupVoiceRoutes } from './routes/group-voice';
 import { voiceActiveRoutes } from './routes/voice-active';
@@ -98,6 +103,9 @@ v1.route('/crew', crewRoutes);
 v1.route('/crews', crewsRoutes);
 v1.route('/crews', crewMessagesRoutes);            // POST /v1/crews/:crewId/messages
 v1.route('/sessions', sessionInboxRoutes);         // GET /v1/sessions/:sessionId/inbox + mark-delivered
+v1.route('/permission-requests', permissionRequestRoutes);   // POST /v1/permission-requests/:id/decide
+v1.route('/crews', crewPermissionModeRoutes);                // PATCH /v1/crews/:crewId/permission-mode
+v1.route('/sessions', sessionPermissionModeRoutes);          // PATCH /v1/sessions/:sessionId/permission-mode
 v1.route('/share-changes', shareChangesRoutes);
 v1.route('/groups', groupVoiceRoutes);
 v1.route('/voice', voiceActiveRoutes);

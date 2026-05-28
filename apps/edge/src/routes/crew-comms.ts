@@ -373,6 +373,17 @@ const SessionPostToCrewBody = z.object({
   category: z.enum(['progress', 'question', 'milestone']).optional(),
 });
 
+// T4.3 — server-side reception for the `request_permission` agent tool.
+// Same auth shape as post-to-crew (device-grant only — only the runner
+// owns the session lease and can speak on its behalf). Body mirrors the
+// tool's args: action (1–400 char short string), details (free-form
+// jsonb), risk_level (optional, 'low'|'medium'|'high', default medium).
+const SessionRequestPermissionBody = z.object({
+  action: z.string().trim().min(1).max(400),
+  details: z.record(z.string(), z.unknown()).default({}),
+  risk_level: z.enum(['low', 'medium', 'high']).optional(),
+});
+
 // ────────────────────────────────────────────────────────────────────
 // POST /v1/sessions/:sessionId/post-to-crew
 //
@@ -451,6 +462,76 @@ sessionInboxRoutes.post('/:sessionId/post-to-crew', requireSubjectAuth(['crew:wr
     return jsonError(c, 500, 'database_error', { detail: message });
   }
   return c.json({ announcementId: data, category: parsed.category ?? null });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// POST /v1/sessions/:sessionId/request-permission
+//
+// T4.3 server-side reception for the spec v2 §10 `request_permission`
+// agent tool. The runner translates the tool-call from Claude Code /
+// Codex into this HTTP POST. Auth is device-grant only — the runner
+// owns the session lease and is the authoritative source for
+// "this session emitted this tool call".
+//
+// The tool itself does NOT pause the agent in this iteration: T4.5
+// peer_device communication is what wires the round-trip back to the
+// runner. For now the request lands as a crew_announcements card (via
+// create_permission_request RPC) and the agent keeps going. The
+// prompt-side note (request-permission-tool-result.md) tells the agent
+// not to actually execute the underlying high-risk action until it sees
+// a status flip to 'approved' in a later turn's whiteboard context.
+// ────────────────────────────────────────────────────────────────────
+
+sessionInboxRoutes.post('/:sessionId/request-permission', requireSubjectAuth(['crew:write']), async (c) => {
+  const sessionId = c.req.param('sessionId');
+  if (!isUuid(sessionId)) {
+    return jsonError(c, 400, 'invalid_id', { message: 'sessionId must be a uuid' });
+  }
+  if (c.var.authKind !== 'device_grant') {
+    return jsonError(c, 403, 'forbidden', {
+      message: 'request-permission requires a device grant (runner-only path)',
+    });
+  }
+  const deviceGrant = c.var.deviceGrant!;
+
+  let parsed: z.infer<typeof SessionRequestPermissionBody>;
+  try {
+    parsed = SessionRequestPermissionBody.parse(await c.req.json());
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+
+  const svc = serviceClient(c.env);
+  const { data: sessionRow, error: sessionErr } = await svc
+    .from('crew_sessions')
+    .select('id, responsible_subject_id, runner_host_id, status, crew_conversation_id')
+    .eq('id', sessionId)
+    .maybeSingle();
+  if (sessionErr) return jsonError(c, 500, 'database_error', { detail: sessionErr.message });
+  if (!sessionRow) return jsonError(c, 404, 'session_not_found');
+  if (sessionRow.responsible_subject_id !== deviceGrant.subjectId) {
+    return jsonError(c, 403, 'session_forbidden');
+  }
+  if (!sessionRow.runner_host_id) {
+    return jsonError(c, 409, 'conflict', {
+      message: 'session has no active runner host — cannot request on its behalf',
+    });
+  }
+
+  const { data, error } = await untypedRpc(svc).rpc('create_permission_request', {
+    p_session_id: sessionId,
+    p_action: parsed.action,
+    p_payload: parsed.details as unknown as Json,
+    p_risk_level: parsed.risk_level ?? 'medium',
+  });
+  if (error) {
+    const message = rpcMessage(error);
+    if (/forbidden/i.test(message)) return jsonError(c, 403, 'forbidden', { message });
+    if (/not found/i.test(message)) return jsonError(c, 404, 'session_not_found', { message });
+    if (/invalid|required/i.test(message)) return jsonError(c, 400, 'invalid_body', { message });
+    return jsonError(c, 500, 'database_error', { detail: message });
+  }
+  return c.json({ permissionRequestId: data, status: 'pending' });
 });
 
 sessionInboxRoutes.post('/:sessionId/inbox/mark-delivered', requireSubjectAuth(['crew:write']), async (c) => {
