@@ -15,6 +15,7 @@ export const PROMPT_NAMES = [
   'title',
   'group-router',
   'bot-social-graph',
+  'session-world-model',
 ] as const;
 
 export type PromptName = (typeof PROMPT_NAMES)[number];
@@ -33,4 +34,5 @@ export const PROMPT_DESCRIPTIONS: Record<PromptName, string> = {
   'title': '会话标题自动生成 prompt',
   'group-router': '群聊调度器：判断每轮该唤醒哪些 bot',
   'bot-social-graph': '永远注入：解释 bot 对自己社交圈、好友可见性、ask_friend/delegate 工具语义的固有常识',
+  'session-world-model': 'Crew session 世界观（spec v2 §9.5）：身份/IO/群聊定位/captain/拍板方/post_to_crew/读白板/permission 模式。每个 session 启动时由 edge 渲染填值后注入。',
 };
