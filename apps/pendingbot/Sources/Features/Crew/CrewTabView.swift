@@ -23,6 +23,11 @@ struct CrewTabView: View {
     @State private var error: String?
     @State private var notice: String?
     @State private var scanningDeviceLogin = false
+    // T1.3 P2: after scanning a PendingCrew/PendingBot device-login QR,
+    // hold the parsed payload here so the SubjectPickerSheet can prompt
+    // the user to choose which subject to authorize as. Set to nil on
+    // cancel / completion.
+    @State private var pendingDeviceLogin: DeviceLoginLink.Payload?
 
     var body: some View {
         Group {
@@ -91,11 +96,26 @@ struct CrewTabView: View {
         .sheet(isPresented: $scanningDeviceLogin) {
             QRScannerView { value in
                 scanningDeviceLogin = false
-                Task { await approveDeviceLogin(from: value) }
+                if let payload = DeviceLoginLink.parse(value) {
+                    pendingDeviceLogin = payload
+                } else {
+                    error = "这不是 PendingCrew 登录二维码"
+                }
             } onError: { err in
                 error = err.localizedDescription
             }
             .ignoresSafeArea()
+        }
+        .sheet(item: $pendingDeviceLogin) { payload in
+            SubjectPickerSheet(
+                payload: payload,
+                defaultSubject: subject,
+                onApprove: { selected in
+                    pendingDeviceLogin = nil
+                    Task { await approveDeviceLogin(payload: payload, subjectId: selected.id, label: selected.label) }
+                },
+                onCancel: { pendingDeviceLogin = nil }
+            )
         }
         .alert("出错", isPresented: .constant(error != nil)) {
             Button("好") { error = nil }
@@ -394,16 +414,12 @@ struct CrewTabView: View {
         }
     }
 
-    private func approveDeviceLogin(from scannedValue: String) async {
+    private func approveDeviceLogin(
+        payload: DeviceLoginLink.Payload,
+        subjectId: String,
+        label: String
+    ) async {
         guard let api else { return }
-        guard let subject else {
-            error = "还没有加载账号主体"
-            return
-        }
-        guard let payload = DeviceLoginLink.parse(scannedValue) else {
-            error = "这不是 PendingCrew 登录二维码"
-            return
-        }
         let initialApproval: DeviceLoginGrantApproval = payload.appKind == .pendingBotMacOS
             ? .pendingBotClient
             : .pendingCrewControl
@@ -413,7 +429,7 @@ struct CrewTabView: View {
                 response = try await api.approvePendingCrewDeviceLogin(
                     challengeId: payload.challengeId,
                     secret: payload.secret,
-                    subjectId: subject.id,
+                    subjectId: subjectId,
                     approval: initialApproval
                 )
             } catch {
@@ -422,11 +438,13 @@ struct CrewTabView: View {
                 response = try await api.approvePendingCrewDeviceLogin(
                     challengeId: payload.challengeId,
                     secret: payload.secret,
-                    subjectId: subject.id,
+                    subjectId: subjectId,
                     approval: retry
                 )
             }
-            notice = response.ok ? "已确认桌面端登录" : "扫码登录状态：\(response.status)"
+            notice = response.ok
+                ? "已以 \(label) 身份授权桌面端登录"
+                : "扫码登录状态：\(response.status)"
         } catch {
             self.error = error.localizedDescription
         }

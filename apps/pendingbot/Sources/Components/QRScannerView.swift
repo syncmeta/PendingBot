@@ -146,10 +146,15 @@ enum DeviceLoginLink {
         case pendingCrewMacOS = "pendingcrew_macos"
     }
 
-    struct Payload: Equatable {
+    struct Payload: Equatable, Identifiable {
         let challengeId: String
         let secret: String
         let appKind: AppKind?
+
+        // Identifiable conformance is for SwiftUI .sheet(item:) presenters
+        // that want to drive a modal off a scanned payload. challengeId
+        // is unique per challenge so it doubles as the identity.
+        var id: String { challengeId }
     }
 
     static func parse(_ raw: String) -> Payload? {
