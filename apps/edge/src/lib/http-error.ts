@@ -43,6 +43,8 @@ export type ApiErrorCode =
   | 'insufficient_balance'
   | 'quota_exceeded'
   | 'subject_not_found'
+  | 'subject_mismatch'
+  | 'subject_forbidden'
   | 'redemption_not_found'
   | 'redemption_already_used'
 
