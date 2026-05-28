@@ -1,5 +1,177 @@
 import Foundation
 
+// ─────────────────────────────────────────────────────────────────────
+// MARK: - Spec v2 §6/§7/§11 endpoints (`/v1/crews`, `/v1/share-changes`)
+//
+// These wrap the Phase 2 endpoints F agent shipped in `crews.ts` +
+// `share-changes.ts`. The legacy `/v1/crew` (singular) surface further
+// down still exists for the old dashboard view — leave it untouched
+// until cutover is complete; CrewTabV2View / CrewDetailV2View only
+// consume the V2 types below.
+// ─────────────────────────────────────────────────────────────────────
+
+/// `GET /v1/crews` list row. Field shape mirrors edge response:
+/// `id / title / responsibleSubjectId / runtimeLocation / tag /
+/// captainBotId / status / createdAt / updatedAt`.
+///
+/// `runtimeLocation` is a string (not an enum) so we never reject
+/// unknown values from the wire — spec v2 §6.2 reserves room for v1.1
+/// runner locations; clients should fall back to displaying the raw
+/// string rather than failing to decode.
+struct CrewSummaryV2: Decodable, Identifiable, Equatable, Hashable {
+    let id: String
+    let title: String
+    let responsibleSubjectId: String
+    let runtimeLocation: String
+    let tag: String?
+    let captainBotId: String?
+    let status: String?
+    let createdAt: String
+    let updatedAt: String
+
+    enum RuntimeLocationV2: String {
+        case localHost = "local_host"
+        case peerDevice = "peer_device"
+        case flyMachine = "fly_machine"
+
+        var sfSymbol: String {
+            switch self {
+            case .localHost: return "desktopcomputer"
+            case .peerDevice: return "personalhotspot"
+            case .flyMachine: return "cloud"
+            }
+        }
+
+        var shortLabel: String {
+            switch self {
+            case .localHost: return "本机"
+            case .peerDevice: return "peer 设备"
+            case .flyMachine: return "Fly machine"
+            }
+        }
+    }
+
+    var runtimeLocationKind: RuntimeLocationV2? {
+        RuntimeLocationV2(rawValue: runtimeLocation)
+    }
+}
+
+/// `GET /v1/crews/:crewId` detail. Crew body + parents/children/shares
+/// + (optional) captain bot.
+struct CrewDetailV2: Decodable, Equatable, Hashable {
+    let crew: CrewBodyV2
+    let parents: [CrewLinkV2]
+    let children: [CrewLinkV2]
+    let shares: [CrewShareV2]
+    let captain: CrewCaptainV2?
+}
+
+struct CrewBodyV2: Decodable, Equatable, Hashable {
+    let id: String
+    let title: String
+    let responsibleSubjectId: String
+    let runtimeLocation: String
+    let workingDirectory: String?
+    let tag: String?
+    let captainBotId: String?
+    let status: String?
+    let createdAt: String
+    let updatedAt: String
+
+    var runtimeLocationKind: CrewSummaryV2.RuntimeLocationV2? {
+        CrewSummaryV2.RuntimeLocationV2(rawValue: runtimeLocation)
+    }
+}
+
+struct CrewLinkV2: Decodable, Equatable, Hashable, Identifiable {
+    var id: String { crewId }
+    let crewId: String
+    let title: String
+    /// child 在这条 parent-child 边上保留的责任份额 (bps, 0-10000)。
+    let childShareBps: Int
+}
+
+struct CrewShareV2: Decodable, Equatable, Hashable, Identifiable {
+    var id: String { subjectId }
+    let subjectId: String
+    let shareBps: Int
+    let isTiebreaker: Bool
+    let displayName: String
+    /// `subjects.subject_type` —— 一般是 `user_account` / `group_account`。
+    let kind: String
+}
+
+struct CrewCaptainV2: Decodable, Equatable, Hashable {
+    let botId: String
+    let displayName: String
+}
+
+/// `POST /v1/crews` body. Mirrors edge `CreateCrewBody` (zod schema in
+/// `apps/edge/src/routes/crews.ts`). `runtimeLocation` MVP only accepts
+/// `local_host`; peer/fly need a peer device / fly machine pick first
+/// (Phase 4+).
+struct CreateCrewRequestV2: Encodable {
+    let responsibleSubjectId: String
+    let title: String
+    let runtimeLocation: String
+    let workingDirectory: String?
+    let tag: String?
+    let captain: CaptainBody
+    let peerDeviceId: String?
+    let flyMachineId: String?
+
+    enum CaptainBody: Encodable, Equatable {
+        case systemGenerated(templateName: String?)
+        case reuseBot(botId: String)
+
+        enum CodingKeys: String, CodingKey {
+            case source
+            case templateName
+            case botId
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            switch self {
+            case .systemGenerated(let name):
+                try container.encode("system_generated", forKey: .source)
+                if let name { try container.encode(name, forKey: .templateName) }
+            case .reuseBot(let botId):
+                try container.encode("reuse_bot", forKey: .source)
+                try container.encode(botId, forKey: .botId)
+            }
+        }
+    }
+
+    static func localHost(
+        responsibleSubjectId: String,
+        title: String,
+        workingDirectory: String?,
+        tag: String?,
+        captain: CaptainBody
+    ) -> CreateCrewRequestV2 {
+        CreateCrewRequestV2(
+            responsibleSubjectId: responsibleSubjectId,
+            title: title,
+            runtimeLocation: "local_host",
+            workingDirectory: workingDirectory,
+            tag: tag,
+            captain: captain,
+            peerDeviceId: nil,
+            flyMachineId: nil
+        )
+    }
+}
+
+struct CreateCrewResponseV2: Decodable {
+    let crewId: String
+    let captainBotId: String?
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// MARK: - Legacy `/v1/crew` (singular) types — kept until cutover lands
+// ─────────────────────────────────────────────────────────────────────
+
 struct CrewListResponse<Item: Decodable>: Decodable {
     let items: [Item]
 }
@@ -326,5 +498,31 @@ extension APIClient {
             "v1/device-login/challenges/\(challengeId)/approve",
             body: Body(secret: secret, subjectId: subjectId, grantKind: approval.grantKind, scopes: approval.scopes)
         )
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // MARK: Spec v2 §6/§7/§11 — Phase 2 crew endpoints (`/v1/crews`)
+    //
+    // These call F agent's new `crews.ts` route surface. CrewTabV2View
+    // / CrewDetailV2View only consume these; the older singular
+    // `/v1/crew` methods further up stay live for `CrewTabView` until
+    // the dashboard is removed in a follow-up cutover.
+    // ─────────────────────────────────────────────────────────────
+
+    /// `GET /v1/crews` — list crews caller can see.
+    func listCrewsV2() async throws -> [CrewSummaryV2] {
+        struct Response: Decodable { let crews: [CrewSummaryV2] }
+        let response: Response = try await get("v1/crews")
+        return response.crews
+    }
+
+    /// `GET /v1/crews/:crewId` — crew detail (parents/children/shares/captain).
+    func getCrewV2(_ crewId: String) async throws -> CrewDetailV2 {
+        try await get("v1/crews/\(crewId)")
+    }
+
+    /// `POST /v1/crews` — create a crew + choose a captain.
+    func createCrewV2(_ request: CreateCrewRequestV2) async throws -> CreateCrewResponseV2 {
+        try await post("v1/crews", body: request)
     }
 }

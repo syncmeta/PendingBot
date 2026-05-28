@@ -1,5 +1,28 @@
 import SwiftUI
 
+// DEPRECATED — T4.6 cutover (2026-05-28).
+//
+// This is the codex-era dashboard-style Crew Tab (878 lines of @State
+// dict explosion + legacy `/v1/crew` singular endpoint usage). Spec v2
+// §11.2 requires the Crew Tab to be a普通群聊 UI grammar instead, so
+// the iPhone compact path now mounts `CrewTabV2View` from
+// `CrewTabV2View.swift`.
+//
+// This file is kept temporarily because:
+//   1. `PendingBotRegularCrewView` (iPad shared big-screen shell) still
+//      consumes the legacy `CrewSummary` + `crewList` / `crewLinks` /
+//      `crewMembers` etc. surface in `CrewAPI.swift`. Multiplatform
+//      cutover lives in a follow-up T4.6 chunk.
+//   2. SubjectPickerSheet usage was duplicated into `CrewTabV2View`,
+//      not removed from here yet — leaving both functional avoids any
+//      regression in the SDK build/test loop before the dashboard
+//      finally comes out.
+//
+// **Do not extend this file.** All new Crew Tab work belongs in
+// `CrewTabV2View.swift` / `CrewDetailV2View.swift` / `CreateCrewV2Sheet.swift`.
+// Removal: tracked under tech-debt "iOS PendingBot CrewTabView 是 codex
+// 老 dashboard 风格" — entry will be marked ✅ Done after the iPad
+// shared shell is migrated to the V2 endpoints and this file deletes.
 struct CrewTabView: View {
     @Environment(\.api) private var api
     @Environment(\.useSidebarLayout) private var sidebarLayout
