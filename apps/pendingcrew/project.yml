@@ -19,6 +19,10 @@ targets:
     supportedDestinations: [iOS, macOS]
     sources:
       - path: Sources
+    scheme:
+      testTargets:
+        - PendingCrewTests
+      gatherCoverageData: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.pendingname.pendingcrew
@@ -28,3 +32,23 @@ targets:
         TARGETED_DEVICE_FAMILY: "2"
         ENABLE_PREVIEWS: YES
         SUPPORTS_MACCATALYST: NO
+  # PendingCrewTests —— macOS-only XCTest bundle for LocalRunner module.
+  # 不挂 iOS，因为待测代码全在 `#if os(macOS)` guard 后面。
+  PendingCrewTests:
+    type: bundle.unit-test
+    supportedDestinations: [macOS]
+    sources:
+      - path: Tests/PendingCrewTests
+      # 直接把 LocalRunner 源码编进 test bundle 而不是从 app 链接 ——
+      # scaffold 阶段 app 不签名，无法做完整 macOS host-app injection；
+      # bundle_loader + 无 test host 又会触发 dlopen 时 swift symbol 找不到。
+      # LocalRunner 模块是纯 Foundation 代码（不依赖 SwiftUI / NSApplicationMain），
+      # 重复编译进 test bundle 完全没问题。
+      - path: Sources/Mac/LocalRunner
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.pendingname.pendingcrew.tests
+        GENERATE_INFOPLIST_FILE: YES
+        # standalone test bundle —— 不挂 host app
+        TEST_HOST: ""
+        BUNDLE_LOADER: ""
