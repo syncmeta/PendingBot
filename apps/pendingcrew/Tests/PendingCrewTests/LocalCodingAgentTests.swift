@@ -231,5 +231,95 @@ final class LocalCodingAgentTests: XCTestCase {
         XCTAssertLessThan(elapsed, 3.0,
                           "SIGKILL should kill within grace + small slack (got \(elapsed)s)")
     }
+
+    // MARK: - service integration smoke
+
+    /// 端到端验证 `MacLocalCodingAgentService.runSession()` 的 stdout 流 +
+    /// exitCode Task。
+    ///
+    /// 用一个临时 bash 脚本当 "executable"，spec 的 argv flags（--print 等）
+    /// 对 bash 来说是无害的位置参数 —— bash 会忽略 unknown flags 因为没 `-`
+    /// 开头的脚本路径作为第一个参数。这里直接用 inline `bash -c <script>` 太
+    /// 麻烦，写一个真正的 shebang 脚本到 tmp 让它跑。
+    func testServiceRunSessionStreamsStdoutAndExits() async throws {
+        // 写一个 victim 脚本：打印三行，然后 exit 0。
+        let scriptURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pendingcrew-test-runner-\(UUID().uuidString).sh")
+        let script = """
+        #!/bin/bash
+        # 忽略 spec 传进来的 argv (--print / --output-format=...)；
+        # 我们关心的是 stdout 行流确实能传出去。
+        echo "line one"
+        echo "line two"
+        echo "line three"
+        """
+        try script.write(to: scriptURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: NSNumber(value: 0o755)],
+            ofItemAtPath: scriptURL.path
+        )
+        defer { try? FileManager.default.removeItem(at: scriptURL) }
+
+        let spec = LocalCodingAgentLaunchSpec(
+            kind: .claudeCode,
+            executableURL: scriptURL,
+            workingDirectory: URL(fileURLWithPath: NSTemporaryDirectory()),
+            taskBrief: "smoke",
+            initialPrompt: ""
+        )
+        let service = MacLocalCodingAgentService()
+        let runID = UUID()
+        let handle = try await service.runSession(runID: runID, spec: spec)
+        XCTAssertEqual(handle.runID, runID)
+
+        // 读 stdout 全部行，并发等 exitCode。
+        var lines: [String] = []
+        for await line in handle.stdout {
+            lines.append(line)
+        }
+        let exit = await handle.exitCode.value
+        XCTAssertEqual(exit, 0, "victim script exits 0")
+        XCTAssertEqual(lines, ["line one", "line two", "line three"])
+    }
+
+    /// 验 cancel 通过 handle 走 SIGTERM。Sleep 子进程被取消后退出码非 0。
+    func testServiceRunSessionCancelKillsSleep() async throws {
+        // sleep 100 — 直接用 /bin/sleep 作 executable，argv 含 --print 这种
+        // claude flag 也无所谓（sleep 会拒绝并直接退出，所以改用一个 wrapper
+        // 脚本）。
+        let scriptURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pendingcrew-test-sleep-\(UUID().uuidString).sh")
+        let script = """
+        #!/bin/bash
+        # 忽略所有参数，进入长 sleep；cancel 应在 grace 内打死。
+        exec sleep 30
+        """
+        try script.write(to: scriptURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: NSNumber(value: 0o755)],
+            ofItemAtPath: scriptURL.path
+        )
+        defer { try? FileManager.default.removeItem(at: scriptURL) }
+
+        let spec = LocalCodingAgentLaunchSpec(
+            kind: .codex,
+            executableURL: scriptURL,
+            workingDirectory: URL(fileURLWithPath: NSTemporaryDirectory()),
+            taskBrief: "cancel-test",
+            initialPrompt: ""
+        )
+        let service = MacLocalCodingAgentService()
+        let handle = try await service.runSession(runID: UUID(), spec: spec)
+
+        // 让子进程跑起来再 cancel。
+        try await Task.sleep(nanoseconds: 200_000_000)
+        let start = Date()
+        await handle.cancel()
+        let code = await handle.exitCode.value
+        let elapsed = Date().timeIntervalSince(start)
+        // SIGTERM 后 bash 应在毫秒级退出；grace 是 5s 上限。
+        XCTAssertLessThan(elapsed, 6.5, "cancel should resolve within grace + slack")
+        XCTAssertNotEqual(code, 0, "cancelled process should not exit 0")
+    }
 }
 #endif

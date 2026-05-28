@@ -2,17 +2,24 @@ import Foundation
 
 /// 精简 PendingBot Edge client。
 ///
-/// scaffold 阶段只包 device-login 的两个端点 — 创建 challenge 和
-/// poll 状态。后续 Phase 上的 crew / runner / config 端点等到真正
-/// 需要时再加，避免重蹈老 PendingCrew "提前抽象 → 不匹配实际需求"
-/// 的覆辙。
+/// 当前覆盖端点：
+/// - device-login（创建 challenge + poll）
+/// - crew read/write（list / detail / create / attach-parent）
+/// - me（subjects 列表）
+///
+/// 后续 share-change / runner / config 端点等到真正需要时再加，避免重蹈老
+/// PendingCrew "提前抽象 → 不匹配实际需求" 的覆辙。
 struct PendingCrewAPI {
     let baseURL: URL
     let session: URLSession
+    /// 当前登录 grant token（`pdg_*`）。device-login 端点不需要；其它
+    /// `/v1/*` 端点都通过 `Authorization: Bearer <token>` 鉴权。
+    let bearerToken: String?
 
-    init(baseURL: URL, session: URLSession = .shared) {
+    init(baseURL: URL, bearerToken: String? = nil, session: URLSession = .shared) {
         self.baseURL = baseURL
         self.session = session
+        self.bearerToken = bearerToken
     }
 
     // MARK: - Device-login
@@ -42,7 +49,7 @@ struct PendingCrewAPI {
             scopes: ["subject:read", "crew:read", "crew:write", "runner:read", "runner:write"],
             subjectId: subjectId
         )
-        return try await post(path: "v1/device-login/challenges", body: body)
+        return try await post(path: "v1/device-login/challenges", body: body, authenticated: false)
     }
 
     /// `GET /v1/device-login/challenges/:id?secret=...`。
@@ -60,20 +67,77 @@ struct PendingCrewAPI {
         components.queryItems = [URLQueryItem(name: "secret", value: secret)]
         var request = URLRequest(url: components.url!)
         request.httpMethod = "GET"
+        // device-login poll 端点本身就是 unauthenticated（secret 在 query
+        // 里），不要塞 bearer。
         return try await perform(request)
+    }
+
+    // MARK: - Subjects
+
+    /// `GET /v1/me/subjects`。返回 caller 能代表/登录的 subject。
+    func listMySubjects() async throws -> [UserSubject] {
+        struct Response: Decodable { let subjects: [UserSubject] }
+        let resp: Response = try await get(path: "v1/me/subjects")
+        return resp.subjects
+    }
+
+    // MARK: - Crews
+
+    /// `GET /v1/crews`。
+    func listCrews() async throws -> [CrewSummary] {
+        struct Response: Decodable { let crews: [CrewSummary] }
+        let resp: Response = try await get(path: "v1/crews")
+        return resp.crews
+    }
+
+    /// `GET /v1/crews/:crewId`。
+    func getCrew(_ crewId: String) async throws -> CrewDetail {
+        try await get(path: "v1/crews/\(crewId)")
+    }
+
+    /// `POST /v1/crews`。返回新建 crew + 自动创建的 captain bot id。
+    func createCrew(_ request: CreateCrewRequest) async throws -> CreateCrewResponse {
+        try await post(path: "v1/crews", body: request)
+    }
+
+    /// `POST /v1/crews/:crewId/attach-parent`。
+    func attachParent(crewId: String, parentCrewId: String, childKeepsBps: Int) async throws {
+        struct Body: Encodable {
+            let parentCrewId: String
+            let childKeepsBps: Int
+        }
+        struct Response: Decodable { let ok: Bool }
+        let _: Response = try await post(
+            path: "v1/crews/\(crewId)/attach-parent",
+            body: Body(parentCrewId: parentCrewId, childKeepsBps: childKeepsBps)
+        )
     }
 
     // MARK: - Internals
 
+    private func get<Response: Decodable>(path: String) async throws -> Response {
+        var request = URLRequest(url: baseURL.appendingPathComponent(path))
+        request.httpMethod = "GET"
+        attachAuth(to: &request)
+        return try await perform(request)
+    }
+
     private func post<Body: Encodable, Response: Decodable>(
         path: String,
-        body: Body
+        body: Body,
+        authenticated: Bool = true
     ) async throws -> Response {
         var request = URLRequest(url: baseURL.appendingPathComponent(path))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(body)
+        if authenticated { attachAuth(to: &request) }
         return try await perform(request)
+    }
+
+    private func attachAuth(to request: inout URLRequest) {
+        guard let token = bearerToken else { return }
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
     }
 
     private func perform<Response: Decodable>(_ request: URLRequest) async throws -> Response {
@@ -94,6 +158,71 @@ struct PendingCrewAPI {
         return try JSONDecoder().decode(Response.self, from: data)
     }
 }
+
+// MARK: - Create crew request/response
+
+/// 对应 edge `POST /v1/crews` 的 body。`runtimeLocation` MVP 只支持
+/// `local_host`，peer/fly 两档留下次（需要先选 peer device / fly
+/// machine —— Phase 4+）。
+struct CreateCrewRequest: Encodable {
+    let responsibleSubjectId: String
+    let title: String
+    let runtimeLocation: String
+    let workingDirectory: String?
+    let tag: String?
+    let captain: Captain
+    let peerDeviceId: String?
+    let flyMachineId: String?
+
+    enum Captain: Encodable, Equatable {
+        case systemGenerated(templateName: String?)
+        case reuseBot(botId: String)
+
+        enum CodingKeys: String, CodingKey {
+            case source
+            case templateName
+            case botId
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            switch self {
+            case .systemGenerated(let name):
+                try container.encode("system_generated", forKey: .source)
+                if let name { try container.encode(name, forKey: .templateName) }
+            case .reuseBot(let botId):
+                try container.encode("reuse_bot", forKey: .source)
+                try container.encode(botId, forKey: .botId)
+            }
+        }
+    }
+
+    static func localHost(
+        responsibleSubjectId: String,
+        title: String,
+        workingDirectory: String?,
+        tag: String?,
+        captain: Captain
+    ) -> CreateCrewRequest {
+        CreateCrewRequest(
+            responsibleSubjectId: responsibleSubjectId,
+            title: title,
+            runtimeLocation: "local_host",
+            workingDirectory: workingDirectory,
+            tag: tag,
+            captain: captain,
+            peerDeviceId: nil,
+            flyMachineId: nil
+        )
+    }
+}
+
+struct CreateCrewResponse: Decodable {
+    let crewId: String
+    let captainBotId: String?
+}
+
+// MARK: - Error envelope
 
 private struct ErrorEnvelope: Decodable {
     let error: ErrorBody
