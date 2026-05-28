@@ -364,7 +364,11 @@ extension ConversationView {
                 let sender_bot_id: String?
                 let role: String
                 let log_kind: String?
-                let log_payload: RecallPayload?
+                /// Raw jsonb. Different log_kinds use different shapes
+                /// (recall → RecallPayload; crew_proposal →
+                /// CrewProposalPayload). We re-decode lazily per row
+                /// instead of forcing one schema at the column level.
+                let log_payload: AnyJSON?
                 /// jsonb shape on `messages.attachments`: { ids: [uuid, ...] }
                 /// (see apps/edge/src/routes/messages.ts upsert). Captured so
                 /// recall can scrub URLCache for the right ids.
@@ -409,6 +413,7 @@ extension ConversationView {
             var tracesLoaded: [String: [ToolTraceEvent]] = [:]
             var traceCitationsLoaded: [String: [MessageCitation]] = [:]
             var attachmentIdsLoaded: [String: [String]] = [:]
+            var crewProposalsLoaded: [String: CrewProposalPayload] = [:]
             for r in rows {
                 let secs = ServerTimestamp.epochSeconds(r.created_at, default: 0)
                 // Recalled message rows (status='deleted') shouldn't render —
@@ -425,10 +430,12 @@ extension ConversationView {
                     continue
                 }
                 if r.role == "log" {
-                    // Recall tombstone — synthesise into a render-only
-                    // ChatMessage. Other log_kinds (review steps, etc.)
-                    // stay server-only and don't render here.
-                    if r.log_kind == "recall", let payload = r.log_payload {
+                    // log_kind dispatch — each kind synthesises (or
+                    // doesn't) a render-only ChatMessage. Other kinds
+                    // (e.g. review steps, continue_request) stay
+                    // server-only and don't surface here.
+                    if r.log_kind == "recall", let any = r.log_payload,
+                       let payload = decodeLogPayload(any, as: RecallPayload.self) {
                         let originalSecs = payload.original_created_at_secs
                         viewMessages.append(ChatMessage(
                             id: r.id,
@@ -438,6 +445,23 @@ extension ConversationView {
                             // `content` carries the original message's
                             // epoch-seconds for the tombstone formatter.
                             content: String(originalSecs),
+                            created_at: secs,
+                            attachments: nil
+                        ))
+                    } else if r.log_kind == "crew_proposal", let any = r.log_payload,
+                              let payload = decodeLogPayload(any, as: CrewProposalPayload.self) {
+                        // crew_proposal — bot's start_crew tool dropped
+                        // a proposal here. We synthesise a placeholder
+                        // ChatMessage so the timeline can host the card,
+                        // and stash the typed payload in a sibling dict
+                        // for the renderer to pick up by message id.
+                        crewProposalsLoaded[r.id] = payload
+                        viewMessages.append(ChatMessage(
+                            id: r.id,
+                            conversation_id: r.conversation_id,
+                            sender_type: "crew_proposal_log",
+                            sender_id: r.sender_bot_id ?? "",
+                            content: "",
                             created_at: secs,
                             attachments: nil
                         ))
@@ -500,6 +524,11 @@ extension ConversationView {
             self.tracesByUserMsgId.merge(tracesLoaded) { _, new in new }
             self.traceCitationsByUserMsgId.merge(traceCitationsLoaded) { _, new in new }
             self.attachmentIdsByMsgId.merge(attachmentIdsLoaded) { _, new in new }
+            // crew_proposal payloads — server is the source of truth on
+            // status, so a fresh load overwrites any stale local copy
+            // (e.g. a card that was 'pending' last time but has since
+            // been decided in another session).
+            self.crewProposalsByMsgId.merge(crewProposalsLoaded) { _, new in new }
 
             // Per-id attachment metadata (mime + filename) so the bubble
             // grid can render non-image files as icon+name chips, not
@@ -550,5 +579,22 @@ extension ConversationView {
                 self.error = error.localizedDescription
             }
         }
+    }
+}
+
+/// Decode a typed shape out of a Supabase AnyJSON jsonb cell. We
+/// re-encode the AnyJSON value back to JSON bytes and then JSONDecode
+/// the requested struct from those bytes. Returns nil on any failure
+/// (missing field, literal `null`, wrong shape) so callers can safely
+/// fall back to ignoring the row.
+func decodeLogPayload<T: Decodable>(_ any: AnyJSON, as type: T.Type) -> T? {
+    do {
+        let data = try JSONEncoder().encode(any)
+        if data.count == 4, String(data: data, encoding: .utf8) == "null" {
+            return nil
+        }
+        return try JSONDecoder().decode(T.self, from: data)
+    } catch {
+        return nil
     }
 }

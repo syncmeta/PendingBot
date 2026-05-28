@@ -18,6 +18,7 @@ import { askFriendTool } from './tools/ask-friend';
 import { submitInquiryAnswerTool } from './tools/submit-inquiry-answer';
 import { sendImagesTool } from './tools/send-images';
 import { postToCrewTool } from './tools/post-to-crew';
+import { startCrewTool } from './tools/start-crew';
 
 /// Single web-search citation. Stored on each bubble row's `citations`
 /// jsonb so iOS can resolve inline `[N]` markers to a tappable link.
@@ -146,6 +147,9 @@ export async function runTool(
     }
     if (name === 'post_to_crew') {
       return await postToCrewTool(env, args, ctx);
+    }
+    if (name === 'start_crew') {
+      return await startCrewTool(env, args, ctx);
     }
     return JSON.stringify({ error: `unknown tool: ${name}` });
   } catch (err) {

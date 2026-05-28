@@ -53,6 +53,7 @@ import { resolveProviderSlug } from '../../llm/providers';
 import { WebToolMeter } from '../web-meter';
 import {
   ASK_FRIEND_TOOL,
+  START_CREW_TOOL,
   buildOpenRouterServerTools,
   CHAT_TOOLS,
   DELEGATE_TO_SPECIALIST_TOOL,
@@ -739,6 +740,11 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     ...CHAT_TOOLS,
     REQUEST_EXECUTE_CODE_TOOL,
     DELEGATE_TO_SPECIALIST_TOOL,
+    // start_crew is always on — every conversation flavor where a bot
+    // can reasonably propose pulling in a crew (user_bot / group). The
+    // tool itself rejects self / crew-internal convs at runtime so the
+    // tool dispatcher doesn't have to know the conv shape.
+    START_CREW_TOOL,
   ];
   if (allowedTools.has('execute_code')) turnToolsRaw.push(EXECUTE_CODE_TOOL);
   if (input.inGroup) turnToolsRaw.push(...GROUP_BOT_TOOLS);
@@ -773,6 +779,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   const nativeFnToolsRaw: ChatCompletionTool[] = [
     ...CHAT_TOOLS,
     DELEGATE_TO_SPECIALIST_TOOL,
+    START_CREW_TOOL,
   ];
   if (input.inGroup) nativeFnToolsRaw.push(...GROUP_BOT_TOOLS);
   if (socialSnapshot?.isPublic) {

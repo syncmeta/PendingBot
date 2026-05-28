@@ -38,6 +38,7 @@ import botSocialGraph_zh from '../../prompts/zh/bot-social-graph.md';
 import sessionWorldModel_zh from '../../prompts/zh/session-world-model.md';
 
 import sessionWorldModel_en from '../../prompts/en/session-world-model.md';
+import startCrewToolResult_zh from '../../prompts/zh/start-crew-tool-result.md';
 
 const PROMPTS_ZH = {
   'system': system_zh,
@@ -52,6 +53,7 @@ const PROMPTS_ZH = {
   'group-router': groupRouter_zh,
   'bot-social-graph': botSocialGraph_zh,
   'session-world-model': sessionWorldModel_zh,
+  'start-crew-tool-result': startCrewToolResult_zh,
 } as const;
 
 export { PROMPT_NAMES, type PromptName } from './prompt-names';

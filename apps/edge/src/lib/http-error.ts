@@ -106,7 +106,27 @@ export type ApiErrorCode =
   | 'crew_attach_forbidden'
   | 'crew_share_invalid'
   | 'crew_not_found'
-  | 'crew_share_change_forbidden';
+  | 'crew_share_change_forbidden'
+
+  // ── Crew proposal (spec v2 §6.4 — bot-initiated crew) ────
+  // POST /v1/messages/:id/crew-proposal/decide raises these.
+  //   * `crew_proposal_not_found`         — message id doesn't resolve to a
+  //                                          crew_proposal log row.
+  //   * `crew_proposal_forbidden`         — caller isn't a human member of
+  //                                          the conversation the proposal
+  //                                          lives in.
+  //   * `crew_proposal_bot_caller_forbidden`
+  //                                       — non-user identity hit the
+  //                                          decide endpoint (bots can't
+  //                                          approve their own proposals).
+  //   * `crew_proposal_already_decided`   — payload.status was already
+  //                                          'approved' / 'rejected'.
+  //                                          Idempotent: we surface the
+  //                                          existing decision in `detail`.
+  | 'crew_proposal_not_found'
+  | 'crew_proposal_forbidden'
+  | 'crew_proposal_bot_caller_forbidden'
+  | 'crew_proposal_already_decided';
 
 export interface ApiErrorBody {
   error: {

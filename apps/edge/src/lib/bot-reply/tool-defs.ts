@@ -434,6 +434,52 @@ export const POST_TO_CREW_TOOL: ChatCompletionTool = {
   },
 };
 
+// `start_crew` — bot proposes creating a new crew (spec v2 §6.4). The
+// tool does NOT actually create the crew; it drops a special log message
+// (`log_kind='crew_proposal'`) into the current conversation that
+// PendingBot renders as a confirmation card. Only after a human in the
+// conversation taps 确认创建 does the decide endpoint call
+// `create_crew_with_captain` with `captain_source='reuse_bot'` so the
+// proposing bot becomes captain. This protects the user's wallet from
+// hallucination — model never bypasses human sign-off.
+export const START_CREW_TOOL: ChatCompletionTool = {
+  type: 'function',
+  function: {
+    name: 'start_crew',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description:
+            '提议的 crew 名字（标题），1–80 字。会显示在确认卡片上，要让用户一眼看明白要拉的 crew 干什么。',
+        },
+        tag: {
+          type: 'string',
+          description:
+            '可选的短分类标签，≤80 字（例如「研究」「投资」「文档」）。用户后续会用这个 tag 来归类多个 crew。',
+        },
+        working_directory: {
+          type: 'string',
+          description:
+            '可选的工作目录路径（仅本机 / peer 设备场景有意义），≤2048 字。云端 Fly machine 场景不用填。',
+        },
+        parent_crew_id: {
+          type: 'string',
+          description:
+            '可选 — 如果这个新 crew 应该挂到某个已有 crew 当子 crew，给出父 crew 的 UUID。具体责任比例由用户在确认时分配。',
+        },
+        initial_brief: {
+          type: 'string',
+          description:
+            '可选的初始任务简报，1–4000 字 —— 用户确认后，captain（也就是你）会以此为起点开始工作。',
+        },
+      },
+      required: ['name'],
+    },
+  },
+};
+
 // Group-only tools — exposed by dispatchGroupTurn via input.inGroup.
 // Both write to the same conversation_id + bot_id the runner is acting
 // for, so they take just the new value as an argument. Description
