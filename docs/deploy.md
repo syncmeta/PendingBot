@@ -48,7 +48,11 @@ was re-putting with the flag).
 
 ---
 
-## iOS (`apps/ios/`)
+## iOS / iPad / macOS apps (`apps/pendingbot/`)
+
+> 工程在 T0.1 合并成单 `apps/pendingbot/` 三 destination multiplatform。老的
+> `apps/ios/` 已经不存在；iPad scheme 用同一个 `PendingBot` target
+> （`TARGETED_DEVICE_FAMILY=1,2`）。
 
 TestFlight uploads are operator-initiated. When the user asks
 "上传一版到 TestFlight" / "upload to TestFlight", do the upload end to end
@@ -57,6 +61,11 @@ from a short-lived branch. Do not stop with instructions for the user.
 The project uses automatic signing with team `M42BKJN82S` and Xcode's
 archive/export flow. The configured App Store Connect/Xcode account on
 this machine is enough; no repo-secret is needed.
+
+xcodeproj 由 [XcodeGen](https://github.com/yonaskolb/XcodeGen) 从
+`apps/pendingbot/project.yml` 生成，已 commit 到 repo。**改 build
+settings 改 `project.yml` 然后 `xcodegen` 重新生成，别手动改
+`project.pbxproj`**。
 
 ### Fast TestFlight recipe
 
@@ -69,17 +78,22 @@ this machine is enough; no repo-secret is needed.
    If in the main worktree on `main`, create a short-lived branch or
    worktree first. Do not edit the build number directly on `main`.
 
-2. **Bump the iOS build number** in
-   `apps/ios/PendingBot.xcodeproj/project.pbxproj` by changing both
-   `CURRENT_PROJECT_VERSION = <old>;` entries to the next integer. Keep
-   `MARKETING_VERSION` unchanged unless the user explicitly asks for a
-   version bump. Commit this after the upload succeeds.
+2. **Bump the iOS build number** in `apps/pendingbot/project.yml`
+   (`CURRENT_PROJECT_VERSION` under `settings.base`). Then regen:
+   ```sh
+   (cd apps/pendingbot && xcodegen)
+   ```
+   Keep `MARKETING_VERSION` unchanged unless the user explicitly asks
+   for a version bump. **Scaffold 阶段** `CODE_SIGNING_ALLOWED=NO` 仍在
+   project.yml 里；正式 archive 需要先把这两行删掉再 regen，或者用
+   `-allowProvisioningUpdates` 走 xcodebuild override（automatic signing
+   会临时盖掉这两个 flag）。
 
 3. **Resolve SwiftPM packages**. This usually needs network/Xcode cache
    access; if sandboxed DNS/cache writes fail, rerun with escalation.
    ```sh
    xcodebuild -resolvePackageDependencies \
-     -project apps/ios/PendingBot.xcodeproj \
+     -project apps/pendingbot/PendingBot.xcodeproj \
      -scheme PendingBot \
      -clonedSourcePackagesDirPath /private/tmp/pendingbot-xcode-packages \
      -derivedDataPath /private/tmp/pendingbot-xcode-derived
@@ -89,14 +103,14 @@ this machine is enough; no repo-secret is needed.
    `ExportOptions.plist` as `destination=export`; use `/private/tmp` for
    upload.
    ```sh
-   cp apps/ios/ExportOptions.plist /private/tmp/PendingBot-ExportUpload.plist
+   cp apps/pendingbot/ExportOptions.plist /private/tmp/PendingBot-ExportUpload.plist
    /usr/libexec/PlistBuddy -c 'Set :destination upload' /private/tmp/PendingBot-ExportUpload.plist
    ```
 
 5. **Archive Release for iPhoneOS**:
    ```sh
    xcodebuild archive \
-     -project apps/ios/PendingBot.xcodeproj \
+     -project apps/pendingbot/PendingBot.xcodeproj \
      -scheme PendingBot \
      -configuration Release \
      -sdk iphoneos \
@@ -122,7 +136,7 @@ this machine is enough; no repo-secret is needed.
 
 7. **Commit and merge the build number**:
    ```sh
-   git add apps/ios/PendingBot.xcodeproj/project.pbxproj
+   git add apps/pendingbot/project.yml apps/pendingbot/PendingBot.xcodeproj/project.pbxproj
    git commit -m "ios: bump TestFlight build to <build>"
    git rebase main
    ```
