@@ -107,6 +107,33 @@
 
 ## 🟡 拆东墙补西墙
 
+### 🟡 PendingCrew `devicePublicKey` 是 placeholder 字符串,device grant 没真绑设备
+- **发现**: 2026-05-28 · feat/subject-login-flow(T1.3 sub-agent 标了 TODO,session cleanup 时正式登记)
+- **位置**: `apps/pendingcrew/Sources/Services/PendingCrewAPI.swift`(`createDeviceLoginChallenge` 里的 `devicePublicKey`)
+- **问题**: 现在传给 edge 的 `devicePublicKey` 是写死的字符串(类似 `"scaffold-placeholder-key-0123456789abcdef"`),仅满足 edge 端 `z.string().min(16).max(4096)` 长度校验,**没有任何 keypair 在背后**。spec v2 §4.4 暗示的"device-bound grant"(Secure Enclave / Keychain backed P-256 / Ed25519,后续请求要签名)完全没实装。
+- **影响**: device grant token 跟物理设备**没有密码学绑定**,**丢了就丢了**;edge 也没办法验证后续请求真的来自原设备。这对一个挂在远程命令通道(Phase 4 跨端遥控 / `peer_device` location)上的客户端是显著的安全洞 —— 偷到 grant 的攻击者可以装作合法设备发指令。
+- **建议**: Phase 4 跨端遥控架构动工前必须真做:Secure Enclave / `SecKey` API 起 P-256 keypair,private key 留 Enclave,public key 上行;后续敏感请求加 signed header(`x-pcrew-device-sig`)边端 verify。**写进 spec v2 §4.4 + roadmap T4.5 前置依赖**。
+- **状态**: 待办(Phase 4 前置)
+
+### 🟡 三组"新旧字段"双写并存(Phase 2 schema 增量演进的副产品)
+- **发现**: 2026-05-28 · feat/crew-core-schema + feat/subject-schema-foundation(T1.1 / T2.x sub-agent 都选择"增量演进而非重写",session cleanup 时合记一条)
+- **位置**:
+  - `subjects.subject_type`(老 plan)↔ `subjects.kind`(spec v2 §4.1),`20260528083506_subject_v2_schema_alignment.sql` 加 BEFORE trigger 双写
+  - `temporary_group_meta.runtime_kind` ('local'/'cloud',老)↔ `runtime_location` ('local_host'/'peer_device'/'fly_machine',spec v2 §8.2),迁移 `20260528105149` 双写
+  - `temporary_group_meta.cloud_machine_id`(老)↔ `fly_machine_id`(spec v2 §8.2),同上
+- **问题**: 我让 sub-agent 在 T1.1 / T2.1 写 schema 时图省事,选了 "新加列 + trigger 同步" 而不是 "改老列 + 全量回填 + 老 column drop"。triggers 把读写两边都对上,但**两套字段的存在让任何后续改这些字段的人要同时维护两套**,read path 也乱(看 schema.ts 不知道用哪个)。
+- **影响**: 每多一个引用这些字段的 code path,都要决定用新名还是老名;混用很容易出现;长期会让 schema 不易理解。已经在 `crews.ts` route 等地方混用了 runtime_kind 跟 runtime_location 两个名字。
+- **建议**: 起一轮 hard cutover migration:把所有 read path 切到 spec v2 字段名 → 删 trigger → DROP 老字段。趁 v1 还没发外、用户量为 0 时做最便宜。**v1 launch 前必须完成**,不然 user data 落到老字段就要做 backfill 比现在贵。
+- **状态**: 待办(v1 launch 前必须 cutover)
+
+### 🟡 Spec v2 §6.3.1 captain 三种来源跟现有 schema 不一致
+- **发现**: 2026-05-28 · feat/crew-core-schema(T2.2 sub-agent 报告)
+- **位置**: `docs/superpowers/specs/2026-05-28-pendingbot-pendingcrew-product-design-v2.md` §6.3.1 vs `supabase/migrations/20260527090000_crew_dag_captain_responsibility.sql`(老迁移已实装 `spawned_by_captain` 第四种来源)
+- **问题**: spec v2 §6.3.1 列了 captain 三种来源(bot 在群聊发起自动当 / 用户已有 bot / 系统生成),但**老迁移已经实装了第四种** `spawned_by_captain`(captain 主动创建子 crew 时自动成为子的 captain),并配有 `create_child_crew_inheriting_responsibility_for_actor` RPC。T2.2 sub-agent 走了老 RPC,**没修订 spec v2**。
+- **影响**: spec 跟现实出现 4 vs 3 来源的轻量不一致;后续 captain 选择 UI 设计、客户端枚举、文档都可能照 spec 漏掉 spawned_by_captain 分支。
+- **建议**: 修订 spec v2 §6.3.1 把 captain 来源补到第四种,描述清楚"由当前 crew 的 captain 主动创建子 crew → 子 crew 的 captain 默认 = 父 captain"的语义。
+- **状态**: 待办(spec 修订)
+
 ### 🟡 PendingBot Mac 端通过 EXCLUDED_SOURCE_FILE_NAMES 跳过 iOS-only 文件,非真正 multiplatform 适配
 - **发现**: 2026-05-28 · feat/pendingbot-multiplatform-scaffold + feat/pendingbot-mac-tab-shell
 - **位置**: `apps/pendingbot/project.yml`(EXCLUDED 配置)、`apps/pendingbot/Sources/{Components,Features,Models,Networking,Storage}/`(被排除的 iOS-only 子树)
