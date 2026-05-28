@@ -74,11 +74,35 @@ struct PendingCrewAPI {
 
     // MARK: - Subjects
 
-    /// `GET /v1/me/subjects`。返回 caller 能代表/登录的 subject。
+    /// 返回 caller 能代表/登录的 subject(目前固定 1 个,即 grant 绑定的那个)。
+    ///
+    /// 历史:**PendingCrew 用 device grant token 鉴权**(`pdg_*`),不是 supabase
+    /// user JWT。`/v1/me/subjects`(复数)走 `requireSession()`,只接受 user JWT,
+    /// 调起来 401 → CreateCrewSheet picker 空 → "没有可代表的 subject"。
+    ///
+    /// 正确路径:`/v1/me/subject`(单数)走 `requireSubjectAuth(['subject:read'])`,
+    /// device grant 兼容,返回 **grant 当前代表的 subject + wallet**。
+    /// PendingCrew grant 颁发时 iOS 那边已经选过 subject(spec v2 §4.4),所以单数足够。
+    /// 复数 endpoint 留给 iOS PendingBot 的"选 subject 批准 Mac 扫码"picker 用。
+    ///
+    /// 包成 `[UserSubject]` 单元素 array 是为了不改 UI 层 picker 形状 ——
+    /// 后续 phase 加"已登录态切换 subject"时这里改成调真正的多 subject endpoint。
     func listMySubjects() async throws -> [UserSubject] {
-        struct Response: Decodable { let subjects: [UserSubject] }
-        let resp: Response = try await get(path: "v1/me/subjects")
-        return resp.subjects
+        struct Response: Decodable {
+            let subject: Row
+            struct Row: Decodable {
+                let id: String
+                let subjectType: String
+                let displayName: String
+            }
+        }
+        let resp: Response = try await get(path: "v1/me/subject")
+        return [UserSubject(
+            id: resp.subject.id,
+            kind: resp.subject.subjectType,
+            displayName: resp.subject.displayName,
+            role: nil
+        )]
     }
 
     // MARK: - Crews
