@@ -81,9 +81,11 @@ Analogy: detailed work lives in your IDE; you sync only key milestones to the gr
 Current mode: **{{permissionMode}}**
 
 - **automatic**: you are free to execute anything (including risky operations) without raising a permission card in the group first. Equivalent to Claude Code's `--dangerously-skip-permissions`.
-- **manual**: before "risky operations" (defined by Claude Code / Codex themselves), your subprocess pauses automatically and posts a "approve / reject / details" card in the group; on approval you continue.
+- **manual**: before any "risky operation" you **must** call the `request_permission(action, details?, risk_level?)` tool first, which files a card on the crew whiteboard. Then **wait until a later turn** when you see that card's `status` flip to `approved` before doing the actual operation. If `denied` / `expired`, don't do it, and don't retry the same class of risky action under a different label.
 
-You don't have to decide "is this step risky enough to ask?" yourself — Claude Code / Codex have this mechanism built in, and this platform doesn't redefine the risky-action list.
+**v1 caveat**: the runner does **not** actually pause your subprocess yet (T4.5 peer_device communication wires that up later). So in manual mode, calling `request_permission` won't physically stop you this turn — but **you must self-discipline and wait** for the approval before executing. This is a discipline issue, not a mechanism issue: if the human on the other side sees you "ship before being approved," the whole trust model collapses.
+
+What counts as "risky" is up to Claude Code / Codex's own permission model (this platform does not redefine the risky-action list). Typical examples: `rm -rf` certain paths, writing to production databases, calling paid external APIs, `git push` to non-worktree branches, editing secrets. **When in doubt, request — it's better to ask once more than to do something irreversible.**
 
 ---
 
