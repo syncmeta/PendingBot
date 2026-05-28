@@ -107,6 +107,14 @@
 
 ## 🟡 拆东墙补西墙
 
+### 🟡 PendingBot Mac 端通过 EXCLUDED_SOURCE_FILE_NAMES 跳过 iOS-only 文件,非真正 multiplatform 适配
+- **发现**: 2026-05-28 · feat/pendingbot-multiplatform-scaffold + feat/pendingbot-mac-tab-shell
+- **位置**: `apps/pendingbot/project.yml`(EXCLUDED 配置)、`apps/pendingbot/Sources/{Components,Features,Models,Networking,Storage}/`(被排除的 iOS-only 子树)
+- **问题**: T0.1 commit message 声称 "iOS code 全部用 `#if os(iOS)` 整体包住,Mac 端 build 能跑";实际**没有逐文件加** `#if os(iOS)`,Mac build "成功" 只是因为 swift 编译器在前面 2 个 module-resolution error 就 abort,后面 100+ 个 `import UIKit` 文件根本没参与 Mac 编译。T1.4 sub-agent 发现后改走 `EXCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]` 在 xcodegen 层把整个 iOS-only 子树从 Mac build 排除,实现等价(Mac 不编译这些文件),但代价是**这些文件在 Mac 端完全不可见**。
+- **影响**: Phase 2+ 渐进做 Mac 端业务接入(IM 列表、消息流、Crew Tab 等)时,要逐文件决定是 unwrap 成跨平台还是保持 Mac-excluded。**没有任何 build 验证能告诉你哪些文件还在 iOS-only 子树里**(它们对 Mac build 隐身);容易在做 Mac UI 时反复 surprise:某个想用的 model / service 其实在 excluded 子树里,引用就编译不通。
+- **建议**: Phase 2 起,每加一个跨平台 view 要主动检查依赖链 —— 跨平台需要的 model / service / helper 从 excluded 子树挪到 `Sources/Shared/`,或加 `#if os(iOS)` 让平台特定部分隔离,逐步收缩 EXCLUDED 范围。**T0.1 的"整体 #if 包"承诺要么真做(逐文件加),要么把 EXCLUDED 当作长期方案显式记入 spec/roadmap,不能两头吊**。
+- **状态**: 待办(Phase 2 起渐进消化)
+
 ### 🟡 Supabase advisor 噪音没有 allowlist / ownership 分层
 - **发现**: 2026-05-25 · codex/security-architecture-audit
 - **位置**: Supabase security/performance advisors、`supabase/migrations`
