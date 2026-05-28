@@ -1,4 +1,3 @@
-import PendingBotShared
 import SwiftUI
 
 struct PendingBotRegularCrewView: View {

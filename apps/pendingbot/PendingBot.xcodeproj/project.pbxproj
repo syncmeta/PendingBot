@@ -40,6 +40,7 @@
 		38F776ACCEA9D9B3EC7FF2D4 /* ChatStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0DF072DCFB0786FA83D70F3 /* ChatStream.swift */; };
 		3CC92F5C7673D6F8336720CA /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 82DB1C86825A36B3C6B2555B /* Assets.xcassets */; };
 		3E88530EBC57B170C2AD9812 /* GroupCallTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F57C354DC67393099BE1D8E /* GroupCallTransport.swift */; };
+		3E951E7D1064806A8CEB148B /* MacRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2B98AFCAEB4DAF5903E44D0 /* MacRootView.swift */; };
 		3ED70C506F80A7FA5031A5D9 /* CallSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0952FBAFFA7B0819B8B70672 /* CallSession.swift */; };
 		3F6C2CE574F1B2E1D65677E9 /* AppleSignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FEFDBE4DFE6AB93D06D2015 /* AppleSignIn.swift */; };
 		410E4CD407F8295F837084F9 /* Platform.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A4E9EE25926BD0C0327F5F9 /* Platform.swift */; };
@@ -216,6 +217,7 @@
 		B856606A50216D8F41125BFC /* ProtectedURLCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtectedURLCache.swift; sourceTree = "<group>"; };
 		B864C55A6D09538AA4E09FAD /* UnreadStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnreadStore.swift; sourceTree = "<group>"; };
 		C169F240D3B0FFEE51443992 /* PendingBotRegularRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingBotRegularRootView.swift; sourceTree = "<group>"; };
+		C2B98AFCAEB4DAF5903E44D0 /* MacRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacRootView.swift; sourceTree = "<group>"; };
 		C49D5C2273CF903796CDB250 /* GroupCallView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupCallView.swift; sourceTree = "<group>"; };
 		C53CFA1DBE04DAEFC59F99DE /* ColorHash.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorHash.swift; sourceTree = "<group>"; };
 		C552E6A0C0FB84E03F1152D1 /* ConversationView+Group.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConversationView+Group.swift"; sourceTree = "<group>"; };
@@ -384,6 +386,14 @@
 			path = Envelope;
 			sourceTree = "<group>";
 		};
+		484E51BC2157D35C6C8DB11E /* Mac */ = {
+			isa = PBXGroup;
+			children = (
+				C2B98AFCAEB4DAF5903E44D0 /* MacRootView.swift */,
+			);
+			path = Mac;
+			sourceTree = "<group>";
+		};
 		5499C93C9DF42D382007DFA9 /* Products */ = {
 			isa = PBXGroup;
 			children = (
@@ -473,6 +483,7 @@
 				3BD3256170D29AD9138939C3 /* PendingBotApp.swift */,
 				1FC28CEA4A1CCB6739CFFCFA /* Components */,
 				0364D2C593CA8D46BA64CD55 /* Features */,
+				484E51BC2157D35C6C8DB11E /* Mac */,
 				F6C5D78A85BF027A0B2ABEAD /* Models */,
 				0E66F2E935AD717E1538F3A9 /* Networking */,
 				0827733EEB6F2EF6F937154B /* Shared */,
@@ -691,6 +702,7 @@
 				A0D13A30C3F770CF9B9505E1 /* LetterSenderAvatar.swift in Sources */,
 				BDDDE8F25B3B11A420609162 /* LocalDatabase.swift in Sources */,
 				E81BA5D57A39095B26E2EE89 /* Log.swift in Sources */,
+				3E951E7D1064806A8CEB148B /* MacRootView.swift in Sources */,
 				B502735FC12E0BB52BB19368 /* MarkdownText.swift in Sources */,
 				BC1CCF7E6090730EF93B7BF0 /* MathRendering.swift in Sources */,
 				86F117F1822D5658B9E4685E /* MeTabView.swift in Sources */,
@@ -746,6 +758,8 @@
 				CODE_SIGN_ENTITLEMENTS = Resources/PendingBot.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				ENABLE_PREVIEWS = YES;
+				"EXCLUDED_SOURCE_FILE_NAMES[sdk=iphone*]" = "Mac/* Mac/**/*";
+				"EXCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]" = "Components/* Components/**/* Features/* Features/**/* Models/* Models/**/* Networking/* Networking/**/* Storage/* Storage/**/*";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -770,6 +784,8 @@
 				CODE_SIGN_ENTITLEMENTS = Resources/PendingBot.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				ENABLE_PREVIEWS = YES;
+				"EXCLUDED_SOURCE_FILE_NAMES[sdk=iphone*]" = "Mac/* Mac/**/*";
+				"EXCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]" = "Components/* Components/**/* Features/* Features/**/* Models/* Models/**/* Networking/* Networking/**/* Storage/* Storage/**/*";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
