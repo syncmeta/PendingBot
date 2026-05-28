@@ -107,6 +107,19 @@
 
 ## 🟡 拆东墙补西墙
 
+### 🟡 iOS PendingBot CrewTabView 是 codex 老 dashboard 风格,未按 spec v2 §11.2 重做(roadmap 漏列单独 task)
+- **发现**: 2026-05-28 · user 主动追问"iOS Crew Tab 做了没"时暴露
+- **位置**: `apps/pendingbot/Sources/Features/Crew/CrewTabView.swift`(878 行)+ `CrewAPI.swift`(330 行)+ 调用的老 `/v1/crew`(单数)endpoint 链路
+- **问题**: 现有 iOS Crew Tab 是 codex 之前实现的 **dashboard 风格**:`@State crews / runnerHosts / sessionsByCrew / linksByCrew / membersByCrew / announcementsByCrew` 字典爆炸,UI 是创建 crew + 起 session + 看 runner host 的"工作台"形态。spec v2 §11.2 明确要求 PendingBot Crew Tab 是**普通群聊 UI grammar**(crew 列表按最近活跃排 + tap 进 crew → 群聊页面 + 消息流 + composer + @人/@session/@captain + session 状态卡 + 子 crew 摘要卡 + "在 PendingCrew 中打开")—— 完全两种东西。T1.3 D agent 只往里塞了个 SubjectPickerSheet(扫码批准 PendingCrew 登录),主体没动。
+- **影响**: v1.0 发出去 iOS Crew Tab 是 codex 风格而非 spec v2 §11.2 风格,**用户体验跟 Mac PendingCrew + iPad 不一致**;后续 §9 通信规则(`@session` mailbox / `post_to_crew` tool / 群聊白板)接入也没 client 入口。
+- **建议**: v1.0 roadmap 漏列了这个 task,本次补加 **T4.6 iOS PendingBot Crew Tab v2 重做**(roadmap §7 Phase 4,跟通信规则一起做)。重做要点:
+  - 删/重写 老 dashboard
+  - crew 列表用 `/v1/crews`(F agent ship 的新 endpoint),不是老 `/v1/crew`
+  - tap 进 crew → 群聊页(类似 ConversationView 风格,但 crew 上下文)
+  - 保留 SubjectPickerSheet(扫码批准 PendingCrew 登录的入口)
+  - iPad / Mac 借此机会规划共享(spec v2 §12.1 中栏 = §11.2 crew 群聊,两端同源)
+- **状态**: 待办(已加 roadmap T4.6,本次 session spawn sub-agent 做 MVP)
+
 ### 🟡 PendingCrew `devicePublicKey` 是 placeholder 字符串,device grant 没真绑设备
 - **发现**: 2026-05-28 · feat/subject-login-flow(T1.3 sub-agent 标了 TODO,session cleanup 时正式登记)
 - **位置**: `apps/pendingcrew/Sources/Services/PendingCrewAPI.swift`(`createDeviceLoginChallenge` 里的 `devicePublicKey`)

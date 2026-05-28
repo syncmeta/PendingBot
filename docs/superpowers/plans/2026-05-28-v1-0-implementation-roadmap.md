@@ -464,6 +464,31 @@
 
 ---
 
+### T4.6 iOS PendingBot Crew Tab v2 重做
+
+**目标**：spec v2 §11.2 — 把 iOS Crew Tab 从 codex 旧 dashboard 风格改成**普通群聊 UI grammar**，跟 spec v2 §11.2 描述一致；iPad/Mac PendingBot 的 Crew Tab 沿用同一份代码（multiplatform 共享）。
+
+**当前状态**：`apps/pendingbot/Sources/Features/Crew/CrewTabView.swift` 是 codex 之前实现的 878 行 dashboard（@State 字典爆炸：crews / runnerHosts / sessionsByCrew / linksByCrew / membersByCrew / announcementsByCrew），调老 `/v1/crew`（单数）endpoint；T1.3 D agent 只塞了 `SubjectPickerSheet`（扫码批准 PendingCrew 登录的入口），主体没动。该 task 漏在原 roadmap 里 —— 2026-05-28 session cleanup pass 时补加。详见 `docs/tech-debt.md` 同名条目。
+
+**具体动作**：
+- 重写 Crew Tab：crew 列表（扁平，按最近活跃排序，类似微信会话列表）+ tap 进 crew → 群聊页面
+- 群聊页面用现有 ConversationView 风格作底，但 crew 上下文：
+  - 消息流 + composer
+  - `@人` / `@session` / `@captain` mention
+  - session 状态卡（行内）
+  - 子 crew 摘要卡 + "进入子 crew" 按钮
+  - "在 PendingCrew 中打开" 跳转按钮（Mac 端用 deep link，iOS 端展示二维码/复制）
+  - 跨端遥控状态指示（取决于 T4.5 完成度）
+- 切到新 `/v1/crews` endpoint（F agent 在 commit `0e619241` ship 的），停掉老 `/v1/crew` 调用
+- 保留 SubjectPickerSheet（T1.3 入口）
+- Multiplatform 化：把 CrewTab 主体移出 iOS-only 子树，让 iPad / Mac PendingBot 共享同一份代码（spec v2 §11.2 三端齐）
+
+**估时**：4-6 天（重写 878 行 view + 群聊 UI 借用 ConversationView 但 crew context + multiplatform 提升）
+
+**依赖**：T4.1（Session ↔ 群聊通信接口）, T4.3（Permission Request UI 卡片）。但**P0 MVP**（crew 列表 + 进入 crew 看 metadata + 新 endpoint）可以**先做**，不必等 T4.1/T4.3。
+
+---
+
 ## 8. Phase 5：BYOK + 整合（1-2 周）
 
 ### T5.1 PendingCrew 未登录路径
