@@ -112,7 +112,7 @@ struct CrewDetailV2View: View {
             } header: {
                 Text("机长")
             } footer: {
-                Text("机长是 crew 的"代理人格"和"对父 crew 的代表"。spec v2 §6.3。")
+                Text("机长是 crew 的「代理人格」和「对父 crew 的代表」。spec v2 §6.3。")
             }
 
             Section {

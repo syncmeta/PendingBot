@@ -147,7 +147,7 @@ struct TabRoot: View {
                 .tabItem { Label(TopTab.friends.label, systemImage: TopTab.friends.systemImage) }
                 .tag(TopTab.friends)
 
-            CrewTabView()
+            CrewTabV2View()
                 .tabItem { Label(TopTab.crew.label, systemImage: TopTab.crew.systemImage) }
                 .tag(TopTab.crew)
 
