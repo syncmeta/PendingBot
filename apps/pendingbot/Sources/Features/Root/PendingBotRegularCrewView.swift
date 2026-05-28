@@ -1,4 +1,9 @@
-import PendingBotShared
+// NOTE: `PendingBotShared` is referenced as a placeholder for the
+// big-screen shared layer; the types it provides (PendingBotCrewSummary,
+// PendingBotCrewWorkspaceView, etc.) actually live in this same target
+// under Sources/Shared/. The original `import PendingBotShared` was T0.1
+// scaffold dead-code that broke build because the module doesn't exist
+// — dropping it makes the file resolve the symbols intra-module.
 import SwiftUI
 
 struct PendingBotRegularCrewView: View {
