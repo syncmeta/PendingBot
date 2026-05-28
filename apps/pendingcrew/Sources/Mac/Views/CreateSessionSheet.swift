@@ -24,8 +24,39 @@ struct CreateSessionSheet: View {
     @State private var taskBrief: String = ""
     @State private var initialPrompt: String = ""
     @State private var workingDirectory: URL?
+    @State private var permissionMode: PermissionModeSelection = .inherit
     @State private var starting: Bool = false
     @State private var localError: String?
+
+    /// Spec v2 §10 — session-level permission mode picker. `inherit`
+    /// means "use whatever the crew default is" and maps to a null
+    /// `permission_mode_override` on the server; `auto` / `manual`
+    /// override the crew default for just this session.
+    enum PermissionModeSelection: String, CaseIterable, Identifiable {
+        case inherit
+        case auto
+        case manual
+
+        var id: String { rawValue }
+
+        var label: String {
+            switch self {
+            case .inherit: return "跟随 crew 默认"
+            case .auto:    return "自动（不请示）"
+            case .manual:  return "手动（高危请示）"
+            }
+        }
+
+        /// Wire value for CrewSessionRunner.start. `nil` = inherit
+        /// (server-side null clears the override).
+        var wireValue: String? {
+            switch self {
+            case .inherit: return nil
+            case .auto:    return "auto"
+            case .manual:  return "manual"
+            }
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -73,10 +104,41 @@ struct CreateSessionSheet: View {
                 kindField
                 workingDirField
                 worktreePlaceholder
+                permissionModeField
                 briefField
                 promptField
             }
             .padding(20)
+        }
+    }
+
+    private var permissionModeField: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("Permission 模式")
+                    .font(.callout.weight(.medium))
+                Text("(spec v2 §10)")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            Picker("", selection: $permissionMode) {
+                ForEach(PermissionModeSelection.allCases) { mode in
+                    Text(mode.label).tag(mode)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            Text(permissionModeHint)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var permissionModeHint: String {
+        switch permissionMode {
+        case .inherit: return "用 crew 设定的默认模式（如果没设过,默认为自动）。"
+        case .auto:    return "agent 自由执行,不弹卡片请权限。"
+        case .manual:  return "agent 做高危操作前要在群里弹卡片等批准。v1 还没接通真正暂停 agent —— 闭环留 T4.5。"
         }
     }
 
@@ -238,7 +300,8 @@ struct CreateSessionSheet: View {
                 kind: kind,
                 workingDirectory: wd,
                 taskBrief: taskBrief.trimmingCharacters(in: .whitespacesAndNewlines),
-                initialPrompt: initialPrompt
+                initialPrompt: initialPrompt,
+                permissionModeOverride: permissionMode.wireValue
             )
             dismiss()
         } catch {
