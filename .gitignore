@@ -36,6 +36,10 @@ apps/scroll-lab/runs/
 **/xcuserdata/
 *.xcuserstate
 
+# 老 iOS 工程残留(T0.1 把 apps/ios/ 迁移到 apps/pendingbot/ 后,build/ 里仍有
+# 老 TestFlight archive(.xcarchive + .ipa)— 保留供历史回溯,但不入 git。
+apps/ios/
+
 # Claude Code
 .claude/
 .codex/
