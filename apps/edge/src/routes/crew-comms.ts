@@ -368,6 +368,91 @@ const MarkDeliveredBody = z.object({
   item_ids: z.array(z.string().uuid()).min(1).max(500),
 });
 
+const SessionPostToCrewBody = z.object({
+  content: z.string().trim().min(1).max(4_000),
+  category: z.enum(['progress', 'question', 'milestone']).optional(),
+});
+
+// ────────────────────────────────────────────────────────────────────
+// POST /v1/sessions/:sessionId/post-to-crew
+//
+// The server-side reception for spec v2 §9.3's `post_to_crew` tool when
+// the agent (Claude Code / Codex) emits it inside a PendingCrew runner.
+// The runner translates the tool-call into this HTTP POST (the bot-side
+// in-process variant lives in lib/bot-reply/tools/post-to-crew.ts).
+//
+// Auth: device-grant only — the runner host owns the grant and is the
+// authoritative source for "this session emitted this tool call".
+// Supabase JWT path is intentionally rejected — humans don't post via
+// this endpoint, they use POST /v1/crews/:crewId/messages.
+// ────────────────────────────────────────────────────────────────────
+
+sessionInboxRoutes.post('/:sessionId/post-to-crew', requireSubjectAuth(['crew:write']), async (c) => {
+  const sessionId = c.req.param('sessionId');
+  if (!isUuid(sessionId)) {
+    return jsonError(c, 400, 'invalid_id', { message: 'sessionId must be a uuid' });
+  }
+  if (c.var.authKind !== 'device_grant') {
+    return jsonError(c, 403, 'forbidden', {
+      message: 'post-to-crew requires a device grant (runner-only path)',
+    });
+  }
+  const deviceGrant = c.var.deviceGrant!;
+
+  let parsed: z.infer<typeof SessionPostToCrewBody>;
+  try {
+    parsed = SessionPostToCrewBody.parse(await c.req.json());
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+
+  // Resolve the session + its runner_host_id (needed by the runner-side
+  // RPC for the lease check).
+  const svc = serviceClient(c.env);
+  const { data: sessionRow, error: sessionErr } = await svc
+    .from('crew_sessions')
+    .select('id, responsible_subject_id, runner_host_id, status')
+    .eq('id', sessionId)
+    .maybeSingle();
+  if (sessionErr) return jsonError(c, 500, 'database_error', { detail: sessionErr.message });
+  if (!sessionRow) return jsonError(c, 404, 'session_not_found');
+  if (sessionRow.responsible_subject_id !== deviceGrant.subjectId) {
+    return jsonError(c, 403, 'session_forbidden');
+  }
+  if (!sessionRow.runner_host_id) {
+    return jsonError(c, 409, 'conflict', {
+      message: 'session has no active runner host — cannot post on its behalf',
+    });
+  }
+
+  const dbMessageKind = parsed.category === 'question' ? 'question' : 'status';
+  const payload: Record<string, unknown> = {
+    text: parsed.content,
+    source: 'session_post_to_crew',
+  };
+  if (parsed.category) payload.category = parsed.category;
+
+  const { data, error } = await svc.rpc('create_crew_announcement_from_runner_for_subject', {
+    p_runner_host_id: sessionRow.runner_host_id,
+    p_responsible_subject_id: sessionRow.responsible_subject_id,
+    p_crew_session_id: sessionRow.id,
+    p_recipient_session_ids: [] as Json,
+    p_recipient_member_ids: [] as Json,
+    p_message_kind: dbMessageKind,
+    p_summary: parsed.content,
+    p_payload: payload as Json,
+    p_board_visible: true,
+  } as never);
+  if (error) {
+    const message = rpcMessage(error);
+    if (/forbidden|lease/i.test(message)) return jsonError(c, 403, 'session_forbidden', { message });
+    if (/not found/i.test(message)) return jsonError(c, 404, 'session_not_found', { message });
+    if (/invalid|required/i.test(message)) return jsonError(c, 400, 'invalid_body', { message });
+    return jsonError(c, 500, 'database_error', { detail: message });
+  }
+  return c.json({ announcementId: data, category: parsed.category ?? null });
+});
+
 sessionInboxRoutes.post('/:sessionId/inbox/mark-delivered', requireSubjectAuth(['crew:write']), async (c) => {
   const sessionId = c.req.param('sessionId');
   if (!isUuid(sessionId)) {

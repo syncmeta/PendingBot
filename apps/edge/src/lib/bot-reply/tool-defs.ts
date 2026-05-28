@@ -400,6 +400,40 @@ export const SUBMIT_INQUIRY_ANSWER_TOOL: ChatCompletionTool = {
   },
 };
 
+// `post_to_crew` — spec v2 §9.3. Session (or, in this bot-side variant,
+// a captain/master bot) drops a key-milestone note onto the crew
+// whiteboard. Only meaningful inside a crew conversation; outside
+// crews the handler returns an error envelope.
+//
+// Category guidance (see prompts/zh/session-world-model.md §8 for the
+// LLM-facing version):
+//   - 'progress'   — ongoing-status update
+//   - 'question'   — blocking question for the crew
+//   - 'milestone'  — completed-step / hand-off
+export const POST_TO_CREW_TOOL: ChatCompletionTool = {
+  type: 'function',
+  function: {
+    name: 'post_to_crew',
+    parameters: {
+      type: 'object',
+      properties: {
+        content: {
+          type: 'string',
+          description:
+            '群聊白板上的一条关键节点消息 —— 只发"我开始了 / 我完成了 / 我卡住了 / 重要发现",别发每一步 IO 日志。1–4000 字。',
+        },
+        category: {
+          type: 'string',
+          enum: ['progress', 'question', 'milestone'],
+          description:
+            '可选分类: progress (进度更新) / question (需要别人回答的问题) / milestone (节点完成 / 交接)。',
+        },
+      },
+      required: ['content'],
+    },
+  },
+};
+
 // Group-only tools — exposed by dispatchGroupTurn via input.inGroup.
 // Both write to the same conversation_id + bot_id the runner is acting
 // for, so they take just the new value as an argument. Description

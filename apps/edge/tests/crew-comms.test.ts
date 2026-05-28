@@ -389,6 +389,38 @@ describe('GET /v1/sessions/:sessionId/inbox', () => {
   });
 });
 
+// post-to-crew endpoint is device-grant-only, which the bare requireSession
+// mock doesn't satisfy. We skip the happy-path test (would need to seed a
+// real subject_device_grants row + bypass requireSubjectAuth) and only pin
+// the "supabase JWT path is rejected" contract — that runs through the
+// mocked requireSession and lands in the explicit 403 branch.
+describe('POST /v1/sessions/:sessionId/post-to-crew', () => {
+  it('rejects supabase JWT (non-device-grant) callers with 403 forbidden', async () => {
+    const db = makeFakeDb();
+    const res = await appFor(db).request(`/v1/sessions/${SESSION_A}/post-to-crew`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-user-id': USER },
+      body: JSON.stringify({ content: 'milestone hit' }),
+    });
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: { code: string; message?: string } };
+    expect(body.error.code).toBe('forbidden');
+    expect(body.error.message).toMatch(/device grant/i);
+  });
+
+  it('rejects bad uuid in path with 400 invalid_id', async () => {
+    const db = makeFakeDb();
+    const res = await appFor(db).request('/v1/sessions/not-uuid/post-to-crew', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-user-id': USER },
+      body: JSON.stringify({ content: 'x' }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe('invalid_id');
+  });
+});
+
 describe('POST /v1/sessions/:sessionId/inbox/mark-delivered', () => {
   it('forwards item_ids to the RPC and returns updated count', async () => {
     const db = makeFakeDb();
