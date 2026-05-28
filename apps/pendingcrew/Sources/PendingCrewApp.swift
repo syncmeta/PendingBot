@@ -2,12 +2,20 @@ import SwiftUI
 
 @main
 struct PendingCrewApp: App {
-    @StateObject private var model = AppModel()
+    @StateObject private var model: AppModel
+    @StateObject private var crewStore: CrewStore
+
+    init() {
+        let appModel = AppModel()
+        _model = StateObject(wrappedValue: appModel)
+        _crewStore = StateObject(wrappedValue: CrewStore(appModel: appModel))
+    }
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environmentObject(model)
+                .environmentObject(crewStore)
                 #if os(macOS)
                 .frame(minWidth: 1040, minHeight: 680)
                 #endif
@@ -17,12 +25,19 @@ struct PendingCrewApp: App {
 
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var crewStore: CrewStore
 
     var body: some View {
-        if model.isAuthenticated {
-            authenticatedRoot
-        } else {
-            LoginView()
+        Group {
+            if model.isAuthenticated {
+                authenticatedRoot
+            } else {
+                LoginView()
+            }
+        }
+        // 登出时清空 crew 缓存；登入时 view 自己负责按需 refresh。
+        .onChange(of: model.isAuthenticated) { _, isAuth in
+            if !isAuth { crewStore.reset() }
         }
     }
 
