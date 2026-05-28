@@ -1,5 +1,20 @@
 # Subject Foundation Implementation Plan
 
+> **2026-05-28 修订 — spec v2 对齐补充**
+>
+> 本 plan 的 Task 1 已落地为 `supabase/migrations/20260524084417_subject_foundation.sql`。在 2026-05-28
+> 出的 `docs/superpowers/specs/2026-05-28-pendingbot-pendingcrew-product-design-v2.md` §4.2 / §4.3
+> 把群账号定位**显著调整**了,以下原 plan 与新 spec 矛盾或需要补丁的地方,列在文件最末
+> 「## Spec v2 修订(2026-05-28)」一节。**实施新工作之前先读那一节**,本文上半部分保留作为
+> 历史背景与已实施 Task 1 的 SQL 参考。
+>
+> 重点变化预告:
+> - 群账号 = **轻量、可临时**(出门旅游建一个都行) — 不必先有 group conversation
+> - `subjects` 表加 `kind` / `created_by`;`group_subject_members` 加 `granted_by` / `granted_at`
+> - `bots` / `conversations` 加 `responsible_subject_id`(渐进 nullable 回填)
+> - 权限矩阵简化为 α 版三级 role 固定权限(spec v2 §4.3 表格);**充值全员开放、无提现接口**
+> - 新增 `grp_*` RPC 套件替代原 plan 散落的 helper
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 建立个人/群账号责任主体和 subject wallet 兼容层，为 Crew、临时群、runner lease、subject 计费打地基。
@@ -828,3 +843,117 @@ Expected: worktree clean；分支上有 subject foundation 相关小提交和设
 - iOS/macOS UI。
 
 这些需要在 Phase 1 验证通过后分别写独立计划。
+
+---
+
+## Spec v2 修订（2026-05-28）
+
+新 spec(`docs/superpowers/specs/2026-05-28-pendingbot-pendingcrew-product-design-v2.md`)在 §4
+重新校准了「Subject 模型」。本节列出**与原 plan 的差异**与后续两份迁移做的对齐;原 plan 中
+2026-05-24 已落地的 SQL **不动**(数据库不喜欢 retroactive 改时间戳),都用增量迁移收敛。
+
+### 1. 群账号定位:轻量化、可独立创建（spec v2 §4.2）
+
+**spec 原文要点**:
+
+- 群账号跟 Notion workspace 那种重资产**完全不同**
+- 出门旅游临时建一个群账号都行,家用一台电脑共享也合适
+- 任何协作平台都需要组织账号,但 PendingBot 的组织账号**比业界主流轻量得多**
+
+**原 plan 把 `subjects.group_conversation_id` 设为非空** → 跟新定位冲突(必须先有 group
+conversation 才能建 group_account)。修订:
+
+- 迁移 `20260528083506_subject_v2_schema_alignment.sql` 放宽 `subjects_user_kind_chk`,
+  允许 `group_account` 行的 `group_conversation_id IS NULL`(独立创建的群账号)
+- 旧绑了 conversation 的 group_account 行不动,继续可用
+- 后续 group_account 创建路径 = `grp_create_group_subject(display_name)`,**不强求绑 conversation**
+
+### 2. Subject 表字段补齐(spec v2 字段名)
+
+| 字段 | 原 plan | spec v2 期望 | 迁移做的事 |
+|---|---|---|---|
+| `subjects.kind` | 没有(用 `subject_type`) | `kind` | 加列,触发器保持两个字段同步,以 `kind` 为准 |
+| `subjects.created_by` | 没有 | `created_by uuid REFERENCES users(id)` | 加列,回填:user_account → 自己;legacy group_account → conversation_group_meta.created_by |
+| `group_subject_members.granted_by` | 没有(只有 `created_at`) | `granted_by` | 加列,owner 行回填为自己(临时);其余 NULL,等真正经手时再填 |
+| `group_subject_members.granted_at` | `created_at` | `granted_at` | 加列,从 `created_at` 回填 |
+| `subject_wallets.updated_at` | `balance_updated_at` | `updated_at` | 加列,触发器把两个时间戳并行推进 |
+
+`subject_type` / `created_at` / `balance_updated_at` **不删** — 老代码(crew_announcement_mentions、
+device_login_grants、billing_debit_subject)还在引用,留作 alias。
+
+### 3. bots / conversations 加 responsible_subject_id
+
+原 plan 没碰这两张表(留给 Crew 阶段)。spec v2 §4.1 明确:**每个 crew / temporary group /
+session / runner host / fly machine 都绑唯一 `responsible_subject_id`**。bots 和 conversations
+是基础对象,这一步先把列加上,nullable + 回填到 owner 的 user subject。
+
+迁移 `20260528083616_bots_conversations_responsible_subject.sql`:
+
+- 兜底回填所有 `pendingbot.users` 行的 user_account subject(老 plan 的回填只覆盖了 2026-05-24
+  存量,新增 user 走触发器,但触发器从 INSERT 起才挂)
+- `bots.responsible_subject_id` = `creator_id` 对应的 user_account subject(preset bot creator_id
+  NULL → 留 NULL,后续运营策略决定)
+- `conversations.responsible_subject_id` = `user_id` 对应的 user_account subject(bot-only /
+  system conversation → 留 NULL)
+
+### 4. 权限矩阵 α 简化版（spec v2 §4.3）
+
+原 plan 在 `group_subject_members` 上散布了 `can_manage_wallet` / `can_manage_runners` /
+`can_create_crew` 三个布尔位 — 这是「可自定义权限」的雏形。spec v2 §4.3 明确把 α 版收紧成
+**固定三级 role 默认权限,v1 不允许自定义**:
+
+| 操作 | owner | admin | member |
+|---|---|---|---|
+| 在群下任一 crew 里对话/看摘要 | ✅ | ✅ | ✅ |
+| 创建群下的 crew | ✅ | ✅ | ✅ |
+| 删除群下的 crew | ✅ | ✅ | 仅自己创建的 |
+| **群钱包充值** | ✅ | ✅ | ✅ |
+| 加 member / 踢 member | ✅ | ✅ | ❌ |
+| 启动 / 销毁 Fly machine | ✅ | ✅ | ❌ |
+| 创建 / 删除 captain bot | ✅ | ✅ | ❌ |
+| **批准外部 crew 认本群下 crew 为父** | ✅ | ✅ | ❌ |
+| **接受跨主体协作邀请** | ✅ | ✅ | ❌ |
+| **登录代表群账号**(扫码到 PendingCrew Mac/iPad) | ✅ | ✅ | ❌ |
+| 加/踢 admin、转让 ownership、解散群 | ✅ | ❌ | ❌ |
+
+**关键约束**:
+
+- **单 owner**(v1 不做 multi-owner,转让足够解决继承场景)
+- **充值全员开放** — owner / admin / member 都能调 `grp_topup_wallet`
+- **无提现接口** — 规避「金融服务」合规风险,简化产品;schema 不留接口
+- **群账号 = 永远 unified billing** — 没有 BYOK 概念
+
+布尔位字段(`can_manage_*`)留作 legacy 数据,不再扩展,但也不删 — 删的话 RPC 老路径会断。
+后续如需「自定义权限」(post-v1),从 RPC 守卫开始改,而不是回到布尔位模式。
+
+### 5. 新 RPC 套件(替代原 plan 的散落 helper)
+
+迁移 `20260528083639_group_account_permission_rpcs.sql` 实现:
+
+| RPC | 调用者 | 行为 |
+|---|---|---|
+| `grp_create_group_subject(display_name)` | 任何 authenticated user | 建 group_account + wallet + 自己 owner 行 |
+| `grp_add_member(group_subject_id, user_id)` | owner/admin | 加 member |
+| `grp_remove_member(group_subject_id, user_id)` | owner/admin | 踢 member;踢 admin 仅 owner |
+| `grp_promote_to_admin(group_subject_id, user_id)` | owner only | member → admin |
+| `grp_demote_admin(group_subject_id, user_id)` | owner only | admin → member |
+| `grp_transfer_ownership(group_subject_id, to_user_id)` | owner only | 原 owner 自动降为 admin |
+| `grp_topup_wallet(group_subject_id, credits)` | 任何 group member | 充值;**不提供提现** |
+
+全部 `SECURITY DEFINER` + 内部 `auth.uid()` 检查。`service_role` 可 bypass(支付 webhook
+后台调用)。原 plan 的 `ensure_user_subject` / `ensure_group_subject_for_conversation` /
+`billing_debit_subject` **保留**,RPC 之间互补。
+
+### 6. RLS 状态
+
+- `subjects` / `subject_wallets` / `group_subject_members` 的老 SELECT 策略仍生效(2026-05-24 那份迁移)
+- WRITE 暂时**只通过 RPC**(security definer),不放 client-side INSERT/UPDATE/DELETE — 这是 α
+  版务实选择,避免精细 RLS write policy 写错
+- **完整 RLS(尤其跨群 read / member 自管 read 边界)留到 T1.3** 一起做(扫码登录会同时
+  打开「以 subject 身份读 subject_wallets」路径)
+
+### 7. 后续 phase 关联
+
+- **T1.3 扫码登录** 依赖本步的 `created_by` / `granted_by` / RPC 套件,以及 `responsible_subject_id` 列
+- **T2.x Crew schema** 依赖本步的 `subjects` + responsible_subject_id 链路(crew_* 表已用 FK)
+- **billing path** 仍走原 plan 的 `billing_debit_subject`(未改),只是入口主体变成 `responsible_subject_id`
