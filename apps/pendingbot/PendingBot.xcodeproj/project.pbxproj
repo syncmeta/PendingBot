@@ -56,6 +56,7 @@
 		583836D442830F875F8C55F2 /* CallCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7E8B55D4DE8ED09E4B54C14 /* CallCenter.swift */; };
 		5A76B2CB395294D7B493AE8D /* SidebarTabBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AE0A0B0D448DCB7DB1EB17F /* SidebarTabBar.swift */; };
 		5DC1DDF2BCFD9284F2421B38 /* ActiveCallBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = E586576C7350D86FA4C6C68B /* ActiveCallBanner.swift */; };
+		62834377D43A0D27902FD8AA /* ConversationView+CrewProposal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 550414C4E1E5D5C11397ABA1 /* ConversationView+CrewProposal.swift */; };
 		67B0E4F2A2C4FE0ACCE07550 /* EnvelopeFeedRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56BFB3EBF959D378BC6BC313 /* EnvelopeFeedRow.swift */; };
 		68CC7CE5D41AC8BE5940E886 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = 58587B83E149045A770D0833 /* GoogleSignIn */; };
 		6E4DD70ABC53852AB56FCFED /* EnvelopeArticleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F18FB9C392174C32131512F /* EnvelopeArticleView.swift */; };
@@ -88,6 +89,7 @@
 		A356B62C725A74F8C0DDB244 /* SubjectPickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A19A4D76A2D17FD422DA74D /* SubjectPickerSheet.swift */; };
 		A7ADFAD7B076861A93C987D1 /* UserAvatar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A4C4C281584EA9A3D270E66 /* UserAvatar.swift */; };
 		AE2E39CEFC00A4D6517ABAE9 /* SwiftMath in Frameworks */ = {isa = PBXBuildFile; productRef = 6F86D21C91A9BC3B4CA176D0 /* SwiftMath */; };
+		AEF24DAC89A4BDB1F89EB53F /* CrewProposalCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE4AD56378500470C3FFCB27 /* CrewProposalCard.swift */; };
 		B1F765C31CB716461C8AB2AC /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = BAA061523352F62354113E3C /* WebRTC */; };
 		B31B22663A5B416DE2146130 /* PendingBotRegularCrewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A8ABE32267038A221A90F5D /* PendingBotRegularCrewView.swift */; };
 		B502735FC12E0BB52BB19368 /* MarkdownText.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F8C48D5CD8682E938D093C /* MarkdownText.swift */; };
@@ -174,6 +176,7 @@
 		4AA1FB293BD301008D3819AD /* EnvelopeTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvelopeTabView.swift; sourceTree = "<group>"; };
 		508FBAF36D83C0824F8073F4 /* CallFloatingPill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallFloatingPill.swift; sourceTree = "<group>"; };
 		538B09D7D56B20AA7BCE1E50 /* RealtimeSocket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeSocket.swift; sourceTree = "<group>"; };
+		550414C4E1E5D5C11397ABA1 /* ConversationView+CrewProposal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConversationView+CrewProposal.swift"; sourceTree = "<group>"; };
 		56BFB3EBF959D378BC6BC313 /* EnvelopeFeedRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvelopeFeedRow.swift; sourceTree = "<group>"; };
 		58C7852B0C9D1F1A7346DDCB /* BotVisibilityTag.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotVisibilityTag.swift; sourceTree = "<group>"; };
 		59B8BCA71B08958950585241 /* BotCapabilitiesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotCapabilitiesView.swift; sourceTree = "<group>"; };
@@ -222,6 +225,7 @@
 		B7E8B55D4DE8ED09E4B54C14 /* CallCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallCenter.swift; sourceTree = "<group>"; };
 		B856606A50216D8F41125BFC /* ProtectedURLCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtectedURLCache.swift; sourceTree = "<group>"; };
 		B864C55A6D09538AA4E09FAD /* UnreadStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnreadStore.swift; sourceTree = "<group>"; };
+		BE4AD56378500470C3FFCB27 /* CrewProposalCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewProposalCard.swift; sourceTree = "<group>"; };
 		C169F240D3B0FFEE51443992 /* PendingBotRegularRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingBotRegularRootView.swift; sourceTree = "<group>"; };
 		C2B98AFCAEB4DAF5903E44D0 /* MacRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacRootView.swift; sourceTree = "<group>"; };
 		C49D5C2273CF903796CDB250 /* GroupCallView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupCallView.swift; sourceTree = "<group>"; };
@@ -547,12 +551,14 @@
 				0A39758A2179809248593753 /* ConversationSettingsView.swift */,
 				83F41539F59462EA04C55F6F /* ConversationView.swift */,
 				EA551869EBE6A7E25EEFBDCA /* ConversationView+Attachments.swift */,
+				550414C4E1E5D5C11397ABA1 /* ConversationView+CrewProposal.swift */,
 				C552E6A0C0FB84E03F1152D1 /* ConversationView+Group.swift */,
 				E87432FAA048B69C5F8515B5 /* ConversationView+Loading.swift */,
 				7114A9AF0BBDF033ADE65E67 /* ConversationView+Realtime.swift */,
 				3BD4BD3319B91CCFCAFEE846 /* ConversationView+Recall.swift */,
 				0C772BAA4B0D29D2620E67CF /* ConversationView+Streaming.swift */,
 				C87A0A38056F5029C934F737 /* ConversationView+ToolTrace.swift */,
+				BE4AD56378500470C3FFCB27 /* CrewProposalCard.swift */,
 				0D559B8D3970D7B444980F3C /* MessageTabView.swift */,
 				7E95667CA42D6EA266907A06 /* SubConversationView.swift */,
 				CAB29CAABC38BF9B5380C3DE /* ToolTraceView.swift */,
@@ -684,6 +690,7 @@
 				9D84625FAE71E4AD55E3A389 /* ContactsAPI.swift in Sources */,
 				D106CFB71C2A7C90213B340E /* ConversationSettingsView.swift in Sources */,
 				8B4901EDE82D47DC1E4D5365 /* ConversationView+Attachments.swift in Sources */,
+				62834377D43A0D27902FD8AA /* ConversationView+CrewProposal.swift in Sources */,
 				47AFDCF46A82E6F362AAE3E1 /* ConversationView+Group.swift in Sources */,
 				04409BF069F6090B17FDEA09 /* ConversationView+Loading.swift in Sources */,
 				2B724B440312D4E9372269A0 /* ConversationView+Realtime.swift in Sources */,
@@ -694,6 +701,7 @@
 				754FF3CE1701C6D130EC618C /* CreateCrewV2Sheet.swift in Sources */,
 				8FAC3CB10EEC9AD7CE5EEE34 /* CrewAPI.swift in Sources */,
 				4B8693B2BE0A0352EAC924DE /* CrewDetailV2View.swift in Sources */,
+				AEF24DAC89A4BDB1F89EB53F /* CrewProposalCard.swift in Sources */,
 				0E0FCE983AB9E6DB3447D869 /* CrewTabV2View.swift in Sources */,
 				00F8285F54F41EC3FD4515C1 /* CrewTabView.swift in Sources */,
 				D86D67B77E20704ED320D0F9 /* EmailSignIn.swift in Sources */,

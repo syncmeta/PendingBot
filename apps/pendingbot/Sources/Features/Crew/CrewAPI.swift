@@ -525,4 +525,49 @@ extension APIClient {
     func createCrewV2(_ request: CreateCrewRequestV2) async throws -> CreateCrewResponseV2 {
         try await post("v1/crews", body: request)
     }
+
+    // ─────────────────────────────────────────────────────────────
+    // MARK: Spec v2 §6.4 — bot-initiated crew (start_crew tool)
+    //
+    // The `start_crew` bot tool drops a `role='log'` row with
+    // `log_kind='crew_proposal'` into the conversation. PendingBot
+    // renders it as a confirmation card; tapping 确认创建 / 拒绝
+    // hits this endpoint to make the decision binding.
+    // ─────────────────────────────────────────────────────────────
+
+    /// Approve or reject decision for a `start_crew` proposal.
+    enum CrewProposalDecision: String, Encodable {
+        case approve
+        case reject
+    }
+
+    /// Response from `POST /v1/messages/:id/crew-proposal/decide`.
+    /// `crewId` is set on approve only; `parentAttachError` is set
+    /// when the proposal had `proposed_parent_crew_id` and the
+    /// follow-up crew_attach_as_child call failed — the crew itself
+    /// is still live, just standalone.
+    struct CrewProposalDecisionResponse: Decodable {
+        let ok: Bool
+        let status: String
+        let crewId: String?
+        let parentAttachError: String?
+    }
+
+    /// POST /v1/messages/:messageId/crew-proposal/decide.
+    ///
+    /// Returns the server's view of the resulting status (always
+    /// `approved` or `rejected` on 200). A 409 from the server with
+    /// code `crew_proposal_already_decided` surfaces here as
+    /// `APIError.http` — the caller refreshes conversation history to
+    /// pick up the existing decision.
+    func decideCrewProposal(
+        messageId: String,
+        decision: CrewProposalDecision
+    ) async throws -> CrewProposalDecisionResponse {
+        struct Body: Encodable { let decision: CrewProposalDecision }
+        return try await post(
+            "v1/messages/\(messageId)/crew-proposal/decide",
+            body: Body(decision: decision)
+        )
+    }
 }
