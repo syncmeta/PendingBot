@@ -63,6 +63,12 @@ targets:
         SUPPORTS_MACCATALYST: NO
         # 不为 macOS 提供 Designed-for-iPad 模式（要真正的 SwiftUI macOS）
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+        # iOS 端排除 macOS-only 子树（Sources/Mac/）
+        "EXCLUDED_SOURCE_FILE_NAMES[sdk=iphone*]": "Mac/* Mac/**/*"
+        # macOS 端排除 iOS-only 子树。iOS 业务代码（Components/Features/Models/
+        # Networking/Storage）依赖 UIKit/PushKit/CallKit/Supabase iOS flow，
+        # 整体不参与 Mac build。Mac 端走全新的 Mac/ 占位 UI，T1.4 阶段只搭壳。
+        "EXCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]": "Components/* Components/**/* Features/* Features/**/* Models/* Models/**/* Networking/* Networking/**/* Storage/* Storage/**/*"
     dependencies:
       - package: GRDB
         product: GRDB

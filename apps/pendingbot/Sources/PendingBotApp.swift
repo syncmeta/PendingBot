@@ -1,5 +1,7 @@
 import SwiftUI
 
+#if os(iOS)
+
 @main
 struct PendingBotApp: App {
     @StateObject private var accountStore = AccountStore.shared
@@ -178,3 +180,22 @@ private struct SplashView: View {
         }
     }
 }
+
+#elseif os(macOS)
+
+/// PendingBot Mac 端 @main — T1.4 partial 占位壳。
+///
+/// Mac 端业务接入是 Phase 2 才做的事；当前只挂 MacRootView 的 5 tab
+/// NavigationSplitView,sidebar + detail 都是 placeholder。窗口最小
+/// 尺寸 1100x700,跟 PendingCrew Mac 端的体感保持一致。
+@main
+struct PendingBotApp: App {
+    var body: some Scene {
+        WindowGroup {
+            MacRootView()
+                .frame(minWidth: 1100, minHeight: 700)
+        }
+    }
+}
+
+#endif
