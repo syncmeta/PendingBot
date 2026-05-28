@@ -1,8 +1,12 @@
-# PendingBot 与 PendingCrew 产品落地设计
+> ⚠️ **DEPRECATED — 2026-05-28**
+>
+> 这份 spec 已被 [`2026-05-28-pendingbot-pendingcrew-product-design-v2.md`](./2026-05-28-pendingbot-pendingcrew-product-design-v2.md) 替换。保留为历史参考。后续 implementation 以 v2 为准。
+
+# PendingBot 与 PendingCrew 产品落地设计（已废弃）
 
 日期：2026-05-27
 分支：`codex/crew-group-continuation`
-状态：待评审
+状态：已废弃 — 见 v2
 
 ## 目的
 
