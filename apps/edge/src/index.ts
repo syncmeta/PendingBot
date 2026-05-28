@@ -14,6 +14,7 @@ import { friendRequestRoutes } from './routes/friend-requests';
 import { groupRoutes } from './routes/groups';
 import { crewRoutes } from './routes/crew';
 import { crewsRoutes } from './routes/crews';
+import { crewMessagesRoutes, sessionInboxRoutes } from './routes/crew-comms';
 import { shareChangesRoutes } from './routes/share-changes';
 import { groupVoiceRoutes } from './routes/group-voice';
 import { voiceActiveRoutes } from './routes/voice-active';
@@ -95,6 +96,8 @@ v1.route('/friend-requests', friendRequestRoutes);
 v1.route('/groups', groupRoutes);
 v1.route('/crew', crewRoutes);
 v1.route('/crews', crewsRoutes);
+v1.route('/crews', crewMessagesRoutes);            // POST /v1/crews/:crewId/messages
+v1.route('/sessions', sessionInboxRoutes);         // GET /v1/sessions/:sessionId/inbox + mark-delivered
 v1.route('/share-changes', shareChangesRoutes);
 v1.route('/groups', groupVoiceRoutes);
 v1.route('/voice', voiceActiveRoutes);
