@@ -241,6 +241,148 @@ enum DeviceLoginGrantApproval: Equatable {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// MARK: - T4.6 P1 crew chat — read feed + human-post + session/member rows
+//
+// **Casing split is per-route, and this client uses a bare JSONDecoder
+// with NO keyDecodingStrategy.** The read endpoints below
+// (`crew.ts` GET announcements/sessions/members) return RAW snake_case
+// rows from supabase, so every property here is literal snake_case. The
+// human-post response (`crew-comms.ts` POST messages) is hand-shaped
+// camelCase, so `CrewPostMessageResponse` stays camelCase. Mixing these
+// up silently decodes to nil — each field is confirmed against the route.
+// ─────────────────────────────────────────────────────────────────────
+
+/// One row from `GET /v1/crew/:id/announcements` — the crew whiteboard /
+/// group-chat feed. `summary` is the human-visible text (NOT `content`).
+/// `created_at` is an ISO-8601 string on this snake_case route.
+struct CrewAnnouncementRow: Decodable, Identifiable, Hashable {
+    let id: String
+    let crew_conversation_id: String
+    let responsible_subject_id: String?
+    /// DB CHECK vocab: `'human' | 'session' | 'master_bot' | 'system'`
+    /// (NOT `captain`). The bubble-side mapping keys off
+    /// `sender_session_id != nil` rather than this string so an unknown
+    /// future value never lands a human post on the wrong side.
+    let sender_kind: String
+    let sender_member_id: String?
+    let sender_session_id: String?
+    let recipient_mode: String?
+    let message_kind: String
+    let board_visible: Bool
+    /// The human-visible message text.
+    let summary: String
+    /// Free-form JSON; decoded leniently (kept optional, not rendered in
+    /// P1 — the bubble only needs `summary`). `JSONScalar` maps objects /
+    /// arrays to `.other` rather than throwing, so an arbitrary payload
+    /// never aborts the whole list decode.
+    let payload: JSONScalar?
+    let created_at: String
+    let mentions: [CrewAnnouncementMention]
+}
+
+/// Read-side mention row attached to an announcement. NOTE: no
+/// `target_user_id`, and no bare `kind` — it's `target_kind` plus
+/// `target_session_id` / `target_member_id`.
+struct CrewAnnouncementMention: Decodable, Hashable, Identifiable {
+    let id: String
+    let announcement_id: String
+    let target_kind: String
+    let target_session_id: String?
+    let target_member_id: String?
+    let created_at: String
+}
+
+/// One row from `GET /v1/crew/:id/sessions` (snake_case, created_at DESC).
+struct CrewSessionRow: Decodable, Identifiable, Hashable {
+    let id: String
+    let crew_conversation_id: String
+    let responsible_subject_id: String?
+    let runner_kind: String?
+    let status: String
+    let task_brief: String?
+    let progress_summary: String?
+    let created_at: String
+    let started_at: String?
+    let finished_at: String?
+}
+
+/// One row from `GET /v1/crew/:id/members` (snake_case, wrapper `{items}`).
+/// Resolves human / captain sender display names + powers the @mention
+/// picker.
+struct CrewMemberRow: Decodable, Identifiable, Hashable {
+    let id: String
+    let conversation_id: String
+    /// `'human' | 'bot' | 'session'` (mirrors temporary_group_members).
+    let member_kind: String
+    let user_id: String?
+    let bot_id: String?
+    let code_session_id: String?
+    let display_name: String?
+    let role: String?
+    /// Free-form JSON capability bag — kept lenient, unused in P1.
+    let capabilities: JSONScalar?
+    let status: String
+    let created_at: String
+}
+
+/// Structured mention sent with a human post. `target_id` is the wire key
+/// (no key-encoding strategy → property name == JSON key). `kind` vocab:
+/// `'human' | 'session' | 'captain' | 'broadcast'`.
+struct CrewMentionInput: Encodable, Hashable {
+    let kind: String
+    let target_id: String?
+}
+
+/// `POST /v1/crews/:crewId/messages` response (camelCase, hand-mapped).
+struct CrewPostMessageResponse: Decodable, Hashable {
+    let announcementId: String
+    let recipientSessionIds: [String]
+}
+
+extension APIClient {
+    /// `GET /v1/crew/:id/announcements` — the crew chat feed (board_visible
+    /// rows, created_at ASC, limit 200). `id` is the crew conversation id.
+    func getCrewAnnouncements(_ crewId: String) async throws -> [CrewAnnouncementRow] {
+        struct Response: Decodable { let items: [CrewAnnouncementRow] }
+        let r: Response = try await get("v1/crew/\(crewId)/announcements")
+        return r.items
+    }
+
+    /// `GET /v1/crew/:id/sessions` — crew session rows (created_at DESC, 100).
+    func getCrewSessions(_ crewId: String) async throws -> [CrewSessionRow] {
+        struct Response: Decodable { let items: [CrewSessionRow] }
+        let r: Response = try await get("v1/crew/\(crewId)/sessions")
+        return r.items
+    }
+
+    /// `GET /v1/crew/:id/members` — active crew members (humans / bots /
+    /// sessions). Resolves sender display names + mention candidates.
+    func getCrewMembers(_ crewId: String) async throws -> [CrewMemberRow] {
+        struct Response: Decodable { let items: [CrewMemberRow] }
+        let r: Response = try await get("v1/crew/\(crewId)/members")
+        return r.items
+    }
+
+    /// `POST /v1/crews/:crewId/messages` — the mention-aware human-post path.
+    /// Empty `mentions` (or any `broadcast`) fans out to everyone.
+    /// `message_kind` is omitted (server defaults to `text`).
+    func postCrewMessage(
+        crewId: String,
+        content: String,
+        mentions: [CrewMentionInput] = []
+    ) async throws -> CrewPostMessageResponse {
+        struct Body: Encodable {
+            let content: String
+            let mentions: [CrewMentionInput]
+        }
+        return try await post(
+            "v1/crews/\(crewId)/messages",
+            body: Body(content: content, mentions: mentions)
+        )
+    }
+}
+
 extension APIClient {
     func crewCurrentSubject() async throws -> CrewSubject {
         let envelope: CrewSubjectEnvelope = try await get("v1/me/subject")
