@@ -3,10 +3,8 @@ import type { Env } from '../types';
 import type { SupabaseClient } from '../lib/supabase';
 import { serviceClient } from '../lib/supabase';
 import type { Json } from '../db/schema';
-import { billingDebit, billingDebitSubject, getMarkup, usdToPnd } from '../lib/billing';
-import { dualWriteV2 } from './billing-v2-dualwrite';
-import { putCachedBalance } from '../lib/balance-cache';
-import { splitAndDebit } from '../lib/group-billing';
+import { settleTurnV2 } from './billing-v2-dualwrite';
+import type { OwnerRef } from '../lib/billing-v2';
 import type { WebToolUsage } from '../lib/web-meter';
 import { uuidv7 } from '../lib/ids';
 import { fetchGatewayCost, GATEWAY_COST_PENDING } from '../lib/ai-gateway';
@@ -362,20 +360,17 @@ export async function persistAuditMessage(
     llmCost = gw;
   }
   // Web-tool spend (Brave / Tavily / Exa / Serper / Firecrawl) accrues
-  // during the same LLM turn. We fold its USD sum into the parent row
-  // and apply the same usdToPnd markup so a single billing_debit
-  // covers both. Per-call detail goes into audit_web_tool_calls below.
+  // during the same LLM turn. We fold its USD sum into the parent
+  // audit row for at-a-glance turn cost; the actual debit is per-call
+  // via settleTurnV2 below (one usage_event each). Per-call detail also
+  // goes into audit_web_tool_calls.
   const toolCalls = opts.webTools ?? [];
   const toolCostUsd = toolCalls.reduce((s, c) => s + (c.costUsd || 0), 0);
   const hasTools = toolCalls.length > 0;
-  // Combined USD for billing. usdToPnd treats null/<=0 as 0, so a turn
-  // with neither LLM pricing nor any tool cost still settles into the
-  // 'skipped' branch below without us special-casing nulls here.
-  // Markup is read from billing_config (cached) — ops retunes it from
-  // the board without redeploying the worker.
+  // Combined raw USD for the audit row (informational). v2 billing is in
+  // PNC micros via settleTurnV2 — no runtime markup (markup lives only on
+  // sale-side pack issuance now).
   const combinedUsd = (llmCost ?? 0) + toolCostUsd;
-  const markup = await getMarkup(supa);
-  const pnd = usdToPnd(combinedUsd, markup);
   const total =
     (opts.inputTokens ?? 0) +
     (opts.outputTokens ?? 0) +
@@ -390,19 +385,17 @@ export async function persistAuditMessage(
   const hasBillableTarget =
     conversationBillingTarget.kind !== 'none' || opts.userId != null;
 
-  // Billing status preview. The actual billed/unbilled flip happens in
-  // billing_debit (when called below); we plant a sensible initial value
-  // so audit rows that never debit (no userId, zero PND, error status)
-  // settle into a final state on insert.
-  //   - 'free'    : no billable owner/group target at all
-  //   - 'skipped' : has billable target but pnd == 0 (error / no usage / no
-  //                 cost AND no tool spend)
-  //   - 'pending' : will be flipped to billed/unbilled by billing_debit
-  const initialBilling: 'free' | 'skipped' | 'pending' = !hasBillableTarget
+  // audit_log.billing_status is now a v1-legacy column kept only as turn
+  // metadata (the real ledger is billing v2's ledger_entries). We stamp a
+  // sensible terminal value on insert:
+  //   - 'free'    : no billable owner at all (system/bot-only turn)
+  //   - 'skipped' : billable owner but zero cost (error / no usage)
+  //   - 'billed'  : settleTurnV2 will debit packs for this turn
+  const initialBilling: 'free' | 'skipped' | 'billed' = !hasBillableTarget
     ? 'free'
-    : pnd <= 0
+    : combinedUsd <= 0
       ? 'skipped'
-      : 'pending';
+      : 'billed';
 
   // Voice call dims land in dedicated columns so dashboards can split
   // "audio token spend" vs "text token spend" without re-deriving from
@@ -438,11 +431,12 @@ export async function persistAuditMessage(
     audio_output_tokens: audioOutputTokens,
     total_tokens: total,
     // cost_usd is the LLM cost that drives billing — the provider-reported
-    // figure for this turn. tool_cost_usd breaks out web-tool spend;
-    // cost_credits below is the combined debit (LLM + tools, after markup).
+    // figure for this turn. tool_cost_usd breaks out web-tool spend.
+    // cost_credits is v1-legacy (the real debit is v2 ledger_entries);
+    // left 0 so dashboards reading it don't double-count post-cutover.
     cost_usd: llmCost,
     tool_cost_usd: hasTools ? toolCostUsd : null,
-    cost_credits: pnd,
+    cost_credits: 0,
     billing_status: initialBilling,
     generation_id: opts.generationId ?? null,
     latency_ms: latencyMs,
@@ -496,44 +490,39 @@ export async function persistAuditMessage(
     }
   }
 
-  // Post-insert debit. Errors are swallowed inside billingDebit /
-  // splitAndDebit — never propagate billing-side failures. The next
-  // pre-call gate handles consequences (insufficient balance blocks
-  // further requests in 1v1; group members are flagged overdrawn for
-  // next-turn exclusion). Runs only on the fresh-insert path above, so
-  // a duplicate delivery never double-debits.
-  if (initialBilling === 'pending') {
-    // Branch on conv billing target: groups split across participating
-    // members; temporary groups / Crew debit their responsibility subject;
-    // legacy 1v1 / system tasks debit a single user.
-    if (conversationBillingTarget.kind === 'group') {
-      await splitAndDebit({ env, auditLogId: auditId }).catch((err) =>
-        console.warn('[persistAuditMessage] splitAndDebit failed', err),
-      );
-    } else if (conversationBillingTarget.kind === 'subject') {
-      await billingDebitSubject(
-        supa,
-        conversationBillingTarget.subjectId,
-        auditId,
-        pnd,
-      );
+  // Post-insert debit (billing v2 authoritative). settleTurnV2 records a
+  // usage_event + ledger debit per model/voice spend and per web-tool
+  // call. Failures are logged + swallowed inside it — never propagate.
+  // Runs only on the fresh-insert path above, so a duplicate queue
+  // delivery never double-debits.
+  if (initialBilling === 'billed') {
+    // Resolve the v2 owner, preserving v1 targeting semantics:
+    //   - group           → the group's responsible subject (pool wallet)
+    //   - subject (tmp/crew) → that responsibility subject
+    //   - none + userId   → the user (1v1 / system)
+    // The group per-member split (group_member_billing) is retired —
+    // groups now pay from the group subject's wallet (design §9).
+    let owner: OwnerRef | null = null;
+    if (conversationBillingTarget.kind === 'subject') {
+      owner = { kind: 'subject', subjectId: conversationBillingTarget.subjectId };
+    } else if (conversationBillingTarget.kind === 'group') {
+      const subjectId = opts.conversationId
+        ? await resolveConversationSubjectId(supa, opts.conversationId)
+        : null;
+      owner = subjectId
+        ? { kind: 'subject', subjectId }
+        : opts.userId
+          ? { kind: 'user', userId: opts.userId }
+          : null;
     } else if (opts.userId) {
-      const newBalance = await billingDebit(supa, opts.userId, auditId, pnd);
-      // Keep the per-user KV balance cache in sync so the next
-      // requireBalance call skips Supabase. RPC returned null = swallowed
-      // error; leave the cache alone so the next miss re-reads.
-      if (newBalance != null) {
-        await putCachedBalance(env, opts.userId, newBalance).catch(() => undefined);
-      }
-      // Billing v2 dual-write: parallel to the v1 debit above, record
-      // usage_events + settleUsage on packs (model spend + each web-tool
-      // call). v1 stays authoritative; v2 builds parallel state we'll
-      // switch to in #190. Failures inside dualWriteV2 are logged and
-      // swallowed — never propagate.
-      await dualWriteV2({
+      owner = { kind: 'user', userId: opts.userId };
+    }
+
+    if (owner) {
+      await settleTurnV2({
         supa,
         msg,
-        ownerUserId: opts.userId,
+        owner,
         modelCostUsd: llmCost,
         totalTokens: total,
         modelId: route?.modelToCall ?? opts.tag ?? '<unrouted>',
@@ -543,6 +532,22 @@ export async function persistAuditMessage(
       });
     }
   }
+}
+
+// Look up a conversation's responsible_subject_id (the group/account
+// wallet a 'group' conversation bills against in v2). Null when unset
+// (falls back to the initiating user).
+async function resolveConversationSubjectId(
+  supa: SupabaseClient,
+  conversationId: string,
+): Promise<string | null> {
+  const { data } = await supa
+    .from('conversations')
+    .select('responsible_subject_id')
+    .eq('id', conversationId)
+    .maybeSingle();
+  const sid = data?.responsible_subject_id;
+  return typeof sid === 'string' && sid.length > 0 ? sid : null;
 }
 
 type ConversationBillingTarget =
