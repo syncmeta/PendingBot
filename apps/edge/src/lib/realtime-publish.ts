@@ -1,15 +1,20 @@
 import type { Env } from '../types';
 
-// The six tables that the CF realtime layer fans out — the same set that
-// was subscribed via Supabase Realtime. conv:* tables route by
-// conversation_id, user:* tables route by user_id.
+// Tables the CF realtime layer fans out. conv:* tables route by
+// conversation_id, user:* tables by user_id, and the crew_* tables by
+// crew_conversation_id (a crew IS a conversation, so they land on the same
+// `conv:<id>` topic the crew chat already authorizes via resolveConv).
 export type RealtimeTable =
   | 'messages'
   | 'bot_lookbacks'
   | 'group_continue_requests'
   | 'conversation_participants'
   | 'user_unread_counts'
-  | 'envelope_runs';
+  | 'envelope_runs'
+  // T4.5 crew live-push — the crew whiteboard feed + session status. Keyed
+  // by crew_conversation_id (see realtime-internal.ts routing).
+  | 'crew_announcements'
+  | 'crew_sessions';
 
 // Wire shape of a single row change delivered to clients over the
 // WebSocket. `record` is the row as it stands after the change (for

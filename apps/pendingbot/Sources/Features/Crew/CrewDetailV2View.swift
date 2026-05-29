@@ -52,6 +52,13 @@ struct CrewDetailV2View: View {
             }
         }
         .task { await bootstrap() }
+        .onDisappear {
+            // Drop the crew's realtime socket when leaving. Re-entering
+            // re-runs `.task` → bootstrap → store.start(), and start() is
+            // idempotent so a warm re-subscribe is a no-op if it somehow
+            // races the teardown.
+            if let store { Task { await store.stop() } }
+        }
         .sheet(isPresented: $showingShareSheet) {
             CrewDeepLinkShareSheet(url: pendingCrewDeepLink)
         }
@@ -114,6 +121,11 @@ struct CrewDetailV2View: View {
             let store = CrewChatStore(crewId: crewId, api: api)
             self.store = store
             await store.load(detail: detail)
+            // Go live: open the crew's conv-channel so crew_announcements /
+            // crew_sessions changes push in without a poll. start() is
+            // idempotent and must follow the first load (it needs the
+            // adapter the load built). The socket is dropped in .onDisappear.
+            await store.start(detail: detail)
         } catch is CancellationError {
         } catch {
             self.error = error.localizedDescription

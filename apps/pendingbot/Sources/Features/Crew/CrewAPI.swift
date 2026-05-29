@@ -272,13 +272,30 @@ struct CrewAnnouncementRow: Decodable, Identifiable, Hashable {
     let board_visible: Bool
     /// The human-visible message text.
     let summary: String
-    /// Free-form JSON; decoded leniently (kept optional, not rendered in
-    /// P1 — the bubble only needs `summary`). `JSONScalar` maps objects /
-    /// arrays to `.other` rather than throwing, so an arbitrary payload
-    /// never aborts the whole list decode.
-    let payload: JSONScalar?
+    /// Free-form JSON payload. For `message_kind == 'permission_request'`
+    /// rows this is the permission card body
+    /// (`{ permission_request_id, action, risk_level, detail, status }`),
+    /// read via `payload?.value` (the adapter only consults it for
+    /// permission rows). Wrapped in `LenientPermissionPayload` so a
+    /// non-permission row's arbitrary payload (object/array/scalar) can
+    /// never *throw* and abort the whole announcements array decode — it
+    /// just decodes to nil. Keeps the cold HTTP path symmetric with the
+    /// live realtime path (which is already tolerant via decodeLogPayload).
+    let payload: LenientPermissionPayload?
     let created_at: String
     let mentions: [CrewAnnouncementMention]
+}
+
+/// Tolerant wrapper for the announcement `payload` cell: decodes to a
+/// `PermissionRequestPayload` when the JSON is a matching object, else nil,
+/// and crucially never throws on a shape mismatch — so one odd payload
+/// can't blank the entire crew chat on cold load.
+struct LenientPermissionPayload: Decodable, Hashable {
+    let value: PermissionRequestPayload?
+    init(value: PermissionRequestPayload?) { self.value = value }
+    init(from decoder: Decoder) throws {
+        self.value = try? PermissionRequestPayload(from: decoder)
+    }
 }
 
 /// Read-side mention row attached to an announcement. NOTE: no

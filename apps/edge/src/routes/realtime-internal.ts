@@ -28,6 +28,10 @@ const CONV_TABLES = new Set<RealtimeTable>([
   'conversation_participants',
 ]);
 const USER_TABLES = new Set<RealtimeTable>(['user_unread_counts', 'envelope_runs']);
+// Crew tables also land on a `conv:<id>` topic, but their routing key is
+// `crew_conversation_id` (a crew is a conversation; the crew chat already
+// subscribes to that conv topic). T4.5 crew live-push.
+const CREW_CONV_TABLES = new Set<RealtimeTable>(['crew_announcements', 'crew_sessions']);
 
 interface WebhookPayload {
   type: 'INSERT' | 'UPDATE' | 'DELETE';
@@ -51,7 +55,7 @@ realtimeInternalRoutes.post('/notify', async (c) => {
   }
 
   const table = body.table as RealtimeTable;
-  if (!CONV_TABLES.has(table) && !USER_TABLES.has(table)) {
+  if (!CONV_TABLES.has(table) && !USER_TABLES.has(table) && !CREW_CONV_TABLES.has(table)) {
     // A webhook on a table we don't fan out — accept so the trigger
     // doesn't see an error, but do nothing.
     return c.json({ ok: true, skipped: 'table not fanned out' });
@@ -67,6 +71,12 @@ realtimeInternalRoutes.post('/notify', async (c) => {
   if (CONV_TABLES.has(table)) {
     const convId = row.conversation_id;
     if (typeof convId === 'string') hubKey = `conv:${convId}`;
+  } else if (CREW_CONV_TABLES.has(table)) {
+    // crew_announcements / crew_sessions carry crew_conversation_id, not
+    // conversation_id — but a crew is a conversation, so they fan out on
+    // the same conv topic.
+    const crewConvId = row.crew_conversation_id;
+    if (typeof crewConvId === 'string') hubKey = `conv:${crewConvId}`;
   } else {
     const uid = row.user_id;
     if (typeof uid === 'string') hubKey = `user:${uid}`;
