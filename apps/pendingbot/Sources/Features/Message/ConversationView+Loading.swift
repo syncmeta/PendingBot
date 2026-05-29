@@ -345,6 +345,7 @@ extension ConversationView {
                     sender_id: r.role == "bot" ? (r.sender_bot_id ?? "") : (r.user_id ?? ""),
                     content: r.content ?? "",
                     created_at: r.created_at,
+                    message_seq: r.message_seq,
                     attachments: nil,
                     parent_message_id: r.parent_message_id,
                     bubble_group_id: r.bubble_group_id,
@@ -376,6 +377,7 @@ extension ConversationView {
                 let content: String?
                 let status: String?
                 let created_at: String
+                let message_seq: Int?
                 let citations: [MessageCitation]?
                 let metadata: AnyJSON?
                 // Arena: link a bot answer to its prompt + identify the answer
@@ -398,8 +400,9 @@ extension ConversationView {
             // "bottom" and land on an ancient message.
             let rowsDesc: [Row] = try await SupabaseStack.shared
                 .from("messages")
-                .select("id, client_message_id, conversation_id, user_id, sender_bot_id, role, log_kind, log_payload, attachments, content, status, created_at, citations, metadata, parent_message_id, bubble_group_id, model_slug")
+                .select("id, client_message_id, conversation_id, user_id, sender_bot_id, role, log_kind, log_payload, attachments, content, status, created_at, message_seq, citations, metadata, parent_message_id, bubble_group_id, model_slug")
                 .eq("conversation_id", value: conversation.id)
+                .order("message_seq", ascending: false)
                 .order("created_at", ascending: false)
                 .limit(200)
                 .execute()
@@ -447,6 +450,7 @@ extension ConversationView {
                             // epoch-seconds for the tombstone formatter.
                             content: String(originalSecs),
                             created_at: secs,
+                            message_seq: r.message_seq,
                             attachments: nil
                         ))
                     } else if r.log_kind == "crew_proposal", let any = r.log_payload,
@@ -464,6 +468,7 @@ extension ConversationView {
                             sender_id: r.sender_bot_id ?? "",
                             content: "",
                             created_at: secs,
+                            message_seq: r.message_seq,
                             attachments: nil
                         ))
                     } else if r.log_kind == "permission_request", let any = r.log_payload,
@@ -481,6 +486,7 @@ extension ConversationView {
                             sender_id: r.sender_bot_id ?? "",
                             content: "",
                             created_at: secs,
+                            message_seq: r.message_seq,
                             attachments: nil
                         ))
                     }
@@ -502,6 +508,7 @@ extension ConversationView {
                     sender_id: senderId,
                     content: renderContent,
                     created_at: secs,
+                    message_seq: r.message_seq,
                     attachments: nil,
                     parent_message_id: r.parent_message_id,
                     bubble_group_id: r.bubble_group_id,
@@ -523,6 +530,7 @@ extension ConversationView {
                     content: renderContent,
                     status: r.status,
                     created_at: secs,
+                    message_seq: r.message_seq,
                     parent_message_id: r.parent_message_id,
                     bubble_group_id: r.bubble_group_id,
                     model_slug: r.model_slug

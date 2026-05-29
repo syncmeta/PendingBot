@@ -26,6 +26,10 @@ import { safeWaitUntil } from '../lib/safe-wait-until';
 import { startSseKeepalive } from '../lib/sse-keepalive';
 import { notifyConversationUsers, notifyUserMessage } from '../lib/push';
 import {
+  markConversationReadThroughLatest,
+  notifyConversationUnreadState,
+} from '../lib/unread-state';
+import {
   authorizeAttachmentOwnership,
   authorizeBotUse,
   authorizeMessageDelete,
@@ -76,6 +80,12 @@ const PostBody = z.object({
   // Used to render the per-turn time hint we append to the user's message in
   // the LLM prompt, so the model sees the user's *local* clock — not UTC.
   clientTz: z.string().max(64).optional(),
+});
+
+const ReadAckBody = z.object({
+  conversationId: z.string().uuid(),
+  messageId: z.string().uuid().optional(),
+  messageSeq: z.number().int().nonnegative().optional(),
 });
 
 // POST /v1/messages
@@ -209,6 +219,7 @@ messageRoutes.post('/', async (c) => {
             { onConflict: 'client_message_id', ignoreDuplicates: true },
           );
         if (error) console.error('[messages] user upsert failed', error.message);
+        else await notifyConversationUnreadState(c.env, parsed.conversationId);
       })(),
     );
 
@@ -509,6 +520,16 @@ messageRoutes.post('/', async (c) => {
                 }),
               );
             }
+
+            if (!streamClosed && conv.conversation_type === 'user_bot') {
+              await markConversationReadThroughLatest({
+                env: c.env,
+                userId,
+                conversationId: parsed.conversationId,
+              });
+            } else {
+              await notifyConversationUnreadState(c.env, parsed.conversationId, [userId]);
+            }
           }
         } catch (err) {
           const message =
@@ -775,6 +796,16 @@ messageRoutes.post('/start', async (c) => {
                 conversationId: convId,
               }),
             );
+
+            if (!streamClosed) {
+              await markConversationReadThroughLatest({
+                env: c.env,
+                userId,
+                conversationId: convId,
+              });
+            } else {
+              await notifyConversationUnreadState(c.env, convId, [userId]);
+            }
           }
         } catch (err) {
           const message =
@@ -816,6 +847,36 @@ messageRoutes.post('/start', async (c) => {
       'X-Accel-Buffering': 'no',
     },
   });
+});
+
+messageRoutes.post('/read-ack', async (c) => {
+  const userId = c.var.userId!;
+  const userJwt = c.var.userJwt!;
+
+  let parsed: z.infer<typeof ReadAckBody>;
+  try {
+    parsed = ReadAckBody.parse(await c.req.json());
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+
+  const supaUser = userClient(c.env, userJwt);
+  const conv = await resolveConv(c.env, supaUser, parsed.conversationId, userId, (p) =>
+    safeWaitUntil(c, p),
+  ).catch((err: { message?: string }) => ({ __error: err.message ?? 'database_error' }));
+  if (conv && typeof conv === 'object' && '__error' in conv) {
+    return jsonError(c, 500, 'database_error', { detail: conv.__error });
+  }
+  if (!conv) return jsonError(c, 404, 'conversation_no_access');
+
+  const result = await markConversationReadThroughLatest({
+    env: c.env,
+    userId,
+    conversationId: parsed.conversationId,
+    messageId: parsed.messageId,
+    messageSeq: parsed.messageSeq,
+  });
+  return c.json({ ok: true, messageSeq: result.messageSeq });
 });
 
 // POST /v1/messages/:id/regenerate
@@ -939,7 +1000,7 @@ messageRoutes.post('/:id/regenerate', async (c) => {
       const stopKeepalive = startSseKeepalive(controller, () => streamClosed);
       const turnWork = (async () => {
         try {
-          await runChatTurn({
+          const result = await runChatTurn({
             env: c.env,
             conversationId: parsed.conversationId,
             userId,
@@ -962,6 +1023,17 @@ messageRoutes.post('/:id/regenerate', async (c) => {
             signal: detachedAbort.signal,
             emit,
           });
+          if (result.finalStatus === 'done' && result.bubblesInserted > 0) {
+            if (!streamClosed && conv.conversation_type === 'user_bot') {
+              await markConversationReadThroughLatest({
+                env: c.env,
+                userId,
+                conversationId: parsed.conversationId,
+              });
+            } else {
+              await notifyConversationUnreadState(c.env, parsed.conversationId, [userId]);
+            }
+          }
         } catch (err) {
           const message = err instanceof Error ? err.message || err.name || 'Error' : String(err);
           console.error('[messages/regenerate] turn error:', err);

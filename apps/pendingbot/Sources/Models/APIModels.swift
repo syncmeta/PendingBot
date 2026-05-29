@@ -66,6 +66,7 @@ struct ChatMessage: Codable, Identifiable, Hashable {
     let sender_id: String
     let content: String
     let created_at: Int
+    let message_seq: Int?
     let attachments: [Attachment]?
     /// Optimistic-send state for locally-inserted user rows. nil for any
     /// canonical row (loaded from server / Realtime / cache) and for bot
@@ -100,12 +101,30 @@ struct ChatMessage: Codable, Identifiable, Hashable {
     var isSending: Bool { status == "sending" }
     var isSent: Bool { status == "sent" }
 
+    func withMessageSeq(_ seq: Int?) -> ChatMessage {
+        ChatMessage(
+            id: id,
+            conversation_id: conversation_id,
+            sender_type: sender_type,
+            sender_id: sender_id,
+            content: content,
+            created_at: created_at,
+            message_seq: seq,
+            attachments: attachments,
+            status: status,
+            parent_message_id: parent_message_id,
+            bubble_group_id: bubble_group_id,
+            model_slug: model_slug
+        )
+    }
+
     init(id: String,
          conversation_id: String,
          sender_type: String,
          sender_id: String,
          content: String,
          created_at: Int,
+         message_seq: Int? = nil,
          attachments: [Attachment]?,
          status: String? = nil,
          parent_message_id: String? = nil,
@@ -117,11 +136,22 @@ struct ChatMessage: Codable, Identifiable, Hashable {
         self.sender_id = sender_id
         self.content = content
         self.created_at = created_at
+        self.message_seq = message_seq
         self.attachments = attachments
         self.status = status
         self.parent_message_id = parent_message_id
         self.bubble_group_id = bubble_group_id
         self.model_slug = model_slug
+    }
+
+    static func timelinePrecedes(_ lhs: ChatMessage, _ rhs: ChatMessage) -> Bool {
+        if let lseq = lhs.message_seq, let rseq = rhs.message_seq, lseq != rseq {
+            return lseq < rseq
+        }
+        if lhs.created_at != rhs.created_at {
+            return lhs.created_at < rhs.created_at
+        }
+        return lhs.id < rhs.id
     }
 }
 

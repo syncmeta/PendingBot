@@ -784,6 +784,7 @@ struct MessageTabView: View {
             let content: String?
             let status: String?
             let created_at: String
+            let message_seq: Int?
         }
         await withTaskGroup(of: [LocalDatabase.MessageRow].self) { group in
             for convId in convIds {
@@ -791,8 +792,9 @@ struct MessageTabView: View {
                     do {
                         let rows: [MsgRow] = try await SupabaseStack.shared
                             .from("messages")
-                            .select("id, client_message_id, conversation_id, user_id, sender_bot_id, role, content, status, created_at")
+                            .select("id, client_message_id, conversation_id, user_id, sender_bot_id, role, content, status, created_at, message_seq")
                             .eq("conversation_id", value: convId)
+                            .order("message_seq", ascending: false)
                             .order("created_at", ascending: false)
                             .limit(30)
                             .execute()
@@ -814,7 +816,8 @@ struct MessageTabView: View {
                                 role: r.role,
                                 content: r.content,
                                 status: r.status,
-                                created_at: ServerTimestamp.epochSeconds(r.created_at, default: 0)
+                                created_at: ServerTimestamp.epochSeconds(r.created_at, default: 0),
+                                message_seq: r.message_seq
                             )
                         }
                     } catch {

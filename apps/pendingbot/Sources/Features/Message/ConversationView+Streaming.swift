@@ -46,6 +46,7 @@ extension ConversationView {
                 sender_id: conversation.bot_id,
                 content: content,
                 created_at: Int(Date().timeIntervalSince1970),
+                message_seq: nil,
                 attachments: nil
             ))
             // Record the bubble in turn order so the SSE `bubble` event
@@ -75,6 +76,7 @@ extension ConversationView {
                     sender_type: prev.sender_type, sender_id: prev.sender_id,
                     content: prev.content + delta,
                     created_at: prev.created_at,
+                    message_seq: prev.message_seq,
                     attachments: prev.attachments
                 )
             }
@@ -113,48 +115,65 @@ extension ConversationView {
 
     /// Rekey the optimistic `live-*` bot bubble at `turnBubbleIds[idx]` to
     /// its server-canonical `id`, announced by the SSE `bubble` event.
-    /// After this the bubble carries the same id the realtime INSERT will
-    /// carry, so `applyRealtimeEvent` resolves that INSERT as an in-place
-    /// upsert rather than appending a duplicate. Idempotent; a no-op if the
-    /// entry is already canonical or the row has since gone.
+    /// If the realtime INSERT already won the race and placed the
+    /// canonical row on screen, remove the live row and keep the canonical
+    /// one. Either way, one logical server row leaves one rendered bubble.
     ///
     /// Safe to run mid-turn: a bubble's `bubble` event trails all of its
     /// tokens, so no further `.append` targets the old `live-*` key.
-    func rekeyBotBubble(at idx: Int, to id: String) {
+    func rekeyBotBubble(at idx: Int, to id: String, messageSeq: Int?) {
         guard idx >= 0, idx < turnBubbleIds.count else { return }
         let oldId = turnBubbleIds[idx]
         guard oldId != id else { return }
         turnBubbleIds[idx] = id
-        guard let mIdx = messages.firstIndex(where: { $0.id == oldId }) else { return }
+        let canonicalIdx = messages.firstIndex(where: { $0.id == id })
+        guard let mIdx = messages.firstIndex(where: { $0.id == oldId }) else {
+            if let canonicalIdx, let messageSeq {
+                let m = messages[canonicalIdx]
+                messages[canonicalIdx] = m.withMessageSeq(messageSeq)
+            }
+            return
+        }
         let m = messages[mIdx]
-        messages[mIdx] = ChatMessage(
-            id: id,
-            conversation_id: m.conversation_id,
-            sender_type: m.sender_type,
-            sender_id: m.sender_id,
-            content: m.content,
-            created_at: m.created_at,
-            attachments: m.attachments
-        )
+        if let canonicalIdx {
+            if let messageSeq {
+                messages[canonicalIdx] = messages[canonicalIdx].withMessageSeq(messageSeq)
+            }
+            messages.remove(at: mIdx)
+        } else {
+            messages[mIdx] = ChatMessage(
+                id: id,
+                conversation_id: m.conversation_id,
+                sender_type: m.sender_type,
+                sender_id: m.sender_id,
+                content: m.content,
+                created_at: m.created_at,
+                message_seq: messageSeq ?? m.message_seq,
+                attachments: m.attachments,
+                status: m.status,
+                parent_message_id: m.parent_message_id,
+                bubble_group_id: m.bubble_group_id,
+                model_slug: m.model_slug
+            )
+        }
         // Carry id-keyed sidecars across the rekey.
         if let cites = citationsByMsgId.removeValue(forKey: oldId) {
-            citationsByMsgId[id] = cites
+            if citationsByMsgId[id] == nil { citationsByMsgId[id] = cites }
         }
         if let aids = attachmentIdsByMsgId.removeValue(forKey: oldId) {
-            attachmentIdsByMsgId[id] = aids
+            if attachmentIdsByMsgId[id] == nil { attachmentIdsByMsgId[id] = aids }
         }
         if revealTargetId == oldId { revealTargetId = id }
+        messages.sort(by: ChatMessage.timelinePrecedes)
     }
 
     /// Persist this turn's canonical rows (the user message + each bot
     /// bubble) into the local cache at turn end.
     ///
-    /// The live SSE path mutates only the in-memory `messages` array, and
-    /// `applyRealtimeEvent` drops 1:1 bot text rows *before* its own cache
-    /// write — so without this the cache is a full turn behind the moment
-    /// the user leaves the conversation, and reopening paints stale content
-    /// (missing the latest reply) until loadHistory's network round-trip
-    /// lands. That's the "每次进去都是旧的，要刷新一次" symptom.
+    /// The live SSE path mutates the in-memory `messages` array first;
+    /// realtime may arrive later or earlier. Persisting the canonical rows
+    /// here keeps the cache current even when the user leaves immediately
+    /// after a turn completes.
     ///
     /// Skips rows still carrying an optimistic id (`live-*` bot bubble not
     /// yet rekeyed by its SSE `bubble` event, or `local-*` user row not yet
@@ -176,7 +195,8 @@ extension ConversationView {
                 role: "user",
                 content: m.content,
                 status: "done",
-                created_at: m.created_at
+                created_at: m.created_at,
+                message_seq: m.message_seq
             ))
         }
         for bid in turnBubbleIds where !bid.hasPrefix("live-") {
@@ -190,7 +210,8 @@ extension ConversationView {
                 role: "bot",
                 content: m.content,
                 status: "done",
-                created_at: m.created_at
+                created_at: m.created_at,
+                message_seq: m.message_seq
             ))
         }
         guard !rows.isEmpty else { return }

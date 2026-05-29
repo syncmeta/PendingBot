@@ -2035,6 +2035,7 @@ struct ConversationView: View {
                                 sender_id: prev.sender_id,
                                 content: prev.content,
                                 created_at: prev.created_at,
+                                message_seq: prev.message_seq,
                                 attachments: prev.attachments,
                                 status: nil
                             )
@@ -2061,7 +2062,7 @@ struct ConversationView: View {
                     case .token(let delta):
                         if !pending { pending = true }
                         splitter.accept(token: delta)
-                    case .bubble(let id, let index, _, _):
+                    case .bubble(let id, let index, _, _, let messageSeq):
                         // The server persisted this bubble under canonical
                         // `id`. Rekey our optimistic live-* bubble (bubble
                         // `index`, 1-based) to that id NOW — so the realtime
@@ -2072,7 +2073,7 @@ struct ConversationView: View {
                         // of the bubble's tokens), so the live-* row is
                         // already in `turnBubbleIds` here.
                         if !id.isEmpty, index >= 1, index <= turnBubbleIds.count {
-                            rekeyBotBubble(at: index - 1, to: id)
+                            rekeyBotBubble(at: index - 1, to: id, messageSeq: messageSeq)
                         }
                     case .done(_, let total):
                         splitter.flushTail()
@@ -2473,7 +2474,7 @@ extension ConversationView {
             messages[i] = ChatMessage(
                 id: p.id, conversation_id: p.conversation_id, sender_type: p.sender_type,
                 sender_id: p.sender_id, content: make(p.content), created_at: p.created_at,
-                attachments: nil, parent_message_id: p.parent_message_id,
+                message_seq: p.message_seq, attachments: nil, parent_message_id: p.parent_message_id,
                 bubble_group_id: p.bubble_group_id, model_slug: p.model_slug)
         }
         do {

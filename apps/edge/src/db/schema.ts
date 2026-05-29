@@ -771,6 +771,7 @@ export type Database = {
           conversation_id: string
           joined_at: string
           last_read_message_id: string | null
+          last_read_message_seq: number | null
           muted: boolean
           nickname: string | null
           participant_id: string
@@ -781,6 +782,7 @@ export type Database = {
           conversation_id: string
           joined_at?: string
           last_read_message_id?: string | null
+          last_read_message_seq?: number | null
           muted?: boolean
           nickname?: string | null
           participant_id: string
@@ -791,6 +793,7 @@ export type Database = {
           conversation_id?: string
           joined_at?: string
           last_read_message_id?: string | null
+          last_read_message_seq?: number | null
           muted?: boolean
           nickname?: string | null
           participant_id?: string
@@ -818,6 +821,7 @@ export type Database = {
           id: string
           last_turn_status: string | null
           metadata: Json
+          message_seq_counter: number
           parent_message_id: string | null
           random_model_config: Json | null
           responsible_subject_id: string | null
@@ -837,6 +841,7 @@ export type Database = {
           id?: string
           last_turn_status?: string | null
           metadata?: Json
+          message_seq_counter?: number
           parent_message_id?: string | null
           random_model_config?: Json | null
           responsible_subject_id?: string | null
@@ -856,6 +861,7 @@ export type Database = {
           id?: string
           last_turn_status?: string | null
           metadata?: Json
+          message_seq_counter?: number
           parent_message_id?: string | null
           random_model_config?: Json | null
           responsible_subject_id?: string | null
@@ -2062,6 +2068,7 @@ export type Database = {
           log_kind: string | null
           log_payload: Json | null
           metadata: Json | null
+          message_seq: number | null
           model_provider: string | null
           model_slug: string | null
           parent_message_id: string | null
@@ -2087,6 +2094,7 @@ export type Database = {
           log_kind?: string | null
           log_payload?: Json | null
           metadata?: Json | null
+          message_seq?: number | null
           model_provider?: string | null
           model_slug?: string | null
           parent_message_id?: string | null
@@ -2112,6 +2120,7 @@ export type Database = {
           log_kind?: string | null
           log_payload?: Json | null
           metadata?: Json | null
+          message_seq?: number | null
           model_provider?: string | null
           model_slug?: string | null
           parent_message_id?: string | null
@@ -3688,6 +3697,7 @@ export type Database = {
           last_message_at: string | null
           last_message_id: string | null
           last_message_preview: string | null
+          last_message_seq: number | null
           unread_count: number
           user_id: string
         }
@@ -3696,6 +3706,7 @@ export type Database = {
           last_message_at?: string | null
           last_message_id?: string | null
           last_message_preview?: string | null
+          last_message_seq?: number | null
           unread_count?: number
           user_id: string
         }
@@ -3704,6 +3715,7 @@ export type Database = {
           last_message_at?: string | null
           last_message_id?: string | null
           last_message_preview?: string | null
+          last_message_seq?: number | null
           unread_count?: number
           user_id?: string
         }

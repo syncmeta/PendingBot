@@ -290,6 +290,14 @@ final class LocalDatabase {
                 t.add(column: "model_slug", .text)
             }
         }
+        m.registerMigration("v9_message_seq") { db in
+            try db.alter(table: "messages") { t in
+                t.add(column: "message_seq", .integer)
+            }
+            try db.create(index: "idx_messages_conversation_seq",
+                          on: "messages",
+                          columns: ["conversation_id", "message_seq"])
+        }
         return m
     }
 
@@ -383,6 +391,7 @@ final class LocalDatabase {
         var content: String?
         var status: String?
         var created_at: Int
+        var message_seq: Int? = nil
         var parent_message_id: String?
         var bubble_group_id: String?
         var model_slug: String?
@@ -397,11 +406,19 @@ final class LocalDatabase {
     /// the oldest — matching loadHistory's latest-200 server fetch.
     func loadMessages(conversationId: String, limit: Int = 200) -> [MessageRow] {
         let rows = (try? dbQueue.read { db in
-            try MessageRow
-                .filter(Column("conversation_id") == conversationId)
-                .order(Column("created_at").desc)
-                .limit(limit)
-                .fetchAll(db)
+            try MessageRow.fetchAll(
+                db,
+                sql: """
+                    SELECT *
+                      FROM messages
+                     WHERE conversation_id = ?
+                     ORDER BY COALESCE(message_seq, 9223372036854775807) DESC,
+                              created_at DESC,
+                              id DESC
+                     LIMIT ?
+                    """,
+                arguments: [conversationId, limit]
+            )
         }) ?? []
         return Array(rows.reversed())
     }

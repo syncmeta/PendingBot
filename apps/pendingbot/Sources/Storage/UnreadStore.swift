@@ -232,25 +232,20 @@ final class UnreadStore: ObservableObject {
         }
     }
 
-    /// Persist unread_count = 0 for one conversation. RLS on
-    /// user_unread_counts scopes UPDATE to user_id = auth.uid(), so
-    /// matching conversation_id alone hits exactly this user's row.
+    private struct ReadAckBody: Encodable {
+        let conversationId: String
+        let messageId: String?
+    }
+
+    /// Persist read state through the Worker so the same path can clear
+    /// unread_count and fan the resulting user-hub event to every device.
     private func pushClear(_ conversationId: String, throughLastMessageId: String?) {
         Task {
-            if let throughLastMessageId, !throughLastMessageId.isEmpty {
-                try? await SupabaseStack.shared
-                    .from("user_unread_counts")
-                    .update(["unread_count": 0])
-                    .eq("conversation_id", value: conversationId)
-                    .eq("last_message_id", value: throughLastMessageId)
-                    .execute()
-            } else {
-                try? await SupabaseStack.shared
-                    .from("user_unread_counts")
-                    .update(["unread_count": 0])
-                    .eq("conversation_id", value: conversationId)
-                    .execute()
-            }
+            let messageId = throughLastMessageId?.isEmpty == false ? throughLastMessageId : nil
+            try? await APIClient().postVoid(
+                "v1/messages/read-ack",
+                body: ReadAckBody(conversationId: conversationId, messageId: messageId)
+            )
         }
     }
 

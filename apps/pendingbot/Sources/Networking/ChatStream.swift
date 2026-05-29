@@ -17,7 +17,7 @@ enum ChatEvent: Sendable {
     case meta(conversationId: String, userMessageId: String)
     case typing(state: String)
     case token(delta: String)
-    case bubble(id: String, index: Int, groupId: String, content: String)
+    case bubble(id: String, index: Int, groupId: String, content: String, messageSeq: Int?)
     case done(groupId: String, totalContent: String)
     case interrupted(groupId: String, totalContent: String)
     /// Bot used the [SILENT] control token — nothing to show, the turn
@@ -225,7 +225,8 @@ private func decode(eventName: String, dataJSON: String) -> ChatEvent {
             id: (json["id"] as? String) ?? "",
             index: (json["index"] as? Int) ?? 0,
             groupId: (json["bubble_group_id"] as? String) ?? "",
-            content: (json["content"] as? String) ?? ""
+            content: (json["content"] as? String) ?? "",
+            messageSeq: json["message_seq"] as? Int
         )
     case "done":
         return .done(

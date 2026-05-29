@@ -1,4 +1,5 @@
 import Foundation
+import Supabase
 import SwiftUI
 
 // Realtime + voice-call surfaces of ConversationView. Two cohesive
@@ -171,30 +172,6 @@ extension ConversationView {
         // with the soft-delete above for user_user convs. Synthesise a
         // recall_log ChatMessage so the ForEach renderer drops a
         // centered "你/对方撤回了 X 的一条消息" pill at the right spot.
-        // 1v1 bot conv: SSE is the authoritative source for *text* bot
-        // bubbles. The WS INSERT for the canonical row races the SSE
-        // `bubble` rekey event; when WS wins (fast model or long content),
-        // the live-* dedupe at the bottom of this function misses and we
-        // end up with two bot bubbles. Drop the WS bot row outright — if
-        // SSE genuinely dropped a bubble, re-entering the conv refetches
-        // /v1/messages and reconstructs the timeline. status='deleted'
-        // (recall) was already handled above so this skip preserves
-        // recall behavior.
-        //
-        // Carve-out: image bubbles (OpenAI image_generation results)
-        // have content="" + non-empty attachments and SSE never emits a
-        // `bubble` event for them (no streamed text counterpart), so the
-        // hub WS INSERT is their ONLY delivery path. Letting them through
-        // is safe — text bubbles arrive via SSE, image bubbles via hub,
-        // disjoint sets, no duplicate risk.
-        if conversation.conversation_type == "user_bot" && role == "bot" {
-            let contentEmpty = (r["content"]?.stringValue ?? "").isEmpty
-            let attIds = r["attachments"].flatMap { decodeAttachmentIds($0) } ?? []
-            let isImageOnlyBubble = contentEmpty && !attIds.isEmpty
-            if !isImageOnlyBubble {
-                return
-            }
-        }
         if role == "log" {
             let logKind = r["log_kind"]?.stringValue ?? ""
             if logKind == "recall" {
@@ -217,7 +194,7 @@ extension ConversationView {
                     messages[existing] = synth
                 } else {
                     messages.append(synth)
-                    messages.sort { $0.created_at < $1.created_at }
+                    messages.sort(by: ChatMessage.timelinePrecedes)
                 }
             }
             return
@@ -236,6 +213,7 @@ extension ConversationView {
         // Default to "now" so live messages don't collapse to 1970 if the
         // timestamp format ever drifts.
         let secs = ServerTimestamp.epochSeconds(createdRaw, default: Int(Date().timeIntervalSince1970))
+        let messageSeq = decodeIntValue(r["message_seq"])
         let senderType = role == "bot" ? "bot" : "user"
         let senderId = role == "bot"
             ? (r["sender_bot_id"]?.stringValue ?? "")
@@ -247,7 +225,11 @@ extension ConversationView {
             sender_id: senderId,
             content: content,
             created_at: secs,
-            attachments: nil
+            message_seq: messageSeq,
+            attachments: nil,
+            parent_message_id: r["parent_message_id"]?.stringValue,
+            bubble_group_id: r["bubble_group_id"]?.stringValue,
+            model_slug: r["model_slug"]?.stringValue
         )
         let citations = parseCitations(from: r["citations"])
         if let existing = messages.firstIndex(where: { $0.id == id }) {
@@ -337,13 +319,14 @@ extension ConversationView {
                 if let citations { citationsByMsgId[id] = citations }
             }
         }
+        messages.sort(by: ChatMessage.timelinePrecedes)
         // Conversation is open and a new message just landed — clear the
         // server unread bump the INSERT trigger added. Without this the
         // count silently climbs while the user is reading and resurfaces
         // on the message list the moment they back out. clearServerCount
         // early-returns when serverCounts is already 0, so this is a cheap
         // no-op for our own outgoing rows (sender starts at 0 server-side).
-        UnreadStore.shared.markRead(conversation.id)
+        UnreadStore.shared.markRead(conversation.id, throughLastMessageId: id)
         // Mirror to local cache.
         LocalDatabase.shared.upsertMessages([
             LocalDatabase.MessageRow(
@@ -355,7 +338,11 @@ extension ConversationView {
                 role: role,
                 content: content,
                 status: r["status"]?.stringValue,
-                created_at: secs
+                created_at: secs,
+                message_seq: messageSeq,
+                parent_message_id: r["parent_message_id"]?.stringValue,
+                bubble_group_id: r["bubble_group_id"]?.stringValue,
+                model_slug: r["model_slug"]?.stringValue
             ),
         ])
     }
@@ -442,4 +429,16 @@ extension ConversationView {
         )
         callCenter.startVoiceCall(session)
     }
+}
+
+private func decodeIntValue(_ any: AnyJSON?) -> Int? {
+    guard let any,
+          let data = try? JSONEncoder().encode(any) else { return nil }
+    if let int = try? JSONDecoder().decode(Int.self, from: data) {
+        return int
+    }
+    if let string = try? JSONDecoder().decode(String.self, from: data) {
+        return Int(string)
+    }
+    return nil
 }

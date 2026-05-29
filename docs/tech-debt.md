@@ -124,6 +124,14 @@
 - **建议**: 等容器部署后做一次真机演练：通话中 kill 容器实例（或断其网络），观察 (a) DO 是否在 ~10s 内检测到并广播 reconnecting；(b) 新容器 ready 后 OpenAI/RTK 是否都重建、人能否继续听到 bot；(c) 进行中 turn 丢失是否需要补一条「我刚刚断了一下」式的提示音/系统消息；(d) RTK 双 participant 是否需要在 resync 前显式 leave 旧 meeting participant。若 (b)/(d) 有硬伤，考虑 resync 时让容器先显式 detach 旧 RTK participant 再 rejoin，而非纯靠 `start` 复位。
 - **状态**: 待办（控制逻辑已合入 + 单测绿；端到端音频恢复待容器部署后 runtime 验证）
 
+### 🟡 IM realtime 仍是 Worker 主动推送和 Postgres conv webhook 混合态
+- **发现**: 2026-05-29 · codex/message-coordination
+- **位置**: `supabase/migrations/20260516073714_realtime_webhooks.sql`、`apps/edge/src/routes/messages.ts`、`apps/edge/src/lib/unread-state.ts`
+- **问题**: 本轮已把高放大的 `user_unread_counts` pg_net fanout 去掉，read ack/unread 状态改由 Worker 主动推 user hub；但 `messages` 的 conv 级变更仍依赖 Postgres webhook 作为兜底，Worker 写入后也会等待 DB webhook 把 canonical row 推回客户端。
+- **影响**: SSE/WS 已靠 message id + `message_seq` 去重，但消息发布源仍是混合态；后续要做 DO 级房间排序、离线 outbox、recall/update/delete 的精确顺序时，仍可能出现“Worker 已知道结果但 conv hub 等 DB webhook”的延迟和双路径语义漂移。
+- **建议**: 下一阶段把所有消息状态变更统一收敛到 Worker/DO 的 `publishMessageChange` primitive：insert/update/delete/recall 都由 Worker 写库后同步发布 conv hub，Postgres `messages` webhook 只保留迁移期兜底，最终关闭。
+- **状态**: 待办
+
 ### 🟡 PendingCrew Mac 本机 session：成功跑的 stdout + 退出码不回流 UI（卡在 running）
 - **发现**: 2026-05-29 · computer-use 实测本机 happy path 时暴露
 - **位置**: `apps/pendingcrew/Sources/Mac/LocalRunner/LocalCodingAgentProcess.swift`(actor + readabilityHandler/terminationHandler)、`LocalCodingAgentService.swift`(`MacLocalCodingAgentService.runSession` 把 line handler → AsyncStream，`waitUntilExit` → `exitCode` Task)、`apps/pendingcrew/Sources/Mac/Services/CrewSessionRunner.swift`(`CrewSessionRun.observeStreams`)

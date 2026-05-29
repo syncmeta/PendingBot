@@ -50,6 +50,11 @@ struct APIClient {
         _ = try await sendRaw(req)
     }
 
+    func postVoid<Body: Encodable>(_ path: String, body: Body) async throws {
+        let req = try await makeRequest(method: "POST", path: path, query: [], body: body)
+        _ = try await sendRaw(req)
+    }
+
     func deleteVoid(_ path: String) async throws {
         let req = try await makeRequest(method: "DELETE", path: path, query: [], body: nil as Empty?)
         _ = try await sendRaw(req)

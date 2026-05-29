@@ -1,6 +1,7 @@
 import { runChatTurn } from './bot-reply';
 import { parseWebSearchConfig } from './bot-reply/tool-defs';
 import { serviceClient } from './supabase';
+import { notifyConversationUnreadState } from './unread-state';
 import type { Env } from '../types';
 
 /// Pull the bot's default vision model (bots.config.visionModel) out of
@@ -227,6 +228,9 @@ export async function dispatchGroupTurn(
         bubbles_inserted: result.bubblesInserted,
         final_status: result.finalStatus,
       });
+      if (result.finalStatus === 'done' && result.bubblesInserted > 0) {
+        await notifyConversationUnreadState(env, conversationId);
+      }
     } catch (err) {
       console.error('[group-dispatch] runChatTurn failed', botId, err);
       bubblesPerBot.push({

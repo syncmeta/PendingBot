@@ -614,7 +614,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     const bubbleId = randomUUID();
     const clientMessageId = randomUUID();
     const snapshot = citations.length > 0 ? citations.map((c) => ({ ...c })) : null;
-    await supa.from('messages').insert({
+    const { data: inserted, error } = await supa.from('messages').insert({
       id: bubbleId,
       client_message_id: clientMessageId,
       conversation_id: conversationId,
@@ -627,12 +627,17 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       citations: snapshot,
       model_slug: bot.model_id,
       model_provider: turnProviderSlug,
-    });
+    }).select('message_seq').single();
+    if (error) {
+      console.warn('[bot-reply] bubble insert', error.message);
+      return;
+    }
     bubblesInserted++;
     emit('bubble', {
       id: bubbleId,
       index: bubbleIndex,
       bubble_group_id: bubbleGroupId,
+      message_seq: inserted?.message_seq ?? null,
       content: text,
       citations: snapshot,
     });
