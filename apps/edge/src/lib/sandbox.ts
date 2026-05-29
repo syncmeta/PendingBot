@@ -1,5 +1,7 @@
 import { getSandbox } from '@cloudflare/sandbox';
 import type { Env } from '../types';
+import { serviceClient } from './supabase';
+import { settleUsage as v2SettleUsage } from './billing-v2';
 
 // Thin wrapper over the Cloudflare Sandbox SDK. Each conversation gets its
 // own container-backed Durable Object instance keyed by conversation_id —
@@ -41,19 +43,67 @@ export interface CodeRunResult {
 /// across calls (each runCode invocation is its own interpreter session,
 /// matching the model-facing tool description). Side effects on the
 /// container filesystem do persist for the life of the sandbox.
+///
+/// Billing v2 (#183): if `meter` is given, a sandbox_runtime usage_event
+/// is recorded for the run with vendor_cost_usd=0 (cost_source='manual')
+/// until Cloudflare publishes a per-second container price the worker
+/// can ingest. The event row gives the wallet history page a per-run
+/// audit trail today and lets a future migration backfill cost. See
+/// docs/tech-debt.md "sandbox runtime pricebook".
 export async function runPython(
   env: Env,
   conversationId: string,
   code: string,
-  opts: { timeoutMs?: number } = {},
+  opts: {
+    timeoutMs?: number;
+    meter?: {
+      ownerUserId?: string | null;
+      ownerSubjectId?: string | null;
+    } | null;
+  } = {},
 ): Promise<CodeRunResult> {
   const sandbox = getSandbox(env.Sandbox, conversationId, {
     sleepAfter: SANDBOX_SLEEP_AFTER,
   });
+  const startedAt = Date.now();
   const result = await sandbox.runCode(code, {
     language: 'python',
     timeout: opts.timeoutMs ?? CODE_RUN_TIMEOUT_MS,
   });
+  const elapsedSeconds = Math.max(0, (Date.now() - startedAt) / 1000);
+
+  if (opts.meter && elapsedSeconds > 0) {
+    const owner =
+      opts.meter.ownerUserId
+        ? ({ kind: 'user' as const, userId: opts.meter.ownerUserId })
+        : opts.meter.ownerSubjectId
+          ? ({ kind: 'subject' as const, subjectId: opts.meter.ownerSubjectId })
+          : null;
+    if (owner) {
+      // Fire-and-forget so a Supabase blip can't fail a successful
+      // code-exec call. Service-role client because the sandbox is
+      // called from inside an LLM tool path that's already running with
+      // worker-side privileges.
+      const supa = serviceClient(env);
+      void v2SettleUsage(supa, {
+        owner,
+        category: 'sandbox_runtime',
+        provider: 'cloudflare',
+        vendorSku: 'sandbox:python',
+        quantity: elapsedSeconds,
+        quantityUnit: 'seconds',
+        // 0 until the Cloudflare Sandbox pricebook lands — see tech-debt.
+        vendorCostUsd: 0,
+        costSource: 'manual',
+        conversationId,
+        rawUsage: {
+          exit_code: result.error ? 1 : 0,
+          // Don't log the code itself — sensitive. Only the shape.
+          code_chars: code.length,
+        },
+      });
+    }
+  }
 
   // Combine stdout + stderr + traceback into one stream — Daytona's
   // code-run returned a single `result` field and the chat agent's
