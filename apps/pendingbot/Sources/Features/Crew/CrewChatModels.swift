@@ -133,14 +133,47 @@ struct CrewChatAdapter {
     let members: CrewMemberIndex
     let sessions: CrewSessionIndex
 
-    func adapt(_ rows: [CrewAnnouncementRow]) -> [(message: ChatMessage, sender: GroupBubbleSender?)] {
+    /// One adapted announcement: a normal bubble, or — when
+    /// `message_kind == 'permission_request'` — a permission card carrying
+    /// the decoded payload + the requesting session's label. `message` is
+    /// always populated (id + created_at drive dedupe / sorting); for a
+    /// permission row it doubles as the carrier the bubble path ignores.
+    struct Adapted {
+        let message: ChatMessage
+        let sender: GroupBubbleSender?
+        var permission: PermissionRequestPayload? = nil
+        var permissionSessionLabel: String? = nil
+    }
+
+    func adapt(_ rows: [CrewAnnouncementRow]) -> [Adapted] {
         rows
             .map { adapt($0) }
             .sorted { $0.message.created_at < $1.message.created_at }
     }
 
-    func adapt(_ row: CrewAnnouncementRow) -> (message: ChatMessage, sender: GroupBubbleSender?) {
+    func adapt(_ row: CrewAnnouncementRow) -> Adapted {
         let epoch = CrewTimestamp.epoch(row.created_at)
+
+        // Permission card (T4.5) — message_kind=='permission_request' rows
+        // carry the request body in `payload`. Render the centered card
+        // instead of a bubble. sessionLabel from the session index by
+        // sender_session_id, fallback "Session". `message` is still built
+        // (bot side, summary text) so id/created_at sort + the rare case
+        // where payload is missing degrades to a plain bubble below.
+        if row.message_kind == "permission_request", let payload = row.payload {
+            let label = sessions.label(forSession: row.sender_session_id) ?? "Session"
+            let msg = ChatMessage(
+                id: row.id,
+                conversation_id: crewId,
+                sender_type: "bot",
+                sender_id: row.sender_session_id ?? "crew-permission-\(crewId)",
+                content: row.summary,
+                created_at: epoch,
+                attachments: nil
+            )
+            return Adapted(message: msg, sender: nil,
+                           permission: payload, permissionSessionLabel: label)
+        }
 
         // Agent / session post → bot side.
         if let sessionId = row.sender_session_id {
@@ -158,7 +191,7 @@ struct CrewChatAdapter {
                 kind: .bot, id: sessionId, displayName: label,
                 avatarPath: nil, avatarSeed: sessionId
             )
-            return (msg, sender)
+            return Adapted(message: msg, sender: sender)
         }
 
         // Human member → user side.
@@ -181,7 +214,7 @@ struct CrewChatAdapter {
                 kind: .user, id: memberId, displayName: name,
                 avatarPath: nil, avatarSeed: seed
             )
-            return (msg, sender)
+            return Adapted(message: msg, sender: sender)
         }
 
         // Captain (master_bot) / system / unresolved → bot side.
@@ -212,6 +245,6 @@ struct CrewChatAdapter {
             kind: .bot, id: seedId, displayName: name,
             avatarPath: nil, avatarSeed: seedId
         )
-        return (msg, sender)
+        return Adapted(message: msg, sender: sender)
     }
 }

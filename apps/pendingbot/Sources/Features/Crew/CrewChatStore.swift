@@ -50,12 +50,21 @@ final class CrewChatStore {
         self.api = api
     }
 
-    /// One adapted chat row: the `ChatMessage` BubbleView renders plus the
-    /// per-message `GroupBubbleSender` (sender name above the bubble).
+    /// One adapted chat row. Normal posts render as a bubble (the
+    /// `ChatMessage` BubbleView + per-message `GroupBubbleSender`). Rows
+    /// whose announcement `message_kind == 'permission_request'` render as
+    /// an inline permission card instead — `permission` carries the decoded
+    /// payload and `permissionSessionLabel` the requesting session's name.
+    /// `message` is still populated for both variants (it supplies the row
+    /// id + created_at used for dedupe / sorting).
     struct CrewChatRow: Identifiable, Equatable {
         let message: ChatMessage
         let sender: GroupBubbleSender?
+        /// Non-nil ⇒ render the permission card instead of a bubble.
+        var permission: PermissionRequestPayload? = nil
+        var permissionSessionLabel: String? = nil
         var id: String { message.id }
+        var isPermission: Bool { permission != nil }
     }
 
     // MARK: - Load
@@ -84,7 +93,11 @@ final class CrewChatStore {
             // Preserve any in-flight optimistic rows (status == sending) so
             // a refresh that races a send doesn't drop the local bubble.
             let pending = rows.filter { $0.message.isSending || $0.message.isFailed }
-            var adapted = adapter.adapt(anns).map { CrewChatRow(message: $0.message, sender: $0.sender) }
+            var adapted = adapter.adapt(anns).map {
+                CrewChatRow(message: $0.message, sender: $0.sender,
+                            permission: $0.permission,
+                            permissionSessionLabel: $0.permissionSessionLabel)
+            }
             // Drop pending rows that the server has now echoed back.
             let serverIds = Set(adapted.map(\.id))
             adapted.append(contentsOf: pending.filter { !serverIds.contains($0.id) })
@@ -142,7 +155,9 @@ final class CrewChatStore {
         // row stays put until that reload replaces it. Dedupe is purely by
         // canonical id below; the optimistic local-<uuid> id never collides.
         let adapted = adapter.adapt(row)
-        let newRow = CrewChatRow(message: adapted.message, sender: adapted.sender)
+        let newRow = CrewChatRow(message: adapted.message, sender: adapted.sender,
+                                 permission: adapted.permission,
+                                 permissionSessionLabel: adapted.permissionSessionLabel)
         if let idx = rows.firstIndex(where: { $0.id == newRow.id }) {
             rows[idx] = newRow
         } else {
@@ -260,6 +275,42 @@ final class CrewChatStore {
         guard let row = rows.first(where: { $0.id == rowId }) else { return }
         markRemoved(rowId)
         await send(content: row.message.content, mentions: mentions, detail: detail)
+    }
+
+    // MARK: - Permission decide (T4.5)
+
+    /// Approve / deny a permission card by its permission_request_id. Marks
+    /// the id in-flight (the card disables its buttons), calls the decide
+    /// endpoint, then clears the flag. The endpoint stamps the new status
+    /// onto the announcement, which fans back as a crew_announcements UPDATE
+    /// and flips the card via `apply` — so the happy path needs no manual
+    /// refresh. If no live frame arrives (or we hit a 409 already-decided),
+    /// reload to reconcile. `detail` is the crew detail for the reload.
+    func decide(permissionRequestId: String, approve: Bool, detail: CrewDetailV2?) async {
+        guard !decidingPermissionIds.contains(permissionRequestId) else { return }
+        decidingPermissionIds.insert(permissionRequestId)
+        revision += 1
+        defer {
+            decidingPermissionIds.remove(permissionRequestId)
+            revision += 1
+        }
+        do {
+            _ = try await api.decidePermissionRequest(
+                id: permissionRequestId,
+                decision: approve ? .approve : .reject
+            )
+            // Belt-and-suspenders: if the live UPDATE frame is slow / dropped,
+            // reload picks up the stamped status. Cheap relative to a decide.
+            await load(detail: detail)
+        } catch {
+            // 409 permission_request_already_decided (or any other error):
+            // reload to surface the authoritative status the server holds.
+            if case let APIError.http(status, _, _, _) = error, status == 409 {
+                await load(detail: detail)
+            } else {
+                self.error = error.localizedDescription
+            }
+        }
     }
 
     private func mark(_ id: String, status: String) {
