@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import Supabase
 
@@ -354,3 +355,4 @@ private struct BotMeta: Decodable {
     let id: String
     let display_name: String
 }
+#endif

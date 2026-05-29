@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 
 /// Full-screen call surface. Two visible metrics: elapsed time and the
@@ -317,3 +318,4 @@ struct CallView: View {
         return "打电话要直连 OpenAI，检查你的网络是否处于它支持的国家或地区。"
     }
 }
+#endif

@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 
 /// 「我 → 机器人能力扩展」entry. Splits by upstream provider because
@@ -133,3 +134,4 @@ struct MCPServersStubView: View {
         }
     }
 }
+#endif

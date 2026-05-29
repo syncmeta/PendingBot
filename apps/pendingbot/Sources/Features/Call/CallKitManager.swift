@@ -1,3 +1,4 @@
+#if os(iOS)
 import AVFoundation
 import CallKit
 import Foundation
@@ -377,3 +378,4 @@ extension CallKitManager: CXProviderDelegate {
     }
     nonisolated func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {}
 }
+#endif

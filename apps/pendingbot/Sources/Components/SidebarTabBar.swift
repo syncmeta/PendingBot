@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 
 /// One of the top-level tabs. Used by TabRoot to drive its
@@ -117,3 +118,4 @@ struct SidebarTabBar: View {
         )
     }
 }
+#endif

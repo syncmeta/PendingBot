@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 
 /// Five-tab root: 消息 / 好友 / 机组 / 来信 / 我.
@@ -183,3 +184,4 @@ extension EnvironmentValues {
         set { self[APIKey.self] = newValue }
     }
 }
+#endif

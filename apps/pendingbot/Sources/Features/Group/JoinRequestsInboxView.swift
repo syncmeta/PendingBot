@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 
 /// Inbox of pending join-requests for a group. Owner/admin sees the
@@ -201,3 +202,4 @@ struct JoinRequestsInboxView: View {
         }
     }
 }
+#endif

@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import PhotosUI
 import UIKit
@@ -2771,3 +2772,4 @@ struct ArenaCompareCard: View {
         }
     }
 }
+#endif

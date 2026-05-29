@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 
 /// Modal shown after scanning a PendingCrew/PendingBot device-login QR.
@@ -180,3 +181,4 @@ private struct SubjectRow: View {
         .padding(.vertical, 4)
     }
 }
+#endif

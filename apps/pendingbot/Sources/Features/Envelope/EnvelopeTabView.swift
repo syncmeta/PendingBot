@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import Supabase
 
@@ -289,3 +290,4 @@ private struct EmptyState: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
+#endif

@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import CoreImage.CIFilterBuiltins
 import Photos
@@ -393,3 +394,4 @@ struct MyQRBusinessCard: View {
         .background(Theme.Palette.canvas)
     }
 }
+#endif

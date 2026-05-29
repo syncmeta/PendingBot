@@ -1,3 +1,4 @@
+#if os(iOS)
 import Foundation
 import OSLog
 import Supabase
@@ -629,3 +630,4 @@ func decodeLogPayload<T: Decodable>(_ any: AnyJSON, as type: T.Type) -> T? {
         return nil
     }
 }
+#endif

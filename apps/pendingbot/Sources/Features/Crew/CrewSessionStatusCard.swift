@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import UIKit
 
@@ -120,3 +121,4 @@ struct CrewDeepLinkShareSheet: UIViewControllerRepresentable {
     }
     func updateUIViewController(_: UIActivityViewController, context: Context) {}
 }
+#endif

@@ -1,3 +1,4 @@
+#if os(iOS)
 import Foundation
 import OSLog
 import SwiftUI
@@ -254,3 +255,4 @@ extension ConversationView {
         streamPaused = false
     }
 }
+#endif

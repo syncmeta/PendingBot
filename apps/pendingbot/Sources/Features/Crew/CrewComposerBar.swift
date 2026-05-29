@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import PhotosUI
 
@@ -156,3 +157,4 @@ struct CrewComposerBar: View {
         showPicker = false
     }
 }
+#endif

@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import Supabase
 
@@ -622,3 +623,4 @@ struct SkillEditorSheet: View {
         }
     }
 }
+#endif

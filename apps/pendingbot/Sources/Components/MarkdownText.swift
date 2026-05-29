@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import MarkdownUI
 
@@ -552,3 +553,4 @@ private struct ChatCodeBlock: View {
         }
     }
 }
+#endif

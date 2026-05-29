@@ -1,3 +1,4 @@
+#if os(iOS)
 import Foundation
 
 /// Wire-types + thin HTTP wrapper for `/v1/realtime/*` on the worker.
@@ -473,3 +474,4 @@ enum VoiceCallError: LocalizedError, Sendable {
         }
     }
 }
+#endif

@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 
 /// Slim "通话中" pill that ConversationView pins above the messages list
@@ -53,3 +54,4 @@ struct ActiveCallBanner: View {
         return String(format: "%02d:%02d", secs / 60, secs % 60)
     }
 }
+#endif

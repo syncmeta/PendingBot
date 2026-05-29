@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import UIKit
 import AuthenticationServices
@@ -879,3 +880,4 @@ private extension View {
         }
     }
 }
+#endif

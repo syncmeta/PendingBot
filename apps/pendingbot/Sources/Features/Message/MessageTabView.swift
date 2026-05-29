@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import Supabase
 import OSLog
@@ -1692,3 +1693,4 @@ private struct CreateGroupView: View {
         }
     }
 }
+#endif

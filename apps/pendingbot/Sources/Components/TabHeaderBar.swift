@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 
 /// One row at the top of every top-level tab — left-aligned serif title +
@@ -180,3 +181,4 @@ struct PlusActionPopover: View {
         }
     }
 }
+#endif

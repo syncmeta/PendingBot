@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 
 // PendingBot rendering for a session's `request_permission` card
@@ -338,4 +339,5 @@ struct PermissionRequestCardView: View {
         }
     }
 }
+#endif
 #endif

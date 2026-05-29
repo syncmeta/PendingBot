@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import UIKit
 
@@ -21,3 +22,4 @@ enum Platform {
     /// sites don't have to know they're on Mac.
     static let macFontScale: CGFloat = 0.88
 }
+#endif

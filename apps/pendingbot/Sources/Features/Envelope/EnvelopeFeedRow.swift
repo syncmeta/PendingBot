@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import Supabase
 
@@ -185,3 +186,4 @@ private struct StatusPill: View {
         }
     }
 }
+#endif

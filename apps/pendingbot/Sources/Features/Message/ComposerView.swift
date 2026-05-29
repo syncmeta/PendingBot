@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import PhotosUI
 import UIKit
@@ -530,3 +531,4 @@ final class ComposerUITextView: UITextView {
         super.pressesBegan(presses, with: event)
     }
 }
+#endif

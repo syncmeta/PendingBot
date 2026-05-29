@@ -1,3 +1,4 @@
+#if os(iOS)
 import Foundation
 
 /// In-memory index of which group conversations currently have a live
@@ -93,3 +94,4 @@ final class ActiveVoiceCallStore {
         return f.date(from: raw)
     }
 }
+#endif

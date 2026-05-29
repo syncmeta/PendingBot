@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import AVFoundation
 import UIKit
@@ -267,3 +268,4 @@ struct QRScannerView: UIViewControllerRepresentable {
         }
     }
 }
+#endif

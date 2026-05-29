@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 
 /// Small left-aligned section title for each top-level tab. Sits as plain
@@ -21,3 +22,4 @@ struct TabTitle: View {
         .padding(.bottom, 8)
     }
 }
+#endif

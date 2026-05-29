@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 
 /// Compact pill that sits above the tab bar while a call is minimized.
@@ -183,3 +184,4 @@ struct CallFloatingPill: View {
         return String(format: "%02d:%02d", total / 60, total % 60)
     }
 }
+#endif

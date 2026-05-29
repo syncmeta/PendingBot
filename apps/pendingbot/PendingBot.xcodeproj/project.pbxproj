@@ -811,7 +811,6 @@
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				ENABLE_PREVIEWS = YES;
 				"EXCLUDED_SOURCE_FILE_NAMES[sdk=iphone*]" = "Mac/* Mac/**/*";
-				"EXCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]" = "Components/* Components/**/* Features/* Features/**/* Models/* Models/**/* Networking/* Networking/**/* Storage/* Storage/**/*";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -837,7 +836,6 @@
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				ENABLE_PREVIEWS = YES;
 				"EXCLUDED_SOURCE_FILE_NAMES[sdk=iphone*]" = "Mac/* Mac/**/*";
-				"EXCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]" = "Components/* Components/**/* Features/* Features/**/* Models/* Models/**/* Networking/* Networking/**/* Storage/* Storage/**/*";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
