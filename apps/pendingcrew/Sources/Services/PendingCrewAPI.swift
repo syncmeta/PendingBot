@@ -94,6 +94,16 @@ struct PendingCrewAPI {
                 let id: String
                 let subjectType: String
                 let displayName: String
+                // `/v1/me/subject` 直接回 supabase row(snake_case),
+                // 不像 crews 路由那样手动 map camelCase,所以这里要显式
+                // CodingKeys。perform() 用裸 JSONDecoder(crews 端返回的
+                // 已是 camelCase),不能加全局 convertFromSnakeCase 否则
+                // 反过来破坏 crews 解码。
+                enum CodingKeys: String, CodingKey {
+                    case id
+                    case subjectType = "subject_type"
+                    case displayName = "display_name"
+                }
             }
         }
         let resp: Response = try await get(path: "v1/me/subject")

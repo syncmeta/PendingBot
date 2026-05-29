@@ -61,11 +61,15 @@ export function requireSubjectAuth(requiredScopes: string[] = []): MiddlewareHan
   return async (c, next) => {
     const token = bearerToken(c.req.header('authorization'));
     if (!token?.startsWith('pdg_')) {
-      await sessionMiddleware(c, async () => {
+      // Return the session middleware's result so its 401 Response (missing
+      // / invalid JWT) propagates — `await`ing then returning would drop it
+      // and leave the context unfinalized. On success requireSession runs
+      // our callback (which calls next) and returns undefined; Hono then
+      // uses c.res set during the downstream handler.
+      return sessionMiddleware(c, async () => {
         c.set('authKind', 'supabase_jwt');
         await next();
       });
-      return;
     }
 
     const tokenHash = await sha256Hex(token);

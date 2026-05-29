@@ -107,6 +107,15 @@
 
 ## 🟡 拆东墙补西墙
 
+### 🟡 PendingCrew Mac 本机 session：成功跑的 stdout + 退出码不回流 UI（卡在 running）
+- **发现**: 2026-05-29 · computer-use 实测本机 happy path 时暴露
+- **位置**: `apps/pendingcrew/Sources/Mac/LocalRunner/LocalCodingAgentProcess.swift`(actor + readabilityHandler/terminationHandler)、`LocalCodingAgentService.swift`(`MacLocalCodingAgentService.runSession` 把 line handler → AsyncStream，`waitUntilExit` → `exitCode` Task)、`apps/pendingcrew/Sources/Mac/Services/CrewSessionRunner.swift`(`CrewSessionRun.observeStreams`)
+- **问题**: 起一个本机 Claude Code session 后，进程**确实跑完并干净退出**（`ps` 确认无残留 claude 子/孙进程；shell 里用完全相同的 argv/env/cwd/stdin 跑 `claude --print --output-format=stream-json --verbose` 2.6–8.7s 出完整 stream-json、exit 0），但 app 右栏**永远停在 `running`、stdout 恒为「(空)」**，6+ 分钟不变。即 stdout 流和 exit code 都没回流到 `CrewSessionRun` 的 `@Published`。
+- **关键非对称线索**: **失败路径正常**——`--verbose` 修复前，claude 把参数错误打到 **stderr** 并秒退，app 正确显示 stderr 内容 + 状态 `失败 1`。也就是说 stderr 流 + exit code 在「快速退出」时能回流；但 **stdout** 在「跑几秒成功退出」时不回流，且同一次 run 的 exit code 也收不到（否则状态会从 running 翻成 completed）。代码层面 stdout/stderr 两条桥是对称的（同样的 readabilityHandler、同样的 `cont.yield`、同样的 observe Task），所以更像是 **Process/actor 生命周期或 Pipe EOF/terminationHandler 在「长跑 + 大块 stdout」场景下的竞态/未触发**，而非 stdout 专属的代码 bug。已排除：App Sandbox（无 entitlements、codesign 无 sandbox）、PATH/env（`env -i` 最小 PATH 也能跑通）、stdin 未关闭（代码已 write+close）、孙进程占住 pipe（`ps` 无残留）。
+- **影响**: **v1.0 本机 runner 的核心路径目前不可用**——每个成功的本机 Claude Code/Codex session 都会卡在 running、看不到任何输出，用户无法判断任务进展或完成。这是 PendingCrew Mac 最主线的功能。`--verbose` flag 已修（commit 8bc97d72），所以 CLI 调用本身已正确；剩下的就是这条「成功 run 的输出/退出不回流」。
+- **建议**: 需要本机活体调试（当前 computer-use 环境被前台 app 抢焦点，迭代成本高）。优先怀疑顺序：① `LocalCodingAgentProcess.start()` 里 readabilityHandler 的 `Task { await self?.ingestStdout }` hop 到 actor 的时机 vs. 进程快速产出大块 stdout（init event ~4KB）；② `terminationHandler` 是否真触发（加日志/改用 `process.waitUntilExit()` 同步等待在后台线程兜底）；③ `~/.local/bin/claude` 是 launcher 再 exec 版本化二进制（`claude.app/.../claude`），确认 app spawn 的直接子进程退出语义。建议先写一个不依赖 GUI 的小 Swift harness（直接 new `LocalCodingAgentProcess` 跑 claude 打印 stdout/exit）复现，再定位。
+- **状态**: 未修（仅记录 + 已修 `--verbose` 前置 bug）
+
 ### 🟡 iOS PendingBot CrewTabView 是 codex 老 dashboard 风格,未按 spec v2 §11.2 重做(roadmap 漏列单独 task)
 - **发现**: 2026-05-28 · user 主动追问"iOS Crew Tab 做了没"时暴露
 - **位置**: `apps/pendingbot/Sources/Features/Crew/CrewTabView.swift`(878 行)+ `CrewAPI.swift`(330 行)+ 调用的老 `/v1/crew`(单数)endpoint 链路
