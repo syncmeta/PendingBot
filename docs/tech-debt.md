@@ -223,6 +223,14 @@
 
 ## 🟢 不规范
 
+### 🟢 PendingBot 模拟器构建不签名 → Keychain -34018 → 登录态/加密 DB 在 sim 上不可用
+- **发现**: 2026-05-29 · v1 QA 时在 iOS 模拟器上测登录暴露
+- **位置**: `apps/pendingbot/project.yml`(`CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]: NO`)+ `Resources/PendingBot.entitlements`(`keychain-access-groups`)
+- **问题**: 模拟器构建被配置成**不签名**,于是 entitlements(含 `keychain-access-groups`)不被应用。app 一旦访问带 access group 的 Keychain 就报 `errSecMissingEntitlement(-34018)`:① supabase-swift 的登录 session 存不进 Keychain → `currentSession` 永远空 → 所有直连 PostgREST 的请求以 `anon` 发出(`auth.uid()` 为空)→ 登录后选名字 PATCH users 报 "permission denied for table users" / "auth session missing",卡死;② 本地 SQLCipher 口令也存不住(`hmac check failed`,本地缓存坏)。**真机不受影响**:iphoneos 走 Automatic+team 真签名,entitlements 正常,Keychain 能写,邮箱登录正常(api 日志里 12mini 真机的直连请求都是 200 authenticated)。
+- **影响**: 纯**测试环境**问题——模拟器上**任何依赖 Keychain 的流程(登录态持久化、加密缓存)都不可信**,容易误判成 app/后端 bug(本轮就误追了很久)。不影响线上/真机。
+- **建议**: 模拟器上的 auth/登录态相关验证一律走**真机**;模拟器只适合验纯 UI / 不依赖 Keychain 的逻辑。想让 sim 可测 auth,要么给 sim 真签名(团队 keychain group 在 sim 上塞不进,ad-hoc/`$(AppIdentifierPrefix)` 解析不出,实测不通),要么加 `#if targetEnvironment(simulator)` 的内存版 AuthLocalStorage(用户本轮否决,不做)。当前结论:**真机为准**。
+- **状态**: 不修(已记录;真机无此问题,sim 限制按"测试用真机"规避)
+
 ### 🟢 iOS 工程缺少测试 target，语音诊断只能靠构建兜底
 - **发现**: 2026-05-23 · codex/fix-group-voice-diagnostics
 - **位置**: apps/ios/PendingBot.xcodeproj、apps/ios/PendingBot/Features/Call/CallDiagnostics.swift
