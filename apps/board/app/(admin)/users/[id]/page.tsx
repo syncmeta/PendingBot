@@ -1,8 +1,9 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase/admin';
-import { fmtPnd, fmtUsd } from '@/lib/format';
+import { fmtPnd, fmtPncMicros, fmtUsd } from '@/lib/format';
 import {
+  adjustWalletV2,
   cancelPendingDeletion,
   forceDeleteAccount,
   grantCredits,
@@ -10,6 +11,7 @@ import {
 } from '../actions';
 import { QuotaForm } from './_form';
 import { GrantForm } from './_grant-form';
+import { WalletV2Form } from './_wallet-v2-form';
 import { ConfirmDeletionAction } from './_deletion-actions';
 
 const COOLDOWN_DAYS = 28;
@@ -25,7 +27,13 @@ export default async function UserDetailPage({
   const { id } = await params;
   const supa = supabaseAdmin();
 
-  const [{ data: user }, { data: quota }, { data: ledger }] = await Promise.all([
+  const [
+    { data: user },
+    { data: quota },
+    { data: ledger },
+    { data: v2Packs },
+    { data: v2Ledger },
+  ] = await Promise.all([
     supa
       .from('users')
       .select('id, display_name, email, is_admin, created_at, updated_at, bio, balance_credits, lifetime_topup_credits, lifetime_spent_credits, pending_deletion_at, pending_deletion_sentiment')
@@ -38,8 +46,29 @@ export default async function UserDetailPage({
       .eq('user_id', id)
       .order('created_at', { ascending: false })
       .limit(15),
+    // Billing v2 — active packs + recent ledger. Read directly (service
+    // role bypasses RLS) so admin sees the v2 wallet alongside v1.
+    supa
+      .from('packs')
+      .select('id, initial_pnc_micros, remaining_pnc_micros, expires_at, status, sales_channel, created_at')
+      .eq('owner_user_id', id)
+      .eq('status', 'active')
+      .order('expires_at', { ascending: true, nullsFirst: false })
+      .order('created_at', { ascending: true })
+      .limit(50),
+    supa
+      .from('ledger_entries')
+      .select('id, entry_type, delta_pnc_micros, balance_after_pnc_micros, created_at, metadata')
+      .eq('owner_user_id', id)
+      .order('created_at', { ascending: false })
+      .limit(15),
   ]);
   if (!user) notFound();
+
+  const v2TotalMicros = (v2Packs ?? []).reduce(
+    (s, p) => s + Number(p.remaining_pnc_micros ?? 0),
+    0,
+  );
 
   const pendingDeletionAt = user.pending_deletion_at
     ? new Date(user.pending_deletion_at)
@@ -167,6 +196,94 @@ export default async function UserDetailPage({
             </p>
             <GrantForm action={grantCredits.bind(null, id)} />
           </div>
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-sm font-medium">
+          余额 v2（PNC · packs）
+          <span className="ml-2 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-normal text-emerald-700">
+            billing v2
+          </span>
+        </h2>
+        <div className="rounded-lg border bg-card p-4 space-y-3">
+          <div>
+            <div className="text-xs uppercase text-muted-foreground">v2 总余额（活跃 packs 求和）</div>
+            <div className="mt-0.5 text-2xl font-semibold tabular-nums">
+              {fmtPncMicros(v2TotalMicros)}
+            </div>
+          </div>
+          {(v2Packs ?? []).length > 0 && (
+            <div className="overflow-x-auto rounded-md border">
+              <table className="w-full text-xs">
+                <thead className="border-b text-left uppercase text-muted-foreground">
+                  <tr>
+                    <th className="px-3 py-1.5 font-medium">来源</th>
+                    <th className="px-3 py-1.5 font-medium text-right">剩余 / 初始</th>
+                    <th className="px-3 py-1.5 font-medium">过期</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(v2Packs ?? []).map((p) => (
+                    <tr key={p.id} className="border-b last:border-0">
+                      <td className="px-3 py-1.5">{p.sales_channel}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums">
+                        {fmtPncMicros(p.remaining_pnc_micros)} / {fmtPncMicros(p.initial_pnc_micros)}
+                      </td>
+                      <td className="px-3 py-1.5 text-muted-foreground">
+                        {p.expires_at
+                          ? new Date(p.expires_at).toISOString().slice(0, 10)
+                          : '永不'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <div className="border-t pt-3">
+            <p className="mb-2 text-xs text-muted-foreground">
+              发放（正数 → admin_grant pack，永不过期）/ 扣回（负数 → FIFO 扣
+              active packs）。走 billing_v2_admin_adjust RPC，写 ledger_entries
+              adjustment + admin_audit。&gt; 100 PNC 需二次确认。
+            </p>
+            <WalletV2Form action={adjustWalletV2.bind(null, id)} />
+          </div>
+          {(v2Ledger ?? []).length > 0 && (
+            <div className="overflow-x-auto rounded-md border">
+              <table className="w-full text-xs">
+                <thead className="border-b text-left uppercase text-muted-foreground">
+                  <tr>
+                    <th className="px-3 py-1.5 font-medium">时间</th>
+                    <th className="px-3 py-1.5 font-medium">类型</th>
+                    <th className="px-3 py-1.5 font-medium text-right">变化</th>
+                    <th className="px-3 py-1.5 font-medium text-right">余额后</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(v2Ledger ?? []).map((l) => (
+                    <tr key={l.id} className="border-b last:border-0">
+                      <td className="px-3 py-1.5 font-mono">
+                        {new Date(l.created_at).toISOString().replace('T', ' ').slice(0, 19)}
+                      </td>
+                      <td className="px-3 py-1.5">{l.entry_type}</td>
+                      <td
+                        className={`px-3 py-1.5 text-right tabular-nums ${
+                          Number(l.delta_pnc_micros) > 0 ? 'text-emerald-700' : 'text-amber-700'
+                        }`}
+                      >
+                        {Number(l.delta_pnc_micros) > 0 ? '+' : ''}
+                        {fmtPncMicros(l.delta_pnc_micros)}
+                      </td>
+                      <td className="px-3 py-1.5 text-right tabular-nums text-muted-foreground">
+                        {fmtPncMicros(l.balance_after_pnc_micros)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </section>
 
