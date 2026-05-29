@@ -115,6 +115,14 @@
 
 ## 🟡 拆东墙补西墙
 
+### 🟡 Mac 端整体业务子树被 build settings 排除，三端 IM 实质上还是 iOS-only
+- **发现**: 2026-05-29 · feat/mac-3col-shell
+- **位置**: `apps/pendingbot/project.yml`（`EXCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]`：`Components/* Features/* Models/* Networking/* Storage/*`）、`apps/pendingbot/Sources/Mac/MacRootView.swift`、`apps/pendingbot/Sources/Features/Message/*`（顶层 `import UIKit` + `UIViewRepresentable` + `UIImagePickerController` + `UIScreen.main`，无 `#if os(iOS)` 门）
+- **问题**: spec v2 §11 三端齐目标要求 Mac 端跑通普通 IM，但当前为了让 Mac 能 build，`project.yml` 一刀把 `Features/ Components/ Models/ Networking/ Storage/` 整个子树从 macOS target 排除。`MacRootView` 因此只能渲染纯占位 3 列 shell（sidebar/list/detail 都是空态文案）——没有 `AccountStore`、没有 `APIClient`、没有任何会话或好友数据可读。Features/Message 那一堆（`ConversationView`、`BubbleView`、`ComposerView`、`ChatComposerAccessory`、`ChatActionSheet`、`MessageTabView`）也都顶层 `import UIKit`,直接共用要 (a) 在几十个文件里加 `#if os(iOS)` 门 + Mac 替代实现 (b) 把 UIKit 部分下沉到一个 iOS-only Components 层。
+- **影响**: Mac 端会一直停在"空壳"阶段——每加一个 Mac 业务功能，都要先拆一刀 UIKit 门或者整段重写跨平台版。任由它发展，最终会形成"iOS 业务代码 + Mac 重写"两套并行实现的根基级分裂；T4.6 Crew Tab V2 多端方案能成立，是因为 Crew 一开始就走 SwiftUI-only。普通 IM 这块没有同样的预算，相当于 spec §11 三端齐目标被偷偷降级成"iOS+iPad 齐,Mac 占位"。
+- **建议**: 接 Mac IM 之前必须先做一次跨平台抽层，至少这几步：(1) 把 `Models/`、`Storage/AccountStore`、`Storage/UnreadStore`、`Networking/APIClient`、`Networking/RealtimeManager` 等纯 Foundation 模块从 macOS 的 EXCLUDED 列表里拿出来（这些文件已经不 import UIKit）；(2) `Features/Message/*` 里 UIViewRepresentable 子组件抽进 `Components/iOS/` 子目录,顶层 view 用 `#if os(iOS)` / `#if os(macOS)` 各跑一份；(3) 写明哪些 iOS-only 能力（CallKit/PushKit/相机/UIImage 编码）在 Mac 上的对应方案（不做 / NSImage / 文件选择器）。短期不要为了多接一个 tab 而随手加 `#if`，会让以后真正拆层时阻力越大。
+- **状态**: 待办（T1.4 stream 升级 Mac shell 到三列结构,但中间和右栏仍是 placeholder；真正的 Mac IM 接入留给后续 Phase 2+ stream）
+
 ### 🟡 群语音 DO↔容器掉线重连/resync 控制逻辑已写+单测，但端到端音频恢复 runtime 未验证
 - **发现**: 2026-05-29 · feat/group-voice-reconnect
 - **位置**: `apps/edge/src/durable-objects/room-voice.ts`（heartbeat / onMediaClosed / runReconnect / resyncContainer / 多路复用 alarm）、`apps/edge/src/durable-objects/room-voice-reconnect.ts`（纯函数：nextBackoffMs / buildResyncCommands / shouldGiveUpReconnect）、`apps/voice-container/src/room.ts`（resetForStart + pong）
