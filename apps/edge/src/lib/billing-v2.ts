@@ -381,6 +381,16 @@ export async function settleUsage(
     }
   }
 
+  // For subject owners (group wallets), keep group_pools in sync with the
+  // pack-level debits AND decay share_index proportionally. See §9 — group
+  // refund math reads share_index, so it must stay accurate on every spend.
+  // The pack-level debits above are the authoritative balance; group_pools
+  // mirrors them. (Per-pack FIFO and proportional share-index diverge in
+  // theory; in practice the refund path reads share_index, not packs.)
+  if (params.owner.kind === 'subject' && totalBilled > 0) {
+    await applyGroupPoolSpend(supa, params.owner.subjectId, totalBilled);
+  }
+
   return {
     usageEventId,
     pncMicrosBilled: totalBilled,
@@ -388,4 +398,62 @@ export async function settleUsage(
     balanceAfterMicros: runningBalance,
     thresholdState: getThresholdState(runningBalance),
   };
+}
+
+/**
+ * Decay group_pools.share_index proportionally after a group spend, and
+ * update total_remaining. NOT a CAS — small race window between two
+ * concurrent settles on the same group; pre-launch we accept it and the
+ * reconciliation cron (§14) reports any drift.
+ *
+ * When total drops to 0, reset share_index to 1.0 so future contributions
+ * don't divide by an arbitrarily small number.
+ */
+async function applyGroupPoolSpend(
+  supa: SupabaseClient,
+  subjectId: string,
+  spentMicros: number,
+): Promise<void> {
+  const { data: pool, error: readErr } = await supa
+    .from('group_pools')
+    .select('total_remaining_pnc_micros, share_index')
+    .eq('subject_id', subjectId)
+    .maybeSingle();
+  if (readErr) {
+    console.warn('[billing-v2.applyGroupPoolSpend] read', readErr.message);
+    return;
+  }
+  if (!pool) {
+    // Group spent something without a pool row — bootstrap one at zero,
+    // so the reconciliation cron has something to flag.
+    const { error: insErr } = await supa.from('group_pools').insert({
+      subject_id: subjectId,
+      total_remaining_pnc_micros: 0,
+      share_index: 1,
+    });
+    if (insErr) {
+      console.warn('[billing-v2.applyGroupPoolSpend] bootstrap', insErr.message);
+    }
+    return;
+  }
+  const oldTotal = Number(pool.total_remaining_pnc_micros);
+  const oldShareIndex = Number(pool.share_index);
+  const newTotal = Math.max(0, oldTotal - spentMicros);
+  const newShareIndex =
+    newTotal === 0
+      ? 1
+      : oldTotal > 0
+        ? (oldShareIndex * newTotal) / oldTotal
+        : oldShareIndex;
+  const { error: updErr } = await supa
+    .from('group_pools')
+    .update({
+      total_remaining_pnc_micros: newTotal,
+      share_index: newShareIndex,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('subject_id', subjectId);
+  if (updErr) {
+    console.warn('[billing-v2.applyGroupPoolSpend] update', updErr.message);
+  }
 }
