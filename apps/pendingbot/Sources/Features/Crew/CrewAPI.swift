@@ -4,10 +4,9 @@ import Foundation
 // MARK: - Spec v2 §6/§7/§11 endpoints (`/v1/crews`, `/v1/share-changes`)
 //
 // These wrap the Phase 2 endpoints F agent shipped in `crews.ts` +
-// `share-changes.ts`. The legacy `/v1/crew` (singular) surface further
-// down still exists for the old dashboard view — leave it untouched
-// until cutover is complete; CrewTabV2View / CrewDetailV2View only
-// consume the V2 types below.
+// `share-changes.ts`. The codex-era `/v1/crew` (singular) dashboard
+// surface was retired in the T4.6 multiplatform cutover; only the
+// subject + device-login support types remain below.
 // ─────────────────────────────────────────────────────────────────────
 
 /// `GET /v1/crews` list row. Field shape mirrors edge response:
@@ -169,12 +168,8 @@ struct CreateCrewResponseV2: Decodable {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// MARK: - Legacy `/v1/crew` (singular) types — kept until cutover lands
+// MARK: - Subject + device-login support types (shared by V2 + scan-login)
 // ─────────────────────────────────────────────────────────────────────
-
-struct CrewListResponse<Item: Decodable>: Decodable {
-    let items: [Item]
-}
 
 struct CrewSubjectEnvelope: Decodable {
     let subject: CrewSubject
@@ -206,108 +201,9 @@ struct SubjectListResponse: Decodable {
     let subjects: [SubjectListItem]
 }
 
-struct CrewSummary: Decodable, Identifiable, Hashable {
-    var id: String { conversation_id }
-    let conversation_id: String
-    let responsible_subject_id: String
-    let status: String
-    let title: String
-    let runtime_kind: String?
-    let created_at: String
-    let updated_at: String
-}
-
-struct CrewRunnerHost: Decodable, Identifiable, Hashable {
-    let id: String
-    let responsible_subject_id: String
-    let platform: String
-    let display_name: String
-    let allowed_runner_kinds: [String]
-    let status: String
-    let last_seen_at: String?
-}
-
 struct DeviceLoginApprovalResponse: Decodable, Hashable {
     let ok: Bool
     let status: String
-}
-
-struct CrewSessionSummary: Decodable, Identifiable, Hashable {
-    let id: String
-    let crew_conversation_id: String
-    let responsible_subject_id: String
-    let runner_kind: String
-    let status: String
-    let task_brief: String
-    let progress_summary: String?
-    let created_at: String
-    let started_at: String?
-    let finished_at: String?
-}
-
-struct CrewLinkSummary: Decodable, Identifiable, Hashable {
-    var id: String { crew_conversation_id }
-    let crew_conversation_id: String
-    let title: String
-    let status: String
-    let runtime_kind: String
-    let captain_bot_id: String?
-    let captain_member_id: String?
-    let created_at: String
-}
-
-struct CrewResponsibilityShareSummary: Decodable, Identifiable, Hashable {
-    var id: String { subject_id }
-    let subject_id: String
-    let share_bps: Int
-    let source: String
-}
-
-struct CrewLinksResponse: Decodable, Hashable {
-    let parents: [CrewLinkSummary]
-    let children: [CrewLinkSummary]
-    let responsibilityShares: [CrewResponsibilityShareSummary]
-}
-
-struct CrewMemberSummary: Decodable, Identifiable, Hashable {
-    let id: String
-    let conversation_id: String
-    let member_kind: String
-    let user_id: String?
-    let bot_id: String?
-    let code_session_id: String?
-    let display_name: String
-    let role: String?
-    let status: String
-    let created_at: String
-}
-
-struct CrewAnnouncementMentionSummary: Decodable, Identifiable, Hashable {
-    let id: String
-    let announcement_id: String
-    let target_kind: String
-    let target_session_id: String?
-    let target_member_id: String?
-    let created_at: String
-}
-
-struct CrewAnnouncementSummary: Decodable, Identifiable, Hashable {
-    let id: String
-    let crew_conversation_id: String
-    let responsible_subject_id: String
-    let sender_kind: String
-    let sender_member_id: String?
-    let sender_session_id: String?
-    let recipient_mode: String
-    let message_kind: String
-    let board_visible: Bool
-    let summary: String
-    let created_at: String
-    let mentions: [CrewAnnouncementMentionSummary]
-}
-
-struct CrewAnnouncementCreateResponse: Decodable, Hashable {
-    let announcementId: String
 }
 
 enum DeviceLoginGrantApproval: Equatable {
@@ -345,26 +241,6 @@ enum DeviceLoginGrantApproval: Equatable {
     }
 }
 
-enum CrewRunnerKind: String, CaseIterable, Identifiable, Hashable {
-    case cloudSandbox = "cloud_sandbox"
-    case localClaudeCode = "local_claude_code"
-    case localCodex = "local_codex"
-    case localOpencode = "local_opencode"
-    case localKilo = "local_kilo"
-
-    var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .cloudSandbox: "云端 Sandbox"
-        case .localClaudeCode: "Mac Claude Code"
-        case .localCodex: "Mac Codex"
-        case .localOpencode: "Mac opencode"
-        case .localKilo: "Mac Kilo"
-        }
-    }
-}
-
 extension APIClient {
     func crewCurrentSubject() async throws -> CrewSubject {
         let envelope: CrewSubjectEnvelope = try await get("v1/me/subject")
@@ -376,110 +252,6 @@ extension APIClient {
     func meSubjects() async throws -> [SubjectListItem] {
         let response: SubjectListResponse = try await get("v1/me/subjects")
         return response.subjects
-    }
-
-    func crewList() async throws -> [CrewSummary] {
-        let response: CrewListResponse<CrewSummary> = try await get("v1/crew")
-        return response.items
-    }
-
-    func crewCreate(responsibleSubjectId: String, title: String) async throws -> String {
-        struct Body: Encodable {
-            let responsibleSubjectId: String
-            let title: String
-        }
-        struct Response: Decodable {
-            let conversationId: String
-        }
-        let response: Response = try await post(
-            "v1/crew",
-            body: Body(responsibleSubjectId: responsibleSubjectId, title: title)
-        )
-        return response.conversationId
-    }
-
-    func crewCreateChild(crewId: String, title: String) async throws -> String {
-        struct Body: Encodable {
-            let title: String
-        }
-        struct Response: Decodable {
-            let conversationId: String
-        }
-        let response: Response = try await post(
-            "v1/crew/\(crewId)/children",
-            body: Body(title: title)
-        )
-        return response.conversationId
-    }
-
-    func crewLinks(crewId: String) async throws -> CrewLinksResponse {
-        try await get("v1/crew/\(crewId)/links")
-    }
-
-    func crewMembers(crewId: String) async throws -> [CrewMemberSummary] {
-        let response: CrewListResponse<CrewMemberSummary> = try await get("v1/crew/\(crewId)/members")
-        return response.items
-    }
-
-    func crewAnnouncements(crewId: String) async throws -> [CrewAnnouncementSummary] {
-        let response: CrewListResponse<CrewAnnouncementSummary> = try await get("v1/crew/\(crewId)/announcements")
-        return response.items
-    }
-
-    func crewCreateAnnouncement(
-        crewId: String,
-        summary: String,
-        recipientSessionIds: [String] = [],
-        recipientMemberIds: [String] = []
-    ) async throws -> CrewAnnouncementCreateResponse {
-        struct Body: Encodable {
-            let recipientSessionIds: [String]
-            let recipientMemberIds: [String]
-            let messageKind: String
-            let summary: String
-            let payload: [String: String]
-            let boardVisible: Bool
-        }
-        return try await post(
-            "v1/crew/\(crewId)/announcements",
-            body: Body(
-                recipientSessionIds: recipientSessionIds,
-                recipientMemberIds: recipientMemberIds,
-                messageKind: "announcement",
-                summary: summary,
-                payload: [:],
-                boardVisible: true
-            )
-        )
-    }
-
-    func crewSessions(crewId: String) async throws -> [CrewSessionSummary] {
-        let response: CrewListResponse<CrewSessionSummary> = try await get("v1/crew/\(crewId)/sessions")
-        return response.items
-    }
-
-    func crewCreateSession(
-        crewId: String,
-        runnerKind: CrewRunnerKind,
-        taskBrief: String
-    ) async throws -> String {
-        struct Body: Encodable {
-            let runnerKind: String
-            let taskBrief: String
-        }
-        struct Response: Decodable {
-            let sessionId: String
-        }
-        let response: Response = try await post(
-            "v1/crew/\(crewId)/sessions",
-            body: Body(runnerKind: runnerKind.rawValue, taskBrief: taskBrief)
-        )
-        return response.sessionId
-    }
-
-    func crewRunnerHosts() async throws -> [CrewRunnerHost] {
-        let response: CrewListResponse<CrewRunnerHost> = try await get("v1/runner-hosts")
-        return response.items
     }
 
     func approvePendingCrewDeviceLogin(
@@ -503,10 +275,9 @@ extension APIClient {
     // ─────────────────────────────────────────────────────────────
     // MARK: Spec v2 §6/§7/§11 — Phase 2 crew endpoints (`/v1/crews`)
     //
-    // These call F agent's new `crews.ts` route surface. CrewTabV2View
-    // / CrewDetailV2View only consume these; the older singular
-    // `/v1/crew` methods further up stay live for `CrewTabView` until
-    // the dashboard is removed in a follow-up cutover.
+    // These call F agent's new `crews.ts` route surface. CrewTabV2View /
+    // CrewDetailV2View consume these across all three sizes; the codex-era
+    // singular `/v1/crew` dashboard methods were removed in the T4.6 cutover.
     // ─────────────────────────────────────────────────────────────
 
     /// `GET /v1/crews` — list crews caller can see.
