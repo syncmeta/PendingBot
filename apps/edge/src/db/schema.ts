@@ -1215,6 +1215,7 @@ export type Database = {
           id: string
           initiating_member_id: string
           last_context_cursor: string | null
+          permission_mode_override: string | null
           progress_summary: string | null
           responsible_subject_id: string
           runner_host_id: string | null
@@ -1233,6 +1234,7 @@ export type Database = {
           id?: string
           initiating_member_id: string
           last_context_cursor?: string | null
+          permission_mode_override?: string | null
           progress_summary?: string | null
           responsible_subject_id: string
           runner_host_id?: string | null
@@ -1251,6 +1253,7 @@ export type Database = {
           id?: string
           initiating_member_id?: string
           last_context_cursor?: string | null
+          permission_mode_override?: string | null
           progress_summary?: string | null
           responsible_subject_id?: string
           runner_host_id?: string | null
@@ -3286,6 +3289,7 @@ export type Database = {
           master_member_id: string | null
           parent_temporary_group_id: string | null
           peer_device_id: string | null
+          permission_mode: string
           responsibility_mode: string
           responsible_subject_id: string
           root_temporary_group_id: string | null
@@ -3314,6 +3318,7 @@ export type Database = {
           master_member_id?: string | null
           parent_temporary_group_id?: string | null
           peer_device_id?: string | null
+          permission_mode?: string
           responsibility_mode?: string
           responsible_subject_id: string
           root_temporary_group_id?: string | null
@@ -3342,6 +3347,7 @@ export type Database = {
           master_member_id?: string | null
           parent_temporary_group_id?: string | null
           peer_device_id?: string | null
+          permission_mode?: string
           responsibility_mode?: string
           responsible_subject_id?: string
           root_temporary_group_id?: string | null
@@ -4134,6 +4140,15 @@ export type Database = {
         }
         Returns: string
       }
+      create_permission_request: {
+        Args: {
+          p_action: string
+          p_payload?: Json
+          p_risk_level?: string
+          p_session_id: string
+        }
+        Returns: string
+      }
       crew_approve_share_change: {
         Args: { p_change_id: string; p_subject_id: string }
         Returns: string
@@ -4162,6 +4177,10 @@ export type Database = {
       decide_human_help_request: {
         Args: { p_decision: string; p_request_id: string }
         Returns: boolean
+      }
+      decide_permission_request: {
+        Args: { p_caller_user_id: string; p_decision: string; p_id: string }
+        Returns: undefined
       }
       enqueue_session_mailbox: {
         Args: {
