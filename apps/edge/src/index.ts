@@ -15,6 +15,7 @@ import { groupRoutes } from './routes/groups';
 import { crewRoutes } from './routes/crew';
 import { crewsRoutes } from './routes/crews';
 import { crewMessagesRoutes, sessionInboxRoutes } from './routes/crew-comms';
+import { sessionProxyRoutes } from './routes/session-proxy';
 import {
   permissionRequestRoutes,
   crewPermissionModeRoutes,
@@ -48,6 +49,9 @@ export { RoomVoiceDO } from './durable-objects/room-voice';
 // Container-enabled DO wrapping the group-voice media container
 // (apps/voice-container). Required export for the ROOM_MEDIA binding.
 export { RoomMediaContainerDO } from './durable-objects/room-media';
+// Cross-device session remote-control DO (T4.5). Required export for the
+// SESSION_PROXY_DO binding declared in wrangler.jsonc.
+export { SessionProxyDO } from './durable-objects/session-proxy';
 // Container-backed DO from @cloudflare/sandbox. Required export for
 // the `Sandbox` binding declared in wrangler.jsonc.
 export { Sandbox } from '@cloudflare/sandbox';
@@ -106,6 +110,7 @@ v1.route('/sessions', sessionInboxRoutes);         // GET /v1/sessions/:sessionI
 v1.route('/permission-requests', permissionRequestRoutes);   // POST /v1/permission-requests/:id/decide
 v1.route('/crews', crewPermissionModeRoutes);                // PATCH /v1/crews/:crewId/permission-mode
 v1.route('/sessions', sessionPermissionModeRoutes);          // PATCH /v1/sessions/:sessionId/permission-mode
+v1.route('/sessions', sessionProxyRoutes);                   // GET /v1/sessions/:sessionId/proxy/connect (ws upgrade)
 v1.route('/share-changes', shareChangesRoutes);
 v1.route('/groups', groupVoiceRoutes);
 v1.route('/voice', voiceActiveRoutes);
