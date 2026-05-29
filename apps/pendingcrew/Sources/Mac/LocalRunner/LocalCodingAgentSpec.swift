@@ -65,6 +65,9 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
             // Claude Code CLI: 非交互模式 = `claude -p <prompt>` 或 `claude --print`
             // 用 `--print` 拒绝 TTY；`--output-format=stream-json` 让我们一行一行
             // 读 JSON 事件流（PendingCrew 后面要解析做 session 窗口）。
+            // `--verbose` 是硬性要求:`--print` + `--output-format=stream-json`
+            // 不带 `--verbose` 时 CLI 直接报错退出
+            // ("Error: When using --print, --output-format=stream-json requires --verbose")。
             //
             // prompt 走 stdin（`--print` 在没有位置参数时从 stdin 读）。
             //
@@ -76,6 +79,7 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
             return [
                 "--print",
                 "--output-format=stream-json",
+                "--verbose",
             ]
 
         case .codex:
