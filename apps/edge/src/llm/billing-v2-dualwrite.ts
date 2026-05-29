@@ -3,19 +3,20 @@ import { settleUsage, type EventCategory, type OwnerRef } from '../lib/billing-v
 import type { WebToolUsage } from '../lib/web-meter';
 import type { AuditMessage } from '../queue/audit-types';
 
-// Dual-write: every successful turn that lands a v1 audit + debit also
-// fires v2 settleUsage() calls. v1 stays authoritative until the cutover
-// in #190; v2 builds parallel state so we can compare and switch.
+// Authoritative v2 turn settle (post-cutover #190). Every successful turn
+// settles the model spend + each web-tool call against the owner's packs.
+// This is THE debit now — v1 billingDebit/splitAndDebit are gone.
 //
-// SCOPE (1v1 user-owner turns only — opts.userId set, no conversation
-// subject). Group / temporary_group / Crew turns still flow v1-only; their
-// v2 owner mapping lands with #190.
+// Owner is resolved by the caller (router.persistAuditMessage):
+//   - 1v1 / system turns        → user packs
+//   - temporary_group / crew    → responsible subject packs
+//   - group                     → group's responsible subject (pool) packs
 //
-// Three usage_event shapes are recorded per qualifying turn:
+// Two usage_event shapes per turn:
 //   1. The model spend            → category llm_tokens | voice_tokens
 //   2. Each web-tool call         → category web_tools (one event per call)
-//   (sandbox_runtime is a design-doc category but has NO v1 billing path
-//    today — see docs/tech-debt.md; nothing to dual-write yet.)
+//   (sandbox_runtime is a design-doc category but has NO billing path yet
+//    — see docs/tech-debt.md.)
 
 // ---------------------------------------------------------------------------
 // taskType → event category. Voice turns price audio tokens, so they get
@@ -25,10 +26,10 @@ export function modelEventCategory(taskType: string): EventCategory {
   return taskType === 'voice_call' ? 'voice_tokens' : 'llm_tokens';
 }
 
-export interface DualWriteV2Params {
+export interface SettleTurnV2Params {
   supa: SupabaseClient;
   msg: AuditMessage;
-  ownerUserId: string;
+  owner: OwnerRef;
   /** The model/voice USD cost for this turn (llmCost in persistAuditMessage). */
   modelCostUsd: number | null;
   totalTokens: number;
@@ -40,15 +41,15 @@ export interface DualWriteV2Params {
 }
 
 /**
- * Record v2 usage_events for a 1v1 turn: the model spend plus one event
- * per web-tool call. All failures are logged + swallowed — billing v2
- * dual-write must never break the authoritative v1 path.
+ * Settle a turn's model spend + web-tool calls against the owner's packs.
+ * All failures are logged + swallowed — a billing failure must never
+ * break the user-visible turn (the audit_log row already persisted).
  */
-export async function dualWriteV2(params: DualWriteV2Params): Promise<void> {
+export async function settleTurnV2(params: SettleTurnV2Params): Promise<void> {
   const {
     supa,
     msg,
-    ownerUserId,
+    owner,
     modelCostUsd,
     totalTokens,
     modelId,
@@ -57,7 +58,6 @@ export async function dualWriteV2(params: DualWriteV2Params): Promise<void> {
     webTools,
   } = params;
 
-  const owner: OwnerRef = { kind: 'user', userId: ownerUserId };
   const conversationId = msg.opts.conversationId ?? null;
 
   // 1. Model spend (LLM or voice). Skip free/zero-cost turns.

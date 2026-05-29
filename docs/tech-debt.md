@@ -123,6 +123,22 @@
 
 ## 🟡 拆东墙补西墙
 
+### 🟡 通话内 voice_cost 实时预览还在用 v1 PND markup（与 v2 PNC 钱包单位不一致）
+- **发现**: 2026-05-29 · feat/billing-v2-cutover
+- **位置**: `apps/edge/src/lib/voice-metering.ts:broadcastVoiceCostPreview`（getMarkup + usdToPnd）、`apps/edge/src/durable-objects/room-voice.ts:broadcastCost`、iOS `RealtimeSocket`/`Manager` 的 `voice_cost` 处理（`delta_pnd`/`cumulative_pnd` 字段）
+- **问题**: billing v2 cutover 后，权威扣费已全部走 v2 PNC（settleUsage）。但通话过程中给客户端广播的"本次通话已花费"实时预览仍走 v1 路径：`getMarkup(billing_config.markup) × usdToPnd`，单位是 PND ∂，字段名 `delta_pnd`/`cumulative_pnd`。用户在通话里看到 ∂ 估算，挂断后进钱包看到的是 PNC——单位对不上。
+- **影响**: 纯展示层不一致，不影响真实扣费（扣费已是 v2 权威）。但用户体验割裂；且这是 billing.ts 里 getMarkup/usdToPnd 仅剩的运行时调用点，挡着把这两个 v1 函数彻底删掉。
+- **建议**: 把广播改成 PNC：`usdToPncMicros(costUsd)` 累加，字段改 `delta_pnc_micros`/`cumulative_pnc_micros`，iOS voice_cost 处理同步改单位 + 文案。改完即可从 billing.ts 删 getMarkup/usdToPnd。
+- **状态**: 待办
+
+### 🟡 v1 billing 表 + 死函数在 cutover 后留作冷备，未删
+- **发现**: 2026-05-29 · feat/billing-v2-cutover
+- **位置**: `users.balance_credits` / `subject_wallets` / `billing_ledger` / `topups` / `redemption_codes` / `group_member_billing` 表；`apps/edge/src/lib/billing.ts`（getBalance/getMarkup/usdToPnd/billingDebit/billingDebitSubject/getThreshold 等）、`apps/edge/src/lib/group-billing.ts`（splitAndDebit 整文件）
+- **问题**: billing v2 cutover 让 v2 成为权威，v1 的扣费/gate 逻辑已不再被运行时调用（gate 已改读 v2 packs，debit 已改 settleUsage）。但 v1 的表和一批导出函数留着没删——作为一个周期的冷备，万一迁移有遗漏可回查。`/v1/me/balance`、`/v1/me/redeem`、`group-billing.ts`、`billing.ts` 的大部分导出现在是死代码（仅被自己的单测引用）。
+- **影响**: 死代码 + 未用表，读代码时容易误以为还在用 v1；balance-cache.ts 的 KV 缓存也不再被写。不致命，但要在 v2 线上跑稳一个周期后清掉。
+- **建议**: 跑稳后开 chore 分支：删 group-billing.ts、billing.ts 里 v1-only 导出、/me/balance + /me/redeem（或改 redeem 走 v2 issuePack）、balance-cache.ts；再写一个 drop-v1-tables 迁移（备份后 DROP）。
+- **状态**: 待办
+
 ### 🟡 sandbox / container runtime 没有任何计费路径（v1 + v2 都缺）
 - **发现**: 2026-05-29 · feat/billing-v2-services
 - **位置**: `apps/edge/src/lib/sandbox.ts`、`apps/edge/src/routes/code-exec.ts`、`docs/billing-v2-design.md` §5 `sandbox_runtime`

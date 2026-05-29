@@ -11,9 +11,7 @@ import {
   splitRealtimeUsage,
   type VoiceTurnUsage,
 } from '../lib/voice-metering';
-import { getMarkup, usdToPnd } from '../lib/billing';
-import { splitAndDebit } from '../lib/group-billing';
-import { uuidv7 } from '../lib/ids';
+import { settleUsage, type OwnerRef } from '../lib/billing-v2';
 import { roomMediaToken } from './room-voice-context';
 import type {
   ContainerBotSpec,
@@ -1084,10 +1082,9 @@ export class RoomVoiceDO {
       roomId: ctx.roomId,
       turnIndex: leg.turnIndex++,
       botId: leg.spec.botId,
-      // Humans in the room at this turn. splitAndDebit bills the turn
-      // per-head across them, so over the call each member's total tracks
-      // how long they were in it ("按在场时长分摊") — and nobody pays for
-      // turns before they joined or after they left.
+      // Humans in the room at this turn — recorded on the audit row for
+      // diagnostics. Billing v2 settles the voice turn against the group's
+      // subject wallet (via persistAuditMessage), not a per-head split.
       presentUserIds: [...this.humans.keys()],
     });
 
@@ -1130,62 +1127,54 @@ export class RoomVoiceDO {
     const supa = serviceClient(this.env);
     const price = await getRealtimeKitAudioParticipantUsdPerMinute(supa);
     const costUsd = computeRealtimeKitParticipantCostUsd(participantSeconds, price);
-    const markup = await getMarkup(supa);
-    const pnd = usdToPnd(costUsd, markup);
-    const auditId = uuidv7();
+    if (costUsd <= 0) return;
 
-    const metadata = {
-      source: 'cloudflare_realtimekit_media',
-      billing_target_kind: 'group',
-      room_id: ctx.roomId,
-      realtimekit_meeting_id: ctx.realtimeKitMeetingId,
-      participant_seconds: participantSeconds,
-      human_participant_seconds: humanSeconds,
-      bot_participant_seconds: botSeconds,
-      participant_minute_price_usd: price,
-      present_user_seconds: Object.fromEntries(userSeconds),
-    };
+    // Billing v2: the RealtimeKit media cost (participant-minutes) is its
+    // own usage_event, category 'realtimekit_media'. Owner = the group's
+    // responsible subject (the group wallet, design §9), falling back to
+    // the billing user. The v1 per-member split + audit_log row is gone.
+    const owner = await this.resolveVoiceBillingOwner(supa, ctx);
+    if (!owner) return;
 
-    const { data, error } = await supa
-      .from('audit_log')
-      .upsert(
-        {
-          id: auditId,
-          user_id: ctx.billUserId,
-          conversation_id: ctx.conversationId,
-          task_type: 'voice_call',
-          model_id: 'cloudflare_realtimekit:audio_only',
-          input_tokens: 0,
-          output_tokens: 0,
-          cache_read_tokens: 0,
-          cache_write_tokens: 0,
-          audio_input_tokens: 0,
-          audio_output_tokens: 0,
-          total_tokens: 0,
-          cost_usd: costUsd > 0 ? costUsd : null,
-          tool_cost_usd: null,
-          cost_credits: pnd,
-          billing_status: pnd > 0 ? 'pending' : 'skipped',
-          generation_id: null,
-          latency_ms: Math.max(0, atMs - ctx.startedAt),
-          status: 'success',
-          error_class: null,
-          route_trace: null,
-          tag: 'cloudflare_realtimekit_media',
-          metadata,
-        },
-        { onConflict: 'id', ignoreDuplicates: true },
-      )
-      .select('id');
-    if (error) {
-      console.warn('[room-voice] realtimekit media audit failed', error.message);
-      return;
+    await settleUsage(supa, {
+      owner,
+      category: 'realtimekit_media',
+      provider: 'cloudflare',
+      vendorSku: 'realtimekit_audio',
+      modelId: 'cloudflare_realtimekit:audio_only',
+      quantity: participantSeconds,
+      quantityUnit: 'seconds',
+      vendorCostUsd: costUsd,
+      costSource: 'local_pricebook',
+      conversationId: ctx.conversationId,
+      rawUsage: {
+        room_id: ctx.roomId,
+        realtimekit_meeting_id: ctx.realtimeKitMeetingId,
+        participant_seconds: participantSeconds,
+        human_participant_seconds: humanSeconds,
+        bot_participant_seconds: botSeconds,
+        participant_minute_price_usd: price,
+        present_user_seconds: Object.fromEntries(userSeconds),
+      },
+    });
+  }
+
+  /// Resolve the v2 billing owner for this room: the conversation's
+  /// responsible subject (group wallet) if set, else the billing user.
+  private async resolveVoiceBillingOwner(
+    supa: ReturnType<typeof serviceClient>,
+    ctx: NonNullable<typeof this.ctx>,
+  ): Promise<OwnerRef | null> {
+    const { data } = await supa
+      .from('conversations')
+      .select('responsible_subject_id')
+      .eq('id', ctx.conversationId)
+      .maybeSingle();
+    const sid = data?.responsible_subject_id;
+    if (typeof sid === 'string' && sid.length > 0) {
+      return { kind: 'subject', subjectId: sid };
     }
-    if (pnd > 0 && data && data.length > 0) {
-      await splitAndDebit({ env: this.env, auditLogId: auditId }).catch((err) =>
-        console.warn('[room-voice] realtimekit media split failed', err),
-      );
-    }
+    return ctx.billUserId ? { kind: 'user', userId: ctx.billUserId } : null;
   }
 
   // ── teardown ───────────────────────────────────────────────────────
