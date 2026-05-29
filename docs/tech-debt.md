@@ -284,6 +284,14 @@
 
 ## 🟢 不规范
 
+### 🟢 PendingCrew 双轨 backend(EdgeBackend / LocalBackend)没有单元测试覆盖
+- **发现**: 2026-05-29 · T5.2 dual-track routing wiring
+- **位置**: `apps/pendingcrew/Sources/Services/PendingCrewBackend.swift`、`apps/pendingcrew/Tests/PendingCrewTests/`、`apps/pendingcrew/project.yml`
+- **问题**: `PendingCrewBackend` protocol 有两个实现(EdgeBackend / LocalBackend),关键行为(BYOK 路径下 `attachParent` / 非 `local_host` runtime 抛 `notSupportedInByok`、`listMySubjects` 返回单元素假 subject、AppModel.mode → backend 选择)只通过 Mac 手测验证。`PendingCrewTests` target 是 standalone XCTest bundle,故意只编 `Sources/Mac/LocalRunner` 进去(`TEST_HOST=""` / `BUNDLE_LOADER=""`,见 project.yml 注释 —— scaffold 阶段 app 不签,无法做 host-app injection)。要给 backend 加单测得改 project.yml 把 Sources/Services + Sources/Stores + Sources/Models 也编进 bundle,或者把 backend 抽成独立 SwiftPM module。
+- **影响**: BYOK / logged 切换、能力 gating(`supportsCloudRuntime`)的行为契约靠 UI 手验,后续新加 protocol 方法(spec §5.3 提到的 share-change / mailbox / whiteboard 等)很容易漏掉一端没实现就 ship。
+- **建议**: 等 PendingCrew app 真正签名(脱离 scaffold 阶段)后,把测试 bundle 改成普通 host-app injection 模式,补 backend 行为快照测试;或者把 PendingCrewBackend + 两个实现拆到 `Packages/PendingCrewBackend/` SwiftPM module,带自己的测试 target。
+- **状态**: 待办
+
 ### 🟢 ~~模拟器 Keychain -34018 登录失败~~ → 其实是后端 signup bug 的误诊(已纠正)
 - **发现**: 2026-05-29 · v1 QA;2026-05-29 复盘纠正
 - **位置**: 误指 `apps/pendingbot/project.yml` / `Resources/PendingBot.entitlements`;实因 `bootstrap_user_id` 等 signup RPC
