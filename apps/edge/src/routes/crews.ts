@@ -14,21 +14,41 @@
 //   GET /v1/crews              — list crews caller can see
 //   GET /v1/crews/:crewId      — crew detail (parents/children/shares/captain)
 //
-// All endpoints require a supabase user JWT (`requireSession()`); we use
-// `userClient` so RLS / RPC `auth.uid()` reflect the caller. We don't
-// expose this surface to device grants — those still go through the
-// legacy `/v1/crew/*` paths today.
+// Accepts BOTH a supabase user JWT (`requireSession` path) and a
+// PendingCrew device grant (`pdg_*`). PendingCrew is the primary consumer
+// of this surface and authenticates with a device grant — it has no user
+// JWT. JWT callers go through `userClient` so RLS / RPC `auth.uid()`
+// reflect them; device-grant callers go through `serviceClient` and pass
+// the grant's `grantedByUserId` as the explicit actor (`p_actor_user_id`),
+// mirroring the legacy `/v1/crew/*` convention (`open_crew_conv_for_subject`).
 
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { requireSession } from '@pendingbot/identity';
+import { requireSubjectAuth, hasDeviceScope } from '../lib/device-grants';
 import { serviceClient, userClient } from '../lib/supabase';
 import { jsonError, type ApiErrorCode } from '../lib/http-error';
 import type { Json } from '../db/schema';
 import type { AppBindings } from '../types';
 
 export const crewsRoutes = new Hono<AppBindings>();
-crewsRoutes.use('*', requireSession());
+// `subject:read` is the floor every PendingCrew grant carries; per-handler
+// checks below additionally require `crew:write` for the mutating routes.
+crewsRoutes.use('*', requireSubjectAuth(['crew:read']));
+
+// Resolve the acting supabase user id regardless of auth kind. JWT callers
+// → their own uid; device-grant callers → the user who approved the grant
+// on iOS (`grantedByUserId`). Returns a 403 Response if a device grant is
+// missing its approving user (should never happen for an active grant).
+function actingUserId(
+  c: Parameters<typeof jsonError>[0],
+): { userId: string } | { error: Response } {
+  if (c.var.authKind === 'device_grant') {
+    const uid = c.var.deviceGrant?.grantedByUserId;
+    if (!uid) return { error: jsonError(c, 403, 'forbidden') };
+    return { userId: uid };
+  }
+  return { userId: c.var.userId! };
+}
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -104,8 +124,26 @@ crewsRoutes.post('/', async (c) => {
     return jsonError(c, 400, 'invalid_body', { message: 'peerDeviceId/flyMachineId must be null for local_host' });
   }
 
-  const userJwt = c.var.userJwt!;
-  const supa = userClient(c.env, userJwt);
+  // Device grants may only create crews for the subject they represent;
+  // and the mutating path requires the crew:write scope.
+  let actorUserId: string | undefined;
+  if (c.var.authKind === 'device_grant') {
+    if (!hasDeviceScope(c, 'crew:write')) return jsonError(c, 403, 'forbidden');
+    if (parsed.responsibleSubjectId !== c.var.deviceGrant?.subjectId) {
+      return jsonError(c, 403, 'forbidden');
+    }
+    const actor = actingUserId(c);
+    if ('error' in actor) return actor.error;
+    actorUserId = actor.userId;
+  }
+
+  // JWT callers run through userClient (auth.uid() drives the RPC);
+  // device-grant callers run through serviceClient and pass the verified
+  // actor explicitly (auth.uid() is null there, so the RPC's COALESCE
+  // picks p_actor_user_id).
+  const supa = actorUserId
+    ? serviceClient(c.env)
+    : userClient(c.env, c.var.userJwt!);
 
   const captain = parsed.captain;
   const { data: convId, error } = await supa.rpc('create_crew_with_captain', {
@@ -119,6 +157,7 @@ crewsRoutes.post('/', async (c) => {
     p_captain_template_name: captain.source === 'system_generated' ? (captain.templateName ?? undefined) : undefined,
     p_peer_device_id: parsed.peerDeviceId ?? undefined,
     p_fly_machine_id: parsed.flyMachineId ?? undefined,
+    p_actor_user_id: actorUserId ?? undefined,
   });
   if (error) {
     const code = rpcErrorCode(error);
@@ -175,12 +214,21 @@ crewsRoutes.post('/:crewId/attach-parent', async (c) => {
     return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
-  const userJwt = c.var.userJwt!;
-  const supa = userClient(c.env, userJwt);
+  let actorUserId: string | undefined;
+  if (c.var.authKind === 'device_grant') {
+    if (!hasDeviceScope(c, 'crew:write')) return jsonError(c, 403, 'forbidden');
+    const actor = actingUserId(c);
+    if ('error' in actor) return actor.error;
+    actorUserId = actor.userId;
+  }
+  const supa = actorUserId
+    ? serviceClient(c.env)
+    : userClient(c.env, c.var.userJwt!);
   const { error } = await supa.rpc('crew_attach_as_child', {
     p_child: crewId,
     p_parent: parsed.parentCrewId,
     p_child_keeps_bps: parsed.childKeepsBps,
+    p_actor_user_id: actorUserId ?? undefined,
   });
   if (error) {
     const code = rpcErrorCode(error);
@@ -224,9 +272,14 @@ crewsRoutes.post('/:crewId/attach-parent', async (c) => {
 // ─────────────────────────────────────────────────────────────
 
 crewsRoutes.get('/', async (c) => {
-  const userJwt = c.var.userJwt!;
-  const userId = c.var.userId!;
-  const supa = userClient(c.env, userJwt);
+  const actor = actingUserId(c);
+  if ('error' in actor) return actor.error;
+  const userId = actor.userId;
+  // Device grants have no JWT → use service role for the post-filtered
+  // read (visibility is already encoded by the accessibleSubjectIds set).
+  const supa = c.var.authKind === 'device_grant'
+    ? serviceClient(c.env)
+    : userClient(c.env, c.var.userJwt!);
 
   const subjectIds = await accessibleSubjectIds(c, userId, ['owner', 'admin', 'member']);
   if (subjectIds.error) return subjectIds.error;
@@ -273,9 +326,14 @@ crewsRoutes.get('/:crewId', async (c) => {
   if (!isUuid(crewId)) {
     return jsonError(c, 400, 'invalid_id', { message: 'crewId must be a uuid' });
   }
-  const userJwt = c.var.userJwt!;
-  const userId = c.var.userId!;
-  const supaUser = userClient(c.env, userJwt);
+  const actor = actingUserId(c);
+  if ('error' in actor) return actor.error;
+  const userId = actor.userId;
+  // can_view_temporary_group takes the user id explicitly, so it's safe
+  // to invoke via service role for device grants (no JWT available).
+  const supaUser = c.var.authKind === 'device_grant'
+    ? serviceClient(c.env)
+    : userClient(c.env, c.var.userJwt!);
 
   const { data: canView, error: canViewErr } = await supaUser.rpc('can_view_temporary_group', {
     p_conversation_id: crewId,
@@ -459,8 +517,16 @@ crewsRoutes.post('/:crewId/share-changes', async (c) => {
     proposedSubjects.add(s.subjectId);
   }
 
-  const userJwt = c.var.userJwt!;
-  const supaUser = userClient(c.env, userJwt);
+  let actorUserId: string | undefined;
+  if (c.var.authKind === 'device_grant') {
+    if (!hasDeviceScope(c, 'crew:write')) return jsonError(c, 403, 'forbidden');
+    const actor = actingUserId(c);
+    if ('error' in actor) return actor.error;
+    actorUserId = actor.userId;
+  }
+  const supaUser = actorUserId
+    ? serviceClient(c.env)
+    : userClient(c.env, c.var.userJwt!);
 
   // Pull current shares so we can union the "subjects who must approve".
   // We use service-role here because the caller may legitimately be
@@ -492,6 +558,7 @@ crewsRoutes.post('/:crewId/share-changes', async (c) => {
     p_crew_id: crewId,
     p_proposal_payload: payload as Json,
     p_requires_subject_approvals: requiredApprovalsArr,
+    p_actor_user_id: actorUserId ?? undefined,
   });
   if (error) {
     const code = rpcErrorCode(error);
