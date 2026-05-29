@@ -8,9 +8,11 @@ import SwiftUI
 /// —— 一个 crewId 对应一个结构化 `CrewDetail`。新加字段时改 `CrewDetail`
 /// struct，不要在这里 / view 里到处摊。
 ///
-/// Store 不持有自己的 `PendingCrewAPI` 实例。`AppModel` 持有 base URL +
-/// credential，每次 refresh 通过 `client(_:)` 拼出一个新的 API（轻量 struct，
-/// `URLSession` 是共享的）。这样切 base URL / 重新登录都自然生效。
+/// **T5.2 重构**:Store 不再直接拼 `PendingCrewAPI`,改成调
+/// `appModel.backend`(`PendingCrewBackend` protocol)。这样登录态 / BYOK
+/// 两条路用同一份 store 逻辑;backend 实例换了,数据来源自动切。
+/// `client()` 老函数没了 —— 用 `currentBackend()` 替代,失败时设
+/// `error = "未配置 backend"` 让 UI 显空态。
 @MainActor
 final class CrewStore: ObservableObject {
     @Published private(set) var crews: [CrewSummary] = []
@@ -40,6 +42,16 @@ final class CrewStore: ObservableObject {
         return details[id]
     }
 
+    /// 当前 backend mode(给 view 层做禁用/提示判定用)。
+    /// nil 表示 WelcomeView 阶段 —— 不应当走到任何数据方法。
+    var mode: BackendMode? { appModel.mode }
+
+    /// view 层快捷判定 —— Fly / cloud 入口该不该灰显。
+    /// nil mode 也按 "不支持"处理(WelcomeView 时态)。
+    var supportsCloudRuntime: Bool {
+        appModel.backend?.supportsCloudRuntime ?? false
+    }
+
     // MARK: - Selection
 
     func selectCrew(_ id: String?) {
@@ -53,11 +65,11 @@ final class CrewStore: ObservableObject {
     // MARK: - Refresh
 
     func refreshList() async {
-        guard let api = client() else { return }
+        guard let backend = currentBackend() else { return }
         loadingList = true
         defer { loadingList = false }
         do {
-            let result = try await api.listCrews()
+            let result = try await backend.listCrews()
             crews = result
             // 选中项消失（比如刚被删）的话清掉。
             if let sel = selectedCrewId, !result.contains(where: { $0.id == sel }) {
@@ -69,11 +81,11 @@ final class CrewStore: ObservableObject {
     }
 
     func refreshDetail(_ crewId: String) async {
-        guard let api = client() else { return }
+        guard let backend = currentBackend() else { return }
         loadingDetailIds.insert(crewId)
         defer { loadingDetailIds.remove(crewId) }
         do {
-            let detail = try await api.getCrew(crewId)
+            let detail = try await backend.getCrew(crewId)
             details[crewId] = detail
         } catch {
             self.error = "加载 crew 详情失败：\(error.localizedDescription)"
@@ -81,11 +93,11 @@ final class CrewStore: ObservableObject {
     }
 
     func refreshSubjects() async {
-        guard let api = client() else { return }
+        guard let backend = currentBackend() else { return }
         loadingSubjects = true
         defer { loadingSubjects = false }
         do {
-            subjects = try await api.listMySubjects()
+            subjects = try await backend.listMySubjects()
         } catch {
             self.error = "加载 subject 列表失败：\(error.localizedDescription)"
         }
@@ -98,10 +110,10 @@ final class CrewStore: ObservableObject {
     /// （比如关 sheet）。
     @discardableResult
     func createCrew(_ request: CreateCrewRequest) async throws -> CreateCrewResponse {
-        guard let api = client() else {
-            throw PendingCrewAPIError.invalidResponse
+        guard let backend = currentBackend() else {
+            throw PendingCrewBackendError.notAuthenticated
         }
-        let response = try await api.createCrew(request)
+        let response = try await backend.createCrew(request)
         // 刷新列表 + detail —— 避免靠 client 自己拼 CrewSummary 出 bug
         // （edge 端将来加字段时会自动跟上）。
         await refreshList()
@@ -123,15 +135,13 @@ final class CrewStore: ObservableObject {
 
     // MARK: - Internals
 
-    private func client() -> PendingCrewAPI? {
-        guard let credential = appModel.credential else {
-            self.error = "未登录"
+    /// 拿当前生效的 backend;nil 时设 error 给 UI 显示。
+    /// 唯一的"两态共用"入口 —— EdgeBackend / LocalBackend 切换在这里自动发生。
+    private func currentBackend() -> PendingCrewBackend? {
+        guard let backend = appModel.backend else {
+            self.error = "未配置 backend(凭据缺失)"
             return nil
         }
-        guard let url = URL(string: appModel.apiBaseURL) else {
-            self.error = "API base URL 无效"
-            return nil
-        }
-        return PendingCrewAPI(baseURL: url, bearerToken: credential.token)
+        return backend
     }
 }

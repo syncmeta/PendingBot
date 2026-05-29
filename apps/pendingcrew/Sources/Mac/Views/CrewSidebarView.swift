@@ -23,6 +23,14 @@ struct CrewSidebarView: View {
             } header: {
                 Text("Crew")
             }
+            // Machines section — 占位提示(v1.1 才接真 Fly machine 列表)。
+            // BYOK 模式显示 "登录解锁" prompt;登录模式显示 v1.1 placeholder。
+            // 这条目前不可选(没 tag),只展示状态。
+            Section {
+                machinesRow
+            } header: {
+                Text("Machines")
+            }
         }
         .listStyle(.sidebar)
         .navigationTitle("PendingCrew")
@@ -53,6 +61,44 @@ struct CrewSidebarView: View {
             get: { crewStore.selectedCrewId },
             set: { crewStore.selectCrew($0) }
         )
+    }
+
+    /// 根据 backend.mode 切两种 placeholder。
+    /// - logged → "Fly machine — v1.1 上线"(灰显)
+    /// - byok → "登录 PendingBot 解锁云端 Fly machine"(灰显 + 锁图标)
+    @ViewBuilder
+    private var machinesRow: some View {
+        if crewStore.supportsCloudRuntime {
+            HStack(spacing: 8) {
+                Image(systemName: "cloud")
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 18)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Fly machine")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Text("v1.1 上线")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .padding(.vertical, 2)
+        } else {
+            HStack(spacing: 8) {
+                Image(systemName: "lock.fill")
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 18)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("云端 Fly machine")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Text("登录 PendingBot 解锁")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .padding(.vertical, 2)
+        }
     }
 
     private var emptyRow: some View {

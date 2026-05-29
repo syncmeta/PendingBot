@@ -129,11 +129,24 @@ struct CreateCrewSheet: View {
             Picker("", selection: $runtimeLocation) {
                 Text("本机（local_host）").tag("local_host")
                 Text("peer 设备（待 Phase 4）").tag("peer_device")
-                Text("Fly machine（待 Phase 4）").tag("fly_machine")
+                // Fly machine 在 BYOK 模式禁用 —— 加 "(需登录)" 后缀让用户
+                // 一眼看出原因。Picker.disabled 的 case 在 macOS 上跟正常
+                // case 视觉差异不明显,通过文字补强。
+                Text(crewStore.supportsCloudRuntime
+                     ? "Fly machine（待 Phase 4）"
+                     : "Fly machine（需登录 PendingBot 解锁）")
+                    .tag("fly_machine")
             }
             .labelsHidden()
             .pickerStyle(.menu)
-            if runtimeLocation != "local_host" {
+            if runtimeLocation == "fly_machine", !crewStore.supportsCloudRuntime {
+                Label(
+                    "BYOK 模式不支持云端 runtime。登录 PendingBot 账号后可用 Fly machine。",
+                    systemImage: "lock.fill"
+                )
+                .font(.caption)
+                .foregroundStyle(.orange)
+            } else if runtimeLocation != "local_host" {
                 Text("MVP 仅支持 local_host；peer/Fly 等 Phase 4 完成后开放。")
                     .font(.caption)
                     .foregroundStyle(.orange)
@@ -229,6 +242,11 @@ struct CreateCrewSheet: View {
         // 工作目录对 local_host 是强烈推荐而非硬性必填（edge 允许 null），
         // 但 MVP 阶段 session 起来需要它，所以强制要求。
         guard workingDirectory != nil else { return false }
+        // BYOK 模式不接受 fly_machine —— 上面 picker 已禁用,这里防御一下
+        // 万一 picker 状态绕过。
+        if !crewStore.supportsCloudRuntime, runtimeLocation == "fly_machine" {
+            return false
+        }
         return true
     }
 
