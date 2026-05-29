@@ -107,6 +107,15 @@
 
 ## 🟡 拆东墙补西墙
 
+### 🟡 群语音 DO↔容器掉线重连/resync 控制逻辑已写+单测，但端到端音频恢复 runtime 未验证
+- **发现**: 2026-05-29 · feat/group-voice-reconnect
+- **位置**: `apps/edge/src/durable-objects/room-voice.ts`（heartbeat / onMediaClosed / runReconnect / resyncContainer / 多路复用 alarm）、`apps/edge/src/durable-objects/room-voice-reconnect.ts`（纯函数：nextBackoffMs / buildResyncCommands / shouldGiveUpReconnect）、`apps/voice-container/src/room.ts`（resetForStart + pong）
+- **问题**: 控制面的掉线检测（close/error + 心跳丢 pong）、指数退避重连、resync 重放（start 复位容器 + 逐 bot add-bot）这套**控制逻辑已实现并有 vitest 覆盖**（退避表 + cap、resync 命令序列、drop→reconnecting→恢复/放弃的状态机用 mock socket 跑通）。但这个功能**无法在本地 runtime 验证**——线上 Cloudflare Container 部署被刻意搁置，没有活的容器实例可打。因此 `start` + `dial /control` + `{t:'ready'}` 握手 + 重放命令的**真实时序**、以及音频是否真的恢复，全都没跑过。
+- **影响**: 端到端的「通话扛过容器抖动」目前是**未验证的纸面能力**。最关键的几个未知：(1) **OpenAI realtime 会话**在容器被 `start` 复位后是全新握手——掉线那一刻**进行中的那一轮 turn 大概率丢失**，bot 不会接着说，需要人或 VAD 重新触发；(2) **RealtimeKit 参与者**在新容器/复用暖容器上 rejoin 的时序未知——旧 participant 是否会 linger 30–60s 让新 leg 干净顶替，还是会出现双 participant / 抢占；(3) 重连窗口内（最坏 ~30s）**人类听到的是静音**，没有补偿音频或「正在重连」语音提示，只有 UI 的「重连中…」横条；(4) playout jitter-buffer 在新 leg 上要重新 pre-roll，恢复瞬间可能有一小段额外延迟/卡顿。
+- **重试边界（reviewer 需知道何时仍会放弃）**: 退避 250/500/1000/2000/4000/8000ms，cap 10s；总 wall-clock 预算 `RECONNECT_MAX_WALL_MS = 30s`。预算耗尽（约 8 次拨号）后 `runReconnect` 调 `finalize()` 真正结束通话并广播 `voice_call{event:'ended'}`，日志 loud（带尝试次数）。重连期间 `sendMedia` 丢弃命令（有日志）——靠 resync 的 add-bot 重放重建 roster，不排队。
+- **建议**: 等容器部署后做一次真机演练：通话中 kill 容器实例（或断其网络），观察 (a) DO 是否在 ~10s 内检测到并广播 reconnecting；(b) 新容器 ready 后 OpenAI/RTK 是否都重建、人能否继续听到 bot；(c) 进行中 turn 丢失是否需要补一条「我刚刚断了一下」式的提示音/系统消息；(d) RTK 双 participant 是否需要在 resync 前显式 leave 旧 meeting participant。若 (b)/(d) 有硬伤，考虑 resync 时让容器先显式 detach 旧 RTK participant 再 rejoin，而非纯靠 `start` 复位。
+- **状态**: 待办（控制逻辑已合入 + 单测绿；端到端音频恢复待容器部署后 runtime 验证）
+
 ### 🟡 PendingCrew Mac 本机 session：成功跑的 stdout + 退出码不回流 UI（卡在 running）
 - **发现**: 2026-05-29 · computer-use 实测本机 happy path 时暴露
 - **位置**: `apps/pendingcrew/Sources/Mac/LocalRunner/LocalCodingAgentProcess.swift`(actor + readabilityHandler/terminationHandler)、`LocalCodingAgentService.swift`(`MacLocalCodingAgentService.runSession` 把 line handler → AsyncStream，`waitUntilExit` → `exitCode` Task)、`apps/pendingcrew/Sources/Mac/Services/CrewSessionRunner.swift`(`CrewSessionRun.observeStreams`)

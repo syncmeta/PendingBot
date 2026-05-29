@@ -220,6 +220,11 @@ export class Room {
       case 'tool-result':
         this.sendToolResult(cmd.botId, cmd.callId, cmd.output);
         return;
+      case 'ping':
+        // Heartbeat from the DO — reply so it knows the control link
+        // (and this process) is alive.
+        this.emit({ t: 'pong' });
+        return;
       case 'end':
         this.end();
         return;
@@ -235,7 +240,39 @@ export class Room {
     return this.token !== null && t === this.token;
   }
 
+  // Tear down all bot legs + media timers without ending the room or
+  // touching the (live) control socket. Used by `start` to make a
+  // resync replay idempotent on a reused warm instance. Unlike
+  // `onLegClosed`/`removeBot`, this emits NO `leg-closed` events — the
+  // DO is the one driving this reset and already knows the roster it is
+  // about to rebuild.
+  private resetForStart(): void {
+    if (this.inputTimer) clearInterval(this.inputTimer);
+    this.inputTimer = null;
+    if (this.playoutTimer) clearInterval(this.playoutTimer);
+    this.playoutTimer = null;
+    if (this.statsTimer) clearInterval(this.statsTimer);
+    this.statsTimer = null;
+    for (const leg of this.bots.values()) {
+      try {
+        leg.openaiWs?.close();
+      } catch {
+        // already closing
+      }
+      leg.rtkBridge?.close();
+    }
+    this.bots.clear();
+  }
+
   private start(token: string, openaiApiKey: string): void {
+    // `start` is a RESET point. On a cold instance the room is already
+    // empty and this is a no-op; on a warm/reused instance (the DO
+    // reconnected after a control-socket drop and is replaying its
+    // resync sequence) we must tear down stale legs + timers FIRST, so
+    // the re-`add-bot` commands that follow rebuild cleanly without
+    // double-running the input/playout/stats clocks or leaking the old
+    // OpenAI + RealtimeKit sockets.
+    this.resetForStart();
     this.token = token;
     this.openaiApiKey = openaiApiKey;
     this.closed = false;

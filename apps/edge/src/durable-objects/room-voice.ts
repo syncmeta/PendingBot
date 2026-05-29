@@ -23,6 +23,12 @@ import type {
   RealtimeUsage,
 } from './room-media-protocol';
 import { isCallAdminTargetPresent } from './room-voice-policy';
+import {
+  buildResyncCommands,
+  nextBackoffMs,
+  RECONNECT_MAX_WALL_MS,
+  shouldGiveUpReconnect,
+} from './room-voice-reconnect';
 
 // RoomVoiceDO — the group-voice control plane. One instance per group call
 // (keyed by conversation_id). Humans and bots are Cloudflare RealtimeKit
@@ -40,6 +46,14 @@ const DEFAULT_VOICE_MODEL_SLUG = 'gpt-realtime-2';
 // is gone the room finalizes.
 const PRESENCE_TIMEOUT_MS = 30 * 1000;
 const PRESENCE_AUDIT_MS = 5 * 1000;
+
+// Heartbeat over the DO↔container control link. The DO pings on each
+// presence-audit tick (5s) and the container pongs. If no pong lands
+// within HEARTBEAT_TIMEOUT_MS (two missed ticks) the link is treated as
+// half-open / dead and reconnect begins. This catches a silent drop a
+// `close`/`error` event would miss (e.g. the container went away without
+// a clean close frame).
+const HEARTBEAT_TIMEOUT_MS = 2 * PRESENCE_AUDIT_MS;
 
 // Room-level context — everything that is not per-bot. The RTK container
 // bridge only needs a private media token for its localhost page/WS
@@ -178,11 +192,35 @@ export class RoomVoiceDO {
   private pendingInvites = new Map<string, PendingInvite>();
   private callAdminIds = new Set<string>();
 
-  // Control WebSocket to the media container. Opened on start; if it drops
-  // mid-call the call ends (a container crash is a hard failure for v1 —
-  // reconnect/resync is a follow-up once the happy path is validated).
+  // Control WebSocket to the media container. Opened on start. If it
+  // drops mid-call the DO does NOT end the call immediately — it enters a
+  // bounded reconnect loop (re-dial + replay room state to a fresh
+  // container session) and only finalizes if every attempt fails within
+  // RECONNECT_MAX_WALL_MS. See onMediaClosed / runReconnect.
   private mediaWs: WebSocket | null = null;
   private mediaOpening: Promise<void> | null = null;
+
+  // ── reconnect / heartbeat bookkeeping ──────────────────────────────
+  // True between detecting a control-link drop and a successful resync
+  // (or hard give-up). While set, sendMedia drops commands — the resync
+  // replay rebuilds roster state, so transient roster commands are safe
+  // to lose.
+  private reconnecting = false;
+  // Guards against two reconnect loops running at once (e.g. a `close`
+  // event and a heartbeat timeout firing back-to-back).
+  private reconnectInFlight = false;
+  // 0-based attempt counter for the backoff schedule; reset on success.
+  private reconnectAttempt = 0;
+  // Wall-clock ms when the current reconnect episode began — the
+  // RECONNECT_MAX_WALL_MS budget is measured from here.
+  private reconnectStartedAt = 0;
+  // Wall-clock ms of the last pong (or `ready`) seen on the control link.
+  // Heartbeat compares against this to detect a half-open socket.
+  private lastPongAt = 0;
+  // Absolute ms deadline for the hard wall-clock call cap. Persisted so
+  // the (now multiplexed) alarm handler can tell a reconnect tick apart
+  // from the genuine MAX_CALL_MS expiry.
+  private callDeadlineAt = 0;
 
   private presenceAuditTimer: ReturnType<typeof setTimeout> | null = null;
   private humanEverJoined = false;
@@ -280,6 +318,24 @@ export class RoomVoiceDO {
   private async openMediaChannel(): Promise<void> {
     const ctx = this.ctx;
     if (!ctx || this.mediaWs || this.closed) return;
+    const ws = await this.dialMediaChannel();
+    if (!ws) return;
+    // Arm the container: the RTK bridge token it must see in ?t=, and the
+    // OpenAI key (passed at runtime so it stays out of the image).
+    this.sendMedia({
+      t: 'start',
+      token: roomMediaToken(ctx),
+      openaiApiKey: this.env.OPENAI_API_KEY ?? '',
+    });
+  }
+
+  // Open one control WebSocket to the container and wire its handlers.
+  // Does NOT send `start` — callers (initial connect vs reconnect) decide
+  // what to replay. Sets this.mediaWs on success. Returns the socket or
+  // null on failure.
+  private async dialMediaChannel(): Promise<WebSocket | null> {
+    const ctx = this.ctx;
+    if (!ctx || this.mediaWs || this.closed) return null;
     try {
       const stub = getContainer(this.env.ROOM_MEDIA, ctx.roomId);
       const resp = await stub.fetch(
@@ -288,10 +344,11 @@ export class RoomVoiceDO {
       const ws = resp.webSocket;
       if (!ws) {
         console.warn('[room-voice] media control upgrade failed', resp.status);
-        return;
+        return null;
       }
       ws.accept();
       this.mediaWs = ws;
+      this.lastPongAt = Date.now();
       ws.addEventListener('message', (ev) => {
         if (typeof ev.data === 'string') {
           this.onMediaEvent(ev.data).catch((err) =>
@@ -302,44 +359,186 @@ export class RoomVoiceDO {
       ws.addEventListener('close', () => {
         if (this.mediaWs === ws) {
           this.mediaWs = null;
-          this.onMediaClosed();
+          this.onMediaClosed('close');
         }
       });
       ws.addEventListener('error', () => {
         if (this.mediaWs === ws) {
           this.mediaWs = null;
-          this.onMediaClosed();
+          this.onMediaClosed('error');
         }
       });
-      // Arm the container: the RTK bridge token it must see in ?t=, and the
-      // OpenAI key (passed at runtime so it stays out of the image).
-      this.sendMedia({
-        t: 'start',
-        token: roomMediaToken(ctx),
-        openaiApiKey: this.env.OPENAI_API_KEY ?? '',
-      });
+      return ws;
     } catch (err) {
-      console.warn('[room-voice] openMediaChannel failed', err);
+      console.warn('[room-voice] dialMediaChannel failed', err);
+      return null;
     }
   }
 
   private sendMedia(cmd: ControlCommand): void {
     const ws = this.mediaWs;
     if (!ws) {
-      console.warn('[room-voice] media channel not open, dropping', cmd.t);
+      // During a reconnect episode the channel is intentionally down; the
+      // resync replay (start + add-bot per bot) rebuilds roster state, so
+      // dropping transient commands here is safe — just log it.
+      if (this.reconnecting) {
+        console.warn('[room-voice] media channel reconnecting, dropping', cmd.t);
+      } else {
+        console.warn('[room-voice] media channel not open, dropping', cmd.t);
+      }
       return;
     }
     try {
       ws.send(JSON.stringify(cmd));
     } catch {
-      // socket gone — onMediaClosed will fire and end the call
+      // socket gone — onMediaClosed will fire and the reconnect loop runs
     }
   }
 
-  private onMediaClosed(): void {
+  // The control link dropped (clean close, error, or a missed heartbeat).
+  // Begin a bounded reconnect+resync episode rather than ending the call
+  // outright. finalize() only happens if every attempt fails within the
+  // wall-clock budget (see runReconnect). Guards: ignore once the call has
+  // legitimately ended, and don't start a second episode if one is live.
+  private onMediaClosed(reason: 'close' | 'error' | 'heartbeat'): void {
     if (this.closed) return;
-    console.warn('[room-voice] media channel closed unexpectedly; ending call');
-    void this.finalize();
+    if (this.reconnecting || this.reconnectInFlight) return;
+    console.warn(
+      `[room-voice] media control link lost (${reason}); starting reconnect+resync`,
+    );
+    this.reconnecting = true;
+    this.reconnectAttempt = 0;
+    this.reconnectStartedAt = Date.now();
+    void this.broadcastState('reconnecting');
+    // Drive the first attempt immediately off the alarm so the retry loop
+    // survives DO hibernation (the open control WS used to keep us awake;
+    // it's gone now).
+    void this.scheduleReconnectTick(0);
+  }
+
+  // Arm the alarm for the next reconnect attempt, clamped so it never
+  // pushes past the hard call deadline. Driving retries off the alarm
+  // (rather than setTimeout) keeps them alive if the DO hibernates while
+  // the control WS is down.
+  private async scheduleReconnectTick(delayMs: number): Promise<void> {
+    if (this.closed || !this.reconnecting) return;
+    const at = Math.min(
+      Date.now() + Math.max(0, delayMs),
+      this.callDeadlineAt || Date.now() + MAX_CALL_MS,
+    );
+    await this.state.storage.setAlarm(at);
+  }
+
+  // One reconnect attempt, invoked from the alarm dispatcher. Re-dials the
+  // container, waits for the next session, replays the resync sequence,
+  // and on success clears the reconnecting flag. On failure it re-arms the
+  // alarm for the next backoff — or finalizes if the wall-clock budget is
+  // spent. Fail-loud at every branch.
+  private async runReconnect(): Promise<void> {
+    if (this.closed || !this.reconnecting) return;
+    if (this.reconnectInFlight) return;
+    this.reconnectInFlight = true;
+    const attempt = this.reconnectAttempt;
+    try {
+      const ws = await this.dialMediaChannel();
+      if (ws) {
+        // New session is live; replay room state. The container's `start`
+        // handler resets any stale legs first (idempotent), so this is
+        // safe even on a reused warm instance.
+        const ok = await this.resyncContainer();
+        if (ok) {
+          console.warn(
+            `[room-voice] reconnect succeeded after ${attempt + 1} attempt(s); resynced`,
+          );
+          this.reconnecting = false;
+          this.reconnectAttempt = 0;
+          await this.broadcastState('state');
+          // Re-arm the alarm for the genuine call deadline.
+          await this.rearmCallDeadline();
+          return;
+        }
+        // Dial worked but resync send failed — tear the half-open socket
+        // down and fall through to a retry.
+        try {
+          this.mediaWs?.close();
+        } catch {
+          // already closing
+        }
+        this.mediaWs = null;
+      }
+
+      // This attempt failed. Decide: retry or give up.
+      this.reconnectAttempt = attempt + 1;
+      const elapsed = Date.now() - this.reconnectStartedAt;
+      const backoff = nextBackoffMs(this.reconnectAttempt);
+      if (shouldGiveUpReconnect(elapsed, backoff, RECONNECT_MAX_WALL_MS)) {
+        console.error(
+          `[room-voice] reconnect GAVE UP after ${this.reconnectAttempt} attempt(s) ` +
+            `(${elapsed}ms elapsed, budget ${RECONNECT_MAX_WALL_MS}ms); ending call`,
+        );
+        this.reconnecting = false;
+        await this.finalize();
+        return;
+      }
+      console.warn(
+        `[room-voice] reconnect attempt ${this.reconnectAttempt} failed; ` +
+          `retrying in ${backoff}ms (${elapsed}ms elapsed)`,
+      );
+      await this.scheduleReconnectTick(backoff);
+    } finally {
+      this.reconnectInFlight = false;
+    }
+  }
+
+  // Replay the resync command sequence to the freshly-dialed session:
+  // start (resets the container) then one add-bot per current bot.
+  // Returns false if the channel went away mid-send.
+  private async resyncContainer(): Promise<boolean> {
+    const ctx = this.ctx;
+    if (!ctx || !this.mediaWs) return false;
+    const specs = [...this.bots.values()].map((leg) => this.toContainerSpec(leg.spec));
+    const cmds = buildResyncCommands(
+      { token: roomMediaToken(ctx), openaiApiKey: this.env.OPENAI_API_KEY ?? '' },
+      specs,
+    );
+    for (const cmd of cmds) {
+      if (!this.mediaWs) return false;
+      this.sendMedia(cmd);
+    }
+    return Boolean(this.mediaWs);
+  }
+
+  // (Re)arm the hard wall-clock call cap alarm. Stores the absolute
+  // deadline so the alarm dispatcher can distinguish a deadline expiry
+  // from a reconnect tick.
+  private async rearmCallDeadline(): Promise<void> {
+    if (this.closed) return;
+    await this.state.storage.setAlarm(this.callDeadlineAt);
+  }
+
+  // Heartbeat tick — invoked from the presence audit. Pings the container
+  // if the link is up, and if no pong has arrived within the timeout
+  // treats the link as half-open and starts a reconnect.
+  private heartbeatTick(): void {
+    if (this.closed || this.reconnecting || this.reconnectInFlight) return;
+    if (!this.mediaWs) return;
+    const now = Date.now();
+    if (this.lastPongAt > 0 && now - this.lastPongAt > HEARTBEAT_TIMEOUT_MS) {
+      console.warn(
+        `[room-voice] no pong for ${now - this.lastPongAt}ms; link half-open`,
+      );
+      // Drop the dead socket and trigger reconnect.
+      const ws = this.mediaWs;
+      this.mediaWs = null;
+      try {
+        ws?.close();
+      } catch {
+        // already gone
+      }
+      this.onMediaClosed('heartbeat');
+      return;
+    }
+    this.sendMedia({ t: 'ping' });
   }
 
   private async onMediaEvent(raw: string): Promise<void> {
@@ -351,6 +550,11 @@ export class RoomVoiceDO {
     }
     switch (ev.t) {
       case 'ready':
+        // A fresh session is live — treat as a fresh heartbeat too.
+        this.lastPongAt = Date.now();
+        return;
+      case 'pong':
+        this.lastPongAt = Date.now();
         return;
       case 'bot-tool':
         await this.handleBotTool(ev.botId, ev.name, ev.callId, ev.args);
@@ -401,7 +605,9 @@ export class RoomVoiceDO {
     }
 
     this.schedulePresenceAudit();
-    await this.state.storage.setAlarm(Date.now() + MAX_CALL_MS);
+    this.callDeadlineAt = Date.now() + MAX_CALL_MS;
+    await this.state.storage.put('callDeadlineAt', this.callDeadlineAt);
+    await this.state.storage.setAlarm(this.callDeadlineAt);
     await this.upsertActiveIndex();
     await this.broadcastState('state');
     return Response.json({ ok: true, ...this.roster() });
@@ -652,7 +858,7 @@ export class RoomVoiceDO {
     return Response.json({ ok: true });
   }
 
-  private async broadcastState(event: 'state' | 'ended'): Promise<void> {
+  private async broadcastState(event: 'state' | 'ended' | 'reconnecting'): Promise<void> {
     const ctx = this.ctx;
     if (!ctx) return;
     const snapshot = this.roster();
@@ -791,7 +997,12 @@ export class RoomVoiceDO {
   }
 
   private async auditPresence(): Promise<void> {
-    if (this.closed || !this.humanEverJoined) return;
+    if (this.closed) return;
+    // Heartbeat the control link on every audit tick — independent of
+    // human presence, so a drop is detected even before anyone has
+    // joined.
+    this.heartbeatTick();
+    if (!this.humanEverJoined) return;
     const now = Date.now();
     const stale: string[] = [];
     for (const [humanId, h] of this.humans) {
@@ -982,6 +1193,8 @@ export class RoomVoiceDO {
   private async finalize(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    // Stop any reconnect episode from racing teardown.
+    this.reconnecting = false;
     await this.settleRealtimeKitMediaCost();
     // Notify the conv channel first — once we tear down the snapshot is
     // meaningless.
@@ -1007,7 +1220,30 @@ export class RoomVoiceDO {
     await this.state.storage.deleteAll().catch(() => undefined);
   }
 
+  // The alarm is multiplexed: it fires either for a reconnect retry tick
+  // (while the control link is down) or for the genuine MAX_CALL_MS wall-
+  // clock cap. Distinguish by the reconnecting flag + the persisted
+  // deadline so a reconnect tick doesn't prematurely end the call and a
+  // deadline expiry still ends it.
   async alarm(): Promise<void> {
-    await this.finalize();
+    if (this.closed) return;
+    if (!this.callDeadlineAt) {
+      const stored = await this.state.storage.get<number>('callDeadlineAt');
+      if (typeof stored === 'number') this.callDeadlineAt = stored;
+    }
+    // Genuine wall-clock cap reached — end regardless of reconnect state.
+    if (this.callDeadlineAt && Date.now() >= this.callDeadlineAt) {
+      console.warn('[room-voice] max call duration reached; ending call');
+      await this.finalize();
+      return;
+    }
+    // Otherwise this is a reconnect retry tick.
+    if (this.reconnecting) {
+      await this.runReconnect();
+      return;
+    }
+    // Spurious wake (no deadline hit, not reconnecting) — re-arm the
+    // deadline so the hard cap still fires.
+    await this.rearmCallDeadline();
   }
 }

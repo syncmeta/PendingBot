@@ -75,11 +75,20 @@ export interface MediaDiagnostics {
 // ── DO -> container ──────────────────────────────────────────────────
 
 export type ControlCommand =
+  // Arm (or RESET) the room. `start` is idempotent: receiving it on a
+  // warm/reused container instance tears down any existing bot legs +
+  // timers BEFORE arming fresh, so a DO that reconnected after a control
+  // drop can replay `start` + re-`add-bot` to rebuild room state cleanly
+  // without double-running timers or leaking sockets (see Unit 2).
   | { t: 'start'; token: string; openaiApiKey: string }
   | { t: 'add-bot'; spec: ContainerBotSpec }
   | { t: 'remove-bot'; botId: string }
   | { t: 'update-tools'; botId: string; tools: unknown[] }
   | { t: 'tool-result'; botId: string; callId: string; output: string }
+  // Heartbeat: the DO pings on a fixed cadence; the container replies
+  // `pong`. A missed pong window is how the DO detects a half-open
+  // control socket and triggers reconnect + resync.
+  | { t: 'ping' }
   | { t: 'end' };
 
 // ── container -> DO ──────────────────────────────────────────────────
@@ -89,4 +98,6 @@ export type ControlEvent =
   | { t: 'bot-tool'; botId: string; name: string; callId: string; args?: string }
   | { t: 'turn-usage'; botId: string; usage: RealtimeUsage }
   | { t: 'diagnostics'; diagnostics: MediaDiagnostics }
-  | { t: 'leg-closed'; botId: string };
+  | { t: 'leg-closed'; botId: string }
+  // Reply to a `ping` — the DO records lastPongAt to keep the link live.
+  | { t: 'pong' };

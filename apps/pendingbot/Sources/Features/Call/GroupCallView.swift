@@ -96,6 +96,12 @@ struct GroupCallView: View {
                     .padding(.top, 44)
                     .padding(.leading, 24)
                     .padding(.trailing, 76)
+                if session.isReconnecting {
+                    reconnectingBanner
+                        .padding(.horizontal, 24)
+                        .padding(.top, 12)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
                 ScrollView {
                     rosterSection
                         .padding(.horizontal, 32)
@@ -159,6 +165,33 @@ struct GroupCallView: View {
                 .font(Theme.Fonts.subheadline)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    /// Transient banner shown while the server's media container link is
+    /// dropped and the RoomVoiceDO is re-dialing + replaying room state.
+    /// Cleared by the next `.state` frame (resync ok) or by teardown
+    /// (`.ended`, when the DO gave up after its bounded retries).
+    private var reconnectingBanner: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+                .controlSize(.small)
+            Text("重连中…")
+                .font(Theme.Fonts.subheadline)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Theme.Palette.surface),
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Theme.Palette.hairline, lineWidth: 0.5),
+        )
+        .accessibilityLabel("通话重连中")
     }
 
     static func formatElapsed(_ seconds: TimeInterval) -> String {
