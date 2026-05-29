@@ -24,6 +24,15 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
     /// 第一轮 prompt 全文。同样不拼进 argv，走 stdin / file。
     public let initialPrompt: String
 
+    /// 用户在 CreateSessionSheet 选的模型 slug。
+    ///
+    /// - Claude Code：拼成 `--model <slug>` 透传给 CLI；nil = 让 CLI 用默认。
+    /// - Codex：暂未拼参数（Codex CLI 模型选项还在变，spec v2 §8.1 + TODO
+    ///   T4.x 复核）；nil/非 nil 都暂时无效，UI 仍允许选以便 metadata 记录。
+    ///
+    /// 不会出现在 env 里 —— spec v2 §8.4.2 白名单严控环境变量。
+    public let model: String?
+
     /// 额外的 env 透传。**只放用户在 PendingCrew 设置里自己配的 LLM API key**
     /// （`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` 等）。
     ///
@@ -36,6 +45,7 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
         workingDirectory: URL,
         taskBrief: String,
         initialPrompt: String,
+        model: String? = nil,
         additionalEnv: [String: String] = [:]
     ) {
         self.kind = kind
@@ -43,6 +53,7 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
         self.workingDirectory = workingDirectory
         self.taskBrief = taskBrief
         self.initialPrompt = initialPrompt
+        self.model = model
         self.additionalEnv = additionalEnv
     }
 
@@ -76,11 +87,16 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
             //   - `--dangerously-skip-permissions` 给"自动模式"（spec v2 §10.1）
             //   - `--model <id>` 选模型
             // 现在 T3.1 只保证能起一个非交互 session，flag 留作 follow-up。
-            return [
+            var args: [String] = [
                 "--print",
                 "--output-format=stream-json",
                 "--verbose",
             ]
+            if let model, !model.isEmpty {
+                args.append("--model")
+                args.append(model)
+            }
+            return args
 
         case .codex:
             // Codex CLI: 非交互模式 = `codex exec [prompt]`
