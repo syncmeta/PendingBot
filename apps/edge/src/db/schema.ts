@@ -4127,6 +4127,7 @@ export type Database = {
       }
       create_crew_with_captain: {
         Args: {
+          p_actor_user_id?: string
           p_captain_bot_id?: string
           p_captain_source?: string
           p_captain_template_name?: string
@@ -4154,11 +4155,17 @@ export type Database = {
         Returns: string
       }
       crew_attach_as_child: {
-        Args: { p_child: string; p_child_keeps_bps: number; p_parent: string }
+        Args: {
+          p_actor_user_id?: string
+          p_child: string
+          p_child_keeps_bps: number
+          p_parent: string
+        }
         Returns: undefined
       }
       crew_propose_share_change: {
         Args: {
+          p_actor_user_id?: string
           p_crew_id: string
           p_proposal_payload: Json
           p_requires_subject_approvals: string[]
