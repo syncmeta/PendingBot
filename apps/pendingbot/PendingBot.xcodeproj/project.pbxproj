@@ -67,6 +67,7 @@
 		7D7660E36F2A8F3B1C88CD45 /* GroupBillingSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F88AE2F9558F84A927D904C /* GroupBillingSheet.swift */; };
 		7FEECCD4D899454D43447F5C /* GoogleSignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F14048DCB73276C7D252616 /* GoogleSignIn.swift */; };
 		80F4BC61FE476D0E3362F831 /* ModelPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95EAE20F68A86A8C803A0B1E /* ModelPicker.swift */; };
+		81AE8716B84995322DFC5EE4 /* CrewChatStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F80EEA9363B2D0019EECF31A /* CrewChatStore.swift */; };
 		81C3A1F5BC0BEEAC5D96DE66 /* ActiveVoiceCallStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6250CBEDB98FA64D32915F09 /* ActiveVoiceCallStore.swift */; };
 		8358C6E7D2CDA9AC7C388452 /* ConversationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83F41539F59462EA04C55F6F /* ConversationView.swift */; };
 		83CDD45BF74B5724F75FC0AD /* CallDiagnosticsLogic.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6541D1291535650ACAD4D6F1 /* CallDiagnosticsLogic.swift */; };
@@ -259,6 +260,7 @@
 		F1D36E9865F8E358AD4A1B49 /* APIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIModels.swift; sourceTree = "<group>"; };
 		F2F07903E8E0959584180E65 /* PushService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushService.swift; sourceTree = "<group>"; };
 		F6E8A6BE1816A51145EF8FA6 /* Haptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Haptics.swift; sourceTree = "<group>"; };
+		F80EEA9363B2D0019EECF31A /* CrewChatStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewChatStore.swift; sourceTree = "<group>"; };
 		F898044EDF181328CD4C946F /* JoinRequestsInboxView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JoinRequestsInboxView.swift; sourceTree = "<group>"; };
 		FAEEAA2E4EC4CC777D41E48B /* CrewTabV2View.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewTabV2View.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -374,6 +376,7 @@
 				602E04C3276D1A3CB9588320 /* CreateCrewV2Sheet.swift */,
 				6CF743A2BD19523CAF11ECC6 /* CrewAPI.swift */,
 				24A22C8CB9CB37FC1E1EBC60 /* CrewChatModels.swift */,
+				F80EEA9363B2D0019EECF31A /* CrewChatStore.swift */,
 				D2426E68B61F7DC57E429193 /* CrewDetailV2View.swift */,
 				FAEEAA2E4EC4CC777D41E48B /* CrewTabV2View.swift */,
 				9A19A4D76A2D17FD422DA74D /* SubjectPickerSheet.swift */,
@@ -705,6 +708,7 @@
 				754FF3CE1701C6D130EC618C /* CreateCrewV2Sheet.swift in Sources */,
 				8FAC3CB10EEC9AD7CE5EEE34 /* CrewAPI.swift in Sources */,
 				F997277C458BCD62E1CDA2E1 /* CrewChatModels.swift in Sources */,
+				81AE8716B84995322DFC5EE4 /* CrewChatStore.swift in Sources */,
 				4B8693B2BE0A0352EAC924DE /* CrewDetailV2View.swift in Sources */,
 				AEF24DAC89A4BDB1F89EB53F /* CrewProposalCard.swift in Sources */,
 				0E0FCE983AB9E6DB3447D869 /* CrewTabV2View.swift in Sources */,
