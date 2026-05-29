@@ -8,10 +8,11 @@ import PhotosUI
 // display token and stages a structured `CrewMentionInput`. No `@` =
 // broadcast (server default), which is the empty-mentions case.
 //
-// P1 simplifications (tech-debt): attachments are not supported — the
-// picker-trigger bindings are wired to dummy state and the pickers are
-// never presented, so the ComposerView "+" action tiles are inert. Live
-// streaming is not used (isStreaming stays false).
+// P1 simplification: crew chat has no attachments, so ComposerView is
+// hosted with `showsAttachments: false` — the "+" button and its action
+// panel are hidden outright (no inert tiles). The attachment-binding
+// params below are still required by ComposerView's initializer, so they
+// stay as never-mutated dummy state.
 struct CrewComposerBar: View {
     @Bindable var store: CrewChatStore
     let detail: CrewDetailV2?
@@ -57,7 +58,8 @@ struct CrewComposerBar: View {
                 showPhotoPicker: $showPhotoPicker,
                 showCamera: $showCamera,
                 canSend: canSend,
-                onSend: send
+                onSend: send,
+                showsAttachments: false
             )
         }
         .onChange(of: input) { _, newValue in

@@ -38,6 +38,10 @@ struct ComposerView: View {
     /// when the conv has a single bot (user_bot / self); group + user_user
     /// pass nil and the action sheet hides the tile.
     var onLookback: (() -> Void)? = nil
+    /// When false, the "+" attachment button and its action panel are hidden
+    /// entirely. Crew chat (T4.6 P1) has no attachments, so it passes false
+    /// rather than surfacing a "+" that opens tiles wired to dead pickers.
+    var showsAttachments: Bool = true
 
     @State private var showActions = false
     // Plain Bool, not @FocusState: the actual first responder is the
@@ -54,6 +58,7 @@ struct ComposerView: View {
                 pendingTray
             }
             HStack(alignment: .bottom, spacing: 8) {
+                if showsAttachments {
                 Button {
                     Haptics.tap()
                     // Scope the action-sheet animation to a withAnimation
@@ -81,6 +86,7 @@ struct ComposerView: View {
                         .floatingComposerSurface(shape: Circle())
                 }
                 .buttonStyle(.plain)
+                }
 
                 HStack(alignment: .bottom, spacing: 6) {
                     ComposerTextField(
@@ -153,7 +159,7 @@ struct ComposerView: View {
             // breathing room above that.
             .padding(.bottom, 12)
 
-            if showActions {
+            if showActions && showsAttachments {
                 ChatActionSheet(
                     onPickPhoto: { showPhotoPicker = true },
                     onPickCamera: { showCamera = true },

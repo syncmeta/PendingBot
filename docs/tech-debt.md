@@ -227,7 +227,7 @@
 - **问题**: 把 crew 详情页改成群聊 UI（消息流 + composer + @mention + session 状态条 + 子机组卡）时，为了把 P1 落地，刻意留了四个洞：
   1. **轮询，无实时推送**——消息流只靠下拉 `.refreshable` + 发送后 `reload()` 刷新；别人发的消息不会自动出现。crew 没有任何 SSE/Realtime new-message 通道（crew-comms 确认无），`SessionProxyDO` 的 viewer WebSocket 只带 session.state / permission 帧，没有"新 crew 消息"帧——上推送是 T4.5 的活。
   2. **inline 权限卡片缺数据源**——没有 crew 级"列出 pending permission requests"的 GET（只有 per-session POST request-permission + `decidePermissionRequest`），所以消息流里**不渲染**权限卡，等 T4.5 `SessionProxyDO` 的 `permission.request` 帧落地再接。`PermissionRequestCardView` 已现成可复用。
-  3. **composer 无附件**——复用 `ComposerView` 但把图片/相机/文件三个 binding 接到 dummy state、从不弹 picker，所以 ComposerView 的 "+" 动作面板里的附件 tile 是哑的。crew 发送只走 `POST /v1/crews/:crewId/messages` 的纯文本 + mentions。
+  3. **composer 无附件**——复用 `ComposerView` 但传 `showsAttachments: false`，把 "+" 按钮和附件面板整个隐藏（不是留哑 tile）。crew 发送只走 `POST /v1/crews/:crewId/messages` 的纯文本 + mentions。
   4. **人类气泡分不出"我 vs 别人"**——`crew_announcements` 读出来只有 `sender_member_id`，拿不到我的 user_id，所以 `CrewChatAdapter` 把所有 human 帖都渲染到 user（右）侧、用 `display_name` 做气泡上方署名。多人时仍读得出是群聊，但"哪条是我发的"无法高亮。
 - **影响**: 都是体验降级而非功能缺失/报错。① 协作实时性弱（要手动下拉）；② 高危操作的批准入口在 crew tab 里看不到（仍可在 PendingCrew / 会话流里批）；③ crew 里发不了图/文件；④ 我自己的消息和别人的同侧、无"自己"高亮。
 - **建议**: T4.5 落 `SessionProxyDO` viewer 通道后，把 new-message + permission.request 帧接进 `CrewChatStore`（替换轮询、补回 inline 权限卡）；要分"我 vs 别人"需要读侧返回 `sender_user_id` 或在 members 里把 `me` 的 member_id 标出来再比对；附件等 crew upload 通道就绪后把 ComposerView 的 picker 接活。
