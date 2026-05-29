@@ -13,6 +13,7 @@ import {
 } from '../lib/voice-metering';
 import { getMarkup, usdToPnd } from '../lib/billing';
 import { splitAndDebit } from '../lib/group-billing';
+import { settleUsage as v2SettleUsage } from '../lib/billing-v2';
 import { uuidv7 } from '../lib/ids';
 import { roomMediaToken } from './room-voice-context';
 import type {
@@ -1185,6 +1186,34 @@ export class RoomVoiceDO {
       await splitAndDebit({ env: this.env, auditLogId: auditId }).catch((err) =>
         console.warn('[room-voice] realtimekit media split failed', err),
       );
+      // v2 dual-write: bill the billUser's wallet for the RealtimeKit
+      // media slice. Group splitting in v2 happens at the subject level
+      // (group_pools); this DO doesn't have a subjectId for the legacy
+      // 'group' conversation type, so we fall back to billUserId — the
+      // member who initiated the call. After the v2 group cutover this
+      // becomes settleUsage(owner=group-subject) instead.
+      if (ctx.billUserId && costUsd > 0) {
+        await v2SettleUsage(supa, {
+          owner: { kind: 'user', userId: ctx.billUserId },
+          category: 'realtimekit_media',
+          provider: 'cloudflare',
+          vendorSku: 'realtimekit:participant_minute',
+          modelId: 'cloudflare_realtimekit:audio_only',
+          quantity: participantSeconds,
+          quantityUnit: 'seconds',
+          vendorCostUsd: costUsd,
+          costSource: 'local_pricebook',
+          conversationId: ctx.conversationId,
+          auditLogId: auditId,
+          rawUsage: {
+            human_participant_seconds: humanSeconds,
+            bot_participant_seconds: botSeconds,
+            participant_minute_price_usd: price,
+          },
+        }).catch((err) =>
+          console.warn('[room-voice] v2 realtimekit_media settle failed', err),
+        );
+      }
     }
   }
 

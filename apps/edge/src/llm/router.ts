@@ -6,6 +6,7 @@ import type { Json } from '../db/schema';
 import { billingDebit, billingDebitSubject, getMarkup, usdToPnd } from '../lib/billing';
 import { putCachedBalance } from '../lib/balance-cache';
 import { splitAndDebit } from '../lib/group-billing';
+import { settleAuditUsage, type OwnerRef as V2OwnerRef } from '../lib/billing-v2';
 import type { WebToolUsage } from '../lib/web-meter';
 import { uuidv7 } from '../lib/ids';
 import { fetchGatewayCost, GATEWAY_COST_PENDING } from '../lib/ai-gateway';
@@ -525,6 +526,61 @@ export async function persistAuditMessage(
         await putCachedBalance(env, opts.userId, newBalance).catch(() => undefined);
       }
     }
+  }
+
+  // ── billing v2 dual-write (#182 / #183) ──────────────────────────────
+  //
+  // Write usage_events + ledger_entries against the v2 packs wallet
+  // alongside the v1 debit above. Pre-launch we run both: v1 is the
+  // authoritative balance until the cutover migration; v2 collects real
+  // data so the wallet UI / cron paths have something to validate
+  // against. After the cutover the v1 block above is deleted.
+  //
+  // Group (legacy multi-member split) is NOT dual-written yet — v2's
+  // wallet model is single-owner per turn (group subject owns the pack
+  // pool). Groups that haven't migrated to the subject model still bill
+  // v1-only; the v2 migration plan covers them in the group cutover.
+  const v2Owner: V2OwnerRef | null =
+    conversationBillingTarget.kind === 'subject'
+      ? { kind: 'subject', subjectId: conversationBillingTarget.subjectId }
+      : conversationBillingTarget.kind === 'none' && opts.userId
+        ? { kind: 'user', userId: opts.userId }
+        : null;
+  if (v2Owner && ((llmCost ?? 0) > 0 || hasTools)) {
+    // The provider slug recorded on the usage_event row. Audit-only field
+    // so we don't try too hard — when the route never resolved (every
+    // fallback failed) we lose this detail, which is fine.
+    const llmProvider = route?.provider.slug ?? opts.tag ?? 'unknown';
+    // Cost source enum: provider-reported (OpenRouter), local pricebook
+    // (voice), otherwise gateway-computed.
+    const costSource =
+      opts.providerCostUsd != null
+        ? ('provider' as const)
+        : opts.taskType === 'voice_call'
+          ? ('local_pricebook' as const)
+          : ('gateway' as const);
+    await settleAuditUsage(supa, v2Owner, {
+      llmCostUsd: llmCost,
+      modelId: route?.modelToCall ?? opts.tag ?? null,
+      llmProvider,
+      llmCostSource: costSource,
+      inputTokens: opts.inputTokens,
+      outputTokens: opts.outputTokens,
+      cacheReadTokens: opts.cacheReadTokens,
+      cacheWriteTokens: opts.cacheWriteTokens,
+      audioInputTokens: opts.audioInputTokens,
+      audioOutputTokens: opts.audioOutputTokens,
+      webTools: toolCalls.map((c) => ({
+        provider: c.provider,
+        kind: c.kind,
+        costUsd: c.costUsd,
+        status: c.status,
+      })),
+      conversationId: opts.conversationId ?? null,
+      auditLogId: auditId,
+    }).catch((err) =>
+      console.warn('[persistAuditMessage] v2 settleAuditUsage failed', err),
+    );
   }
 }
 
