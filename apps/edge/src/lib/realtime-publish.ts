@@ -31,9 +31,13 @@ export interface RealtimeChange {
 // `type === 'voice_call'` and re-render the in-conv banner / call view.
 export interface VoiceCallEvent {
   type: 'voice_call';
-  // 'state'  — full snapshot (started/joined/pending changed)
-  // 'ended'  — the room finalized; banner should disappear
-  event: 'state' | 'ended';
+  // 'state'        — full snapshot (started/joined/pending changed)
+  // 'ended'        — the room finalized; banner should disappear
+  // 'reconnecting' — the DO↔container media link dropped and the DO is
+  //                  re-dialing + replaying room state; a transient
+  //                  "重连中…" banner should show until a 'state' (resync
+  //                  succeeded) or 'ended' (reconnect gave up) arrives.
+  event: 'state' | 'ended' | 'reconnecting';
   conversation_id: string;
   started_at?: number; // ms epoch; absent on 'ended'
   initiator_id?: string;
