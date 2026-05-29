@@ -126,7 +126,27 @@ export type ApiErrorCode =
   | 'crew_proposal_not_found'
   | 'crew_proposal_forbidden'
   | 'crew_proposal_bot_caller_forbidden'
-  | 'crew_proposal_already_decided';
+  | 'crew_proposal_already_decided'
+
+  // ── Permission request (spec v2 §10 — Permission Request mode) ────
+  // Surfaced by /v1/permission-requests/:id/decide and the crew/session
+  // permission-mode PATCH endpoints.
+  //   * `permission_request_not_found`        — id doesn't resolve to a row,
+  //                                              or RLS hid it from the
+  //                                              caller (same shape; we
+  //                                              don't leak existence).
+  //   * `permission_request_forbidden`        — caller isn't authorised to
+  //                                              decide (user_account
+  //                                              non-owner / group_account
+  //                                              non-owner/admin).
+  //   * `permission_request_already_decided`  — row.status != 'pending';
+  //                                              idempotent re-decide is a
+  //                                              client mistake we surface
+  //                                              loudly so the UI clears
+  //                                              the pending state.
+  | 'permission_request_not_found'
+  | 'permission_request_forbidden'
+  | 'permission_request_already_decided';
 
 export interface ApiErrorBody {
   error: {

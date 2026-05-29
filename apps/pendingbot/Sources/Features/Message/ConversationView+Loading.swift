@@ -414,6 +414,7 @@ extension ConversationView {
             var traceCitationsLoaded: [String: [MessageCitation]] = [:]
             var attachmentIdsLoaded: [String: [String]] = [:]
             var crewProposalsLoaded: [String: CrewProposalPayload] = [:]
+            var permissionRequestsLoaded: [String: PermissionRequestPayload] = [:]
             for r in rows {
                 let secs = ServerTimestamp.epochSeconds(r.created_at, default: 0)
                 // Recalled message rows (status='deleted') shouldn't render —
@@ -460,6 +461,23 @@ extension ConversationView {
                             id: r.id,
                             conversation_id: r.conversation_id,
                             sender_type: "crew_proposal_log",
+                            sender_id: r.sender_bot_id ?? "",
+                            content: "",
+                            created_at: secs,
+                            attachments: nil
+                        ))
+                    } else if r.log_kind == "permission_request", let any = r.log_payload,
+                              let payload = decodeLogPayload(any, as: PermissionRequestPayload.self) {
+                        // permission_request — agent's request_permission
+                        // tool dropped a card here (spec v2 §10). Same
+                        // pattern as crew_proposal: synthesise a host
+                        // ChatMessage + stash typed payload in the
+                        // sibling dict for the renderer.
+                        permissionRequestsLoaded[r.id] = payload
+                        viewMessages.append(ChatMessage(
+                            id: r.id,
+                            conversation_id: r.conversation_id,
+                            sender_type: "permission_request_log",
                             sender_id: r.sender_bot_id ?? "",
                             content: "",
                             created_at: secs,
@@ -529,6 +547,11 @@ extension ConversationView {
             // (e.g. a card that was 'pending' last time but has since
             // been decided in another session).
             self.crewProposalsByMsgId.merge(crewProposalsLoaded) { _, new in new }
+            // permission_request payloads — same shape as crew_proposal:
+            // server is the only source of truth on status, so a fresh
+            // load overwrites any locally cached `pending` card that has
+            // been decided elsewhere.
+            self.permissionRequestsByMsgId.merge(permissionRequestsLoaded) { _, new in new }
 
             // Per-id attachment metadata (mime + filename) so the bubble
             // grid can render non-image files as icon+name chips, not

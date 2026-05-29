@@ -30,7 +30,15 @@ final class CrewSessionRunner: ObservableObject {
         workingDirectory: URL,
         taskBrief: String,
         initialPrompt: String,
-        additionalEnv: [String: String] = [:]
+        additionalEnv: [String: String] = [:],
+        /// Spec v2 §10 — per-session override of the crew's permission
+        /// mode. `nil` = inherit crew default (server-side null).
+        /// `"auto"` / `"manual"` override just this session. The runner
+        /// itself doesn't enforce the mode yet (T4.5 peer_device round-
+        /// trip lands the real pause-on-manual behaviour); for now the
+        /// value just gets recorded server-side so the crew chat card
+        /// + the agent's system prompt see it.
+        permissionModeOverride: String? = nil
     ) async throws {
         // 1. 校验工具可用
         guard let executable = await service.resolveExecutable(kind) else {
@@ -55,10 +63,15 @@ final class CrewSessionRunner: ObservableObject {
             kind: kind,
             taskBrief: taskBrief,
             workingDirectory: workingDirectory,
+            permissionModeOverride: permissionModeOverride,
             handle: handle
         )
         current = run
         run.observeStreams()
+        // 5. v1 stub: 持有 override 在 run 上,等 T4.5 接入 session 创建
+        //    HTTP endpoint 时把这个值 PATCH 到 /v1/sessions/:id/permission-mode。
+        //    现在还没有 server-side session 行(本机 stub run),所以纯
+        //    本地 metadata。
     }
 
     enum RunnerError: LocalizedError {
@@ -92,6 +105,12 @@ final class CrewSessionRun: ObservableObject, Identifiable {
     let kind: LocalCodingAgentKind
     let taskBrief: String
     let workingDirectory: URL
+    /// Spec v2 §10 — session-level override for permission_mode.
+    /// `nil` = inherit crew default (server-side null). The runner
+    /// doesn't enforce the mode locally yet; this field is kept so
+    /// the UI can show it and T4.5 has a place to read from when it
+    /// wires the runner-side pause-on-manual behaviour.
+    let permissionModeOverride: String?
     let startedAt: Date
 
     @Published private(set) var status: Status = .running
@@ -113,6 +132,7 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         kind: LocalCodingAgentKind,
         taskBrief: String,
         workingDirectory: URL,
+        permissionModeOverride: String? = nil,
         handle: LocalCodingAgentRunHandle
     ) {
         self.runID = runID
@@ -120,6 +140,7 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         self.kind = kind
         self.taskBrief = taskBrief
         self.workingDirectory = workingDirectory
+        self.permissionModeOverride = permissionModeOverride
         self.startedAt = Date()
         self.handle = handle
     }

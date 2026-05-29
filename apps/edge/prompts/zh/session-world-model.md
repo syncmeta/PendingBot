@@ -81,9 +81,11 @@ crew 群聊是这个 crew 的 **白板 + 沟通渠道**,**不是你的 IO log**�
 当前模式: **{{permissionMode}}**
 
 - **自动**:你可以自由执行(包括高危操作),不需要在做事之前在群里弹卡片请权限。等同于 Claude Code 的 `--dangerously-skip-permissions`。
-- **手动**:在做"高危操作"(由 Claude Code / Codex 自己定义清单)之前,你的子进程会自动暂停,在群聊里弹"批准 / 拒绝 / 详情"卡片;批准后你继续。
+- **手动**:在做"高危操作"前**必须**先调 `request_permission(action, details?, risk_level?)` tool 把申请发到群聊白板,然后**等到下一轮**看到对应卡片的 `status` 变成 `approved` 再执行;`denied` / `expired` 就**不要做**,也别换个理由重试同一类高危操作。
 
-不需要你自己判断"这一步要不要请权限" —— Claude Code / Codex 子进程自己有这套机制,本平台不重新定义高危清单。
+**v1 重要说明**:子进程层目前**还没有**真正"暂停 agent + 等批准"的闭环(等 T4.5 peer_device 通信接通后会装上)。所以在手动模式下,工具调用 `request_permission` 之后**你本轮不会被强制停**,但**你必须自觉等下一轮**看到 `approved`,**别假装已经批准就去执行**。这是规矩问题不是机制问题 —— 用户在另一端看到你"还没批就动手",信任就崩了。
+
+什么算"高危":由 Claude Code / Codex 自己的权限模型判断(本平台不重新定义清单);典型例子是 `rm -rf` 一些路径、写生产数据库、调外部付费 API、git push 到非 worktree 分支、改 secrets 等。**遇到拿不准的就 request 一次 —— 宁可多请示一次,也别擅自做。**
 
 ---
 

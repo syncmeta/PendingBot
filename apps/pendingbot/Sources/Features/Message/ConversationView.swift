@@ -144,6 +144,15 @@ struct ConversationView: View {
     /// card uses this to disable its buttons during the network round-
     /// trip; an empty set when nothing is pending.
     @State var crewProposalBusy: Set<String> = []
+    /// permission_request payload per log message id (spec v2 §10).
+    /// Populated by loadHistory from `role='log'` rows with
+    /// `log_kind='permission_request'`. The timeline renderer swaps in
+    /// a `PermissionRequestCardView` for each entry; `decidePermissionRequest`
+    /// updates the status when the user taps 批准 / 拒绝.
+    @State var permissionRequestsByMsgId: [String: PermissionRequestPayload] = [:]
+    /// Message ids whose permission-decide HTTP call is currently in
+    /// flight. Used to disable the card's buttons mid-round-trip.
+    @State var permissionRequestBusy: Set<String> = []
     /// Local id of the user message currently driving an SSE turn — set in
     /// sendViaSSE before the stream starts, cleared when the turn ends.
     /// Multiple traces can land for the same user msg if the agent loops.
@@ -482,6 +491,30 @@ struct ConversationView: View {
                                     },
                                     onReject: {
                                         Task { await decideCrewProposal(msg.id, decision: .reject) }
+                                    }
+                                )
+                                .id(msg.id)
+                                .transition(.opacity)
+                            } else if msg.sender_type == "permission_request_log",
+                                      let payload = permissionRequestsByMsgId[msg.id] {
+                                // Agent's request_permission card
+                                // (spec v2 §10). 批准 / 拒绝 while
+                                // payload.status == 'pending'; once
+                                // decided it just shows a status badge.
+                                // sessionLabel uses "Session" since
+                                // P2 doesn't yet thread session names
+                                // through to ConversationView — T4.6
+                                // will surface them when crew
+                                // conversations get full timeline UI.
+                                PermissionRequestCardView(
+                                    sessionLabel: "Session",
+                                    payload: payload,
+                                    busy: permissionRequestBusy.contains(msg.id),
+                                    onApprove: {
+                                        Task { await decidePermissionRequest(msg.id, decision: .approve) }
+                                    },
+                                    onDeny: {
+                                        Task { await decidePermissionRequest(msg.id, decision: .reject) }
                                     }
                                 )
                                 .id(msg.id)
