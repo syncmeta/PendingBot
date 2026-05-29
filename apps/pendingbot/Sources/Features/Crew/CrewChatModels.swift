@@ -139,7 +139,7 @@ struct CrewChatAdapter {
             .sorted { $0.message.created_at < $1.message.created_at }
     }
 
-    private func adapt(_ row: CrewAnnouncementRow) -> (message: ChatMessage, sender: GroupBubbleSender?) {
+    func adapt(_ row: CrewAnnouncementRow) -> (message: ChatMessage, sender: GroupBubbleSender?) {
         let epoch = CrewTimestamp.epoch(row.created_at)
 
         // Agent / session post → bot side.

@@ -272,11 +272,15 @@ struct CrewAnnouncementRow: Decodable, Identifiable, Hashable {
     let board_visible: Bool
     /// The human-visible message text.
     let summary: String
-    /// Free-form JSON; decoded leniently (kept optional, not rendered in
-    /// P1 — the bubble only needs `summary`). `JSONScalar` maps objects /
-    /// arrays to `.other` rather than throwing, so an arbitrary payload
-    /// never aborts the whole list decode.
-    let payload: JSONScalar?
+    /// Free-form JSON payload. For `message_kind == 'permission_request'`
+    /// rows this is the permission card body
+    /// (`{ permission_request_id, action, risk_level, detail, status }`),
+    /// decoded into `PermissionRequestPayload` (all fields optional, so a
+    /// non-permission row's payload decodes to an all-nil payload and is
+    /// simply never read — the adapter only consults it when message_kind
+    /// is permission_request). Optional + lenient: a malformed / absent
+    /// payload decodes to nil and never aborts the list.
+    let payload: PermissionRequestPayload?
     let created_at: String
     let mentions: [CrewAnnouncementMention]
 }

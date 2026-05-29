@@ -1,12 +1,16 @@
 import Foundation
 import Observation
+import Supabase
 
 // T4.6 P1 — view-model for the crew chat surface. Owns the adapted
 // message list + session/child rows + the mention candidate set, and
-// drives the optimistic human-post path. Poll-only in P1 (no live push):
-// the list refreshes via pull-to-refresh and a reload after each send.
-// Live push is T4.5 (SessionProxyDO carries session/permission frames but
-// no new-crew-message frame) — logged in tech-debt.
+// drives the optimistic human-post path.
+//
+// T4.5 — now LIVE: a crew IS a conversation, so the existing
+// `conv:<crewId>` RealtimeHub topic fans out crew_announcements +
+// crew_sessions row changes. `start(detail:)` opens that channel after the
+// first cold `load()`; `apply` / `applySession` upsert the live frames.
+// `load()` remains the cold-start + pull-to-refresh fallback.
 
 @MainActor
 @Observable
@@ -28,6 +32,18 @@ final class CrewChatStore {
     /// Bumped each time `rows` changes by an append/replace so the list can
     /// scroll to bottom on new content.
     private(set) var revision = 0
+
+    /// Latest adapter (member + session indexes), rebuilt on every cold
+    /// `load()`. Live frames adapt against this so a single announcement /
+    /// session row resolves its sender name without a re-fetch.
+    private var adapter: CrewChatAdapter?
+    /// Live conv-channel subscription token, set by `start`, cleared by
+    /// `stop`. Non-nil ⇒ already subscribed (idempotency guard).
+    private var realtimeToken: ConvSubscriptionToken?
+
+    /// permission_request_ids whose decide() call is in flight — the card
+    /// reads this to disable its buttons while we wait for the status flip.
+    private(set) var decidingPermissionIds: Set<String> = []
 
     init(crewId: String, api: APIClient) {
         self.crewId = crewId
@@ -63,6 +79,7 @@ final class CrewChatStore {
             let memberIndex = CrewMemberIndex(members: members, captainFallbackName: captainName)
             let sessionIndex = CrewSessionIndex(sessions: sessionRows)
             let adapter = CrewChatAdapter(crewId: crewId, members: memberIndex, sessions: sessionIndex)
+            self.adapter = adapter
 
             // Preserve any in-flight optimistic rows (status == sending) so
             // a refresh that races a send doesn't drop the local bubble.
@@ -82,6 +99,120 @@ final class CrewChatStore {
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    // MARK: - Live subscription (T4.5)
+
+    /// Open the crew's conv-channel and route crew_announcements /
+    /// crew_sessions frames into the appliers. Idempotent — a second call
+    /// while already subscribed is a no-op (re-entering the view after a
+    /// reload must not double-subscribe). Call after the first successful
+    /// `load()` so the adapter (member/session indexes) is ready.
+    func start(detail _: CrewDetailV2? = nil) async {
+        guard realtimeToken == nil, !crewId.isEmpty else { return }
+        realtimeToken = await RealtimeManager.shared.startConvChannel(
+            conversationId: crewId,
+            onMessage: { _ in },
+            onCrewAnnouncement: { [weak self] event in
+                Task { @MainActor in self?.apply(event) }
+            },
+            onCrewSession: { [weak self] event in
+                Task { @MainActor in self?.applySession(event) }
+            }
+        )
+    }
+
+    /// Drop the live subscription. Call on view disappear.
+    func stop() async {
+        guard let token = realtimeToken else { return }
+        realtimeToken = nil
+        await RealtimeManager.shared.stopConvChannel(token)
+    }
+
+    /// crew_announcements INSERT/UPDATE → upsert into `rows` by message id.
+    /// INSERT = a new whiteboard post / permission card; UPDATE = a
+    /// permission status flip (decide() stamps approved/denied onto the
+    /// row, which fans back here). Re-sort + bump revision on any change.
+    func apply(_ event: CrewAnnouncementEvent) {
+        guard let row = Self.decodeAnnouncement(event.record),
+              let adapter else { return }
+        // Skip our own still-pending optimistic bubble's echo — `send()`
+        // already reloads to fold the canonical row, and the live frame
+        // carries no client id to match a local-* row, so an optimistic
+        // row stays put until that reload replaces it. Dedupe is purely by
+        // canonical id below; the optimistic local-<uuid> id never collides.
+        let adapted = adapter.adapt(row)
+        let newRow = CrewChatRow(message: adapted.message, sender: adapted.sender)
+        if let idx = rows.firstIndex(where: { $0.id == newRow.id }) {
+            rows[idx] = newRow
+        } else {
+            rows.append(newRow)
+        }
+        rows.sort { $0.message.created_at < $1.message.created_at }
+        revision += 1
+    }
+
+    /// crew_sessions INSERT/UPDATE → upsert into `sessions` by id so the
+    /// session index / status stays live. Bumps revision so any session-
+    /// derived label refreshes.
+    func applySession(_ event: CrewSessionEvent) {
+        guard let row = Self.decodeSession(event.record) else { return }
+        if let idx = sessions.firstIndex(where: { $0.id == row.id }) {
+            sessions[idx] = row
+        } else {
+            sessions.append(row)
+        }
+        revision += 1
+    }
+
+    // MARK: - Live record decoders
+
+    /// Build a `CrewAnnouncementRow` from a raw `[String: AnyJSON]` realtime
+    /// frame, field-by-field (the ConversationView+Realtime pattern — no
+    /// top-level JSONDecoder round-trip). Live frames carry no `mentions`
+    /// join, so `mentions: []`. Returns nil if the id/text is missing.
+    static func decodeAnnouncement(_ r: [String: AnyJSON]) -> CrewAnnouncementRow? {
+        guard let id = r["id"]?.stringValue else { return nil }
+        // `payload` is a jsonb cell. Re-encode the AnyJSON value to bytes
+        // and JSONDecode it into PermissionRequestPayload (decodeLogPayload
+        // returns nil on missing / literal-null / wrong-shape). For non-
+        // permission rows the payload decodes to an all-nil struct that the
+        // adapter never reads — only message_kind=='permission_request'
+        // consults it.
+        let payload: PermissionRequestPayload? = r["payload"].flatMap {
+            decodeLogPayload($0, as: PermissionRequestPayload.self)
+        }
+        return CrewAnnouncementRow(
+            id: id,
+            crew_conversation_id: r["crew_conversation_id"]?.stringValue ?? "",
+            responsible_subject_id: r["responsible_subject_id"]?.stringValue,
+            sender_kind: r["sender_kind"]?.stringValue ?? "system",
+            sender_member_id: r["sender_member_id"]?.stringValue,
+            sender_session_id: r["sender_session_id"]?.stringValue,
+            recipient_mode: r["recipient_mode"]?.stringValue,
+            message_kind: r["message_kind"]?.stringValue ?? "text",
+            board_visible: r["board_visible"]?.boolValue ?? true,
+            summary: r["summary"]?.stringValue ?? "",
+            payload: payload,
+            created_at: r["created_at"]?.stringValue ?? "",
+            mentions: []
+        )
+    }
+
+    static func decodeSession(_ r: [String: AnyJSON]) -> CrewSessionRow? {
+        guard let id = r["id"]?.stringValue else { return nil }
+        return CrewSessionRow(
+            id: id,
+            crew_conversation_id: r["crew_conversation_id"]?.stringValue ?? "",
+            responsible_subject_id: r["responsible_subject_id"]?.stringValue,
+            runner_kind: r["runner_kind"]?.stringValue,
+            status: r["status"]?.stringValue ?? "",
+            task_brief: r["task_brief"]?.stringValue,
+            progress_summary: r["progress_summary"]?.stringValue,
+            created_at: r["created_at"]?.stringValue ?? "",
+            started_at: r["started_at"]?.stringValue,
+            finished_at: r["finished_at"]?.stringValue
+        )
     }
 
     // MARK: - Send (optimistic)
