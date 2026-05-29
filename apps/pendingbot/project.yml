@@ -90,3 +90,4 @@ targets:
         product: Supabase
       - package: WebRTC
         product: WebRTC
+        platforms: [iOS]

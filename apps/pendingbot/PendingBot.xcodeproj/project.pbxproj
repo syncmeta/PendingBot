@@ -95,7 +95,6 @@
 		A7ADFAD7B076861A93C987D1 /* UserAvatar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A4C4C281584EA9A3D270E66 /* UserAvatar.swift */; };
 		AE2E39CEFC00A4D6517ABAE9 /* SwiftMath in Frameworks */ = {isa = PBXBuildFile; productRef = 6F86D21C91A9BC3B4CA176D0 /* SwiftMath */; };
 		AEF24DAC89A4BDB1F89EB53F /* CrewProposalCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE4AD56378500470C3FFCB27 /* CrewProposalCard.swift */; };
-		B1F765C31CB716461C8AB2AC /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = BAA061523352F62354113E3C /* WebRTC */; };
 		B502735FC12E0BB52BB19368 /* MarkdownText.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F8C48D5CD8682E938D093C /* MarkdownText.swift */; };
 		B5B71DE9781BE668FF81DE91 /* BlinkingCursor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C86ED7FEA6F6BBBFA222E483 /* BlinkingCursor.swift */; };
 		B652E5852C42C437A6849CA3 /* GroupJoinView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9010CC63D1CC724A55770E7A /* GroupJoinView.swift */; };
@@ -285,7 +284,6 @@
 				A2E9CBC1BBEC585F2594DFAC /* MarkdownUI in Frameworks */,
 				AE2E39CEFC00A4D6517ABAE9 /* SwiftMath in Frameworks */,
 				30E08775E0377B26A0398856 /* Supabase in Frameworks */,
-				B1F765C31CB716461C8AB2AC /* WebRTC in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -609,7 +607,6 @@
 				23AC5D1A6CD4C748003E6936 /* MarkdownUI */,
 				6F86D21C91A9BC3B4CA176D0 /* SwiftMath */,
 				42AEEDC8DF7B9FD796EE879D /* Supabase */,
-				BAA061523352F62354113E3C /* WebRTC */,
 			);
 			productName = PendingBot;
 			productReference = 42A11830F64F80977210B443 /* PendingBot.app */;
@@ -1102,11 +1099,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 3C2317EDB19D6043688D1BCB /* XCRemoteSwiftPackageReference "SwiftMath" */;
 			productName = SwiftMath;
-		};
-		BAA061523352F62354113E3C /* WebRTC */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 29D657BB797271F924E65A03 /* XCRemoteSwiftPackageReference "WebRTC" */;
-			productName = WebRTC;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
