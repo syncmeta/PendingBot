@@ -29,7 +29,10 @@ private struct PendingBotBigScreenShellBridge: View {
         switch selection {
         case .message: MessageTabView()
         case .friends: FriendsTabView()
-        case .crew: PendingBotRegularCrewView()
+        // T4.6 multiplatform cutover: iPad/Mac share the same V2 Crew Tab as
+        // iPhone (spec v2 §11.2 三端齐), retiring the codex-era big-screen
+        // dashboard (PendingBotRegularCrewView + /v1/crew singular surface).
+        case .crew: CrewTabV2View()
         case .envelope: EnvelopeTabView()
         case .me: MeTabView()
         }

@@ -9,7 +9,6 @@
 /* Begin PBXBuildFile section */
 		007079D60A217D6661C43EA7 /* RelativeMessageTime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F21A15DD9477AC940984A06 /* RelativeMessageTime.swift */; };
 		009C790D5513035CF7E9DD99 /* SkillsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADEFF9B985A092B6174979F7 /* SkillsView.swift */; };
-		00F8285F54F41EC3FD4515C1 /* CrewTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2073EBA574527DD7419909F /* CrewTabView.swift */; };
 		01587F44B0F28DB47EE66436 /* TabRoot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0535C2EB32C3F6E1DFE0EA95 /* TabRoot.swift */; };
 		01D69F420946CB0900A7EEFC /* MyQRBusinessCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70EAEDCC6E5ABCC5261A43E3 /* MyQRBusinessCard.swift */; };
 		01EC2D59BF1FFC4B3E4C9987 /* SwipeRevealRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 280AFB82A018AB0016C826EA /* SwipeRevealRow.swift */; };
@@ -93,7 +92,6 @@
 		AE2E39CEFC00A4D6517ABAE9 /* SwiftMath in Frameworks */ = {isa = PBXBuildFile; productRef = 6F86D21C91A9BC3B4CA176D0 /* SwiftMath */; };
 		AEF24DAC89A4BDB1F89EB53F /* CrewProposalCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE4AD56378500470C3FFCB27 /* CrewProposalCard.swift */; };
 		B1F765C31CB716461C8AB2AC /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = BAA061523352F62354113E3C /* WebRTC */; };
-		B31B22663A5B416DE2146130 /* PendingBotRegularCrewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A8ABE32267038A221A90F5D /* PendingBotRegularCrewView.swift */; };
 		B502735FC12E0BB52BB19368 /* MarkdownText.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F8C48D5CD8682E938D093C /* MarkdownText.swift */; };
 		B5B71DE9781BE668FF81DE91 /* BlinkingCursor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C86ED7FEA6F6BBBFA222E483 /* BlinkingCursor.swift */; };
 		B652E5852C42C437A6849CA3 /* GroupJoinView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9010CC63D1CC724A55770E7A /* GroupJoinView.swift */; };
@@ -183,7 +181,6 @@
 		56BFB3EBF959D378BC6BC313 /* EnvelopeFeedRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvelopeFeedRow.swift; sourceTree = "<group>"; };
 		58C7852B0C9D1F1A7346DDCB /* BotVisibilityTag.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotVisibilityTag.swift; sourceTree = "<group>"; };
 		59B8BCA71B08958950585241 /* BotCapabilitiesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotCapabilitiesView.swift; sourceTree = "<group>"; };
-		5A8ABE32267038A221A90F5D /* PendingBotRegularCrewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingBotRegularCrewView.swift; sourceTree = "<group>"; };
 		5EFE46C6B281742A271B9202 /* LocalDatabase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalDatabase.swift; sourceTree = "<group>"; };
 		5F74C5B9B7D89D583C48817E /* CodeRunnerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeRunnerSheet.swift; sourceTree = "<group>"; };
 		602E04C3276D1A3CB9588320 /* CreateCrewV2Sheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreateCrewV2Sheet.swift; sourceTree = "<group>"; };
@@ -222,7 +219,6 @@
 		9A19A4D76A2D17FD422DA74D /* SubjectPickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubjectPickerSheet.swift; sourceTree = "<group>"; };
 		9FF3BF57EA0692041B43E25A /* BubbleSplitter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BubbleSplitter.swift; sourceTree = "<group>"; };
 		A0DF072DCFB0786FA83D70F3 /* ChatStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatStream.swift; sourceTree = "<group>"; };
-		A2073EBA574527DD7419909F /* CrewTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewTabView.swift; sourceTree = "<group>"; };
 		A5131104F9620195C8AF448E /* TypingDots.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypingDots.swift; sourceTree = "<group>"; };
 		ADEFF9B985A092B6174979F7 /* SkillsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkillsView.swift; sourceTree = "<group>"; };
 		B7E8B55D4DE8ED09E4B54C14 /* CallCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallCenter.swift; sourceTree = "<group>"; };
@@ -377,7 +373,6 @@
 				6CF743A2BD19523CAF11ECC6 /* CrewAPI.swift */,
 				D2426E68B61F7DC57E429193 /* CrewDetailV2View.swift */,
 				FAEEAA2E4EC4CC777D41E48B /* CrewTabV2View.swift */,
-				A2073EBA574527DD7419909F /* CrewTabView.swift */,
 				9A19A4D76A2D17FD422DA74D /* SubjectPickerSheet.swift */,
 			);
 			path = Crew;
@@ -386,7 +381,6 @@
 		3F3A831B63D455A9DE4EB656 /* Root */ = {
 			isa = PBXGroup;
 			children = (
-				5A8ABE32267038A221A90F5D /* PendingBotRegularCrewView.swift */,
 				C169F240D3B0FFEE51443992 /* PendingBotRegularRootView.swift */,
 				0535C2EB32C3F6E1DFE0EA95 /* TabRoot.swift */,
 			);
@@ -710,7 +704,6 @@
 				4B8693B2BE0A0352EAC924DE /* CrewDetailV2View.swift in Sources */,
 				AEF24DAC89A4BDB1F89EB53F /* CrewProposalCard.swift in Sources */,
 				0E0FCE983AB9E6DB3447D869 /* CrewTabV2View.swift in Sources */,
-				00F8285F54F41EC3FD4515C1 /* CrewTabView.swift in Sources */,
 				D86D67B77E20704ED320D0F9 /* EmailSignIn.swift in Sources */,
 				E169F0C9CD13280A7A6C92D9 /* EmptyHint.swift in Sources */,
 				CFA38CDEF1AC9937D7C2B65A /* EnvelopeAPI.swift in Sources */,
@@ -747,7 +740,6 @@
 				C5029F554D68B613AC801852 /* OpenAICallTransport.swift in Sources */,
 				FAECF2B5BD0A3A5A114A1851 /* PendingBotApp.swift in Sources */,
 				24DE7D404DE3727CE2B2ABA7 /* PendingBotBigScreenApp.swift in Sources */,
-				B31B22663A5B416DE2146130 /* PendingBotRegularCrewView.swift in Sources */,
 				8B333BA755644E0D336C10C1 /* PendingBotRegularRootView.swift in Sources */,
 				F3238C85A9A478B6EA7B7F55 /* PendingBotSharedModels.swift in Sources */,
 				0764DE6E6E5998186C2AEF3D /* PermissionRequestCard.swift in Sources */,
