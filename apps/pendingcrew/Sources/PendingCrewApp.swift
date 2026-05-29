@@ -4,6 +4,9 @@ import SwiftUI
 struct PendingCrewApp: App {
     @StateObject private var model: AppModel
     @StateObject private var crewStore: CrewStore
+    /// Captain 模板池(BYOK 模式的"本机 captain 池",spec v2 §5.2)。
+    /// 登录态下也注入但 UI 不消费 —— 登录态走真 bot 库(后续 task)。
+    @StateObject private var captainTemplates = CaptainTemplateStore.shared
 
     init() {
         let appModel = AppModel()
@@ -16,6 +19,7 @@ struct PendingCrewApp: App {
             RootView()
                 .environmentObject(model)
                 .environmentObject(crewStore)
+                .environmentObject(captainTemplates)
                 #if os(macOS)
                 .frame(minWidth: 1040, minHeight: 680)
                 .modifier(FirstLaunchDisclosureGate())
