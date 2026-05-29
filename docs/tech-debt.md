@@ -315,3 +315,80 @@
 - **影响**: 体验降级而非功能缺失——引用列表正常显示、可点。属于 provider 能力差异，非自挖的坑。
 - **建议**: 可选增强——按 annotation 的 start/end_index 把 [N] 注回正文文本；OpenRouter 的搜索词无解（provider 不暴露）。
 - **状态**: 不修（provider 限制 / 体验可接受）
+
+---
+
+## 2026-05-29 v1 sprint summary
+
+本节为本轮（Phase 1–7）冲刺收尾的汇总。冲刺范围：在 `claude/blissful-albattani-a8a732` 分支上推进 v1 双轨架构（PendingBot IM 多端 + PendingCrew 本地 coding agent + billing-v2 双写），共 **34 commits**，由 ~13 个并行 sub-agent worktree 汇出。
+
+### 已落地（commit hash）
+
+**Phase 1 — billing-v2 双写底座** (merge `worktree-wf_bb2bdb07-141-3`)
+- `4a9f93da` v2 dual-write — LLM + web-tool usage_events alongside v1 debit
+- `71b69a02` v2 voice (RealtimeKit media) + sandbox usage_events
+- `2dc06dbe` v2 cron — pack expiry sweep + group-pool reconciliation
+- `cbb4fb3f` v2 settleUsage CAS-loss retry + cover main paths
+- `3aef07e8` merge
+
+**Phase 2 — PendingBot Mac multiplat T0.1 P0** (merge `worktree-wf_bb2bdb07-141-5`)
+- `388f24fd` `#if os(iOS)` 替代 EXCLUDED_SOURCE_FILE_NAMES 大锅排除
+- `4eff9d8e` Mac "我" tab 接入 AccountStore 真实账号信息
+- `d6ed2808` 记录剩余缺口
+- `6df88dbb` merge
+
+**Phase 3 — 群账号 / 权限 / 三端壳** (merges `…-7`, `…-8`, `feat/mac-3col-shell`)
+- `207d5203` edge T1.2 — `/v1/group-subjects/*` 群权限矩阵路由
+- `cc080ac1` merge T1.2
+- `7ff0c2a6` merge T1.3
+- `f2dbebfb` crew(mac) identity footer + sign-out
+- `c174f734` mac 三栏 NavigationSplitView 根壳
+- `5e132703` merge mac-3col-shell
+
+**Phase 5 — T4.5 跨设备控制设计** (merge `worktree-wf_bb2bdb07-141-16`)
+- `ceba5619` docs(t4.5) cross-device session control as-built design
+- `0780685f` merge
+
+**Phase 6 — PendingCrew 本地 runner + Session 面板** (merges `…-18`, `…-19`, `…-20`)
+- `5f731002` Swift 6 captured-var warnings 静化
+- `2c7b7887` LocalRunner 接 model slug
+- `a5ffe5c3` `/v1/models` client + backend `listModels()`
+- `6d944513` GitInspector helper（分支选择器）
+- `29699690` 完整 session-create panel（spec v2 §12.2）
+- `280d5b7b` T3.4 first-launch disclosure modal
+- `00746ca9` GitWorktreeService for T3.3 worktree option
+- `bbd97ae4` T3.3 three-layer working directory in session sheet
+- `4ca47a98`, `564693f7`, `e7bb267b` merges
+
+**Phase 7 — PendingCrew 未登录 BYOK 双轨路由** (merges `…-22`, `…-23`)
+- `ee28d676` reset CrewStore on backend mode change
+- `8e0eac32` docs(tech-debt) PendingCrew 后端单测缺口
+- `42d58047` BYOK 本地 captain template store
+- `f78d61bf` BYOK CreateCrewSheet captain pool picker + template editor
+- `c69ba418` merge T5.1
+- `692b661f` merge T5.2
+
+### 仍延期（需人工或后续 session）
+
+#### 🔴 必须人工介入
+
+- **#185 IAP 服务端 webhook** — App Store Server Notifications V2 真实签名校验、refund/REVOKE 处理；当前只有 stub。需要 Apple Developer 后台配置 + 真实 sandbox 测试，必须人工。
+- **#186 Lemon Squeezy refund 完整路径** — webhook 已落 issuePack 入账，但 refund/dispute 反向冲销在 v2 ledger 上还没串通；需要联调 LS test mode。
+- **#188 Board 后台 — 计费 v2 管理面板** — `de4a62c2` 起了 admin grant/claw-back RPC + 简单 board UI，但仍缺：pack 列表/手动作废、refund 列表、用户 wallet 详情视图、批量 grant。需要 Board 端 UI 设计 + RPC 扩展。
+- **#189 iOS wallet v2 完整 UI** — `5c63ce76` 只落了 preview 入口（PNC packs view），缺购买流（IAP product picker）、refund 历史、share-index 详情、群池贡献 UI。需要设计师定稿后再做。
+- **#190 v1 计费完全退役** — `551296e9` 边缘 cutover 已让 v2 authoritative，但 v1 表 (`wallets`, `wallet_ledger`) 还在 schema 里；30 天观察期后需要一次清理迁移 + 删除 dead code 路径。
+
+#### 🟡 后续 session 即可
+
+- **T3.2 Codex runner** — Phase 6 只落了 Claude Code 本地 runner (`LocalCodingAgentService`)；Codex CLI runner adapter 仍是 TODO，需要 codex 二进制契约调研 + adapter 抽象。
+- **T4.5 完整实现** — `ceba5619` 只落了设计文档（as-built），跨设备 session 控制的实际代码（手机 → Mac 推送 session 命令、Mac 端 session 镜像）一行都没动。
+- **T5.3 PendingCrew E2E QA** — BYOK 路径和 cloud 路径的端到端测试（创建 crew → 派单 → 收到结果 → 计费记账）从未真机跑通；只有编译过 + 单测覆盖。需要人工 QA pass。
+
+### 部分/骨架级、需要补完
+
+- **PendingCrew 后端单元测试** — `8e0eac32` 已记录：`apps/pendingcrew-server` 几乎没有单测覆盖，BYOK 路径切换、CrewStore reset、template store 三处都是裸代码。建议后续 session 补 vitest。
+- **群权限矩阵 client 端消费** — `207d5203` edge 给了 `/v1/group-subjects/*` 路由，iOS / Mac 客户端还没真正消费；目前权限判定仍走旧 client-side 规则。
+- **Mac 三栏壳的实际内容** — `c174f734` 是结构脚手架；middle column 的会话列表 + detail column 的消息流都还是 placeholder，等 IM 主路径打通后填。
+- **First-launch disclosure modal 文案** — `280d5b7b` 走通了流程，正式文案待法务/产品定稿。
+- **billing-v2 settleUsage CAS-loss retry** — `cbb4fb3f` 实现了重试，但极端高并发下的退避策略未压测；30 天观察期内若看到大量重试再优化。
+
