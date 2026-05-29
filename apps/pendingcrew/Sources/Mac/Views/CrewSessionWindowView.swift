@@ -2,8 +2,47 @@
 import SwiftUI
 
 /// 右栏：当前 session 的 stdout/stderr 实时视图。
+///
+/// 这一层只观察 `CrewSessionRunner.current`（哪个 run 在前台）。具体
+/// run 的 stdout/stderr/status 变化由内层 `SessionRunContentView` 通过
+/// `@ObservedObject` 观察 —— **必须分两层**：`CrewSessionRun` 是嵌套的
+/// ObservableObject，父 view 只 `@EnvironmentObject` 持有 runner 时不会
+/// 订阅到 run 自己的 `@Published`，否则 stdout/status 更新了 UI 不刷新
+/// （会卡在 "running" / "(空)"）。
 struct CrewSessionWindowView: View {
     @EnvironmentObject private var sessionRunner: CrewSessionRunner
+
+    var body: some View {
+        Group {
+            if let run = sessionRunner.current {
+                SessionRunContentView(run: run)
+            } else {
+                empty
+            }
+        }
+        .navigationTitle("Session")
+    }
+
+    private var empty: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "play.rectangle.on.rectangle")
+                .font(.system(size: 40))
+                .foregroundStyle(.tertiary)
+            Text("没有正在运行的 session")
+                .foregroundStyle(.secondary)
+            Text("在中栏点 \"新建 session\" 开始")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// 单个 run 的内容视图。`@ObservedObject` 订阅 run 的 `@Published`
+/// （stdoutText / stderrText / status / exitCode），保证流式输出和状态
+/// 变化能驱动 UI 刷新。
+private struct SessionRunContentView: View {
+    @ObservedObject var run: CrewSessionRun
 
     enum OutputTab: String, CaseIterable, Identifiable {
         case stdout, stderr
@@ -19,20 +58,8 @@ struct CrewSessionWindowView: View {
     @State private var selectedTab: OutputTab = .stdout
 
     var body: some View {
-        Group {
-            if let run = sessionRunner.current {
-                content(run: run)
-            } else {
-                empty
-            }
-        }
-        .navigationTitle("Session")
-    }
-
-    @ViewBuilder
-    private func content(run: CrewSessionRun) -> some View {
         VStack(spacing: 0) {
-            header(run: run)
+            header
             Divider()
             Picker("", selection: $selectedTab) {
                 ForEach(OutputTab.allCases) { tab in
@@ -43,12 +70,12 @@ struct CrewSessionWindowView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             Divider()
-            outputView(run: run)
+            outputView
         }
     }
 
     @ViewBuilder
-    private func header(run: CrewSessionRun) -> some View {
+    private var header: some View {
         HStack(spacing: 10) {
             Image(systemName: run.kind == .claudeCode ? "sparkles" : "wand.and.stars")
                 .foregroundStyle(.tint)
@@ -106,7 +133,7 @@ struct CrewSessionWindowView: View {
     }
 
     @ViewBuilder
-    private func outputView(run: CrewSessionRun) -> some View {
+    private var outputView: some View {
         let text = selectedTab == .stdout ? run.stdoutText : run.stderrText
         ScrollViewReader { proxy in
             ScrollView {
@@ -136,19 +163,5 @@ struct CrewSessionWindowView: View {
     }
 
     private var tailID: String { "session-tail" }
-
-    private var empty: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "play.rectangle.on.rectangle")
-                .font(.system(size: 40))
-                .foregroundStyle(.tertiary)
-            Text("没有正在运行的 session")
-                .foregroundStyle(.secondary)
-            Text("在中栏点 \"新建 session\" 开始")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
 }
 #endif
