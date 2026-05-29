@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import UIKit
 import MarkdownUI
@@ -332,3 +333,4 @@ private struct MathBlockImage: View {
         }
     }
 }
+#endif

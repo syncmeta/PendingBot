@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import PhotosUI
 
@@ -570,3 +571,4 @@ final class NameCorpus {
         names.randomElement() ?? "你"
     }
 }
+#endif

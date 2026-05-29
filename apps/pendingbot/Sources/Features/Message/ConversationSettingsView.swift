@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 
 // The old per-conversation "会话设置" page is gone — gear icon in the
@@ -482,3 +483,4 @@ struct LetterSettingsView: View {
         return slug.split(separator: "/").last.map(String.init) ?? slug
     }
 }
+#endif

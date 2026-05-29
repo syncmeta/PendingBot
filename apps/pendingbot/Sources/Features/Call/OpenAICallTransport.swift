@@ -1,3 +1,4 @@
+#if os(iOS)
 import Foundation
 import AVFoundation
 #if canImport(WebRTC)
@@ -884,3 +885,4 @@ final class OpenAIWebSocketTransport: NSObject, CallTransport {
         resolveSummary(voiceCallSummaryText(fromResponseDone: obj))
     }
 }
+#endif

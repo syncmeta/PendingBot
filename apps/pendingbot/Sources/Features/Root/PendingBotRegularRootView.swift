@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 
 /// Regular-size PendingBot shell for iPad.
@@ -38,3 +39,4 @@ private struct PendingBotBigScreenShellBridge: View {
         }
     }
 }
+#endif

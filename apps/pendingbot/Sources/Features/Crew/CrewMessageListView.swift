@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 
 // T4.6 P1 Step 4 — the crew chat message stream. Hand-ports the inline
@@ -113,3 +114,4 @@ struct CrewMessageListView: View {
         .padding(.top, 60)
     }
 }
+#endif

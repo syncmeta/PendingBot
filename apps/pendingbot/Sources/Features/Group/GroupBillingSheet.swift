@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 
 /// Group billing sheet — owner/admin sets the cost-split mode + window;
@@ -303,3 +304,4 @@ struct GroupBillingSheet: View {
         }
     }
 }
+#endif

@@ -1,3 +1,4 @@
+#if os(iOS)
 import Foundation
 import Observation
 import Supabase
@@ -380,3 +381,4 @@ struct CrewMentionCandidate: Identifiable, Hashable {
 
     var mentionInput: CrewMentionInput { .init(kind: kind, target_id: targetId) }
 }
+#endif

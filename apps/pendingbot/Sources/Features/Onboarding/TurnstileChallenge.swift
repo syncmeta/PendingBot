@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 @preconcurrency import WebKit
 
@@ -134,3 +135,4 @@ struct TurnstileWebView: UIViewRepresentable {
         }
     }
 }
+#endif

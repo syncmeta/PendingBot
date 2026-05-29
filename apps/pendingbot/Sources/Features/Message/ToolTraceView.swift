@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 
 /// One tool invocation captured from the SSE turn — `tool_call` creates it,
@@ -451,3 +452,4 @@ struct ToolTraceView: View {
         return out
     }
 }
+#endif

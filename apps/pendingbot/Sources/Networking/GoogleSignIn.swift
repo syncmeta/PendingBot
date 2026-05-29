@@ -1,3 +1,4 @@
+#if os(iOS)
 import Foundation
 import UIKit
 import GoogleSignIn
@@ -108,3 +109,4 @@ enum PendingGoogleSignIn {
         return nil
     }
 }
+#endif

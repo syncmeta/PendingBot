@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import Supabase
 
@@ -193,3 +194,4 @@ struct SubConversationView: View {
         }
     }
 }
+#endif

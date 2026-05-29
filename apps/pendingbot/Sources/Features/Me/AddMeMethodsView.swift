@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import Supabase
 
@@ -454,3 +455,4 @@ private struct HandleContactsView: View {
         }
     }
 }
+#endif

@@ -1,3 +1,4 @@
+#if os(iOS)
 import WebKit
 import SwiftUI
 
@@ -976,3 +977,4 @@ struct RealtimeKitParticipantView: UIViewRepresentable {
         }
     }
 }
+#endif

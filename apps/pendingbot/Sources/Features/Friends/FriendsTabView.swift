@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import Supabase
 
@@ -2159,3 +2160,4 @@ private struct BotRowOwnerActions: ViewModifier {
         }
     }
 }
+#endif

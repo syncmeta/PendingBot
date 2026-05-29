@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 
 /// Pill button that surfaces the currently-selected model. Tap opens
@@ -1193,3 +1194,4 @@ private struct PriceRangeSlider: View {
         return bounds.lowerBound + Double(pct) * span
     }
 }
+#endif

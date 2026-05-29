@@ -1,3 +1,4 @@
+#if os(iOS)
 import Foundation
 import Supabase
 
@@ -255,3 +256,4 @@ private final class ConvChannelHandle {
     var socket: RealtimeSocket?
     var observers: [UUID: Observers] = [:]
 }
+#endif

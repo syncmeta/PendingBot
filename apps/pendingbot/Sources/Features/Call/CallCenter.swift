@@ -1,3 +1,4 @@
+#if os(iOS)
 import Foundation
 
 /// App-level owner of the currently-active voice / group call.
@@ -117,3 +118,4 @@ final class CallCenter {
         if voiceCall == nil { isMinimized = false }
     }
 }
+#endif

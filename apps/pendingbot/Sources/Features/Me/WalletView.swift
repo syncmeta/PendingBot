@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 
 /// 钱包 — PND 余额、兑换码、消费日志。Pull-to-refresh 重拉余额 +
@@ -301,3 +302,4 @@ private let pndFormatter: NumberFormatter = {
     f.maximumFractionDigits = 0
     return f
 }()
+#endif

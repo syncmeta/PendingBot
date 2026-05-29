@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import CoreImage.CIFilterBuiltins
 import UIKit
@@ -246,3 +247,4 @@ struct GroupQRCard: View {
         }
     }
 }
+#endif

@@ -1,3 +1,4 @@
+#if os(iOS)
 import Foundation
 import Supabase
 
@@ -246,3 +247,4 @@ final class RealtimeSocket {
         return comps.url!
     }
 }
+#endif

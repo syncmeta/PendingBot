@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 
 /// T4.6 — iOS 简化版的 "新建 crew" sheet。
@@ -199,3 +200,4 @@ struct CreateCrewV2Sheet: View {
         }
     }
 }
+#endif

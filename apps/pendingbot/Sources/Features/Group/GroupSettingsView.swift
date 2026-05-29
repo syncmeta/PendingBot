@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 
 /// Group settings — group-info section (title, group number, policy),
@@ -1104,3 +1105,4 @@ private struct GroupAddFriendSheet: View {
 extension PendingPeer: Identifiable {
     var id: String { "\(kind):\(peerId)" }
 }
+#endif

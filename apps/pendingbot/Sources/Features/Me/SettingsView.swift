@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import OSLog
 
@@ -114,3 +115,4 @@ struct SettingsView: View {
         }
     }
 }
+#endif

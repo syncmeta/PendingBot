@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import UIKit
 import PhotosUI
@@ -654,3 +655,4 @@ final class ComposerBarContainerView: UIView {
         refreshBackdrop()
     }
 }
+#endif

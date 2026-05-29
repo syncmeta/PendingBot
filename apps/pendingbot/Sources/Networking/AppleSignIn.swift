@@ -1,3 +1,4 @@
+#if os(iOS)
 import Foundation
 import AuthenticationServices
 import Supabase
@@ -193,4 +194,5 @@ private func sha256Compute(_ message: [UInt8], into out: inout [UInt8]) {
 
 #if canImport(UIKit)
 import UIKit
+#endif
 #endif

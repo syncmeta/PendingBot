@@ -74,10 +74,9 @@ struct MacRootView: View {
         case .envelope:
             MacTabPlaceholder(title: "来信", note: "Phase 2")
         case .me:
-            MacTabPlaceholder(
-                title: "我",
-                note: "Phase 2 — 等 subject 系统接入,展示当前代表的 subject + 钱包"
-            )
+            // T0.1 P0 已接入真实数据 — 展示 AccountStore.current 的账号信息,
+            // 提供退出登录。subject / 钱包 / 注销账号 留给 T0.1 P1+。
+            MacMeView()
         }
     }
 }

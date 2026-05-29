@@ -1,3 +1,4 @@
+#if os(iOS)
 import Foundation
 import Supabase
 import SwiftUI
@@ -442,3 +443,4 @@ private func decodeIntValue(_ any: AnyJSON?) -> Int? {
     }
     return nil
 }
+#endif

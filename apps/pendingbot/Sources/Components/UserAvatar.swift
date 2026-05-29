@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 
 /// Avatar view that prefers an uploaded image (`/v1/uploads/<id>`) when
@@ -87,3 +88,4 @@ final class AvatarCache: @unchecked Sendable {
         store.removeAll()
     }
 }
+#endif
