@@ -13,6 +13,7 @@ import AppKit
 /// reuse_bot 路径需要先 ship `GET /v1/me/bots`；留下次。
 struct CreateCrewSheet: View {
     @EnvironmentObject private var crewStore: CrewStore
+    @EnvironmentObject private var captainTemplates: CaptainTemplateStore
     @Environment(\.dismiss) private var dismiss
 
     @State private var title: String = ""
@@ -21,6 +22,10 @@ struct CreateCrewSheet: View {
     @State private var runtimeLocation: String = "local_host"
     @State private var workingDirectory: URL?
     @State private var captainTemplateName: String = ""
+    /// BYOK 模式下选中的本机 captain 模板。nil = 用 "新建 captain" 路径
+    /// (templateName field 自填名字)。这个 picker 只在 BYOK 模式渲染。
+    @State private var selectedTemplateId: String?
+    @State private var showingTemplateEditor: Bool = false
     @State private var creating: Bool = false
     @State private var localError: String?
 
@@ -190,18 +195,94 @@ struct CreateCrewSheet: View {
         }
     }
 
+    @ViewBuilder
     private var captainSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             Text("机长（captain bot）")
                 .font(.callout.weight(.medium))
-            Text("将自动创建一个新的 captain bot 代表本 crew。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            TextField("Captain 名称（留空则用默认）", text: $captainTemplateName)
-                .textFieldStyle(.roundedBorder)
-            Text("注：复用已有 bot 作 captain 留下次（需要 GET /v1/me/bots 接通）。")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+            // BYOK 模式:本机 captain 模板池 + 新建。
+            // 登录模式:沿用旧的"自动新建 captain"路径(真 bot 库待接通)。
+            if crewStore.mode == .byok {
+                captainPoolPicker
+            } else {
+                Text("将自动创建一个新的 captain bot 代表本 crew。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextField("Captain 名称(留空则用默认)", text: $captainTemplateName)
+                    .textFieldStyle(.roundedBorder)
+                Text("注:复用已有 bot 作 captain 留下次(需要 GET /v1/me/bots 接通)。")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .sheet(isPresented: $showingTemplateEditor) {
+            CaptainTemplateEditorSheet { newTemplate in
+                // 新建完自动选中,体感像 "下拉新建一项再确认"。
+                selectedTemplateId = newTemplate.id
+                captainTemplateName = newTemplate.displayName
+            }
+            .environmentObject(captainTemplates)
+        }
+    }
+
+    /// BYOK 模式的 captain 选择 UI:从本机模板池挑一个,或现场新建。
+    /// 选中模板后把 displayName 灌到 captainTemplateName(走 systemGenerated
+    /// 的 templateName 字段);新建路径 push 一个 sheet 让用户填字段。
+    @ViewBuilder
+    private var captainPoolPicker: some View {
+        let list = captainTemplates.list()
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Picker("", selection: Binding(
+                    get: { selectedTemplateId ?? "__new__" },
+                    set: { newValue in
+                        if newValue == "__new__" {
+                            selectedTemplateId = nil
+                        } else {
+                            selectedTemplateId = newValue
+                            if let t = list.first(where: { $0.id == newValue }) {
+                                captainTemplateName = t.displayName
+                            }
+                        }
+                    }
+                )) {
+                    Text("现场新建 captain").tag("__new__")
+                    if !list.isEmpty {
+                        Divider()
+                        ForEach(list) { t in
+                            Text("\(t.displayName) · \(t.model)").tag(t.id)
+                        }
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                Button {
+                    showingTemplateEditor = true
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .buttonStyle(.bordered)
+                .help("新建本机 captain 模板")
+            }
+            if selectedTemplateId == nil {
+                TextField("Captain 名称(留空则用默认)", text: $captainTemplateName)
+                    .textFieldStyle(.roundedBorder)
+                Text("BYOK 模式:也可以从本机 captain 池里选一个已存的模板。模板保存在本机,不上传 PendingBot。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if let t = list.first(where: { $0.id == selectedTemplateId }) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("模型:\(t.model)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if let sp = t.systemPrompt, !sp.isEmpty {
+                        Text("System prompt: \(sp)")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(2)
+                    }
+                }
+            }
         }
     }
 
