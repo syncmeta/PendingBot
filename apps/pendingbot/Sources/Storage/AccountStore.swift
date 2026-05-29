@@ -188,8 +188,10 @@ final class AccountStore: ObservableObject {
     }
 
     /// Sign out everywhere. Clears the Supabase session (which fires the
-    /// authStateChanges listener and nils `current`) AND wipes the local
-    /// SQLite cache so the next user doesn't see leftover conversations.
+    /// authStateChanges listener and nils `current`) AND hard-wipes the local
+    /// SQLite cache — deleting the DB file and rotating its SQLCipher key — so
+    /// the next user neither sees leftover conversations nor inherits a key
+    /// that could decrypt a forensic copy of the prior user's data.
     func signOut() async {
         do {
             try await SupabaseStack.shared.auth.signOut()
@@ -198,7 +200,7 @@ final class AccountStore: ObservableObject {
             // the network half fails the local session is gone.
             log.error("signOut error: \(String(describing: error), privacy: .public)")
         }
-        LocalDatabase.shared.clear()
+        LocalDatabase.shared.wipeForSignOut()
         #if os(iOS)
         // AvatarCache lives in Sources/Components/UserAvatar.swift, which
         // is whole-file gated behind #if os(iOS) (UIImage-based).

@@ -2,6 +2,7 @@ import type { SupabaseClient } from './supabase';
 import type { Env } from '../types';
 import { getCachedBalance, putCachedBalance } from './balance-cache';
 import { kvConfig } from './kv-config';
+import { getOwnerBalanceMicros } from './billing-v2';
 
 // Billing layer (P0). All schema changes ship in 0033_billing.sql /
 // 0034_billing_admin_rpcs.sql. This module is the single point that knows
@@ -214,37 +215,20 @@ export async function getBalanceGateState(
   env: Env,
   supa: SupabaseClient,
   userId: string,
-  opts?: { readBalanceWhenDisabled?: boolean },
+  _opts?: { readBalanceWhenDisabled?: boolean },
 ): Promise<BalanceGateState> {
-  const [cached, threshold] = await Promise.all([
-    getCachedBalance(env, userId),
-    getThreshold(supa, env),
-  ]);
-  const minThreshold = threshold;
-
-  if (cached) {
-    return {
-      balance_credits: cached.balance_credits,
-      min_threshold: minThreshold,
-      allowed: minThreshold <= 0 || cached.balance_credits >= minThreshold,
-    };
-  }
-
-  if (minThreshold <= 0 && !opts?.readBalanceWhenDisabled) {
-    return {
-      balance_credits: 0,
-      min_threshold: minThreshold,
-      allowed: true,
-    };
-  }
-
-  const bal = await getBalance(supa, userId);
-  const balance = bal?.balance_credits ?? 0;
-  putCachedBalance(env, userId, balance).catch(() => undefined);
+  // Billing v2 authoritative (post-cutover #190). The pre-call gate now
+  // reads the user's v2 pack balance and blocks only when EXHAUSTED
+  // (≤ 0) — design §7 hard-stop. `balance_credits` here carries PNC
+  // micros (the field name is v1-legacy; callers only branch on
+  // `allowed` + surface the number, so the unit change is cosmetic).
+  // No KV cache: the SUM over active packs is a single cheap indexed
+  // read, and a stale cache after a debit would mis-gate.
+  const micros = await getOwnerBalanceMicros(supa, { kind: 'user', userId });
   return {
-    balance_credits: balance,
-    min_threshold: minThreshold,
-    allowed: minThreshold <= 0 || balance >= minThreshold,
+    balance_credits: micros,
+    min_threshold: 0,
+    allowed: micros > 0,
   };
 }
 

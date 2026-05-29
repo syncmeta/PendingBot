@@ -36,6 +36,7 @@ import { realtimeRoutes } from './routes/realtime';
 import { realtimeHubRoutes } from './routes/realtime-hub';
 import { realtimeInternalRoutes } from './routes/realtime-internal';
 import { wellKnownRoutes } from './routes/well-known';
+import { billingWebhookRoutes } from './routes/billing-webhooks';
 import { handleScheduled } from './cron';
 import { persistAuditMessage, GatewayCostPendingError } from './llm/router';
 import type { AuditMessage } from './queue/audit-types';
@@ -126,6 +127,7 @@ v1.route('/arena', arenaRoutes);
 v1.route('/realtime', realtimeRoutes);
 v1.route('/realtime-hub', realtimeHubRoutes);
 v1.route('/realtime-internal', realtimeInternalRoutes);
+v1.route('/billing', billingWebhookRoutes);  // /v1/billing/lemonsqueezy/* + /v1/billing/iap/*
 
 app.route('/v1', v1);
 

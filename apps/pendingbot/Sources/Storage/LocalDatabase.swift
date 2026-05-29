@@ -48,35 +48,45 @@ private enum LocalDatabaseEncryptionError: LocalizedError {
 final class LocalDatabase {
     static let shared = LocalDatabase()
 
-    let dbQueue: DatabaseQueue
+    /// `var` (not `let`) so `wipeForSignOut()` can tear the connection down
+    /// and swap in a freshly-keyed one. No external code touches it directly
+    /// — all access goes through the methods below — so mutating it is safe.
+    private(set) var dbQueue: DatabaseQueue
 
     private init() {
-        let url = Self.databaseURL()
-        let key = Self.loadOrCreatePassphrase()
-        let config = Self.makeConfiguration(passphrase: key)
+        self.dbQueue = Self.openWithRecovery()
+    }
+
+    /// Open the on-disk encrypted DB, with the two-tier recovery cascade,
+    /// falling back to in-memory if the disk is genuinely unusable. Mints a
+    /// passphrase via `loadOrCreatePassphrase()` (reusing the Keychain one if
+    /// present), so calling this after deleting the Keychain entry yields a
+    /// brand-new key + file. Shared by `init` and `wipeForSignOut()`.
+    private static func openWithRecovery() -> DatabaseQueue {
+        let url = databaseURL()
+        let key = loadOrCreatePassphrase()
+        let config = makeConfiguration(passphrase: key)
 
         do {
             let queue = try DatabaseQueue(path: url.path, configuration: config)
-            try Self.migrator.migrate(queue)
-            Self.protectDatabaseFile(at: url)
-            self.dbQueue = queue
-            return
+            try migrator.migrate(queue)
+            protectDatabaseFile(at: url)
+            return queue
         } catch LocalDatabaseEncryptionError.sqlCipherUnavailable {
             fatalError("LocalDatabase: SQLCipher is not active; refusing to open an unencrypted on-disk cache")
         } catch {
             // First-resort recovery: nuke a possibly-corrupt OR
-            // wrong-format file and retry. Triggers on the
-            // plaintext→encrypted flip too — a legacy plaintext DB
-            // file fails to open when SQLCipher applies the key, and
-            // we'd rather start fresh than crash.
-            try? FileManager.default.removeItem(at: url)
+            // wrong-format file (incl. WAL/SHM sidecars) and retry.
+            // Triggers on the plaintext→encrypted flip too — a legacy
+            // plaintext DB file fails to open when SQLCipher applies the
+            // key, and we'd rather start fresh than crash.
+            removeDatabaseFiles(at: url)
         }
         do {
             let queue = try DatabaseQueue(path: url.path, configuration: config)
-            try Self.migrator.migrate(queue)
-            Self.protectDatabaseFile(at: url)
-            self.dbQueue = queue
-            return
+            try migrator.migrate(queue)
+            protectDatabaseFile(at: url)
+            return queue
         } catch LocalDatabaseEncryptionError.sqlCipherUnavailable {
             fatalError("LocalDatabase: SQLCipher is not active; refusing to open an unencrypted on-disk cache")
         } catch {
@@ -91,8 +101,8 @@ final class LocalDatabase {
         let memQueue = (try? DatabaseQueue(configuration: config)) ?? {
             fatalError("LocalDatabase: in-memory DatabaseQueue() failed — unrecoverable")
         }()
-        try? Self.migrator.migrate(memQueue)
-        self.dbQueue = memQueue
+        try? migrator.migrate(memQueue)
+        return memQueue
     }
 
     private static func databaseURL() -> URL {
@@ -116,18 +126,31 @@ final class LocalDatabase {
         )
     }
 
+    /// Delete the DB file AND its WAL/SHM sidecars. SQLCipher writes recent
+    /// pages into the `-wal` journal before checkpointing into the main file,
+    /// so removing only `pendingbot.sqlite` would leave un-checkpointed
+    /// ciphertext behind in `-wal`. Decryptable by anyone holding the
+    /// passphrase — hence we always nuke all three together.
+    private static func removeDatabaseFiles(at url: URL) {
+        let fm = FileManager.default
+        for suffix in ["", "-wal", "-shm"] {
+            try? fm.removeItem(atPath: url.path + suffix)
+        }
+    }
+
     // MARK: - Encryption passphrase
 
     /// Keychain account name for the local DB passphrase. The Keychain
     /// service is the app's bundle id (see Keychain.service); the
-    /// account scopes within that. Once written, the value is
-    /// device-only (no iCloud sync) and survives reinstalls under the
-    /// same Apple ID — which means a fresh install of the app on the
-    /// same device WILL recover access to its DB file if one's left
-    /// over. We rely on `clear()` at sign-out to flush content; we do
-    /// NOT delete the passphrase on sign-out, so the same passphrase
-    /// is reused for the next user. That's fine — the passphrase is
-    /// only a key, never a user identifier.
+    /// account scopes within that. The value is device-only (no iCloud
+    /// sync). `wipeForSignOut()` deletes this entry on sign-out and the
+    /// reopen mints a fresh one, so each signed-in session runs under its
+    /// own key — the prior user's key never carries over.
+    ///
+    /// Note iOS keeps Keychain entries across app *uninstall*, so an
+    /// orphaned passphrase may linger after the app is deleted — harmless,
+    /// because uninstall also wipes the app container (the DB file it would
+    /// decrypt). A reinstall just mints over it on first launch.
     private static let dbPassphraseAccount = "local-db-passphrase-v1"
 
     private static func loadOrCreatePassphrase() -> String {
@@ -301,16 +324,37 @@ final class LocalDatabase {
         return m
     }
 
-    /// Wipe the cache — call from sign-out.
-    func clear() {
-        try? dbQueue.write { db in
-            try db.execute(sql: "DELETE FROM messages")
-            try db.execute(sql: "DELETE FROM conversations")
-            try db.execute(sql: "DELETE FROM bots")
-            try db.execute(sql: "DELETE FROM contacts")
-            try db.execute(sql: "DELETE FROM group_members")
-            try db.execute(sql: "DELETE FROM group_meta")
+    /// Hard-wipe the cache on sign-out. Stronger than a `DELETE FROM` sweep:
+    /// a logical delete leaves the prior user's rows as recoverable ciphertext
+    /// in the file's freelist / WAL, and the key that decrypts them keeps
+    /// sitting in the Keychain. Instead we:
+    ///   1. tear down the live connection (so the OS releases the file lock),
+    ///   2. delete the DB file + WAL/SHM sidecars,
+    ///   3. rotate the SQLCipher passphrase (delete the Keychain entry) so any
+    ///      forensic copy of the old ciphertext is undecryptable even if its
+    ///      key had been captured,
+    ///   4. reopen a fresh, newly-keyed encrypted DB.
+    /// After this the next user starts on a clean file under a new key.
+    func wipeForSignOut() {
+        let url = Self.databaseURL()
+        // (1) Drop the on-disk queue. Pointing `dbQueue` at a throwaway
+        // in-memory DB releases the last strong ref to the disk queue, whose
+        // deinit closes the sqlite handle and frees the file/WAL lock — a
+        // prerequisite for deleting the sidecars cleanly. The transient queue
+        // is keyed with the still-present passphrase; its contents never
+        // persist, so the key value is irrelevant.
+        let transientConfig = Self.makeConfiguration(passphrase: Self.loadOrCreatePassphrase())
+        if let mem = try? DatabaseQueue(configuration: transientConfig) {
+            dbQueue = mem
         }
+        // (2) Remove the encrypted file and its journal sidecars.
+        Self.removeDatabaseFiles(at: url)
+        // (3) Rotate the key: drop the Keychain passphrase so the reopen mints
+        // a new one rather than reusing the key that decrypted the old data.
+        Keychain.delete(account: Self.dbPassphraseAccount)
+        // (4) Reopen fresh — openWithRecovery generates a new passphrase +
+        // encrypted file via loadOrCreatePassphrase.
+        dbQueue = Self.openWithRecovery()
     }
 
     // MARK: - Conversations

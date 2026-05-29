@@ -2690,6 +2690,8 @@ export type Database = {
           external_refund_id: string
           id: string
           pack_id: string | null
+          processed_at: string | null
+          processing_error: string | null
           raw_payload: Json
           refund_amount_usd_cents: number
           source: string
@@ -2701,6 +2703,8 @@ export type Database = {
           external_refund_id: string
           id?: string
           pack_id?: string | null
+          processed_at?: string | null
+          processing_error?: string | null
           raw_payload?: Json
           refund_amount_usd_cents: number
           source: string
@@ -2712,6 +2716,8 @@ export type Database = {
           external_refund_id?: string
           id?: string
           pack_id?: string | null
+          processed_at?: string | null
+          processing_error?: string | null
           raw_payload?: Json
           refund_amount_usd_cents?: number
           source?: string
@@ -4343,6 +4349,15 @@ export type Database = {
       }
       billing_redeem: { Args: { p_code: string }; Returns: Json }
       billing_signup_bonus: { Args: { p_user_id: string }; Returns: number }
+      billing_v2_admin_adjust: {
+        Args: {
+          p_actor_user_id: string
+          p_delta_pnc_micros: number
+          p_owner_user_id: string
+          p_reason: string
+        }
+        Returns: number
+      }
       bootstrap_user_id: {
         Args: { p_email: string; p_meta: Json; p_uid: string }
         Returns: undefined

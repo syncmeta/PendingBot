@@ -5,20 +5,31 @@ import {
   makeFakeEnv,
   type FakeDb,
 } from '../../tests/_helpers/fake-supabase';
-import { _resetMarkupCache } from '../lib/billing';
 import { persistAuditMessage } from './router';
 
 installFakeSupabaseMock();
 
+// Billing v2 cutover: persistAuditMessage no longer calls the v1
+// billing_debit* RPCs. It writes the audit_log row (turn metadata) and
+// settles the spend via settleTurnV2 → settleUsage, which records a
+// usage_events row owned by the resolved billing owner. The deep settle
+// mechanics (FIFO pack debit, ledger) are unit-tested in
+// billing-v2.test.ts; here we assert the OWNER RESOLUTION + that no v1
+// RPC fires.
+
 function seedConversationBilling(conversationType: string, subjectId = 'subject-1'): FakeDb {
-  const db = makeFakeDb({
-    billing_config: [{ key: 'markup', value: 1 }],
-    conversations: [{ id: 'conv-1', conversation_type: conversationType }],
+  return makeFakeDb({
+    conversations: [
+      {
+        id: 'conv-1',
+        conversation_type: conversationType,
+        responsible_subject_id: subjectId,
+      },
+    ],
     temporary_group_meta: [
       { conversation_id: 'conv-1', responsible_subject_id: subjectId },
     ],
   });
-  return db;
 }
 
 function auditMessage(overrides: Record<string, unknown> = {}) {
@@ -39,53 +50,53 @@ function auditMessage(overrides: Record<string, unknown> = {}) {
   } as never;
 }
 
-describe('persistAuditMessage conversation billing target', () => {
+describe('persistAuditMessage v2 billing owner resolution', () => {
   beforeEach(() => {
-    _resetMarkupCache();
     vi.restoreAllMocks();
   });
 
-  it('debits a crew conversation to its responsible subject wallet', async () => {
+  it('settles a crew conversation against its responsible subject', async () => {
     const db = seedConversationBilling('crew');
-    const debitSubject = vi.fn(() => ({ data: 973, error: null }));
     const debitUser = vi.fn(() => ({ data: 973, error: null }));
-    db.rpcs = {
-      billing_debit_subject: debitSubject,
-      billing_debit: debitUser,
-    };
+    const debitSubject = vi.fn(() => ({ data: 973, error: null }));
+    db.rpcs = { billing_debit: debitUser, billing_debit_subject: debitSubject };
 
     await persistAuditMessage(makeFakeEnv(db), auditMessage());
 
-    expect(debitSubject).toHaveBeenCalledWith({
-      p_subject_id: 'subject-1',
-      p_audit_log_id: '018f1111-1111-7111-8111-111111111111',
-      p_credits: 27,
-    });
+    // No v1 debit RPCs post-cutover.
     expect(debitUser).not.toHaveBeenCalled();
+    expect(debitSubject).not.toHaveBeenCalled();
+
+    // Audit row is turn metadata only: billing_status 'billed', cost_credits 0.
     const auditRow = db.inserts.find((i) => i.table === 'audit_log')?.row;
-    expect(auditRow?.billing_status).toBe('pending');
+    expect(auditRow?.billing_status).toBe('billed');
+    expect(auditRow?.cost_credits).toBe(0);
     expect(auditRow?.metadata).toMatchObject({
       billing_target_kind: 'subject',
       billing_subject_id: 'subject-1',
     });
+
+    // v2 usage_event owned by the subject. 0.01 USD → 270_000 PNC micros.
+    const usageRow = db.inserts.find((i) => i.table === 'usage_events')?.row;
+    expect(usageRow?.owner_subject_id).toBe('subject-1');
+    expect(usageRow?.owner_user_id).toBeNull();
+    expect(usageRow?.event_category).toBe('llm_tokens');
+    expect(usageRow?.pnc_micros).toBe(270000);
   });
 
   it('prefers the conversation subject over a caller-supplied user id', async () => {
     const db = seedConversationBilling('temporary_group', 'subject-2');
-    const debitSubject = vi.fn(() => ({ data: 940, error: null }));
     const debitUser = vi.fn(() => ({ data: 940, error: null }));
-    db.rpcs = {
-      billing_debit_subject: debitSubject,
-      billing_debit: debitUser,
-    };
+    const debitSubject = vi.fn(() => ({ data: 940, error: null }));
+    db.rpcs = { billing_debit: debitUser, billing_debit_subject: debitSubject };
 
     await persistAuditMessage(makeFakeEnv(db), auditMessage({ userId: 'user-1' }));
 
-    expect(debitSubject).toHaveBeenCalledWith({
-      p_subject_id: 'subject-2',
-      p_audit_log_id: '018f1111-1111-7111-8111-111111111111',
-      p_credits: 27,
-    });
     expect(debitUser).not.toHaveBeenCalled();
+    expect(debitSubject).not.toHaveBeenCalled();
+
+    const usageRow = db.inserts.find((i) => i.table === 'usage_events')?.row;
+    expect(usageRow?.owner_subject_id).toBe('subject-2');
+    expect(usageRow?.owner_user_id).toBeNull();
   });
 });

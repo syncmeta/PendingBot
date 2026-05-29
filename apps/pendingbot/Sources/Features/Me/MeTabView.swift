@@ -124,7 +124,7 @@ struct MeTabView: View {
                             optionDivider
 
                             NavigationLink {
-                                WalletView().toolbar(.hidden, for: .tabBar)
+                                WalletV2View().toolbar(.hidden, for: .tabBar)
                             } label: {
                                 OptionRow(title: "钱包")
                             }

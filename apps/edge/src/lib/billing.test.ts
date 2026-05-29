@@ -161,93 +161,67 @@ describe('getMarkup', () => {
   });
 });
 
-describe('requireBalance', () => {
-  it('returns a balance gate snapshot and warms the balance cache on miss', async () => {
-    const put = vi.fn(async () => undefined);
-    const env = {
-      MEMORY: {
-        get: async () => null,
-        put,
-        delete: async () => undefined,
-      },
-    } as unknown as Env;
-    const supa = stubSupa({
-      users: () => ({ data: { balance_credits: 120 } }),
-      billing_config: () => ({ data: { value: 100 }, error: null }),
-    });
+// Billing v2 cutover: the pre-call gate now reads the user's v2 pack
+// balance (SUM of active packs.remaining_pnc_micros) and blocks ONLY when
+// exhausted (≤ 0). min_threshold is always 0; balance_credits carries PNC
+// micros. This stub makes `.from('packs')...` awaitable to a row list.
+function stubSupaPacks(remainingMicrosRows: number[]): SupabaseClient {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const builder: any = {
+    select() { return this; },
+    eq() { return this; },
+    then(resolve: (v: { data: unknown; error: null }) => void) {
+      resolve({
+        data: remainingMicrosRows.map((m) => ({ remaining_pnc_micros: m })),
+        error: null,
+      });
+    },
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const client: any = { from: () => builder };
+  return client as SupabaseClient;
+}
 
-    await expect(
-      getBalanceGateState(env, supa, 'u1', { readBalanceWhenDisabled: true }),
-    ).resolves.toEqual({
-      balance_credits: 120,
-      min_threshold: 100,
-      allowed: true,
-    });
-    expect(put).toHaveBeenCalled();
-  });
-
-  it('can read balance snapshots even when the gate is disabled', async () => {
-    const supa = stubSupa({
-      users: () => ({ data: { balance_credits: -50 } }),
-      billing_config: () => ({ data: { value: 0 }, error: null }),
-    });
-
-    await expect(
-      getBalanceGateState(fakeEnv(), supa, 'u1', { readBalanceWhenDisabled: true }),
-    ).resolves.toEqual({
-      balance_credits: -50,
+describe('requireBalance (v2 gate)', () => {
+  it('snapshot reports v2 micros, threshold 0, allowed when positive', async () => {
+    const supa = stubSupaPacks([60_000_000, 10_000_000]);
+    await expect(getBalanceGateState(fakeEnv(), supa, 'u1')).resolves.toEqual({
+      balance_credits: 70_000_000,
       min_threshold: 0,
       allowed: true,
     });
   });
 
-  it('passes when balance >= threshold', async () => {
-    const supa = stubSupa({
-      users: () => ({ data: { balance_credits: 1000 } }),
-      billing_config: () => ({ data: { value: 100 }, error: null }),
-    });
+  it('passes when the user has any positive pack balance', async () => {
+    const supa = stubSupaPacks([1]);
     await expect(requireBalance(fakeEnv(), supa, 'u1')).resolves.toBeUndefined();
   });
 
-  it('passes when threshold is 0 (no gate)', async () => {
-    // 0 means "don't gate anyone" per the seed value semantics.
-    const supa = stubSupa({
-      users: () => ({ data: { balance_credits: -50 } }),
-      billing_config: () => ({ data: { value: 0 }, error: null }),
-    });
-    await expect(requireBalance(fakeEnv(), supa, 'u1')).resolves.toBeUndefined();
+  it('throws InsufficientBalanceError when exhausted (no packs)', async () => {
+    const supa = stubSupaPacks([]);
+    await expect(requireBalance(fakeEnv(), supa, 'u1')).rejects.toBeInstanceOf(
+      InsufficientBalanceError,
+    );
   });
 
-  it('throws InsufficientBalanceError when balance < threshold', async () => {
-    const supa = stubSupa({
-      users: () => ({ data: { balance_credits: 5 } }),
-      billing_config: () => ({ data: { value: 100 }, error: null }),
-    });
-    await expect(requireBalance(fakeEnv(), supa, 'u1')).rejects.toBeInstanceOf(InsufficientBalanceError);
+  it('throws when all packs are drained to zero', async () => {
+    const supa = stubSupaPacks([0, 0]);
+    await expect(requireBalance(fakeEnv(), supa, 'u1')).rejects.toBeInstanceOf(
+      InsufficientBalanceError,
+    );
   });
 
-  it('error carries actual balance + threshold (so client can render copy)', async () => {
-    const supa = stubSupa({
-      users: () => ({ data: { balance_credits: 5 } }),
-      billing_config: () => ({ data: { value: 100 }, error: null }),
-    });
+  it('error carries the (zero) balance and threshold for client copy', async () => {
+    const supa = stubSupaPacks([]);
     try {
       await requireBalance(fakeEnv(), supa, 'u1');
       expect.fail('should have thrown');
     } catch (err) {
       expect(err).toBeInstanceOf(InsufficientBalanceError);
       const e = err as InsufficientBalanceError;
-      expect(e.balance).toBe(5);
-      expect(e.threshold).toBe(100);
+      expect(e.balance).toBe(0);
+      expect(e.threshold).toBe(0);
     }
-  });
-
-  it('treats missing user row as balance 0', async () => {
-    const supa = stubSupa({
-      users: () => ({ data: null }),
-      billing_config: () => ({ data: { value: 1 }, error: null }),
-    });
-    await expect(requireBalance(fakeEnv(), supa, 'u1')).rejects.toBeInstanceOf(InsufficientBalanceError);
   });
 });
 

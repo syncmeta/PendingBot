@@ -11,6 +11,7 @@ import {
   redeemCode,
   RedemptionError,
 } from '../lib/billing';
+import { getThresholdState } from '../lib/billing-v2';
 import { putCachedBalance } from '../lib/balance-cache';
 import { jsonError } from '../lib/http-error';
 import type { AppBindings } from '../types';
@@ -22,6 +23,7 @@ meRoutes.use('/balance', requireSession());
 meRoutes.use('/redeem', requireSession());
 meRoutes.use('/billing/*', requireSession());
 meRoutes.use('/subjects', requireSession());
+meRoutes.use('/wallet/*', requireSession());
 
 function billingCategory(taskType: string, metadata: unknown): { key: string; label: string } {
   const source = metadata && typeof metadata === 'object'
@@ -131,6 +133,69 @@ meRoutes.get('/balance', async (c) => {
     lifetime_topup_credits: balance?.lifetime_topup_credits ?? 0,
     lifetime_spent_credits: balance?.lifetime_spent_credits ?? 0,
     min_threshold: threshold ?? 0,
+  });
+});
+
+// GET /v1/me/wallet/v2 — billing v2 wallet read.
+// Returns total balance + active packs + recent ledger entries. RLS is
+// the user's anon-key client, so they only see their own packs.
+//
+// Pre-cutover (#190) this endpoint runs alongside /v1/me/balance (v1).
+// Once v2 is the source of truth, /balance gets redirected here.
+meRoutes.get('/wallet/v2', async (c) => {
+  const userId = c.var.userId!;
+  const userJwt = c.var.userJwt!;
+  const supa = userClient(c.env, userJwt);
+
+  const [packsResult, ledgerResult] = await Promise.all([
+    supa
+      .from('packs')
+      .select(
+        'id, initial_pnc_micros, remaining_pnc_micros, expires_at, status, sales_channel, created_at',
+      )
+      .eq('owner_user_id', userId)
+      .eq('status', 'active')
+      .order('expires_at', { ascending: true, nullsFirst: false })
+      .order('created_at', { ascending: true })
+      .limit(50),
+    supa
+      .from('ledger_entries')
+      .select(
+        'id, pack_id, entry_type, delta_pnc_micros, balance_after_pnc_micros, created_at',
+      )
+      .eq('owner_user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(20),
+  ]);
+
+  if (packsResult.error) {
+    console.warn('[wallet/v2] packs read', packsResult.error.message);
+    return jsonError(c, 500, 'database_error');
+  }
+  const packs = (packsResult.data ?? []).map((p) => ({
+    id: p.id,
+    initial_pnc_micros: Number(p.initial_pnc_micros),
+    remaining_pnc_micros: Number(p.remaining_pnc_micros),
+    expires_at: p.expires_at,
+    status: p.status,
+    sales_channel: p.sales_channel,
+    created_at: p.created_at,
+  }));
+  const totalPncMicros = packs.reduce((s, p) => s + p.remaining_pnc_micros, 0);
+  const thresholdState = getThresholdState(totalPncMicros);
+
+  return c.json({
+    total_pnc_micros: totalPncMicros,
+    threshold_state: thresholdState,
+    packs,
+    recent_ledger: (ledgerResult.data ?? []).map((l) => ({
+      id: l.id,
+      pack_id: l.pack_id,
+      entry_type: l.entry_type,
+      delta_pnc_micros: Number(l.delta_pnc_micros),
+      balance_after_pnc_micros: Number(l.balance_after_pnc_micros),
+      created_at: l.created_at,
+    })),
   });
 });
 

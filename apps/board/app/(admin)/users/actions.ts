@@ -150,6 +150,75 @@ export async function grantCredits(
   return { ok: { credits, new_balance: Number(newBalance ?? 0) } };
 }
 
+export type WalletV2FormState = {
+  error?: string;
+  ok?: { pnc: number; new_balance_micros: number };
+};
+
+// Billing v2 admin grant / claw-back. Amount is in PNC (the form takes a
+// human PNC value with up to 2 decimals); we convert to micros and call
+// billing_v2_admin_adjust (delta>0 grants a never-expiring admin_grant
+// pack; delta<0 FIFO-debits active packs). Mirrors the v1 grantCredits
+// shape so the page can host both during dual-write.
+export async function adjustWalletV2(
+  userId: string,
+  _prev: WalletV2FormState,
+  formData: FormData,
+): Promise<WalletV2FormState> {
+  const admin = await requireAdmin();
+  const pncRaw = String(formData.get('pnc') ?? '').trim();
+  const reason = String(formData.get('reason') ?? '').trim() || null;
+  const confirmed = String(formData.get('confirm') ?? '') === 'yes';
+
+  const pnc = Number.parseFloat(pncRaw);
+  if (!Number.isFinite(pnc) || pnc === 0) {
+    return { error: 'PNC 必须是非零数值（正数=发放，负数=扣回）' };
+  }
+  // micros = pnc * 1_000_000, rounded to integer micros.
+  const deltaMicros = Math.round(pnc * 1_000_000);
+  if (deltaMicros === 0) {
+    return { error: '金额过小（不足 1 micro PNC）' };
+  }
+  // Double-confirm gate: |amount| > 100 PNC requires the confirm checkbox.
+  if (Math.abs(pnc) > 100 && !confirmed) {
+    return { error: `金额 ${pnc} PNC 超过 100，请勾选二次确认后再提交` };
+  }
+
+  const supa = supabaseAdmin();
+  const { data: beforeRows } = await supa
+    .from('packs')
+    .select('remaining_pnc_micros')
+    .eq('owner_user_id', userId)
+    .eq('status', 'active');
+  const beforeMicros = (beforeRows ?? []).reduce(
+    (s, r) => s + Number(r.remaining_pnc_micros ?? 0),
+    0,
+  );
+
+  const { data: newBalance, error } = await supa.rpc('billing_v2_admin_adjust', {
+    p_owner_user_id: userId,
+    p_delta_pnc_micros: deltaMicros,
+    p_reason: reason ?? '',
+    p_actor_user_id: admin.id,
+  });
+  if (error) return { error: error.message };
+
+  await audit({
+    action: deltaMicros > 0 ? 'billing_v2.grant' : 'billing_v2.adjust',
+    targetId: userId,
+    before: { balance_pnc_micros: beforeMicros },
+    after: {
+      balance_pnc_micros: Number(newBalance ?? 0),
+      delta_pnc_micros: deltaMicros,
+      reason,
+    },
+    actorId: admin.id,
+  });
+  revalidatePath(`/users/${userId}`);
+  revalidatePath('/billing');
+  return { ok: { pnc, new_balance_micros: Number(newBalance ?? 0) } };
+}
+
 export type DeletionActionResult = { ok?: true; error?: string; message?: string };
 
 /// Force-finalize a user's account, bypassing the 28-day cooldown. Calls

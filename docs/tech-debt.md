@@ -41,6 +41,14 @@
 - **建议**: T0.1 P1 — 先把 Models / Storage / Networking 里已 cross-platform 的部分往上抽通用 `Theme` / `PlatformColor` / `PlatformImage` 抽象层,让 `Sources/Components/` 里小部件(`UserAvatar` / `BotAvatar` / `Theme` / `Haptics` / `Platform` / `RelativeMessageTime` / `EmptyHint`)能不带 `#if os(iOS)` 编译过 Mac;T0.1 P2 — 接 `MessageTabView` 等价物(读 supabase `conversations` + 走 `ChatStream` 已是纯 Foundation),把"消息" tab 做出来。Crew / Call 强依赖 PushKit/CallKit 的,Mac 端等 v2 再说。
 - **状态**: 待办(P0 已完成 — 见 commit 388f24fd + 4eff9d8e)
 
+### 🔴 Apple IAP JWS 验证未实现 — IAP 路由当前 fail-closed
+- **发现**: 2026-05-29 · feat/billing-v2-webhooks
+- **位置**: `apps/edge/src/lib/billing-v2-iap.ts:verifyAppleJws`
+- **问题**: `/v1/billing/iap/purchase` 和 `/v1/billing/iap/notify` 已经接入了数据流（idempotency、pack 发放、refund_events、handler 分发），但 JWS 签名校验函数直接 `throw new Error('apple_jws_verification_not_implemented')`，所有 Apple 路径目前返回 501。原因：Workers 没有内置 X.509 解析，要实现 Apple ASN V2 完整链验证需要手写 ASN.1/DER 解码 + ECDSA P-256 链验证 + Apple Root CA G2/G3 指纹固定化，工作量不小。
+- **影响**: 上 iOS IAP 之前必须先解决，否则要么 Apple 充值彻底跑不通、要么用环境变量 bypass 验证（已被显式拒绝写入代码以避免静默旁路）。Lemon Squeezy（HMAC-SHA256）已完整实现，所以上架顺序可以先 LS / Web、再补 Apple。
+- **建议**: 实现路径已写在 `verifyAppleJws` 函数注释里：(1) 解 JWS header.x5c → 3 张 DER cert；(2) ASN.1 解 X.509 取 SPKI + issuer；(3) 链验证（leaf signed by intermediate, intermediate by root, ECDSA-P256）；(4) Root SHA-256 比对 Apple Root CA G2 / G3 内嵌指纹；(5) 校验 NotBefore/NotAfter；(6) importKey('spki', leaf.spki, 'ECDSA P-256') + verify on signing input；(7) 校验 `iss==='Apple Inc.'` 和 `bundleId === env.APPLE_IAP_BUNDLE_ID`。落地后，本文件这条状态置为已解决。
+- **状态**: 待办
+
 ### 🔴 计费事实源、成本字段和销售 markup 混在旧 credits 框架里
 - **发现**: 2026-05-29 · codex/billing-v2-design
 - **位置**: `apps/edge/src/llm/router.ts`、`apps/edge/src/lib/billing.ts`、`apps/edge/src/lib/ai-gateway.ts`、`supabase/migrations/20260514065304_local_cost_billing.sql`、`supabase/migrations/20260516042918_drop_audit_observability.sql`
@@ -138,7 +146,30 @@
 - **影响**: Mac 端会一直停在"空壳"阶段——每加一个 Mac 业务功能，都要先拆一刀 UIKit 门或者整段重写跨平台版。任由它发展，最终会形成"iOS 业务代码 + Mac 重写"两套并行实现的根基级分裂；T4.6 Crew Tab V2 多端方案能成立，是因为 Crew 一开始就走 SwiftUI-only。普通 IM 这块没有同样的预算，相当于 spec §11 三端齐目标被偷偷降级成"iOS+iPad 齐,Mac 占位"。
 - **建议**: 接 Mac IM 之前必须先做一次跨平台抽层，至少这几步：(1) 把 `Models/`、`Storage/AccountStore`、`Storage/UnreadStore`、`Networking/APIClient`、`Networking/RealtimeManager` 等纯 Foundation 模块从 macOS 的 EXCLUDED 列表里拿出来（这些文件已经不 import UIKit）；(2) `Features/Message/*` 里 UIViewRepresentable 子组件抽进 `Components/iOS/` 子目录,顶层 view 用 `#if os(iOS)` / `#if os(macOS)` 各跑一份；(3) 写明哪些 iOS-only 能力（CallKit/PushKit/相机/UIImage 编码）在 Mac 上的对应方案（不做 / NSImage / 文件选择器）。短期不要为了多接一个 tab 而随手加 `#if`，会让以后真正拆层时阻力越大。
 - **状态**: 待办（T1.4 stream 升级 Mac shell 到三列结构,但中间和右栏仍是 placeholder；真正的 Mac IM 接入留给后续 Phase 2+ stream）
+=======
+### 🟡 通话内 voice_cost 实时预览还在用 v1 PND markup（与 v2 PNC 钱包单位不一致）
+- **发现**: 2026-05-29 · feat/billing-v2-cutover
+- **位置**: `apps/edge/src/lib/voice-metering.ts:broadcastVoiceCostPreview`（getMarkup + usdToPnd）、`apps/edge/src/durable-objects/room-voice.ts:broadcastCost`、iOS `RealtimeSocket`/`Manager` 的 `voice_cost` 处理（`delta_pnd`/`cumulative_pnd` 字段）
+- **问题**: billing v2 cutover 后，权威扣费已全部走 v2 PNC（settleUsage）。但通话过程中给客户端广播的"本次通话已花费"实时预览仍走 v1 路径：`getMarkup(billing_config.markup) × usdToPnd`，单位是 PND ∂，字段名 `delta_pnd`/`cumulative_pnd`。用户在通话里看到 ∂ 估算，挂断后进钱包看到的是 PNC——单位对不上。
+- **影响**: 纯展示层不一致，不影响真实扣费（扣费已是 v2 权威）。但用户体验割裂；且这是 billing.ts 里 getMarkup/usdToPnd 仅剩的运行时调用点，挡着把这两个 v1 函数彻底删掉。
+- **建议**: 把广播改成 PNC：`usdToPncMicros(costUsd)` 累加，字段改 `delta_pnc_micros`/`cumulative_pnc_micros`，iOS voice_cost 处理同步改单位 + 文案。改完即可从 billing.ts 删 getMarkup/usdToPnd。
+- **状态**: 待办
 
+### 🟡 v1 billing 表 + 死函数在 cutover 后留作冷备，未删
+- **发现**: 2026-05-29 · feat/billing-v2-cutover
+- **位置**: `users.balance_credits` / `subject_wallets` / `billing_ledger` / `topups` / `redemption_codes` / `group_member_billing` 表；`apps/edge/src/lib/billing.ts`（getBalance/getMarkup/usdToPnd/billingDebit/billingDebitSubject/getThreshold 等）、`apps/edge/src/lib/group-billing.ts`（splitAndDebit 整文件）
+- **问题**: billing v2 cutover 让 v2 成为权威，v1 的扣费/gate 逻辑已不再被运行时调用（gate 已改读 v2 packs，debit 已改 settleUsage）。但 v1 的表和一批导出函数留着没删——作为一个周期的冷备，万一迁移有遗漏可回查。`/v1/me/balance`、`/v1/me/redeem`、`group-billing.ts`、`billing.ts` 的大部分导出现在是死代码（仅被自己的单测引用）。
+- **影响**: 死代码 + 未用表，读代码时容易误以为还在用 v1；balance-cache.ts 的 KV 缓存也不再被写。不致命，但要在 v2 线上跑稳一个周期后清掉。
+- **建议**: 跑稳后开 chore 分支：删 group-billing.ts、billing.ts 里 v1-only 导出、/me/balance + /me/redeem（或改 redeem 走 v2 issuePack）、balance-cache.ts；再写一个 drop-v1-tables 迁移（备份后 DROP）。
+- **状态**: 待办
+
+### 🟡 sandbox / container runtime 没有任何计费路径（v1 + v2 都缺）
+- **发现**: 2026-05-29 · feat/billing-v2-services
+- **位置**: `apps/edge/src/lib/sandbox.ts`、`apps/edge/src/routes/code-exec.ts`、`docs/billing-v2-design.md` §5 `sandbox_runtime`
+- **问题**: billing v2 design §5 把 `sandbox_runtime`（container/runtime 秒数、磁盘、网络）列为应纳入 PNC 账本的成本分类，但 v1 从来没有给 sandbox 计过费，code-exec 工具调用 Cloudflare Sandbox SDK 时不产生任何 usage_event / audit cost。因此 billing v2 dual-write（#183）也无从镜像——没有可镜像的 v1 成本。当前 `dualWriteV2` 只接了 model 成本（llm/voice）和 web_tools。
+- **影响**: 沙盒是可被滥用的变量成本（长时间运行的 container、磁盘、egress），目前完全免费。用户可以无限跑 execute_code 不掉余额。pre-launch、单人、沙盒 auto-sleep 的现状下风险有限，但发布前必须补上，否则是一个开口的成本漏洞。
+- **建议**: 在 sandbox 生命周期（启动→运行→sleep）打点 container-seconds，按 Cloudflare Sandbox 计价转 `vendor_cost_usd`，走 `settleUsage({category:'sandbox_runtime', quantityUnit:'seconds'})`。design doc §7 要求 sandbox 走周期 settle + 余额 ≤ 0 立即终止容器——这部分要和 sandbox.ts 的 sleepAfter 生命周期一起做。
+- **状态**: 待办
 ### 🟡 群语音 DO↔容器掉线重连/resync 控制逻辑已写+单测，但端到端音频恢复 runtime 未验证
 - **发现**: 2026-05-29 · feat/group-voice-reconnect
 - **位置**: `apps/edge/src/durable-objects/room-voice.ts`（heartbeat / onMediaClosed / runReconnect / resyncContainer / 多路复用 alarm）、`apps/edge/src/durable-objects/room-voice-reconnect.ts`（纯函数：nextBackoffMs / buildResyncCommands / shouldGiveUpReconnect）、`apps/voice-container/src/room.ts`（resetForStart + pong）
