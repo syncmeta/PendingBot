@@ -293,6 +293,12 @@ export async function settleUsage(
   let totalBilled = 0;
 
   // Two passes — handles a single race (CAS lost) by re-reading packs.
+  // Pass 1 walks the FIFO list once. If a CAS loss leaves us still owing,
+  // pass 2 refetches (some packs may now have less remaining than we read,
+  // others may be newly available) and retries the unfinished debit. If
+  // pass 2 makes no progress either, we fall through to the overdraft
+  // path — no infinite retry on a hot contended pack.
+  let casLostSinceLastFetch = false;
   for (let attempt = 0; attempt < 2 && stillOwed > 0; attempt++) {
     const ownerCol = params.owner.kind === 'user' ? 'owner_user_id' : 'owner_subject_id';
     const ownerVal = params.owner.kind === 'user' ? params.owner.userId : params.owner.subjectId;
@@ -312,6 +318,7 @@ export async function settleUsage(
     if (!packs || packs.length === 0) break;
 
     let progressedThisPass = false;
+    casLostSinceLastFetch = false;
     for (const pack of packs) {
       if (stillOwed <= 0) break;
       const packRemaining = Number(pack.remaining_pnc_micros);
@@ -333,7 +340,14 @@ export async function settleUsage(
         console.warn('[billing-v2.settleUsage] pack debit', updErr.message);
         continue;
       }
-      if (!updated) continue; // CAS lost; outer loop will refetch.
+      if (!updated) {
+        // CAS lost (concurrent settle / cron expiry took our stale slice).
+        // Set the retry flag so the outer loop refetches even if no other
+        // pack progressed this pass — that's the whole point of the
+        // CAS-loss retry per design doc §7.
+        casLostSinceLastFetch = true;
+        continue;
+      }
 
       stillOwed -= debit;
       totalBilled += debit;
@@ -358,8 +372,9 @@ export async function settleUsage(
       }
     }
 
-    // No progress this pass = no point retrying (all CAS failed or empty list).
-    if (!progressedThisPass) break;
+    // Stop iterating once we've stopped making forward progress AND aren't
+    // racing a CAS contender. The CAS-loss path always retries once.
+    if (!progressedThisPass && !casLostSinceLastFetch) break;
   }
 
   let overdrawn = 0;
