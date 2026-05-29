@@ -79,6 +79,23 @@ struct RootView: View {
                 flow = .welcome
             }
         }
+        // mode 切换时(BYOK → logged 等)也要清缓存,避免上一态的
+        // crew / subject 残留在 UI 上。`saveDeviceGrantToken` 会在登录后
+        // 清掉 BYOK config,但 `isConfigured` 一直为 true,上面那个 onChange
+        // 不会触发 —— 用 mode 作为第二条触发线。
+        //
+        // 重置后让 MacThreePaneView 的 `.task` 自然在下一帧重跑 list /
+        // subjects —— 但 `.task` 只在 view 出现时跑,mode 切换不重建视图,
+        // 所以这里显式拉一次。WelcomeView 时态(mode == nil)跳过。
+        .onChange(of: model.mode) { _, newMode in
+            crewStore.reset()
+            if newMode != nil {
+                Task {
+                    await crewStore.refreshList()
+                    await crewStore.refreshSubjects()
+                }
+            }
+        }
     }
 
     @ViewBuilder
