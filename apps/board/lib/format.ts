@@ -35,6 +35,21 @@ export function fmtPnd(n: number | string | null | undefined): string {
   return sign + '∂' + new Intl.NumberFormat('en-US').format(abs);
 }
 
+// PNC (Pending Name Credits) — billing v2 unit. Stored internally as
+// micros (1 PNC = 1_000_000 micros); $1 = 27 PNC. This formats a micros
+// value to a human PNC string with 2 decimals.
+export function fmtPncMicros(micros: number | string | null | undefined): string {
+  if (micros == null) return '—';
+  const v = typeof micros === 'string' ? parseFloat(micros) : micros;
+  if (!Number.isFinite(v)) return '—';
+  const pnc = v / 1_000_000;
+  const sign = pnc < 0 ? '-' : '';
+  return sign + new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Math.abs(pnc)) + ' PNC';
+}
+
 export function fmtMs(n: number | null | undefined): string {
   if (n == null) return '—';
   if (n < 1000) return `${Math.round(n)}ms`;
