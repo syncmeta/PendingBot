@@ -57,6 +57,13 @@ final class GroupCallSession {
     /// up. Rendered below the joined list in the call UI.
     var pendingInvites: [GroupPendingEntry] = []
 
+    /// True while the server's media container link is dropped and the
+    /// RoomVoiceDO is re-dialing + replaying room state. Set by a
+    /// `voice_call{event:.reconnecting}` frame; cleared by the next
+    /// `.state` (resync succeeded) or `.ended` (gave up). Drives a
+    /// transient "重连中…" banner in the group call UI.
+    var isReconnecting: Bool = false
+
     /// True when the caller may kick / end / designate — they opened the
     /// call, or they are a group owner/admin.
     var isPrivileged: Bool = false
@@ -496,6 +503,16 @@ final class GroupCallSession {
                         await self.terminate(reason: .ended)
                         return
                     }
+                    if frame.event == .reconnecting {
+                        // Transient media-link drop on the server side —
+                        // show the banner and keep the existing roster.
+                        // A later `.state` (resync ok) or `.ended` (gave
+                        // up) supersedes it.
+                        self.isReconnecting = true
+                        return
+                    }
+                    // .state — resync (or a normal roster change) landed.
+                    self.isReconnecting = false
                     self.applyVoiceCallFrame(frame)
                     if let diagnostics = frame.diagnostics {
                         self.latestMediaDiagnostics = diagnostics

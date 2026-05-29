@@ -65,6 +65,11 @@ final class ActiveVoiceCallStore {
         switch frame.event {
         case .ended:
             calls.removeValue(forKey: frame.conversationId)
+        case .reconnecting:
+            // The server's media link dropped mid-call — the call is
+            // still up (the DO is resyncing), so keep the existing
+            // snapshot. The in-call UI shows its own "重连中…" banner.
+            break
         case .state:
             let startedAt: Date = frame.startedAt.map {
                 Date(timeIntervalSince1970: $0 / 1000)

@@ -25,7 +25,10 @@ struct HubChange: Sendable {
 /// pending change and on final teardown. The conv-hub subscriber uses
 /// these to drive the in-conv banner and ActiveVoiceCallStore.
 struct VoiceCallFrame: Sendable {
-    enum Event: String, Sendable { case state, ended }
+    // `reconnecting` — the DO↔container media link dropped and the DO is
+    // re-dialing + replaying room state. Transient: a later `state`
+    // (resync ok) or `ended` (gave up) supersedes it.
+    enum Event: String, Sendable { case state, ended, reconnecting }
     let event: Event
     let conversationId: String
     let startedAt: Double?      // ms epoch, absent on `.ended`
