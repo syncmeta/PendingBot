@@ -132,6 +132,15 @@ struct MeTabView: View {
                             optionDivider
 
                             NavigationLink {
+                                WalletV2View().toolbar(.hidden, for: .tabBar)
+                            } label: {
+                                OptionRow(title: "钱包 v2（预览）")
+                            }
+                            .buttonStyle(.plain)
+
+                            optionDivider
+
+                            NavigationLink {
                                 BotCapabilitiesView().toolbar(.hidden, for: .tabBar)
                             } label: {
                                 OptionRow(title: "机器人能力扩展")
