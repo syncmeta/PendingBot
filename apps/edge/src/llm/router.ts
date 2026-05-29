@@ -4,6 +4,7 @@ import type { SupabaseClient } from '../lib/supabase';
 import { serviceClient } from '../lib/supabase';
 import type { Json } from '../db/schema';
 import { billingDebit, billingDebitSubject, getMarkup, usdToPnd } from '../lib/billing';
+import { dualWriteV2Llm } from './billing-v2-dualwrite';
 import { putCachedBalance } from '../lib/balance-cache';
 import { splitAndDebit } from '../lib/group-billing';
 import type { WebToolUsage } from '../lib/web-meter';
@@ -524,6 +525,20 @@ export async function persistAuditMessage(
       if (newBalance != null) {
         await putCachedBalance(env, opts.userId, newBalance).catch(() => undefined);
       }
+      // Billing v2 dual-write: parallel to the v1 debit above, record a
+      // usage_event + settleUsage on packs. v1 stays authoritative; v2
+      // builds parallel state we'll switch to in #190. Failures inside
+      // dualWriteV2Llm are logged and swallowed — never propagate.
+      await dualWriteV2Llm({
+        supa,
+        msg,
+        ownerUserId: opts.userId,
+        llmCostUsd: llmCost,
+        totalTokens: total,
+        modelId: route?.modelToCall ?? opts.tag ?? '<unrouted>',
+        providerSlug: route?.provider?.slug ?? null,
+        costSource: opts.providerCostUsd != null ? 'provider' : 'gateway',
+      });
     }
   }
 }
