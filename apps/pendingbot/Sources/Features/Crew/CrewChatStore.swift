@@ -208,7 +208,7 @@ final class CrewChatStore {
             message_kind: r["message_kind"]?.stringValue ?? "text",
             board_visible: r["board_visible"]?.boolValue ?? true,
             summary: r["summary"]?.stringValue ?? "",
-            payload: payload,
+            payload: payload.map(LenientPermissionPayload.init(value:)),
             created_at: r["created_at"]?.stringValue ?? "",
             mentions: []
         )

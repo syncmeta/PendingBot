@@ -160,7 +160,7 @@ struct CrewChatAdapter {
         // sender_session_id, fallback "Session". `message` is still built
         // (bot side, summary text) so id/created_at sort + the rare case
         // where payload is missing degrades to a plain bubble below.
-        if row.message_kind == "permission_request", let payload = row.payload {
+        if row.message_kind == "permission_request", let payload = row.payload?.value {
             let label = sessions.label(forSession: row.sender_session_id) ?? "Session"
             let msg = ChatMessage(
                 id: row.id,
