@@ -131,6 +131,7 @@
 		EF535E70029F6A3734F9E56F /* BotCapabilitiesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59B8BCA71B08958950585241 /* BotCapabilitiesView.swift */; };
 		F3238C85A9A478B6EA7B7F55 /* PendingBotSharedModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98EE77602B594DA83ABDCBB6 /* PendingBotSharedModels.swift */; };
 		F7AE57D22B8A151AF452E63F /* BotAvatar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90F4AA849A0395AE40EE6817 /* BotAvatar.swift */; };
+		F997277C458BCD62E1CDA2E1 /* CrewChatModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24A22C8CB9CB37FC1E1EBC60 /* CrewChatModels.swift */; };
 		F9BBC0C73F84A357B5B0A8C4 /* TypingDots.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5131104F9620195C8AF448E /* TypingDots.swift */; };
 		F9D83EFE1997143A29F31A8F /* ChatActionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CD2B61B65FC1ADB1C95184A /* ChatActionSheet.swift */; };
 		FAECF2B5BD0A3A5A114A1851 /* PendingBotApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BD3256170D29AD9138939C3 /* PendingBotApp.swift */; };
@@ -158,6 +159,7 @@
 		1F18FB9C392174C32131512F /* EnvelopeArticleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvelopeArticleView.swift; sourceTree = "<group>"; };
 		1FEFDBE4DFE6AB93D06D2015 /* AppleSignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSignIn.swift; sourceTree = "<group>"; };
 		213E09F2D1646151DC7BE1C6 /* CallView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallView.swift; sourceTree = "<group>"; };
+		24A22C8CB9CB37FC1E1EBC60 /* CrewChatModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewChatModels.swift; sourceTree = "<group>"; };
 		26815F4D8AE1B1CDF63042ED /* CallKitManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallKitManager.swift; sourceTree = "<group>"; };
 		280AFB82A018AB0016C826EA /* SwipeRevealRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwipeRevealRow.swift; sourceTree = "<group>"; };
 		2889FBE3D654AA1EC7144A11 /* names.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = names.txt; sourceTree = "<group>"; };
@@ -371,6 +373,7 @@
 			children = (
 				602E04C3276D1A3CB9588320 /* CreateCrewV2Sheet.swift */,
 				6CF743A2BD19523CAF11ECC6 /* CrewAPI.swift */,
+				24A22C8CB9CB37FC1E1EBC60 /* CrewChatModels.swift */,
 				D2426E68B61F7DC57E429193 /* CrewDetailV2View.swift */,
 				FAEEAA2E4EC4CC777D41E48B /* CrewTabV2View.swift */,
 				9A19A4D76A2D17FD422DA74D /* SubjectPickerSheet.swift */,
@@ -701,6 +704,7 @@
 				8358C6E7D2CDA9AC7C388452 /* ConversationView.swift in Sources */,
 				754FF3CE1701C6D130EC618C /* CreateCrewV2Sheet.swift in Sources */,
 				8FAC3CB10EEC9AD7CE5EEE34 /* CrewAPI.swift in Sources */,
+				F997277C458BCD62E1CDA2E1 /* CrewChatModels.swift in Sources */,
 				4B8693B2BE0A0352EAC924DE /* CrewDetailV2View.swift in Sources */,
 				AEF24DAC89A4BDB1F89EB53F /* CrewProposalCard.swift in Sources */,
 				0E0FCE983AB9E6DB3447D869 /* CrewTabV2View.swift in Sources */,
