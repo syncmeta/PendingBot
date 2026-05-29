@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { SupabaseClient } from './supabase';
 import {
   OVERDRAFT_BUFFER_PNC_MICROS,
   PNC_MICROS_PER_PNC,
@@ -8,6 +9,7 @@ import {
   THRESHOLD_THROTTLE_PNC_MICROS,
   defaultPackExpiresAt,
   getThresholdState,
+  settleAuditUsage,
   usdToPncMicros,
 } from './billing-v2';
 
@@ -71,6 +73,117 @@ describe('getThresholdState', () => {
   it('≥ 50 PNC → sufficient (no UX intervention)', () => {
     expect(getThresholdState(THRESHOLD_LOW_PNC_MICROS)).toBe('sufficient');
     expect(getThresholdState(1_000_000_000)).toBe('sufficient');
+  });
+});
+
+describe('settleAuditUsage', () => {
+  // Minimal mock that records every insert payload so the test can
+  // assert exactly which usage_events were written. We don't need a real
+  // pack/ledger flow here — the test for that lives in settleUsage. The
+  // assertion is about the splitting logic: how settleAuditUsage breaks
+  // a turn into per-category rows.
+  type Recorded = { table: string; payload: unknown };
+  function mockSupa(): { supa: SupabaseClient; recorded: Recorded[] } {
+    const recorded: Recorded[] = [];
+    const supa = {
+      from(table: string) {
+        return {
+          insert(payload: unknown) {
+            recorded.push({ table, payload });
+            // settleUsage needs id back from usage_events insert
+            const id = `${table}-${recorded.length}`;
+            return {
+              select() {
+                return {
+                  single: async () => ({ data: { id }, error: null }),
+                };
+              },
+              // ledger_entries.insert is called without .select()
+              then: (resolve: (v: { error: null }) => void) => resolve({ error: null }),
+            };
+          },
+          select() {
+            // packs select for FIFO walk + balance lookups — return empty
+            // so settleUsage early-exits into the overdraft path.
+            return {
+              eq() {
+                return {
+                  eq() {
+                    return {
+                      order() {
+                        return {
+                          order() {
+                            return {
+                              limit: async () => ({ data: [], error: null }),
+                            };
+                          },
+                        };
+                      },
+                    };
+                  },
+                };
+              },
+            };
+          },
+        };
+      },
+    } as unknown as SupabaseClient;
+    return { supa, recorded };
+  }
+
+  it('writes one llm_tokens row + one web_tools row per call', async () => {
+    const { supa, recorded } = mockSupa();
+    await settleAuditUsage(
+      supa,
+      { kind: 'user', userId: 'u1' },
+      {
+        llmCostUsd: 0.01,
+        modelId: 'gpt-5',
+        llmProvider: 'openai',
+        inputTokens: 100,
+        outputTokens: 50,
+        webTools: [
+          { provider: 'exa', kind: 'search', costUsd: 0.005, status: 'success' },
+          { provider: 'tavily', kind: 'scrape', costUsd: 0.0, status: 'error' },
+        ],
+        conversationId: 'c1',
+        auditLogId: 'a1',
+      },
+    );
+    const ueInserts = recorded.filter((r) => r.table === 'usage_events');
+    expect(ueInserts).toHaveLength(3);
+    const cats = ueInserts.map(
+      (r) => (r.payload as { event_category: string }).event_category,
+    );
+    expect(cats).toEqual(['llm_tokens', 'web_tools', 'web_tools']);
+    // LLM row sums all token counts into `quantity` (so audit can derive
+    // tokens/$ later without re-walking raw_usage).
+    expect((ueInserts[0].payload as { quantity: number }).quantity).toBe(150);
+    // Failed web-tool call records cost 0 (matches v1 web-meter semantics).
+    expect((ueInserts[2].payload as { vendor_cost_usd: number }).vendor_cost_usd).toBe(0);
+  });
+
+  it('skips llm row when cost is 0 / null', async () => {
+    const { supa, recorded } = mockSupa();
+    await settleAuditUsage(
+      supa,
+      { kind: 'user', userId: 'u1' },
+      { llmCostUsd: 0 },
+    );
+    expect(recorded.filter((r) => r.table === 'usage_events')).toHaveLength(0);
+  });
+
+  it('writes subject-owner rows when owner kind is subject', async () => {
+    const { supa, recorded } = mockSupa();
+    await settleAuditUsage(
+      supa,
+      { kind: 'subject', subjectId: 's1' },
+      { llmCostUsd: 0.001, llmProvider: 'anthropic', modelId: 'claude-sonnet-4-6' },
+    );
+    const ue = recorded.find((r) => r.table === 'usage_events');
+    const payload = ue?.payload as { owner_user_id: unknown; owner_subject_id: unknown };
+    expect(payload.owner_user_id).toBeNull();
+    expect(payload.owner_subject_id).toBe('s1');
   });
 });
 
