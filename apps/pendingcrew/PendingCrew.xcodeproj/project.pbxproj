@@ -16,8 +16,10 @@
 		50E92F718E5EC71E96ECD0F8 /* CrewCenterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 845C8C15B805012BF7FD6165 /* CrewCenterView.swift */; };
 		522751E374EB87F01B4A9528 /* LocalCodingAgentService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C657E83A90EF648972686C4 /* LocalCodingAgentService.swift */; };
 		5BBFB39FEFADFBC3E3A905C8 /* LocalCodingAgentSpec.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF8E8FC64275B7932540FB17 /* LocalCodingAgentSpec.swift */; };
+		64DFD174BA2ABA14F434358D /* GitInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60202465DF374BE31614C151 /* GitInspector.swift */; };
 		6942FF0B2E3D04AF1005374B /* PendingCrewApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C09067E3C1637408FEED8F2 /* PendingCrewApp.swift */; };
 		6FC755AFB9D2D4ADD5EA6744 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5857EBAF956D4104D4FBCBB2 /* KeychainStore.swift */; };
+		7A15BB191DFBA58595C58D60 /* ModelCatalogEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C78204BFE04404235068547 /* ModelCatalogEntry.swift */; };
 		81265797B89B31AC21E3DB4A /* CrewSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 051E45F99057FB8295F991DA /* CrewSummary.swift */; };
 		85A85A33D606BD7CDD81FE9F /* LocalCodingAgentProcess.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04AB14AD72B0DE64D57DEE0 /* LocalCodingAgentProcess.swift */; };
 		902AF2700BDF817359CF22CB /* CreateCrewSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A3C8AAD5F35F08DAC72F931 /* CreateCrewSheet.swift */; };
@@ -33,6 +35,7 @@
 		B6354746E8966251161A34F4 /* MacRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1A9FCA930C6487C96B9A211 /* MacRootView.swift */; };
 		BA64F31E29C3BE38DA3BEEB0 /* LocalCodingAgentSpec.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF8E8FC64275B7932540FB17 /* LocalCodingAgentSpec.swift */; };
 		BDC267627A50BEE0256332D4 /* LocalCodingAgentKind.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECFF7155D04A3862EC79E34B /* LocalCodingAgentKind.swift */; };
+		CABF5E79969852F020AF8C97 /* GitInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60202465DF374BE31614C151 /* GitInspector.swift */; };
 		CCB8B7D58871E769BD2E1C07 /* LocalCodingAgentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68DED4864DF441E88BAC0A24 /* LocalCodingAgentTests.swift */; };
 		DD9151772D00E2D50DD7B9C8 /* LocalCodingAgentService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C657E83A90EF648972686C4 /* LocalCodingAgentService.swift */; };
 		DE7E6AD7E1FBFD63657A6BF6 /* Subject.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCB0A9A2B511BAA8446CF9A4 /* Subject.swift */; };
@@ -53,6 +56,7 @@
 		197432C919C9626706255DDE /* BYOKConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BYOKConfig.swift; sourceTree = "<group>"; };
 		19B1A2BBA684270B0A2BE996 /* PendingCrewDeepLinkRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingCrewDeepLinkRoute.swift; sourceTree = "<group>"; };
 		1C657E83A90EF648972686C4 /* LocalCodingAgentService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalCodingAgentService.swift; sourceTree = "<group>"; };
+		2C78204BFE04404235068547 /* ModelCatalogEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelCatalogEntry.swift; sourceTree = "<group>"; };
 		2CC4D38A8ADADF050411F604 /* LocalRunnerPlaceholder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalRunnerPlaceholder.swift; sourceTree = "<group>"; };
 		2DFC0F15C2EF325530543B30 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
 		3431B4DF325BB67DBBFAFA45 /* PendingCrewBackend.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingCrewBackend.swift; sourceTree = "<group>"; };
@@ -61,6 +65,7 @@
 		476A276CBDA4640936A8B817 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		486ABCF7EEB8DF24CA6EDF11 /* CrewStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewStore.swift; sourceTree = "<group>"; };
 		5857EBAF956D4104D4FBCBB2 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
+		60202465DF374BE31614C151 /* GitInspector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitInspector.swift; sourceTree = "<group>"; };
 		68DED4864DF441E88BAC0A24 /* LocalCodingAgentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalCodingAgentTests.swift; sourceTree = "<group>"; };
 		6A12EB1BACBB13838365C685 /* DeviceLogin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceLogin.swift; sourceTree = "<group>"; };
 		6C09067E3C1637408FEED8F2 /* PendingCrewApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingCrewApp.swift; sourceTree = "<group>"; };
@@ -88,6 +93,7 @@
 		032862B7FC1B7EEB64723C28 /* LocalRunner */ = {
 			isa = PBXGroup;
 			children = (
+				60202465DF374BE31614C151 /* GitInspector.swift */,
 				8DCD41EF4DF79F9A7C1794CD /* LocalCodingAgentExecutable.swift */,
 				ECFF7155D04A3862EC79E34B /* LocalCodingAgentKind.swift */,
 				F04AB14AD72B0DE64D57DEE0 /* LocalCodingAgentProcess.swift */,
@@ -221,6 +227,7 @@
 				DB97F9F0E2E939FEA9FEFE63 /* CrewDetail.swift */,
 				051E45F99057FB8295F991DA /* CrewSummary.swift */,
 				6A12EB1BACBB13838365C685 /* DeviceLogin.swift */,
+				2C78204BFE04404235068547 /* ModelCatalogEntry.swift */,
 				BCB0A9A2B511BAA8446CF9A4 /* Subject.swift */,
 			);
 			path = Models;
@@ -342,6 +349,7 @@
 				F1D33F231B108834332DBAB1 /* CrewStore.swift in Sources */,
 				81265797B89B31AC21E3DB4A /* CrewSummary.swift in Sources */,
 				DFC7D547D8BD7A03378DA23F /* DeviceLogin.swift in Sources */,
+				CABF5E79969852F020AF8C97 /* GitInspector.swift in Sources */,
 				6FC755AFB9D2D4ADD5EA6744 /* KeychainStore.swift in Sources */,
 				A4E099C910B5400D8A645F0C /* LocalCodingAgentExecutable.swift in Sources */,
 				99B5BB04A0E197AE03535A86 /* LocalCodingAgentKind.swift in Sources */,
@@ -353,6 +361,7 @@
 				9DC9AF0EDD6D37A556A534B6 /* LocalSetupView.swift in Sources */,
 				2F4C8E9B74443BE19546AC44 /* LoginView.swift in Sources */,
 				B6354746E8966251161A34F4 /* MacRootView.swift in Sources */,
+				7A15BB191DFBA58595C58D60 /* ModelCatalogEntry.swift in Sources */,
 				FB3DCCB044D79D45575CBE76 /* PendingCrewAPI.swift in Sources */,
 				6942FF0B2E3D04AF1005374B /* PendingCrewApp.swift in Sources */,
 				A9B245CF14AC8C3B9C969D83 /* PendingCrewAuthCredential.swift in Sources */,
@@ -367,6 +376,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				64DFD174BA2ABA14F434358D /* GitInspector.swift in Sources */,
 				22A27AC631B26380BC3108D2 /* LocalCodingAgentExecutable.swift in Sources */,
 				BDC267627A50BEE0256332D4 /* LocalCodingAgentKind.swift in Sources */,
 				B3B861B67DDCB1C6A0367BC9 /* LocalCodingAgentProcess.swift in Sources */,
