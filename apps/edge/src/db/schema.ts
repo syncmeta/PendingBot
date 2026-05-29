@@ -1666,6 +1666,57 @@ export type Database = {
           },
         ]
       }
+      group_contributions: {
+        Row: {
+          contributed_pnc_micros: number
+          contributor_user_id: string
+          created_at: string
+          id: string
+          refunded_at: string | null
+          share_index_at_join: number
+          source_pack_id: string | null
+          status: string
+          subject_id: string
+        }
+        Insert: {
+          contributed_pnc_micros: number
+          contributor_user_id: string
+          created_at?: string
+          id?: string
+          refunded_at?: string | null
+          share_index_at_join: number
+          source_pack_id?: string | null
+          status?: string
+          subject_id: string
+        }
+        Update: {
+          contributed_pnc_micros?: number
+          contributor_user_id?: string
+          created_at?: string
+          id?: string
+          refunded_at?: string | null
+          share_index_at_join?: number
+          source_pack_id?: string | null
+          status?: string
+          subject_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "group_contributions_source_pack_id_fkey"
+            columns: ["source_pack_id"]
+            isOneToOne: false
+            referencedRelation: "packs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "group_contributions_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       group_join_handles: {
         Row: {
           conversation_id: string
@@ -1840,6 +1891,35 @@ export type Database = {
           },
         ]
       }
+      group_pools: {
+        Row: {
+          share_index: number
+          subject_id: string
+          total_remaining_pnc_micros: number
+          updated_at: string
+        }
+        Insert: {
+          share_index?: number
+          subject_id: string
+          total_remaining_pnc_micros?: number
+          updated_at?: string
+        }
+        Update: {
+          share_index?: number
+          subject_id?: string
+          total_remaining_pnc_micros?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "group_pools_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: true
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       group_subject_members: {
         Row: {
           can_create_crew: boolean
@@ -2005,6 +2085,70 @@ export type Database = {
           used_by?: string | null
         }
         Relationships: []
+      }
+      ledger_entries: {
+        Row: {
+          balance_after_pnc_micros: number
+          created_at: string
+          delta_pnc_micros: number
+          entry_type: string
+          id: string
+          metadata: Json
+          owner_kind: string | null
+          owner_subject_id: string | null
+          owner_user_id: string | null
+          pack_id: string | null
+          usage_event_id: string | null
+        }
+        Insert: {
+          balance_after_pnc_micros: number
+          created_at?: string
+          delta_pnc_micros: number
+          entry_type: string
+          id?: string
+          metadata?: Json
+          owner_kind?: string | null
+          owner_subject_id?: string | null
+          owner_user_id?: string | null
+          pack_id?: string | null
+          usage_event_id?: string | null
+        }
+        Update: {
+          balance_after_pnc_micros?: number
+          created_at?: string
+          delta_pnc_micros?: number
+          entry_type?: string
+          id?: string
+          metadata?: Json
+          owner_kind?: string | null
+          owner_subject_id?: string | null
+          owner_user_id?: string | null
+          pack_id?: string | null
+          usage_event_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ledger_entries_owner_subject_id_fkey"
+            columns: ["owner_subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ledger_entries_pack_id_fkey"
+            columns: ["pack_id"]
+            isOneToOne: false
+            referencedRelation: "packs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ledger_entries_usage_event_id_fkey"
+            columns: ["usage_event_id"]
+            isOneToOne: false
+            referencedRelation: "usage_events"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       mcp_servers: {
         Row: {
@@ -2220,6 +2364,68 @@ export type Database = {
             columns: ["conversation_id"]
             isOneToOne: false
             referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      packs: {
+        Row: {
+          created_at: string
+          expires_at: string | null
+          external_purchase_id: string | null
+          gross_paid_usd_cents: number | null
+          id: string
+          initial_pnc_micros: number
+          metadata: Json
+          net_revenue_usd_cents: number | null
+          owner_kind: string | null
+          owner_subject_id: string | null
+          owner_user_id: string | null
+          remaining_pnc_micros: number
+          sales_channel: string
+          sales_markup_snapshot: number | null
+          status: string
+        }
+        Insert: {
+          created_at?: string
+          expires_at?: string | null
+          external_purchase_id?: string | null
+          gross_paid_usd_cents?: number | null
+          id?: string
+          initial_pnc_micros: number
+          metadata?: Json
+          net_revenue_usd_cents?: number | null
+          owner_kind?: string | null
+          owner_subject_id?: string | null
+          owner_user_id?: string | null
+          remaining_pnc_micros: number
+          sales_channel: string
+          sales_markup_snapshot?: number | null
+          status?: string
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string | null
+          external_purchase_id?: string | null
+          gross_paid_usd_cents?: number | null
+          id?: string
+          initial_pnc_micros?: number
+          metadata?: Json
+          net_revenue_usd_cents?: number | null
+          owner_kind?: string | null
+          owner_subject_id?: string | null
+          owner_user_id?: string | null
+          remaining_pnc_micros?: number
+          sales_channel?: string
+          sales_markup_snapshot?: number | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "packs_owner_subject_id_fkey"
+            columns: ["owner_subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
         ]
@@ -2475,6 +2681,50 @@ export type Database = {
           status?: string
         }
         Relationships: []
+      }
+      refund_events: {
+        Row: {
+          chargeback_loss_pnc_micros: number
+          consumed_pnc_micros_at_refund: number
+          created_at: string
+          external_refund_id: string
+          id: string
+          pack_id: string | null
+          raw_payload: Json
+          refund_amount_usd_cents: number
+          source: string
+        }
+        Insert: {
+          chargeback_loss_pnc_micros?: number
+          consumed_pnc_micros_at_refund?: number
+          created_at?: string
+          external_refund_id: string
+          id?: string
+          pack_id?: string | null
+          raw_payload?: Json
+          refund_amount_usd_cents: number
+          source: string
+        }
+        Update: {
+          chargeback_loss_pnc_micros?: number
+          consumed_pnc_micros_at_refund?: number
+          created_at?: string
+          external_refund_id?: string
+          id?: string
+          pack_id?: string | null
+          raw_payload?: Json
+          refund_amount_usd_cents?: number
+          source?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "refund_events_pack_id_fkey"
+            columns: ["pack_id"]
+            isOneToOne: false
+            referencedRelation: "packs"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       runner_hosts: {
         Row: {
@@ -3533,6 +3783,88 @@ export type Database = {
           verified_at?: string | null
         }
         Relationships: []
+      }
+      usage_events: {
+        Row: {
+          audit_log_id: string | null
+          conversation_id: string | null
+          cost_source: string
+          created_at: string
+          event_category: string
+          id: string
+          model_id: string | null
+          owner_kind: string | null
+          owner_subject_id: string | null
+          owner_user_id: string | null
+          pnc_micros: number
+          provider: string
+          quantity: number
+          quantity_unit: string
+          raw_usage: Json
+          vendor_cost_usd: number
+          vendor_sku: string | null
+        }
+        Insert: {
+          audit_log_id?: string | null
+          conversation_id?: string | null
+          cost_source: string
+          created_at?: string
+          event_category: string
+          id?: string
+          model_id?: string | null
+          owner_kind?: string | null
+          owner_subject_id?: string | null
+          owner_user_id?: string | null
+          pnc_micros: number
+          provider: string
+          quantity: number
+          quantity_unit: string
+          raw_usage?: Json
+          vendor_cost_usd: number
+          vendor_sku?: string | null
+        }
+        Update: {
+          audit_log_id?: string | null
+          conversation_id?: string | null
+          cost_source?: string
+          created_at?: string
+          event_category?: string
+          id?: string
+          model_id?: string | null
+          owner_kind?: string | null
+          owner_subject_id?: string | null
+          owner_user_id?: string | null
+          pnc_micros?: number
+          provider?: string
+          quantity?: number
+          quantity_unit?: string
+          raw_usage?: Json
+          vendor_cost_usd?: number
+          vendor_sku?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "usage_events_audit_log_id_fkey"
+            columns: ["audit_log_id"]
+            isOneToOne: false
+            referencedRelation: "audit_log"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "usage_events_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "usage_events_owner_subject_id_fkey"
+            columns: ["owner_subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       user_bot_contacts: {
         Row: {
