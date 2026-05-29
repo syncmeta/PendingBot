@@ -117,6 +117,12 @@
       // WebSocket connections and broadcasts row changes pushed in by
       // the DB-webhook notify path. Hibernatable WebSockets keep idle
       // connections near-free. See src/durable-objects/hub.ts.
+      //
+      // SESSION_PROXY_DO is the cross-device session remote-control hub
+      // (T4.5 — spec v2 §8.2 + §9.6). One instance per active crew session
+      // (keyed by session_id); holds viewer sockets + at most one runner
+      // socket and queues commands while the runner is offline. See
+      // src/durable-objects/session-proxy.ts.
       "durable_objects": {
         "bindings": [
           { "name": "GROUP_ROUTER", "class_name": "GroupRouterDO" },
@@ -124,6 +130,7 @@
           { "name": "REALTIME_METER", "class_name": "RealtimeMeterDO" },
           { "name": "ROOM_VOICE", "class_name": "RoomVoiceDO" },
           { "name": "ROOM_MEDIA", "class_name": "RoomMediaContainerDO" },
+          { "name": "SESSION_PROXY_DO", "class_name": "SessionProxyDO" },
           { "name": "Sandbox", "class_name": "Sandbox" }
         ]
       },
@@ -193,6 +200,10 @@
         {
           "tag": "v6",
           "new_sqlite_classes": ["RoomMediaContainerDO"]
+        },
+        {
+          "tag": "v7",
+          "new_sqlite_classes": ["SessionProxyDO"]
         }
       ],
       // Audit + billing offload. recordAudit used to insert audit_log

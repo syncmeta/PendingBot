@@ -44,6 +44,16 @@ export interface Env {
   /// real OS process with reliable timers instead of a workerd isolate.
   /// See src/durable-objects/room-media.ts + apps/voice-container.
   ROOM_MEDIA: DurableObjectNamespace<RoomMediaContainerDO>;
+  /// Cross-device session proxy DO (T4.5 — spec v2 §8.2 + §9.6). One
+  /// instance per active crew session (keyed by session_id via
+  /// SESSION_PROXY_DO.idFromName(sessionId)). It is the edge hub that lets
+  /// any logged-in client on the same account watch + remote-control a
+  /// session whose agent runs on a different machine (PendingCrew Mac now,
+  /// Fly machine in v1.1 — same location-agnostic channel). Holds viewer
+  /// sockets + at most one runner socket, routes commands / state /
+  /// permission requests between them, and queues commands while the runner
+  /// is offline. See src/durable-objects/session-proxy.ts.
+  SESSION_PROXY_DO: DurableObjectNamespace;
   /// Cloudflare ratelimit binding for handle-enumeration endpoints
   /// (friend-request /lookup, group /join, friend-request POST /).
   /// Limit + period live in wrangler.jsonc — call from a route via
