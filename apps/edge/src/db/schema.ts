@@ -2690,6 +2690,8 @@ export type Database = {
           external_refund_id: string
           id: string
           pack_id: string | null
+          processed_at: string | null
+          processing_error: string | null
           raw_payload: Json
           refund_amount_usd_cents: number
           source: string
@@ -2701,6 +2703,8 @@ export type Database = {
           external_refund_id: string
           id?: string
           pack_id?: string | null
+          processed_at?: string | null
+          processing_error?: string | null
           raw_payload?: Json
           refund_amount_usd_cents: number
           source: string
@@ -2712,6 +2716,8 @@ export type Database = {
           external_refund_id?: string
           id?: string
           pack_id?: string | null
+          processed_at?: string | null
+          processing_error?: string | null
           raw_payload?: Json
           refund_amount_usd_cents?: number
           source?: string

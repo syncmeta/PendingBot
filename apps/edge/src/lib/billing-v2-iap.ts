@@ -7,6 +7,7 @@ import {
   usdCentsToPncMicrosViaMarkup,
 } from './billing-v2-pack';
 import type { SalesChannel } from './billing-v2';
+import { processRefundEvent } from './billing-v2-refund';
 
 // Apple In-App Purchase / Server Notifications V2 (see docs/billing-v2-design.md §10).
 //
@@ -297,17 +298,25 @@ async function handleAppleRefund(
 
   const refundAmountUsdCents = typeof txn.price === 'number' ? txn.price : 0;
 
-  const { error: insErr } = await supa.from('refund_events').insert({
-    source: 'apple',
-    external_refund_id: externalRefundId,
-    pack_id: pack?.id ?? null,
-    refund_amount_usd_cents: refundAmountUsdCents,
-    consumed_pnc_micros_at_refund: 0,
-    chargeback_loss_pnc_micros: 0,
-    raw_payload: notif as never,
-  });
-  if (insErr && insErr.code !== '23505') {
+  const { data: insRow, error: insErr } = await supa
+    .from('refund_events')
+    .insert({
+      source: 'apple',
+      external_refund_id: externalRefundId,
+      pack_id: pack?.id ?? null,
+      refund_amount_usd_cents: refundAmountUsdCents,
+      consumed_pnc_micros_at_refund: 0,
+      chargeback_loss_pnc_micros: 0,
+      raw_payload: notif as never,
+    })
+    .select('id')
+    .single();
+  if (insErr) {
+    if (insErr.code === '23505') return { ok: true, action: 'refund_recorded' };
     return { ok: false, status: 500, reason: insErr.message };
+  }
+  if (insRow) {
+    await processRefundEvent({ supa, refundEventId: insRow.id });
   }
   return { ok: true, action: 'refund_recorded' };
 }

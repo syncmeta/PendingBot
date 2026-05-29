@@ -6,6 +6,7 @@ import {
   issuePack,
   usdCentsToPncMicrosViaMarkup,
 } from './billing-v2-pack';
+import { processRefundEvent } from './billing-v2-refund';
 
 // Lemon Squeezy webhook handler (see docs/billing-v2-design.md §10).
 //
@@ -216,19 +217,32 @@ async function handleOrderRefunded(
     .maybeSingle();
 
   // Idempotency: refund_events has UNIQUE(source, external_refund_id).
-  const { error: insErr } = await supa.from('refund_events').insert({
-    source: 'lemon_squeezy',
-    external_refund_id: externalRefundId,
-    pack_id: pack?.id ?? null,
-    refund_amount_usd_cents: refundAmountUsdCents,
-    consumed_pnc_micros_at_refund: 0, // filled in by refund processor (#186)
-    chargeback_loss_pnc_micros: 0,
-    raw_payload: payload as never,
-  });
-  if (insErr && insErr.code !== '23505') {
+  const { data: insRow, error: insErr } = await supa
+    .from('refund_events')
+    .insert({
+      source: 'lemon_squeezy',
+      external_refund_id: externalRefundId,
+      pack_id: pack?.id ?? null,
+      refund_amount_usd_cents: refundAmountUsdCents,
+      consumed_pnc_micros_at_refund: 0,
+      chargeback_loss_pnc_micros: 0,
+      raw_payload: payload as never,
+    })
+    .select('id')
+    .single();
+  if (insErr) {
+    if (insErr.code === '23505') {
+      // Already received; idempotent retry. Refund processor / cron will
+      // pick up any leftover work.
+      return { ok: true, action: 'refund_recorded' };
+    }
     return { ok: false, status: 500, reason: insErr.message };
   }
-  // The refund processor (task #186) consumes refund_events asynchronously
-  // — pack invalidation / chargeback_loss accounting happens there.
+
+  // Eager-process the refund inline. The cron sweep (#187) catches any
+  // rows that fail here (left with processed_at IS NULL).
+  if (insRow) {
+    await processRefundEvent({ supa, refundEventId: insRow.id });
+  }
   return { ok: true, action: 'refund_recorded' };
 }
