@@ -39,7 +39,7 @@
 - **问题**: T0.1 P0 把 `project.yml` 里的 `EXCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]` 大锅排除摘掉了,改用 `#if os(iOS) ... #endif` 包住每个 iOS-only 文件。但实际包了 `Sources/Components/*` + `Sources/Features/*` 整两层目录(再加 Networking 里 7 个文件),原因是这些目录里的 UI 类全部转性依赖 UIKit / PushKit / CallKit / Theme(UIColor) / Haptics(UIKit)。Mac build 现在能过,但能拿来用的 Mac 真实视图只有 `MacMeView`(账号信息 + 退出登录),消息 / 好友 / Crew / 来信 4 个 tab 仍是 `MacTabPlaceholder`。
 - **影响**: 用户在 Mac 端只能看自己账号 + 登出,看不到任何聊天、好友、Crew、来信内容 — Mac 端基本不可用。后续 T0.1 P1+P2 真正接业务时,要把 iOS 业务里 UIKit-tied 的小部件抽成 cross-platform 等价物(`UIImage`→`Image+platform helper`、`UIPasteboard`→`NSPasteboard`、`Haptics`→Mac noop、`UIViewRepresentable` 桥不能用要找 SwiftUI 等价或 Mac-only 重写),工作量按文件数估在 30+ 文件级别;短期不可能"开关一拨就好"。
 - **建议**: T0.1 P1 — 先把 Models / Storage / Networking 里已 cross-platform 的部分往上抽通用 `Theme` / `PlatformColor` / `PlatformImage` 抽象层,让 `Sources/Components/` 里小部件(`UserAvatar` / `BotAvatar` / `Theme` / `Haptics` / `Platform` / `RelativeMessageTime` / `EmptyHint`)能不带 `#if os(iOS)` 编译过 Mac;T0.1 P2 — 接 `MessageTabView` 等价物(读 supabase `conversations` + 走 `ChatStream` 已是纯 Foundation),把"消息" tab 做出来。Crew / Call 强依赖 PushKit/CallKit 的,Mac 端等 v2 再说。
-- **状态**: 待办(P0 已完成 — 见 commit 388f24fd + 4eff9d8e)
+- **状态**: 部分完成（P0 + P1 好友 tab — 2026-05-30。P1: ContactsAPI 解耦成 view-independent `ContactProfile`(Networking 现可在 Mac 编译)、`HumanPick(_:ContactProfile)` 映射、`MacFriendsView` 接入好友 tab 显示真实联系人,替换 placeholder;Mac+iOS build 双绿。剩余 P2: 消息 / Crew / 来信 3 个 tab 仍 placeholder — 消息 tab 依赖 `Features/Message/*` 的 UIKit 拆层,工作量最大。见 commit 388f24fd/4eff9d8e(P0) + 本轮 Mac IM merge。）
 
 ### ✅ Apple IAP JWS 验证未实现 — IAP 路由当前 fail-closed
 - **发现**: 2026-05-29 · feat/billing-v2-webhooks
