@@ -33,13 +33,13 @@
 
 ## 🔴 根基级
 
-### 🔴 Apple IAP JWS 验证未实现 — IAP 路由当前 fail-closed
+### ✅ Apple IAP JWS 验证未实现 — IAP 路由当前 fail-closed
 - **发现**: 2026-05-29 · feat/billing-v2-webhooks
-- **位置**: `apps/edge/src/lib/billing-v2-iap.ts:verifyAppleJws`
+- **位置**: `apps/edge/src/lib/billing-v2-iap.ts:verifyAppleJws` + `apps/edge/src/lib/billing-v2-iap-verify.ts`
 - **问题**: `/v1/billing/iap/purchase` 和 `/v1/billing/iap/notify` 已经接入了数据流（idempotency、pack 发放、refund_events、handler 分发），但 JWS 签名校验函数直接 `throw new Error('apple_jws_verification_not_implemented')`，所有 Apple 路径目前返回 501。原因：Workers 没有内置 X.509 解析，要实现 Apple ASN V2 完整链验证需要手写 ASN.1/DER 解码 + ECDSA P-256 链验证 + Apple Root CA G2/G3 指纹固定化，工作量不小。
 - **影响**: 上 iOS IAP 之前必须先解决，否则要么 Apple 充值彻底跑不通、要么用环境变量 bypass 验证（已被显式拒绝写入代码以避免静默旁路）。Lemon Squeezy（HMAC-SHA256）已完整实现，所以上架顺序可以先 LS / Web、再补 Apple。
 - **建议**: 实现路径已写在 `verifyAppleJws` 函数注释里：(1) 解 JWS header.x5c → 3 张 DER cert；(2) ASN.1 解 X.509 取 SPKI + issuer；(3) 链验证（leaf signed by intermediate, intermediate by root, ECDSA-P256）；(4) Root SHA-256 比对 Apple Root CA G2 / G3 内嵌指纹；(5) 校验 NotBefore/NotAfter；(6) importKey('spki', leaf.spki, 'ECDSA P-256') + verify on signing input；(7) 校验 `iss==='Apple Inc.'` 和 `bundleId === env.APPLE_IAP_BUNDLE_ID`。落地后，本文件这条状态置为已解决。
-- **状态**: 待办
+- **状态**: 已修复（2026-05-30 · wf_a7dc5753 worktree。选了**零依赖手写 DER/ASN.1** 路线而非加 `@peculiar/x509`——理由：仓库偏好最小依赖面，且 Apple App Store Server 证书全是固定结构的 ECDSA P-256，需要解析的 ASN.1 很小、可控；任何结构偏离都 throw 而非静默接受（对支付真伪门来说是正确的失败模式）。新增 `apps/edge/src/lib/billing-v2-iap-verify.ts`：`verifyAppleJwsChain<P>(jws, {expectedRootSha256?, now?})` 做 split→decode header（强制 alg=ES256 + 3 段 x5c）→解析每张 cert（TBS / SPKI 原样取自 cert bytes 给 importKey('spki') / validity / 外层 ECDSA 签名 DER→JOSE raw r‖s）→**Apple Root CA G3 SHA-256 根固定**（常量 `APPLE_ROOT_CA_G3_SHA256`，2026-05-30 用 `openssl x509 -inform DER -fingerprint -sha256` + `shasum` 双工具核对官方 cert：`63343abf…3e9179`，subject = `CN=Apple Root CA - G3`）→leaf/intermediate/root validity 窗口检查→链验证（leaf←intermediate←root + root 自签）→SubtleCrypto ES256 verify `header.payload` 签名输入→JSON decode payload。`verifyAppleJws` 改为调它再加 `bundleId === env.APPLE_IAP_BUNDLE_ID`（已配置时）断言；函数签名不变，三个 handler caller 零改动。单测 `billing-v2-iap.test.ts`：用 SubtleCrypto 在测试内现造 P-256 三级链 + 自建 DER cert builder（已用 `parseCertificate` round-trip 自检），覆盖 happy path、篡改 payload→`jws_signature_invalid`、错根→`root_pin_mismatch`、断链→`chain_leaf_sig_invalid`、过期 leaf→`cert_expired`、非 ES256 拒绝、默认 pin 拒绝自签根（证明 prod fail-closed）、`jwsSigningInput` 字节正确性——14 测全绿，typecheck 0 error，全量 201 测无回归。**仍待真机/沙盒验证**：没有真实 Apple sandbox JWS，端到端（真 Apple cert 链 + 真签名 payload）未跑过；首次接 iOS IAP 时需用 Apple sandbox 交易回归一次，确认真链能过 + bundleId/字段映射正确。`iss==='Apple Inc.'` 断言未加——Apple ASN V2 的 transaction/notification payload 里并没有 JWT 风格的 `iss` claim（信任由 x5c 链 + 根固定建立），加它会误拒真实 payload。）
 
 ### 🔴 计费事实源、成本字段和销售 markup 混在旧 credits 框架里
 - **发现**: 2026-05-29 · codex/billing-v2-design
