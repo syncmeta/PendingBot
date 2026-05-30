@@ -4,6 +4,9 @@ import SwiftUI
 struct PendingCrewApp: App {
     @StateObject private var model: AppModel
     @StateObject private var crewStore: CrewStore
+    /// Captain 模板池(BYOK 模式的"本机 captain 池",spec v2 §5.2)。
+    /// 登录态下也注入但 UI 不消费 —— 登录态走真 bot 库(后续 task)。
+    @StateObject private var captainTemplates = CaptainTemplateStore.shared
 
     init() {
         let appModel = AppModel()
@@ -16,12 +19,38 @@ struct PendingCrewApp: App {
             RootView()
                 .environmentObject(model)
                 .environmentObject(crewStore)
+                .environmentObject(captainTemplates)
                 #if os(macOS)
                 .frame(minWidth: 1040, minHeight: 680)
+                .modifier(FirstLaunchDisclosureGate())
                 #endif
         }
     }
 }
+
+#if os(macOS)
+/// Spec v2 §8.4 — 把 "本机 agent = 完整用户权限" 的 disclosure modal 挂在
+/// RootView 之上。仅每台机第一次启动 PendingCrew 时显示一次,接受后写
+/// `UserDefaults` 不再弹。RootView 始终渲染在背后(用户接受前看不到也点不
+/// 到主界面 —— sheet 是 modal)。
+private struct FirstLaunchDisclosureGate: ViewModifier {
+    /// 用 `@State` 而不是常量 —— `markAccepted()` 同步改 UserDefaults 后 SwiftUI
+    /// 不会自动重渲(UserDefaults 不是 @Published);我们手动把 sheet 收起来。
+    @State private var showing: Bool = !FirstLaunchDisclosure.isAccepted()
+
+    func body(content: Content) -> some View {
+        content.sheet(isPresented: $showing) {
+            FirstLaunchDisclosureView {
+                FirstLaunchDisclosure.markAccepted()
+                showing = false
+            }
+            // `.interactiveDismissDisabled` 防用户 Esc / 点空白处绕过 modal。
+            // disclosure 必须主动接受。
+            .interactiveDismissDisabled()
+        }
+    }
+}
+#endif
 
 /// 启动路由(T5.1 + T5.2)。三种顶层态:
 /// 1. **WelcomeView** — 没凭据 + 没 BYOK key → 用户先选路径(扫码登录 / BYOK)
@@ -77,6 +106,23 @@ struct RootView: View {
             if !configured {
                 crewStore.reset()
                 flow = .welcome
+            }
+        }
+        // mode 切换时(BYOK → logged 等)也要清缓存,避免上一态的
+        // crew / subject 残留在 UI 上。`saveDeviceGrantToken` 会在登录后
+        // 清掉 BYOK config,但 `isConfigured` 一直为 true,上面那个 onChange
+        // 不会触发 —— 用 mode 作为第二条触发线。
+        //
+        // 重置后让 MacThreePaneView 的 `.task` 自然在下一帧重跑 list /
+        // subjects —— 但 `.task` 只在 view 出现时跑,mode 切换不重建视图,
+        // 所以这里显式拉一次。WelcomeView 时态(mode == nil)跳过。
+        .onChange(of: model.mode) { _, newMode in
+            crewStore.reset()
+            if newMode != nil {
+                Task {
+                    await crewStore.refreshList()
+                    await crewStore.refreshSubjects()
+                }
             }
         }
     }

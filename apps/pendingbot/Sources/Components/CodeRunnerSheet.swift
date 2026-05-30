@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import WebKit
 
@@ -327,3 +328,4 @@ private struct HTMLPreviewWebView: UIViewRepresentable {
         view.loadHTMLString(html, baseURL: nil)
     }
 }
+#endif

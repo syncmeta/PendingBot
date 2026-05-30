@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import Supabase
 import CoreImage.CIFilterBuiltins
@@ -2372,3 +2373,4 @@ struct BotQRCard: View {
         }
     }
 }
+#endif

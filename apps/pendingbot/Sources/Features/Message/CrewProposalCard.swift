@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 
 // PendingBot rendering for a bot's `start_crew` proposal (spec v2 §6.4).
@@ -198,4 +199,5 @@ struct CrewProposalCardView: View {
         }
     }
 }
+#endif
 #endif

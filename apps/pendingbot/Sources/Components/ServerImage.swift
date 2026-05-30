@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import UIKit
 import Supabase
@@ -138,3 +139,4 @@ struct ImageViewer: View {
         steadyOffset = .zero
     }
 }
+#endif

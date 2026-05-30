@@ -1,3 +1,4 @@
+#if os(iOS)
 import Foundation
 
 enum CallDiagnosticsLogic {
@@ -104,3 +105,4 @@ enum CallDiagnosticsLogic {
         return nil
     }
 }
+#endif

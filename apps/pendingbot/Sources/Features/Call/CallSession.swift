@@ -1,3 +1,4 @@
+#if os(iOS)
 import Foundation
 
 /// State container for a single OpenAI Realtime voice call. `CallView`
@@ -645,3 +646,4 @@ extension CallSession: CallTransportDelegate {
         diagnostics = snapshot
     }
 }
+#endif

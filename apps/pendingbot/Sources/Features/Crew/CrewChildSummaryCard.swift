@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 
 // T4.6 P1 Step 7 — child-crew summary strip. Driven off the already-loaded
@@ -68,3 +69,4 @@ struct CrewChildSummaryCard: View {
         String(format: "%.1f%%", Double(bps) / 100.0)
     }
 }
+#endif

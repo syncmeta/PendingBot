@@ -1,3 +1,4 @@
+#if os(iOS)
 import Foundation
 import AVFoundation
 import Supabase
@@ -698,3 +699,4 @@ final class GroupCallSession {
     }
 
 }
+#endif

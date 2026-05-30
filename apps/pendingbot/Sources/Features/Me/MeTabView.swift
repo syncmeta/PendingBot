@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 
 /// 我 — left-aligned header column (avatar / name / email, no card
@@ -431,3 +432,4 @@ struct ArenaLeaderboardView: View {
         }
     }
 }
+#endif

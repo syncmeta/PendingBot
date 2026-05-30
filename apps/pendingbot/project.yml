@@ -71,10 +71,12 @@ targets:
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
         # iOS 端排除 macOS-only 子树（Sources/Mac/）
         "EXCLUDED_SOURCE_FILE_NAMES[sdk=iphone*]": "Mac/* Mac/**/*"
-        # macOS 端排除 iOS-only 子树。iOS 业务代码（Components/Features/Models/
-        # Networking/Storage）依赖 UIKit/PushKit/CallKit/Supabase iOS flow，
-        # 整体不参与 Mac build。Mac 端走全新的 Mac/ 占位 UI，T1.4 阶段只搭壳。
-        "EXCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]": "Components/* Components/**/* Features/* Features/**/* Models/* Models/**/* Networking/* Networking/**/* Storage/* Storage/**/*"
+        # macOS 端不再用 EXCLUDED_SOURCE_FILE_NAMES 大锅排除业务子树 —
+        # 改为在每个 iOS-only 文件顶部包 `#if os(iOS)` ... `#endif`,
+        # 让纯 Foundation/SwiftUI 的 Models / Storage / 部分 Networking /
+        # 部分 Components 自然进入 Mac build,给 Sources/Mac/ 的真实视图
+        # 提供数据底座。剩余 iOS-only 业务(Features/* 等)的 Mac 接入
+        # 见 docs/tech-debt.md 中的 T0.1 P1+P2 条目。
     dependencies:
       - package: GRDB
         product: GRDB
@@ -88,3 +90,4 @@ targets:
         product: Supabase
       - package: WebRTC
         product: WebRTC
+        platforms: [iOS]

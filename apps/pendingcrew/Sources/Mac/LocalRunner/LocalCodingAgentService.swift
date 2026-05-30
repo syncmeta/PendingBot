@@ -71,14 +71,12 @@ public struct MacLocalCodingAgentService: LocalCodingAgentService {
     ) async throws -> LocalCodingAgentRunHandle {
         // 用 AsyncStream 把 LocalCodingAgentProcess 的 line handler 转成 stream。
         // continuation 在 process 终止后 finish。
-        var stdoutCont: AsyncStream<String>.Continuation!
-        let stdoutStream = AsyncStream<String> { cont in
-            stdoutCont = cont
-        }
-        var stderrCont: AsyncStream<String>.Continuation!
-        let stderrStream = AsyncStream<String> { cont in
-            stderrCont = cont
-        }
+        //
+        // 用 `AsyncStream.makeStream(of:)` 拿到 (stream, continuation) 二元组 —
+        // 旧写法（捕获 `var cont: ...!` 后赋值）在 Swift 6 严格并发下会被认为
+        // 有跨任务捕获 mutable var 的隐患，新写法直接绕开。
+        let (stdoutStream, stdoutCont) = AsyncStream<String>.makeStream(of: String.self)
+        let (stderrStream, stderrCont) = AsyncStream<String>.makeStream(of: String.self)
 
         let process = LocalCodingAgentProcess(
             spec: spec,

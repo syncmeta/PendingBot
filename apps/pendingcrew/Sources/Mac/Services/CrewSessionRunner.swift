@@ -30,6 +30,10 @@ final class CrewSessionRunner: ObservableObject {
         workingDirectory: URL,
         taskBrief: String,
         initialPrompt: String,
+        /// 用户在 CreateSessionSheet 选的 model slug。Claude Code 会拼成
+        /// `--model <slug>`；Codex 暂时只做 metadata（spec v2 §8.1 TODO）。
+        /// nil = 让 CLI 用自己的默认。
+        model: String? = nil,
         additionalEnv: [String: String] = [:],
         /// Spec v2 §10 — per-session override of the crew's permission
         /// mode. `nil` = inherit crew default (server-side null).
@@ -51,6 +55,7 @@ final class CrewSessionRunner: ObservableObject {
             workingDirectory: workingDirectory,
             taskBrief: taskBrief,
             initialPrompt: initialPrompt,
+            model: model,
             additionalEnv: additionalEnv
         )
         // 3. 起进程
@@ -63,6 +68,7 @@ final class CrewSessionRunner: ObservableObject {
             kind: kind,
             taskBrief: taskBrief,
             workingDirectory: workingDirectory,
+            model: model,
             permissionModeOverride: permissionModeOverride,
             handle: handle
         )
@@ -105,6 +111,9 @@ final class CrewSessionRun: ObservableObject, Identifiable {
     let kind: LocalCodingAgentKind
     let taskBrief: String
     let workingDirectory: URL
+    /// 用户起 session 时选的 model slug。Run-level metadata，view 层用来
+    /// 在 session 窗口展示「模型: claude-sonnet-4-5」之类信息。
+    let model: String?
     /// Spec v2 §10 — session-level override for permission_mode.
     /// `nil` = inherit crew default (server-side null). The runner
     /// doesn't enforce the mode locally yet; this field is kept so
@@ -132,6 +141,7 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         kind: LocalCodingAgentKind,
         taskBrief: String,
         workingDirectory: URL,
+        model: String? = nil,
         permissionModeOverride: String? = nil,
         handle: LocalCodingAgentRunHandle
     ) {
@@ -140,6 +150,7 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         self.kind = kind
         self.taskBrief = taskBrief
         self.workingDirectory = workingDirectory
+        self.model = model
         self.permissionModeOverride = permissionModeOverride
         self.startedAt = Date()
         self.handle = handle

@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import UIKit
 
@@ -339,3 +340,4 @@ private struct LabeledRow: View {
         }
     }
 }
+#endif

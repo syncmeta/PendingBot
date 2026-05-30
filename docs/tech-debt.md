@@ -33,6 +33,14 @@
 
 ## 🔴 根基级
 
+### 🔴 PendingBot Mac 端业务接入只覆盖 5 tab 中的 1 个,其余仍是 placeholder
+- **发现**: 2026-05-29 · feat/mac-multiplat-t01-p0(worktree wf_bb2bdb07-141-5)
+- **位置**: `apps/pendingbot/Sources/Mac/MacRootView.swift`、`apps/pendingbot/Sources/Features/**`、`apps/pendingbot/project.yml`
+- **问题**: T0.1 P0 把 `project.yml` 里的 `EXCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]` 大锅排除摘掉了,改用 `#if os(iOS) ... #endif` 包住每个 iOS-only 文件。但实际包了 `Sources/Components/*` + `Sources/Features/*` 整两层目录(再加 Networking 里 7 个文件),原因是这些目录里的 UI 类全部转性依赖 UIKit / PushKit / CallKit / Theme(UIColor) / Haptics(UIKit)。Mac build 现在能过,但能拿来用的 Mac 真实视图只有 `MacMeView`(账号信息 + 退出登录),消息 / 好友 / Crew / 来信 4 个 tab 仍是 `MacTabPlaceholder`。
+- **影响**: 用户在 Mac 端只能看自己账号 + 登出,看不到任何聊天、好友、Crew、来信内容 — Mac 端基本不可用。后续 T0.1 P1+P2 真正接业务时,要把 iOS 业务里 UIKit-tied 的小部件抽成 cross-platform 等价物(`UIImage`→`Image+platform helper`、`UIPasteboard`→`NSPasteboard`、`Haptics`→Mac noop、`UIViewRepresentable` 桥不能用要找 SwiftUI 等价或 Mac-only 重写),工作量按文件数估在 30+ 文件级别;短期不可能"开关一拨就好"。
+- **建议**: T0.1 P1 — 先把 Models / Storage / Networking 里已 cross-platform 的部分往上抽通用 `Theme` / `PlatformColor` / `PlatformImage` 抽象层,让 `Sources/Components/` 里小部件(`UserAvatar` / `BotAvatar` / `Theme` / `Haptics` / `Platform` / `RelativeMessageTime` / `EmptyHint`)能不带 `#if os(iOS)` 编译过 Mac;T0.1 P2 — 接 `MessageTabView` 等价物(读 supabase `conversations` + 走 `ChatStream` 已是纯 Foundation),把"消息" tab 做出来。Crew / Call 强依赖 PushKit/CallKit 的,Mac 端等 v2 再说。
+- **状态**: 待办(P0 已完成 — 见 commit 388f24fd + 4eff9d8e)
+
 ### 🔴 Apple IAP JWS 验证未实现 — IAP 路由当前 fail-closed
 - **发现**: 2026-05-29 · feat/billing-v2-webhooks
 - **位置**: `apps/edge/src/lib/billing-v2-iap.ts:verifyAppleJws`
@@ -47,6 +55,14 @@
 - **问题**: 现有计费路径把 provider-reported cost、AI Gateway cost、本地价格表估算、voice 本地计算、web tool 成本和 runtime markup 折进 `audit_log.cost_usd` / `tool_cost_usd` / `cost_credits` 这组旧字段里。历史迁移曾把 `cost_usd` 从“provider cost”改成“local pricebook cost”，后续又删掉 `provider_cost_usd` 和 raw model call 表并转向 AI Gateway 作为事实源，导致字段名、注释和实际结算语义互相打架。
 - **影响**: 新增服务计费时容易继续塞进 parent audit 单列，无法清楚解释“供应商真实成本、用户扣减单位、销售利润”三者关系；余额门槛也只能用粗糙固定阈值，无法按服务预授权。当前已出现有 token 且 Gateway 有成本但落成 `skipped` 的行，说明计费链路缺少明确的 settling/failure 状态。
 - **建议**: 以 `docs/billing-v2-design.md` 为目标态重做：PNC 作为成本单位，`27 PNC = 1 USD`；运行时不加 markup，销售 pack 时加 markup；用 usage events + pack ledger + reserve/settle 替代单列 `cost_credits`；所有 LLM、工具、语音、RealtimeKit、sandbox、存储等变量成本都进入统一 usage event。
+- **状态**: 待办
+
+### 🟡 Sandbox runtime usage_event 暂以 vendor_cost_usd=0 落账
+- **发现**: 2026-05-29 · worktree-wf_bb2bdb07-141-3 (#183 billing v2 sandbox 接入)
+- **位置**: `apps/edge/src/lib/sandbox.ts` (`runPython`)
+- **问题**: billing v2 给 sandbox 加上了 `sandbox_runtime` usage_event 行（记录 elapsed seconds + conversation/owner），但 Cloudflare Sandbox 的 per-second container 价格目前没在 worker 里维护，所以 `vendor_cost_usd` 暂时硬写 0、`cost_source='manual'`。usage_event 行存在、ledger 不扣钱。
+- **影响**: pre-launch 没有真实滥用流量，先记录形态再补价格是合理的折中；但发布前必须有真实价目，否则用户跑无限循环代码不计费。同样的 hole 也存在于 storage_transfer / push_delivery，这两类目前完全没接入。
+- **建议**: (1) 把 Cloudflare Sandbox 的 container 价格表（memory-seconds + disk + network egress）建成 `sandbox_prices` 表，跟 `web_tool_prices` 同一个模式；(2) `runPython` 里改用真实价目算 `vendor_cost_usd`；(3) 顺手把 R2 上传/下载/转码、APNs 短信/邮件按同样的 usage_event + pricebook 模式补齐。
 - **状态**: 待办
 
 ### 🔴 Edge 用户态路由里 service-role 鉴权边界过于分散
@@ -123,6 +139,14 @@
 
 ## 🟡 拆东墙补西墙
 
+### 🟡 Mac 端整体业务子树被 build settings 排除，三端 IM 实质上还是 iOS-only
+- **发现**: 2026-05-29 · feat/mac-3col-shell
+- **位置**: `apps/pendingbot/project.yml`（`EXCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]`：`Components/* Features/* Models/* Networking/* Storage/*`）、`apps/pendingbot/Sources/Mac/MacRootView.swift`、`apps/pendingbot/Sources/Features/Message/*`（顶层 `import UIKit` + `UIViewRepresentable` + `UIImagePickerController` + `UIScreen.main`，无 `#if os(iOS)` 门）
+- **问题**: spec v2 §11 三端齐目标要求 Mac 端跑通普通 IM，但当前为了让 Mac 能 build，`project.yml` 一刀把 `Features/ Components/ Models/ Networking/ Storage/` 整个子树从 macOS target 排除。`MacRootView` 因此只能渲染纯占位 3 列 shell（sidebar/list/detail 都是空态文案）——没有 `AccountStore`、没有 `APIClient`、没有任何会话或好友数据可读。Features/Message 那一堆（`ConversationView`、`BubbleView`、`ComposerView`、`ChatComposerAccessory`、`ChatActionSheet`、`MessageTabView`）也都顶层 `import UIKit`,直接共用要 (a) 在几十个文件里加 `#if os(iOS)` 门 + Mac 替代实现 (b) 把 UIKit 部分下沉到一个 iOS-only Components 层。
+- **影响**: Mac 端会一直停在"空壳"阶段——每加一个 Mac 业务功能，都要先拆一刀 UIKit 门或者整段重写跨平台版。任由它发展，最终会形成"iOS 业务代码 + Mac 重写"两套并行实现的根基级分裂；T4.6 Crew Tab V2 多端方案能成立，是因为 Crew 一开始就走 SwiftUI-only。普通 IM 这块没有同样的预算，相当于 spec §11 三端齐目标被偷偷降级成"iOS+iPad 齐,Mac 占位"。
+- **建议**: 接 Mac IM 之前必须先做一次跨平台抽层，至少这几步：(1) 把 `Models/`、`Storage/AccountStore`、`Storage/UnreadStore`、`Networking/APIClient`、`Networking/RealtimeManager` 等纯 Foundation 模块从 macOS 的 EXCLUDED 列表里拿出来（这些文件已经不 import UIKit）；(2) `Features/Message/*` 里 UIViewRepresentable 子组件抽进 `Components/iOS/` 子目录,顶层 view 用 `#if os(iOS)` / `#if os(macOS)` 各跑一份；(3) 写明哪些 iOS-only 能力（CallKit/PushKit/相机/UIImage 编码）在 Mac 上的对应方案（不做 / NSImage / 文件选择器）。短期不要为了多接一个 tab 而随手加 `#if`，会让以后真正拆层时阻力越大。
+- **状态**: 待办（T1.4 stream 升级 Mac shell 到三列结构,但中间和右栏仍是 placeholder；真正的 Mac IM 接入留给后续 Phase 2+ stream）
+=======
 ### 🟡 通话内 voice_cost 实时预览还在用 v1 PND markup（与 v2 PNC 钱包单位不一致）
 - **发现**: 2026-05-29 · feat/billing-v2-cutover
 - **位置**: `apps/edge/src/lib/voice-metering.ts:broadcastVoiceCostPreview`（getMarkup + usdToPnd）、`apps/edge/src/durable-objects/room-voice.ts:broadcastCost`、iOS `RealtimeSocket`/`Manager` 的 `voice_cost` 处理（`delta_pnd`/`cumulative_pnd` 字段）
@@ -146,7 +170,6 @@
 - **影响**: 沙盒是可被滥用的变量成本（长时间运行的 container、磁盘、egress），目前完全免费。用户可以无限跑 execute_code 不掉余额。pre-launch、单人、沙盒 auto-sleep 的现状下风险有限，但发布前必须补上，否则是一个开口的成本漏洞。
 - **建议**: 在 sandbox 生命周期（启动→运行→sleep）打点 container-seconds，按 Cloudflare Sandbox 计价转 `vendor_cost_usd`，走 `settleUsage({category:'sandbox_runtime', quantityUnit:'seconds'})`。design doc §7 要求 sandbox 走周期 settle + 余额 ≤ 0 立即终止容器——这部分要和 sandbox.ts 的 sleepAfter 生命周期一起做。
 - **状态**: 待办
-
 ### 🟡 群语音 DO↔容器掉线重连/resync 控制逻辑已写+单测，但端到端音频恢复 runtime 未验证
 - **发现**: 2026-05-29 · feat/group-voice-reconnect
 - **位置**: `apps/edge/src/durable-objects/room-voice.ts`（heartbeat / onMediaClosed / runReconnect / resyncContainer / 多路复用 alarm）、`apps/edge/src/durable-objects/room-voice-reconnect.ts`（纯函数：nextBackoffMs / buildResyncCommands / shouldGiveUpReconnect）、`apps/voice-container/src/room.ts`（resetForStart + pong）
@@ -292,6 +315,14 @@
 
 ## 🟢 不规范
 
+### 🟢 PendingCrew 双轨 backend(EdgeBackend / LocalBackend)没有单元测试覆盖
+- **发现**: 2026-05-29 · T5.2 dual-track routing wiring
+- **位置**: `apps/pendingcrew/Sources/Services/PendingCrewBackend.swift`、`apps/pendingcrew/Tests/PendingCrewTests/`、`apps/pendingcrew/project.yml`
+- **问题**: `PendingCrewBackend` protocol 有两个实现(EdgeBackend / LocalBackend),关键行为(BYOK 路径下 `attachParent` / 非 `local_host` runtime 抛 `notSupportedInByok`、`listMySubjects` 返回单元素假 subject、AppModel.mode → backend 选择)只通过 Mac 手测验证。`PendingCrewTests` target 是 standalone XCTest bundle,故意只编 `Sources/Mac/LocalRunner` 进去(`TEST_HOST=""` / `BUNDLE_LOADER=""`,见 project.yml 注释 —— scaffold 阶段 app 不签,无法做 host-app injection)。要给 backend 加单测得改 project.yml 把 Sources/Services + Sources/Stores + Sources/Models 也编进 bundle,或者把 backend 抽成独立 SwiftPM module。
+- **影响**: BYOK / logged 切换、能力 gating(`supportsCloudRuntime`)的行为契约靠 UI 手验,后续新加 protocol 方法(spec §5.3 提到的 share-change / mailbox / whiteboard 等)很容易漏掉一端没实现就 ship。
+- **建议**: 等 PendingCrew app 真正签名(脱离 scaffold 阶段)后,把测试 bundle 改成普通 host-app injection 模式,补 backend 行为快照测试;或者把 PendingCrewBackend + 两个实现拆到 `Packages/PendingCrewBackend/` SwiftPM module,带自己的测试 target。
+- **状态**: 待办
+
 ### 🟢 ~~模拟器 Keychain -34018 登录失败~~ → 其实是后端 signup bug 的误诊(已纠正)
 - **发现**: 2026-05-29 · v1 QA;2026-05-29 复盘纠正
 - **位置**: 误指 `apps/pendingbot/project.yml` / `Resources/PendingBot.entitlements`;实因 `bootstrap_user_id` 等 signup RPC
@@ -315,3 +346,80 @@
 - **影响**: 体验降级而非功能缺失——引用列表正常显示、可点。属于 provider 能力差异，非自挖的坑。
 - **建议**: 可选增强——按 annotation 的 start/end_index 把 [N] 注回正文文本；OpenRouter 的搜索词无解（provider 不暴露）。
 - **状态**: 不修（provider 限制 / 体验可接受）
+
+---
+
+## 2026-05-29 v1 sprint summary
+
+本节为本轮（Phase 1–7）冲刺收尾的汇总。冲刺范围：在 `claude/blissful-albattani-a8a732` 分支上推进 v1 双轨架构（PendingBot IM 多端 + PendingCrew 本地 coding agent + billing-v2 双写），共 **34 commits**，由 ~13 个并行 sub-agent worktree 汇出。
+
+### 已落地（commit hash）
+
+**Phase 1 — billing-v2 双写底座** (merge `worktree-wf_bb2bdb07-141-3`)
+- `4a9f93da` v2 dual-write — LLM + web-tool usage_events alongside v1 debit
+- `71b69a02` v2 voice (RealtimeKit media) + sandbox usage_events
+- `2dc06dbe` v2 cron — pack expiry sweep + group-pool reconciliation
+- `cbb4fb3f` v2 settleUsage CAS-loss retry + cover main paths
+- `3aef07e8` merge
+
+**Phase 2 — PendingBot Mac multiplat T0.1 P0** (merge `worktree-wf_bb2bdb07-141-5`)
+- `388f24fd` `#if os(iOS)` 替代 EXCLUDED_SOURCE_FILE_NAMES 大锅排除
+- `4eff9d8e` Mac "我" tab 接入 AccountStore 真实账号信息
+- `d6ed2808` 记录剩余缺口
+- `6df88dbb` merge
+
+**Phase 3 — 群账号 / 权限 / 三端壳** (merges `…-7`, `…-8`, `feat/mac-3col-shell`)
+- `207d5203` edge T1.2 — `/v1/group-subjects/*` 群权限矩阵路由
+- `cc080ac1` merge T1.2
+- `7ff0c2a6` merge T1.3
+- `f2dbebfb` crew(mac) identity footer + sign-out
+- `c174f734` mac 三栏 NavigationSplitView 根壳
+- `5e132703` merge mac-3col-shell
+
+**Phase 5 — T4.5 跨设备控制设计** (merge `worktree-wf_bb2bdb07-141-16`)
+- `ceba5619` docs(t4.5) cross-device session control as-built design
+- `0780685f` merge
+
+**Phase 6 — PendingCrew 本地 runner + Session 面板** (merges `…-18`, `…-19`, `…-20`)
+- `5f731002` Swift 6 captured-var warnings 静化
+- `2c7b7887` LocalRunner 接 model slug
+- `a5ffe5c3` `/v1/models` client + backend `listModels()`
+- `6d944513` GitInspector helper（分支选择器）
+- `29699690` 完整 session-create panel（spec v2 §12.2）
+- `280d5b7b` T3.4 first-launch disclosure modal
+- `00746ca9` GitWorktreeService for T3.3 worktree option
+- `bbd97ae4` T3.3 three-layer working directory in session sheet
+- `4ca47a98`, `564693f7`, `e7bb267b` merges
+
+**Phase 7 — PendingCrew 未登录 BYOK 双轨路由** (merges `…-22`, `…-23`)
+- `ee28d676` reset CrewStore on backend mode change
+- `8e0eac32` docs(tech-debt) PendingCrew 后端单测缺口
+- `42d58047` BYOK 本地 captain template store
+- `f78d61bf` BYOK CreateCrewSheet captain pool picker + template editor
+- `c69ba418` merge T5.1
+- `692b661f` merge T5.2
+
+### 仍延期（需人工或后续 session）
+
+#### 🔴 必须人工介入
+
+- **#185 IAP 服务端 webhook** — App Store Server Notifications V2 真实签名校验、refund/REVOKE 处理；当前只有 stub。需要 Apple Developer 后台配置 + 真实 sandbox 测试，必须人工。
+- **#186 Lemon Squeezy refund 完整路径** — webhook 已落 issuePack 入账，但 refund/dispute 反向冲销在 v2 ledger 上还没串通；需要联调 LS test mode。
+- **#188 Board 后台 — 计费 v2 管理面板** — `de4a62c2` 起了 admin grant/claw-back RPC + 简单 board UI，但仍缺：pack 列表/手动作废、refund 列表、用户 wallet 详情视图、批量 grant。需要 Board 端 UI 设计 + RPC 扩展。
+- **#189 iOS wallet v2 完整 UI** — `5c63ce76` 只落了 preview 入口（PNC packs view），缺购买流（IAP product picker）、refund 历史、share-index 详情、群池贡献 UI。需要设计师定稿后再做。
+- **#190 v1 计费完全退役** — `551296e9` 边缘 cutover 已让 v2 authoritative，但 v1 表 (`wallets`, `wallet_ledger`) 还在 schema 里；30 天观察期后需要一次清理迁移 + 删除 dead code 路径。
+
+#### 🟡 后续 session 即可
+
+- **T3.2 Codex runner** — Phase 6 只落了 Claude Code 本地 runner (`LocalCodingAgentService`)；Codex CLI runner adapter 仍是 TODO，需要 codex 二进制契约调研 + adapter 抽象。
+- **T4.5 完整实现** — `ceba5619` 只落了设计文档（as-built），跨设备 session 控制的实际代码（手机 → Mac 推送 session 命令、Mac 端 session 镜像）一行都没动。
+- **T5.3 PendingCrew E2E QA** — BYOK 路径和 cloud 路径的端到端测试（创建 crew → 派单 → 收到结果 → 计费记账）从未真机跑通；只有编译过 + 单测覆盖。需要人工 QA pass。
+
+### 部分/骨架级、需要补完
+
+- **PendingCrew 后端单元测试** — `8e0eac32` 已记录：`apps/pendingcrew-server` 几乎没有单测覆盖，BYOK 路径切换、CrewStore reset、template store 三处都是裸代码。建议后续 session 补 vitest。
+- **群权限矩阵 client 端消费** — `207d5203` edge 给了 `/v1/group-subjects/*` 路由，iOS / Mac 客户端还没真正消费；目前权限判定仍走旧 client-side 规则。
+- **Mac 三栏壳的实际内容** — `c174f734` 是结构脚手架；middle column 的会话列表 + detail column 的消息流都还是 placeholder，等 IM 主路径打通后填。
+- **First-launch disclosure modal 文案** — `280d5b7b` 走通了流程，正式文案待法务/产品定稿。
+- **billing-v2 settleUsage CAS-loss retry** — `cbb4fb3f` 实现了重试，但极端高并发下的退避策略未压测；30 天观察期内若看到大量重试再优化。
+

@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 
 /// Markdown compose sheet for human-to-human letters. The send action
@@ -242,3 +243,4 @@ struct LetterComposeSheet: View {
         }
     }
 }
+#endif

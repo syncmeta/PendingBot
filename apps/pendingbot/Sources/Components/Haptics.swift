@@ -1,3 +1,4 @@
+#if os(iOS)
 import UIKit
 
 /// Centralized haptic feedback. Avoids creating one-shot generators all over
@@ -46,3 +47,4 @@ enum Haptics {
     /// Hard failure (auth revoked, server unreachable).
     @MainActor static func error()   { notification.notificationOccurred(.error) }
 }
+#endif

@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 
 /// Layout switch driven by horizontal size class.
@@ -50,3 +51,4 @@ extension View {
         navigationSplitViewColumnWidth(min: 280, ideal: 340, max: 420)
     }
 }
+#endif

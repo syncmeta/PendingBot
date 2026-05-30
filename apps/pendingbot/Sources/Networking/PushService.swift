@@ -1,3 +1,4 @@
+#if os(iOS)
 import Foundation
 import UIKit
 import UserNotifications
@@ -348,3 +349,4 @@ extension VoIPPushService: PKPushRegistryDelegate {
         }
     }
 }
+#endif

@@ -36,6 +36,13 @@ protocol PendingCrewBackend: AnyObject {
 
     /// `POST /v1/crews/:crewId/attach-parent`(edge);BYOK 抛 `notSupportedInByok`。
     func attachParent(crewId: String, parentCrewId: String, childKeepsBps: Int) async throws
+
+    // MARK: - Models
+
+    /// 拉 model 目录给 CreateSessionSheet 用。
+    /// - 登录态:走 edge `GET /v1/models`,返回 native + OpenRouter 全集。
+    /// - BYOK:edge 不可达,返回空 array(UI 改走手动 model id 输入框)。
+    func listModels() async throws -> [ModelCatalogEntry]
 }
 
 // MARK: - Edge backend
@@ -76,6 +83,10 @@ final class EdgeBackend: PendingCrewBackend {
             parentCrewId: parentCrewId,
             childKeepsBps: childKeepsBps
         )
+    }
+
+    func listModels() async throws -> [ModelCatalogEntry] {
+        try await client().listModels()
     }
 
     private func client() throws -> PendingCrewAPI {
@@ -149,6 +160,12 @@ final class LocalBackend: PendingCrewBackend {
         throw PendingCrewBackendError.notSupportedInByok(
             "BYOK 模式不支持 crew 之间的责任分账;需要登录 PendingBot 账号才能挂父 crew"
         )
+    }
+
+    func listModels() async throws -> [ModelCatalogEntry] {
+        // BYOK 没法走 edge 拿动态目录。CreateSessionSheet 看到空 array 时
+        // 会自动 fallback 到手动输入框。
+        []
     }
 }
 

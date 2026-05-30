@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 
 /// Avatar for a 来信 byline. The preset 「读我」letter (trigger='example')
@@ -23,3 +24,4 @@ struct LetterSenderAvatar: View {
         }
     }
 }
+#endif

@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 
 /// Stable per-bot visual identity derived from its id. Produces a two-stop
@@ -66,3 +67,4 @@ enum ColorHash {
         return avatarEmoji[idx]
     }
 }
+#endif

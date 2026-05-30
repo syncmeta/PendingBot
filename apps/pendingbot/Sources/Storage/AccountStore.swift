@@ -201,7 +201,11 @@ final class AccountStore: ObservableObject {
             log.error("signOut error: \(String(describing: error), privacy: .public)")
         }
         LocalDatabase.shared.wipeForSignOut()
+        #if os(iOS)
+        // AvatarCache lives in Sources/Components/UserAvatar.swift, which
+        // is whole-file gated behind #if os(iOS) (UIImage-based).
         AvatarCache.shared.clear()
+        #endif
     }
 
     private static func makeAccount(session: Session) -> Account {

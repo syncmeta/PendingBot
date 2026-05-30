@@ -1,3 +1,4 @@
+#if os(iOS)
 import PhotosUI
 import SwiftUI
 import UIKit
@@ -259,3 +260,4 @@ extension ConversationView {
         }
     }
 }
+#endif

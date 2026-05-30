@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 
 /// T4.6 — PendingBot iOS Crew Tab v2.
@@ -284,3 +285,4 @@ private struct CrewRowV2: View {
         }
     }
 }
+#endif

@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 
 #if canImport(WebRTC)
@@ -566,4 +567,5 @@ final class WebRTCDiagnosticsSampler {
     }
 }
 
+#endif
 #endif

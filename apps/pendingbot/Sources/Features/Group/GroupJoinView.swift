@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 
 /// Scan-to-join / paste-to-join flow. The user types a group number
@@ -169,3 +170,4 @@ struct GroupJoinView: View {
 
     private enum PendingState { case joined, pending }
 }
+#endif

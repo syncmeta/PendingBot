@@ -293,6 +293,12 @@ export async function settleUsage(
   let totalBilled = 0;
 
   // Two passes — handles a single race (CAS lost) by re-reading packs.
+  // Pass 1 walks the FIFO list once. If a CAS loss leaves us still owing,
+  // pass 2 refetches (some packs may now have less remaining than we read,
+  // others may be newly available) and retries the unfinished debit. If
+  // pass 2 makes no progress either, we fall through to the overdraft
+  // path — no infinite retry on a hot contended pack.
+  let casLostSinceLastFetch = false;
   for (let attempt = 0; attempt < 2 && stillOwed > 0; attempt++) {
     const ownerCol = params.owner.kind === 'user' ? 'owner_user_id' : 'owner_subject_id';
     const ownerVal = params.owner.kind === 'user' ? params.owner.userId : params.owner.subjectId;
@@ -312,6 +318,7 @@ export async function settleUsage(
     if (!packs || packs.length === 0) break;
 
     let progressedThisPass = false;
+    casLostSinceLastFetch = false;
     for (const pack of packs) {
       if (stillOwed <= 0) break;
       const packRemaining = Number(pack.remaining_pnc_micros);
@@ -333,7 +340,14 @@ export async function settleUsage(
         console.warn('[billing-v2.settleUsage] pack debit', updErr.message);
         continue;
       }
-      if (!updated) continue; // CAS lost; outer loop will refetch.
+      if (!updated) {
+        // CAS lost (concurrent settle / cron expiry took our stale slice).
+        // Set the retry flag so the outer loop refetches even if no other
+        // pack progressed this pass — that's the whole point of the
+        // CAS-loss retry per design doc §7.
+        casLostSinceLastFetch = true;
+        continue;
+      }
 
       stillOwed -= debit;
       totalBilled += debit;
@@ -358,8 +372,9 @@ export async function settleUsage(
       }
     }
 
-    // No progress this pass = no point retrying (all CAS failed or empty list).
-    if (!progressedThisPass) break;
+    // Stop iterating once we've stopped making forward progress AND aren't
+    // racing a CAS contender. The CAS-loss path always retries once.
+    if (!progressedThisPass && !casLostSinceLastFetch) break;
   }
 
   let overdrawn = 0;
@@ -398,6 +413,118 @@ export async function settleUsage(
     balanceAfterMicros: runningBalance,
     thresholdState: getThresholdState(runningBalance),
   };
+}
+
+// ============================================================
+// Convenience: settle a whole turn (LLM + per-call tool spend)
+// ============================================================
+
+export interface AuditTurnUsage {
+  /** vendor LLM cost in USD; 0/null → no llm_tokens row written. */
+  llmCostUsd: number | null | undefined;
+  /** LLM model id, recorded onto the llm_tokens usage_event row. */
+  modelId?: string | null;
+  /** Provider slug for the LLM call (e.g. 'openai' | 'anthropic' | 'openrouter'). */
+  llmProvider?: string | null;
+  /** Source of the LLM USD figure — drives cost_source on the usage_event. */
+  llmCostSource?: CostSource;
+  /** Token counts for `quantity` on the llm_tokens row. */
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  audioInputTokens?: number;
+  audioOutputTokens?: number;
+  /**
+   * Web-tool calls fired during this turn. Each becomes one web_tools
+   * usage_event row (per call, not aggregated) so the wallet's history
+   * page can break down spend by provider.
+   */
+  webTools?: ReadonlyArray<{
+    provider: string;
+    kind: 'search' | 'scrape';
+    costUsd: number;
+    status: 'success' | 'error';
+  }>;
+  conversationId?: string | null;
+  auditLogId?: string | null;
+}
+
+/**
+ * Settle one audit turn's full spend against v2 packs.
+ *
+ * Splits the turn into per-category usage_events so wallet history can
+ * break down spend by category:
+ *   - one `llm_tokens` row (if llmCostUsd > 0)
+ *   - one `web_tools` row per successful web-tool call (failed calls
+ *     are recorded at cost 0 — matches v1 metering)
+ *
+ * Each row goes through settleUsage independently → independent ledger
+ * debits per category, so per-pack FIFO works at the row level.
+ *
+ * Soft-fails: any per-row failure is logged inside settleUsage. The
+ * function never throws to the caller (LLM turn must not fail because
+ * the billing path tripped).
+ *
+ * Returns the final balance state after all rows landed. Drives the
+ * threshold UX layer (low/throttle/exhausted notices on next turn).
+ */
+export async function settleAuditUsage(
+  supa: SupabaseClient,
+  owner: OwnerRef,
+  turn: AuditTurnUsage,
+): Promise<BalanceCheckResult> {
+  const llmCostUsd = turn.llmCostUsd ?? 0;
+  if (llmCostUsd > 0) {
+    const quantity =
+      (turn.inputTokens ?? 0) +
+      (turn.outputTokens ?? 0) +
+      (turn.cacheReadTokens ?? 0) +
+      (turn.cacheWriteTokens ?? 0) +
+      (turn.audioInputTokens ?? 0) +
+      (turn.audioOutputTokens ?? 0);
+    await settleUsage(supa, {
+      owner,
+      category: 'llm_tokens',
+      provider: turn.llmProvider ?? 'unknown',
+      modelId: turn.modelId ?? null,
+      quantity,
+      quantityUnit: 'tokens',
+      vendorCostUsd: llmCostUsd,
+      costSource: turn.llmCostSource ?? 'gateway',
+      conversationId: turn.conversationId ?? null,
+      auditLogId: turn.auditLogId ?? null,
+      rawUsage: {
+        input_tokens: turn.inputTokens ?? 0,
+        output_tokens: turn.outputTokens ?? 0,
+        cache_read_tokens: turn.cacheReadTokens ?? 0,
+        cache_write_tokens: turn.cacheWriteTokens ?? 0,
+        audio_input_tokens: turn.audioInputTokens ?? 0,
+        audio_output_tokens: turn.audioOutputTokens ?? 0,
+      },
+    });
+  }
+  for (const call of turn.webTools ?? []) {
+    // Failed calls record a 0-cost event for the audit trail; settleUsage
+    // early-exits when pncMicros === 0 (no ledger debit, no pack touch).
+    await settleUsage(supa, {
+      owner,
+      category: 'web_tools',
+      provider: call.provider,
+      vendorSku: `${call.provider}:${call.kind}`,
+      quantity: 1,
+      quantityUnit: 'calls',
+      vendorCostUsd: call.status === 'success' ? call.costUsd : 0,
+      costSource: 'local_pricebook',
+      conversationId: turn.conversationId ?? null,
+      auditLogId: turn.auditLogId ?? null,
+      rawUsage: {
+        kind: call.kind,
+        status: call.status,
+      },
+    });
+  }
+  return await checkBalance(supa, owner);
 }
 
 /**

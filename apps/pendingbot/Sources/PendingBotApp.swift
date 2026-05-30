@@ -183,17 +183,28 @@ private struct SplashView: View {
 
 #elseif os(macOS)
 
-/// PendingBot Mac 端 @main — T1.4 partial 占位壳。
+/// PendingBot Mac 端 @main — T0.1 partial:5 tab 框架仍是 NavigationSplitView,
+/// "我" tab 已接入真实 AccountStore(MacMeView),其余 tab 暂为 placeholder。
 ///
-/// Mac 端业务接入是 Phase 2 才做的事；当前只挂 MacRootView 的 5 tab
-/// NavigationSplitView,sidebar + detail 都是 placeholder。窗口最小
-/// 尺寸 1100x700,跟 PendingCrew Mac 端的体感保持一致。
+/// AccountStore 是单例,本来不依赖 EnvironmentObject 注入,但 SwiftUI
+/// `@EnvironmentObject` 在 Mac 端 + macOS 14 起对 ObservableObject 的
+/// 变更追踪比直接读单例更可靠(不需要在每个子视图里订阅),所以这里仍按
+/// iOS 一致的方式把 AccountStore.shared 当 environmentObject 注入。
+/// 窗口最小尺寸 1100x700,跟 PendingCrew Mac 端的体感保持一致。
 @main
 struct PendingBotApp: App {
+    @StateObject private var accountStore = AccountStore.shared
+
     var body: some Scene {
         WindowGroup {
             MacRootView()
                 .frame(minWidth: 1100, minHeight: 700)
+                .environmentObject(accountStore)
+                .task {
+                    // 跟 iOS 入口对齐:.task 里 hydrate 持久化的 supabase
+                    // session,避免冷启动直接闪过 "未登录" 态。
+                    await accountStore.bootstrap()
+                }
         }
     }
 }

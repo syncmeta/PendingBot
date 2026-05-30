@@ -134,6 +134,16 @@ struct PendingCrewAPI {
         try await post(path: "v1/crews", body: request)
     }
 
+    // MARK: - Models
+
+    /// `GET /v1/models` — 拉模型目录给 CreateSessionSheet 的 picker。
+    ///
+    /// edge 端返回的是裸 array(不是 `{ models: [...] }` envelope),所以这里
+    /// 直接解 `[ModelCatalogEntry]`。
+    func listModels() async throws -> [ModelCatalogEntry] {
+        try await get(path: "v1/models")
+    }
+
     /// `POST /v1/crews/:crewId/attach-parent`。
     func attachParent(crewId: String, parentCrewId: String, childKeepsBps: Int) async throws {
         struct Body: Encodable {

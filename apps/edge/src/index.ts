@@ -9,6 +9,7 @@ import { botRoutes } from './routes/bots';
 import { uploadRoutes } from './routes/upload';
 import { envelopeRoutes } from './routes/envelope';
 import { meRoutes } from './routes/me';
+import { groupSubjectRoutes } from './routes/group-subjects';
 import { contactRoutes } from './routes/contacts';
 import { friendRequestRoutes } from './routes/friend-requests';
 import { groupRoutes } from './routes/groups';
@@ -101,6 +102,7 @@ v1.route('/upload', uploadRoutes);
 v1.route('/uploads', uploadRoutes);   // GET /v1/uploads/:id
 v1.route('/envelope', envelopeRoutes);
 v1.route('/me', meRoutes);
+v1.route('/group-subjects', groupSubjectRoutes);
 v1.route('/contacts', contactRoutes);
 v1.route('/friend-requests', friendRequestRoutes);
 v1.route('/groups', groupRoutes);

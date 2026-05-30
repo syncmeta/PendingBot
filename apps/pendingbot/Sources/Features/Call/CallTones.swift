@@ -1,3 +1,4 @@
+#if os(iOS)
 import AVFoundation
 import CoreAudio
 import Foundation
@@ -332,3 +333,4 @@ final class HangupTonePlayer {
 
     func stop() { player.stop() }
 }
+#endif
