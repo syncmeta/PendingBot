@@ -41,13 +41,13 @@
 - **建议**: T0.1 P1 — 先把 Models / Storage / Networking 里已 cross-platform 的部分往上抽通用 `Theme` / `PlatformColor` / `PlatformImage` 抽象层,让 `Sources/Components/` 里小部件(`UserAvatar` / `BotAvatar` / `Theme` / `Haptics` / `Platform` / `RelativeMessageTime` / `EmptyHint`)能不带 `#if os(iOS)` 编译过 Mac;T0.1 P2 — 接 `MessageTabView` 等价物(读 supabase `conversations` + 走 `ChatStream` 已是纯 Foundation),把"消息" tab 做出来。Crew / Call 强依赖 PushKit/CallKit 的,Mac 端等 v2 再说。
 - **状态**: 待办(P0 已完成 — 见 commit 388f24fd + 4eff9d8e)
 
-### 🔴 Apple IAP JWS 验证未实现 — IAP 路由当前 fail-closed
+### ✅ Apple IAP JWS 验证未实现 — IAP 路由当前 fail-closed
 - **发现**: 2026-05-29 · feat/billing-v2-webhooks
 - **位置**: `apps/edge/src/lib/billing-v2-iap.ts:verifyAppleJws`
 - **问题**: `/v1/billing/iap/purchase` 和 `/v1/billing/iap/notify` 已经接入了数据流（idempotency、pack 发放、refund_events、handler 分发），但 JWS 签名校验函数直接 `throw new Error('apple_jws_verification_not_implemented')`，所有 Apple 路径目前返回 501。原因：Workers 没有内置 X.509 解析，要实现 Apple ASN V2 完整链验证需要手写 ASN.1/DER 解码 + ECDSA P-256 链验证 + Apple Root CA G2/G3 指纹固定化，工作量不小。
 - **影响**: 上 iOS IAP 之前必须先解决，否则要么 Apple 充值彻底跑不通、要么用环境变量 bypass 验证（已被显式拒绝写入代码以避免静默旁路）。Lemon Squeezy（HMAC-SHA256）已完整实现，所以上架顺序可以先 LS / Web、再补 Apple。
 - **建议**: 实现路径已写在 `verifyAppleJws` 函数注释里：(1) 解 JWS header.x5c → 3 张 DER cert；(2) ASN.1 解 X.509 取 SPKI + issuer；(3) 链验证（leaf signed by intermediate, intermediate by root, ECDSA-P256）；(4) Root SHA-256 比对 Apple Root CA G2 / G3 内嵌指纹；(5) 校验 NotBefore/NotAfter；(6) importKey('spki', leaf.spki, 'ECDSA P-256') + verify on signing input；(7) 校验 `iss==='Apple Inc.'` 和 `bundleId === env.APPLE_IAP_BUNDLE_ID`。落地后，本文件这条状态置为已解决。
-- **状态**: 待办
+- **状态**: ✅ 已修复（2026-05-30 · 零依赖手写 DER/ASN.1。新增 `apps/edge/src/lib/billing-v2-iap-verify.ts`：`verifyAppleJwsChain` 做 x5c 链解码 → 每张 cert 解析（SPKI/validity/ECDSA 签名 DER→JOSE raw）→ **Apple Root CA G3 SHA-256 根固定**（常量已用 openssl 双工具核对官方 cert）→ validity 窗口 → 链验证（leaf←intermediate←root + root 自签）→ SubtleCrypto ES256 验 `header.payload` → decode payload。`verifyAppleJws` 改为调它 + `bundleId===env.APPLE_IAP_BUNDLE_ID` 断言，函数签名不变、三个 caller 零改动。单测 `billing-v2-iap.test.ts` 用 SubtleCrypto 现造 P-256 三级链 + DER builder，覆盖 happy/篡改/错根/断链/过期/非ES256/默认pin拒自签根/签名输入字节——14 测全绿，typecheck 0 error。**仍待真机**：无真实 Apple sandbox JWS，端到端未跑，首次接 iOS IAP 时需用 sandbox 交易回归一次。）
 
 ### 🔴 计费事实源、成本字段和销售 markup 混在旧 credits 框架里
 - **发现**: 2026-05-29 · codex/billing-v2-design

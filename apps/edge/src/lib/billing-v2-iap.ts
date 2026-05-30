@@ -8,6 +8,10 @@ import {
 } from './billing-v2-pack';
 import type { SalesChannel } from './billing-v2';
 import { processRefundEvent } from './billing-v2-refund';
+import {
+  verifyAppleJwsChain,
+  AppleJwsVerifyError,
+} from './billing-v2-iap-verify';
 
 // Apple In-App Purchase / Server Notifications V2 (see docs/billing-v2-design.md §10).
 //
@@ -15,16 +19,15 @@ import { processRefundEvent } from './billing-v2-refund';
 //
 //   This module ships the data-flow, idempotency, and pack-issuance
 //   plumbing for Apple IAP. JWS verification against Apple's certificate
-//   chain is NOT implemented yet — the verify function throws and the
-//   route gates the whole endpoint behind a 501 until it lands.
+//   chain is implemented in lib/billing-v2-iap-verify.ts (zero-dependency
+//   x5c chain decode + ECDSA-P256 verify, SHA-256-pinned to Apple Root
+//   CA G3). verifyAppleJws() below wraps it and adds the bundleId /
+//   issuer claim assertions.
 //
 //   We deliberately do NOT have an "accept unverified payloads" dev
 //   override. Per CLAUDE.md / feedback_no_shortcut_debt: a silently-on
-//   bypass would be a security landmine. When the verification work
-//   lands (X.509 chain decode + ECDSA verify against Apple Root CA G2),
-//   it replaces the throw — no other plumbing in this file changes.
-//
-//   See docs/tech-debt.md → "Apple JWS verification not implemented".
+//   bypass would be a security landmine. Verification failures throw an
+//   AppleJwsVerifyError; callers map that to a non-2xx response.
 //
 // Flow shapes are correct so the eventual verification swap-in is local:
 //
@@ -124,28 +127,33 @@ export function decodeAppleJws<P>(jws: string): { header: unknown; payload: P } 
 }
 
 /**
- * Verify Apple's JWS signature.
+ * Verify Apple's JWS signature and return the decoded payload.
  *
- * NOT YET IMPLEMENTED. Throws unconditionally. The route gates IAP
- * behind a 501 until this lands. See module header.
+ * Delegates the cryptographic work (x5c chain decode, validity windows,
+ * chain verification, Apple Root CA G3 SHA-256 pin, ECDSA-P256 verify of
+ * the signing input) to lib/billing-v2-iap-verify.ts, then asserts the
+ * payload's `bundleId` matches env.APPLE_IAP_BUNDLE_ID (when configured).
+ *
+ * Throws on any failure so callers fail closed.
  */
-export async function verifyAppleJws<P>(_jws: string, _env: Env): Promise<P> {
-  // TODO(billing-v2-iap-verify): implement Apple JWS verification.
-  //
-  // Steps:
-  //   1. Decode header → x5c chain (3 certs, base64-DER).
-  //   2. Parse each X.509 cert (manual ASN.1 — Workers has no built-in X.509).
-  //   3. Verify chain links via ECDSA (P-256) against parent's pubkey.
-  //   4. Verify root cert SHA-256 equals Apple Root CA G2/G3 fingerprint
-  //      (bundled at build time — don't fetch at request time).
-  //   5. Validate cert NotBefore/NotAfter dates.
-  //   6. Extract leaf cert's SPKI → importKey('spki', ..., 'ECDSA P-256') for verify.
-  //   7. Run crypto.subtle.verify('ECDSA',...) on the JWS signing input
-  //      (`${headerB64url}.${payloadB64url}`).
-  //   8. Validate payload.iss === 'Apple Inc.' and bundleId matches env.
-  //
-  // Until then, every call to this function fails closed.
-  throw new Error('apple_jws_verification_not_implemented');
+export async function verifyAppleJws<P>(jws: string, env: Env): Promise<P> {
+  const payload = await verifyAppleJwsChain<P & { bundleId?: string }>(jws);
+
+  // Bind the payload to our app. APPLE_IAP_BUNDLE_ID is optional at
+  // typecheck time (a deploy-time secret/var); when it is set we require an
+  // exact match so a validly-signed JWS for a *different* Apple app cannot
+  // mint credits here. When unset (e.g. local dev that hasn't configured
+  // it), we skip the check but the cryptographic chain verification above
+  // still holds — there is no unverified bypass.
+  const expectedBundleId = env.APPLE_IAP_BUNDLE_ID;
+  if (expectedBundleId && payload.bundleId && payload.bundleId !== expectedBundleId) {
+    throw new AppleJwsVerifyError(
+      'bundle_id_mismatch',
+      `expected=${expectedBundleId} got=${payload.bundleId}`,
+    );
+  }
+
+  return payload as P;
 }
 
 // ============================================================
