@@ -17,10 +17,10 @@ final class DeepLinkStore {
     static let shared = DeepLinkStore()
     private init() {}
 
-    /// Set when a `bot.pendingname.com/b/<slug>` link is opened. The
+    /// Set when a `bot.pendingname.com/b/<token>` invite link is opened. The
     /// friends tab switches itself in and presents the add-bot preview,
     /// then clears this back to nil.
-    var pendingAddBotSlug: String?
+    var pendingAddBotToken: String?
 
     /// Parse an incoming URL into a pending action. Returns true when the
     /// link was recognised (so the caller can stop here).
@@ -28,7 +28,7 @@ final class DeepLinkStore {
     func handle(_ url: URL) -> Bool {
         let raw = url.absoluteString
         if BotShareLink.isBotShareLink(raw) {
-            pendingAddBotSlug = BotShareLink.slug(fromScanned: raw)
+            pendingAddBotToken = BotShareLink.token(fromScanned: raw)
             return true
         }
         return false
@@ -90,15 +90,14 @@ enum PendingBotQR {
     }
 }
 
-/// Codec for the bot-share deep link.
+/// Codec for the bot-share deep link (decisions.md D1 — invite-only model).
 ///
-/// Encoded form is `https://bot.pendingname.com/b/<slug>` — same `bot.`
-/// subdomain as the contact/group QRs (so the Universal Links
-/// entitlement applies), but the AASA path is `/b/` (see
-/// apps/edge/src/routes/well-known.ts). Unlike the rotating `/c/` and
-/// `/g/` tokens, the payload is the bot's own `slug`: a public bot's
-/// slug is its stable, intentionally-public identity, so there's nothing
-/// to rotate. The same slug is what a user can type in 加机器人.
+/// Encoded form is `https://bot.pendingname.com/b/<token>` — same `bot.`
+/// subdomain as the contact/group QRs (so the Universal Links entitlement
+/// applies), AASA path `/b/` (see apps/edge/src/routes/well-known.ts). The
+/// payload is an inviter-scoped, revocable invite *token* (minted by
+/// POST /v1/bots/:id/invite-links), NOT the bot slug — bots are invite-only.
+/// The token is opaque (64 hex); not normalised.
 enum BotShareLink {
     static let host = "bot.pendingname.com"
     static let pathPrefix = "/b/"
@@ -107,26 +106,26 @@ enum BotShareLink {
     /// still parse, mirroring PendingBotQR.
     private static let urlHostSuffix = "pendingname.com"
 
-    static func url(forSlug slug: String) -> String {
-        "https://\(host)\(pathPrefix)\(slug)"
+    static func url(forToken token: String) -> String {
+        "https://\(host)\(pathPrefix)\(token)"
     }
 
-    /// Parse a payload back into the bare slug. Accepts the current
-    /// `bot.pendingname.com/b/<slug>` form, the legacy apex form, and a
-    /// bare slug. Always returns lowercased (slugs are case-insensitive).
-    static func slug(fromScanned raw: String) -> String {
+    /// Parse a payload back into the bare invite token. Accepts the current
+    /// `bot.pendingname.com/b/<token>` form, the legacy apex form, and a
+    /// bare token. Opaque — returned verbatim.
+    static func token(fromScanned raw: String) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if let url = URL(string: trimmed),
            url.host?.lowercased().hasSuffix(urlHostSuffix) == true,
            url.path.hasPrefix(pathPrefix) {
-            let slug = String(url.path.dropFirst(pathPrefix.count))
-            if !slug.isEmpty { return slug.lowercased() }
+            let token = String(url.path.dropFirst(pathPrefix.count))
+            if !token.isEmpty { return token }
         }
-        return trimmed.lowercased()
+        return trimmed
     }
 
     /// Strict check: only true when the payload is unambiguously a
-    /// bot-share URL (`*pendingname.com/b/<slug>`). Bare slugs are not
+    /// bot-share URL (`*pendingname.com/b/<token>`). Bare tokens are not
     /// recognised here (indistinguishable from arbitrary text).
     static func isBotShareLink(_ raw: String) -> Bool {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
