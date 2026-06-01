@@ -38,24 +38,32 @@
 
 ## 核心建模决策
 
-### 单一「credit」计价单位(推荐)
+> **沿用 billing-v2 的概念模型。** 见 [`docs/billing-v2-design.md`](../../billing-v2-design.md)。要换掉的只是 billing-v2 **自研的引擎实现**(`settleUsage`、账本表当事实源);它的**设计——PNC 单位、markup 只在卖包体现、pack 过期、低额/节流阈值、群结算——基本全部保留**,改用 OpenMeter + RevenueCat 实现。
 
-计价规则是 PendingBot 的**专有逻辑**(模型价格倍率从 OpenRouter 派生、语音按分钟、web/sandbox 各有费率),不适合塞进通用计费平台。因此:
+### 计价单位 = PNC(单一 credit,已定)
 
-- **edge 负责把每次用量换算成 credits**(它已持有目录与倍率),向 OpenMeter 上报**已消耗的 credits**。
-- **OpenMeter 以单一 credit 为单位**做:额度授予(grant)、按优先级燃尽 + 过期、余额事实源、**实时 entitlement 门禁**。
+计价规则是 PendingBot 的**专有逻辑**(模型价格倍率从 OpenRouter 派生、语音按分钟、web/sandbox 各有费率),不适合塞进通用计费平台。billing-v2 早已选定此路:**系统内部只按真实服务成本记 PNC,利润只在卖 PNC 包时体现**。因此:
+
+- **edge 把每次用量按真实成本换算成 PNC**(它已持有目录与倍率),向 OpenMeter 上报**已消耗的 PNC**。
+- **OpenMeter 以单一 credit(= PNC)为单位**做:额度授予(grant)、按优先级燃尽 + 过期、余额事实源、**实时 entitlement 门禁**。
 
 这样专有计价留在 edge,而账本/余额/燃尽/门禁这些最容易出错、最该外包的全归 OpenMeter。
 
-> 备选(开放问题 §8-1):向 OpenMeter 上报**原始用量**(token/分钟),在 OpenMeter 内定义费率做 rating。更「正统」但要把专有倍率搬进平台,耦合更高。本设计先选单一 credit 单位。
+> 否决的备选:向 OpenMeter 上报**原始用量**(token/分钟)并在平台内定义费率 rating。要把动态派生的倍率搬进 OpenMeter 费率表并持续同步 = 新的漂移源,与 billing-v2 既有的 PNC 模型也冲突。不采用。
+
+### 商品形态(照 billing-v2,不简化也不扩张)
+
+- **PNC 包**:上线只有**单一「现金充值包」**,1 年过期,无促销/优先级/限定服务分类。
+- **markup 快照**:每笔 pack 落 `sales_markup_snapshot`,不引用运行时全局 markup 配置(改促销/套餐不污染历史已售包与运行账本)。
+- **映射**:一个 PNC 包 = 一笔 **OpenMeter credit grant**(带过期 + 优先级燃尽,天生匹配);markup 快照留在 edge 的 pack 记录(作支付审计,OpenMeter 不需要)。
 
 ### 概念映射
 
 | PendingBot 概念 | OpenMeter 原语 |
 |---|---|
 | subject(用户 / 群账号) | customer / subject |
-| 钱包余额 | metered **entitlement**(credit 计) 的余额 |
-| 充值入账(IAP/LS) | **credit grant**(可带过期) |
+| 钱包余额(PNC) | metered **entitlement**(credit 计) 的余额 |
+| PNC 充值包(IAP/LS) | **credit grant**(1 年过期、优先级燃尽) |
 | 兑换码促销额度 | promotional credit grant(低优先级先燃) |
 | 一次用量(LLM/语音/web/sandbox) | 上报到 credit meter 的 usage event |
 | 调用前「够不够」 | entitlement **实时余额查询**(门禁核心) |
@@ -79,13 +87,16 @@ Web      → Lemon Squeezy ┘        │
 ### 用量计量(usage-out)+ 实时门禁(gate)
 
 ```
-调用前: edge gate(subjectId) ── 读缓存余额/entitlement ──→ 允许 / 拦截 / 预警(overdraft 策略)
-调用后: edge 算 credits 成本 → 写 outbox → 异步上报 OpenMeter usage event → 扣减 entitlement
+调用前: edge gate(subjectId) ── 读缓存余额/entitlement ──→ 按阈值决策(见下)
+调用后: edge 算 PNC 成本 → 写 outbox → 异步上报 OpenMeter usage event → 扣减 entitlement
 ```
 
 - **门禁是薄的、留在 edge**:任何计费平台都不该进 LLM 的 token 热路径。edge 持一份从 OpenMeter entitlement 同步来的**缓存余额**做亚毫秒判断。
-- **可靠投递用 outbox**:用量事件先落 edge 的 outbox 表,再异步推 OpenMeter,带重试 —— **不能丢可计费事件**。
-- 门禁硬度(硬拦 vs 允许软 overdraft 后补)见开放问题 §8-2。
+- **门禁策略 = 软 overdraft(已定)**,沿用 billing-v2 阈值:
+  - `< 50 PNC`:正常调用,AI 回复尾部/会话顶部注入低额提醒(每 24h 一次)。
+  - `< 5 PNC`:**节流模式** —— 强制切最便宜可用模型、关全部工具、提示充值;**允许小额透支**(余额可短暂为负)。
+  - 充值入账时**优先偿还透支**(grant 先抵负余额)。
+- **可靠投递用 outbox**:用量事件先落 edge 的 outbox 表,再异步推 OpenMeter,带重试 —— **不能丢可计费事件**(崩溃也留着、可重试、与请求延迟解耦)。
 
 ### 群分摊(第 5 层,唯一自研,且薄)
 
@@ -111,13 +122,16 @@ edge 侧新增 / 调整(全部薄):
 - reconciliation cron —— 拉 OpenMeter 余额,核对 edge 缓存。
 - OpenMeter SDK:Node/TS,在 edge 调用。
 
-## 与现有 billing-v2 表的关系(需谨慎,见 §8-7)
+## 与现有 billing-v2 表的关系
+
+billing-v2 **从未服役、未验证、大概率有误** → **纯绿地直接建,不做双轨并行对账**(无服役系统可对账,平行对账是伪命题)。这些表按需重用/退役,不必保旧路径:
 
 | billing-v2 表 | 去向 |
 |---|---|
-| `subject_wallets`(余额事实源) | 降级为 edge **缓存**(SoR 移到 OpenMeter);或保留作缓存表 |
+| `subject_wallets`(余额事实源) | 降级为 edge **缓存**(SoR 移到 OpenMeter) |
 | `billing_ledger` / `ledger_entries` | OpenMeter 即账本 → **退役**(或留薄审计) |
 | `usage_events` | 改作 edge **outbox / 原始日志**,可靠投递后可裁剪 |
+| `packs` | 降级为 edge 的**支付/markup 审计记录**(`sales_markup_snapshot` 留此);余额燃尽由 OpenMeter grant 接管 |
 | `topups` / `refund_events` | 保留为**支付事件审计**(触发 grant 的凭据) |
 | `redemption_codes` | **保留**(码库存),发额度走 OpenMeter |
 | `group_billing_config` / `group_member_billing` | **保留**(专有分摊策略,第 5 层) |
@@ -129,15 +143,20 @@ edge 侧新增 / 调整(全部薄):
 - 聊天 / 账单真身仍只在 Supabase;OpenMeter 是余额/额度事实源,非内容存储。
 - 核实 OpenMeter Cloud 数据区域(优先 EU,与 PostHog 一致)。
 
-## 开放问题(评审需拍板)
+## 已拍板(2026-06-01)
 
-1. **计价单位**:单一 credit(edge 计价,推荐)vs 上报原始用量在 OpenMeter 内 rating?
-2. **门禁硬度**:硬拦(余额不足即拒)vs 软 overdraft(允许小额透支后补扣)?影响缓存新鲜度与同步策略。
-3. **群分摊优先级**:群账号钱包 vs 成员钱包的扣减先后与回退规则。
-4. **outbox 可靠性**:用量事件投递的重试 / 去重 / 死信处理细节。
-5. **OpenMeter Cloud 上限与封顶**:免费/低价档的事件量上限、超出价格、数据区域 —— 签约时核实。
-6. **iOS 商品形态**:consumable 额度包的 RevenueCat 产品配置 + 恢复购买语义。
-7. **billing-v2 退役节奏**:绿地直接切 vs 双轨并行验平再切(钱正确性高风险,倾向先并行对账)。
+- **计价单位** = **PNC(单一 credit,edge 计价)**。否决「OpenMeter 内 rating」。
+- **门禁** = **软 overdraft**,沿用 billing-v2 的 50/5 PNC 阈值 + 充值优先偿还透支。
+- **商品形态** = 照 billing-v2:单一现金充值包、1 年过期、markup 快照(`sales_markup_snapshot`)。
+- **退役节奏** = 纯绿地,不做双轨对账(billing-v2 未服役,无从对账)。
+
+## 开放问题(写实现计划时逐条落)
+
+1. **群分摊优先级**:群账号钱包 vs 成员钱包的扣减先后与回退规则(billing-v2 已有 share-index 实现,核对其语义后沿用)。
+2. **outbox 实现位置 + 可靠性**:落 Supabase 还是 D1?draining worker 用 CF Queue 还是 cron?重试 / 去重(幂等键)/ 死信细节。
+3. **OpenMeter Cloud 上限与数据区域**:免费/低价档事件量上限、超出价格、EU 区可用性 —— 签约时核实。
+4. **iOS 商品形态接入**:consumable 充值包的 RevenueCat 产品配置 + 恢复购买语义。
+5. **缓存余额新鲜度**:软 overdraft 下缓存允许多旧?事件驱动刷新 + 定时兜底的窗口取值。
 
 ## 成本
 
@@ -156,5 +175,5 @@ edge 侧新增 / 调整(全部薄):
 - [ ] **P3** 实时门禁 + 缓存同步(事件驱动 + 定时)。
 - [ ] **P4** 群分摊策略(第 5 层)长在 OpenMeter 之上。
 - [ ] **P5** 退款 / chargeback / 兑换码。
-- [ ] **P6** 对账 cron + billing-v2 表退役/repoint(按 §8-7 节奏)。
+- [ ] **P6** 对账 cron + billing-v2 表退役/repoint(按「与现有 billing-v2 表的关系」一节)。
 - [ ] **P7** iOS 钱包页改读新余额源。
