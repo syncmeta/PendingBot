@@ -804,6 +804,7 @@ export type Database = {
       conversation_participants: {
         Row: {
           conversation_id: string
+          invited_by: string | null
           joined_at: string
           last_read_message_id: string | null
           last_read_message_seq: number | null
@@ -815,6 +816,7 @@ export type Database = {
         }
         Insert: {
           conversation_id: string
+          invited_by?: string | null
           joined_at?: string
           last_read_message_id?: string | null
           last_read_message_seq?: number | null
@@ -826,6 +828,7 @@ export type Database = {
         }
         Update: {
           conversation_id?: string
+          invited_by?: string | null
           joined_at?: string
           last_read_message_id?: string | null
           last_read_message_seq?: number | null
@@ -1752,6 +1755,41 @@ export type Database = {
           },
         ]
       }
+      group_invite_links: {
+        Row: {
+          conversation_id: string
+          created_at: string
+          expires_at: string
+          inviter_user_id: string
+          revoked_at: string | null
+          token: string
+        }
+        Insert: {
+          conversation_id: string
+          created_at?: string
+          expires_at?: string
+          inviter_user_id: string
+          revoked_at?: string | null
+          token: string
+        }
+        Update: {
+          conversation_id?: string
+          created_at?: string
+          expires_at?: string
+          inviter_user_id?: string
+          revoked_at?: string | null
+          token?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "group_invite_links_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       group_join_handles: {
         Row: {
           conversation_id: string
@@ -1794,6 +1832,7 @@ export type Database = {
           decided_at: string | null
           decided_by: string | null
           id: string
+          invited_by: string | null
           message: string | null
           requester_id: string
           status: Database["pendingbot"]["Enums"]["join_request_status"]
@@ -1805,6 +1844,7 @@ export type Database = {
           decided_at?: string | null
           decided_by?: string | null
           id?: string
+          invited_by?: string | null
           message?: string | null
           requester_id: string
           status?: Database["pendingbot"]["Enums"]["join_request_status"]
@@ -1816,6 +1856,7 @@ export type Database = {
           decided_at?: string | null
           decided_by?: string | null
           id?: string
+          invited_by?: string | null
           message?: string | null
           requester_id?: string
           status?: Database["pendingbot"]["Enums"]["join_request_status"]
@@ -4706,6 +4747,44 @@ export type Database = {
       group_invite_bot: {
         Args: { p_bot_id: string; p_conv_id: string }
         Returns: undefined
+      }
+      group_invite_link_create: {
+        Args: { p_conversation_id: string }
+        Returns: {
+          expires_at: string
+          token: string
+        }[]
+      }
+      group_invite_link_redeem: {
+        Args: { p_message: string; p_token: string }
+        Returns: {
+          conversation_id: string
+          joined: boolean
+          request_id: string
+        }[]
+      }
+      group_invite_link_resolve: {
+        Args: { p_token: string }
+        Returns: {
+          conversation_id: string
+          inviter_name: string
+          join_policy: string
+          member_count: number
+          title: string
+        }[]
+      }
+      group_invite_link_revoke: {
+        Args: { p_token: string }
+        Returns: undefined
+      }
+      group_invite_links_list: {
+        Args: { p_conversation_id: string }
+        Returns: {
+          created_at: string
+          expires_at: string
+          revoked_at: string
+          token: string
+        }[]
       }
       group_invite_user: {
         Args: { p_conv_id: string; p_target_user_id: string }
