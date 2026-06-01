@@ -560,6 +560,41 @@ export type Database = {
           },
         ]
       }
+      bot_invite_links: {
+        Row: {
+          bot_id: string
+          created_at: string
+          expires_at: string
+          inviter_user_id: string
+          revoked_at: string | null
+          token: string
+        }
+        Insert: {
+          bot_id: string
+          created_at?: string
+          expires_at?: string
+          inviter_user_id: string
+          revoked_at?: string | null
+          token: string
+        }
+        Update: {
+          bot_id?: string
+          created_at?: string
+          expires_at?: string
+          inviter_user_id?: string
+          revoked_at?: string | null
+          token?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bot_invite_links_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "bots"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       bot_invites: {
         Row: {
           bot_id: string
@@ -3878,6 +3913,7 @@ export type Database = {
           added_via: string
           alias: string | null
           bot_id: string
+          invited_by: string | null
           user_id: string
         }
         Insert: {
@@ -3885,6 +3921,7 @@ export type Database = {
           added_via?: string
           alias?: string | null
           bot_id: string
+          invited_by?: string | null
           user_id: string
         }
         Update: {
@@ -3892,6 +3929,7 @@ export type Database = {
           added_via?: string
           alias?: string | null
           bot_id?: string
+          invited_by?: string | null
           user_id?: string
         }
         Relationships: [
@@ -4362,6 +4400,39 @@ export type Database = {
         Args: { p_email: string; p_meta: Json; p_uid: string }
         Returns: undefined
       }
+      bot_invite_caller_can_invite: {
+        Args: { p_bot_id: string; p_user_id: string }
+        Returns: boolean
+      }
+      bot_invite_link_create: {
+        Args: { p_bot_id: string }
+        Returns: {
+          expires_at: string
+          token: string
+        }[]
+      }
+      bot_invite_link_redeem: { Args: { p_token: string }; Returns: string }
+      bot_invite_link_resolve: {
+        Args: { p_token: string }
+        Returns: {
+          bot_id: string
+          display_name: string
+          inviter_name: string
+          model_id: string
+          slug: string
+          visibility: string
+        }[]
+      }
+      bot_invite_link_revoke: { Args: { p_token: string }; Returns: undefined }
+      bot_invite_links_list: {
+        Args: { p_bot_id: string }
+        Returns: {
+          created_at: string
+          expires_at: string
+          revoked_at: string
+          token: string
+        }[]
+      }
       bot_invites_add: {
         Args: { p_bot_id: string; p_handle: string }
         Returns: string
@@ -4600,6 +4671,7 @@ export type Database = {
           added_at: string
           avatar_path: string
           display_name: string
+          invited_by: string
           user_id: string
         }[]
       }
