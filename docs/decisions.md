@@ -33,8 +33,8 @@
 - **背景**: 现状 `attachments` RLS 让头像行(含 `r2_key`、文件名)对所有登录用户可读,和 Worker 下载口径不一致、可能泄露 r2_key。决策明确"头像不是全局公开资源",据此收紧 RLS 到这两条路径 + 闭合 metadata 泄露。
 - **现状核实**（2026-06-01 亲验 + 部分落地）:
   - **Part 1（关 metadata 泄露）— ✅ 已落地**：迁移 `20260601080625` 删掉 `attachments_self_read` 的全局头像分支(原对任意 authenticated 暴露 r2_key,无合法消费者)。已 push live。
-  - **Part 2（给两条场景服务头像字节）— ❌ 未做 + 需设计决策**：亲验发现 **跨用户头像字节本来就下不到** —— Worker `/v1/uploads/:id`(`apps/edge/src/routes/upload.ts:347`)用 serviceClient 自鉴权,只放行上传者 / 有未删消息引用的参与者,**没有头像例外**;0063 当年加的 RLS 头像例外在 upload.ts 改用 serviceClient 后已失效。所以现在别人上传的头像一律回退种子占位。要实现 D3 的"加好友 + 群成员两条场景能看头像",得在 Worker 加一条**受 scope 的头像服务路径**(群成员:caller 与头像主人同会话即可;加好友:lookup 流程带凭证)。**两条场景的服务机制 = 待决策**,我没有臆造。
-    - 关联 tech-debt:这条升级了原"附件 RLS 与 Worker 口径不一致"条目 —— 现确认是"metadata 过宽(已修)+ 字节跨用户不可达(待设计)"两面。
+  - **Part 2（给两条场景服务头像字节）— ✅ 已落地**（2026-06-01,`53de193f`）：用户拍板"加好友和群成员都要能看头像"。设计选定 **id-as-capability**:`/v1/uploads/:id`(`apps/edge/src/routes/upload.ts`)加头像例外 —— 任意登录用户凭(不可枚举、只能从合法处拿到的)头像 attachment id 可取**头像图片字节**。同时覆盖加好友(lookup 给的 id)和群成员(成员列表给的 id)两场景。**只服务图片字节**;metadata(r2_key 等)仍由 part1 RLS 挡住;聊天附件仍消息引用 gated。这是标准头像模型。
+    - 小遗留:`users.avatar_path` 上的查找未建索引(头像有 1yr immutable 缓存,每客户端每头像查一次,pre-launch 量级可接受);未来量大可加索引。
 
 ## D4 · Crew captain 来源 = 4 种(spec 补齐)
 - **日期**: 2026-06-01
