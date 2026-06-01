@@ -33,6 +33,14 @@
 
 ## 🔴 根基级
 
+### 🔴 Bot 公开分享链路被 `bots` 表 RLS 堵死 — 陌生人扫码/点链接解析 public_invite bot 命中 0 行
+- **发现**: 2026-06-01 · chore/progress-ledger（对账 task #121-128 时实测）
+- **位置**: `supabase/migrations/20260527091508_drop_public_open_visibility.sql:56`（`bots_visible_read` policy）、`supabase/migrations/0022_fix_bots_rls_recursion.sql:15`（`is_bot_invitee`）、`apps/pendingbot/Sources/Features/Friends/FriendsTabView.swift:1944`（`runLookup` 直查 supabase）
+- **问题**: bot 分享功能（slug / 二维码 / Universal Link，task #121-128）代码已几乎全做完且提交，但 iOS 解析 slug 是**直接查 Supabase** `bots` 表、靠 RLS 控可见性。唯一的 SELECT policy `bots_visible_read` 对 `public_invite` bot 要求 `is_bot_invitee(id, auth.uid())` —— 而该函数只在 `bot_invites` 表有预先邀请行时为真（邀请只能由 bot 主人按 handle 主动塞）。陌生人扫码/点分享链接时**还不是被邀请人** → SELECT 命中 0 行 → iOS 显示"找不到这个机器人,或者它不允许你加入"。
+- **影响**: 整个分享链路（slug→二维码→扫码→universal link→AddBotPreviewPage）对"非预先邀请者"全部走不通 —— 而分享功能的**全部意义**就是给陌生人加。UI 文案还写着"别人按这个标识、链接或二维码加你的机器人",与 RLS 实际行为直接矛盾。这是个"iOS+edge 表层都做了、DB 授权层没跟上"导致的 ship 即坏缺口。edge 侧也确认没有任何按 slug 解析 bot 的路由（纯靠 client 直查）。
+- **建议**: 二选一：(a) 放宽 `bots_visible_read`，让 `visibility='public_invite'` 对所有 authenticated 可 SELECT（public 的本意就是可被发现自加）；(b) 加一个 service-role 的 `GET /b/:slug` 解析端点，绕开 client 直查 + RLS。改完跑 #128 验证（含真机扫码闭环），通后翻 #121-128 状态。注意 `is_bot_invitee` 的"单向门"语义要和 spec `project_bot_visibility` 对齐确认。
+- **状态**: 待办（task #121-127 代码已落但功能被此 bug 堵死、保持 pending；#128 验证未跑）
+
 ### 🔴 PendingBot Mac 端业务接入只覆盖 5 tab 中的 1 个,其余仍是 placeholder
 - **发现**: 2026-05-29 · feat/mac-multiplat-t01-p0(worktree wf_bb2bdb07-141-5)
 - **位置**: `apps/pendingbot/Sources/Mac/MacRootView.swift`、`apps/pendingbot/Sources/Features/**`、`apps/pendingbot/project.yml`
@@ -412,7 +420,7 @@
 #### 🟡 后续 session 即可
 
 - **T3.2 Codex runner** — Phase 6 只落了 Claude Code 本地 runner (`LocalCodingAgentService`)；Codex CLI runner adapter 仍是 TODO，需要 codex 二进制契约调研 + adapter 抽象。
-- **T4.5 完整实现** — `ceba5619` 只落了设计文档（as-built），跨设备 session 控制的实际代码（手机 → Mac 推送 session 命令、Mac 端 session 镜像）一行都没动。
+- **T4.5 完整实现** — ~~`ceba5619` 只落了设计文档，实际代码一行没动~~ **（2026-06-01 对账更正：此说法已过时）**。服务端 P0 已落地：`c7b2cd2d` ship 了 `SessionProxyDO`（`apps/edge/src/durable-objects/session-proxy.ts` 534 行）+ `session.command`/`session.state` ws 协议 + 路由 + 单测 + wrangler 绑定。**仍缺客户端侧**：iOS/Mac 无任何 SessionProxy 订阅代码、PendingCrew runner 不发布到 DO（手机→Mac 推命令、Mac session 镜像未接）。当前是"服务端打底好、客户端未接"的半截桥，不是"一行没动"。
 - **T5.3 PendingCrew E2E QA** — BYOK 路径和 cloud 路径的端到端测试（创建 crew → 派单 → 收到结果 → 计费记账）从未真机跑通；只有编译过 + 单测覆盖。需要人工 QA pass。
 
 ### 部分/骨架级、需要补完
