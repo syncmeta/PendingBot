@@ -49,7 +49,10 @@
 - 内部用高精度原子单位 **`pnc_micros`(bigint)**:`pnc_micros = vendor_cost_usd * 27 * 1_000_000`。
 - **运行时只按真实成本扣**(`provider_cost_usd * 27`),**无 per-call markup**;利润只在卖包时体现(见下)。
 - **OpenMeter 的 credit 单位 = 1 pnc_micro(整数)**。**禁止每事件四舍五入**(否则便宜模型/短工具被系统性放大或漏计)。
-- 🔴 **头号风险(§开放问题-1)**:必须先核实 **OpenMeter 余额/grant 是否大整数精确计、内部不用浮点**。若它用浮点存余额,百万级微单位累减会有钱漂移 —— 那要么改建模(edge 留 `pnc_micros` 事实源、OpenMeter 仅做粗粒度 entitlement),要么换引擎。**此点未核实前,选型不算最终敲定。**
+- **精度已核实(2026-06-01,源码)**:OpenMeter 的 grant `Amount`/余额是 **`float64`**(`openmeter/credit/grant.go:26`)。float64 尾数 53 位 → **整数在 ±2^53(≈9.007×10¹⁵)内精确**。量级:2^53 ≈ 90 亿 PNC ≈ 单账户 $3.3 亿,永不接近;单次扣费(便宜模型≈2700 micros)远小于。**结论:float64 对本设计精确,不阻断选型**,但靠以下硬约束保证:
+  1. **只发整数 `pnc_micros`**,永不发小数 credit。
+  2. **不用 OpenMeter 的 reset / rollover / proration**(我们的 grant = 一次性充值包 + 到期,无周期重置 → 不触发除法/取整)。
+  3. **不在 OpenMeter 内做 rating**(edge 先算成整数 micros 再上报,平台只 SUM/减法,burn-down 只做减)。
 
 ### Markup 只在销售侧(已定)
 
@@ -189,17 +192,24 @@ settle:      edge 算 pnc_micros → 写 outbox → 异步上报 OpenMeter → �
 - settle-only,无 reserve。
 - 退役节奏 = 纯绿地,不做双轨对账。
 
+## BYOK 边界(2026-06-01 对齐产品 spec v2)
+
+BYOK **没被移除**:它是 **PendingCrew 未登录(开源)模式**专用(产品 spec v2 §5.2)。task #97 移除的只是**主 PendingBot** 的 BYOK 提供商目录。计费含义:
+
+- **BYOK 路径完全在计费系统之外**:LLM 调用直接走用户自己的 native key,**永不进 PNC 账本 / 不发 OpenMeter / 无 subject 可计费**。
+- BYOK 未登录态只能跑**本地 crew**,不能开 Fly/云端 → 不会产生 PendingBot 托管服务(云 sandbox/托管搜索/存储)的可计费成本。
+- **群账号永远 unified billing,无 BYOK**(spec v2 §4.3)。
+- ∴ billing-v2 §11 的 BYOK 规则在 PendingCrew 语境下**仍然有效**,不作废。
+
 ## 开放问题(评审/写计划时定)
 
-1. 🔴 **OpenMeter 精度核实(选型阻断)**:余额/grant 是否大整数精确、不用浮点?若否如何降级建模或换引擎。
-2. **群 vs 个人节流优先级**:billing-v2 默认「群开销走群账户、个人余额只管个人」,确认沿用。
-3. **breakage 事件捕获**:OpenMeter 过期 grant 能否回吐事件供 edge 记 breakage revenue?
-4. **OpenMeter Cloud 上限/数据区域**:免费/低价档事件量、超出价、EU 区——签约时核实。
-5. **outbox 落地**:Supabase vs D1?draining 用 CF Queue vs cron?重试/去重/死信。
-6. **BYOK 现状对齐**:task #97 已移除 BYOK,billing-v2 §11 作废?需确认。
-7. **pricebook 表结构**(vendor×sku×effective_at vs model_id×period)+ 月度软上限是否要做。
-8. **iOS 商品接入**:consumable 充值包的 RevenueCat 产品配置 + 恢复购买语义。
-9. **缓存余额新鲜度**:软 overdraft 下缓存允许多旧?刷新窗口取值。
+1. **群 vs 个人节流优先级**:billing-v2 默认「群开销走群账户、个人余额只管个人」,确认沿用。
+2. **breakage 事件捕获**:OpenMeter 过期 grant 能否回吐事件供 edge 记 breakage revenue?
+3. **OpenMeter Cloud 上限/数据区域**:免费/低价档事件量、超出价、EU 区——签约时核实。
+4. **outbox 落地**:Supabase vs D1?draining 用 CF Queue vs cron?重试/去重/死信。
+5. **pricebook 表结构**(vendor×sku×effective_at vs model_id×period)+ 月度软上限是否要做。
+6. **iOS 商品接入**:consumable 充值包的 RevenueCat 产品配置 + 恢复购买语义。
+7. **缓存余额新鲜度**:软 overdraft 下缓存允许多旧?刷新窗口取值。
 
 ## 成本
 
@@ -209,7 +219,7 @@ settle:      edge 算 pnc_micros → 写 outbox → 异步上报 OpenMeter → �
 
 > 设计阶段,以下为待办。
 
-- [ ] **P0** 🔴 核实 OpenMeter 精度/上限/EU 区;OpenMeter 账号 + 定义 pnc_micros credit entitlement + subject 模型;打通「查余额 + 发 grant + revoke」最小调用。
+- [ ] **P0** 核实 OpenMeter Cloud 上限/EU 区(精度已核实=float64,靠整数 micros 约束保精确);OpenMeter 账号 + 定义 pnc_micros credit entitlement + subject 模型;打通「查余额 + 发 grant + revoke」最小调用。
 - [ ] **P1** 入账主干:RevenueCat(ASN V2)+ LS webhook → 验签/幂等 → markup 算 initial_pnc_micros → 发 grant + pack 审计记录。
 - [ ] **P2** 用量主干:pricebooks(hardcoded)+ 8 类 event 计价 → outbox → 上报 OpenMeter。
 - [ ] **P3** settle 策略:LLM 即时 + 语音/群媒体/sandbox periodic settle + **余额≤0 杀会话/容器**;4 档阈值 + −0.5 overdraft + 缓存同步。
