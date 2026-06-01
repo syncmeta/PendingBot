@@ -22,7 +22,9 @@
 - **日期**: 2026-06-01
 - **决策**: 群加入码也走"关联邀请者"模型,但形态是**每个群成员看到的是关联到自己的那份码**——使用时当"群的码"用(扫了就进这个群),但每个人的码不同,从而留痕"谁是被谁拉进来的"。
 - **背景**: 现状群 handle 是单一共享码,任何人拿到就能请求加入,不记是谁分享的,与 D1 的 bot 邀请哲学不一致。统一成同一套"邀请关联到人"。
-- **现状核实**: 🔍 当前群加入流程(`group_join_request_create`,edge userClient)需核实,再定 delta。
+- **现状核实**（2026-06-01）:
+  - **后端 ✅ 已落地**（迁移 `20260601082502`,push live + edge typecheck 绿）：`group_invite_links` per-inviter token 表 + `conversation_participants.invited_by` / `group_join_requests.invited_by` + RPC create/list/revoke/resolve/redeem;`group_join_request_decide` 批准时把 invited_by 落到成员行。Edge `/v1/groups/:id/invite-links` + `/v1/group-invites/:token`。RLS 不放宽。
+  - **iOS ❌ 未做**：群 QR/加入 UI 改走 token(像 D1 iOS,需 simulator 验证)。旧 `group_join_handles` 共享码暂留,iOS 返工后删。
 
 ## D3 · 头像 / 昵称可见性 = 只走两条受限路径,不全局公开
 - **日期**: 2026-06-01
