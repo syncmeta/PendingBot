@@ -7,6 +7,7 @@ import { healthRoutes } from './routes/health';
 import { messageRoutes } from './routes/messages';
 import { botRoutes } from './routes/bots';
 import { botInviteRoutes } from './routes/bot-invites';
+import { groupInviteLinkRoutes, groupInviteTokenRoutes } from './routes/group-invites';
 import { uploadRoutes } from './routes/upload';
 import { envelopeRoutes } from './routes/envelope';
 import { meRoutes } from './routes/me';
@@ -100,6 +101,8 @@ v1.route('/health', healthRoutes);
 v1.route('/messages', messageRoutes);
 v1.route('/bots', botRoutes);
 v1.route('/bot-invites', botInviteRoutes);         // GET/:token resolve · POST/:token/redeem · DELETE/:token
+v1.route('/groups', groupInviteLinkRoutes);        // POST/GET /v1/groups/:id/invite-links (D2)
+v1.route('/group-invites', groupInviteTokenRoutes);// GET/:token resolve · POST/:token/redeem · DELETE/:token
 v1.route('/upload', uploadRoutes);
 v1.route('/uploads', uploadRoutes);   // GET /v1/uploads/:id
 v1.route('/envelope', envelopeRoutes);
