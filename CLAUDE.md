@@ -171,6 +171,26 @@ Rules:
 - Don't log what linter/typecheck already catches, pure style nits, or task-local TODOs.
 - Mention any notable new entries in your end-of-turn summary so the user sees them surface.
 
+## 账本维护 — task 系统 / progress / roadmap / tech-debt 必须跟得上代码
+
+项目有四个账本，**各归其位，不混用**。它们靠纪律保持与代码一致；失效从来不是工具的错，是更新与意识没跟上。
+
+| 账本 | 本职 | 粒度 |
+|---|---|---|
+| **Task 系统**（内置 TaskList） | "做没做"的**事实源** | 单个可提交单元 |
+| **roadmap**（`docs/superpowers/plans/2026-05-28-v1-0-implementation-roadmap.md`） | 计划 / 顺序 / 依赖 | phase / T 编号 |
+| **`docs/tech-debt.md`** | 结构风险 + 关不掉的尾巴 | 风险条目 |
+| **`docs/progress.md`** | 当前真实状态 rollup + 阻塞 + 下一步（串起前三者） | 工作流 / feature |
+
+判断"做没做"以 **Task 系统**为准；判断"整体到哪了"以 **progress** 为准；两者冲突 = 该对账了。
+
+纪律（把更新绑到已经会发生的动作上，别让它成为可遗忘的独立步骤）：
+
+- **小单元 auto-commit 的同一拍**，顺手 `TaskUpdate` 翻对应 task（跟"commit 绑小单元"一个道理）。
+- **合 sub-agent 的 worktree 后，汇总方（你）负责对账那批 task 状态** —— worktree 里的 sub-agent 不会可靠地碰共享 task 列表，这个缺口只能由合并方补。
+- **`completed` = 已验证可用，不是"代码写了"**。需要人工/真机才能 done 的（真机验签、E2E QA、设计定稿），task 保持 open 或加注，并把缺口记进 tech-debt —— 别在骨架阶段就关。
+- **session 末或合一批活后**，更新 `docs/progress.md` 顶部"最近对账"日期，顺手改 roadmap / tech-debt 对应条目，别攒到一次性审计。
+
 ## First action on every session that's about to change code
 
 Before touching files, check where you are:
