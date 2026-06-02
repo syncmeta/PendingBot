@@ -440,6 +440,13 @@
 
 ### 部分/骨架级、需要补完
 
+- **PendingBot 完整原生 Mac 版 — 2026-06-02 夜间进展(#212)** — 用户明确要完整原生 SwiftUI macOS(非 Catalyst)。架构:逻辑/数据/网络跨平台共享,UI 原生重画。夜间一口气接了 4 块,均两端 BUILD SUCCEEDED + 合 main:登录(MacWelcomeView+MacRootGate,Email OTP+Turnstile,**用户真机验通**)、机组 viewer(MacRemoteSessionsView)、消息(MacMessagesView + 跨平台 ChatDataSource,会话列表+1:1/群文字聊天+流式发送)、好友(MacFriendsColumn + FriendsDataSource,机器人+人类好友只读列表)。
+  - **关键验证缺口(用户醒后必看)**:**Mac 真实 UI 渲染没截图核对**——agent 截不了 Mac 桌面(computer-use 掉线、screencapture 无屏幕权限)。已做的替代验证:① 所有 Supabase 查询的列名/FK/role 值用 live DB introspection 核对(messages.role 仅 user/bot、conversations_bot_id_fkey、user_unread_counts 列、user_bot_contacts FK 抄 iOS 已验证查询)② 命令行跑 Mac app binary 8s,stderr 无崩溃/无 401/无未捕获异常 ③ iOS 范本装模拟器截图确认跨平台抽取没退化。**但每个 tab 在 Mac 上实际渲染长啥样、点击交互对不对、流式聊天收发是否正常,需用户在 Mac app 逐 tab 真机过一遍**。
+  - **各模块第一版简化(均记此)**:消息——无 Realtime(3s 轮询+发后 reload)、无附件/图片/语音、无 @提及、无群组 peer 解析、时间戳列刻意不 select(规避 Decodable 歧义);好友——只读,无点击进会话/头像图片(ServerImage iOS-only)/加好友/备注/排序;机组——仅 viewer,无创建/群聊/详情。
+  - **DRY 注记**:iOS 的会话列表/消息加载逻辑内联在 `MessageTabView`/`ConversationView`(UIKit 耦合的 View),没法直接复用,所以 Mac 新建了 `ChatDataSource`/`FriendsDataSource` 跨平台 service 复刻同样的 Supabase 查询——查询逻辑与 iOS 有重复。未来可让 iOS 也迁到这两个 service 去重(改 iOS 范本有回归风险,夜间没动)。
+  - **未做(夜间因复杂度+无法真机验时序而留)**:来信 tab(EnvelopeAPI:realtime-hub WebSocket + EnvelopeRun/Turn + thinking trace,最复杂)、机组完整(创建 crew 是写操作会污染 prod、群聊)、跨 tab 连贯交互(好友点击进会话需 ensure-conversation + SwiftUI 跨 tab selection 状态机,夜间无法验时序)、Realtime 推送(三端 Mac 现全轮询)、头像图片。
+
+
 - **PendingCrew 后端单元测试** — `8e0eac32` 已记录：`apps/pendingcrew-server` 几乎没有单测覆盖，BYOK 路径切换、CrewStore reset、template store 三处都是裸代码。建议后续 session 补 vitest。
 - **群权限矩阵 client 端消费** — `207d5203` edge 给了 `/v1/group-subjects/*` 路由，iOS / Mac 客户端还没真正消费；目前权限判定仍走旧 client-side 规则。
 - **Mac 三栏壳的实际内容** — `c174f734` 是结构脚手架；middle column 的会话列表 + detail column 的消息流都还是 placeholder，等 IM 主路径打通后填。
