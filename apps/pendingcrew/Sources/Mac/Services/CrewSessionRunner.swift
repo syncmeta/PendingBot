@@ -129,7 +129,18 @@ final class CrewSessionRunner: ObservableObject {
         guard let executable = await service.resolveExecutable(kind) else {
             throw RunnerError.toolNotInstalled(kind: kind)
         }
-        // 2. 构造 spec
+        let runID = UUID()
+        // 2a. T4.5 ambient steering — for a logged Claude session, set up the
+        //     out-of-tree hook channel so a viewer can post a standing note that
+        //     injects into every turn. Best-effort: a setup failure just means no
+        //     ambient steering, the run is otherwise unaffected. BYOK/local + Codex
+        //     get no channel (and `--settings` stays off → verified argv).
+        var steeringChannel: SteeringChannel? = nil
+        if serverLink != nil, kind == .claudeCode {
+            steeringChannel = try? SteeringChannel.create(
+                parent: SteeringChannel.defaultParent(), sessionId: runID.uuidString)
+        }
+        // 2b. 构造 spec
         let spec = LocalCodingAgentLaunchSpec(
             kind: kind,
             executableURL: executable,
@@ -137,10 +148,10 @@ final class CrewSessionRunner: ObservableObject {
             taskBrief: taskBrief,
             initialPrompt: initialPrompt,
             model: model,
-            additionalEnv: additionalEnv
+            additionalEnv: additionalEnv,
+            claudeSettingsPath: steeringChannel?.settingsPath
         )
         // 3. 起进程
-        let runID = UUID()
         let handle = try await service.runSession(runID: runID, spec: spec)
         // 4. 包成 view model + 接 streams
         let run = CrewSessionRun(
@@ -153,7 +164,8 @@ final class CrewSessionRunner: ObservableObject {
             permissionModeOverride: permissionModeOverride,
             handle: handle,
             service: service,
-            serverLink: serverLink
+            serverLink: serverLink,
+            steeringChannel: steeringChannel
         )
         current = run
         run.observeStreams()
@@ -238,6 +250,12 @@ final class CrewSessionRun: ObservableObject, Identifiable {
     /// Set once the session truly ends (queue drained / cancelled). Guards
     /// double-finalize and rejects steering after the session is over.
     private var finalized = false
+    /// T4.5 ambient steering channel (logged Claude only). A viewer's standing
+    /// note writes here; every turn's `--settings` hook injects it as context.
+    /// Torn down when the session ends.
+    private let steeringChannel: SteeringChannel?
+    /// The current standing steering note, surfaced for the viewer UI.
+    @Published private(set) var steeringNote: String = ""
     /// T4.5 server mirror (logged mode only; nil for BYOK/local-only runs).
     private let serverLink: CrewSessionServerLink?
     /// T4.5 realtime proxy socket (logged mode only). Built from `serverLink`;
@@ -266,7 +284,8 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         permissionModeOverride: String? = nil,
         handle: LocalCodingAgentRunHandle,
         service: LocalCodingAgentService,
-        serverLink: CrewSessionServerLink? = nil
+        serverLink: CrewSessionServerLink? = nil,
+        steeringChannel: SteeringChannel? = nil
     ) {
         self.runID = runID
         self.crewId = crewId
@@ -279,6 +298,7 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         self.currentHandle = handle
         self.service = service
         self.serverLink = serverLink
+        self.steeringChannel = steeringChannel
         self.proxyClient = serverLink?.makeProxyClient()
     }
 
@@ -356,6 +376,17 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         followUpQueue.append(trimmed)
     }
 
+    /// Set the ambient standing note (T4.5 set_steering). Persisted to the
+    /// steering channel so every turn's `--settings` hook injects it; empty
+    /// clears it. Takes effect from the next turn (a turn already in flight
+    /// keeps its snapshot). No-op without a channel (BYOK/local/Codex).
+    func setSteeringNote(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        steeringNote = trimmed
+        steeringChannel?.setNote(trimmed)
+        print("[crew-session] ambient steering note " + (trimmed.isEmpty ? "cleared" : "set (\(trimmed.count) chars)"))
+    }
+
     deinit {
         observeStdoutTask?.cancel()
         observeStderrTask?.cancel()
@@ -367,6 +398,8 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         if let proxyClient {
             Task { await proxyClient.close() }
         }
+        // Clean up the steering hook dir if finalize() never ran.
+        steeringChannel?.teardown()
     }
 
     // MARK: - private mutators
@@ -440,6 +473,11 @@ final class CrewSessionRun: ObservableObject, Identifiable {
                 } else {
                     print("[crew-session] send_prompt \(commandId) missing string payload.text — ignored")
                 }
+            case "set_steering":
+                // Ambient standing note — injected into every turn via the hook.
+                // Empty text clears it. Takes effect from the next turn onward.
+                let text = { if case let .string(t)? = payload?["text"] { return t } else { return "" } }()
+                setSteeringNote(text)
             default:
                 print("[crew-session] remote command \(commandId) kind=\(kind) queued=\(queued) — not applied")
             }
@@ -522,6 +560,8 @@ final class CrewSessionRun: ObservableObject, Identifiable {
     private func finalize(exitCode: Int32) {
         guard !finalized else { return }
         finalized = true
+        // Remove the out-of-tree steering hook dir now the session is over.
+        steeringChannel?.teardown()
         if cancelled {
             status = .cancelled
         } else if exitCode == 0 {
