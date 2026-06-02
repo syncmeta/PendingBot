@@ -443,3 +443,6 @@
 - **First-launch disclosure modal 文案** — `280d5b7b` 走通了流程，正式文案待法务/产品定稿。
 - **billing-v2 settleUsage CAS-loss retry** — `cbb4fb3f` 实现了重试，但极端高并发下的退避策略未压测；30 天观察期内若看到大量重试再优化。
 
+- 🟡 **计费 P2 throttle 档"降级"未实装（LLM 路径）** — `gateUsage`(`apps/edge/src/billing/usage-gate.ts`)已正确分出 4 档阈值(exhausted 硬停 / low / throttle / sufficient),`<5 PNC = throttle` 也正确返回,但 **throttle 时的"降级"动作没做**:计划里写的 OpenRouter `cost_quality_tradeoff=max` 经官方文档核实(<https://openrouter.ai/docs/guides/routing/routers/auto-router>)**只对 `model: "openrouter/auto"` 生效,且是 `plugins:[{id:"auto-router",cost_quality_tradeoff:10}]` 的 plugin 配置,不是顶层 `=max`**;本仓库 router 是纯 passthrough(把调用方 model slug 原样发),不走 auto-router,所以该参数对正常 slug 是 no-op。要真正"降级"得在 throttle 时(a)临时切到 `openrouter/auto`+plugin、或(b)切便宜模型 pin,并(c)关工具——这要把 threshold 信号穿过 `runChatTurn`/各 runner(memory/envelope/title/group)到 completion 构造处,跨多文件接线,本任务(Phase C)未做。**当前 throttle 等同 low(放行不降级)**,只是不会硬停。
+- 🟡 **计费 P2 low 档"余额低"提醒未注入** — 阈值 low(<50 PNC)gate 正确放行,但"在下一条回复里注入余额低提醒(24h 去抖)"这个 UX 从未实装(billing-v2.ts 注释里只写了意图)。需要在回复渲染层加一个 threshold 信号通道 + 去抖。gate 层已就绪(`gateUsage` 返回 `thresholdState`),缺消费方。
+
