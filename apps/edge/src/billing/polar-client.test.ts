@@ -30,6 +30,17 @@ describe('polar-client', () => {
     expect(ev.metadata.category).toBe('llm_tokens')
   })
 
+  it('grantCredits ingests a NEGATIVE event (official grant-before-purchase mechanism)', async () => {
+    const sdk = fakeSdk()
+    const om = createPolarClient(sdk as any, { meterId: 'meter_pnc' })
+    await om.grantCredits('subject_1', 94_500_000, { source: 'iap_ios', externalId: 'txn_abc' })
+    const ev = sdk.events.ingest.mock.calls[0][0].events[0]
+    expect(ev.externalCustomerId).toBe('subject_1')
+    expect(ev.metadata.pnc).toBe(-94_500_000) // 负值 = 发放 credit
+    expect(ev.metadata.kind).toBe('grant')
+    expect(ev.metadata.source).toBe('iap_ios')
+  })
+
   it('getBalance returns the matching meter balance from customer state', async () => {
     const om = createPolarClient(fakeSdk(94_497_300) as any, { meterId: 'meter_pnc' })
     expect(await om.getBalance('subject_1')).toBe(94_497_300)

@@ -56,7 +56,7 @@
 | 用户 / 群账户 | **Customer**,`externalId` = 我们的 subject_id |
 | 钱包余额 | Customer 的 **meter balance**(`getStateExternal` 一次返回所有 active meter + 余额) |
 | PNC 充值包(web/Mac) | 购买带 **Credits Benefit** 的 Polar 产品 → 自动发 credit |
-| PNC 充值包(iOS) | 🔴 **见开放问题-1**:IAP 不走 Polar,需要一条"外部入账→Polar 加 credit"的路径(API 能力待核实) |
+| PNC 充值包(iOS) | ✅ **已核实**:`events.ingest` 一条**负值**事件即给该 Customer 发 credit(Polar 官方《Grant Meter Credits Before Purchase》),无需 checkout。iOS IAP→RevenueCat→edge→负值事件 |
 | 一次用量扣费 | `events.ingest` 上报 usage event,meter 燃尽余额 |
 | 调用前「够不够」 | `customers.getStateExternal` 读 meter 余额(门禁) |
 | 退款 | Polar 购买→Polar 退款;credit 冲销机制待核实(开放问题-2) |
@@ -138,8 +138,8 @@ settle:      edge 算 PNC → 写 outbox → 异步 events.ingest 到 Polar → 
 - 精度松绑;软 overdraft −0.5 PNC + 4 档阈值;商品=单一现金充值包;settle-only;纯绿地;群池自研;edge 影子账兜底。
 
 ## 开放问题(P0 spike 必须核实)
-1. 🔴 **iOS 外部入账 → Polar 加 credit**:Polar 是否提供"非 Polar-checkout 的手动 credit 授予 API"(给 IAP 充值用)?若**不能**,则 iOS 的钱包余额需以 **edge 影子账为事实源**、Polar 只覆盖 web/Mac —— 这会改变"Polar 单一钱包"的假设,**P0 第一件事就验它**。
-2. **credit 冲销/退款**:Polar 能否按量 void/扣减 credit(退款 3-case 用)?
+1. ✅ **已解决(2026-06-01,文档核实)**:**iOS 外部入账 → Polar 加 credit 可行**。机制 = `events.ingest` 一条**负值**事件(Polar 官方《Grant Meter Credits Before Purchase》),用 `externalCustomerId` 指定,无需 checkout → **Polar 单一钱包跨 iOS/web 成立**,不需要 edge-影子账分支。残留(spike 锁):确切符号约定 + `getStateExternal.balance` 在"benefit 发放"与"负值事件发放"混用时的语义。
+2. **credit 冲销/退款**:退款用一条**正值**事件冲减即可(与扣费同向);但要确认"扣成负可用额度"的边界(退款 3-case:已耗部分不追讨)。spike 验。
 3. **过期 breakage 事件**:能否拿到 credit 过期事件记账?
 4. **getStateExternal 余额新鲜度**:meter 余额刷新延迟多少?(门禁靠 edge 缓存,但要知道同步窗口)
 5. **Polar 费率/支付国家**:确认 5%+$0.50 当前值 + Stripe Express 支持你的收款国家。

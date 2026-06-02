@@ -31,9 +31,12 @@ export interface UsageOpts {
   metadata?: Record<string, unknown>
 }
 
+// 符号约定(Polar 官方《Grant Meter Credits Before Purchase》)：
+// meter = SUM(metadata.pnc)。**扣费 = 正值;充值/发 credit = 负值**。
+// 可用额度 = -(meter 余额)(负余额代表可用)。确切符号 + getStateExternal.balance 语义由 P0 spike 锁定。
 export function createPolarClient(sdk: Sdk, opts: { meterId: string }) {
   return {
-    /** 扣费：上报一条 usage event(externalCustomerId = subject_id)。 */
+    /** 扣费：上报正值 usage event(externalCustomerId = subject_id)。 */
     async reportUsage(externalCustomerId: string, pnc: number, u: UsageOpts): Promise<void> {
       await sdk.events.ingest({
         events: [
@@ -41,6 +44,28 @@ export function createPolarClient(sdk: Sdk, opts: { meterId: string }) {
             name: PNC_EVENT_NAME,
             externalCustomerId,
             metadata: { [PNC_METADATA_KEY]: pnc, category: u.category, ...(u.metadata ?? {}) },
+          },
+        ],
+      })
+    },
+
+    /** 充值/发 credit：上报负值事件(官方机制,无需 checkout,iOS IAP 入账走这里)。 */
+    async grantCredits(
+      externalCustomerId: string,
+      pnc: number,
+      meta: { source: string; externalId: string },
+    ): Promise<void> {
+      await sdk.events.ingest({
+        events: [
+          {
+            name: PNC_EVENT_NAME,
+            externalCustomerId,
+            metadata: {
+              [PNC_METADATA_KEY]: -Math.abs(pnc), // 负值 = 发放 credit
+              kind: 'grant',
+              source: meta.source, // iap_ios / lemon_squeezy 已弃 / polar_checkout / admin ...
+              externalId: meta.externalId, // 幂等去重靠上游(provider 交易 id)
+            },
           },
         ],
       })
