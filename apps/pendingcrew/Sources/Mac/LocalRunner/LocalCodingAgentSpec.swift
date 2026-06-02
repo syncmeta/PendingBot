@@ -1,6 +1,42 @@
 #if os(macOS)
 import Foundation
 
+/// Session 的权限/沙箱档（spec v2 §10.1）。PendingCrew 不自建审批策略，只把
+/// claude/codex 的**原生模式**作为选项暴露并拼进 argv。三档跨两个 runner 映射：
+///
+/// | 档 | Claude `--permission-mode` | Codex `--sandbox` |
+/// |---|---|---|
+/// | `.standard`（默认） | `auto` | `workspace-write` |
+/// | `.planOnly` | `plan`（只读规划） | `read-only` |
+/// | `.full` | `bypassPermissions`（全跳过，危险） | `danger-full-access` |
+///
+/// headless 实测（2026-06-02，docs §10）：`auto` / `bypassPermissions` 在 `-p`
+/// 下能跑（Write + Bash 都放行）；`default` / `dontAsk` 会卡死等不存在的终端审批
+/// —— 所以**不**暴露它们，且 standard 默认 `auto`（而非不传 flag = `default` 卡死）。
+public enum AgentPermissionMode: String, Sendable, CaseIterable {
+    case standard
+    case planOnly
+    case full
+
+    /// The argv fragment for a given runner (`[]` never — always a concrete mode).
+    public func argv(for kind: LocalCodingAgentKind) -> [String] {
+        switch kind {
+        case .claudeCode:
+            switch self {
+            case .standard: return ["--permission-mode", "auto"]
+            case .planOnly: return ["--permission-mode", "plan"]
+            case .full:     return ["--permission-mode", "bypassPermissions"]
+            }
+        case .codex:
+            switch self {
+            case .standard: return ["--sandbox", "workspace-write"]
+            case .planOnly: return ["--sandbox", "read-only"]
+            case .full:     return ["--sandbox", "danger-full-access"]
+            }
+        }
+    }
+}
+
 /// 启动一个本机 coding agent 子进程所需的全部参数。
 ///
 /// **Value semantics**：所有字段 immutable，构造时一次性传齐；`argv()` / `env()`
@@ -51,6 +87,11 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
     /// 验证过的路径一致。仅 Claude 用；Codex 忽略。
     public let claudeSettingsPath: String?
 
+    /// 权限/沙箱档（spec v2 §10.1）。默认 `.standard` —— **重要**：不传 flag 时
+    /// claude 落到 `default` 模式，headless 下碰权限会卡死等不存在的终端，所以
+    /// 一律带一个明确的档。
+    public let permissionMode: AgentPermissionMode
+
     public init(
         kind: LocalCodingAgentKind,
         executableURL: URL,
@@ -60,7 +101,8 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
         model: String? = nil,
         additionalEnv: [String: String] = [:],
         argvOverride: [String]? = nil,
-        claudeSettingsPath: String? = nil
+        claudeSettingsPath: String? = nil,
+        permissionMode: AgentPermissionMode = .standard
     ) {
         self.kind = kind
         self.executableURL = executableURL
@@ -71,6 +113,7 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
         self.additionalEnv = additionalEnv
         self.argvOverride = argvOverride
         self.claudeSettingsPath = claudeSettingsPath
+        self.permissionMode = permissionMode
     }
 
     /// 构造一个 **resume 续跑回合** 的 spec（T4.5 send_prompt 跨端遥控）。
@@ -93,8 +136,10 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
             resumeArgv.append("--model")
             resumeArgv.append(model)
         }
-        // Carry the ambient-steering hook into resume turns too, so a standing
-        // note keeps injecting on every follow-up turn.
+        // Resume turns keep the same permission mode + ambient-steering hook as
+        // the first turn (so a follow-up doesn't silently fall back to a
+        // headless-blocking default, and a standing note keeps injecting).
+        resumeArgv.append(contentsOf: permissionMode.argv(for: .claudeCode))
         resumeArgv.append(contentsOf: claudeSettingsArgs())
         return LocalCodingAgentLaunchSpec(
             kind: kind,
@@ -105,7 +150,8 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
             model: model,
             additionalEnv: additionalEnv,
             argvOverride: resumeArgv,
-            claudeSettingsPath: claudeSettingsPath
+            claudeSettingsPath: claudeSettingsPath,
+            permissionMode: permissionMode
         )
     }
 
@@ -159,6 +205,7 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
                 args.append("--model")
                 args.append(model)
             }
+            args.append(contentsOf: permissionMode.argv(for: .claudeCode))
             args.append(contentsOf: claudeSettingsArgs())
             return args
 
@@ -184,6 +231,7 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
                 "exec",
                 "--json",
             ]
+            args.append(contentsOf: permissionMode.argv(for: .codex)) // --sandbox <mode>
             if let model, !model.isEmpty {
                 args.append("--model")
                 args.append(model)

@@ -206,6 +206,52 @@ final class LocalCodingAgentTests: XCTestCase {
                        "verified one-shot argv must omit --settings when no steering channel")
     }
 
+    // MARK: - permission / sandbox mode (spec §10.1)
+
+    func testPermissionModeMapsToNativeFlagsPerKind() {
+        XCTAssertEqual(AgentPermissionMode.standard.argv(for: .claudeCode), ["--permission-mode", "auto"])
+        XCTAssertEqual(AgentPermissionMode.planOnly.argv(for: .claudeCode), ["--permission-mode", "plan"])
+        XCTAssertEqual(AgentPermissionMode.full.argv(for: .claudeCode), ["--permission-mode", "bypassPermissions"])
+        XCTAssertEqual(AgentPermissionMode.standard.argv(for: .codex), ["--sandbox", "workspace-write"])
+        XCTAssertEqual(AgentPermissionMode.planOnly.argv(for: .codex), ["--sandbox", "read-only"])
+        XCTAssertEqual(AgentPermissionMode.full.argv(for: .codex), ["--sandbox", "danger-full-access"])
+    }
+
+    func testSpecDefaultsToStandardAndThreadsModeIntoArgv() {
+        // Default (no explicit mode) must NOT leave claude on the headless-
+        // blocking `default` — it carries `--permission-mode auto`.
+        let claude = claudeSpec()  // permissionMode defaults to .standard
+        let cargv = claude.argv()
+        guard let i = cargv.firstIndex(of: "--permission-mode") else { return XCTFail("claude missing --permission-mode") }
+        XCTAssertTrue(i + 1 < cargv.count && cargv[i + 1] == "auto")
+
+        let codex = LocalCodingAgentLaunchSpec(
+            kind: .codex, executableURL: URL(fileURLWithPath: "/usr/bin/true"),
+            workingDirectory: URL(fileURLWithPath: NSTemporaryDirectory()),
+            taskBrief: "x", initialPrompt: "p")
+        let cxargv = codex.argv()
+        guard let j = cxargv.firstIndex(of: "--sandbox") else { return XCTFail("codex missing --sandbox") }
+        XCTAssertTrue(j + 1 < cxargv.count && cxargv[j + 1] == "workspace-write")
+    }
+
+    func testExplicitFullModeThreads() {
+        let spec = LocalCodingAgentLaunchSpec(
+            kind: .claudeCode, executableURL: URL(fileURLWithPath: "/usr/bin/true"),
+            workingDirectory: URL(fileURLWithPath: NSTemporaryDirectory()),
+            taskBrief: "x", initialPrompt: "p", permissionMode: .full)
+        XCTAssertTrue(spec.argv().contains("bypassPermissions"))
+    }
+
+    func testResumeTurnKeepsPermissionMode() {
+        let spec = LocalCodingAgentLaunchSpec(
+            kind: .claudeCode, executableURL: URL(fileURLWithPath: "/usr/bin/true"),
+            workingDirectory: URL(fileURLWithPath: NSTemporaryDirectory()),
+            taskBrief: "x", initialPrompt: "first", permissionMode: .full)
+        let resume = spec.makingResumeTurn(agentSessionId: "s", prompt: "go")!
+        XCTAssertEqual(resume.permissionMode, .full)
+        XCTAssertTrue(resume.argv().contains("bypassPermissions"), "resume turn must keep the mode, not fall back")
+    }
+
     // MARK: - SteeringChannel (managed hook config)
 
     func testSteeringChannelWritesHookSettingsAndNote() throws {

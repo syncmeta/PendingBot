@@ -120,6 +120,11 @@ final class CrewSessionRunner: ObservableObject {
         /// value just gets recorded server-side so the crew chat card
         /// + the agent's system prompt see it.
         permissionModeOverride: String? = nil,
+        /// spec v2 §10.1 — the CLI permission/sandbox 档 threaded into argv
+        /// (claude `--permission-mode` / codex `--sandbox`). Default `.standard`
+        /// (= claude `auto`); never nil so headless never falls into the
+        /// blocking `default` mode.
+        permissionMode: AgentPermissionMode = .standard,
         /// T4.5 — when logged in, the caller prepares a server-side session
         /// (register host → create → claim) and hands the link here so the run
         /// mirrors its transcript to the server. `nil` = BYOK / local-only.
@@ -149,7 +154,8 @@ final class CrewSessionRunner: ObservableObject {
             initialPrompt: initialPrompt,
             model: model,
             additionalEnv: additionalEnv,
-            claudeSettingsPath: steeringChannel?.settingsPath
+            claudeSettingsPath: steeringChannel?.settingsPath,
+            permissionMode: permissionMode
         )
         // 3. 起进程
         let handle = try await service.runSession(runID: runID, spec: spec)

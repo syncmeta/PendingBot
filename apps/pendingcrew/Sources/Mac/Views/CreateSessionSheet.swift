@@ -64,7 +64,7 @@ struct CreateSessionSheet: View {
     // Runtime location —— v1 只允许 local_host。
     @State private var runtimeLocation: RuntimeLocation = .localHost
 
-    @State private var permissionMode: PermissionModeSelection = .inherit
+    @State private var permissionMode: AgentPermissionMode = .standard
     @State private var starting: Bool = false
     @State private var localError: String?
 
@@ -80,36 +80,6 @@ struct CreateSessionSheet: View {
             case .crewDefault: return "使用 crew 默认目录"
             case .custom:      return "选其他目录"
             case .gitWorktree: return "新 git worktree"
-            }
-        }
-    }
-
-    /// Spec v2 §10 — session-level permission mode picker. `inherit`
-    /// means "use whatever the crew default is" and maps to a null
-    /// `permission_mode_override` on the server; `auto` / `manual`
-    /// override the crew default for just this session.
-    enum PermissionModeSelection: String, CaseIterable, Identifiable {
-        case inherit
-        case auto
-        case manual
-
-        var id: String { rawValue }
-
-        var label: String {
-            switch self {
-            case .inherit: return "跟随 crew 默认"
-            case .auto:    return "自动（不请示）"
-            case .manual:  return "手动（高危请示）"
-            }
-        }
-
-        /// Wire value for CrewSessionRunner.start. `nil` = inherit
-        /// (server-side null clears the override).
-        var wireValue: String? {
-            switch self {
-            case .inherit: return nil
-            case .auto:    return "auto"
-            case .manual:  return "manual"
             }
         }
     }
@@ -514,15 +484,15 @@ struct CreateSessionSheet: View {
     private var permissionModeField: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text("Permission 模式")
+                Text("权限 / 沙箱")
                     .font(.callout.weight(.medium))
-                Text("(spec v2 §10)")
+                Text("(spec v2 §10.1)")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
             Picker("", selection: $permissionMode) {
-                ForEach(PermissionModeSelection.allCases) { mode in
-                    Text(mode.label).tag(mode)
+                ForEach(AgentPermissionMode.allCases, id: \.self) { mode in
+                    Text(Self.permissionLabel(mode)).tag(mode)
                 }
             }
             .labelsHidden()
@@ -533,11 +503,20 @@ struct CreateSessionSheet: View {
         }
     }
 
+    /// UI 标签（AgentPermissionMode 在 LocalRunner 里是纯 Foundation，UI 文案放这）。
+    private static func permissionLabel(_ mode: AgentPermissionMode) -> String {
+        switch mode {
+        case .standard: return "标准"
+        case .planOnly: return "只读规划"
+        case .full:     return "完全放行"
+        }
+    }
+
     private var permissionModeHint: String {
         switch permissionMode {
-        case .inherit: return "用 crew 设定的默认模式（如果没设过,默认为自动）。"
-        case .auto:    return "agent 自由执行,不弹卡片请权限。"
-        case .manual:  return "agent 做高危操作前要在群里弹卡片等批准。v1 还没接通真正暂停 agent —— 闭环留 T4.5。"
+        case .standard: return "自动放行常规操作，能改文件、跑命令（claude auto / codex workspace-write）。最常用。"
+        case .planOnly: return "只读：能看不能改，适合先让 agent 规划（claude plan / codex read-only）。"
+        case .full:     return "完全放行所有操作，含危险动作（claude bypassPermissions / codex danger-full-access）。谨慎。"
         }
     }
 
@@ -686,7 +665,7 @@ struct CreateSessionSheet: View {
                 taskBrief: taskBrief.trimmingCharacters(in: .whitespacesAndNewlines),
                 initialPrompt: initialPrompt,
                 model: resolvedModelSlug,
-                permissionModeOverride: permissionMode.wireValue,
+                permissionMode: permissionMode,
                 serverLink: serverLink
             )
             dismiss()
