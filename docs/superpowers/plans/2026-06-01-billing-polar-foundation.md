@@ -32,7 +32,9 @@
 
 ---
 
-### Task P0-A:Spike —— 验闭环 + 头号开放问题
+### Task P0-A:Spike —— 验闭环 + 头号开放问题 ✅ 完成(2026-06-02,sandbox)
+
+> **实测结果**:meter(SUM metadata.pnc)+ customer 建成;`grantCredits` -94_500_000 + `reportUsage` +2700 → `getStateExternal` 读到 `balance=94_497_300`(整数精确)、`consumedUnits=-94_497_300`、`creditedUnits=0`。闭环✅、符号✅(grant负/usage正→balance正=可用)、iOS外部入账✅、精度✅、刷新延迟~10–12s✅。`polar-client` 与真实返回吻合,无需改。**P0 收口,可开 P1。**
 
 **Files:** 已就绪 `apps/edge/scripts/polar-spike.ts`;`package.json` 有 `polar:spike`。
 

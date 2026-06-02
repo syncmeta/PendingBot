@@ -2,7 +2,9 @@
 
 日期：2026-06-01
 分支：`chore/billing-dashboard-specs`
-状态：**草案,待评审**（2026-06-01 多轮选型后定稿引擎 = Polar）
+状态：**草案,待评审**（2026-06-01 定稿引擎 = Polar;**2026-06-02 P0 spike sandbox 实测通过**）
+
+> **✅ P0 spike 实测(2026-06-02,sandbox)**:建 meter(SUM metadata.pnc)+ customer → `grantCredits` 负值 -94_500_000 + `reportUsage` 正值 +2700 → `getStateExternal` 读到 **balance=94_497_300(整数精确,无浮点漂移)**,`consumedUnits=-94_497_300, creditedUnits=0`。证实:① 全事件符号模型成立(grant 负/usage 正 → balance 正=可用);② **iOS 外部入账可行**(对无购买的 customer 直接 grant 成功);③ 精度无忧;④ 余额刷新 ~10–12s(门禁须靠 edge 缓存)。`polar-client` 与真实返回结构吻合,无需改。
 
 > 选型历程(留痕,免得重走):OpenMeter Cloud → 发现被 Kong 收编(免费托管没了)→ 重扫全市场 → 用户松绑两条约束(**精度不必苛求**、**"不接 Stripe"= 不直连 Stripe 而走 MoR,底层 Stripe 无妨**)→ 锁定 **Polar**。完整 MoR 版图见本轮调研:能"MoR+自带预付 credit 钱包+单人自助"的只有 {Polar, Creem, Dodo}(+未核实的 Fungies);其余要么不是 MoR、要么没钱包。
 >
@@ -149,7 +151,7 @@ settle:      edge 算 PNC → 写 outbox → 异步 events.ingest 到 Polar → 
 1. ✅ **已解决(2026-06-01,文档核实)**:**iOS 外部入账 → Polar 加 credit 可行**。机制 = `events.ingest` 一条**负值**事件(Polar 官方《Grant Meter Credits Before Purchase》),用 `externalCustomerId` 指定,无需 checkout → **Polar 单一钱包跨 iOS/web 成立**,不需要 edge-影子账分支。残留(spike 锁):确切符号约定 + `getStateExternal.balance` 在"benefit 发放"与"负值事件发放"混用时的语义。
 2. ✅ **退款机制已明**(文档核实):无"void credit"API;退款=`reduceCredits`(正值事件)。**Polar 不在 0 处夹**,所以退款 3-case 的"只冲未消耗、不扣成负"必须 **edge 自己 `min(退款额, 可用余额)` 夹**。已落 `polar-client.reduceCredits`。
 3. **过期 breakage 事件**:能否拿到 credit 过期事件记账?(全事件模型下"过期"需自己实现,spike/P6 定)
-4. ⚠️ **余额新鲜度无 SLA**(文档核实):meter 聚合**最终一致、非读写即时**。→ 门禁必须靠 **edge 缓存**,Polar 余额当 reconciliation 基准,不读写即用。spike 实测延迟窗口。
+4. ✅ **余额新鲜度**(spike 实测):~**10–12 秒**才反映 ingest(最终一致,非读写即时)。→ 门禁必须靠 **edge 缓存**,Polar 余额当 reconciliation 基准。
 5. ✅ **费率/去重已核实**:Starter **5%+$0.50**(2026-05-27 后新组织;+1.5% 国际卡;$15/争议);payout 经 Stripe Express(约 120 国,银行须同国;[supported-countries](https://polar.sh/docs/merchant-of-record/supported-countries));`events.ingest` 用 **`external_id` 去重**(重复跳过,返回 `duplicates` 计数)。**签约/上架前确认你的收款国家在列**。
 6. RevenueCat 产品配置(consumable 充值包)+ logIn 时机(购买前)。
 7. outbox 落地(Supabase vs D1;Queue vs cron;幂等键用 external_id/死信)。
@@ -159,7 +161,7 @@ settle:      edge 算 PNC → 写 outbox → 异步 events.ingest 到 Polar → 
 
 ## 分阶段 checklist
 > 设计阶段,待办。
-- [ ] **P0** Polar sandbox 账号/token + 建 pnc meter(SUM metadata.pnc);跑 polar-spike 确认"充值(负值)→扣费(正值)→getStateExternal 读余额"闭环 + 符号 + 刷新延迟。(开放问题-1 iOS 加 credit 已文档核实可行)
+- [x] **P0** ✅ **完成(2026-06-02)**:Polar sandbox + meter + polar-spike 实测通过——闭环/符号/精度/iOS外部入账/刷新延迟全部确认(见顶部 spike 记录)。
 - [ ] **P1** 入账:web/Mac Polar checkout + iOS(RevenueCat→edge→Polar 加 credit)→ 双落影子账(幂等)。
 - [ ] **P2** 用量:pricebooks(hardcoded)+ 8 类 event 计价 → outbox → events.ingest。
 - [ ] **P3** settle(LLM 即时 + 语音/群媒体/sandbox periodic + 余额≤0 杀会话)+ 4 档阈值 + −0.5 overdraft + 缓存同步。
