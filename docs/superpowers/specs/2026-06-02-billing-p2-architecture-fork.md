@@ -2,7 +2,7 @@
 
 日期：2026-06-02
 分支：`chore/billing-dashboard-specs`
-状态：**待用户拍板**(P2 实现计划取决于此)
+状态：**已定案(2026-06-02)= 路 2 + WalletDO + push 同步**(见文末「定案」)
 
 ## 背景:Explore 测绘的关键发现
 
@@ -51,6 +51,48 @@ billing-v2 **不是空壳,是一套已建成的完整本地账本**:
 - 群池接 Polar 侧(路1 群池已在本地;Polar 只收镜像)。
 - sandbox_runtime 计费补齐(Explore 标注:目前完全没接)。
 
-## 待你决定
-1. **路 1 还是路 2?**
-2. 顺带:**sandbox 用量计费**(目前未实现)P2 一起补,还是单列?
+## 定案(2026-06-02)= 路 2 + WalletDO + push 同步
+
+用户决定:**Polar 当钱包本体,不为门禁让步**。门禁用 **Cloudflare Durable Object 缓存**解决。
+
+### 架构
+- **Polar** = 余额事实源 + credit 授予/过期/燃尽 + MoR + iOS 钱包面读它。
+- **`WalletDO`(每 subject 一个)** = Polar 在边缘的**强一致缓存 + 门禁闸 + 用量 outbox**。**不是账本**——只存一个 `balanceMicros` + `pendingUsage[]` 缓冲(DO 自带 SQLite,持久)。
+  - `gateAndDebit(pncMicros, meta)`:DO 内原子——按 4 档阈值判定 → 允许则 `balance -= pnc` + 记 `pendingUsage` → 返回 `{allowed, thresholdState, balanceAfter}`。强一致、不超支。
+  - `credit(pncMicros)` / `applyAbsolute(polarBalance)`:被 edge push 调用。
+  - `alarm()` 稀疏兜底:把 `pendingUsage` flush 到 Polar(`events.ingest`)+ 极低频从 Polar 拉绝对值纠偏(防丢包)。
+  - **冷启动/首次门禁**:DO 无缓存时,惰性从 Polar `getStateExternal` 拉一次初始化。
+- **为什么 DO 不是 KV**:余额是高频递减计数器,KV 最终一致 + last-write-wins 会**丢扣减/超支**;DO 单线程强一致,串行扣减不竞争。
+- **billing-v2 的 settleUsage/packs/ledger_entries → 退役**(路 2 不要本地账本)。`pnc_ledger`(P1)保留为**支付/对账审计**,不再当门禁余额。
+- **群**:群=Polar customer + 群的 WalletDO;share-index 池(退款分摊数学)留 Supabase(`group_pools`),Polar 不管这个。
+
+### 同步模型(全 push,几乎零轮询)
+| 余额变动源 | 通知 DO 的方式 |
+|---|---|
+| 用量扣减 | 发生在 DO 内,自知 |
+| 充值/退款/admin/群充资退群 | 都从 edge 发起 → handler 直接 push DO |
+| Polar 侧自变(过期、后台手改) | Polar **`customer.state_changed`** webhook → edge → push DO(对齐绝对值) |
+- 兜底:**仅**一个极稀的安全对账(DO alarm 几分钟/更久,或"久无事件才拉一次"),专防 webhook 丢包。不是高频轮询。
+
+## ⚠️ 坑清单(实现时必须处理)
+
+1. **回环双扣**:DO 本地扣 + flush 用量给 Polar → Polar 处理后 `customer.state_changed` 回来。处理:**state_changed 带绝对余额,DO 对齐到 `绝对值 − 在途未被Polar反映的pending`,不再减 delta**。
+2. **丢 webhook → 余额偏高 → 用户超花**(钱!):靠"稀疏安全对账"兜底纠偏;关键扣费路径宁可保守。
+3. **DO 必须用强一致存储扣减**(不是 KV),否则并发调用丢扣减/超支。
+4. **pendingUsage 必须落 DO SQLite(持久)**:崩溃不丢可计费量,下次 alarm 补发(= outbox 语义)。
+5. **Polar ~10s 最终一致**:门禁只读 DO 本地值;Polar 当 SoR/对账,绝不进热路径读。
+6. **符号约定沿用**:充值=负值事件、用量=正值事件、`getStateExternal.balance` 正=可用(P0 已验)。
+7. **`customer.state_changed` 字段待核**:是否含 meter 余额、是否每笔用量都触发(影响回环处理)——P2 spike 时核。
+8. **owner=最终责任主体**(group→responsible_subject_id,非发起 userId);路由到对应 subject 的 WalletDO。
+9. **上报给 Polar 的是 vendor 成本(不含平台 markup)**;markup 只在卖包体现。
+10. **系统级级联**(title-runner/lookback/bot_note 等)按现状跳过门禁/或归属正确 subject——别误扣误拦。
+11. **DO 路由延迟**:gate 多一次 DO 往返(几~几十 ms),相对一次 LLM 调用可忽略;语音/ sandbox 周期 settle 同理可接受。
+
+## P2 范围(含 sandbox)
+- WalletDO(gate+debit+credit+alarm flush/reconcile)。
+- 门禁 + 用量上报挂到:LLM(`enqueueAudit`/`persistAuditMessage`)、语音(`realtime-meter`/`room-voice`)、web tools、**sandbox(代码执行,目前完全没接计费 → P2 一并补:执行前 gate + 执行后按时长/资源 settle)**。
+- Polar `customer.state_changed` webhook handler → push DO。
+- 充值/退款 push DO(P1 webhook 接 DO)。
+- 退役 billing-v2 settleUsage/packs/ledger_entries;`pnc_ledger` 转审计。
+- 群 WalletDO + share-index 池保留。
+- 4 档阈值节流(复活;Explore 指出 v2 把节流删了只剩硬停)。
