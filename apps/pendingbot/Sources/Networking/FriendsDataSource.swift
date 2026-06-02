@@ -71,4 +71,22 @@ enum FriendsDataSource {
             }
         }
     }
+
+    /// The caller's existing 1:1 conversation with a bot, if any. RLS scopes
+    /// `conversations` to the current user, so this returns *my* user_bot
+    /// conversation for that bot. nil = no conversation yet (Mac 第一版不在此
+    /// 处建会话,UI 提示去手机端先聊一次)。
+    static func findBotConversation(botId: String) async throws -> String? {
+        struct Row: Decodable { let id: String }
+        let rows: [Row] = try await SupabaseStack.shared
+            .from("conversations")
+            .select("id")
+            .eq("bot_id", value: botId)
+            .eq("conversation_type", value: "user_bot")
+            .order("updated_at", ascending: false)
+            .limit(1)
+            .execute()
+            .value
+        return rows.first?.id
+    }
 }
