@@ -125,6 +125,11 @@ final class CrewSessionRun: ObservableObject, Identifiable {
     @Published private(set) var status: Status = .running
     @Published private(set) var stdoutText: String = ""
     @Published private(set) var stderrText: String = ""
+    /// Parsed transcript — each stdout JSONL line is flattened into zero or
+    /// more `RunnerEvent`s (see `RunnerEventParser`). This is what the
+    /// session window renders by default; `stdoutText` stays as the raw
+    /// fallback tab. Claude Code / Codex schemas both collapse into here.
+    @Published private(set) var events: [RunnerEvent] = []
     @Published private(set) var exitCode: Int32?
 
     private let handle: LocalCodingAgentRunHandle
@@ -201,6 +206,11 @@ final class CrewSessionRun: ObservableObject, Identifiable {
     private func appendStdout(_ line: String) {
         if !stdoutText.isEmpty { stdoutText.append("\n") }
         stdoutText.append(line)
+        // Parse the same line into transcript events. One JSONL line can
+        // yield 0..n events; noise drops to none. Kept append-only so the
+        // window's @Published subscription drives incremental rendering.
+        let parsed = RunnerEventParser.parse(line: line, kind: kind)
+        if !parsed.isEmpty { events.append(contentsOf: parsed) }
     }
 
     private func appendStderr(_ line: String) {
