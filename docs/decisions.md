@@ -16,7 +16,7 @@
   - **好友列表对所有好友透明**:任何好友能看到该 bot 还有哪些好友、以及**每个好友是谁拉进来的**。
 - **背景**: #121-128 原实现是 slug-as-public-identity(陌生人按 slug 直查),与邀请制 RLS 正面冲突、ship 即坏(见 tech-debt 🔴 bot 分享 RLS)。本决策把它返工成 invite-token 模型。
 - **落地方向**: 新表 `bot_invite_links(token, bot_id, inviter_user_id, expires_at, revoked_at)`;service-role 预览/兑换端点(RLS 不放宽);客户端外壳复用、内核换 token。slug 保留当展示 @名。
-- **现状核实**: ❌ 未实现(待返工)。#121-127 代码是旧 slug 模型,保持 pending。
+- **现状核实**: ✅ **已实现 + 端到端验证(2026-06-01)**。DB(#191)+ Edge(#192/#193,已部署 prod worker)+ iOS 全返工(#194,签名构建装模拟器实测)。收件人路径真机验证链:universal link `/b/<token>` → 加机器人页 → resolve 预览(真 bot +「由 X 邀请你加入」)→ 添加 → redeem → 进聊天;DB 确认 `user_bot_contacts.added_via='invite_link'` + `invited_by` 留痕。无效 token 显示「邀请链接无效」。**残留(低风险,未单独视觉验)**:发件签发页(BotSharePage,创建者可进公开 bot 管理→分享验);CreateBotSheet slug 栏旧文案(#123)。
 
 ## D2 · 群加入码 = 每人一码、各自关联到本人(邀请者)
 - **日期**: 2026-06-01
