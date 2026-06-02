@@ -12,6 +12,7 @@
 		22A27AC631B26380BC3108D2 /* LocalCodingAgentExecutable.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DCD41EF4DF79F9A7C1794CD /* LocalCodingAgentExecutable.swift */; };
 		2DFC3899F9816634824C1EFF /* CrewSessionWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FFA131E8A46E341E75F7A01 /* CrewSessionWindowView.swift */; };
 		2F4C8E9B74443BE19546AC44 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DFC0F15C2EF325530543B30 /* LoginView.swift */; };
+		38D9D397475247C56DE16511 /* RemoteSessionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5C2B69B1686D74FA04F261B /* RemoteSessionsView.swift */; };
 		3AAC99AF45EEF1C824F1EF80 /* RunnerEventParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6442FC978045D4584397E8B /* RunnerEventParserTests.swift */; };
 		3FB981B1A72334696C9A7540 /* SessionProxyProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8659160BA978CA311E9673E2 /* SessionProxyProtocol.swift */; };
 		405AD24AAB26662F93045B6E /* SessionProxyProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8659160BA978CA311E9673E2 /* SessionProxyProtocol.swift */; };
@@ -97,6 +98,7 @@
 		9A3C8AAD5F35F08DAC72F931 /* CreateCrewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreateCrewSheet.swift; sourceTree = "<group>"; };
 		AF1050766B25F50A640A709F /* PendingCrew.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = PendingCrew.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B4AB47EFABEEEDC3D1AA7F4D /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		B5C2B69B1686D74FA04F261B /* RemoteSessionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteSessionsView.swift; sourceTree = "<group>"; };
 		BCB0A9A2B511BAA8446CF9A4 /* Subject.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Subject.swift; sourceTree = "<group>"; };
 		C19AB68BF7E4D689CEAF0A0F /* CrewSessionRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewSessionRunner.swift; sourceTree = "<group>"; };
 		C6388019E8C2DDFED3A85E99 /* PendingCrewAuthCredential.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingCrewAuthCredential.swift; sourceTree = "<group>"; };
@@ -180,6 +182,7 @@
 				23CBE414E3726AB27DCA90AA /* FirstLaunchDisclosureView.swift */,
 				73BC806F682C0CE6E3EB26CA /* LocalSetupView.swift */,
 				D1A9FCA930C6487C96B9A211 /* MacRootView.swift */,
+				B5C2B69B1686D74FA04F261B /* RemoteSessionsView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -425,6 +428,7 @@
 				A9B245CF14AC8C3B9C969D83 /* PendingCrewAuthCredential.swift in Sources */,
 				EB82BC6650DAEA2D09DD9785 /* PendingCrewBackend.swift in Sources */,
 				F5FB1B5F727AF7F8838D05F6 /* PendingCrewDeepLinkRoute.swift in Sources */,
+				38D9D397475247C56DE16511 /* RemoteSessionsView.swift in Sources */,
 				852E01198CF0F7490A56E9C1 /* RunnerEventParser.swift in Sources */,
 				405AD24AAB26662F93045B6E /* SessionProxyProtocol.swift in Sources */,
 				DE7E6AD7E1FBFD63657A6BF6 /* Subject.swift in Sources */,

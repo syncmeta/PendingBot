@@ -258,6 +258,24 @@ struct PendingCrewAPI {
         return resp.eventId
     }
 
+    /// `GET /v1/crew/:crewId/sessions` — list a crew's server sessions (most
+    /// recent first). The viewer side reads this to watch sessions running on
+    /// another host. Needs `crew:read`.
+    func listCrewSessions(crewId: String) async throws -> [CrewSessionSummary] {
+        struct Response: Decodable { let items: [CrewSessionSummary] }
+        let resp: Response = try await get(path: "v1/crew/\(crewId)/sessions")
+        return resp.items
+    }
+
+    /// `GET /v1/crew/sessions/:sessionId/events` — the durable transcript log
+    /// for one session (oldest first). What a viewer renders to follow a
+    /// session without being its runner. Needs `crew:read`.
+    func getSessionEvents(sessionId: String) async throws -> [CrewSessionEvent] {
+        struct Response: Decodable { let items: [CrewSessionEvent] }
+        let resp: Response = try await get(path: "v1/crew/sessions/\(sessionId)/events")
+        return resp.items
+    }
+
     /// `POST /v1/runner-hosts/:hostId/sessions/:sessionId/finish` — close out
     /// the session. `status` ∈ completed / failed / cancelled.
     @discardableResult
@@ -334,6 +352,47 @@ struct PendingCrewAPI {
 /// claimed); only the lease id is decoded. `leaseId` nil = nothing claimable.
 struct SessionClaim: Decodable {
     let leaseId: String?
+}
+
+/// One server crew session row (from `listCrewSessions`). Mirrors the
+/// `crew_sessions` columns the list endpoint returns.
+struct CrewSessionSummary: Decodable, Identifiable, Equatable {
+    let id: String
+    let runnerKind: String
+    let status: String
+    let taskBrief: String
+    let progressSummary: String?
+    let createdAt: String
+    let startedAt: String?
+    let finishedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case runnerKind = "runner_kind"
+        case status
+        case taskBrief = "task_brief"
+        case progressSummary = "progress_summary"
+        case createdAt = "created_at"
+        case startedAt = "started_at"
+        case finishedAt = "finished_at"
+    }
+}
+
+/// One transcript event from a session's durable log (`getSessionEvents`).
+struct CrewSessionEvent: Decodable, Identifiable, Equatable {
+    let id: String
+    let eventType: String
+    let visibility: String
+    let summary: String?
+    let createdAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case eventType = "event_type"
+        case visibility
+        case summary
+        case createdAt = "created_at"
+    }
 }
 
 // MARK: - Create crew request/response
