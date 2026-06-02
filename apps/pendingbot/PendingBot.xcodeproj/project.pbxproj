@@ -63,6 +63,7 @@
 		5DC1DDF2BCFD9284F2421B38 /* ActiveCallBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = E586576C7350D86FA4C6C68B /* ActiveCallBanner.swift */; };
 		62834377D43A0D27902FD8AA /* ConversationView+CrewProposal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 550414C4E1E5D5C11397ABA1 /* ConversationView+CrewProposal.swift */; };
 		639FCF827C899E1C25DA3237 /* ChatDataSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD69E5388537288F5E14D3D1 /* ChatDataSource.swift */; };
+		6715ECF7C0A8F33235E8B564 /* FriendsDataSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = C82D486B7EBB27D5882B5844 /* FriendsDataSource.swift */; };
 		67B0E4F2A2C4FE0ACCE07550 /* EnvelopeFeedRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56BFB3EBF959D378BC6BC313 /* EnvelopeFeedRow.swift */; };
 		68CC7CE5D41AC8BE5940E886 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = 58587B83E149045A770D0833 /* GoogleSignIn */; };
 		6E4DD70ABC53852AB56FCFED /* EnvelopeArticleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F18FB9C392174C32131512F /* EnvelopeArticleView.swift */; };
@@ -90,6 +91,7 @@
 		8DCDDFC943420CE93381525F /* CallView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 213E09F2D1646151DC7BE1C6 /* CallView.swift */; };
 		8FAC3CB10EEC9AD7CE5EEE34 /* CrewAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CF743A2BD19523CAF11ECC6 /* CrewAPI.swift */; };
 		93195F559ABAEBD132E64F17 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 11A77E911EA1D815E90E7BFD /* GRDB */; };
+		939B2ECABC9E20A928E7ABCD /* MacFriendsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6C7BA77C498838A64F51382 /* MacFriendsView.swift */; };
 		95771EBFA9FE35E196DBAB95 /* MacWelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 954AA26D0420171081DFA5EA /* MacWelcomeView.swift */; };
 		968D6C940981E2A023C7B257 /* CrewComposerBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48A52B363C89957B95F12AD6 /* CrewComposerBar.swift */; };
 		9A4A8A9216FA410B81046949 /* CrewSessionPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22B3BF0A069E8CE296ED306E /* CrewSessionPresentation.swift */; };
@@ -265,6 +267,7 @@
 		C4F92F6F520EC1E69BFB6426 /* CrewSessionStatusCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewSessionStatusCard.swift; sourceTree = "<group>"; };
 		C53CFA1DBE04DAEFC59F99DE /* ColorHash.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorHash.swift; sourceTree = "<group>"; };
 		C552E6A0C0FB84E03F1152D1 /* ConversationView+Group.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConversationView+Group.swift"; sourceTree = "<group>"; };
+		C82D486B7EBB27D5882B5844 /* FriendsDataSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FriendsDataSource.swift; sourceTree = "<group>"; };
 		C86ED7FEA6F6BBBFA222E483 /* BlinkingCursor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlinkingCursor.swift; sourceTree = "<group>"; };
 		C87A0A38056F5029C934F737 /* ConversationView+ToolTrace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConversationView+ToolTrace.swift"; sourceTree = "<group>"; };
 		C9E0A1F2EEFADA0D94998172 /* ServerTimestamp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerTimestamp.swift; sourceTree = "<group>"; };
@@ -292,6 +295,7 @@
 		EA551869EBE6A7E25EEFBDCA /* ConversationView+Attachments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConversationView+Attachments.swift"; sourceTree = "<group>"; };
 		F1D36E9865F8E358AD4A1B49 /* APIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIModels.swift; sourceTree = "<group>"; };
 		F2F07903E8E0959584180E65 /* PushService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushService.swift; sourceTree = "<group>"; };
+		F6C7BA77C498838A64F51382 /* MacFriendsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacFriendsView.swift; sourceTree = "<group>"; };
 		F6E8A6BE1816A51145EF8FA6 /* Haptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Haptics.swift; sourceTree = "<group>"; };
 		F80EEA9363B2D0019EECF31A /* CrewChatStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewChatStore.swift; sourceTree = "<group>"; };
 		F898044EDF181328CD4C946F /* JoinRequestsInboxView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JoinRequestsInboxView.swift; sourceTree = "<group>"; };
@@ -353,6 +357,7 @@
 				03D2467ADBD40F4F8755863A /* CrewSessionAPI.swift */,
 				22B3BF0A069E8CE296ED306E /* CrewSessionPresentation.swift */,
 				023C318B8EB2B3A4CC9F8594 /* EmailSignIn.swift */,
+				C82D486B7EBB27D5882B5844 /* FriendsDataSource.swift */,
 				1F14048DCB73276C7D252616 /* GoogleSignIn.swift */,
 				6007B7AC7A2508EA9C7C04C9 /* GroupInviteAPI.swift */,
 				7EEDB9DF3C6B9D1EC67C769F /* HostedConfig.swift */,
@@ -464,6 +469,7 @@
 		4B6ED05D5BC8BD3EDAD14EF6 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				F6C7BA77C498838A64F51382 /* MacFriendsView.swift */,
 				40B3AC8D204D37CE4A7DE319 /* MacMessagesView.swift */,
 				186A7AED372BD3345AEC8273 /* MacRemoteSessionsView.swift */,
 			);
@@ -783,6 +789,7 @@
 				67B0E4F2A2C4FE0ACCE07550 /* EnvelopeFeedRow.swift in Sources */,
 				1D67444A38A55B99E0E21F76 /* EnvelopeTabView.swift in Sources */,
 				D57CD481C115FD6D4F067F1F /* EnvelopeThinkingTrace.swift in Sources */,
+				6715ECF7C0A8F33235E8B564 /* FriendsDataSource.swift in Sources */,
 				0B2D6E04E981C24EDB2ED740 /* FriendsTabView.swift in Sources */,
 				7FEECCD4D899454D43447F5C /* GoogleSignIn.swift in Sources */,
 				1431C4C1F06DB04B39E9C1FF /* GroupAvatar.swift in Sources */,
@@ -802,6 +809,7 @@
 				A0D13A30C3F770CF9B9505E1 /* LetterSenderAvatar.swift in Sources */,
 				BDDDE8F25B3B11A420609162 /* LocalDatabase.swift in Sources */,
 				E81BA5D57A39095B26E2EE89 /* Log.swift in Sources */,
+				939B2ECABC9E20A928E7ABCD /* MacFriendsView.swift in Sources */,
 				D75770E01905BA3C3A8D4119 /* MacMeView.swift in Sources */,
 				C52090D1049289B1C5AC862A /* MacMessagesView.swift in Sources */,
 				82A8EEB896FD422C7064FFB2 /* MacRemoteSessionsView.swift in Sources */,
