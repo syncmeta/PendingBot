@@ -168,15 +168,19 @@ struct PendingCrewAPI {
     // payloads wait for a cross-platform JSON value (JSONValue is Mac-only,
     // this file compiles for iOS too).
 
-    /// `POST /v1/crews/:crewId/sessions` — open a crew session (status
+    /// `POST /v1/crew/:crewId/sessions` — open a crew session (status
     /// 'queued'). Returns the server session id. `runnerKind` ∈
     /// local_claude_code / local_codex / local_opencode / local_kilo /
     /// cloud_sandbox. Needs `crew:write`.
+    ///
+    /// **Path is singular `/v1/crew`** — `routes/crew.ts` (sessions / links /
+    /// mailbox) mounts at `/v1/crew`, while `routes/crews.ts` (list / get /
+    /// create crew) mounts at the plural `/v1/crews`. Easy to mix up.
     func createSession(crewId: String, runnerKind: String, taskBrief: String) async throws -> String {
         struct Body: Encodable { let runnerKind: String; let taskBrief: String }
         struct Response: Decodable { let sessionId: String }
         let resp: Response = try await post(
-            path: "v1/crews/\(crewId)/sessions",
+            path: "v1/crew/\(crewId)/sessions",
             body: Body(runnerKind: runnerKind, taskBrief: taskBrief)
         )
         return resp.sessionId
