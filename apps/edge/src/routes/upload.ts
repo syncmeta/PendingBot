@@ -387,6 +387,24 @@ uploadRoutes.get('/:id', async (c) => {
     }
   }
 
+  if (!allowed) {
+    // Avatar exception (decisions.md D3 part 2): a user's profile avatar is
+    // viewable by any authenticated caller that presents its attachment id.
+    // The id is non-enumerable (uuid) and only surfaces from legitimate
+    // places — handle lookup (加好友 preview) and conversation/group member
+    // lists (群成员). This makes those two contexts' avatars load while
+    // keeping everything else gated: only the *image bytes* are served here;
+    // attachment *metadata* (r2_key, filename, …) stays RLS-gated (migration
+    // 20260601080625), and chat attachments stay message-reference gated above.
+    const { data: avatarRow, error: avatarErr } = await supa
+      .from('users')
+      .select('id')
+      .eq('avatar_path', id)
+      .maybeSingle();
+    if (avatarErr) return jsonError(c, 500, 'database_error', { detail: avatarErr.message });
+    if (avatarRow) allowed = true;
+  }
+
   if (!allowed) return jsonError(c, 404, 'not_found');
 
   const obj = await c.env.UPLOADS.get(att.r2_key);

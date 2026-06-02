@@ -63,12 +63,12 @@ struct MessageTabView: View {
     /// empty means the sheet should auto-run the lookup on appear so the
     /// user lands on the preview page without re-typing.
     @State private var addFriendPrefill: String = ""
-    /// Bot-add sheet driven by a scanned bot-share QR. `addBotPrefill`
-    /// carries the slug so AddBotSheet opens straight on the preview.
+    /// Bot-add sheet driven by a scanned bot invite QR. `addBotPrefill`
+    /// carries the invite token so AddBotSheet opens straight on the preview.
     @State private var addingBot = false
     @State private var addBotPrefill: String = ""
     @State private var pendingScannedFriendHandle: String?
-    @State private var pendingScannedBotSlug: String?
+    @State private var pendingScannedBotToken: String?
     // Path-based nav for compact: keyed to .toolbar(.hidden, for: .tabBar)
     // so the bottom tab bar slides out alongside the push transition (rather
     // than snapping back in *after* the back transition finishes, which is
@@ -172,9 +172,9 @@ struct MessageTabView: View {
                 pendingScannedFriendHandle = nil
                 addFriendPrefill = token
                 addingFriend = true
-            } else if let slug = pendingScannedBotSlug {
-                pendingScannedBotSlug = nil
-                addBotPrefill = slug
+            } else if let token = pendingScannedBotToken {
+                pendingScannedBotToken = nil
+                addBotPrefill = token
                 addingBot = true
             }
         }) {
@@ -187,10 +187,10 @@ struct MessageTabView: View {
                     pendingScannedFriendHandle = token
                     scanning = false
                 },
-                onScannedBotSlug: { slug in
-                    // Scanned a bot-share QR — open the add-bot preview
-                    // with the slug pre-loaded.
-                    pendingScannedBotSlug = slug
+                onScannedBotToken: { token in
+                    // Scanned a bot invite QR — open the add-bot preview
+                    // with the invite token pre-loaded.
+                    pendingScannedBotToken = token
                     scanning = false
                 }
             )
@@ -198,7 +198,7 @@ struct MessageTabView: View {
         .sheet(isPresented: $addingBot, onDismiss: { addBotPrefill = "" }) {
             AddBotSheet(
                 onAdded: { _ in Task { await load() } },
-                prefilledSlug: addBotPrefill
+                prefilledToken: addBotPrefill
             )
             .presentationDragIndicator(.visible)
         }
@@ -1174,10 +1174,10 @@ private struct ScanQRSheet: View {
     /// the scanner and presents AddFriendSheet with the handle pre-loaded,
     /// so both 扫码 and 输号码 land on the same review page.
     var onScannedUserHandle: (String) -> Void = { _ in }
-    /// Called with the bot slug when the scanned QR is a bot-share link
-    /// (`/b/<slug>`). Caller dismisses the scanner and presents
-    /// AddBotSheet with the slug pre-loaded, landing on the bot preview.
-    var onScannedBotSlug: (String) -> Void = { _ in }
+    /// Called with the invite token when the scanned QR is a bot invite link
+    /// (`/b/<token>`). Caller dismisses the scanner and presents
+    /// AddBotSheet with the token pre-loaded, landing on the bot preview.
+    var onScannedBotToken: (String) -> Void = { _ in }
 
     @State private var scannedValue: String?
     @State private var submitting = false
@@ -1287,10 +1287,10 @@ private struct ScanQRSheet: View {
     ///   3. Anything else → render the raw text in the centre of the sheet.
     private func handle(value: String) async {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Bot-share link (/b/<slug>) — disjoint from the /c/ contact path,
-        // so check it first and hand the slug up for the add-bot preview.
+        // Bot invite link (/b/<token>) — disjoint from the /c/ contact path,
+        // so check it first and hand the token up for the add-bot preview.
         if BotShareLink.isBotShareLink(trimmed) {
-            onScannedBotSlug(BotShareLink.slug(fromScanned: trimmed))
+            onScannedBotToken(BotShareLink.token(fromScanned: trimmed))
             return
         }
         if PendingBotQR.isPendingBotQR(trimmed) {

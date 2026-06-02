@@ -97,8 +97,8 @@ struct TabRoot: View {
             .onChange(of: store.current) { _, _ in Haptics.tap() }
             // A bot-share link landed — make sure the friends tab is the
             // one on screen so it can present the add-bot preview. The
-            // friends tab itself consumes (and clears) the pending slug.
-            .onChange(of: deepLink.pendingAddBotSlug) { _, new in
+            // friends tab itself consumes (and clears) the pending token.
+            .onChange(of: deepLink.pendingAddBotToken) { _, new in
                 if new != nil { selected.wrappedValue = .friends }
             }
         } else {
