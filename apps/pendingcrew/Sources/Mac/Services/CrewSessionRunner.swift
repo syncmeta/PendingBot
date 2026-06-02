@@ -52,6 +52,21 @@ struct CrewSessionServerLink: Sendable {
         }
     }
 
+    /// Build the realtime proxy client for this session (runner role). The
+    /// WS upgrade reuses the HTTP client's base URL + device-grant bearer; the
+    /// route authenticates the bearer and stamps trusted facts onto the DO
+    /// upgrade. This is the live sibling of `publish`/`finish` above — where
+    /// those mirror the durable transcript, the proxy pushes low-latency
+    /// `session.state` and receives remote commands/decisions.
+    func makeProxyClient() -> SessionProxyClient {
+        SessionProxyClient(
+            baseURL: api.baseURL,
+            sessionId: sessionId,
+            role: .runner,
+            token: api.bearerToken
+        )
+    }
+
     /// Map a RunnerEvent to the server's (event_type, visibility) enums.
     static func map(_ e: RunnerEvent) -> (String, String) {
         switch e {
@@ -198,10 +213,20 @@ final class CrewSessionRun: ObservableObject, Identifiable {
     /// fallback tab. Claude Code / Codex schemas both collapse into here.
     @Published private(set) var events: [RunnerEvent] = []
     @Published private(set) var exitCode: Int32?
+    /// Last remote command received over the proxy socket, for UI surfacing.
+    /// `nil` until a cross-device viewer sends one. The command isn't applied
+    /// to the local run yet — see `handleRemoteInbound` (T4.5 follow-up).
+    @Published private(set) var lastRemoteCommand: String?
 
     private let handle: LocalCodingAgentRunHandle
     /// T4.5 server mirror (logged mode only; nil for BYOK/local-only runs).
     private let serverLink: CrewSessionServerLink?
+    /// T4.5 realtime proxy socket (logged mode only). Built from `serverLink`;
+    /// pushes live `session.state` to viewers and receives their commands /
+    /// permission decisions. nil for BYOK/local-only runs.
+    private let proxyClient: SessionProxyClient?
+    private var proxyConnectTask: Task<Void, Never>?
+    private var proxyInboundTask: Task<Void, Never>?
     /// Serializes server publishes so transcript events land in stream order
     /// (each publish awaits the previous). Best-effort — see CrewSessionServerLink.
     private var publishChain: Task<Void, Never>?
@@ -233,6 +258,7 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         self.startedAt = Date()
         self.handle = handle
         self.serverLink = serverLink
+        self.proxyClient = serverLink?.makeProxyClient()
     }
 
     /// 起后台 task 把 handle 的 stream / exit code 同步进 @Published。
@@ -259,6 +285,17 @@ final class CrewSessionRun: ObservableObject, Identifiable {
             let code = await exitTask.value
             self?.finish(exitCode: code)
         }
+        // T4.5 — bring up the realtime proxy socket (logged mode only). Connect
+        // publishes session.state live; the inbound loop consumes remote
+        // commands / permission decisions on the MainActor.
+        if let proxyClient {
+            proxyConnectTask = Task { await proxyClient.connect() }
+            proxyInboundTask = Task { [weak self] in
+                for await frame in proxyClient.inbound {
+                    self?.handleRemoteInbound(frame)
+                }
+            }
+        }
     }
 
     func cancel() async {
@@ -273,6 +310,13 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         observeStdoutTask?.cancel()
         observeStderrTask?.cancel()
         observeExitTask?.cancel()
+        proxyConnectTask?.cancel()
+        proxyInboundTask?.cancel()
+        // Close the socket if the run is torn down before finish() ran (e.g.
+        // window dismissed mid-run). close() is idempotent + best-effort.
+        if let proxyClient {
+            Task { await proxyClient.close() }
+        }
     }
 
     // MARK: - private mutators
@@ -287,6 +331,44 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         if !parsed.isEmpty {
             events.append(contentsOf: parsed)
             publishToServer(parsed)
+            publishStateToProxy()
+        }
+    }
+
+    /// Push the run's current state over the realtime proxy (logged mode only).
+    /// Best-effort + fire-and-forget — the client only sends when subscribed
+    /// and a failure never affects the local run. Each parsed line publishes
+    /// the latest state; the client also re-publishes it on reconnect.
+    private func publishStateToProxy() {
+        guard let proxyClient else { return }
+        let state = SessionState.from(status: Self.wireStatus(status), events: events)
+        Task { await proxyClient.publish(state) }
+    }
+
+    /// Map the local lifecycle to the wire status SessionState carries. Mirrors
+    /// CrewSessionServerLink.finish's mapping (running stays running).
+    static func wireStatus(_ status: Status) -> String {
+        switch status {
+        case .running: return "running"
+        case .completed: return "completed"
+        case .cancelled: return "cancelled"
+        case .failed: return "failed"
+        }
+    }
+
+    /// Handle a runner-actionable frame from a cross-device viewer. **Minimal
+    /// for now**: commands are recorded + logged but not yet applied to the
+    /// local agent process (send_prompt → inject, cancel → cancel()). Wiring
+    /// the real effect is a T4.5 follow-up (logged in docs/tech-debt.md).
+    private func handleRemoteInbound(_ frame: SessionProxyInbound) {
+        switch frame {
+        case let .command(commandId, kind, _, queued):
+            lastRemoteCommand = queued ? "\(kind)（离线补发）" : kind
+            print("[crew-session] remote command \(commandId) kind=\(kind) queued=\(queued) — not applied yet")
+        case let .permissionDecision(requestId, decision):
+            print("[crew-session] remote permission decision \(requestId): \(decision) — not applied yet")
+        case .subscribed, .error, .unknown:
+            break // handled inside SessionProxyClient
         }
     }
 
@@ -328,6 +410,15 @@ final class CrewSessionRun: ObservableObject, Identifiable {
             publishChain = Task {
                 await prev?.value
                 await link.finish(localStatus: finalStatus, summary: summary)
+            }
+        }
+        // T4.5 — push the terminal state to viewers, then close the socket.
+        // Independent of the HTTP publishChain; the proxy is best-effort.
+        if let proxyClient {
+            let finalState = SessionState.from(status: Self.wireStatus(status), events: events)
+            Task {
+                await proxyClient.publish(finalState)
+                await proxyClient.close()
             }
         }
     }
