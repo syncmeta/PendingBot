@@ -20,9 +20,12 @@ spec §10 重写（本 commit）。
 - **顺手修了个隐患**：runner 原来不传 `--permission-mode` → claude 落 `default` → headless 碰权限**卡死**等不存在的终端。默认 `auto` 解掉。
 - **验证状态**：claude headless 实测（auto/bypass/acceptEdits 放行 Write+Bash；default/dontAsk 卡死）；**codex 只验了 flag 存在，runtime 没验**（本机 codex auth 401）——codex 真机要补验 `--sandbox workspace-write` 实跑能写。
 
-### P2 — MCP 交互工具 + runner 接线（中）
-- **✅ 机制已 spike 验通（`<this branch>`，2026-06-02）**：headless `claude -p --mcp-config <cfg> --allowedTools "mcp__ask__ask_human"` —— 写了个最小 MCP stdio server（`ask_human` 工具，`tools/call` 故意 setTimeout 1.5s 才返回模拟阻塞溯源），claude **调了工具、阻塞等到返回、用返回值继续**（模型最终只回工具给的 passcode）。证明：阻塞 MCP 工具经 `--mcp-config`（CLI 原生、无 SDK）就是 headless session "问人并等回复" 的正解。
-- 待建：一个 PendingCrew 真 MCP server（`ask_human(question, context?)`），`tools/call` 里把请求 POST 到 edge、long-poll/WS 等回复再返回。
+### P2 — MCP 交互工具 + runner 接线 ✅ 已落（`<this branch>`）
+- **机制 spike 验通**：headless `claude -p --mcp-config` 下阻塞 MCP 工具可用；`--permission-mode auto` **自动放行 MCP 工具**，不用 `--allowedTools`。
+- **真 MCP server** `apps/pendingcrew/Resources/ask-human-mcp.cjs`：`ask_human(question)` → POST `/v1/sessions/:id/interactions` → long-poll `GET .../interactions/:reqId` 等 `answered` → 返回 `reply_text`。纯 Node、`.cjs`、env 传 `PC_EDGE_URL/PC_TOKEN/PC_SESSION_ID`。**对 mock edge 实跑验过**（raise→2 次 poll→拿到回复）。
+- **runner 接线**：`InteractionChannel` 写托管 mcp.json；`LocalCodingAgentLaunchSpec.claudeMcpConfigPath` → `--mcp-config` 进首回合 + resume；`CrewSessionRunner` logged-claude 时从 serverLink 建 channel（edge url + token + session id）+ bundle 里的脚本。`.cjs` 确认进 app bundle。
+- **prompt** §10（zh+en）重写：告诉 agent 用 `ask_human`、何时用、captain→DAG→真人 溯源 + 阻塞返回。
+- 已验：61 swift 测试 + macOS build + MCP server mock-edge 实跑 + prompt 测试。**未验**：真实 edge auth 的端到端（要登录 + 迁移 apply）。
 - runner 启动时 `--mcp-config` 注入（仅 logged；BYOK 看情况）。工具实现把请求 POST 到 edge、long-poll/WS 等回复。
 - session-world-model 提示词（T4.2）加一段"要人介入时调 `ask_human`"。
 - session 状态加 `waiting_interaction`。
