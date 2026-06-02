@@ -531,28 +531,74 @@ PendingBot 和 PendingCrew 是**账号同步**的关系。同一账号登录后�
 
 ---
 
-## 10. Permission Request
+## 10. 人在回路交互（Human-in-the-loop Interaction）
 
-### 10.1 模式
+> **2026-06-02 重写**。原 §10 把"自动模式"等同于 `--dangerously-skip-permissions`、并自建"批准/拒绝"逐动作门禁——与实际设计不符，已废弃。本节是纠正后的权威版本：这不是"审批"，是**交互**。
 
-| 模式 | 行为 | 类比 |
+### 10.0 核心原则
+
+- session 跑的 coding agent **直接用 claude code / codex 程序本身**（**不用 Agent SDK**），在 **auto / bypass permission 模式**下运行——**不做"一个个动作都要批"的细粒度权限门禁**。
+- 我们要的是**交互**（不是审批）：偶发的、agent 自己解决不了、**真需要人介入**的事——例如 computer-use 的运行授权、要问个问题、要个判断方向。
+- "坐在终端前回答的人"换成 crew 的 **captain**；captain 答不了再沿 DAG 溯源到真人。这跟 Claude Code 子 agent 向上请求的套路一致。
+
+### 10.1 运行模式（CLI 原生，仅作为选项暴露）
+
+PendingCrew **不重定义高危清单、不自建审批策略**，只把所选 runner 的**原生模式**作为 session 选项暴露并拼进 argv：
+
+| Runner | 模式来源 | 默认 |
 |---|---|---|
-| **自动**（默认） | agent 自由执行所有动作，不弹卡片请权限 | Claude Code 的 `--dangerously-skip-permissions` |
-| **手动** | agent 做"高危操作"前**暂停**，在群聊弹卡片等批准，批准/拒绝后继续 | Claude Code 默认模式 |
+| Claude Code | `--permission-mode`（`auto` / `bypassPermissions`；可选暴露 `plan` / `acceptEdits` / `dontAsk`） | `auto` |
+| Codex | `codex exec --sandbox`（`read-only` / `workspace-write` / `danger-full-access`）+ 审批 `never` | `workspace-write` |
 
-### 10.2 用户切换
+crew-level 设默认，session 可覆盖（沿用原"用户切换"语义）。
 
-每个 session 设置里可切。crew-level 默认 = 自动。用户可在 crew 设置改全局默认 + 在 session 设置覆盖。
+### 10.2 交互通道（agent → 人，CLI 原生）
 
-### 10.3 "高危操作"定义
+agent 在 auto 跑、绝大多数时候不打扰人。**只有要人介入时**，调一个 PendingCrew 经 **`--mcp-config`** 注入的工具（CLI 原生，**无 SDK**）：
 
-由 claude code / codex 自己定义（它们各自的权限模型）。PendingCrew **不重新定义高危清单**，只在 agent 主动 `request_permission(...)` 时把请求转成群聊卡片。
+- 工具 `ask_human(question, context?)` / `request_interaction(...)`——agent 调用即**阻塞**等回复，拿到答复后返回、继续跑。
+- session-world-model 提示词（T4.2）告诉 agent：要人介入（问问题 / 要授权 / 要判断）时调这个工具，别瞎猜也别空转。
+- 等待期间 session 状态 = `waiting_interaction`（沿用 `waiting_permission` 的位）。
 
-### 10.4 卡片形态
+### 10.3 谁来答：captain 自决 → 沿 DAG 溯源到真人
 
-- 在群聊里以特殊消息卡形式出现（不是普通消息）
-- 显示：session 名 / 操作描述 / "批准" "拒绝" "查看详情"按钮
-- 批准/拒绝按钮按当前 crew 权限矩阵显示（不是所有 member 都能批）
+session 跑的是 claude/codex（**≠ captain**）。交互请求先到本 crew 的 **captain**（captain 本就负责启动 session、代表本 crew、作为 `member_kind='captain'` 存在于父 crew）：
+
+- **简单 / 明显** → captain 自决，直接答回。
+- **拿不准** → 沿 crew DAG 往上**溯源**（captain 的父 crew 成员关系天然是上溯通道），直到够到真人责任主体并 **@** 之。
+
+### 10.4 两种溯源模式（用户可选）
+
+| 模式 | 行为 | 适用 |
+|---|---|---|
+| **直达真人** | 跳过中间 bot/captain，请求一路冒泡到最近的真人责任主体，@ 之 | "我要亲自把关每一步" |
+| **层层** | 每一级 captain/bot 能答就答，答不了才继续往上 | 深 DAG / 放权给上级 bot |
+
+### 10.5 溯源落点（@ 到谁）
+
+- 手动建的 crew、session 直接在该 crew → @ 该 crew 的人类成员。
+- **子 crew** → 交给发起它的父 crew 继续上溯（父 captain / 父 crew 的人类）。
+- 1:1 / 群里某 **bot 建的 crew** → 那个 bot 去原聊天 @ 人类（责任主体 = 对面用户 / 群）。
+- 群场景同理，一路向上直到能 @ 到真人。
+
+### 10.6 人类侧呈现
+
+- 交互请求在群聊以**交互卡**出现（复用 T4.3 的卡片实现）：session 名 / 问题或请求 / 输入框或选项 / "查看详情"。
+- 可回应的人按 crew 权限矩阵显示（不是所有 member 都能答）。
+- **@-mention**：溯源到的真人被 @；每个人可"仅看 @我"过滤噪声。
+- 回复通道复用跨端遥控的 composer（§9.6）。
+
+### 10.7 阻塞语义
+
+- 交互是**同步**的：agent 阻塞等回复（跟本地用 claude code 等自己答一样）。期间 session = `waiting_interaction`，可能挂很久。
+- 回流：人 / captain 的回复沿链路回到 captain → 答回 MCP 工具调用 → 解阻塞。
+- 超时 / 无人响应策略：**待定**（默认无限挂起；可配超时后 captain 兜底自决或 fail-loud）。
+
+### 10.8 明确不做
+
+- ❌ 逐动作权限门禁（"approve this edit/command"）——交给 CLI 的 auto/bypass 模式。
+- ❌ Claude Agent SDK / `canUseTool` 回调 / `--permission-prompt-tool`（CLI 不存在此 flag）。
+- ❌ PendingCrew 自建高危清单 / 审批策略。
 
 ---
 
