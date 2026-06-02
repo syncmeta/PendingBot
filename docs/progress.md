@@ -60,7 +60,7 @@
 | **T5.3 端到端 QA** | ❌ | — | — | **BYOK/cloud 全链路从没真机跑通** | 仍延期 |
 
 ### roadmap 维度真实缺口（就这几个真"没做"）
-- ✅ ~~T3.2 Codex runner~~ —— 已补完(#202,2026-06-02)。后续 JSONL 事件**解析**(把 codex/claude 两种 JSONL 转成统一 session 事件)是更上层的活,不属 T3.2 adapter 范畴
+- ✅ ~~T3.2 Codex runner~~ —— 已补完(#202,2026-06-02)。其上层 **JSONL 事件解析层**也已落地(#203,2026-06-02):`RunnerEventParser` 把 codex/claude 两种 JSONL flatten 成统一 `RunnerEvent` 模型,接进 `CrewSessionRun.events` 并在 session 窗口加「转写」tab 渲染;schema 取自实跑两个 CLI 的 fixtures,9 测试绿。本机 runner 闭环(Phase 3)真实缺口已清零(剩 T5.3 真机 QA 见下)。
 - ❌ **T5.3 端到端 QA** —— 整链路没真机验证
 - 🟡 **T4.5 客户端侧** —— 服务端打底好了，手机/Mac 订阅 + runner 发布没接（半截桥）
 - 🟡 **Mac/iPad IM 业务内容**（T0.1/T1.4）—— 壳在，tab 是 placeholder

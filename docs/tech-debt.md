@@ -431,7 +431,7 @@
 
 #### 🟡 后续 session 即可
 
-- ~~**T3.2 Codex runner**~~ **（2026-06-02 已解决，#202）** — codex 契约已调研（codex-cli 0.133.0 `codex exec --help`）：argv 补 `--json`（JSONL 事件流，对标 Claude `--output-format=stream-json`）+ `-m/--model` 透传；launch / env 白名单 / discovery 早就是 kind-无关的复用层，不需要单独抽象。argv 测试覆盖 codex `--json` + 双 runner model 透传，11/11 绿。**剩余（非 adapter 范畴）**：JSONL 事件**解析层**——把 codex 与 claude 两种不同 schema 的 JSONL 统一成 session 事件模型（喂 UI 窗口），目前 Process/Service 只逐行透传裸文本。属更上层活，单列。
+- ~~**T3.2 Codex runner**~~ **（2026-06-02 已解决，#202）** — codex 契约已调研（codex-cli 0.133.0 `codex exec --help`）：argv 补 `--json`（JSONL 事件流，对标 Claude `--output-format=stream-json`）+ `-m/--model` 透传；launch / env 白名单 / discovery 早就是 kind-无关的复用层，不需要单独抽象。argv 测试覆盖 codex `--json` + 双 runner model 透传，11/11 绿。**上层 JSONL 事件解析层也已落地（#203，2026-06-02）**：`RunnerEventParser`（`apps/pendingcrew/Sources/Mac/LocalRunner/RunnerEventParser.swift`）把两种 schema flatten 成统一 `RunnerEvent`，接进 `CrewSessionRun.events` + session 窗口「转写」tab；fixtures 取自实跑 claude-cli / codex-cli 0.133.0，9 测试绿。Phase 3 本机 runner 闭环真实缺口已清零（剩 T5.3 真机 E2E QA，另列）。
 - **T4.5 完整实现** — ~~`ceba5619` 只落了设计文档，实际代码一行没动~~ **（2026-06-01 对账更正：此说法已过时）**。服务端 P0 已落地：`c7b2cd2d` ship 了 `SessionProxyDO`（`apps/edge/src/durable-objects/session-proxy.ts` 534 行）+ `session.command`/`session.state` ws 协议 + 路由 + 单测 + wrangler 绑定。**仍缺客户端侧**：iOS/Mac 无任何 SessionProxy 订阅代码、PendingCrew runner 不发布到 DO（手机→Mac 推命令、Mac session 镜像未接）。当前是"服务端打底好、客户端未接"的半截桥，不是"一行没动"。
 - **T5.3 PendingCrew E2E QA** — BYOK 路径和 cloud 路径的端到端测试（创建 crew → 派单 → 收到结果 → 计费记账）从未真机跑通；只有编译过 + 单测覆盖。需要人工 QA pass。
 
