@@ -157,6 +157,126 @@ struct PendingCrewAPI {
         )
     }
 
+    // MARK: - Crew sessions (T4.5 runner lifecycle)
+    //
+    // The HTTP client surface for cross-device remote control. These mirror
+    // the shipped server routes (apps/edge/src/routes/{crew,runner-hosts}.ts);
+    // the runner-loop slice consumes them next. All but `createSession`
+    // require a **device-grant** bearer with `runner:write` scope. `payload`
+    // isn't plumbed yet — `summary`/`progressSummary` cover the human-readable
+    // bits and the server fills `payload` with its `{}` default; structured
+    // payloads wait for a cross-platform JSON value (JSONValue is Mac-only,
+    // this file compiles for iOS too).
+
+    /// `POST /v1/crews/:crewId/sessions` — open a crew session (status
+    /// 'queued'). Returns the server session id. `runnerKind` ∈
+    /// local_claude_code / local_codex / local_opencode / local_kilo /
+    /// cloud_sandbox. Needs `crew:write`.
+    func createSession(crewId: String, runnerKind: String, taskBrief: String) async throws -> String {
+        struct Body: Encodable { let runnerKind: String; let taskBrief: String }
+        struct Response: Decodable { let sessionId: String }
+        let resp: Response = try await post(
+            path: "v1/crews/\(crewId)/sessions",
+            body: Body(runnerKind: runnerKind, taskBrief: taskBrief)
+        )
+        return resp.sessionId
+    }
+
+    /// `POST /v1/runner-hosts` — register this machine as a runner host.
+    /// Returns the runner host id used for claim/events/finish. The
+    /// `responsibleSubjectId` must equal the device grant's subject.
+    func registerRunnerHost(
+        responsibleSubjectId: String,
+        displayName: String?,
+        allowedRunnerKinds: [String]
+    ) async throws -> String {
+        struct Body: Encodable {
+            let responsibleSubjectId: String
+            let displayName: String?
+            let allowedRunnerKinds: [String]
+        }
+        struct Response: Decodable { let runnerHostId: String }
+        let resp: Response = try await post(
+            path: "v1/runner-hosts",
+            body: Body(
+                responsibleSubjectId: responsibleSubjectId,
+                displayName: displayName,
+                allowedRunnerKinds: allowedRunnerKinds
+            )
+        )
+        return resp.runnerHostId
+    }
+
+    /// `POST /v1/runner-hosts/:hostId/sessions/:sessionId/claim` — claim a
+    /// specific session for this host (assigns a runner lease, status →
+    /// running). `leaseId` is nil when there was nothing claimable.
+    func claimSession(
+        runnerHostId: String,
+        sessionId: String,
+        runnerKinds: [String]? = nil
+    ) async throws -> SessionClaim {
+        struct Body: Encodable { let runnerKinds: [String]? }
+        return try await post(
+            path: "v1/runner-hosts/\(runnerHostId)/sessions/\(sessionId)/claim",
+            body: Body(runnerKinds: runnerKinds)
+        )
+    }
+
+    /// `POST /v1/runner-hosts/:hostId/sessions/:sessionId/events` — append a
+    /// runner event. `eventType` ∈ started / context_injected / status /
+    /// tool_call / tool_result / permission_requested / permission_resolved /
+    /// artifact_created / posted_to_crew / blocked. `visibility` ∈ controllers
+    /// / crew_members / private_system. Returns the new event id.
+    func appendSessionEvent(
+        runnerHostId: String,
+        sessionId: String,
+        eventType: String,
+        visibility: String = "crew_members",
+        summary: String?,
+        progressSummary: String? = nil
+    ) async throws -> String {
+        struct Body: Encodable {
+            let eventType: String
+            let visibility: String
+            let summary: String?
+            let progressSummary: String?
+        }
+        struct Response: Decodable { let eventId: String }
+        let resp: Response = try await post(
+            path: "v1/runner-hosts/\(runnerHostId)/sessions/\(sessionId)/events",
+            body: Body(
+                eventType: eventType,
+                visibility: visibility,
+                summary: summary,
+                progressSummary: progressSummary
+            )
+        )
+        return resp.eventId
+    }
+
+    /// `POST /v1/runner-hosts/:hostId/sessions/:sessionId/finish` — close out
+    /// the session. `status` ∈ completed / failed / cancelled.
+    @discardableResult
+    func finishSession(
+        runnerHostId: String,
+        sessionId: String,
+        status: String,
+        summary: String? = nil,
+        progressSummary: String? = nil
+    ) async throws -> Bool {
+        struct Body: Encodable {
+            let status: String
+            let summary: String?
+            let progressSummary: String?
+        }
+        struct Response: Decodable { let ok: Bool }
+        let resp: Response = try await post(
+            path: "v1/runner-hosts/\(runnerHostId)/sessions/\(sessionId)/finish",
+            body: Body(status: status, summary: summary, progressSummary: progressSummary)
+        )
+        return resp.ok
+    }
+
     // MARK: - Internals
 
     private func get<Response: Decodable>(path: String) async throws -> Response {
@@ -201,6 +321,15 @@ struct PendingCrewAPI {
         }
         return try JSONDecoder().decode(Response.self, from: data)
     }
+}
+
+// MARK: - Crew session models (T4.5)
+
+/// Result of `claimSession`. The claimed crew_session row is free-form on the
+/// wire and not modeled yet (the runner already holds the sessionId it
+/// claimed); only the lease id is decoded. `leaseId` nil = nothing claimable.
+struct SessionClaim: Decodable {
+    let leaseId: String?
 }
 
 // MARK: - Create crew request/response
