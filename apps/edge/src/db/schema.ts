@@ -1967,6 +1967,48 @@ export type Database = {
           },
         ]
       }
+      group_pledges: {
+        Row: {
+          created_at: string
+          pledge_pnc_micros: number
+          status: string
+          subject_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          pledge_pnc_micros: number
+          status?: string
+          subject_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          pledge_pnc_micros?: number
+          status?: string
+          subject_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "group_pledges_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "group_pledges_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       group_pools: {
         Row: {
           share_index: number
@@ -4455,6 +4497,14 @@ export type Database = {
       apply_group_refund: {
         Args: { p_refund_micros: number; p_subject_id: string }
         Returns: undefined
+      }
+      apply_partial_withdraw: {
+        Args: {
+          p_amount_micros: number
+          p_subject_id: string
+          p_user_id: string
+        }
+        Returns: number
       }
       are_mutual_friends: { Args: { a: string; b: string }; Returns: boolean }
       billing_admin_grant: {
