@@ -54,6 +54,10 @@ export interface Env {
   /// permission requests between them, and queues commands while the runner
   /// is offline. See src/durable-objects/session-proxy.ts.
   SESSION_PROXY_DO: DurableObjectNamespace;
+  /// Per-subject 钱包缓存 DO(计费 P2)。一个实例每 subject(idFromName(subjectId))。
+  /// Polar 是余额事实源;WalletDO 是边缘强一致缓存 + 门禁闸 + 用量 outbox。
+  /// 见 docs/superpowers/specs/2026-06-02-billing-p2-architecture-fork.md。
+  WALLET: DurableObjectNamespace;
   /// Cloudflare ratelimit binding for handle-enumeration endpoints
   /// (friend-request /lookup, group /join, friend-request POST /).
   /// Limit + period live in wrangler.jsonc — call from a route via

@@ -132,7 +132,8 @@
           { "name": "ROOM_VOICE", "class_name": "RoomVoiceDO" },
           { "name": "ROOM_MEDIA", "class_name": "RoomMediaContainerDO" },
           { "name": "SESSION_PROXY_DO", "class_name": "SessionProxyDO" },
-          { "name": "Sandbox", "class_name": "Sandbox" }
+          { "name": "Sandbox", "class_name": "Sandbox" },
+          { "name": "WALLET", "class_name": "WalletDO" }
         ]
       },
       // Cloudflare Sandbox SDK container. The DO above wraps a real
@@ -205,6 +206,10 @@
         {
           "tag": "v7",
           "new_sqlite_classes": ["SessionProxyDO"]
+        },
+        {
+          "tag": "v8",
+          "new_sqlite_classes": ["WalletDO"]
         }
       ],
       // Audit + billing offload. recordAudit used to insert audit_log

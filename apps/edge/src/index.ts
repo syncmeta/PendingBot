@@ -57,6 +57,8 @@ export { RoomMediaContainerDO } from './durable-objects/room-media';
 // Cross-device session remote-control DO (T4.5). Required export for the
 // SESSION_PROXY_DO binding declared in wrangler.jsonc.
 export { SessionProxyDO } from './durable-objects/session-proxy';
+// Per-subject 钱包缓存 DO(计费 P2)。WALLET binding 的必需导出。
+export { WalletDO } from './durable-objects/wallet';
 // Container-backed DO from @cloudflare/sandbox. Required export for
 // the `Sandbox` binding declared in wrangler.jsonc.
 export { Sandbox } from '@cloudflare/sandbox';
