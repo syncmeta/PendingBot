@@ -55,7 +55,7 @@
 |---|---|
 | 用户 / 群账户 | **Customer**,`externalId` = 我们的 subject_id |
 | 钱包余额 | Customer 的 **meter balance**(`getStateExternal` 一次返回所有 active meter + 余额) |
-| PNC 充值包(web/Mac) | 购买带 **Credits Benefit** 的 Polar 产品 → 自动发 credit |
+| PNC 充值包(web/Mac) | Polar checkout 卖包 → `order.paid` webhook → edge `grantCredits`(负值事件)。**不挂 Credits Benefit**(见下「统一符号模型」) |
 | PNC 充值包(iOS) | ✅ **已核实**:`events.ingest` 一条**负值**事件即给该 Customer 发 credit(Polar 官方《Grant Meter Credits Before Purchase》),无需 checkout。iOS IAP→RevenueCat→edge→负值事件 |
 | 一次用量扣费 | `events.ingest` 上报 usage event,meter 燃尽余额 |
 | 调用前「够不够」 | `customers.getStateExternal` 读 meter 余额(门禁) |
@@ -65,11 +65,19 @@
 
 ### 充值入账(credit-in)
 ```
-web/Mac:  用户在 Polar checkout 买 PNC 包 → Polar 收款+代税 + 自动发 credit benefit
-iOS:      Apple IAP → RevenueCat webhook → edge → (把 credit 加进 Polar 钱包) + 影子账记一笔
+web/Mac:  用户在 Polar checkout 买 PNC 包 → Polar 收款+代税 → `order.paid` webhook → edge grantCredits(负值)+ 影子账
+iOS:      Apple IAP → RevenueCat webhook(NON_RENEWING_PURCHASE)→ edge grantCredits(负值)+ 影子账
 ```
-- web/Mac 是 Polar 原生路径,最省事。
-- **iOS 是关键集成点**:RevenueCat 验证购买 → edge 收 webhook → 给该 Customer 的钱包加 credit(机制见开放问题-1)。两条路最终都落到"同一个 Polar Customer 的 credit 余额 + edge 影子账"。
+- **两条路同构**:都经 webhook → edge `grantCredits` 给同一个 Polar Customer(`externalId`=subject_id)发 credit。不用 Credits Benefit。
+- **幂等**:Polar `events.ingest` 的 `external_id` 做去重(重复跳过);webhook 侧再用 RevenueCat `event.id`/`transaction_id`、Polar `order id` 兜一层。
+
+> **统一符号模型(避 Polar 双约定坑,2026-06-01 调研)**:Polar 有两套相反约定——Credits Benefit 走 `credited−consumed`(正=可用),而原始 SUM meter 走负值发 credit;**混用不自洽**。本设计统一走**全事件模型**:不挂 Credits Benefit,**充值=负值事件、扣费/退款=正值事件**,`getStateExternal.balance` 落成正数=可用。确切符号 spike 实跑锁定。
+
+### iOS 入账细节(RevenueCat,P1)
+- `app_user_id` = 我们的 subject_id(iOS 端购买前先 `logIn(subject_id)`;webhook 兜 `original_app_user_id`/`aliases`)。
+- 事件:充值 `NON_RENEWING_PURCHASE`;退款 `CANCELLATION`(cancel_reason=CUSTOMER_SUPPORT);退款撤销 `REFUND_REVERSED` 重发。
+- 鉴权:RevenueCat 只有**共享密钥 Authorization 头**(无签名)→ edge 常量时间比对,密钥进 wrangler secret。
+- RevenueCat **不记 consumable 余额**(Polar/影子账才是事实源);webhook 非 exactly-once、consumable 退款投递可能延迟 → **配 reconciliation 兜底**。
 
 ### 用量计量 + settle(settle-only,无 reserve)
 服务成本全量纳入(billing-v2 §5,8 类:llm_tokens / server_side_tools / web_tools / voice_tokens / realtimekit_media / sandbox_runtime / storage_transfer / push_delivery)。计价来源 = AI Gateway / provider / 本地 pricebooks(先 hardcoded)。
@@ -139,19 +147,19 @@ settle:      edge 算 PNC → 写 outbox → 异步 events.ingest 到 Polar → 
 
 ## 开放问题(P0 spike 必须核实)
 1. ✅ **已解决(2026-06-01,文档核实)**:**iOS 外部入账 → Polar 加 credit 可行**。机制 = `events.ingest` 一条**负值**事件(Polar 官方《Grant Meter Credits Before Purchase》),用 `externalCustomerId` 指定,无需 checkout → **Polar 单一钱包跨 iOS/web 成立**,不需要 edge-影子账分支。残留(spike 锁):确切符号约定 + `getStateExternal.balance` 在"benefit 发放"与"负值事件发放"混用时的语义。
-2. **credit 冲销/退款**:退款用一条**正值**事件冲减即可(与扣费同向);但要确认"扣成负可用额度"的边界(退款 3-case:已耗部分不追讨)。spike 验。
-3. **过期 breakage 事件**:能否拿到 credit 过期事件记账?
-4. **getStateExternal 余额新鲜度**:meter 余额刷新延迟多少?(门禁靠 edge 缓存,但要知道同步窗口)
-5. **Polar 费率/支付国家**:确认 5%+$0.50 当前值 + Stripe Express 支持你的收款国家。
-6. RevenueCat 产品配置(consumable 充值包)+ 恢复购买。
-7. outbox 落地(Supabase vs D1;Queue vs cron;幂等/死信)。
+2. ✅ **退款机制已明**(文档核实):无"void credit"API;退款=`reduceCredits`(正值事件)。**Polar 不在 0 处夹**,所以退款 3-case 的"只冲未消耗、不扣成负"必须 **edge 自己 `min(退款额, 可用余额)` 夹**。已落 `polar-client.reduceCredits`。
+3. **过期 breakage 事件**:能否拿到 credit 过期事件记账?(全事件模型下"过期"需自己实现,spike/P6 定)
+4. ⚠️ **余额新鲜度无 SLA**(文档核实):meter 聚合**最终一致、非读写即时**。→ 门禁必须靠 **edge 缓存**,Polar 余额当 reconciliation 基准,不读写即用。spike 实测延迟窗口。
+5. ✅ **费率/去重已核实**:Starter **5%+$0.50**(2026-05-27 后新组织;+1.5% 国际卡;$15/争议);payout 经 Stripe Express(约 120 国,银行须同国;[supported-countries](https://polar.sh/docs/merchant-of-record/supported-countries));`events.ingest` 用 **`external_id` 去重**(重复跳过,返回 `duplicates` 计数)。**签约/上架前确认你的收款国家在列**。
+6. RevenueCat 产品配置(consumable 充值包)+ logIn 时机(购买前)。
+7. outbox 落地(Supabase vs D1;Queue vs cron;幂等键用 external_id/死信)。
 
 ## 成本
-- Polar ~5%+$0.50(含 MoR+税+钱包+计量,单一费率);RevenueCat <$2,500 MTR/月免费;**无单独引擎费、无 VPS**(计费侧)。
+- Polar **Starter 5%+$0.50**(含 MoR+税+钱包+计量,单一费率;量上来后付费档可降到 3.4–3.8%);RevenueCat <$2,500 MTR/月免费;**无单独引擎费、无 VPS**(计费侧)。
 
 ## 分阶段 checklist
 > 设计阶段,待办。
-- [ ] **P0** 🔴 验开放问题-1(iOS→Polar 加 credit 是否可行)+ Polar 账号/产品/meter/credit-benefit;打通"建 Customer → 上报 usage → getStateExternal 读余额"最小闭环。
+- [ ] **P0** Polar sandbox 账号/token + 建 pnc meter(SUM metadata.pnc);跑 polar-spike 确认"充值(负值)→扣费(正值)→getStateExternal 读余额"闭环 + 符号 + 刷新延迟。(开放问题-1 iOS 加 credit 已文档核实可行)
 - [ ] **P1** 入账:web/Mac Polar checkout + iOS(RevenueCat→edge→Polar 加 credit)→ 双落影子账(幂等)。
 - [ ] **P2** 用量:pricebooks(hardcoded)+ 8 类 event 计价 → outbox → events.ingest。
 - [ ] **P3** settle(LLM 即时 + 语音/群媒体/sandbox periodic + 余额≤0 杀会话)+ 4 档阈值 + −0.5 overdraft + 缓存同步。
