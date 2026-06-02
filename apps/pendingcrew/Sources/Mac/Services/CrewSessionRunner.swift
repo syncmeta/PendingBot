@@ -214,9 +214,14 @@ final class CrewSessionRun: ObservableObject, Identifiable {
     @Published private(set) var events: [RunnerEvent] = []
     @Published private(set) var exitCode: Int32?
     /// Last remote command received over the proxy socket, for UI surfacing.
-    /// `nil` until a cross-device viewer sends one. The command isn't applied
-    /// to the local run yet — see `handleRemoteInbound` (T4.5 follow-up).
+    /// `nil` until a cross-device viewer sends one.
     @Published private(set) var lastRemoteCommand: String?
+    /// The agent CLI's own session id, captured from the first `.started`
+    /// transcript event (claude emits it in its init line). This is what a
+    /// `--resume` follow-up turn keys on for T4.5 send_prompt steering — the
+    /// agent keeps full context + the cached prefix. nil until the first
+    /// started event arrives, or for runners that don't report one (Codex).
+    @Published private(set) var agentSessionId: String?
 
     private let handle: LocalCodingAgentRunHandle
     /// T4.5 server mirror (logged mode only; nil for BYOK/local-only runs).
@@ -330,8 +335,20 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         let parsed = RunnerEventParser.parse(line: line, kind: kind)
         if !parsed.isEmpty {
             events.append(contentsOf: parsed)
+            captureAgentSessionId(from: parsed)
             publishToServer(parsed)
             publishStateToProxy()
+        }
+    }
+
+    /// Latch the agent's session id from the first `.started` event that
+    /// carries one. Stable across resume turns (claude reuses the id), so we
+    /// only take the first.
+    private func captureAgentSessionId(from parsed: [RunnerEvent]) {
+        guard agentSessionId == nil else { return }
+        for case let .started(_, sid?) in parsed where !sid.isEmpty {
+            agentSessionId = sid
+            return
         }
     }
 

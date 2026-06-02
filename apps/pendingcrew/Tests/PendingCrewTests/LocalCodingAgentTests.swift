@@ -121,6 +121,63 @@ final class LocalCodingAgentTests: XCTestCase {
                        "Codex argv must omit --model for an empty slug")
     }
 
+    // MARK: - resume turns (T4.5 send_prompt)
+
+    private func claudeSpec(model: String? = nil) -> LocalCodingAgentLaunchSpec {
+        LocalCodingAgentLaunchSpec(
+            kind: .claudeCode,
+            executableURL: URL(fileURLWithPath: "/usr/bin/true"),
+            workingDirectory: URL(fileURLWithPath: NSTemporaryDirectory()),
+            taskBrief: "x",
+            initialPrompt: "first turn",
+            model: model
+        )
+    }
+
+    func testResumeTurnArgvResumesSessionAndCarriesPromptOnStdin() {
+        let resume = claudeSpec(model: "claude-sonnet-4")
+            .makingResumeTurn(agentSessionId: "sess-abc", prompt: "now do the follow-up")
+        guard let resume else { return XCTFail("claude should build a resume turn") }
+        let argv = resume.argv()
+        // resumes the SAME agent session, in the same stream-json shape
+        guard let i = argv.firstIndex(of: "--resume") else { return XCTFail("missing --resume") }
+        XCTAssertTrue(i + 1 < argv.count && argv[i + 1] == "sess-abc",
+                      "--resume must be immediately followed by the session id")
+        XCTAssertTrue(argv.contains("--print"))
+        XCTAssertTrue(argv.contains("--output-format=stream-json"))
+        XCTAssertTrue(argv.contains("--verbose"))
+        XCTAssertTrue(argv.contains("claude-sonnet-4"), "model slug threads through the resume turn")
+        // the follow-up prompt rides on stdin (same as the first turn), NOT argv
+        XCTAssertEqual(resume.initialPrompt, "now do the follow-up")
+        XCTAssertFalse(argv.contains("now do the follow-up"), "prompt must not be an argv arg")
+    }
+
+    func testResumeTurnDoesNotTouchTheVerifiedFirstTurnArgv() {
+        // makingResumeTurn returns a NEW spec; the original first-turn argv is
+        // byte-identical to the standard path (argvOverride nil).
+        let first = claudeSpec()
+        let firstArgv = first.argv()
+        _ = first.makingResumeTurn(agentSessionId: "x", prompt: "y")
+        XCTAssertEqual(first.argv(), firstArgv, "building a resume turn must not mutate the original spec")
+        XCTAssertNil(first.argvOverride)
+    }
+
+    func testCodexHasNoResumeTurnYet() {
+        let codex = LocalCodingAgentLaunchSpec(
+            kind: .codex,
+            executableURL: URL(fileURLWithPath: "/usr/bin/true"),
+            workingDirectory: URL(fileURLWithPath: NSTemporaryDirectory()),
+            taskBrief: "x",
+            initialPrompt: "first"
+        )
+        XCTAssertNil(codex.makingResumeTurn(agentSessionId: "s", prompt: "p"),
+                     "Codex resume is a different subcommand — must fail loud (nil), not start a fresh run")
+    }
+
+    func testResumeTurnRejectsEmptySessionId() {
+        XCTAssertNil(claudeSpec().makingResumeTurn(agentSessionId: "", prompt: "p"))
+    }
+
     // MARK: - executable resolution
 
     func testResolveAgainstDiscoverAvailableIsConsistent() {

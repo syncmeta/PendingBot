@@ -39,6 +39,12 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
     /// **不要**把 PendingCrew 自己的 secret 塞进来 —— 见 `env()` 的白名单逻辑。
     public let additionalEnv: [String: String]
 
+    /// 完全替换 `argv()` 计算结果的命令行。`nil`（默认）= 走每个 kind 的标准
+    /// 非交互 argv（已真机验过的首回合路径，**不动**）。非 nil 用于 T4.5
+    /// send_prompt 的 `--resume` 续跑回合（见 `makingResumeTurn`），让一次
+    /// resume turn 复用同一套 Process / stdin / 流式解析管道，只换 argv。
+    public let argvOverride: [String]?
+
     public init(
         kind: LocalCodingAgentKind,
         executableURL: URL,
@@ -46,7 +52,8 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
         taskBrief: String,
         initialPrompt: String,
         model: String? = nil,
-        additionalEnv: [String: String] = [:]
+        additionalEnv: [String: String] = [:],
+        argvOverride: [String]? = nil
     ) {
         self.kind = kind
         self.executableURL = executableURL
@@ -55,6 +62,39 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
         self.initialPrompt = initialPrompt
         self.model = model
         self.additionalEnv = additionalEnv
+        self.argvOverride = argvOverride
+    }
+
+    /// 构造一个 **resume 续跑回合** 的 spec（T4.5 send_prompt 跨端遥控）。
+    ///
+    /// 复用 agent 已有的 session，所以模型保留完整上下文；新 prompt 跟首回合
+    /// 一样走 stdin，转写仍是 `--output-format=stream-json`，现有解析层无需改。
+    /// 缓存前缀复用，所以一次 resume turn 很便宜（2026-06-02 实测，见
+    /// `docs/crew-runner-steering.md`）。
+    ///
+    /// **目前仅 Claude** —— Codex 的续跑是另一个子命令（`codex exec resume`），
+    /// 这里对 Codex 返回 nil，让上层 fail loud，而不是悄悄起一个丢了上下文的
+    /// 全新 Codex run（那是埋雷）。
+    public func makingResumeTurn(agentSessionId: String, prompt: String) -> LocalCodingAgentLaunchSpec? {
+        guard kind == .claudeCode, !agentSessionId.isEmpty else { return nil }
+        var resumeArgv: [String] = [
+            "--resume", agentSessionId,
+            "--print", "--output-format=stream-json", "--verbose",
+        ]
+        if let model, !model.isEmpty {
+            resumeArgv.append("--model")
+            resumeArgv.append(model)
+        }
+        return LocalCodingAgentLaunchSpec(
+            kind: kind,
+            executableURL: executableURL,
+            workingDirectory: workingDirectory,
+            taskBrief: taskBrief,
+            initialPrompt: prompt,
+            model: model,
+            additionalEnv: additionalEnv,
+            argvOverride: resumeArgv
+        )
     }
 
     // MARK: - argv
@@ -71,6 +111,9 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
     /// 具体 flag 选择见各 case 注释 —— Claude Code / Codex 的 CLI 都在持续演进，
     /// 这里挑了**当前文档里最稳的非交互模式 flag**，新版若改了需要回头复核。
     public func argv() -> [String] {
+        // A resume turn (or any caller-built command) bypasses the standard
+        // per-kind argv. The default path below is unchanged + still verified.
+        if let argvOverride { return argvOverride }
         switch kind {
         case .claudeCode:
             // Claude Code CLI: 非交互模式 = `claude -p <prompt>` 或 `claude --print`
