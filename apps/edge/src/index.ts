@@ -1,3 +1,4 @@
+import * as Sentry from '@sentry/cloudflare';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
@@ -139,7 +140,7 @@ app.route('/.well-known', wellKnownRoutes);
 // Workers entry point: HTTP via Hono, scheduled (cron) via handleScheduled,
 // and the AUDIT_QUEUE consumer via `queue`. Hono's default export is
 // `{ fetch }`, so we wrap it to add the scheduled + queue hooks.
-export default {
+const handler = {
   fetch: app.fetch,
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     await handleScheduled(controller, env, ctx);
@@ -169,3 +170,27 @@ export default {
     }
   },
 };
+
+// Sentry error tracking — wraps the whole handler (fetch + scheduled +
+// queue) so unhandled exceptions across every entry point are captured.
+// Env-gated: when SENTRY_DSN is unset the options callback returns
+// undefined, which tells withSentry to skip SDK initialization entirely —
+// a true no-op, so dev/preview behave exactly as before. See
+// docs/superpowers/specs/2026-06-01-dashboard-stack-design.md.
+export default Sentry.withSentry<Env, AuditMessage>(
+  (env: Env) =>
+    env.SENTRY_DSN
+      ? {
+          dsn: env.SENTRY_DSN,
+          // Sample rate for performance tracing. Errors are always
+          // captured; tracing is sampled to keep volume/cost sane. Tune
+          // (or wire to an env var) once real traffic data exists.
+          tracesSampleRate: 0.1,
+          environment: env.ENVIRONMENT,
+          // Don't send PII (IP, headers) by default — this is a privacy-
+          // sensitive chat product. Opt specific context in deliberately.
+          sendDefaultPii: false,
+        }
+      : undefined,
+  handler,
+);
