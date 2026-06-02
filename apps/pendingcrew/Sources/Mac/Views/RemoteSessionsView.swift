@@ -33,6 +33,8 @@ struct RemoteSessionsView: View {
     @State private var liveClient: SessionProxyClient?
     @State private var liveTask: Task<Void, Never>?
     @State private var liveSnapshot: SessionStateSnapshot?
+    // Steering composer draft (send_prompt to the running session).
+    @State private var promptDraft = ""
 
     private let pollInterval: UInt64 = 3_000_000_000 // 3s
 
@@ -47,6 +49,10 @@ struct RemoteSessionsView: View {
                     Divider()
                 }
                 eventPane
+                if let s = selectedSession, isStoppable(s.status) {
+                    Divider()
+                    steeringComposer
+                }
             }
         }
         .frame(minWidth: 720, minHeight: 460)
@@ -73,6 +79,31 @@ struct RemoteSessionsView: View {
         .task { await pollLoop() }
         .onChange(of: selectedId) { _, newValue in subscribeLive(to: newValue) }
         .onDisappear { teardownLive() }
+    }
+
+    /// Steering composer — send a `send_prompt` to the running session. The
+    /// runner applies it as a `--resume` follow-up turn (T4.5). Only shown for a
+    /// live (non-terminal) session; disabled until the proxy socket is up.
+    private var steeringComposer: some View {
+        HStack(spacing: 8) {
+            TextField("给这个 session 发一条指令…", text: $promptDraft, axis: .vertical)
+                .textFieldStyle(.roundedBorder)
+                .lineLimit(1...4)
+                .onSubmit(sendSteering)
+            Button(action: sendSteering) {
+                Image(systemName: "paperplane.fill")
+            }
+            .keyboardShortcut(.return, modifiers: .command)
+            .disabled(liveClient == nil || promptDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+        .padding(8)
+    }
+
+    private func sendSteering() {
+        let text = promptDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, let client = liveClient else { return }
+        promptDraft = ""
+        Task { await client.sendCommand(kind: "send_prompt", payload: ["text": .string(text)]) }
     }
 
     /// The live-state banner — driven by the runner's real-time `session.state`
