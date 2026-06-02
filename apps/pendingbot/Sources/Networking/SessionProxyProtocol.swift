@@ -1,4 +1,3 @@
-#if os(iOS)
 import Foundation
 
 /// Swift mirror of the SessionProxyDO wire protocol
@@ -147,4 +146,3 @@ enum SessionProxyInbound: Equatable, Sendable {
         }
     }
 }
-#endif

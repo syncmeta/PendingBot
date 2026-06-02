@@ -62,7 +62,7 @@
 ### roadmap 维度真实缺口（就这几个真"没做"）
 - ✅ ~~T3.2 Codex runner~~ —— 已补完(#202,2026-06-02)。其上层 **JSONL 事件解析层**也已落地(#203,2026-06-02):`RunnerEventParser` 把 codex/claude 两种 JSONL flatten 成统一 `RunnerEvent` 模型,接进 `CrewSessionRun.events` 并在 session 窗口加「转写」tab 渲染;schema 取自实跑两个 CLI 的 fixtures,9 测试绿。本机 runner 闭环(Phase 3)真实缺口已清零(剩 T5.3 真机 QA 见下)。
 - ❌ **T5.3 端到端 QA** —— 整链路没真机验证
-- 🟡 **T4.5 客户端侧** —— 只读 viewer 两端齐且真机验（Mac `acf9db29` + iOS `RemoteSessionsView.swift`，用户用骆店账号在 iOS 看到 test2 渲染）。**实时层 + cancel 遥控**：Mac 侧在 `feat/t45-ws-transport`（runner 发布 + Mac viewer 实时/cancel）；iOS 侧已落地（`SessionProxyClient.swift`，viewer WS 连 proxy DO、收 session.state 实时 banner、发 cancel，编译绿）。仍缺：**两设备 E2E QA**（Mac 起活 session + iOS 实时看&cancel）+ permission over WS。WS 传输地基两端都铺好了，就差活 session 串一次。
+- 🟡 **T4.5 客户端侧** —— **PendingBot 三端 viewer 代码齐了**：iPhone（只读已真机验 + 实时 banner/cancel 编译绿）、iPad（随 iOS universal，同代码）、**Mac（PendingBot macOS 端新接 Crew tab：crew 列表→session viewer→实时+cancel，编译绿）**。跨平台层（CrewSessionAPI / SessionProxyClient / SessionStatusStyle）已抽共享。另有 PendingCrew Mac 独立 app 的 runner 发布 + 实时/cancel 在 `feat/t45-ws-transport`。仍缺：**两设备 E2E QA**（Mac 起活 session + 任一 viewer 实时看&cancel）+ Mac app 登录骆店真机看 test2 + permission over WS。WS 地基铺好，差活 session 串一次。
 - 🟡 **Mac/iPad IM 业务内容**（T0.1/T1.4）—— 壳在，tab 是 placeholder
 - 🟡 **T1.2 客户端消费** —— 后端权限矩阵有了，客户端没用
 
