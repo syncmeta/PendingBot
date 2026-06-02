@@ -8,6 +8,8 @@
 
 **Tech Stack:** Cloudflare Workers + Hono + TS,Supabase(serviceClient),`@polar-sh/sdk`(+ `validateEvent`),vitest。前置:**P0 已完成**(`pnc.ts`/`polar-client.ts` 已就绪、spike 实测通过)。
 
+> **✅ 进度(2026-06-02)**:代码全做完。Task1 迁移 `pnc_ledger` 已 **db push + regen**;Task2 Env;Task3 `billing-packs`(占位 product_id);Task4 `billing-polar`(幂等入账/退款夹值);Task5-6 两个 webhook 路由(`/v1/billing/polar/webhook`、`/v1/billing/revenuecat/webhook`)。**478 测试绿、typecheck 绿**。**剩下全是"需要你"的**:P1-0 dashboard 配置(Polar webhook endpoint+secret、RC webhook+Authorization、真实 product_id 填 `billing-packs`、`pnc` meter id 进 secret)+ 发测试 webhook 核对 payload 字段路径(`order.customer.externalId` / `order.product.id` / RC `app_user_id`/`transaction_id`)。
+
 > **范围**:P1 只做**入账(topup + refund)**。用量计量/settle/门禁 = P2;群池 = P4。
 
 ---
