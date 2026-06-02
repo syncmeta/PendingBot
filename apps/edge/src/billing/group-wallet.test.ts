@@ -7,6 +7,8 @@ import {
   getActivePledges,
   setPledge,
   withdrawFromGroup,
+  resolveGroupStakes,
+  settleGroupSpend,
 } from './group-wallet';
 import { makeFakeDb, makeFakeClient, makeFakeEnv, type FakeDb, type FakeWallet } from '../../tests/_helpers/fake-supabase';
 import type { PolarClient } from './polar-client';
@@ -205,6 +207,57 @@ describe('withdrawFromGroup (部分取出)', () => {
     const r = await withdrawFromGroup({ env, supa, om, subjectId: GROUP, userId: ALICE, amountMicros: 30_000_000 });
     expect(r.withdrawnMicros).toBe(0);
     expect((om as any).reduceCredits).not.toHaveBeenCalled();
+  });
+});
+
+describe('resolveGroupStakes', () => {
+  it('S = 实缴池 + Σ认缴 min(pledge,余额)', async () => {
+    const db = makeFakeDb({
+      group_pledges: [{ subject_id: GROUP, user_id: 'u_bob', pledge_pnc_micros: 40_000_000, status: 'active' }],
+    });
+    const { env, supa } = ctx(db, { [GROUP]: 60_000_000, u_bob: 100_000_000 });
+    const s = await resolveGroupStakes(env, supa, GROUP);
+    expect(s.poolStake).toBe(60_000_000);
+    expect(s.pledgeStakes).toEqual([{ userId: 'u_bob', stakeMicros: 40_000_000 }]);
+    expect(s.total).toBe(100_000_000);
+  });
+
+  it('认缴成员余额低于 pledge → 份额缩到余额', async () => {
+    const db = makeFakeDb({
+      group_pledges: [{ subject_id: GROUP, user_id: 'u_bob', pledge_pnc_micros: 40_000_000, status: 'active' }],
+    });
+    const { env, supa } = ctx(db, { [GROUP]: 60_000_000, u_bob: 10_000_000 });
+    const s = await resolveGroupStakes(env, supa, GROUP);
+    expect(s.pledgeStakes[0].stakeMicros).toBe(10_000_000);
+    expect(s.total).toBe(70_000_000);
+  });
+});
+
+describe('settleGroupSpend', () => {
+  it('按占比拆:实缴池衰减 + 认缴成员个人钱包直扣', async () => {
+    const db = makeFakeDb({
+      group_pledges: [{ subject_id: GROUP, user_id: 'u_bob', pledge_pnc_micros: 40_000_000, status: 'active' }],
+      group_pools: [{ subject_id: GROUP, total_remaining_pnc_micros: 60_000_000, share_index: 1 }],
+    });
+    const decay = vi.fn(() => ({ data: null }));
+    db.rpcs = { apply_group_pool_spend: decay };
+    // 池 60M + Bob 40M = S 100M;花 10M → 池摊 6M、Bob 摊 4M
+    const { env, supa, wallet } = ctx(db, { [GROUP]: 60_000_000, u_bob: 40_000_000 });
+    await settleGroupSpend({ env, supa, subjectId: GROUP, spendMicros: 10_000_000, category: 'llm_tokens', dedupeId: 'audit1' });
+    expect(wallet.calls.find((c) => c.subjectId === GROUP && c.path === '/debit')?.body.pncMicros).toBe(6_000_000);
+    expect(decay).toHaveBeenCalledWith({ p_subject_id: GROUP, p_spend_micros: 6_000_000 });
+    const bobDebit = wallet.calls.find((c) => c.subjectId === 'u_bob' && c.path === '/debit');
+    expect(bobDebit?.body.pncMicros).toBe(4_000_000);
+    expect(bobDebit?.body.dedupeId).toBe('audit1:pledge:u_bob');
+  });
+
+  it('无份额(池空+无认缴)→ 整笔记群池透支', async () => {
+    const db = makeFakeDb({ group_pledges: [], group_pools: [{ subject_id: GROUP, total_remaining_pnc_micros: 0, share_index: 1 }] });
+    const decay = vi.fn(() => ({ data: null }));
+    db.rpcs = { apply_group_pool_spend: decay };
+    const { env, supa, wallet } = ctx(db, { [GROUP]: 0 });
+    await settleGroupSpend({ env, supa, subjectId: GROUP, spendMicros: 5_000_000, category: 'llm_tokens', dedupeId: 'a2' });
+    expect(wallet.calls.find((c) => c.subjectId === GROUP && c.path === '/debit')?.body.pncMicros).toBe(5_000_000);
   });
 });
 

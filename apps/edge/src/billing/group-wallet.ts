@@ -305,6 +305,82 @@ export async function setPledge(
 }
 
 // ============================================================
+// 分账份额 + 群消费分账(实缴池衰减 + 认缴个人钱包直扣)
+// ============================================================
+
+export interface GroupStakes {
+  poolStake: number; // 实缴池余额(群 WalletDO)
+  pledgeStakes: { userId: string; stakeMicros: number }[]; // 认缴 min(pledge, 余额)
+  total: number; // S = 池 + Σ认缴
+}
+
+/** 读群当前分账份额:实缴池(群 WalletDO 余额) + 各认缴成员 min(pledge, 个人余额)。 */
+export async function resolveGroupStakes(
+  env: Env,
+  supa: Supa,
+  subjectId: string,
+): Promise<GroupStakes> {
+  const poolGate = await wallet.gate(env, subjectId);
+  const poolStake = Math.max(0, poolGate.balanceMicros);
+  const pledges = await getActivePledges(supa, subjectId);
+  const pledgeStakes: { userId: string; stakeMicros: number }[] = [];
+  for (const pl of pledges) {
+    const g = await wallet.gate(env, pl.userId);
+    const stake = Math.max(0, Math.min(pl.pledgeMicros, g.balanceMicros));
+    if (stake > 0) pledgeStakes.push({ userId: pl.userId, stakeMicros: stake });
+  }
+  const total = poolStake + pledgeStakes.reduce((s, x) => s + x.stakeMicros, 0);
+  return { poolStake, pledgeStakes, total };
+}
+
+export interface SettleGroupParams {
+  env: Env;
+  supa: Supa;
+  subjectId: string;
+  spendMicros: number;
+  category: string;
+  dedupeId: string;
+  meta?: Record<string, unknown>;
+}
+
+/**
+ * 群消费分账:实缴池摊 X·池/S(扣群 WalletDO + 衰减 share_index),
+ * 认缴成员各摊 X·份额/S(实时直扣其个人 WalletDO,个人 DO 串行权威)。
+ * 无任何份额(total<=0)→ 整笔记群池(透支兜底,与无认缴时一致)。
+ */
+export async function settleGroupSpend(p: SettleGroupParams): Promise<void> {
+  const { env, supa, subjectId } = p;
+  const spend = Math.trunc(p.spendMicros);
+  if (!Number.isFinite(spend) || spend <= 0) return;
+
+  const { poolStake, pledgeStakes, total } = await resolveGroupStakes(env, supa, subjectId);
+  if (total <= 0) {
+    await wallet.debit(env, subjectId, spend, { category: p.category, dedupeId: p.dedupeId, meta: p.meta });
+    await applyGroupSpendDecay(supa, subjectId, spend);
+    return;
+  }
+
+  const poolPortion = Math.round((spend * poolStake) / total);
+  if (poolPortion > 0) {
+    await wallet.debit(env, subjectId, poolPortion, { category: p.category, dedupeId: p.dedupeId, meta: p.meta });
+    await applyGroupSpendDecay(supa, subjectId, poolPortion);
+  }
+  for (const m of pledgeStakes) {
+    const portion = Math.round((spend * m.stakeMicros) / total);
+    if (portion <= 0) continue;
+    try {
+      await wallet.debit(env, m.userId, portion, {
+        category: p.category,
+        dedupeId: `${p.dedupeId}:pledge:${m.userId}`,
+        meta: { ...(p.meta ?? {}), group_subject_id: subjectId, via: 'pledge' },
+      });
+    } catch (e) {
+      console.warn('[group-wallet] pledge debit failed', subjectId, m.userId, (e as Error)?.message);
+    }
+  }
+}
+
+// ============================================================
 // 部分取出(实缴,随时、可部分)
 // ============================================================
 
