@@ -1,6 +1,6 @@
 # PendingBot / PendingCrew 进度账本 (Progress Ledger)
 
-**最近对账：2026-06-01**（对照实际代码 / 迁移 / git，不是看 task 标记）
+**最近对账：2026-06-02**（对照实际代码 / 迁移 / git，不是看 task 标记）
 
 ---
 
@@ -95,6 +95,28 @@
 | #190 v1 退役 | 数据已迁；**v1 表当冷备未删，`billing_debit` 等 v1 RPC 仍被调，无 drop 迁移** | 观察期后 |
 
 > 另：sandbox `vendorCostUsd` 仍硬写 0（无 Cloudflare 价目），用户可免费无限跑 execute_code。见 tech-debt 🟡。
+
+---
+
+## 4b. Billing **引擎大转向 → Polar(钱包 SoR)+ WalletDO(边缘门禁缓存)**（2026-06-02，#207-209）
+
+billing-v2 的自研结算引擎(settleUsage/packs/本地账本)**改为外包**:Polar = MoR + 信用钱包事实源(`pnc` meter),RevenueCat = iOS IAP 入账。CF 上 WalletDO(per-subject DO,强一致)做边缘门禁缓存 + 用量 outbox,push-sync + 稀疏对账。设计见 `specs/2026-06-01-billing-engine-design.md`、`specs/2026-06-02-billing-p2-architecture-fork.md`。
+
+| 块 | 状态 | 验证 | 说明 |
+|---|---|---|---|
+| P0/P1 Polar 引擎 + 单位 + 封装 | ✅ | 代码 + **真 sandbox spike** | pnc.ts / polar-client / billing-polar;收/扣/退/余额/幂等真打通 |
+| P2-A WalletDO | ✅ | 代码+单测 | balance + pending outbox + alarm flush + 稀疏对账 |
+| P2-B wallet-client | ✅ | 代码+单测 | gate/debit/credit/applyAbsolute RPC |
+| P2-C LLM router 门禁+扣费 | ✅ | 代码+单测 | 替 settleTurnV2;gate 接进 `lib/billing.ts requireBalance`(messages/envelope/语音共用) |
+| P2-D 语音(1v1+群) | ✅ | 代码+单测 | realtime-meter + room-voice 走 WalletDO |
+| P2-F sandbox | ✅ | 代码+单测 | gate+按时长扣(占位单价) |
+| P2-G 充退/state_changed push | ✅ | 代码+单测 | Polar/RC webhook → wallet.credit / applyAbsolute(官方类型核实) |
+| **集成** | ✅ | **typecheck 0 + 509 测试全过** | 四并行分支已合 chore/billing-dashboard-specs |
+| **P2 群成本分摊 重挂(#208)** | ❌ | — | 🔴 share-index 被旁路,两套旧实现成孤儿;用户"只自研群分摊" → **需设计决策,已停下待拍板** |
+| billing-v2 退役 + me.ts 余额改源(#209) | ❌ | — | dead 代码仍在树;me.ts /wallet/v2 读 packs 会显示过期余额;被 #208 阻塞 |
+| throttle 降级 / low 提醒 / sandbox 真实单价 | ❌ | — | 已记 tech-debt 🟡(throttle 经 OpenRouter 官方文档核实不适用 passthrough) |
+
+**待用户**:Polar 加 `customer.state_changed` webhook 事件;开 Grafana/PostHog/Langfuse/Sentry 账号(dashboard #206);真实 product_id 填 billing-packs.ts;轮换 Polar token;**群分摊模型拍板(#208)**。
 
 ---
 
