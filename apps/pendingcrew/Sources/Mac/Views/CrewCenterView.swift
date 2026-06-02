@@ -10,6 +10,7 @@ struct CrewCenterView: View {
     @EnvironmentObject private var crewStore: CrewStore
     @EnvironmentObject private var sessionRunner: CrewSessionRunner
     @State private var showingCreateSessionSheet = false
+    @State private var showingRemoteSessions = false
 
     var body: some View {
         Group {
@@ -33,12 +34,26 @@ struct CrewCenterView: View {
                         Label("刷新详情", systemImage: "arrow.clockwise")
                     }
                 }
+                // T4.5 viewer — watch this crew's server sessions (incl. ones
+                // running on another host) by reading the durable event log.
+                ToolbarItem {
+                    Button {
+                        showingRemoteSessions = true
+                    } label: {
+                        Label("服务端 session", systemImage: "rectangle.on.rectangle.angled")
+                    }
+                }
             }
         }
         .sheet(isPresented: $showingCreateSessionSheet) {
             if let detail = crewStore.selectedDetail {
                 CreateSessionSheet(detail: detail)
                     .environmentObject(sessionRunner)
+            }
+        }
+        .sheet(isPresented: $showingRemoteSessions) {
+            if let detail = crewStore.selectedDetail {
+                RemoteSessionsView(crewId: detail.crew.id, crewTitle: detail.crew.title)
             }
         }
     }

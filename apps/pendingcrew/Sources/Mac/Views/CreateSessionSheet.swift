@@ -663,6 +663,21 @@ struct CreateSessionSheet: View {
             return
         }
 
+        // T4.5 — in logged mode, mirror this session to the server (register
+        // host → create → claim) so cross-device viewers can follow it. BYOK
+        // runs skip this and stay purely local. Server prep failure aborts the
+        // start (a logged session shouldn't run untracked); the local agent
+        // hasn't launched yet, so nothing leaks.
+        var serverLink: CrewSessionServerLink? = nil
+        if appModel.mode == .logged {
+            do {
+                serverLink = try await prepareServerSession()
+            } catch {
+                localError = "服务端 session 准备失败: \(error.localizedDescription)"
+                return
+            }
+        }
+
         do {
             try await sessionRunner.start(
                 crewId: detail.crew.id,
@@ -671,12 +686,40 @@ struct CreateSessionSheet: View {
                 taskBrief: taskBrief.trimmingCharacters(in: .whitespacesAndNewlines),
                 initialPrompt: initialPrompt,
                 model: resolvedModelSlug,
-                permissionModeOverride: permissionMode.wireValue
+                permissionModeOverride: permissionMode.wireValue,
+                serverLink: serverLink
             )
             dismiss()
         } catch {
             localError = error.localizedDescription
         }
+    }
+
+    /// Build the server-side session lifecycle for a logged run:
+    /// register this Mac as a runner host (cached) → open a crew_session row →
+    /// claim it for this host. Returns the link the run uses to publish events
+    /// and finish. Throws on any step so `submit` can surface it.
+    private func prepareServerSession() async throws -> CrewSessionServerLink {
+        let api = try appModel.loggedAPIClient()
+        let subjects = try await api.listMySubjects()
+        guard let subjectId = subjects.first?.id else {
+            throw PendingCrewBackendError.invalidConfig("没有可用的 subject（device grant 未解析出主体）")
+        }
+        let hostId = try await appModel.ensureRunnerHost(
+            api: api,
+            subjectId: subjectId,
+            allowedRunnerKinds: [
+                LocalCodingAgentKind.claudeCode.serverRunnerKind,
+                LocalCodingAgentKind.codex.serverRunnerKind,
+            ]
+        )
+        let sessionId = try await api.createSession(
+            crewId: detail.crew.id,
+            runnerKind: kind.serverRunnerKind,
+            taskBrief: taskBrief.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        _ = try await api.claimSession(runnerHostId: hostId, sessionId: sessionId)
+        return CrewSessionServerLink(api: api, runnerHostId: hostId, sessionId: sessionId)
     }
 
     /// 把当前选择折成 session 子进程真用的 cwd。`gitWorktree` 模式会跑

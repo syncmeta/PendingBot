@@ -26,5 +26,14 @@ public enum LocalCodingAgentKind: String, CaseIterable, Sendable, Hashable {
         case .codex: return "codex"
         }
     }
+
+    /// 对应 server `crew_sessions.runner_kind` 的 wire 值(T4.5)。edge 的
+    /// RunnerKind enum:`local_claude_code` / `local_codex`。
+    public var serverRunnerKind: String {
+        switch self {
+        case .claudeCode: return "local_claude_code"
+        case .codex: return "local_codex"
+        }
+    }
 }
 #endif

@@ -45,17 +45,18 @@ private struct SessionRunContentView: View {
     @ObservedObject var run: CrewSessionRun
 
     enum OutputTab: String, CaseIterable, Identifiable {
-        case stdout, stderr
+        case transcript, stdout, stderr
         var id: String { rawValue }
         var label: String {
             switch self {
+            case .transcript: return "转写"
             case .stdout: return "stdout"
             case .stderr: return "stderr"
             }
         }
     }
 
-    @State private var selectedTab: OutputTab = .stdout
+    @State private var selectedTab: OutputTab = .transcript
 
     var body: some View {
         VStack(spacing: 0) {
@@ -134,7 +135,55 @@ private struct SessionRunContentView: View {
 
     @ViewBuilder
     private var outputView: some View {
-        let text = selectedTab == .stdout ? run.stdoutText : run.stderrText
+        if selectedTab == .transcript {
+            transcriptView
+        } else {
+            rawTextView(selectedTab == .stdout ? run.stdoutText : run.stderrText)
+        }
+    }
+
+    // Parsed, runner-agnostic transcript (the default tab). Falls back to the
+    // raw stdout tab when nothing has been parsed yet (e.g. a CLI that printed
+    // only non-JSONL warnings, or output not yet arrived).
+    @ViewBuilder
+    private var transcriptView: some View {
+        if run.events.isEmpty {
+            VStack(spacing: 8) {
+                if run.status == .running {
+                    ProgressView().controlSize(.small)
+                    Text("等待 agent 输出…").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text("没有可转写的事件").font(.caption).foregroundStyle(.secondary)
+                    Text("查看 stdout 标签页看原始输出").font(.caption2).foregroundStyle(.tertiary)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(nsColor: .textBackgroundColor))
+        } else {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 8) {
+                        ForEach(Array(run.events.enumerated()), id: \.offset) { idx, event in
+                            RunnerEventRow(event: event)
+                                .id(idx)
+                        }
+                        Color.clear.frame(height: 1).id(tailID)
+                    }
+                    .padding(12)
+                }
+                .background(Color(nsColor: .textBackgroundColor))
+                .onChange(of: run.events.count) { _, _ in
+                    withAnimation(.linear(duration: 0.05)) {
+                        proxy.scrollTo(tailID, anchor: .bottom)
+                    }
+                }
+                .onAppear { proxy.scrollTo(tailID, anchor: .bottom) }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func rawTextView(_ text: String) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
@@ -163,5 +212,71 @@ private struct SessionRunContentView: View {
     }
 
     private var tailID: String { "session-tail" }
+}
+
+/// One transcript line. Each `RunnerEvent` case gets a distinct visual
+/// grammar (icon + tint + body) so a glance separates assistant prose from
+/// tool calls / reasoning / errors — independent of which CLI produced it.
+private struct RunnerEventRow: View {
+    let event: RunnerEvent
+
+    var body: some View {
+        switch event {
+        case let .started(model, _):
+            label("bolt.horizontal.circle", .secondary,
+                  model.map { "会话开始 · \($0)" } ?? "会话开始", mono: false)
+        case let .reasoning(text):
+            label("brain", .purple, text, mono: false, secondary: true)
+        case let .assistant(text):
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "sparkles").foregroundStyle(.tint)
+                Text(text)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        case let .toolCall(title, detail):
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "wrench.and.screwdriver").foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.callout.weight(.semibold))
+                    if let detail, !detail.isEmpty {
+                        Text(detail)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        case let .toolResult(text, isError):
+            label("arrow.turn.down.right", isError ? .red : .secondary,
+                  text, mono: true, secondary: !isError)
+        case let .finished(summary, isError, costUSD):
+            let parts = [summary, costUSD.map { String(format: "$%.4f", $0) }]
+                .compactMap { $0 }.filter { !$0.isEmpty }
+            label(isError ? "xmark.seal" : "checkmark.seal",
+                  isError ? .red : .green,
+                  parts.isEmpty ? (isError ? "失败" : "完成")
+                                : ((isError ? "失败 · " : "完成 · ") + parts.joined(separator: " · ")),
+                  mono: false)
+        case let .failed(text):
+            label("exclamationmark.triangle.fill", .red, text, mono: false)
+        case let .unknown(raw):
+            label("questionmark.circle", .secondary, raw, mono: true, secondary: true)
+        }
+    }
+
+    @ViewBuilder
+    private func label(_ icon: String, _ tint: Color, _ text: String,
+                       mono: Bool, secondary: Bool = false) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: icon).foregroundStyle(tint)
+            Text(text)
+                .font(mono ? .system(.caption, design: .monospaced) : .callout)
+                .foregroundStyle(secondary ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
 }
 #endif

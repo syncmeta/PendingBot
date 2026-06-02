@@ -53,6 +53,9 @@ struct MessageTabView: View {
     @State private var pullRefreshing = false
     @State private var error: String?
     @State private var joiningGroup = false
+    /// Group invite deep link (/g/<token>): prefill + observe the inbox.
+    @State private var groupJoinPrefill = ""
+    @State private var deepLink = DeepLinkStore.shared
     @State private var addingFriend = false
     @State private var scanning = false
     /// Two-way 加好友 chooser (扫码 / 输号码). Shown when the user taps
@@ -134,8 +137,8 @@ struct MessageTabView: View {
         .alert("出错了", isPresented: .constant(error != nil), actions: {
             Button("好") { error = nil }
         }, message: { Text(error ?? "") })
-        .sheet(isPresented: $joiningGroup) {
-            GroupJoinView { convId in
+        .sheet(isPresented: $joiningGroup, onDismiss: { groupJoinPrefill = "" }) {
+            GroupJoinView(prefilledToken: groupJoinPrefill) { convId in
                 // After successful join, refresh the conv list and
                 // navigate into the new group conv.
                 Task { await load() }
@@ -159,6 +162,8 @@ struct MessageTabView: View {
             .presentationDetents([.medium])
             .presentationDragIndicator(.visible)
         }
+        .onAppear { consumeGroupDeepLink() }
+        .onChange(of: deepLink.pendingJoinGroupToken) { _, _ in consumeGroupDeepLink() }
         .sheet(isPresented: $addingFriend, onDismiss: { addFriendPrefill = "" }) {
             AddFriendSheet(
                 onAdded: { Task { await load() } },
@@ -578,6 +583,17 @@ struct MessageTabView: View {
         let elapsed = DispatchTime.now().uptimeNanoseconds - started
         if elapsed < minimumVisibleNanos {
             try? await Task.sleep(nanoseconds: minimumVisibleNanos - elapsed)
+        }
+    }
+
+    /// Consume a pending /g/<token> group invite deep link: open the
+    /// join-group sheet prefilled with the token (decisions.md D2).
+    private func consumeGroupDeepLink() {
+        guard let token = deepLink.pendingJoinGroupToken, !token.isEmpty else { return }
+        deepLink.pendingJoinGroupToken = nil
+        groupJoinPrefill = token
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            joiningGroup = true
         }
     }
 
