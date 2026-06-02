@@ -68,7 +68,11 @@ struct RemoteSessionsView: View {
                 }
                 ForEach(sessions) { session in
                     NavigationLink {
-                        RemoteSessionTranscriptView(sessionId: session.id, brief: sessionTitle(session))
+                        RemoteSessionTranscriptView(
+                            sessionId: session.id,
+                            brief: sessionTitle(session),
+                            initialStatus: session.status
+                        )
                     } label: {
                         sessionRow(session)
                     }
@@ -142,6 +146,9 @@ struct RemoteSessionsView: View {
 struct RemoteSessionTranscriptView: View {
     let sessionId: String
     let brief: String
+    /// Status from the list row — the starting point for the "can stop?" gate
+    /// until the live `session.state` (or the next poll) supplies a fresher one.
+    let initialStatus: String
 
     @Environment(\.api) private var api
 
@@ -149,28 +156,84 @@ struct RemoteSessionTranscriptView: View {
     @State private var loadError: String?
     @State private var didInitialLoad = false
 
+    // Live layer — one viewer proxy socket for this session. Best-effort
+    // decoration over the durable poll: if the WS can't connect, the poll still
+    // drives the transcript.
+    @State private var liveClient: SessionProxyClient?
+    @State private var liveSnapshot: SessionStateSnapshot?
+    @State private var sentCancel = false
+
     private let pollInterval: UInt64 = 3_000_000_000
 
+    /// The freshest status we know — live state wins over the list-row snapshot.
+    private var currentStatus: String { liveSnapshot?.status ?? initialStatus }
+
     var body: some View {
-        Group {
-            if let loadError, events.isEmpty {
-                ContentUnavailableView {
-                    Label("拉取事件失败", systemImage: "exclamationmark.triangle")
-                } description: {
-                    Text(loadError)
-                }
-            } else if events.isEmpty && !didInitialLoad {
-                ProgressView("拉取事件…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if events.isEmpty {
-                ContentUnavailableView("还没有事件", systemImage: "text.append")
-            } else {
-                transcript
+        VStack(spacing: 0) {
+            if let liveSnapshot {
+                liveBanner(liveSnapshot)
+                Divider()
             }
+            transcriptBody
         }
         .navigationTitle(brief)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if SessionStatusStyle.isStoppable(currentStatus) {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(role: .destructive) {
+                        guard let client = liveClient else { return }
+                        sentCancel = true
+                        Task { await client.sendCommand(kind: "cancel") }
+                    } label: {
+                        Image(systemName: "stop.circle")
+                    }
+                    .accessibilityLabel("停止会话")
+                    .disabled(liveClient == nil || sentCancel)
+                }
+            }
+        }
         .task { await pollLoop() }
+        .task { await subscribeLive() }
+        .onDisappear { teardownLive() }
+    }
+
+    @ViewBuilder
+    private var transcriptBody: some View {
+        if let loadError, events.isEmpty {
+            ContentUnavailableView {
+                Label("拉取事件失败", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(loadError)
+            }
+        } else if events.isEmpty && !didInitialLoad {
+            ProgressView("拉取事件…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if events.isEmpty {
+            ContentUnavailableView("还没有事件", systemImage: "text.append")
+        } else {
+            transcript
+        }
+    }
+
+    /// The real-time banner driven by the runner's `session.state` fan-out over
+    /// the proxy socket — distinct from the polled durable log below.
+    private func liveBanner(_ snap: SessionStateSnapshot) -> some View {
+        HStack(spacing: 6) {
+            Circle().fill(SessionStatusStyle.tint(snap.status)).frame(width: 7, height: 7)
+            Text("实时").font(.caption.weight(.semibold)).foregroundStyle(SessionStatusStyle.tint(snap.status))
+            Text(SessionStatusStyle.statusLabel(snap.status)).font(.caption2).foregroundStyle(.secondary)
+            if let last = snap.lastEvent, !last.isEmpty {
+                Text("·").foregroundStyle(.secondary)
+                Text(last).font(.caption).lineLimit(1).truncationMode(.tail)
+            }
+            Spacer(minLength: 4)
+            Text("\(snap.eventCount) 事件").font(.caption2).foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 7)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemBackground))
     }
 
     private var transcript: some View {
@@ -234,6 +297,34 @@ struct RemoteSessionTranscriptView: View {
             loadError = error.localizedDescription
         }
     }
+
+    // MARK: - live (viewer proxy socket)
+
+    /// Open the viewer proxy socket and drain its live `session.state` fan-out
+    /// into `liveSnapshot`. The JWT is fetched fresh on every (re)connect via the
+    /// token closure so a long-lived view that crosses a token refresh keeps a
+    /// valid bearer. Best-effort — not logged in or a failed upgrade just leaves
+    /// the polled transcript as the sole source.
+    private func subscribeLive() async {
+        guard let api else { return }
+        let client = SessionProxyClient(
+            baseURL: api.workerURL,
+            sessionId: sessionId,
+            role: .viewer,
+            token: { try? await SupabaseStack.shared.auth.session.accessToken }
+        )
+        liveClient = client
+        await client.connect()
+        for await snap in client.states {
+            liveSnapshot = snap
+        }
+    }
+
+    private func teardownLive() {
+        let client = liveClient
+        liveClient = nil
+        Task { await client?.close() }
+    }
 }
 
 /// Shared presentation mapping for session status + event types. Mirrors the Mac
@@ -274,6 +365,14 @@ enum SessionStatusStyle {
         case "failed": return .red
         case "cancelled": return .secondary
         default: return .orange
+        }
+    }
+
+    /// A session a viewer can still stop — pre-terminal states only.
+    static func isStoppable(_ status: String) -> Bool {
+        switch status {
+        case "completed", "finished", "failed", "cancelled": return false
+        default: return true
         }
     }
 
