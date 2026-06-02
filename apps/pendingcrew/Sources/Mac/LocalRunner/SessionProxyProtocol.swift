@@ -1,0 +1,237 @@
+#if os(macOS)
+import Foundation
+
+/// Swift mirror of the SessionProxyDO wire protocol
+/// (`apps/edge/src/lib/session-proxy-protocol.ts`, spec v2 §8.2 + §9.6).
+///
+/// This is the **runner side** of T4.5 cross-device remote control. The
+/// PendingCrew Mac host is the single `runner` peer for a crew session: it
+/// subscribes as `runner`, publishes `session.state` (its transcript) +
+/// `permission.request` to the DO, and receives `session.command` +
+/// `permission.decision` back. Viewers (iOS/iPad/Mac PendingBot) live on the
+/// other end and are out of scope here.
+///
+/// Only JSON framing lives in this file — pure value transforms, no
+/// networking. The WebSocket transport + connection lifecycle + the
+/// server-session row prerequisite are the next (device-verified) slice;
+/// keeping the codec separate makes it unit-testable without a live socket,
+/// the same split RunnerEventParser uses.
+///
+/// Frames are encoded/decoded with `JSONSerialization` (matching
+/// RunnerEventParser's style) rather than Codable, because the protocol's
+/// `payload` / `state` fields are deliberately free-form `Record<string,
+/// unknown>` on the wire.
+
+public enum ProxyRole: String, Sendable {
+    case viewer
+    case runner
+}
+
+// MARK: - JSONValue (minimal, Equatable free-form JSON)
+
+/// A small Equatable JSON tree, used for the protocol's free-form `payload`
+/// fields so inbound frames stay testable by value. Numbers normalize to
+/// `Double` (JSON has one number type); integer payloads round-trip exactly
+/// within 2^53.
+public enum JSONValue: Equatable, Sendable {
+    case string(String)
+    case number(Double)
+    case bool(Bool)
+    case null
+    case array([JSONValue])
+    case object([String: JSONValue])
+
+    /// Wrap a JSONSerialization-produced value. Returns nil for types that
+    /// can't appear in JSON.
+    public init?(_ any: Any) {
+        switch any {
+        case let s as String: self = .string(s)
+        case let b as Bool where Self.isBoolNSNumber(any): self = .bool(b)
+        case let n as NSNumber: self = .number(n.doubleValue)
+        case is NSNull: self = .null
+        case let arr as [Any]:
+            self = .array(arr.compactMap(JSONValue.init))
+        case let obj as [String: Any]:
+            var out: [String: JSONValue] = [:]
+            for (k, v) in obj {
+                guard let jv = JSONValue(v) else { return nil }
+                out[k] = jv
+            }
+            self = .object(out)
+        default:
+            return nil
+        }
+    }
+
+    /// Back to a JSONSerialization-compatible value (for encoding).
+    public var anyValue: Any {
+        switch self {
+        case let .string(s): return s
+        case let .number(n): return n
+        case let .bool(b): return b
+        case .null: return NSNull()
+        case let .array(a): return a.map(\.anyValue)
+        case let .object(o): return o.mapValues(\.anyValue)
+        }
+    }
+
+    // `NSNumber` boxes Bool and numerics identically; distinguish a real
+    // JSON bool by its CFTypeID so `true` doesn't decode as `1.0`.
+    private static func isBoolNSNumber(_ any: Any) -> Bool {
+        (any as? NSNumber).map { CFGetTypeID($0) == CFBooleanGetTypeID() } ?? false
+    }
+}
+
+// MARK: - SessionState (runner → viewers payload)
+
+/// The runner's published `session.state`. The wire field is free-form; this
+/// is the shape PendingCrew owns. Viewers render best-effort. Built from the
+/// live `[RunnerEvent]` transcript so a viewer mirrors what the session
+/// window shows.
+public struct SessionState: Equatable, Sendable {
+    /// running / completed / cancelled / failed — the run's lifecycle.
+    public var status: String
+    /// How many transcript events have been produced so far.
+    public var eventCount: Int
+    /// A short human label for the latest event (drives a one-line "what's
+    /// happening" on viewers without shipping the whole transcript).
+    public var lastEvent: String?
+
+    public init(status: String, eventCount: Int, lastEvent: String?) {
+        self.status = status
+        self.eventCount = eventCount
+        self.lastEvent = lastEvent
+    }
+
+    /// Derive the state from a run's status + its transcript tail.
+    public static func from(status: String, events: [RunnerEvent]) -> SessionState {
+        SessionState(status: status,
+                     eventCount: events.count,
+                     lastEvent: events.last.map(Self.summarize))
+    }
+
+    public func dict() -> [String: Any] {
+        var d: [String: Any] = ["status": status, "eventCount": eventCount]
+        if let lastEvent { d["lastEvent"] = lastEvent }
+        return d
+    }
+
+    /// One-line label for a transcript event (mirrors the window's grammar).
+    static func summarize(_ event: RunnerEvent) -> String {
+        switch event {
+        case let .started(model, _): return model.map { "会话开始 · \($0)" } ?? "会话开始"
+        case let .reasoning(t): return "思考：\(Self.clip(t))"
+        case let .assistant(t): return Self.clip(t)
+        case let .toolCall(title, detail):
+            return detail.map { "\(title)：\(Self.clip($0))" } ?? title
+        case let .toolResult(t, isError): return (isError ? "工具失败：" : "工具结果：") + Self.clip(t)
+        case let .finished(summary, isError, _):
+            return summary.map { (isError ? "失败 · " : "完成 · ") + Self.clip($0) } ?? (isError ? "失败" : "完成")
+        case let .failed(t): return "错误：\(Self.clip(t))"
+        case let .unknown(t): return Self.clip(t)
+        }
+    }
+
+    private static func clip(_ s: String, _ max: Int = 80) -> String {
+        let oneLine = s.replacingOccurrences(of: "\n", with: " ")
+        return oneLine.count <= max ? oneLine : String(oneLine.prefix(max)) + "…"
+    }
+}
+
+// MARK: - Outbound (runner → DO)
+
+/// A frame the runner sends to the DO.
+public enum SessionProxyOutbound: Sendable {
+    /// First frame after the socket opens. Role must match what the HTTP
+    /// route authorized; `token` is a defence-in-depth echo.
+    case subscribe(role: ProxyRole, token: String?)
+    /// Publish current state to all viewers.
+    case sessionState(SessionState)
+    /// Raise a permission request (manual-mode high-risk action).
+    case permissionRequest(action: String, payload: [String: JSONValue]?, riskLevel: String?)
+
+    /// The wire dictionary (stable shape; matches the TS interfaces).
+    public func wireDict() -> [String: Any] {
+        switch self {
+        case let .subscribe(role, token):
+            var d: [String: Any] = ["type": "subscribe", "role": role.rawValue]
+            if let token { d["token"] = token }
+            return d
+        case let .sessionState(state):
+            return ["type": "session.state", "state": state.dict()]
+        case let .permissionRequest(action, payload, riskLevel):
+            var req: [String: Any] = ["action": action]
+            if let payload { req["payload"] = JSONValue.object(payload).anyValue }
+            if let riskLevel { req["riskLevel"] = riskLevel }
+            return ["type": "permission.request", "request": req]
+        }
+    }
+
+    /// Serialize to a UTF-8 JSON frame ready for `WebSocket.send`.
+    public func jsonData() throws -> Data {
+        try JSONSerialization.data(withJSONObject: wireDict(), options: [.sortedKeys])
+    }
+}
+
+// MARK: - Inbound (DO → runner)
+
+/// A frame the runner receives from the DO. Only the variants that flow to a
+/// runner are modeled; viewer-only frames degrade to `.unknown`.
+public enum SessionProxyInbound: Equatable, Sendable {
+    /// Ack of subscribe.
+    case subscribed(sessionId: String, role: ProxyRole)
+    /// A command to execute. `queued` = flushed from the offline queue (the
+    /// runner dedupes against its own state). `payload` is free-form.
+    case command(commandId: String, kind: String, payload: [String: JSONValue]?, queued: Bool)
+    /// A viewer's approve/reject for a pending permission request.
+    case permissionDecision(requestId: String, decision: String)
+    /// A protocol/error frame from the DO.
+    case error(code: String, message: String)
+    /// Valid JSON we don't act on as a runner (e.g. a viewer-targeted frame),
+    /// or anything unclassifiable. Carries the raw frame for debugging.
+    case unknown(String)
+
+    /// Parse one inbound frame. Never throws — bad frames degrade to
+    /// `.unknown` so the receive loop can't be crashed by garbage.
+    public static func parse(_ raw: String) -> SessionProxyInbound {
+        guard let data = raw.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let type = obj["type"] as? String else {
+            return .unknown(raw)
+        }
+        switch type {
+        case "subscribed":
+            let sid = (obj["sessionId"] as? String) ?? ""
+            let role = (obj["role"] as? String).flatMap(ProxyRole.init) ?? .runner
+            return .subscribed(sessionId: sid, role: role)
+        case "session.command":
+            guard let commandId = obj["commandId"] as? String,
+                  let command = obj["command"] as? [String: Any],
+                  let kind = command["kind"] as? String else {
+                return .unknown(raw)
+            }
+            let payload = (command["payload"] as? [String: Any]).flatMap(Self.objectPayload)
+            let queued = (obj["queued"] as? Bool) ?? false
+            return .command(commandId: commandId, kind: kind, payload: payload, queued: queued)
+        case "permission.decision":
+            guard let requestId = obj["requestId"] as? String,
+                  let decision = obj["decision"] as? String else {
+                return .unknown(raw)
+            }
+            return .permissionDecision(requestId: requestId, decision: decision)
+        case "error":
+            return .error(code: (obj["code"] as? String) ?? "",
+                          message: (obj["message"] as? String) ?? "")
+        default:
+            // subscribed/command/decision/error are the runner-facing frames;
+            // session.state / permission.request are viewer-facing.
+            return .unknown(raw)
+        }
+    }
+
+    private static func objectPayload(_ dict: [String: Any]) -> [String: JSONValue]? {
+        guard case let .object(o)? = JSONValue(dict) else { return nil }
+        return o
+    }
+}
+#endif
