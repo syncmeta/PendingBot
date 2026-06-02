@@ -13,7 +13,7 @@ import {
 } from '../lib/voice-metering';
 import type { OwnerRef } from '../lib/billing-v2';
 import { wallet, walletSubjectKey } from '../billing/wallet-client';
-import { applyGroupSpendDecay } from '../billing/group-wallet';
+import { settleGroupSpend } from '../billing/group-wallet';
 import { usdToPncMicros } from '../billing/pnc';
 import { roomMediaToken } from './room-voice-context';
 import type {
@@ -1146,25 +1146,25 @@ export class RoomVoiceDO {
     // One-shot at finalize → a stable dedupeId per call instance keeps the
     // debit idempotent under any re-entry / retry.
     const dedupeId = `${ctx.roomId}:realtimekit_media`;
+    const micros = usdToPncMicros(costUsd);
+    const meta = {
+      room_id: ctx.roomId,
+      conversation_id: ctx.conversationId,
+      realtimekit_meeting_id: ctx.realtimeKitMeetingId,
+      participant_seconds: participantSeconds,
+      human_participant_seconds: humanSeconds,
+      bot_participant_seconds: botSeconds,
+      participant_minute_price_usd: price,
+      vendor_cost_usd: costUsd,
+      present_user_seconds: Object.fromEntries(userSeconds),
+    };
     try {
-      await wallet.debit(this.env, subjectId, usdToPncMicros(costUsd), {
-        category: 'realtimekit_media',
-        dedupeId,
-        meta: {
-          room_id: ctx.roomId,
-          conversation_id: ctx.conversationId,
-          realtimekit_meeting_id: ctx.realtimeKitMeetingId,
-          participant_seconds: participantSeconds,
-          human_participant_seconds: humanSeconds,
-          bot_participant_seconds: botSeconds,
-          participant_minute_price_usd: price,
-          vendor_cost_usd: costUsd,
-          present_user_seconds: Object.fromEntries(userSeconds),
-        },
-      });
-      // 群池公平性:群语音媒体成本扣的是群 subject 钱包,扣后衰减 share_index。
+      // 群(owner=subject)走 settleGroupSpend:实缴池衰减 + 认缴成员个人钱包直扣;
+      // 1v1(owner=user)直扣其个人钱包。
       if (owner.kind === 'subject') {
-        await applyGroupSpendDecay(supa, subjectId, usdToPncMicros(costUsd));
+        await settleGroupSpend({ env: this.env, supa, subjectId, spendMicros: micros, category: 'realtimekit_media', dedupeId, meta });
+      } else {
+        await wallet.debit(this.env, subjectId, micros, { category: 'realtimekit_media', dedupeId, meta });
       }
     } catch (err) {
       // Billing failures must never break call teardown.

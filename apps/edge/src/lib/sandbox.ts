@@ -3,7 +3,7 @@ import type { Env } from '../types';
 import type { SupabaseClient } from './supabase';
 import { serviceClient } from './supabase';
 import { wallet } from '../billing/wallet-client';
-import { applyGroupSpendDecay } from '../billing/group-wallet';
+import { settleGroupSpend } from '../billing/group-wallet';
 import { usdToPncMicros } from '../billing/pnc';
 
 // Thin wrapper over the Cloudflare Sandbox SDK. Each conversation gets its
@@ -204,29 +204,23 @@ export async function runPython(
     const pncMicros = usdToPncMicros(usd);
     if (pncMicros > 0) {
       const dedupeId = `sandbox:${conversationId}:${startedAt}`;
-      void wallet
-        .debit(env, subjectId, pncMicros, {
-          category: 'sandbox_runtime',
-          dedupeId,
-          meta: {
-            conversation_id: conversationId,
-            elapsed_seconds: elapsedSeconds,
-            usd_per_second: SANDBOX_USD_PER_SECOND,
-            exit_code: result.error ? 1 : 0,
-            // Don't log the code itself — sensitive. Only the shape.
-            code_chars: code.length,
-          },
-        })
-        .then(() => {
-          // 群池公平性:群会话(subjectId 解析为责任 subject,≠ 发起人 userId)
-          // 的 sandbox 消费扣后衰减 share_index。个人钱包(subjectId===userId)不衰减。
-          if (subjectId && subjectId !== opts.meter?.userId) {
-            return applyGroupSpendDecay(serviceClient(env), subjectId, pncMicros);
-          }
-        })
-        .catch((err) => {
-          console.warn('[sandbox] wallet debit failed', subjectId, dedupeId, err);
-        });
+      const meta = {
+        conversation_id: conversationId,
+        elapsed_seconds: elapsedSeconds,
+        usd_per_second: SANDBOX_USD_PER_SECOND,
+        exit_code: result.error ? 1 : 0,
+        // Don't log the code itself — sensitive. Only the shape.
+        code_chars: code.length,
+      };
+      // 群会话(subjectId 解析为责任 subject,≠ 发起人 userId)走 settleGroupSpend
+      // (实缴池衰减 + 认缴成员个人钱包直扣);个人(subjectId===userId)直扣其钱包。
+      const isGroup = !!opts.meter?.userId && subjectId !== opts.meter.userId;
+      const charge = isGroup
+        ? settleGroupSpend({ env, supa: serviceClient(env), subjectId, spendMicros: pncMicros, category: 'sandbox_runtime', dedupeId, meta })
+        : wallet.debit(env, subjectId, pncMicros, { category: 'sandbox_runtime', dedupeId, meta }).then(() => undefined);
+      void charge.catch((err) => {
+        console.warn('[sandbox] wallet charge failed', subjectId, dedupeId, err);
+      });
     }
   }
 

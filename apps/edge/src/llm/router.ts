@@ -6,7 +6,7 @@ import type { Json } from '../db/schema';
 import { wallet } from '../billing/wallet-client';
 import { usdToPncMicros } from '../billing/pnc';
 import { resolveBillingSubjectId } from '../billing/usage-gate';
-import { applyGroupSpendDecay } from '../billing/group-wallet';
+import { settleGroupSpend } from '../billing/group-wallet';
 import type { WebToolUsage } from '../lib/web-meter';
 import { uuidv7 } from '../lib/ids';
 import { fetchGatewayCost, GATEWAY_COST_PENDING } from '../lib/ai-gateway';
@@ -504,68 +504,47 @@ export async function persistAuditMessage(
   // already-persisted, user-visible turn.
   if (initialBilling === 'billed' && billingTarget) {
     const subjectId = billingTarget.subjectId;
-    // 群池(kind='subject')消费要在扣费后衰减 share_index(成员公平性)。
-    // 累计本回合实扣 micros,块末一次性 decay。见 group-wallet.applyGroupSpendDecay。
-    let groupSpentMicros = 0;
-    // 1. Model spend. Voice turns (OpenAI Realtime, priced via
-    //    computeVoiceCost) bill as voice_tokens; everything else llm_tokens.
-    //    vendor cost, no markup.
+    const isGroup = billingTarget.kind === 'subject';
     const modelCategory = opts.taskType === 'voice_call' ? 'voice_tokens' : 'llm_tokens';
-    const llmMicros = usdToPncMicros(llmCost ?? 0);
-    if (llmMicros > 0) {
-      try {
-        await wallet.debit(env, subjectId, llmMicros, {
-          category: modelCategory,
-          dedupeId: auditId,
-          meta: {
-            model_id: route?.modelToCall ?? opts.tag ?? '<unrouted>',
-            provider: route?.provider?.slug ?? null,
-            task_type: opts.taskType,
-            total_tokens: total,
-            cost_source: opts.providerCostUsd != null ? 'provider' : 'gateway',
-            conversation_id: opts.conversationId ?? null,
-          },
-        });
-        groupSpentMicros += llmMicros;
-      } catch (err) {
-        console.warn(
-          '[wallet.debit llm_tokens]',
-          auditId,
-          err instanceof Error ? err.message : String(err),
-        );
+    // 群(kind=subject)走 settleGroupSpend:按份额拆实缴池(衰减 share_index)+ 认缴成员
+    // 个人钱包直扣。个人(kind=user)走 wallet.debit。失败 log+吞,不破坏已落地的回合。
+    const charge = async (micros: number, category: string, dedupeId: string, meta: Record<string, unknown>) => {
+      if (micros <= 0) return;
+      if (isGroup) {
+        await settleGroupSpend({ env, supa, subjectId, spendMicros: micros, category, dedupeId, meta });
+      } else {
+        await wallet.debit(env, subjectId, micros, { category, dedupeId, meta });
       }
+    };
+    // 1. Model/voice spend(vendor cost, no markup)。
+    const llmMicros = usdToPncMicros(llmCost ?? 0);
+    try {
+      await charge(llmMicros, modelCategory, auditId, {
+        model_id: route?.modelToCall ?? opts.tag ?? '<unrouted>',
+        provider: route?.provider?.slug ?? null,
+        task_type: opts.taskType,
+        total_tokens: total,
+        cost_source: opts.providerCostUsd != null ? 'provider' : 'gateway',
+        conversation_id: opts.conversationId ?? null,
+      });
+    } catch (err) {
+      console.warn('[charge llm_tokens]', auditId, err instanceof Error ? err.message : String(err));
     }
-    // 2. Web-tool calls — one debit each, dedupeId namespaced by call index
-    //    so retries can't double-charge any single call. Errors cost 0.
+    // 2. Web-tool calls — one charge each, dedupeId namespaced by call index。
     for (let i = 0; i < toolCalls.length; i++) {
       const tool = toolCalls[i];
       const micros = usdToPncMicros(tool.costUsd ?? 0);
-      if (micros <= 0) continue;
       try {
-        await wallet.debit(env, subjectId, micros, {
-          category: 'web_tools',
-          dedupeId: `${auditId}:tool:${i}`,
-          meta: {
-            provider: tool.provider,
-            kind: tool.kind,
-            target: tool.target,
-            status: tool.status,
-            conversation_id: opts.conversationId ?? null,
-          },
+        await charge(micros, 'web_tools', `${auditId}:tool:${i}`, {
+          provider: tool.provider,
+          kind: tool.kind,
+          target: tool.target,
+          status: tool.status,
+          conversation_id: opts.conversationId ?? null,
         });
-        groupSpentMicros += micros;
       } catch (err) {
-        console.warn(
-          '[wallet.debit web_tools]',
-          auditId,
-          tool.provider,
-          err instanceof Error ? err.message : String(err),
-        );
+        console.warn('[charge web_tools]', auditId, tool.provider, err instanceof Error ? err.message : String(err));
       }
-    }
-    // 3. 群池公平性:本回合群消费后按比例衰减 share_index(个人钱包不衰减)。
-    if (billingTarget.kind === 'subject' && groupSpentMicros > 0) {
-      await applyGroupSpendDecay(supa, subjectId, groupSpentMicros);
     }
   }
 }

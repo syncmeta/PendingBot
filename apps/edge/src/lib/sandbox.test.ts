@@ -22,6 +22,13 @@ vi.mock('../billing/wallet-client', () => ({
   },
 }));
 
+// 群消费路由到 settleGroupSpend(实缴池+认缴分账);此处只验"群→调它",
+// 其内部逻辑由 billing/group-wallet.test.ts 覆盖。
+const settleGroupSpendMock = vi.fn((..._args: unknown[]) => Promise.resolve(undefined));
+vi.mock('../billing/group-wallet', () => ({
+  settleGroupSpend: (...args: unknown[]) => settleGroupSpendMock(...args),
+}));
+
 // serviceClient → a Supabase stub whose conversations lookup returns a
 // 1v1 conversation (so resolveSandboxBillingSubjectId falls back to the
 // passed userId as the billing subject).
@@ -159,13 +166,12 @@ describe('Cloudflare sandbox wrapper', () => {
       expect(debitMock).not.toHaveBeenCalled();
     });
 
-    it('bills the group responsible subject for a group conversation', async () => {
+    it('群会话:pre-gate 读群 subject + 扣费走 settleGroupSpend(非直接 wallet.debit)', async () => {
       conversationTypeMock.mockReturnValue({
         conversation_type: 'group',
         responsible_subject_id: 'subject-group-7',
       });
       gateMock.mockResolvedValueOnce({ balanceMicros: 1_000_000, thresholdState: 'sufficient' });
-      debitMock.mockResolvedValueOnce({ balanceMicros: 999_000, thresholdState: 'sufficient' });
       runCodeMock.mockImplementationOnce(async () => {
         await new Promise((r) => setTimeout(r, 20));
         return { logs: { stdout: [], stderr: [] }, results: [], executionCount: 1 };
@@ -173,8 +179,15 @@ describe('Cloudflare sandbox wrapper', () => {
 
       await runPython(env, 'conv-1', 'pass', { meter: { userId: 'user-42' } });
 
+      // pre-exec gate 仍按群 subject 读
       expect(gateMock).toHaveBeenCalledWith(env, 'subject-group-7');
-      expect(debitMock.mock.calls[0][1]).toBe('subject-group-7');
+      // 群消费走 settleGroupSpend(实缴池+认缴分账),不再直接 wallet.debit(group)
+      expect(settleGroupSpendMock).toHaveBeenCalledTimes(1);
+      const arg = settleGroupSpendMock.mock.calls[0][0] as { subjectId: string; spendMicros: number; category: string };
+      expect(arg.subjectId).toBe('subject-group-7');
+      expect(arg.spendMicros).toBeGreaterThan(0);
+      expect(arg.category).toBe('sandbox_runtime');
+      expect(debitMock).not.toHaveBeenCalled();
     });
   });
 });
