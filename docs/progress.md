@@ -53,7 +53,7 @@
 | T4.2 Session 系统提示模板 | ✅ | 代码 | #168 | 走 prompt-loader | — |
 | T4.3 Permission Request | ✅ | 代码 | #170-176 | schema + tool + iOS/Mac 卡片 | — |
 | T4.4 Bot start_crew tool | ✅ | 代码 | — | `tools/start-crew.ts` + tool-def | — |
-| **T4.5 跨端遥控 peer_device** | 🟡 | 代码(服务端+客户端 codec) | #204 | 服务端 P0 已落(SessionProxyDO);**客户端 codec 已落**(#204,`d6fba7a3`,14测试绿:runner 侧 wire 编解码 + `SessionState.from(events:)`)。**仍缺**:WS 传输/连接生命周期、server-session 创建端点(runner 现用本地 stub UUID)、Mac runner 发布 RunnerEvent、iOS viewer 订阅+遥控 UI、两设备 E2E QA(需真机) | 🟡 半截桥(服务端+codec 好,传输/会话/viewer 未接) |
+| **T4.5 跨端遥控 peer_device** | 🟡 | 代码(服务端**全**+客户端 codec) | #204 | **服务端比账本旧写的完整得多(2026-06-02 重新核实)**:不止 SessionProxyDO —— `crew_sessions` 表 + 整条 runner HTTP 生命周期都在:`POST /v1/crews/:id/sessions`(创建)·`runner-hosts/:id/sessions/:sid/{claim,events,finish}`(`runner:write`)·`GET /v1/sessions/:sid/proxy/connect`·`PATCH .../permission-mode`。**客户端 codec 已落**(#204,`d6fba7a3`,14测试绿)。**纯缺客户端链(无 edge/迁移工作)**:① runner-host 注册 ② 创建/认领 session(现用本地 stub UUID,无 server 行)③ WS 传输 + runner 发布 RunnerEvent→session.state ④ finish ⑤ iOS viewer 订阅+遥控 UI ⑥ 两设备 E2E QA。**每步需 device-grant `runner:write`,活验证要登录账号+真机** —— 宜作连贯 feature 一次做,别拆成孤儿/半接(create-不-claim 会留 queued 孤儿行) | 🟡 半截桥(服务端**全好**+codec,客户端链未接) |
 | T4.6 iOS Crew Tab v2 | 🟡 | 代码 | — | 群聊 UI + live push + 权限卡done；剩附件、自我气泡高亮 2 洞 | 🟢 Crew Tab 2 洞 |
 | T5.1 PendingCrew BYOK 未登录 | ✅ | 代码 | #177 | 本机 captain 池 + BYOK key | — |
 | T5.2 双轨路由 | ✅ | 代码 | #177 | EdgeBackend/LocalBackend；⚠️ 无单测 | 🟢 backend 无单测 |
