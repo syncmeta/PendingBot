@@ -63,7 +63,7 @@ import { userClient, serviceClient, type SupabaseClient } from '../lib/supabase'
 import { jsonError } from '../lib/http-error';
 import type { AppBindings, Env } from '../types';
 import { polarFromEnv, type PolarClient } from '../billing/polar-client';
-import { contributeToGroup, refundContributorFromGroup, dissolveGroup } from '../billing/group-wallet';
+import { contributeToGroup, refundContributorFromGroup, dissolveGroup, setPledge, withdrawFromGroup } from '../billing/group-wallet';
 import { pncToMicros, pncMicrosToPnc } from '../billing/pnc';
 
 // 群钱包 = Polar(余额事实源)+ WalletDO 缓存(计费 P2)。注资/退款/解散走
@@ -450,4 +450,80 @@ groupSubjectRoutes.post('/:id/dissolve', async (c) => {
     refunded_contributors: r.refundedContributors,
     total_refunded_pnc: pncMicrosToPnc(r.totalRefundedMicros),
   });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// POST /v1/group-subjects/:id/pledge — 设置/清除认缴额度(钱不动,授权群按比例扣)
+// body { credits }(PNC;0 = 撤销认缴)。成员均可。
+// ────────────────────────────────────────────────────────────────────
+
+const PledgeBody = z.object({ credits: z.number().int().min(0) });
+
+groupSubjectRoutes.post('/:id/pledge', async (c) => {
+  const id = c.req.param('id');
+  if (!isUuid(id)) return jsonError(c, 400, 'invalid_id');
+  const userId = c.var.userId;
+  if (!userId) return jsonError(c, 401, 'unauthorized');
+  let body: z.infer<typeof PledgeBody>;
+  try {
+    body = PledgeBody.parse(await c.req.json());
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+
+  const rls = clientForRequest(c);
+  if (rls instanceof Response) return rls;
+  const { data: membership } = await rls
+    .from('group_subject_members')
+    .select('role')
+    .eq('subject_id', id)
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (!membership) return jsonError(c, 403, 'subject_forbidden', { message: '非群成员' });
+
+  await setPledge(serviceClient(c.env), id, userId, pncToMicros(body.credits));
+  return c.json({ ok: true, pledge_pnc: body.credits });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// POST /v1/group-subjects/:id/withdraw — 部分取出(≤ 当前 share_now),留群
+// body { credits }(PNC)。退回个人 PNC 余额(非提现)。
+// ────────────────────────────────────────────────────────────────────
+
+const WithdrawBody = z.object({ credits: z.number().int().positive() });
+
+groupSubjectRoutes.post('/:id/withdraw', async (c) => {
+  const id = c.req.param('id');
+  if (!isUuid(id)) return jsonError(c, 400, 'invalid_id');
+  const userId = c.var.userId;
+  if (!userId) return jsonError(c, 401, 'unauthorized');
+  let body: z.infer<typeof WithdrawBody>;
+  try {
+    body = WithdrawBody.parse(await c.req.json());
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+
+  const rls = clientForRequest(c);
+  if (rls instanceof Response) return rls;
+  const { data: membership } = await rls
+    .from('group_subject_members')
+    .select('role')
+    .eq('subject_id', id)
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (!membership) return jsonError(c, 403, 'subject_forbidden', { message: '非群成员' });
+
+  const om = polarOrNull(c.env);
+  if (!om) return jsonError(c, 501, 'polar_not_configured');
+
+  const r = await withdrawFromGroup({
+    env: c.env,
+    supa: serviceClient(c.env),
+    om,
+    subjectId: id,
+    userId,
+    amountMicros: pncToMicros(body.credits),
+  });
+  return c.json({ ok: true, withdrawn_pnc: pncMicrosToPnc(r.withdrawnMicros) });
 });
