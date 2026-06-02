@@ -70,11 +70,15 @@
 
 ## 3. 独立功能（不在 roadmap）
 
-### Bot 公开分享链接（slug / 二维码 / Universal Link）
-- **状态**：🟡 代码几乎全做完且已提交，但**核心路径被 RLS 堵死 + 从没验证**
-- **Task#**：#121-127（代码已落，task 仍挂 pending）、#128（验证门，未跑）
-- **🔴 已知阻塞**：iOS 靠**直接查 Supabase**按 slug 解析 bot，靠 `bots` 表 RLS 控可见性；但唯一的 `bots_visible_read` policy 对 `public_invite` bot 要求 `is_bot_invitee`（预先邀请）。**陌生人扫码/点链接 → SELECT 命中 0 行 → "找不到这个机器人"**。整个分享链路对"非预先邀请者"走不通，与功能初衷直接矛盾。
-- **下一步**：放宽 public_invite 可读（或加 service-role `GET /b/:slug` 解析端点）；跑 #128 验证；通后翻 #121-128 状态。
+### Bot 邀请链接（取代旧 slug 分享 — decisions.md D1）
+- **状态**：🟡 后端完成并验证；iOS UX 返工进行中（feat/invite-model 分支，未合 main）
+- **决策**：旧 slug-直查模型作废（陌生人被 RLS 堵死、ship 即坏）。改为 **invite-token 模型**：好友可签发、关联签发者、7 天有效、可撤销、redeem 记 invited_by。见 decisions.md D1。
+- **已落地并验证（2026-06-01）**：
+  - ✅ DB（#191，迁移已 push 到 live + schema regen + typecheck 绿）：`bot_invite_links` 表 + `user_bot_contacts.invited_by` + `bot_invite_link_{create,list,revoke,resolve,redeem}` RPC（RLS 不放宽，definer 代写授权行）+ `get_bot_friends` 带 invited_by。
+  - ✅ Edge（#192/#193，typecheck 绿）：`POST/GET /v1/bots/:id/invite-links`、`GET/POST/DELETE /v1/bot-invites/:token`、friends 返回 invited_by。
+  - ✅ iOS 基础（BotInviteAPI.swift）：API client 方法 + 类型。
+- **剩余（#194，未做）**：iOS UX 返工 —— scan/universal-link → resolve → redeem 的 AddBotSheet 改造（去掉手动 slug 加，改 token codec）、ManageBotSheet 分享区改成「签发/管理邀请链接」。**这是 UX 重设计，需 simulator 视觉验证（非仅编译）**。#121-127 旧 slug task 待 #194 完成后一起翻。
+- **关联**：D2 群加入码同构（#195，未做）。
 
 ---
 

@@ -14,7 +14,7 @@
 2. PendingCrew 是**独立可开源**的 Codex Desktop 类客户端，**双端**（Mac + iPad）而非仅 Mac
 3. PendingCrew 支持**未登录 BYOK 路径**，开源软件不能强制登录
 4. **Subject 系统**（user + group_account）是核心，群账号轻量化、可临时
-5. **Captain 机长**有三种来源（bot 发起自动当 / 用户已有 bot / 系统生成）
+5. **Captain 机长**有四种来源（bot 发起自动当 / 用户已有 bot / 系统生成 / captain 派生子 crew 继承，见 §6.3.1）
 6. **Crew DAG 责任比例**遵循"认父时定死、不允许相同、永远有拍板方"
 7. **Fly Machine 云端 crew** 是 v1.1 完整做，不是永久预留
 8. Runner v1 = Claude Code + Codex（**砍掉 Kilo**，砍掉 opencode）
@@ -220,6 +220,9 @@ PendingBot 定位 = **人与 AI 协作的平台**。任何协作平台都需要�
 | **Bot 在 PendingBot 群聊里主动发起 crew** | 发起的 bot 自动当 captain |
 | **PendingCrew 直接建 crew（登录态）** | 创建面板选：从用户的 bot 好友里选 / 系统生成新 bot |
 | **PendingCrew 直接建 crew（未登录态）** | 创建面板选：从已有 captain 选 / 系统生成新 bot |
+| **某 crew 的 captain 主动创建子 crew**（`spawned_by_captain`） | 子 crew 的 captain 默认 = 父 crew 的 captain（父 captain 直接担任子 captain；走 `create_child_crew_inheriting_responsibility_*` RPC，迁移 `20260527090000`） |
+
+> 注：第 4 种来源 `spawned_by_captain` 是 DAG 责任继承链路的实装结果（2026-06-01 对照代码补入，见 `docs/decisions.md` D4）。原 spec 只列了前三种。
 
 #### 6.3.2 Captain 模型与计费
 

@@ -9,13 +9,23 @@ settings:
   base:
     SWIFT_VERSION: "5.0"
     # 签名策略:
-    # - iOS 真机(iphoneos):Automatic + dev team(用于装机 / TestFlight)
-    # - iOS Simulator + macOS:scaffold 阶段不签名(Mac 端目前只占位,不上 prod)
+    # - iOS 真机(iphoneos) + iOS Simulator:Automatic + dev team。
+    #   Simulator 也必须签名 —— 否则 ad-hoc 构建拿不到 keychain-access-groups
+    #   (该 entitlement 需要 team 前缀),Keychain 全挂 -34018,supabase 会话
+    #   存不住,登录态写操作静默降级成 anon → onboarding 报 "permission denied
+    #   for table users"。这个坑被反复误诊过多次,务必保持 Simulator 签名开启。
+    # - macOS:目前只占位,不上 prod,继续不签名。
     CODE_SIGN_STYLE: Automatic
     DEVELOPMENT_TEAM: M42BKJN82S
-    "CODE_SIGNING_REQUIRED[sdk=iphonesimulator*]": "NO"
-    "CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]": "NO"
-    "CODE_SIGN_IDENTITY[sdk=iphonesimulator*]": ""
+    # Simulator 也用 dev team 签名(继承上面的 Automatic + M42BKJN82S,和真机
+    # 一致)。必须显式给 iphonesimulator 指定 Apple Development 身份,否则 Xcode
+    # 默认 "Sign to Run Locally"(ad-hoc),ad-hoc 不带 team 前缀 →
+    # keychain-access-groups entitlement 失效 → Keychain 全挂 -34018 →
+    # supabase 会话存不住 → 登录态写静默降级成 anon → onboarding 报
+    # "permission denied for table users"。这个坑被反复误诊多次,务必保持开启。
+    # 用 Xcode GUI / 已登录 Apple ID 的环境构建即可正常签名;headless 无证书的
+    # 构建会回落 ad-hoc(仅编译校验用,不影响)。
+    "CODE_SIGN_IDENTITY[sdk=iphonesimulator*]": "Apple Development"
     "CODE_SIGNING_REQUIRED[sdk=macosx*]": "NO"
     "CODE_SIGNING_ALLOWED[sdk=macosx*]": "NO"
     "CODE_SIGN_IDENTITY[sdk=macosx*]": ""

@@ -16,13 +16,15 @@
   - **好友列表对所有好友透明**:任何好友能看到该 bot 还有哪些好友、以及**每个好友是谁拉进来的**。
 - **背景**: #121-128 原实现是 slug-as-public-identity(陌生人按 slug 直查),与邀请制 RLS 正面冲突、ship 即坏(见 tech-debt 🔴 bot 分享 RLS)。本决策把它返工成 invite-token 模型。
 - **落地方向**: 新表 `bot_invite_links(token, bot_id, inviter_user_id, expires_at, revoked_at)`;service-role 预览/兑换端点(RLS 不放宽);客户端外壳复用、内核换 token。slug 保留当展示 @名。
-- **现状核实**: ❌ 未实现(待返工)。#121-127 代码是旧 slug 模型,保持 pending。
+- **现状核实**: ✅ **已实现 + 端到端验证(2026-06-01)**。DB(#191)+ Edge(#192/#193,已部署 prod worker)+ iOS 全返工(#194,签名构建装模拟器实测)。收件人路径真机验证链:universal link `/b/<token>` → 加机器人页 → resolve 预览(真 bot +「由 X 邀请你加入」)→ 添加 → redeem → 进聊天;DB 确认 `user_bot_contacts.added_via='invite_link'` + `invited_by` 留痕。无效 token 显示「邀请链接无效」。**残留(低风险,未单独视觉验)**:发件签发页(BotSharePage,创建者可进公开 bot 管理→分享验);CreateBotSheet slug 栏旧文案(#123)。
 
 ## D2 · 群加入码 = 每人一码、各自关联到本人(邀请者)
 - **日期**: 2026-06-01
 - **决策**: 群加入码也走"关联邀请者"模型,但形态是**每个群成员看到的是关联到自己的那份码**——使用时当"群的码"用(扫了就进这个群),但每个人的码不同,从而留痕"谁是被谁拉进来的"。
 - **背景**: 现状群 handle 是单一共享码,任何人拿到就能请求加入,不记是谁分享的,与 D1 的 bot 邀请哲学不一致。统一成同一套"邀请关联到人"。
-- **现状核实**: 🔍 当前群加入流程(`group_join_request_create`,edge userClient)需核实,再定 delta。
+- **现状核实**（2026-06-01）:
+  - **后端 ✅ 已落地**（迁移 `20260601082502`,push live + edge typecheck 绿）：`group_invite_links` per-inviter token 表 + `conversation_participants.invited_by` / `group_join_requests.invited_by` + RPC create/list/revoke/resolve/redeem;`group_join_request_decide` 批准时把 invited_by 落到成员行。Edge `/v1/groups/:id/invite-links` + `/v1/group-invites/:token`。RLS 不放宽。
+  - **iOS 🟡 核心已编译验证**(2026-06-01,`4e5a58a7`,BUILD SUCCEEDED)：GroupInviteAPI client + `GroupShareLink`(/g/ token codec)+ GroupJoinView 改 token resolve/redeem(扫码 → 预览群信息 +「由 X 邀请」→ 加入,记 invited_by)+ GroupQRCard 改签发 per-inviter 群邀请链接 + QR(任何成员可签发)。**残留**:① /g/ universal-link 的 MessageTabView/TabRoot presenter 接线(扫码路径已通,深链点击未接);② simulator 视觉验证(结构同已端到端验证的 D1,低风险);③ 旧 `group_join_handles` 共享码 iOS 已不用作主分享,可后续清。
 
 ## D3 · 头像 / 昵称可见性 = 只走两条受限路径,不全局公开
 - **日期**: 2026-06-01
@@ -31,13 +33,26 @@
   2. **群聊里** —— 能看到非好友群成员的头像+昵称(走群成员路径)。
   - 除这两处外没有需要公开的地方,**就不公开**。
 - **背景**: 现状 `attachments` RLS 让头像行(含 `r2_key`、文件名)对所有登录用户可读,和 Worker 下载口径不一致、可能泄露 r2_key。决策明确"头像不是全局公开资源",据此收紧 RLS 到这两条路径 + 闭合 metadata 泄露。
-- **现状核实**: 🔍 attachments 头像 RLS 当前过宽,待按此收紧(tech-debt 曾标"已修",agent 说洞还在,需我亲验)。
+- **现状核实**（2026-06-01 亲验 + 部分落地）:
+  - **Part 1（关 metadata 泄露）— ✅ 已落地**：迁移 `20260601080625` 删掉 `attachments_self_read` 的全局头像分支(原对任意 authenticated 暴露 r2_key,无合法消费者)。已 push live。
+  - **Part 2（给两条场景服务头像字节）— ✅ 已落地**（2026-06-01,`53de193f`）：用户拍板"加好友和群成员都要能看头像"。设计选定 **id-as-capability**:`/v1/uploads/:id`(`apps/edge/src/routes/upload.ts`)加头像例外 —— 任意登录用户凭(不可枚举、只能从合法处拿到的)头像 attachment id 可取**头像图片字节**。同时覆盖加好友(lookup 给的 id)和群成员(成员列表给的 id)两场景。**只服务图片字节**;metadata(r2_key 等)仍由 part1 RLS 挡住;聊天附件仍消息引用 gated。这是标准头像模型。
+    - 小遗留:`users.avatar_path` 上的查找未建索引(头像有 1yr immutable 缓存,每客户端每头像查一次,pre-launch 量级可接受);未来量大可加索引。
 
 ## D4 · Crew captain 来源 = 4 种(spec 补齐)
 - **日期**: 2026-06-01
 - **决策**: spec §6.3.1 从 3 种改为 **4 种**,补上代码已实装的 `spawned_by_captain`(父 crew 的 captain 主动创建子 crew → 子 crew captain 默认 = 父 captain)。
 - **背景**: spec 写 3 种,迁移 `20260527090000` + `create_child_crew_inheriting_responsibility_*` RPC 已实装第 4 种,spec 没同步(tech-debt 🟡 已记)。决策是对齐到代码(4 种),不是删代码。
-- **现状核实**: ✅ 代码已是 4 种;待改 spec 文档 §6.3.1。
+- **现状核实**: ✅ 代码已是 4 种;spec §6.3.1 已补(2026-06-01,feat/invite-model)。**已落地。**
+
+## D5 · PendingBot 三端 UI = 共享视觉组件层 + 大屏多列壳,iPhone 视觉不变
+- **日期**: 2026-06-01
+- **决策**: 三端 UI"较为统一"且**不改动 iPhone 现有视觉设计**。做法分三层:
+  1. **视觉设计语言**(Theme 配色 / 气泡样式 / 字体 / 头像 / 图标 / 间距 / 交互手感)—— 三端**完全统一、原封保留**。抽成一套**三端共享的 SwiftUI 组件层**,让 iPhone 自己也用这套(所以"统一"=字面意义上同一套代码)。
+  2. **布局骨架** —— 按平台适配,**不算改设计**:iPhone 保持底部 `TabView` 单列;**iPad/Mac 用 `NavigationSplitView` 多列**(会话列表 + 聊天流并排)。用户已拍板大屏走多列、复用同一套视觉。
+  3. **个别 UIKit-only 控件**(键盘附件栏 `ChatComposerAccessory` / 相机相册 `UIImagePickerController`)—— Mac 上无对应,必须 AppKit 重写,**视觉尽量贴近但底层不同**(这是唯一会有差异的地方)。
+- **关键纪律(让"不改 iPhone 设计"真的成立)**: 把现有 iOS 视觉视图重构成"共享 SwiftUI core + 薄 iOS 桥"时,是**结构重构、不是视觉改动**;每次重构后**必须在 iOS 真机/模拟器视觉回归确认无变化**,否则共享化容易顺手改了 iPhone 的样子。
+- **背景**: 用户希望三端 UI 较统一且不动现有设计。Crew Tab v2 已验证此路子(SwiftUI-only 三端共享)。工作量见 tech-debt / 本轮 Mac 估算(~70–108 人日,砍 Mac 语音可压到 ~70)。
+- **现状核实**: ❌ 未实施(规划)。Mac 三栏壳在、"我"+"好友"tab 已接;iPad 现状是 iOS UI 加大(只 Crew tab 三端共享)。落地路径:P1 抽 Foundation/共享组件 → P2 Components 跨平台 → P3 Message(最重)→ P4 其他 tab。
 
 ---
 

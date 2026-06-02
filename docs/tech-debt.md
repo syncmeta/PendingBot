@@ -331,13 +331,25 @@
 - **建议**: 等 PendingCrew app 真正签名(脱离 scaffold 阶段)后,把测试 bundle 改成普通 host-app injection 模式,补 backend 行为快照测试;或者把 PendingCrewBackend + 两个实现拆到 `Packages/PendingCrewBackend/` SwiftPM module,带自己的测试 target。
 - **状态**: 待办
 
-### 🟢 ~~模拟器 Keychain -34018 登录失败~~ → 其实是后端 signup bug 的误诊(已纠正)
+### ✅ 模拟器 signup 失败("permission denied for table users") = 模拟器没签名 → Keychain -34018(三轮误诊后定案)
+> 标题历经多轮:~~Keychain entitlements~~ → ~~后端 signup bug~~ → ~~supabase-swift anon~~ → **真因:模拟器关签名导致 Keychain -34018**(详见下方"二次纠正"+ 343 条 🔴 的"⭐ 上游真因")。已在 `project.yml` 根治。
 - **发现**: 2026-05-29 · v1 QA;2026-05-29 复盘纠正
 - **位置**: 误指 `apps/pendingbot/project.yml` / `Resources/PendingBot.entitlements`;实因 `bootstrap_user_id` 等 signup RPC
 - **纠正后的真相**: 之前把模拟器邮箱登录失败归因为"sim 不签名 → `keychain-access-groups` 不生效 → `-34018` → session 存不进 Keychain"。**这是误诊**。三条证据推翻它:① `keychain-access-groups` 自 T0.1 脚手架(`4b305f1a`)起就在 entitlements 里,不是新增,无法解释"突然不行";② 关键 tell —— 故障期 **Google 登录正常、只有邮箱登录失败**;若真是 Keychain 问题,两条登录都要存 session 到 Keychain,会**一起挂**,Google 能成功恰恰证明 **sim 的 Keychain 工作正常**;③ 邮箱 OTP 走 `shouldCreateUser=true` 的建号路径,正好踩中当时坏掉的后端 RPC(`bootstrap_user_id` 的 `bot_id` 歧义、`uuidv7` 对 authenticated 无执行权、`is_bot_invitee` 残留),"permission denied for table users / auth session missing" 是后端 bootstrap 失败后拒绝 PATCH,不是 client 存不住 session。
 - **影响**: 误诊本身耗了不少时间,也差点逼出"sim 用内存版 AuthLocalStorage"这种没必要的 workaround。模拟器**可以正常登录和测试**(签不签名都行;CLI ad-hoc 签名 entitlements 是空的,但 sim 的 Keychain 默认 access group 不依赖它)。
 - **建议**: 模拟器是可信的 auth 测试环境,无需真机兜底。后端 signup bug 已修并部署(见对应迁移)。CLI 不签名构建只用于编译校验;运行时测试直接装 unsigned 或 Xcode GUI 构建都可登录。
 - **状态**: 已解决/纠正(2026-05-29 · 根因是后端 signup bug,已修+部署;Keychain 结论作废,留作"别再被表象误导"的记录)
+- **二次纠正(2026-06-01)**: 上面"`permission denied for table users` 是后端 bootstrap 失败后拒绝 PATCH"这句**也是误诊**。2026-06-01 同样的报错在选名字步骤复现,这次连 live 钉死了根因——**和后端无关**:① live introspection 实测 `has_table_privilege('authenticated','pendingbot.users','UPDATE')=true`、`users_self_update` RLS 在、唯一会 fire 的 `users_ensure_subject_trg` 是 `SECURITY DEFINER` owned by postgres;② `supabase db query` 直接复现出**一模一样**的 `42501: permission denied for table users`——但只在 `SET ROLE anon` 时;`SET ROLE authenticated + jwt.sub` 时 UPDATE 成功;③ live 上新用户行+subject 都正常建了(bootstrap 健康)。真正根因见下一条 🔴。**教训**:"permission denied for table X" 是**表级 grant**被拒(执行角色没权限),不是 RLS(那会说 "new row violates row-level security policy"),也几乎从不是 bootstrap;遇到先用 `has_table_privilege` + `SET ROLE` 复现钉死执行角色,别再往后端 RPC 上猜。
+
+### 🔴 supabase-swift 写操作在拿不到 token 时**静默降级成 anon**(吞掉鉴权失败)
+- **发现**: 2026-06-01 · 新用户选名字保存报 "permission denied for table users"
+- **位置**: **全仓所有 `SupabaseStack.shared.from(...).insert/update/delete` 直写都受影响**;机理在 supabase-swift 2.46.0 `SupabaseClient.adapt(request:)`;最先暴露点是 `apps/pendingbot/Sources/Features/Onboarding/ProfileBootstrapView.swift:save()`
+- **问题**: PostgREST 客户端初始化时把 `Authorization: Bearer <anonKey>` 设进默认 header;每个请求经 `adapt(request:)` 用 `let token = try? await _getAccessToken()` 取用户 JWT,**`try?` 会把 `auth.session` 的抛错吞成 nil**,nil 时**不覆盖** Authorization → 沿用 anon key 发出。于是当会话取不到 token(过期+刷新在途/刷新失败/瞬时不可用)时,这条写**静默以 `anon` 身份执行**;`anon` 对 `pendingbot.users` 只有 SELECT 没有 UPDATE → `42501 permission denied for table users`。onboarding 的 `users` PATCH 只是最先暴露的点(全新用户第一笔写、且直写 `users` 表),但**任何**直写都可能在 token 抖动时悄悄变 anon 然后被 RLS/grant 挡掉或(更糟)被 anon 的策略静默放行/拒绝,排错时极易误判成"后端/DB 问题"。
+- **影响**: 真机上 token 抖动(过期+刷新失败)时,任意客户端直写会静默以 anon 发出 → 被 RLS/grant 挡掉并报误导性的"DB 权限"错。叠加既有的"客户端绕过 edge 直写 `users` 表"这一架构异味(本次 bug 报告里用户自己也点了"不走 edge / 不走 RPC")。注:本轮 onboarding 故障的**实际触发**是签名导致会话存不住(见上一条),不是真机 token 抖动;此条记录的是**独立存在的潜在隐患**。
+- **建议(分层)**: ① 单点 mitigation(`save()` 写前 `try await auth.session` + fail-loud)**已评估并 revert** —— 真根因是模拟器签名,单点改动只治 onboarding 一个写、价值有限,为保持本分支聚焦签名根治,不保留。② 系统性(推荐):给所有"需要登录的写"包一层统一 helper(写前确保 token、拿不到就抛而不是降级),或把直写收敛到 edge 端点(显式 Bearer + service-role 落库,彻底消除 anon-fallback,顺带去掉直写 `users` 的异味)。③ 可选:给 `SupabaseStack` 配 `auth.accessToken` 自定义闭包改成"拿不到就 throw",从源头堵掉静默降级。
+- **状态**: **未修**(代码层无改动;单点 mitigation 已 revert)。本轮 onboarding 故障由签名根因解决(见上一条 ✅)。本条作为独立潜在隐患记录,系统性收敛(helper / 收敛到 edge)待排期。
+- **⭐ 上游真因(2026-06-01 当天继续挖出,这才是病根)**: "token 拿不到"在**模拟器上不是偶发抖动,是必现**——因为 `auth.session` 取不到 token 的根本原因是 **Keychain -34018**:模拟器装机后保存会话写 Keychain 直接失败,会话根本存不住。而 Keychain -34018 的根因是 **`project.yml` 之前对模拟器关了签名**(`CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]=NO`)→ ad-hoc 构建 → 没有 `keychain-access-groups`(该 entitlement 需要 team 前缀,ad-hoc 没有)→ app 没有任何 keychain access group → 所有 Keychain 操作 -34018。**模拟器实测**:`supabase db query` 复现出一模一样的 `42501`(只在 anon 角色);模拟器日志确证 `failed to persist DB passphrase to Keychain: -34018` + `aps-environment` 缺失,都是没签名的征兆。**生产/TestFlight 不受影响**(真机用真 profile 签名,有 team 前缀,Keychain 正常,会话存得住)——live 里 `bootstrapped=1` 的真实用户就是证据。这个病根被**反复误诊过多轮**(Keychain entitlements → 后端 bootstrap → supabase-swift anon),每轮都治了表象。
+- **根治**: `project.yml` 改成模拟器也用 dev team 签名(`fix/signup-bootstrap-patch` 已提交)。**注意**:headless / 无登录 Apple ID 的 CLI 构建仍会回落 ad-hoc(xcodebuild 自动签名需要交互式证书访问),所以**模拟器跑 onboarding happy-path 必须用 Xcode GUI(已登录 Apple ID)构建**,纯命令行装的包验证不了登录态写。`supabase-swift 静默降级 anon`(下一条 🔴)本身仍是真实隐患(真机若遇 token 抖动同样会静默 anon),代码层未做改动、系统性收敛待排期。
 
 ### 🟢 iOS 工程缺少测试 target，语音诊断只能靠构建兜底
 - **发现**: 2026-05-23 · codex/fix-group-voice-diagnostics

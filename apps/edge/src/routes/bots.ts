@@ -257,6 +257,7 @@ botRoutes.get('/:id/friends', async (c) => {
     display_name: string;
     avatar_path: string | null;
     added_at: string;
+    invited_by: string | null;
   }>;
   return c.json({
     friends: rows.map((r) => ({
@@ -264,6 +265,56 @@ botRoutes.get('/:id/friends', async (c) => {
       display_name: r.display_name,
       avatar_path: r.avatar_path,
       added_at: r.added_at,
+      // D1 transparency: who pulled this friend in (null for pre-invite-link
+      // contacts / creator-seeded). iOS resolves the id to a name from the
+      // same friend list.
+      invited_by: r.invited_by,
+    })),
+  });
+});
+
+// POST /v1/bots/:id/invite-links — mint a reusable invite link (decisions.md
+// D1). Any friend of the bot (or the creator) may mint; the link is scoped to
+// the caller (recorded as invited_by on redeem) and expires in 7 days. The
+// friend/creator gate + token minting live in the SECURITY DEFINER RPC, so
+// auth.uid() must resolve — call via userClient. iOS builds the share URL from
+// the returned token (BotShareLink owns the host/path).
+botRoutes.post('/:id/invite-links', async (c) => {
+  const id = c.req.param('id');
+  if (!UUID_RE.test(id)) return jsonError(c, 400, 'invalid_id');
+  const supa = userClient(c.env, c.var.userJwt!);
+  const { data, error } = await supa.rpc('bot_invite_link_create', { p_bot_id: id });
+  if (error) {
+    if (/好友/.test(error.message)) {
+      return jsonError(c, 403, 'forbidden', { detail: error.message });
+    }
+    return jsonError(c, 500, 'database_error', { detail: error.message });
+  }
+  const row = (data ?? [])[0] as { token: string; expires_at: string } | undefined;
+  if (!row) return jsonError(c, 500, 'database_error', { message: '链接生成失败' });
+  return c.json({ token: row.token, expiresAt: row.expires_at });
+});
+
+// GET /v1/bots/:id/invite-links — the caller's own active links (management
+// UI: list + expiry + revoke).
+botRoutes.get('/:id/invite-links', async (c) => {
+  const id = c.req.param('id');
+  if (!UUID_RE.test(id)) return jsonError(c, 400, 'invalid_id');
+  const supa = userClient(c.env, c.var.userJwt!);
+  const { data, error } = await supa.rpc('bot_invite_links_list', { p_bot_id: id });
+  if (error) return jsonError(c, 500, 'database_error', { detail: error.message });
+  const rows = (data ?? []) as Array<{
+    token: string;
+    created_at: string;
+    expires_at: string;
+    revoked_at: string | null;
+  }>;
+  return c.json({
+    links: rows.map((r) => ({
+      token: r.token,
+      createdAt: r.created_at,
+      expiresAt: r.expires_at,
+      revokedAt: r.revoked_at,
     })),
   });
 });

@@ -486,14 +486,14 @@ struct ManageBotSheet: View {
                     }
                 }
 
-                // Share affordance — only for already-public bots with a
-                // persisted slug. (A promotion-in-progress shows the slug
-                // editor above but not this, until the row is saved.)
-                if (initial.visibility ?? "private") != "private" && !initialSlug.isEmpty {
+                // Share affordance — invite-only bots (public_invite). Mints
+                // a reusable invite link/QR on the share page (decisions.md
+                // D1). Private bots are owner-only, so no sharing.
+                if (initial.visibility ?? "private") != "private" {
                     Section {
                         NavigationLink {
                             BotSharePage(
-                                slug: initialSlug,
+                                botId: initial.id,
                                 botName: displayName.trimmingCharacters(in: .whitespaces).isEmpty
                                     ? initial.display_name : displayName)
                         } label: {
@@ -501,10 +501,8 @@ struct ManageBotSheet: View {
                                 .foregroundStyle(Theme.Palette.ink)
                         }
                     } footer: {
-                        if BotSlugRule.normalize(slug) != initialSlug {
-                            Text("标识改了记得先保存,分享的链接 / 二维码才会用新的。")
-                                .font(Theme.Fonts.caption)
-                        }
+                        Text("生成邀请链接或二维码,发给别人加这个机器人。")
+                            .font(Theme.Fonts.caption)
                     }
                 }
 
@@ -2180,51 +2178,59 @@ private struct DomainListEditor: View {
 /// all keyed on the same `bots.slug`. Presentational only: the slug is
 /// the persisted one, so edits in ManageBotSheet must be saved first
 /// before they show up here (the caller passes the saved value).
+/// Invite-link share page (decisions.md D1). Bots are invite-only: this
+/// mints (or reuses) a reusable, revocable invite *link* for the bot via
+/// POST /v1/bots/:id/invite-links and shows its QR + URL. The link is
+/// scoped to the caller (recorded as invited_by on redeem). Not slug-based.
 struct BotSharePage: View {
-    let slug: String
+    let botId: String
     let botName: String
 
+    @Environment(\.api) private var api
+    @State private var state: LinkState = .loading
     @State private var copied = false
 
-    private var shareURLString: String { BotShareLink.url(forSlug: slug) }
-    private var shareURL: URL? { URL(string: shareURLString) }
-    /// Display form drops the scheme — `bot.pendingname.com/b/<slug>`.
-    private var displayURL: String {
-        shareURLString.replacingOccurrences(of: "https://", with: "")
+    enum LinkState: Equatable {
+        case loading
+        case loaded(token: String)
+        case failed(String)
     }
+
+    private func shareURLString(_ token: String) -> String { BotShareLink.url(forToken: token) }
 
     var body: some View {
         ScrollView {
             VStack(spacing: 24) {
-                BotQRCard(slug: slug, botName: botName)
+                switch state {
+                case .loading:
+                    ProgressView("正在生成邀请链接…").padding(.top, 48)
+                case .failed(let msg):
+                    VStack(spacing: 12) {
+                        Text(msg)
+                            .foregroundStyle(.red).font(Theme.Fonts.footnote)
+                            .multilineTextAlignment(.center).padding(.horizontal)
+                        Button("重试") { Task { await load(forceNew: false) } }
+                    }
+                    .padding(.top, 48)
+                case .loaded(let token):
+                    BotQRCard(shareURL: shareURLString(token), botName: botName)
 
-                VStack(spacing: 12) {
-                    Text(displayURL)
-                        .font(Theme.Fonts.monospaced(size: 13))
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .padding(.horizontal)
+                    VStack(spacing: 12) {
+                        Text(shareURLString(token).replacingOccurrences(of: "https://", with: ""))
+                            .font(Theme.Fonts.monospaced(size: 13))
+                            .foregroundStyle(Theme.Palette.inkMuted)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .padding(.horizontal)
 
-                    HStack(spacing: 12) {
-                        Button {
-                            UIPasteboard.general.string = shareURLString
-                            copied = true
-                            Haptics.tap()
-                        } label: {
-                            Label(copied ? "已复制" : "复制链接",
-                                  systemImage: copied ? "checkmark" : "doc.on.doc")
-                                .font(Theme.Fonts.system(size: 14, weight: .semibold))
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 10)
-                                .background(Capsule().fill(Theme.Palette.accentBg))
-                                .foregroundStyle(Theme.Palette.accent)
-                        }
-                        .buttonStyle(.plain)
-
-                        if let shareURL {
-                            ShareLink(item: shareURL) {
-                                Label("分享", systemImage: "square.and.arrow.up")
+                        HStack(spacing: 12) {
+                            Button {
+                                UIPasteboard.general.string = shareURLString(token)
+                                copied = true
+                                Haptics.tap()
+                            } label: {
+                                Label(copied ? "已复制" : "复制链接",
+                                      systemImage: copied ? "checkmark" : "doc.on.doc")
                                     .font(Theme.Fonts.system(size: 14, weight: .semibold))
                                     .padding(.horizontal, 16)
                                     .padding(.vertical, 10)
@@ -2232,33 +2238,67 @@ struct BotSharePage: View {
                                     .foregroundStyle(Theme.Palette.accent)
                             }
                             .buttonStyle(.plain)
-                        }
-                    }
-                }
 
-                Text("把这个链接、二维码,或者标识 @\(slug) 发给别人。对方点开链接、扫码,或在「加机器人」里输入这个标识,就能加这个机器人。")
-                    .font(Theme.Fonts.footnote)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
+                            if let url = URL(string: shareURLString(token)) {
+                                ShareLink(item: url) {
+                                    Label("分享", systemImage: "square.and.arrow.up")
+                                        .font(Theme.Fonts.system(size: 14, weight: .semibold))
+                                        .padding(.horizontal, 16)
+                                        .padding(.vertical, 10)
+                                        .background(Capsule().fill(Theme.Palette.accentBg))
+                                        .foregroundStyle(Theme.Palette.accent)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+
+                        Button("重新生成链接") { Task { await load(forceNew: true) } }
+                            .font(Theme.Fonts.footnote)
+                            .foregroundStyle(Theme.Palette.accent)
+                            .padding(.top, 4)
+                    }
+
+                    Text("把链接或二维码发给别人 —— 对方点开链接,或在「扫一扫」里扫码,就能加这个机器人。链接 7 天内有效。")
+                        .font(Theme.Fonts.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                }
             }
             .padding(.vertical, 8)
         }
         .background(Theme.Palette.canvas.ignoresSafeArea())
         .navigationTitle("分享机器人")
         .navigationBarTitleDisplayMode(.inline)
+        .task { if case .loading = state { await load(forceNew: false) } }
+    }
+
+    private func load(forceNew: Bool) async {
+        guard let api else { state = .failed("请先登录"); return }
+        state = .loading
+        copied = false
+        do {
+            if !forceNew,
+               let existing = try await api.listBotInviteLinks(botId: botId).first(where: { $0.isActive }) {
+                state = .loaded(token: existing.token)
+                return
+            }
+            let link = try await api.createBotInviteLink(botId: botId)
+            state = .loaded(token: link.token)
+        } catch {
+            state = .failed((error as? APIError)?.errorDescription ?? error.localizedDescription)
+        }
     }
 }
 
 // MARK: - Bot QR card
 
 /// Bot-side counterpart to GroupQRCard. Renders a deep-green QR of the
-/// bot-share link (`BotShareLink.url(forSlug:)`) with the brand mark in
-/// the centre, plus the bot name + handle below. No rotation/minting —
-/// the slug is the bot's stable public identity, so the QR is a pure
-/// function of the slug.
+/// bot invite link (`BotShareLink.url(forToken:)`) with the brand mark in
+/// the centre, plus the bot name below. The QR encodes a revocable invite
+/// token (decisions.md D1), not the bot slug.
 struct BotQRCard: View {
-    let slug: String
+    let shareURL: String
     let botName: String
 
     private let context = CIContext()
@@ -2267,12 +2307,12 @@ struct BotQRCard: View {
         VStack(spacing: 18) {
             qrPanel
             VStack(spacing: 6) {
-                Text(botName.isEmpty ? "@\(slug)" : botName)
+                Text(botName.isEmpty ? "机器人" : botName)
                     .font(Theme.Fonts.serif(size: 20, weight: .semibold))
                     .foregroundStyle(Theme.Palette.ink)
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
-                Text("@\(slug) · 扫码加我")
+                Text("扫码加我")
                     .font(Theme.Fonts.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -2286,7 +2326,7 @@ struct BotQRCard: View {
         let size: CGFloat = 240
         ZStack {
             background(size: size)
-            if let qr = qrImage(for: BotShareLink.url(forSlug: slug)) {
+            if let qr = qrImage(for: shareURL) {
                 Image(uiImage: qr)
                     .interpolation(.none)
                     .resizable()

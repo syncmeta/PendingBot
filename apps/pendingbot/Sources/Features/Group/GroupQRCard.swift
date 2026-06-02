@@ -23,14 +23,23 @@ import UIKit
 struct GroupQRCard: View {
     let conversationId: String
     let groupTitle: String
+    /// Kept for call-site compatibility. In the per-inviter model (D2) ANY
+    /// member can mint an invite link, so this no longer gates the UI.
     let isAdmin: Bool
 
-    @State private var currentValue: String?
-    @State private var loading = false
-    @State private var refreshing = false
-    @State private var error: String?
+    @State private var state: LinkState = .loading
+    @State private var copied = false
 
+    enum LinkState: Equatable {
+        case loading
+        case loaded(token: String)
+        case failed(String)
+    }
+
+    private let api = APIClient()
     private let context = CIContext()
+
+    private func shareURL(_ token: String) -> String { GroupShareLink.url(forToken: token) }
 
     var body: some View {
         VStack(spacing: 22) {
@@ -41,22 +50,46 @@ struct GroupQRCard: View {
                     .foregroundStyle(Theme.Palette.ink)
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
-                Text("扫这个码加群")
+                Text("扫这个码加群 · 7 天有效")
                     .font(Theme.Fonts.footnote)
                     .foregroundStyle(.secondary)
             }
-            if isAdmin {
-                refreshButton
+            if case .loaded(let token) = state {
+                HStack(spacing: 12) {
+                    Button {
+                        UIPasteboard.general.string = shareURL(token)
+                        copied = true
+                        Haptics.tap()
+                    } label: {
+                        chipLabel(copied ? "已复制" : "复制链接", systemImage: copied ? "checkmark" : "doc.on.doc")
+                    }
+                    .buttonStyle(.plain)
+                    Button {
+                        Task { await load(forceNew: true) }
+                    } label: {
+                        chipLabel("重新生成", systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.plain)
+                }
             }
-            if let error {
-                Text(error)
+            if case .failed(let msg) = state {
+                Text(msg)
                     .font(Theme.Fonts.footnote)
                     .foregroundStyle(.red)
             }
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 24)
-        .task { await ensureActive() }
+        .task { if case .loading = state { await load(forceNew: false) } }
+    }
+
+    private func chipLabel(_ text: String, systemImage: String) -> some View {
+        Label(text, systemImage: systemImage)
+            .font(Theme.Fonts.system(size: 14, weight: .semibold))
+            .foregroundStyle(Theme.Palette.accent)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(Capsule().fill(Theme.Palette.accentBg))
     }
 
     // MARK: - QR panel
@@ -66,33 +99,36 @@ struct GroupQRCard: View {
         let size: CGFloat = 240
         ZStack {
             background(size: size)
-            if loading {
+            switch state {
+            case .loading:
                 ProgressView().controlSize(.large)
-            } else if let value = currentValue, !value.isEmpty,
-                      let qr = qrImage(for: PendingBotQR.url(forToken: value)) {
-                Image(uiImage: qr)
-                    .interpolation(.none)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: size - 32, height: size - 32)
-                    .padding(10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .fill(Color.white)
-                    )
-                Image("BrandMark")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 40, height: 40)
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .padding(6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Theme.Palette.canvas)
-                    )
-            } else {
-                Text("生成二维码失败")
-                    .foregroundStyle(.secondary)
+            case .loaded(let token):
+                if let qr = qrImage(for: shareURL(token)) {
+                    Image(uiImage: qr)
+                        .interpolation(.none)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: size - 32, height: size - 32)
+                        .padding(10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .fill(Color.white)
+                        )
+                    Image("BrandMark")
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 40, height: 40)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .padding(6)
+                        .background(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .fill(Theme.Palette.canvas)
+                        )
+                } else {
+                    Text("生成二维码失败").foregroundStyle(.secondary)
+                }
+            case .failed:
+                Text("生成失败").foregroundStyle(.secondary)
             }
         }
         .frame(width: size, height: size)
@@ -118,95 +154,24 @@ struct GroupQRCard: View {
         }
     }
 
-    // MARK: - Refresh
-
-    private var refreshButton: some View {
-        Button {
-            Task { await refresh() }
-        } label: {
-            HStack(spacing: 6) {
-                if refreshing {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Image(systemName: "arrow.clockwise")
-                }
-                Text("刷新（旧码作废）")
-            }
-            .font(Theme.Fonts.system(size: 14, weight: .semibold))
-            .foregroundStyle(Theme.Palette.accent)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 10)
-            .background(Capsule().fill(Theme.Palette.accentBg))
-        }
-        .buttonStyle(.plain)
-        .disabled(refreshing)
-    }
-
     // MARK: - Data
 
-    private func ensureActive() async {
-        loading = true; defer { loading = false }
-        struct Row: Decodable {
-            let handle_type: String
-            let value: String
-        }
+    /// Mint (or reuse the freshest active) per-inviter group invite link for
+    /// this group via /v1/groups/:id/invite-links. Any member may mint.
+    private func load(forceNew: Bool) async {
+        state = .loading
+        copied = false
         do {
-            let rows: [Row] = try await SupabaseStack.shared
-                .from("group_join_handles")
-                .select("handle_type, value")
-                .eq("conversation_id", value: conversationId)
-                .eq("handle_type", value: "qr")
-                .limit(1)
-                .execute()
-                .value
-            self.currentValue = rows.first?.value
+            if !forceNew,
+               let existing = try await api.listGroupInviteLinks(conversationId: conversationId).first(where: { $0.isActive }) {
+                state = .loaded(token: existing.token)
+                return
+            }
+            let link = try await api.createGroupInviteLink(conversationId: conversationId)
+            state = .loaded(token: link.token)
         } catch {
-            self.error = error.localizedDescription
+            state = .failed((error as? APIError)?.errorDescription ?? error.localizedDescription)
         }
-    }
-
-    private func refresh() async {
-        refreshing = true; defer { refreshing = false }
-        let fresh = randomHandleToken()
-        do {
-            try await postHandle(value: fresh)
-            self.currentValue = fresh
-            Haptics.tap()
-        } catch {
-            self.error = error.localizedDescription
-        }
-    }
-
-    private func postHandle(value: String) async throws {
-        struct Body: Encodable {
-            let handleType: String
-            let value: String
-        }
-        let url = HostedConfig.environment.workerURL
-            .appendingPathComponent("v1/groups/\(conversationId)/handle")
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let token = try await SupabaseStack.shared.auth.session.accessToken
-        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        req.httpBody = try JSONEncoder().encode(Body(handleType: "qr", value: value))
-        let (data, resp) = try await URLSession.shared.data(for: req)
-        guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
-            let msg = String(data: data, encoding: .utf8) ?? "HTTP error"
-            throw NSError(
-                domain: "GroupQR",
-                code: (resp as? HTTPURLResponse)?.statusCode ?? -1,
-                userInfo: [NSLocalizedDescriptionKey: msg],
-            )
-        }
-    }
-
-    /// 8 chars from the lowercase + digit alphabet (skip 0/o/1/l/i for
-    /// readability) — matches the server's [A-Za-z0-9_-]{4,20} guard
-    /// and the migration-0066 trigger that mints handles at creation.
-    private func randomHandleToken() -> String {
-        let alphabet = Array("abcdefghijkmnpqrstuvwxyz23456789")
-        return String((0..<8).map { _ in alphabet.randomElement()! })
     }
 
     // Mirrors MyQRBusinessCard.qrImage — kept in sync intentionally
