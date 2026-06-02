@@ -112,8 +112,10 @@ billing-v2 的自研结算引擎(settleUsage/packs/本地账本)**改为外包**
 | P2-F sandbox | ✅ | 代码+单测 | gate+按时长扣(占位单价) |
 | P2-G 充退/state_changed push | ✅ | 代码+单测 | Polar/RC webhook → wallet.credit / applyAbsolute(官方类型核实) |
 | **集成** | ✅ | **typecheck 0 + 509 测试全过** | 四并行分支已合 chore/billing-dashboard-specs |
-| **P2 群成本分摊 重挂(#208)** | ❌ | — | 🔴 share-index 被旁路,两套旧实现成孤儿;用户"只自研群分摊" → **需设计决策,已停下待拍板** |
-| billing-v2 退役 + me.ts 余额改源(#209) | ❌ | — | dead 代码仍在树;me.ts /wallet/v2 读 packs 会显示过期余额;被 #208 阻塞 |
+| **P2 群成本分摊 重挂(#208)** | ✅ | 代码+单测 | 用户拍板用 v2 共享池法。share-index.ts + 原子 RPC 迁移 + group-wallet.ts(contribute/refund/dissolve)+ router/群语音/sandbox 扣费后衰减 + 端点 /topup·/leave·/dissolve。计划 `plans/2026-06-02-group-wallet-polar-rehome.md` |
+| me.ts /wallet/v2 余额改读 WalletDO | ✅ | 代码 | 替 packs 求和(会显示过期值);明细读 pnc_ledger |
+| 群分摊 尾巴(#208 衍生) | 🟡 | — | 链式退款命中群注资(Task6)/ 群池漂移报警(Task8)/ `/leave` 不删 membership 行 —— 均记 tech-debt,上线前补 |
+| billing-v2 死代码退役(#209) | ❌ | — | settleUsage/packs/旧 cron/lemon+iap 路由/subject_wallets 群 topup 仍在树(无 live 调用),待一次性清理 |
 | throttle 降级 / low 提醒 / sandbox 真实单价 | ❌ | — | 已记 tech-debt 🟡(throttle 经 OpenRouter 官方文档核实不适用 passthrough) |
 
 **待用户**:Polar 加 `customer.state_changed` webhook 事件;开 Grafana/PostHog/Langfuse/Sentry 账号(dashboard #206);真实 product_id 填 billing-packs.ts;轮换 Polar token;**群分摊模型拍板(#208)**。
