@@ -356,15 +356,25 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         }
     }
 
-    /// Handle a runner-actionable frame from a cross-device viewer. **Minimal
-    /// for now**: commands are recorded + logged but not yet applied to the
-    /// local agent process (send_prompt → inject, cancel → cancel()). Wiring
-    /// the real effect is a T4.5 follow-up (logged in docs/tech-debt.md).
+    /// Handle a runner-actionable frame from a cross-device viewer.
+    ///
+    /// `cancel` is wired through to `cancel()` — a viewer can stop a runaway
+    /// session from any device, end-to-end. Other command kinds (notably
+    /// `send_prompt`) are recorded + logged but not yet applied: injecting a
+    /// follow-up prompt needs an interactive stdin channel the one-shot launch
+    /// spec doesn't have yet (T4.5 follow-up, logged in docs/tech-debt.md).
+    /// Permission decisions are likewise not yet routed to a paused action.
     private func handleRemoteInbound(_ frame: SessionProxyInbound) {
         switch frame {
         case let .command(commandId, kind, _, queued):
             lastRemoteCommand = queued ? "\(kind)（离线补发）" : kind
-            print("[crew-session] remote command \(commandId) kind=\(kind) queued=\(queued) — not applied yet")
+            switch kind {
+            case "cancel":
+                print("[crew-session] remote command \(commandId): cancel — cancelling local run")
+                Task { await cancel() }
+            default:
+                print("[crew-session] remote command \(commandId) kind=\(kind) queued=\(queued) — not applied yet")
+            }
         case let .permissionDecision(requestId, decision):
             print("[crew-session] remote permission decision \(requestId): \(decision) — not applied yet")
         case .subscribed, .error, .unknown:
