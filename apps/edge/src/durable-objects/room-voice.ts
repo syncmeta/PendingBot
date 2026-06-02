@@ -13,6 +13,7 @@ import {
 } from '../lib/voice-metering';
 import type { OwnerRef } from '../lib/billing-v2';
 import { wallet, walletSubjectKey } from '../billing/wallet-client';
+import { applyGroupSpendDecay } from '../billing/group-wallet';
 import { usdToPncMicros } from '../billing/pnc';
 import { roomMediaToken } from './room-voice-context';
 import type {
@@ -1161,6 +1162,10 @@ export class RoomVoiceDO {
           present_user_seconds: Object.fromEntries(userSeconds),
         },
       });
+      // 群池公平性:群语音媒体成本扣的是群 subject 钱包,扣后衰减 share_index。
+      if (owner.kind === 'subject') {
+        await applyGroupSpendDecay(supa, subjectId, usdToPncMicros(costUsd));
+      }
     } catch (err) {
       // Billing failures must never break call teardown.
       console.warn('[room-voice] realtimekit_media debit failed', err);

@@ -3,6 +3,7 @@ import type { Env } from '../types';
 import type { SupabaseClient } from './supabase';
 import { serviceClient } from './supabase';
 import { wallet } from '../billing/wallet-client';
+import { applyGroupSpendDecay } from '../billing/group-wallet';
 import { usdToPncMicros } from '../billing/pnc';
 
 // Thin wrapper over the Cloudflare Sandbox SDK. Each conversation gets its
@@ -215,6 +216,13 @@ export async function runPython(
             // Don't log the code itself — sensitive. Only the shape.
             code_chars: code.length,
           },
+        })
+        .then(() => {
+          // 群池公平性:群会话(subjectId 解析为责任 subject,≠ 发起人 userId)
+          // 的 sandbox 消费扣后衰减 share_index。个人钱包(subjectId===userId)不衰减。
+          if (subjectId && subjectId !== opts.meter?.userId) {
+            return applyGroupSpendDecay(serviceClient(env), subjectId, pncMicros);
+          }
         })
         .catch((err) => {
           console.warn('[sandbox] wallet debit failed', subjectId, dedupeId, err);

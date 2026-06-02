@@ -6,6 +6,7 @@ import type { Json } from '../db/schema';
 import { wallet } from '../billing/wallet-client';
 import { usdToPncMicros } from '../billing/pnc';
 import { resolveBillingSubjectId } from '../billing/usage-gate';
+import { applyGroupSpendDecay } from '../billing/group-wallet';
 import type { WebToolUsage } from '../lib/web-meter';
 import { uuidv7 } from '../lib/ids';
 import { fetchGatewayCost, GATEWAY_COST_PENDING } from '../lib/ai-gateway';
@@ -503,6 +504,9 @@ export async function persistAuditMessage(
   // already-persisted, user-visible turn.
   if (initialBilling === 'billed' && billingTarget) {
     const subjectId = billingTarget.subjectId;
+    // 群池(kind='subject')消费要在扣费后衰减 share_index(成员公平性)。
+    // 累计本回合实扣 micros,块末一次性 decay。见 group-wallet.applyGroupSpendDecay。
+    let groupSpentMicros = 0;
     // 1. Model spend. Voice turns (OpenAI Realtime, priced via
     //    computeVoiceCost) bill as voice_tokens; everything else llm_tokens.
     //    vendor cost, no markup.
@@ -522,6 +526,7 @@ export async function persistAuditMessage(
             conversation_id: opts.conversationId ?? null,
           },
         });
+        groupSpentMicros += llmMicros;
       } catch (err) {
         console.warn(
           '[wallet.debit llm_tokens]',
@@ -548,6 +553,7 @@ export async function persistAuditMessage(
             conversation_id: opts.conversationId ?? null,
           },
         });
+        groupSpentMicros += micros;
       } catch (err) {
         console.warn(
           '[wallet.debit web_tools]',
@@ -556,6 +562,10 @@ export async function persistAuditMessage(
           err instanceof Error ? err.message : String(err),
         );
       }
+    }
+    // 3. 群池公平性:本回合群消费后按比例衰减 share_index(个人钱包不衰减)。
+    if (billingTarget.kind === 'subject' && groupSpentMicros > 0) {
+      await applyGroupSpendDecay(supa, subjectId, groupSpentMicros);
     }
   }
 }
