@@ -1,5 +1,7 @@
 # Dashboard stack — self-hosted setup runbook
 
+> ⚠️ **降级为可选 fallback(2026-06-02)**:主方案已改为**零 VPS**——BI 用 Grafana Cloud Free 直连 Supabase、控制台用 Refine 部署 CF Pages(见 `docs/superpowers/specs/2026-06-01-dashboard-stack-design.md`)。本 runbook(自托管 Metabase+Appsmith on VPS)**仅在将来确实需要点选式自助 BI 且愿意养 VPS 时**才用。`metabase_ro` 只读角色已建,现给 Grafana 用。
+
 Stand up the **self-hosted** half of the PendingBot dashboard stack on a single
 VPS: **Metabase** (read-only BI on Supabase) + **Appsmith** (admin/moderation
 console, writes via edge). The SaaS half (PostHog / Langfuse / Sentry) is
