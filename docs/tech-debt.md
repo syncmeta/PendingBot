@@ -71,7 +71,7 @@
 - **问题**: billing v2 给 sandbox 加上了 `sandbox_runtime` usage_event 行（记录 elapsed seconds + conversation/owner），但 Cloudflare Sandbox 的 per-second container 价格目前没在 worker 里维护，所以 `vendor_cost_usd` 暂时硬写 0、`cost_source='manual'`。usage_event 行存在、ledger 不扣钱。
 - **影响**: pre-launch 没有真实滥用流量，先记录形态再补价格是合理的折中；但发布前必须有真实价目，否则用户跑无限循环代码不计费。同样的 hole 也存在于 storage_transfer / push_delivery，这两类目前完全没接入。
 - **建议**: (1) 把 Cloudflare Sandbox 的 container 价格表（memory-seconds + disk + network egress）建成 `sandbox_prices` 表，跟 `web_tool_prices` 同一个模式；(2) `runPython` 里改用真实价目算 `vendor_cost_usd`；(3) 顺手把 R2 上传/下载/转码、APNs 短信/邮件按同样的 usage_event + pricebook 模式补齐。
-- **状态**: 待办
+- **状态**: 部分迁移（2026-06-02 · billing P2 Phase F）。`runPython` 已从旧 billing-v2 `settleUsage(vendor_cost_usd=0)` 改为接 WalletDO（`wallet.gate` 前置门禁 + `wallet.debit('sandbox_runtime')` 后置扣费），不再写 0。但**价格仍是占位**（见下方新条目「sandbox 真实单价 + 计量维度待定」），核心 hole（无真实价目）未关。
 
 ### 🔴 Edge 用户态路由里 service-role 鉴权边界过于分散
 - **发现**: 2026-05-25 · codex/security-architecture-audit
@@ -177,6 +177,14 @@
 - **问题**: billing v2 design §5 把 `sandbox_runtime`（container/runtime 秒数、磁盘、网络）列为应纳入 PNC 账本的成本分类，但 v1 从来没有给 sandbox 计过费，code-exec 工具调用 Cloudflare Sandbox SDK 时不产生任何 usage_event / audit cost。因此 billing v2 dual-write（#183）也无从镜像——没有可镜像的 v1 成本。当前 `dualWriteV2` 只接了 model 成本（llm/voice）和 web_tools。
 - **影响**: 沙盒是可被滥用的变量成本（长时间运行的 container、磁盘、egress），目前完全免费。用户可以无限跑 execute_code 不掉余额。pre-launch、单人、沙盒 auto-sleep 的现状下风险有限，但发布前必须补上，否则是一个开口的成本漏洞。
 - **建议**: 在 sandbox 生命周期（启动→运行→sleep）打点 container-seconds，按 Cloudflare Sandbox 计价转 `vendor_cost_usd`，走 `settleUsage({category:'sandbox_runtime', quantityUnit:'seconds'})`。design doc §7 要求 sandbox 走周期 settle + 余额 ≤ 0 立即终止容器——这部分要和 sandbox.ts 的 sleepAfter 生命周期一起做。
+- **状态**: ✅ 基本闭合（2026-06-02 · billing P2 Phase F）。`runPython` 现在：执行前 `wallet.gate`（`exhausted` 抛 `SandboxGateError`，code-exec 工具转「余额用完」文案，不跑代码）；执行后按 wall-clock 秒数扣 `wallet.debit(category:'sandbox_runtime')`，dedupeId=`sandbox:<conv>:<startedAt>` 幂等。subjectId 复用 router 解析（群/临时群/crew→`responsible_subject_id`，否则发起 userId）。**仍未做**：周期 settle + 余额≤0 中途终止容器（当前最小可用=执行完一次性扣，30s 超时已封顶单次成本，长任务跨多次调用各扣各的，可接受）；真实单价见下条。
+
+### 🟡 sandbox 真实单价 + 计量维度待定（当前 wall-clock × 占位价）
+- **发现**: 2026-06-02 · billing P2 Phase F
+- **位置**: `apps/edge/src/lib/sandbox.ts`（`SANDBOX_USD_PER_SECOND` 常量）
+- **问题**: (1) **单价是占位**——`SANDBOX_USD_PER_SECOND = 0.0001`（≈0.36 USD/h）是随手填的 stand-in，**不是定价决策**。真实数字得从 Cloudflare container 计价（running 态按 provisioned memory+disk 计费）推。(2) **计量维度可能不对**——现在按 **wall-clock 秒** 计，但 Cloudflare 实际按 memory-seconds + disk + egress 计；CPU/内存重的任务和空转任务被同价对待。Sandbox SDK `runCode` 的返回（官方文档核实：`{ code, logs, results, error, executionCount }`）**不含任何时长/资源字段**，所以 worker 侧只能拿 wall-clock，要按内存/CPU 计就得换数据源（容器 DO 自报 or CF 用量 API）。
+- **影响**: 占位价上线 = 系统性多扣或少扣；wall-clock 计量对滥用者（高内存长跑）偏宽松。pre-launch 无真实流量，先把门禁+扣费形态接通是合理折中。
+- **建议**: 发布前 (1) 用 Cloudflare container 实际价目替换 `SANDBOX_USD_PER_SECOND`，最好建 `sandbox_prices` 表（同 `web_tool_prices` 模式）；(2) 评估是否需从容器侧拿 memory-seconds 取代纯 wall-clock；(3) 视成本量级决定是否加周期 settle + 余额≤0 中途 kill 容器。
 - **状态**: 待办
 ### 🟡 群语音 DO↔容器掉线重连/resync 控制逻辑已写+单测，但端到端音频恢复 runtime 未验证
 - **发现**: 2026-05-29 · feat/group-voice-reconnect
