@@ -142,6 +142,7 @@
 		F9BBC0C73F84A357B5B0A8C4 /* TypingDots.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5131104F9620195C8AF448E /* TypingDots.swift */; };
 		F9D83EFE1997143A29F31A8F /* ChatActionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CD2B61B65FC1ADB1C95184A /* ChatActionSheet.swift */; };
 		FAECF2B5BD0A3A5A114A1851 /* PendingBotApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BD3256170D29AD9138939C3 /* PendingBotApp.swift */; };
+		FC8F6706A2705C7F8913F790 /* GroupInviteAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6007B7AC7A2508EA9C7C04C9 /* GroupInviteAPI.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -196,6 +197,7 @@
 		59B8BCA71B08958950585241 /* BotCapabilitiesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotCapabilitiesView.swift; sourceTree = "<group>"; };
 		5EFE46C6B281742A271B9202 /* LocalDatabase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalDatabase.swift; sourceTree = "<group>"; };
 		5F74C5B9B7D89D583C48817E /* CodeRunnerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeRunnerSheet.swift; sourceTree = "<group>"; };
+		6007B7AC7A2508EA9C7C04C9 /* GroupInviteAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupInviteAPI.swift; sourceTree = "<group>"; };
 		602E04C3276D1A3CB9588320 /* CreateCrewV2Sheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreateCrewV2Sheet.swift; sourceTree = "<group>"; };
 		6250CBEDB98FA64D32915F09 /* ActiveVoiceCallStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActiveVoiceCallStore.swift; sourceTree = "<group>"; };
 		6541D1291535650ACAD4D6F1 /* CallDiagnosticsLogic.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallDiagnosticsLogic.swift; sourceTree = "<group>"; };
@@ -331,6 +333,7 @@
 				8B8E7132DEAB8AA2580E7DDF /* ContactsAPI.swift */,
 				023C318B8EB2B3A4CC9F8594 /* EmailSignIn.swift */,
 				1F14048DCB73276C7D252616 /* GoogleSignIn.swift */,
+				6007B7AC7A2508EA9C7C04C9 /* GroupInviteAPI.swift */,
 				7EEDB9DF3C6B9D1EC67C769F /* HostedConfig.swift */,
 				F2F07903E8E0959584180E65 /* PushService.swift */,
 				6EFB784DC12029E53EB12A5C /* RealtimeManager.swift */,
@@ -749,6 +752,7 @@
 				096B537A54400F2BC07A0775 /* GroupCallSession.swift in Sources */,
 				3E88530EBC57B170C2AD9812 /* GroupCallTransport.swift in Sources */,
 				BF1A43D6762B6F732360A79D /* GroupCallView.swift in Sources */,
+				FC8F6706A2705C7F8913F790 /* GroupInviteAPI.swift in Sources */,
 				B652E5852C42C437A6849CA3 /* GroupJoinView.swift in Sources */,
 				C47DDDD2BAD3AD2DA4EC51A0 /* GroupQRCard.swift in Sources */,
 				A22D46B0B364248079A08775 /* GroupSettingsView.swift in Sources */,

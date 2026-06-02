@@ -22,6 +22,11 @@ final class DeepLinkStore {
     /// then clears this back to nil.
     var pendingAddBotToken: String?
 
+    /// Set when a `bot.pendingname.com/g/<token>` group invite link is opened
+    /// (decisions.md D2). The message tab presents the join-group preview,
+    /// then clears this back to nil.
+    var pendingJoinGroupToken: String?
+
     /// Parse an incoming URL into a pending action. Returns true when the
     /// link was recognised (so the caller can stop here).
     @discardableResult
@@ -29,6 +34,10 @@ final class DeepLinkStore {
         let raw = url.absoluteString
         if BotShareLink.isBotShareLink(raw) {
             pendingAddBotToken = BotShareLink.token(fromScanned: raw)
+            return true
+        }
+        if GroupShareLink.isGroupShareLink(raw) {
+            pendingJoinGroupToken = GroupShareLink.token(fromScanned: raw)
             return true
         }
         return false
@@ -128,6 +137,44 @@ enum BotShareLink {
     /// bot-share URL (`*pendingname.com/b/<token>`). Bare tokens are not
     /// recognised here (indistinguishable from arbitrary text).
     static func isBotShareLink(_ raw: String) -> Bool {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed),
+              url.host?.lowercased().hasSuffix(urlHostSuffix) == true,
+              url.path.hasPrefix(pathPrefix) else { return false }
+        return !url.path.dropFirst(pathPrefix.count).isEmpty
+    }
+}
+
+/// Codec for the group-invite deep link (decisions.md D2 — per-inviter).
+///
+/// Encoded form is `https://bot.pendingname.com/g/<token>` — AASA path `/g/`.
+/// The payload is an inviter-scoped, revocable group invite *token* (minted by
+/// POST /v1/groups/:id/invite-links). Every member's link is a distinct token;
+/// joining records invited_by. Supersedes the shared group_join_handles code.
+enum GroupShareLink {
+    static let host = "bot.pendingname.com"
+    static let pathPrefix = "/g/"
+    private static let urlHostSuffix = "pendingname.com"
+
+    static func url(forToken token: String) -> String {
+        "https://\(host)\(pathPrefix)\(token)"
+    }
+
+    /// Parse a payload back into the bare group invite token. Accepts the
+    /// `*pendingname.com/g/<token>` form and a bare token. Opaque — verbatim.
+    static func token(fromScanned raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let url = URL(string: trimmed),
+           url.host?.lowercased().hasSuffix(urlHostSuffix) == true,
+           url.path.hasPrefix(pathPrefix) {
+            let token = String(url.path.dropFirst(pathPrefix.count))
+            if !token.isEmpty { return token }
+        }
+        return trimmed
+    }
+
+    /// Strict check: only true for an unambiguous `*pendingname.com/g/<token>`.
+    static func isGroupShareLink(_ raw: String) -> Bool {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: trimmed),
               url.host?.lowercased().hasSuffix(urlHostSuffix) == true,
