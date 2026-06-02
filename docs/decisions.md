@@ -44,6 +44,16 @@
 - **背景**: spec 写 3 种,迁移 `20260527090000` + `create_child_crew_inheriting_responsibility_*` RPC 已实装第 4 种,spec 没同步(tech-debt 🟡 已记)。决策是对齐到代码(4 种),不是删代码。
 - **现状核实**: ✅ 代码已是 4 种;spec §6.3.1 已补(2026-06-01,feat/invite-model)。**已落地。**
 
+## D5 · PendingBot 三端 UI = 共享视觉组件层 + 大屏多列壳,iPhone 视觉不变
+- **日期**: 2026-06-01
+- **决策**: 三端 UI"较为统一"且**不改动 iPhone 现有视觉设计**。做法分三层:
+  1. **视觉设计语言**(Theme 配色 / 气泡样式 / 字体 / 头像 / 图标 / 间距 / 交互手感)—— 三端**完全统一、原封保留**。抽成一套**三端共享的 SwiftUI 组件层**,让 iPhone 自己也用这套(所以"统一"=字面意义上同一套代码)。
+  2. **布局骨架** —— 按平台适配,**不算改设计**:iPhone 保持底部 `TabView` 单列;**iPad/Mac 用 `NavigationSplitView` 多列**(会话列表 + 聊天流并排)。用户已拍板大屏走多列、复用同一套视觉。
+  3. **个别 UIKit-only 控件**(键盘附件栏 `ChatComposerAccessory` / 相机相册 `UIImagePickerController`)—— Mac 上无对应,必须 AppKit 重写,**视觉尽量贴近但底层不同**(这是唯一会有差异的地方)。
+- **关键纪律(让"不改 iPhone 设计"真的成立)**: 把现有 iOS 视觉视图重构成"共享 SwiftUI core + 薄 iOS 桥"时,是**结构重构、不是视觉改动**;每次重构后**必须在 iOS 真机/模拟器视觉回归确认无变化**,否则共享化容易顺手改了 iPhone 的样子。
+- **背景**: 用户希望三端 UI 较统一且不动现有设计。Crew Tab v2 已验证此路子(SwiftUI-only 三端共享)。工作量见 tech-debt / 本轮 Mac 估算(~70–108 人日,砍 Mac 语音可压到 ~70)。
+- **现状核实**: ❌ 未实施(规划)。Mac 三栏壳在、"我"+"好友"tab 已接;iPad 现状是 iOS UI 加大(只 Crew tab 三端共享)。落地路径:P1 抽 Foundation/共享组件 → P2 Components 跨平台 → P3 Message(最重)→ P4 其他 tab。
+
 ---
 
 ## 反向核实记录(确认"没丢"的设计,留作证据)
