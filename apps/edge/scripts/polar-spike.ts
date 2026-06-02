@@ -1,41 +1,74 @@
-// 真实 Polar spike(P0 验收)：验证 "上报用量 → meter 燃尽 → getStateExternal 读余额" 闭环。
-// 跑法：cd apps/edge && POLAR_ACCESS_TOKEN=<token> POLAR_SERVER=sandbox \
-//        SPIKE_METER_ID=<meterId> SPIKE_EXTERNAL_ID=<已有credit的customer externalId> bun run polar:spike
-//
-// 前置(P0 在 Polar dashboard / API 先做好,见 spec 开放问题-1):
-//   1. 建 pnc meter(按 event name 'pnc.usage' 聚合 metadata.pnc 求和)→ 记下 meterId
-//   2. 给一个测试 Customer(externalId 自定)发一笔 credit(经带 Credits Benefit 的产品购买,
-//      或核实 Polar 是否支持外部手动授予 credit —— 这正是开放问题-1)
+// 自带建 meter + customer 的一键 P0 spike：验证 Polar 全事件钱包闭环。
+// 跑法：cd apps/edge && POLAR_ACCESS_TOKEN=<token> POLAR_SERVER=sandbox bun run polar:spike
 import { Polar } from '@polar-sh/sdk'
-import { createPolarClient } from '../src/billing/polar-client'
+import { createPolarClient, PNC_EVENT_NAME, PNC_METADATA_KEY } from '../src/billing/polar-client'
 
-const meterId = process.env.SPIKE_METER_ID!
-const externalId = process.env.SPIKE_EXTERNAL_ID!
-const sdk = new Polar({
-  accessToken: process.env.POLAR_ACCESS_TOKEN!,
-  server: (process.env.POLAR_SERVER as 'sandbox' | 'production' | undefined) ?? 'sandbox',
-}) as any
-const om = createPolarClient(sdk, { meterId })
+const server = (process.env.POLAR_SERVER as 'sandbox' | 'production' | undefined) ?? 'sandbox'
+const sdk = new Polar({ accessToken: process.env.POLAR_ACCESS_TOKEN!, server }) as any
 
-async function main() {
-  const before = await om.getBalance(externalId)
-  console.log('balance before:', before)
-
-  await om.reportUsage(externalId, 2700, { category: 'llm_tokens', dedupeId: `spike-${Date.now()}` })
-  console.log('ingested 2700 pnc usage')
-
-  // meter 聚合有延迟,轮询观察燃尽
-  let after = before
-  for (let i = 0; i < 12; i++) {
-    await new Promise((r) => setTimeout(r, 2000))
-    after = await om.getBalance(externalId)
-    console.log(`poll ${i}: balance=${after}`)
-    if (after !== before) break
-  }
-
-  const delta = before - after
-  console.log(delta === 2700 ? '✅ 精确燃尽 2700' : `⚠️ delta=${delta}(期望 2700;float 余额可能有微差,精度已松绑可接受)`)
-  console.log('记录:getStateExternal 余额刷新延迟约', '(见上面 poll 次数)')
+function log(label: string, v: unknown) {
+  console.log(label, JSON.stringify(v, null, 2))
 }
 
-main()
+async function main() {
+  console.log('server:', server)
+
+  // 1) 建 meter(SUM metadata.pnc，按事件名 pnc.usage 过滤)
+  let meterId = process.env.SPIKE_METER_ID
+  if (!meterId) {
+    try {
+      const meter = await sdk.meters.create({
+        name: `pnc-spike-${Math.floor(Date.now() / 1000)}`,
+        filter: {
+          conjunction: 'and',
+          clauses: [{ property: 'name', operator: 'eq', value: PNC_EVENT_NAME }],
+        },
+        aggregation: { func: 'sum', property: PNC_METADATA_KEY },
+      })
+      meterId = meter.id
+      console.log('✅ meter created:', meterId)
+    } catch (e: any) {
+      console.error('❌ meter create failed:', e?.message ?? e, e?.body$ ?? e?.detail ?? '')
+      throw e
+    }
+  }
+
+  // 2) 建 customer(externalId = 我们的 subject_id)
+  const externalId = `spike-${Math.floor(Date.now() / 1000)}`
+  try {
+    const c = await sdk.customers.create({ email: `${externalId}@gmail.com`, externalId })
+    console.log('✅ customer created:', c.id, 'externalId:', externalId)
+  } catch (e: any) {
+    console.error('❌ customer create failed:', e?.message ?? e, e?.body$ ?? e?.detail ?? '')
+    throw e
+  }
+
+  const om = createPolarClient(sdk, { meterId: meterId! })
+
+  // 3) 充值 94_500_000(负值事件)
+  await om.grantCredits(externalId, 94_500_000, { source: 'spike', dedupeId: `grant-${externalId}` })
+  console.log('→ granted 94_500_000')
+
+  // 4) 扣费 2700(正值事件)
+  await om.reportUsage(externalId, 2700, { category: 'llm_tokens', dedupeId: `use-${externalId}` })
+  console.log('→ used 2700')
+
+  // 5) 轮询读余额
+  for (let i = 0; i < 15; i++) {
+    await new Promise((r) => setTimeout(r, 2000))
+    const state = await sdk.customers.getStateExternal({ externalId })
+    const meters = state.activeMeters ?? state.active_meters ?? []
+    log(`poll ${i} activeMeters`, meters)
+    const m = meters.find((x: any) => (x.meterId ?? x.meter_id) === meterId)
+    if (m && (m.balance ?? 0) !== 0) {
+      console.log(`\n=== 结果 ===\nbalance=${m.balance}  consumed=${m.consumedUnits ?? m.consumed_units}  credited=${m.creditedUnits ?? m.credited_units}`)
+      console.log('期望:充值94_500_000 − 用2700 = 可用 94_497_300(符号以实际为准)')
+      break
+    }
+  }
+}
+
+main().catch((e) => {
+  console.error('SPIKE FAILED:', e?.message ?? e)
+  process.exit(1)
+})
