@@ -51,12 +51,58 @@ export function makeFakeDb(seed: Record<string, Row[]> = {}): FakeDb {
   };
 }
 
-export function makeFakeEnv(db: FakeDb): Env {
+/// A WalletDO call captured by the fake env's WALLET binding. `path` is
+/// the RPC verb (gate / debit / credit / apply-absolute); `body` is the
+/// JSON the wallet-client posted (subjectId + pncMicros + category + …).
+export interface WalletCall {
+  subjectId: string;
+  path: string;
+  body: Record<string, unknown>;
+}
+
+export interface FakeWallet {
+  calls: WalletCall[];
+  /// Per-subject balance the fake gate/debit replies with (micros). Seed
+  /// before the test to drive threshold branching; debit decrements it.
+  balances: Record<string, number>;
+}
+
+export function makeFakeEnv(
+  db: FakeDb,
+  opts?: { wallet?: FakeWallet },
+): Env {
+  const fakeWallet: FakeWallet = opts?.wallet ?? { calls: [], balances: {} };
+  const walletBinding = {
+    idFromName: (name: string) => name,
+    get: (subjectId: string) => ({
+      fetch: async (url: string | URL, init?: { body?: string }) => {
+        const path = new URL(String(url)).pathname;
+        const body = init?.body
+          ? (JSON.parse(init.body) as Record<string, unknown>)
+          : {};
+        fakeWallet.calls.push({ subjectId, path, body });
+        const cur = fakeWallet.balances[subjectId] ?? 0;
+        let next = cur;
+        if (path === '/debit') next = cur - Number(body.pncMicros ?? 0);
+        else if (path === '/credit') next = cur + Number(body.pncMicros ?? 0);
+        fakeWallet.balances[subjectId] = next;
+        // Mirror WalletDO.thresholdOf: ≥50 PNC sufficient / ≥5 low / >0 throttle / ≤0 exhausted.
+        const thresholdState =
+          next >= 50_000_000 ? 'sufficient' : next >= 5_000_000 ? 'low' : next > 0 ? 'throttle' : 'exhausted';
+        return new Response(
+          JSON.stringify({ balanceMicros: next, thresholdState }),
+          { headers: { 'content-type': 'application/json' } },
+        );
+      },
+    }),
+  };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const env: any = {
     SUPABASE_URL: 'https://example.supabase.co',
     SUPABASE_SERVICE_ROLE_KEY: 'service-key',
+    WALLET: walletBinding,
     __fakeDb: db,
+    __fakeWallet: fakeWallet,
   };
   return env as Env;
 }
