@@ -4,6 +4,8 @@
 分支：`chore/billing-dashboard-specs`
 状态：**草案,待评审**（2026-06-01 定稿引擎 = Polar;**2026-06-02 P0 spike sandbox 实测通过**）
 
+> **✅ P1 资金流实测(2026-06-02,sandbox,直连 API)**:充值 270M(同 dedupeId 重复一次→**去重不翻倍**=270M)→ 扣费 2700 → 退款 1000 → balance=**269,996,300** 全对。证实 grant/usage/refund/balance + `external_id` 幂等(webhook 重投不重复加额度)。仅 webhook 验签 + payload 字段路径待 dashboard 配置后核对。脚本 `apps/edge/scripts/polar-verify.ts`。
+>
 > **✅ P0 spike 实测(2026-06-02,sandbox)**:建 meter(SUM metadata.pnc)+ customer → `grantCredits` 负值 -94_500_000 + `reportUsage` 正值 +2700 → `getStateExternal` 读到 **balance=94_497_300(整数精确,无浮点漂移)**,`consumedUnits=-94_497_300, creditedUnits=0`。证实:① 全事件符号模型成立(grant 负/usage 正 → balance 正=可用);② **iOS 外部入账可行**(对无购买的 customer 直接 grant 成功);③ 精度无忧;④ 余额刷新 ~10–12s(门禁须靠 edge 缓存)。`polar-client` 与真实返回结构吻合,无需改。
 
 > 选型历程(留痕,免得重走):OpenMeter Cloud → 发现被 Kong 收编(免费托管没了)→ 重扫全市场 → 用户松绑两条约束(**精度不必苛求**、**"不接 Stripe"= 不直连 Stripe 而走 MoR,底层 Stripe 无妨**)→ 锁定 **Polar**。完整 MoR 版图见本轮调研:能"MoR+自带预付 credit 钱包+单人自助"的只有 {Polar, Creem, Dodo}(+未核实的 Fungies);其余要么不是 MoR、要么没钱包。
