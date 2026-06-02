@@ -431,7 +431,7 @@
 
 #### 🟡 后续 session 即可
 
-- **T3.2 Codex runner** — Phase 6 只落了 Claude Code 本地 runner (`LocalCodingAgentService`)；Codex CLI runner adapter 仍是 TODO，需要 codex 二进制契约调研 + adapter 抽象。
+- ~~**T3.2 Codex runner**~~ **（2026-06-02 已解决，#202）** — codex 契约已调研（codex-cli 0.133.0 `codex exec --help`）：argv 补 `--json`（JSONL 事件流，对标 Claude `--output-format=stream-json`）+ `-m/--model` 透传；launch / env 白名单 / discovery 早就是 kind-无关的复用层，不需要单独抽象。argv 测试覆盖 codex `--json` + 双 runner model 透传，11/11 绿。**剩余（非 adapter 范畴）**：JSONL 事件**解析层**——把 codex 与 claude 两种不同 schema 的 JSONL 统一成 session 事件模型（喂 UI 窗口），目前 Process/Service 只逐行透传裸文本。属更上层活，单列。
 - **T4.5 完整实现** — ~~`ceba5619` 只落了设计文档，实际代码一行没动~~ **（2026-06-01 对账更正：此说法已过时）**。服务端 P0 已落地：`c7b2cd2d` ship 了 `SessionProxyDO`（`apps/edge/src/durable-objects/session-proxy.ts` 534 行）+ `session.command`/`session.state` ws 协议 + 路由 + 单测 + wrangler 绑定。**仍缺客户端侧**：iOS/Mac 无任何 SessionProxy 订阅代码、PendingCrew runner 不发布到 DO（手机→Mac 推命令、Mac session 镜像未接）。当前是"服务端打底好、客户端未接"的半截桥，不是"一行没动"。
 - **T5.3 PendingCrew E2E QA** — BYOK 路径和 cloud 路径的端到端测试（创建 crew → 派单 → 收到结果 → 计费记账）从未真机跑通；只有编译过 + 单测覆盖。需要人工 QA pass。
 
