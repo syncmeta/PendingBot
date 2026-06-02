@@ -19,10 +19,13 @@
     "@cloudflare/sandbox": "^0.10.1",
     "@honcho-ai/sdk": "^2",
     "@pendingbot/identity": "workspace:*",
+    "@sentry/cloudflare": "^10.55.0",
     "@supabase/supabase-js": "^2",
     "hono": "^4.12.22",
     "jose": "^5",
+    "langfuse": "^3.38.20",
     "openai": "^4",
+    "posthog-node": "^5.35.11",
     "zod": "^4",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@polar-sh/sdk": "^0.47.1"
