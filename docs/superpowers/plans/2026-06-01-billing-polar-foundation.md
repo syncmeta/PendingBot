@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development 或 superpowers:executing-plans。步骤用 `- [ ]` 跟踪。
 
-**Goal:** 在 edge 建立 Polar 薄封装与 PNC 换算,并用真实 spike 验证 ①"上报用量→meter 燃尽→读余额"闭环、②**头号开放问题:iOS 外部入账能否给 Polar 钱包加 credit**。
+**Goal:** 在 edge 建立 Polar 薄封装与 PNC 换算,并用真实 spike 确认 "充值(负值事件)→上报用量(正值)→读余额" 闭环。**头号开放问题(iOS 外部加 credit)已文档核实可行**(Polar 官方《Grant Meter Credits Before Purchase》:`events.ingest` 负值=发 credit),spike 只需确认符号 + 余额语义。
 
 **Architecture:** Polar 作 MoR + 预付 credit 钱包 + usage 计量(`@polar-sh/sdk`)。Customer 以 `externalId = subject_id` 标识;用量 `events.ingest`,余额 `customers.getStateExternal`,门禁在 edge 缓存余额上做。不直连 Stripe;iOS 仍 IAP+RevenueCat。详见 [`../specs/2026-06-01-billing-engine-design.md`](../specs/2026-06-01-billing-engine-design.md)。
 
