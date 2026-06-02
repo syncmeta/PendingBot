@@ -119,6 +119,10 @@ struct MacRootView: View {
     @ViewBuilder
     private var middleColumn: some View {
         switch selectedTab {
+        case .messages:
+            // T0.1 — 消息 tab 中列接入真实会话列表;选中一个会话后右栏是聊天。
+            MacConversationListColumn(selectedConversationId: $selectedItemId)
+                .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
         case .crew:
             // T4.5 — Crew tab 中列接入真实机组列表;选中一个 crew 后右栏看它的
             // 服务端 session(跨端 viewer)。其余 crew 业务(创建 / 群聊 / 详情)
@@ -141,6 +145,13 @@ struct MacRootView: View {
             // 注:Mac 三列下,「我」tab 直接把账号详情放到右栏(中间列保持空态),
             // 因为「我」tab 没有可枚举的 list 内容。
             MacMeView()
+        case .messages:
+            if let convId = selectedItemId {
+                MacChatView(conversationId: convId)
+                    .id(convId)
+            } else {
+                MacEmptyColumn(message: selectedTab.detailColumnEmpty, prominent: true)
+            }
         case .crew:
             if let crewId = selectedItemId {
                 MacRemoteSessionsView(crewId: crewId)
