@@ -3,8 +3,9 @@ import type { Env } from '../types';
 import type { SupabaseClient } from '../lib/supabase';
 import { serviceClient } from '../lib/supabase';
 import type { Json } from '../db/schema';
-import { settleTurnV2 } from './billing-v2-dualwrite';
-import type { OwnerRef } from '../lib/billing-v2';
+import { wallet } from '../billing/wallet-client';
+import { usdToPncMicros } from '../billing/pnc';
+import { resolveBillingSubjectId } from '../billing/usage-gate';
 import type { WebToolUsage } from '../lib/web-meter';
 import { uuidv7 } from '../lib/ids';
 import { fetchGatewayCost, GATEWAY_COST_PENDING } from '../lib/ai-gateway';
@@ -362,14 +363,14 @@ export async function persistAuditMessage(
   // Web-tool spend (Brave / Tavily / Exa / Serper / Firecrawl) accrues
   // during the same LLM turn. We fold its USD sum into the parent
   // audit row for at-a-glance turn cost; the actual debit is per-call
-  // via settleTurnV2 below (one usage_event each). Per-call detail also
+  // via wallet.debit below (one WalletDO debit each). Per-call detail also
   // goes into audit_web_tool_calls.
   const toolCalls = opts.webTools ?? [];
   const toolCostUsd = toolCalls.reduce((s, c) => s + (c.costUsd || 0), 0);
   const hasTools = toolCalls.length > 0;
-  // Combined raw USD for the audit row (informational). v2 billing is in
-  // PNC micros via settleTurnV2 — no runtime markup (markup lives only on
-  // sale-side pack issuance now).
+  // Combined raw USD for the audit row (informational). The authoritative
+  // debit is WalletDO in PNC micros (usdToPncMicros) — no runtime markup
+  // (markup lives only on sale-side pack issuance now).
   const combinedUsd = (llmCost ?? 0) + toolCostUsd;
   const total =
     (opts.inputTokens ?? 0) +
@@ -379,18 +380,22 @@ export async function persistAuditMessage(
     (opts.audioInputTokens ?? 0) +
     (opts.audioOutputTokens ?? 0);
 
-  const conversationBillingTarget = opts.conversationId
-    ? await resolveConversationBillingTarget(supa, opts.conversationId)
-    : { kind: 'none' as const };
-  const hasBillableTarget =
-    conversationBillingTarget.kind !== 'none' || opts.userId != null;
+  // Owner = final responsible subject (group/temp-group/crew → the conv's
+  // responsible_subject_id pool wallet; else the initiating user). Same
+  // resolver the pre-call gate uses, so gate-subject and debit-subject
+  // never drift.
+  const billingTarget = await resolveBillingSubjectId(supa, {
+    conversationId: opts.conversationId,
+    userId: opts.userId,
+  });
+  const hasBillableTarget = billingTarget != null;
 
   // audit_log.billing_status is now a v1-legacy column kept only as turn
   // metadata (the real ledger is billing v2's ledger_entries). We stamp a
   // sensible terminal value on insert:
   //   - 'free'    : no billable owner at all (system/bot-only turn)
   //   - 'skipped' : billable owner but zero cost (error / no usage)
-  //   - 'billed'  : settleTurnV2 will debit packs for this turn
+  //   - 'billed'  : wallet.debit will charge the owner's WalletDO this turn
   const initialBilling: 'free' | 'skipped' | 'billed' = !hasBillableTarget
     ? 'free'
     : combinedUsd <= 0
@@ -406,11 +411,9 @@ export async function persistAuditMessage(
   const auditMetadata = opts.metadata
     ? { ...(opts.metadata as Record<string, Json>) }
     : {};
-  if (conversationBillingTarget.kind === 'subject') {
-    auditMetadata.billing_target_kind = 'subject';
-    auditMetadata.billing_subject_id = conversationBillingTarget.subjectId;
-  } else if (conversationBillingTarget.kind === 'group') {
-    auditMetadata.billing_target_kind = 'group';
+  if (billingTarget) {
+    auditMetadata.billing_target_kind = billingTarget.kind;
+    auditMetadata.billing_subject_id = billingTarget.subjectId;
   }
 
   const insertRow = {
@@ -432,7 +435,7 @@ export async function persistAuditMessage(
     total_tokens: total,
     // cost_usd is the LLM cost that drives billing — the provider-reported
     // figure for this turn. tool_cost_usd breaks out web-tool spend.
-    // cost_credits is v1-legacy (the real debit is v2 ledger_entries);
+    // cost_credits is v1-legacy (the real debit is WalletDO PNC micros);
     // left 0 so dashboards reading it don't double-count post-cutover.
     cost_usd: llmCost,
     tool_cost_usd: hasTools ? toolCostUsd : null,
@@ -490,104 +493,76 @@ export async function persistAuditMessage(
     }
   }
 
-  // Post-insert debit (billing v2 authoritative). settleTurnV2 records a
-  // usage_event + ledger debit per model/voice spend and per web-tool
-  // call. Failures are logged + swallowed inside it — never propagate.
-  // Runs only on the fresh-insert path above, so a duplicate queue
-  // delivery never double-debits.
-  if (initialBilling === 'billed') {
-    // Resolve the v2 owner, preserving v1 targeting semantics:
-    //   - group           → the group's responsible subject (pool wallet)
-    //   - subject (tmp/crew) → that responsibility subject
-    //   - none + userId   → the user (1v1 / system)
-    // The group per-member split (group_member_billing) is retired —
-    // groups now pay from the group subject's wallet (design §9).
-    let owner: OwnerRef | null = null;
-    if (conversationBillingTarget.kind === 'subject') {
-      owner = { kind: 'subject', subjectId: conversationBillingTarget.subjectId };
-    } else if (conversationBillingTarget.kind === 'group') {
-      const subjectId = opts.conversationId
-        ? await resolveConversationSubjectId(supa, opts.conversationId)
-        : null;
-      owner = subjectId
-        ? { kind: 'subject', subjectId }
-        : opts.userId
-          ? { kind: 'user', userId: opts.userId }
-          : null;
-    } else if (opts.userId) {
-      owner = { kind: 'user', userId: opts.userId };
+  // Post-insert debit (WalletDO authoritative — 计费 P2). One debit for the
+  // model/voice spend + one per web-tool call, each against the resolved
+  // owner's WalletDO (the DO decrements its cached balance + buffers the
+  // usage to flush to Polar). Idempotent on dedupeId (auditId-derived), so
+  // the at-least-once queue never double-charges; the fresh-insert guard
+  // above also short-circuits duplicate deliveries before reaching here.
+  // Failures are logged + swallowed — a billing hiccup must never break the
+  // already-persisted, user-visible turn.
+  if (initialBilling === 'billed' && billingTarget) {
+    const subjectId = billingTarget.subjectId;
+    // 1. Model spend. Voice turns (OpenAI Realtime, priced via
+    //    computeVoiceCost) bill as voice_tokens; everything else llm_tokens.
+    //    vendor cost, no markup.
+    const modelCategory = opts.taskType === 'voice_call' ? 'voice_tokens' : 'llm_tokens';
+    const llmMicros = usdToPncMicros(llmCost ?? 0);
+    if (llmMicros > 0) {
+      try {
+        await wallet.debit(env, subjectId, llmMicros, {
+          category: modelCategory,
+          dedupeId: auditId,
+          meta: {
+            model_id: route?.modelToCall ?? opts.tag ?? '<unrouted>',
+            provider: route?.provider?.slug ?? null,
+            task_type: opts.taskType,
+            total_tokens: total,
+            cost_source: opts.providerCostUsd != null ? 'provider' : 'gateway',
+            conversation_id: opts.conversationId ?? null,
+          },
+        });
+      } catch (err) {
+        console.warn(
+          '[wallet.debit llm_tokens]',
+          auditId,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
     }
-
-    if (owner) {
-      await settleTurnV2({
-        supa,
-        msg,
-        owner,
-        modelCostUsd: llmCost,
-        totalTokens: total,
-        modelId: route?.modelToCall ?? opts.tag ?? '<unrouted>',
-        providerSlug: route?.provider?.slug ?? null,
-        costSource: opts.providerCostUsd != null ? 'provider' : 'gateway',
-        webTools: toolCalls,
-      });
+    // 2. Web-tool calls — one debit each, dedupeId namespaced by call index
+    //    so retries can't double-charge any single call. Errors cost 0.
+    for (let i = 0; i < toolCalls.length; i++) {
+      const tool = toolCalls[i];
+      const micros = usdToPncMicros(tool.costUsd ?? 0);
+      if (micros <= 0) continue;
+      try {
+        await wallet.debit(env, subjectId, micros, {
+          category: 'web_tools',
+          dedupeId: `${auditId}:tool:${i}`,
+          meta: {
+            provider: tool.provider,
+            kind: tool.kind,
+            target: tool.target,
+            status: tool.status,
+            conversation_id: opts.conversationId ?? null,
+          },
+        });
+      } catch (err) {
+        console.warn(
+          '[wallet.debit web_tools]',
+          auditId,
+          tool.provider,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
     }
   }
 }
 
-// Look up a conversation's responsible_subject_id (the group/account
-// wallet a 'group' conversation bills against in v2). Null when unset
-// (falls back to the initiating user).
-async function resolveConversationSubjectId(
-  supa: SupabaseClient,
-  conversationId: string,
-): Promise<string | null> {
-  const { data } = await supa
-    .from('conversations')
-    .select('responsible_subject_id')
-    .eq('id', conversationId)
-    .maybeSingle();
-  const sid = data?.responsible_subject_id;
-  return typeof sid === 'string' && sid.length > 0 ? sid : null;
-}
-
-type ConversationBillingTarget =
-  | { kind: 'group' }
-  | { kind: 'subject'; subjectId: string }
-  | { kind: 'none' };
-
-// Cheap conv-target resolver used by persistAuditMessage. We could push
-// this into callers, but billing ownership is the audit layer's concern:
-// group conversations split, temporary group / Crew conversations debit
-// their immutable responsibility subject, and old 1v1/system tasks keep
-// using the caller user id.
-async function resolveConversationBillingTarget(
-  supa: SupabaseClient,
-  conversationId: string,
-): Promise<ConversationBillingTarget> {
-  const { data } = await supa
-    .from('conversations')
-    .select('conversation_type')
-    .eq('id', conversationId)
-    .maybeSingle();
-  if (data?.conversation_type === 'group') {
-    return { kind: 'group' };
-  }
-  if (
-    data?.conversation_type !== 'temporary_group' &&
-    data?.conversation_type !== 'crew'
-  ) {
-    return { kind: 'none' };
-  }
-  const { data: meta } = await supa
-    .from('temporary_group_meta')
-    .select('responsible_subject_id')
-    .eq('conversation_id', conversationId)
-    .maybeSingle();
-  const subjectId = meta?.responsible_subject_id;
-  return typeof subjectId === 'string' && subjectId.length > 0
-    ? { kind: 'subject', subjectId }
-    : { kind: 'none' };
-}
+// Billing-owner resolution moved to billing/usage-gate.ts
+// (resolveBillingSubjectId) so the pre-call gate and the post-call debit
+// route through one resolver and can't drift.
 
 // ============================================================
 // Fallback orchestration
