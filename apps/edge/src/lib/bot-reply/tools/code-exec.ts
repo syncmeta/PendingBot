@@ -1,6 +1,6 @@
 import type { Env } from '../../../types';
 import { serviceClient } from '../../supabase';
-import { runPython } from '../../sandbox';
+import { runPython, SandboxGateError } from '../../sandbox';
 import type { ToolCtx } from '../tool-runner';
 
 // How often the request_execute_code tool re-checks the DB for an iOS
@@ -37,7 +37,25 @@ export async function executeCodeTool(
     code_preview: codePreview,
   });
 
-  const result = await runPython(env, ctx.conversationId, code);
+  let result;
+  try {
+    result = await runPython(env, ctx.conversationId, code, {
+      meter: { userId: ctx.userId },
+    });
+  } catch (err) {
+    if (err instanceof SandboxGateError) {
+      ctx.emit('tool_result', {
+        name: 'execute_code',
+        error: err.message,
+      });
+      return JSON.stringify({
+        error: 'balance_exhausted',
+        message: err.message,
+        hint: '余额已用完，无法执行代码。请提示用户充值，或换一条不需要跑代码的思路。',
+      });
+    }
+    throw err;
+  }
 
   // Tail of stdout (last ~160 chars, single-lined) so the expanded trace
   // shows what actually printed. Full stdout still goes back to the model
@@ -166,7 +184,29 @@ export async function requestExecuteCodeTool(
   }
 
   // approved → run the code.
-  const result = await runPython(env, ctx.conversationId, code);
+  let result;
+  try {
+    result = await runPython(env, ctx.conversationId, code, {
+      meter: { userId: ctx.userId },
+    });
+  } catch (err) {
+    if (err instanceof SandboxGateError) {
+      ctx.emit('tool_result', {
+        name: 'request_execute_code',
+        request_id: requestId,
+        decision: 'approved',
+        error: err.message,
+      });
+      return JSON.stringify({
+        approved: true,
+        decision: 'approved',
+        error: 'balance_exhausted',
+        message: err.message,
+        hint: '用户已批准，但余额已用完，无法执行。请提示用户充值。',
+      });
+    }
+    throw err;
+  }
 
   const stdoutTail = result.stdout
     .slice(-160)
