@@ -2,14 +2,20 @@
 import SwiftUI
 
 /// T4.5 viewer side — watch a crew's sessions running on **any** host (incl.
-/// another machine) by reading the durable server log over HTTP. This is the
-/// read-only "follow a session" half of cross-device control; sending commands
-/// (the live SessionProxyDO WebSocket) is a follow-up.
+/// another machine).
 ///
-/// Polls `listCrewSessions` for the session list and `getSessionEvents` for the
-/// selected session's transcript, every few seconds while visible. The runner
-/// publishes those rows via the verified register→create→claim→events→finish
-/// lifecycle, so this renders sessions even from a different device.
+/// Two layers, by design:
+///   * **Durable transcript** — polls `listCrewSessions` + `getSessionEvents`
+///     every few seconds. This is the verified, always-available source: the
+///     runner writes those rows via register→create→claim→events→finish, so
+///     the log renders even if the runner is offline or the socket is down.
+///   * **Live state** — opens a `SessionProxyClient` (role:.viewer) on the
+///     selected session and renders the runner's real-time `session.state`
+///     fan-out in a banner, so progress shows up the instant the runner
+///     publishes it instead of waiting for the next 3s poll.
+///
+/// The live layer is best-effort decoration over the durable one; if the WS
+/// can't connect, the poll still drives the transcript.
 struct RemoteSessionsView: View {
     let crewId: String
     let crewTitle: String
@@ -23,6 +29,11 @@ struct RemoteSessionsView: View {
     @State private var loadError: String?
     @State private var didInitialLoad = false
 
+    // Live state layer — one viewer proxy socket for the selected session.
+    @State private var liveClient: SessionProxyClient?
+    @State private var liveTask: Task<Void, Never>?
+    @State private var liveSnapshot: SessionStateSnapshot?
+
     private let pollInterval: UInt64 = 3_000_000_000 // 3s
 
     var body: some View {
@@ -30,7 +41,13 @@ struct RemoteSessionsView: View {
             sessionList
                 .navigationSplitViewColumnWidth(min: 240, ideal: 280)
         } detail: {
-            eventPane
+            VStack(spacing: 0) {
+                if let liveSnapshot {
+                    liveBanner(liveSnapshot)
+                    Divider()
+                }
+                eventPane
+            }
         }
         .frame(minWidth: 720, minHeight: 460)
         .toolbar {
@@ -42,6 +59,27 @@ struct RemoteSessionsView: View {
             }
         }
         .task { await pollLoop() }
+        .onChange(of: selectedId) { _, newValue in subscribeLive(to: newValue) }
+        .onDisappear { teardownLive() }
+    }
+
+    /// The live-state banner — driven by the runner's real-time `session.state`
+    /// fan-out over the proxy socket, distinct from the polled durable log below.
+    private func liveBanner(_ snap: SessionStateSnapshot) -> some View {
+        HStack(spacing: 8) {
+            Circle().fill(tintForStatus(snap.status)).frame(width: 7, height: 7)
+            Text("实时").font(.caption.weight(.semibold)).foregroundStyle(tintForStatus(snap.status))
+            Text(snap.status).font(.caption2).foregroundStyle(.secondary)
+            if let last = snap.lastEvent, !last.isEmpty {
+                Text("·").foregroundStyle(.secondary)
+                Text(last).font(.caption).lineLimit(1).truncationMode(.tail)
+            }
+            Spacer()
+            Text("\(snap.eventCount) 事件").font(.caption2).foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(.quaternary.opacity(0.5))
     }
 
     // MARK: - panes
@@ -139,6 +177,36 @@ struct RemoteSessionsView: View {
         } catch {
             loadError = error.localizedDescription
         }
+    }
+
+    // MARK: - live state (viewer proxy socket)
+
+    /// (Re)subscribe the live layer to `sessionId`. Tears down the previous
+    /// session's socket first so only the visible session holds a connection.
+    /// Best-effort — failure to build the client (not logged in) just leaves the
+    /// poll-driven transcript as the sole source.
+    private func subscribeLive(to sessionId: String?) {
+        teardownLive()
+        guard let sessionId, let api = try? appModel.loggedAPIClient() else { return }
+        let client = SessionProxyClient(
+            baseURL: api.baseURL, sessionId: sessionId, role: .viewer, token: api.bearerToken)
+        liveClient = client
+        liveTask = Task {
+            await client.connect()
+            for await snap in client.states {
+                liveSnapshot = snap
+            }
+        }
+    }
+
+    /// Cancel the live consumer + close the socket, and clear the banner.
+    private func teardownLive() {
+        liveTask?.cancel()
+        liveTask = nil
+        liveSnapshot = nil
+        let client = liveClient
+        liveClient = nil
+        Task { await client?.close() }
     }
 
     // MARK: - presentation helpers
