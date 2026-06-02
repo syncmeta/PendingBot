@@ -157,11 +157,11 @@ export interface Env {
   // lib/billing-v2-iap.ts header). When it lands, the chain root cert
   // fingerprint will live here (or be bundled into the worker bundle).
   APPLE_IAP_BUNDLE_ID?: string;
-  // ── OpenMeter (计费引擎第4层，见 docs/superpowers/specs/2026-06-01-billing-engine-design.md) ──
-  // 计量+钱包+credit grant+实时门禁的余额事实源。SDK: @openmeter/sdk。
-  // 本地写 .dev.vars；生产 `wrangler secret put OPENMETER_API_KEY`。
-  OPENMETER_API_KEY?: string;
-  OPENMETER_BASE_URL?: string; // e.g. https://openmeter.cloud
+  // ── Polar (MoR + 预付钱包 + usage，见 docs/superpowers/specs/2026-06-01-billing-engine-design.md) ──
+  // web/Mac 收款+代税 + credit 钱包 + 用量计量的事实源。SDK: @polar-sh/sdk。
+  // 本地写 .dev.vars；生产 `wrangler secret put POLAR_ACCESS_TOKEN`。
+  POLAR_ACCESS_TOKEN?: string;
+  POLAR_SERVER?: string; // 'sandbox' | 'production'
 }
 
 // Hono's c.var slot — populated by middleware (auth, version, etc.)
