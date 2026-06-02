@@ -157,6 +157,25 @@ export interface Env {
   // lib/billing-v2-iap.ts header). When it lands, the chain root cert
   // fingerprint will live here (or be bundled into the worker bundle).
   APPLE_IAP_BUNDLE_ID?: string;
+
+  // ── Observability (dashboard stack) ────────────────────────────
+  // All env-gated: a feature is fully no-op when its key(s) are unset,
+  // so dev / preview deploys without these configured behave exactly as
+  // before. See docs/superpowers/specs/2026-06-01-dashboard-stack-design.md.
+  //
+  // Sentry error tracking. DSN unset → withSentry's options callback
+  // returns undefined → the SDK is not initialized (index.ts).
+  SENTRY_DSN?: string;
+  // PostHog product analytics. KEY unset → lib/analytics.ts capture() is a
+  // no-op. HOST defaults to PostHog cloud when unset (set for self-hosted /
+  // EU region). See lib/analytics.ts.
+  POSTHOG_KEY?: string;
+  POSTHOG_HOST?: string;
+  // Langfuse LLM observability. Both keys must be set for lib/llm-trace.ts
+  // to emit; either unset → no-op. BASE_URL defaults to Langfuse cloud.
+  LANGFUSE_PUBLIC_KEY?: string;
+  LANGFUSE_SECRET_KEY?: string;
+  LANGFUSE_BASE_URL?: string;
 }
 
 // Hono's c.var slot — populated by middleware (auth, version, etc.)
