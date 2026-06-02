@@ -1,6 +1,6 @@
 # PendingBot / PendingCrew 进度账本 (Progress Ledger)
 
-**最近对账：2026-06-01**（对照实际代码 / 迁移 / git，不是看 task 标记）
+**最近对账：2026-06-02**（对照实际代码 / 迁移 / git，不是看 task 标记）
 
 ---
 
@@ -45,7 +45,7 @@
 | T2.3 DAG + 环检测 | ✅ | 代码+单测 | — | 递归 CTE trigger + `crew_attach_as_child` + 内联测试 | — |
 | T2.4 责任比例 5 规则 | ✅ | 代码+单测 | — | `crew_recompute_shares`/`propose_split_distinct`/tiebreaker 全有 | — |
 | T3.1 Claude Code runner | ✅ | 代码 | — | 本轮修了 nested-ObservableObject 不回流 bug | — |
-| **T3.2 Codex runner** | ❌ | — | — | **enum 有 `local_codex`，无 adapter 实现**，只有 placeholder | 仍延期 |
+| **T3.2 Codex runner** | ✅ | 代码+单测 | #202 | argv codex 分支补 `--json`(JSONL 事件流,对标 Claude stream-json)+ `-m/--model` 透传;launch/env/discovery 早已 kind-无关复用。11/11 测试绿(含 model 透传) | — |
 | T3.3 工作目录三层 | ✅ | 代码 | — | GitWorktreeService + session sheet | — |
 | T3.4 子进程安全 | ✅ | 代码 | — | env 白名单 + SIGTERM/grace/KILL + 首启 disclosure | — |
 | T3.5 Session 创建面板 | ✅ | 代码 | — | — | — |
@@ -60,7 +60,7 @@
 | **T5.3 端到端 QA** | ❌ | — | — | **BYOK/cloud 全链路从没真机跑通** | 仍延期 |
 
 ### roadmap 维度真实缺口（就这几个真"没做"）
-- ❌ **T3.2 Codex runner** —— 唯一 enum 占位、代码没写的
+- ✅ ~~T3.2 Codex runner~~ —— 已补完(#202,2026-06-02)。后续 JSONL 事件**解析**(把 codex/claude 两种 JSONL 转成统一 session 事件)是更上层的活,不属 T3.2 adapter 范畴
 - ❌ **T5.3 端到端 QA** —— 整链路没真机验证
 - 🟡 **T4.5 客户端侧** —— 服务端打底好了，手机/Mac 订阅 + runner 发布没接（半截桥）
 - 🟡 **Mac/iPad IM 业务内容**（T0.1/T1.4）—— 壳在，tab 是 placeholder
