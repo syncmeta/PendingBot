@@ -14,10 +14,11 @@
 ### P0 — 设计定稿 ✅
 spec §10 重写（本 commit）。
 
-### P1 — 运行模式作为 session 选项（小，CLI 原生）
-- `LocalCodingAgentLaunchSpec`：claude 拼 `--permission-mode <mode>`，codex 拼 `--sandbox <mode>`；现有 `permissionModeOverride`（auto/manual 两档）改成 per-kind 原生档枚举，**真正进 argv**（现在只存 server 元数据没用）。
-- CreateSessionSheet picker 改成 per-kind 原生档；默认 claude=`auto` / codex=`workspace-write`。
-- **先验**：headless `claude -p --permission-mode auto` / `codex exec --sandbox workspace-write` 真跑一遍确认行为（跟我之前 send_prompt/steering 一样 verify-first）。
+### P1 — 运行模式作为 session 选项（小，CLI 原生）✅ 已落（`<this branch>`）
+- `AgentPermissionMode {standard, planOnly, full}`（LocalRunner）→ per-kind 映射：claude `--permission-mode {auto, plan, bypassPermissions}` / codex `--sandbox {workspace-write, read-only, danger-full-access}`；进首回合 + resume 回合 argv，默认 `.standard`。
+- CreateSessionSheet picker 改成 标准 / 只读规划 / 完全放行 + 每档说明。
+- **顺手修了个隐患**：runner 原来不传 `--permission-mode` → claude 落 `default` → headless 碰权限**卡死**等不存在的终端。默认 `auto` 解掉。
+- **验证状态**：claude headless 实测（auto/bypass/acceptEdits 放行 Write+Bash；default/dontAsk 卡死）；**codex 只验了 flag 存在，runtime 没验**（本机 codex auth 401）——codex 真机要补验 `--sandbox workspace-write` 实跑能写。
 
 ### P2 — MCP 交互工具 + runner 接线（中）
 - 一个 PendingCrew 提供的 MCP server，暴露 `ask_human(question, context?)`（阻塞工具）。先**本地 spike**：`claude -p --mcp-config <cfg>` 给个会阻塞返回的假 ask 工具，确认 agent 能调、能拿返回继续（**verify-first，别假设**）。
