@@ -23,7 +23,8 @@
     "jose": "^5",
     "openai": "^4",
     "zod": "^4",
-    "@modelcontextprotocol/sdk": "^1.29.0"
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@openmeter/sdk": "1.0.0-beta.228"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0",
