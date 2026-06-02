@@ -21,7 +21,8 @@ spec §10 重写（本 commit）。
 - **验证状态**：claude headless 实测（auto/bypass/acceptEdits 放行 Write+Bash；default/dontAsk 卡死）；**codex 只验了 flag 存在，runtime 没验**（本机 codex auth 401）——codex 真机要补验 `--sandbox workspace-write` 实跑能写。
 
 ### P2 — MCP 交互工具 + runner 接线（中）
-- 一个 PendingCrew 提供的 MCP server，暴露 `ask_human(question, context?)`（阻塞工具）。先**本地 spike**：`claude -p --mcp-config <cfg>` 给个会阻塞返回的假 ask 工具，确认 agent 能调、能拿返回继续（**verify-first，别假设**）。
+- **✅ 机制已 spike 验通（`<this branch>`，2026-06-02）**：headless `claude -p --mcp-config <cfg> --allowedTools "mcp__ask__ask_human"` —— 写了个最小 MCP stdio server（`ask_human` 工具，`tools/call` 故意 setTimeout 1.5s 才返回模拟阻塞溯源），claude **调了工具、阻塞等到返回、用返回值继续**（模型最终只回工具给的 passcode）。证明：阻塞 MCP 工具经 `--mcp-config`（CLI 原生、无 SDK）就是 headless session "问人并等回复" 的正解。
+- 待建：一个 PendingCrew 真 MCP server（`ask_human(question, context?)`），`tools/call` 里把请求 POST 到 edge、long-poll/WS 等回复再返回。
 - runner 启动时 `--mcp-config` 注入（仅 logged；BYOK 看情况）。工具实现把请求 POST 到 edge、long-poll/WS 等回复。
 - session-world-model 提示词（T4.2）加一段"要人介入时调 `ask_human`"。
 - session 状态加 `waiting_interaction`。
