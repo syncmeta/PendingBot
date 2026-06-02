@@ -36,6 +36,7 @@
 		2B5FBDBE4E766F40C3B0D349 /* ServerImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F1FA831F2107CCFDA665DF7 /* ServerImage.swift */; };
 		2B724B440312D4E9372269A0 /* ConversationView+Realtime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7114A9AF0BBDF033ADE65E67 /* ConversationView+Realtime.swift */; };
 		2EDC3C6BB075E73E53D0BBB6 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 48F02BEA5BEDE74073641EEB /* PrivacyInfo.xcprivacy */; };
+		306D026B79B03723153035AD /* CrewSessionAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03D2467ADBD40F4F8755863A /* CrewSessionAPI.swift */; };
 		30E08775E0377B26A0398856 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 42AEEDC8DF7B9FD796EE879D /* Supabase */; };
 		32FAAF4A0D4EC4DEAC048497 /* ProfileBootstrapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B53E0D25B2AB056D25D67C8 /* ProfileBootstrapView.swift */; };
 		33A0E9A245FD9DBFB4DC699F /* CrewMessageListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26BEFAA0CA92FE472585DD78 /* CrewMessageListView.swift */; };
@@ -150,6 +151,7 @@
 
 /* Begin PBXFileReference section */
 		023C318B8EB2B3A4CC9F8594 /* EmailSignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmailSignIn.swift; sourceTree = "<group>"; };
+		03D2467ADBD40F4F8755863A /* CrewSessionAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewSessionAPI.swift; sourceTree = "<group>"; };
 		0535C2EB32C3F6E1DFE0EA95 /* TabRoot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabRoot.swift; sourceTree = "<group>"; };
 		05749CCA7DC81C13CE7D3C84 /* EnvelopeThinkingTrace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvelopeThinkingTrace.swift; sourceTree = "<group>"; };
 		0767E4C8060BA86E1484AB2E /* SupabaseStack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseStack.swift; sourceTree = "<group>"; };
@@ -337,6 +339,7 @@
 				6A5442547F63F7CF41B54C46 /* BotInviteAPI.swift */,
 				A0DF072DCFB0786FA83D70F3 /* ChatStream.swift */,
 				8B8E7132DEAB8AA2580E7DDF /* ContactsAPI.swift */,
+				03D2467ADBD40F4F8755863A /* CrewSessionAPI.swift */,
 				023C318B8EB2B3A4CC9F8594 /* EmailSignIn.swift */,
 				1F14048DCB73276C7D252616 /* GoogleSignIn.swift */,
 				6007B7AC7A2508EA9C7C04C9 /* GroupInviteAPI.swift */,
@@ -745,6 +748,7 @@
 				4B8693B2BE0A0352EAC924DE /* CrewDetailV2View.swift in Sources */,
 				33A0E9A245FD9DBFB4DC699F /* CrewMessageListView.swift in Sources */,
 				AEF24DAC89A4BDB1F89EB53F /* CrewProposalCard.swift in Sources */,
+				306D026B79B03723153035AD /* CrewSessionAPI.swift in Sources */,
 				22DC73D9B52F654B9610BCB3 /* CrewSessionStatusCard.swift in Sources */,
 				0E0FCE983AB9E6DB3447D869 /* CrewTabV2View.swift in Sources */,
 				D86D67B77E20704ED320D0F9 /* EmailSignIn.swift in Sources */,

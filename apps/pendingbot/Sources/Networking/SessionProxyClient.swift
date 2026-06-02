@@ -1,8 +1,8 @@
-#if os(iOS)
 import Foundation
 
 /// The viewer-side WebSocket transport for T4.5 cross-device remote control on
-/// PendingBot (iOS/iPad). Wraps a `URLSessionWebSocketTask` connected to the
+/// PendingBot — shared by iOS/iPad and the macOS app (pure Foundation, no
+/// platform gate). Wraps a `URLSessionWebSocketTask` connected to the
 /// session's `SessionProxyDO`
 /// (`GET /v1/sessions/<id>/proxy/connect?role=viewer`).
 ///
@@ -258,4 +258,3 @@ actor SessionProxyClient {
         return request
     }
 }
-#endif
