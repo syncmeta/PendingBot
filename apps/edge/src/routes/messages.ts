@@ -8,6 +8,7 @@ import { maybeRefreshMemory } from '../lib/memory';
 import { runLookback } from '../lib/lookback-runner';
 import { runTitle } from '../lib/title-runner';
 import { requireBalance, InsufficientBalanceError } from '../lib/billing';
+import { gateConversation } from '../billing/usage-gate';
 import { resolveGroupMentions } from '../lib/group-mentions';
 import { summarizeAttachments, DEFAULT_VISION_MODEL } from '../llm/vision';
 import { UUID_RE } from '../lib/ids';
@@ -183,8 +184,12 @@ messageRoutes.post('/', async (c) => {
   // Phase 2 — fire balance gate, bot lookup, autoLookback parent lookup
   // in parallel. INSERT runs detached (waitUntil) using the
   // pre-generated id, so the pre-stream path holds no write RTT.
+  // 余额门禁:仅 1v1 bot 路径在此同步 gate(发消息即流式触发 bot 回复 = 当场产生成本)。
+  // 群消息在本 handler 不同步触发 bot 回复(群 bot 回复异步另走),故不在此 gate 群;
+  // 群的前置 gate 应落在群 bot 回复发起处(见 tech-debt:群 bot 回复前置门禁未接)。
+  // gateConversation 对 1v1 解析为发起人钱包,与旧 requireMessageBalance 等价。
   const balancePromise: Promise<InsufficientBalanceError | null> = needsBotPath
-    ? requireMessageBalance(c.env, supaUser, userId)
+    ? gateConversation(c.env, supaService, { userId, conversationId: parsed.conversationId })
     : Promise.resolve(null);
 
   const botPromise = needsBotPath
@@ -964,14 +969,12 @@ messageRoutes.post('/:id/regenerate', async (c) => {
     return jsonError(c, 403, 'forbidden', { message: '没有权限和这个机器人聊天,可能已被取消邀请' });
   }
 
-  try {
-    await requireBalance(c.env, supaUser, userId);
-  } catch (err) {
-    if (err instanceof InsufficientBalanceError) {
-      return insufficientBalanceResponse(c, err);
-    }
-    throw err;
-  }
+  // 群感知门禁:群按池+认缴聚合,1v1 按发起人(计费 P2)。
+  const gateErr = await gateConversation(c.env, supaService, {
+    userId,
+    conversationId: parsed.conversationId,
+  });
+  if (gateErr) return insufficientBalanceResponse(c, gateErr);
 
   const turnRoute = await resolveMessageBotTurnRoute(
     c.env,
@@ -1574,18 +1577,6 @@ function botConfigString(config: unknown, key: string): string | null {
   return typeof v === 'string' && v.length > 0 ? v : null;
 }
 
-async function requireMessageBalance(
-  env: AppBindings['Bindings'],
-  supaUser: ReturnType<typeof userClient>,
-  userId: string,
-): Promise<InsufficientBalanceError | null> {
-  return requireBalance(env, supaUser, userId)
-    .then(() => null)
-    .catch((err) => {
-      if (err instanceof InsufficientBalanceError) return err;
-      throw err;
-    });
-}
 
 function insufficientBalanceResponse(
   c: Context<AppBindings>,

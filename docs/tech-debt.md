@@ -458,6 +458,7 @@
   - 🟡 **链式退款未覆盖群注资**(plan Task 6 未做):Apple/LS 退款命中"已注资进群"的那笔钱时,应按 `share_now` 冲减群池 + 超出部分平台自担(billing-v2-design §9)。当前 `billing-webhooks.ts` 退款路径只对 user subject 走 `recordRefund`,**不会**反查 group_contributions。后果:已进群的钱被 Apple 退款时,群池不冲减(平台/账目不一致),不是双退用户但需补。**上线前必补,否则群退款与平台退款账目漂移。**
   - 🟡 **群池镜像漂移报警未做**(plan Task 8):`group_pools.total_remaining` 是镜像,应在 WalletDO alarm 对账时与 Polar 余额比对、超 1 PNC 报警。当前无,靠 floor 保守 + WalletDO 自身对账兜底。
   - 🟡 **`/leave` 只退款不删 membership 行**:退份额走通,但成员行的移除仍需走既有 `DELETE /members/:userId`(无 self-leave RPC)。"退群"两步未合一。
+  - 🟡 **群 bot 回复的前置门禁未接(认缴聚合)** — 计费 P2 群钱包:`gateConversation`(群=实缴池+认缴聚合)已接进**同步触发 LLM 的路径**(1v1 send / regenerate / envelope);但**群里人发消息→bot 异步回复**这条路径在消息 POST 处不 gate(避免对纯附件等无成本消息误拦),群 bot 回复发起处也尚未加前置 gate。后果:群池/认缴耗尽时,异步 bot 回复仍会发起→靠 settleGroupSpend 事后扣 + overdraft floor 兜底,但缺"开跑前拦截"。应在群 bot 回复发起处(bot-reply 投递)加 `gateConversation`。当前钱不会算错(settleGroupSpend 正确),只是少一道预拦。
 
 - 🟡 **billing-v2 退役未完成(用量/packs/旧入账 dead 但仍在树)** — P2 后这些已无 live 调用方但代码还在:`lib/billing-v2.ts` 的 `settleUsage`/`settleManyUsage`/packs 扣减、`lib/billing-v2-pack.ts`、pack 过期 cron(`cron/billing-v2-sweep.ts`/`billing-v2-expiry.ts`/`billing-v2-tasks.ts`)、旧入账 `billing-v2-lemon.ts`(Lemon 已弃)+ `billing-v2-iap.ts`(被 RevenueCat 取代)及其在 `billing-webhooks.ts` 仍挂载的 `/lemonsqueezy/webhook`、`/iap/purchase`、`/iap/notify` 路由。**保留项**:`pnc_ledger`(审计)、群分摊雏形(待重挂,见上条)。退役需与群分摊重做一起做,避免误删 share-index 逻辑。
 

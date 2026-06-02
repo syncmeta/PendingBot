@@ -109,3 +109,32 @@ describe('gateUsage thresholds', () => {
     expect(r).toBeNull();
   });
 });
+
+describe('availableForSubject (群聚合认缴)', () => {
+  beforeEach(() => vi.restoreAllMocks());
+
+  it('群可用 = 实缴池 + Σ认缴 min(pledge,余额)', async () => {
+    const db = makeFakeDb({
+      group_pledges: [
+        { subject_id: 'grp', user_id: 'bob', pledge_pnc_micros: 40 * PNC, status: 'active' },
+      ],
+    });
+    const w: FakeWallet = { calls: [], balances: { grp: 60 * PNC, bob: 100 * PNC } };
+    const env = makeFakeEnv(db, { wallet: w });
+    const supa = serviceClient(env);
+    const { availableForSubject } = await import('./usage-gate');
+    const r = await availableForSubject(env, supa, { subjectId: 'grp', kind: 'subject' });
+    expect(r.balanceMicros).toBe(100 * PNC); // 60 池 + 40 认缴
+    expect(r.thresholdState).toBe('sufficient');
+  });
+
+  it('个人 = 自己 WalletDO', async () => {
+    const db = makeFakeDb({});
+    const w: FakeWallet = { calls: [], balances: { u1: 3 * PNC } };
+    const env = makeFakeEnv(db, { wallet: w });
+    const { availableForSubject } = await import('./usage-gate');
+    const r = await availableForSubject(env, serviceClient(env), { subjectId: 'u1', kind: 'user' });
+    expect(r.balanceMicros).toBe(3 * PNC);
+    expect(r.thresholdState).toBe('throttle');
+  });
+});

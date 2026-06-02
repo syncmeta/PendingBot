@@ -21,8 +21,10 @@
 import type { Env } from '../types';
 import type { SupabaseClient } from '../lib/supabase';
 import type { ThresholdState } from '../durable-objects/wallet';
+import { thresholdOf } from '../durable-objects/wallet';
 import { InsufficientBalanceError } from '../lib/billing';
 import { wallet } from './wallet-client';
+import { resolveGroupStakes } from './group-wallet';
 
 export type { ThresholdState } from '../durable-objects/wallet';
 
@@ -111,9 +113,50 @@ export async function gateUsage(
 ): Promise<GateResult | null> {
   const target = await resolveBillingSubjectId(supa, ctx);
   if (!target) return null;
-  const { balanceMicros, thresholdState } = await wallet.gate(env, target.subjectId);
+  const { balanceMicros, thresholdState } = await availableForSubject(env, supa, target);
   if (thresholdState === 'exhausted') {
     throw new InsufficientBalanceError(balanceMicros, 0);
   }
   return { subjectId: target.subjectId, balanceMicros, thresholdState };
+}
+
+/**
+ * 主体可用额:个人 = 其 WalletDO 余额;群 = 实缴池 + Σ认缴成员 min(pledge, 余额)。
+ * 群路径要读全群 pledge + 各成员余额,**须传 service-role client**(认缴 RLS 仅本人可读)。
+ */
+export async function availableForSubject(
+  env: Env,
+  supa: SupabaseClient,
+  target: BillingTarget,
+): Promise<{ balanceMicros: number; thresholdState: ThresholdState }> {
+  if (target.kind === 'user') {
+    const g = await wallet.gate(env, target.subjectId);
+    return { balanceMicros: g.balanceMicros, thresholdState: g.thresholdState };
+  }
+  const { total } = await resolveGroupStakes(env, supa, target.subjectId);
+  return { balanceMicros: total, thresholdState: thresholdOf(total) };
+}
+
+/**
+ * 群感知前置门禁:解析计费主体(群=池+认缴聚合,个人=自己),exhausted 返回
+ * InsufficientBalanceError(不抛,便于并行 promise 拼装),否则 null。读失败 fail-open。
+ * **群路径须传 service client**。系统级级联不调本函数(只对用户发起路径)。
+ */
+export async function gateConversation(
+  env: Env,
+  supa: SupabaseClient,
+  ctx: { conversationId?: string | null; userId?: string | null },
+): Promise<InsufficientBalanceError | null> {
+  try {
+    const target = await resolveBillingSubjectId(supa, ctx);
+    if (!target) return null;
+    const avail = await availableForSubject(env, supa, target);
+    if (avail.thresholdState === 'exhausted') {
+      return new InsufficientBalanceError(avail.balanceMicros, 0);
+    }
+    return null;
+  } catch (e) {
+    console.warn('[gateConversation] fail-open', (e as Error)?.message);
+    return null;
+  }
 }
