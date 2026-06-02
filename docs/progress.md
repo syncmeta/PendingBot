@@ -63,7 +63,7 @@
 - ✅ ~~T3.2 Codex runner~~ —— 已补完(#202,2026-06-02)。其上层 **JSONL 事件解析层**也已落地(#203,2026-06-02):`RunnerEventParser` 把 codex/claude 两种 JSONL flatten 成统一 `RunnerEvent` 模型,接进 `CrewSessionRun.events` 并在 session 窗口加「转写」tab 渲染;schema 取自实跑两个 CLI 的 fixtures,9 测试绿。本机 runner 闭环(Phase 3)真实缺口已清零(剩 T5.3 真机 QA 见下)。
 - ❌ **T5.3 端到端 QA** —— 整链路没真机验证
 - 🟡 **T4.5 客户端侧** —— **PendingBot 三端 viewer 代码齐了**：iPhone（只读已真机验 + 实时 banner/cancel 编译绿）、iPad（随 iOS universal，同代码）、**Mac（PendingBot macOS 端新接 Crew tab：crew 列表→session viewer→实时+cancel，编译绿）**。跨平台层（CrewSessionAPI / SessionProxyClient / SessionStatusStyle）已抽共享。另有 PendingCrew Mac 独立 app 的 runner 发布 + 实时/cancel 在 `feat/t45-ws-transport`。仍缺：**两设备 E2E QA**（Mac 起活 session + 任一 viewer 实时看&cancel）+ Mac app 登录骆店真机看 test2 + permission over WS。WS 地基铺好，差活 session 串一次。
-- 🟡 **Mac/iPad IM 业务内容**（T0.1/T1.4）—— 壳在，tab 是 placeholder
+- 🟡 **PendingBot 完整原生 Mac 版**（T0.1/T1.4，#212）—— 用户明确要完整原生 SwiftUI macOS（非 Catalyst）。架构:逻辑/数据/网络 100% 跨平台共享，UI 壳逐块原生重画。已接:我 tab、**登录（MacWelcomeView+MacRootGate，Email OTP+Turnstile，待真机验）**、**机组 viewer（MacRemoteSessionsView）**。待接:**消息（会话列表+聊天，主体最大块，已调研:Conversation/ChatMessage/LocalDatabase/APIClient/ChatStream/Supabase 查询全可白嫖，UI 重写，Realtime→轮询）**、好友、机组完整、来信。顺序:登录(地基先验)→消息→好友→机组完整→来信。跨多 session 推进
 - 🟡 **T1.2 客户端消费** —— 后端权限矩阵有了，客户端没用
 
 ---
