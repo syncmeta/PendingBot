@@ -12,38 +12,47 @@ function fakeSdk(balance = 94_497_300) {
   }
 }
 
+const cli = (sdk: unknown) => createPolarClient(sdk as any, { meterId: 'meter_pnc' })
+
 describe('polar-client', () => {
   it('exposes the fixed pnc event name + metadata key', () => {
     expect(PNC_EVENT_NAME).toBe('pnc.usage')
     expect(PNC_METADATA_KEY).toBe('pnc')
   })
 
-  it('reportUsage ingests an event keyed by externalCustomerId with pnc in metadata', async () => {
+  it('reportUsage ingests a POSITIVE event keyed by externalCustomerId + dedupe external_id', async () => {
     const sdk = fakeSdk()
-    const om = createPolarClient(sdk as any, { meterId: 'meter_pnc' })
-    await om.reportUsage('subject_1', 2700, { category: 'llm_tokens' })
-    const req = sdk.events.ingest.mock.calls[0][0]
-    const ev = req.events[0]
+    await cli(sdk).reportUsage('subject_1', 2700, { category: 'llm_tokens', dedupeId: 'evt_1' })
+    const ev = sdk.events.ingest.mock.calls[0][0].events[0]
     expect(ev.name).toBe('pnc.usage')
     expect(ev.externalCustomerId).toBe('subject_1')
-    expect(ev.metadata.pnc).toBe(2700)
+    expect(ev.externalId).toBe('evt_1') // Polar 去重键
+    expect(ev.metadata.pnc).toBe(2700) // 正值 = 扣费
     expect(ev.metadata.category).toBe('llm_tokens')
   })
 
-  it('grantCredits ingests a NEGATIVE event (official grant-before-purchase mechanism)', async () => {
+  it('grantCredits ingests a NEGATIVE event with dedupe id (official grant mechanism)', async () => {
     const sdk = fakeSdk()
-    const om = createPolarClient(sdk as any, { meterId: 'meter_pnc' })
-    await om.grantCredits('subject_1', 94_500_000, { source: 'iap_ios', externalId: 'txn_abc' })
+    await cli(sdk).grantCredits('subject_1', 94_500_000, { source: 'iap_ios', dedupeId: 'txn_abc' })
     const ev = sdk.events.ingest.mock.calls[0][0].events[0]
     expect(ev.externalCustomerId).toBe('subject_1')
+    expect(ev.externalId).toBe('txn_abc')
     expect(ev.metadata.pnc).toBe(-94_500_000) // 负值 = 发放 credit
     expect(ev.metadata.kind).toBe('grant')
     expect(ev.metadata.source).toBe('iap_ios')
   })
 
-  it('getBalance returns the matching meter balance from customer state', async () => {
-    const om = createPolarClient(fakeSdk(94_497_300) as any, { meterId: 'meter_pnc' })
-    expect(await om.getBalance('subject_1')).toBe(94_497_300)
+  it('reduceCredits ingests a POSITIVE refund event (caller must clamp amount)', async () => {
+    const sdk = fakeSdk()
+    await cli(sdk).reduceCredits('subject_1', 1000, { source: 'apple_refund', dedupeId: 'rf_1' })
+    const ev = sdk.events.ingest.mock.calls[0][0].events[0]
+    expect(ev.metadata.pnc).toBe(1000)
+    expect(ev.metadata.kind).toBe('refund')
+    expect(ev.externalId).toBe('rf_1')
+  })
+
+  it('getBalance returns the matching meter balance (positive = available)', async () => {
+    expect(await cli(fakeSdk(94_497_300)).getBalance('subject_1')).toBe(94_497_300)
   })
 
   it('getBalance returns 0 when our meter is absent', async () => {
@@ -51,7 +60,6 @@ describe('polar-client', () => {
       events: { ingest: vi.fn() },
       customers: { getStateExternal: vi.fn().mockResolvedValue({ activeMeters: [] }) },
     }
-    const om = createPolarClient(sdk as any, { meterId: 'meter_pnc' })
-    expect(await om.getBalance('subject_1')).toBe(0)
+    expect(await cli(sdk).getBalance('subject_1')).toBe(0)
   })
 })

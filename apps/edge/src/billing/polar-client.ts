@@ -1,19 +1,28 @@
 // Polar 薄封装。只暴露 PendingBot 计费需要的领域操作。
 // 真实 SDK：@polar-sh/sdk。Customer 以 externalId = 我们的 subject_id 标识。
 // 见 docs/superpowers/specs/2026-06-01-billing-engine-design.md。
+//
+// 符号约定(统一"全事件"模型，避免 Polar 双约定坑)：
+//   meter = SUM(metadata.pnc)；**扣费/退款 = 正值；充值/发 credit = 负值**。
+//   不挂 Credits Benefit(它走 credited−consumed 正向，与负值事件混用不自洽)。
+//   web 购买与 iOS IAP 都经 webhook 走 grantCredits(负值)入账。
+//   getStateExternal 的 balance(=credited−consumed，此模型下 credited=0)→ 正数=可用额度。
+//   确切符号 + 余额刷新延迟由 P0 spike 实跑确认。
 import { Polar } from '@polar-sh/sdk'
 
-/** 上报扣费的事件名；Polar meter 配置为按 metadata 里的 pnc 字段求和。 */
+/** 上报事件名；Polar meter 配置为按 metadata.pnc 求和。 */
 export const PNC_EVENT_NAME = 'pnc.usage'
 /** meter 聚合的 metadata 数值字段名。 */
 export const PNC_METADATA_KEY = 'pnc'
 
 // 只用 SDK 的这两块；结构化类型避免与 SDK 内部类型强耦合(真实形状由 spike 锁定)。
+// events.ingest 的 externalId 是 Polar 的去重键(重复 external_id 被跳过)。
 type Sdk = {
   events: {
     ingest: (req: {
       events: Array<{
         name: string
+        externalId?: string
         externalCustomerId?: string
         metadata?: Record<string, unknown>
       }>
@@ -28,50 +37,63 @@ type Sdk = {
 
 export interface UsageOpts {
   category: string // llm_tokens / voice_tokens / ...（spec §5 八类）
+  dedupeId: string // Polar event external_id，防 outbox/webhook 重投重复计
   metadata?: Record<string, unknown>
 }
 
-// 符号约定(Polar 官方《Grant Meter Credits Before Purchase》)：
-// meter = SUM(metadata.pnc)。**扣费 = 正值;充值/发 credit = 负值**。
-// 可用额度 = -(meter 余额)(负余额代表可用)。确切符号 + getStateExternal.balance 语义由 P0 spike 锁定。
+export interface GrantOpts {
+  source: string // iap_ios / polar_checkout / admin / redemption ...
+  dedupeId: string // 上游交易 id(RC event.id / transaction_id / order id)，幂等键
+}
+
 export function createPolarClient(sdk: Sdk, opts: { meterId: string }) {
   return {
-    /** 扣费：上报正值 usage event(externalCustomerId = subject_id)。 */
+    /** 扣费：上报正值 usage event。dedupeId 防重投。 */
     async reportUsage(externalCustomerId: string, pnc: number, u: UsageOpts): Promise<void> {
       await sdk.events.ingest({
         events: [
           {
             name: PNC_EVENT_NAME,
+            externalId: u.dedupeId,
             externalCustomerId,
-            metadata: { [PNC_METADATA_KEY]: pnc, category: u.category, ...(u.metadata ?? {}) },
+            metadata: { [PNC_METADATA_KEY]: Math.abs(pnc), category: u.category, ...(u.metadata ?? {}) },
           },
         ],
       })
     },
 
-    /** 充值/发 credit：上报负值事件(官方机制,无需 checkout,iOS IAP 入账走这里)。 */
-    async grantCredits(
-      externalCustomerId: string,
-      pnc: number,
-      meta: { source: string; externalId: string },
-    ): Promise<void> {
+    /** 充值/发 credit：上报负值事件(无需 checkout，web+iOS 入账都走这里)。dedupeId 幂等。 */
+    async grantCredits(externalCustomerId: string, pnc: number, g: GrantOpts): Promise<void> {
       await sdk.events.ingest({
         events: [
           {
             name: PNC_EVENT_NAME,
+            externalId: g.dedupeId,
             externalCustomerId,
-            metadata: {
-              [PNC_METADATA_KEY]: -Math.abs(pnc), // 负值 = 发放 credit
-              kind: 'grant',
-              source: meta.source, // iap_ios / lemon_squeezy 已弃 / polar_checkout / admin ...
-              externalId: meta.externalId, // 幂等去重靠上游(provider 交易 id)
-            },
+            metadata: { [PNC_METADATA_KEY]: -Math.abs(pnc), kind: 'grant', source: g.source },
           },
         ],
       })
     },
 
-    /** 门禁读余额：从 customer state 取我们 meter 的余额(找不到记 0)。 */
+    /**
+     * 退款冲减:上报正值事件(与扣费同向)减少可用额度。
+     * ⚠️ Polar 不会把余额夹在 0；退款 3-case 的"不扣成负/已耗不追讨"必须调用方先夹好金额。
+     */
+    async reduceCredits(externalCustomerId: string, pnc: number, g: GrantOpts): Promise<void> {
+      await sdk.events.ingest({
+        events: [
+          {
+            name: PNC_EVENT_NAME,
+            externalId: g.dedupeId,
+            externalCustomerId,
+            metadata: { [PNC_METADATA_KEY]: Math.abs(pnc), kind: 'refund', source: g.source },
+          },
+        ],
+      })
+    },
+
+    /** 门禁读余额：从 customer state 取我们 meter 的余额(正=可用;找不到记 0)。 */
     async getBalance(externalCustomerId: string): Promise<number> {
       const state = await sdk.customers.getStateExternal({ externalId: externalCustomerId })
       const m = (state.activeMeters ?? []).find((x) => x.meterId === opts.meterId)

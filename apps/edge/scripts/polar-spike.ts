@@ -21,7 +21,7 @@ async function main() {
   const before = await om.getBalance(externalId)
   console.log('balance before:', before)
 
-  await om.reportUsage(externalId, 2700, { category: 'llm_tokens' })
+  await om.reportUsage(externalId, 2700, { category: 'llm_tokens', dedupeId: `spike-${Date.now()}` })
   console.log('ingested 2700 pnc usage')
 
   // meter 聚合有延迟,轮询观察燃尽
