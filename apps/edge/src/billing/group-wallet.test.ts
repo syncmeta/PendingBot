@@ -4,6 +4,9 @@ import {
   refundContributorFromGroup,
   dissolveGroup,
   applyGroupSpendDecay,
+  getActivePledges,
+  setPledge,
+  withdrawFromGroup,
 } from './group-wallet';
 import { makeFakeDb, makeFakeClient, makeFakeEnv, type FakeDb, type FakeWallet } from '../../tests/_helpers/fake-supabase';
 import type { PolarClient } from './polar-client';
@@ -139,6 +142,69 @@ describe('dissolveGroup', () => {
     const r = await dissolveGroup({ env, supa, om: fakeOm(), subjectId: GROUP });
     expect(r.refundedContributors).toBe(2);
     expect(db.rows.group_contributions.every((c) => c.status === 'refunded')).toBe(true);
+  });
+});
+
+describe('setPledge / getActivePledges', () => {
+  it('upsert 认缴额度', async () => {
+    const db = makeFakeDb({ group_pledges: [] });
+    const supa = makeFakeClient(db);
+    await setPledge(supa, GROUP, ALICE, 27_000_000);
+    const row = db.inserts.find((i) => i.table === 'group_pledges')?.row;
+    expect(row).toMatchObject({
+      subject_id: GROUP,
+      user_id: ALICE,
+      pledge_pnc_micros: 27_000_000,
+      status: 'active',
+    });
+  });
+
+  it('额度 0 = 撤销', async () => {
+    const db = makeFakeDb({ group_pledges: [] });
+    await setPledge(makeFakeClient(db), GROUP, ALICE, 0);
+    expect(db.inserts.find((i) => i.table === 'group_pledges')?.row.status).toBe('revoked');
+  });
+
+  it('getActivePledges 读 active', async () => {
+    const db = makeFakeDb({
+      group_pledges: [
+        { subject_id: GROUP, user_id: ALICE, pledge_pnc_micros: 27_000_000, status: 'active' },
+        { subject_id: GROUP, user_id: 'u_x', pledge_pnc_micros: 5, status: 'revoked' },
+      ],
+    });
+    const pledges = await getActivePledges(makeFakeClient(db), GROUP);
+    expect(pledges).toEqual([{ userId: ALICE, pledgeMicros: 27_000_000 }]);
+  });
+});
+
+describe('withdrawFromGroup (部分取出)', () => {
+  it('退≤share_now,池减、个人入账、缩 contributions', async () => {
+    const db = makeFakeDb({
+      group_pools: [{ subject_id: GROUP, total_remaining_pnc_micros: 100_000_000, share_index: 1 }],
+      group_contributions: [
+        { id: 'c1', subject_id: GROUP, contributor_user_id: ALICE, contributed_pnc_micros: 100_000_000, share_index_at_join: 1, status: 'active' },
+      ],
+      pnc_ledger: [],
+    });
+    db.rpcs = { apply_partial_withdraw: () => ({ data: 30_000_000 }) };
+    const { env, supa, wallet } = ctx(db, { [GROUP]: 100_000_000, [ALICE]: 0 });
+    const om = fakeOm();
+    const r = await withdrawFromGroup({ env, supa, om, subjectId: GROUP, userId: ALICE, amountMicros: 30_000_000 });
+    expect(r.withdrawnMicros).toBe(30_000_000);
+    expect((om as any).reduceCredits).toHaveBeenCalledWith(GROUP, 30_000_000, expect.any(Object));
+    expect((om as any).grantCredits).toHaveBeenCalledWith(ALICE, 30_000_000, expect.any(Object));
+    expect(wallet.calls.some((c) => c.subjectId === GROUP && c.path === '/debit')).toBe(true);
+    expect(wallet.calls.some((c) => c.subjectId === ALICE && c.path === '/credit')).toBe(true);
+  });
+
+  it('RPC 退 0(份额/池为空)→ 不动 Polar', async () => {
+    const db = makeFakeDb({ pnc_ledger: [] });
+    db.rpcs = { apply_partial_withdraw: () => ({ data: 0 }) };
+    const { env, supa } = ctx(db, {});
+    const om = fakeOm();
+    const r = await withdrawFromGroup({ env, supa, om, subjectId: GROUP, userId: ALICE, amountMicros: 30_000_000 });
+    expect(r.withdrawnMicros).toBe(0);
+    expect((om as any).reduceCredits).not.toHaveBeenCalled();
   });
 });
 

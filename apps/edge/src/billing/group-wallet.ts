@@ -261,3 +261,101 @@ export async function applyGroupSpendDecay(
     console.warn('[group-wallet] applyGroupSpendDecay failed', subjectId, (e as Error)?.message);
   }
 }
+
+// ============================================================
+// 认缴(pledge)读写
+// ============================================================
+
+export interface Pledge {
+  userId: string;
+  pledgeMicros: number;
+}
+
+/** 群的所有有效认缴(status=active)。 */
+export async function getActivePledges(supa: Supa, subjectId: string): Promise<Pledge[]> {
+  const { data } = await supa
+    .from('group_pledges')
+    .select('user_id, pledge_pnc_micros')
+    .eq('subject_id', subjectId)
+    .eq('status', 'active');
+  return (data ?? []).map((r) => ({
+    userId: r.user_id as string,
+    pledgeMicros: Number(r.pledge_pnc_micros),
+  }));
+}
+
+/** 设/改认缴额度;amountMicros<=0 视为撤销(status=revoked, 额度 0)。 */
+export async function setPledge(
+  supa: Supa,
+  subjectId: string,
+  userId: string,
+  amountMicros: number,
+): Promise<void> {
+  const micros = Math.max(0, Math.trunc(amountMicros));
+  await supa.from('group_pledges').upsert(
+    {
+      subject_id: subjectId,
+      user_id: userId,
+      pledge_pnc_micros: micros,
+      status: micros > 0 ? 'active' : 'revoked',
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: 'subject_id,user_id' },
+  );
+}
+
+// ============================================================
+// 部分取出(实缴,随时、可部分)
+// ============================================================
+
+export interface WithdrawParams {
+  env: Env;
+  supa: Supa;
+  om: PolarClient;
+  subjectId: string;
+  userId: string;
+  amountMicros: number;
+}
+
+/**
+ * 从实缴池退回 amount(≤ 当前 share_now)给成员个人钱包,留在群里。
+ * apply_partial_withdraw 原子缩 contributions + 减池(share_index 不变),返回实退额。
+ */
+export async function withdrawFromGroup(p: WithdrawParams): Promise<{ withdrawnMicros: number }> {
+  const { env, supa, om, subjectId, userId } = p;
+  const amount = Math.trunc(p.amountMicros);
+  if (!Number.isFinite(amount) || amount <= 0) return { withdrawnMicros: 0 };
+
+  const { data } = await supa.rpc('apply_partial_withdraw', {
+    p_subject_id: subjectId,
+    p_user_id: userId,
+    p_amount_micros: amount,
+  });
+  const withdrawn = Number(data ?? 0);
+  if (withdrawn <= 0) return { withdrawnMicros: 0 };
+
+  const rid = crypto.randomUUID();
+  // 群侧出账:Polar 群减 + 手写审计 + DO 缓存(不用 recordRefund:ledger 不含群消费会超退)。
+  await supa.from('pnc_ledger').insert({
+    subject_id: subjectId,
+    kind: 'refund',
+    source: 'group_withdraw',
+    external_ref: rid,
+    delta_pnc_micros: -withdrawn,
+    raw: { contributor_user_id: userId },
+  });
+  await om.reduceCredits(subjectId, withdrawn, { source: 'group_withdraw', dedupeId: `gwd-out:${rid}` });
+  await wallet.debit(env, subjectId, withdrawn, { category: 'group_withdraw', dedupeId: `gwd-out:${rid}` });
+  // 用户侧入账(credit-in 幂等 + DO 缓存)。
+  await recordCreditIn(supa, om, {
+    subjectId: userId,
+    kind: 'topup',
+    source: 'group_withdraw',
+    externalRef: rid,
+    pncMicros: withdrawn,
+    raw: { withdrawn_from_subject_id: subjectId },
+  });
+  await wallet.credit(env, userId, withdrawn);
+
+  return { withdrawnMicros: withdrawn };
+}
