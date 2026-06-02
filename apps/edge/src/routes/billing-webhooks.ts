@@ -12,6 +12,14 @@ import {
   handleAppleNotification,
 } from '../lib/billing-v2-iap';
 import type { AppBindings } from '../types';
+// ── Polar(新计费引擎)+ RevenueCat(iOS)入账 webhook ──
+// 见 docs/superpowers/specs/2026-06-01-billing-engine-design.md
+//     docs/superpowers/plans/2026-06-02-billing-p1-credit-in.md
+import { validateEvent, WebhookVerificationError } from '@polar-sh/sdk/webhooks';
+import { polarFromEnv } from '../billing/polar-client';
+import { recordCreditIn, recordRefund } from '../lib/billing-polar';
+import { resolvePack } from '../lib/billing-packs';
+import { pncToMicros } from '../billing/pnc';
 
 // Billing v2 webhook + purchase endpoints (see docs/billing-v2-design.md §10).
 //
@@ -122,3 +130,126 @@ billingWebhookRoutes.post('/iap/notify', async (c) => {
   }
   return c.json({ ok: true, action: result.action });
 });
+
+// ============================================================
+// Polar(web/Mac MoR)— order.paid 充值 / order.refunded 退款
+// ⚠️ payload 字段路径(order.customer.externalId / order.product.id)以真实 webhook 为准,
+//    P1-0 配好 endpoint 后用 Polar dashboard "send test" 核对再微调。
+// ============================================================
+
+function polarClientOrNull(env: {
+  POLAR_ACCESS_TOKEN?: string;
+  POLAR_SERVER?: string;
+  POLAR_PNC_METER_ID?: string;
+}) {
+  if (!env.POLAR_ACCESS_TOKEN || !env.POLAR_PNC_METER_ID) return null;
+  return polarFromEnv(
+    { POLAR_ACCESS_TOKEN: env.POLAR_ACCESS_TOKEN, POLAR_SERVER: env.POLAR_SERVER },
+    env.POLAR_PNC_METER_ID,
+  );
+}
+
+billingWebhookRoutes.post('/polar/webhook', async (c) => {
+  const secret = c.env.POLAR_WEBHOOK_SECRET;
+  if (!secret) return jsonError(c, 501, 'webhook_not_configured');
+  const om = polarClientOrNull(c.env);
+  if (!om) return jsonError(c, 501, 'polar_not_configured');
+
+  const raw = await c.req.text();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let event: any;
+  try {
+    event = validateEvent(raw, Object.fromEntries(c.req.raw.headers), secret);
+  } catch (e) {
+    if (e instanceof WebhookVerificationError) return jsonError(c, 401, 'invalid_signature');
+    throw e;
+  }
+
+  const supa = serviceClient(c.env);
+  const order = event?.data ?? {};
+  const subjectId: string | undefined = order.customer?.externalId ?? order.customerExternalId;
+  const productId: string | undefined = order.product?.id ?? order.productId;
+
+  if (event.type === 'order.paid' && subjectId && productId) {
+    const pack = resolvePack('polar_checkout', productId);
+    if (pack) {
+      await recordCreditIn(supa, om, {
+        subjectId, kind: 'topup', source: 'polar_checkout', externalRef: String(order.id),
+        pncMicros: pncToMicros(pack.pnc), markupSnapshot: pack.markupSnapshot, raw: order,
+      });
+    }
+    return c.json({ ok: true });
+  }
+  if (event.type === 'order.refunded' && subjectId && productId) {
+    const pack = resolvePack('polar_checkout', productId);
+    if (pack) {
+      await recordRefund(supa, om, {
+        subjectId, source: 'polar_checkout', externalRef: `${order.id}:refund`,
+        pncMicros: pncToMicros(pack.pnc), raw: order,
+      });
+    }
+    return c.json({ ok: true });
+  }
+  return c.json({ ok: true, ignored: event.type });
+});
+
+// ============================================================
+// RevenueCat(iOS IAP)— NON_RENEWING_PURCHASE 充值 / CANCELLATION 退款 / REFUND_REVERSED 重发
+// 鉴权:RevenueCat 无签名,只有共享密钥 Authorization 头 → 常量时间比对。
+// ============================================================
+
+billingWebhookRoutes.post('/revenuecat/webhook', async (c) => {
+  const expected = c.env.REVENUECAT_WEBHOOK_AUTH;
+  if (!expected) return jsonError(c, 501, 'webhook_not_configured');
+  const got = c.req.header('authorization') ?? '';
+  if (got.length !== expected.length || !timingSafeEqual(got, expected)) {
+    return jsonError(c, 401, 'invalid_auth');
+  }
+  const om = polarClientOrNull(c.env);
+  if (!om) return jsonError(c, 501, 'polar_not_configured');
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let body: any;
+  try {
+    body = await c.req.json();
+  } catch {
+    return jsonError(c, 400, 'invalid_json');
+  }
+  const ev = body?.event;
+  if (!ev) return jsonError(c, 400, 'invalid_json');
+
+  const supa = serviceClient(c.env);
+  const subjectId: string | undefined = ev.app_user_id;
+  const pack = ev.product_id ? resolvePack('iap_ios', ev.product_id) : null;
+  if (!subjectId || !pack) return c.json({ ok: true, skipped: 'no_subject_or_pack' });
+
+  if (ev.type === 'NON_RENEWING_PURCHASE') {
+    await recordCreditIn(supa, om, {
+      subjectId, kind: 'topup', source: 'iap_ios', externalRef: String(ev.transaction_id),
+      pncMicros: pncToMicros(pack.pnc), markupSnapshot: pack.markupSnapshot, raw: ev,
+    });
+    return c.json({ ok: true });
+  }
+  if (ev.type === 'CANCELLATION') {
+    await recordRefund(supa, om, {
+      subjectId, source: 'iap_ios', externalRef: `${ev.transaction_id}:refund`,
+      pncMicros: pncToMicros(pack.pnc), raw: ev,
+    });
+    return c.json({ ok: true });
+  }
+  if (ev.type === 'REFUND_REVERSED') {
+    await recordCreditIn(supa, om, {
+      subjectId, kind: 'topup', source: 'iap_ios', externalRef: `${ev.transaction_id}:rev`,
+      pncMicros: pncToMicros(pack.pnc), markupSnapshot: pack.markupSnapshot, raw: ev,
+    });
+    return c.json({ ok: true });
+  }
+  return c.json({ ok: true, ignored: ev.type });
+});
+
+// 常量时间字符串比较(避免计时攻击)。
+function timingSafeEqual(a: string, b: string): boolean {
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}

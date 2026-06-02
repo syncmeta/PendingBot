@@ -30,7 +30,7 @@ const UNIQUE_VIOLATION = '23505'
 
 /** 入账:影子账幂等(unique(source,external_ref) 冲突=已处理过),仅新插入才推 Polar 发 credit。 */
 export async function recordCreditIn(
-  supa: SupabaseClient,
+  supa: SupabaseClient<any, any, any>,
   om: PolarClient,
   i: CreditInInput,
 ): Promise<{ applied: boolean }> {
@@ -63,7 +63,7 @@ export async function recordCreditIn(
 
 /** 退款:按影子账可用余额夹金额(不扣成负),写负向行 + Polar reduceCredits。 */
 export async function recordRefund(
-  supa: SupabaseClient,
+  supa: SupabaseClient<any, any, any>,
   om: PolarClient,
   i: RefundInput,
 ): Promise<{ applied: boolean; clampedMicros: number }> {
