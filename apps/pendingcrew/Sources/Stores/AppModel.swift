@@ -115,6 +115,39 @@ final class AppModel: ObservableObject {
         BYOKConfig.clear()
         byokConfig = nil
     }
+
+    // MARK: - T4.5 crew-session server lifecycle
+
+    /// 本 app session 缓存的 runner-host id —— 第一个 logged crew session 时
+    /// 懒注册,之后复用;重启后重新注册。
+    private var cachedRunnerHostId: String?
+
+    /// 用当前 device-grant 凭据构造一个 `PendingCrewAPI`。非登录态抛错。
+    func loggedAPIClient() throws -> PendingCrewAPI {
+        guard let credential, credential.kind == .deviceGrant else {
+            throw PendingCrewBackendError.notAuthenticated
+        }
+        guard let url = URL(string: apiBaseURL) else {
+            throw PendingCrewBackendError.invalidConfig("API base URL 无效")
+        }
+        return PendingCrewAPI(baseURL: url, bearerToken: credential.token)
+    }
+
+    /// 把这台机注册成 runner host(每个 app session 一次,缓存 id 复用)。
+    func ensureRunnerHost(
+        api: PendingCrewAPI,
+        subjectId: String,
+        allowedRunnerKinds: [String]
+    ) async throws -> String {
+        if let id = cachedRunnerHostId { return id }
+        let id = try await api.registerRunnerHost(
+            responsibleSubjectId: subjectId,
+            displayName: ProcessInfo.processInfo.hostName,
+            allowedRunnerKinds: allowedRunnerKinds
+        )
+        cachedRunnerHostId = id
+        return id
+    }
 }
 
 /// PendingCrewBackend 的 mode 标记。

@@ -2,6 +2,68 @@
 import Foundation
 import SwiftUI
 
+/// Bridges a local `CrewSessionRun` to its server-side `crew_sessions` row
+/// over the T4.5 runner HTTP lifecycle (register → create → claim → events →
+/// finish). Logged mode only; BYOK runs pass `nil` and stay purely local.
+///
+/// **Best-effort**: every server call is `try?`'d — a publish failure (network
+/// blip, scope gap, evicted lease) is logged but never disrupts the local
+/// agent process. The local run is always the source of truth for the user;
+/// the server mirror is a convenience for cross-device viewers.
+struct CrewSessionServerLink: Sendable {
+    let api: PendingCrewAPI
+    let runnerHostId: String
+    let sessionId: String
+
+    /// Append one transcript event to the server session log.
+    func publish(_ event: RunnerEvent) async {
+        let (eventType, visibility) = Self.map(event)
+        do {
+            _ = try await api.appendSessionEvent(
+                runnerHostId: runnerHostId,
+                sessionId: sessionId,
+                eventType: eventType,
+                visibility: visibility,
+                summary: SessionState.summarize(event)
+            )
+        } catch {
+            print("[crew-session] append event failed: \(error)")
+        }
+    }
+
+    /// Close out the server session row. `localStatus` is the run's terminal
+    /// state mapped to the server's completed/failed/cancelled enum.
+    func finish(localStatus: CrewSessionRun.Status, summary: String?) async {
+        let status: String
+        switch localStatus {
+        case .completed: status = "completed"
+        case .cancelled: status = "cancelled"
+        default: status = "failed"
+        }
+        do {
+            try await api.finishSession(
+                runnerHostId: runnerHostId,
+                sessionId: sessionId,
+                status: status,
+                summary: summary
+            )
+        } catch {
+            print("[crew-session] finish failed: \(error)")
+        }
+    }
+
+    /// Map a RunnerEvent to the server's (event_type, visibility) enums.
+    static func map(_ e: RunnerEvent) -> (String, String) {
+        switch e {
+        case .started: return ("started", "crew_members")
+        case .toolCall: return ("tool_call", "crew_members")
+        case .toolResult: return ("tool_result", "crew_members")
+        case .reasoning: return ("status", "private_system")
+        case .assistant, .finished, .failed, .unknown: return ("status", "crew_members")
+        }
+    }
+}
+
 /// 一次 local coding agent 跑动的 view-side 视图模型。
 ///
 /// 每次 `start(...)` 起一个新 `CrewSessionRun` 并赋给 `current`。
@@ -42,7 +104,11 @@ final class CrewSessionRunner: ObservableObject {
         /// trip lands the real pause-on-manual behaviour); for now the
         /// value just gets recorded server-side so the crew chat card
         /// + the agent's system prompt see it.
-        permissionModeOverride: String? = nil
+        permissionModeOverride: String? = nil,
+        /// T4.5 — when logged in, the caller prepares a server-side session
+        /// (register host → create → claim) and hands the link here so the run
+        /// mirrors its transcript to the server. `nil` = BYOK / local-only.
+        serverLink: CrewSessionServerLink? = nil
     ) async throws {
         // 1. 校验工具可用
         guard let executable = await service.resolveExecutable(kind) else {
@@ -70,7 +136,8 @@ final class CrewSessionRunner: ObservableObject {
             workingDirectory: workingDirectory,
             model: model,
             permissionModeOverride: permissionModeOverride,
-            handle: handle
+            handle: handle,
+            serverLink: serverLink
         )
         current = run
         run.observeStreams()
@@ -133,6 +200,11 @@ final class CrewSessionRun: ObservableObject, Identifiable {
     @Published private(set) var exitCode: Int32?
 
     private let handle: LocalCodingAgentRunHandle
+    /// T4.5 server mirror (logged mode only; nil for BYOK/local-only runs).
+    private let serverLink: CrewSessionServerLink?
+    /// Serializes server publishes so transcript events land in stream order
+    /// (each publish awaits the previous). Best-effort — see CrewSessionServerLink.
+    private var publishChain: Task<Void, Never>?
     private var observeStdoutTask: Task<Void, Never>?
     private var observeStderrTask: Task<Void, Never>?
     private var observeExitTask: Task<Void, Never>?
@@ -148,7 +220,8 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         workingDirectory: URL,
         model: String? = nil,
         permissionModeOverride: String? = nil,
-        handle: LocalCodingAgentRunHandle
+        handle: LocalCodingAgentRunHandle,
+        serverLink: CrewSessionServerLink? = nil
     ) {
         self.runID = runID
         self.crewId = crewId
@@ -159,6 +232,7 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         self.permissionModeOverride = permissionModeOverride
         self.startedAt = Date()
         self.handle = handle
+        self.serverLink = serverLink
     }
 
     /// 起后台 task 把 handle 的 stream / exit code 同步进 @Published。
@@ -210,7 +284,22 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         // yield 0..n events; noise drops to none. Kept append-only so the
         // window's @Published subscription drives incremental rendering.
         let parsed = RunnerEventParser.parse(line: line, kind: kind)
-        if !parsed.isEmpty { events.append(contentsOf: parsed) }
+        if !parsed.isEmpty {
+            events.append(contentsOf: parsed)
+            publishToServer(parsed)
+        }
+    }
+
+    /// Mirror newly-parsed events to the server session log, in order. No-op
+    /// without a serverLink (BYOK/local). Chained so events keep stream order;
+    /// best-effort so a publish failure never affects the local run.
+    private func publishToServer(_ events: [RunnerEvent]) {
+        guard let link = serverLink else { return }
+        let prev = publishChain
+        publishChain = Task {
+            await prev?.value
+            for event in events { await link.publish(event) }
+        }
     }
 
     private func appendStderr(_ line: String) {
@@ -229,6 +318,17 @@ final class CrewSessionRun: ObservableObject, Identifiable {
             // 后续如果 CLI 对 SIGTERM 也 exit 130/143，cancel + 非零退出码
             // 都会落到 cancelled 分支，因为 cancelled 标志已置。
             status = .failed
+        }
+        // T4.5 — close out the server session row after the last queued event
+        // publishes, so the finish doesn't race ahead of in-flight appends.
+        if let link = serverLink {
+            let finalStatus = status
+            let summary = events.last.map(SessionState.summarize)
+            let prev = publishChain
+            publishChain = Task {
+                await prev?.value
+                await link.finish(localStatus: finalStatus, summary: summary)
+            }
         }
     }
 }
