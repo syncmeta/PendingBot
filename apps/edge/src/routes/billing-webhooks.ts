@@ -20,6 +20,8 @@ import { polarFromEnv } from '../billing/polar-client';
 import { recordCreditIn, recordRefund } from '../lib/billing-polar';
 import { resolvePack } from '../lib/billing-packs';
 import { pncToMicros } from '../billing/pnc';
+import { wallet } from '../billing/wallet-client';
+import type { CustomerState } from '@polar-sh/sdk/models/components/customerstate.js';
 
 // Billing v2 webhook + purchase endpoints (see docs/billing-v2-design.md §10).
 //
@@ -148,6 +150,16 @@ function polarClientOrNull(env: {
   );
 }
 
+// 充值/退款后把 delta 实时推进 WalletDO 缓存(正=入账,负=退款扣减)。
+// best-effort:webhook 必须 200,缓存失败由 WalletDO 的 alarm 稀疏对账纠偏。
+async function pushWalletCredit(env: AppBindings['Bindings'], subjectId: string, pncMicros: number): Promise<void> {
+  try {
+    await wallet.credit(env, subjectId, pncMicros);
+  } catch (e) {
+    console.warn('[billing-webhook] wallet.credit push failed', subjectId, pncMicros, (e as Error)?.message);
+  }
+}
+
 billingWebhookRoutes.post('/polar/webhook', async (c) => {
   const secret = c.env.POLAR_WEBHOOK_SECRET;
   if (!secret) return jsonError(c, 501, 'webhook_not_configured');
@@ -175,20 +187,44 @@ billingWebhookRoutes.post('/polar/webhook', async (c) => {
   if (event.type === 'order.paid' && subjectId && productId) {
     const pack = resolvePack('polar_checkout', productId);
     if (pack) {
-      await recordCreditIn(supa, om, {
+      const pncMicros = pncToMicros(pack.pnc);
+      const { applied } = await recordCreditIn(supa, om, {
         subjectId, kind: 'topup', source: 'polar_checkout', externalRef: String(order.id),
-        pncMicros: pncToMicros(pack.pnc), markupSnapshot: pack.markupSnapshot, raw: order,
+        pncMicros, markupSnapshot: pack.markupSnapshot, raw: order,
       });
+      // 实时把入账推进 WalletDO 缓存(best-effort;失败由 alarm 对账纠偏,不可阻塞 200)。
+      if (applied) await pushWalletCredit(c.env, subjectId, pncMicros);
     }
     return c.json({ ok: true });
   }
   if (event.type === 'order.refunded' && subjectId && productId) {
     const pack = resolvePack('polar_checkout', productId);
     if (pack) {
-      await recordRefund(supa, om, {
+      const { clampedMicros } = await recordRefund(supa, om, {
         subjectId, source: 'polar_checkout', externalRef: `${order.id}:refund`,
         pncMicros: pncToMicros(pack.pnc), raw: order,
       });
+      // 退款扣减实时推进缓存(负值);clampedMicros<=0 时无变动,跳过。
+      if (clampedMicros > 0) await pushWalletCredit(c.env, subjectId, -clampedMicros);
+    }
+    return c.json({ ok: true });
+  }
+
+  // customer.state_changed:Polar 余额发生变化(含其它来源调整)→ 对齐 WalletDO 到绝对余额。
+  // event.data 是官方 CustomerState(CustomerStateIndividual | CustomerStateTeam),
+  // 二者均含 externalId(=我们的 subjectId)与 activeMeters: CustomerStateMeter[]。
+  // CustomerStateMeter.balance = credited−consumed,单位与上报事件一致(=pnc_micros)。
+  if (event.type === 'customer.state_changed') {
+    const cs = event.data as CustomerState;
+    const externalId = cs.externalId ?? undefined;
+    const meter = cs.activeMeters.find((m) => m.meterId === c.env.POLAR_PNC_METER_ID);
+    if (externalId && meter) {
+      // best-effort:对齐绝对余额(DO 内会减去在途用量);失败由 alarm 对账纠偏。
+      try {
+        await wallet.applyAbsolute(c.env, externalId, meter.balance);
+      } catch (e) {
+        console.warn('[polar.state_changed] applyAbsolute failed', externalId, (e as Error)?.message);
+      }
     }
     return c.json({ ok: true });
   }
@@ -226,24 +262,29 @@ billingWebhookRoutes.post('/revenuecat/webhook', async (c) => {
   if (!subjectId || !pack) return c.json({ ok: true, skipped: 'no_subject_or_pack' });
 
   if (ev.type === 'NON_RENEWING_PURCHASE') {
-    await recordCreditIn(supa, om, {
+    const pncMicros = pncToMicros(pack.pnc);
+    const { applied } = await recordCreditIn(supa, om, {
       subjectId, kind: 'topup', source: 'iap_ios', externalRef: String(ev.transaction_id),
-      pncMicros: pncToMicros(pack.pnc), markupSnapshot: pack.markupSnapshot, raw: ev,
+      pncMicros, markupSnapshot: pack.markupSnapshot, raw: ev,
     });
+    if (applied) await pushWalletCredit(c.env, subjectId, pncMicros);
     return c.json({ ok: true });
   }
   if (ev.type === 'CANCELLATION') {
-    await recordRefund(supa, om, {
+    const { clampedMicros } = await recordRefund(supa, om, {
       subjectId, source: 'iap_ios', externalRef: `${ev.transaction_id}:refund`,
       pncMicros: pncToMicros(pack.pnc), raw: ev,
     });
+    if (clampedMicros > 0) await pushWalletCredit(c.env, subjectId, -clampedMicros);
     return c.json({ ok: true });
   }
   if (ev.type === 'REFUND_REVERSED') {
-    await recordCreditIn(supa, om, {
+    const pncMicros = pncToMicros(pack.pnc);
+    const { applied } = await recordCreditIn(supa, om, {
       subjectId, kind: 'topup', source: 'iap_ios', externalRef: `${ev.transaction_id}:rev`,
-      pncMicros: pncToMicros(pack.pnc), markupSnapshot: pack.markupSnapshot, raw: ev,
+      pncMicros, markupSnapshot: pack.markupSnapshot, raw: ev,
     });
+    if (applied) await pushWalletCredit(c.env, subjectId, pncMicros);
     return c.json({ ok: true });
   }
   return c.json({ ok: true, ignored: ev.type });
