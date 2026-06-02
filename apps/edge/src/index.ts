@@ -19,6 +19,7 @@ import { crewRoutes } from './routes/crew';
 import { crewsRoutes } from './routes/crews';
 import { crewMessagesRoutes, sessionInboxRoutes } from './routes/crew-comms';
 import { sessionProxyRoutes } from './routes/session-proxy';
+import { crewInteractionRoutes, crewInteractionAnswerRoutes } from './routes/crew-interactions';
 import {
   permissionRequestRoutes,
   crewPermissionModeRoutes,
@@ -119,6 +120,8 @@ v1.route('/permission-requests', permissionRequestRoutes);   // POST /v1/permiss
 v1.route('/crews', crewPermissionModeRoutes);                // PATCH /v1/crews/:crewId/permission-mode
 v1.route('/sessions', sessionPermissionModeRoutes);          // PATCH /v1/sessions/:sessionId/permission-mode
 v1.route('/sessions', sessionProxyRoutes);                   // GET /v1/sessions/:sessionId/proxy/connect (ws upgrade)
+v1.route('/sessions', crewInteractionRoutes);                // POST/GET /v1/sessions/:sessionId/interactions (T4.5 ask_human)
+v1.route('/interactions', crewInteractionAnswerRoutes);      // POST /v1/interactions/:reqId/answer
 v1.route('/share-changes', shareChangesRoutes);
 v1.route('/groups', groupVoiceRoutes);
 v1.route('/voice', voiceActiveRoutes);
