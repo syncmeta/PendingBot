@@ -118,9 +118,18 @@ struct MacRootView: View {
 
     @ViewBuilder
     private var middleColumn: some View {
-        MacEmptyColumn(message: selectedTab.middleColumnEmpty)
-            .navigationTitle(selectedTab.middleColumnTitle)
-            .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
+        switch selectedTab {
+        case .crew:
+            // T4.5 — Crew tab 中列接入真实机组列表;选中一个 crew 后右栏看它的
+            // 服务端 session(跨端 viewer)。其余 crew 业务(创建 / 群聊 / 详情)
+            // 仍是 iOS-only,Mac 端后续渐进接入。
+            MacCrewListColumn(selectedCrewId: $selectedItemId)
+                .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
+        default:
+            MacEmptyColumn(message: selectedTab.middleColumnEmpty)
+                .navigationTitle(selectedTab.middleColumnTitle)
+                .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
+        }
     }
 
     @ViewBuilder
@@ -132,6 +141,12 @@ struct MacRootView: View {
             // 注:Mac 三列下,「我」tab 直接把账号详情放到右栏(中间列保持空态),
             // 因为「我」tab 没有可枚举的 list 内容。
             MacMeView()
+        case .crew:
+            if let crewId = selectedItemId {
+                MacRemoteSessionsView(crewId: crewId)
+            } else {
+                MacEmptyColumn(message: selectedTab.detailColumnEmpty, prominent: true)
+            }
         default:
             MacEmptyColumn(message: selectedTab.detailColumnEmpty, prominent: true)
         }
