@@ -4444,6 +4444,18 @@ export type Database = {
         Args: { p_audit_log_id: string; p_splits: Json }
         Returns: undefined
       }
+      apply_group_contribution: {
+        Args: { p_amount_micros: number; p_subject_id: string }
+        Returns: number
+      }
+      apply_group_pool_spend: {
+        Args: { p_spend_micros: number; p_subject_id: string }
+        Returns: undefined
+      }
+      apply_group_refund: {
+        Args: { p_refund_micros: number; p_subject_id: string }
+        Returns: undefined
+      }
       are_mutual_friends: { Args: { a: string; b: string }; Returns: boolean }
       billing_admin_grant: {
         Args: { p_credits: number; p_reason?: string; p_user_id: string }
