@@ -123,6 +123,10 @@ struct MacRootView: View {
             // T0.1 — 消息 tab 中列接入真实会话列表;选中一个会话后右栏是聊天。
             MacConversationListColumn(selectedConversationId: $selectedItemId)
                 .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
+        case .friends:
+            // T0.1 — 好友 tab 中列:机器人 + 人类好友列表(只读第一版)。
+            MacFriendsColumn()
+                .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
         case .crew:
             // T4.5 — Crew tab 中列接入真实机组列表;选中一个 crew 后右栏看它的
             // 服务端 session(跨端 viewer)。其余 crew 业务(创建 / 群聊 / 详情)
