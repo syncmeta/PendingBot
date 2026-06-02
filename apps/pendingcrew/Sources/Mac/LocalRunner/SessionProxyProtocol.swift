@@ -138,6 +138,43 @@ public struct SessionState: Equatable, Sendable {
     }
 }
 
+// MARK: - SessionStateSnapshot (viewer ← runner, inbound decode)
+
+/// The viewer-side decode of a runner's `session.state` fan-out. The runner
+/// publishes `SessionState.dict()` (`{status, eventCount, lastEvent?}`) and the
+/// DO broadcasts it verbatim inside `{type:"session.state", state:{…}}`. This
+/// is the mirror image of `SessionState`: where that *builds* the wire payload,
+/// this *reads* it on a watching client. Sendable so the proxy client can hand
+/// it across the actor boundary to the SwiftUI viewer.
+public struct SessionStateSnapshot: Equatable, Sendable {
+    public var status: String
+    public var eventCount: Int
+    public var lastEvent: String?
+
+    public init(status: String, eventCount: Int, lastEvent: String?) {
+        self.status = status
+        self.eventCount = eventCount
+        self.lastEvent = lastEvent
+    }
+
+    /// Parse one inbound `session.state` frame. Returns nil for any other frame
+    /// type / malformed JSON so a caller can cheaply try this on `.unknown`
+    /// frames without a separate type check. `eventCount` tolerates the JSON
+    /// number being a double.
+    public static func parse(_ raw: String) -> SessionStateSnapshot? {
+        guard let data = raw.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              obj["type"] as? String == "session.state",
+              let state = obj["state"] as? [String: Any] else {
+            return nil
+        }
+        let status = (state["status"] as? String) ?? ""
+        let count = (state["eventCount"] as? NSNumber)?.intValue ?? 0
+        let last = state["lastEvent"] as? String
+        return SessionStateSnapshot(status: status, eventCount: count, lastEvent: last)
+    }
+}
+
 // MARK: - Outbound (runner → DO)
 
 /// A frame the runner sends to the DO.

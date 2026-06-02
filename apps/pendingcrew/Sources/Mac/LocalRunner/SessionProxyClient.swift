@@ -36,11 +36,17 @@ actor SessionProxyClient {
     /// internally and never reach here. Consumed on the MainActor by the run.
     let inbound: AsyncStream<SessionProxyInbound>
 
+    /// Viewer-side live state fan-out (`session.state` from the runner). Dormant
+    /// for a runner peer (a runner never receives state). A watching client
+    /// (role:.viewer) consumes this to render progress live instead of polling.
+    let states: AsyncStream<SessionStateSnapshot>
+
     private let connectRequest: URLRequest
     private let role: ProxyRole
     private let token: String?
     private let session: URLSession
     private let inboundContinuation: AsyncStream<SessionProxyInbound>.Continuation
+    private let statesContinuation: AsyncStream<SessionStateSnapshot>.Continuation
 
     private var task: URLSessionWebSocketTask?
     private var receiveLoop: Task<Void, Never>?
@@ -72,6 +78,9 @@ actor SessionProxyClient {
         var cont: AsyncStream<SessionProxyInbound>.Continuation!
         self.inbound = AsyncStream { cont = $0 }
         self.inboundContinuation = cont
+        var stateCont: AsyncStream<SessionStateSnapshot>.Continuation!
+        self.states = AsyncStream { stateCont = $0 }
+        self.statesContinuation = stateCont
     }
 
     // MARK: - Public lifecycle
@@ -110,6 +119,7 @@ actor SessionProxyClient {
         task?.cancel(with: .goingAway, reason: nil)
         task = nil
         inboundContinuation.finish()
+        statesContinuation.finish()
     }
 
     // MARK: - Socket bring-up
@@ -167,7 +177,9 @@ actor SessionProxyClient {
     // MARK: - Inbound routing
 
     /// Route one parsed inbound frame. `subscribed` flips us live + re-publishes
-    /// state; runner-actionable frames go out on `inbound`; the rest are logged
+    /// state; runner-actionable frames go out on `inbound`; viewer-facing
+    /// `session.state` (which the runner-oriented `SessionProxyInbound` parses as
+    /// `.unknown`) is decoded and yielded on `states`; anything left is logged
     /// and dropped. Exposed at `internal` so a test can drive it without a
     /// socket; production calls it from the receive loop.
     func dispatch(_ frame: SessionProxyInbound) {
@@ -183,7 +195,14 @@ actor SessionProxyClient {
         case let .error(code, message):
             print("[session-proxy] server error frame: \(code) \(message)")
         case let .unknown(raw):
-            print("[session-proxy] ignoring unknown inbound frame: \(raw)")
+            // A viewer's live state fan-out lands here (session.state is not a
+            // runner-facing frame, so SessionProxyInbound degrades it). Decode
+            // and surface it; truly-unknown frames just log.
+            if let snapshot = SessionStateSnapshot.parse(raw) {
+                statesContinuation.yield(snapshot)
+            } else {
+                print("[session-proxy] ignoring unknown inbound frame: \(raw)")
+            }
         }
     }
 

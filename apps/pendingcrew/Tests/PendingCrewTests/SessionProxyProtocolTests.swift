@@ -191,5 +191,40 @@ final class SessionProxyProtocolTests: XCTestCase {
             .permissionDecision(requestId: "r1", decision: "approve"),
         ])
     }
+
+    // MARK: - SessionStateSnapshot (viewer-side inbound decode)
+
+    func testSnapshotDecodesWhatRunnerPublishes() {
+        // The runner publishes SessionState.dict(); the DO fans it out verbatim
+        // inside {type:"session.state", state:{…}}. The viewer must decode the
+        // exact bytes back — round-trip through the real outbound encoder.
+        let state = SessionState(status: "running", eventCount: 5, lastEvent: "Bash：ls")
+        let data = try! SessionProxyOutbound.sessionState(state).jsonData()
+        let wire = String(data: data, encoding: .utf8)!
+        let snap = SessionStateSnapshot.parse(wire)
+        XCTAssertEqual(snap, SessionStateSnapshot(status: "running", eventCount: 5, lastEvent: "Bash：ls"))
+    }
+
+    func testSnapshotRejectsNonStateFrames() {
+        XCTAssertNil(SessionStateSnapshot.parse(#"{"type":"subscribed","sessionId":"s","role":"viewer"}"#))
+        XCTAssertNil(SessionStateSnapshot.parse("not json"))
+        XCTAssertNil(SessionStateSnapshot.parse(#"{"type":"session.command","commandId":"c"}"#))
+    }
+
+    func testViewerDispatchYieldsLiveStateOnTheStatesStream() async {
+        let client = SessionProxyClient(
+            baseURL: URL(string: "https://api.pendingname.com")!,
+            sessionId: "s5", role: .viewer, token: "pdg_x")
+        // The receive loop parses the frame as SessionProxyInbound first, where a
+        // viewer-facing session.state degrades to .unknown; dispatch then decodes
+        // it onto `states`. Drive that exact path.
+        let raw = #"{"type":"session.state","state":{"status":"completed","eventCount":2,"lastEvent":"done"}}"#
+        await client.dispatch(SessionProxyInbound.parse(raw))
+        await client.close() // finish the stream so for-await terminates
+
+        var got: [SessionStateSnapshot] = []
+        for await snap in client.states { got.append(snap) }
+        XCTAssertEqual(got, [SessionStateSnapshot(status: "completed", eventCount: 2, lastEvent: "done")])
+    }
 }
 #endif
