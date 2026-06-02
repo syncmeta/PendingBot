@@ -135,5 +135,61 @@ final class SessionProxyProtocolTests: XCTestCase {
         XCTAssertEqual(payload?["flag"], .bool(true))
         XCTAssertEqual(payload?["count"], .number(1))
     }
+
+    // MARK: - SessionProxyClient.makeConnectRequest (pure request building)
+
+    func testConnectRequestUpgradesHttpsToWss() {
+        let req = SessionProxyClient.makeConnectRequest(
+            baseURL: URL(string: "https://api.pendingname.com")!,
+            sessionId: "sess-1", role: .runner, token: "pdg_abc")
+        let url = req.url!
+        XCTAssertEqual(url.scheme, "wss")
+        XCTAssertEqual(url.host, "api.pendingname.com")
+        XCTAssertEqual(url.path, "/v1/sessions/sess-1/proxy/connect")
+        XCTAssertTrue(url.query?.contains("role=runner") ?? false, "role query missing: \(url)")
+        XCTAssertEqual(req.value(forHTTPHeaderField: "Authorization"), "Bearer pdg_abc")
+    }
+
+    func testConnectRequestUpgradesHttpToWs() {
+        let req = SessionProxyClient.makeConnectRequest(
+            baseURL: URL(string: "http://127.0.0.1:8787")!,
+            sessionId: "s2", role: .viewer, token: nil)
+        let url = req.url!
+        XCTAssertEqual(url.scheme, "ws")
+        XCTAssertEqual(url.host, "127.0.0.1")
+        XCTAssertEqual(url.port, 8787)
+        XCTAssertTrue(url.query?.contains("role=viewer") ?? false)
+    }
+
+    func testConnectRequestOmitsAuthWhenTokenNil() {
+        let req = SessionProxyClient.makeConnectRequest(
+            baseURL: URL(string: "https://api.pendingname.com")!,
+            sessionId: "s3", role: .runner, token: nil)
+        XCTAssertNil(req.value(forHTTPHeaderField: "Authorization"))
+    }
+
+    // MARK: - SessionProxyClient.dispatch (inbound routing → AsyncStream)
+
+    func testDispatchYieldsRunnerActionableFramesOnly() async {
+        let client = SessionProxyClient(
+            baseURL: URL(string: "https://api.pendingname.com")!,
+            sessionId: "s4", token: "pdg_x")
+        // subscribed ack + an error are handled internally and must NOT leak to
+        // the inbound stream; command + decision must.
+        await client.dispatch(.subscribed(sessionId: "s4", role: .runner))
+        await client.dispatch(.command(commandId: "c1", kind: "send_prompt",
+                                       payload: ["text": .string("hi")], queued: false))
+        await client.dispatch(.error(code: "x", message: "y"))
+        await client.dispatch(.permissionDecision(requestId: "r1", decision: "approve"))
+        await client.close() // finishes the stream so the for-await terminates
+
+        var received: [SessionProxyInbound] = []
+        for await frame in client.inbound { received.append(frame) }
+        XCTAssertEqual(received, [
+            .command(commandId: "c1", kind: "send_prompt",
+                     payload: ["text": .string("hi")], queued: false),
+            .permissionDecision(requestId: "r1", decision: "approve"),
+        ])
+    }
 }
 #endif
