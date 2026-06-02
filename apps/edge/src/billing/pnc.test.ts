@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PNC_PER_USD, MICROS_PER_PNC, usdToPncMicros, pncMicrosToPnc } from './pnc'
+import { PNC_PER_USD, MICROS_PER_PNC, usdToPncMicros, pncMicrosToPnc, pncToMicros } from './pnc'
 
 describe('pnc', () => {
   it('exposes the product-fixed ratio', () => {
@@ -21,5 +21,9 @@ describe('pnc', () => {
 
   it('formats micros back to PNC for display', () => {
     expect(pncMicrosToPnc(94_500_000)).toBeCloseTo(94.5, 6)
+  })
+
+  it('converts integer PNC pack face value to micros', () => {
+    expect(pncToMicros(270)).toBe(270_000_000)
   })
 })

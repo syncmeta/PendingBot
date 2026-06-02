@@ -162,6 +162,9 @@ export interface Env {
   // 本地写 .dev.vars；生产 `wrangler secret put POLAR_ACCESS_TOKEN`。
   POLAR_ACCESS_TOKEN?: string;
   POLAR_SERVER?: string; // 'sandbox' | 'production'
+  POLAR_WEBHOOK_SECRET?: string; // Polar webhook signing secret(Standard Webhooks)
+  POLAR_PNC_METER_ID?: string; // bootstrap 建的 pnc meter id
+  REVENUECAT_WEBHOOK_AUTH?: string; // RevenueCat webhook Authorization 头共享密钥
 }
 
 // Hono's c.var slot — populated by middleware (auth, version, etc.)

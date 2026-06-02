@@ -13,3 +13,8 @@ export function usdToPncMicros(vendorCostUsd: number): number {
 export function pncMicrosToPnc(micros: number): number {
   return micros / MICROS_PER_PNC
 }
+
+/** 整数 PNC → 整数 pnc_micros(充值包面值用)。 */
+export function pncToMicros(pnc: number): number {
+  return Math.round(pnc * MICROS_PER_PNC)
+}
