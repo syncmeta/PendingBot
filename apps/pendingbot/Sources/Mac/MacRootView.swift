@@ -89,6 +89,9 @@ struct MacRootView: View {
     /// 中间列的选中项。骨架阶段没有真实条目,所以这里只是 `String?`
     /// 占位 —— 后续接入会话 / 好友 / 来信时换成对应的 ID 类型。
     @State private var selectedItemId: String? = nil
+    /// 跨 tab 跳转待定值(好友点 bot → 切到消息 tab 选中该会话)。切 tab 的
+    /// onChange 会消费它,避免被「切 tab 清 selection」覆盖——确定性、无竞态。
+    @State private var pendingConversationJump: String? = nil
 
     var body: some View {
         NavigationSplitView {
@@ -99,9 +102,14 @@ struct MacRootView: View {
             detailColumn
         }
         .onChange(of: selectedTab) { _, _ in
-            // 切 tab 时清掉中间列的选中,避免上一个 tab 的 selection
-            // 串到下一个 tab 的右栏。
-            selectedItemId = nil
+            // 切 tab 时清掉中间列的选中,避免上一个 tab 的 selection 串到下一个
+            // tab 的右栏;但若是程序触发的跨 tab 跳转,改为选中目标会话。
+            if let jump = pendingConversationJump {
+                selectedItemId = jump
+                pendingConversationJump = nil
+            } else {
+                selectedItemId = nil
+            }
         }
     }
 
@@ -124,9 +132,13 @@ struct MacRootView: View {
             MacConversationListColumn(selectedConversationId: $selectedItemId)
                 .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
         case .friends:
-            // T0.1 — 好友 tab 中列:机器人 + 人类好友列表(只读第一版)。
-            MacFriendsColumn()
-                .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
+            // T0.1 — 好友 tab 中列:机器人 + 人类好友列表。点 bot → 跳到消息 tab
+            // 选中它的会话(确定性 pendingConversationJump 状态机)。
+            MacFriendsColumn(onOpenConversation: { convId in
+                pendingConversationJump = convId
+                selectedTab = .messages
+            })
+            .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
         case .crew:
             // T4.5 — Crew tab 中列接入真实机组列表;选中一个 crew 后右栏看它的
             // 服务端 session(跨端 viewer)。其余 crew 业务(创建 / 群聊 / 详情)
