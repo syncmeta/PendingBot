@@ -1,11 +1,11 @@
 import type { Env } from '../types';
 import { serviceClient } from '../lib/supabase';
-import { resolveRoute } from '../llm/router';
-import { getBalanceGateState } from '../lib/billing';
+import { computeVoiceCost, resolveRoute } from '../llm/router';
+import { wallet } from '../billing/wallet-client';
+import { usdToPncMicros } from '../billing/pnc';
 import { endRealtimeSession, REALTIME_HANG_UP_TOOL } from '../lib/realtime-sessions';
 import {
   broadcastVoiceCostPreview,
-  enqueueVoiceTurnAudit,
   safeRealtimeErrorSummary,
   safeRealtimeEventSummary,
   splitRealtimeUsage,
@@ -435,28 +435,45 @@ export class RealtimeMeterDO {
     }
 
     const turnUsage = splitRealtimeUsage(usage);
+    const turnIndex = this.turnIndex++;
 
-    await enqueueVoiceTurnAudit({
-      env: this.env,
-      route,
-      userId: ctx.userId,
-      conversationId: ctx.conversationId,
-      usage: turnUsage,
-      source: 'voice_call',
-      sessionId: ctx.sessionId,
-      turnIndex: this.turnIndex++,
-      botId: ctx.botId,
-    });
+    // Billing P2: debit the caller's WalletDO per turn from OpenAI's own
+    // response.done usage. Owner of a 1:1 call is the caller (ctx.userId).
+    // We report the raw vendor USD (no platform markup, design §9); the DO
+    // converts to pnc_micros, decrements its strong-consistent cache, and
+    // queues the usage for flush to Polar. dedupeId = session + turn index
+    // makes the debit idempotent under reconnect / re-delivery. The legacy
+    // billing-v2 AUDIT_QUEUE settle + getBalanceGateState gate are gone.
+    const vendorCostUsd = computeVoiceCost(route?.modelToCall, turnUsage);
+    if (vendorCostUsd != null && vendorCostUsd > 0) {
+      try {
+        const res = await wallet.debit(this.env, ctx.userId, usdToPncMicros(vendorCostUsd), {
+          category: 'voice_tokens',
+          dedupeId: `${ctx.sessionId}:${turnIndex}`,
+          meta: {
+            session_id: ctx.sessionId,
+            conversation_id: ctx.conversationId,
+            bot_id: ctx.botId,
+            turn_index: turnIndex,
+            vendor_cost_usd: vendorCostUsd,
+          },
+        });
+        // Hard-stop on exhaustion (design §7 ≤0). The debit already
+        // happened (the turn is spent), so we end the call after it.
+        if (res.thresholdState === 'exhausted') {
+          await this.endCall();
+        }
+      } catch (err) {
+        // Billing failures must never break the live call.
+        console.warn('[realtime-meter] voice debit failed', err);
+      }
+    }
 
-    // Mirror the queue consumer's pricing locally so the in-call UI
-    // sees a running spend figure within ~100 ms of the model's
-    // response.done instead of waiting on AUDIT_QUEUE → debit. The
-    // numbers come from the same computeVoiceCost + usdToPnd helpers
-    // the consumer uses, so the live preview and the eventual ledger
-    // entry agree to within rounding.
+    // Mirror the debit's pricing into the in-call UI so the user sees a
+    // running spend figure within ~100 ms of the model's response.done.
+    // Display applies the platform markup (usdToPnd) and is intentionally
+    // separate from the vendor-cost WalletDO debit above.
     void this.broadcastCost(ctx, route?.modelToCall, supa, turnUsage);
-
-    await this.enforceBalance(ctx);
   }
 
   // Compute and publish this turn's PND to the caller's user hub.
@@ -481,17 +498,6 @@ export class RealtimeMeterDO {
       cumulativePnd: this.cumulativePnd,
       logPrefix: '[realtime-meter]',
     });
-  }
-
-  // After a turn is billed, drop the call if the user can't afford it.
-  // The debit runs through AUDIT_QUEUE so the balance read can lag one
-  // turn — acceptable. 0/null threshold disables the gate.
-  private async enforceBalance(ctx: MeterContext): Promise<void> {
-    const supa = serviceClient(this.env);
-    const gate = await getBalanceGateState(this.env, supa, ctx.userId);
-    if (!gate.allowed) {
-      await this.endCall();
-    }
   }
 
   // End the call. proxy mode: closing the sockets tears it down. sideband
