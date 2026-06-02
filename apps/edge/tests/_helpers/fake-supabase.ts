@@ -152,6 +152,15 @@ function matches(row: Row, f: Filter): boolean {
   }
 }
 
+/** 直接拿一个绑定到 db 的 fake supabase client(供直接收 `supa` 参数的单元用)。 */
+export function makeFakeClient(db: FakeDb): SupabaseClientLike {
+  return makeClient(db) as SupabaseClientLike;
+}
+
+// 最小 client 形状(只声明我们用到的;实参在 makeClient 里全实现)。
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type SupabaseClientLike = any;
+
 function makeClient(db: FakeDb): unknown {
   const builder = (table: string) => {
     const filters: Filter[] = [];
