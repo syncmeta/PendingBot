@@ -145,6 +145,22 @@ final class CrewSessionRunner: ObservableObject {
             steeringChannel = try? SteeringChannel.create(
                 parent: SteeringChannel.defaultParent(), sessionId: runID.uuidString)
         }
+        // 2a'. T4.5 交互 — for a logged Claude session, set up the ask_human MCP
+        //      channel so the agent can raise an interaction (ask the human via
+        //      captain→DAG escalation). Needs the bundled server script + the
+        //      device-grant token + server session id. Best-effort.
+        var interactionChannel: InteractionChannel? = nil
+        if let serverLink, kind == .claudeCode,
+           let scriptPath = Bundle.main.url(forResource: "ask-human-mcp", withExtension: "cjs")?.path,
+           let token = serverLink.api.bearerToken {
+            interactionChannel = try? InteractionChannel.create(
+                parent: InteractionChannel.defaultParent(),
+                sessionId: runID.uuidString,
+                serverScriptPath: scriptPath,
+                edgeURL: serverLink.api.baseURL.absoluteString,
+                token: token,
+                edgeSessionId: serverLink.sessionId)
+        }
         // 2b. 构造 spec
         let spec = LocalCodingAgentLaunchSpec(
             kind: kind,
@@ -155,6 +171,7 @@ final class CrewSessionRunner: ObservableObject {
             model: model,
             additionalEnv: additionalEnv,
             claudeSettingsPath: steeringChannel?.settingsPath,
+            claudeMcpConfigPath: interactionChannel?.mcpConfigPath,
             permissionMode: permissionMode
         )
         // 3. 起进程
@@ -171,7 +188,8 @@ final class CrewSessionRunner: ObservableObject {
             handle: handle,
             service: service,
             serverLink: serverLink,
-            steeringChannel: steeringChannel
+            steeringChannel: steeringChannel,
+            interactionChannel: interactionChannel
         )
         current = run
         run.observeStreams()
@@ -260,6 +278,9 @@ final class CrewSessionRun: ObservableObject, Identifiable {
     /// note writes here; every turn's `--settings` hook injects it as context.
     /// Torn down when the session ends.
     private let steeringChannel: SteeringChannel?
+    /// T4.5 交互 channel (logged Claude only). The session's `ask_human` MCP
+    /// server uses it; torn down when the session ends.
+    private let interactionChannel: InteractionChannel?
     /// The current standing steering note, surfaced for the viewer UI.
     @Published private(set) var steeringNote: String = ""
     /// T4.5 server mirror (logged mode only; nil for BYOK/local-only runs).
@@ -291,7 +312,8 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         handle: LocalCodingAgentRunHandle,
         service: LocalCodingAgentService,
         serverLink: CrewSessionServerLink? = nil,
-        steeringChannel: SteeringChannel? = nil
+        steeringChannel: SteeringChannel? = nil,
+        interactionChannel: InteractionChannel? = nil
     ) {
         self.runID = runID
         self.crewId = crewId
@@ -305,6 +327,7 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         self.service = service
         self.serverLink = serverLink
         self.steeringChannel = steeringChannel
+        self.interactionChannel = interactionChannel
         self.proxyClient = serverLink?.makeProxyClient()
     }
 
@@ -406,6 +429,7 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         }
         // Clean up the steering hook dir if finalize() never ran.
         steeringChannel?.teardown()
+        interactionChannel?.teardown()
     }
 
     // MARK: - private mutators
@@ -566,8 +590,9 @@ final class CrewSessionRun: ObservableObject, Identifiable {
     private func finalize(exitCode: Int32) {
         guard !finalized else { return }
         finalized = true
-        // Remove the out-of-tree steering hook dir now the session is over.
+        // Remove the out-of-tree steering + interaction dirs now the session is over.
         steeringChannel?.teardown()
+        interactionChannel?.teardown()
         if cancelled {
             status = .cancelled
         } else if exitCode == 0 {

@@ -252,6 +252,45 @@ final class LocalCodingAgentTests: XCTestCase {
         XCTAssertTrue(resume.argv().contains("bypassPermissions"), "resume turn must keep the mode, not fall back")
     }
 
+    // MARK: - interaction channel (--mcp-config / ask_human)
+
+    func testMcpConfigThreadsIntoFirstAndResumeTurns() {
+        let first = LocalCodingAgentLaunchSpec(
+            kind: .claudeCode, executableURL: URL(fileURLWithPath: "/usr/bin/true"),
+            workingDirectory: URL(fileURLWithPath: NSTemporaryDirectory()),
+            taskBrief: "x", initialPrompt: "p", claudeMcpConfigPath: "/managed/mcp.json")
+        let a = first.argv()
+        guard let i = a.firstIndex(of: "--mcp-config") else { return XCTFail("first-turn missing --mcp-config") }
+        XCTAssertTrue(i + 1 < a.count && a[i + 1] == "/managed/mcp.json")
+        let resume = first.makingResumeTurn(agentSessionId: "s", prompt: "go")!
+        XCTAssertEqual(resume.claudeMcpConfigPath, "/managed/mcp.json")
+        XCTAssertTrue(resume.argv().contains("/managed/mcp.json"), "resume turn keeps --mcp-config")
+    }
+
+    func testNoMcpConfigWhenUnset() {
+        XCTAssertFalse(claudeSpec().argv().contains("--mcp-config"))
+    }
+
+    func testInteractionChannelWritesMcpConfig() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("intr-test-\(UUID().uuidString)")
+        let ch = try InteractionChannel.create(
+            parent: tmp, sessionId: "sess-1",
+            serverScriptPath: "/bundle/ask-human-mcp.cjs",
+            edgeURL: "https://api.pendingname.com", token: "pdg_abc", edgeSessionId: "srv-9")
+        defer { ch.teardown() }
+
+        let json = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: URL(fileURLWithPath: ch.mcpConfigPath))) as? [String: Any]
+        let server = (json?["mcpServers"] as? [String: Any])?["pendingcrew"] as? [String: Any]
+        XCTAssertEqual(server?["command"] as? String, "node")
+        XCTAssertEqual((server?["args"] as? [String])?.first, "/bundle/ask-human-mcp.cjs")
+        let env = server?["env"] as? [String: String]
+        XCTAssertEqual(env?["PC_EDGE_URL"], "https://api.pendingname.com")
+        XCTAssertEqual(env?["PC_TOKEN"], "pdg_abc")
+        XCTAssertEqual(env?["PC_SESSION_ID"], "srv-9")
+    }
+
     // MARK: - SteeringChannel (managed hook config)
 
     func testSteeringChannelWritesHookSettingsAndNote() throws {

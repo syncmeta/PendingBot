@@ -87,6 +87,11 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
     /// 验证过的路径一致。仅 Claude 用；Codex 忽略。
     public let claudeSettingsPath: String?
 
+    /// T4.5 交互 —— Claude Code 的 `--mcp-config <file>` 路径，指向托管的
+    /// mcp.json（含 `ask_human` MCP server；见 `InteractionChannel`）。`nil`
+    /// （默认）= 不挂。仅 Claude；Codex 忽略。
+    public let claudeMcpConfigPath: String?
+
     /// 权限/沙箱档（spec v2 §10.1）。默认 `.standard` —— **重要**：不传 flag 时
     /// claude 落到 `default` 模式，headless 下碰权限会卡死等不存在的终端，所以
     /// 一律带一个明确的档。
@@ -102,6 +107,7 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
         additionalEnv: [String: String] = [:],
         argvOverride: [String]? = nil,
         claudeSettingsPath: String? = nil,
+        claudeMcpConfigPath: String? = nil,
         permissionMode: AgentPermissionMode = .standard
     ) {
         self.kind = kind
@@ -113,6 +119,7 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
         self.additionalEnv = additionalEnv
         self.argvOverride = argvOverride
         self.claudeSettingsPath = claudeSettingsPath
+        self.claudeMcpConfigPath = claudeMcpConfigPath
         self.permissionMode = permissionMode
     }
 
@@ -141,6 +148,7 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
         // headless-blocking default, and a standing note keeps injecting).
         resumeArgv.append(contentsOf: permissionMode.argv(for: .claudeCode))
         resumeArgv.append(contentsOf: claudeSettingsArgs())
+        resumeArgv.append(contentsOf: claudeMcpConfigArgs())
         return LocalCodingAgentLaunchSpec(
             kind: kind,
             executableURL: executableURL,
@@ -151,6 +159,7 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
             additionalEnv: additionalEnv,
             argvOverride: resumeArgv,
             claudeSettingsPath: claudeSettingsPath,
+            claudeMcpConfigPath: claudeMcpConfigPath,
             permissionMode: permissionMode
         )
     }
@@ -161,6 +170,13 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
     private func claudeSettingsArgs() -> [String] {
         guard let claudeSettingsPath, !claudeSettingsPath.isEmpty else { return [] }
         return ["--settings", claudeSettingsPath]
+    }
+
+    /// `--mcp-config <path>` for the ask_human interaction tool, or `[]`.
+    /// On first + resume turns so the agent can always raise an interaction.
+    private func claudeMcpConfigArgs() -> [String] {
+        guard let claudeMcpConfigPath, !claudeMcpConfigPath.isEmpty else { return [] }
+        return ["--mcp-config", claudeMcpConfigPath]
     }
 
     // MARK: - argv
@@ -207,6 +223,7 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
             }
             args.append(contentsOf: permissionMode.argv(for: .claudeCode))
             args.append(contentsOf: claudeSettingsArgs())
+            args.append(contentsOf: claudeMcpConfigArgs())
             return args
 
         case .codex:
