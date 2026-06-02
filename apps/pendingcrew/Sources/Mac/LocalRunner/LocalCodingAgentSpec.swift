@@ -45,6 +45,12 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
     /// resume turn 复用同一套 Process / stdin / 流式解析管道，只换 argv。
     public let argvOverride: [String]?
 
+    /// T4.5 ambient steering —— Claude Code 的 `--settings <file>` 路径，指向
+    /// PendingCrew 托管的 settings（含 `UserPromptSubmit` hook，把常驻便签作为
+    /// 上下文注入；见 `SteeringChannel`）。`nil`（默认）= 不挂 hook，argv 与
+    /// 验证过的路径一致。仅 Claude 用；Codex 忽略。
+    public let claudeSettingsPath: String?
+
     public init(
         kind: LocalCodingAgentKind,
         executableURL: URL,
@@ -53,7 +59,8 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
         initialPrompt: String,
         model: String? = nil,
         additionalEnv: [String: String] = [:],
-        argvOverride: [String]? = nil
+        argvOverride: [String]? = nil,
+        claudeSettingsPath: String? = nil
     ) {
         self.kind = kind
         self.executableURL = executableURL
@@ -63,6 +70,7 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
         self.model = model
         self.additionalEnv = additionalEnv
         self.argvOverride = argvOverride
+        self.claudeSettingsPath = claudeSettingsPath
     }
 
     /// 构造一个 **resume 续跑回合** 的 spec（T4.5 send_prompt 跨端遥控）。
@@ -85,6 +93,9 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
             resumeArgv.append("--model")
             resumeArgv.append(model)
         }
+        // Carry the ambient-steering hook into resume turns too, so a standing
+        // note keeps injecting on every follow-up turn.
+        resumeArgv.append(contentsOf: claudeSettingsArgs())
         return LocalCodingAgentLaunchSpec(
             kind: kind,
             executableURL: executableURL,
@@ -93,8 +104,17 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
             initialPrompt: prompt,
             model: model,
             additionalEnv: additionalEnv,
-            argvOverride: resumeArgv
+            argvOverride: resumeArgv,
+            claudeSettingsPath: claudeSettingsPath
         )
+    }
+
+    /// `--settings <path>` for the ambient-steering hook, or `[]` when unset.
+    /// Shared by the first-turn argv + the resume argv so a standing note
+    /// injects on every turn.
+    private func claudeSettingsArgs() -> [String] {
+        guard let claudeSettingsPath, !claudeSettingsPath.isEmpty else { return [] }
+        return ["--settings", claudeSettingsPath]
     }
 
     // MARK: - argv
@@ -139,6 +159,7 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
                 args.append("--model")
                 args.append(model)
             }
+            args.append(contentsOf: claudeSettingsArgs())
             return args
 
         case .codex:

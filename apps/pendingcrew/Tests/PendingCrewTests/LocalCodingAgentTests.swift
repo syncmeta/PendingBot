@@ -178,6 +178,63 @@ final class LocalCodingAgentTests: XCTestCase {
         XCTAssertNil(claudeSpec().makingResumeTurn(agentSessionId: "", prompt: "p"))
     }
 
+    // MARK: - ambient steering (--settings hook)
+
+    private func claudeSpec(settingsPath: String?) -> LocalCodingAgentLaunchSpec {
+        LocalCodingAgentLaunchSpec(
+            kind: .claudeCode,
+            executableURL: URL(fileURLWithPath: "/usr/bin/true"),
+            workingDirectory: URL(fileURLWithPath: NSTemporaryDirectory()),
+            taskBrief: "x", initialPrompt: "p", claudeSettingsPath: settingsPath)
+    }
+
+    func testSettingsFlagThreadsIntoFirstAndResumeTurns() {
+        let first = claudeSpec(settingsPath: "/managed/settings.json")
+        let firstArgv = first.argv()
+        guard let i = firstArgv.firstIndex(of: "--settings") else { return XCTFail("first-turn missing --settings") }
+        XCTAssertTrue(i + 1 < firstArgv.count && firstArgv[i + 1] == "/managed/settings.json")
+        // the steering hook must persist onto resume turns too
+        let resume = first.makingResumeTurn(agentSessionId: "s", prompt: "go")!
+        let rArgv = resume.argv()
+        guard let j = rArgv.firstIndex(of: "--settings") else { return XCTFail("resume missing --settings") }
+        XCTAssertTrue(j + 1 < rArgv.count && rArgv[j + 1] == "/managed/settings.json")
+        XCTAssertEqual(resume.claudeSettingsPath, "/managed/settings.json")
+    }
+
+    func testNoSettingsFlagWhenUnset() {
+        XCTAssertFalse(claudeSpec(settingsPath: nil).argv().contains("--settings"),
+                       "verified one-shot argv must omit --settings when no steering channel")
+    }
+
+    // MARK: - SteeringChannel (managed hook config)
+
+    func testSteeringChannelWritesHookSettingsAndNote() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("steer-test-\(UUID().uuidString)")
+        let channel = try SteeringChannel.create(parent: tmp, sessionId: "sess-1")
+        defer { channel.teardown() }
+
+        // settings.json registers a UserPromptSubmit command hook pointing at hook.sh
+        let settings = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: URL(fileURLWithPath: channel.settingsPath))) as? [String: Any]
+        let hooks = settings?["hooks"] as? [String: Any]
+        let ups = hooks?["UserPromptSubmit"] as? [[String: Any]]
+        let cmd = ((ups?.first?["hooks"] as? [[String: Any]])?.first)?["command"] as? String
+        XCTAssertEqual((ups?.first?["hooks"] as? [[String: Any]])?.first?["type"] as? String, "command")
+        XCTAssertTrue(cmd?.contains("hook.sh") ?? false, "hook command must invoke hook.sh: \(cmd ?? "nil")")
+
+        // hook.sh exists + is executable
+        let hookPath = channel.directory.appendingPathComponent("hook.sh").path
+        XCTAssertTrue(FileManager.default.isExecutableFile(atPath: hookPath))
+
+        // note starts empty, setNote replaces it, teardown removes the dir
+        XCTAssertEqual(channel.currentNote(), "")
+        channel.setNote("Always prefer Swift concurrency.")
+        XCTAssertEqual(channel.currentNote(), "Always prefer Swift concurrency.")
+        channel.setNote("")
+        XCTAssertEqual(channel.currentNote(), "", "empty note clears the standing instruction")
+    }
+
     // MARK: - executable resolution
 
     func testResolveAgainstDiscoverAvailableIsConsistent() {
