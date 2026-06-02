@@ -32,6 +32,18 @@ export interface DebitOpts {
   meta?: Record<string, unknown>;
 }
 
+// 责任主体 → WalletDO 路由键。每个 subject(group→responsible_subject_id,
+// 个人→userId)对应一个 WalletDO(`idFromName(key)`)。credit/debit 必须用同
+// 一键才会命中同一 DO。映射与 billing-v2 的 owner→余额列一致(user→userId,
+// subject→subjectId),保证退役 settleUsage 后门禁路由不变。见架构定案 §8。
+export type WalletOwner =
+  | { kind: 'user'; userId: string }
+  | { kind: 'subject'; subjectId: string };
+
+export function walletSubjectKey(owner: WalletOwner): string {
+  return owner.kind === 'user' ? owner.userId : owner.subjectId;
+}
+
 export const wallet = {
   /** 调用前门禁:读余额 + 阈值(不扣)。 */
   gate: (env: Env, subjectId: string): Promise<WalletResult> => call(env, subjectId, 'gate', {}),

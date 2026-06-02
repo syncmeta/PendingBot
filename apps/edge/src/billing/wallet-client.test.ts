@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { wallet } from './wallet-client';
+import { wallet, walletSubjectKey } from './wallet-client';
 
 function fakeEnv(reply: unknown) {
   const fetchMock = vi.fn().mockResolvedValue(
@@ -36,5 +36,27 @@ describe('wallet-client', () => {
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body.polarBalanceMicros).toBe(5);
     expect(String(fetchMock.mock.calls[0][0])).toContain('/apply-absolute');
+  });
+
+  it('routes a voice debit to the subject DO under the same key credit uses', async () => {
+    const { env, fetchMock, idFromName } = fakeEnv({ balanceMicros: -1, thresholdState: 'exhausted' });
+    const r = await wallet.debit(env, 'subject_g1', 2700, {
+      category: 'realtimekit_media',
+      dedupeId: 'room_1:realtimekit_media',
+    });
+    expect(idFromName).toHaveBeenCalledWith('subject_g1');
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.category).toBe('realtimekit_media');
+    expect(body.dedupeId).toBe('room_1:realtimekit_media');
+    expect(r.thresholdState).toBe('exhausted');
+  });
+});
+
+describe('walletSubjectKey', () => {
+  it('uses userId for a user owner', () => {
+    expect(walletSubjectKey({ kind: 'user', userId: 'u1' })).toBe('u1');
+  });
+  it('uses subjectId for a subject owner (group wallet)', () => {
+    expect(walletSubjectKey({ kind: 'subject', subjectId: 'sub_grp' })).toBe('sub_grp');
   });
 });
