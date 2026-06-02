@@ -108,6 +108,20 @@ actor SessionProxyClient {
         send(.permissionRequest(action: action, payload: payload, riskLevel: riskLevel), over: task)
     }
 
+    /// Viewer → DO: send a command to the session's runner (e.g. `cancel`).
+    /// Best-effort over the live socket; the DO persists + queues it durably, so
+    /// a momentary disconnect still reaches the runner on its next inbox pull.
+    func sendCommand(kind: String, payload: [String: JSONValue]? = nil) {
+        guard subscribed, let task else { return }
+        send(viewer: .command(kind: kind, payload: payload), over: task)
+    }
+
+    /// Viewer → DO: approve/reject a pending permission request. Best-effort.
+    func sendPermissionDecision(requestId: String, decision: String) {
+        guard subscribed, let task else { return }
+        send(viewer: .permissionDecision(requestId: requestId, decision: decision), over: task)
+    }
+
     /// Tear down for good. Cancels loops + the socket and finishes `inbound`.
     /// After this the client will not reconnect.
     func close() {
@@ -236,6 +250,14 @@ actor SessionProxyClient {
     }
 
     // MARK: - Send helper
+
+    private func send(viewer frame: SessionProxyViewerOutbound, over task: URLSessionWebSocketTask) {
+        guard let data = try? frame.jsonData(),
+              let text = String(data: data, encoding: .utf8) else { return }
+        task.send(.string(text)) { error in
+            if let error { print("[session-proxy] viewer send failed: \(error)") }
+        }
+    }
 
     private func send(_ frame: SessionProxyOutbound, over task: URLSessionWebSocketTask) {
         guard let data = try? frame.jsonData(),

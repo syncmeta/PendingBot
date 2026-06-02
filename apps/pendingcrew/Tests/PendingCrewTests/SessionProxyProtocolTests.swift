@@ -192,6 +192,34 @@ final class SessionProxyProtocolTests: XCTestCase {
         ])
     }
 
+    // MARK: - SessionProxyViewerOutbound (viewer → DO)
+
+    func testViewerCommandFrameShape() throws {
+        let frame = SessionProxyViewerOutbound.command(kind: "cancel", payload: nil)
+        let d = decode(try frame.jsonData())
+        XCTAssertEqual(d["type"] as? String, "session.command")
+        let cmd = d["command"] as? [String: Any]
+        XCTAssertEqual(cmd?["kind"] as? String, "cancel")
+        XCTAssertNil(cmd?["payload"], "nil payload must be omitted")
+    }
+
+    func testViewerCommandFrameWithPayload() throws {
+        let frame = SessionProxyViewerOutbound.command(
+            kind: "send_prompt", payload: ["text": .string("再跑一遍测试")])
+        let d = decode(try frame.jsonData())
+        let cmd = d["command"] as? [String: Any]
+        XCTAssertEqual(cmd?["kind"] as? String, "send_prompt")
+        XCTAssertEqual((cmd?["payload"] as? [String: Any])?["text"] as? String, "再跑一遍测试")
+    }
+
+    func testViewerPermissionDecisionFrameShape() throws {
+        let frame = SessionProxyViewerOutbound.permissionDecision(requestId: "r1", decision: "approve")
+        let d = decode(try frame.jsonData())
+        XCTAssertEqual(d["type"] as? String, "permission.decision")
+        XCTAssertEqual(d["requestId"] as? String, "r1")
+        XCTAssertEqual(d["decision"] as? String, "approve")
+    }
+
     // MARK: - SessionStateSnapshot (viewer-side inbound decode)
 
     func testSnapshotDecodesWhatRunnerPublishes() {

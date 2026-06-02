@@ -210,6 +210,36 @@ public enum SessionProxyOutbound: Sendable {
     }
 }
 
+// MARK: - Outbound (viewer → DO)
+
+/// A frame a **viewer** sends up to the DO — the mirror of `SessionProxyOutbound`
+/// for the watching/controlling side. The DO routes `session.command` to the
+/// runner (assigning a `commandId` if absent) and persists it; it routes
+/// `permission.decision` to the runner + back to other viewers. Shapes match the
+/// TS `SessionCommandMsg` / `PermissionDecisionMsg`.
+public enum SessionProxyViewerOutbound: Sendable {
+    /// Send a command to the session's runner (e.g. `cancel`, `send_prompt`).
+    /// `payload` is free-form; the DO assigns the `commandId`.
+    case command(kind: String, payload: [String: JSONValue]?)
+    /// Approve/reject a pending permission request raised by the runner.
+    case permissionDecision(requestId: String, decision: String)
+
+    public func wireDict() -> [String: Any] {
+        switch self {
+        case let .command(kind, payload):
+            var cmd: [String: Any] = ["kind": kind]
+            if let payload { cmd["payload"] = JSONValue.object(payload).anyValue }
+            return ["type": "session.command", "command": cmd]
+        case let .permissionDecision(requestId, decision):
+            return ["type": "permission.decision", "requestId": requestId, "decision": decision]
+        }
+    }
+
+    public func jsonData() throws -> Data {
+        try JSONSerialization.data(withJSONObject: wireDict(), options: [.sortedKeys])
+    }
+}
+
 // MARK: - Inbound (DO → runner)
 
 /// A frame the runner receives from the DO. Only the variants that flow to a

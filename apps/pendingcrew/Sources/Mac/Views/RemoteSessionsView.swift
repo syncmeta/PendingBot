@@ -54,6 +54,18 @@ struct RemoteSessionsView: View {
             ToolbarItem(placement: .principal) {
                 Text("服务端 session · \(crewTitle)").font(.headline)
             }
+            if let s = selectedSession, isStoppable(s.status) {
+                ToolbarItem(placement: .automatic) {
+                    Button(role: .destructive) {
+                        guard let client = liveClient else { return }
+                        Task { await client.sendCommand(kind: "cancel") }
+                    } label: {
+                        Label("停止", systemImage: "stop.circle")
+                    }
+                    .help("向运行该 session 的机器发送停止命令")
+                    .disabled(liveClient == nil)
+                }
+            }
             ToolbarItem(placement: .confirmationAction) {
                 Button("完成") { dismiss() }
             }
@@ -176,6 +188,20 @@ struct RemoteSessionsView: View {
             }
         } catch {
             loadError = error.localizedDescription
+        }
+    }
+
+    /// The currently selected session row, if any.
+    private var selectedSession: CrewSessionSummary? {
+        guard let selectedId else { return nil }
+        return sessions.first { $0.id == selectedId }
+    }
+
+    /// A session a viewer can still stop — pre-terminal states only.
+    private func isStoppable(_ status: String) -> Bool {
+        switch status {
+        case "completed", "failed", "cancelled": return false
+        default: return true
         }
     }
 
