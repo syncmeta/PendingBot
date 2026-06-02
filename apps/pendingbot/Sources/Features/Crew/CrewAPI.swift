@@ -325,6 +325,25 @@ struct CrewSessionRow: Decodable, Identifiable, Hashable {
     let finished_at: String?
 }
 
+/// One transcript event from a server crew session's durable log
+/// (`GET /v1/crew/sessions/:sessionId/events`, oldest first). This is what
+/// the T4.5 read-only viewer renders to follow a session running on **another**
+/// host. The runner publishes these via the register→create→claim→events→finish
+/// lifecycle.
+///
+/// Named `CrewSessionLogEvent` (not `CrewSessionEvent`) — the latter already
+/// names the realtime-change struct in `RealtimeManager.swift`. snake_case
+/// literal keys match this client's bare JSONDecoder (the read route returns
+/// raw supabase rows). `payload` is free-form and unused by the viewer for now,
+/// so it's intentionally not decoded.
+struct CrewSessionLogEvent: Decodable, Identifiable, Hashable {
+    let id: String
+    let event_type: String
+    let visibility: String
+    let summary: String?
+    let created_at: String
+}
+
 /// One row from `GET /v1/crew/:id/members` (snake_case, wrapper `{items}`).
 /// Resolves human / captain sender display names + powers the @mention
 /// picker.
@@ -379,6 +398,19 @@ extension APIClient {
     func getCrewMembers(_ crewId: String) async throws -> [CrewMemberRow] {
         struct Response: Decodable { let items: [CrewMemberRow] }
         let r: Response = try await get("v1/crew/\(crewId)/members")
+        return r.items
+    }
+
+    /// `GET /v1/crew/sessions/:sessionId/events` — the durable transcript log
+    /// for one session (oldest first). What the T4.5 viewer renders to follow a
+    /// session without being its runner. Needs `crew:read`.
+    ///
+    /// **Path is singular `/v1/crew/sessions/...`** — `routes/crew.ts` (sessions
+    /// / events / mailbox) mounts at `/v1/crew`; the plural `/v1/crews` is the
+    /// list/get/create-crew surface. Easy to mix up — a past session ate a 404 here.
+    func getCrewSessionEvents(sessionId: String) async throws -> [CrewSessionLogEvent] {
+        struct Response: Decodable { let items: [CrewSessionLogEvent] }
+        let r: Response = try await get("v1/crew/sessions/\(sessionId)/events")
         return r.items
     }
 
