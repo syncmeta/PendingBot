@@ -27,8 +27,8 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
     /// 用户在 CreateSessionSheet 选的模型 slug。
     ///
     /// - Claude Code：拼成 `--model <slug>` 透传给 CLI；nil = 让 CLI 用默认。
-    /// - Codex：暂未拼参数（Codex CLI 模型选项还在变，spec v2 §8.1 + TODO
-    ///   T4.x 复核）；nil/非 nil 都暂时无效，UI 仍允许选以便 metadata 记录。
+    /// - Codex：拼成 `-m/--model <slug>` 透传给 `codex exec`；nil = 让 Codex 用
+    ///   `~/.codex/config.toml` 的默认。
     ///
     /// 不会出现在 env 里 —— spec v2 §8.4.2 白名单严控环境变量。
     public let model: String?
@@ -99,16 +99,32 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
             return args
 
         case .codex:
-            // Codex CLI: 非交互模式 = `codex exec [prompt]`
-            // 同样让 prompt 走 stdin —— Codex `exec` 在没有位置参数时也从 stdin 读。
+            // Codex CLI (codex-cli ≥ 0.13x): 非交互模式 = `codex exec [PROMPT]`。
+            // prompt 走 stdin —— `exec` 在没有位置参数时从 stdin 读（`codex exec
+            // --help`: "If not provided as an argument … instructions are read from
+            // stdin"）。
             //
-            // TODO(T4.x): Codex CLI 的细节也在变。后续要复核：
-            //   - 是否有等价的 stream-json 输出 flag
-            //   - 模型选择参数
-            //   - permission / approval 模式 flag
-            return [
+            // `--json` = 把事件以 JSONL 打到 stdout（对标 Claude Code 的
+            // `--output-format=stream-json`）。PendingCrew 后面要逐行解析事件流做
+            // session 窗口，所以两个 runner 统一走 JSONL。
+            //
+            // `-m/--model <slug>` 透传用户在 CreateSessionSheet 选的模型；nil/空 =
+            // 让 Codex 用 `~/.codex/config.toml` 的默认。
+            //
+            // TODO(T4.x): 还在演进、留作 follow-up 复核：
+            //   - sandbox 策略（`-s read-only|workspace-write|danger-full-access`）
+            //     + approval 模式 —— 对标 Claude 的 `--dangerously-skip-permissions`，
+            //     和"自动模式"一起做（spec v2 §10.1）。
+            //   - `resume` 子命令做多轮续跑（spec v2 §9.2）。
+            var args: [String] = [
                 "exec",
+                "--json",
             ]
+            if let model, !model.isEmpty {
+                args.append("--model")
+                args.append(model)
+            }
+            return args
         }
     }
 

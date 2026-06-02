@@ -79,6 +79,46 @@ final class LocalCodingAgentTests: XCTestCase {
                       "Claude Code argv should include --print for non-interactive mode")
         XCTAssertTrue(codexArgv.contains("exec"),
                       "Codex argv should include 'exec' subcommand")
+        // `exec` 必须是首个参数（子命令位置敏感），后接 JSONL 事件流 flag。
+        XCTAssertEqual(codexArgv.first, "exec",
+                       "Codex argv must lead with the 'exec' subcommand")
+        XCTAssertTrue(codexArgv.contains("--json"),
+                      "Codex argv should include --json for a parseable JSONL event stream")
+    }
+
+    func testModelFlagThreadsIntoBothRunners() {
+        func argv(for kind: LocalCodingAgentKind, model: String?) -> [String] {
+            LocalCodingAgentLaunchSpec(
+                kind: kind,
+                executableURL: URL(fileURLWithPath: "/usr/bin/true"),
+                workingDirectory: URL(fileURLWithPath: NSTemporaryDirectory()),
+                taskBrief: "x",
+                initialPrompt: "do thing",
+                model: model
+            ).argv()
+        }
+
+        // model set → `--model <slug>` appears for both runners.
+        let claudeWith = argv(for: .claudeCode, model: "claude-sonnet-4")
+        let codexWith = argv(for: .codex, model: "gpt-5-codex")
+        for (kind, args, slug) in [("claude", claudeWith, "claude-sonnet-4"),
+                                   ("codex", codexWith, "gpt-5-codex")] {
+            guard let i = args.firstIndex(of: "--model") else {
+                XCTFail("\(kind) argv missing --model when a model slug is set")
+                continue
+            }
+            XCTAssertTrue(i + 1 < args.count && args[i + 1] == slug,
+                          "\(kind) --model must be immediately followed by the slug")
+        }
+
+        // model nil → no `--model` flag for either runner.
+        XCTAssertFalse(argv(for: .claudeCode, model: nil).contains("--model"),
+                       "Claude argv must omit --model when no slug is set")
+        XCTAssertFalse(argv(for: .codex, model: nil).contains("--model"),
+                       "Codex argv must omit --model when no slug is set")
+        // empty string is treated like nil (no flag).
+        XCTAssertFalse(argv(for: .codex, model: "").contains("--model"),
+                       "Codex argv must omit --model for an empty slug")
     }
 
     // MARK: - executable resolution
