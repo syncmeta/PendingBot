@@ -90,11 +90,20 @@ struct RemoteSessionsView: View {
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(1...4)
                 .onSubmit(sendSteering)
-            Button(action: sendSteering) {
+            // Primary tap = send once; menu = set/clear the standing note that
+            // injects into every turn (T4.5 ambient steering).
+            Menu {
+                Button("发送（一次性）", systemImage: "paperplane") { sendSteering() }
+                Button("设为常驻便签", systemImage: "pin") { setStandingNote() }
+                Button("清除常驻便签", systemImage: "pin.slash", role: .destructive) { clearStandingNote() }
+            } label: {
                 Image(systemName: "paperplane.fill")
+            } primaryAction: {
+                sendSteering()
             }
-            .keyboardShortcut(.return, modifiers: .command)
-            .disabled(liveClient == nil || promptDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .menuStyle(.button)
+            .fixedSize()
+            .disabled(liveClient == nil)
         }
         .padding(8)
     }
@@ -104,6 +113,20 @@ struct RemoteSessionsView: View {
         guard !text.isEmpty, let client = liveClient else { return }
         promptDraft = ""
         Task { await client.sendCommand(kind: "send_prompt", payload: ["text": .string(text)]) }
+    }
+
+    /// Set the standing steering note to the composer text (injected into every
+    /// turn until changed/cleared).
+    private func setStandingNote() {
+        let text = promptDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, let client = liveClient else { return }
+        promptDraft = ""
+        Task { await client.sendCommand(kind: "set_steering", payload: ["text": .string(text)]) }
+    }
+
+    private func clearStandingNote() {
+        guard let client = liveClient else { return }
+        Task { await client.sendCommand(kind: "set_steering", payload: ["text": .string("")]) }
     }
 
     /// The live-state banner — driven by the runner's real-time `session.state`
