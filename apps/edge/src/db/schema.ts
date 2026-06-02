@@ -2572,6 +2572,59 @@ export type Database = {
         }
         Relationships: []
       }
+      pnc_ledger: {
+        Row: {
+          created_at: string
+          delta_pnc_micros: number
+          external_ref: string
+          gross_paid_usd_cents: number | null
+          id: string
+          kind: string
+          markup_snapshot: number | null
+          net_revenue_usd_cents: number | null
+          polar_synced: boolean
+          raw: Json | null
+          source: string
+          subject_id: string
+        }
+        Insert: {
+          created_at?: string
+          delta_pnc_micros: number
+          external_ref: string
+          gross_paid_usd_cents?: number | null
+          id?: string
+          kind: string
+          markup_snapshot?: number | null
+          net_revenue_usd_cents?: number | null
+          polar_synced?: boolean
+          raw?: Json | null
+          source: string
+          subject_id: string
+        }
+        Update: {
+          created_at?: string
+          delta_pnc_micros?: number
+          external_ref?: string
+          gross_paid_usd_cents?: number | null
+          id?: string
+          kind?: string
+          markup_snapshot?: number | null
+          net_revenue_usd_cents?: number | null
+          polar_synced?: boolean
+          raw?: Json | null
+          source?: string
+          subject_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pnc_ledger_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       preset_conversation_templates: {
         Row: {
           base_ts: string
