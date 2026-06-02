@@ -24,7 +24,7 @@
 - **背景**: 现状群 handle 是单一共享码,任何人拿到就能请求加入,不记是谁分享的,与 D1 的 bot 邀请哲学不一致。统一成同一套"邀请关联到人"。
 - **现状核实**（2026-06-01）:
   - **后端 ✅ 已落地**（迁移 `20260601082502`,push live + edge typecheck 绿）：`group_invite_links` per-inviter token 表 + `conversation_participants.invited_by` / `group_join_requests.invited_by` + RPC create/list/revoke/resolve/redeem;`group_join_request_decide` 批准时把 invited_by 落到成员行。Edge `/v1/groups/:id/invite-links` + `/v1/group-invites/:token`。RLS 不放宽。
-  - **iOS ❌ 未做**：群 QR/加入 UI 改走 token(像 D1 iOS,需 simulator 验证)。旧 `group_join_handles` 共享码暂留,iOS 返工后删。
+  - **iOS 🟡 核心已编译验证**(2026-06-01,`4e5a58a7`,BUILD SUCCEEDED)：GroupInviteAPI client + `GroupShareLink`(/g/ token codec)+ GroupJoinView 改 token resolve/redeem(扫码 → 预览群信息 +「由 X 邀请」→ 加入,记 invited_by)+ GroupQRCard 改签发 per-inviter 群邀请链接 + QR(任何成员可签发)。**残留**:① /g/ universal-link 的 MessageTabView/TabRoot presenter 接线(扫码路径已通,深链点击未接);② simulator 视觉验证(结构同已端到端验证的 D1,低风险);③ 旧 `group_join_handles` 共享码 iOS 已不用作主分享,可后续清。
 
 ## D3 · 头像 / 昵称可见性 = 只走两条受限路径,不全局公开
 - **日期**: 2026-06-01
