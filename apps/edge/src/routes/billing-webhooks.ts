@@ -133,8 +133,7 @@ billingWebhookRoutes.post('/iap/notify', async (c) => {
 
 // ============================================================
 // Polar(web/Mac MoR)— order.paid 充值 / order.refunded 退款
-// ⚠️ payload 字段路径(order.customer.externalId / order.product.id)以真实 webhook 为准,
-//    P1-0 配好 endpoint 后用 Polar dashboard "send test" 核对再微调。
+// payload 字段路径已用官方 @polar-sh/sdk 生成类型核实(见下方 order.* 取值注释)。
 // ============================================================
 
 function polarClientOrNull(env: {
@@ -166,9 +165,12 @@ billingWebhookRoutes.post('/polar/webhook', async (c) => {
   }
 
   const supa = serviceClient(c.env);
+  // 字段路径已用官方 SDK 生成类型核实(@polar-sh/sdk Order):
+  //   order.customer.externalId(OrderCustomer.externalId?:string|null)、
+  //   order.productId(顶层 string|null)/ order.product.id(OrderProduct.id)。
   const order = event?.data ?? {};
-  const subjectId: string | undefined = order.customer?.externalId ?? order.customerExternalId;
-  const productId: string | undefined = order.product?.id ?? order.productId;
+  const subjectId: string | undefined = order.customer?.externalId ?? undefined;
+  const productId: string | undefined = order.productId ?? order.product?.id ?? undefined;
 
   if (event.type === 'order.paid' && subjectId && productId) {
     const pack = resolvePack('polar_checkout', productId);
