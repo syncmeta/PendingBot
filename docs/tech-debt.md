@@ -46,8 +46,8 @@
 - **位置**: `apps/pendingbot/Sources/Networking/ChatDataSource.swift:loadMessages`；对照 iOS `Features/Message/ConversationView+Loading.swift:402`（18 列超集 → `Row` → cache）
 - **问题**: #212 把 Mac 复刻的查询往「共享 fetch、iOS 也改用」方向收口，**已收口 5 块**：实时通道（`RealtimeManager`/`RealtimeSocket` 去 gate，两端同一条自建 RealtimeHubDO，删了 Mac 轮询）、会话列表（`ConversationFetch.list()`）、bot 好友（`BotContactsFetch.list()`）、人类好友（`ContactsFetch.fetch()` + 中性 `ContactProfile`，iOS `ContactsAPI` 改成映射它）、来信（`EnvelopeFetch.list/get`，`EnvelopeRun` 从 iOS-only 移到共享）—— iOS 缓存/富渲染层叠在共享 fetch 上、Mac 投影薄 summary，查询形状单一来源。**仅剩 1 条仍复刻**：消息历史 —— iOS 是 18 列超集喂 GRDB 缓存 + recall/voice-recap/citations/tool-trace/attachments 派发的重管线（#145-147/#150 验证过的最易碎路径），Mac 是 4 列轻读（id/role/content/message_seq）只渲染纯气泡，两者**合理地不同**，强行统一要么逼 Mac 扛它不渲染的 14 列、要么动那条脆弱管线。
 - **影响**: 这条查询形状两边各存一份，列漂移时不会编译报错、只在运行期错——属"复制粘贴而非抽象"。但风险被 Mac 只读核心稳定列（id/role/content/message_seq）压低；真正的根治时机是 Mac 渲染富内容（附件/citations）时，那时 Mac 自然需要 iOS 超集行，顺势抽 `MessagesFetch` 最划算。
-- **建议**: 等 Mac 接附件/citations 渲染时，把 `ConversationView+Loading` 的 `Row`+查询抽进共享 `MessagesFetch`（iOS 缓存派发叠在上、Mac 投影），收口时进模拟器验 iOS 不回归。**短期防漂移**：`ChatDataSource.loadMessages` 注释已写明 iOS canonical 列清单 + 文件:line 交叉引用，改 iOS 那条查询时同步。
-- **状态**: 基本收口（实时 + 会话/bot好友/人类好友/来信 4 条查询已统一，commit 见本分支；仅消息历史 1 条按上面时机后续收口）
+- **建议**: 等 Mac 接附件/citations 渲染时，把 `ConversationView+Loading` 的 `Row`+查询抽进共享 `MessagesFetch`（iOS 缓存派发叠在上、Mac 投影），收口时进模拟器验 iOS 不回归。
+- **状态**: ✅ **已解决（2026-06-03）** —— Mac 接图片附件渲染时顺势收口:新增 `Networking/MessagesFetch.swift`（`MessageRow` 18 列超集 + `AttachmentRef` 从 iOS-only 移来 + `latest()` + `attachmentMeta()`）;iOS `ConversationView+Loading` 改调它（删局部 Row + 内联 attachments 查询,200 行 dispatch 字节级不变）;Mac `ChatDataSource` 改调 + 投影 + 滤 log/deleted/语音 recap + 解析图片附件。**至此 Mac 5 条查询（会话/bot好友/人类好友/来信/消息）全部两端同一份,零手抄复刻**。两端编译过;iOS 消息列表模拟器冒烟无回归（会话内消息因无 tap 工具未点验,改动逐字搬迁+dispatch 未动,风险极低）。剩余 Mac 缺口:bot/会话/来信头像（数据层补 avatar_path）、非图片附件的 icon+name chip、Mac 全屏看图 viewer。
 
 ## 🔴 根基级
 
