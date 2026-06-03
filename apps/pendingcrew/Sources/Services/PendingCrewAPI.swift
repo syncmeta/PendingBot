@@ -345,6 +345,12 @@ struct PendingCrewAPI {
         return resp.announcementId
     }
 
+    /// `GET /v1/crews/:crewId/members` — the crew roster (spec §9: everyone is a
+    /// member — human / captain / code_session / temp bot). Needs `crew:read`.
+    func listCrewMembers(crewId: String) async throws -> CrewRoster {
+        try await get(path: "v1/crews/\(crewId)/members")
+    }
+
     // MARK: - Session inbox (runner per-turn context: whiteboard + mailbox)
 
     /// `GET /v1/sessions/:sessionId/inbox` — the per-turn context bundle the
@@ -531,6 +537,44 @@ struct CrewWhiteboardEntry: Decodable, Identifiable, Equatable {
     var displayText: String { payload?.text ?? summary ?? "" }
     /// True if this row is an ask_human interaction card.
     var isInteraction: Bool { payload?.kind == "interaction" }
+}
+
+/// The crew roster (`listCrewMembers`). `captainBotId` lets the UI tag which
+/// bot member is the captain.
+struct CrewRoster: Decodable {
+    let captainBotId: String?
+    let members: [CrewMember]
+
+    enum CodingKeys: String, CodingKey {
+        case captainBotId = "captainBotId"
+        case members
+    }
+}
+
+/// One crew member (a row of `temporary_group_members`). `memberKind` ∈
+/// human / bot / captain / code_session.
+struct CrewMember: Decodable, Identifiable, Equatable {
+    let id: String
+    let memberKind: String
+    let userId: String?
+    let botId: String?
+    let codeSessionId: String?
+    let displayName: String?
+    let role: String?
+    let status: String
+    let representsCrewId: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case memberKind = "member_kind"
+        case userId = "user_id"
+        case botId = "bot_id"
+        case codeSessionId = "code_session_id"
+        case displayName = "display_name"
+        case role
+        case status
+        case representsCrewId = "represents_crew_id"
+    }
 }
 
 /// The per-turn context bundle (`getSessionInbox`): crew whiteboard + this

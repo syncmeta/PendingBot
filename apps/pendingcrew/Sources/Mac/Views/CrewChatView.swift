@@ -22,16 +22,68 @@ struct CrewChatView: View {
     @State private var didInitialLoad = false
     /// Per-interaction reply drafts, keyed by permission_request_id.
     @State private var replyDrafts: [String: String] = [:]
+    /// Crew roster (spec §9 — everyone is a member): rendered as a participant strip.
+    @State private var members: [CrewMember] = []
+    @State private var captainBotId: String?
 
     private let pollInterval: UInt64 = 3_000_000_000 // 3s
 
     var body: some View {
         VStack(spacing: 0) {
+            if !members.isEmpty {
+                rosterBar
+                Divider()
+            }
             timeline
             Divider()
             composer
         }
         .task(id: crewId) { await pollLoop() }
+    }
+
+    // MARK: - roster (participant strip)
+
+    private var rosterBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 14) {
+                ForEach(members) { m in
+                    memberChip(m)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+        }
+    }
+
+    private func memberChip(_ m: CrewMember) -> some View {
+        let isCaptain = m.memberKind == "captain" || (m.botId != nil && m.botId == captainBotId)
+        let (icon, tint): (String, Color) = {
+            if isCaptain { return ("star.circle.fill", .orange) }
+            switch m.memberKind {
+            case "human": return ("person.crop.circle.fill", .accentColor)
+            case "code_session": return ("terminal.fill", .green)
+            case "bot": return ("cpu.fill", .purple)
+            default: return ("circle.fill", .secondary)
+            }
+        }()
+        return VStack(spacing: 3) {
+            Image(systemName: icon).font(.title3).foregroundStyle(tint)
+            Text(memberLabel(m, isCaptain: isCaptain))
+                .font(.caption2)
+                .lineLimit(1)
+                .frame(maxWidth: 76)
+        }
+    }
+
+    private func memberLabel(_ m: CrewMember, isCaptain: Bool) -> String {
+        if let n = m.displayName, !n.isEmpty { return n }
+        if isCaptain { return "机长" }
+        switch m.memberKind {
+        case "human": return "我"
+        case "code_session": return "session"
+        case "bot": return "bot"
+        default: return m.memberKind
+        }
     }
 
     // MARK: - timeline
@@ -187,6 +239,11 @@ struct CrewChatView: View {
             loadError = nil
         } catch {
             loadError = error.localizedDescription
+        }
+        // Roster is best-effort decoration — a failure leaves the prior strip.
+        if let roster = try? await api.listCrewMembers(crewId: crewId) {
+            members = roster.members
+            captainBotId = roster.captainBotId
         }
     }
 

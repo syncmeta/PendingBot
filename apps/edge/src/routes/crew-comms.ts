@@ -327,6 +327,55 @@ crewMessagesRoutes.get('/:crewId/messages', requireSubjectAuth(['crew:read']), a
 });
 
 // ────────────────────────────────────────────────────────────────────
+// GET /v1/crews/:crewId/members
+// ────────────────────────────────────────────────────────────────────
+//
+// The crew's roster for the middle-pane group chat (spec §9 — everyone is a
+// member: human / captain / code_session / temp bot). crewId ==
+// crew_conversation_id. Same gate as the whiteboard GET.
+crewMessagesRoutes.get('/:crewId/members', requireSubjectAuth(['crew:read']), async (c) => {
+  const crewId = c.req.param('crewId');
+  if (!isUuid(crewId)) {
+    return jsonError(c, 400, 'invalid_id', { message: 'crewId must be a uuid' });
+  }
+
+  const svc = serviceClient(c.env);
+  const { data: meta, error: metaErr } = await svc
+    .from('temporary_group_meta')
+    .select('conversation_id, responsible_subject_id, captain_bot_id')
+    .eq('conversation_id', crewId)
+    .maybeSingle();
+  if (metaErr) return jsonError(c, 500, 'database_error', { detail: metaErr.message });
+  if (!meta) return jsonError(c, 404, 'not_found', { message: 'crew not found' });
+
+  if (c.var.authKind === 'device_grant') {
+    const deviceGrant = c.var.deviceGrant;
+    if (!deviceGrant) return jsonError(c, 401, 'unauthorized');
+    if (deviceGrant.subjectId !== meta.responsible_subject_id) {
+      return jsonError(c, 403, 'forbidden');
+    }
+  } else {
+    const userId = c.var.userId!;
+    const { data: canView, error: canViewErr } = await svc.rpc('can_view_temporary_group', {
+      p_conversation_id: crewId,
+      p_user_id: userId,
+    });
+    if (canViewErr) return jsonError(c, 500, 'database_error', { detail: canViewErr.message });
+    if (canView !== true) return jsonError(c, 403, 'forbidden');
+  }
+
+  const { data: members, error: memErr } = await svc
+    .from('temporary_group_members')
+    .select('id, member_kind, user_id, bot_id, code_session_id, display_name, role, status, represents_crew_id, created_at')
+    .eq('conversation_id', crewId)
+    .eq('status', 'active')
+    .order('created_at', { ascending: true });
+  if (memErr) return jsonError(c, 500, 'database_error', { detail: memErr.message });
+
+  return c.json({ crewId, captainBotId: meta.captain_bot_id, members: members ?? [] });
+});
+
+// ────────────────────────────────────────────────────────────────────
 // GET /v1/sessions/:sessionId/inbox
 // ────────────────────────────────────────────────────────────────────
 
