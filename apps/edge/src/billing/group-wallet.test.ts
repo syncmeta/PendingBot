@@ -9,6 +9,7 @@ import {
   withdrawFromGroup,
   resolveGroupStakes,
   settleGroupSpend,
+  clawbackFromGroups,
 } from './group-wallet';
 import { makeFakeDb, makeFakeClient, makeFakeEnv, type FakeDb, type FakeWallet } from '../../tests/_helpers/fake-supabase';
 import type { PolarClient } from './polar-client';
@@ -258,6 +259,33 @@ describe('settleGroupSpend', () => {
     const { env, supa, wallet } = ctx(db, { [GROUP]: 0 });
     await settleGroupSpend({ env, supa, subjectId: GROUP, spendMicros: 5_000_000, category: 'llm_tokens', dedupeId: 'a2' });
     expect(wallet.calls.find((c) => c.subjectId === GROUP && c.path === '/debit')?.body.pncMicros).toBe(5_000_000);
+  });
+});
+
+describe('clawbackFromGroups (链式退款冲群)', () => {
+  it('从用户各群份额冲减(reduceCredits 群、不返还用户),返回 clawed', async () => {
+    const db = makeFakeDb({
+      group_contributions: [
+        { id: 'c1', subject_id: GROUP, contributor_user_id: ALICE, contributed_pnc_micros: 50_000_000, share_index_at_join: 1, status: 'active' },
+      ],
+      pnc_ledger: [],
+    });
+    db.rpcs = { apply_partial_withdraw: () => ({ data: 20_000_000 }) }; // 群只能冲 20M
+    const { env, supa, wallet } = ctx(db, { [GROUP]: 50_000_000 });
+    const om = fakeOm();
+    const r = await clawbackFromGroups(env, supa, om, ALICE, 30_000_000);
+    expect(r.clawedMicros).toBe(20_000_000);
+    expect((om as any).reduceCredits).toHaveBeenCalledWith(GROUP, 20_000_000, expect.any(Object));
+    // 群 DO 扣;不给 ALICE credit(用户拿上游现金)
+    expect(wallet.calls.some((c) => c.subjectId === GROUP && c.path === '/debit')).toBe(true);
+    expect(wallet.calls.some((c) => c.subjectId === ALICE && c.path === '/credit')).toBe(false);
+  });
+
+  it('用户无群贡献 → 冲 0', async () => {
+    const db = makeFakeDb({ group_contributions: [], pnc_ledger: [] });
+    const { env, supa } = ctx(db, {});
+    const r = await clawbackFromGroups(env, supa, fakeOm(), ALICE, 30_000_000);
+    expect(r.clawedMicros).toBe(0);
   });
 });
 

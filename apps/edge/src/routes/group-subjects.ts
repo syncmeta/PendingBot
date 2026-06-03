@@ -384,8 +384,8 @@ groupSubjectRoutes.post('/:id/topup', async (c) => {
 // POST /v1/group-subjects/:id/leave — 退出群:按 share-index 退回我的份额
 // ────────────────────────────────────────────────────────────────────
 //
-// 把调用者在群里的当前份额(share_now)退回其个人钱包,并标记其 contributions
-// refunded。成员行的移除走既有 DELETE /members/:userId(权限不同),这里只管钱。
+// 把调用者在群里的当前份额(share_now)退回其个人钱包、标记其 contributions
+// refunded,清其认缴,并移除其成员行(一步退群)。群主不能直接退群(须先转让或解散)。
 
 groupSubjectRoutes.post('/:id/leave', async (c) => {
   const id = c.req.param('id');
@@ -402,22 +402,31 @@ groupSubjectRoutes.post('/:id/leave', async (c) => {
     .eq('user_id', userId)
     .maybeSingle();
   if (!membership) return jsonError(c, 403, 'subject_forbidden', { message: '非群成员' });
+  if (membership.role === 'owner') {
+    return jsonError(c, 409, 'conflict', { message: '群主需先转让群主或解散群,不能直接退群' });
+  }
 
   const om = polarOrNull(c.env);
   if (!om) return jsonError(c, 501, 'polar_not_configured');
 
-  const r = await refundContributorFromGroup({
-    env: c.env,
-    supa: serviceClient(c.env),
-    om,
-    subjectId: id,
-    contributorUserId: userId,
-  });
-  if (!r.ok) {
-    if (r.reason === 'no_contributions') return c.json({ ok: true, refunded_pnc: 0, contributions_refunded: 0 });
+  const supa = serviceClient(c.env);
+  // 1. 退份额(no_contributions 视作退 0,仍继续退群)。
+  const r = await refundContributorFromGroup({ env: c.env, supa, om, subjectId: id, contributorUserId: userId });
+  const refundedMicros = r.ok ? r.refundedMicros : 0;
+  const contributionsRefunded = r.ok ? r.contributionsRefunded : 0;
+  if (!r.ok && r.reason !== 'no_contributions' && r.reason !== 'pool_missing') {
     return jsonError(c, 500, 'database_error', { message: r.message });
   }
-  return c.json({ ok: true, refunded_pnc: pncMicrosToPnc(r.refundedMicros), contributions_refunded: r.contributionsRefunded });
+  // 2. 清认缴授权(撤销该群对其钱包的扣款授权)。
+  await setPledge(supa, id, userId, 0);
+  // 3. 移除成员行(自退;grp_remove_member 仅 owner/admin 可删人,故 service 直删)。
+  await supa.from('group_subject_members').delete().eq('subject_id', id).eq('user_id', userId);
+
+  return c.json({
+    ok: true,
+    refunded_pnc: pncMicrosToPnc(refundedMicros),
+    contributions_refunded: contributionsRefunded,
+  });
 });
 
 // ────────────────────────────────────────────────────────────────────

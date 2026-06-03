@@ -305,6 +305,61 @@ export async function setPledge(
 }
 
 // ============================================================
+// 链式退款:上游退款命中已注资进群的钱 → 从群冲减(不返还用户)
+// ============================================================
+
+/**
+ * 用户被上游(Apple/Polar)退款 amount 时,先把其在各群的当前份额冲减(最多冲到
+ * 各群 share_now 合计):缩该用户在群里的 contributions + 减群池 + reduceCredits 群 Polar +
+ * 群侧 pnc_ledger 审计。**不返还用户**(用户拿的是上游现金)。等价于"该用户撤回了自己那份",
+ * 对其他群成员公平(share_index 不变)。返回实际从群冲掉的额度,调用方用 amount−clawed 退个人。
+ * 这堵住"注资进群→退购买款→群仍留额度"的漏洞(billing-v2-design §9 链式退款)。
+ */
+export async function clawbackFromGroups(
+  env: Env,
+  supa: Supa,
+  om: PolarClient,
+  userId: string,
+  amountMicros: number,
+): Promise<{ clawedMicros: number }> {
+  let remaining = Math.trunc(amountMicros);
+  if (!Number.isFinite(remaining) || remaining <= 0) return { clawedMicros: 0 };
+
+  const { data: rows } = await supa
+    .from('group_contributions')
+    .select('subject_id')
+    .eq('contributor_user_id', userId)
+    .eq('status', 'active');
+  const groups = [...new Set((rows ?? []).map((r) => r.subject_id as string))];
+
+  let clawed = 0;
+  for (const g of groups) {
+    if (remaining <= 0) break;
+    const { data } = await supa.rpc('apply_partial_withdraw', {
+      p_subject_id: g,
+      p_user_id: userId,
+      p_amount_micros: remaining,
+    });
+    const reduced = Number(data ?? 0);
+    if (reduced <= 0) continue;
+    const rid = crypto.randomUUID();
+    await supa.from('pnc_ledger').insert({
+      subject_id: g,
+      kind: 'refund',
+      source: 'chargeback_clawback',
+      external_ref: rid,
+      delta_pnc_micros: -reduced,
+      raw: { contributor_user_id: userId },
+    });
+    await om.reduceCredits(g, reduced, { source: 'chargeback_clawback', dedupeId: `cb:${rid}` });
+    await wallet.debit(env, g, reduced, { category: 'chargeback_clawback', dedupeId: `cb-do:${rid}` });
+    clawed += reduced;
+    remaining -= reduced;
+  }
+  return { clawedMicros: clawed };
+}
+
+// ============================================================
 // 分账份额 + 群消费分账(实缴池衰减 + 认缴个人钱包直扣)
 // ============================================================
 

@@ -8,6 +8,7 @@
 // - alarm 周期把 pending flush 给 Polar + 稀疏对账纠偏(防丢包)。
 import { MICROS_PER_PNC } from '../billing/pnc';
 import { polarFromEnv, type PolarClient } from '../billing/polar-client';
+import { serviceClient } from '../lib/supabase';
 import type { Env } from '../types';
 
 // 阈值(micros)。来自 billing-v2-design §7.3:≥50 充足 / <50 提醒 / <5 节流 / ≤0 硬停。
@@ -97,6 +98,32 @@ export class WalletDO {
 
   private async subjectId(): Promise<string> {
     return (await this.state.storage.get<string>('subjectId')) ?? '';
+  }
+
+  /** 群池镜像漂移检查:group_pools.total 与 Polar 群余额偏差 > 1 PNC 报警(仅群 subject 有行)。 */
+  private async checkGroupPoolDrift(subjectId: string, polarBalance: number): Promise<void> {
+    try {
+      const supa = serviceClient(this.env);
+      const { data } = await supa
+        .from('group_pools')
+        .select('total_remaining_pnc_micros')
+        .eq('subject_id', subjectId)
+        .maybeSingle();
+      if (!data) return; // 个人 subject 无群池行
+      const mirror = Number(data.total_remaining_pnc_micros);
+      if (Math.abs(mirror - polarBalance) > MICROS_PER_PNC) {
+        console.warn(
+          '[WalletDO] group_pool DRIFT',
+          subjectId,
+          'mirror=',
+          mirror,
+          'polar=',
+          polarBalance,
+        );
+      }
+    } catch (e) {
+      console.warn('[WalletDO] group pool drift check failed', (e as Error)?.message);
+    }
   }
 
   private pendingSumAll(): number {
@@ -208,6 +235,9 @@ export class WalletDO {
         const polarBalance = await om.getBalance(subjectId);
         await this.setBalance(polarBalance - this.pendingSumAll());
         await this.state.storage.put('lastReconcileAt', now);
+        // 群池漂移报警(计费 P2 群钱包):group_pools.total 是公平性镜像,应与 Polar
+        // 群余额一致;偏差 > 1 PNC 报警(不自动改写,避免与 share_index 失配)。仅群 subject 有行。
+        await this.checkGroupPoolDrift(subjectId, polarBalance);
       } catch (e) {
         console.warn('[WalletDO] reconcile failed', (e as Error)?.message);
       }

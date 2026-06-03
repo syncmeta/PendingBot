@@ -1,4 +1,5 @@
 import { runChatTurn } from './bot-reply';
+import { gateConversation } from '../billing/usage-gate';
 import { parseWebSearchConfig } from './bot-reply/tool-defs';
 import { serviceClient } from './supabase';
 import { notifyConversationUnreadState } from './unread-state';
@@ -60,7 +61,7 @@ export interface DispatchGroupTurnInput {
 }
 
 export interface DispatchGroupTurnResult {
-  status: 'dispatched' | 'continue_request_filed' | 'no_bots' | 'aborted';
+  status: 'dispatched' | 'continue_request_filed' | 'no_bots' | 'aborted' | 'no_balance';
   /// Number of bots that actually got to runChatTurn (some may be
   /// skipped because they were since removed from the group).
   bubblesPerBot: Array<{ bot_id: string; bubbles_inserted: number; final_status: string }>;
@@ -82,6 +83,14 @@ export async function dispatchGroupTurn(
   }
 
   const supa = serviceClient(env);
+
+  // 0. 余额门禁(计费 P2 群钱包):群消费的责任主体 = 群池 + 认缴聚合。耗尽则
+  //    不发起 bot 回合(否则跑完才事后扣、把群池/认缴扣穿)。读失败 fail-open。
+  const gateErr = await gateConversation(env, supa, { conversationId });
+  if (gateErr) {
+    console.warn('[group-dispatch] group balance exhausted, skip bot turn', conversationId);
+    return { status: 'no_balance', bubblesPerBot: [] };
+  }
 
   // 1. Anti-loop check: did a human speak in the last 30s? If not,
   //    file a continue_request and let humans gate further bot output.

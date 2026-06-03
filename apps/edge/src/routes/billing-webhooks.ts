@@ -11,6 +11,7 @@ import { recordCreditIn, recordRefund } from '../lib/billing-polar';
 import { resolvePack } from '../lib/billing-packs';
 import { pncToMicros } from '../billing/pnc';
 import { wallet } from '../billing/wallet-client';
+import { clawbackFromGroups } from '../billing/group-wallet';
 import type { CustomerState } from '@polar-sh/sdk/models/components/customerstate.js';
 
 // Billing credit-in webhooks (see docs/superpowers/specs/2026-06-01-billing-engine-design.md).
@@ -88,12 +89,18 @@ billingWebhookRoutes.post('/polar/webhook', async (c) => {
   if (event.type === 'order.refunded' && subjectId && productId) {
     const pack = resolvePack('polar_checkout', productId);
     if (pack) {
-      const { clampedMicros } = await recordRefund(supa, om, {
-        subjectId, source: 'polar_checkout', externalRef: `${order.id}:refund`,
-        pncMicros: pncToMicros(pack.pnc), raw: order,
-      });
-      // 退款扣减实时推进缓存(负值);clampedMicros<=0 时无变动,跳过。
-      if (clampedMicros > 0) await pushWalletCredit(c.env, subjectId, -clampedMicros);
+      const intended = pncToMicros(pack.pnc);
+      // 链式退款:先从该用户已注资进群的份额冲减(防"注资进群→退款→群留额度"),
+      // 再退个人剩余。clawback 已自行 reduceCredits 群 + 推进群 DO 缓存。
+      const { clawedMicros } = await clawbackFromGroups(c.env, supa, om, subjectId, intended);
+      const personal = Math.max(0, intended - clawedMicros);
+      if (personal > 0) {
+        const { clampedMicros } = await recordRefund(supa, om, {
+          subjectId, source: 'polar_checkout', externalRef: `${order.id}:refund`,
+          pncMicros: personal, raw: order,
+        });
+        if (clampedMicros > 0) await pushWalletCredit(c.env, subjectId, -clampedMicros);
+      }
     }
     return c.json({ ok: true });
   }
@@ -159,11 +166,17 @@ billingWebhookRoutes.post('/revenuecat/webhook', async (c) => {
     return c.json({ ok: true });
   }
   if (ev.type === 'CANCELLATION') {
-    const { clampedMicros } = await recordRefund(supa, om, {
-      subjectId, source: 'iap_ios', externalRef: `${ev.transaction_id}:refund`,
-      pncMicros: pncToMicros(pack.pnc), raw: ev,
-    });
-    if (clampedMicros > 0) await pushWalletCredit(c.env, subjectId, -clampedMicros);
+    const intended = pncToMicros(pack.pnc);
+    // 链式退款:先冲群份额再退个人剩余(同 Polar 路径)。
+    const { clawedMicros } = await clawbackFromGroups(c.env, supa, om, subjectId, intended);
+    const personal = Math.max(0, intended - clawedMicros);
+    if (personal > 0) {
+      const { clampedMicros } = await recordRefund(supa, om, {
+        subjectId, source: 'iap_ios', externalRef: `${ev.transaction_id}:refund`,
+        pncMicros: personal, raw: ev,
+      });
+      if (clampedMicros > 0) await pushWalletCredit(c.env, subjectId, -clampedMicros);
+    }
     return c.json({ ok: true });
   }
   if (ev.type === 'REFUND_REVERSED') {
