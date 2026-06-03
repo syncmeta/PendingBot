@@ -26,7 +26,7 @@
       }
     ]
   },
-  "description": "Consumption cost grouped by category. Primary source: pendingbot.audit_log (task_type = category, model_id, cost_credits, cost_usd, tool_cost_usd). Secondary: pendingbot.billing_ledger grouped by entry_type for ledger movements.",
+  "description": "Consumption cost grouped by category. Primary source: pendingbot.audit_log (task_type = category, model_id, cost_credits, cost_usd, tool_cost_usd). Secondary: pendingbot.pnc_ledger grouped by kind/source for credit issue/refund movements (delta_pnc_micros).",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
@@ -114,13 +114,13 @@
     },
     {
       "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
-      "description": "Ledger movements by entry_type (topup / grant / redemption / refund / adjust / signup_bonus). Positive delta = credit issued, negative = consumed/clawed back.",
+      "description": "Credit ledger movements by kind (topup / refund / admin / redemption) and source (channel). Positive delta = credit issued, negative = refund/clawback. Amounts PNC = delta_pnc_micros / 1e6.",
       "fieldConfig": { "defaults": { "custom": { "align": "auto", "cellOptions": { "type": "auto" }, "inspect": false }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } }, "overrides": [] },
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 18 },
       "id": 4,
       "options": { "cellHeight": "sm", "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false }, "showHeader": true },
       "pluginVersion": "12.0.0",
-      "title": "Ledger movements by entry_type (billing_ledger)",
+      "title": "Credit ledger movements by kind & source (pnc_ledger)",
       "type": "table",
       "targets": [
         {
@@ -128,7 +128,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT\n  entry_type,\n  COUNT(*) AS entries,\n  COALESCE(SUM(delta_credits), 0) AS net_delta_credits,\n  COALESCE(SUM(delta_credits) FILTER (WHERE delta_credits > 0), 0) AS credited,\n  COALESCE(SUM(delta_credits) FILTER (WHERE delta_credits < 0), 0) AS debited\nFROM pendingbot.billing_ledger\nWHERE $__timeFilter(created_at)\nGROUP BY entry_type\nORDER BY net_delta_credits DESC;",
+          "rawSql": "SELECT\n  kind,\n  source,\n  COUNT(*) AS entries,\n  COALESCE(SUM(delta_pnc_micros), 0) / 1e6 AS net_delta_pnc,\n  COALESCE(SUM(delta_pnc_micros) FILTER (WHERE delta_pnc_micros > 0), 0) / 1e6 AS credited_pnc,\n  COALESCE(SUM(delta_pnc_micros) FILTER (WHERE delta_pnc_micros < 0), 0) / 1e6 AS debited_pnc\nFROM pendingbot.pnc_ledger\nWHERE $__timeFilter(created_at)\nGROUP BY kind, source\nORDER BY net_delta_pnc DESC;",
           "refId": "A"
         }
       ]
