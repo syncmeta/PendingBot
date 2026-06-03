@@ -150,43 +150,13 @@ only means WebRTC framework crash logs may lack readable symbols.
 
 ---
 
-## Board (`apps/board/`) — internal admin UI
+## Admin / BI surface — dashboard stack (board retired)
 
-Next.js 15. **Currently NOT deployed** — runs locally only.
-Pre-launch single-user ops doesn't need a hosted instance; one
-`bun run dev:board` from the worktree is the entire UI surface.
-
-```sh
-bun run dev:board
-# → http://localhost:4000
-```
-
-### Pointing local Board at prod data
-
-Populate `apps/board/.env.local` with prod URL + keys (gitignored,
-never commits):
-
-```sh
-supabase projects api-keys --project-ref <prod-ref>
-# pipe anon + service_role into apps/board/.env.local
-# see apps/board/.env.example for shape
-```
-
-Then restart the dev server. Login still requires
-`pendingbot.users.is_admin = true` for the auth.uid().
-
-### When eventually deploying
-
-Natural target: **Cloudflare Pages with `@opennextjs/cloudflare`**
-(matches the existing CF stack). Domain not decided.
-
-Steps when picked:
-1. `bun add -d @opennextjs/cloudflare` in `apps/board/`
-2. Add `wrangler.jsonc` + `open-next.config.ts` under `apps/board/`
-3. Build: `opennextjs-cloudflare build`
-4. Deploy: `opennextjs-cloudflare deploy`
-5. CF Pages env vars need both Supabase keys + a real (non-localhost)
-   `NEXT_PUBLIC_SUPABASE_URL`
+The old self-made `apps/board` Next.js admin UI is **deleted**. The
+admin + BI surface is now the zero-VPS dashboard stack: Grafana Cloud
+(financial BI over Supabase), Supabase Studio, PostHog, Langfuse,
+Sentry, and the Refine admin console (`apps/admin`). See
+`docs/superpowers/specs/2026-06-01-dashboard-stack-design.md`.
 
 ---
 
@@ -198,7 +168,7 @@ When `feat/*` lands on `main`, decide which deploys are needed:
 |---|---|
 | `apps/edge/src/**`, `apps/edge/wrangler.jsonc`, `apps/edge/src/types.ts` | Run edge deploy |
 | New `supabase/migrations/00NN_*.sql` | `supabase db push --linked` against prod, then regen `apps/edge/src/db/schema.ts` and re-typecheck |
-| `apps/board/**` source | If local dev server is running, hot-reload picks it up. If Board ever gets deployed, redeploy. |
+| `apps/admin/**` source (Refine console) | Deploy to CF Pages when wired; not deployed pre-launch |
 | Pure prod data (direct SQL like flipping `model_id` / `is_admin`) | No deploy. Ephemeral state, won't survive a `supabase db reset` if anyone ever runs that on prod (we don't, single-env). |
 
 ---
