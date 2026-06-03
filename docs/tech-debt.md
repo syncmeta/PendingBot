@@ -455,10 +455,10 @@
 - 🟡 **计费 P2 low 档"余额低"提醒未注入** — 阈值 low(<50 PNC)gate 正确放行,但"在下一条回复里注入余额低提醒(24h 去抖)"这个 UX 从未实装(billing-v2.ts 注释里只写了意图)。需要在回复渲染层加一个 threshold 信号通道 + 去抖。gate 层已就绪(`gateUsage` 返回 `thresholdState`),缺消费方。
 
 - ✅/🟡 **计费 P2 群成本分摊(share-index)已重挂到 Polar/WalletDO**(2026-06-02,用户拍板"用 v2 共享池方法") — 计划 `docs/superpowers/plans/2026-06-02-group-wallet-polar-rehome.md`。已落:`billing/share-index.ts`(纯数学)+ 迁移 `apply_group_pool_spend`/`apply_group_contribution`/`apply_group_refund` 原子 RPC + `billing/group-wallet.ts`(contribute/refund/dissolve)+ 群消费在 router/群语音/sandbox 扣费后衰减 share_index + 端点 `/topup`(改 contribute)`/leave`(自退款)`/dissolve`。typecheck 0 + 523 测试。**剩余 🟡 尾巴(未做,见下三条)**:链式退款、漂移报警、`/leave` 不删 membership 行。
-  - 🟡 **链式退款未覆盖群注资**(plan Task 6 未做):Apple/LS 退款命中"已注资进群"的那笔钱时,应按 `share_now` 冲减群池 + 超出部分平台自担(billing-v2-design §9)。当前 `billing-webhooks.ts` 退款路径只对 user subject 走 `recordRefund`,**不会**反查 group_contributions。后果:已进群的钱被 Apple 退款时,群池不冲减(平台/账目不一致),不是双退用户但需补。**上线前必补,否则群退款与平台退款账目漂移。**
-  - 🟡 **群池镜像漂移报警未做**(plan Task 8):`group_pools.total_remaining` 是镜像,应在 WalletDO alarm 对账时与 Polar 余额比对、超 1 PNC 报警。当前无,靠 floor 保守 + WalletDO 自身对账兜底。
-  - 🟡 **`/leave` 只退款不删 membership 行**:退份额走通,但成员行的移除仍需走既有 `DELETE /members/:userId`(无 self-leave RPC)。"退群"两步未合一。
-  - 🟡 **群 bot 回复的前置门禁未接(认缴聚合)** — 计费 P2 群钱包:`gateConversation`(群=实缴池+认缴聚合)已接进**同步触发 LLM 的路径**(1v1 send / regenerate / envelope);但**群里人发消息→bot 异步回复**这条路径在消息 POST 处不 gate(避免对纯附件等无成本消息误拦),群 bot 回复发起处也尚未加前置 gate。后果:群池/认缴耗尽时,异步 bot 回复仍会发起→靠 settleGroupSpend 事后扣 + overdraft floor 兜底,但缺"开跑前拦截"。应在群 bot 回复发起处(bot-reply 投递)加 `gateConversation`。当前钱不会算错(settleGroupSpend 正确),只是少一道预拦。
+  - ✅ **链式退款覆盖群注资**(2026-06-02 完成,#210):`billing/group-wallet.ts clawbackFromGroups` —— Apple/Polar 退款先从用户各群 active 份额按 share_now 冲减(`apply_partial_withdraw` 缩份额+池 + `reduceCredits` 群 Polar,不返还用户)、再退个人剩余,平台只自担"已被群花掉"的部分。Polar `order.refunded` + RC `CANCELLATION` 两路接入。堵住"注资进群→退购买款→群留额度"漏洞。
+  - ✅ **群池镜像漂移报警**(2026-06-02 完成,#210):`WalletDO.checkGroupPoolDrift` 在 alarm 对账时比对 `group_pools.total_remaining` vs Polar 群余额,偏差 > 1 PNC `console.warn`(不自动改写)。
+  - ✅ **`/leave` 一步退群**(2026-06-02 完成,#210):退份额 + 清认缴(setPledge 0)+ service 直删成员行;群主拒退(须先转让/解散)。
+  - ✅ **群 bot 异步回复前置 gate**(2026-06-02 完成,#210):`lib/group-dispatch.ts dispatchGroupTurn` 开头按群池+认缴聚合 `gateConversation`,exhausted 直接 `no_balance` 不发起 bot 回合(读失败 fail-open)。
 
 - 🟡 **billing-v2 退役未完成(用量/packs/旧入账 dead 但仍在树)** — P2 后这些已无 live 调用方但代码还在:`lib/billing-v2.ts` 的 `settleUsage`/`settleManyUsage`/packs 扣减、`lib/billing-v2-pack.ts`、pack 过期 cron(`cron/billing-v2-sweep.ts`/`billing-v2-expiry.ts`/`billing-v2-tasks.ts`)、旧入账 `billing-v2-lemon.ts`(Lemon 已弃)+ `billing-v2-iap.ts`(被 RevenueCat 取代)及其在 `billing-webhooks.ts` 仍挂载的 `/lemonsqueezy/webhook`、`/iap/purchase`、`/iap/notify` 路由。**保留项**:`pnc_ledger`(审计)、群分摊雏形(待重挂,见上条)。退役需与群分摊重做一起做,避免误删 share-index 逻辑。
 

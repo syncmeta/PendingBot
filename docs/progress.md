@@ -115,7 +115,7 @@ billing-v2 的自研结算引擎(settleUsage/packs/本地账本)**改为外包**
 | **P2 群成本分摊 重挂(#208)** | ✅ | 代码+单测 | 用户拍板用 v2 共享池法。share-index.ts + 原子 RPC 迁移 + group-wallet.ts(contribute/refund/dissolve)+ router/群语音/sandbox 扣费后衰减 + 端点 /topup·/leave·/dissolve。计划 `plans/2026-06-02-group-wallet-polar-rehome.md` |
 | me.ts /wallet/v2 余额改读 WalletDO | ✅ | 代码 | 替 packs 求和(会显示过期值);明细读 pnc_ledger |
 | **群钱包 认缴(pledge)模型(#213)** | ✅ | 代码+单测(534) | 实缴池+认缴统一:group_pledges 表 + 部分取出 + settleGroupSpend(消费按份额拆池衰减+认缴个人直扣)+ 门禁聚合 + 端点 /pledge·/withdraw。spec/plan `2026-06-02-group-billing-pledge-model*` |
-| 群分摊 尾巴 | 🟡 | — | 链式退款命中群注资 / 群池漂移报警 / `/leave` 不删 membership / 群 bot 异步回复前置 gate —— 均记 tech-debt,上线前补 |
+| 群分摊 尾巴(#210) | ✅ | 代码+单测(474) | 链式退款冲群(clawbackFromGroups)/ 群池漂移报警 / `/leave` 一步退群 / 群 bot 异步回复前置 gate —— 全做完 |
 | billing-v2 死代码退役(#209) | ✅ | typecheck 0 + 472 测试 | 删 16 文件(billing-v2.ts/group/pack/lemon/iap/refund/expiry + pack cron)+ 去 /lemonsqueezy·/iap 路由 + room-voice OwnerRef→WalletOwner + 清孤儿 env/cron。旧 packs/ledger 表留冷备 |
 | throttle 降级 / low 提醒 / sandbox 真实单价 | ❌ | — | 已记 tech-debt 🟡(throttle 经 OpenRouter 官方文档核实不适用 passthrough) |
 
