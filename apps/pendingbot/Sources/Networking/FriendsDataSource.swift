@@ -18,6 +18,10 @@ struct HumanContact: Identifiable, Equatable, Hashable {
     let id: String            // userId
     let displayName: String
     let alias: String?
+    /// Worker upload path for the real avatar image (nil = use emoji placeholder).
+    let avatarPath: String?
+    /// Stable emoji-placeholder seed (defaults to userId).
+    let avatarSeed: String
 
     var shownName: String {
         if let alias, !alias.isEmpty { return alias }
@@ -38,7 +42,8 @@ enum FriendsDataSource {
     /// contact (id / displayName / alias). No hand-copied request here anymore.
     static func listHumanContacts() async throws -> [HumanContact] {
         try await ContactsFetch.fetch().map {
-            HumanContact(id: $0.userId, displayName: $0.displayName, alias: $0.alias)
+            HumanContact(id: $0.userId, displayName: $0.displayName, alias: $0.alias,
+                         avatarPath: $0.avatarPath, avatarSeed: $0.avatarSeed ?? $0.userId)
         }
     }
 

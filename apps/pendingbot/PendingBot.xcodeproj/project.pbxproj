@@ -58,6 +58,7 @@
 		4B8693B2BE0A0352EAC924DE /* CrewDetailV2View.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2426E68B61F7DC57E429193 /* CrewDetailV2View.swift */; };
 		4BB4C2FB26A507B0A0BCBBDA /* SplitNav.swift in Sources */ = {isa = PBXBuildFile; fileRef = 669D712A76A1F12D4F8171E8 /* SplitNav.swift */; };
 		4D643B36DC9C4F4911A4B845 /* WelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F7C3B5C578F1BE2095D0B00 /* WelcomeView.swift */; };
+		5042BAAF9E26EC2AFC0226DF /* PlatformImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9142C17F5B4C0AC7A9AA91ED /* PlatformImage.swift */; };
 		5206C9F2F44F35357CB69A70 /* CallKitManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26815F4D8AE1B1CDF63042ED /* CallKitManager.swift */; };
 		54B48FB87D7B73FF585A93FB /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D0542BAF8BA5245F4DD6FA1 /* Keychain.swift */; };
 		583836D442830F875F8C55F2 /* CallCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7E8B55D4DE8ED09E4B54C14 /* CallCenter.swift */; };
@@ -262,6 +263,7 @@
 		8EE20E0F4BC59E02C737D9F2 /* ColorHex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorHex.swift; sourceTree = "<group>"; };
 		9010CC63D1CC724A55770E7A /* GroupJoinView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupJoinView.swift; sourceTree = "<group>"; };
 		90F4AA849A0395AE40EE6817 /* BotAvatar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotAvatar.swift; sourceTree = "<group>"; };
+		9142C17F5B4C0AC7A9AA91ED /* PlatformImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformImage.swift; sourceTree = "<group>"; };
 		9203CD5A29F63BF0D4B5B9B7 /* AccountStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountStore.swift; sourceTree = "<group>"; };
 		954AA26D0420171081DFA5EA /* MacWelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacWelcomeView.swift; sourceTree = "<group>"; };
 		95EAE20F68A86A8C803A0B1E /* ModelPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelPicker.swift; sourceTree = "<group>"; };
@@ -425,6 +427,7 @@
 				95EAE20F68A86A8C803A0B1E /* ModelPicker.swift */,
 				70EAEDCC6E5ABCC5261A43E3 /* MyQRBusinessCard.swift */,
 				3A4E9EE25926BD0C0327F5F9 /* Platform.swift */,
+				9142C17F5B4C0AC7A9AA91ED /* PlatformImage.swift */,
 				13BCD0D49AA6CCB35BBB0C31 /* QRScannerView.swift */,
 				0F21A15DD9477AC940984A06 /* RelativeMessageTime.swift */,
 				2F1FA831F2107CCFDA665DF7 /* ServerImage.swift */,
@@ -865,6 +868,7 @@
 				F3238C85A9A478B6EA7B7F55 /* PendingBotSharedModels.swift in Sources */,
 				0764DE6E6E5998186C2AEF3D /* PermissionRequestCard.swift in Sources */,
 				410E4CD407F8295F837084F9 /* Platform.swift in Sources */,
+				5042BAAF9E26EC2AFC0226DF /* PlatformImage.swift in Sources */,
 				32FAAF4A0D4EC4DEAC048497 /* ProfileBootstrapView.swift in Sources */,
 				433F3178E73B28AAA4D05AA9 /* ProtectedURLCache.swift in Sources */,
 				D6974FC7B55E1BC31FFBB131 /* PushService.swift in Sources */,
