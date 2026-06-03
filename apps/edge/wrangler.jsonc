@@ -46,13 +46,23 @@
   // .dev.vars. We deliberately keep ONE deployed env (production) until there
   // are real users to insulate from churn — see CLAUDE.md "Deploys".
   "vars": {
-    "ENVIRONMENT": "dev"
+    "ENVIRONMENT": "dev",
+    // Kill-switches (lib/feature-flags.ts). Default OFF: only "true" enables.
+    "BILLING_ENABLED": "false",
+    "OBSERVABILITY_ENABLED": "false"
   },
 
   "env": {
     "production": {
       "vars": {
         "ENVIRONMENT": "production",
+        // Kill-switches (lib/feature-flags.ts). Default OFF: only "true"
+        // enables. Flip to "true" + redeploy when ready; flip back to disable.
+        // BILLING_ENABLED gates the live billing gate + debit (off = nobody
+        // blocked, nothing charged). OBSERVABILITY_ENABLED gates Sentry +
+        // PostHog + Langfuse (off = no vendor quota burned).
+        "BILLING_ENABLED": "false",
+        "OBSERVABILITY_ENABLED": "false",
         "SUPABASE_URL": "https://sslzhblojwkxfdyisity.supabase.co",
         "ALLOWED_ORIGIN": "https://bot.pendingname.com",
         // AI Gateway coordinates — the worker reads the gateway's
