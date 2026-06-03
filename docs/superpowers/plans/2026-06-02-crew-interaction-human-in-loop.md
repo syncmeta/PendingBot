@@ -55,8 +55,15 @@ spec §10 重写（本 commit）。
 
 ## 验证门（不能跳）
 
-- P1/P2 的 CLI 行为：headless 真跑确认（mode 生效、`--mcp-config` 阻塞工具可用）。
-- 整链路 E2E：要登录账号 + 真实 crew/DAG + 真机（mint device-grant 要 iOS 扫码，headless 起不了）——归 T5.3 QA。
+- P1/P2 的 CLI 行为：headless 真跑确认（mode 生效、`--mcp-config` 阻塞工具可用）。✅
+- **机械层（2026-06-03，用户授权后）全验通**：
+  - 迁移 apply 到 prod（列 + RPC，read-only 复核）✅
+  - edge 部署 live（Version `7e026b27`）；三个交互路由都返 401（auth gating 生效、路由挂上、对照不存在路径返 404）✅
+  - edge typecheck 绿 + 459 vitest 全过 ✅（注：worktree 之前没装 deps，装上后暴露并修了两个真 type error：`z.record` arity + 列表查询走 typed schema.ts → 改 `untypedFrom`）
+  - PendingCrew Mac app `BUILD SUCCEEDED`，全部交互 Swift 一起编过；`ask-human-mcp.cjs` 进 bundle（`Contents/Resources/`）、node v26 在位 ✅
+- **整链路 E2E（剩最后一跳，需人在 GUI）**：agent ask_human → 卡片 → 人答 → agent 续跑。要登录账号 + 真 crew session + agent 真调 ask_human（prompt 驱动）。手测步骤见下。
+  - 手测：① app 里登录态起一个 logged crew session，prompt 里明确让 agent「用 ask_human 工具问我一个问题再继续」②观察 RemoteSessionsView 出现「Agent 在问你」卡片 ③回答 ④确认 agent 收到回复续跑。
+  - captain 自动 triage（§10.3-10.5）：仍待，且其 LLM-pipeline 也要在这套 E2E 环境里才好验。
 
 ## 待定 / 开放问题
 
