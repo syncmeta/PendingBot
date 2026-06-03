@@ -28,10 +28,20 @@
 - captain 成为群里活的参与者(先只会聊 + 拆解,工具下阶段)。
 - 复用我之前查的 captain-triage 那套(captain_bot_id from temporary_group_meta + dispatchGroupTurn)。交互溯源(§10.3-10.5)也并到这。
 
-### Phase K — captain 编排工具（大块,含最硬的 edge→Mac 通道）
-- captain bot tools:`start_session(brief)` / `create_child_crew(...)` / `recruit_temp_bot(...)`。
-- **start_session 的难点**:captain 跑在 edge(云),session 要跑在用户 Mac(本机)。需要 edge→Mac 控制通道把"去起 session"推到 PendingCrew 本机执行(复用 SessionProxyDO 命令通道,或建 crew 级命令队列 + Mac 端订阅)。
-- create_child_crew 已有 RPC(`create_child_crew_inheriting_responsibility_*`);recruit_temp_bot 需要"临时 bot"创建路径(member_kind='bot',非责任主体)。
+### Phase J — captain 活起来 ✅（编译/部署,真机未验）
+- POST `/v1/crews/:id/messages` 写入会话 `messages` + `waitUntil(dispatchGroupTurn(captain))` → captain 走标准 bot-reply pipeline 回话。中栏 + `/inbox` 改读 `messages`(统一事实源)。
+- **真机未验**:captain 真回不回、会不会 `[SILENT]`、钱包够不够。
+
+### Phase K — captain 编排工具
+- ✅ **`start_session(brief, runner?)` 已端到端落地**(编译/部署/迁移 applied,真机未验):
+  - bot tool(`tool-defs` + `tool-runner` dispatch + `tools/start-session.ts`)—— 门控 crew + captain。
+  - RPC `open_crew_session_by_captain`:验 bot 是本 crew captain → 建 `status='queued'` crew_session + H1 成员行。
+  - **edge→Mac 通道 = Mac auto-claim 轮询**(`CrewSessionWindowView.autoClaimLoop`):poll `listCrewSessions` 看到 `queued` + 本机空闲 → claim + 用 crew 默认起。captain 在云建 queued 行,Mac 当 executor 跑。**无新 WS/DO**。
+  - **无 human-confirm**(人正在跟 captain 聊,local_host 算力免费;只 LLM token 扣 crew 钱包)。
+  - **真机未验**:要真 captain LLM 调到 tool + Mac 真接住跑。归 T5.3。
+- **待**:`create_child_crew`(已有 RPC `create_child_crew_inheriting_responsibility_*`)+ `recruit_temp_bot`(member_kind=`ephemeral_bot`,非责任主体)。
+- **待 J-e**:session 的 `post_to_crew` 也落 `messages`(现写老 crew_announcements,不显示在群)。
+- **待**:captain persona(让它知道自己是机长 + 何时该 start_session)。
 
 ### Phase L（later）— 跟 captain 1:1 私聊视图（默认仍群聊）
 
