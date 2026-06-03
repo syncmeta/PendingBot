@@ -18,6 +18,10 @@ struct CrewSessionWindowView: View {
     @State private var starting = false
     @State private var localError: String?
     @State private var selectedKind: LocalCodingAgentKind = .claudeCode
+    /// Sessions this app has already claimed+run (or is running), so the
+    /// auto-claim loop (K: captain-created queued sessions) doesn't double-run
+    /// them. Includes both manual starts and auto-claimed ones.
+    @State private var handledSessionIds: Set<String> = []
 
     /// spec §9.3 + 用户心智：右栏是**常驻**和 claude/codex 交互的面（像 Codex
     /// Desktop）。没有 session 时就地给一个 composer —— **第一条消息即开始
@@ -34,6 +38,10 @@ struct CrewSessionWindowView: View {
             composer
         }
         .navigationTitle("Session")
+        // K (edge→Mac channel): for the selected crew, auto-claim + run sessions
+        // the captain queued on the server (status='queued'). local_host = this
+        // Mac is the executor; the captain just creates the queued row on edge.
+        .task(id: crewStore.selectedDetail?.crew.id) { await autoClaimLoop() }
     }
 
     private var isRunning: Bool { sessionRunner.current?.status == .running }
@@ -130,6 +138,7 @@ struct CrewSessionWindowView: View {
                 return
             }
         }
+        if let sid = serverLink?.sessionId { handledSessionIds.insert(sid) }
         do {
             try await sessionRunner.start(
                 crewId: detail.crew.id,
@@ -142,6 +151,61 @@ struct CrewSessionWindowView: View {
             draft = ""
         } catch {
             localError = error.localizedDescription
+        }
+    }
+
+    // MARK: - auto-claim (K: captain-created queued sessions)
+
+    /// Poll the crew's server sessions; when the captain queues one (status=
+    /// 'queued') and this Mac is free, claim it + run it locally with the crew's
+    /// working dir. local_host: the captain (on edge) creates the row, this Mac
+    /// executes. Logged mode only.
+    private func autoClaimLoop() async {
+        while !Task.isCancelled {
+            if appModel.mode == .logged,
+               let detail = crewStore.selectedDetail,
+               sessionRunner.current == nil || sessionRunner.current?.status != .running,
+               let api = try? appModel.loggedAPIClient(),
+               let sessions = try? await api.listCrewSessions(crewId: detail.crew.id) {
+                if let queued = sessions.first(where: { $0.status == "queued" && !handledSessionIds.contains($0.id) }) {
+                    handledSessionIds.insert(queued.id) // claim-once guard before the await
+                    await runQueuedSession(queued, detail: detail, api: api)
+                }
+            }
+            try? await Task.sleep(nanoseconds: 4_000_000_000) // 4s
+        }
+    }
+
+    /// Claim + run an already-created (captain-queued) session. Mirrors the
+    /// manual start but skips createSession (the row already exists).
+    private func runQueuedSession(_ s: CrewSessionSummary, detail: CrewDetail, api: PendingCrewAPI) async {
+        guard let wd = detail.crew.workingDirectory, !wd.isEmpty else { return }
+        let dir = URL(fileURLWithPath: (wd as NSString).expandingTildeInPath)
+        do {
+            let subjects = try await api.listMySubjects()
+            guard let subjectId = subjects.first?.id else { return }
+            let hostId = try await appModel.ensureRunnerHost(
+                api: api,
+                subjectId: subjectId,
+                allowedRunnerKinds: [
+                    LocalCodingAgentKind.claudeCode.serverRunnerKind,
+                    LocalCodingAgentKind.codex.serverRunnerKind,
+                ]
+            )
+            _ = try await api.claimSession(runnerHostId: hostId, sessionId: s.id)
+            let link = CrewSessionServerLink(api: api, runnerHostId: hostId, sessionId: s.id)
+            let kind: LocalCodingAgentKind = s.runnerKind.contains("codex") ? .codex : .claudeCode
+            try await sessionRunner.start(
+                crewId: detail.crew.id,
+                kind: kind,
+                workingDirectory: dir,
+                taskBrief: s.taskBrief,
+                initialPrompt: s.taskBrief,
+                serverLink: link
+            )
+        } catch {
+            localError = "自动认领 session 失败: \(error.localizedDescription)"
+            handledSessionIds.remove(s.id) // allow a retry next poll
         }
     }
 
