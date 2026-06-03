@@ -36,6 +36,14 @@ vi.mock('@pendingbot/identity', () => ({
   },
 }));
 
+// crew-comms now imports dispatchGroupTurn (to wake the captain on a crew
+// message). Mock it so the test doesn't transitively pull the bot-reply +
+// prompt-loader chain, and so we can assert the captain wake without an LLM turn.
+const dispatchGroupTurnMock = vi.fn().mockResolvedValue({ status: 'dispatched', bubblesPerBot: [] });
+vi.mock('../src/lib/group-dispatch', () => ({
+  dispatchGroupTurn: dispatchGroupTurnMock,
+}));
+
 installFakeSupabaseMock();
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -51,9 +59,17 @@ function appFor(db: FakeDb) {
   const app = new Hono<AppBindings>();
   app.route('/v1/crews', crewMessagesRoutes);
   app.route('/v1/sessions', sessionInboxRoutes);
+  // crew message POST uses c.executionCtx.waitUntil (captain wake). Provide a
+  // fake executionCtx so it's present in tests; the dispatch promise's creation
+  // (and thus the mock call) is synchronous regardless of whether waitUntil runs.
+  const executionCtx = {
+    waitUntil: () => {},
+    passThroughOnException: () => {},
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } as any;
   return {
     request: (path: string, init?: RequestInit) =>
-      app.request(path, init, makeFakeEnv(db)),
+      app.request(path, init, makeFakeEnv(db), executionCtx),
   };
 }
 
@@ -67,107 +83,42 @@ const CAPTAIN_BOT_ID = '66666666-6666-4666-8666-ffffffffffff';
 const CAPTAIN_MEMBER_ID = '77777777-7777-4777-8777-000000000001';
 const ANNOUNCEMENT_ID = '88888888-8888-4888-8888-000000000002';
 
+// J (spec §9): the crew chat IS the conversation's `messages`. POST inserts a
+// user message + wakes the captain via dispatchGroupTurn (mocked).
 describe('POST /v1/crews/:crewId/messages', () => {
-  it('fans out to all sessions when no mentions are given', async () => {
-    const db = makeFakeDb();
-    let seenArgs: Record<string, unknown> | undefined;
-    db.rpcs = {
-      create_crew_announcement: (args) => {
-        seenArgs = args;
-        return { data: ANNOUNCEMENT_ID, error: null };
-      },
-    };
+  beforeEach(() => dispatchGroupTurnMock.mockClear());
 
+  function seedCrew(db: FakeDb) {
+    db.rows.temporary_group_meta = [
+      { conversation_id: CREW_ID, responsible_subject_id: SUBJECT, captain_bot_id: CAPTAIN_BOT_ID },
+    ];
+    db.rpcs = { can_view_temporary_group: () => ({ data: true, error: null }) };
+  }
+
+  it('inserts a user message into the crew conversation and wakes the captain', async () => {
+    const db = makeFakeDb();
+    seedCrew(db);
     const res = await appFor(db).request(`/v1/crews/${CREW_ID}/messages`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-test-user-id': USER },
       body: JSON.stringify({ content: 'hello crew' }),
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      announcementId: string;
-      recipientSessionIds: string[];
-    };
-    expect(body.announcementId).toBe(ANNOUNCEMENT_ID);
-    expect(body.recipientSessionIds).toEqual([]);
-    expect(seenArgs).toMatchObject({
-      p_crew_conversation_id: CREW_ID,
-      p_recipient_session_ids: [],
-      p_recipient_member_ids: [],
-      p_message_kind: 'instruction',
-      p_summary: 'hello crew',
+    const body = (await res.json()) as { messageId: string };
+    expect(body.messageId).toBeTruthy();
+    const msgInsert = db.inserts.find((i) => i.table === 'messages');
+    expect(msgInsert?.row).toMatchObject({
+      conversation_id: CREW_ID,
+      role: 'user',
+      content: 'hello crew',
+      user_id: USER,
     });
-  });
-
-  it('translates @session mention into recipient_session_ids', async () => {
-    const db = makeFakeDb();
-    let seenArgs: Record<string, unknown> | undefined;
-    db.rpcs = {
-      create_crew_announcement: (args) => {
-        seenArgs = args;
-        return { data: ANNOUNCEMENT_ID, error: null };
-      },
-    };
-
-    const res = await appFor(db).request(`/v1/crews/${CREW_ID}/messages`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-test-user-id': USER },
-      body: JSON.stringify({
-        content: 'hey worker',
-        mentions: [{ kind: 'session', target_id: SESSION_A }],
-      }),
+    expect(dispatchGroupTurnMock).toHaveBeenCalledTimes(1);
+    expect(dispatchGroupTurnMock.mock.calls[0][0]).toMatchObject({
+      conversationId: CREW_ID,
+      wakeBotIds: [CAPTAIN_BOT_ID],
+      reason: 'mention',
     });
-    expect(res.status).toBe(200);
-    expect(seenArgs?.p_recipient_session_ids).toEqual([SESSION_A]);
-    const body = (await res.json()) as { recipientSessionIds: string[] };
-    expect(body.recipientSessionIds).toEqual([SESSION_A]);
-  });
-
-  it('resolves @captain into the captain bot member\'s active session', async () => {
-    const db = makeFakeDb();
-    db.rows.temporary_group_meta = [
-      {
-        conversation_id: CREW_ID,
-        temporary_kind: 'crew',
-        captain_bot_id: CAPTAIN_BOT_ID,
-      },
-    ];
-    db.rows.temporary_group_members = [
-      {
-        id: CAPTAIN_MEMBER_ID,
-        conversation_id: CREW_ID,
-        bot_id: CAPTAIN_BOT_ID,
-        status: 'active',
-      },
-    ];
-    db.rows.crew_sessions = [
-      {
-        id: SESSION_B,
-        crew_conversation_id: CREW_ID,
-        assigned_to_member_id: CAPTAIN_MEMBER_ID,
-        status: 'running',
-        responsible_subject_id: SUBJECT,
-      },
-    ];
-
-    let seenArgs: Record<string, unknown> | undefined;
-    db.rpcs = {
-      create_crew_announcement: (args) => {
-        seenArgs = args;
-        return { data: ANNOUNCEMENT_ID, error: null };
-      },
-    };
-
-    const res = await appFor(db).request(`/v1/crews/${CREW_ID}/messages`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-test-user-id': USER },
-      body: JSON.stringify({
-        content: 'captain wake up',
-        mentions: [{ kind: 'captain' }],
-      }),
-    });
-    expect(res.status).toBe(200);
-    expect(seenArgs?.p_recipient_session_ids).toEqual([SESSION_B]);
   });
 
   it('rejects malformed body with 400 invalid_body', async () => {
@@ -178,8 +129,7 @@ describe('POST /v1/crews/:crewId/messages', () => {
       body: JSON.stringify({ content: '' }),
     });
     expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: { code: string } };
-    expect(body.error.code).toBe('invalid_body');
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('invalid_body');
   });
 
   it('rejects invalid crewId format with 400 invalid_id', async () => {
@@ -190,44 +140,33 @@ describe('POST /v1/crews/:crewId/messages', () => {
       body: JSON.stringify({ content: 'hi' }),
     });
     expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: { code: string } };
-    expect(body.error.code).toBe('invalid_id');
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('invalid_id');
   });
 
-  it('maps RPC forbidden into 403 forbidden', async () => {
+  it('returns 404 when the crew does not exist', async () => {
+    const db = makeFakeDb(); // no temporary_group_meta seeded
+    const res = await appFor(db).request(`/v1/crews/${CREW_ID}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-user-id': USER },
+      body: JSON.stringify({ content: 'hi' }),
+    });
+    expect(res.status).toBe(404);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('not_found');
+  });
+
+  it('returns 403 when a JWT caller cannot view the crew', async () => {
     const db = makeFakeDb();
-    db.rpcs = {
-      create_crew_announcement: () => ({
-        data: null,
-        error: { code: '42501', message: 'forbidden: not an active crew member' },
-      }),
-    };
+    db.rows.temporary_group_meta = [
+      { conversation_id: CREW_ID, responsible_subject_id: SUBJECT, captain_bot_id: CAPTAIN_BOT_ID },
+    ];
+    db.rpcs = { can_view_temporary_group: () => ({ data: false, error: null }) };
     const res = await appFor(db).request(`/v1/crews/${CREW_ID}/messages`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-test-user-id': USER },
       body: JSON.stringify({ content: 'hi' }),
     });
     expect(res.status).toBe(403);
-    const body = (await res.json()) as { error: { code: string } };
-    expect(body.error.code).toBe('forbidden');
-  });
-
-  it('maps "system" message_kind to announcement (DB enum)', async () => {
-    const db = makeFakeDb();
-    let seenArgs: Record<string, unknown> | undefined;
-    db.rpcs = {
-      create_crew_announcement: (args) => {
-        seenArgs = args;
-        return { data: ANNOUNCEMENT_ID, error: null };
-      },
-    };
-    const res = await appFor(db).request(`/v1/crews/${CREW_ID}/messages`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-test-user-id': USER },
-      body: JSON.stringify({ content: 'crew kickoff', message_kind: 'system' }),
-    });
-    expect(res.status).toBe(200);
-    expect(seenArgs?.p_message_kind).toBe('announcement');
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('forbidden');
   });
 });
 
@@ -311,14 +250,23 @@ describe('GET /v1/sessions/:sessionId/inbox', () => {
       },
     ];
 
+    // Whiteboard now reads the crew conversation's `messages` (spec §9 unified
+    // store), not the get_crew_whiteboard RPC.
+    db.rows.messages = [
+      {
+        id: 'a-1',
+        conversation_id: CREW_ID,
+        role: 'user',
+        content: 'announcement one',
+        user_id: USER,
+        log_kind: null,
+        log_payload: null,
+        status: 'done',
+        created_at: '2026-05-28T00:00:00Z',
+      },
+    ];
     db.rpcs = {
       can_view_temporary_group: () => ({ data: true, error: null }),
-      get_crew_whiteboard: () => ({
-        data: [
-          { id: 'a-1', summary: 'announcement one', created_at: '2026-05-28T00:00:00Z' },
-        ],
-        error: null,
-      }),
     };
 
     const res = await appFor(db).request(`/v1/sessions/${SESSION_A}/inbox`, {
