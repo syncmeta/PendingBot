@@ -569,3 +569,5 @@
 
   **建议**:把 A 段整体并入 #226 的物理 drop 迁移(同一 `chore/` 批次);B 段先做 #226 的 invite 流/me.ts 解耦再 drop;C 段与 #244 一起拍板(送不送 / 兑换走不走 Polar)。drop 顺序硬约束:`chore/retire-billing-v2` 必须先部署到生产,否则提前 drop 会让线上旧路径 500。
   **状态**:待办(已登记,等 #226/#244 推进时按 A/B/C 分层落)
+
+- ✅ **billing-v2/v1 孤儿 A 段已 drop(2026-06-03 部署)** — 上条「全清单」的 **A 段**(表 billing_ledger/group_billing_config/group_billing_custom_shares/ledger_entries/packs/topups/refund_events + 8 孤儿 RPC + on_user_billing_signup 触发器)已随迁移 `20260603112148_drop_billing_v2_orphans` apply 到生产(先部署新 edge 代码再 drop,无 500)。**C 段**(兑换/送)已重建到 Polar:`billing_redeem` 退化为只校验(迁移 20260603111613),送(35 PNC)/兑换入账走 `lib/billing-grant.ts` 的 ensureCustomer+grantCredits,均受 BILLING_ENABLED 门控。**残留**:ensureCustomer 的 409(已存在客户)吞掉分支未经 sandbox 实测(P0 spike 已验证全新客户的 create+grant+balance;409 支 dormant,billing 关时不触发)——启用计费前用 token 跑一次 spike 坐实即可。**B 段**(subject_wallets / group_member_billing + invite 流 + iOS)仍是 #226。
