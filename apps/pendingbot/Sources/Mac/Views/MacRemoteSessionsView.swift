@@ -38,22 +38,25 @@ struct MacCrewListColumn: View {
                 Text("还没有可见的机组").font(.callout).foregroundStyle(.secondary)
             }
             ForEach(crews) { crew in
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(crew.title.isEmpty ? "未命名机组" : crew.title)
-                        .font(.body).lineLimit(1)
-                    HStack(spacing: 5) {
-                        if let kind = crew.runtimeLocationKind {
-                            Label(kind.shortLabel, systemImage: kind.sfSymbol)
-                        } else {
-                            Text(crew.runtimeLocation)
+                HStack(spacing: 10) {
+                    BrandAvatar(seed: crew.id, size: 34)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(crew.title.isEmpty ? "未命名机组" : crew.title)
+                            .font(.body).lineLimit(1)
+                        HStack(spacing: 5) {
+                            if let kind = crew.runtimeLocationKind {
+                                Label(kind.shortLabel, systemImage: kind.sfSymbol)
+                            } else {
+                                Text(crew.runtimeLocation)
+                            }
+                            if let tag = crew.tag, !tag.isEmpty {
+                                Text("· \(tag)")
+                            }
                         }
-                        if let tag = crew.tag, !tag.isEmpty {
-                            Text("· \(tag)")
-                        }
+                        .font(.caption2).foregroundStyle(.secondary)
                     }
-                    .font(.caption2).foregroundStyle(.secondary)
                 }
-                .padding(.vertical, 2)
+                .padding(.vertical, 3)
                 .tag(crew.id)
             }
         }

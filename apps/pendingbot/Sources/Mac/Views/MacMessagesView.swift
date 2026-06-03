@@ -97,6 +97,7 @@ struct MacChatView: View {
             Divider()
             composer
         }
+        .background(Color(hex: 0xFDFCFA)) // 对齐 iOS canvas 米白,白 bot 气泡浮其上
         .navigationTitle("对话")
         .task(id: conversationId) { await reload() }
     }

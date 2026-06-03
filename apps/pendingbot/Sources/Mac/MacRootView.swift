@@ -34,7 +34,7 @@ enum MacTab: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .messages: "消息"
         case .friends: "好友"
-        case .crew: "Crew"
+        case .crew: "机组"
         case .envelope: "来信"
         case .me: "我"
         }
@@ -42,9 +42,10 @@ enum MacTab: String, CaseIterable, Identifiable, Hashable {
 
     var systemImage: String {
         switch self {
-        case .messages: "bubble.left.and.bubble.right"
+        // 对齐 iOS TopTab(SidebarTabBar.swift)的图标。
+        case .messages: "bubble.left"
         case .friends: "person.2"
-        case .crew: "person.3.sequence"
+        case .crew: "command"
         case .envelope: "envelope.open"
         case .me: "person.crop.circle"
         }
@@ -55,7 +56,7 @@ enum MacTab: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .messages: "会话"
         case .friends: "好友"
-        case .crew: "Crew"
+        case .crew: "机组"
         case .envelope: "来信"
         case .me: "我"
         }
