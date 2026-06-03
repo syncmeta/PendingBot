@@ -2347,13 +2347,8 @@ struct RecallPayload: Decodable, Hashable {
     }
 }
 
-/// Decoded shape of a `messages.attachments` jsonb column. Worker writes
-/// `{ ids: [uuid, ...] }` on insert; we only read the ids back to scrub
-/// URLCache on recall — the full Attachment objects are reconstructed
-/// elsewhere for rendering.
-struct AttachmentRef: Decodable, Hashable {
-    let ids: [String]?
-}
+// NOTE: `AttachmentRef` moved to the shared `MessagesFetch`
+// (Networking/MessagesFetch.swift) with the rest of the message row types.
 
 /// Centered "我撤回了 X 的一条消息" / "对方撤回了 X 的一条消息" pill.
 /// Rendered inline by ConversationView whenever a `sender_type ==

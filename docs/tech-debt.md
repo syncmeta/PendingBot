@@ -46,8 +46,8 @@
 - **位置**: `apps/pendingbot/Sources/Networking/ChatDataSource.swift:loadMessages`；对照 iOS `Features/Message/ConversationView+Loading.swift:402`（18 列超集 → `Row` → cache）
 - **问题**: #212 把 Mac 复刻的查询往「共享 fetch、iOS 也改用」方向收口，**已收口 5 块**：实时通道（`RealtimeManager`/`RealtimeSocket` 去 gate，两端同一条自建 RealtimeHubDO，删了 Mac 轮询）、会话列表（`ConversationFetch.list()`）、bot 好友（`BotContactsFetch.list()`）、人类好友（`ContactsFetch.fetch()` + 中性 `ContactProfile`，iOS `ContactsAPI` 改成映射它）、来信（`EnvelopeFetch.list/get`，`EnvelopeRun` 从 iOS-only 移到共享）—— iOS 缓存/富渲染层叠在共享 fetch 上、Mac 投影薄 summary，查询形状单一来源。**仅剩 1 条仍复刻**：消息历史 —— iOS 是 18 列超集喂 GRDB 缓存 + recall/voice-recap/citations/tool-trace/attachments 派发的重管线（#145-147/#150 验证过的最易碎路径），Mac 是 4 列轻读（id/role/content/message_seq）只渲染纯气泡，两者**合理地不同**，强行统一要么逼 Mac 扛它不渲染的 14 列、要么动那条脆弱管线。
 - **影响**: 这条查询形状两边各存一份，列漂移时不会编译报错、只在运行期错——属"复制粘贴而非抽象"。但风险被 Mac 只读核心稳定列（id/role/content/message_seq）压低；真正的根治时机是 Mac 渲染富内容（附件/citations）时，那时 Mac 自然需要 iOS 超集行，顺势抽 `MessagesFetch` 最划算。
-- **建议**: 等 Mac 接附件/citations 渲染时，把 `ConversationView+Loading` 的 `Row`+查询抽进共享 `MessagesFetch`（iOS 缓存派发叠在上、Mac 投影），收口时进模拟器验 iOS 不回归。**短期防漂移**：`ChatDataSource.loadMessages` 注释已写明 iOS canonical 列清单 + 文件:line 交叉引用，改 iOS 那条查询时同步。
-- **状态**: 基本收口（实时 + 会话/bot好友/人类好友/来信 4 条查询已统一，commit 见本分支；仅消息历史 1 条按上面时机后续收口）
+- **建议**: 等 Mac 接附件/citations 渲染时，把 `ConversationView+Loading` 的 `Row`+查询抽进共享 `MessagesFetch`（iOS 缓存派发叠在上、Mac 投影），收口时进模拟器验 iOS 不回归。
+- **状态**: ✅ **已解决（2026-06-03）** —— Mac 接图片附件渲染时顺势收口:新增 `Networking/MessagesFetch.swift`（`MessageRow` 18 列超集 + `AttachmentRef` 从 iOS-only 移来 + `latest()` + `attachmentMeta()`）;iOS `ConversationView+Loading` 改调它（删局部 Row + 内联 attachments 查询,200 行 dispatch 字节级不变）;Mac `ChatDataSource` 改调 + 投影 + 滤 log/deleted/语音 recap + 解析图片附件。**至此 Mac 5 条查询（会话/bot好友/人类好友/来信/消息）全部两端同一份,零手抄复刻**。两端编译过;iOS 消息列表模拟器冒烟无回归（会话内消息因无 tap 工具未点验,改动逐字搬迁+dispatch 未动,风险极低）。剩余 Mac 缺口:bot/会话/来信头像（数据层补 avatar_path）、非图片附件的 icon+name chip、Mac 全屏看图 viewer。
 
 ## 🔴 根基级
 
@@ -57,7 +57,7 @@
 - **问题**: bot 分享功能（slug / 二维码 / Universal Link，task #121-128）代码已几乎全做完且提交，但 iOS 解析 slug 是**直接查 Supabase** `bots` 表、靠 RLS 控可见性。唯一的 SELECT policy `bots_visible_read` 对 `public_invite` bot 要求 `is_bot_invitee(id, auth.uid())` —— 而该函数只在 `bot_invites` 表有预先邀请行时为真（邀请只能由 bot 主人按 handle 主动塞）。陌生人扫码/点分享链接时**还不是被邀请人** → SELECT 命中 0 行 → iOS 显示"找不到这个机器人,或者它不允许你加入"。
 - **影响**: 整个分享链路（slug→二维码→扫码→universal link→AddBotPreviewPage）对"非预先邀请者"全部走不通 —— 而分享功能的**全部意义**就是给陌生人加。UI 文案还写着"别人按这个标识、链接或二维码加你的机器人",与 RLS 实际行为直接矛盾。这是个"iOS+edge 表层都做了、DB 授权层没跟上"导致的 ship 即坏缺口。edge 侧也确认没有任何按 slug 解析 bot 的路由（纯靠 client 直查）。
 - **建议**: 二选一：(a) 放宽 `bots_visible_read`，让 `visibility='public_invite'` 对所有 authenticated 可 SELECT（public 的本意就是可被发现自加）；(b) 加一个 service-role 的 `GET /b/:slug` 解析端点，绕开 client 直查 + RLS。改完跑 #128 验证（含真机扫码闭环），通后翻 #121-128 状态。注意 `is_bot_invitee` 的"单向门"语义要和 spec `project_bot_visibility` 对齐确认。
-- **状态**: 待办（task #121-127 代码已落但功能被此 bug 堵死、保持 pending；#128 验证未跑）
+- **状态**: ✅ **已解决/被取代（2026-06-03 核实）** —— 旧的「client 直查 bots 表靠 RLS」分享路径已被**邀请链接模型**(decisions.md D1，task #191-194)整体取代：`bot_invite_links` 表 + `apps/edge/src/routes/bot-invites.ts` 的 `GET /v1/bot-invites/:token`(service-role RPC `bot_invite_link_resolve` 预览) + `POST /:token/redeem`(`bot_invite_link_redeem` 授予)。iOS 走 `resolveBotInvite`/`redeemBotInvite` 经 worker，**不再 client 直查 bots 表**，所以 RLS 堵死的结构性病根消失(redeem 由 service-role 写，bots/user_bot_contacts RLS 保持严格)。注:这是「结构性 blocker 消失」，完整的陌生人扫码闭环真机 QA 仍未单独跑(并入分享功能整体验证)。
 
 ### 🔴 PendingBot Mac 端业务接入只覆盖 5 tab 中的 1 个,其余仍是 placeholder
 - **发现**: 2026-05-29 · feat/mac-multiplat-t01-p0(worktree wf_bb2bdb07-141-5)

@@ -94,6 +94,7 @@
 		8B4901EDE82D47DC1E4D5365 /* ConversationView+Attachments.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA551869EBE6A7E25EEFBDCA /* ConversationView+Attachments.swift */; };
 		8C5BA9B67A199694684F4D25 /* AddMeMethodsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4E8F2C116FE4E4C091C20C5 /* AddMeMethodsView.swift */; };
 		8DCDDFC943420CE93381525F /* CallView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 213E09F2D1646151DC7BE1C6 /* CallView.swift */; };
+		8E9E5D16A0E2681726E411DB /* MessagesFetch.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDF32066E5F831C3B474EBB7 /* MessagesFetch.swift */; };
 		8FAC3CB10EEC9AD7CE5EEE34 /* CrewAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CF743A2BD19523CAF11ECC6 /* CrewAPI.swift */; };
 		93195F559ABAEBD132E64F17 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 11A77E911EA1D815E90E7BFD /* GRDB */; };
 		939B2ECABC9E20A928E7ABCD /* MacFriendsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6C7BA77C498838A64F51382 /* MacFriendsView.swift */; };
@@ -294,6 +295,7 @@
 		CB83A6154A7226DF743254BE /* CallDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallDiagnostics.swift; sourceTree = "<group>"; };
 		CD5D4A454D7F9C17F498BD8A /* TabTitle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabTitle.swift; sourceTree = "<group>"; };
 		CD69E5388537288F5E14D3D1 /* ChatDataSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatDataSource.swift; sourceTree = "<group>"; };
+		CDF32066E5F831C3B474EBB7 /* MessagesFetch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessagesFetch.swift; sourceTree = "<group>"; };
 		D2426E68B61F7DC57E429193 /* CrewDetailV2View.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewDetailV2View.swift; sourceTree = "<group>"; };
 		D2FF6CBBDD7A1F3222907A47 /* MathRendering.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MathRendering.swift; sourceTree = "<group>"; };
 		D4F8C48D5CD8682E938D093C /* MarkdownText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownText.swift; sourceTree = "<group>"; };
@@ -387,6 +389,7 @@
 				6007B7AC7A2508EA9C7C04C9 /* GroupInviteAPI.swift */,
 				0DBBEAE928AB77BE9DBD5029 /* GroupWalletService.swift */,
 				7EEDB9DF3C6B9D1EC67C769F /* HostedConfig.swift */,
+				CDF32066E5F831C3B474EBB7 /* MessagesFetch.swift */,
 				F2F07903E8E0959584180E65 /* PushService.swift */,
 				6EFB784DC12029E53EB12A5C /* RealtimeManager.swift */,
 				538B09D7D56B20AA7BCE1E50 /* RealtimeSocket.swift */,
@@ -858,6 +861,7 @@
 				BC1CCF7E6090730EF93B7BF0 /* MathRendering.swift in Sources */,
 				86F117F1822D5658B9E4685E /* MeTabView.swift in Sources */,
 				D99058B289362510CB2EAB85 /* MessageTabView.swift in Sources */,
+				8E9E5D16A0E2681726E411DB /* MessagesFetch.swift in Sources */,
 				746FAC37DF7AF6317D0DE6C7 /* ModelCatalog.swift in Sources */,
 				80F4BC61FE476D0E3362F831 /* ModelPicker.swift in Sources */,
 				01D69F420946CB0900A7EEFC /* MyQRBusinessCard.swift in Sources */,

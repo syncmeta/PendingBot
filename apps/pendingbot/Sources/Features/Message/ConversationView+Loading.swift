@@ -357,36 +357,12 @@ extension ConversationView {
 
         do {
             // Direct Supabase read — RLS gates participation. Excludes role='log'
-            // (review step entries) which are rendered separately.
-            struct Row: Decodable {
-                let id: String
-                let client_message_id: String?
-                let conversation_id: String
-                let user_id: String?
-                let sender_bot_id: String?
-                let role: String
-                let log_kind: String?
-                /// Raw jsonb. Different log_kinds use different shapes
-                /// (recall → RecallPayload; crew_proposal →
-                /// CrewProposalPayload). We re-decode lazily per row
-                /// instead of forcing one schema at the column level.
-                let log_payload: AnyJSON?
-                /// jsonb shape on `messages.attachments`: { ids: [uuid, ...] }
-                /// (see apps/edge/src/routes/messages.ts upsert). Captured so
-                /// recall can scrub URLCache for the right ids.
-                let attachments: AttachmentRef?
-                let content: String?
-                let status: String?
-                let created_at: String
-                let message_seq: Int?
-                let citations: [MessageCitation]?
-                let metadata: AnyJSON?
-                // Arena: link a bot answer to its prompt + identify the answer
-                // + record its model, for the inline blind A/B compare.
-                let parent_message_id: String?
-                let bubble_group_id: String?
-                let model_slug: String?
-            }
+            // (review step entries) which are rendered separately. The row type
+            // (`MessageRow`) + query live in the shared `MessagesFetch`
+            // (Networking/) so iOS + macOS run one query; the per-row dispatch
+            // below is iOS-only. `latest()` returns chronological (oldest→newest)
+            // — the latest 200, not the oldest.
+            //
             // Most role='log' rows are server-only (review step entries)
             // and never render. The one exception is log_kind='recall':
             // it's the WeChat-style tombstone the recall flow inserts
@@ -394,21 +370,7 @@ extension ConversationView {
             // sender_type="recall_log" and stash the original message's
             // created_at in `content` so the row renderer can format
             // "我撤回了 几分钟前 的一条消息" without further look-ups.
-            // Fetch the LATEST 200 (descending) then flip to chronological
-            // for the ascending timeline. `ascending: true` + limit would
-            // pin us to the OLDEST 200 rows and hide recent messages the
-            // moment a conversation passes 200 — the user would scroll to
-            // "bottom" and land on an ancient message.
-            let rowsDesc: [Row] = try await SupabaseStack.shared
-                .from("messages")
-                .select("id, client_message_id, conversation_id, user_id, sender_bot_id, role, log_kind, log_payload, attachments, content, status, created_at, message_seq, citations, metadata, parent_message_id, bubble_group_id, model_slug")
-                .eq("conversation_id", value: conversation.id)
-                .order("message_seq", ascending: false)
-                .order("created_at", ascending: false)
-                .limit(200)
-                .execute()
-                .value
-            let rows = Array(rowsDesc.reversed())
+            let rows = try await MessagesFetch.latest(conversationId: conversation.id)
             var viewMessages: [ChatMessage] = []
             var cacheRows: [LocalDatabase.MessageRow] = []
             viewMessages.reserveCapacity(rows.count)
@@ -569,31 +531,11 @@ extension ConversationView {
             // caller's own, so they all resolve; a peer's file in a
             // user_user conv won't, and falls back to the image guess.
             let metaIds = Array(Set(attachmentIdsLoaded.values.flatMap { $0 }))
-            if !metaIds.isEmpty {
-                struct AttachmentMetaRow: Decodable {
-                    let id: String
-                    let mime_type: String
-                    let filename: String?
-                    let byte_size: Int?
-                }
-                if let metaRows: [AttachmentMetaRow] = try? await SupabaseStack.shared
-                    .from("attachments")
-                    .select("id, mime_type, filename, byte_size")
-                    .in("id", values: metaIds)
-                    .execute()
-                    .value {
-                    var meta: [String: Attachment] = [:]
-                    for r in metaRows {
-                        let isImage = r.mime_type.lowercased().hasPrefix("image/")
-                        meta[r.id] = Attachment(
-                            id: r.id, kind: isImage ? "image" : "file",
-                            mime: r.mime_type, size: r.byte_size,
-                            width: nil, height: nil,
-                            url: "/v1/uploads/\(r.id)", filename: r.filename
-                        )
-                    }
-                    self.attachmentMetaById.merge(meta) { _, new in new }
-                }
+            // Resolution lives in the shared `MessagesFetch.attachmentMeta`
+            // (Networking/) so iOS + macOS build the same `Attachment` from the
+            // `attachments` table.
+            if let meta = try? await MessagesFetch.attachmentMeta(ids: metaIds), !meta.isEmpty {
+                self.attachmentMetaById.merge(meta) { _, new in new }
             }
             // Reconcile the local cache against the server's authoritative
             // view in one atomic transaction: the cache for this conv
