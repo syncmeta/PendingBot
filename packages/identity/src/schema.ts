@@ -15,13 +15,3 @@ export const SupabaseJwtPayload = z.object({
   iat: z.number().optional(),
 });
 export type SupabaseJwtPayload = z.infer<typeof SupabaseJwtPayload>;
-
-// What our products know about a user, after combining auth.users + their
-// own product-specific `users` table mirror (display_name, is_admin, etc.).
-export const SessionUser = z.object({
-  id: z.string().uuid(),
-  email: z.string().email().nullable(),
-  isAdmin: z.boolean(),
-  jwt: z.string(),                       // raw JWT for downstream Supabase calls
-});
-export type SessionUser = z.infer<typeof SessionUser>;
