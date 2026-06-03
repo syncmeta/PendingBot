@@ -7,17 +7,13 @@
 //     single owner resolver both the pre-call gate AND the post-call debit
 //     (router.persistAuditMessage) route through, so gate-subject and
 //     debit-subject can never drift.
-//   - gateUsage — reads the subject's WalletDO cached balance (strong-
-//     consistent, no DB round-trip) and maps it to a 4-band threshold:
-//       sufficient (≥50 PNC) → run normally
-//       low        (<50 PNC) → run, caller injects a "余额低" reminder
-//       throttle   (<5  PNC) → run; caller SHOULD degrade (cheap model / no
-//                              tools). See gate result `thresholdState`.
-//       exhausted  (≤0 PNC)  → throw InsufficientBalanceError → 402 / no-balance
-//                              copy path (model is never called).
+//   - gateConversation — reads the subject's available balance (个人=WalletDO
+//     缓存余额;群=实缴池+认缴聚合) and HARD-STOPS when exhausted (≤0 PNC):
+//     returns an InsufficientBalanceError (不抛,便于并行 promise 拼装) →
+//     402 / no-balance copy path (model is never called). 读失败 fail-open。
 //
 // Only user-initiated paths gate. System cascades (title / lookback /
-// bot_note) bill but never gate — they simply don't call gateUsage.
+// bot_note) bill but never gate — they simply don't call gateConversation.
 import type { Env } from '../types';
 import type { SupabaseClient } from '../lib/supabase';
 import type { ThresholdState } from '../durable-objects/wallet';
@@ -89,39 +85,6 @@ export async function resolveBillingSubjectId(
   }
   if (ctx.userId) return { subjectId: ctx.userId, kind: 'user' };
   return null;
-}
-
-export interface GateResult {
-  subjectId: string;
-  balanceMicros: number;
-  thresholdState: ThresholdState;
-}
-
-/**
- * Pre-call gate. Resolves the billing subject, reads its WalletDO balance,
- * and HARD-STOPS (throws InsufficientBalanceError) when exhausted (≤0). For
- * low / throttle it returns the state so the caller can degrade — it does
- * NOT block. Call this BEFORE issuing an LLM request on a user-initiated
- * path; skip it for system cascades.
- *
- * When no billable subject can be resolved (system/bot-only turn) the gate
- * is a no-op pass — there's no wallet to read and nothing to charge.
- */
-export async function gateUsage(
-  env: Env,
-  supa: SupabaseClient,
-  ctx: { conversationId?: string | null; userId?: string | null },
-): Promise<GateResult | null> {
-  // Kill-switch: when billing is off (default), never gate — pre-launch
-  // testers must not be blocked by an empty Polar wallet.
-  if (!billingEnabled(env)) return null;
-  const target = await resolveBillingSubjectId(supa, ctx);
-  if (!target) return null;
-  const { balanceMicros, thresholdState } = await availableForSubject(env, supa, target);
-  if (thresholdState === 'exhausted') {
-    throw new InsufficientBalanceError(balanceMicros, 0);
-  }
-  return { subjectId: target.subjectId, balanceMicros, thresholdState };
 }
 
 /**

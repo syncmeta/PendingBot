@@ -6,8 +6,7 @@ import {
   type FakeWallet,
 } from '../../tests/_helpers/fake-supabase';
 import { serviceClient } from '../lib/supabase';
-import { gateUsage, resolveBillingSubjectId } from './usage-gate';
-import { InsufficientBalanceError } from '../lib/billing';
+import { gateConversation, resolveBillingSubjectId } from './usage-gate';
 
 installFakeSupabaseMock();
 
@@ -61,57 +60,20 @@ describe('resolveBillingSubjectId', () => {
   });
 });
 
-describe('gateUsage thresholds', () => {
+describe('gateConversation kill-switch', () => {
   beforeEach(() => vi.restoreAllMocks());
 
-  function setup(balanceMicros: number) {
+  it('kill-switch off → never gates even when exhausted (no-op pass)', async () => {
     const db = makeFakeDb({
       conversations: [
         { id: 'c1', conversation_type: 'user_bot', responsible_subject_id: null },
       ],
     });
     const w = wallet();
-    w.balances['u1'] = balanceMicros;
+    w.balances['u1'] = 0;
     const env = makeFakeEnv(db, { wallet: w });
-    return { env, supa: serviceClient(env), w };
-  }
-
-  it('exhausted (≤0) → throws InsufficientBalanceError', async () => {
-    const { env, supa } = setup(0);
-    await expect(gateUsage(env, supa, { conversationId: 'c1', userId: 'u1' })).rejects.toBeInstanceOf(
-      InsufficientBalanceError,
-    );
-  });
-
-  it('kill-switch off → never gates even when exhausted (no-op pass)', async () => {
-    const { env, supa } = setup(0);
     (env as unknown as { BILLING_ENABLED?: string }).BILLING_ENABLED = 'false';
-    await expect(gateUsage(env, supa, { conversationId: 'c1', userId: 'u1' })).resolves.toBeNull();
-  });
-
-  it('throttle (<5 PNC) → passes with state throttle', async () => {
-    const { env, supa } = setup(3 * PNC);
-    const r = await gateUsage(env, supa, { conversationId: 'c1', userId: 'u1' });
-    expect(r?.thresholdState).toBe('throttle');
-  });
-
-  it('low (<50 PNC) → passes with state low', async () => {
-    const { env, supa } = setup(20 * PNC);
-    const r = await gateUsage(env, supa, { conversationId: 'c1', userId: 'u1' });
-    expect(r?.thresholdState).toBe('low');
-  });
-
-  it('sufficient (≥50 PNC) → passes with state sufficient', async () => {
-    const { env, supa } = setup(100 * PNC);
-    const r = await gateUsage(env, supa, { conversationId: 'c1', userId: 'u1' });
-    expect(r?.thresholdState).toBe('sufficient');
-    expect(r?.subjectId).toBe('u1');
-  });
-
-  it('no billable subject → no-op pass (null)', async () => {
-    const db = makeFakeDb({});
-    const env = makeFakeEnv(db, { wallet: wallet() });
-    const r = await gateUsage(env, serviceClient(env), {});
+    const r = await gateConversation(env, serviceClient(env), { conversationId: 'c1', userId: 'u1' });
     expect(r).toBeNull();
   });
 });
