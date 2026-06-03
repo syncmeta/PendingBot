@@ -370,11 +370,20 @@ sessionInboxRoutes.get('/:sessionId/inbox', requireSubjectAuth(['crew:read']), a
     if (canView !== true) return jsonError(c, 403, 'session_forbidden');
   }
 
-  // Whiteboard
-  const { data: whiteboard, error: wbErr } = await untypedRpc(svc).rpc('get_crew_whiteboard', {
-    p_crew_id: sessionRow.crew_conversation_id,
-    p_since: sinceParam ?? null,
-  });
+  // Whiteboard — read crew_announcements directly. We do NOT call
+  // get_crew_whiteboard here: that RPC guards on auth.uid() and RAISEs
+  // 'auth required' under the service-role client (auth.uid() is NULL), which
+  // is exactly how this runs — it would 500 the runner's per-turn context pull.
+  // Access is already gated above (device-grant subject / JWT can_view).
+  let wbQuery = svc
+    .from('crew_announcements')
+    .select('id, crew_conversation_id, sender_kind, sender_member_id, sender_session_id, source_message_id, recipient_mode, message_kind, summary, payload, created_at')
+    .eq('crew_conversation_id', sessionRow.crew_conversation_id)
+    .eq('board_visible', true);
+  if (sinceParam) wbQuery = wbQuery.gte('created_at', sinceParam);
+  const { data: whiteboard, error: wbErr } = await wbQuery
+    .order('created_at', { ascending: true })
+    .limit(500);
   if (wbErr) return jsonError(c, 500, 'database_error', { detail: wbErr.message });
 
   // Mailbox tail for this session — anything not yet processed.
