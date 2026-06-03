@@ -262,6 +262,60 @@ crewMessagesRoutes.post('/:crewId/messages', requireSubjectAuth(['crew:write']),
 });
 
 // ────────────────────────────────────────────────────────────────────
+// GET /v1/crews/:crewId/messages
+// ────────────────────────────────────────────────────────────────────
+//
+// Crew-level whiteboard for the PendingCrew Mac middle pane (spec §9 群聊会话
+// 页). Returns the full whiteboard (get_crew_whiteboard) so the chat timeline
+// can render it. crewId == crew_conversation_id. Gated like the session inbox:
+// device-grant subject must own the crew; JWT user must be able to view it.
+crewMessagesRoutes.get('/:crewId/messages', requireSubjectAuth(['crew:read']), async (c) => {
+  const crewId = c.req.param('crewId');
+  if (!isUuid(crewId)) {
+    return jsonError(c, 400, 'invalid_id', { message: 'crewId must be a uuid' });
+  }
+  const sinceParam = c.req.query('since');
+  if (sinceParam && Number.isNaN(Date.parse(sinceParam))) {
+    return jsonError(c, 400, 'invalid_query', { message: 'since must be ISO-8601 timestamp' });
+  }
+
+  const svc = serviceClient(c.env);
+
+  // Resolve the crew's responsible subject for the device-grant gate.
+  const { data: meta, error: metaErr } = await svc
+    .from('temporary_group_meta')
+    .select('conversation_id, responsible_subject_id, captain_bot_id, title, working_directory, runtime_kind, runtime_location, tag, status')
+    .eq('conversation_id', crewId)
+    .maybeSingle();
+  if (metaErr) return jsonError(c, 500, 'database_error', { detail: metaErr.message });
+  if (!meta) return jsonError(c, 404, 'not_found', { message: 'crew not found' });
+
+  if (c.var.authKind === 'device_grant') {
+    const deviceGrant = c.var.deviceGrant;
+    if (!deviceGrant) return jsonError(c, 401, 'unauthorized');
+    if (deviceGrant.subjectId !== meta.responsible_subject_id) {
+      return jsonError(c, 403, 'forbidden');
+    }
+  } else {
+    const userId = c.var.userId!;
+    const { data: canView, error: canViewErr } = await svc.rpc('can_view_temporary_group', {
+      p_conversation_id: crewId,
+      p_user_id: userId,
+    });
+    if (canViewErr) return jsonError(c, 500, 'database_error', { detail: canViewErr.message });
+    if (canView !== true) return jsonError(c, 403, 'forbidden');
+  }
+
+  const { data: whiteboard, error: wbErr } = await untypedRpc(svc).rpc('get_crew_whiteboard', {
+    p_crew_id: crewId,
+    p_since: sinceParam ?? null,
+  });
+  if (wbErr) return jsonError(c, 500, 'database_error', { detail: wbErr.message });
+
+  return c.json({ crewId, whiteboard: whiteboard ?? [] });
+});
+
+// ────────────────────────────────────────────────────────────────────
 // GET /v1/sessions/:sessionId/inbox
 // ────────────────────────────────────────────────────────────────────
 
