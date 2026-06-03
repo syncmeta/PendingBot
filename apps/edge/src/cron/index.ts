@@ -1,3 +1,4 @@
+import * as Sentry from '@sentry/cloudflare';
 import type { Env } from '../types';
 import { cleanupOrphanUploads } from './uploads-cleanup';
 import { reapStuckEnvelopes } from './envelope-reaper';
@@ -48,5 +49,9 @@ async function safe(label: string, fn: () => Promise<unknown>): Promise<void> {
     console.log('[cron]', label, 'done');
   } catch (err) {
     console.error('[cron]', label, 'failed', err);
+    // Scheduled tasks (billing reconciliation, deletion sweep, envelope
+    // reaper) run unattended with no caller to notice a failure — surface
+    // them to Sentry instead of only logging. No-op when DSN unset.
+    Sentry.captureException(err, { tags: { source: 'cron', cron_task: label } });
   }
 }

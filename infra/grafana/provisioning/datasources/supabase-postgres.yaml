@@ -1,0 +1,44 @@
+# Grafana file-based datasource provisioning — Supabase Postgres (read-only)
+# Format confirmed against official docs (apiVersion: 1):
+#   https://grafana.com/docs/grafana/latest/administration/provisioning/
+#   https://grafana.com/docs/grafana/latest/datasources/postgres/configure/
+#
+# NOTE: Grafana *Cloud* cannot read this file from disk (no filesystem access to
+# /etc/grafana/provisioning). This YAML is the source of truth for a self-hosted
+# Grafana OR for replication via Terraform/grizzly. For Grafana Cloud, add the
+# datasource by hand via Connections > Data sources > PostgreSQL, using the same
+# field values below. See README.md "Datasource setup".
+#
+# Secrets are NOT committed. ${SUPABASE_*} are resolved from Grafana's env at
+# provisioning time (Grafana expands ${ENV} in provisioning files).
+
+apiVersion: 1
+
+datasources:
+  - name: Supabase Postgres (metabase_ro)
+    uid: supabase_pendingbot_ro
+    type: postgres
+    access: proxy
+    # Supabase direct connection host:port. Prefer the *session pooler* (port 5432)
+    # or the connection pooler host from the Supabase dashboard. Set via env.
+    url: ${SUPABASE_DB_HOST}:${SUPABASE_DB_PORT}
+    # Read-only role. Must be created first (see README precondition).
+    user: metabase_ro
+    secureJsonData:
+      password: ${SUPABASE_DB_PASSWORD}
+    jsonData:
+      database: postgres
+      # Supabase requires TLS. 'require' verifies the connection is encrypted
+      # without pinning a CA cert; tighten to 'verify-full' + a root cert if you
+      # mount Supabase's CA bundle.
+      sslmode: require
+      maxOpenConns: 5
+      maxIdleConns: 2
+      maxIdleConnsAuto: true
+      connMaxLifetime: 14400
+      # Supabase runs Postgres 15.x. 1500 = 15.0 in Grafana's numeric encoding.
+      postgresVersion: 1500
+      timescaledb: false
+    # Read-only datasource; do not let UI edits drift from this file.
+    editable: false
+    version: 1

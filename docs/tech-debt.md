@@ -459,7 +459,7 @@
 - **群权限矩阵 client 端消费** — `207d5203` edge 给了 `/v1/group-subjects/*` 路由，iOS / Mac 客户端还没真正消费；目前权限判定仍走旧 client-side 规则。
 - **Mac 三栏壳的实际内容** — `c174f734` 是结构脚手架；middle column 的会话列表 + detail column 的消息流都还是 placeholder，等 IM 主路径打通后填。
 - **First-launch disclosure modal 文案** — `280d5b7b` 走通了流程，正式文案待法务/产品定稿。
-- **billing-v2 settleUsage CAS-loss retry** — `cbb4fb3f` 实现了重试，但极端高并发下的退避策略未压测；30 天观察期内若看到大量重试再优化。
+- **billing-v2 settleUsage CAS-loss retry** — `cbb4fb3f` 实现了重试，但极端高并发下的退避策略未压测；30 天观察期内若看到大量重试再优化。（注:billing-v2 settleUsage 已于 #209 整体退役删除,本条历史留痕。）
 
 - 🟡 **计费 P2 throttle 档"降级"未实装（LLM 路径）** — `gateUsage`(`apps/edge/src/billing/usage-gate.ts`)已正确分出 4 档阈值(exhausted 硬停 / low / throttle / sufficient),`<5 PNC = throttle` 也正确返回,但 **throttle 时的"降级"动作没做**:计划里写的 OpenRouter `cost_quality_tradeoff=max` 经官方文档核实(<https://openrouter.ai/docs/guides/routing/routers/auto-router>)**只对 `model: "openrouter/auto"` 生效,且是 `plugins:[{id:"auto-router",cost_quality_tradeoff:10}]` 的 plugin 配置,不是顶层 `=max`**;本仓库 router 是纯 passthrough(把调用方 model slug 原样发),不走 auto-router,所以该参数对正常 slug 是 no-op。要真正"降级"得在 throttle 时(a)临时切到 `openrouter/auto`+plugin、或(b)切便宜模型 pin,并(c)关工具——这要把 threshold 信号穿过 `runChatTurn`/各 runner(memory/envelope/title/group)到 completion 构造处,跨多文件接线,本任务(Phase C)未做。**当前 throttle 等同 low(放行不降级)**,只是不会硬停。
 - 🟡 **计费 P2 low 档"余额低"提醒未注入** — 阈值 low(<50 PNC)gate 正确放行,但"在下一条回复里注入余额低提醒(24h 去抖)"这个 UX 从未实装(billing-v2.ts 注释里只写了意图)。需要在回复渲染层加一个 threshold 信号通道 + 去抖。gate 层已就绪(`gateUsage` 返回 `thresholdState`),缺消费方。
@@ -470,7 +470,51 @@
   - ✅ **`/leave` 一步退群**(2026-06-02 完成,#210):退份额 + 清认缴(setPledge 0)+ service 直删成员行;群主拒退(须先转让/解散)。
   - ✅ **群 bot 异步回复前置 gate**(2026-06-02 完成,#210):`lib/group-dispatch.ts dispatchGroupTurn` 开头按群池+认缴聚合 `gateConversation`,exhausted 直接 `no_balance` 不发起 bot 回合(读失败 fail-open)。
 
-- 🟡 **billing-v2 退役未完成(用量/packs/旧入账 dead 但仍在树)** — P2 后这些已无 live 调用方但代码还在:`lib/billing-v2.ts` 的 `settleUsage`/`settleManyUsage`/packs 扣减、`lib/billing-v2-pack.ts`、pack 过期 cron(`cron/billing-v2-sweep.ts`/`billing-v2-expiry.ts`/`billing-v2-tasks.ts`)、旧入账 `billing-v2-lemon.ts`(Lemon 已弃)+ `billing-v2-iap.ts`(被 RevenueCat 取代)及其在 `billing-webhooks.ts` 仍挂载的 `/lemonsqueezy/webhook`、`/iap/purchase`、`/iap/notify` 路由。**保留项**:`pnc_ledger`(审计)、群分摊雏形(待重挂,见上条)。退役需与群分摊重做一起做,避免误删 share-index 逻辑。
+- ✅ **billing-v2 退役完成(#209,2026-06-02)** — 删 16 文件:`billing-v2.ts`(settleUsage/packs)、`billing-v2-{group,pack,lemon,iap,iap-verify,refund,expiry}.ts`、pack 过期 cron;去掉 `/lemonsqueezy/webhook`·`/iap/*` 路由;`room-voice` OwnerRef→WalletOwner;清孤儿 env/cron。保留 `pnc_ledger` + `group_pools/contributions/pledges`。旧 packs/ledger 表留冷备。
 
-- 🟡 **`routes/me.ts` 余额展示仍读 billing-v2 packs(merge 后实时偏差)** — `/v1/me/wallet/v2` 用 `getThresholdState(totalPncMicros)` + 直读 `pnc_packs`/`pnc_ledger` 求和算余额;P2 后真实余额在 Polar/WalletDO,packs 不再被扣减 → 该端点会显示过期/错误余额。应改读 WalletDO(`wallet.gate` 返回 balanceMicros)或 Polar `getStateExternal`。属 Phase I 验证范围,需与 iOS 钱包页(#189)口径对齐。
+- ✅ **`routes/me.ts /wallet/v2` 余额改读 WalletDO(2026-06-02)** — 余额/阈值走 `wallet.gate`,账本读 `pnc_ledger`,不再读已退役 packs 求和。
+
+> ── 以下为 dashboard 栈接线(feat/dashboard-wiring)的待办 ──
+#### 🟡 PostHog 行为事件 — 缺 server 端 seam 的事件（dashboard 栈 block 1）
+
+边缘 PostHog 接线（`feat/dashboard-wiring`）已覆盖有服务端落点的事件：`message_sent` / `group_created` / `group_joined`(invitation+invite_link) / `voice_call_started`(1v1+group) / `voice_call_ended`(group) / `topup_succeeded`(iap+lemon webhook，`created:true` 时)。统一走 `lib/track.ts` 的 `trackEvent(c,...)`（fire-and-forget，无 PII）。**以下 spec 列出的事件在当前架构没有 edge 落点，未接，必须从别处补**（别当成"已全覆盖"）：
+
+- **`signed_up`** — 用户/subject 创建是 Supabase signup 触发器（`me.ts:256` 注释提及），edge 无 signup handler。→ 由 iOS PostHog SDK 在登录/首启时 `identify` + 发，或加 DB 触发器→PostHog（P4，spec 的客户端侧）。
+- **`bot_created`** — `routes/bots.ts` **没有 POST/create**，建 bot 是客户端直写 Supabase（仅 PATCH/GET/invite-links 在 edge）。→ 同上，由 iOS SDK 发，或 bots 表 AFTER INSERT 触发器。
+- **`voice_call_ended`（1v1）** — 1v1 通话结束在 `RealtimeMeterDO`（计量 DO）里异步发生，route `/realtime/.../end` 是 no-op，edge 路由层无落点。→ 需要在 DO finalize 时发（DO 内 `capture(env,...)` 可用），未做。
+- **群注资 / 认缴（`group_topped_up` / `group_subject_created`）** — `routes/group-subjects.ts` 有 `POST /:id/topup` 等落点，但该文件正被另一 session 改造（task #220-221 群钱包重构），为避免抢同一文件**本轮未接**；待群钱包改造落定后补 `trackEvent`。事件名已在 `AnalyticsEvent` 常量预留。
+- **`topup_succeeded` 数据源随计费迁移** — 当前接在 billing-v2 iap/lemon webhook（仍是现行入账路径）。billing 引擎若迁到 **Polar**（见 memory `project_billing_outsourcing`），事件源要跟着搬到 Polar webhook，别留在退役路径上。
+
+
+
+### 🟡 Grafana BI 依赖 `metabase_ro` 只读角色，但该角色无 migration
+- **发现**: 2026-06-03 · feat/dashboard-wiring
+- **位置**: infra/grafana/（datasource provisioning 指向 `metabase_ro`）
+- **问题**: dashboard stack 第 5 块（Grafana 营收/钱包 BI）的数据源用 SELECT-only 角色 `metabase_ro`，但本 worktree 里没有任何 `*metabase_readonly_role*` migration——角色不存在则数据源连不上。属于「依赖一个未落库的前置」。
+- **影响**: Grafana 面板全部依赖此角色；未建角色前所有 dashboard 都是空的/连接失败。不影响主程序运行。
+- **建议**: 补一条 migration 建 `metabase_ro` 角色 + `GRANT USAGE ON SCHEMA pendingbot` + `GRANT SELECT` on（至少）`topups, billing_ledger, subject_wallets, subjects, group_member_billing, conversations, audit_log, users, bots, group_join_requests`；或手工 SQL 建角色。建好后在 Grafana Cloud 填 datasource 密码 + 确认 Supabase 网络放行（pooler 公网可达或配 PDC）。
+- **状态**: 待办（前置依赖，需用户落库角色 + 配 datasource）
+
+### 🟡 admin 控制台（apps/admin）依赖的 edge admin 端点尚不存在 —— dataProvider 指向"意图路径"，调用即 404
+- **发现**: 2026-06-03 · feat/dashboard-wiring（dashboard stack block 4）
+- **位置**: `apps/admin/src/providers/resource-map.ts`（`RESOURCE_ROUTES` + `ADMIN_ACTION_ENDPOINTS`，逐条标了 `exists:false`）、`apps/admin/src/providers/data-provider.ts`、`apps/edge/src/index.ts`（v1 路由挂载处，**当前无任何 `/v1/admin/*`**）
+- **问题**: 新建的 Refine admin 控制台按 spec 要求"读写都过 edge、绝不直连 Postgres、前端不持 service-role key"，所以 dataProvider 把每个资源映射到 edge REST 路由。但**edge 目前没有 admin 路由面**：`users.is_admin` 字段在 DB 里存在，`@pendingbot/identity` 也导出了 `requireAdmin(...)`，但**全仓没有任何地方 mount 或使用它**。控制台为了不埋"假装能用"的 stub，把这些资源指向**意图中的** edge 路径并在代码里 `exists:false` 标注 + 页面渲染告警横条；调用当前会 404。
+- **影响**: 控制台骨架可编译、可登录（Supabase Auth → JWT），但除下面两条已存在的 route 外，所有 admin 读/写页面都打不通真实数据，直到 edge 补齐这些端点。属于"先把前端接好、等后端落地"的刻意取舍，不是无声 stub。
+- **已存在、控制台已复用的 edge 面（仅这两条）**:
+  - `GET /v1/human-help-requests?status=...`（**requester-scoped**，按 `requested_user_id = caller` 过滤）+ `POST /v1/human-help-requests/:id/decision {decision: accepted|declined}`
+  - `POST /v1/permission-requests/:id/decide {decision: approve|reject}`
+- **控制台需要、但 edge 尚不存在的端点（完整清单，全部待办）**:
+  1. `GET /v1/admin/users`（list）+ `GET /v1/admin/users/:id`（show）—— 用户清单（id/handle/created_at/subject），跨用户、需 is_admin。
+  2. `GET /v1/admin/bots` + `/:id` —— bot 清单（visibility/model/owner）。现有 `/v1/bots` 是用户态，非 admin 列表。
+  3. `GET /v1/admin/conversations` + `/:id` —— 会话清单/详情。
+  4. `GET /v1/admin/billing/ledger` —— 计费台账读。**注意 spec 写的 `pnc_ledger` 视图在 schema 里不存在**；真实来源是 `pendingbot.billing_ledger` 表（+ `subject_wallets` 取每主体余额）。要么建 `pnc_ledger` 视图，要么端点直接读 `billing_ledger`。
+  5. `GET /v1/admin/billing/group-pool` —— 群池/分摊读。**schema 里没有 pool/pledge 视图**；最接近的源表是 `group_billing_config` + `group_member_billing`，需要端点聚合或建视图。
+  6. `POST /v1/admin/billing/wallet/grant` —— 钱包发放额度（写 `subject_wallets`/`billing_ledger` + `admin_audit`）。
+  7. `POST /v1/admin/billing/wallet/clawback` —— 钱包回收（负 delta）。
+  8. `POST /v1/admin/billing/ledger/adjust` —— 直接台账调整（entry_type=adjustment 等）。
+  9. `POST /v1/admin/users/account-op` —— 账户操作（freeze/unfreeze/delete）。
+  10. `GET /v1/admin/permission-requests`（list）—— 权限审批**列表**（decide 动作已存在，但没有 admin 列表读）。
+  11. `GET /v1/admin/human-help-requests`（list）—— **admin-wide** 人工协助队列（现有那条只看 caller 自己被点名的，不是全局队列）。
+- **建议**: 新建 `apps/edge/src/routes/admin.ts`，挂在 `/v1/admin`，第一道中间件 `requireSession()` 后接 `requireAdmin(c => SELECT is_admin FROM pendingbot.users WHERE id=c.var.userId)`，所有读用 `serviceClient` 跨用户查、所有写进 `admin_audit`（actor_id/before/after/ip/user_agent 已有列）。读端点返回 `{ items: [...] }`（控制台 dataProvider 已按此 normalize）。建端点时同步把 `resource-map.ts` 对应条目翻成 `exists:true`，并把本条状态推进。计费两个端点落地前先决定 `pnc_ledger` 视图建不建（spec 名 vs 实表名的口径要统一）。
+- **状态**: 待办（控制台前端已接好并可编译/构建；等 edge admin 路由面落地）
 

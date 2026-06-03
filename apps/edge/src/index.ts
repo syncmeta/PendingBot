@@ -93,6 +93,14 @@ app.notFound((c) => jsonError(c, 404, 'not_found', { detail: { path: c.req.path 
 
 app.onError((err, c) => {
   console.error('[edge] unhandled', err);
+  // Hono's onError turns the throw into a 500 *response*, so it never
+  // propagates out of app.fetch — which means withSentry's handler
+  // instrumentation would never see it. Capture explicitly here, with the
+  // request path/method as context, so unhandled 500s actually reach Sentry.
+  // No-op when SENTRY_DSN is unset (the SDK isn't initialized).
+  Sentry.captureException(err, {
+    extra: { method: c.req.method, path: c.req.path },
+  });
   return jsonError(c, 500, 'internal_error', {
     message: c.env.ENVIRONMENT === 'production' ? undefined : String(err),
   });
@@ -175,6 +183,13 @@ const handler = {
           msg.retry({ delaySeconds: 60 });
         } else {
           console.error('[queue:audit] persist failed, will retry', err);
+          // Real persistence failure (not the expected cost-pending race).
+          // After max_retries this message lands in the DLQ, so surface it
+          // to Sentry rather than only logging. No-op when DSN unset.
+          Sentry.captureException(err, {
+            tags: { source: 'queue:audit' },
+            extra: { auditId: msg.body?.auditId },
+          });
           msg.retry();
         }
       }

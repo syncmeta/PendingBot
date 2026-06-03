@@ -37,6 +37,7 @@ import { resolveLocale } from '../i18n/locale';
 import { jsonError } from '../lib/http-error';
 import { UUID_RE } from '../lib/ids';
 import { sendVoipRing } from '../lib/push';
+import { trackEvent, AnalyticsEvent } from '../lib/track';
 import {
   addRealtimeKitParticipant,
   bootstrapRealtimeKitGroupVoice,
@@ -372,6 +373,9 @@ groupVoiceRoutes.post('/:id/voice/bootstrap', async (c) => {
       const title = `PendingBot group voice ${conversationId}`;
       meeting = { id: '', title };
     }
+    // True only for the participant who opens the room — used below to fire
+    // `voice_call_started` once per call rather than once per join.
+    const isNewGroupCall = !meeting.id;
     const boot = await bootstrapRealtimeKitGroupVoice(app, {
       conversationId,
       meeting: meeting.id ? meeting : undefined,
@@ -399,6 +403,12 @@ groupVoiceRoutes.post('/:id/voice/bootstrap', async (c) => {
     if (!roomResp.ok) {
       console.warn('[group-voice/bootstrap] room control sync failed', roomResp.status);
       return jsonError(c, 502, 'voice_upstream_failed');
+    }
+    if (isNewGroupCall) {
+      trackEvent(c, AnalyticsEvent.VoiceCallStarted, {
+        kind: 'group',
+        conversation_id: conversationId,
+      });
     }
     const roster = (await roomResp.json().catch(() => ({}))) as {
       bots?: unknown;
@@ -469,6 +479,11 @@ groupVoiceRoutes.post('/:id/voice/leave', async (c) => {
     await controlRoom(c, conversationId, '/control/finalize', {}).catch((err) =>
       console.warn('[group-voice/leave] room finalize failed', err),
     );
+    trackEvent(c, AnalyticsEvent.VoiceCallEnded, {
+      kind: 'group',
+      conversation_id: conversationId,
+      reason: 'last_human_left',
+    });
     return c.json({ ok: true, ended: true });
   }
 
@@ -504,6 +519,11 @@ groupVoiceRoutes.post('/:id/voice/end', async (c) => {
   await controlRoom(c, conversationId, '/control/finalize', {}).catch((err) =>
     console.warn('[group-voice/end] room finalize failed', err),
   );
+  trackEvent(c, AnalyticsEvent.VoiceCallEnded, {
+    kind: 'group',
+    conversation_id: conversationId,
+    reason: 'ended_for_all',
+  });
 
   const app = realtimeKitAppFromEnv(c.env);
   if (app) {

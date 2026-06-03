@@ -1,0 +1,148 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_SUPABASE",
+      "label": "Supabase Postgres (metabase_ro)",
+      "description": "Read-only Supabase Postgres datasource",
+      "type": "datasource",
+      "pluginId": "postgres",
+      "pluginName": "PostgreSQL"
+    }
+  ],
+  "__requires": [
+    { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "12.0.0" },
+    { "type": "datasource", "id": "postgres", "name": "PostgreSQL", "version": "1.0.0" }
+  ],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Consumption cost grouped by category. Primary source: pendingbot.audit_log (task_type = category, model_id, cost_credits, cost_usd, tool_cost_usd). Secondary: pendingbot.billing_ledger grouped by entry_type for ledger movements.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
+      "description": "Cost (credits) by task_type — the real per-call category column in audit_log.",
+      "fieldConfig": { "defaults": { "custom": { "align": "auto", "cellOptions": { "type": "auto" }, "inspect": false }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } }, "overrides": [] },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "options": { "cellHeight": "sm", "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": true }, "showHeader": true },
+      "pluginVersion": "12.0.0",
+      "title": "Cost by task_type (audit_log)",
+      "type": "table",
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  task_type,\n  COUNT(*) AS calls,\n  COALESCE(SUM(cost_credits), 0) AS cost_credits,\n  COALESCE(SUM(cost_usd), 0) AS cost_usd,\n  COALESCE(SUM(tool_cost_usd), 0) AS tool_cost_usd,\n  COALESCE(SUM(total_tokens), 0) AS total_tokens\nFROM pendingbot.audit_log\nWHERE $__timeFilter(created_at)\nGROUP BY task_type\nORDER BY cost_credits DESC;",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
+      "description": "Cost (credits) by model_id — which models burn the most.",
+      "fieldConfig": { "defaults": { "custom": { "align": "auto", "cellOptions": { "type": "auto" }, "inspect": false }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } }, "overrides": [] },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "options": { "cellHeight": "sm", "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": true }, "showHeader": true },
+      "pluginVersion": "12.0.0",
+      "title": "Cost by model_id (audit_log)",
+      "type": "table",
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  model_id,\n  COUNT(*) AS calls,\n  COALESCE(SUM(cost_credits), 0) AS cost_credits,\n  COALESCE(SUM(cost_usd), 0) AS cost_usd,\n  COALESCE(SUM(input_tokens), 0) AS input_tokens,\n  COALESCE(SUM(output_tokens), 0) AS output_tokens\nFROM pendingbot.audit_log\nWHERE $__timeFilter(created_at)\nGROUP BY model_id\nORDER BY cost_credits DESC\nLIMIT 50;",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
+      "description": "Daily cost (credits) stacked by task_type.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto",
+            "barAlignment": 0, "drawStyle": "bars", "fillOpacity": 70, "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5,
+            "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false,
+            "stacking": { "group": "A", "mode": "normal" }, "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "locale"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 9 },
+      "id": 3,
+      "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "pluginVersion": "12.0.0",
+      "title": "Daily cost (credits) by task_type",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  $__timeGroup(created_at, '1d') AS time,\n  task_type AS metric,\n  COALESCE(SUM(cost_credits), 0) AS cost_credits\nFROM pendingbot.audit_log\nWHERE $__timeFilter(created_at)\nGROUP BY 1, task_type\nORDER BY 1;",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
+      "description": "Ledger movements by entry_type (topup / grant / redemption / refund / adjust / signup_bonus). Positive delta = credit issued, negative = consumed/clawed back.",
+      "fieldConfig": { "defaults": { "custom": { "align": "auto", "cellOptions": { "type": "auto" }, "inspect": false }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 18 },
+      "id": 4,
+      "options": { "cellHeight": "sm", "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false }, "showHeader": true },
+      "pluginVersion": "12.0.0",
+      "title": "Ledger movements by entry_type (billing_ledger)",
+      "type": "table",
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  entry_type,\n  COUNT(*) AS entries,\n  COALESCE(SUM(delta_credits), 0) AS net_delta_credits,\n  COALESCE(SUM(delta_credits) FILTER (WHERE delta_credits > 0), 0) AS credited,\n  COALESCE(SUM(delta_credits) FILTER (WHERE delta_credits < 0), 0) AS debited\nFROM pendingbot.billing_ledger\nWHERE $__timeFilter(created_at)\nGROUP BY entry_type\nORDER BY net_delta_credits DESC;",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "5m",
+  "schemaVersion": 41,
+  "tags": ["pendingbot", "cost", "consumption"],
+  "templating": { "list": [] },
+  "time": { "from": "now-30d", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "PendingBot — Cost by Category",
+  "uid": "pb-cost-category",
+  "version": 1,
+  "weekStart": ""
+}

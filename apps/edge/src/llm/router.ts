@@ -10,6 +10,7 @@ import { settleGroupSpend } from '../billing/group-wallet';
 import type { WebToolUsage } from '../lib/web-meter';
 import { uuidv7 } from '../lib/ids';
 import { fetchGatewayCost, GATEWAY_COST_PENDING } from '../lib/ai-gateway';
+import { traceGeneration } from '../lib/llm-trace';
 import type { AuditMessage } from '../queue/audit-types';
 import {
   gatewayBaseUrl,
@@ -547,6 +548,38 @@ export async function persistAuditMessage(
       }
     }
   }
+
+  // LLM observability (Langfuse, dashboard block 2). Fires after the audit
+  // row + billing land, on the fresh-insert path only (a duplicate queue
+  // delivery returned early at the dedup guard above), so each turn traces
+  // exactly once. Awaited — this is the queue consumer, not a request path —
+  // but no-op + instant when Langfuse keys are unset, and it never throws.
+  // Privacy: model / tokens / cost / latency + structural metadata only —
+  // NEVER prompt or completion content (the design forbids sending chat
+  // content to any external analytics platform).
+  await traceGeneration(env, {
+    name: opts.taskType ?? 'llm_turn',
+    model: route?.modelToCall ?? opts.tag ?? undefined,
+    traceId: auditId,
+    userId: opts.userId ?? undefined,
+    sessionId: opts.conversationId ?? undefined,
+    usage: {
+      input: opts.inputTokens ?? 0,
+      output: opts.outputTokens ?? 0,
+      total,
+    },
+    metadata: {
+      task_type: opts.taskType,
+      provider: route?.provider?.slug ?? null,
+      status: opts.status,
+      latency_ms: latencyMs,
+      cost_usd: llmCost,
+      cache_read_tokens: opts.cacheReadTokens ?? 0,
+      cache_write_tokens: opts.cacheWriteTokens ?? 0,
+      audio_input_tokens: audioInputTokens,
+      audio_output_tokens: audioOutputTokens,
+    },
+  });
 }
 
 // Billing-owner resolution moved to billing/usage-gate.ts
