@@ -11,30 +11,161 @@ import SwiftUI
 /// （会卡在 "running" / "(空)"）。
 struct CrewSessionWindowView: View {
     @EnvironmentObject private var sessionRunner: CrewSessionRunner
+    @EnvironmentObject private var appModel: AppModel
+    @EnvironmentObject private var crewStore: CrewStore
 
+    @State private var draft = ""
+    @State private var starting = false
+    @State private var localError: String?
+    @State private var selectedKind: LocalCodingAgentKind = .claudeCode
+
+    /// spec §9.3 + 用户心智：右栏是**常驻**和 claude/codex 交互的面（像 Codex
+    /// Desktop）。没有 session 时就地给一个 composer —— **第一条消息即开始
+    /// session**（零配置，用 crew 默认目录/runner/权限模式；无标题、无单独的
+    /// 「新建」表单）。运行中再发 = `send_prompt` 续跑回合。
     var body: some View {
-        Group {
+        VStack(spacing: 0) {
             if let run = sessionRunner.current {
                 SessionRunContentView(run: run)
             } else {
-                empty
+                idleState
             }
+            Divider()
+            composer
         }
         .navigationTitle("Session")
     }
 
-    private var empty: some View {
+    private var isRunning: Bool { sessionRunner.current?.status == .running }
+
+    private var idleState: some View {
         VStack(spacing: 10) {
             Image(systemName: "play.rectangle.on.rectangle")
                 .font(.system(size: 40))
                 .foregroundStyle(.tertiary)
-            Text("没有正在运行的 session")
-                .foregroundStyle(.secondary)
-            Text("在中栏点 \"新建 session\" 开始")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+            if crewStore.selectedDetail == nil {
+                Text("先在左侧选一个 crew").foregroundStyle(.secondary)
+            } else {
+                Text("给 agent 下第一条指令，开始一个 session")
+                    .foregroundStyle(.secondary)
+                Text("用 crew 的默认工作目录与权限模式，无需任何配置")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var composer: some View {
+        VStack(spacing: 4) {
+            if let localError {
+                Text(localError).font(.caption).foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            HStack(spacing: 8) {
+                if !isRunning {
+                    Picker("", selection: $selectedKind) {
+                        Text("Claude Code").tag(LocalCodingAgentKind.claudeCode)
+                        Text("Codex").tag(LocalCodingAgentKind.codex)
+                    }
+                    .labelsHidden()
+                    .frame(width: 130)
+                    .disabled(starting)
+                }
+                TextField(isRunning ? "继续对 agent 说…（⌘↩ 发送）" : "下第一条指令开始…",
+                          text: $draft, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(1...6)
+                    .disabled(starting || crewStore.selectedDetail == nil)
+                    .onSubmit { Task { await send() } }
+                Button {
+                    Task { await send() }
+                } label: {
+                    if starting { ProgressView().controlSize(.small) }
+                    else { Image(systemName: "paperplane.fill") }
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.return, modifiers: .command)
+                .disabled(starting || crewStore.selectedDetail == nil
+                          || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(12)
+    }
+
+    // MARK: - actions
+
+    private func send() async {
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        if let run = sessionRunner.current, run.status == .running {
+            // Running session → queue as a send_prompt resume turn (T4.5).
+            run.enqueueFollowUp(text)
+            draft = ""
+        } else {
+            await startSession(firstPrompt: text)
+        }
+    }
+
+    /// Zero-config start: crew default dir + runner kind + permission mode, with
+    /// `firstPrompt` as the initial turn. No title, no task brief. Replicates the
+    /// logged server-link prep (register host → create → claim) so cross-device
+    /// viewers can follow it; BYOK stays local.
+    private func startSession(firstPrompt: String) async {
+        guard let detail = crewStore.selectedDetail else { return }
+        guard let wd = detail.crew.workingDirectory, !wd.isEmpty else {
+            localError = "这个 crew 没有工作目录 —— 在建 crew 时设置后再开 session。"
+            return
+        }
+        let dir = URL(fileURLWithPath: (wd as NSString).expandingTildeInPath)
+        starting = true
+        defer { starting = false }
+        localError = nil
+
+        var serverLink: CrewSessionServerLink? = nil
+        if appModel.mode == .logged {
+            do { serverLink = try await prepareServerSession(detail: detail) }
+            catch {
+                localError = "服务端 session 准备失败: \(error.localizedDescription)"
+                return
+            }
+        }
+        do {
+            try await sessionRunner.start(
+                crewId: detail.crew.id,
+                kind: selectedKind,
+                workingDirectory: dir,
+                taskBrief: "",
+                initialPrompt: firstPrompt,
+                serverLink: serverLink
+            )
+            draft = ""
+        } catch {
+            localError = error.localizedDescription
+        }
+    }
+
+    private func prepareServerSession(detail: CrewDetail) async throws -> CrewSessionServerLink {
+        let api = try appModel.loggedAPIClient()
+        let subjects = try await api.listMySubjects()
+        guard let subjectId = subjects.first?.id else {
+            throw PendingCrewBackendError.invalidConfig("没有可用的 subject（device grant 未解析出主体）")
+        }
+        let hostId = try await appModel.ensureRunnerHost(
+            api: api,
+            subjectId: subjectId,
+            allowedRunnerKinds: [
+                LocalCodingAgentKind.claudeCode.serverRunnerKind,
+                LocalCodingAgentKind.codex.serverRunnerKind,
+            ]
+        )
+        let sessionId = try await api.createSession(
+            crewId: detail.crew.id,
+            runnerKind: selectedKind.serverRunnerKind,
+            taskBrief: ""
+        )
+        _ = try await api.claimSession(runnerHostId: hostId, sessionId: sessionId)
+        return CrewSessionServerLink(api: api, runnerHostId: hostId, sessionId: sessionId)
     }
 }
 
