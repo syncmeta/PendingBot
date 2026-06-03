@@ -61,15 +61,6 @@ export function providerApiStyle(slug: ProviderSlug): ProviderApiStyle {
   return API_STYLE[slug];
 }
 
-// True for providers whose inference is driven by a native adapter using
-// raw fetch (Anthropic Messages / Gemini generateContent) rather than the
-// OpenAI SDK. The router still constructs an OpenAI client for these (it's
-// cheap and harmless) but bot-reply / delegate branch on this to pick the
-// adapter and use route.baseURL + route.aigToken directly.
-export function isNativeAdapterStyle(style: ProviderApiStyle): boolean {
-  return style === 'anthropic' || style === 'gemini';
-}
-
 // AI Gateway inference endpoint for a provider:
 //   https://gateway.ai.cloudflare.com/v1/{account}/{gateway}/{path}
 // where {path} is the provider's native passthrough segment.

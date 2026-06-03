@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { computeVoiceCost } from './router';
 import {
-  isNativeAdapterStyle,
   providerApiStyle,
   resolveProviderSlug,
 } from './providers';
@@ -27,15 +26,6 @@ describe('providerApiStyle', () => {
     expect(providerApiStyle('openrouter')).toBe('chat');
     expect(providerApiStyle('anthropic')).toBe('anthropic');
     expect(providerApiStyle('google-ai-studio')).toBe('gemini');
-  });
-});
-
-describe('isNativeAdapterStyle', () => {
-  it('flags anthropic + gemini as native-adapter (raw fetch) styles', () => {
-    expect(isNativeAdapterStyle('anthropic')).toBe(true);
-    expect(isNativeAdapterStyle('gemini')).toBe(true);
-    expect(isNativeAdapterStyle('chat')).toBe(false);
-    expect(isNativeAdapterStyle('responses')).toBe(false);
   });
 });
 

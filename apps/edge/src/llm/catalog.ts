@@ -13,10 +13,6 @@ interface CatalogEntry {
 
 let cache: { at: number; byId: Map<string, CatalogEntry> } | null = null;
 
-export function _resetCatalogCache(): void {
-  cache = null;
-}
-
 async function getCatalog(): Promise<Map<string, CatalogEntry> | null> {
   const now = Date.now();
   if (cache && now - cache.at < CATALOG_TTL_MS) return cache.byId;

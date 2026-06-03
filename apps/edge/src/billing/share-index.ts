@@ -20,13 +20,3 @@ export function computeShareNow(
   if (contributedPncMicros <= 0) return 0;
   return Math.max(0, Math.floor(contributedPncMicros * (currentShareIndex / shareIndexAtJoin)));
 }
-
-/**
- * 群消费后的新 share_index。池空(newTotal<=0)时重置 1.0,
- * 避免未来注资的退款数学除以约 0。
- */
-export function decayShareIndex(oldTotal: number, newTotal: number, oldShareIndex: number): number {
-  if (newTotal <= 0) return 1;
-  if (oldTotal <= 0) return oldShareIndex;
-  return (oldShareIndex * newTotal) / oldTotal;
-}
