@@ -1,6 +1,6 @@
 # PendingBot / PendingCrew 进度账本 (Progress Ledger)
 
-**最近对账：2026-06-02**（对照实际代码 / 迁移 / git，不是看 task 标记）
+**最近对账：2026-06-03**（对照实际代码 / 迁移 / git，不是看 task 标记）
 
 ---
 
@@ -86,6 +86,16 @@
   - ✅ iOS 基础（BotInviteAPI.swift）：API client 方法 + 类型。
 - **剩余（#194，未做）**：iOS UX 返工 —— scan/universal-link → resolve → redeem 的 AddBotSheet 改造（去掉手动 slug 加，改 token codec）、ManageBotSheet 分享区改成「签发/管理邀请链接」。**这是 UX 重设计，需 simulator 视觉验证（非仅编译）**。#121-127 旧 slug task 待 #194 完成后一起翻。
 - **关联**：D2 群加入码同构（#195，未做）。
+
+### Dashboard 栈接线（#206 — 零 VPS 方案，feat/dashboard-wiring 分支，未合 main）
+- **状态**：🟡 代码/接线全部就绪并验证（edge typecheck + 469 vitest 绿、admin `bun run build` 绿、grafana JSON 全 jq 合法）；**待用户开第三方账号 + 填 secret**，真实端到端未验。
+- **已落地（2026-06-03，所有外部 SDK 接入前都查了官方文档/核了已装包类型）**：
+  - **Sentry**（block 3）：`withSentry` wrap 早就有；补了三处吞错点的 `captureException` —— `app.onError`（Hono 把 throw 转成 500 response，原来到不了 withSentry）、queue:audit 非瞬时失败、cron `safe()`。DSN 未设=no-op。
+  - **PostHog**（block 1）：新 `lib/track.ts` `trackEvent(c,...)`（fire-and-forget，无 PII），接在 `message_sent / group_created / group_joined / voice_call_started(1v1+群) / voice_call_ended(群) / topup_succeeded(iap+lemon webhook)`。无 server seam 的事件（`signed_up` 触发器、`bot_created` 客户端直写、1v1 通话结束在 MeterDO、群注资/认缴在被改造的文件）记 tech-debt 留 iOS SDK/后续补，没造假。
+  - **Langfuse**（block 2）：`traceGeneration` 接在 `persistAuditMessage`（每回合 model/tokens/cost/latency 都齐的唯一点），dedup 之后只发一次；隐私：只发结构指标不发 prompt/completion。装的是 v3 legacy SDK（Workers 友好）。
+  - **Refine 后台**（block 4，`apps/admin`）：Refine v5 + react-router v7 SPA，custom dataProvider 走 edge（不直连 PG）、Supabase Auth、CF Pages 部署。**但 edge 没有 `/v1/admin/*` 面**——11 个端点缺口已记 tech-debt，dataProvider 逐条 `exists:false` 标注，不是无声 stub。
+  - **Grafana**（block 5，`infra/grafana`）：5 张 provisioning dashboard（营收/钱包/群池/成本/转化），datasource 走只读 `metabase_ro`。SQL 全部基于真实列（agent 发现 spec 的 `pnc_ledger` 不存在，实表是 `billing_ledger`）。
+- **待用户**：开 PostHog(EU)/Langfuse/Sentry/Grafana Cloud/CF Pages 账号、`wrangler secret put` 填 secret、建 `metabase_ro` 角色、连 Grafana→Supabase。详见 session 末清单。
 
 ---
 
