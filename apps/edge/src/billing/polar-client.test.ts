@@ -62,4 +62,25 @@ describe('polar-client', () => {
     }
     expect(await cli(sdk).getBalance('subject_1')).toBe(0)
   })
+
+  it('ensureCustomer creates the customer with externalId + email', async () => {
+    const create = vi.fn().mockResolvedValue({ id: 'cus_1' })
+    const sdk = { events: { ingest: vi.fn() }, customers: { getStateExternal: vi.fn(), create } }
+    await cli(sdk).ensureCustomer('subject_1', 'u@example.com')
+    expect(create).toHaveBeenCalledWith({ email: 'u@example.com', externalId: 'subject_1' })
+  })
+
+  it('ensureCustomer swallows a 409 (already exists) as idempotent success', async () => {
+    const create = vi.fn().mockRejectedValue({ statusCode: 409, message: 'customer already exists' })
+    const sdk = { events: { ingest: vi.fn() }, customers: { getStateExternal: vi.fn(), create } }
+    await expect(cli(sdk).ensureCustomer('subject_1', 'u@example.com')).resolves.toBeUndefined()
+  })
+
+  it('ensureCustomer rethrows non-conflict errors (e.g. 500)', async () => {
+    const create = vi.fn().mockRejectedValue({ statusCode: 500, message: 'server error' })
+    const sdk = { events: { ingest: vi.fn() }, customers: { getStateExternal: vi.fn(), create } }
+    await expect(cli(sdk).ensureCustomer('subject_1', 'u@example.com')).rejects.toMatchObject({
+      statusCode: 500,
+    })
+  })
 })

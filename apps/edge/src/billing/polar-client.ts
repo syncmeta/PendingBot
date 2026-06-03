@@ -32,6 +32,12 @@ type Sdk = {
     getStateExternal: (req: {
       externalId: string
     }) => Promise<{ activeMeters?: Array<{ meterId: string; balance: number }> }>
+    // CustomerCreate(individual):email 必填,externalId 可选(SDK @0.47.1 验证)。
+    create: (req: {
+      email: string
+      externalId?: string
+      metadata?: Record<string, unknown>
+    }) => Promise<{ id: string }>
   }
 }
 
@@ -91,6 +97,25 @@ export function createPolarClient(sdk: Sdk, opts: { meterId: string }) {
           },
         ],
       })
+    },
+
+    /**
+     * 幂等确保 Polar customer 存在(externalId = 我们的 subjectId)。
+     * 送(signup)/兑换给"从没付过钱"的用户发额度的前置:这类用户没经过
+     * checkout,Polar 里没有 customer,而 grantCredits 需要一个 customer。
+     * customers.create 的 email 必填(SDK 验证)。已存在(409)吞掉作幂等成功;
+     * 其余错误抛出。⚠️ 409 的确切判定 + 是否需 ensure 由 sandbox spike 实测确认。
+     */
+    async ensureCustomer(externalId: string, email: string): Promise<void> {
+      try {
+        await sdk.customers.create({ email, externalId })
+      } catch (e) {
+        const err = e as { statusCode?: number; status?: number; message?: string }
+        const status = err?.statusCode ?? err?.status
+        const dup = status === 409 || /already.*exist|exists/i.test(err?.message ?? '')
+        if (dup) return // 已存在 → 幂等成功
+        throw e
+      }
     },
 
     /** 门禁读余额：从 customer state 取我们 meter 的余额(正=可用;找不到记 0)。 */
