@@ -15,40 +15,10 @@ enum ContactsAPI {
     /// the caller via that specific handle — drives the per-handle
     /// friend list in 加我为好友的方式 → 我的隐私号 详情页。
     static func fetchContacts(viaHandleId: String? = nil) async throws -> [FriendsTabView.HumanPick] {
-        var url = HostedConfig.environment.workerURL
-            .appendingPathComponent("v1/contacts")
-        if let viaHandleId, var comps = URLComponents(url: url, resolvingAgainstBaseURL: false) {
-            comps.queryItems = [URLQueryItem(name: "via_handle_id", value: viaHandleId)]
-            if let withQuery = comps.url { url = withQuery }
-        }
-        var req = URLRequest(url: url)
-        req.httpMethod = "GET"
-        let token = try await SupabaseStack.shared.auth.session.accessToken
-        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        let (data, resp) = try await URLSession.shared.data(for: req)
-        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
-        struct Payload: Decodable {
-            struct Row: Decodable {
-                let userId: String
-                let alias: String?
-                let displayName: String
-                let avatarPath: String?
-                /// Server-supplied placeholder-emoji seed — see HumanPick.avatarSeed.
-                /// Older worker builds may omit the field; default to userId so the
-                /// emoji still renders consistently across viewers (everyone hashes
-                /// the same fallback).
-                let avatarSeed: String?
-                /// Friend-added time as epoch seconds (user_contacts.created_at).
-                /// Drives the "按加好友时间" sort. Optional for older worker
-                /// builds that predate the field; defaults to 0.
-                let addedAt: Int?
-            }
-            let contacts: [Row]
-        }
-        let payload = try JSONDecoder().decode(Payload.self, from: data)
-        return payload.contacts.map {
+        // Request + decode lives in the shared `ContactsFetch.fetch()`
+        // (Networking/) so iOS + macOS hit one implementation; this just maps the
+        // neutral `ContactProfile` into the iOS view's `HumanPick`.
+        try await ContactsFetch.fetch(viaHandleId: viaHandleId).map {
             FriendsTabView.HumanPick(
                 id: $0.userId,
                 alias: $0.alias,

@@ -11,7 +11,9 @@ import {
   splitRealtimeUsage,
   type VoiceTurnUsage,
 } from '../lib/voice-metering';
-import { settleUsage, type OwnerRef } from '../lib/billing-v2';
+import { wallet, walletSubjectKey, type WalletOwner } from '../billing/wallet-client';
+import { settleGroupSpend } from '../billing/group-wallet';
+import { usdToPncMicros } from '../billing/pnc';
 import { roomMediaToken } from './room-voice-context';
 import type {
   ContainerBotSpec,
@@ -1129,34 +1131,44 @@ export class RoomVoiceDO {
     const costUsd = computeRealtimeKitParticipantCostUsd(participantSeconds, price);
     if (costUsd <= 0) return;
 
-    // Billing v2: the RealtimeKit media cost (participant-minutes) is its
-    // own usage_event, category 'realtimekit_media'. Owner = the group's
-    // responsible subject (the group wallet, design §9), falling back to
-    // the billing user. The v1 per-member split + audit_log row is gone.
+    // Billing P2: the RealtimeKit media cost (participant-minutes) is
+    // debited from the responsible subject's WalletDO, category
+    // 'realtimekit_media'. Owner = the group's responsible subject (the
+    // group wallet, design §8), falling back to the billing user. The DO
+    // converts vendor USD → pnc_micros (no platform markup, design §9),
+    // decrements its strong-consistent cache, and queues the usage for
+    // flush to Polar. The legacy billing-v2 settleUsage/packs path is gone.
     const owner = await this.resolveVoiceBillingOwner(supa, ctx);
     if (!owner) return;
+    const subjectId = walletSubjectKey(owner);
 
-    await settleUsage(supa, {
-      owner,
-      category: 'realtimekit_media',
-      provider: 'cloudflare',
-      vendorSku: 'realtimekit_audio',
-      modelId: 'cloudflare_realtimekit:audio_only',
-      quantity: participantSeconds,
-      quantityUnit: 'seconds',
-      vendorCostUsd: costUsd,
-      costSource: 'local_pricebook',
-      conversationId: ctx.conversationId,
-      rawUsage: {
-        room_id: ctx.roomId,
-        realtimekit_meeting_id: ctx.realtimeKitMeetingId,
-        participant_seconds: participantSeconds,
-        human_participant_seconds: humanSeconds,
-        bot_participant_seconds: botSeconds,
-        participant_minute_price_usd: price,
-        present_user_seconds: Object.fromEntries(userSeconds),
-      },
-    });
+    // One-shot at finalize → a stable dedupeId per call instance keeps the
+    // debit idempotent under any re-entry / retry.
+    const dedupeId = `${ctx.roomId}:realtimekit_media`;
+    const micros = usdToPncMicros(costUsd);
+    const meta = {
+      room_id: ctx.roomId,
+      conversation_id: ctx.conversationId,
+      realtimekit_meeting_id: ctx.realtimeKitMeetingId,
+      participant_seconds: participantSeconds,
+      human_participant_seconds: humanSeconds,
+      bot_participant_seconds: botSeconds,
+      participant_minute_price_usd: price,
+      vendor_cost_usd: costUsd,
+      present_user_seconds: Object.fromEntries(userSeconds),
+    };
+    try {
+      // 群(owner=subject)走 settleGroupSpend:实缴池衰减 + 认缴成员个人钱包直扣;
+      // 1v1(owner=user)直扣其个人钱包。
+      if (owner.kind === 'subject') {
+        await settleGroupSpend({ env: this.env, supa, subjectId, spendMicros: micros, category: 'realtimekit_media', dedupeId, meta });
+      } else {
+        await wallet.debit(this.env, subjectId, micros, { category: 'realtimekit_media', dedupeId, meta });
+      }
+    } catch (err) {
+      // Billing failures must never break call teardown.
+      console.warn('[room-voice] realtimekit_media debit failed', err);
+    }
   }
 
   /// Resolve the v2 billing owner for this room: the conversation's
@@ -1164,7 +1176,7 @@ export class RoomVoiceDO {
   private async resolveVoiceBillingOwner(
     supa: ReturnType<typeof serviceClient>,
     ctx: NonNullable<typeof this.ctx>,
-  ): Promise<OwnerRef | null> {
+  ): Promise<WalletOwner | null> {
     const { data } = await supa
       .from('conversations')
       .select('responsible_subject_id')

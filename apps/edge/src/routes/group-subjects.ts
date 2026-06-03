@@ -59,9 +59,22 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
-import { userClient, type SupabaseClient } from '../lib/supabase';
-import { jsonError, type ApiErrorCode } from '../lib/http-error';
-import type { AppBindings } from '../types';
+import { userClient, serviceClient, type SupabaseClient } from '../lib/supabase';
+import { jsonError } from '../lib/http-error';
+import type { AppBindings, Env } from '../types';
+import { polarFromEnv, type PolarClient } from '../billing/polar-client';
+import { contributeToGroup, refundContributorFromGroup, dissolveGroup, setPledge, withdrawFromGroup, readGroupWallet, type MemberWalletView } from '../billing/group-wallet';
+import { pncToMicros, pncMicrosToPnc } from '../billing/pnc';
+
+// 群钱包 = Polar(余额事实源)+ WalletDO 缓存(计费 P2)。注资/退款/解散走
+// billing/group-wallet.ts(service-role 内部记账 + Polar 转账 + share-index)。
+function polarOrNull(env: Env): PolarClient | null {
+  if (!env.POLAR_ACCESS_TOKEN || !env.POLAR_PNC_METER_ID) return null;
+  return polarFromEnv(
+    { POLAR_ACCESS_TOKEN: env.POLAR_ACCESS_TOKEN, POLAR_SERVER: env.POLAR_SERVER },
+    env.POLAR_PNC_METER_ID,
+  );
+}
 
 export const groupSubjectRoutes = new Hono<AppBindings>();
 groupSubjectRoutes.use('/*', requireSession());
@@ -100,20 +113,6 @@ function rpcErrorToResponse(
     default:
       return jsonError(c, 500, 'database_error', { detail: { code, message } });
   }
-}
-
-// Some routes need to return a typed code rather than the generic mapping
-// — currently only topup's invalid-credits case, which is an input
-// validation problem rather than a state problem.
-function rpcErrorToResponseWithOverride(
-  c: Parameters<typeof jsonError>[0],
-  err: RpcError,
-  override: Partial<Record<string, { status: 400 | 401 | 403 | 404 | 409; code: ApiErrorCode }>>,
-): Response {
-  const sqlstate = err.code ?? '';
-  const hit = override[sqlstate];
-  if (hit) return jsonError(c, hit.status, hit.code, { message: err.message });
-  return rpcErrorToResponse(c, err);
 }
 
 function clientForRequest(c: Parameters<typeof jsonError>[0]): SupabaseClient | Response {
@@ -192,6 +191,65 @@ groupSubjectRoutes.get('/:id/members', async (c) => {
     .eq('subject_id', id);
   if (error) return jsonError(c, 500, 'database_error', { detail: error.message });
   return c.json({ members: rows ?? [] });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// GET /v1/group-subjects/:id/wallet — 群钱包视图(读)
+// ────────────────────────────────────────────────────────────────────
+//
+// 实缴池余额 + S(分摊分母)+ 我的实缴 share_now/认缴/总份额/占比 + 成员明细。
+// owner/admin 看全员明细(members_complete=true);member 仅看自己(只读 WalletDO+
+// DB,跨成员读用 service client,但可见范围按角色裁剪,与 /members 的 RLS 语义一致)。
+// 金额一律 PNC(micros 不出网,与 /topup 等动作端点的 *_pnc 口径一致)。
+// 读不动钱,不要求 Polar 配置(余额取自 WalletDO 缓存)。
+
+groupSubjectRoutes.get('/:id/wallet', async (c) => {
+  const id = c.req.param('id');
+  if (!isUuid(id)) return jsonError(c, 400, 'invalid_id');
+  const userId = c.var.userId;
+  if (!userId) return jsonError(c, 401, 'unauthorized');
+
+  // 成员校验(RLS 读自己的 membership 行)。
+  const rls = clientForRequest(c);
+  if (rls instanceof Response) return rls;
+  const { data: membership } = await rls
+    .from('group_subject_members')
+    .select('role')
+    .eq('subject_id', id)
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (!membership) return jsonError(c, 403, 'subject_forbidden', { message: '非群成员' });
+
+  const view = await readGroupWallet(c.env, serviceClient(c.env), id);
+
+  const canSeeAll = membership.role === 'owner' || membership.role === 'admin';
+  const ratio = (stake: number) => (view.totalStakeMicros > 0 ? stake / view.totalStakeMicros : 0);
+  const mapMember = (m: MemberWalletView) => ({
+    user_id: m.userId,
+    contribution_share_now_pnc: pncMicrosToPnc(m.contributionShareNowMicros),
+    pledge_pnc: pncMicrosToPnc(m.pledgeMicros),
+    pledge_effective_pnc: pncMicrosToPnc(m.pledgeEffectiveMicros),
+    stake_pnc: pncMicrosToPnc(m.stakeMicros),
+    share_ratio: ratio(m.stakeMicros),
+  });
+
+  const mine: MemberWalletView = view.members.find((m) => m.userId === userId) ?? {
+    userId,
+    contributionShareNowMicros: 0,
+    pledgeMicros: 0,
+    pledgeEffectiveMicros: 0,
+    stakeMicros: 0,
+  };
+
+  return c.json({
+    subject_id: id,
+    role: membership.role,
+    pool_pnc: pncMicrosToPnc(view.poolMicros),
+    total_stake_pnc: pncMicrosToPnc(view.totalStakeMicros),
+    me: mapMember(mine),
+    members: canSeeAll ? view.members.map(mapMember) : [mapMember(mine)],
+    members_complete: canSeeAll,
+  });
 });
 
 // ────────────────────────────────────────────────────────────────────
@@ -347,23 +405,193 @@ groupSubjectRoutes.post('/:id/topup', async (c) => {
     return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
-  const supa = clientForRequest(c);
-  if (supa instanceof Response) return supa;
+  const userId = c.var.userId;
+  if (!userId) return jsonError(c, 401, 'unauthorized');
 
-  const { data, error } = await supa.rpc('grp_topup_wallet', {
-    p_group_subject_id: id,
-    p_credits: body.credits,
+  // 成员校验:走 RLS 读自己的 membership 行(非成员看不到 → 拒)。
+  const rls = clientForRequest(c);
+  if (rls instanceof Response) return rls;
+  const { data: membership } = await rls
+    .from('group_subject_members')
+    .select('role')
+    .eq('subject_id', id)
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (!membership) return jsonError(c, 403, 'subject_forbidden', { message: '非群成员' });
+
+  const om = polarOrNull(c.env);
+  if (!om) return jsonError(c, 501, 'polar_not_configured');
+
+  // 注资:从出资人 Polar 钱包转入群 Polar 钱包 + 记 share-index 贡献。
+  const r = await contributeToGroup({
+    env: c.env,
+    supa: serviceClient(c.env),
+    om,
+    subjectId: id,
+    contributorUserId: userId,
+    pncMicros: pncToMicros(body.credits),
   });
-  if (error) {
-    // 22023 from grp_topup_wallet specifically means "credits must be
-    // positive" — surface as invalid_body rather than the generic
-    // conflict (which is appropriate for state errors elsewhere).
-    return rpcErrorToResponseWithOverride(c, error, {
-      '22023': { status: 400, code: 'invalid_body' },
-    });
+  if (!r.ok) {
+    if (r.reason === 'insufficient_balance') return jsonError(c, 402, 'quota_exceeded', { message: '余额不足' });
+    if (r.reason === 'invalid_amount') return jsonError(c, 400, 'invalid_body');
+    return jsonError(c, 500, 'database_error', { message: r.message });
   }
-  if (typeof data !== 'number') {
-    return jsonError(c, 500, 'internal_error', { message: 'rpc returned non-numeric balance' });
+  return c.json({ ok: true, contribution_id: r.contributionId, contributed_pnc: pncMicrosToPnc(r.debitedMicros) });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// POST /v1/group-subjects/:id/leave — 退出群:按 share-index 退回我的份额
+// ────────────────────────────────────────────────────────────────────
+//
+// 把调用者在群里的当前份额(share_now)退回其个人钱包、标记其 contributions
+// refunded,清其认缴,并移除其成员行(一步退群)。群主不能直接退群(须先转让或解散)。
+
+groupSubjectRoutes.post('/:id/leave', async (c) => {
+  const id = c.req.param('id');
+  if (!isUuid(id)) return jsonError(c, 400, 'invalid_id');
+  const userId = c.var.userId;
+  if (!userId) return jsonError(c, 401, 'unauthorized');
+
+  const rls = clientForRequest(c);
+  if (rls instanceof Response) return rls;
+  const { data: membership } = await rls
+    .from('group_subject_members')
+    .select('role')
+    .eq('subject_id', id)
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (!membership) return jsonError(c, 403, 'subject_forbidden', { message: '非群成员' });
+  if (membership.role === 'owner') {
+    return jsonError(c, 409, 'conflict', { message: '群主需先转让群主或解散群,不能直接退群' });
   }
-  return c.json({ balance_credits: data });
+
+  const om = polarOrNull(c.env);
+  if (!om) return jsonError(c, 501, 'polar_not_configured');
+
+  const supa = serviceClient(c.env);
+  // 1. 退份额(no_contributions 视作退 0,仍继续退群)。
+  const r = await refundContributorFromGroup({ env: c.env, supa, om, subjectId: id, contributorUserId: userId });
+  const refundedMicros = r.ok ? r.refundedMicros : 0;
+  const contributionsRefunded = r.ok ? r.contributionsRefunded : 0;
+  if (!r.ok && r.reason !== 'no_contributions' && r.reason !== 'pool_missing') {
+    return jsonError(c, 500, 'database_error', { message: r.message });
+  }
+  // 2. 清认缴授权(撤销该群对其钱包的扣款授权)。
+  await setPledge(supa, id, userId, 0);
+  // 3. 移除成员行(自退;grp_remove_member 仅 owner/admin 可删人,故 service 直删)。
+  await supa.from('group_subject_members').delete().eq('subject_id', id).eq('user_id', userId);
+
+  return c.json({
+    ok: true,
+    refunded_pnc: pncMicrosToPnc(refundedMicros),
+    contributions_refunded: contributionsRefunded,
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// POST /v1/group-subjects/:id/dissolve — 解散群:按比例退所有 active 出资人
+// owner only。
+// ────────────────────────────────────────────────────────────────────
+
+groupSubjectRoutes.post('/:id/dissolve', async (c) => {
+  const id = c.req.param('id');
+  if (!isUuid(id)) return jsonError(c, 400, 'invalid_id');
+  const userId = c.var.userId;
+  if (!userId) return jsonError(c, 401, 'unauthorized');
+
+  const rls = clientForRequest(c);
+  if (rls instanceof Response) return rls;
+  const { data: membership } = await rls
+    .from('group_subject_members')
+    .select('role')
+    .eq('subject_id', id)
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (membership?.role !== 'owner') return jsonError(c, 403, 'subject_forbidden', { message: '仅群主可解散' });
+
+  const om = polarOrNull(c.env);
+  if (!om) return jsonError(c, 501, 'polar_not_configured');
+
+  const r = await dissolveGroup({ env: c.env, supa: serviceClient(c.env), om, subjectId: id });
+  return c.json({
+    ok: true,
+    refunded_contributors: r.refundedContributors,
+    total_refunded_pnc: pncMicrosToPnc(r.totalRefundedMicros),
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// POST /v1/group-subjects/:id/pledge — 设置/清除认缴额度(钱不动,授权群按比例扣)
+// body { credits }(PNC;0 = 撤销认缴)。成员均可。
+// ────────────────────────────────────────────────────────────────────
+
+const PledgeBody = z.object({ credits: z.number().int().min(0) });
+
+groupSubjectRoutes.post('/:id/pledge', async (c) => {
+  const id = c.req.param('id');
+  if (!isUuid(id)) return jsonError(c, 400, 'invalid_id');
+  const userId = c.var.userId;
+  if (!userId) return jsonError(c, 401, 'unauthorized');
+  let body: z.infer<typeof PledgeBody>;
+  try {
+    body = PledgeBody.parse(await c.req.json());
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+
+  const rls = clientForRequest(c);
+  if (rls instanceof Response) return rls;
+  const { data: membership } = await rls
+    .from('group_subject_members')
+    .select('role')
+    .eq('subject_id', id)
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (!membership) return jsonError(c, 403, 'subject_forbidden', { message: '非群成员' });
+
+  await setPledge(serviceClient(c.env), id, userId, pncToMicros(body.credits));
+  return c.json({ ok: true, pledge_pnc: body.credits });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// POST /v1/group-subjects/:id/withdraw — 部分取出(≤ 当前 share_now),留群
+// body { credits }(PNC)。退回个人 PNC 余额(非提现)。
+// ────────────────────────────────────────────────────────────────────
+
+const WithdrawBody = z.object({ credits: z.number().int().positive() });
+
+groupSubjectRoutes.post('/:id/withdraw', async (c) => {
+  const id = c.req.param('id');
+  if (!isUuid(id)) return jsonError(c, 400, 'invalid_id');
+  const userId = c.var.userId;
+  if (!userId) return jsonError(c, 401, 'unauthorized');
+  let body: z.infer<typeof WithdrawBody>;
+  try {
+    body = WithdrawBody.parse(await c.req.json());
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+
+  const rls = clientForRequest(c);
+  if (rls instanceof Response) return rls;
+  const { data: membership } = await rls
+    .from('group_subject_members')
+    .select('role')
+    .eq('subject_id', id)
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (!membership) return jsonError(c, 403, 'subject_forbidden', { message: '非群成员' });
+
+  const om = polarOrNull(c.env);
+  if (!om) return jsonError(c, 501, 'polar_not_configured');
+
+  const r = await withdrawFromGroup({
+    env: c.env,
+    supa: serviceClient(c.env),
+    om,
+    subjectId: id,
+    userId,
+    amountMicros: pncToMicros(body.credits),
+  });
+  return c.json({ ok: true, withdrawn_pnc: pncMicrosToPnc(r.withdrawnMicros) });
 });

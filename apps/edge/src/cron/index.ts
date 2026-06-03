@@ -1,8 +1,8 @@
+import * as Sentry from '@sentry/cloudflare';
 import type { Env } from '../types';
 import { cleanupOrphanUploads } from './uploads-cleanup';
 import { reapStuckEnvelopes } from './envelope-reaper';
 import { finalizeExpiredAccountDeletions } from './account-deletion-sweep';
-import { runBillingV2Hourly } from './billing-v2-tasks';
 
 // Workers cron entrypoint. wrangler.jsonc declares `triggers.crons` with
 // each schedule pattern; the same handler routes by `controller.cron`.
@@ -13,9 +13,6 @@ import { runBillingV2Hourly } from './billing-v2-tasks';
 //   "*/5 * * * *"  every 5 min — envelope-run watchdog (force-fail
 //                  envelope_runs rows stuck in 'running' past the loop's
 //                  4-min wall budget)
-//   "17 * * * *"   hourly @ :17 — billing v2 expiry sweep + refund
-//                  retry sweep. Off-the-hour minute keeps cron load
-//                  staggered from external pickers.
 //
 // The hourly "5 * * * *" idle-sandbox sweep was retired when the
 // code-exec tool moved off Daytona — the Cloudflare Sandbox SDK
@@ -41,8 +38,6 @@ export async function handleScheduled(
     );
   } else if (cron === '*/5 * * * *') {
     ctx.waitUntil(safe('envelope-reaper', () => reapStuckEnvelopes(env)));
-  } else if (cron === '17 * * * *') {
-    ctx.waitUntil(safe('billing-v2-hourly', () => runBillingV2Hourly(env)));
   } else {
     console.warn('[cron] unmatched schedule', cron);
   }
@@ -54,5 +49,9 @@ async function safe(label: string, fn: () => Promise<unknown>): Promise<void> {
     console.log('[cron]', label, 'done');
   } catch (err) {
     console.error('[cron]', label, 'failed', err);
+    // Scheduled tasks (billing reconciliation, deletion sweep, envelope
+    // reaper) run unattended with no caller to notice a failure — surface
+    // them to Sentry instead of only logging. No-op when DSN unset.
+    Sentry.captureException(err, { tags: { source: 'cron', cron_task: label } });
   }
 }

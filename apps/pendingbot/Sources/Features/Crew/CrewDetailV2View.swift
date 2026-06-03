@@ -28,6 +28,7 @@ struct CrewDetailV2View: View {
     @State private var notice: String?
     @State private var showingShareSheet = false
     @State private var showingDetailSheet = false
+    @State private var showingSessionsSheet = false
 
     var body: some View {
         Group {
@@ -43,6 +44,14 @@ struct CrewDetailV2View: View {
         .navigationTitle(detail?.crew.title ?? fallbackTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showingSessionsSheet = true
+                } label: {
+                    Image(systemName: "terminal")
+                }
+                .accessibilityLabel("查看服务端 session")
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     showingDetailSheet = true

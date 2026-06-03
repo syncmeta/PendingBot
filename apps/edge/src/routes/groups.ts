@@ -6,6 +6,7 @@ import { generateInitialBotDescription } from '../lib/group-bot-intro';
 import { rateLimitOrBlock } from '../lib/rate-limit';
 import { jsonError } from '../lib/http-error';
 import { isGroupHumanParticipant, requireGroupRole } from '../lib/route-authz';
+import { trackEvent, AnalyticsEvent } from '../lib/track';
 import type { AppBindings } from '../types';
 
 // All group endpoints sit under /v1/groups. Schema + RPCs live in
@@ -158,6 +159,13 @@ groupRoutes.post('/', async (c) => {
       }
       if (invite?.id) invitationIds.push(invite.id as string);
     }
+  }
+  if (data) {
+    trackEvent(c, AnalyticsEvent.GroupCreated, {
+      group_id: data,
+      bot_count: parsed.memberBotIds.length,
+      invited_count: invitationIds.length,
+    });
   }
   return c.json({ conversationId: data, invitationIds });
 });
@@ -409,6 +417,13 @@ groupRoutes.post('/invitations/:inviteId/decide', async (c) => {
     .eq('id', inviteId);
   if (updateErr) return jsonError(c, 500, 'database_error', { detail: updateErr.message });
 
+  if (parsed.approve) {
+    trackEvent(c, AnalyticsEvent.GroupJoined, {
+      group_id: invite.conversation_id,
+      via: 'invitation',
+    });
+  }
+
   return c.json({ ok: true, status: decidedStatus, conversationId: invite.conversation_id });
 });
 
@@ -616,103 +631,14 @@ groupRoutes.post('/:id/bot-description', async (c) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────
-// Billing config + caps + mute
+// Mute
 // ─────────────────────────────────────────────────────────────────────
-
-const BillingBody = z.object({
-  mode: z.enum(['custom', 'per_head', 'per_message', 'per_token', 'hybrid']),
-  windowSeconds: z.number().int().positive().max(30 * 86400),
-  customShares: z
-    .array(
-      z.object({
-        userId: z.string().uuid(),
-        weightBps: z.number().int().min(0).max(10000),
-      }),
-    )
-    .optional(),
-});
-groupRoutes.post('/:id/billing', async (c) => {
-  const convId = c.req.param('id');
-  let parsed: z.infer<typeof BillingBody>;
-  try {
-    parsed = BillingBody.parse(await c.req.json());
-  } catch (err) {
-    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
-  }
-
-  const supa = userClient(c.env, c.var.userJwt!);
-  const { error } = await supa.rpc('group_set_billing', {
-    p_conv_id: convId,
-    p_mode: parsed.mode,
-    p_window_seconds: parsed.windowSeconds,
-    p_custom_shares:
-      parsed.mode === 'custom'
-        ? (parsed.customShares ?? []).map((s) => ({
-            user_id: s.userId,
-            weight_bps: s.weightBps,
-          }))
-        : null,
-  });
-  if (error) {
-    const e = rpcError(error);
-    return c.json(e.body, e.status);
-  }
-  return c.json({ ok: true });
-});
-
-const CapBody = z.object({
-  capCredits: z.number().int().nonnegative().nullable().optional(),
-});
-groupRoutes.post('/:id/cap', async (c) => {
-  const convId = c.req.param('id');
-  let parsed: z.infer<typeof CapBody>;
-  try {
-    parsed = CapBody.parse(await c.req.json());
-  } catch (err) {
-    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
-  }
-
-  const supa = userClient(c.env, c.var.userJwt!);
-  // supabase gen types emits `p_cap_credits: number` (non-null) because
-  // the SQL bigint param has no DEFAULT — but passing null is the
-  // documented "remove cap" path. JSON-null serializes correctly to
-  // PostgREST; the cast is a type-only workaround.
-  const { error } = await supa.rpc('group_set_member_cap', {
-    p_conv_id: convId,
-    p_cap_credits: (parsed.capCredits ?? null) as unknown as number,
-  });
-  if (error) {
-    const e = rpcError(error);
-    return c.json(e.body, e.status);
-  }
-  return c.json({ ok: true });
-});
-
-const ParticipatesBody = z.object({
-  userId: z.string().uuid(),
-  participates: z.boolean(),
-});
-groupRoutes.post('/:id/participates', async (c) => {
-  const convId = c.req.param('id');
-  let parsed: z.infer<typeof ParticipatesBody>;
-  try {
-    parsed = ParticipatesBody.parse(await c.req.json());
-  } catch (err) {
-    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
-  }
-
-  const supa = userClient(c.env, c.var.userJwt!);
-  const { error } = await supa.rpc('group_set_member_participates', {
-    p_conv_id: convId,
-    p_target_user_id: parsed.userId,
-    p_participates: parsed.participates,
-  });
-  if (error) {
-    const e = rpcError(error);
-    return c.json(e.body, e.status);
-  }
-  return c.json({ ok: true });
-});
+//
+// 旧的 per-conversation 分摊配置(/billing、/cap、/participates →
+// group_member_billing 表 + group_set_* RPC)已退役 —— 群消费改由责任
+// subject 的实缴池+认缴模型结算(billing/group-wallet.ts settleGroupSpend),
+// 配置入口移到群钱包页(/v1/group-subjects/:id/*)。表/RPC/列的物理 drop 见
+// supabase/migrations 的 retire 迁移(随 billing 分支部署协调应用)。
 
 const MuteBody = z.object({ muted: z.boolean() });
 groupRoutes.post('/:id/mute', async (c) => {

@@ -161,60 +161,58 @@ describe('getMarkup', () => {
   });
 });
 
-// Billing v2 cutover: the pre-call gate now reads the user's v2 pack
-// balance (SUM of active packs.remaining_pnc_micros) and blocks ONLY when
+// 计费 P2: the pre-call gate reads the subject's strong-consistent WalletDO
+// cached balance (env.WALLET, one DO per subject) and blocks ONLY when
 // exhausted (≤ 0). min_threshold is always 0; balance_credits carries PNC
-// micros. This stub makes `.from('packs')...` awaitable to a row list.
-function stubSupaPacks(remainingMicrosRows: number[]): SupabaseClient {
+// micros. This env stub makes wallet.gate(env, userId) reply with a fixed
+// balance. supa is no longer touched by the gate (passed for signature).
+function walletEnv(balanceMicros: number): Env {
+  const fetchImpl = async () =>
+    new Response(
+      JSON.stringify({
+        balanceMicros,
+        thresholdState: balanceMicros > 0 ? 'sufficient' : 'exhausted',
+      }),
+      { headers: { 'content-type': 'application/json' } },
+    );
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const builder: any = {
-    select() { return this; },
-    eq() { return this; },
-    then(resolve: (v: { data: unknown; error: null }) => void) {
-      resolve({
-        data: remainingMicrosRows.map((m) => ({ remaining_pnc_micros: m })),
-        error: null,
-      });
+  return {
+    WALLET: {
+      idFromName: (n: string) => n,
+      get: () => ({ fetch: fetchImpl }),
     },
-  };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const client: any = { from: () => builder };
-  return client as SupabaseClient;
+  } as any;
 }
+const noSupa = {} as SupabaseClient;
 
-describe('requireBalance (v2 gate)', () => {
-  it('snapshot reports v2 micros, threshold 0, allowed when positive', async () => {
-    const supa = stubSupaPacks([60_000_000, 10_000_000]);
-    await expect(getBalanceGateState(fakeEnv(), supa, 'u1')).resolves.toEqual({
+describe('requireBalance (WalletDO gate)', () => {
+  it('snapshot reports WalletDO micros, threshold 0, allowed when positive', async () => {
+    await expect(getBalanceGateState(walletEnv(70_000_000), noSupa, 'u1')).resolves.toEqual({
       balance_credits: 70_000_000,
       min_threshold: 0,
       allowed: true,
     });
   });
 
-  it('passes when the user has any positive pack balance', async () => {
-    const supa = stubSupaPacks([1]);
-    await expect(requireBalance(fakeEnv(), supa, 'u1')).resolves.toBeUndefined();
+  it('passes when the subject has any positive balance', async () => {
+    await expect(requireBalance(walletEnv(1), noSupa, 'u1')).resolves.toBeUndefined();
   });
 
-  it('throws InsufficientBalanceError when exhausted (no packs)', async () => {
-    const supa = stubSupaPacks([]);
-    await expect(requireBalance(fakeEnv(), supa, 'u1')).rejects.toBeInstanceOf(
+  it('throws InsufficientBalanceError when exhausted (zero balance)', async () => {
+    await expect(requireBalance(walletEnv(0), noSupa, 'u1')).rejects.toBeInstanceOf(
       InsufficientBalanceError,
     );
   });
 
-  it('throws when all packs are drained to zero', async () => {
-    const supa = stubSupaPacks([0, 0]);
-    await expect(requireBalance(fakeEnv(), supa, 'u1')).rejects.toBeInstanceOf(
+  it('throws when balance is negative (overdrawn)', async () => {
+    await expect(requireBalance(walletEnv(-100), noSupa, 'u1')).rejects.toBeInstanceOf(
       InsufficientBalanceError,
     );
   });
 
   it('error carries the (zero) balance and threshold for client copy', async () => {
-    const supa = stubSupaPacks([]);
     try {
-      await requireBalance(fakeEnv(), supa, 'u1');
+      await requireBalance(walletEnv(0), noSupa, 'u1');
       expect.fail('should have thrown');
     } catch (err) {
       expect(err).toBeInstanceOf(InsufficientBalanceError);
@@ -222,6 +220,21 @@ describe('requireBalance (v2 gate)', () => {
       expect(e.balance).toBe(0);
       expect(e.threshold).toBe(0);
     }
+  });
+
+  it('fails open (allows) when the WalletDO read errors — never hard-stop a paying user', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const env = {
+      WALLET: {
+        idFromName: (n: string) => n,
+        get: () => ({ fetch: async () => { throw new Error('DO unreachable'); } }),
+      },
+    } as any;
+    await expect(getBalanceGateState(env, noSupa, 'u1')).resolves.toEqual({
+      balance_credits: 0,
+      min_threshold: 0,
+      allowed: true,
+    });
   });
 });
 

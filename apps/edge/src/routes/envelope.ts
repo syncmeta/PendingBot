@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
 import { serviceClient, userClient } from '../lib/supabase';
 import { runEnvelope, resolveEnvelopeSettings, HARD_CAP_TURNS } from '../lib/envelope-runner';
-import { requireBalance, InsufficientBalanceError } from '../lib/billing';
+import { gateConversation } from '../billing/usage-gate';
 import { jsonError } from '../lib/http-error';
 import type { AppBindings } from '../types';
 import type { Json } from '../db/schema';
@@ -94,23 +94,20 @@ envelopeRoutes.post('/trigger', async (c) => {
   // Billing gate. An envelope is multi-step LLM work (probably the most
   // expensive single trigger we have); reject up-front when balance is
   // below threshold rather than burn credits half-way through.
-  try {
-    await requireBalance(c.env, supaUser, userId);
-  } catch (err) {
-    if (err instanceof InsufficientBalanceError) {
-      return c.json(
-        {
-          error: 'insufficient_balance',
-          balance_credits: err.balance,
-          min_threshold: err.threshold,
-        },
-        402,
-      );
-    }
-    throw err;
-  }
-
+  // 群感知门禁:群按池+认缴聚合,1v1 按发起人(计费 P2)。须用 service client
+  // 读全群认缴。系统级级联不在此 gate。
   const supa = serviceClient(c.env);
+  const gateErr = await gateConversation(c.env, supa, { userId, conversationId: parsed.conversationId });
+  if (gateErr) {
+    return c.json(
+      {
+        error: 'insufficient_balance',
+        balance_credits: gateErr.balance,
+        min_threshold: gateErr.threshold,
+      },
+      402,
+    );
+  }
   const { data: run, error: runErr } = await supa
     .from('envelope_runs')
     .insert({

@@ -649,25 +649,10 @@ struct MessageTabView: View {
             // `participants` is embedded so user_user rows know the peer's
             // user id without a second trip — RLS lets us see both rows of
             // a conv we participate in.
-            async let convRows: [ConvRow] = SupabaseStack.shared
-                .from("conversations")
-                .select("""
-                    id, bot_id, user_id, title, conversation_type, feature, round_count, updated_at,
-                    bot:bots!conversations_bot_id_fkey(display_name, model_id, visibility, creator_id),
-                    unread:user_unread_counts!inner(last_message_id, last_message_at, last_message_preview, unread_count),
-                    participants:conversation_participants(participant_type, participant_id)
-                """)
-                // Subagent child conversations are opened from the parent
-                // tool trace only; they should never appear as top-level
-                // message-list rows even though the user is a participant.
-                .neq("conversation_type", value: "subagent")
-                .order("updated_at", ascending: false)
-                // Tie-break: ascending id so the order is deterministic when
-                // multiple convs share an updated_at timestamp (e.g. all
-                // bootstrapped at the same instant for a fresh user).
-                .order("id", ascending: true)
-                .execute()
-                .value
+            // The query itself lives in the shared `ConversationFetch.list()`
+            // (Networking/) so iOS + macOS run one query shape; iOS layers the
+            // cache + peer resolution below, macOS projects a thin summary.
+            async let convRows: [ConvListRow] = ConversationFetch.list()
             // Friends list — cheap (single worker round-trip, even cheaper
             // when the cache is warm), and we need it to render avatars +
             // names on user_user rows. Empty list on auth/network failure
@@ -866,73 +851,10 @@ struct MessageTabView: View {
             )
         }
     }
-    private struct ConvRow: Decodable {
-        static func parseTimestamp(_ s: String) -> Int? {
-            if let secs = ServerTimestamp.parse(s).map({ Int($0.timeIntervalSince1970) }) {
-                return secs
-            }
-            log.warning("timestamp parse failed: \(s, privacy: .public)")
-            return nil
-        }
-
-        let id: String
-        let bot_id: String?
-        let user_id: String?
-        let title: String?
-        let conversation_type: String?
-        let feature: String?
-        let round_count: Int?
-        let updated_at: String? // ISO 8601
-        let bot: BotJoin?
-        // PostgREST returns the embedded user_unread_counts as an array
-        // (the FK has no unique constraint on conversation_id alone — one
-        // row per (user, conv)). With !inner + RLS, callers see at most one.
-        let unread: [UnreadJoin]?
-        let participants: [ParticipantJoin]?
-        struct BotJoin: Decodable {
-            let display_name: String?
-            let model_id: String?
-            let visibility: String?
-            let creator_id: String?
-        }
-        struct UnreadJoin: Decodable {
-            let last_message_id: String?
-            let last_message_at: String?
-            let last_message_preview: String?
-            let unread_count: Int?
-        }
-        struct ParticipantJoin: Decodable {
-            let participant_type: String
-            let participant_id: String
-        }
-        var asConversation: Conversation {
-            let unreadRow = unread?.first
-            let secs: Int = {
-                if let s = unreadRow?.last_message_at,
-                   let ts = ConvRow.parseTimestamp(s) {
-                    return ts
-                }
-                if let updated_at, let ts = ConvRow.parseTimestamp(updated_at) {
-                    return ts
-                }
-                return 0
-            }()
-            return Conversation(
-                id: id,
-                bot_id: bot_id ?? "",
-                user_id: user_id ?? "",
-                title: title,
-                feature_type: feature,
-                conversation_type: conversation_type,
-                last_activity_at: secs,
-                round_count: round_count,
-                bot_name: bot?.display_name,
-                last_message_content: unreadRow?.last_message_preview,
-                last_message_sender_type: nil,
-                last_message_id: unreadRow?.last_message_id
-            )
-        }
-    }
+    // NOTE: the conversation-list row type + query moved to the shared
+    // `ConversationFetch` (Networking/ConversationFetch.swift) so iOS + macOS
+    // run one query. iOS reads `ConvListRow.asConversation` + the raw
+    // `unread` / `participants` embeds from there.
 
     /// Open a fresh chat with `bot` lazily — no DB row is inserted here.
     /// ConversationView materialises the conv on first send, so the user

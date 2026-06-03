@@ -11,7 +11,7 @@ import {
   redeemCode,
   RedemptionError,
 } from '../lib/billing';
-import { getThresholdState } from '../lib/billing-v2';
+import { wallet } from '../billing/wallet-client';
 import { putCachedBalance } from '../lib/balance-cache';
 import { jsonError } from '../lib/http-error';
 import type { AppBindings } from '../types';
@@ -147,53 +147,30 @@ meRoutes.get('/wallet/v2', async (c) => {
   const userJwt = c.var.userJwt!;
   const supa = userClient(c.env, userJwt);
 
-  const [packsResult, ledgerResult] = await Promise.all([
+  // 余额/阈值:WalletDO(Polar 缓存,强一致,计费 P2)—— 不再读 billing-v2 packs
+  // 求和(packs 已退役,不再被扣减,会显示过期值)。账本明细:pnc_ledger(入账/退款
+  // 审计;RLS 仅本人)。packs 字段保留为空数组以兼容旧客户端解码。
+  const [gate, ledgerResult] = await Promise.all([
+    wallet.gate(c.env, userId),
     supa
-      .from('packs')
-      .select(
-        'id, initial_pnc_micros, remaining_pnc_micros, expires_at, status, sales_channel, created_at',
-      )
-      .eq('owner_user_id', userId)
-      .eq('status', 'active')
-      .order('expires_at', { ascending: true, nullsFirst: false })
-      .order('created_at', { ascending: true })
-      .limit(50),
-    supa
-      .from('ledger_entries')
-      .select(
-        'id, pack_id, entry_type, delta_pnc_micros, balance_after_pnc_micros, created_at',
-      )
-      .eq('owner_user_id', userId)
+      .from('pnc_ledger')
+      .select('id, kind, source, delta_pnc_micros, created_at')
+      .eq('subject_id', userId)
       .order('created_at', { ascending: false })
       .limit(20),
   ]);
 
-  if (packsResult.error) {
-    console.warn('[wallet/v2] packs read', packsResult.error.message);
-    return jsonError(c, 500, 'database_error');
-  }
-  const packs = (packsResult.data ?? []).map((p) => ({
-    id: p.id,
-    initial_pnc_micros: Number(p.initial_pnc_micros),
-    remaining_pnc_micros: Number(p.remaining_pnc_micros),
-    expires_at: p.expires_at,
-    status: p.status,
-    sales_channel: p.sales_channel,
-    created_at: p.created_at,
-  }));
-  const totalPncMicros = packs.reduce((s, p) => s + p.remaining_pnc_micros, 0);
-  const thresholdState = getThresholdState(totalPncMicros);
-
   return c.json({
-    total_pnc_micros: totalPncMicros,
-    threshold_state: thresholdState,
-    packs,
+    total_pnc_micros: gate.balanceMicros,
+    threshold_state: gate.thresholdState,
+    packs: [] as unknown[],
     recent_ledger: (ledgerResult.data ?? []).map((l) => ({
       id: l.id,
-      pack_id: l.pack_id,
-      entry_type: l.entry_type,
+      pack_id: null,
+      entry_type: l.kind,
+      source: l.source,
       delta_pnc_micros: Number(l.delta_pnc_micros),
-      balance_after_pnc_micros: Number(l.balance_after_pnc_micros),
+      balance_after_pnc_micros: null,
       created_at: l.created_at,
     })),
   });
@@ -228,13 +205,13 @@ meRoutes.get('/subject', requireSubjectAuth(['subject:read']), async (c) => {
     });
   }
 
-  const wallet = await getSubjectBalance(supa, subject.id);
+  const subjectWallet = await getSubjectBalance(supa, subject.id);
   return c.json({
     subject,
     wallet: {
-      balance_credits: wallet?.balance_credits ?? 0,
-      lifetime_topup_credits: wallet?.lifetime_topup_credits ?? 0,
-      lifetime_spent_credits: wallet?.lifetime_spent_credits ?? 0,
+      balance_credits: subjectWallet?.balance_credits ?? 0,
+      lifetime_topup_credits: subjectWallet?.lifetime_topup_credits ?? 0,
+      lifetime_spent_credits: subjectWallet?.lifetime_spent_credits ?? 0,
     },
   });
 });

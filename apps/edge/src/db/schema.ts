@@ -1967,6 +1967,48 @@ export type Database = {
           },
         ]
       }
+      group_pledges: {
+        Row: {
+          created_at: string
+          pledge_pnc_micros: number
+          status: string
+          subject_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          pledge_pnc_micros: number
+          status?: string
+          subject_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          pledge_pnc_micros?: number
+          status?: string
+          subject_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "group_pledges_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "group_pledges_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       group_pools: {
         Row: {
           share_index: number
@@ -2571,6 +2613,59 @@ export type Database = {
           name?: string
         }
         Relationships: []
+      }
+      pnc_ledger: {
+        Row: {
+          created_at: string
+          delta_pnc_micros: number
+          external_ref: string
+          gross_paid_usd_cents: number | null
+          id: string
+          kind: string
+          markup_snapshot: number | null
+          net_revenue_usd_cents: number | null
+          polar_synced: boolean
+          raw: Json | null
+          source: string
+          subject_id: string
+        }
+        Insert: {
+          created_at?: string
+          delta_pnc_micros: number
+          external_ref: string
+          gross_paid_usd_cents?: number | null
+          id?: string
+          kind: string
+          markup_snapshot?: number | null
+          net_revenue_usd_cents?: number | null
+          polar_synced?: boolean
+          raw?: Json | null
+          source: string
+          subject_id: string
+        }
+        Update: {
+          created_at?: string
+          delta_pnc_micros?: number
+          external_ref?: string
+          gross_paid_usd_cents?: number | null
+          id?: string
+          kind?: string
+          markup_snapshot?: number | null
+          net_revenue_usd_cents?: number | null
+          polar_synced?: boolean
+          raw?: Json | null
+          source?: string
+          subject_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pnc_ledger_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       preset_conversation_templates: {
         Row: {
@@ -4390,6 +4485,26 @@ export type Database = {
       apply_audit_split: {
         Args: { p_audit_log_id: string; p_splits: Json }
         Returns: undefined
+      }
+      apply_group_contribution: {
+        Args: { p_amount_micros: number; p_subject_id: string }
+        Returns: number
+      }
+      apply_group_pool_spend: {
+        Args: { p_spend_micros: number; p_subject_id: string }
+        Returns: undefined
+      }
+      apply_group_refund: {
+        Args: { p_refund_micros: number; p_subject_id: string }
+        Returns: undefined
+      }
+      apply_partial_withdraw: {
+        Args: {
+          p_amount_micros: number
+          p_subject_id: string
+          p_user_id: string
+        }
+        Returns: number
       }
       are_mutual_friends: { Args: { a: string; b: string }; Returns: boolean }
       billing_admin_grant: {

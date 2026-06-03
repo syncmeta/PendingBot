@@ -28,6 +28,7 @@ import { resolveLocale } from '../i18n/locale';
 import { t } from '../i18n/index';
 import type { Json } from '../db/schema';
 import { UUID_RE } from '../lib/ids';
+import { trackEvent, AnalyticsEvent } from '../lib/track';
 import {
   endRealtimeSession,
   recordRealtimeSession,
@@ -344,6 +345,13 @@ realtimeRoutes.post('/session', async (c) => {
   }
 
   const sessionId = crypto.randomUUID();
+
+  // Analytics: a 1:1 voice call is being established (auth + route resolved).
+  trackEvent(c, AnalyticsEvent.VoiceCallStarted, {
+    kind: '1v1',
+    conversation_id: parsed.conversation_id,
+    transport: parsed.transport,
+  });
 
   if (parsed.transport === 'websocket') {
     // WebSocket transport: audio is relayed iOS<->worker<->OpenAI by

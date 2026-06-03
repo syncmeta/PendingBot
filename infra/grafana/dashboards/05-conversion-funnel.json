@@ -1,0 +1,189 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_SUPABASE",
+      "label": "Supabase Postgres (metabase_ro)",
+      "description": "Read-only Supabase Postgres datasource",
+      "type": "datasource",
+      "pluginId": "postgres",
+      "pluginName": "PostgreSQL"
+    }
+  ],
+  "__requires": [
+    { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "12.0.0" },
+    { "type": "datasource", "id": "postgres", "name": "PostgreSQL", "version": "1.0.0" }
+  ],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Conversion skeleton: registrations (users) -> bot created (bots) -> group joined (group_join_requests approved) -> paid (real-money topup in pnc_ledger). Paid = distinct users whose personal subject has a pnc_ledger row with kind='topup' AND source IN ('polar_checkout','iap_ios'). Counts over the dashboard time window unless a stage has no timestamp (see README caveats).",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] }, "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "id": 1,
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+      "pluginVersion": "12.0.0",
+      "title": "1 · Registrations",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COUNT(*) AS registrations\nFROM pendingbot.users\nWHERE $__timeFilter(created_at);",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
+      "description": "Distinct users who created at least one bot in the window (bots.creator_id).",
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] }, "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "id": 2,
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+      "pluginVersion": "12.0.0",
+      "title": "2 · Created a bot",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COUNT(DISTINCT creator_id) AS users_with_bot\nFROM pendingbot.bots\nWHERE creator_id IS NOT NULL\n  AND $__timeFilter(created_at);",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
+      "description": "Distinct users whose group join request was approved in the window (group_join_requests.status = 'approved').",
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] }, "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "id": 3,
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+      "pluginVersion": "12.0.0",
+      "title": "3 · Joined a group",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COUNT(DISTINCT requester_id) AS users_joined_group\nFROM pendingbot.group_join_requests\nWHERE status = 'approved'\n  AND $__timeFilter(COALESCE(decided_at, created_at));",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
+      "description": "Distinct users with a real-money topup in the window: pnc_ledger kind='topup' AND source IN ('polar_checkout','iap_ios'), mapped to the owning user via subjects.user_id.",
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }, "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "id": 4,
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+      "pluginVersion": "12.0.0",
+      "title": "4 · Paid",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COUNT(DISTINCT s.user_id) AS paying_users\nFROM pendingbot.pnc_ledger l\nJOIN pendingbot.subjects s ON s.id = l.subject_id\nWHERE l.kind = 'topup'\n  AND l.source IN ('polar_checkout', 'iap_ios')\n  AND s.user_id IS NOT NULL\n  AND $__timeFilter(l.created_at);",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
+      "description": "Funnel as a single ordered table: stage, users, conversion vs previous stage.",
+      "fieldConfig": { "defaults": { "custom": { "align": "auto", "cellOptions": { "type": "auto" }, "inspect": false }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } }, "overrides": [] },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 5 },
+      "id": 5,
+      "options": { "cellHeight": "sm", "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false }, "showHeader": true },
+      "pluginVersion": "12.0.0",
+      "title": "Conversion funnel (window)",
+      "type": "table",
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH stages AS (\n  SELECT 1 AS ord, 'registrations' AS stage,\n    (SELECT COUNT(*) FROM pendingbot.users WHERE $__timeFilter(created_at)) AS users\n  UNION ALL\n  SELECT 2, 'created_bot',\n    (SELECT COUNT(DISTINCT creator_id) FROM pendingbot.bots WHERE creator_id IS NOT NULL AND $__timeFilter(created_at))\n  UNION ALL\n  SELECT 3, 'joined_group',\n    (SELECT COUNT(DISTINCT requester_id) FROM pendingbot.group_join_requests WHERE status = 'approved' AND $__timeFilter(COALESCE(decided_at, created_at)))\n  UNION ALL\n  SELECT 4, 'paid',\n    (SELECT COUNT(DISTINCT s.user_id) FROM pendingbot.pnc_ledger l JOIN pendingbot.subjects s ON s.id = l.subject_id WHERE l.kind = 'topup' AND l.source IN ('polar_checkout','iap_ios') AND s.user_id IS NOT NULL AND $__timeFilter(l.created_at))\n)\nSELECT\n  stage,\n  users,\n  ROUND(100.0 * users / NULLIF(FIRST_VALUE(users) OVER (ORDER BY ord), 0), 2) AS pct_of_registrations,\n  ROUND(100.0 * users / NULLIF(LAG(users) OVER (ORDER BY ord), 0), 2) AS pct_of_prev_stage\nFROM stages\nORDER BY ord;",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
+      "description": "Daily new registrations trend.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto",
+            "barAlignment": 0, "drawStyle": "bars", "fillOpacity": 60, "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5,
+            "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 14 },
+      "id": 6,
+      "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } },
+      "pluginVersion": "12.0.0",
+      "title": "Daily registrations",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  $__timeGroup(created_at, '1d') AS time,\n  COUNT(*) AS \"registrations\"\nFROM pendingbot.users\nWHERE $__timeFilter(created_at)\nGROUP BY 1\nORDER BY 1;",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "5m",
+  "schemaVersion": 41,
+  "tags": ["pendingbot", "conversion", "funnel"],
+  "templating": { "list": [] },
+  "time": { "from": "now-30d", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "PendingBot — Conversion Funnel",
+  "uid": "pb-conversion",
+  "version": 1,
+  "weekStart": ""
+}

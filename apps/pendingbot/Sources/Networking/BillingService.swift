@@ -271,14 +271,20 @@ enum BillingService {
             let id: String
             let packId: String?
             let entryType: String
+            /// 账本来源(group_topup / group_refund / iap_ios / …)。后端 pnc_ledger
+            /// 的 `source` 列;packs 退役后用于区分群注资/退款等场景。
+            let source: String?
             let deltaPncMicros: Int
-            let balanceAfterPncMicros: Int
+            /// 扣后余额。WalletDO 模型下后端恒返回 null(余额事实源在 Polar/DO,
+            /// 不在每条账本行上),故必须可选 —— 否则整页解码失败。
+            let balanceAfterPncMicros: Int?
             let createdAt: String
 
             enum CodingKeys: String, CodingKey {
                 case id
                 case packId = "pack_id"
                 case entryType = "entry_type"
+                case source
                 case deltaPncMicros = "delta_pnc_micros"
                 case balanceAfterPncMicros = "balance_after_pnc_micros"
                 case createdAt = "created_at"

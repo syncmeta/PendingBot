@@ -2,7 +2,7 @@ import type { SupabaseClient } from './supabase';
 import type { Env } from '../types';
 import { getCachedBalance, putCachedBalance } from './balance-cache';
 import { kvConfig } from './kv-config';
-import { getOwnerBalanceMicros } from './billing-v2';
+import { wallet } from '../billing/wallet-client';
 
 // Billing layer (P0). All schema changes ship in 0033_billing.sql /
 // 0034_billing_admin_rpcs.sql. This module is the single point that knows
@@ -217,14 +217,23 @@ export async function getBalanceGateState(
   userId: string,
   _opts?: { readBalanceWhenDisabled?: boolean },
 ): Promise<BalanceGateState> {
-  // Billing v2 authoritative (post-cutover #190). The pre-call gate now
-  // reads the user's v2 pack balance and blocks only when EXHAUSTED
-  // (≤ 0) — design §7 hard-stop. `balance_credits` here carries PNC
-  // micros (the field name is v1-legacy; callers only branch on
-  // `allowed` + surface the number, so the unit change is cosmetic).
-  // No KV cache: the SUM over active packs is a single cheap indexed
-  // read, and a stale cache after a debit would mis-gate.
-  const micros = await getOwnerBalanceMicros(supa, { kind: 'user', userId });
+  // WalletDO authoritative (计费 P2). The pre-call gate reads the user's
+  // strong-consistent WalletDO cached balance (one DO per subject; here
+  // subject = the user's own id for the 1v1/bot path — group convs skip
+  // this gate entirely) and blocks only when EXHAUSTED (≤ 0) — design §7
+  // hard-stop. `balance_credits` carries PNC micros (the field name is
+  // v1-legacy; callers branch on `allowed` + surface the number).
+  // WalletDO is the cache, so no extra KV layer here.
+  void supa;
+  let micros: number;
+  try {
+    ({ balanceMicros: micros } = await wallet.gate(env, userId));
+  } catch (err) {
+    // A WalletDO read failure must NOT hard-stop a paying user. Fail open
+    // (allow) — the post-call debit + DO overdraft floor still bound spend.
+    console.warn('[billing.getBalanceGateState] wallet.gate failed, fail-open', err);
+    return { balance_credits: 0, min_threshold: 0, allowed: true };
+  }
   return {
     balance_credits: micros,
     min_threshold: 0,

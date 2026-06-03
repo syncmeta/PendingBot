@@ -478,26 +478,10 @@ struct FriendsTabView: View {
         }
     }
 
-    private struct BotDecodable: Decodable {
-        let id: String
-        let slug: String?
-        let display_name: String
-        let model_id: String?
-        let visibility: String?
-        let creator_id: String?
-        let voice_call_enabled: Bool?
-        let is_active: Bool?
-    }
-
-    /// Embed wrapper for `from("user_bot_contacts").select("added_at, bot:bots!fk(...)")`.
-    /// The Friends Tab now lists bots the user has explicitly added (or that
-    /// were added implicitly via the auto-conv trigger / bootstrap); the bot
-    /// payload comes back nested under `bot`. `added_at` is the contact-row
-    /// timestamp (ISO 8601) driving the "按加好友时间" sort.
-    private struct BotContactDecodable: Decodable {
-        let added_at: String?
-        let bot: BotDecodable
-    }
+    // NOTE: the `user_bot_contacts` row type + query moved to the shared
+    // `BotContactsFetch` (Networking/BotContactsFetch.swift) so iOS + macOS run
+    // one query. iOS maps `BotContactRow` → BotPick below; macOS projects its
+    // own thin contact. (`added_at` ISO 8601 drives the "按加好友时间" sort.)
 
     /// Pull a pending /b/<slug> deep link out of the shared inbox and open
     /// the add-bot preview on it. The small defer lets a concurrent tab
@@ -570,12 +554,10 @@ struct FriendsTabView: View {
             // is filtered client-side after decode — soft-deleted bots stay
             // hidden but their contact row remains (for cheap re-show if the
             // bot comes back).
-            async let botRowsResp: [BotContactDecodable] = SupabaseStack.shared
-                .from("user_bot_contacts")
-                .select("added_at, bot:bots!user_bot_contacts_bot_id_fkey!inner(id, slug, display_name, model_id, visibility, creator_id, voice_call_enabled, is_active)")
-                .order("added_at", ascending: true)
-                .execute()
-                .value
+            // Query lives in the shared `BotContactsFetch.list()` (Networking/)
+            // so iOS + macOS run one query shape; iOS layers the cache + filters
+            // + sort below, macOS projects a thin contact.
+            async let botRowsResp: [BotContactRow] = BotContactsFetch.list()
             async let contactsResp: [HumanPick] = loadContactsWithProfiles()
             async let incomingFR: [PendingFriendRequest] = loadIncomingFriendRequests()
             async let incomingGroupInvites: [PendingGroupInvitation] = loadIncomingGroupInvitations()

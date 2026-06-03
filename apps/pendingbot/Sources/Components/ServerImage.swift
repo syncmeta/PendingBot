@@ -1,9 +1,8 @@
-#if os(iOS)
 import SwiftUI
-import UIKit
 import Supabase
 
-/// Loads an auth-gated image from the Worker (`/v1/uploads/<id>`).
+/// Loads an auth-gated image from the Worker (`/v1/uploads/<id>`). Cross-platform
+/// (iOS + macOS) — pure Foundation fetch + `PlatformImage` decode, no UIKit.
 ///
 /// That endpoint sits behind `requireSession()` — it only honours an
 /// `Authorization: Bearer <jwt>` header. A bare `AsyncImage` can't carry
@@ -15,13 +14,13 @@ struct ServerImage: View {
     let serverURL: URL
     var contentMode: ContentMode = .fit
 
-    @State private var image: UIImage?
+    @State private var image: PlatformImage?
     @State private var failed = false
 
     var body: some View {
         Group {
             if let image {
-                Image(uiImage: image)
+                Image(platformImage: image)
                     .resizable()
                     .aspectRatio(contentMode: contentMode)
             } else if failed {
@@ -54,11 +53,11 @@ struct ServerImage: View {
             let (data, response) = try await URLSession.shared.data(for: req)
             guard let http = response as? HTTPURLResponse,
                   (200..<300).contains(http.statusCode),
-                  let ui = UIImage(data: data) else {
+                  let decoded = PlatformImage(data: data) else {
                 failed = true
                 return
             }
-            image = ui
+            image = decoded
         } catch {
             failed = true
         }
@@ -73,9 +72,11 @@ private extension String {
     }
 }
 
+#if os(iOS)
 /// Full-screen viewer for a tapped attachment image — pinch to zoom,
 /// drag to pan when zoomed, double-tap to toggle 1×/2×. Tapping the
-/// backdrop or the close button dismisses.
+/// backdrop or the close button dismisses. iOS-only (uses `Theme` + touch
+/// gestures); Mac doesn't surface a full-screen pinch viewer yet.
 struct ImageViewer: View {
     let path: String
     let serverURL: URL

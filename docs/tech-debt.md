@@ -31,6 +31,24 @@
 
 ---
 
+## 🟡 拆东墙补西墙
+
+### 🟡 metabase_ro BI 角色读不了 RLS 受限表 — Grafana 财务看板多个 panel 取不到数
+- **发现**: 2026-06-03 · chore/dashboard-sql-repoint（#238 看板重指 Polar schema）
+- **位置**: `supabase/migrations/20260602051354_metabase_readonly_role.sql`（角色 NOBYPASSRLS + 无函数 EXECUTE）;受影响表 `group_pledges`/`group_pools`/`group_contributions`/`bots`/`group_join_requests` 的成员域 RLS policy
+- **问题**: `metabase_ro`（Grafana Postgres 数据源连接角色，pooler 形式 `metabase_ro.<ref>`）是 NOBYPASSRLS,且没有 grant 任何函数 EXECUTE。这些表的 RLS policy 要么 `TO authenticated`(无 auth.uid() 时 0 行匹配),要么 `USING <fn>(...)` 调 `_grp_caller_role`/`is_bot_invitee`/`is_participant`(角色无 EXECUTE → SELECT 直接 42501 报错)。实测:`group_pools`/`group_contributions` 返回 200 但**永远 0 行**;`group_pledges`/`bots`/`group_join_requests` 直接 **500 permission denied for function**。
+- **影响**: 看板 03(群池/认缴/实缴)在补 policy 前**全空或报错**;看板 05 的"创建 bot""加入群"两 stage 也一直报错(早于本次改动、与计费重指无关)。BI"看(只读)和改(可写)分家"的设计在 RLS 表上没打通——只读角色拿不到聚合数据。
+- **建议**: 已起草 `supabase/migrations/20260603094114_metabase_ro_group_billing_read.sql`(给 metabase_ro 在 3 张群计费表加 `FOR SELECT TO metabase_ro USING (true)` 的宽松读 policy),但 `db push` 被 auto-mode 当作未授权的生产权限变更拦下,**未 apply**(文件留在主 worktree `/dev` 未跟踪,待用户审阅)。`bots`/`group_join_requests` 同类问题需另起一摊(本任务范围外)。决策口径:要么给 metabase_ro 逐表加只读 policy + grant 相关函数 EXECUTE,要么为 BI 单独建 `security definer` 聚合视图。
+- **状态**: 待办（看板 SQL 已按真实 schema 写对并重导;数据落地等 RLS 读权限收口）
+
+### 🟡 Mac 端消息历史查询仍是 iOS inline 的手抄复刻（其余 4 条已收口）
+- **发现**: 2026-06-03 · feat/t45-ios-viewer（#212 真复用收口）
+- **位置**: `apps/pendingbot/Sources/Networking/ChatDataSource.swift:loadMessages`；对照 iOS `Features/Message/ConversationView+Loading.swift:402`（18 列超集 → `Row` → cache）
+- **问题**: #212 把 Mac 复刻的查询往「共享 fetch、iOS 也改用」方向收口，**已收口 5 块**：实时通道（`RealtimeManager`/`RealtimeSocket` 去 gate，两端同一条自建 RealtimeHubDO，删了 Mac 轮询）、会话列表（`ConversationFetch.list()`）、bot 好友（`BotContactsFetch.list()`）、人类好友（`ContactsFetch.fetch()` + 中性 `ContactProfile`，iOS `ContactsAPI` 改成映射它）、来信（`EnvelopeFetch.list/get`，`EnvelopeRun` 从 iOS-only 移到共享）—— iOS 缓存/富渲染层叠在共享 fetch 上、Mac 投影薄 summary，查询形状单一来源。**仅剩 1 条仍复刻**：消息历史 —— iOS 是 18 列超集喂 GRDB 缓存 + recall/voice-recap/citations/tool-trace/attachments 派发的重管线（#145-147/#150 验证过的最易碎路径），Mac 是 4 列轻读（id/role/content/message_seq）只渲染纯气泡，两者**合理地不同**，强行统一要么逼 Mac 扛它不渲染的 14 列、要么动那条脆弱管线。
+- **影响**: 这条查询形状两边各存一份，列漂移时不会编译报错、只在运行期错——属"复制粘贴而非抽象"。但风险被 Mac 只读核心稳定列（id/role/content/message_seq）压低；真正的根治时机是 Mac 渲染富内容（附件/citations）时，那时 Mac 自然需要 iOS 超集行，顺势抽 `MessagesFetch` 最划算。
+- **建议**: 等 Mac 接附件/citations 渲染时，把 `ConversationView+Loading` 的 `Row`+查询抽进共享 `MessagesFetch`（iOS 缓存派发叠在上、Mac 投影），收口时进模拟器验 iOS 不回归。
+- **状态**: ✅ **已解决（2026-06-03）** —— Mac 接图片附件渲染时顺势收口:新增 `Networking/MessagesFetch.swift`（`MessageRow` 18 列超集 + `AttachmentRef` 从 iOS-only 移来 + `latest()` + `attachmentMeta()`）;iOS `ConversationView+Loading` 改调它（删局部 Row + 内联 attachments 查询,200 行 dispatch 字节级不变）;Mac `ChatDataSource` 改调 + 投影 + 滤 log/deleted/语音 recap + 解析图片附件。**至此 Mac 5 条查询（会话/bot好友/人类好友/来信/消息）全部两端同一份,零手抄复刻**。两端编译过;iOS 消息列表模拟器冒烟无回归（会话内消息因无 tap 工具未点验,改动逐字搬迁+dispatch 未动,风险极低）。剩余 Mac 缺口:bot/会话/来信头像（数据层补 avatar_path）、非图片附件的 icon+name chip、Mac 全屏看图 viewer。
+
 ## 🔴 根基级
 
 ### 🔴 Bot 公开分享链路被 `bots` 表 RLS 堵死 — 陌生人扫码/点链接解析 public_invite bot 命中 0 行
@@ -39,7 +57,7 @@
 - **问题**: bot 分享功能（slug / 二维码 / Universal Link，task #121-128）代码已几乎全做完且提交，但 iOS 解析 slug 是**直接查 Supabase** `bots` 表、靠 RLS 控可见性。唯一的 SELECT policy `bots_visible_read` 对 `public_invite` bot 要求 `is_bot_invitee(id, auth.uid())` —— 而该函数只在 `bot_invites` 表有预先邀请行时为真（邀请只能由 bot 主人按 handle 主动塞）。陌生人扫码/点分享链接时**还不是被邀请人** → SELECT 命中 0 行 → iOS 显示"找不到这个机器人,或者它不允许你加入"。
 - **影响**: 整个分享链路（slug→二维码→扫码→universal link→AddBotPreviewPage）对"非预先邀请者"全部走不通 —— 而分享功能的**全部意义**就是给陌生人加。UI 文案还写着"别人按这个标识、链接或二维码加你的机器人",与 RLS 实际行为直接矛盾。这是个"iOS+edge 表层都做了、DB 授权层没跟上"导致的 ship 即坏缺口。edge 侧也确认没有任何按 slug 解析 bot 的路由（纯靠 client 直查）。
 - **建议**: 二选一：(a) 放宽 `bots_visible_read`，让 `visibility='public_invite'` 对所有 authenticated 可 SELECT（public 的本意就是可被发现自加）；(b) 加一个 service-role 的 `GET /b/:slug` 解析端点，绕开 client 直查 + RLS。改完跑 #128 验证（含真机扫码闭环），通后翻 #121-128 状态。注意 `is_bot_invitee` 的"单向门"语义要和 spec `project_bot_visibility` 对齐确认。
-- **状态**: 待办（task #121-127 代码已落但功能被此 bug 堵死、保持 pending；#128 验证未跑）
+- **状态**: ✅ **已解决/被取代（2026-06-03 核实）** —— 旧的「client 直查 bots 表靠 RLS」分享路径已被**邀请链接模型**(decisions.md D1，task #191-194)整体取代：`bot_invite_links` 表 + `apps/edge/src/routes/bot-invites.ts` 的 `GET /v1/bot-invites/:token`(service-role RPC `bot_invite_link_resolve` 预览) + `POST /:token/redeem`(`bot_invite_link_redeem` 授予)。iOS 走 `resolveBotInvite`/`redeemBotInvite` 经 worker，**不再 client 直查 bots 表**，所以 RLS 堵死的结构性病根消失(redeem 由 service-role 写，bots/user_bot_contacts RLS 保持严格)。注:这是「结构性 blocker 消失」，完整的陌生人扫码闭环真机 QA 仍未单独跑(并入分享功能整体验证)。
 
 ### 🔴 PendingBot Mac 端业务接入只覆盖 5 tab 中的 1 个,其余仍是 placeholder
 - **发现**: 2026-05-29 · feat/mac-multiplat-t01-p0(worktree wf_bb2bdb07-141-5)
@@ -71,7 +89,7 @@
 - **问题**: billing v2 给 sandbox 加上了 `sandbox_runtime` usage_event 行（记录 elapsed seconds + conversation/owner），但 Cloudflare Sandbox 的 per-second container 价格目前没在 worker 里维护，所以 `vendor_cost_usd` 暂时硬写 0、`cost_source='manual'`。usage_event 行存在、ledger 不扣钱。
 - **影响**: pre-launch 没有真实滥用流量，先记录形态再补价格是合理的折中；但发布前必须有真实价目，否则用户跑无限循环代码不计费。同样的 hole 也存在于 storage_transfer / push_delivery，这两类目前完全没接入。
 - **建议**: (1) 把 Cloudflare Sandbox 的 container 价格表（memory-seconds + disk + network egress）建成 `sandbox_prices` 表，跟 `web_tool_prices` 同一个模式；(2) `runPython` 里改用真实价目算 `vendor_cost_usd`；(3) 顺手把 R2 上传/下载/转码、APNs 短信/邮件按同样的 usage_event + pricebook 模式补齐。
-- **状态**: 待办
+- **状态**: 部分迁移（2026-06-02 · billing P2 Phase F）。`runPython` 已从旧 billing-v2 `settleUsage(vendor_cost_usd=0)` 改为接 WalletDO（`wallet.gate` 前置门禁 + `wallet.debit('sandbox_runtime')` 后置扣费），不再写 0。但**价格仍是占位**（见下方新条目「sandbox 真实单价 + 计量维度待定」），核心 hole（无真实价目）未关。
 
 ### 🔴 Edge 用户态路由里 service-role 鉴权边界过于分散
 - **发现**: 2026-05-25 · codex/security-architecture-audit
@@ -177,6 +195,14 @@
 - **问题**: billing v2 design §5 把 `sandbox_runtime`（container/runtime 秒数、磁盘、网络）列为应纳入 PNC 账本的成本分类，但 v1 从来没有给 sandbox 计过费，code-exec 工具调用 Cloudflare Sandbox SDK 时不产生任何 usage_event / audit cost。因此 billing v2 dual-write（#183）也无从镜像——没有可镜像的 v1 成本。当前 `dualWriteV2` 只接了 model 成本（llm/voice）和 web_tools。
 - **影响**: 沙盒是可被滥用的变量成本（长时间运行的 container、磁盘、egress），目前完全免费。用户可以无限跑 execute_code 不掉余额。pre-launch、单人、沙盒 auto-sleep 的现状下风险有限，但发布前必须补上，否则是一个开口的成本漏洞。
 - **建议**: 在 sandbox 生命周期（启动→运行→sleep）打点 container-seconds，按 Cloudflare Sandbox 计价转 `vendor_cost_usd`，走 `settleUsage({category:'sandbox_runtime', quantityUnit:'seconds'})`。design doc §7 要求 sandbox 走周期 settle + 余额 ≤ 0 立即终止容器——这部分要和 sandbox.ts 的 sleepAfter 生命周期一起做。
+- **状态**: ✅ 基本闭合（2026-06-02 · billing P2 Phase F）。`runPython` 现在：执行前 `wallet.gate`（`exhausted` 抛 `SandboxGateError`，code-exec 工具转「余额用完」文案，不跑代码）；执行后按 wall-clock 秒数扣 `wallet.debit(category:'sandbox_runtime')`，dedupeId=`sandbox:<conv>:<startedAt>` 幂等。subjectId 复用 router 解析（群/临时群/crew→`responsible_subject_id`，否则发起 userId）。**仍未做**：周期 settle + 余额≤0 中途终止容器（当前最小可用=执行完一次性扣，30s 超时已封顶单次成本，长任务跨多次调用各扣各的，可接受）；真实单价见下条。
+
+### 🟡 sandbox 真实单价 + 计量维度待定（当前 wall-clock × 占位价）
+- **发现**: 2026-06-02 · billing P2 Phase F
+- **位置**: `apps/edge/src/lib/sandbox.ts`（`SANDBOX_USD_PER_SECOND` 常量）
+- **问题**: (1) **单价是占位**——`SANDBOX_USD_PER_SECOND = 0.0001`（≈0.36 USD/h）是随手填的 stand-in，**不是定价决策**。真实数字得从 Cloudflare container 计价（running 态按 provisioned memory+disk 计费）推。(2) **计量维度可能不对**——现在按 **wall-clock 秒** 计，但 Cloudflare 实际按 memory-seconds + disk + egress 计；CPU/内存重的任务和空转任务被同价对待。Sandbox SDK `runCode` 的返回（官方文档核实：`{ code, logs, results, error, executionCount }`）**不含任何时长/资源字段**，所以 worker 侧只能拿 wall-clock，要按内存/CPU 计就得换数据源（容器 DO 自报 or CF 用量 API）。
+- **影响**: 占位价上线 = 系统性多扣或少扣；wall-clock 计量对滥用者（高内存长跑）偏宽松。pre-launch 无真实流量，先把门禁+扣费形态接通是合理折中。
+- **建议**: 发布前 (1) 用 Cloudflare container 实际价目替换 `SANDBOX_USD_PER_SECOND`，最好建 `sandbox_prices` 表（同 `web_tool_prices` 模式）；(2) 评估是否需从容器侧拿 memory-seconds 取代纯 wall-clock；(3) 视成本量级决定是否加周期 settle + 余额≤0 中途 kill 容器。
 - **状态**: 待办
 ### 🟡 群语音 DO↔容器掉线重连/resync 控制逻辑已写+单测，但端到端音频恢复 runtime 未验证
 - **发现**: 2026-05-29 · feat/group-voice-reconnect
@@ -441,13 +467,86 @@
 - ~~🔴 **`get_crew_whiteboard` 在 service-role 下 `RAISE 'auth required'`**~~ **（2026-06-03 已修，G1）**。根因：RPC 体内 `caller_id := auth.uid(); IF caller_id IS NULL THEN RAISE 'auth required'`，但 edge 一律用 **service-role client** 调它（auth.uid()=NULL）→ 必 500。这是 crew 上下文注入（白板→session，T4.1/T4.2 核心通道）真跑就炸的潜伏雷（同 `client_message_id` 类）。**修法**：`GET /v1/crews/:crewId/messages`（中栏）+ `GET /v1/sessions/:id/inbox`（runner）两处都改成**直接读 `crew_announcements` 表**（访问门禁在路由层已做），不再调该 RPC。已部署（`9f4234eb`）。RPC 没删（仍带 guard，将来 authenticated 调用方可用）。
 - 🟡 **白板→session 注入闭环（G1-G3）只编译/端点 live，没真机跑过** (2026-06-03)。runner（`CrewSessionRun.runCrewContextPoll`）每 4s 拉 `/inbox`，把白板近况 + 未读 mailbox 渲染成 `<crew-whiteboard>` 块写进 `SteeringChannel` 的 crew-context slot（UserPromptSubmit hook 每轮 tail 注入，缓存安全），注入后 mark-delivered。**未验**：① agent 真跑时确实读到该块并按相关性行动（prompt 工程对不对、会不会被当成"任务"误执行——digest 里加了"这是参考不是任务"的提示，但没真测）；② 4s 轮询 + mark-delivered 的时序（同一条消息会不会在 mark 前重复注入一两轮）；③ 仅 logged Claude（Codex 无 steering channel → 不注入,BYOK 同）。归 T5.3 真机 QA。
 - 🟡 **右栏「持续对话」回合完成后不续上下文（resume-after-complete 缺口）** (2026-06-03)。三栏重排后右栏 = composer-first 常驻 session（`CrewSessionWindowView`，spec §9 落地）：第一条消息零配置起 session，运行中再发 = `enqueueFollowUp` 走 `--resume` 续回合（保上下文 + 缓存前缀）。**但** claude `-p` 单回合跑完、队列空 → `finalize`（status=completed）。此后再发消息 `send()` 判 `status != .running` → **起一个全新 agent**（fresh context，丢历史）。所以「像 Claude Desktop 一直聊」只在**一个回合进行中持续发**时成立；agent 跑完闲下来后下一条消息会另起炉灶。真·持续对话要改 runner lifecycle：闲置不 finalize、下条消息 `--resume` 复活同一 agent session（`agentSessionId` 已存着，`startResumeTurn` 也在，差「completed 后还能 resume」这一段 + server row 不立即关）。属右栏体验的后续打磨，非阻塞。Codex 同理且更弱（resume 返回 nil）。
+  - **（2026-06-02）iOS PendingBot 只读 viewer 已落地并真机验通（#204）** — `RemoteSessionsView.swift`（session 列表→push 转写，3s 轮询）+ `getCrewSessionEvents` / `CrewSessionLogEvent`，入口是 `CrewDetailV2View` 右上角 terminal 按钮（sheet）。镜像 Mac `RemoteSessionsView`（`acf9db29`）。**编译过 + 用户用骆店账号在 iOS 上打开 viewer 看到 test2 渲染（2026-06-02 验通）**。
+  - **（2026-06-02）iOS viewer 实时层 + cancel 遥控已落地（#204 第二刀，编译绿）** — `SessionProxyClient.swift` + `SessionProxyProtocol.swift`（viewer-only 镜像 Mac `feat/t45-ws-transport` 的 SessionProxyClient）：viewer 连 `GET /v1/sessions/:sid/proxy/connect?role=viewer`（用 Supabase JWT，token 每次 reconnect 取 fresh），收 `session.state` → transcript 顶部实时 banner，工具栏「停止」按钮发 `session.command{kind:cancel}`。**仅 BUILD SUCCEEDED，端到端两设备 QA 未做**：要 Mac PendingCrew（带 `feat/t45-ws-transport` 的 runner 发布）起一个 **running** session 实时推 state，iOS 同账号 viewer 看实时 banner + 点停止能真的取消。wire 格式对齐 edge + Mac 已验证侧（Mac viewer 已验过发 cancel/收 state，`40870183`），实时层是 best-effort 装饰（连不上回退已验证的只读轮询）。**剩**：① 两设备 E2E QA（活 session）② permission.request/decision over WS（iOS 现走 HTTP T4.3 卡片，WS 实时通道未接）。
+  - **（2026-06-02）PendingBot macOS 端 viewer 也落地（#204 第三刀，编译绿）** — PendingBot 是 iOS+macOS multiplatform 工程；把 viewer 所需的纯数据/网络/展示层抽成跨平台（`CrewSessionAPI.swift` / `SessionProxyClient` / `SessionProxyProtocol` / `CrewSessionPresentation.swift` 去掉 `#if os(iOS)`），新增 macOS UI `Sources/Mac/Views/MacRemoteSessionsView.swift`（Mac 三列 detail：crew 列表→session 列表→实时转写+cancel），接进 `MacRootView` 的 Crew tab。**iOS + macOS BUILD SUCCEEDED**。三端 viewer 齐：iPhone（已真机验只读）+ iPad（随 iOS universal，同代码，布局打磨待做）+ Mac（编译绿，**待登录骆店在 Mac app 真机看 test2 渲染**）。**copy-paste/DRY 注记**：Mac viewer UI 是 iOS `RemoteSessionsView` 的平台适配（HSplitView vs NavigationStack），逻辑重复但 SwiftUI 布局差异大，未强行抽共享 ViewModel；纯数据/网络/展示已抽共享。Mac 端 crew 其它业务（创建/群聊/详情）仍是 iOS-only，Mac 仅接了 viewer 这一刀。
 - **T5.3 PendingCrew E2E QA** — BYOK 路径和 cloud 路径的端到端测试（创建 crew → 派单 → 收到结果 → 计费记账）从未真机跑通；只有编译过 + 单测覆盖。需要人工 QA pass。
 
 ### 部分/骨架级、需要补完
+
+- **PendingBot 完整原生 Mac 版 — 2026-06-02 夜间进展(#212)** — 用户明确要完整原生 SwiftUI macOS(非 Catalyst)。架构:逻辑/数据/网络跨平台共享,UI 原生重画。夜间一口气接了 4 块,均两端 BUILD SUCCEEDED + 合 main:登录(MacWelcomeView+MacRootGate,Email OTP+Turnstile,**用户真机验通**)、机组 viewer(MacRemoteSessionsView)、消息(MacMessagesView + 跨平台 ChatDataSource,会话列表+1:1/群文字聊天+流式发送)、好友(MacFriendsColumn + FriendsDataSource,机器人+人类好友只读列表)。
+  - **关键验证缺口(用户醒后必看)**:**Mac 真实 UI 渲染没截图核对**——agent 截不了 Mac 桌面(computer-use 掉线、screencapture 无屏幕权限)。已做的替代验证:① 所有 Supabase 查询的列名/FK/role 值用 live DB introspection 核对(messages.role 仅 user/bot、conversations_bot_id_fkey、user_unread_counts 列、user_bot_contacts FK 抄 iOS 已验证查询)② 命令行跑 Mac app binary 8s,stderr 无崩溃/无 401/无未捕获异常 ③ iOS 范本装模拟器截图确认跨平台抽取没退化。**但每个 tab 在 Mac 上实际渲染长啥样、点击交互对不对、流式聊天收发是否正常,需用户在 Mac app 逐 tab 真机过一遍**。
+  - **各模块第一版简化(均记此)**:消息——无 Realtime(3s 轮询+发后 reload)、无附件/图片/语音、无 @提及、无群组 peer 解析、时间戳列刻意不 select(规避 Decodable 歧义);好友——只读,无点击进会话/头像图片(ServerImage iOS-only)/加好友/备注/排序;机组——仅 viewer,无创建/群聊/详情。
+  - **DRY 注记**:iOS 的会话列表/消息加载逻辑内联在 `MessageTabView`/`ConversationView`(UIKit 耦合的 View),没法直接复用,所以 Mac 新建了 `ChatDataSource`/`FriendsDataSource` 跨平台 service 复刻同样的 Supabase 查询——查询逻辑与 iOS 有重复。未来可让 iOS 也迁到这两个 service 去重(改 iOS 范本有回归风险,夜间没动)。
+  - **未做(夜间因复杂度+无法真机验时序而留)**:来信 tab(EnvelopeAPI:realtime-hub WebSocket + EnvelopeRun/Turn + thinking trace,最复杂)、机组完整(创建 crew 是写操作会污染 prod、群聊)、跨 tab 连贯交互(好友点击进会话需 ensure-conversation + SwiftUI 跨 tab selection 状态机,夜间无法验时序)、Realtime 推送(三端 Mac 现全轮询)、头像图片。
+
 
 - **PendingCrew 后端单元测试** — `8e0eac32` 已记录：`apps/pendingcrew-server` 几乎没有单测覆盖，BYOK 路径切换、CrewStore reset、template store 三处都是裸代码。建议后续 session 补 vitest。
 - **群权限矩阵 client 端消费** — `207d5203` edge 给了 `/v1/group-subjects/*` 路由，iOS / Mac 客户端还没真正消费；目前权限判定仍走旧 client-side 规则。
 - **Mac 三栏壳的实际内容** — `c174f734` 是结构脚手架；middle column 的会话列表 + detail column 的消息流都还是 placeholder，等 IM 主路径打通后填。
 - **First-launch disclosure modal 文案** — `280d5b7b` 走通了流程，正式文案待法务/产品定稿。
-- **billing-v2 settleUsage CAS-loss retry** — `cbb4fb3f` 实现了重试，但极端高并发下的退避策略未压测；30 天观察期内若看到大量重试再优化。
+- **billing-v2 settleUsage CAS-loss retry** — `cbb4fb3f` 实现了重试，但极端高并发下的退避策略未压测；30 天观察期内若看到大量重试再优化。（注:billing-v2 settleUsage 已于 #209 整体退役删除,本条历史留痕。）
 
+- 🟡 **计费 P2 throttle 档"降级"未实装（LLM 路径）** — `gateUsage`(`apps/edge/src/billing/usage-gate.ts`)已正确分出 4 档阈值(exhausted 硬停 / low / throttle / sufficient),`<5 PNC = throttle` 也正确返回,但 **throttle 时的"降级"动作没做**:计划里写的 OpenRouter `cost_quality_tradeoff=max` 经官方文档核实(<https://openrouter.ai/docs/guides/routing/routers/auto-router>)**只对 `model: "openrouter/auto"` 生效,且是 `plugins:[{id:"auto-router",cost_quality_tradeoff:10}]` 的 plugin 配置,不是顶层 `=max`**;本仓库 router 是纯 passthrough(把调用方 model slug 原样发),不走 auto-router,所以该参数对正常 slug 是 no-op。要真正"降级"得在 throttle 时(a)临时切到 `openrouter/auto`+plugin、或(b)切便宜模型 pin,并(c)关工具——这要把 threshold 信号穿过 `runChatTurn`/各 runner(memory/envelope/title/group)到 completion 构造处,跨多文件接线,本任务(Phase C)未做。**当前 throttle 等同 low(放行不降级)**,只是不会硬停。
+- 🟡 **计费 P2 low 档"余额低"提醒未注入** — 阈值 low(<50 PNC)gate 正确放行,但"在下一条回复里注入余额低提醒(24h 去抖)"这个 UX 从未实装(billing-v2.ts 注释里只写了意图)。需要在回复渲染层加一个 threshold 信号通道 + 去抖。gate 层已就绪(`gateUsage` 返回 `thresholdState`),缺消费方。
+
+- ✅/🟡 **计费 P2 群成本分摊(share-index)已重挂到 Polar/WalletDO**(2026-06-02,用户拍板"用 v2 共享池方法") — 计划 `docs/superpowers/plans/2026-06-02-group-wallet-polar-rehome.md`。已落:`billing/share-index.ts`(纯数学)+ 迁移 `apply_group_pool_spend`/`apply_group_contribution`/`apply_group_refund` 原子 RPC + `billing/group-wallet.ts`(contribute/refund/dissolve)+ 群消费在 router/群语音/sandbox 扣费后衰减 share_index + 端点 `/topup`(改 contribute)`/leave`(自退款)`/dissolve`。typecheck 0 + 523 测试。**剩余 🟡 尾巴(未做,见下三条)**:链式退款、漂移报警、`/leave` 不删 membership 行。
+  - ✅ **链式退款覆盖群注资**(2026-06-02 完成,#210):`billing/group-wallet.ts clawbackFromGroups` —— Apple/Polar 退款先从用户各群 active 份额按 share_now 冲减(`apply_partial_withdraw` 缩份额+池 + `reduceCredits` 群 Polar,不返还用户)、再退个人剩余,平台只自担"已被群花掉"的部分。Polar `order.refunded` + RC `CANCELLATION` 两路接入。堵住"注资进群→退购买款→群留额度"漏洞。
+  - ✅ **群池镜像漂移报警**(2026-06-02 完成,#210):`WalletDO.checkGroupPoolDrift` 在 alarm 对账时比对 `group_pools.total_remaining` vs Polar 群余额,偏差 > 1 PNC `console.warn`(不自动改写)。
+  - ✅ **`/leave` 一步退群**(2026-06-02 完成,#210):退份额 + 清认缴(setPledge 0)+ service 直删成员行;群主拒退(须先转让/解散)。
+  - ✅ **群 bot 异步回复前置 gate**(2026-06-02 完成,#210):`lib/group-dispatch.ts dispatchGroupTurn` 开头按群池+认缴聚合 `gateConversation`,exhausted 直接 `no_balance` 不发起 bot 回合(读失败 fail-open)。
+
+- ✅ **billing-v2 退役完成(#209,2026-06-02)** — 删 16 文件:`billing-v2.ts`(settleUsage/packs)、`billing-v2-{group,pack,lemon,iap,iap-verify,refund,expiry}.ts`、pack 过期 cron;去掉 `/lemonsqueezy/webhook`·`/iap/*` 路由;`room-voice` OwnerRef→WalletOwner;清孤儿 env/cron。保留 `pnc_ledger` + `group_pools/contributions/pledges`。旧 packs/ledger 表留冷备。
+
+- ✅ **`routes/me.ts /wallet/v2` 余额改读 WalletDO(2026-06-02)** — 余额/阈值走 `wallet.gate`,账本读 `pnc_ledger`,不再读已退役 packs 求和。
+
+> ── 以下为 dashboard 栈接线(feat/dashboard-wiring)的待办 ──
+#### 🟡 PostHog 行为事件 — 缺 server 端 seam 的事件（dashboard 栈 block 1）
+
+边缘 PostHog 接线（`feat/dashboard-wiring`）已覆盖有服务端落点的事件：`message_sent` / `group_created` / `group_joined`(invitation+invite_link) / `voice_call_started`(1v1+group) / `voice_call_ended`(group) / `topup_succeeded`(iap+lemon webhook，`created:true` 时)。统一走 `lib/track.ts` 的 `trackEvent(c,...)`（fire-and-forget，无 PII）。**以下 spec 列出的事件在当前架构没有 edge 落点，未接，必须从别处补**（别当成"已全覆盖"）：
+
+- **`signed_up`** — 用户/subject 创建是 Supabase signup 触发器（`me.ts:256` 注释提及），edge 无 signup handler。→ 由 iOS PostHog SDK 在登录/首启时 `identify` + 发，或加 DB 触发器→PostHog（P4，spec 的客户端侧）。
+- **`bot_created`** — `routes/bots.ts` **没有 POST/create**，建 bot 是客户端直写 Supabase（仅 PATCH/GET/invite-links 在 edge）。→ 同上，由 iOS SDK 发，或 bots 表 AFTER INSERT 触发器。
+- **`voice_call_ended`（1v1）** — 1v1 通话结束在 `RealtimeMeterDO`（计量 DO）里异步发生，route `/realtime/.../end` 是 no-op，edge 路由层无落点。→ 需要在 DO finalize 时发（DO 内 `capture(env,...)` 可用），未做。
+- **群注资 / 认缴（`group_topped_up` / `group_subject_created`）** — `routes/group-subjects.ts` 有 `POST /:id/topup` 等落点，但该文件正被另一 session 改造（task #220-221 群钱包重构），为避免抢同一文件**本轮未接**；待群钱包改造落定后补 `trackEvent`。事件名已在 `AnalyticsEvent` 常量预留。
+- **`topup_succeeded` 数据源随计费迁移** — 当前接在 billing-v2 iap/lemon webhook（仍是现行入账路径）。billing 引擎若迁到 **Polar**（见 memory `project_billing_outsourcing`），事件源要跟着搬到 Polar webhook，别留在退役路径上。
+
+
+
+### 🟡 Grafana BI 依赖 `metabase_ro` 只读角色，但该角色无 migration
+- **发现**: 2026-06-03 · feat/dashboard-wiring
+- **位置**: infra/grafana/（datasource provisioning 指向 `metabase_ro`）
+- **问题**: dashboard stack 第 5 块（Grafana 营收/钱包 BI）的数据源用 SELECT-only 角色 `metabase_ro`，但本 worktree 里没有任何 `*metabase_readonly_role*` migration——角色不存在则数据源连不上。属于「依赖一个未落库的前置」。
+- **影响**: Grafana 面板全部依赖此角色；未建角色前所有 dashboard 都是空的/连接失败。不影响主程序运行。
+- **建议**: 补一条 migration 建 `metabase_ro` 角色 + `GRANT USAGE ON SCHEMA pendingbot` + `GRANT SELECT` on（至少）`topups, billing_ledger, subject_wallets, subjects, group_member_billing, conversations, audit_log, users, bots, group_join_requests`；或手工 SQL 建角色。建好后在 Grafana Cloud 填 datasource 密码 + 确认 Supabase 网络放行（pooler 公网可达或配 PDC）。
+- **状态**: 待办（前置依赖，需用户落库角色 + 配 datasource）
+
+### 🟡 admin 控制台（apps/admin）依赖的 edge admin 端点尚不存在 —— dataProvider 指向"意图路径"，调用即 404
+- **发现**: 2026-06-03 · feat/dashboard-wiring（dashboard stack block 4）
+- **位置**: `apps/admin/src/providers/resource-map.ts`（`RESOURCE_ROUTES` + `ADMIN_ACTION_ENDPOINTS`，逐条标了 `exists:false`）、`apps/admin/src/providers/data-provider.ts`、`apps/edge/src/index.ts`（v1 路由挂载处，**当前无任何 `/v1/admin/*`**）
+- **问题**: 新建的 Refine admin 控制台按 spec 要求"读写都过 edge、绝不直连 Postgres、前端不持 service-role key"，所以 dataProvider 把每个资源映射到 edge REST 路由。但**edge 目前没有 admin 路由面**：`users.is_admin` 字段在 DB 里存在，`@pendingbot/identity` 也导出了 `requireAdmin(...)`，但**全仓没有任何地方 mount 或使用它**。控制台为了不埋"假装能用"的 stub，把这些资源指向**意图中的** edge 路径并在代码里 `exists:false` 标注 + 页面渲染告警横条；调用当前会 404。
+- **影响**: 控制台骨架可编译、可登录（Supabase Auth → JWT），但除下面两条已存在的 route 外，所有 admin 读/写页面都打不通真实数据，直到 edge 补齐这些端点。属于"先把前端接好、等后端落地"的刻意取舍，不是无声 stub。
+- **已存在、控制台已复用的 edge 面（仅这两条）**:
+  - `GET /v1/human-help-requests?status=...`（**requester-scoped**，按 `requested_user_id = caller` 过滤）+ `POST /v1/human-help-requests/:id/decision {decision: accepted|declined}`
+  - `POST /v1/permission-requests/:id/decide {decision: approve|reject}`
+- **控制台需要、但 edge 尚不存在的端点（完整清单，全部待办）**:
+  1. `GET /v1/admin/users`（list）+ `GET /v1/admin/users/:id`（show）—— 用户清单（id/handle/created_at/subject），跨用户、需 is_admin。
+  2. `GET /v1/admin/bots` + `/:id` —— bot 清单（visibility/model/owner）。现有 `/v1/bots` 是用户态，非 admin 列表。
+  3. `GET /v1/admin/conversations` + `/:id` —— 会话清单/详情。
+  4. `GET /v1/admin/billing/ledger` —— 计费台账读。**注意 spec 写的 `pnc_ledger` 视图在 schema 里不存在**；真实来源是 `pendingbot.billing_ledger` 表（+ `subject_wallets` 取每主体余额）。要么建 `pnc_ledger` 视图，要么端点直接读 `billing_ledger`。
+  5. `GET /v1/admin/billing/group-pool` —— 群池/分摊读。**schema 里没有 pool/pledge 视图**；最接近的源表是 `group_billing_config` + `group_member_billing`，需要端点聚合或建视图。
+  6. `POST /v1/admin/billing/wallet/grant` —— 钱包发放额度（写 `subject_wallets`/`billing_ledger` + `admin_audit`）。
+  7. `POST /v1/admin/billing/wallet/clawback` —— 钱包回收（负 delta）。
+  8. `POST /v1/admin/billing/ledger/adjust` —— 直接台账调整（entry_type=adjustment 等）。
+  9. `POST /v1/admin/users/account-op` —— 账户操作（freeze/unfreeze/delete）。
+  10. `GET /v1/admin/permission-requests`（list）—— 权限审批**列表**（decide 动作已存在，但没有 admin 列表读）。
+  11. `GET /v1/admin/human-help-requests`（list）—— **admin-wide** 人工协助队列（现有那条只看 caller 自己被点名的，不是全局队列）。
+- **建议**: 新建 `apps/edge/src/routes/admin.ts`，挂在 `/v1/admin`，第一道中间件 `requireSession()` 后接 `requireAdmin(c => SELECT is_admin FROM pendingbot.users WHERE id=c.var.userId)`，所有读用 `serviceClient` 跨用户查、所有写进 `admin_audit`（actor_id/before/after/ip/user_agent 已有列）。读端点返回 `{ items: [...] }`（控制台 dataProvider 已按此 normalize）。建端点时同步把 `resource-map.ts` 对应条目翻成 `exists:true`，并把本条状态推进。计费两个端点落地前先决定 `pnc_ledger` 视图建不建（spec 名 vs 实表名的口径要统一）。
+- **状态**: 待办（控制台前端已接好并可编译/构建；等 edge admin 路由面落地）
+
+
+- 🟡 **旧 per-conversation 分摊模型"连根拔"未完(invite 流耦合 + 物理 drop 待协调)** — `feat/ios-wallet-group`(2026-06-03,基于 `chore/retire-billing-v2`)。群消费结算早已切到责任 subject 的实缴池+认缴(`settleGroupSpend`),用户拍板 iOS+edge 连根拔旧 per-conversation `group_member_billing` 分摊。**本拍已做**:删 `lib/group-billing.ts`+测试(死)、删 `groups.ts` 的 `/billing|/cap|/participates` 三路由。**未做(耦合群邀请流 + iOS,独立一摊)**:(a) `groups.ts:groupBillingInviteSnapshot` 仍读 `group_member_billing` 生成邀请预览"分摊"文案,两处调用(创建群邀请 / 邀请预览)嵌进 invite 响应,iOS `FriendsTabView` 消费 `mode_label/invitee_participates/payer_count_after` —— 新模型无 per-conversation "participates" 概念,该快照前提已不成立,需解耦/移除并改 iOS 邀请预览 UI;(b) 接受邀请 handler 仍写 `group_member_billing`(seeding)+ 用 `group_member_invitations.invitee_participates`;(c) 物理 drop 迁移:`group_member_billing` 表 + `group_set_billing/cap/participates` RPC + `group_member_invitations.billing_snapshot`/`invitee_participates` 列。**(c) 必须在 `chore/retire-billing-v2` 部署、且 (a)(b) 解耦后再 apply**(生产 main 当前仍 live 在旧模型上,提前 drop 会 500)。建议作为独立 task 整体收口,别塞进钱包 UI 这一拍。
+
+- 🟡 **iOS 群钱包/个人钱包 UI 依赖的 edge 端点只在 `chore/retire-billing-v2`,未合 main** — `feat/ios-wallet-group` 基于 `chore/retire-billing-v2`(75 commits ahead of main)。新加的 `GET /v1/group-subjects/:id/wallet` + 已有的 `/pledge`/`/withdraw`/`/leave`/`/dissolve` + `/wallet/v2`(micros+null ledger)都在该分支,**main 上没有**。iOS 改动编译不依赖 edge,但**运行期端点 404 直到该 billing 分支部署**。合并/部署排序:iOS 钱包 UI 必须随/在 billing 分支之后上线,不能单独先合 main。本 feat 分支应并入 `chore/retire-billing-v2`(或与之同批合 main),不走独立合 main。
+
+- 🟢 **群部分取出 `/withdraw` 流式回合诚实小角** — spec §5:流式回合最终成本要回合结束才精确,若有人正流式中途取走,极端下池子在末笔扣款落地时可能短一点点;overdraft 缓冲 + 新回合过门禁兜着,预发布可忽略。记此备查。

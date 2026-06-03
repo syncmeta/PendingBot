@@ -1,0 +1,120 @@
+# PendingBot self-hosted dashboard stack.
+#
+# Two read/write-split tools on one Hetzner VPS (8GB recommended; 4GB OOMs):
+#   * metabase  — BI on the Supabase Postgres via a READ-ONLY role. Uses its own
+#                 dedicated Postgres ("metabase-db") for app metadata — NEVER the
+#                 default embedded H2, which is not durable/portable.
+#   * appsmith  — internal admin / moderation console (WRITES go through the edge
+#                 REST API, never straight to the DB). Ships its own bundled
+#                 dependencies in a single container image.
+#
+# Secrets/config come from the sibling .env file (copy .env.example → .env).
+# Bring up:   docker compose --env-file .env up -d
+# See docs/dashboards-setup.md for the full runbook (VPS, firewall, backups).
+
+services:
+  # ── Metabase metadata database ──────────────────────────────────────────
+  # Stores Metabase's own state (questions, dashboards, users). This is the only
+  # thing we need to back up for Metabase; the BI data itself lives in Supabase.
+  metabase-db:
+    image: postgres:17-alpine
+    container_name: pb-metabase-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: metabase
+      POSTGRES_USER: metabase
+      POSTGRES_PASSWORD: ${MB_METADATA_DB_PASSWORD}   # strong random; .env only
+    volumes:
+      - metabase-db-data:/var/lib/postgresql/data
+    networks:
+      - dashboards
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U metabase -d metabase"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Not published to the host — only Metabase talks to it over the internal
+    # docker network.
+
+  # ── Metabase ────────────────────────────────────────────────────────────
+  metabase:
+    image: metabase/metabase:latest
+    container_name: pb-metabase
+    restart: unless-stopped
+    depends_on:
+      metabase-db:
+        condition: service_healthy
+    ports:
+      # Bind to localhost only; expose to the internet via a reverse proxy with
+      # TLS (Caddy/nginx) or the VPS firewall — see runbook. Change "127.0.0.1"
+      # to "0.0.0.0" only if you intend to firewall the port at the VPS level.
+      - "127.0.0.1:3000:3000"
+    environment:
+      # --- Metabase application database (its own state) ---
+      MB_DB_TYPE: postgres
+      MB_DB_DBNAME: metabase
+      MB_DB_PORT: 5432
+      MB_DB_USER: metabase
+      MB_DB_PASS: ${MB_METADATA_DB_PASSWORD}
+      MB_DB_HOST: metabase-db
+      # --- Hardening ---
+      MB_ENCRYPTION_SECRET_KEY: ${MB_ENCRYPTION_SECRET_KEY}  # encrypts stored
+                                                             # DB credentials
+      JAVA_TIMEZONE: UTC
+    volumes:
+      # Plugins / GeoJSON etc. App state is in metabase-db, not here.
+      - metabase-plugins:/plugins
+    networks:
+      - dashboards
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    # NOTE: the read-only Supabase connection (metabase_ro) is NOT configured
+    # here — it is added through the Metabase UI after first-run setup, using
+    # MB_DB_SUPABASE_* values from .env. See runbook.
+
+  # ── Appsmith ──────────────────────────────────────────────────────────────
+  # Internal admin/moderation console. Reads from edge REST and performs writes
+  # via authenticated edge endpoints (admin grants, billing adjustments, review).
+  # The official image bundles its own MongoDB + Redis internally.
+  appsmith:
+    image: appsmith/appsmith-ce:latest
+    container_name: pb-appsmith
+    restart: unless-stopped
+    ports:
+      # Same localhost-bind / reverse-proxy posture as Metabase.
+      - "127.0.0.1:8080:80"
+    environment:
+      # Encrypts datasource credentials at rest. Both must be set and stable;
+      # losing them makes saved datasources unreadable. Back them up with .env.
+      APPSMITH_ENCRYPTION_PASSWORD: ${APPSMITH_ENCRYPTION_PASSWORD}
+      APPSMITH_ENCRYPTION_SALT: ${APPSMITH_ENCRYPTION_SALT}
+      # Disable Appsmith's anonymous telemetry.
+      APPSMITH_DISABLE_TELEMETRY: "true"
+      # Public base URL (used for OAuth callbacks / invite links). Set to the
+      # reverse-proxied https URL in production.
+      APPSMITH_CUSTOM_DOMAIN: ${APPSMITH_CUSTOM_DOMAIN}
+    volumes:
+      # Holds Appsmith's bundled Mongo/Redis data + uploaded assets + config.
+      # This is the single thing to back up for Appsmith.
+      - appsmith-stacks:/appsmith-stacks
+    networks:
+      - dashboards
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
+
+networks:
+  dashboards:
+    driver: bridge
+
+volumes:
+  metabase-db-data:    # Metabase metadata Postgres — BACK UP (pg_dump → R2)
+  metabase-plugins:    # Metabase plugins/assets — non-critical
+  appsmith-stacks:     # Appsmith state (Mongo/Redis/uploads) — BACK UP

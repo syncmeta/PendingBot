@@ -1,6 +1,12 @@
 # PendingBot / PendingCrew 进度账本 (Progress Ledger)
 
-**最近对账：2026-06-02**（对照实际代码 / 迁移 / git，不是看 task 标记）
+**最近对账：2026-06-03**（对照实际代码 / 迁移 / git，不是看 task 标记）
+
+> 2026-06-03 整合分支 `chore/billing-dashboard-specs` = main(#212 Mac) + 计费(P2/认缴/退役/尾巴) + dashboard(观测/Refine/Grafana) + iOS 群钱包。
+> - iOS 钱包/计费 UI 接群钱包（实缴池+认缴）：edge `GET /v1/group-subjects/:id/wallet` 读端点（群池+我的份额/占比/认缴+成员明细）；iOS `GroupWalletService` + `GroupWalletView`（充值/认缴/取出/退群/解散，骨架待视觉定稿）；修个人钱包 `WalletV2` 解码崩溃。**连根拔旧 per-conversation 分摊**做了安全部分（删死 `lib/group-billing.ts`+3 配置路由 + 退役 `GroupBillingSheet`），剩 invite 流解耦 + 表/RPC 物理 drop 留 #226。
+> - **未决/未验**：群钱包页入口待定（群聊≠group_account，须从 group_account subject 起，#227）；真机/真数据未验（端点未部署 + 无群账号数据 + Polar 配置未填 secret）。
+
+> **2026-06-03 #212 Mac 真复用收口**：把 Mac 端「轮询 + 手抄 iOS 查询」纠正成真复用。**实时通道**（`RealtimeManager`/`RealtimeSocket` 去 gate，两端同一条自建 RealtimeHubDO，删 Mac 三处轮询）+ **4 条查询全部收口成共享 fetch**（会话 `ConversationFetch`、bot 好友 `BotContactsFetch`、人类好友 `ContactsFetch`+中性 `ContactProfile`、来信 `EnvelopeFetch`+`EnvelopeRun` 移共享）——iOS 缓存/富渲染层叠在共享 fetch 上、Mac 投影 summary。仅剩**消息历史**1 条仍是 Mac 薄读复刻（iOS 那条是喂 GRDB 缓存的脆弱重管线 #145-147/#150，按 tech-debt 等 Mac 接附件渲染时再收）。另:`PlatformImage` 抽象 + `ServerImage` 跨平台 + Mac 人类好友真实头像;**macOS 打开 Development 签名**(根治 supabase.gotrue.swift 钥匙串反复弹授权/-34018)。iOS 会话 tab 进模拟器验证无回归；好友/来信为同种逐字搬迁+两端编译过（无 tap 工具未逐 tab 点验）。#212 保持 in_progress（剩 Mac 功能缺口：机组完整/头像图片其余面/附件 + 消息查询收口）。
 
 ---
 
@@ -53,7 +59,7 @@
 | T4.2 Session 系统提示模板 | ✅ | 代码 | #168 | 走 prompt-loader | — |
 | T4.3 Permission Request | ✅ | 代码 | #170-176 | schema + tool + iOS/Mac 卡片 | — |
 | T4.4 Bot start_crew tool | ✅ | 代码 | — | `tools/start-crew.ts` + tool-def | — |
-| **T4.5 跨端遥控 peer_device** | 🟡 | 代码+**runner 链真机验** | #204 | **服务端比账本旧写的完整得多(2026-06-02 重新核实)**:不止 SessionProxyDO —— `crew_sessions` 表 + 整条 runner HTTP 生命周期都在:`POST /v1/crews/:id/sessions`(创建)·`runner-hosts/:id/sessions/:sid/{claim,events,finish}`(`runner:write`)·`GET /v1/sessions/:sid/proxy/connect`·`PATCH .../permission-mode`。**runner 链 + viewer 读 已真机端到端验通(2026-06-02)**:① wire codec(`d6fba7a3`,14测试绿)② session 生命周期 API client(`289788b3`)③ **runner-loop 接线**(`8cabab1c`,CreateSessionSheet 登录态起 session → register host→createSession→claim→边跑边 appendSessionEvent→finish)④ **viewer**(`acf9db29`,RemoteSessionsView 轮询 listCrewSessions/getSessionEvents 渲染转写)。**真机验**:PendingCrew Mac 登录起 Claude Code session → DB 出现 crew_session(queued→running→cancelled)+ 4 条 session_events,viewer 原样渲染(截图核对一致)。途中抓到并修 createSession 路径 bug(复数 crews→单数 crew,`e986d778`,compile-only 抓不到)。**剩(都需 SessionProxyDO WS,非 HTTP)**:实时推送(session.state 边跑边推,现 viewer 靠 3s 轮询)+ **遥控发命令**(session.command,viewer 现只读)+ iOS PendingBot viewer(现 viewer 在 PendingCrew Mac)。**每步需 device-grant `runner:write`,活验证要登录账号+真机** —— 宜作连贯 feature 一次做,别拆成孤儿/半接(create-不-claim 会留 queued 孤儿行) | 🟡 半截桥(服务端**全好**+codec,客户端链未接) |
+| **T4.5 跨端遥控 peer_device** | 🟡 | 代码+**runner 链真机验** | #204 | **服务端比账本旧写的完整得多(2026-06-02 重新核实)**:不止 SessionProxyDO —— `crew_sessions` 表 + 整条 runner HTTP 生命周期都在:`POST /v1/crews/:id/sessions`(创建)·`runner-hosts/:id/sessions/:sid/{claim,events,finish}`(`runner:write`)·`GET /v1/sessions/:sid/proxy/connect`·`PATCH .../permission-mode`。**runner 链 + viewer 读 已真机端到端验通(2026-06-02)**:① wire codec(`d6fba7a3`,14测试绿)② session 生命周期 API client(`289788b3`)③ **runner-loop 接线**(`8cabab1c`,CreateSessionSheet 登录态起 session → register host→createSession→claim→边跑边 appendSessionEvent→finish)④ **viewer**(`acf9db29`,RemoteSessionsView 轮询 listCrewSessions/getSessionEvents 渲染转写)。**真机验**:PendingCrew Mac 登录起 Claude Code session → DB 出现 crew_session(queued→running→cancelled)+ 4 条 session_events,viewer 原样渲染(截图核对一致)。途中抓到并修 createSession 路径 bug(复数 crews→单数 crew,`e986d778`,compile-only 抓不到)。**剩(都需 SessionProxyDO WS,非 HTTP)**:实时推送(session.state 边跑边推,现 viewer 靠 3s 轮询)+ **遥控发命令**(session.command,viewer 现只读)。**iOS PendingBot viewer 已补并真机验通(2026-06-02,`RemoteSessionsView.swift` + `getCrewSessionEvents`,入口 CrewDetailV2View terminal 按钮;用户用骆店账号在 iOS 上看到 test2 渲染)**。**每步需 device-grant `runner:write`,活验证要登录账号+真机** —— 宜作连贯 feature 一次做,别拆成孤儿/半接(create-不-claim 会留 queued 孤儿行) | 🟡 半截桥(服务端**全好**+codec,客户端链未接) |
 | T4.6 iOS Crew Tab v2 | 🟡 | 代码 | — | 群聊 UI + live push + 权限卡done；剩附件、自我气泡高亮 2 洞 | 🟢 Crew Tab 2 洞 |
 | T5.1 PendingCrew BYOK 未登录 | ✅ | 代码 | #177 | 本机 captain 池 + BYOK key | — |
 | T5.2 双轨路由 | ✅ | 代码 | #177 | EdgeBackend/LocalBackend；⚠️ 无单测 | 🟢 backend 无单测 |
@@ -62,8 +68,17 @@
 ### roadmap 维度真实缺口（就这几个真"没做"）
 - ✅ ~~T3.2 Codex runner~~ —— 已补完(#202,2026-06-02)。其上层 **JSONL 事件解析层**也已落地(#203,2026-06-02):`RunnerEventParser` 把 codex/claude 两种 JSONL flatten 成统一 `RunnerEvent` 模型,接进 `CrewSessionRun.events` 并在 session 窗口加「转写」tab 渲染;schema 取自实跑两个 CLI 的 fixtures,9 测试绿。本机 runner 闭环(Phase 3)真实缺口已清零(剩 T5.3 真机 QA 见下)。
 - ❌ **T5.3 端到端 QA** —— 整链路没真机验证
-- 🟡 **T4.5 客户端侧** —— 服务端 + runner-side codec 已落（#204）；仍缺 WS 传输/server-session 端点/runner 发布/iOS viewer/两设备 QA（仍是半截桥，地基更厚了）
-- 🟡 **Mac/iPad IM 业务内容**（T0.1/T1.4）—— 壳在，tab 是 placeholder
+- 🟡 **T4.5 客户端侧** —— **PendingBot 三端 viewer 代码齐了**：iPhone（只读已真机验 + 实时 banner/cancel 编译绿）、iPad（随 iOS universal，同代码）、**Mac（PendingBot macOS 端新接 Crew tab：crew 列表→session viewer→实时+cancel，编译绿）**。跨平台层（CrewSessionAPI / SessionProxyClient / SessionStatusStyle）已抽共享。另有 PendingCrew Mac 独立 app 的 runner 发布 + 实时/cancel 在 `feat/t45-ws-transport`。仍缺：**两设备 E2E QA**（Mac 起活 session + 任一 viewer 实时看&cancel）+ Mac app 登录骆店真机看 test2 + permission over WS。WS 地基铺好，差活 session 串一次。
+- 🟡 **PendingBot 完整原生 Mac 版**（T0.1/T1.4，#212）—— 用户明确要完整原生 SwiftUI macOS（非 Catalyst）。架构:逻辑/数据/网络 100% 跨平台共享，UI 壳逐块原生重画。**2026-06-02 夜间一口气推进(均两端 BUILD SUCCEEDED + 合 main)**:
+  - ✅ **我 tab**(MacMeView，先前已有)
+  - ✅ **登录**(MacWelcomeView+MacRootGate，Email OTP+Turnstile，**用户真机验通**)
+  - ✅ **机组 viewer**(MacRemoteSessionsView，实时 banner+cancel)
+  - ✅ **消息**(MacMessagesView:会话列表+1:1/群文字聊天+流式发送;跨平台 ChatDataSource+ChatStream;查询列名/FK/role 已 DB 核对;第一版无 Realtime(轮询)/附件/群组 peer)
+  - ✅ **好友**(MacFriendsColumn:机器人+人类好友列表;跨平台 FriendsDataSource;第一版只读)
+  - **验证状态(2026-06-03 computer-use 重连后真机截图验通)**:**消息 tab 完整 IM 闭环跑通** —— 会话列表(真实数据)+ 聊天历史 + 发消息 + **SSE 流式 bot 回复** + user 右对齐蓝气泡/bot 左对齐灰气泡 + 会话预览轮询更新,全部截图确认。**好友 tab 跑通** —— bot 列表 + 点 bot 跳转到会话(pendingConversationJump 状态机工作)。修了一个真机发现的瑕疵:bot 气泡背景 controlBackgroundColor 浅色下≈白→改 secondary.opacity(0.15)。iOS 范本回归也已截图确认未退化。**机组列表空**:这台 Mac 登录的账号非 test2 owner(骆店),crew 自然空——数据/账号问题,非 bug(消息/好友/聊天全通证明数据层+RLS 都对)。
+  - ✅ **来信**(2026-06-03,MacEnvelopeColumn feed 列表 + MacEnvelopeDetail markdown 正文;跨平台 EnvelopeDataSource 查 envelope_runs;第一版无 realtime/thinking-trace 实时/写信 compose)。**至此 Mac 五个 tab(消息/好友/机组/来信/我)都有真实内容**。
+  - ✅ **UI 对齐 iOS**(2026-06-03):品牌视觉基础设施跨平台(Color(hex:)/ColorHash/BrandAvatar)→ 会话/好友/机组/来信列表 emoji 头像、聊天淡绿用户气泡+白 bot 气泡+米白背景+圆角18、tab 图标对齐(⌘机组)、app 图标补 macOS 全套尺寸、sidebar 收窄、间距调大。消息/好友真机截图验通;来信/对齐细节待 computer-use 重连或用户真机看。
+  - **待接(follow-up)**:机组完整(创建 crew/群聊/详情，现仅 viewer)、Realtime 推送(现全轮询)、头像图片(ServerImage iOS-only,现用 emoji 占位)、附件/图片/语音、来信 thinking-trace/写信。详见 tech-debt。
 - 🟡 **T1.2 客户端消费** —— 后端权限矩阵有了，客户端没用
 
 ---
@@ -80,6 +95,16 @@
 - **剩余（#194，未做）**：iOS UX 返工 —— scan/universal-link → resolve → redeem 的 AddBotSheet 改造（去掉手动 slug 加，改 token codec）、ManageBotSheet 分享区改成「签发/管理邀请链接」。**这是 UX 重设计，需 simulator 视觉验证（非仅编译）**。#121-127 旧 slug task 待 #194 完成后一起翻。
 - **关联**：D2 群加入码同构（#195，未做）。
 
+### Dashboard 栈接线（#206 — 零 VPS 方案，feat/dashboard-wiring 分支，未合 main）
+- **状态**：🟡 代码/接线全部就绪并验证（edge typecheck + 469 vitest 绿、admin `bun run build` 绿、grafana JSON 全 jq 合法）；**待用户开第三方账号 + 填 secret**，真实端到端未验。
+- **已落地（2026-06-03，所有外部 SDK 接入前都查了官方文档/核了已装包类型）**：
+  - **Sentry**（block 3）：`withSentry` wrap 早就有；补了三处吞错点的 `captureException` —— `app.onError`（Hono 把 throw 转成 500 response，原来到不了 withSentry）、queue:audit 非瞬时失败、cron `safe()`。DSN 未设=no-op。
+  - **PostHog**（block 1）：新 `lib/track.ts` `trackEvent(c,...)`（fire-and-forget，无 PII），接在 `message_sent / group_created / group_joined / voice_call_started(1v1+群) / voice_call_ended(群) / topup_succeeded(iap+lemon webhook)`。无 server seam 的事件（`signed_up` 触发器、`bot_created` 客户端直写、1v1 通话结束在 MeterDO、群注资/认缴在被改造的文件）记 tech-debt 留 iOS SDK/后续补，没造假。
+  - **Langfuse**（block 2）：`traceGeneration` 接在 `persistAuditMessage`（每回合 model/tokens/cost/latency 都齐的唯一点），dedup 之后只发一次；隐私：只发结构指标不发 prompt/completion。装的是 v3 legacy SDK（Workers 友好）。
+  - **Refine 后台**（block 4，`apps/admin`）：Refine v5 + react-router v7 SPA，custom dataProvider 走 edge（不直连 PG）、Supabase Auth、CF Pages 部署。**但 edge 没有 `/v1/admin/*` 面**——11 个端点缺口已记 tech-debt，dataProvider 逐条 `exists:false` 标注，不是无声 stub。
+  - **Grafana**（block 5，`infra/grafana`）：5 张 provisioning dashboard（营收/钱包/群池/成本/转化），datasource 走只读 `metabase_ro`。SQL 全部基于真实列（agent 发现 spec 的 `pnc_ledger` 不存在，实表是 `billing_ledger`）。
+- **待用户**：开 PostHog(EU)/Langfuse/Sentry/Grafana Cloud/CF Pages 账号、`wrangler secret put` 填 secret、建 `metabase_ro` 角色、连 Grafana→Supabase。详见 session 末清单。
+
 ---
 
 ## 4. Billing v2（#180-190）—— 代码完成 ≠ 可用
@@ -95,6 +120,31 @@
 | #190 v1 退役 | 数据已迁；**v1 表当冷备未删，`billing_debit` 等 v1 RPC 仍被调，无 drop 迁移** | 观察期后 |
 
 > 另：sandbox `vendorCostUsd` 仍硬写 0（无 Cloudflare 价目），用户可免费无限跑 execute_code。见 tech-debt 🟡。
+
+---
+
+## 4b. Billing **引擎大转向 → Polar(钱包 SoR)+ WalletDO(边缘门禁缓存)**（2026-06-02，#207-209）
+
+billing-v2 的自研结算引擎(settleUsage/packs/本地账本)**改为外包**:Polar = MoR + 信用钱包事实源(`pnc` meter),RevenueCat = iOS IAP 入账。CF 上 WalletDO(per-subject DO,强一致)做边缘门禁缓存 + 用量 outbox,push-sync + 稀疏对账。设计见 `specs/2026-06-01-billing-engine-design.md`、`specs/2026-06-02-billing-p2-architecture-fork.md`。
+
+| 块 | 状态 | 验证 | 说明 |
+|---|---|---|---|
+| P0/P1 Polar 引擎 + 单位 + 封装 | ✅ | 代码 + **真 sandbox spike** | pnc.ts / polar-client / billing-polar;收/扣/退/余额/幂等真打通 |
+| P2-A WalletDO | ✅ | 代码+单测 | balance + pending outbox + alarm flush + 稀疏对账 |
+| P2-B wallet-client | ✅ | 代码+单测 | gate/debit/credit/applyAbsolute RPC |
+| P2-C LLM router 门禁+扣费 | ✅ | 代码+单测 | 替 settleTurnV2;gate 接进 `lib/billing.ts requireBalance`(messages/envelope/语音共用) |
+| P2-D 语音(1v1+群) | ✅ | 代码+单测 | realtime-meter + room-voice 走 WalletDO |
+| P2-F sandbox | ✅ | 代码+单测 | gate+按时长扣(占位单价) |
+| P2-G 充退/state_changed push | ✅ | 代码+单测 | Polar/RC webhook → wallet.credit / applyAbsolute(官方类型核实) |
+| **集成** | ✅ | **typecheck 0 + 509 测试全过** | 四并行分支已合 chore/billing-dashboard-specs |
+| **P2 群成本分摊 重挂(#208)** | ✅ | 代码+单测 | 用户拍板用 v2 共享池法。share-index.ts + 原子 RPC 迁移 + group-wallet.ts(contribute/refund/dissolve)+ router/群语音/sandbox 扣费后衰减 + 端点 /topup·/leave·/dissolve。计划 `plans/2026-06-02-group-wallet-polar-rehome.md` |
+| me.ts /wallet/v2 余额改读 WalletDO | ✅ | 代码 | 替 packs 求和(会显示过期值);明细读 pnc_ledger |
+| **群钱包 认缴(pledge)模型(#213)** | ✅ | 代码+单测(534) | 实缴池+认缴统一:group_pledges 表 + 部分取出 + settleGroupSpend(消费按份额拆池衰减+认缴个人直扣)+ 门禁聚合 + 端点 /pledge·/withdraw。spec/plan `2026-06-02-group-billing-pledge-model*` |
+| 群分摊 尾巴(#210) | ✅ | 代码+单测(474) | 链式退款冲群(clawbackFromGroups)/ 群池漂移报警 / `/leave` 一步退群 / 群 bot 异步回复前置 gate —— 全做完 |
+| billing-v2 死代码退役(#209) | ✅ | typecheck 0 + 472 测试 | 删 16 文件(billing-v2.ts/group/pack/lemon/iap/refund/expiry + pack cron)+ 去 /lemonsqueezy·/iap 路由 + room-voice OwnerRef→WalletOwner + 清孤儿 env/cron。旧 packs/ledger 表留冷备 |
+| throttle 降级 / low 提醒 / sandbox 真实单价 | ❌ | — | 已记 tech-debt 🟡(throttle 经 OpenRouter 官方文档核实不适用 passthrough) |
+
+**待用户**:Polar 加 `customer.state_changed` webhook 事件;开 Grafana/PostHog/Langfuse/Sentry 账号(dashboard #206);真实 product_id 填 billing-packs.ts;轮换 Polar token;**群分摊模型拍板(#208)**。
 
 ---
 

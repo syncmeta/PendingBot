@@ -54,6 +54,10 @@ export interface Env {
   /// permission requests between them, and queues commands while the runner
   /// is offline. See src/durable-objects/session-proxy.ts.
   SESSION_PROXY_DO: DurableObjectNamespace;
+  /// Per-subject 钱包缓存 DO(计费 P2)。一个实例每 subject(idFromName(subjectId))。
+  /// Polar 是余额事实源;WalletDO 是边缘强一致缓存 + 门禁闸 + 用量 outbox。
+  /// 见 docs/superpowers/specs/2026-06-02-billing-p2-architecture-fork.md。
+  WALLET: DurableObjectNamespace;
   /// Cloudflare ratelimit binding for handle-enumeration endpoints
   /// (friend-request /lookup, group /join, friend-request POST /).
   /// Limit + period live in wrangler.jsonc — call from a route via
@@ -147,16 +151,33 @@ export interface Env {
   // mirrored into Supabase Vault as `realtime_webhook_secret`.
   REALTIME_WEBHOOK_SECRET?: string;
 
-  // ── Billing v2 (see docs/billing-v2-design.md §10, lib/billing-v2-*.ts) ──
-  // Lemon Squeezy webhook signing secret. LS sends X-Signature =
-  // hex(HMAC-SHA256(secret, raw_body)). Set via `wrangler secret put
-  // LEMON_SQUEEZY_WEBHOOK_SECRET` once the LS store is provisioned.
-  // Optional at typecheck time; route returns 501 when unset.
-  LEMON_SQUEEZY_WEBHOOK_SECRET?: string;
-  // Apple IAP — JWS verification is not yet implemented (see
-  // lib/billing-v2-iap.ts header). When it lands, the chain root cert
-  // fingerprint will live here (or be bundled into the worker bundle).
-  APPLE_IAP_BUNDLE_ID?: string;
+  // ── Polar (MoR + 预付钱包 + usage，见 docs/superpowers/specs/2026-06-01-billing-engine-design.md) ──
+  // web/Mac 收款+代税 + credit 钱包 + 用量计量的事实源。SDK: @polar-sh/sdk。
+  // 本地写 .dev.vars；生产 `wrangler secret put POLAR_ACCESS_TOKEN`。
+  POLAR_ACCESS_TOKEN?: string;
+  POLAR_SERVER?: string; // 'sandbox' | 'production'
+  POLAR_WEBHOOK_SECRET?: string; // Polar webhook signing secret(Standard Webhooks)
+  POLAR_PNC_METER_ID?: string; // bootstrap 建的 pnc meter id
+  REVENUECAT_WEBHOOK_AUTH?: string; // RevenueCat webhook Authorization 头共享密钥
+
+  // ── Observability (dashboard stack) ────────────────────────────
+  // All env-gated: a feature is fully no-op when its key(s) are unset,
+  // so dev / preview deploys without these configured behave exactly as
+  // before. See docs/superpowers/specs/2026-06-01-dashboard-stack-design.md.
+  //
+  // Sentry error tracking. DSN unset → withSentry's options callback
+  // returns undefined → the SDK is not initialized (index.ts).
+  SENTRY_DSN?: string;
+  // PostHog product analytics. KEY unset → lib/analytics.ts capture() is a
+  // no-op. HOST defaults to PostHog cloud when unset (set for self-hosted /
+  // EU region). See lib/analytics.ts.
+  POSTHOG_KEY?: string;
+  POSTHOG_HOST?: string;
+  // Langfuse LLM observability. Both keys must be set for lib/llm-trace.ts
+  // to emit; either unset → no-op. BASE_URL defaults to Langfuse cloud.
+  LANGFUSE_PUBLIC_KEY?: string;
+  LANGFUSE_SECRET_KEY?: string;
+  LANGFUSE_BASE_URL?: string;
 }
 
 // Hono's c.var slot — populated by middleware (auth, version, etc.)

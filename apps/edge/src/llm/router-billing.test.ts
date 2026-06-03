@@ -4,18 +4,17 @@ import {
   makeFakeDb,
   makeFakeEnv,
   type FakeDb,
+  type FakeWallet,
 } from '../../tests/_helpers/fake-supabase';
 import { persistAuditMessage } from './router';
 
 installFakeSupabaseMock();
 
-// Billing v2 cutover: persistAuditMessage no longer calls the v1
-// billing_debit* RPCs. It writes the audit_log row (turn metadata) and
-// settles the spend via settleTurnV2 → settleUsage, which records a
-// usage_events row owned by the resolved billing owner. The deep settle
-// mechanics (FIFO pack debit, ledger) are unit-tested in
-// billing-v2.test.ts; here we assert the OWNER RESOLUTION + that no v1
-// RPC fires.
+// 计费 P2: persistAuditMessage settles the turn's spend via WalletDO
+// (wallet.debit) — NOT the old settleTurnV2 → settleUsage packs path. It
+// writes the audit_log row (turn metadata) and debits the resolved owner's
+// WalletDO. Here we assert OWNER RESOLUTION + the debit shape (subject,
+// pnc micros, category, dedupeId) + that no v1 RPC fires.
 
 function seedConversationBilling(conversationType: string, subjectId = 'subject-1'): FakeDb {
   return makeFakeDb({
@@ -30,6 +29,10 @@ function seedConversationBilling(conversationType: string, subjectId = 'subject-
       { conversation_id: 'conv-1', responsible_subject_id: subjectId },
     ],
   });
+}
+
+function freshWallet(): FakeWallet {
+  return { calls: [], balances: {} };
 }
 
 function auditMessage(overrides: Record<string, unknown> = {}) {
@@ -50,20 +53,21 @@ function auditMessage(overrides: Record<string, unknown> = {}) {
   } as never;
 }
 
-describe('persistAuditMessage v2 billing owner resolution', () => {
+describe('persistAuditMessage WalletDO billing owner resolution', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });
 
-  it('settles a crew conversation against its responsible subject', async () => {
+  it('debits a crew conversation against its responsible subject (from temporary_group_meta)', async () => {
     const db = seedConversationBilling('crew');
     const debitUser = vi.fn(() => ({ data: 973, error: null }));
     const debitSubject = vi.fn(() => ({ data: 973, error: null }));
     db.rpcs = { billing_debit: debitUser, billing_debit_subject: debitSubject };
+    const w = freshWallet();
 
-    await persistAuditMessage(makeFakeEnv(db), auditMessage());
+    await persistAuditMessage(makeFakeEnv(db, { wallet: w }), auditMessage());
 
-    // No v1 debit RPCs post-cutover.
+    // No v1 debit RPCs.
     expect(debitUser).not.toHaveBeenCalled();
     expect(debitSubject).not.toHaveBeenCalled();
 
@@ -76,27 +80,85 @@ describe('persistAuditMessage v2 billing owner resolution', () => {
       billing_subject_id: 'subject-1',
     });
 
-    // v2 usage_event owned by the subject. 0.01 USD → 270_000 PNC micros.
-    const usageRow = db.inserts.find((i) => i.table === 'usage_events')?.row;
-    expect(usageRow?.owner_subject_id).toBe('subject-1');
-    expect(usageRow?.owner_user_id).toBeNull();
-    expect(usageRow?.event_category).toBe('llm_tokens');
-    expect(usageRow?.pnc_micros).toBe(270000);
+    // WalletDO debit owned by the subject. 0.01 USD × 27 PNC/USD = 0.27 PNC
+    // → 270_000 pnc micros. dedupeId is the audit id (idempotency key).
+    const debit = w.calls.find((c) => c.path === '/debit');
+    expect(debit?.subjectId).toBe('subject-1');
+    expect(debit?.body.pncMicros).toBe(270000);
+    expect(debit?.body.category).toBe('llm_tokens');
+    expect(debit?.body.dedupeId).toBe('018f1111-1111-7111-8111-111111111111');
   });
 
   it('prefers the conversation subject over a caller-supplied user id', async () => {
     const db = seedConversationBilling('temporary_group', 'subject-2');
     const debitUser = vi.fn(() => ({ data: 940, error: null }));
-    const debitSubject = vi.fn(() => ({ data: 940, error: null }));
-    db.rpcs = { billing_debit: debitUser, billing_debit_subject: debitSubject };
+    db.rpcs = { billing_debit: debitUser };
+    const w = freshWallet();
 
-    await persistAuditMessage(makeFakeEnv(db), auditMessage({ userId: 'user-1' }));
+    await persistAuditMessage(
+      makeFakeEnv(db, { wallet: w }),
+      auditMessage({ userId: 'user-1' }),
+    );
 
     expect(debitUser).not.toHaveBeenCalled();
-    expect(debitSubject).not.toHaveBeenCalled();
+    const debit = w.calls.find((c) => c.path === '/debit');
+    expect(debit?.subjectId).toBe('subject-2');
+  });
 
-    const usageRow = db.inserts.find((i) => i.table === 'usage_events')?.row;
-    expect(usageRow?.owner_subject_id).toBe('subject-2');
-    expect(usageRow?.owner_user_id).toBeNull();
+  it('debits the initiating user for a 1v1 (no conversation subject)', async () => {
+    const db = makeFakeDb({
+      conversations: [
+        { id: 'conv-1', conversation_type: 'user_bot', responsible_subject_id: null },
+      ],
+    });
+    const w = freshWallet();
+
+    await persistAuditMessage(
+      makeFakeEnv(db, { wallet: w }),
+      auditMessage({ taskType: 'reply', userId: 'user-9' }),
+    );
+
+    const debit = w.calls.find((c) => c.path === '/debit');
+    expect(debit?.subjectId).toBe('user-9');
+    expect(debit?.body.category).toBe('llm_tokens');
+  });
+
+  it('debits each web-tool call with a namespaced dedupeId', async () => {
+    const db = seedConversationBilling('crew');
+    const w = freshWallet();
+
+    await persistAuditMessage(
+      makeFakeEnv(db, { wallet: w }),
+      auditMessage({
+        providerCostUsd: 0.01,
+        webTools: [
+          { provider: 'brave', kind: 'search', target: 'q', status: 'success', latencyMs: 1, costUsd: 0.005 },
+          { provider: 'tavily', kind: 'search', target: 'q2', status: 'success', latencyMs: 1, costUsd: 0.005 },
+        ],
+      }),
+    );
+
+    const toolDebits = w.calls.filter(
+      (c) => c.path === '/debit' && c.body.category === 'web_tools',
+    );
+    expect(toolDebits).toHaveLength(2);
+    expect(toolDebits[0].body.dedupeId).toBe('018f1111-1111-7111-8111-111111111111:tool:0');
+    expect(toolDebits[1].body.dedupeId).toBe('018f1111-1111-7111-8111-111111111111:tool:1');
+    // 0.005 USD × 27 = 0.135 PNC → 135_000 micros.
+    expect(toolDebits[0].body.pncMicros).toBe(135000);
+  });
+
+  it('does not debit a zero-cost turn', async () => {
+    const db = seedConversationBilling('crew');
+    const w = freshWallet();
+
+    await persistAuditMessage(
+      makeFakeEnv(db, { wallet: w }),
+      auditMessage({ providerCostUsd: 0 }),
+    );
+
+    expect(w.calls.find((c) => c.path === '/debit')).toBeUndefined();
+    const auditRow = db.inserts.find((i) => i.table === 'audit_log')?.row;
+    expect(auditRow?.billing_status).toBe('skipped');
   });
 });
