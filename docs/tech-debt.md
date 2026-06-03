@@ -423,6 +423,7 @@
 
 #### 🔴 必须人工介入
 
+- 🔴🔴 **迁移账本漂移 —— 远端有 4 条幽灵迁移，`supabase db push` 对所有人都 blocked** (2026-06-03 发现)。`supabase migration list --linked` 显示远端 history 有 `20260602043820 / 051354 / 121205 / 150732` 四条(都 06-02),但这四个版本**在 git 里哪都没有**(main / origin/main 树里都查无此文件,本地最新提交的迁移是 `20260601082502`,06-01)。即:远端被 apply 了 4 条迁移、却没有对应的 .sql 文件入库 —— 正是 memory `feedback_migration_apply_via_db_push` 警告的"用 MCP `apply_migration` 重打时间戳 → 账本漂移"。**后果**:`db push` 因"Remote migration versions not found in local"**直接拒绝**(不止我的分支,任何人都推不了新迁移)。**这卡住了 T4.5 交互的 `20260602145934_crew_interaction_requests.sql` 落地**(写好 + edge typecheck 绿,但 apply 不了 → schema 没 regen → 真实 DB E2E 没法测)。**修复需人工判断**(不能自动瞎搞共享 prod):要么 `supabase migration repair --status reverted <4 个版本>` 把幽灵条目从 history 表标成未应用(前提:确认这 4 条没在 DB 里留下不可见的真实改动,否则标 reverted 是骗 supabase),要么 `supabase db pull` 把远端现状落成一个本地迁移再对账。先搞清这 4 条到底是什么(查 `supabase_migrations.schema_migrations` 表的 statements)再动。**夜间没动它** —— raw DDL 应用我的迁移被 auto-mode classifier 正确拦下(绕过账本=制造新漂移)。
 - **#185 IAP 服务端 webhook** — App Store Server Notifications V2 真实签名校验、refund/REVOKE 处理；当前只有 stub。需要 Apple Developer 后台配置 + 真实 sandbox 测试，必须人工。
 - **#186 Lemon Squeezy refund 完整路径** — webhook 已落 issuePack 入账，但 refund/dispute 反向冲销在 v2 ledger 上还没串通；需要联调 LS test mode。
 - **#188 Board 后台 — 计费 v2 管理面板** — `de4a62c2` 起了 admin grant/claw-back RPC + 简单 board UI，但仍缺：pack 列表/手动作废、refund 列表、用户 wallet 详情视图、批量 grant。需要 Board 端 UI 设计 + RPC 扩展。
