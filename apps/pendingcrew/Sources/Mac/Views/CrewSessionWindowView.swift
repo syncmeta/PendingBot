@@ -124,7 +124,7 @@ struct CrewSessionWindowView: View {
 
         var serverLink: CrewSessionServerLink? = nil
         if appModel.mode == .logged {
-            do { serverLink = try await prepareServerSession(detail: detail) }
+            do { serverLink = try await prepareServerSession(detail: detail, taskBrief: firstPrompt) }
             catch {
                 localError = "服务端 session 准备失败: \(error.localizedDescription)"
                 return
@@ -145,7 +145,10 @@ struct CrewSessionWindowView: View {
         }
     }
 
-    private func prepareServerSession(detail: CrewDetail) async throws -> CrewSessionServerLink {
+    /// `taskBrief` is the session's first instruction — the edge requires a
+    /// non-empty brief, and the first message is the natural one (no separate
+    /// title/brief form, like Desktop naming a chat by its opening message).
+    private func prepareServerSession(detail: CrewDetail, taskBrief: String) async throws -> CrewSessionServerLink {
         let api = try appModel.loggedAPIClient()
         let subjects = try await api.listMySubjects()
         guard let subjectId = subjects.first?.id else {
@@ -162,7 +165,7 @@ struct CrewSessionWindowView: View {
         let sessionId = try await api.createSession(
             crewId: detail.crew.id,
             runnerKind: selectedKind.serverRunnerKind,
-            taskBrief: ""
+            taskBrief: taskBrief
         )
         _ = try await api.claimSession(runnerHostId: hostId, sessionId: sessionId)
         return CrewSessionServerLink(api: api, runnerHostId: hostId, sessionId: sessionId)
