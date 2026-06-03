@@ -58,6 +58,7 @@
 		54B48FB87D7B73FF585A93FB /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D0542BAF8BA5245F4DD6FA1 /* Keychain.swift */; };
 		583836D442830F875F8C55F2 /* CallCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7E8B55D4DE8ED09E4B54C14 /* CallCenter.swift */; };
 		598A32DFDD15BC85C9A1E90A /* WalletV2View.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67959B4A15D5CFF20CADAAA6 /* WalletV2View.swift */; };
+		5A482C1B8A6167FDA5CB3C16 /* GroupWalletService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DBBEAE928AB77BE9DBD5029 /* GroupWalletService.swift */; };
 		5A76B2CB395294D7B493AE8D /* SidebarTabBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AE0A0B0D448DCB7DB1EB17F /* SidebarTabBar.swift */; };
 		5DC1DDF2BCFD9284F2421B38 /* ActiveCallBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = E586576C7350D86FA4C6C68B /* ActiveCallBanner.swift */; };
 		62834377D43A0D27902FD8AA /* ConversationView+CrewProposal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 550414C4E1E5D5C11397ABA1 /* ConversationView+CrewProposal.swift */; };
@@ -142,6 +143,7 @@
 		F9BBC0C73F84A357B5B0A8C4 /* TypingDots.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5131104F9620195C8AF448E /* TypingDots.swift */; };
 		F9D83EFE1997143A29F31A8F /* ChatActionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CD2B61B65FC1ADB1C95184A /* ChatActionSheet.swift */; };
 		FAECF2B5BD0A3A5A114A1851 /* PendingBotApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BD3256170D29AD9138939C3 /* PendingBotApp.swift */; };
+		FB00D4A903E342738907E282 /* GroupWalletView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D2B2B8D8BD1DE4D364525C4 /* GroupWalletView.swift */; };
 		FC8F6706A2705C7F8913F790 /* GroupInviteAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6007B7AC7A2508EA9C7C04C9 /* GroupInviteAPI.swift */; };
 /* End PBXBuildFile section */
 
@@ -155,6 +157,7 @@
 		0BD194A0682C2BC1E950991E /* TurnstileChallenge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TurnstileChallenge.swift; sourceTree = "<group>"; };
 		0C772BAA4B0D29D2620E67CF /* ConversationView+Streaming.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConversationView+Streaming.swift"; sourceTree = "<group>"; };
 		0D559B8D3970D7B444980F3C /* MessageTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageTabView.swift; sourceTree = "<group>"; };
+		0DBBEAE928AB77BE9DBD5029 /* GroupWalletService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWalletService.swift; sourceTree = "<group>"; };
 		0E4E45D7D0FF70E5557D4F65 /* ConversationView+Permission.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConversationView+Permission.swift"; sourceTree = "<group>"; };
 		0F21A15DD9477AC940984A06 /* RelativeMessageTime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RelativeMessageTime.swift; sourceTree = "<group>"; };
 		0F7C3B5C578F1BE2095D0B00 /* WelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeView.swift; sourceTree = "<group>"; };
@@ -207,6 +210,7 @@
 		69B9DBAF15442620F6137B0F /* BotManagement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotManagement.swift; sourceTree = "<group>"; };
 		6A5442547F63F7CF41B54C46 /* BotInviteAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotInviteAPI.swift; sourceTree = "<group>"; };
 		6CF743A2BD19523CAF11ECC6 /* CrewAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewAPI.swift; sourceTree = "<group>"; };
+		6D2B2B8D8BD1DE4D364525C4 /* GroupWalletView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWalletView.swift; sourceTree = "<group>"; };
 		6EFB784DC12029E53EB12A5C /* RealtimeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeManager.swift; sourceTree = "<group>"; };
 		6F57C354DC67393099BE1D8E /* GroupCallTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupCallTransport.swift; sourceTree = "<group>"; };
 		6F88AE2F9558F84A927D904C /* GroupBillingSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupBillingSheet.swift; sourceTree = "<group>"; };
@@ -334,6 +338,7 @@
 				023C318B8EB2B3A4CC9F8594 /* EmailSignIn.swift */,
 				1F14048DCB73276C7D252616 /* GoogleSignIn.swift */,
 				6007B7AC7A2508EA9C7C04C9 /* GroupInviteAPI.swift */,
+				0DBBEAE928AB77BE9DBD5029 /* GroupWalletService.swift */,
 				7EEDB9DF3C6B9D1EC67C769F /* HostedConfig.swift */,
 				F2F07903E8E0959584180E65 /* PushService.swift */,
 				6EFB784DC12029E53EB12A5C /* RealtimeManager.swift */,
@@ -541,6 +546,7 @@
 				9010CC63D1CC724A55770E7A /* GroupJoinView.swift */,
 				7B48A6EDBF639ED658DB2493 /* GroupQRCard.swift */,
 				E2EDC1669F416D3C59723D25 /* GroupSettingsView.swift */,
+				6D2B2B8D8BD1DE4D364525C4 /* GroupWalletView.swift */,
 				F898044EDF181328CD4C946F /* JoinRequestsInboxView.swift */,
 			);
 			path = Group;
@@ -756,6 +762,8 @@
 				B652E5852C42C437A6849CA3 /* GroupJoinView.swift in Sources */,
 				C47DDDD2BAD3AD2DA4EC51A0 /* GroupQRCard.swift in Sources */,
 				A22D46B0B364248079A08775 /* GroupSettingsView.swift in Sources */,
+				5A482C1B8A6167FDA5CB3C16 /* GroupWalletService.swift in Sources */,
+				FB00D4A903E342738907E282 /* GroupWalletView.swift in Sources */,
 				EAF59E8B7CEB265E5E78C39C /* Haptics.swift in Sources */,
 				D6BA5491F9DE20519ACE28CD /* HostedConfig.swift in Sources */,
 				BBBB6FB5770D8E3EB3080CCE /* JoinRequestsInboxView.swift in Sources */,
