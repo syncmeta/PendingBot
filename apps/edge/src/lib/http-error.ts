@@ -49,18 +49,12 @@ export type ApiErrorCode =
   | 'redemption_not_found'
   | 'redemption_already_used'
 
-  // ── Billing v2 webhooks (see lib/billing-v2-*.ts) ─────────
+  // ── Billing webhooks (Polar + RevenueCat — routes/billing-webhooks.ts) ─
   | 'webhook_not_configured'   // secret env var missing — return 501
-  | 'missing_signature'        // X-Signature header absent on LS webhook
   | 'invalid_signature'        // HMAC / JWS verification failed
   | 'invalid_json'             // webhook body wasn't parseable JSON
   | 'invalid_auth'             // RevenueCat webhook Authorization 头不匹配
   | 'polar_not_configured'     // POLAR_ACCESS_TOKEN / POLAR_PNC_METER_ID 缺失 — 501
-  | 'webhook_error'            // generic 5xx wrapping handler error
-  | 'missing_signed_transaction_info'  // IAP /purchase body lacked field
-  | 'missing_signed_payload'   // IAP /notify body lacked field
-  | 'iap_purchase_failed'      // generic IAP /purchase error from handler
-  | 'apple_notification_failed'  // generic ASN V2 error from handler
 
   // ── Voice ─────────────────────────────────────────────────
   | 'voice_region_unsupported'

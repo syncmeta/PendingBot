@@ -147,7 +147,7 @@ v1.route('/arena', arenaRoutes);
 v1.route('/realtime', realtimeRoutes);
 v1.route('/realtime-hub', realtimeHubRoutes);
 v1.route('/realtime-internal', realtimeInternalRoutes);
-v1.route('/billing', billingWebhookRoutes);  // /v1/billing/lemonsqueezy/* + /v1/billing/iap/*
+v1.route('/billing', billingWebhookRoutes);  // /v1/billing/polar/webhook + /v1/billing/revenuecat/webhook
 
 app.route('/v1', v1);
 

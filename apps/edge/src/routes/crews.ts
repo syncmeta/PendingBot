@@ -26,7 +26,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { requireSubjectAuth, hasDeviceScope } from '../lib/device-grants';
 import { serviceClient, userClient } from '../lib/supabase';
-import { jsonError, type ApiErrorCode } from '../lib/http-error';
+import { jsonError } from '../lib/http-error';
 import type { Json } from '../db/schema';
 import type { AppBindings } from '../types';
 
@@ -635,7 +635,3 @@ export async function accessibleSubjectIds(
   }
   return { ids: Array.from(out), error: null };
 }
-
-// Re-export for the share-changes route — it needs the same predicate
-// when listing pending proposals.
-export type { ApiErrorCode };
