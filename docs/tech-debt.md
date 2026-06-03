@@ -550,3 +550,22 @@
 - 🟡 **iOS 群钱包/个人钱包 UI 依赖的 edge 端点只在 `chore/retire-billing-v2`,未合 main** — `feat/ios-wallet-group` 基于 `chore/retire-billing-v2`(75 commits ahead of main)。新加的 `GET /v1/group-subjects/:id/wallet` + 已有的 `/pledge`/`/withdraw`/`/leave`/`/dissolve` + `/wallet/v2`(micros+null ledger)都在该分支,**main 上没有**。iOS 改动编译不依赖 edge,但**运行期端点 404 直到该 billing 分支部署**。合并/部署排序:iOS 钱包 UI 必须随/在 billing 分支之后上线,不能单独先合 main。本 feat 分支应并入 `chore/retire-billing-v2`(或与之同批合 main),不走独立合 main。
 
 - 🟢 **群部分取出 `/withdraw` 流式回合诚实小角** — spec §5:流式回合最终成本要回合结束才精确,若有人正流式中途取走,极端下池子在末笔扣款落地时可能短一点点;overdraft 缓冲 + 新回合过门禁兜着,预发布可忽略。记此备查。
+
+- 🟡 **billing-v2 / v1 退役后的 DB 孤儿全清单(表 + RPC + 触发器)** — 摸查于 2026-06-03(`feat/billing-obs-killswitch`)。新计费只读 `pnc_ledger / group_pools / group_contributions / group_pledges / subjects / group_subject_members`(+ `billing_config` 的 markup/threshold),余额真相在 WalletDO→Polar。以下是退役 billing-v2 + provider 转向后**线上库仍在、但新模型不读**的工件,按"能否直接 drop"分层。**记录不自动删**(数据销毁性;且部分在生产 main 仍 live,须等 `chore/retire-billing-v2` 部署后才能 drop)。
+
+  **A. 纯孤儿(无任何活代码路径,可随 #226 一并 drop):**
+  - 表:`billing_ledger`、`group_billing_config`、`group_billing_custom_shares`、`ledger_entries`、`packs`、`topups`、`refund_events`(退款现走 `pnc_ledger`)
+  - RPC:`billing_admin_grant`、`billing_credit`、`billing_debit`(仅被死函数 `lib/billing.ts:billingDebit` 调,无活调用方)、`billing_debit_subject`(仅被死函数 `debitSubject` 调)、`billing_issue_codes`、`billing_v2_admin_adjust`、`group_set_billing`、`grp_topup_wallet`
+  - 触发器/触发函数:`on_user_billing_signup` + `billing_signup_bonus()`/`billing_signup_bonus_trigger()`(写 `packs`,新模型不读 → 详见 #244)
+
+  **B. 半死(代码仍碰,但模型已废 → 属 #226 收口,drop 前须先解耦):**
+  - `group_member_billing` 表 + `group_member_billing_freeze_trg`/`_group_member_billing_freeze_trigger()` —— `routes/groups.ts:67/403` 仍在群邀请/加入流里 SELECT/INSERT
+  - `subject_wallets` 表 + `subject_wallets_sync_updated_at_trg`/`tg_subject_wallets_sync_updated_at()` —— `lib/billing.ts:getSubjectBalance` 仍被 `routes/me.ts` 调(很可能展示陈旧值,真相已是 WalletDO/Polar)
+
+  **C. 活着但很可能还在充旧钱包模型(同 signup bonus 的"孤儿入账"病,需决策/重建,非纯删):**
+  - `billing_redeem` RPC + `redemption_codes` 表 —— 兑换码功能经 `routes/me.ts` 活调,但兑换大概率仍写 billing-v2/`subject_wallets` 而非 Polar credit。要么重建到 Polar(注册送同款,见 #244),要么暂时下线。**别当纯孤儿删**。
+
+  **死 edge 代码(随 drop 一起清):** `lib/billing.ts` 的 `billingDebit`/`debitSubject`/`getSubjectBalance` + `balance-cache.ts`(v1 KV 余额缓存)+ 相关 `getBalanceGateState` 旧 1v1 gate 路径。
+
+  **建议**:把 A 段整体并入 #226 的物理 drop 迁移(同一 `chore/` 批次);B 段先做 #226 的 invite 流/me.ts 解耦再 drop;C 段与 #244 一起拍板(送不送 / 兑换走不走 Polar)。drop 顺序硬约束:`chore/retire-billing-v2` 必须先部署到生产,否则提前 drop 会让线上旧路径 500。
+  **状态**:待办(已登记,等 #226/#244 推进时按 A/B/C 分层落)
