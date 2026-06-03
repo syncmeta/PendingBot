@@ -42,7 +42,7 @@ struct MacFriendsColumn: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .padding(.vertical, 2)
+                    .padding(.vertical, 5)
                 }
             }
 
@@ -55,7 +55,7 @@ struct MacFriendsColumn: View {
                         BrandAvatar(seed: human.id, size: 30)
                         Text(human.shownName).lineLimit(1)
                     }
-                    .padding(.vertical, 2)
+                    .padding(.vertical, 5)
                 }
             }
         }

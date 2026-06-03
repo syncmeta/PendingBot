@@ -32,9 +32,9 @@ struct MacConversationListColumn: View {
                 Text("还没有会话").font(.callout).foregroundStyle(.secondary)
             }
             ForEach(conversations) { c in
-                HStack(spacing: 10) {
-                    BrandAvatar(seed: c.id, size: 38)
-                    VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 12) {
+                    BrandAvatar(seed: c.id, size: 40)
+                    VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 6) {
                             Text(c.title).font(.body).lineLimit(1)
                             Spacer(minLength: 4)
@@ -51,7 +51,7 @@ struct MacConversationListColumn: View {
                         }
                     }
                 }
-                .padding(.vertical, 3)
+                .padding(.vertical, 6)
                 .tag(c.id)
             }
         }
@@ -105,7 +105,7 @@ struct MacChatView: View {
     private var transcript: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 8) {
+                LazyVStack(alignment: .leading, spacing: 12) {
                     if let loadError {
                         Text(loadError).font(.caption).foregroundStyle(.red)
                     }
@@ -117,7 +117,7 @@ struct MacChatView: View {
                     }
                     Color.clear.frame(height: 1).id("tail")
                 }
-                .padding(16)
+                .padding(.horizontal, 22).padding(.vertical, 18)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .onChange(of: messages.count) { _, _ in scrollToTail(proxy) }
@@ -130,15 +130,15 @@ struct MacChatView: View {
     }
 
     private func bubble(role: String, content: String, isMine: Bool) -> some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: 10) {
             if isMine {
-                Spacer(minLength: 60)
+                Spacer(minLength: 56)
             } else {
-                BrandAvatar(seed: conversationId, size: 28)
+                BrandAvatar(seed: conversationId, size: 30)
             }
             Text(content.isEmpty ? " " : content)
                 .textSelection(.enabled)
-                .padding(.horizontal, 12).padding(.vertical, 9)
+                .padding(.horizontal, 14).padding(.vertical, 11)
                 .background(
                     // 对齐 iOS:用户气泡淡绿(accentBg 0xE3EEEA)、bot 气泡白(surface)+ hairline 描边,圆角 18。
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
