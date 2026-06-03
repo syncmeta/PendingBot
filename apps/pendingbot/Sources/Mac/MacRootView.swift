@@ -122,7 +122,7 @@ struct MacRootView: View {
                 .tag(tab)
         }
         .navigationTitle("PendingBot")
-        .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 280)
+        .navigationSplitViewColumnWidth(min: 150, ideal: 168, max: 200)
     }
 
     @ViewBuilder
