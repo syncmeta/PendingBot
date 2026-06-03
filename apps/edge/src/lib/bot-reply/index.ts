@@ -54,6 +54,7 @@ import { WebToolMeter } from '../web-meter';
 import {
   ASK_FRIEND_TOOL,
   START_CREW_TOOL,
+  START_SESSION_TOOL,
   buildOpenRouterServerTools,
   CHAT_TOOLS,
   DELEGATE_TO_SPECIALIST_TOOL,
@@ -752,7 +753,9 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     START_CREW_TOOL,
   ];
   if (allowedTools.has('execute_code')) turnToolsRaw.push(EXECUTE_CODE_TOOL);
-  if (input.inGroup) turnToolsRaw.push(...GROUP_BOT_TOOLS);
+  // start_session: crew captain only (handler gates). Exposed on group turns;
+  // the captain replies via dispatchGroupTurn (inGroup=true).
+  if (input.inGroup) turnToolsRaw.push(...GROUP_BOT_TOOLS, START_SESSION_TOOL);
   // ask_friend / submit_inquiry_answer are public-bot-only. The
   // visibility check piggybacks on socialSnapshot.isPublic — already
   // fetched alongside the social graph data above. Private bots get
@@ -786,7 +789,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     DELEGATE_TO_SPECIALIST_TOOL,
     START_CREW_TOOL,
   ];
-  if (input.inGroup) nativeFnToolsRaw.push(...GROUP_BOT_TOOLS);
+  if (input.inGroup) nativeFnToolsRaw.push(...GROUP_BOT_TOOLS, START_SESSION_TOOL);
   if (socialSnapshot?.isPublic) {
     nativeFnToolsRaw.push(ASK_FRIEND_TOOL, SUBMIT_INQUIRY_ANSWER_TOOL);
   }

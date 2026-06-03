@@ -480,6 +480,34 @@ export const START_CREW_TOOL: ChatCompletionTool = {
   },
 };
 
+// `start_session` — spec §6.3.3. The crew CAPTAIN queues a coding session for
+// its crew (runs claude code / codex on the crew's machine). Captain-only: the
+// handler verifies this conversation is a crew and this bot is its captain.
+// `brief` becomes the session's first instruction.
+export const START_SESSION_TOOL: ChatCompletionTool = {
+  type: 'function',
+  function: {
+    name: 'start_session',
+    description:
+      '作为本 crew 的机长，派一个 coding session 去干活（跑 claude code / codex）。session 在 crew 所在机器上启动，作为成员出现在群里，并会读到群聊白板。只有机长能调。',
+    parameters: {
+      type: 'object',
+      properties: {
+        brief: {
+          type: 'string',
+          description: '交给这个 session 的任务（它的第一条指令），1–4000 字。要具体、可执行。',
+        },
+        runner: {
+          type: 'string',
+          enum: ['claude_code', 'codex'],
+          description: '可选，用哪个 agent。默认 claude_code。',
+        },
+      },
+      required: ['brief'],
+    },
+  },
+};
+
 // `request_permission` — spec v2 §10. Agent (or captain bot acting in
 // the crew context) asks for human approval before performing a
 // high-risk action. Files a permission_requests row + writes a special
