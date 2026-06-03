@@ -464,3 +464,9 @@
 
 - 🟡 **`routes/me.ts` 余额展示仍读 billing-v2 packs(merge 后实时偏差)** — `/v1/me/wallet/v2` 用 `getThresholdState(totalPncMicros)` + 直读 `pnc_packs`/`pnc_ledger` 求和算余额;P2 后真实余额在 Polar/WalletDO,packs 不再被扣减 → 该端点会显示过期/错误余额。应改读 WalletDO(`wallet.gate` 返回 balanceMicros)或 Polar `getStateExternal`。属 Phase I 验证范围,需与 iOS 钱包页(#189)口径对齐。
 
+
+- 🟡 **旧 per-conversation 分摊模型"连根拔"未完(invite 流耦合 + 物理 drop 待协调)** — `feat/ios-wallet-group`(2026-06-03,基于 `chore/retire-billing-v2`)。群消费结算早已切到责任 subject 的实缴池+认缴(`settleGroupSpend`),用户拍板 iOS+edge 连根拔旧 per-conversation `group_member_billing` 分摊。**本拍已做**:删 `lib/group-billing.ts`+测试(死)、删 `groups.ts` 的 `/billing|/cap|/participates` 三路由。**未做(耦合群邀请流 + iOS,独立一摊)**:(a) `groups.ts:groupBillingInviteSnapshot` 仍读 `group_member_billing` 生成邀请预览"分摊"文案,两处调用(创建群邀请 / 邀请预览)嵌进 invite 响应,iOS `FriendsTabView` 消费 `mode_label/invitee_participates/payer_count_after` —— 新模型无 per-conversation "participates" 概念,该快照前提已不成立,需解耦/移除并改 iOS 邀请预览 UI;(b) 接受邀请 handler 仍写 `group_member_billing`(seeding)+ 用 `group_member_invitations.invitee_participates`;(c) 物理 drop 迁移:`group_member_billing` 表 + `group_set_billing/cap/participates` RPC + `group_member_invitations.billing_snapshot`/`invitee_participates` 列。**(c) 必须在 `chore/retire-billing-v2` 部署、且 (a)(b) 解耦后再 apply**(生产 main 当前仍 live 在旧模型上,提前 drop 会 500)。建议作为独立 task 整体收口,别塞进钱包 UI 这一拍。
+
+- 🟡 **iOS 群钱包/个人钱包 UI 依赖的 edge 端点只在 `chore/retire-billing-v2`,未合 main** — `feat/ios-wallet-group` 基于 `chore/retire-billing-v2`(75 commits ahead of main)。新加的 `GET /v1/group-subjects/:id/wallet` + 已有的 `/pledge`/`/withdraw`/`/leave`/`/dissolve` + `/wallet/v2`(micros+null ledger)都在该分支,**main 上没有**。iOS 改动编译不依赖 edge,但**运行期端点 404 直到该 billing 分支部署**。合并/部署排序:iOS 钱包 UI 必须随/在 billing 分支之后上线,不能单独先合 main。本 feat 分支应并入 `chore/retire-billing-v2`(或与之同批合 main),不走独立合 main。
+
+- 🟢 **群部分取出 `/withdraw` 流式回合诚实小角** — spec §5:流式回合最终成本要回合结束才精确,若有人正流式中途取走,极端下池子在末笔扣款落地时可能短一点点;overdraft 缓冲 + 新回合过门禁兜着,预发布可忽略。记此备查。
