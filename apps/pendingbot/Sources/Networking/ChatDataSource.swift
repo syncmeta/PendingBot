@@ -40,6 +40,8 @@ struct ChatMessageRow: Identifiable, Equatable, Hashable {
     /// Auth-gated `ServerImage` paths (`/v1/uploads/<id>`) for image attachments
     /// on this message. Empty for text-only rows.
     var imagePaths: [String] = []
+    /// Non-image attachments (PDF / file …) rendered as icon+name chips.
+    var fileAttachments: [Attachment] = []
 
     /// Right-aligned (mine) only for human-sent rows.
     var isMine: Bool { role == "user" }
@@ -93,16 +95,16 @@ enum ChatDataSource {
             if r.status == "deleted" { return nil }
             if r.metadata?.objectValue?["source"]?.stringValue == "voice_call_summary" { return nil }
             if r.role == "log" { return nil }
-            let imagePaths = (r.attachments?.ids ?? [])
-                .compactMap { meta[$0] }
-                .filter { $0.isImage }
-                .map(\.url)
+            let resolved = (r.attachments?.ids ?? []).compactMap { meta[$0] }
+            let imagePaths = resolved.filter { $0.isImage }.map(\.url)
+            let files = resolved.filter { !$0.isImage }
             return ChatMessageRow(
                 id: r.id,
                 role: r.role,
                 content: r.content ?? "",
                 seq: r.message_seq,
-                imagePaths: imagePaths
+                imagePaths: imagePaths,
+                fileAttachments: files
             )
         }
     }
