@@ -69,7 +69,6 @@
 		746FAC37DF7AF6317D0DE6C7 /* ModelCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = D829BEA540B1FE3C5FACFC35 /* ModelCatalog.swift */; };
 		754FF3CE1701C6D130EC618C /* CreateCrewV2Sheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 602E04C3276D1A3CB9588320 /* CreateCrewV2Sheet.swift */; };
 		7C1A92C8517EE5D731A669A1 /* names.txt in Resources */ = {isa = PBXBuildFile; fileRef = 2889FBE3D654AA1EC7144A11 /* names.txt */; };
-		7D7660E36F2A8F3B1C88CD45 /* GroupBillingSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F88AE2F9558F84A927D904C /* GroupBillingSheet.swift */; };
 		7FEECCD4D899454D43447F5C /* GoogleSignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F14048DCB73276C7D252616 /* GoogleSignIn.swift */; };
 		80F4BC61FE476D0E3362F831 /* ModelPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95EAE20F68A86A8C803A0B1E /* ModelPicker.swift */; };
 		81AE8716B84995322DFC5EE4 /* CrewChatStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F80EEA9363B2D0019EECF31A /* CrewChatStore.swift */; };
@@ -213,7 +212,6 @@
 		6D2B2B8D8BD1DE4D364525C4 /* GroupWalletView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWalletView.swift; sourceTree = "<group>"; };
 		6EFB784DC12029E53EB12A5C /* RealtimeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeManager.swift; sourceTree = "<group>"; };
 		6F57C354DC67393099BE1D8E /* GroupCallTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupCallTransport.swift; sourceTree = "<group>"; };
-		6F88AE2F9558F84A927D904C /* GroupBillingSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupBillingSheet.swift; sourceTree = "<group>"; };
 		70EAEDCC6E5ABCC5261A43E3 /* MyQRBusinessCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyQRBusinessCard.swift; sourceTree = "<group>"; };
 		7114A9AF0BBDF033ADE65E67 /* ConversationView+Realtime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConversationView+Realtime.swift"; sourceTree = "<group>"; };
 		72CE91B5FAEED2B40DF223A1 /* EnvelopeAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvelopeAPI.swift; sourceTree = "<group>"; };
@@ -542,7 +540,6 @@
 		C8C8A6138E0A65865F768D13 /* Group */ = {
 			isa = PBXGroup;
 			children = (
-				6F88AE2F9558F84A927D904C /* GroupBillingSheet.swift */,
 				9010CC63D1CC724A55770E7A /* GroupJoinView.swift */,
 				7B48A6EDBF639ED658DB2493 /* GroupQRCard.swift */,
 				E2EDC1669F416D3C59723D25 /* GroupSettingsView.swift */,
@@ -754,7 +751,6 @@
 				0B2D6E04E981C24EDB2ED740 /* FriendsTabView.swift in Sources */,
 				7FEECCD4D899454D43447F5C /* GoogleSignIn.swift in Sources */,
 				1431C4C1F06DB04B39E9C1FF /* GroupAvatar.swift in Sources */,
-				7D7660E36F2A8F3B1C88CD45 /* GroupBillingSheet.swift in Sources */,
 				096B537A54400F2BC07A0775 /* GroupCallSession.swift in Sources */,
 				3E88530EBC57B170C2AD9812 /* GroupCallTransport.swift in Sources */,
 				BF1A43D6762B6F732360A79D /* GroupCallView.swift in Sources */,
