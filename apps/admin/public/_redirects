@@ -1,0 +1,3 @@
+# Cloudflare Pages SPA fallback: serve index.html for any client-side route
+# so deep links (/users/show/<id>, etc.) don't 404. Status 200 = rewrite, not redirect.
+/*    /index.html   200

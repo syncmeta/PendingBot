@@ -463,3 +463,36 @@
 - **群注资 / 认缴（`group_topped_up` / `group_subject_created`）** — `routes/group-subjects.ts` 有 `POST /:id/topup` 等落点，但该文件正被另一 session 改造（task #220-221 群钱包重构），为避免抢同一文件**本轮未接**；待群钱包改造落定后补 `trackEvent`。事件名已在 `AnalyticsEvent` 常量预留。
 - **`topup_succeeded` 数据源随计费迁移** — 当前接在 billing-v2 iap/lemon webhook（仍是现行入账路径）。billing 引擎若迁到 **Polar**（见 memory `project_billing_outsourcing`），事件源要跟着搬到 Polar webhook，别留在退役路径上。
 
+
+
+### 🟡 Grafana BI 依赖 `metabase_ro` 只读角色，但该角色无 migration
+- **发现**: 2026-06-03 · feat/dashboard-wiring
+- **位置**: infra/grafana/（datasource provisioning 指向 `metabase_ro`）
+- **问题**: dashboard stack 第 5 块（Grafana 营收/钱包 BI）的数据源用 SELECT-only 角色 `metabase_ro`，但本 worktree 里没有任何 `*metabase_readonly_role*` migration——角色不存在则数据源连不上。属于「依赖一个未落库的前置」。
+- **影响**: Grafana 面板全部依赖此角色；未建角色前所有 dashboard 都是空的/连接失败。不影响主程序运行。
+- **建议**: 补一条 migration 建 `metabase_ro` 角色 + `GRANT USAGE ON SCHEMA pendingbot` + `GRANT SELECT` on（至少）`topups, billing_ledger, subject_wallets, subjects, group_member_billing, conversations, audit_log, users, bots, group_join_requests`；或手工 SQL 建角色。建好后在 Grafana Cloud 填 datasource 密码 + 确认 Supabase 网络放行（pooler 公网可达或配 PDC）。
+- **状态**: 待办（前置依赖，需用户落库角色 + 配 datasource）
+
+### 🟡 admin 控制台（apps/admin）依赖的 edge admin 端点尚不存在 —— dataProvider 指向"意图路径"，调用即 404
+- **发现**: 2026-06-03 · feat/dashboard-wiring（dashboard stack block 4）
+- **位置**: `apps/admin/src/providers/resource-map.ts`（`RESOURCE_ROUTES` + `ADMIN_ACTION_ENDPOINTS`，逐条标了 `exists:false`）、`apps/admin/src/providers/data-provider.ts`、`apps/edge/src/index.ts`（v1 路由挂载处，**当前无任何 `/v1/admin/*`**）
+- **问题**: 新建的 Refine admin 控制台按 spec 要求"读写都过 edge、绝不直连 Postgres、前端不持 service-role key"，所以 dataProvider 把每个资源映射到 edge REST 路由。但**edge 目前没有 admin 路由面**：`users.is_admin` 字段在 DB 里存在，`@pendingbot/identity` 也导出了 `requireAdmin(...)`，但**全仓没有任何地方 mount 或使用它**。控制台为了不埋"假装能用"的 stub，把这些资源指向**意图中的** edge 路径并在代码里 `exists:false` 标注 + 页面渲染告警横条；调用当前会 404。
+- **影响**: 控制台骨架可编译、可登录（Supabase Auth → JWT），但除下面两条已存在的 route 外，所有 admin 读/写页面都打不通真实数据，直到 edge 补齐这些端点。属于"先把前端接好、等后端落地"的刻意取舍，不是无声 stub。
+- **已存在、控制台已复用的 edge 面（仅这两条）**:
+  - `GET /v1/human-help-requests?status=...`（**requester-scoped**，按 `requested_user_id = caller` 过滤）+ `POST /v1/human-help-requests/:id/decision {decision: accepted|declined}`
+  - `POST /v1/permission-requests/:id/decide {decision: approve|reject}`
+- **控制台需要、但 edge 尚不存在的端点（完整清单，全部待办）**:
+  1. `GET /v1/admin/users`（list）+ `GET /v1/admin/users/:id`（show）—— 用户清单（id/handle/created_at/subject），跨用户、需 is_admin。
+  2. `GET /v1/admin/bots` + `/:id` —— bot 清单（visibility/model/owner）。现有 `/v1/bots` 是用户态，非 admin 列表。
+  3. `GET /v1/admin/conversations` + `/:id` —— 会话清单/详情。
+  4. `GET /v1/admin/billing/ledger` —— 计费台账读。**注意 spec 写的 `pnc_ledger` 视图在 schema 里不存在**；真实来源是 `pendingbot.billing_ledger` 表（+ `subject_wallets` 取每主体余额）。要么建 `pnc_ledger` 视图，要么端点直接读 `billing_ledger`。
+  5. `GET /v1/admin/billing/group-pool` —— 群池/分摊读。**schema 里没有 pool/pledge 视图**；最接近的源表是 `group_billing_config` + `group_member_billing`，需要端点聚合或建视图。
+  6. `POST /v1/admin/billing/wallet/grant` —— 钱包发放额度（写 `subject_wallets`/`billing_ledger` + `admin_audit`）。
+  7. `POST /v1/admin/billing/wallet/clawback` —— 钱包回收（负 delta）。
+  8. `POST /v1/admin/billing/ledger/adjust` —— 直接台账调整（entry_type=adjustment 等）。
+  9. `POST /v1/admin/users/account-op` —— 账户操作（freeze/unfreeze/delete）。
+  10. `GET /v1/admin/permission-requests`（list）—— 权限审批**列表**（decide 动作已存在，但没有 admin 列表读）。
+  11. `GET /v1/admin/human-help-requests`（list）—— **admin-wide** 人工协助队列（现有那条只看 caller 自己被点名的，不是全局队列）。
+- **建议**: 新建 `apps/edge/src/routes/admin.ts`，挂在 `/v1/admin`，第一道中间件 `requireSession()` 后接 `requireAdmin(c => SELECT is_admin FROM pendingbot.users WHERE id=c.var.userId)`，所有读用 `serviceClient` 跨用户查、所有写进 `admin_audit`（actor_id/before/after/ip/user_agent 已有列）。读端点返回 `{ items: [...] }`（控制台 dataProvider 已按此 normalize）。建端点时同步把 `resource-map.ts` 对应条目翻成 `exists:true`，并把本条状态推进。计费两个端点落地前先决定 `pnc_ledger` 视图建不建（spec 名 vs 实表名的口径要统一）。
+- **状态**: 待办（控制台前端已接好并可编译/构建；等 edge admin 路由面落地）
+

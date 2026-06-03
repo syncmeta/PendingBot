@@ -1,0 +1,22 @@
+# Grafana file-based dashboard provider — loads every *.json under dashboards/.
+# Format confirmed against official docs (apiVersion: 1):
+#   https://grafana.com/docs/grafana/latest/administration/provisioning/
+#
+# Self-hosted only. Grafana Cloud cannot read local provisioning files; import the
+# dashboard JSONs via Dashboards > New > Import (see README "Import into Cloud").
+
+apiVersion: 1
+
+providers:
+  - name: pendingbot-revenue
+    orgId: 1
+    folder: PendingBot — Revenue & Wallet
+    folderUid: pendingbot_revenue
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: false
+    options:
+      # Mount the committed dashboards/ dir here in the Grafana container.
+      path: /etc/grafana/provisioning/dashboards/pendingbot
+      foldersFromFilesStructure: false

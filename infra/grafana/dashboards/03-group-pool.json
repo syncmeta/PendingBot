@@ -1,0 +1,132 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_SUPABASE",
+      "label": "Supabase Postgres (metabase_ro)",
+      "description": "Read-only Supabase Postgres datasource",
+      "type": "datasource",
+      "pluginId": "postgres",
+      "pluginName": "PostgreSQL"
+    }
+  ],
+  "__requires": [
+    { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "12.0.0" },
+    { "type": "datasource", "id": "postgres", "name": "PostgreSQL", "version": "1.0.0" }
+  ],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Group pool funding (实缴池 = group subject wallet balance) and member pledge/cap usage (认缴 = SUM(group_member_billing.cap_credits)). NOTE: there is no dedicated pledge/pool table in the schema; this is reconstructed from subject_wallets (group subjects) + group_member_billing. See README caveats.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
+      "description": "实缴池: total credits sitting in group-subject wallets (subjects.subject_type = 'group').",
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }, "unit": "locale" }, "overrides": [] },
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 0 },
+      "id": 1,
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+      "pluginVersion": "12.0.0",
+      "title": "Group pool funded balance (实缴池)",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COALESCE(SUM(w.balance_credits), 0) AS group_pool_balance\nFROM pendingbot.subject_wallets w\nJOIN pendingbot.subjects s ON s.id = w.subject_id\nWHERE s.subject_type = 'group';",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
+      "description": "认缴: sum of per-member spend caps across all groups (group_member_billing.cap_credits; NULL cap = uncapped, excluded from this sum).",
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }, "unit": "locale" }, "overrides": [] },
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 0 },
+      "id": 2,
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+      "pluginVersion": "12.0.0",
+      "title": "Pledged member caps (认缴)",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COALESCE(SUM(cap_credits), 0) AS pledged_caps\nFROM pendingbot.group_member_billing\nWHERE participates = true\n  AND cap_credits IS NOT NULL;",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
+      "description": "Alert-friendly: pledge usage rate = SUM(spent_credits) / SUM(cap_credits) across capped, participating members. >100% means caps overspent in aggregate.",
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "max": 1.5, "min": 0, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.8 }, { "color": "red", "value": 1 }] }, "unit": "percentunit" }, "overrides": [] },
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 0 },
+      "id": 3,
+      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+      "pluginVersion": "12.0.0",
+      "title": "Pledge usage rate (认缴使用率)",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT CASE\n  WHEN COALESCE(SUM(cap_credits), 0) = 0 THEN 0\n  ELSE SUM(spent_credits)::numeric / NULLIF(SUM(cap_credits), 0)\nEND AS pledge_usage_rate\nFROM pendingbot.group_member_billing\nWHERE participates = true\n  AND cap_credits IS NOT NULL;",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
+      "description": "Per-group pool: funded balance, member count, total spent, total capped, usage rate. Highest usage first.",
+      "fieldConfig": { "defaults": { "custom": { "align": "auto", "cellOptions": { "type": "auto" }, "inspect": false }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } }, "overrides": [] },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 4 },
+      "id": 4,
+      "options": { "cellHeight": "sm", "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false }, "showHeader": true },
+      "pluginVersion": "12.0.0",
+      "title": "Per-group pool usage",
+      "type": "table",
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  gmb.conversation_id,\n  c.title AS group_title,\n  COUNT(*) AS member_count,\n  COUNT(*) FILTER (WHERE gmb.participates) AS participating_members,\n  COUNT(*) FILTER (WHERE gmb.overdrawn) AS overdrawn_members,\n  COALESCE(SUM(gmb.spent_credits), 0) AS total_spent,\n  COALESCE(SUM(gmb.cap_credits), 0) AS total_capped,\n  CASE WHEN COALESCE(SUM(gmb.cap_credits), 0) = 0 THEN NULL\n       ELSE ROUND(SUM(gmb.spent_credits)::numeric / NULLIF(SUM(gmb.cap_credits), 0), 4)\n  END AS usage_rate\nFROM pendingbot.group_member_billing gmb\nLEFT JOIN pendingbot.conversations c ON c.id = gmb.conversation_id\nGROUP BY gmb.conversation_id, c.title\nORDER BY usage_rate DESC NULLS LAST\nLIMIT 200;",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "5m",
+  "schemaVersion": 41,
+  "tags": ["pendingbot", "group", "pool", "pledge"],
+  "templating": { "list": [] },
+  "time": { "from": "now-30d", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "PendingBot — Group Pool & Pledge",
+  "uid": "pb-group-pool",
+  "version": 1,
+  "weekStart": ""
+}

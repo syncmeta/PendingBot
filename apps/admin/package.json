@@ -1,0 +1,31 @@
+{
+  "name": "@pendingbot/admin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "PendingBot admin console — Refine SPA (block 4 of the dashboard stack). Deploys to Cloudflare Pages.",
+  "scripts": {
+    "dev": "vite --port 5174",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --port 5174",
+    "typecheck": "tsc --noEmit",
+    "deploy": "wrangler pages deploy dist --project-name=pendingbot-admin"
+  },
+  "dependencies": {
+    "@refinedev/core": "5.0.12",
+    "@refinedev/react-router": "2.0.4",
+    "@supabase/supabase-js": "^2.49.0",
+    "@tanstack/react-query": "^5.81.5",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "react-router": "7.16.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "5.2.0",
+    "typescript": "^6.0.3",
+    "vite": "^6.4.2",
+    "wrangler": "^4.97.0"
+  }
+}
