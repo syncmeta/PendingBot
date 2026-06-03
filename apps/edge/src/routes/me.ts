@@ -13,6 +13,7 @@ import {
 } from '../lib/billing';
 import { wallet } from '../billing/wallet-client';
 import { grantSignupBonus, creditRedemptionToPolar } from '../lib/billing-grant';
+import { billingEnabled } from '../lib/feature-flags';
 import { safeWaitUntil } from '../lib/safe-wait-until';
 import { jsonError } from '../lib/http-error';
 import type { AppBindings } from '../types';
@@ -308,6 +309,11 @@ meRoutes.post('/redeem', async (c) => {
   const code = typeof body.code === 'string' ? body.code.trim() : '';
   if (!code) {
     return jsonError(c, 400, 'invalid_body', { message: 'missing code' });
+  }
+  // 计费 kill-switch 关时(默认)不受理兑换 —— 否则会消耗掉码但无法入账(码白废)。
+  // 先拒绝、绝不调 redeemCode(后者会原子标记 used)。
+  if (!billingEnabled(c.env)) {
+    return jsonError(c, 503, 'billing_disabled', { message: '兑换暂未开放' });
   }
 
   // billing_redeem reads auth.uid() — must use user-scoped client.
