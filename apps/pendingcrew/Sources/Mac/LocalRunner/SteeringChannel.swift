@@ -24,6 +24,10 @@ struct SteeringChannel {
     var settingsPath: String { directory.appendingPathComponent("settings.json").path }
     private var hookPath: URL { directory.appendingPathComponent("hook.sh") }
     private var notePath: URL { directory.appendingPathComponent("steering.md") }
+    /// Auto-maintained crew context (whiteboard + mailbox digest, spec §9.2),
+    /// kept separate from the viewer's manual steering note so neither clobbers
+    /// the other. The hook injects both each turn.
+    private var crewContextPath: URL { directory.appendingPathComponent("crew-context.md") }
 
     /// Create the managed dir + hook script + settings file (the note starts
     /// empty → injects nothing until a viewer sets one). `parent` is normally
@@ -36,6 +40,7 @@ struct SteeringChannel {
         let channel = SteeringChannel(directory: dir)
         try channel.writeHookAndSettings()
         channel.setNote("") // empty note = no-op injection until set
+        channel.setCrewContext("") // empty until the runner polls the inbox
         return channel
     }
 
@@ -52,6 +57,7 @@ struct SteeringChannel {
         #!/bin/bash
         read -r _
         dir="$(cd "$(dirname "$0")" && pwd)"
+        cat "$dir/crew-context.md" 2>/dev/null
         cat "$dir/steering.md" 2>/dev/null
         """
         try hook.write(to: hookPath, atomically: true, encoding: .utf8)
@@ -80,6 +86,12 @@ struct SteeringChannel {
     /// Current note content (for tests / UI echo). Empty if unset.
     func currentNote() -> String {
         (try? String(contentsOf: notePath, encoding: .utf8)) ?? ""
+    }
+
+    /// Replace the auto-maintained crew context block (whiteboard + mailbox
+    /// digest). Empty clears it. Best-effort.
+    func setCrewContext(_ text: String) {
+        try? text.write(to: crewContextPath, atomically: true, encoding: .utf8)
     }
 
     /// Remove the managed dir. Call when the session ends.

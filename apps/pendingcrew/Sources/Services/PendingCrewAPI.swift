@@ -345,6 +345,30 @@ struct PendingCrewAPI {
         return resp.announcementId
     }
 
+    // MARK: - Session inbox (runner per-turn context: whiteboard + mailbox)
+
+    /// `GET /v1/sessions/:sessionId/inbox` — the per-turn context bundle the
+    /// runner injects into the agent's prompt (spec §9.2/§9.5): the crew
+    /// whiteboard + this session's unread mailbox. Needs `crew:read`.
+    func getSessionInbox(sessionId: String) async throws -> CrewSessionInbox {
+        try await get(path: "v1/sessions/\(sessionId)/inbox")
+    }
+
+    /// `POST /v1/sessions/:sessionId/inbox/mark-delivered` — mark mailbox items
+    /// as delivered once they've been folded into a prompt turn, so they don't
+    /// re-inject next turn. Needs `crew:write`.
+    @discardableResult
+    func markInboxDelivered(sessionId: String, itemIds: [String]) async throws -> Bool {
+        guard !itemIds.isEmpty else { return true }
+        struct Body: Encodable { let itemIds: [String]; enum CodingKeys: String, CodingKey { case itemIds = "item_ids" } }
+        struct Response: Decodable { let ok: Bool? }
+        let resp: Response = try await post(
+            path: "v1/sessions/\(sessionId)/inbox/mark-delivered",
+            body: Body(itemIds: itemIds)
+        )
+        return resp.ok ?? true
+    }
+
     // MARK: - Internals
 
     private func get<Response: Decodable>(path: String) async throws -> Response {
@@ -507,6 +531,40 @@ struct CrewWhiteboardEntry: Decodable, Identifiable, Equatable {
     var displayText: String { payload?.text ?? summary ?? "" }
     /// True if this row is an ask_human interaction card.
     var isInteraction: Bool { payload?.kind == "interaction" }
+}
+
+/// The per-turn context bundle (`getSessionInbox`): crew whiteboard + this
+/// session's unread mailbox. Only the two fields the runner injects are
+/// decoded; `session` / `crew` in the response are ignored.
+struct CrewSessionInbox: Decodable {
+    let whiteboard: [CrewWhiteboardEntry]
+    let mailbox: [CrewMailboxItem]
+}
+
+/// One unread mailbox item targeted at this session (a `@session` / broadcast
+/// message someone dropped on the crew, fanned out to this session's mailbox).
+struct CrewMailboxItem: Decodable, Identifiable, Equatable {
+    let id: String
+    let senderKind: String
+    let senderSessionId: String?
+    let messageKind: String
+    let summary: String?
+    let status: String
+    let createdAt: String
+    let payload: CrewWhiteboardEntry.Payload?
+
+    var displayText: String { payload?.text ?? summary ?? "" }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case senderKind = "sender_kind"
+        case senderSessionId = "sender_session_id"
+        case messageKind = "message_kind"
+        case summary
+        case status
+        case createdAt = "created_at"
+        case payload
+    }
 }
 
 // MARK: - Create crew request/response

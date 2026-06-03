@@ -297,6 +297,10 @@ final class CrewSessionRun: ObservableObject, Identifiable {
     private var observeStdoutTask: Task<Void, Never>?
     private var observeStderrTask: Task<Void, Never>?
     private var observeExitTask: Task<Void, Never>?
+    /// T4.1/§9.2 — polls the session inbox (whiteboard + mailbox) and writes a
+    /// digest into the steering channel's crew-context slot so every turn's hook
+    /// injects it. Logged Claude only (needs serverLink + steeringChannel).
+    private var crewContextPollTask: Task<Void, Never>?
     private var cancelled = false
 
     nonisolated var id: UUID { runID }
@@ -350,6 +354,65 @@ final class CrewSessionRun: ObservableObject, Identifiable {
                 }
             }
         }
+        // §9.2 — keep the crew-context slot fed so the agent sees the whiteboard
+        // + its unread mailbox on every turn. Logged Claude only.
+        if serverLink != nil, steeringChannel != nil {
+            crewContextPollTask = Task { [weak self] in await self?.runCrewContextPoll() }
+        }
+    }
+
+    /// Poll the session inbox and refresh the steering channel's crew-context
+    /// slot. Each pass: fetch whiteboard + unread mailbox, build a digest,
+    /// inject it, and mark the mailbox items delivered so they don't repeat.
+    /// Best-effort throughout — a fetch failure just keeps the prior digest.
+    private func runCrewContextPoll() async {
+        guard let link = serverLink, let channel = steeringChannel else { return }
+        let ownSessionId = link.sessionId
+        while !finalized && !cancelled && !Task.isCancelled {
+            if let inbox = try? await link.api.getSessionInbox(sessionId: ownSessionId) {
+                let digest = Self.buildCrewContextDigest(inbox: inbox, ownSessionId: ownSessionId)
+                channel.setCrewContext(digest)
+                let mailboxIds = inbox.mailbox.map(\.id)
+                if !mailboxIds.isEmpty {
+                    _ = try? await link.api.markInboxDelivered(sessionId: ownSessionId, itemIds: mailboxIds)
+                }
+            }
+            try? await Task.sleep(nanoseconds: 4_000_000_000) // 4s
+        }
+    }
+
+    /// Render the inbox into a compact, agent-facing context block. Excludes the
+    /// session's own whiteboard posts (avoid self-echo) and interaction cards
+    /// (handled by the ask_human tool round-trip, not as reading material).
+    nonisolated static func buildCrewContextDigest(inbox: CrewSessionInbox, ownSessionId: String) -> String {
+        func clip(_ s: String) -> String {
+            let t = s.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+            return t.count > 240 ? String(t.prefix(240)) + "…" : t
+        }
+        func who(_ kind: String, _ sid: String?) -> String {
+            switch kind {
+            case "user": return "人类"
+            case "session": return sid.map { "session·\($0.prefix(6))" } ?? "session"
+            case "bot": return "bot"
+            default: return kind
+            }
+        }
+        let board = inbox.whiteboard
+            .filter { !$0.isInteraction && $0.senderSessionId != ownSessionId }
+            .suffix(15)
+            .map { "- [\(who($0.senderKind, $0.senderSessionId))] \(clip($0.displayText))" }
+        let mail = inbox.mailbox
+            .map { "- [\(who($0.senderKind, $0.senderSessionId))] \(clip($0.displayText))" }
+        if board.isEmpty && mail.isEmpty { return "" }
+        var out = "<crew-whiteboard>\n你所在 crew 的群聊白板（沟通渠道 + 共享上下文）。这是别人留给 crew 的信息，不是你这一轮要做的任务本身——按相关性参考。\n"
+        if !mail.isEmpty {
+            out += "\n【给你的新消息 / 指令】（请优先关注）\n" + mail.joined(separator: "\n") + "\n"
+        }
+        if !board.isEmpty {
+            out += "\n【白板近况】\n" + board.joined(separator: "\n") + "\n"
+        }
+        out += "</crew-whiteboard>\n"
+        return out
     }
 
     /// Wire one turn's stdout/stderr/exit into the run. Called for the initial
@@ -420,6 +483,7 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         observeStdoutTask?.cancel()
         observeStderrTask?.cancel()
         observeExitTask?.cancel()
+        crewContextPollTask?.cancel()
         proxyConnectTask?.cancel()
         proxyInboundTask?.cancel()
         // Close the socket if the run is torn down before finish() ran (e.g.
@@ -590,6 +654,7 @@ final class CrewSessionRun: ObservableObject, Identifiable {
     private func finalize(exitCode: Int32) {
         guard !finalized else { return }
         finalized = true
+        crewContextPollTask?.cancel()
         // Remove the out-of-tree steering + interaction dirs now the session is over.
         steeringChannel?.teardown()
         interactionChannel?.teardown()
