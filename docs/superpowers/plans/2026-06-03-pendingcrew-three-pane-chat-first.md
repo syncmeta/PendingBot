@@ -33,9 +33,10 @@
 - 砍 `CreateSessionSheet`（745 行配置表单）。右栏顶部放一个「**开始 session**」按钮：用 crew 默认（工作目录 + runner kind + 权限模式）直接起，**无标题、无初始 prompt**。
 - `CrewSessionWindowView` 成为常驻交互面：转写 + 底部 composer（送 prompt / steering，复用已建的 send_prompt 通道）。多 session 时顶部用切换器（segmented / dropdown），MVP 可先单 active。
 
-### F. 建 crew 配置补全（中）
-- `CreateCrewSheet` 确认/补齐：工作目录、runner kind（claude/codex）、权限模式（标准/只读/放行）、captain。这些从 session 级移上来。
-- `CreateSessionSheet` 退役后，把仍有用的「分支/worktree」选项要么挪到 crew 级、要么先砍（v1 简化，记 tech-debt）。
+### F. 建 crew 配置补全（中）✅ 核心已满足 + 一处刻意延期
+- **已满足**：`CreateCrewSheet` 本就要求工作目录（`canSubmit` 守 `workingDirectory != nil`）+ captain + subject + runtimeLocation。这正是右栏零配置起 session 所需。
+- **简化（不是移到 crew，是直接砍）**：原 `CreateSessionSheet` 的「工作目录模式/分支/worktree/model/权限模式」全砍 —— session 零配置用 crew 默认；runner kind 在右栏 composer 留了个轻量 claude/codex picker（像 Desktop 开新会话时选），权限模式默认 auto。
+- **刻意延期（记 tech-debt）**：crew 级 `default_runner_kind` / `default_permission_mode` 列 —— 要新的共享 prod 迁移 + edge + UI，UX 增量小（picker 一下 / auto 是合理默认），重排中途不再起一轮 prod 迁移摩擦。worktree/分支隔离同样先砍，用户自己用 git 管（spec §8.3.1 本就这么说）。
 
 ## 验证门
 - 每单元 typecheck（edge）/ macOS build。
