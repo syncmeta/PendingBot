@@ -140,6 +140,10 @@ struct MacRootView: View {
                 selectedTab = .messages
             })
             .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
+        case .envelope:
+            // T0.1 — 来信 tab 中列:奏折/信件 feed;选中看正文。
+            MacEnvelopeColumn(selectedEnvelopeId: $selectedItemId)
+                .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
         case .crew:
             // T4.5 — Crew tab 中列接入真实机组列表;选中一个 crew 后右栏看它的
             // 服务端 session(跨端 viewer)。其余 crew 业务(创建 / 群聊 / 详情)
