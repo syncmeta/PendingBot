@@ -3,7 +3,6 @@ import {
   InsufficientBalanceError,
   RedemptionError,
   _resetMarkupCache,
-  _resetThresholdCache,
   getBalanceGateState,
   getMarkup,
   getSubjectBalance,
@@ -78,7 +77,6 @@ function stubSupa(
 
 afterEach(() => {
   _resetMarkupCache();
-  _resetThresholdCache();
   vi.useRealTimers();
 });
 

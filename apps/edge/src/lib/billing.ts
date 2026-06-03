@@ -1,7 +1,5 @@
 import type { SupabaseClient } from './supabase';
 import type { Env } from '../types';
-import { getCachedBalance, putCachedBalance } from './balance-cache';
-import { kvConfig } from './kv-config';
 import { billingEnabled } from './feature-flags';
 import { wallet } from '../billing/wallet-client';
 
@@ -22,11 +20,6 @@ const USD_TO_PND = 2700;
 // tier signup grant. 2.5× was the seed value and stays as the fallback
 // so a wiped billing_config never silently zeroes out billing.
 const DEFAULT_MARKUP = 2.5;
-
-// Pre-call gate threshold default — read from billing_config at runtime.
-// 0 means "no gate" (don't block anyone); deny only when the value is
-// configured AND the user falls below it.
-const DEFAULT_MIN_THRESHOLD = 0;
 
 // Worker-isolate cache for the markup value. The billing_config table is
 // edited from the board roughly never; a short TTL keeps drift bounded
@@ -56,34 +49,6 @@ export async function getMarkup(supa: SupabaseClient): Promise<number> {
 /** For tests / forced refresh after an admin edit on the same isolate. */
 export function _resetMarkupCache(): void {
   markupCache = null;
-}
-
-// Same isolate-local pattern for the pre-call gate threshold. The value
-// is global (one knob in billing_config), tiny, and changes rarely;
-// caching it on the worker isolate avoids a KV round-trip in
-// requireBalance and survives across requests within a single isolate.
-const THRESHOLD_TTL_MS = 60_000;
-const THRESHOLD_TTL_S = THRESHOLD_TTL_MS / 1000;
-let thresholdCache: { at: number; value: number } | null = null;
-
-// getThreshold sits on the message-send critical path (requireBalance).
-// The KV read-through (shared L2 in front of the isolate Map) keeps a
-// cold isolate off the cross-region Supabase round-trip.
-export async function getThreshold(supa: SupabaseClient, env: Env): Promise<number> {
-  const now = Date.now();
-  if (thresholdCache && now - thresholdCache.at < THRESHOLD_TTL_MS) return thresholdCache.value;
-  const value = await kvConfig(
-    env,
-    'cfg:billing:min_balance_threshold',
-    THRESHOLD_TTL_S,
-    async () => (await getConfigInt(supa, 'min_balance_threshold')) ?? DEFAULT_MIN_THRESHOLD,
-  );
-  thresholdCache = { at: now, value };
-  return value;
-}
-
-export function _resetThresholdCache(): void {
-  thresholdCache = null;
 }
 
 /**
