@@ -15,7 +15,7 @@ import type { AppBindings } from '../types';
 
 function fakeCtx(userId: string | undefined) {
   const waitUntil = vi.fn();
-  const env = { POSTHOG_KEY: 'phc_test' };
+  const env = { OBSERVABILITY_ENABLED: 'true', POSTHOG_KEY: 'phc_test' };
   const c = {
     env,
     var: { userId },
