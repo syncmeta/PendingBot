@@ -571,3 +571,16 @@
   **状态**:待办(已登记,等 #226/#244 推进时按 A/B/C 分层落)
 
 - ✅ **billing-v2/v1 孤儿 A 段已 drop(2026-06-03 部署)** — 上条「全清单」的 **A 段**(表 billing_ledger/group_billing_config/group_billing_custom_shares/ledger_entries/packs/topups/refund_events + 8 孤儿 RPC + on_user_billing_signup 触发器)已随迁移 `20260603112148_drop_billing_v2_orphans` apply 到生产(先部署新 edge 代码再 drop,无 500)。**C 段**(兑换/送)已重建到 Polar:`billing_redeem` 退化为只校验(迁移 20260603111613),送(35 PNC)/兑换入账走 `lib/billing-grant.ts` 的 ensureCustomer+grantCredits,均受 BILLING_ENABLED 门控。**残留**:ensureCustomer 的 409(已存在客户)吞掉分支未经 sandbox 实测(P0 spike 已验证全新客户的 create+grant+balance;409 支 dormant,billing 关时不触发)——启用计费前用 token 跑一次 spike 坐实即可。**B 段**(subject_wallets / group_member_billing + invite 流 + iOS)仍是 #226。
+
+- 🟢 **死代码全项目扫描(2026-06-04)— 安全区已清,Swift 区待对应 session 清** — `feat/billing-obs-killswitch`。用 workflow fan-out 8 region 扫了全仓死代码(60 项)。
+  **已清理(edge/supabase/packages 安全区,15 项,typecheck+vitest 守门,484 测试绿)**:删 `lib/balance-cache.ts` 整模块 + `getThreshold`/`_resetThresholdCache`/threshold 缓存簇 + `billingDebit`/`billingDebitSubject`(已在退役批) + `gateUsage`/`GateResult`(throw 版前身) + `decayShareIndex` + `isNativeAdapterStyle` + `_resetCatalogCache` + `_resetWebToolPriceCache` + `SessionUser`(identity) + 6 个废 IAP/LemonSqueezy ApiErrorCode + crews.ts 的 `ApiErrorCode` re-export + index.ts/http-error.ts 过时注释 + 死脚本 `dev:web`(无 apps/web)。
+  **安全区暂留(review,价值低/需判断,未删)**:`models.ts` 4 个 LMArena* 过度 export + `crews.ts:accessibleSubjectIds` 过度 export(去 `export` 关键字即可,低价值,crews.ts 属 crew session territory 故未动);`identity/jwt.ts:ALLOWED_JWT_ALGS` 过度 export;`sandbox.ts:deleteSandbox`(0 调用但注释称"会话拆除时调"——**误导注释**,可能是未接的 future teardown,建议要么接上要么删注释);`supabase` 的 `v_audit_daily`/`v_audit_monthly` 视图(edge 0 引用,可能留给 BI,删需迁移);`createPolarClient`/`PNC_EVENT_NAME` 是**假阳**(被同文件 polarFromEnv 内部用,勿删)。
+  **🟡 顺带发现的潜在 bug(非纯死代码)**:`persona-cache.ts` 的 `deleteCachedChatMemo`/`deleteCachedBotNote` 全仓 0 调用 → chat-memo / bot-note 的 KV 缓存**从不失效**,写入后只能等 TTL。要么是该接没接(staleness bug),要么真没用应删。值得真看一眼,别当纯死代码删。
+
+- 🟡 **iOS/macOS/crew Swift 死代码清单(22 项)— 交接给 pendingbot / pendingcrew session(本 lane 不动)** — 同一次扫描的 Swift 区。Swift 无廉价 unused 检测,以下均 rg 证据(符号全仓仅定义),**删前 owner session 必须 xcodebuild 验证**(可能有 storyboard/动态引用)。多数像被取代的旧面:
+  - **旧 billing-v1 iOS 钱包面(疑被 WalletV2View 取代)**:`Features/Me/WalletView.swift:WalletView`、`Networking/BillingService.swift`(fetchBalance/fetchLog/redeem/fetchSummary/applySilentUpdate + Balance/LogEntry/LogPage/Summary/RedeemResponse 等嵌套类型)——若 UI 已切到 WalletV2View/GroupWalletView,整个 BillingService + WalletView 可能整体死。**高价值核查**。
+  - **BigScreen 实验面**:`Shared/PendingBotBigScreenApp.swift`(PendingBotBigScreenAppView / PendingBotCrewWorkspaceView)+ `Shared/PendingBotSharedModels.swift` 一大批 `PendingBotCrew*` / `PendingBotBigScreenTab` 类型(疑 BigScreen 原型残留)。
+  - **其它 0 引用**:`Features/Me/AccountsView.swift:AccountsView`、`Components/TabTitle.swift:TabTitle`、`Mac/Views/MacEnvelopeView.swift:MacEnvelopeDetail`、`Models/APIModels.swift` 的 `MeProfile`/`AiPick`、`pendingcrew .../LocalRunnerPlaceholder.swift:LocalRunnerModule`。
+  - **过时常量**:`Features/Me/WalletV2View.swift` 的 `channelLabel` 还留 `iap_ios`/`iap_macos`/`lemon_squeezy` 分支(渠道已转 Polar/RevenueCat)。
+  - **构建产物入库**:`apps/ios/build/**`(.xcarchive/.ipa)疑被 git 跟踪——应 gitignore + 移除。
+  建议各 session 在自己分支用 Xcode 的 unused 检查/编译告警逐个核掉,别由计费 lane 跨改。
