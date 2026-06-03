@@ -139,7 +139,7 @@ struct MacChatView: View {
                         Text(loadError).font(.caption).foregroundStyle(.red)
                     }
                     ForEach(visibleMessages) { m in
-                        bubble(role: m.role, content: m.content, isMine: m.isMine).id(m.id)
+                        bubble(role: m.role, content: m.content, isMine: m.isMine, imagePaths: m.imagePaths).id(m.id)
                     }
                     if let streamingBotText, !streamingBotText.isEmpty {
                         bubble(role: "assistant", content: streamingBotText, isMine: false).id("streaming")
@@ -158,26 +158,38 @@ struct MacChatView: View {
         messages.filter { !$0.isHidden }
     }
 
-    private func bubble(role: String, content: String, isMine: Bool) -> some View {
+    private func bubble(role: String, content: String, isMine: Bool, imagePaths: [String] = []) -> some View {
         HStack(alignment: .top, spacing: 10) {
             if isMine {
                 Spacer(minLength: 56)
             } else {
                 BrandAvatar(seed: conversationId, size: 30)
             }
-            Text(content.isEmpty ? " " : content)
-                .textSelection(.enabled)
-                .padding(.horizontal, 14).padding(.vertical, 11)
-                .background(
-                    // 对齐 iOS:用户气泡淡绿(accentBg 0xE3EEEA)、bot 气泡白(surface)+ hairline 描边,圆角 18。
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(isMine ? Color(hex: 0xE3EEEA) : Color(hex: 0xFFFFFF))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .strokeBorder(isMine ? Color.clear : Color(hex: 0xE2E0D7), lineWidth: 0.5)
-                )
-                .foregroundStyle(Color(hex: 0x1B1A14)) // ink 深字,两种气泡都用
+            VStack(alignment: isMine ? .trailing : .leading, spacing: 6) {
+                // 图片附件:复用 iOS 同一个 auth-gated ServerImage 加载器。
+                ForEach(imagePaths, id: \.self) { path in
+                    ServerImage(path: path,
+                                serverURL: HostedConfig.environment.workerURL,
+                                contentMode: .fill)
+                        .frame(maxWidth: 240, maxHeight: 240)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+                if !content.isEmpty {
+                    Text(content)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 14).padding(.vertical, 11)
+                        .background(
+                            // 对齐 iOS:用户气泡淡绿(accentBg 0xE3EEEA)、bot 气泡白(surface)+ hairline 描边,圆角 18。
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .fill(isMine ? Color(hex: 0xE3EEEA) : Color(hex: 0xFFFFFF))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .strokeBorder(isMine ? Color.clear : Color(hex: 0xE2E0D7), lineWidth: 0.5)
+                        )
+                        .foregroundStyle(Color(hex: 0x1B1A14)) // ink 深字,两种气泡都用
+                }
+            }
             if !isMine { Spacer(minLength: 60) }
         }
         .frame(maxWidth: .infinity, alignment: isMine ? .trailing : .leading)

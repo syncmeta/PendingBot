@@ -37,6 +37,9 @@ struct ChatMessageRow: Identifiable, Equatable, Hashable {
     let role: String
     let content: String
     let seq: Int?
+    /// Auth-gated `ServerImage` paths (`/v1/uploads/<id>`) for image attachments
+    /// on this message. Empty for text-only rows.
+    var imagePaths: [String] = []
 
     /// Right-aligned (mine) only for human-sent rows.
     var isMine: Bool { role == "user" }
@@ -74,32 +77,32 @@ enum ChatDataSource {
 
     // MARK: message history
 
-    /// Messages for one conversation, oldest→newest (server-ordered by
-    /// message_seq then created_at). Tool-trace `log` rows are kept in the raw
-    /// result; the view hides them via `ChatMessageRow.isHidden`.
+    /// Messages for one conversation, oldest→newest, via the shared
+    /// `MessagesFetch.latest()` (same query as iOS). Filters the rows iOS's
+    /// dispatch also drops — soft-deleted, voice-call recaps, and `log`
+    /// tool-trace/control rows (macOS doesn't render those yet) — and resolves
+    /// image attachments into `ServerImage` paths.
     static func loadMessages(conversationId: String, limit: Int = 200) async throws -> [ChatMessageRow] {
-        struct Row: Decodable {
-            let id: String
-            let role: String?
-            let content: String?
-            let message_seq: Int?
-        }
-        let rows: [Row] = try await SupabaseStack.shared
-            .from("messages")
-            .select("id, role, content, message_seq")
-            .eq("conversation_id", value: conversationId)
-            .order("message_seq", ascending: true)
-            .order("created_at", ascending: true)
-            .limit(limit)
-            .execute()
-            .value
+        let rows = try await MessagesFetch.latest(conversationId: conversationId, limit: limit)
 
-        return rows.map {
-            ChatMessageRow(
-                id: $0.id,
-                role: $0.role ?? "assistant",
-                content: $0.content ?? "",
-                seq: $0.message_seq
+        // Resolve attachment metadata once for the whole page.
+        let allIds = Array(Set(rows.flatMap { $0.attachments?.ids ?? [] }))
+        let meta = (try? await MessagesFetch.attachmentMeta(ids: allIds)) ?? [:]
+
+        return rows.compactMap { r -> ChatMessageRow? in
+            if r.status == "deleted" { return nil }
+            if r.metadata?.objectValue?["source"]?.stringValue == "voice_call_summary" { return nil }
+            if r.role == "log" { return nil }
+            let imagePaths = (r.attachments?.ids ?? [])
+                .compactMap { meta[$0] }
+                .filter { $0.isImage }
+                .map(\.url)
+            return ChatMessageRow(
+                id: r.id,
+                role: r.role,
+                content: r.content ?? "",
+                seq: r.message_seq,
+                imagePaths: imagePaths
             )
         }
     }
