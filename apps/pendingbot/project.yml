@@ -14,7 +14,10 @@ settings:
     #   (该 entitlement 需要 team 前缀),Keychain 全挂 -34018,supabase 会话
     #   存不住,登录态写操作静默降级成 anon → onboarding 报 "permission denied
     #   for table users"。这个坑被反复误诊过多次,务必保持 Simulator 签名开启。
-    # - macOS:目前只占位,不上 prod,继续不签名。
+    # - macOS:也签名(Development)。Mac 版已是真能用的三端之一(#212),不再是
+    #   占位。不签名 = 钥匙串身份不稳定,每次重构 supabase.gotrue.swift(GoTrue
+    #   会话存储)条目都重弹授权框、甚至 -34018 让 session 存不住 → supabase-swift
+    #   静默降级 anon(和上面 Simulator 那个反复误诊的坑同源)。
     CODE_SIGN_STYLE: Automatic
     DEVELOPMENT_TEAM: M42BKJN82S
     # Simulator 也用 dev team 签名(继承上面的 Automatic + M42BKJN82S,和真机
@@ -26,9 +29,10 @@ settings:
     # 用 Xcode GUI / 已登录 Apple ID 的环境构建即可正常签名;headless 无证书的
     # 构建会回落 ad-hoc(仅编译校验用,不影响)。
     "CODE_SIGN_IDENTITY[sdk=iphonesimulator*]": "Apple Development"
-    "CODE_SIGNING_REQUIRED[sdk=macosx*]": "NO"
-    "CODE_SIGNING_ALLOWED[sdk=macosx*]": "NO"
-    "CODE_SIGN_IDENTITY[sdk=macosx*]": ""
+    # macOS 显式指定 Development 身份(继承 Automatic + M42BKJN82S),否则 Xcode
+    # 默认 ad-hoc("Sign to Run Locally")→ 钥匙串身份每次重构都变 → 反复重弹授权 /
+    # -34018。headless 无证书构建仍会回落 ad-hoc(仅编译校验用,不影响 GUI 构建)。
+    "CODE_SIGN_IDENTITY[sdk=macosx*]": "Apple Development"
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
 packages:
