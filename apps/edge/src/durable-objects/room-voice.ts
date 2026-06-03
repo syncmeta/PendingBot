@@ -11,8 +11,7 @@ import {
   splitRealtimeUsage,
   type VoiceTurnUsage,
 } from '../lib/voice-metering';
-import type { OwnerRef } from '../lib/billing-v2';
-import { wallet, walletSubjectKey } from '../billing/wallet-client';
+import { wallet, walletSubjectKey, type WalletOwner } from '../billing/wallet-client';
 import { settleGroupSpend } from '../billing/group-wallet';
 import { usdToPncMicros } from '../billing/pnc';
 import { roomMediaToken } from './room-voice-context';
@@ -1177,7 +1176,7 @@ export class RoomVoiceDO {
   private async resolveVoiceBillingOwner(
     supa: ReturnType<typeof serviceClient>,
     ctx: NonNullable<typeof this.ctx>,
-  ): Promise<OwnerRef | null> {
+  ): Promise<WalletOwner | null> {
     const { data } = await supa
       .from('conversations')
       .select('responsible_subject_id')

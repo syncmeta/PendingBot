@@ -151,16 +151,6 @@ export interface Env {
   // mirrored into Supabase Vault as `realtime_webhook_secret`.
   REALTIME_WEBHOOK_SECRET?: string;
 
-  // ── Billing v2 (see docs/billing-v2-design.md §10, lib/billing-v2-*.ts) ──
-  // Lemon Squeezy webhook signing secret. LS sends X-Signature =
-  // hex(HMAC-SHA256(secret, raw_body)). Set via `wrangler secret put
-  // LEMON_SQUEEZY_WEBHOOK_SECRET` once the LS store is provisioned.
-  // Optional at typecheck time; route returns 501 when unset.
-  LEMON_SQUEEZY_WEBHOOK_SECRET?: string;
-  // Apple IAP — JWS verification is not yet implemented (see
-  // lib/billing-v2-iap.ts header). When it lands, the chain root cert
-  // fingerprint will live here (or be bundled into the worker bundle).
-  APPLE_IAP_BUNDLE_ID?: string;
   // ── Polar (MoR + 预付钱包 + usage，见 docs/superpowers/specs/2026-06-01-billing-engine-design.md) ──
   // web/Mac 收款+代税 + credit 钱包 + 用量计量的事实源。SDK: @polar-sh/sdk。
   // 本地写 .dev.vars；生产 `wrangler secret put POLAR_ACCESS_TOKEN`。
