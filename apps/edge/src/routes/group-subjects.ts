@@ -63,7 +63,7 @@ import { userClient, serviceClient, type SupabaseClient } from '../lib/supabase'
 import { jsonError } from '../lib/http-error';
 import type { AppBindings, Env } from '../types';
 import { polarFromEnv, type PolarClient } from '../billing/polar-client';
-import { contributeToGroup, refundContributorFromGroup, dissolveGroup, setPledge, withdrawFromGroup } from '../billing/group-wallet';
+import { contributeToGroup, refundContributorFromGroup, dissolveGroup, setPledge, withdrawFromGroup, readGroupWallet, type MemberWalletView } from '../billing/group-wallet';
 import { pncToMicros, pncMicrosToPnc } from '../billing/pnc';
 
 // 群钱包 = Polar(余额事实源)+ WalletDO 缓存(计费 P2)。注资/退款/解散走
@@ -191,6 +191,65 @@ groupSubjectRoutes.get('/:id/members', async (c) => {
     .eq('subject_id', id);
   if (error) return jsonError(c, 500, 'database_error', { detail: error.message });
   return c.json({ members: rows ?? [] });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// GET /v1/group-subjects/:id/wallet — 群钱包视图(读)
+// ────────────────────────────────────────────────────────────────────
+//
+// 实缴池余额 + S(分摊分母)+ 我的实缴 share_now/认缴/总份额/占比 + 成员明细。
+// owner/admin 看全员明细(members_complete=true);member 仅看自己(只读 WalletDO+
+// DB,跨成员读用 service client,但可见范围按角色裁剪,与 /members 的 RLS 语义一致)。
+// 金额一律 PNC(micros 不出网,与 /topup 等动作端点的 *_pnc 口径一致)。
+// 读不动钱,不要求 Polar 配置(余额取自 WalletDO 缓存)。
+
+groupSubjectRoutes.get('/:id/wallet', async (c) => {
+  const id = c.req.param('id');
+  if (!isUuid(id)) return jsonError(c, 400, 'invalid_id');
+  const userId = c.var.userId;
+  if (!userId) return jsonError(c, 401, 'unauthorized');
+
+  // 成员校验(RLS 读自己的 membership 行)。
+  const rls = clientForRequest(c);
+  if (rls instanceof Response) return rls;
+  const { data: membership } = await rls
+    .from('group_subject_members')
+    .select('role')
+    .eq('subject_id', id)
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (!membership) return jsonError(c, 403, 'subject_forbidden', { message: '非群成员' });
+
+  const view = await readGroupWallet(c.env, serviceClient(c.env), id);
+
+  const canSeeAll = membership.role === 'owner' || membership.role === 'admin';
+  const ratio = (stake: number) => (view.totalStakeMicros > 0 ? stake / view.totalStakeMicros : 0);
+  const mapMember = (m: MemberWalletView) => ({
+    user_id: m.userId,
+    contribution_share_now_pnc: pncMicrosToPnc(m.contributionShareNowMicros),
+    pledge_pnc: pncMicrosToPnc(m.pledgeMicros),
+    pledge_effective_pnc: pncMicrosToPnc(m.pledgeEffectiveMicros),
+    stake_pnc: pncMicrosToPnc(m.stakeMicros),
+    share_ratio: ratio(m.stakeMicros),
+  });
+
+  const mine: MemberWalletView = view.members.find((m) => m.userId === userId) ?? {
+    userId,
+    contributionShareNowMicros: 0,
+    pledgeMicros: 0,
+    pledgeEffectiveMicros: 0,
+    stakeMicros: 0,
+  };
+
+  return c.json({
+    subject_id: id,
+    role: membership.role,
+    pool_pnc: pncMicrosToPnc(view.poolMicros),
+    total_stake_pnc: pncMicrosToPnc(view.totalStakeMicros),
+    me: mapMember(mine),
+    members: canSeeAll ? view.members.map(mapMember) : [mapMember(mine)],
+    members_complete: canSeeAll,
+  });
 });
 
 // ────────────────────────────────────────────────────────────────────

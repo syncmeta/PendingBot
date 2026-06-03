@@ -9,6 +9,7 @@ import {
   withdrawFromGroup,
   resolveGroupStakes,
   settleGroupSpend,
+  readGroupWallet,
 } from './group-wallet';
 import { makeFakeDb, makeFakeClient, makeFakeEnv, type FakeDb, type FakeWallet } from '../../tests/_helpers/fake-supabase';
 import type { PolarClient } from './polar-client';
@@ -277,5 +278,56 @@ describe('applyGroupSpendDecay', () => {
     db.rpcs = { apply_group_pool_spend: spy };
     await applyGroupSpendDecay(makeFakeClient(db), GROUP, 0);
     expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe('readGroupWallet', () => {
+  const BOB = 'user_bob';
+
+  it('池余额 + S + 实缴 share_now + 认缴明细', async () => {
+    // ALICE 实缴 50M(join idx 1,当前 idx 1 → share_now 50M);BOB 认缴 30M(余额 100M → 生效 30M)。
+    const db = makeFakeDb({
+      group_pools: [{ subject_id: GROUP, total_remaining_pnc_micros: 50_000_000, share_index: 1 }],
+      group_contributions: [
+        { id: 'c1', subject_id: GROUP, contributor_user_id: ALICE, contributed_pnc_micros: 50_000_000, share_index_at_join: 1, status: 'active' },
+      ],
+      group_pledges: [
+        { subject_id: GROUP, user_id: BOB, pledge_pnc_micros: 30_000_000, status: 'active' },
+      ],
+    });
+    // 池余额取自 GROUP 的 WalletDO 余额;BOB 个人余额 100M。
+    const { env, supa } = ctx(db, { [GROUP]: 50_000_000, [BOB]: 100_000_000 });
+
+    const view = await readGroupWallet(env, supa, GROUP);
+
+    expect(view.poolMicros).toBe(50_000_000);
+    expect(view.totalStakeMicros).toBe(80_000_000); // 池 50M + 认缴生效 30M
+    const alice = view.members.find((m) => m.userId === ALICE)!;
+    expect(alice.contributionShareNowMicros).toBe(50_000_000);
+    expect(alice.pledgeMicros).toBe(0);
+    expect(alice.stakeMicros).toBe(50_000_000);
+    const bob = view.members.find((m) => m.userId === BOB)!;
+    expect(bob.contributionShareNowMicros).toBe(0);
+    expect(bob.pledgeMicros).toBe(30_000_000);
+    expect(bob.pledgeEffectiveMicros).toBe(30_000_000);
+    expect(bob.stakeMicros).toBe(30_000_000);
+  });
+
+  it('认缴成员余额见底 → 生效份额 0(欠费隔离),但仍在明细', async () => {
+    const db = makeFakeDb({
+      group_pools: [{ subject_id: GROUP, total_remaining_pnc_micros: 0, share_index: 1 }],
+      group_contributions: [],
+      group_pledges: [{ subject_id: GROUP, user_id: BOB, pledge_pnc_micros: 30_000_000, status: 'active' }],
+    });
+    const { env, supa } = ctx(db, { [GROUP]: 0, [BOB]: 0 });
+
+    const view = await readGroupWallet(env, supa, GROUP);
+
+    expect(view.poolMicros).toBe(0);
+    expect(view.totalStakeMicros).toBe(0);
+    const bob = view.members.find((m) => m.userId === BOB)!;
+    expect(bob.pledgeMicros).toBe(30_000_000); // 认缴额度还在
+    expect(bob.pledgeEffectiveMicros).toBe(0); // 但余额见底,生效 0
+    expect(bob.stakeMicros).toBe(0);
   });
 });
