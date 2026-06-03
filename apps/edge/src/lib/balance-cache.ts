@@ -1,9 +1,11 @@
 // KV-backed cache for the per-user credit balance so the pre-call
 // gate in POST /v1/messages can run without hitting Supabase.
 //
+// Legacy v1 path: the live billing gate/debit went to WalletDO (计费 P2);
+// this KV cache now only backs the legacy `requireBalance` 1v1 gate
+// (messages.ts:648, itself behind the BILLING_ENABLED kill-switch).
+//
 // Cache invariants:
-//   - Written by billingDebit after every LLM debit lands (router.ts).
-//   - Written by redeem after a successful code redemption (me.ts).
 //   - Read by requireBalance (billing.ts) — falls back to Supabase on
 //     miss and warms KV with the result.
 //

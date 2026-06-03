@@ -9,7 +9,6 @@ import {
   getSubjectBalance,
   redeemCode,
   requireBalance,
-  billingDebitSubject,
   usdToPnd,
 } from './billing';
 import type { SupabaseClient } from './supabase';
@@ -271,30 +270,7 @@ describe('subject billing helpers', () => {
 
     await expect(getSubjectBalance(supa, 'subject-1')).resolves.toBeNull();
   });
-
-  it('debits a subject through the subject billing RPC', async () => {
-    const supa = stubSupa({
-      rpc: (fn, args) => {
-        expect(fn).toBe('billing_debit_subject');
-        expect(args).toEqual({
-          p_subject_id: 'subject-1',
-          p_audit_log_id: 'audit-1',
-          p_credits: 17,
-        });
-        return { data: 983, error: null };
-      },
-    });
-
-    await expect(billingDebitSubject(supa, 'subject-1', 'audit-1', 17)).resolves.toBe(983);
-  });
-
-  it('swallows subject debit RPC errors', async () => {
-    const supa = stubSupa({
-      rpc: () => ({ data: null, error: { message: 'db unavailable' } }),
-    });
-
-    await expect(billingDebitSubject(supa, 'subject-1', 'audit-1', 17)).resolves.toBeNull();
-  });
+  // billingDebitSubject 已删(死代码,扣费走 WalletDO);对应测试随之移除。
 });
 
 describe('redeemCode error mapping', () => {

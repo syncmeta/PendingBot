@@ -268,64 +268,9 @@ export async function requireBalance(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Debit (Worker → DB after each LLM call)
-// ---------------------------------------------------------------------------
-
-/**
- * Apply the post-call debit to the user's balance and update
- * audit_log.billing_status. Always succeeds — even if balance goes
- * negative the row is marked 'unbilled' for ops to chase, and the next
- * pre-call gate blocks further requests.
- *
- * Pass the service-role supa client; the RPC is SECURITY DEFINER but
- * authenticated GRANT is intentionally not given (server-side only).
- *
- * Returns the new balance, or null on failure (logged + swallowed —
- * never propagate billing errors to the user-visible LLM response).
- */
-export async function billingDebit(
-  supa: SupabaseClient,
-  userId: string,
-  auditLogId: string,
-  credits: number,
-): Promise<number | null> {
-  const { data, error } = await supa.rpc('billing_debit', {
-    p_user_id: userId,
-    p_audit_log_id: auditLogId,
-    p_credits: credits,
-  });
-  if (error) {
-    console.warn('[billing_debit]', error.message ?? String(error));
-    return null;
-  }
-  return typeof data === 'number' ? data : null;
-}
-
-/**
- * Apply the post-call debit to a responsibility subject wallet.
- *
- * Temporary groups and Crew sessions should call this after resolving
- * their immutable billing subject. Existing user-wallet billing stays on
- * billingDebit until each old call path is deliberately migrated.
- */
-export async function billingDebitSubject(
-  supa: SupabaseClient,
-  subjectId: string,
-  auditLogId: string,
-  credits: number,
-): Promise<number | null> {
-  const { data, error } = await supa.rpc('billing_debit_subject', {
-    p_subject_id: subjectId,
-    p_audit_log_id: auditLogId,
-    p_credits: credits,
-  });
-  if (error) {
-    console.warn('[billing_debit_subject]', error.message ?? String(error));
-    return null;
-  }
-  return typeof data === 'number' ? data : null;
-}
+// 旧的 billingDebit / billingDebitSubject(写 billing_debit / billing_debit_subject
+// 旧钱包 RPC)已删:计费 P2 后扣费走 WalletDO(wallet.debit),这两个函数无任何调用方。
+// 对应 RPC 在孤儿 drop 迁移里一并删除。
 
 // ---------------------------------------------------------------------------
 // Redeem (user-scoped RPC — auth.uid() inside)
