@@ -160,8 +160,3 @@ export class WebToolMeter {
     return this.calls.length === 0;
   }
 }
-
-/** Exported for tests that need to invalidate the module-scope cache. */
-export function _resetWebToolPriceCache(): void {
-  priceCache = null;
-}
