@@ -1,6 +1,8 @@
-#if os(iOS)
 import Foundation
 import Supabase
+
+/// Centralized realtime subscription manager. Cross-platform — pure Foundation +
+/// the `RealtimeSocket` WebSocket (RealtimeHubDO), no UIKit. iOS + macOS share it.
 
 /// Centralized realtime subscription manager.
 ///
@@ -256,4 +258,3 @@ private final class ConvChannelHandle {
     var socket: RealtimeSocket?
     var observers: [UUID: Observers] = [:]
 }
-#endif

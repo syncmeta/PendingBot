@@ -5,11 +5,15 @@ import SwiftUI
 ///
 /// 三列里:中列 `MacConversationListColumn`(会话列表)+ detail 列 `MacChatView`
 /// (气泡 + 输入框 + 流式发送)。逻辑全复用跨平台 `ChatDataSource`(查询)+
-/// `ChatStream`(SSE 发送),UI 纯 SwiftUI 原生。
+/// `ChatStream`(SSE 发送)+ `RealtimeManager`(RealtimeHub WS),UI 纯 SwiftUI 原生。
+///
+/// Realtime 走的就是 iOS 那套自建 RealtimeHubDO(`RealtimeManager` / `RealtimeSocket`),
+/// **不是 Supabase Realtime、也不是轮询**:会话列表订阅 user channel(unread 变更即
+/// 刷新),聊天订阅 conv channel(对端 / bot 新消息即刷新)。和
+/// `MessageTabView`/`ConversationView` 是同一条实时通道,逻辑一致。
 ///
 /// 第一版范围(其余随后补,见 docs/tech-debt.md #212):纯文字 1:1/群读写;
-/// 无 Realtime(3s 轮询会话列表 + 发送后 reload 消息)、无未读红点细节、无附件/
-/// 图片/语音、无 @提及。
+/// 未读红点;无附件/图片/语音、无 @提及。
 
 // MARK: - 中列:会话列表
 
@@ -19,8 +23,6 @@ struct MacConversationListColumn: View {
     @State private var conversations: [ChatConversationSummary] = []
     @State private var loadError: String?
     @State private var didLoad = false
-
-    private let pollInterval: UInt64 = 3_000_000_000
 
     var body: some View {
         List(selection: $selectedConversationId) {
@@ -56,14 +58,18 @@ struct MacConversationListColumn: View {
             }
         }
         .navigationTitle("消息")
-        .task { await pollLoop() }
-    }
-
-    private func pollLoop() async {
-        while !Task.isCancelled {
+        // 和 iOS MessageTabView 同款:先拉一次,再订阅 user-level RealtimeHub。
+        // 每条 user_unread_counts 变更(任何会话来新消息)即刷新列表 —— 顺序 /
+        // 预览 / 未读数实时更新,无轮询。user channel 是常驻的,startUserChannel
+        // 幂等(已开则 no-op),所以这里不在 disappear 关它。
+        .task {
             await refresh()
             didLoad = true
-            try? await Task.sleep(nanoseconds: pollInterval)
+            if let userId = AccountStore.shared.current?.id {
+                await RealtimeManager.shared.startUserChannel(userId: userId) { _ in
+                    Task { @MainActor in await refresh() }
+                }
+            }
         }
     }
 
@@ -90,6 +96,9 @@ struct MacChatView: View {
     @State private var sending = false
     @State private var loadError: String?
     @State private var didLoad = false
+    /// conv-level RealtimeHub 订阅 token —— 每个会话一个(MacRootView 用 `.id(convId)`
+    /// 给每个会话独立的 MacChatView 实例,各自持有 / 释放自己的 token)。
+    @State private var convToken: ConvSubscriptionToken?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -99,7 +108,27 @@ struct MacChatView: View {
         }
         .background(Color(hex: 0xFDFCFA)) // 对齐 iOS canvas 米白,白 bot 气泡浮其上
         .navigationTitle("对话")
-        .task(id: conversationId) { await reload() }
+        // 和 iOS ConversationView 同款:拉历史 + 订阅 conv-level RealtimeHub。
+        // 对端 / bot 写入 messages 即刷新(自己正在发的那条由 SSE 流接管,
+        // 发完会 reload 拿 server 真值,所以 sending 期间忽略实时事件防抖动)。
+        .task(id: conversationId) {
+            await reload()
+            let token = await RealtimeManager.shared.startConvChannel(
+                conversationId: conversationId,
+                onMessage: { _ in
+                    Task { @MainActor in
+                        guard !sending else { return }
+                        await reload()
+                    }
+                }
+            )
+            convToken = token
+        }
+        .onDisappear {
+            if let convToken {
+                Task { await RealtimeManager.shared.stopConvChannel(convToken) }
+            }
+        }
     }
 
     private var transcript: some View {

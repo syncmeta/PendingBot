@@ -6,6 +6,8 @@
 > - iOS 钱包/计费 UI 接群钱包（实缴池+认缴）：edge `GET /v1/group-subjects/:id/wallet` 读端点（群池+我的份额/占比/认缴+成员明细）；iOS `GroupWalletService` + `GroupWalletView`（充值/认缴/取出/退群/解散，骨架待视觉定稿）；修个人钱包 `WalletV2` 解码崩溃。**连根拔旧 per-conversation 分摊**做了安全部分（删死 `lib/group-billing.ts`+3 配置路由 + 退役 `GroupBillingSheet`），剩 invite 流解耦 + 表/RPC 物理 drop 留 #226。
 > - **未决/未验**：群钱包页入口待定（群聊≠group_account，须从 group_account subject 起，#227）；真机/真数据未验（端点未部署 + 无群账号数据 + Polar 配置未填 secret）。
 
+> **2026-06-03 #212 Mac 真复用收口**：把 Mac 端「轮询 + 手抄 iOS 查询」纠正成真复用。**实时通道**（`RealtimeManager`/`RealtimeSocket` 去 gate，两端同一条自建 RealtimeHubDO，删 Mac 三处轮询）+ **4 条查询全部收口成共享 fetch**（会话 `ConversationFetch`、bot 好友 `BotContactsFetch`、人类好友 `ContactsFetch`+中性 `ContactProfile`、来信 `EnvelopeFetch`+`EnvelopeRun` 移共享）——iOS 缓存/富渲染层叠在共享 fetch 上、Mac 投影 summary。仅剩**消息历史**1 条仍是 Mac 薄读复刻（iOS 那条是喂 GRDB 缓存的脆弱重管线 #145-147/#150，按 tech-debt 等 Mac 接附件渲染时再收）。另:`PlatformImage` 抽象 + `ServerImage` 跨平台 + Mac 人类好友真实头像;**macOS 打开 Development 签名**(根治 supabase.gotrue.swift 钥匙串反复弹授权/-34018)。iOS 会话 tab 进模拟器验证无回归；好友/来信为同种逐字搬迁+两端编译过（无 tap 工具未逐 tab 点验）。#212 保持 in_progress（剩 Mac 功能缺口：机组完整/头像图片其余面/附件 + 消息查询收口）。
+
 ---
 
 ## 0. 这个文档是什么 / 不是什么

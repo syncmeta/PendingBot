@@ -29,18 +29,9 @@ struct EnvelopeRow: Identifiable, Equatable, Hashable {
 }
 
 enum EnvelopeDataSource {
-    private struct Row: Decodable {
-        let id: String
-        let kind: String?
-        let bot_id: String?
-        let author_user_id: String?
-        let status: String?
-        let title: String?
-        let summary: String?
-        let body_md: String?
-    }
-
-    private static func map(_ r: Row) -> EnvelopeRow {
+    /// Project the shared `EnvelopeRun` (superset row) down to the thin macOS feed
+    /// row. macOS ignores the iOS-only columns (progress / turns / timestamps).
+    private static func map(_ r: EnvelopeRun) -> EnvelopeRow {
         EnvelopeRow(
             id: r.id,
             kind: r.kind,
@@ -53,27 +44,14 @@ enum EnvelopeDataSource {
         )
     }
 
-    /// The 来信 feed (most-recent first). RLS scopes `envelope_runs` to the user.
+    /// The 来信 feed (most-recent first) via the shared `EnvelopeFetch.list()` —
+    /// same query as iOS's `EnvelopeTabView`. RLS scopes `envelope_runs` to user.
     static func listEnvelopes(limit: Int = 100) async throws -> [EnvelopeRow] {
-        let rows: [Row] = try await SupabaseStack.shared
-            .from("envelope_runs")
-            .select("id, kind, bot_id, author_user_id, status, title, summary, body_md")
-            .order("created_at", ascending: false)
-            .limit(limit)
-            .execute()
-            .value
-        return rows.map(map)
+        try await EnvelopeFetch.list(limit: limit).map(map)
     }
 
-    /// One article by id (for the detail pane — re-fetch so the body is fresh).
+    /// One article by id (detail pane re-fetch) via the shared `EnvelopeFetch`.
     static func loadEnvelope(id: String) async throws -> EnvelopeRow? {
-        let rows: [Row] = try await SupabaseStack.shared
-            .from("envelope_runs")
-            .select("id, kind, bot_id, author_user_id, status, title, summary, body_md")
-            .eq("id", value: id)
-            .limit(1)
-            .execute()
-            .value
-        return rows.first.map(map)
+        try await EnvelopeFetch.get(id: id).map(map)
     }
 }

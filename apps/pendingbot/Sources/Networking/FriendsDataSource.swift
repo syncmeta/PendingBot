@@ -18,6 +18,10 @@ struct HumanContact: Identifiable, Equatable, Hashable {
     let id: String            // userId
     let displayName: String
     let alias: String?
+    /// Worker upload path for the real avatar image (nil = use emoji placeholder).
+    let avatarPath: String?
+    /// Stable emoji-placeholder seed (defaults to userId).
+    let avatarSeed: String
 
     var shownName: String {
         if let alias, !alias.isEmpty { return alias }
@@ -33,43 +37,31 @@ struct BotContact: Identifiable, Equatable, Hashable {
 }
 
 enum FriendsDataSource {
-    /// `GET /v1/contacts` — human friends. Worker returns camelCase
-    /// `{ contacts: [{ userId, displayName, alias? , ... }] }`.
+    /// Human friends via the shared `ContactsFetch.fetch()` (`GET /v1/contacts`)
+    /// — same request+decode as iOS's `ContactsAPI`, projected to the thin macOS
+    /// contact (id / displayName / alias). No hand-copied request here anymore.
     static func listHumanContacts() async throws -> [HumanContact] {
-        struct Resp: Decodable {
-            let contacts: [Row]
-            struct Row: Decodable {
-                let userId: String
-                let alias: String?
-                let displayName: String
-            }
+        try await ContactsFetch.fetch().map {
+            HumanContact(id: $0.userId, displayName: $0.displayName, alias: $0.alias,
+                         avatarPath: $0.avatarPath, avatarSeed: $0.avatarSeed ?? $0.userId)
         }
-        let r: Resp = try await APIClient().get("v1/contacts")
-        return r.contacts.map { HumanContact(id: $0.userId, displayName: $0.displayName, alias: $0.alias) }
     }
 
-    /// Bot friends from `user_bot_contacts` (added bots only, RLS-scoped). The
-    /// `!inner` embed drops rows whose bot was deleted/deactivated.
+    /// Bot friends from `user_bot_contacts` (added bots only, RLS-scoped). Runs
+    /// the SAME query as iOS's `FriendsTabView.load()` via the shared
+    /// `BotContactsFetch.list()` — no hand-copied query — then keeps the columns
+    /// the macOS list renders. Filters soft-deleted bots (is_active == false) and
+    /// the self-bot to match iOS; reverses for newest-first (shared fetch is
+    /// added_at ascending).
     static func listBotContacts() async throws -> [BotContact] {
-        struct Row: Decodable {
-            let bot: BotEmbed?
-            struct BotEmbed: Decodable {
-                let id: String
-                let display_name: String?
-                let visibility: String?
-            }
-        }
-        let rows: [Row] = try await SupabaseStack.shared
-            .from("user_bot_contacts")
-            .select("bot:bots!user_bot_contacts_bot_id_fkey!inner(id, display_name, visibility)")
-            .order("added_at", ascending: false)
-            .execute()
-            .value
-        return rows.compactMap { row in
-            row.bot.map {
-                BotContact(id: $0.id, displayName: $0.display_name ?? "未命名机器人", visibility: $0.visibility)
-            }
-        }
+        let rows = try await BotContactsFetch.list()
+        return rows
+            .filter { $0.bot.is_active != false }
+            .filter { !($0.bot.slug?.hasPrefix("self-") ?? false) }
+            .reversed()
+            .map { BotContact(id: $0.bot.id,
+                              displayName: $0.bot.display_name.isEmpty ? "未命名机器人" : $0.bot.display_name,
+                              visibility: $0.bot.visibility) }
     }
 
     /// The caller's existing 1:1 conversation with a bot, if any. RLS scopes

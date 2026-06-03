@@ -2,8 +2,12 @@
 import SwiftUI
 
 /// T0.1 — macOS 来信 tab（#212）。中列 feed 列表 + detail 渲染奏折正文(body_md)。
-/// 逻辑复用跨平台 `EnvelopeDataSource`。第一版:列表 + markdown 正文;无 realtime
-/// (3s 轮询)、无 thinking-trace 实时流、无写信 compose。
+/// 逻辑复用跨平台 `EnvelopeDataSource`(查询)+ `RealtimeSocket`(RealtimeHub WS)。
+///
+/// Realtime 和 iOS `EnvelopeFeedChannel` 同一条通道:订阅 user topic
+/// (`v1/realtime-hub/user`)、只挑 `envelope_runs` 行,任意 INSERT/UPDATE/DELETE
+/// 即刷新列表 —— **不是轮询、不是 Supabase Realtime**。第一版:列表 + markdown
+/// 正文;无 thinking-trace 实时流、无写信 compose。
 
 // MARK: - 中列:来信 feed
 
@@ -13,8 +17,8 @@ struct MacEnvelopeColumn: View {
     @State private var envelopes: [EnvelopeRow] = []
     @State private var loadError: String?
     @State private var didLoad = false
-
-    private let pollInterval: UInt64 = 3_000_000_000
+    /// user-topic RealtimeHub socket,只用来监听 envelope_runs 变更触发刷新。
+    @State private var socket: RealtimeSocket?
 
     var body: some View {
         List(selection: $selectedEnvelopeId) {
@@ -42,21 +46,31 @@ struct MacEnvelopeColumn: View {
             }
         }
         .navigationTitle("来信")
-        .task { await pollLoop() }
+        .task {
+            await refresh()
+            didLoad = true
+            // 订阅 user topic,挑 envelope_runs 行变更即刷新(和 iOS 同款逻辑)。
+            let sock = RealtimeSocket(path: "v1/realtime-hub/user") { change in
+                guard change.table == "envelope_runs" else { return }
+                Task { @MainActor in await refresh() }
+            }
+            sock.start()
+            socket = sock
+        }
+        .onDisappear {
+            socket?.stop()
+            socket = nil
+        }
     }
 
-    private func pollLoop() async {
-        while !Task.isCancelled {
-            do {
-                let fresh = try await EnvelopeDataSource.listEnvelopes()
-                if fresh != envelopes { envelopes = fresh }
-                loadError = nil
-            } catch is CancellationError {
-            } catch {
-                loadError = error.localizedDescription
-            }
-            didLoad = true
-            try? await Task.sleep(nanoseconds: pollInterval)
+    private func refresh() async {
+        do {
+            let fresh = try await EnvelopeDataSource.listEnvelopes()
+            if fresh != envelopes { envelopes = fresh }
+            loadError = nil
+        } catch is CancellationError {
+        } catch {
+            loadError = error.localizedDescription
         }
     }
 }

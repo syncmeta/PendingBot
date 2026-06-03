@@ -52,7 +52,7 @@ struct MacFriendsColumn: View {
                 }
                 ForEach(humans) { human in
                     HStack(spacing: 9) {
-                        BrandAvatar(seed: human.id, size: 30)
+                        MacContactAvatar(avatarPath: human.avatarPath, seed: human.avatarSeed, size: 30)
                         Text(human.shownName).lineLimit(1)
                     }
                     .padding(.vertical, 5)
@@ -86,6 +86,27 @@ struct MacFriendsColumn: View {
             } catch {
                 notice = error.localizedDescription
             }
+        }
+    }
+}
+
+/// Contact avatar: real uploaded image (auth-gated `ServerImage`) when an
+/// avatarPath exists, else the emoji placeholder (`BrandAvatar`). Reuses the
+/// same cross-platform `ServerImage` loader iOS uses for chat attachments.
+struct MacContactAvatar: View {
+    let avatarPath: String?
+    let seed: String
+    var size: CGFloat = 30
+
+    var body: some View {
+        if let avatarPath, !avatarPath.isEmpty {
+            ServerImage(path: avatarPath,
+                        serverURL: HostedConfig.environment.workerURL,
+                        contentMode: .fill)
+                .frame(width: size, height: size)
+                .clipShape(Circle())
+        } else {
+            BrandAvatar(seed: seed, size: size)
         }
     }
 }

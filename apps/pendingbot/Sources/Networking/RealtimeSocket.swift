@@ -1,4 +1,3 @@
-#if os(iOS)
 import Foundation
 import Supabase
 
@@ -247,4 +246,30 @@ final class RealtimeSocket {
         return comps.url!
     }
 }
-#endif
+
+/// Group voice-call media diagnostics carried on a `voice_call` hub frame.
+/// Pure data (no UIKit/WebRTC) — lives here with the other hub wire types so
+/// `RealtimeSocket` can stay cross-platform. The iOS-only call UI
+/// (`CallDiagnostics.swift`) renders it; macOS never subscribes to voice frames
+/// but the type must exist for the shared socket to compile.
+struct GroupMediaDiagnostics: Sendable, Equatable, Decodable {
+    let atMs: Double?
+    let participants: [Participant]
+
+    struct Participant: Sendable, Equatable, Decodable {
+        let kind: String
+        let id: String
+        let speaking: Bool
+        let audioLevel: Double?
+        let source: String?
+        let playoutDepthMs: Int?
+        let underruns: Int?
+        let maxGapMs: Int?
+        let droppedOutputMs: Int?
+        let inputLevel: Double?
+        let inputFrames: Int?
+        let quietFrames: Int?
+        let realtimeKitConnected: Bool?
+        let modelSessionReady: Bool?
+    }
+}
