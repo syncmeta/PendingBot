@@ -306,10 +306,21 @@ crewMessagesRoutes.get('/:crewId/messages', requireSubjectAuth(['crew:read']), a
     if (canView !== true) return jsonError(c, 403, 'forbidden');
   }
 
-  const { data: whiteboard, error: wbErr } = await untypedRpc(svc).rpc('get_crew_whiteboard', {
-    p_crew_id: crewId,
-    p_since: sinceParam ?? null,
-  });
+  // NB: we intentionally do NOT call the get_crew_whiteboard RPC here. That
+  // function guards on auth.uid() and RAISEs 'auth required' when called by a
+  // service-role client (auth.uid() is NULL) — which is exactly how the edge
+  // calls it. We've already gated access above, so read crew_announcements
+  // directly with the service client. (The same RPC is used by the session
+  // inbox endpoint and shares this latent service-role bug — see tech-debt.)
+  let wbQuery = svc
+    .from('crew_announcements')
+    .select('id, crew_conversation_id, sender_kind, sender_member_id, sender_session_id, source_message_id, recipient_mode, message_kind, summary, payload, created_at')
+    .eq('crew_conversation_id', crewId)
+    .eq('board_visible', true);
+  if (sinceParam) wbQuery = wbQuery.gte('created_at', sinceParam);
+  const { data: whiteboard, error: wbErr } = await wbQuery
+    .order('created_at', { ascending: true })
+    .limit(500);
   if (wbErr) return jsonError(c, 500, 'database_error', { detail: wbErr.message });
 
   return c.json({ crewId, whiteboard: whiteboard ?? [] });
