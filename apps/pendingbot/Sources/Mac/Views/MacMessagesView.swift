@@ -133,7 +133,9 @@ struct MacChatView: View {
                 .padding(.horizontal, 12).padding(.vertical, 8)
                 .background(
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(isMine ? Color.accentColor : Color(nsColor: .controlBackgroundColor))
+                        // bot 气泡用半透明灰(深浅模式都看得出气泡形状),
+                        // 不用 controlBackgroundColor —— 浅色下它≈白、看不出。
+                        .fill(isMine ? Color.accentColor : Color.secondary.opacity(0.15))
                 )
                 .foregroundStyle(isMine ? Color.white : Color.primary)
             if !isMine { Spacer(minLength: 80) }
