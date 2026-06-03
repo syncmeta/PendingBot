@@ -35,7 +35,14 @@ spec §10 重写（本 commit）。
   - 迁移 `20260603032138_crew_interaction_requests.sql`：`permission_requests` 加 `request_kind`(permission|question) + `reply_text` + status 加 `answered`；RPC `create_interaction_request` / `answer_interaction_request`（复用 T4.3 卡片 + decide 的 ACL）。
   - 路由 `apps/edge/src/routes/crew-interactions.ts`：`POST /v1/sessions/:id/interactions`（runner 发起）· `GET .../interactions/:reqId`（runner long-poll）· `POST /v1/interactions/:reqId/answer`（人答，自由文本）。untypedRpc 走法 → 不用 regen 就 typecheck 绿。
   - **⚠️ 迁移未 apply、schema.ts 未 regen**（commit 用了 LEFTHOOK=0 跳过 schema-regen 钩子）。落地前必须：从主 worktree `supabase db push` + `types:db` + 收口 untypedRpc。v1 直接发卡给责任主体（direct_to_human）。
-- **待**：captain LLM 判断"自决 vs 上溯"（captain system prompt 加职责）+ 沿 crew DAG 父链冒泡溯源路由（§10.3-10.5）。
+- **✅ 迁移已 apply（2026-06-03）**：列 + RPC 在 DB 上（read-only 复核过）。
+- **✅ 「人答」操作者闭环已落**（`<this branch>`）：edge `GET /v1/sessions/:id/interactions`（列待答）+ `PendingCrewAPI.listSessionInteractions/answerInteraction` + `RemoteSessionsView` 的「Agent 在问你」卡片（问题 + 回答框 → POST answer）。**所以 operator 单人闭环通了**：agent ask_human 阻塞 → Mac viewer 显问题 → 人答 → MCP 工具拿到回复 → agent 继续。（编译 + canonical typecheck 绿；真实 E2E 待 deploy。）
+- **待：captain 自动 triage（§10.3-10.5，已把机制摸清，是下一块大活）**：
+  - **触发**：`create_interaction_request` 后台（`waitUntil`）调 `dispatchGroupTurn`（`src/lib/group-dispatch.ts`，wake 一个 bot 跑 `runChatTurn`）唤醒本 crew 的 captain bot。captain id = `temporary_group_meta.captain_bot_id`（经 session.crew_conversation_id 查）。
+  - **captain 工具** `answer_session_interaction(reqId, reply)`（仿 `src/lib/bot-reply/tools/request-permission.ts`）：captain 答得了就调它结掉交互。
+  - **service-role 答复 RPC**（新迁移）：`answer_interaction_request` 要 human caller + ACL；captain 是 bot，要另一条 `answer_interaction_as_captain(reqId, reply, captain_bot_id)` 验 bot 是本 crew captain 再写。
+  - **captain persona prompt** 加一段：你的 crew session 可能发起交互；答得了用工具答，答不了留给人（或沿父 crew 上溯）。
+  - **未做**：这块全 LLM-pipeline、要真跑 crew + bot 才能验，blind 建风险高，留作专门一块（最好在 deploy/E2E 环境里做）。
 
 ### P4 — 两种溯源模式
 - crew/session 配置加 `escalation_mode`：`direct_to_human` / `tiered`。
