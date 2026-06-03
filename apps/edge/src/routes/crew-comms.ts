@@ -364,15 +364,45 @@ crewMessagesRoutes.get('/:crewId/members', requireSubjectAuth(['crew:read']), as
     if (canView !== true) return jsonError(c, 403, 'forbidden');
   }
 
-  const { data: members, error: memErr } = await svc
+  const { data: membersRaw, error: memErr } = await svc
     .from('temporary_group_members')
     .select('id, member_kind, user_id, bot_id, code_session_id, display_name, role, status, represents_crew_id, created_at')
     .eq('conversation_id', crewId)
     .eq('status', 'active')
     .order('created_at', { ascending: true });
   if (memErr) return jsonError(c, 500, 'database_error', { detail: memErr.message });
+  const members = membersRaw ?? [];
 
-  return c.json({ crewId, captainBotId: meta.captain_bot_id, members: members ?? [] });
+  // Drop code_session members whose session is terminal, so finished sessions
+  // fall out of the roster without having to deactivate the member on finish.
+  // Also surface the live session status so the UI can badge running ones.
+  const sessionIds = members
+    .filter((m) => m.member_kind === 'code_session' && m.code_session_id)
+    .map((m) => m.code_session_id as string);
+  const statusById = new Map<string, string>();
+  if (sessionIds.length > 0) {
+    const { data: sessRows, error: sessErr } = await svc
+      .from('crew_sessions')
+      .select('id, status')
+      .in('id', sessionIds);
+    if (sessErr) return jsonError(c, 500, 'database_error', { detail: sessErr.message });
+    for (const s of sessRows ?? []) statusById.set(s.id, s.status);
+  }
+  const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
+  const visible = members
+    .filter((m) => {
+      if (m.member_kind !== 'code_session') return true;
+      const st = m.code_session_id ? statusById.get(m.code_session_id) : undefined;
+      return st !== undefined && !TERMINAL.has(st);
+    })
+    .map((m) => ({
+      ...m,
+      sessionStatus: m.member_kind === 'code_session' && m.code_session_id
+        ? statusById.get(m.code_session_id) ?? null
+        : null,
+    }));
+
+  return c.json({ crewId, captainBotId: meta.captain_bot_id, members: visible });
 });
 
 // ────────────────────────────────────────────────────────────────────

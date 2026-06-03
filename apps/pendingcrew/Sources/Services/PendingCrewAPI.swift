@@ -563,6 +563,10 @@ struct CrewMember: Decodable, Identifiable, Equatable {
     let role: String?
     let status: String
     let representsCrewId: String?
+    /// For code_session members: the live crew_session status (running/queued/…).
+    /// nil for non-session members. Terminal sessions are already filtered out
+    /// server-side, so a present value here is non-terminal.
+    let sessionStatus: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -574,6 +578,7 @@ struct CrewMember: Decodable, Identifiable, Equatable {
         case role
         case status
         case representsCrewId = "represents_crew_id"
+        case sessionStatus
     }
 }
 
