@@ -177,6 +177,9 @@ function walletEnv(balanceMicros: number): Env {
     );
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return {
+    // requireBalance is gated by the billing kill-switch — enable it so these
+    // tests exercise the live gate path.
+    BILLING_ENABLED: 'true',
     WALLET: {
       idFromName: (n: string) => n,
       get: () => ({ fetch: fetchImpl }),

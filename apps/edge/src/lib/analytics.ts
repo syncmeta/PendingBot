@@ -18,6 +18,7 @@
 
 import { PostHog } from 'posthog-node';
 import type { Env } from '../types';
+import { observabilityEnabled } from './feature-flags';
 
 export interface CaptureArgs {
   /** Stable identifier for the acting user / entity (e.g. userId). */
@@ -38,7 +39,7 @@ export interface CaptureArgs {
  * observing. Failures are logged and swallowed.
  */
 export async function capture(env: Env, args: CaptureArgs): Promise<void> {
-  if (!env.POSTHOG_KEY) return;
+  if (!observabilityEnabled(env) || !env.POSTHOG_KEY) return;
 
   const client = new PostHog(env.POSTHOG_KEY, {
     host: env.POSTHOG_HOST,

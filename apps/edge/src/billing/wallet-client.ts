@@ -2,6 +2,7 @@
 // WalletDO 见 src/durable-objects/wallet.ts;计费 P2。
 import type { Env } from '../types';
 import type { ThresholdState } from '../durable-objects/wallet';
+import { billingEnabled } from '../lib/feature-flags';
 
 export interface WalletResult {
   balanceMicros: number;
@@ -47,14 +48,16 @@ export function walletSubjectKey(owner: WalletOwner): string {
 export const wallet = {
   /** 调用前门禁:读余额 + 阈值(不扣)。 */
   gate: (env: Env, subjectId: string): Promise<WalletResult> => call(env, subjectId, 'gate', {}),
-  /** 扣费(幂等)。 */
+  /** 扣费(幂等)。计费 kill-switch 关时(默认)直接 no-op:不扣、不向 Polar 上报用量。 */
   debit: (env: Env, subjectId: string, pncMicros: number, opts: DebitOpts): Promise<WalletResult> =>
-    call(env, subjectId, 'debit', {
-      pncMicros,
-      category: opts.category,
-      dedupeId: opts.dedupeId,
-      meta: opts.meta ?? null,
-    }),
+    billingEnabled(env)
+      ? call(env, subjectId, 'debit', {
+          pncMicros,
+          category: opts.category,
+          dedupeId: opts.dedupeId,
+          meta: opts.meta ?? null,
+        })
+      : Promise.resolve({ balanceMicros: 0, thresholdState: 'sufficient' as ThresholdState }),
   /** 充值/退款后同步缓存(Polar 侧已变)。pncMicros 可负(退款)。 */
   credit: (env: Env, subjectId: string, pncMicros: number): Promise<WalletResult> =>
     call(env, subjectId, 'credit', { pncMicros }),
