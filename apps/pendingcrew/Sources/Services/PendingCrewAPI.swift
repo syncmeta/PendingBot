@@ -320,6 +320,31 @@ struct PendingCrewAPI {
         return resp.ok
     }
 
+    // MARK: - Crew group chat / whiteboard (spec §9 中栏)
+
+    /// `GET /v1/crews/:crewId/messages` — the crew's whiteboard (group chat
+    /// timeline) for the middle pane. crewId == crew_conversation_id. Oldest
+    /// first. Needs `crew:read`.
+    func listCrewWhiteboard(crewId: String) async throws -> [CrewWhiteboardEntry] {
+        struct Response: Decodable { let whiteboard: [CrewWhiteboardEntry] }
+        let resp: Response = try await get(path: "v1/crews/\(crewId)/messages")
+        return resp.whiteboard
+    }
+
+    /// `POST /v1/crews/:crewId/messages` — drop a message on the crew
+    /// whiteboard. `mentions` routes it: `@session <id>` → that session's
+    /// mailbox; `@captain`; empty/`@broadcast` → all sessions. Needs `crew:write`.
+    @discardableResult
+    func postCrewMessage(crewId: String, text: String, mentions: [CrewMention] = []) async throws -> String? {
+        struct Body: Encodable { let content: String; let mentions: [CrewMention] }
+        struct Response: Decodable { let announcementId: String? }
+        let resp: Response = try await post(
+            path: "v1/crews/\(crewId)/messages",
+            body: Body(content: text, mentions: mentions)
+        )
+        return resp.announcementId
+    }
+
     // MARK: - Internals
 
     private func get<Response: Decodable>(path: String) async throws -> Response {
@@ -422,6 +447,66 @@ struct CrewInteraction: Decodable, Identifiable, Equatable {
     let id: String
     let question: String
     let requestedAt: String?
+}
+
+// MARK: - Crew whiteboard / group chat models (spec §9)
+
+/// A mention target for a crew message. `@session <id>` routes to that
+/// session's mailbox; `@captain` to the captain's session; empty list or
+/// `broadcast` fans out to all sessions.
+struct CrewMention: Encodable, Equatable {
+    let kind: String          // 'session' | 'captain' | 'broadcast' | 'human'
+    let targetId: String?
+
+    enum CodingKeys: String, CodingKey {
+        case kind
+        case targetId = "target_id"
+    }
+
+    static func session(_ id: String) -> CrewMention { .init(kind: "session", targetId: id) }
+    static let captain = CrewMention(kind: "captain", targetId: nil)
+    static let broadcast = CrewMention(kind: "broadcast", targetId: nil)
+}
+
+/// One whiteboard entry (a crew_announcements row) rendered in the middle-pane
+/// group chat. `summary` is the display line; `payload.kind == "interaction"`
+/// marks an ask_human card (T4.5) so the timeline can render it specially.
+struct CrewWhiteboardEntry: Decodable, Identifiable, Equatable {
+    let id: String
+    let senderKind: String          // 'session' | 'user' | 'bot' | ...
+    let senderSessionId: String?
+    let messageKind: String         // 'instruction' | 'announcement' | 'permission_request' | ...
+    let summary: String?
+    let createdAt: String
+    let payload: Payload?
+
+    struct Payload: Decodable, Equatable {
+        let text: String?
+        let kind: String?                // 'interaction' for ask_human cards
+        let question: String?
+        let status: String?
+        let permissionRequestId: String?
+
+        enum CodingKeys: String, CodingKey {
+            case text, kind, question, status
+            case permissionRequestId = "permission_request_id"
+        }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case senderKind = "sender_kind"
+        case senderSessionId = "sender_session_id"
+        case messageKind = "message_kind"
+        case summary
+        case createdAt = "created_at"
+        case payload
+    }
+
+    /// Best display text: explicit payload text → summary → empty.
+    var displayText: String { payload?.text ?? summary ?? "" }
+    /// True if this row is an ask_human interaction card.
+    var isInteraction: Bool { payload?.kind == "interaction" }
 }
 
 // MARK: - Create crew request/response
