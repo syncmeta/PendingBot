@@ -49,35 +49,12 @@ struct ChatMessageRow: Identifiable, Equatable, Hashable {
 enum ChatDataSource {
     // MARK: conversation list
 
-    /// The conversation list (most-recent first). Mirrors `MessageTabView.load()`
-    /// but minimal: joins `bots.display_name` for the title and `user_unread_counts`
-    /// (!inner, so empty conversations drop out) for preview + unread count.
+    /// The conversation list (most-recent first), projected to a thin summary.
+    /// Runs the SAME query as iOS's `MessageTabView.load()` via the shared
+    /// `ConversationFetch.list()` — no hand-copied query here anymore — and just
+    /// keeps the columns the macOS list renders (title / preview / unread).
     static func listConversations() async throws -> [ChatConversationSummary] {
-        struct Row: Decodable {
-            let id: String
-            let title: String?
-            let conversation_type: String?
-            let bot: BotEmbed?
-            let unread: [UnreadEmbed]?
-            struct BotEmbed: Decodable { let display_name: String? }
-            struct UnreadEmbed: Decodable {
-                let last_message_preview: String?
-                let unread_count: Int?
-            }
-        }
-        let rows: [Row] = try await SupabaseStack.shared
-            .from("conversations")
-            .select("""
-                id, title, conversation_type,
-                bot:bots!conversations_bot_id_fkey(display_name),
-                unread:user_unread_counts!inner(last_message_preview, unread_count)
-            """)
-            .neq("conversation_type", value: "subagent")
-            .order("updated_at", ascending: false)
-            .order("id", ascending: true)
-            .execute()
-            .value
-
+        let rows = try await ConversationFetch.list()
         return rows.map { row in
             let title = [row.title, row.bot?.display_name]
                 .compactMap { $0 }
