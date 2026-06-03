@@ -6,6 +6,7 @@ import { generateInitialBotDescription } from '../lib/group-bot-intro';
 import { rateLimitOrBlock } from '../lib/rate-limit';
 import { jsonError } from '../lib/http-error';
 import { isGroupHumanParticipant, requireGroupRole } from '../lib/route-authz';
+import { trackEvent, AnalyticsEvent } from '../lib/track';
 import type { AppBindings } from '../types';
 
 // All group endpoints sit under /v1/groups. Schema + RPCs live in
@@ -158,6 +159,13 @@ groupRoutes.post('/', async (c) => {
       }
       if (invite?.id) invitationIds.push(invite.id as string);
     }
+  }
+  if (data) {
+    trackEvent(c, AnalyticsEvent.GroupCreated, {
+      group_id: data,
+      bot_count: parsed.memberBotIds.length,
+      invited_count: invitationIds.length,
+    });
   }
   return c.json({ conversationId: data, invitationIds });
 });
@@ -408,6 +416,13 @@ groupRoutes.post('/invitations/:inviteId/decide', async (c) => {
     .update({ status: decidedStatus, decided_at: now })
     .eq('id', inviteId);
   if (updateErr) return jsonError(c, 500, 'database_error', { detail: updateErr.message });
+
+  if (parsed.approve) {
+    trackEvent(c, AnalyticsEvent.GroupJoined, {
+      group_id: invite.conversation_id,
+      via: 'invitation',
+    });
+  }
 
   return c.json({ ok: true, status: decidedStatus, conversationId: invite.conversation_id });
 });

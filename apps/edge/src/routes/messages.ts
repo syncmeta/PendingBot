@@ -23,6 +23,7 @@ import {
   type ConversationModelState,
 } from '../lib/conversation-model';
 import { safeWaitUntil } from '../lib/safe-wait-until';
+import { trackEvent, AnalyticsEvent } from '../lib/track';
 import { startSseKeepalive } from '../lib/sse-keepalive';
 import { notifyConversationUsers, notifyUserMessage } from '../lib/push';
 import {
@@ -172,6 +173,16 @@ messageRoutes.post('/', async (c) => {
       return jsonError(c, 403, 'attachment_not_owned');
     }
   }
+
+  // Analytics: the send is authorized and committed past this point. Only
+  // structural properties — never message content. Fire-and-forget.
+  trackEvent(c, AnalyticsEvent.MessageSent, {
+    conversation_id: parsed.conversationId,
+    conversation_type: conv.conversation_type,
+    has_attachment: hasAttachments,
+    has_text: (parsed.newMessage?.length ?? 0) > 0,
+    auto_lookback: parsed.autoLookback ?? false,
+  });
 
   // Pre-generate the user message id so we can return it to the client
   // and reference it as parent_message_id without waiting for the INSERT

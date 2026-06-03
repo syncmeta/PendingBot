@@ -1,5 +1,7 @@
 import type { SupabaseClient } from './supabase';
 import type { Env } from '../types';
+import { capture } from './analytics';
+import { AnalyticsEvent } from './track';
 import {
   IAP_DEFAULT_MARKUP,
   APPLE_NET_REVENUE_RATIO,
@@ -233,6 +235,22 @@ export async function handleApplePurchase(
   });
   if (!result.ok) {
     return { ok: false, status: 500, reason: `issue_pack_failed:${result.reason}` };
+  }
+  if (result.created) {
+    // Real new credit landed (idempotent replays return created:false).
+    // Awaited rather than waitUntil'd: this is a server-to-server webhook
+    // with no request executionCtx, and a payment webhook can afford one
+    // extra fetch. capture() never throws and no-ops when PostHog is unset.
+    await capture(env, {
+      distinctId: userId,
+      event: AnalyticsEvent.TopupSucceeded,
+      properties: {
+        channel,
+        owner_kind: 'user',
+        usd_cents: priceCents,
+        pnc_micros: pncMicros,
+      },
+    });
   }
   return { ok: true, action: result.created ? 'issued' : 'duplicate' };
 }

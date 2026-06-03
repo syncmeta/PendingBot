@@ -1,5 +1,7 @@
 import type { SupabaseClient } from './supabase';
 import type { Env } from '../types';
+import { capture } from './analytics';
+import { AnalyticsEvent } from './track';
 import {
   LEMON_SQUEEZY_DEFAULT_MARKUP,
   LEMON_SQUEEZY_NET_REVENUE_RATIO,
@@ -191,6 +193,21 @@ async function handleOrderCreated(
 
   if (!result.ok) {
     return { ok: false, status: 500, reason: `issue_pack_failed:${result.reason}` };
+  }
+  if (result.created) {
+    // Real new credit (idempotent replays return created:false). Awaited —
+    // a webhook has no request executionCtx and can afford one extra fetch.
+    // capture() never throws and no-ops when PostHog is unset.
+    await capture(args.env, {
+      distinctId: (userId ?? subjectId)!,
+      event: AnalyticsEvent.TopupSucceeded,
+      properties: {
+        channel: 'lemon_squeezy',
+        owner_kind: owner.kind,
+        usd_cents: totalUsdCents,
+        pnc_micros: pncMicros,
+      },
+    });
   }
   return { ok: true, action: result.created ? 'issued' : 'duplicate' };
 }

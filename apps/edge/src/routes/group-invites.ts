@@ -4,6 +4,7 @@ import { userClient } from '../lib/supabase';
 import { jsonError } from '../lib/http-error';
 import { rateLimitOrBlock } from '../lib/rate-limit';
 import { UUID_RE } from '../lib/ids';
+import { trackEvent, AnalyticsEvent } from '../lib/track';
 import type { AppBindings } from '../types';
 
 // Per-inviter group invite links (decisions.md D2). Mirrors the bot invite
@@ -132,6 +133,12 @@ groupInviteTokenRoutes.post('/:token/redeem', async (c) => {
     | { conversation_id: string; request_id: string | null; joined: boolean }
     | undefined;
   if (!row) return jsonError(c, 500, 'database_error', { message: '加入失败' });
+  if (row.joined) {
+    trackEvent(c, AnalyticsEvent.GroupJoined, {
+      group_id: row.conversation_id,
+      via: 'invite_link',
+    });
+  }
   return c.json({
     conversationId: row.conversation_id,
     requestId: row.request_id,

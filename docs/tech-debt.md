@@ -453,3 +453,13 @@
 - **First-launch disclosure modal 文案** — `280d5b7b` 走通了流程，正式文案待法务/产品定稿。
 - **billing-v2 settleUsage CAS-loss retry** — `cbb4fb3f` 实现了重试，但极端高并发下的退避策略未压测；30 天观察期内若看到大量重试再优化。
 
+#### 🟡 PostHog 行为事件 — 缺 server 端 seam 的事件（dashboard 栈 block 1）
+
+边缘 PostHog 接线（`feat/dashboard-wiring`）已覆盖有服务端落点的事件：`message_sent` / `group_created` / `group_joined`(invitation+invite_link) / `voice_call_started`(1v1+group) / `voice_call_ended`(group) / `topup_succeeded`(iap+lemon webhook，`created:true` 时)。统一走 `lib/track.ts` 的 `trackEvent(c,...)`（fire-and-forget，无 PII）。**以下 spec 列出的事件在当前架构没有 edge 落点，未接，必须从别处补**（别当成"已全覆盖"）：
+
+- **`signed_up`** — 用户/subject 创建是 Supabase signup 触发器（`me.ts:256` 注释提及），edge 无 signup handler。→ 由 iOS PostHog SDK 在登录/首启时 `identify` + 发，或加 DB 触发器→PostHog（P4，spec 的客户端侧）。
+- **`bot_created`** — `routes/bots.ts` **没有 POST/create**，建 bot 是客户端直写 Supabase（仅 PATCH/GET/invite-links 在 edge）。→ 同上，由 iOS SDK 发，或 bots 表 AFTER INSERT 触发器。
+- **`voice_call_ended`（1v1）** — 1v1 通话结束在 `RealtimeMeterDO`（计量 DO）里异步发生，route `/realtime/.../end` 是 no-op，edge 路由层无落点。→ 需要在 DO finalize 时发（DO 内 `capture(env,...)` 可用），未做。
+- **群注资 / 认缴（`group_topped_up` / `group_subject_created`）** — `routes/group-subjects.ts` 有 `POST /:id/topup` 等落点，但该文件正被另一 session 改造（task #220-221 群钱包重构），为避免抢同一文件**本轮未接**；待群钱包改造落定后补 `trackEvent`。事件名已在 `AnalyticsEvent` 常量预留。
+- **`topup_succeeded` 数据源随计费迁移** — 当前接在 billing-v2 iap/lemon webhook（仍是现行入账路径）。billing 引擎若迁到 **Polar**（见 memory `project_billing_outsourcing`），事件源要跟着搬到 Polar webhook，别留在退役路径上。
+
