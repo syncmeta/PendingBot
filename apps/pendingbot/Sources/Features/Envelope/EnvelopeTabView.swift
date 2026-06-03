@@ -134,13 +134,9 @@ struct EnvelopeTabView: View {
         loading = true
         defer { loading = false }
         do {
-            let rows: [EnvelopeRun] = try await SupabaseStack.shared
-                .from("envelope_runs")
-                .select("id, kind, trigger, bot_id, author_user_id, conversation_id, status, title, summary, body_md, progress, turns, created_at, started_at, finished_at")
-                .order("created_at", ascending: false)
-                .limit(50)
-                .execute()
-                .value
+            // Query lives in the shared `EnvelopeFetch.list()` (Networking/) so
+            // iOS + macOS run one query shape.
+            let rows: [EnvelopeRun] = try await EnvelopeFetch.list(limit: 50)
             // Hide rows the runner deleted before iOS could see them, plus
             // any stuck "pending" rows (initial INSERT before the runner
             // updates to running). The feed is meant to read as articles.

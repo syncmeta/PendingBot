@@ -33,19 +33,13 @@ struct BotContact: Identifiable, Equatable, Hashable {
 }
 
 enum FriendsDataSource {
-    /// `GET /v1/contacts` — human friends. Worker returns camelCase
-    /// `{ contacts: [{ userId, displayName, alias? , ... }] }`.
+    /// Human friends via the shared `ContactsFetch.fetch()` (`GET /v1/contacts`)
+    /// — same request+decode as iOS's `ContactsAPI`, projected to the thin macOS
+    /// contact (id / displayName / alias). No hand-copied request here anymore.
     static func listHumanContacts() async throws -> [HumanContact] {
-        struct Resp: Decodable {
-            let contacts: [Row]
-            struct Row: Decodable {
-                let userId: String
-                let alias: String?
-                let displayName: String
-            }
+        try await ContactsFetch.fetch().map {
+            HumanContact(id: $0.userId, displayName: $0.displayName, alias: $0.alias)
         }
-        let r: Resp = try await APIClient().get("v1/contacts")
-        return r.contacts.map { HumanContact(id: $0.userId, displayName: $0.displayName, alias: $0.alias) }
     }
 
     /// Bot friends from `user_bot_contacts` (added bots only, RLS-scoped). Runs
