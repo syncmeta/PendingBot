@@ -70,7 +70,9 @@
   - ✅ **消息**(MacMessagesView:会话列表+1:1/群文字聊天+流式发送;跨平台 ChatDataSource+ChatStream;查询列名/FK/role 已 DB 核对;第一版无 Realtime(轮询)/附件/群组 peer)
   - ✅ **好友**(MacFriendsColumn:机器人+人类好友列表;跨平台 FriendsDataSource;第一版只读)
   - **验证状态(2026-06-03 computer-use 重连后真机截图验通)**:**消息 tab 完整 IM 闭环跑通** —— 会话列表(真实数据)+ 聊天历史 + 发消息 + **SSE 流式 bot 回复** + user 右对齐蓝气泡/bot 左对齐灰气泡 + 会话预览轮询更新,全部截图确认。**好友 tab 跑通** —— bot 列表 + 点 bot 跳转到会话(pendingConversationJump 状态机工作)。修了一个真机发现的瑕疵:bot 气泡背景 controlBackgroundColor 浅色下≈白→改 secondary.opacity(0.15)。iOS 范本回归也已截图确认未退化。**机组列表空**:这台 Mac 登录的账号非 test2 owner(骆店),crew 自然空——数据/账号问题,非 bug(消息/好友/聊天全通证明数据层+RLS 都对)。
-  - **待接(夜间因复杂度+无法真机验时序而留)**:来信(realtime-hub WS+thinking trace，最复杂)、机组完整(创建 crew/群聊/详情，现仅 viewer)、各跨 tab 连贯交互(好友点击进会话、新建会话)、头像图片(ServerImage iOS-only)、Realtime 推送(现全轮询)、附件/图片/语音。详见 tech-debt。
+  - ✅ **来信**(2026-06-03,MacEnvelopeColumn feed 列表 + MacEnvelopeDetail markdown 正文;跨平台 EnvelopeDataSource 查 envelope_runs;第一版无 realtime/thinking-trace 实时/写信 compose)。**至此 Mac 五个 tab(消息/好友/机组/来信/我)都有真实内容**。
+  - ✅ **UI 对齐 iOS**(2026-06-03):品牌视觉基础设施跨平台(Color(hex:)/ColorHash/BrandAvatar)→ 会话/好友/机组/来信列表 emoji 头像、聊天淡绿用户气泡+白 bot 气泡+米白背景+圆角18、tab 图标对齐(⌘机组)、app 图标补 macOS 全套尺寸、sidebar 收窄、间距调大。消息/好友真机截图验通;来信/对齐细节待 computer-use 重连或用户真机看。
+  - **待接(follow-up)**:机组完整(创建 crew/群聊/详情，现仅 viewer)、Realtime 推送(现全轮询)、头像图片(ServerImage iOS-only,现用 emoji 占位)、附件/图片/语音、来信 thinking-trace/写信。详见 tech-debt。
 - 🟡 **T1.2 客户端消费** —— 后端权限矩阵有了，客户端没用
 
 ---
