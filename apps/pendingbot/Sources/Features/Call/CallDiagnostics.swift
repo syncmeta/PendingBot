@@ -78,27 +78,9 @@ struct CallDiagnosticsSnapshot: Sendable, Equatable {
     var participants: [CallParticipantDiagnostic] = []
 }
 
-struct GroupMediaDiagnostics: Sendable, Equatable, Decodable {
-    let atMs: Double?
-    let participants: [Participant]
-
-    struct Participant: Sendable, Equatable, Decodable {
-        let kind: String
-        let id: String
-        let speaking: Bool
-        let audioLevel: Double?
-        let source: String?
-        let playoutDepthMs: Int?
-        let underruns: Int?
-        let maxGapMs: Int?
-        let droppedOutputMs: Int?
-        let inputLevel: Double?
-        let inputFrames: Int?
-        let quietFrames: Int?
-        let realtimeKitConnected: Bool?
-        let modelSessionReady: Bool?
-    }
-}
+// `GroupMediaDiagnostics` moved to the cross-platform `RealtimeSocket.swift`
+// (it's a hub-frame wire type so the shared socket can compile on macOS).
+// iOS call UI below references it unchanged (same module).
 
 @MainActor
 struct CallDiagnosticsButton: View {
