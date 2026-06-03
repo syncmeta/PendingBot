@@ -83,6 +83,12 @@ describe('gateUsage thresholds', () => {
     );
   });
 
+  it('kill-switch off → never gates even when exhausted (no-op pass)', async () => {
+    const { env, supa } = setup(0);
+    (env as unknown as { BILLING_ENABLED?: string }).BILLING_ENABLED = 'false';
+    await expect(gateUsage(env, supa, { conversationId: 'c1', userId: 'u1' })).resolves.toBeNull();
+  });
+
   it('throttle (<5 PNC) → passes with state throttle', async () => {
     const { env, supa } = setup(3 * PNC);
     const r = await gateUsage(env, supa, { conversationId: 'c1', userId: 'u1' });

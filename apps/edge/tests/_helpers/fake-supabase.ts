@@ -100,6 +100,8 @@ export function makeFakeEnv(
   const env: any = {
     SUPABASE_URL: 'https://example.supabase.co',
     SUPABASE_SERVICE_ROLE_KEY: 'service-key',
+    // Billing tests exercise the live gate/debit path — enable the kill-switch.
+    BILLING_ENABLED: 'true',
     WALLET: walletBinding,
     __fakeDb: db,
     __fakeWallet: fakeWallet,
