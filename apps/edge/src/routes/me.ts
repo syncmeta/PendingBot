@@ -12,7 +12,8 @@ import {
   RedemptionError,
 } from '../lib/billing';
 import { wallet } from '../billing/wallet-client';
-import { putCachedBalance } from '../lib/balance-cache';
+import { grantSignupBonus, creditRedemptionToPolar } from '../lib/billing-grant';
+import { safeWaitUntil } from '../lib/safe-wait-until';
 import { jsonError } from '../lib/http-error';
 import type { AppBindings } from '../types';
 
@@ -64,6 +65,9 @@ meRoutes.get('/profile', async (c) => {
   const rawMode = cf?.notification_preview_mode;
   const mode =
     rawMode === 'name' || rawMode === 'name_content' ? rawMode : 'generic';
+  // 新用户 welcome 赠送(35 PNC)——幂等 + best-effort,仅 BILLING_ENABLED 时种
+  // Polar 余额。挂在 /profile(app 打开必经)上,免单独 signup 钩子。
+  safeWaitUntil(c, grantSignupBonus(c.env, serviceClient(c.env), userId));
   return c.json({ notification_preview_mode: mode });
 });
 
@@ -310,14 +314,20 @@ meRoutes.post('/redeem', async (c) => {
   const supa = userClient(c.env, userJwt);
   const userId = c.var.userId!;
   try {
+    // RPC 原子校验+标记 used,返 {credits(PND), code_id};入账走 Polar
+    // (ensureCustomer + grantCredits + 同步 WalletDO),不再碰旧钱包。
     const result = await redeemCode(supa, code);
-    // Sync KV with the post-redemption balance so the next pre-call
-    // gate sees the new value without a Supabase round-trip.
-    await putCachedBalance(c.env, userId, result.new_balance).catch(() => undefined);
+    const creditedMicros = await creditRedemptionToPolar(
+      c.env,
+      serviceClient(c.env),
+      userId,
+      result.code_id,
+      result.credits,
+    );
     return c.json({
       ok: true,
-      credits: result.credits,
-      new_balance: result.new_balance,
+      credits: result.credits, // PND 原值(兼容旧客户端展示)
+      credited_pnc_micros: creditedMicros,
     });
   } catch (err) {
     if (err instanceof RedemptionError) {

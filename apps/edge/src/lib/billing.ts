@@ -332,8 +332,10 @@ export async function billingDebitSubject(
 // ---------------------------------------------------------------------------
 
 export interface RedeemResult {
+  /** PND 原值(v1 单位);edge 换 PNC micros 后入 Polar。 */
   credits: number;
-  new_balance: number;
+  /** redemption_codes.id,作 Polar 入账幂等键(external_ref)。 */
+  code_id: string;
 }
 
 export class RedemptionError extends Error {
