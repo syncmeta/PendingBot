@@ -1,6 +1,9 @@
-#if os(iOS)
 import SwiftUI
 
+/// Stable per-bot visual identity derived from its id. Cross-platform (pure
+/// SwiftUI Color, no UIKit) so iOS + macOS avatars share the exact same emoji
+/// + tint for a given seed.
+///
 /// Stable per-bot visual identity derived from its id. Produces a two-stop
 /// gradient so avatars feel lively without being fussy. Same shape as the
 /// reference impl — keeps the brand identity consistent across both apps.
@@ -67,4 +70,3 @@ enum ColorHash {
         return avatarEmoji[idx]
     }
 }
-#endif

@@ -32,23 +32,26 @@ struct MacConversationListColumn: View {
                 Text("还没有会话").font(.callout).foregroundStyle(.secondary)
             }
             ForEach(conversations) { c in
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Text(c.title).font(.body).lineLimit(1)
-                        Spacer(minLength: 4)
-                        if c.unreadCount > 0 {
-                            Text("\(c.unreadCount)")
-                                .font(.caption2.weight(.semibold))
-                                .padding(.horizontal, 6).padding(.vertical, 1)
-                                .background(Capsule().fill(.red))
-                                .foregroundStyle(.white)
+                HStack(spacing: 10) {
+                    BrandAvatar(seed: c.id, size: 38)
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(c.title).font(.body).lineLimit(1)
+                            Spacer(minLength: 4)
+                            if c.unreadCount > 0 {
+                                Text("\(c.unreadCount)")
+                                    .font(.caption2.weight(.semibold))
+                                    .padding(.horizontal, 6).padding(.vertical, 1)
+                                    .background(Capsule().fill(.red))
+                                    .foregroundStyle(.white)
+                            }
+                        }
+                        if !c.preview.isEmpty {
+                            Text(c.preview).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                         }
                     }
-                    if !c.preview.isEmpty {
-                        Text(c.preview).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    }
                 }
-                .padding(.vertical, 2)
+                .padding(.vertical, 3)
                 .tag(c.id)
             }
         }
@@ -126,19 +129,26 @@ struct MacChatView: View {
     }
 
     private func bubble(role: String, content: String, isMine: Bool) -> some View {
-        HStack(spacing: 0) {
-            if isMine { Spacer(minLength: 80) }
+        HStack(alignment: .top, spacing: 8) {
+            if isMine {
+                Spacer(minLength: 60)
+            } else {
+                BrandAvatar(seed: conversationId, size: 28)
+            }
             Text(content.isEmpty ? " " : content)
                 .textSelection(.enabled)
-                .padding(.horizontal, 12).padding(.vertical, 8)
+                .padding(.horizontal, 12).padding(.vertical, 9)
                 .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        // bot 气泡用半透明灰(深浅模式都看得出气泡形状),
-                        // 不用 controlBackgroundColor —— 浅色下它≈白、看不出。
-                        .fill(isMine ? Color.accentColor : Color.secondary.opacity(0.15))
+                    // 对齐 iOS:用户气泡淡绿(accentBg 0xE3EEEA)、bot 气泡白(surface)+ hairline 描边,圆角 18。
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(isMine ? Color(hex: 0xE3EEEA) : Color(hex: 0xFFFFFF))
                 )
-                .foregroundStyle(isMine ? Color.white : Color.primary)
-            if !isMine { Spacer(minLength: 80) }
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .strokeBorder(isMine ? Color.clear : Color(hex: 0xE2E0D7), lineWidth: 0.5)
+                )
+                .foregroundStyle(Color(hex: 0x1B1A14)) // ink 深字,两种气泡都用
+            if !isMine { Spacer(minLength: 60) }
         }
         .frame(maxWidth: .infinity, alignment: isMine ? .trailing : .leading)
     }
