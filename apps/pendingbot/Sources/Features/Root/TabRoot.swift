@@ -101,6 +101,11 @@ struct TabRoot: View {
             .onChange(of: deepLink.pendingAddBotToken) { _, new in
                 if new != nil { selected.wrappedValue = .friends }
             }
+            // A group invite link (/g/<token>) landed — flip to the message
+            // tab, which presents the join-group preview (decisions.md D2).
+            .onChange(of: deepLink.pendingJoinGroupToken) { _, new in
+                if new != nil { selected.wrappedValue = .message }
+            }
         } else {
             // Defensive — RootView wouldn't have shown TabRoot otherwise.
             WelcomeView()

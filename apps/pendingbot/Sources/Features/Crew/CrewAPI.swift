@@ -10,51 +10,9 @@ import Foundation
 // subject + device-login support types remain below.
 // ─────────────────────────────────────────────────────────────────────
 
-/// `GET /v1/crews` list row. Field shape mirrors edge response:
-/// `id / title / responsibleSubjectId / runtimeLocation / tag /
-/// captainBotId / status / createdAt / updatedAt`.
-///
-/// `runtimeLocation` is a string (not an enum) so we never reject
-/// unknown values from the wire — spec v2 §6.2 reserves room for v1.1
-/// runner locations; clients should fall back to displaying the raw
-/// string rather than failing to decode.
-struct CrewSummaryV2: Decodable, Identifiable, Equatable, Hashable {
-    let id: String
-    let title: String
-    let responsibleSubjectId: String
-    let runtimeLocation: String
-    let tag: String?
-    let captainBotId: String?
-    let status: String?
-    let createdAt: String
-    let updatedAt: String
-
-    enum RuntimeLocationV2: String {
-        case localHost = "local_host"
-        case peerDevice = "peer_device"
-        case flyMachine = "fly_machine"
-
-        var sfSymbol: String {
-            switch self {
-            case .localHost: return "desktopcomputer"
-            case .peerDevice: return "personalhotspot"
-            case .flyMachine: return "cloud"
-            }
-        }
-
-        var shortLabel: String {
-            switch self {
-            case .localHost: return "本机"
-            case .peerDevice: return "peer 设备"
-            case .flyMachine: return "Fly machine"
-            }
-        }
-    }
-
-    var runtimeLocationKind: RuntimeLocationV2? {
-        RuntimeLocationV2(rawValue: runtimeLocation)
-    }
-}
+// `CrewSummaryV2` moved to the cross-platform `CrewSessionAPI.swift` so the
+// macOS viewer can list crews too. iOS UI still references it unchanged
+// (same module).
 
 /// `GET /v1/crews/:crewId` detail. Crew body + parents/children/shares
 /// + (optional) captain bot.
@@ -311,19 +269,9 @@ struct CrewAnnouncementMention: Decodable, Hashable, Identifiable {
     let created_at: String
 }
 
-/// One row from `GET /v1/crew/:id/sessions` (snake_case, created_at DESC).
-struct CrewSessionRow: Decodable, Identifiable, Hashable {
-    let id: String
-    let crew_conversation_id: String
-    let responsible_subject_id: String?
-    let runner_kind: String?
-    let status: String
-    let task_brief: String?
-    let progress_summary: String?
-    let created_at: String
-    let started_at: String?
-    let finished_at: String?
-}
+// `CrewSessionRow` + `CrewSessionLogEvent` moved to the cross-platform
+// `CrewSessionAPI.swift` (shared with the macOS viewer). iOS references them
+// unchanged (same module).
 
 /// One row from `GET /v1/crew/:id/members` (snake_case, wrapper `{items}`).
 /// Resolves human / captain sender display names + powers the @mention
@@ -367,12 +315,7 @@ extension APIClient {
         return r.items
     }
 
-    /// `GET /v1/crew/:id/sessions` — crew session rows (created_at DESC, 100).
-    func getCrewSessions(_ crewId: String) async throws -> [CrewSessionRow] {
-        struct Response: Decodable { let items: [CrewSessionRow] }
-        let r: Response = try await get("v1/crew/\(crewId)/sessions")
-        return r.items
-    }
+    // `getCrewSessions` moved to the cross-platform `CrewSessionAPI.swift`.
 
     /// `GET /v1/crew/:id/members` — active crew members (humans / bots /
     /// sessions). Resolves sender display names + mention candidates.
@@ -381,6 +324,8 @@ extension APIClient {
         let r: Response = try await get("v1/crew/\(crewId)/members")
         return r.items
     }
+
+    // `getCrewSessionEvents` moved to the cross-platform `CrewSessionAPI.swift`.
 
     /// `POST /v1/crews/:crewId/messages` — the mention-aware human-post path.
     /// Empty `mentions` (or any `broadcast`) fans out to everyone.
@@ -440,12 +385,7 @@ extension APIClient {
     // singular `/v1/crew` dashboard methods were removed in the T4.6 cutover.
     // ─────────────────────────────────────────────────────────────
 
-    /// `GET /v1/crews` — list crews caller can see.
-    func listCrewsV2() async throws -> [CrewSummaryV2] {
-        struct Response: Decodable { let crews: [CrewSummaryV2] }
-        let response: Response = try await get("v1/crews")
-        return response.crews
-    }
+    // `listCrewsV2` moved to the cross-platform `CrewSessionAPI.swift`.
 
     /// `GET /v1/crews/:crewId` — crew detail (parents/children/shares/captain).
     func getCrewV2(_ crewId: String) async throws -> CrewDetailV2 {

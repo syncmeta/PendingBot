@@ -34,7 +34,7 @@ enum MacTab: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .messages: "消息"
         case .friends: "好友"
-        case .crew: "Crew"
+        case .crew: "机组"
         case .envelope: "来信"
         case .me: "我"
         }
@@ -42,9 +42,10 @@ enum MacTab: String, CaseIterable, Identifiable, Hashable {
 
     var systemImage: String {
         switch self {
-        case .messages: "bubble.left.and.bubble.right"
+        // 对齐 iOS TopTab(SidebarTabBar.swift)的图标。
+        case .messages: "bubble.left"
         case .friends: "person.2"
-        case .crew: "person.3.sequence"
+        case .crew: "command"
         case .envelope: "envelope.open"
         case .me: "person.crop.circle"
         }
@@ -55,7 +56,7 @@ enum MacTab: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .messages: "会话"
         case .friends: "好友"
-        case .crew: "Crew"
+        case .crew: "机组"
         case .envelope: "来信"
         case .me: "我"
         }
@@ -89,6 +90,9 @@ struct MacRootView: View {
     /// 中间列的选中项。骨架阶段没有真实条目,所以这里只是 `String?`
     /// 占位 —— 后续接入会话 / 好友 / 来信时换成对应的 ID 类型。
     @State private var selectedItemId: String? = nil
+    /// 跨 tab 跳转待定值(好友点 bot → 切到消息 tab 选中该会话)。切 tab 的
+    /// onChange 会消费它,避免被「切 tab 清 selection」覆盖——确定性、无竞态。
+    @State private var pendingConversationJump: String? = nil
 
     var body: some View {
         NavigationSplitView {
@@ -99,9 +103,14 @@ struct MacRootView: View {
             detailColumn
         }
         .onChange(of: selectedTab) { _, _ in
-            // 切 tab 时清掉中间列的选中,避免上一个 tab 的 selection
-            // 串到下一个 tab 的右栏。
-            selectedItemId = nil
+            // 切 tab 时清掉中间列的选中,避免上一个 tab 的 selection 串到下一个
+            // tab 的右栏;但若是程序触发的跨 tab 跳转,改为选中目标会话。
+            if let jump = pendingConversationJump {
+                selectedItemId = jump
+                pendingConversationJump = nil
+            } else {
+                selectedItemId = nil
+            }
         }
     }
 
@@ -113,14 +122,39 @@ struct MacRootView: View {
                 .tag(tab)
         }
         .navigationTitle("PendingBot")
-        .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 280)
+        .navigationSplitViewColumnWidth(min: 150, ideal: 168, max: 200)
     }
 
     @ViewBuilder
     private var middleColumn: some View {
-        MacEmptyColumn(message: selectedTab.middleColumnEmpty)
-            .navigationTitle(selectedTab.middleColumnTitle)
+        switch selectedTab {
+        case .messages:
+            // T0.1 — 消息 tab 中列接入真实会话列表;选中一个会话后右栏是聊天。
+            MacConversationListColumn(selectedConversationId: $selectedItemId)
+                .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
+        case .friends:
+            // T0.1 — 好友 tab 中列:机器人 + 人类好友列表。点 bot → 跳到消息 tab
+            // 选中它的会话(确定性 pendingConversationJump 状态机)。
+            MacFriendsColumn(onOpenConversation: { convId in
+                pendingConversationJump = convId
+                selectedTab = .messages
+            })
             .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
+        case .envelope:
+            // T0.1 — 来信 tab 中列:奏折/信件 feed;选中看正文。
+            MacEnvelopeColumn(selectedEnvelopeId: $selectedItemId)
+                .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
+        case .crew:
+            // T4.5 — Crew tab 中列接入真实机组列表;选中一个 crew 后右栏看它的
+            // 服务端 session(跨端 viewer)。其余 crew 业务(创建 / 群聊 / 详情)
+            // 仍是 iOS-only,Mac 端后续渐进接入。
+            MacCrewListColumn(selectedCrewId: $selectedItemId)
+                .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
+        default:
+            MacEmptyColumn(message: selectedTab.middleColumnEmpty)
+                .navigationTitle(selectedTab.middleColumnTitle)
+                .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
+        }
     }
 
     @ViewBuilder
@@ -132,6 +166,19 @@ struct MacRootView: View {
             // 注:Mac 三列下,「我」tab 直接把账号详情放到右栏(中间列保持空态),
             // 因为「我」tab 没有可枚举的 list 内容。
             MacMeView()
+        case .messages:
+            if let convId = selectedItemId {
+                MacChatView(conversationId: convId)
+                    .id(convId)
+            } else {
+                MacEmptyColumn(message: selectedTab.detailColumnEmpty, prominent: true)
+            }
+        case .crew:
+            if let crewId = selectedItemId {
+                MacRemoteSessionsView(crewId: crewId)
+            } else {
+                MacEmptyColumn(message: selectedTab.detailColumnEmpty, prominent: true)
+            }
         default:
             MacEmptyColumn(message: selectedTab.detailColumnEmpty, prominent: true)
         }

@@ -197,7 +197,10 @@ struct PendingBotApp: App {
 
     var body: some Scene {
         WindowGroup {
-            MacRootView()
+            // T4.5 后续:macOS 也走会话 gate（未登录 → MacWelcomeView，已登录 →
+            // MacRootView），跟 iOS RootView 一致。此前 Mac 端直接显示 MacRootView
+            // 但没有登录入口,导致没会话、所有 /v1/* 401。
+            MacRootGate()
                 .frame(minWidth: 1100, minHeight: 700)
                 .environmentObject(accountStore)
                 .task {

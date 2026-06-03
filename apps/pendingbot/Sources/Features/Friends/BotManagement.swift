@@ -197,7 +197,7 @@ struct CreateBotSheet: View {
             } header: {
                 Text("机器人标识")
             } footer: {
-                Text("别人按这个标识、链接或二维码加你的机器人。\(BotSlugRule.helpText)。建好后可在管理里修改。")
+                Text("机器人的公开展示标识(@名)。\(BotSlugRule.helpText)。别人加这个机器人走邀请链接或二维码,不是靠输入标识。建好后可在管理里修改。")
             }
         }
     }

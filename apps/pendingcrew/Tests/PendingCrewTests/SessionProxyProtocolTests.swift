@@ -1,0 +1,139 @@
+#if os(macOS)
+import XCTest
+// LocalRunner 源码直接编进 PendingCrewTests target（见 project.yml），无需 import。
+
+/// Tests assert the Swift codec matches the **shipped** server wire protocol
+/// (`apps/edge/src/lib/session-proxy-protocol.ts`) byte-for-shape: outbound
+/// frames encode to the keys the DO's `parseClientMessage` accepts, and
+/// inbound frames decode from the exact shapes the DO emits.
+final class SessionProxyProtocolTests: XCTestCase {
+
+    private func decode(_ data: Data) -> [String: Any] {
+        (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+    }
+
+    // MARK: - outbound
+
+    func testSubscribeFrameShape() throws {
+        let d = decode(try SessionProxyOutbound.subscribe(role: .runner, token: "pdg_x").jsonData())
+        XCTAssertEqual(d["type"] as? String, "subscribe")
+        XCTAssertEqual(d["role"] as? String, "runner")
+        XCTAssertEqual(d["token"] as? String, "pdg_x")
+    }
+
+    func testSubscribeOmitsTokenWhenNil() throws {
+        let d = decode(try SessionProxyOutbound.subscribe(role: .viewer, token: nil).jsonData())
+        XCTAssertEqual(d["role"] as? String, "viewer")
+        XCTAssertNil(d["token"], "nil token must be omitted, not encoded as null")
+    }
+
+    func testSessionStateFrameShape() throws {
+        let state = SessionState(status: "running", eventCount: 3, lastEvent: "ls -la")
+        let d = decode(try SessionProxyOutbound.sessionState(state).jsonData())
+        XCTAssertEqual(d["type"] as? String, "session.state")
+        let s = d["state"] as? [String: Any]
+        XCTAssertEqual(s?["status"] as? String, "running")
+        XCTAssertEqual(s?["eventCount"] as? Int, 3)
+        XCTAssertEqual(s?["lastEvent"] as? String, "ls -la")
+    }
+
+    func testPermissionRequestFrameShape() throws {
+        let payload: [String: JSONValue] = ["path": .string("/etc/hosts"), "bytes": .number(42)]
+        let frame = SessionProxyOutbound.permissionRequest(
+            action: "write_file", payload: payload, riskLevel: "high")
+        let d = decode(try frame.jsonData())
+        XCTAssertEqual(d["type"] as? String, "permission.request")
+        let req = d["request"] as? [String: Any]
+        XCTAssertEqual(req?["action"] as? String, "write_file")
+        XCTAssertEqual(req?["riskLevel"] as? String, "high")
+        let p = req?["payload"] as? [String: Any]
+        XCTAssertEqual(p?["path"] as? String, "/etc/hosts")
+        XCTAssertEqual((p?["bytes"] as? NSNumber)?.intValue, 42)
+    }
+
+    // MARK: - SessionState.from(events:)
+
+    func testSessionStateFromTranscriptTail() {
+        let events: [RunnerEvent] = [
+            .started(model: "claude-sonnet-4-6", sessionId: "s1"),
+            .assistant("Let me check the directory."),
+            .toolCall(title: "Bash", detail: "ls -la"),
+        ]
+        let state = SessionState.from(status: "running", events: events)
+        XCTAssertEqual(state.status, "running")
+        XCTAssertEqual(state.eventCount, 3)
+        XCTAssertEqual(state.lastEvent, "Bash：ls -la")
+    }
+
+    func testSessionStateFromEmptyTranscript() {
+        let state = SessionState.from(status: "running", events: [])
+        XCTAssertEqual(state.eventCount, 0)
+        XCTAssertNil(state.lastEvent)
+    }
+
+    func testSessionStateClipsLongAssistantText() {
+        let long = String(repeating: "x", count: 200)
+        let state = SessionState.from(status: "completed", events: [.assistant(long)])
+        XCTAssertEqual(state.lastEvent?.count, 81, "clip to 80 chars + ellipsis")
+        XCTAssertTrue(state.lastEvent?.hasSuffix("…") ?? false)
+    }
+
+    // MARK: - inbound
+
+    func testParseSubscribedAck() {
+        let raw = #"{"type":"subscribed","sessionId":"sess-1","role":"runner"}"#
+        XCTAssertEqual(SessionProxyInbound.parse(raw),
+                       .subscribed(sessionId: "sess-1", role: .runner))
+    }
+
+    func testParseLiveCommand() {
+        let raw = #"{"type":"session.command","commandId":"c1","command":{"kind":"send_prompt","payload":{"text":"hi","n":2}}}"#
+        XCTAssertEqual(SessionProxyInbound.parse(raw),
+                       .command(commandId: "c1", kind: "send_prompt",
+                                payload: ["text": .string("hi"), "n": .number(2)],
+                                queued: false))
+    }
+
+    func testParseQueuedCommandWithoutPayload() {
+        let raw = #"{"type":"session.command","commandId":"c2","command":{"kind":"cancel"},"queued":true}"#
+        XCTAssertEqual(SessionProxyInbound.parse(raw),
+                       .command(commandId: "c2", kind: "cancel", payload: nil, queued: true))
+    }
+
+    func testParsePermissionDecision() {
+        let raw = #"{"type":"permission.decision","requestId":"r9","decision":"approve"}"#
+        XCTAssertEqual(SessionProxyInbound.parse(raw),
+                       .permissionDecision(requestId: "r9", decision: "approve"))
+    }
+
+    func testParseErrorFrame() {
+        let raw = #"{"type":"error","code":"role_mismatch","message":"nope"}"#
+        XCTAssertEqual(SessionProxyInbound.parse(raw),
+                       .error(code: "role_mismatch", message: "nope"))
+    }
+
+    func testViewerFacingFramesDegradeToUnknown() {
+        // session.state / permission.request flow DO → viewers, not → runner.
+        for raw in [
+            #"{"type":"session.state","state":{"status":"running"}}"#,
+            #"{"type":"permission.request","request":{"action":"x"}}"#,
+            "not json at all",
+            #"{"type":"session.command","commandId":"c"}"#, // missing command.kind
+        ] {
+            XCTAssertEqual(SessionProxyInbound.parse(raw), .unknown(raw),
+                           "should degrade to .unknown: \(raw)")
+        }
+    }
+
+    // MARK: - JSONValue bool/number disambiguation
+
+    func testJSONValueKeepsBoolDistinctFromNumber() {
+        let raw = #"{"type":"session.command","commandId":"c","command":{"kind":"k","payload":{"flag":true,"count":1}}}"#
+        guard case let .command(_, _, payload, _) = SessionProxyInbound.parse(raw) else {
+            return XCTFail("expected .command")
+        }
+        XCTAssertEqual(payload?["flag"], .bool(true))
+        XCTAssertEqual(payload?["count"], .number(1))
+    }
+}
+#endif

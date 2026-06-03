@@ -45,7 +45,7 @@
 | T2.3 DAG + 环检测 | ✅ | 代码+单测 | — | 递归 CTE trigger + `crew_attach_as_child` + 内联测试 | — |
 | T2.4 责任比例 5 规则 | ✅ | 代码+单测 | — | `crew_recompute_shares`/`propose_split_distinct`/tiebreaker 全有 | — |
 | T3.1 Claude Code runner | ✅ | 代码 | — | 本轮修了 nested-ObservableObject 不回流 bug | — |
-| **T3.2 Codex runner** | ❌ | — | — | **enum 有 `local_codex`，无 adapter 实现**，只有 placeholder | 仍延期 |
+| **T3.2 Codex runner** | ✅ | 代码+单测 | #202 | argv codex 分支补 `--json`(JSONL 事件流,对标 Claude stream-json)+ `-m/--model` 透传;launch/env/discovery 早已 kind-无关复用。11/11 测试绿(含 model 透传) | — |
 | T3.3 工作目录三层 | ✅ | 代码 | — | GitWorktreeService + session sheet | — |
 | T3.4 子进程安全 | ✅ | 代码 | — | env 白名单 + SIGTERM/grace/KILL + 首启 disclosure | — |
 | T3.5 Session 创建面板 | ✅ | 代码 | — | — | — |
@@ -53,17 +53,26 @@
 | T4.2 Session 系统提示模板 | ✅ | 代码 | #168 | 走 prompt-loader | — |
 | T4.3 Permission Request | ✅ | 代码 | #170-176 | schema + tool + iOS/Mac 卡片 | — |
 | T4.4 Bot start_crew tool | ✅ | 代码 | — | `tools/start-crew.ts` + tool-def | — |
-| **T4.5 跨端遥控 peer_device** | 🟡 | 代码(服务端) | — | **服务端 P0 已落**（SessionProxyDO，commit c7b2cd2d）；**客户端订阅 + runner 发布未接** | 🟡（条目过时，写成"只有文档"，需改） |
+| **T4.5 跨端遥控 peer_device** | 🟡 | 代码+**runner 链真机验** | #204 | **服务端比账本旧写的完整得多(2026-06-02 重新核实)**:不止 SessionProxyDO —— `crew_sessions` 表 + 整条 runner HTTP 生命周期都在:`POST /v1/crews/:id/sessions`(创建)·`runner-hosts/:id/sessions/:sid/{claim,events,finish}`(`runner:write`)·`GET /v1/sessions/:sid/proxy/connect`·`PATCH .../permission-mode`。**runner 链 + viewer 读 已真机端到端验通(2026-06-02)**:① wire codec(`d6fba7a3`,14测试绿)② session 生命周期 API client(`289788b3`)③ **runner-loop 接线**(`8cabab1c`,CreateSessionSheet 登录态起 session → register host→createSession→claim→边跑边 appendSessionEvent→finish)④ **viewer**(`acf9db29`,RemoteSessionsView 轮询 listCrewSessions/getSessionEvents 渲染转写)。**真机验**:PendingCrew Mac 登录起 Claude Code session → DB 出现 crew_session(queued→running→cancelled)+ 4 条 session_events,viewer 原样渲染(截图核对一致)。途中抓到并修 createSession 路径 bug(复数 crews→单数 crew,`e986d778`,compile-only 抓不到)。**剩(都需 SessionProxyDO WS,非 HTTP)**:实时推送(session.state 边跑边推,现 viewer 靠 3s 轮询)+ **遥控发命令**(session.command,viewer 现只读)。**iOS PendingBot viewer 已补并真机验通(2026-06-02,`RemoteSessionsView.swift` + `getCrewSessionEvents`,入口 CrewDetailV2View terminal 按钮;用户用骆店账号在 iOS 上看到 test2 渲染)**。**每步需 device-grant `runner:write`,活验证要登录账号+真机** —— 宜作连贯 feature 一次做,别拆成孤儿/半接(create-不-claim 会留 queued 孤儿行) | 🟡 半截桥(服务端**全好**+codec,客户端链未接) |
 | T4.6 iOS Crew Tab v2 | 🟡 | 代码 | — | 群聊 UI + live push + 权限卡done；剩附件、自我气泡高亮 2 洞 | 🟢 Crew Tab 2 洞 |
 | T5.1 PendingCrew BYOK 未登录 | ✅ | 代码 | #177 | 本机 captain 池 + BYOK key | — |
 | T5.2 双轨路由 | ✅ | 代码 | #177 | EdgeBackend/LocalBackend；⚠️ 无单测 | 🟢 backend 无单测 |
 | **T5.3 端到端 QA** | ❌ | — | — | **BYOK/cloud 全链路从没真机跑通** | 仍延期 |
 
 ### roadmap 维度真实缺口（就这几个真"没做"）
-- ❌ **T3.2 Codex runner** —— 唯一 enum 占位、代码没写的
+- ✅ ~~T3.2 Codex runner~~ —— 已补完(#202,2026-06-02)。其上层 **JSONL 事件解析层**也已落地(#203,2026-06-02):`RunnerEventParser` 把 codex/claude 两种 JSONL flatten 成统一 `RunnerEvent` 模型,接进 `CrewSessionRun.events` 并在 session 窗口加「转写」tab 渲染;schema 取自实跑两个 CLI 的 fixtures,9 测试绿。本机 runner 闭环(Phase 3)真实缺口已清零(剩 T5.3 真机 QA 见下)。
 - ❌ **T5.3 端到端 QA** —— 整链路没真机验证
-- 🟡 **T4.5 客户端侧** —— 服务端打底好了，手机/Mac 订阅 + runner 发布没接（半截桥）
-- 🟡 **Mac/iPad IM 业务内容**（T0.1/T1.4）—— 壳在，tab 是 placeholder
+- 🟡 **T4.5 客户端侧** —— **PendingBot 三端 viewer 代码齐了**：iPhone（只读已真机验 + 实时 banner/cancel 编译绿）、iPad（随 iOS universal，同代码）、**Mac（PendingBot macOS 端新接 Crew tab：crew 列表→session viewer→实时+cancel，编译绿）**。跨平台层（CrewSessionAPI / SessionProxyClient / SessionStatusStyle）已抽共享。另有 PendingCrew Mac 独立 app 的 runner 发布 + 实时/cancel 在 `feat/t45-ws-transport`。仍缺：**两设备 E2E QA**（Mac 起活 session + 任一 viewer 实时看&cancel）+ Mac app 登录骆店真机看 test2 + permission over WS。WS 地基铺好，差活 session 串一次。
+- 🟡 **PendingBot 完整原生 Mac 版**（T0.1/T1.4，#212）—— 用户明确要完整原生 SwiftUI macOS（非 Catalyst）。架构:逻辑/数据/网络 100% 跨平台共享，UI 壳逐块原生重画。**2026-06-02 夜间一口气推进(均两端 BUILD SUCCEEDED + 合 main)**:
+  - ✅ **我 tab**(MacMeView，先前已有)
+  - ✅ **登录**(MacWelcomeView+MacRootGate，Email OTP+Turnstile，**用户真机验通**)
+  - ✅ **机组 viewer**(MacRemoteSessionsView，实时 banner+cancel)
+  - ✅ **消息**(MacMessagesView:会话列表+1:1/群文字聊天+流式发送;跨平台 ChatDataSource+ChatStream;查询列名/FK/role 已 DB 核对;第一版无 Realtime(轮询)/附件/群组 peer)
+  - ✅ **好友**(MacFriendsColumn:机器人+人类好友列表;跨平台 FriendsDataSource;第一版只读)
+  - **验证状态(2026-06-03 computer-use 重连后真机截图验通)**:**消息 tab 完整 IM 闭环跑通** —— 会话列表(真实数据)+ 聊天历史 + 发消息 + **SSE 流式 bot 回复** + user 右对齐蓝气泡/bot 左对齐灰气泡 + 会话预览轮询更新,全部截图确认。**好友 tab 跑通** —— bot 列表 + 点 bot 跳转到会话(pendingConversationJump 状态机工作)。修了一个真机发现的瑕疵:bot 气泡背景 controlBackgroundColor 浅色下≈白→改 secondary.opacity(0.15)。iOS 范本回归也已截图确认未退化。**机组列表空**:这台 Mac 登录的账号非 test2 owner(骆店),crew 自然空——数据/账号问题,非 bug(消息/好友/聊天全通证明数据层+RLS 都对)。
+  - ✅ **来信**(2026-06-03,MacEnvelopeColumn feed 列表 + MacEnvelopeDetail markdown 正文;跨平台 EnvelopeDataSource 查 envelope_runs;第一版无 realtime/thinking-trace 实时/写信 compose)。**至此 Mac 五个 tab(消息/好友/机组/来信/我)都有真实内容**。
+  - ✅ **UI 对齐 iOS**(2026-06-03):品牌视觉基础设施跨平台(Color(hex:)/ColorHash/BrandAvatar)→ 会话/好友/机组/来信列表 emoji 头像、聊天淡绿用户气泡+白 bot 气泡+米白背景+圆角18、tab 图标对齐(⌘机组)、app 图标补 macOS 全套尺寸、sidebar 收窄、间距调大。消息/好友真机截图验通;来信/对齐细节待 computer-use 重连或用户真机看。
+  - **待接(follow-up)**:机组完整(创建 crew/群聊/详情，现仅 viewer)、Realtime 推送(现全轮询)、头像图片(ServerImage iOS-only,现用 emoji 占位)、附件/图片/语音、来信 thinking-trace/写信。详见 tech-debt。
 - 🟡 **T1.2 客户端消费** —— 后端权限矩阵有了，客户端没用
 
 ---
