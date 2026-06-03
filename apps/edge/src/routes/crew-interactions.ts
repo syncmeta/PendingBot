@@ -36,6 +36,20 @@ function untypedRpc(client: SupabaseClient): UntypedRpcClient {
   return client as unknown as UntypedRpcClient;
 }
 
+// Same rationale as untypedRpc: the list query reads `request_kind`, a column
+// added by this migration but not yet regenerated into schema.ts (deferred to
+// avoid pulling sibling branches' un-merged prod columns into this branch).
+// Query it through an untyped `.from` surface — runtime-safe (the column exists
+// on prod), just invisible to the stale generated types.
+type UntypedFromBuilder = {
+  select: (cols: string) => UntypedFromBuilder;
+  eq: (col: string, val: unknown) => UntypedFromBuilder;
+  order: (col: string, opts: { ascending: boolean }) => Promise<{ data: unknown; error: { message: string } | null }>;
+};
+function untypedFrom(client: SupabaseClient, table: string): UntypedFromBuilder {
+  return (client as unknown as { from: (t: string) => UntypedFromBuilder }).from(table);
+}
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isUuid = (s: string): boolean => UUID_RE.test(s);
 
@@ -51,7 +65,7 @@ crewInteractionRoutes.post('/:sessionId/interactions', requireSubjectAuth(['runn
 
   const parsed = z.object({
     question: z.string().trim().min(1).max(8000),
-    payload: z.record(z.unknown()).optional(),
+    payload: z.record(z.string(), z.unknown()).optional(),
   }).safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return jsonError(c, 400, 'invalid_body', { detail: parsed.error.flatten() });
 
@@ -77,8 +91,7 @@ crewInteractionRoutes.get('/:sessionId/interactions', requireSubjectAuth([]), as
   const session = await loadOwnedSession(c, svc, sessionId);
   if ('errorResponse' in session) return session.errorResponse;
 
-  const { data, error } = await svc
-    .from('permission_requests')
+  const { data, error } = await untypedFrom(svc, 'permission_requests')
     .select('id, requested_action, detail, status, requested_at, request_kind')
     .eq('crew_session_id', sessionId)
     .eq('request_kind', 'question')
