@@ -61,7 +61,8 @@ spec §10 重写（本 commit）。
   - edge 部署 live（Version `7e026b27`）；三个交互路由都返 401（auth gating 生效、路由挂上、对照不存在路径返 404）✅
   - edge typecheck 绿 + 459 vitest 全过 ✅（注：worktree 之前没装 deps，装上后暴露并修了两个真 type error：`z.record` arity + 列表查询走 typed schema.ts → 改 `untypedFrom`）
   - PendingCrew Mac app `BUILD SUCCEEDED`，全部交互 Swift 一起编过；`ask-human-mcp.cjs` 进 bundle（`Contents/Resources/`）、node v26 在位 ✅
-- **整链路 E2E（剩最后一跳，需人在 GUI）**：agent ask_human → 卡片 → 人答 → agent 续跑。要登录账号 + 真 crew session + agent 真调 ask_human（prompt 驱动）。手测步骤见下。
+- **E2E 第一跑抓到真 bug 并修复（2026-06-03）**：真机起 logged session、prompt 让 agent 调 ask_human —— agent **确实调了**工具（接线全通：ToolSearch 加载 → 调用 → 打到 edge），但 edge 返 **HTTP 500**。根因：`create_interaction_request`（和 T4.3 的 `create_permission_request`）镜像发卡时 INSERT `pendingbot.messages` **漏了 `client_message_id`**（NOT NULL UNIQUE 无默认），两个 RPC 都从没在运行时跑过所以一直没暴露。修：新迁移 `20260603043706` CREATE OR REPLACE 两函数补 `gen_random_uuid()`，db push 到 prod，pg_get_functiondef 复核两函数都带上了。**这正是"验证影响后续做法"的一跳——不真跑发现不了。**
+- **整链路 E2E（剩最后一跳，需人在 GUI 重跑一次）**：agent ask_human → 卡片 → 人答 → agent 续跑。500 已修，请重跑一次确认卡片出现 + 闭环。要登录账号 + 真 crew session + agent 真调 ask_human（prompt 驱动）。手测步骤见下。
   - 手测：① app 里登录态起一个 logged crew session，prompt 里明确让 agent「用 ask_human 工具问我一个问题再继续」②观察 RemoteSessionsView 出现「Agent 在问你」卡片 ③回答 ④确认 agent 收到回复续跑。
   - captain 自动 triage（§10.3-10.5）：仍待，且其 LLM-pipeline 也要在这套 E2E 环境里才好验。
 
