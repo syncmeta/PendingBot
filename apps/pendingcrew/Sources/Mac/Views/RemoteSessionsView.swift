@@ -35,6 +35,9 @@ struct RemoteSessionsView: View {
     @State private var liveSnapshot: SessionStateSnapshot?
     // Steering composer draft (send_prompt to the running session).
     @State private var promptDraft = ""
+    // Pending ask_human interactions for the selected session + per-id reply drafts.
+    @State private var pendingInteractions: [CrewInteraction] = []
+    @State private var interactionDrafts: [String: String] = [:]
 
     private let pollInterval: UInt64 = 3_000_000_000 // 3s
 
@@ -46,6 +49,10 @@ struct RemoteSessionsView: View {
             VStack(spacing: 0) {
                 if let liveSnapshot {
                     liveBanner(liveSnapshot)
+                    Divider()
+                }
+                if !pendingInteractions.isEmpty {
+                    interactionPane
                     Divider()
                 }
                 eventPane
@@ -127,6 +134,46 @@ struct RemoteSessionsView: View {
     private func clearStandingNote() {
         guard let client = liveClient else { return }
         Task { await client.sendCommand(kind: "set_steering", payload: ["text": .string("")]) }
+    }
+
+    /// The agent is blocked asking the human something (T4.5 ask_human). One
+    /// card per pending interaction; answering unblocks the session.
+    private var interactionPane: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(pendingInteractions) { intr in
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "person.fill.questionmark").foregroundStyle(.orange)
+                        Text("Agent 在问你").font(.caption.weight(.semibold)).foregroundStyle(.orange)
+                    }
+                    Text(intr.question).font(.callout).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    HStack(spacing: 8) {
+                        TextField("回答…", text: interactionBinding(intr.id), axis: .vertical)
+                            .textFieldStyle(.roundedBorder).lineLimit(1...4)
+                            .onSubmit { answer(intr.id) }
+                        Button("回答") { answer(intr.id) }
+                            .keyboardShortcut(.return, modifiers: .command)
+                            .disabled((interactionDrafts[intr.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                }
+                .padding(10)
+                .background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+            }
+        }
+        .padding(12)
+    }
+
+    private func interactionBinding(_ id: String) -> Binding<String> {
+        Binding(get: { interactionDrafts[id] ?? "" }, set: { interactionDrafts[id] = $0 })
+    }
+
+    private func answer(_ reqId: String) {
+        let reply = (interactionDrafts[reqId] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !reply.isEmpty, let api = try? appModel.loggedAPIClient() else { return }
+        interactionDrafts[reqId] = nil
+        pendingInteractions.removeAll { $0.id == reqId } // optimistic; refetch confirms
+        Task { try? await api.answerInteraction(reqId: reqId, reply: reply) }
     }
 
     /// The live-state banner — driven by the runner's real-time `session.state`
@@ -239,6 +286,11 @@ struct RemoteSessionsView: View {
             if selectedId == nil { selectedId = list.first?.id }
             if let sid = selectedId {
                 events = try await api.getSessionEvents(sessionId: sid)
+                // Pending ask_human interactions for this session (best-effort —
+                // a fetch failure leaves the prior list rather than blanking it).
+                if let intr = try? await api.listSessionInteractions(sessionId: sid) {
+                    pendingInteractions = intr
+                }
             }
         } catch {
             loadError = error.localizedDescription

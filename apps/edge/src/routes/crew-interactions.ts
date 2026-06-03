@@ -68,6 +68,27 @@ crewInteractionRoutes.post('/:sessionId/interactions', requireSubjectAuth(['runn
   return c.json({ requestId: typeof data === 'string' ? data : null });
 });
 
+// ── 列出某 session 的待答交互（操作者 UI 拉去答） ───────────────────────
+crewInteractionRoutes.get('/:sessionId/interactions', requireSubjectAuth([]), async (c) => {
+  const sessionId = c.req.param('sessionId');
+  if (!isUuid(sessionId)) return jsonError(c, 400, 'invalid_id', { message: 'sessionId must be a uuid' });
+
+  const svc = serviceClient(c.env);
+  const session = await loadOwnedSession(c, svc, sessionId);
+  if ('errorResponse' in session) return session.errorResponse;
+
+  const { data, error } = await svc
+    .from('permission_requests')
+    .select('id, requested_action, detail, status, requested_at, request_kind')
+    .eq('crew_session_id', sessionId)
+    .eq('request_kind', 'question')
+    .eq('status', 'pending')
+    .order('requested_at', { ascending: true });
+  if (error) return jsonError(c, 500, 'database_error', { detail: error.message });
+  const rows = (data ?? []) as Array<{ id: string; requested_action: string; detail: unknown; requested_at: string }>;
+  return c.json({ items: rows.map((r) => ({ id: r.id, question: r.requested_action, detail: r.detail, requestedAt: r.requested_at })) });
+});
+
 // ── runner long-poll 读回复 ────────────────────────────────────────────
 crewInteractionRoutes.get('/:sessionId/interactions/:reqId', requireSubjectAuth(['runner:write']), async (c) => {
   const sessionId = c.req.param('sessionId');

@@ -299,6 +299,27 @@ struct PendingCrewAPI {
         return resp.ok
     }
 
+    // MARK: - Crew interactions (T4.5 ask_human / 人在回路)
+
+    /// `GET /v1/sessions/:sessionId/interactions` — list this session's pending
+    /// `ask_human` interactions awaiting a human reply. The operator's viewer
+    /// polls this to surface "the agent is asking you something".
+    func listSessionInteractions(sessionId: String) async throws -> [CrewInteraction] {
+        struct Response: Decodable { let items: [CrewInteraction] }
+        let resp: Response = try await get(path: "v1/sessions/\(sessionId)/interactions")
+        return resp.items
+    }
+
+    /// `POST /v1/interactions/:reqId/answer` — answer an interaction with free
+    /// text. The session's blocked `ask_human` tool picks it up and continues.
+    @discardableResult
+    func answerInteraction(reqId: String, reply: String) async throws -> Bool {
+        struct Body: Encodable { let reply: String }
+        struct Response: Decodable { let ok: Bool }
+        let resp: Response = try await post(path: "v1/interactions/\(reqId)/answer", body: Body(reply: reply))
+        return resp.ok
+    }
+
     // MARK: - Internals
 
     private func get<Response: Decodable>(path: String) async throws -> Response {
@@ -393,6 +414,14 @@ struct CrewSessionEvent: Decodable, Identifiable, Equatable {
         case summary
         case createdAt = "created_at"
     }
+}
+
+/// One pending `ask_human` interaction (T4.5). The agent is blocked waiting on
+/// `question`; the operator answers with free text.
+struct CrewInteraction: Decodable, Identifiable, Equatable {
+    let id: String
+    let question: String
+    let requestedAt: String?
 }
 
 // MARK: - Create crew request/response
