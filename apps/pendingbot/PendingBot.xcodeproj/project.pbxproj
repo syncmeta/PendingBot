@@ -22,6 +22,7 @@
 		0BD44E1EB0D5BE9AB101E1D5 /* CallFloatingPill.swift in Sources */ = {isa = PBXBuildFile; fileRef = 508FBAF36D83C0824F8073F4 /* CallFloatingPill.swift */; };
 		0D14B87E36E28B1C76B152E6 /* BubbleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAF9F958E634C73E5136CC46 /* BubbleView.swift */; };
 		0E0FCE983AB9E6DB3447D869 /* CrewTabV2View.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAEEAA2E4EC4CC777D41E48B /* CrewTabV2View.swift */; };
+		0E612DF59F682B75DCDD2031 /* BotContactsFetch.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC6DBF492E7DD84630FAE567 /* BotContactsFetch.swift */; };
 		10466E154C1970F45ED038DF /* SubConversationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E95667CA42D6EA266907A06 /* SubConversationView.swift */; };
 		12A200D2EF7DE9FE9E8C436C /* BillingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 847B06C1CE436AE865AD9AAE /* BillingService.swift */; };
 		1431C4C1F06DB04B39E9C1FF /* GroupAvatar.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD75C88413B35DD563C0DF45 /* GroupAvatar.swift */; };
@@ -265,6 +266,7 @@
 		9FF3BF57EA0692041B43E25A /* BubbleSplitter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BubbleSplitter.swift; sourceTree = "<group>"; };
 		A0DF072DCFB0786FA83D70F3 /* ChatStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatStream.swift; sourceTree = "<group>"; };
 		A5131104F9620195C8AF448E /* TypingDots.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypingDots.swift; sourceTree = "<group>"; };
+		AC6DBF492E7DD84630FAE567 /* BotContactsFetch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotContactsFetch.swift; sourceTree = "<group>"; };
 		ADEFF9B985A092B6174979F7 /* SkillsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkillsView.swift; sourceTree = "<group>"; };
 		B35BE5986401AECDFE09E6BD /* SessionProxyProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionProxyProtocol.swift; sourceTree = "<group>"; };
 		B7E8B55D4DE8ED09E4B54C14 /* CallCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallCenter.swift; sourceTree = "<group>"; };
@@ -362,6 +364,7 @@
 				7E091E71F22CA1A5DE2A1ECE /* APIClient.swift */,
 				1FEFDBE4DFE6AB93D06D2015 /* AppleSignIn.swift */,
 				847B06C1CE436AE865AD9AAE /* BillingService.swift */,
+				AC6DBF492E7DD84630FAE567 /* BotContactsFetch.swift */,
 				6A5442547F63F7CF41B54C46 /* BotInviteAPI.swift */,
 				CD69E5388537288F5E14D3D1 /* ChatDataSource.swift */,
 				A0DF072DCFB0786FA83D70F3 /* ChatStream.swift */,
@@ -755,6 +758,7 @@
 				B5B71DE9781BE668FF81DE91 /* BlinkingCursor.swift in Sources */,
 				F7AE57D22B8A151AF452E63F /* BotAvatar.swift in Sources */,
 				EF535E70029F6A3734F9E56F /* BotCapabilitiesView.swift in Sources */,
+				0E612DF59F682B75DCDD2031 /* BotContactsFetch.swift in Sources */,
 				498EEE5486864027EDE888E7 /* BotInviteAPI.swift in Sources */,
 				BBE709B9F7E9D22EA452BDED /* BotManagement.swift in Sources */,
 				D7E54D526FC58DAACFDBA45C /* BotVisibilityTag.swift in Sources */,
