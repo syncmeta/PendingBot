@@ -388,6 +388,94 @@ export async function resolveGroupStakes(
   return { poolStake, pledgeStakes, total };
 }
 
+// ============================================================
+// 群钱包视图(只读,供 iOS 群钱包页 GET /v1/group-subjects/:id/wallet)
+// ============================================================
+
+export interface MemberWalletView {
+  userId: string;
+  /** 该成员实缴的当前可取出份额(share_now 合计,micros)。 */
+  contributionShareNowMicros: number;
+  /** 该成员设置的认缴额度(active,micros;0 = 未认缴)。 */
+  pledgeMicros: number;
+  /** 当前生效认缴 = min(pledge, 个人余额)(micros)。余额见底 → 0。 */
+  pledgeEffectiveMicros: number;
+  /** 该成员总份额 = 实缴 share_now + 生效认缴(micros)。 */
+  stakeMicros: number;
+}
+
+export interface GroupWalletView {
+  /** 实缴池余额(群 WalletDO,micros)。 */
+  poolMicros: number;
+  /** S = 池 + Σ生效认缴(micros)。分摊/占比的分母。 */
+  totalStakeMicros: number;
+  /** 有实缴或认缴的成员明细(无份额成员不在此列;占比 = stake/S)。 */
+  members: MemberWalletView[];
+}
+
+/**
+ * 读群钱包当前快照:实缴池余额 + S + 每个有份额成员的实缴 share_now / 认缴 / 总份额。
+ * 复用 resolveGroupStakes(池 + 生效认缴 + S);实缴 share_now 按 group_contributions
+ * 当前 share_index 折算。纯读,不动钱。调用方用 service client(跨成员读)。
+ */
+export async function readGroupWallet(
+  env: Env,
+  supa: Supa,
+  subjectId: string,
+): Promise<GroupWalletView> {
+  const stakes = await resolveGroupStakes(env, supa, subjectId);
+
+  // 当前 share_index(实缴池折算基数)。
+  const { data: pool } = await supa
+    .from('group_pools')
+    .select('share_index')
+    .eq('subject_id', subjectId)
+    .maybeSingle();
+  const idxNow = Number(pool?.share_index ?? 1);
+
+  // 各出资人实缴 share_now 合计。
+  const { data: contribs } = await supa
+    .from('group_contributions')
+    .select('contributor_user_id, contributed_pnc_micros, share_index_at_join')
+    .eq('subject_id', subjectId)
+    .eq('status', 'active');
+  const shareNowByUser = new Map<string, number>();
+  for (const c of contribs ?? []) {
+    const uid = c.contributor_user_id as string;
+    const sn = computeShareNow(
+      Number(c.contributed_pnc_micros),
+      Number(c.share_index_at_join),
+      idxNow,
+    );
+    shareNowByUser.set(uid, (shareNowByUser.get(uid) ?? 0) + sn);
+  }
+
+  // 设置的认缴额度(含余额见底、生效份额为 0 的;resolveGroupStakes 只含生效>0 的)。
+  const setPledges = await getActivePledges(supa, subjectId);
+  const setPledgeByUser = new Map(setPledges.map((p) => [p.userId, p.pledgeMicros]));
+  const effByUser = new Map(stakes.pledgeStakes.map((s) => [s.userId, s.stakeMicros]));
+
+  const userIds = new Set<string>([...shareNowByUser.keys(), ...setPledgeByUser.keys()]);
+  const members: MemberWalletView[] = [];
+  for (const uid of userIds) {
+    const csn = shareNowByUser.get(uid) ?? 0;
+    const eff = effByUser.get(uid) ?? 0;
+    members.push({
+      userId: uid,
+      contributionShareNowMicros: csn,
+      pledgeMicros: setPledgeByUser.get(uid) ?? 0,
+      pledgeEffectiveMicros: eff,
+      stakeMicros: csn + eff,
+    });
+  }
+
+  return {
+    poolMicros: stakes.poolStake,
+    totalStakeMicros: stakes.total,
+    members,
+  };
+}
+
 export interface SettleGroupParams {
   env: Env;
   supa: Supa;

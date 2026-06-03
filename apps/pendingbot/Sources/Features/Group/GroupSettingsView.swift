@@ -29,7 +29,6 @@ struct GroupSettingsView: View {
     @State private var isAdmin: Bool = false
     @State private var myRole: String = ""
     @State private var savingPolicy: Bool = false
-    @State private var showingBilling = false
     @State private var showingApprovals = false
     @State private var showingGroupQR = false
     @State private var showingInviteMembers = false
@@ -139,9 +138,6 @@ struct GroupSettingsView: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text("退出后历史消息仍保留,但你不会再收到新消息。")
-        }
-        .sheet(isPresented: $showingBilling) {
-            GroupBillingSheet(conversationId: conversationId, isAdmin: isAdmin)
         }
         .navigationDestination(isPresented: $showingApprovals) {
             JoinRequestsInboxView(conversationId: conversationId)
@@ -304,12 +300,6 @@ struct GroupSettingsView: View {
                     Text("审批后进").tag("approval")
                     Text("不允许新成员").tag("closed")
                 }
-            }
-
-            Button {
-                showingBilling = true
-            } label: {
-                LabeledContent("谁为机器人的 Token 买单", value: "查看并修改")
             }
 
             Button {

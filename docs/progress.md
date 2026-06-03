@@ -2,6 +2,10 @@
 
 **最近对账：2026-06-03**（对照实际代码 / 迁移 / git，不是看 task 标记）
 
+> 2026-06-03 整合分支 `chore/billing-dashboard-specs` = main(#212 Mac) + 计费(P2/认缴/退役/尾巴) + dashboard(观测/Refine/Grafana) + iOS 群钱包。
+> - iOS 钱包/计费 UI 接群钱包（实缴池+认缴）：edge `GET /v1/group-subjects/:id/wallet` 读端点（群池+我的份额/占比/认缴+成员明细）；iOS `GroupWalletService` + `GroupWalletView`（充值/认缴/取出/退群/解散，骨架待视觉定稿）；修个人钱包 `WalletV2` 解码崩溃。**连根拔旧 per-conversation 分摊**做了安全部分（删死 `lib/group-billing.ts`+3 配置路由 + 退役 `GroupBillingSheet`），剩 invite 流解耦 + 表/RPC 物理 drop 留 #226。
+> - **未决/未验**：群钱包页入口待定（群聊≠group_account，须从 group_account subject 起，#227）；真机/真数据未验（端点未部署 + 无群账号数据 + Polar 配置未填 secret）。
+
 ---
 
 ## 0. 这个文档是什么 / 不是什么
