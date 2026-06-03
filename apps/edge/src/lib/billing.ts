@@ -2,6 +2,7 @@ import type { SupabaseClient } from './supabase';
 import type { Env } from '../types';
 import { getCachedBalance, putCachedBalance } from './balance-cache';
 import { kvConfig } from './kv-config';
+import { billingEnabled } from './feature-flags';
 import { wallet } from '../billing/wallet-client';
 
 // Billing layer (P0). All schema changes ship in 0033_billing.sql /
@@ -259,6 +260,8 @@ export async function requireBalance(
   supa: SupabaseClient,
   userId: string,
 ): Promise<void> {
+  // Kill-switch: billing off (default) → never block.
+  if (!billingEnabled(env)) return;
   const gate = await getBalanceGateState(env, supa, userId);
   if (!gate.allowed) {
     throw new InsufficientBalanceError(gate.balance_credits, gate.min_threshold);

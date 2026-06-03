@@ -70,6 +70,11 @@ export interface Env {
 
   // ── Vars (per env in wrangler.jsonc) ───────────────────────────
   ENVIRONMENT: 'dev' | 'production';
+  /// Kill-switches (lib/feature-flags.ts). Plain vars, default OFF: only the
+  /// exact string 'true' enables. BILLING_ENABLED gates the live billing
+  /// gate + debit; OBSERVABILITY_ENABLED gates Sentry + PostHog + Langfuse.
+  BILLING_ENABLED?: string;
+  OBSERVABILITY_ENABLED?: string;
   SUPABASE_URL: string;
   ALLOWED_ORIGIN: string;
   /// AI Gateway coordinates for the Logs API cost lookup (lib/ai-gateway.ts).

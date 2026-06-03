@@ -15,6 +15,7 @@
 
 import { Langfuse } from 'langfuse';
 import type { Env } from '../types';
+import { observabilityEnabled } from './feature-flags';
 
 export interface TraceGenerationArgs {
   /** Generation/observation name, e.g. 'chat_reply', 'title'. */
@@ -46,7 +47,7 @@ export interface TraceGenerationArgs {
  * observing. Failures are logged and swallowed.
  */
 export async function traceGeneration(env: Env, args: TraceGenerationArgs): Promise<void> {
-  if (!env.LANGFUSE_PUBLIC_KEY || !env.LANGFUSE_SECRET_KEY) return;
+  if (!observabilityEnabled(env) || !env.LANGFUSE_PUBLIC_KEY || !env.LANGFUSE_SECRET_KEY) return;
 
   const langfuse = new Langfuse({
     publicKey: env.LANGFUSE_PUBLIC_KEY,

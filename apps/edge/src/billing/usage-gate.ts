@@ -23,6 +23,7 @@ import type { SupabaseClient } from '../lib/supabase';
 import type { ThresholdState } from '../durable-objects/wallet';
 import { thresholdOf } from '../durable-objects/wallet';
 import { InsufficientBalanceError } from '../lib/billing';
+import { billingEnabled } from '../lib/feature-flags';
 import { wallet } from './wallet-client';
 import { resolveGroupStakes } from './group-wallet';
 
@@ -111,6 +112,9 @@ export async function gateUsage(
   supa: SupabaseClient,
   ctx: { conversationId?: string | null; userId?: string | null },
 ): Promise<GateResult | null> {
+  // Kill-switch: when billing is off (default), never gate — pre-launch
+  // testers must not be blocked by an empty Polar wallet.
+  if (!billingEnabled(env)) return null;
   const target = await resolveBillingSubjectId(supa, ctx);
   if (!target) return null;
   const { balanceMicros, thresholdState } = await availableForSubject(env, supa, target);
@@ -147,6 +151,8 @@ export async function gateConversation(
   supa: SupabaseClient,
   ctx: { conversationId?: string | null; userId?: string | null },
 ): Promise<InsufficientBalanceError | null> {
+  // Kill-switch: billing off (default) → never block.
+  if (!billingEnabled(env)) return null;
   try {
     const target = await resolveBillingSubjectId(supa, ctx);
     if (!target) return null;

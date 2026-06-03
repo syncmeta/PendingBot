@@ -7,7 +7,7 @@ function fakeEnv(reply: unknown) {
   );
   const idFromName = vi.fn().mockReturnValue('id-obj');
   const get = vi.fn().mockReturnValue({ fetch: fetchMock });
-  return { env: { WALLET: { idFromName, get } } as any, fetchMock, idFromName, get };
+  return { env: { BILLING_ENABLED: 'true', WALLET: { idFromName, get } } as any, fetchMock, idFromName, get };
 }
 
 describe('wallet-client', () => {
