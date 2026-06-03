@@ -33,13 +33,13 @@
 
 ## 🟡 拆东墙补西墙
 
-### 🟡 Mac 端剩余 3 条查询仍是 iOS inline 的手抄复刻（消息超集 / 人类好友 / 来信）
+### 🟡 Mac 端消息历史查询仍是 iOS inline 的手抄复刻（其余 4 条已收口）
 - **发现**: 2026-06-03 · feat/t45-ios-viewer（#212 真复用收口）
-- **位置**: `apps/pendingbot/Sources/Networking/ChatDataSource.swift:loadMessages`、`FriendsDataSource.swift:listHumanContacts`、`EnvelopeDataSource.swift:listEnvelopes/loadEnvelope`；对照 iOS `Features/Message/ConversationView+Loading.swift:402`、`Networking/ContactsAPI.swift`、`Features/Envelope/EnvelopeTabView.swift:138`
-- **问题**: #212 把 Mac 复刻的查询往「共享 fetch、iOS 也改用」方向收口，**已收口 3 条**：实时通道（`RealtimeManager`/`RealtimeSocket` 去 gate，两端同一条自建 RealtimeHubDO，删了 Mac 轮询）、会话列表查询（`ConversationFetch.list()`）、bot 好友查询（`BotContactsFetch.list()`）—— iOS 缓存层叠在共享 fetch 上、Mac 投影薄 summary，查询形状单一来源。**仍是复刻的 3 条**：(a) 消息历史 —— iOS 是 18 列超集喂 GRDB 缓存 + recall/voice-recap/citations/tool-trace/attachments 派发的重管线（#145-147/#150 验证过的最易碎路径），Mac 是 4 列轻读（id/role/content/message_seq）只渲染纯气泡，两者**合理地不同**，强行统一要么逼 Mac 扛它不渲染的 14 列、要么动那条脆弱管线；(b) 人类好友 —— iOS `ContactsAPI.fetchContacts()` 返回 view 耦合的 `FriendsTabView.HumanPick`，Mac 走 `APIClient().get("v1/contacts")` 自带 DTO，要收口得先把 HumanPick 解耦成中性模型；(c) 来信 —— iOS `EnvelopeTabView` inline 查 `envelope_runs`，Mac `EnvelopeDataSource` 各查一份。
-- **影响**: 这 3 条查询形状两边各存一份，列/FK 漂移时不会编译报错、只在运行期错——属"复制粘贴而非抽象"。但风险被 Mac 只读核心稳定列（消息 4 列、来信标题/正文）压低；真正的根治时机是 Mac 渲染富内容（附件/citations/thinking-trace）时，那时 Mac 自然需要 iOS 超集行，顺势抽共享 fetch 最划算。
-- **建议**: 收口顺序与会话/bot 好友同模式：消息 → 等 Mac 接附件渲染时把 `ConversationView+Loading` 的 Row+查询抽进 `MessagesFetch`；人类好友 → 把 `ContactsAPI` 解耦成返回中性 `ContactProfile`（tech-debt 旧条目已提到 P1 做过一半），两端共用；来信 → 抽 `EnvelopeFetch`。每条收口都要进模拟器验 iOS 不回归。**短期防漂移**：三个 Mac DataSource 的注释已写明 iOS canonical 列清单 + 文件:line 交叉引用，改 iOS 那条查询时记得同步。
-- **状态**: 部分收口（实时 + 会话查询 + bot 好友查询 已统一，commit 见本分支；消息/人类好友/来信 3 条仍复刻，按上面顺序后续收口）
+- **位置**: `apps/pendingbot/Sources/Networking/ChatDataSource.swift:loadMessages`；对照 iOS `Features/Message/ConversationView+Loading.swift:402`（18 列超集 → `Row` → cache）
+- **问题**: #212 把 Mac 复刻的查询往「共享 fetch、iOS 也改用」方向收口，**已收口 5 块**：实时通道（`RealtimeManager`/`RealtimeSocket` 去 gate，两端同一条自建 RealtimeHubDO，删了 Mac 轮询）、会话列表（`ConversationFetch.list()`）、bot 好友（`BotContactsFetch.list()`）、人类好友（`ContactsFetch.fetch()` + 中性 `ContactProfile`，iOS `ContactsAPI` 改成映射它）、来信（`EnvelopeFetch.list/get`，`EnvelopeRun` 从 iOS-only 移到共享）—— iOS 缓存/富渲染层叠在共享 fetch 上、Mac 投影薄 summary，查询形状单一来源。**仅剩 1 条仍复刻**：消息历史 —— iOS 是 18 列超集喂 GRDB 缓存 + recall/voice-recap/citations/tool-trace/attachments 派发的重管线（#145-147/#150 验证过的最易碎路径），Mac 是 4 列轻读（id/role/content/message_seq）只渲染纯气泡，两者**合理地不同**，强行统一要么逼 Mac 扛它不渲染的 14 列、要么动那条脆弱管线。
+- **影响**: 这条查询形状两边各存一份，列漂移时不会编译报错、只在运行期错——属"复制粘贴而非抽象"。但风险被 Mac 只读核心稳定列（id/role/content/message_seq）压低；真正的根治时机是 Mac 渲染富内容（附件/citations）时，那时 Mac 自然需要 iOS 超集行，顺势抽 `MessagesFetch` 最划算。
+- **建议**: 等 Mac 接附件/citations 渲染时，把 `ConversationView+Loading` 的 `Row`+查询抽进共享 `MessagesFetch`（iOS 缓存派发叠在上、Mac 投影），收口时进模拟器验 iOS 不回归。**短期防漂移**：`ChatDataSource.loadMessages` 注释已写明 iOS canonical 列清单 + 文件:line 交叉引用，改 iOS 那条查询时同步。
+- **状态**: 基本收口（实时 + 会话/bot好友/人类好友/来信 4 条查询已统一，commit 见本分支；仅消息历史 1 条按上面时机后续收口）
 
 ## 🔴 根基级
 
