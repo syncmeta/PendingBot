@@ -31,10 +31,8 @@ struct MacFriendsColumn: View {
                 }
                 ForEach(bots) { bot in
                     Button { openBot(bot) } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "cpu")
-                                .foregroundStyle(.tint)
-                                .frame(width: 22)
+                        HStack(spacing: 9) {
+                            BrandAvatar(seed: bot.id, size: 30)
                             Text(bot.displayName).lineLimit(1)
                             Spacer(minLength: 4)
                             if bot.visibility == "public_invite" {
@@ -44,7 +42,7 @@ struct MacFriendsColumn: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .padding(.vertical, 1)
+                    .padding(.vertical, 2)
                 }
             }
 
@@ -53,13 +51,11 @@ struct MacFriendsColumn: View {
                     Text("还没有好友").font(.caption).foregroundStyle(.secondary)
                 }
                 ForEach(humans) { human in
-                    HStack(spacing: 8) {
-                        Image(systemName: "person.crop.circle")
-                            .foregroundStyle(.secondary)
-                            .frame(width: 22)
+                    HStack(spacing: 9) {
+                        BrandAvatar(seed: human.id, size: 30)
                         Text(human.shownName).lineLimit(1)
                     }
-                    .padding(.vertical, 1)
+                    .padding(.vertical, 2)
                 }
             }
         }
