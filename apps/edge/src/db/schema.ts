@@ -378,60 +378,6 @@ export type Database = {
         }
         Relationships: []
       }
-      billing_ledger: {
-        Row: {
-          actor_user_id: string | null
-          created_at: string
-          delta_credits: number
-          entry_type: string
-          id: string
-          metadata: Json
-          reason: string | null
-          redemption_id: string | null
-          topup_id: string | null
-          user_id: string
-        }
-        Insert: {
-          actor_user_id?: string | null
-          created_at?: string
-          delta_credits: number
-          entry_type: string
-          id?: string
-          metadata?: Json
-          reason?: string | null
-          redemption_id?: string | null
-          topup_id?: string | null
-          user_id: string
-        }
-        Update: {
-          actor_user_id?: string | null
-          created_at?: string
-          delta_credits?: number
-          entry_type?: string
-          id?: string
-          metadata?: Json
-          reason?: string | null
-          redemption_id?: string | null
-          topup_id?: string | null
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "billing_ledger_redemption_id_fkey"
-            columns: ["redemption_id"]
-            isOneToOne: false
-            referencedRelation: "redemption_codes"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "billing_ledger_topup_id_fkey"
-            columns: ["topup_id"]
-            isOneToOne: false
-            referencedRelation: "topups"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       bot_code_exec_requests: {
         Row: {
           bot_id: string
@@ -1543,70 +1489,6 @@ export type Database = {
           },
         ]
       }
-      group_billing_config: {
-        Row: {
-          conversation_id: string
-          mode: Database["pendingbot"]["Enums"]["group_split_mode"]
-          new_member_grace_seconds: number
-          updated_at: string
-          updated_by: string | null
-          window_seconds: number
-        }
-        Insert: {
-          conversation_id: string
-          mode?: Database["pendingbot"]["Enums"]["group_split_mode"]
-          new_member_grace_seconds?: number
-          updated_at?: string
-          updated_by?: string | null
-          window_seconds?: number
-        }
-        Update: {
-          conversation_id?: string
-          mode?: Database["pendingbot"]["Enums"]["group_split_mode"]
-          new_member_grace_seconds?: number
-          updated_at?: string
-          updated_by?: string | null
-          window_seconds?: number
-        }
-        Relationships: [
-          {
-            foreignKeyName: "group_billing_config_conv_fkey"
-            columns: ["conversation_id"]
-            isOneToOne: true
-            referencedRelation: "conversations"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      group_billing_custom_shares: {
-        Row: {
-          conversation_id: string
-          updated_at: string
-          user_id: string
-          weight_bps: number
-        }
-        Insert: {
-          conversation_id: string
-          updated_at?: string
-          user_id: string
-          weight_bps: number
-        }
-        Update: {
-          conversation_id?: string
-          updated_at?: string
-          user_id?: string
-          weight_bps?: number
-        }
-        Relationships: [
-          {
-            foreignKeyName: "group_billing_custom_shares_conv_fkey"
-            columns: ["conversation_id"]
-            isOneToOne: false
-            referencedRelation: "conversations"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       group_bot_descriptions: {
         Row: {
           bot_id: string
@@ -1739,13 +1621,6 @@ export type Database = {
           subject_id?: string
         }
         Relationships: [
-          {
-            foreignKeyName: "group_contributions_source_pack_id_fkey"
-            columns: ["source_pack_id"]
-            isOneToOne: false
-            referencedRelation: "packs"
-            referencedColumns: ["id"]
-          },
           {
             foreignKeyName: "group_contributions_subject_id_fkey"
             columns: ["subject_id"]
@@ -2204,70 +2079,6 @@ export type Database = {
         }
         Relationships: []
       }
-      ledger_entries: {
-        Row: {
-          balance_after_pnc_micros: number
-          created_at: string
-          delta_pnc_micros: number
-          entry_type: string
-          id: string
-          metadata: Json
-          owner_kind: string | null
-          owner_subject_id: string | null
-          owner_user_id: string | null
-          pack_id: string | null
-          usage_event_id: string | null
-        }
-        Insert: {
-          balance_after_pnc_micros: number
-          created_at?: string
-          delta_pnc_micros: number
-          entry_type: string
-          id?: string
-          metadata?: Json
-          owner_kind?: string | null
-          owner_subject_id?: string | null
-          owner_user_id?: string | null
-          pack_id?: string | null
-          usage_event_id?: string | null
-        }
-        Update: {
-          balance_after_pnc_micros?: number
-          created_at?: string
-          delta_pnc_micros?: number
-          entry_type?: string
-          id?: string
-          metadata?: Json
-          owner_kind?: string | null
-          owner_subject_id?: string | null
-          owner_user_id?: string | null
-          pack_id?: string | null
-          usage_event_id?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "ledger_entries_owner_subject_id_fkey"
-            columns: ["owner_subject_id"]
-            isOneToOne: false
-            referencedRelation: "subjects"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "ledger_entries_pack_id_fkey"
-            columns: ["pack_id"]
-            isOneToOne: false
-            referencedRelation: "packs"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "ledger_entries_usage_event_id_fkey"
-            columns: ["usage_event_id"]
-            isOneToOne: false
-            referencedRelation: "usage_events"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       mcp_servers: {
         Row: {
           auth_header_name: string | null
@@ -2486,68 +2297,6 @@ export type Database = {
           },
         ]
       }
-      packs: {
-        Row: {
-          created_at: string
-          expires_at: string | null
-          external_purchase_id: string | null
-          gross_paid_usd_cents: number | null
-          id: string
-          initial_pnc_micros: number
-          metadata: Json
-          net_revenue_usd_cents: number | null
-          owner_kind: string | null
-          owner_subject_id: string | null
-          owner_user_id: string | null
-          remaining_pnc_micros: number
-          sales_channel: string
-          sales_markup_snapshot: number | null
-          status: string
-        }
-        Insert: {
-          created_at?: string
-          expires_at?: string | null
-          external_purchase_id?: string | null
-          gross_paid_usd_cents?: number | null
-          id?: string
-          initial_pnc_micros: number
-          metadata?: Json
-          net_revenue_usd_cents?: number | null
-          owner_kind?: string | null
-          owner_subject_id?: string | null
-          owner_user_id?: string | null
-          remaining_pnc_micros: number
-          sales_channel: string
-          sales_markup_snapshot?: number | null
-          status?: string
-        }
-        Update: {
-          created_at?: string
-          expires_at?: string | null
-          external_purchase_id?: string | null
-          gross_paid_usd_cents?: number | null
-          id?: string
-          initial_pnc_micros?: number
-          metadata?: Json
-          net_revenue_usd_cents?: number | null
-          owner_kind?: string | null
-          owner_subject_id?: string | null
-          owner_user_id?: string | null
-          remaining_pnc_micros?: number
-          sales_channel?: string
-          sales_markup_snapshot?: number | null
-          status?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "packs_owner_subject_id_fkey"
-            columns: ["owner_subject_id"]
-            isOneToOne: false
-            referencedRelation: "subjects"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       permission_requests: {
         Row: {
           crew_session_id: string
@@ -2555,6 +2304,8 @@ export type Database = {
           decided_by_user_id: string | null
           detail: Json
           id: string
+          reply_text: string | null
+          request_kind: string
           requested_action: string
           requested_at: string
           responsible_subject_id: string
@@ -2567,6 +2318,8 @@ export type Database = {
           decided_by_user_id?: string | null
           detail?: Json
           id?: string
+          reply_text?: string | null
+          request_kind?: string
           requested_action: string
           requested_at?: string
           responsible_subject_id: string
@@ -2579,6 +2332,8 @@ export type Database = {
           decided_by_user_id?: string | null
           detail?: Json
           id?: string
+          reply_text?: string | null
+          request_kind?: string
           requested_action?: string
           requested_at?: string
           responsible_subject_id?: string
@@ -2852,56 +2607,6 @@ export type Database = {
           status?: string
         }
         Relationships: []
-      }
-      refund_events: {
-        Row: {
-          chargeback_loss_pnc_micros: number
-          consumed_pnc_micros_at_refund: number
-          created_at: string
-          external_refund_id: string
-          id: string
-          pack_id: string | null
-          processed_at: string | null
-          processing_error: string | null
-          raw_payload: Json
-          refund_amount_usd_cents: number
-          source: string
-        }
-        Insert: {
-          chargeback_loss_pnc_micros?: number
-          consumed_pnc_micros_at_refund?: number
-          created_at?: string
-          external_refund_id: string
-          id?: string
-          pack_id?: string | null
-          processed_at?: string | null
-          processing_error?: string | null
-          raw_payload?: Json
-          refund_amount_usd_cents: number
-          source: string
-        }
-        Update: {
-          chargeback_loss_pnc_micros?: number
-          consumed_pnc_micros_at_refund?: number
-          created_at?: string
-          external_refund_id?: string
-          id?: string
-          pack_id?: string | null
-          processed_at?: string | null
-          processing_error?: string | null
-          raw_payload?: Json
-          refund_amount_usd_cents?: number
-          source?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "refund_events_pack_id_fkey"
-            columns: ["pack_id"]
-            isOneToOne: false
-            referencedRelation: "packs"
-            referencedColumns: ["id"]
-          },
-        ]
       }
       runner_hosts: {
         Row: {
@@ -3913,54 +3618,6 @@ export type Database = {
           },
         ]
       }
-      topups: {
-        Row: {
-          channel: string
-          channel_txn_id: string | null
-          created_at: string
-          credits_granted: number
-          id: string
-          is_sandbox: boolean
-          notes: string | null
-          paid_amount_minor: number | null
-          paid_currency: string | null
-          raw_receipt: Json | null
-          status: string
-          user_id: string
-          verified_at: string | null
-        }
-        Insert: {
-          channel: string
-          channel_txn_id?: string | null
-          created_at?: string
-          credits_granted: number
-          id?: string
-          is_sandbox?: boolean
-          notes?: string | null
-          paid_amount_minor?: number | null
-          paid_currency?: string | null
-          raw_receipt?: Json | null
-          status?: string
-          user_id: string
-          verified_at?: string | null
-        }
-        Update: {
-          channel?: string
-          channel_txn_id?: string | null
-          created_at?: string
-          credits_granted?: number
-          id?: string
-          is_sandbox?: boolean
-          notes?: string | null
-          paid_amount_minor?: number | null
-          paid_currency?: string | null
-          raw_receipt?: Json | null
-          status?: string
-          user_id?: string
-          verified_at?: string | null
-        }
-        Relationships: []
-      }
       usage_events: {
         Row: {
           audit_log_id: string | null
@@ -4457,6 +4114,10 @@ export type Database = {
         Args: { p_request_id: string; p_user_id: string }
         Returns: undefined
       }
+      answer_interaction_request: {
+        Args: { p_caller_user_id: string; p_id: string; p_reply_text: string }
+        Returns: undefined
+      }
       append_crew_session_event_from_runner: {
         Args: {
           p_crew_session_id: string
@@ -4507,51 +4168,8 @@ export type Database = {
         Returns: number
       }
       are_mutual_friends: { Args: { a: string; b: string }; Returns: boolean }
-      billing_admin_grant: {
-        Args: { p_credits: number; p_reason?: string; p_user_id: string }
-        Returns: number
-      }
       billing_config_int: { Args: { p_key: string }; Returns: number }
-      billing_credit: {
-        Args: {
-          p_actor_user_id?: string
-          p_credits: number
-          p_kind: string
-          p_metadata?: Json
-          p_reason?: string
-          p_redemption_id?: string
-          p_topup_id?: string
-          p_user_id: string
-        }
-        Returns: number
-      }
-      billing_debit: {
-        Args: { p_audit_log_id: string; p_credits: number; p_user_id: string }
-        Returns: number
-      }
-      billing_debit_subject: {
-        Args: {
-          p_audit_log_id: string
-          p_credits: number
-          p_subject_id: string
-        }
-        Returns: number
-      }
-      billing_issue_codes: {
-        Args: { p_count: number; p_credits: number; p_label?: string }
-        Returns: string[]
-      }
       billing_redeem: { Args: { p_code: string }; Returns: Json }
-      billing_signup_bonus: { Args: { p_user_id: string }; Returns: number }
-      billing_v2_admin_adjust: {
-        Args: {
-          p_actor_user_id: string
-          p_delta_pnc_micros: number
-          p_owner_user_id: string
-          p_reason: string
-        }
-        Returns: number
-      }
       bootstrap_user_id: {
         Args: { p_email: string; p_meta: Json; p_uid: string }
         Returns: undefined
@@ -4725,6 +4343,10 @@ export type Database = {
           p_title: string
           p_working_directory?: string
         }
+        Returns: string
+      }
+      create_interaction_request: {
+        Args: { p_payload?: Json; p_question: string; p_session_id: string }
         Returns: string
       }
       create_permission_request: {
@@ -4925,15 +4547,6 @@ export type Database = {
         Args: { p_conv_id: string; p_target_user_id: string }
         Returns: undefined
       }
-      group_set_billing: {
-        Args: {
-          p_conv_id: string
-          p_custom_shares: Json
-          p_mode: string
-          p_window_seconds: number
-        }
-        Returns: undefined
-      }
       group_set_bot_description: {
         Args: { p_bot_id: string; p_conv_id: string; p_description: string }
         Returns: undefined
@@ -4994,10 +4607,6 @@ export type Database = {
         Args: { p_group_subject_id: string; p_user_id: string }
         Returns: undefined
       }
-      grp_topup_wallet: {
-        Args: { p_credits: number; p_group_subject_id: string }
-        Returns: number
-      }
       grp_transfer_ownership: {
         Args: { p_group_subject_id: string; p_to_user_id: string }
         Returns: undefined
@@ -5039,6 +4648,15 @@ export type Database = {
         Args: {
           p_crew_conversation_id: string
           p_runner_kind: string
+          p_task_brief: string
+        }
+        Returns: string
+      }
+      open_crew_session_by_captain: {
+        Args: {
+          p_captain_bot_id: string
+          p_crew_conversation_id: string
+          p_runner_kind?: string
           p_task_brief: string
         }
         Returns: string
