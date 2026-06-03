@@ -17,6 +17,7 @@
 		05A7024046B9139FBD7C2D87 /* ComposerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E77E1B14AD8B57831025E060 /* ComposerView.swift */; };
 		0764DE6E6E5998186C2AEF3D /* PermissionRequestCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA2C5A82ADBE3A378A292684 /* PermissionRequestCard.swift */; };
 		096B537A54400F2BC07A0775 /* GroupCallSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C54E13C9AEE93EC21726216 /* GroupCallSession.swift */; };
+		09D4746AF1AD5616504DC333 /* MacEnvelopeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7013EADBDCDA5C670AA6DBB9 /* MacEnvelopeView.swift */; };
 		0B2D6E04E981C24EDB2ED740 /* FriendsTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6BD7F212A4938F0C066074F /* FriendsTabView.swift */; };
 		0BD44E1EB0D5BE9AB101E1D5 /* CallFloatingPill.swift in Sources */ = {isa = PBXBuildFile; fileRef = 508FBAF36D83C0824F8073F4 /* CallFloatingPill.swift */; };
 		0D14B87E36E28B1C76B152E6 /* BubbleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAF9F958E634C73E5136CC46 /* BubbleView.swift */; };
@@ -65,6 +66,7 @@
 		62834377D43A0D27902FD8AA /* ConversationView+CrewProposal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 550414C4E1E5D5C11397ABA1 /* ConversationView+CrewProposal.swift */; };
 		639FCF827C899E1C25DA3237 /* ChatDataSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD69E5388537288F5E14D3D1 /* ChatDataSource.swift */; };
 		6715ECF7C0A8F33235E8B564 /* FriendsDataSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = C82D486B7EBB27D5882B5844 /* FriendsDataSource.swift */; };
+		677726B63A7F47E39943D767 /* EnvelopeDataSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = C385DAFA1E0BFEEC5520467A /* EnvelopeDataSource.swift */; };
 		67B0E4F2A2C4FE0ACCE07550 /* EnvelopeFeedRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56BFB3EBF959D378BC6BC313 /* EnvelopeFeedRow.swift */; };
 		68CC7CE5D41AC8BE5940E886 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = 58587B83E149045A770D0833 /* GoogleSignIn */; };
 		6E4DD70ABC53852AB56FCFED /* EnvelopeArticleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F18FB9C392174C32131512F /* EnvelopeArticleView.swift */; };
@@ -229,6 +231,7 @@
 		6EFB784DC12029E53EB12A5C /* RealtimeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeManager.swift; sourceTree = "<group>"; };
 		6F57C354DC67393099BE1D8E /* GroupCallTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupCallTransport.swift; sourceTree = "<group>"; };
 		6F88AE2F9558F84A927D904C /* GroupBillingSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupBillingSheet.swift; sourceTree = "<group>"; };
+		7013EADBDCDA5C670AA6DBB9 /* MacEnvelopeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacEnvelopeView.swift; sourceTree = "<group>"; };
 		70EAEDCC6E5ABCC5261A43E3 /* MyQRBusinessCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyQRBusinessCard.swift; sourceTree = "<group>"; };
 		7114A9AF0BBDF033ADE65E67 /* ConversationView+Realtime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConversationView+Realtime.swift"; sourceTree = "<group>"; };
 		72CE91B5FAEED2B40DF223A1 /* EnvelopeAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvelopeAPI.swift; sourceTree = "<group>"; };
@@ -267,6 +270,7 @@
 		BE4AD56378500470C3FFCB27 /* CrewProposalCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewProposalCard.swift; sourceTree = "<group>"; };
 		C169F240D3B0FFEE51443992 /* PendingBotRegularRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingBotRegularRootView.swift; sourceTree = "<group>"; };
 		C2B98AFCAEB4DAF5903E44D0 /* MacRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacRootView.swift; sourceTree = "<group>"; };
+		C385DAFA1E0BFEEC5520467A /* EnvelopeDataSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvelopeDataSource.swift; sourceTree = "<group>"; };
 		C49D5C2273CF903796CDB250 /* GroupCallView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupCallView.swift; sourceTree = "<group>"; };
 		C4F92F6F520EC1E69BFB6426 /* CrewSessionStatusCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewSessionStatusCard.swift; sourceTree = "<group>"; };
 		C53CFA1DBE04DAEFC59F99DE /* ColorHash.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorHash.swift; sourceTree = "<group>"; };
@@ -361,6 +365,7 @@
 				03D2467ADBD40F4F8755863A /* CrewSessionAPI.swift */,
 				22B3BF0A069E8CE296ED306E /* CrewSessionPresentation.swift */,
 				023C318B8EB2B3A4CC9F8594 /* EmailSignIn.swift */,
+				C385DAFA1E0BFEEC5520467A /* EnvelopeDataSource.swift */,
 				C82D486B7EBB27D5882B5844 /* FriendsDataSource.swift */,
 				1F14048DCB73276C7D252616 /* GoogleSignIn.swift */,
 				6007B7AC7A2508EA9C7C04C9 /* GroupInviteAPI.swift */,
@@ -475,6 +480,7 @@
 		4B6ED05D5BC8BD3EDAD14EF6 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				7013EADBDCDA5C670AA6DBB9 /* MacEnvelopeView.swift */,
 				F6C7BA77C498838A64F51382 /* MacFriendsView.swift */,
 				40B3AC8D204D37CE4A7DE319 /* MacMessagesView.swift */,
 				186A7AED372BD3345AEC8273 /* MacRemoteSessionsView.swift */,
@@ -794,6 +800,7 @@
 				E169F0C9CD13280A7A6C92D9 /* EmptyHint.swift in Sources */,
 				CFA38CDEF1AC9937D7C2B65A /* EnvelopeAPI.swift in Sources */,
 				6E4DD70ABC53852AB56FCFED /* EnvelopeArticleView.swift in Sources */,
+				677726B63A7F47E39943D767 /* EnvelopeDataSource.swift in Sources */,
 				67B0E4F2A2C4FE0ACCE07550 /* EnvelopeFeedRow.swift in Sources */,
 				1D67444A38A55B99E0E21F76 /* EnvelopeTabView.swift in Sources */,
 				D57CD481C115FD6D4F067F1F /* EnvelopeThinkingTrace.swift in Sources */,
@@ -817,6 +824,7 @@
 				A0D13A30C3F770CF9B9505E1 /* LetterSenderAvatar.swift in Sources */,
 				BDDDE8F25B3B11A420609162 /* LocalDatabase.swift in Sources */,
 				E81BA5D57A39095B26E2EE89 /* Log.swift in Sources */,
+				09D4746AF1AD5616504DC333 /* MacEnvelopeView.swift in Sources */,
 				939B2ECABC9E20A928E7ABCD /* MacFriendsView.swift in Sources */,
 				D75770E01905BA3C3A8D4119 /* MacMeView.swift in Sources */,
 				C52090D1049289B1C5AC862A /* MacMessagesView.swift in Sources */,
