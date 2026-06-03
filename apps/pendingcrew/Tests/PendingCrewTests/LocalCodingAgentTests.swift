@@ -121,6 +121,205 @@ final class LocalCodingAgentTests: XCTestCase {
                        "Codex argv must omit --model for an empty slug")
     }
 
+    // MARK: - resume turns (T4.5 send_prompt)
+
+    private func claudeSpec(model: String? = nil) -> LocalCodingAgentLaunchSpec {
+        LocalCodingAgentLaunchSpec(
+            kind: .claudeCode,
+            executableURL: URL(fileURLWithPath: "/usr/bin/true"),
+            workingDirectory: URL(fileURLWithPath: NSTemporaryDirectory()),
+            taskBrief: "x",
+            initialPrompt: "first turn",
+            model: model
+        )
+    }
+
+    func testResumeTurnArgvResumesSessionAndCarriesPromptOnStdin() {
+        let resume = claudeSpec(model: "claude-sonnet-4")
+            .makingResumeTurn(agentSessionId: "sess-abc", prompt: "now do the follow-up")
+        guard let resume else { return XCTFail("claude should build a resume turn") }
+        let argv = resume.argv()
+        // resumes the SAME agent session, in the same stream-json shape
+        guard let i = argv.firstIndex(of: "--resume") else { return XCTFail("missing --resume") }
+        XCTAssertTrue(i + 1 < argv.count && argv[i + 1] == "sess-abc",
+                      "--resume must be immediately followed by the session id")
+        XCTAssertTrue(argv.contains("--print"))
+        XCTAssertTrue(argv.contains("--output-format=stream-json"))
+        XCTAssertTrue(argv.contains("--verbose"))
+        XCTAssertTrue(argv.contains("claude-sonnet-4"), "model slug threads through the resume turn")
+        // the follow-up prompt rides on stdin (same as the first turn), NOT argv
+        XCTAssertEqual(resume.initialPrompt, "now do the follow-up")
+        XCTAssertFalse(argv.contains("now do the follow-up"), "prompt must not be an argv arg")
+    }
+
+    func testResumeTurnDoesNotTouchTheVerifiedFirstTurnArgv() {
+        // makingResumeTurn returns a NEW spec; the original first-turn argv is
+        // byte-identical to the standard path (argvOverride nil).
+        let first = claudeSpec()
+        let firstArgv = first.argv()
+        _ = first.makingResumeTurn(agentSessionId: "x", prompt: "y")
+        XCTAssertEqual(first.argv(), firstArgv, "building a resume turn must not mutate the original spec")
+        XCTAssertNil(first.argvOverride)
+    }
+
+    func testCodexHasNoResumeTurnYet() {
+        let codex = LocalCodingAgentLaunchSpec(
+            kind: .codex,
+            executableURL: URL(fileURLWithPath: "/usr/bin/true"),
+            workingDirectory: URL(fileURLWithPath: NSTemporaryDirectory()),
+            taskBrief: "x",
+            initialPrompt: "first"
+        )
+        XCTAssertNil(codex.makingResumeTurn(agentSessionId: "s", prompt: "p"),
+                     "Codex resume is a different subcommand — must fail loud (nil), not start a fresh run")
+    }
+
+    func testResumeTurnRejectsEmptySessionId() {
+        XCTAssertNil(claudeSpec().makingResumeTurn(agentSessionId: "", prompt: "p"))
+    }
+
+    // MARK: - ambient steering (--settings hook)
+
+    private func claudeSpec(settingsPath: String?) -> LocalCodingAgentLaunchSpec {
+        LocalCodingAgentLaunchSpec(
+            kind: .claudeCode,
+            executableURL: URL(fileURLWithPath: "/usr/bin/true"),
+            workingDirectory: URL(fileURLWithPath: NSTemporaryDirectory()),
+            taskBrief: "x", initialPrompt: "p", claudeSettingsPath: settingsPath)
+    }
+
+    func testSettingsFlagThreadsIntoFirstAndResumeTurns() {
+        let first = claudeSpec(settingsPath: "/managed/settings.json")
+        let firstArgv = first.argv()
+        guard let i = firstArgv.firstIndex(of: "--settings") else { return XCTFail("first-turn missing --settings") }
+        XCTAssertTrue(i + 1 < firstArgv.count && firstArgv[i + 1] == "/managed/settings.json")
+        // the steering hook must persist onto resume turns too
+        let resume = first.makingResumeTurn(agentSessionId: "s", prompt: "go")!
+        let rArgv = resume.argv()
+        guard let j = rArgv.firstIndex(of: "--settings") else { return XCTFail("resume missing --settings") }
+        XCTAssertTrue(j + 1 < rArgv.count && rArgv[j + 1] == "/managed/settings.json")
+        XCTAssertEqual(resume.claudeSettingsPath, "/managed/settings.json")
+    }
+
+    func testNoSettingsFlagWhenUnset() {
+        XCTAssertFalse(claudeSpec(settingsPath: nil).argv().contains("--settings"),
+                       "verified one-shot argv must omit --settings when no steering channel")
+    }
+
+    // MARK: - permission / sandbox mode (spec §10.1)
+
+    func testPermissionModeMapsToNativeFlagsPerKind() {
+        XCTAssertEqual(AgentPermissionMode.standard.argv(for: .claudeCode), ["--permission-mode", "auto"])
+        XCTAssertEqual(AgentPermissionMode.planOnly.argv(for: .claudeCode), ["--permission-mode", "plan"])
+        XCTAssertEqual(AgentPermissionMode.full.argv(for: .claudeCode), ["--permission-mode", "bypassPermissions"])
+        XCTAssertEqual(AgentPermissionMode.standard.argv(for: .codex), ["--sandbox", "workspace-write"])
+        XCTAssertEqual(AgentPermissionMode.planOnly.argv(for: .codex), ["--sandbox", "read-only"])
+        XCTAssertEqual(AgentPermissionMode.full.argv(for: .codex), ["--sandbox", "danger-full-access"])
+    }
+
+    func testSpecDefaultsToStandardAndThreadsModeIntoArgv() {
+        // Default (no explicit mode) must NOT leave claude on the headless-
+        // blocking `default` — it carries `--permission-mode auto`.
+        let claude = claudeSpec()  // permissionMode defaults to .standard
+        let cargv = claude.argv()
+        guard let i = cargv.firstIndex(of: "--permission-mode") else { return XCTFail("claude missing --permission-mode") }
+        XCTAssertTrue(i + 1 < cargv.count && cargv[i + 1] == "auto")
+
+        let codex = LocalCodingAgentLaunchSpec(
+            kind: .codex, executableURL: URL(fileURLWithPath: "/usr/bin/true"),
+            workingDirectory: URL(fileURLWithPath: NSTemporaryDirectory()),
+            taskBrief: "x", initialPrompt: "p")
+        let cxargv = codex.argv()
+        guard let j = cxargv.firstIndex(of: "--sandbox") else { return XCTFail("codex missing --sandbox") }
+        XCTAssertTrue(j + 1 < cxargv.count && cxargv[j + 1] == "workspace-write")
+    }
+
+    func testExplicitFullModeThreads() {
+        let spec = LocalCodingAgentLaunchSpec(
+            kind: .claudeCode, executableURL: URL(fileURLWithPath: "/usr/bin/true"),
+            workingDirectory: URL(fileURLWithPath: NSTemporaryDirectory()),
+            taskBrief: "x", initialPrompt: "p", permissionMode: .full)
+        XCTAssertTrue(spec.argv().contains("bypassPermissions"))
+    }
+
+    func testResumeTurnKeepsPermissionMode() {
+        let spec = LocalCodingAgentLaunchSpec(
+            kind: .claudeCode, executableURL: URL(fileURLWithPath: "/usr/bin/true"),
+            workingDirectory: URL(fileURLWithPath: NSTemporaryDirectory()),
+            taskBrief: "x", initialPrompt: "first", permissionMode: .full)
+        let resume = spec.makingResumeTurn(agentSessionId: "s", prompt: "go")!
+        XCTAssertEqual(resume.permissionMode, .full)
+        XCTAssertTrue(resume.argv().contains("bypassPermissions"), "resume turn must keep the mode, not fall back")
+    }
+
+    // MARK: - interaction channel (--mcp-config / ask_human)
+
+    func testMcpConfigThreadsIntoFirstAndResumeTurns() {
+        let first = LocalCodingAgentLaunchSpec(
+            kind: .claudeCode, executableURL: URL(fileURLWithPath: "/usr/bin/true"),
+            workingDirectory: URL(fileURLWithPath: NSTemporaryDirectory()),
+            taskBrief: "x", initialPrompt: "p", claudeMcpConfigPath: "/managed/mcp.json")
+        let a = first.argv()
+        guard let i = a.firstIndex(of: "--mcp-config") else { return XCTFail("first-turn missing --mcp-config") }
+        XCTAssertTrue(i + 1 < a.count && a[i + 1] == "/managed/mcp.json")
+        let resume = first.makingResumeTurn(agentSessionId: "s", prompt: "go")!
+        XCTAssertEqual(resume.claudeMcpConfigPath, "/managed/mcp.json")
+        XCTAssertTrue(resume.argv().contains("/managed/mcp.json"), "resume turn keeps --mcp-config")
+    }
+
+    func testNoMcpConfigWhenUnset() {
+        XCTAssertFalse(claudeSpec().argv().contains("--mcp-config"))
+    }
+
+    func testInteractionChannelWritesMcpConfig() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("intr-test-\(UUID().uuidString)")
+        let ch = try InteractionChannel.create(
+            parent: tmp, sessionId: "sess-1",
+            serverScriptPath: "/bundle/ask-human-mcp.cjs",
+            edgeURL: "https://api.pendingname.com", token: "pdg_abc", edgeSessionId: "srv-9")
+        defer { ch.teardown() }
+
+        let json = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: URL(fileURLWithPath: ch.mcpConfigPath))) as? [String: Any]
+        let server = (json?["mcpServers"] as? [String: Any])?["pendingcrew"] as? [String: Any]
+        XCTAssertEqual(server?["command"] as? String, "node")
+        XCTAssertEqual((server?["args"] as? [String])?.first, "/bundle/ask-human-mcp.cjs")
+        let env = server?["env"] as? [String: String]
+        XCTAssertEqual(env?["PC_EDGE_URL"], "https://api.pendingname.com")
+        XCTAssertEqual(env?["PC_TOKEN"], "pdg_abc")
+        XCTAssertEqual(env?["PC_SESSION_ID"], "srv-9")
+    }
+
+    // MARK: - SteeringChannel (managed hook config)
+
+    func testSteeringChannelWritesHookSettingsAndNote() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("steer-test-\(UUID().uuidString)")
+        let channel = try SteeringChannel.create(parent: tmp, sessionId: "sess-1")
+        defer { channel.teardown() }
+
+        // settings.json registers a UserPromptSubmit command hook pointing at hook.sh
+        let settings = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: URL(fileURLWithPath: channel.settingsPath))) as? [String: Any]
+        let hooks = settings?["hooks"] as? [String: Any]
+        let ups = hooks?["UserPromptSubmit"] as? [[String: Any]]
+        let cmd = ((ups?.first?["hooks"] as? [[String: Any]])?.first)?["command"] as? String
+        XCTAssertEqual((ups?.first?["hooks"] as? [[String: Any]])?.first?["type"] as? String, "command")
+        XCTAssertTrue(cmd?.contains("hook.sh") ?? false, "hook command must invoke hook.sh: \(cmd ?? "nil")")
+
+        // hook.sh exists + is executable
+        let hookPath = channel.directory.appendingPathComponent("hook.sh").path
+        XCTAssertTrue(FileManager.default.isExecutableFile(atPath: hookPath))
+
+        // note starts empty, setNote replaces it, teardown removes the dir
+        XCTAssertEqual(channel.currentNote(), "")
+        channel.setNote("Always prefer Swift concurrency.")
+        XCTAssertEqual(channel.currentNote(), "Always prefer Swift concurrency.")
+        channel.setNote("")
+        XCTAssertEqual(channel.currentNote(), "", "empty note clears the standing instruction")
+    }
+
     // MARK: - executable resolution
 
     func testResolveAgainstDiscoverAvailableIsConsistent() {

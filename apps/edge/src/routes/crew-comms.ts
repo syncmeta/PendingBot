@@ -51,6 +51,45 @@ import { serviceClient, userClient, type SupabaseClient } from '../lib/supabase'
 import { jsonError } from '../lib/http-error';
 import type { Json } from '../db/schema';
 import type { AppBindings } from '../types';
+import { dispatchGroupTurn } from '../lib/group-dispatch';
+
+// ── messages → chat-entry mapping (spec §9: crew chat IS the conversation's
+// `messages`, so the captain replies via the standard bot-reply pipeline and
+// session cards / interaction cards ride the same stream). We map a messages
+// row onto the existing whiteboard-entry wire shape so clients (PendingCrew
+// CrewChatView + the runner's context digest) need no change.
+type ChatMessageRow = {
+  id: string;
+  conversation_id: string;
+  role: string;
+  content: string | null;
+  user_id: string | null;
+  log_kind: string | null;
+  log_payload: Record<string, unknown> | null;
+  created_at: string;
+};
+function mapMessageToEntry(m: ChatMessageRow): Record<string, unknown> {
+  const lp = (m.log_payload ?? {}) as Record<string, unknown>;
+  const senderKind =
+    m.role === 'user' || m.role === 'human' ? 'user'
+    : m.role === 'bot' || m.role === 'assistant' ? 'bot'
+    : m.role === 'log' ? 'session'
+    : m.role;
+  // For log rows (cards) the payload IS the card; for prose the text is content.
+  const payload = m.role === 'log' ? lp : { text: m.content ?? '' };
+  return {
+    id: m.id,
+    crew_conversation_id: m.conversation_id,
+    sender_kind: senderKind,
+    sender_session_id: null,
+    message_kind: m.log_kind ?? 'text',
+    summary: m.content ?? (typeof lp.question === 'string' ? lp.question : null),
+    payload,
+    created_at: m.created_at,
+  };
+}
+const CHAT_ROLES = ['user', 'human', 'bot', 'assistant', 'log'];
+const CHAT_SELECT = 'id, conversation_id, role, content, user_id, log_kind, log_payload, created_at';
 
 // schema.ts hasn't been regenerated against this branch's migration yet
 // (the main session applies the DB push + regen). Cast the RPC surface
@@ -186,79 +225,204 @@ crewMessagesRoutes.post('/:crewId/messages', requireSubjectAuth(['crew:write']),
     return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
 
-  // Spec v2 §9.5 lists `text` vs `system` as the user-facing message_kind,
-  // but the crew_announcements check constraint expects one of the longer
-  // enum {announcement, instruction, status, ...}. We map:
-  //   * text   → instruction (default user message)
-  //   * system → announcement (system / meta message, e.g. crew kickoff)
-  const dbMessageKind = parsed.message_kind === 'system' ? 'announcement' : 'instruction';
+  const svc = serviceClient(c.env);
+  const { data: meta, error: metaErr } = await svc
+    .from('temporary_group_meta')
+    .select('conversation_id, responsible_subject_id, captain_bot_id')
+    .eq('conversation_id', crewId)
+    .maybeSingle();
+  if (metaErr) return jsonError(c, 500, 'database_error', { detail: metaErr.message });
+  if (!meta) return jsonError(c, 404, 'not_found', { message: 'crew not found' });
 
-  // Resolve mentions → recipient_session_ids
-  const resolution = await resolveRecipientSessions(c.env, crewId, parsed.mentions);
-  if (resolution.error) {
-    if (resolution.error.status === 400) {
-      return jsonError(c, 400, 'invalid_body', { message: resolution.error.message });
-    }
-    return jsonError(c, 500, 'database_error', { detail: resolution.error.message });
+  // Resolve + gate the caller (the human posting in the crew group chat).
+  let callerUserId: string | null = null;
+  if (c.var.authKind === 'device_grant') {
+    const dg = c.var.deviceGrant;
+    if (!dg?.grantedByUserId) return jsonError(c, 403, 'forbidden');
+    if (dg.subjectId !== meta.responsible_subject_id) return jsonError(c, 403, 'forbidden');
+    callerUserId = dg.grantedByUserId;
+  } else {
+    callerUserId = c.var.userId ?? null;
+    if (!callerUserId) return jsonError(c, 401, 'unauthorized');
+    const { data: canView, error: canViewErr } = await svc.rpc('can_view_temporary_group', {
+      p_conversation_id: crewId,
+      p_user_id: callerUserId,
+    });
+    if (canViewErr) return jsonError(c, 500, 'database_error', { detail: canViewErr.message });
+    if (canView !== true) return jsonError(c, 403, 'forbidden');
   }
-  const recipientSessionIds = resolution.sessionIds ?? [];
 
-  // Capture the structured payload — content goes in summary, structured
-  // bits go in payload.mentions / payload.extra so downstream consumers
-  // (iOS Crew Tab, runner injectors) can rebuild the original shape.
-  const payload: Record<string, unknown> = {
-    text: parsed.content,
-    mentions: parsed.mentions,
-    user_message_kind: parsed.message_kind,
-  };
-  if (parsed.payload) payload.extra = parsed.payload;
+  // spec §9: the crew chat IS the conversation's `messages`. Insert the human's
+  // message synchronously (so the captain wake below sees it), then wake the
+  // captain to reply via the standard bot-reply pipeline.
+  const messageId = crypto.randomUUID();
+  const { error: insErr } = await svc.from('messages').insert({
+    id: messageId,
+    client_message_id: crypto.randomUUID(),
+    conversation_id: crewId,
+    user_id: callerUserId,
+    role: 'user',
+    content: parsed.content,
+    status: 'done',
+  } as never);
+  if (insErr) return jsonError(c, 500, 'database_error', { detail: insErr.message });
 
-  // Route through device-grant vs JWT branches mirroring crew.ts shape.
+  const captainId = meta.captain_bot_id as string | null;
+  if (captainId) {
+    c.executionCtx.waitUntil(
+      dispatchGroupTurn({
+        env: c.env,
+        conversationId: crewId,
+        wakeBotIds: [captainId],
+        reason: 'mention',
+      })
+        .then(() => undefined)
+        .catch((e) => console.error('[crew] captain dispatch failed', e)),
+    );
+  }
+
+  return c.json({ messageId });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// GET /v1/crews/:crewId/messages
+// ────────────────────────────────────────────────────────────────────
+//
+// Crew-level whiteboard for the PendingCrew Mac middle pane (spec §9 群聊会话
+// 页). Returns the full whiteboard (get_crew_whiteboard) so the chat timeline
+// can render it. crewId == crew_conversation_id. Gated like the session inbox:
+// device-grant subject must own the crew; JWT user must be able to view it.
+crewMessagesRoutes.get('/:crewId/messages', requireSubjectAuth(['crew:read']), async (c) => {
+  const crewId = c.req.param('crewId');
+  if (!isUuid(crewId)) {
+    return jsonError(c, 400, 'invalid_id', { message: 'crewId must be a uuid' });
+  }
+  const sinceParam = c.req.query('since');
+  if (sinceParam && Number.isNaN(Date.parse(sinceParam))) {
+    return jsonError(c, 400, 'invalid_query', { message: 'since must be ISO-8601 timestamp' });
+  }
+
+  const svc = serviceClient(c.env);
+
+  // Resolve the crew's responsible subject for the device-grant gate.
+  const { data: meta, error: metaErr } = await svc
+    .from('temporary_group_meta')
+    .select('conversation_id, responsible_subject_id, captain_bot_id, title, working_directory, runtime_kind, runtime_location, tag, status')
+    .eq('conversation_id', crewId)
+    .maybeSingle();
+  if (metaErr) return jsonError(c, 500, 'database_error', { detail: metaErr.message });
+  if (!meta) return jsonError(c, 404, 'not_found', { message: 'crew not found' });
+
   if (c.var.authKind === 'device_grant') {
     const deviceGrant = c.var.deviceGrant;
-    if (!deviceGrant?.grantedByUserId) return jsonError(c, 403, 'forbidden');
-    const { data, error } = await serviceClient(c.env).rpc('create_crew_announcement_for_subject', {
-      p_crew_conversation_id: crewId,
-      p_responsible_subject_id: deviceGrant.subjectId,
-      p_actor_user_id: deviceGrant.grantedByUserId,
-      p_recipient_session_ids: recipientSessionIds as Json,
-      p_recipient_member_ids: [] as Json,
-      p_message_kind: dbMessageKind,
-      p_summary: parsed.content,
-      p_payload: payload as Json,
-      p_board_visible: true,
-    } as never);
-    if (error) {
-      const message = rpcMessage(error);
-      if (/forbidden|not an active crew member/i.test(message)) return jsonError(c, 403, 'forbidden', { message });
-      if (/not found/i.test(message)) return jsonError(c, 404, 'not_found', { message });
-      if (/invalid|required|recipient/i.test(message)) return jsonError(c, 400, 'invalid_body', { message });
-      return jsonError(c, 500, 'database_error', { detail: message });
+    if (!deviceGrant) return jsonError(c, 401, 'unauthorized');
+    if (deviceGrant.subjectId !== meta.responsible_subject_id) {
+      return jsonError(c, 403, 'forbidden');
     }
-    return c.json({ announcementId: data, recipientSessionIds });
+  } else {
+    const userId = c.var.userId!;
+    const { data: canView, error: canViewErr } = await svc.rpc('can_view_temporary_group', {
+      p_conversation_id: crewId,
+      p_user_id: userId,
+    });
+    if (canViewErr) return jsonError(c, 500, 'database_error', { detail: canViewErr.message });
+    if (canView !== true) return jsonError(c, 403, 'forbidden');
   }
 
-  const userJwt = c.var.userJwt!;
-  const supa = userClient(c.env, userJwt);
-  const { data, error } = await supa.rpc('create_crew_announcement', {
-    p_crew_conversation_id: crewId,
-    p_recipient_session_ids: recipientSessionIds as Json,
-    p_recipient_member_ids: [] as Json,
-    p_message_kind: dbMessageKind,
-    p_summary: parsed.content,
-    p_payload: payload as Json,
-    p_board_visible: true,
-  });
-  if (error) {
-    const message = rpcMessage(error);
-    if (/auth required/i.test(message)) return jsonError(c, 401, 'unauthorized', { message });
-    if (/forbidden|not an active crew member/i.test(message)) return jsonError(c, 403, 'forbidden', { message });
-    if (/not found/i.test(message)) return jsonError(c, 404, 'not_found', { message });
-    if (/invalid|required|recipient/i.test(message)) return jsonError(c, 400, 'invalid_body', { message });
-    return jsonError(c, 500, 'database_error', { detail: message });
+  // spec §9: the crew group chat IS the conversation's `messages` (human prose
+  // + captain replies + session cards + interaction cards), mapped onto the
+  // chat-entry shape. Access gated above.
+  let q = svc
+    .from('messages')
+    .select(CHAT_SELECT)
+    .eq('conversation_id', crewId)
+    .in('role', CHAT_ROLES)
+    .neq('status', 'deleted');
+  if (sinceParam) q = q.gte('created_at', sinceParam);
+  const { data: rows, error: msgErr } = await q.order('created_at', { ascending: true }).limit(500);
+  if (msgErr) return jsonError(c, 500, 'database_error', { detail: msgErr.message });
+  const whiteboard = (rows ?? []).map((r) => mapMessageToEntry(r as unknown as ChatMessageRow));
+
+  return c.json({ crewId, whiteboard });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// GET /v1/crews/:crewId/members
+// ────────────────────────────────────────────────────────────────────
+//
+// The crew's roster for the middle-pane group chat (spec §9 — everyone is a
+// member: human / captain / code_session / temp bot). crewId ==
+// crew_conversation_id. Same gate as the whiteboard GET.
+crewMessagesRoutes.get('/:crewId/members', requireSubjectAuth(['crew:read']), async (c) => {
+  const crewId = c.req.param('crewId');
+  if (!isUuid(crewId)) {
+    return jsonError(c, 400, 'invalid_id', { message: 'crewId must be a uuid' });
   }
 
-  return c.json({ announcementId: data, recipientSessionIds });
+  const svc = serviceClient(c.env);
+  const { data: meta, error: metaErr } = await svc
+    .from('temporary_group_meta')
+    .select('conversation_id, responsible_subject_id, captain_bot_id')
+    .eq('conversation_id', crewId)
+    .maybeSingle();
+  if (metaErr) return jsonError(c, 500, 'database_error', { detail: metaErr.message });
+  if (!meta) return jsonError(c, 404, 'not_found', { message: 'crew not found' });
+
+  if (c.var.authKind === 'device_grant') {
+    const deviceGrant = c.var.deviceGrant;
+    if (!deviceGrant) return jsonError(c, 401, 'unauthorized');
+    if (deviceGrant.subjectId !== meta.responsible_subject_id) {
+      return jsonError(c, 403, 'forbidden');
+    }
+  } else {
+    const userId = c.var.userId!;
+    const { data: canView, error: canViewErr } = await svc.rpc('can_view_temporary_group', {
+      p_conversation_id: crewId,
+      p_user_id: userId,
+    });
+    if (canViewErr) return jsonError(c, 500, 'database_error', { detail: canViewErr.message });
+    if (canView !== true) return jsonError(c, 403, 'forbidden');
+  }
+
+  const { data: membersRaw, error: memErr } = await svc
+    .from('temporary_group_members')
+    .select('id, member_kind, user_id, bot_id, code_session_id, display_name, role, status, represents_crew_id, created_at')
+    .eq('conversation_id', crewId)
+    .eq('status', 'active')
+    .order('created_at', { ascending: true });
+  if (memErr) return jsonError(c, 500, 'database_error', { detail: memErr.message });
+  const members = membersRaw ?? [];
+
+  // Drop code_session members whose session is terminal, so finished sessions
+  // fall out of the roster without having to deactivate the member on finish.
+  // Also surface the live session status so the UI can badge running ones.
+  const sessionIds = members
+    .filter((m) => m.member_kind === 'code_session' && m.code_session_id)
+    .map((m) => m.code_session_id as string);
+  const statusById = new Map<string, string>();
+  if (sessionIds.length > 0) {
+    const { data: sessRows, error: sessErr } = await svc
+      .from('crew_sessions')
+      .select('id, status')
+      .in('id', sessionIds);
+    if (sessErr) return jsonError(c, 500, 'database_error', { detail: sessErr.message });
+    for (const s of sessRows ?? []) statusById.set(s.id, s.status);
+  }
+  const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
+  const visible = members
+    .filter((m) => {
+      if (m.member_kind !== 'code_session') return true;
+      const st = m.code_session_id ? statusById.get(m.code_session_id) : undefined;
+      return st !== undefined && !TERMINAL.has(st);
+    })
+    .map((m) => ({
+      ...m,
+      sessionStatus: m.member_kind === 'code_session' && m.code_session_id
+        ? statusById.get(m.code_session_id) ?? null
+        : null,
+    }));
+
+  return c.json({ crewId, captainBotId: meta.captain_bot_id, members: visible });
 });
 
 // ────────────────────────────────────────────────────────────────────
@@ -305,12 +469,21 @@ sessionInboxRoutes.get('/:sessionId/inbox', requireSubjectAuth(['crew:read']), a
     if (canView !== true) return jsonError(c, 403, 'session_forbidden');
   }
 
-  // Whiteboard
-  const { data: whiteboard, error: wbErr } = await untypedRpc(svc).rpc('get_crew_whiteboard', {
-    p_crew_id: sessionRow.crew_conversation_id,
-    p_since: sinceParam ?? null,
-  });
+  // Whiteboard = the crew conversation's `messages` (spec §9 unified store), so
+  // the session's per-turn context injection sees the human chat + captain
+  // replies + cards. Mapped onto the chat-entry shape; access gated above.
+  let wbQuery = svc
+    .from('messages')
+    .select(CHAT_SELECT)
+    .eq('conversation_id', sessionRow.crew_conversation_id)
+    .in('role', CHAT_ROLES)
+    .neq('status', 'deleted');
+  if (sinceParam) wbQuery = wbQuery.gte('created_at', sinceParam);
+  const { data: wbRows, error: wbErr } = await wbQuery
+    .order('created_at', { ascending: true })
+    .limit(500);
   if (wbErr) return jsonError(c, 500, 'database_error', { detail: wbErr.message });
+  const whiteboard = (wbRows ?? []).map((r) => mapMessageToEntry(r as unknown as ChatMessageRow));
 
   // Mailbox tail for this session — anything not yet processed.
   // We include unread / pending / delivered / read (legacy=unread, new

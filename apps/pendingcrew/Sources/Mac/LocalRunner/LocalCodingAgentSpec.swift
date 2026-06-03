@@ -1,6 +1,42 @@
 #if os(macOS)
 import Foundation
 
+/// Session 的权限/沙箱档（spec v2 §10.1）。PendingCrew 不自建审批策略，只把
+/// claude/codex 的**原生模式**作为选项暴露并拼进 argv。三档跨两个 runner 映射：
+///
+/// | 档 | Claude `--permission-mode` | Codex `--sandbox` |
+/// |---|---|---|
+/// | `.standard`（默认） | `auto` | `workspace-write` |
+/// | `.planOnly` | `plan`（只读规划） | `read-only` |
+/// | `.full` | `bypassPermissions`（全跳过，危险） | `danger-full-access` |
+///
+/// headless 实测（2026-06-02，docs §10）：`auto` / `bypassPermissions` 在 `-p`
+/// 下能跑（Write + Bash 都放行）；`default` / `dontAsk` 会卡死等不存在的终端审批
+/// —— 所以**不**暴露它们，且 standard 默认 `auto`（而非不传 flag = `default` 卡死）。
+public enum AgentPermissionMode: String, Sendable, CaseIterable {
+    case standard
+    case planOnly
+    case full
+
+    /// The argv fragment for a given runner (`[]` never — always a concrete mode).
+    public func argv(for kind: LocalCodingAgentKind) -> [String] {
+        switch kind {
+        case .claudeCode:
+            switch self {
+            case .standard: return ["--permission-mode", "auto"]
+            case .planOnly: return ["--permission-mode", "plan"]
+            case .full:     return ["--permission-mode", "bypassPermissions"]
+            }
+        case .codex:
+            switch self {
+            case .standard: return ["--sandbox", "workspace-write"]
+            case .planOnly: return ["--sandbox", "read-only"]
+            case .full:     return ["--sandbox", "danger-full-access"]
+            }
+        }
+    }
+}
+
 /// 启动一个本机 coding agent 子进程所需的全部参数。
 ///
 /// **Value semantics**：所有字段 immutable，构造时一次性传齐；`argv()` / `env()`
@@ -39,6 +75,28 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
     /// **不要**把 PendingCrew 自己的 secret 塞进来 —— 见 `env()` 的白名单逻辑。
     public let additionalEnv: [String: String]
 
+    /// 完全替换 `argv()` 计算结果的命令行。`nil`（默认）= 走每个 kind 的标准
+    /// 非交互 argv（已真机验过的首回合路径，**不动**）。非 nil 用于 T4.5
+    /// send_prompt 的 `--resume` 续跑回合（见 `makingResumeTurn`），让一次
+    /// resume turn 复用同一套 Process / stdin / 流式解析管道，只换 argv。
+    public let argvOverride: [String]?
+
+    /// T4.5 ambient steering —— Claude Code 的 `--settings <file>` 路径，指向
+    /// PendingCrew 托管的 settings（含 `UserPromptSubmit` hook，把常驻便签作为
+    /// 上下文注入；见 `SteeringChannel`）。`nil`（默认）= 不挂 hook，argv 与
+    /// 验证过的路径一致。仅 Claude 用；Codex 忽略。
+    public let claudeSettingsPath: String?
+
+    /// T4.5 交互 —— Claude Code 的 `--mcp-config <file>` 路径，指向托管的
+    /// mcp.json（含 `ask_human` MCP server；见 `InteractionChannel`）。`nil`
+    /// （默认）= 不挂。仅 Claude；Codex 忽略。
+    public let claudeMcpConfigPath: String?
+
+    /// 权限/沙箱档（spec v2 §10.1）。默认 `.standard` —— **重要**：不传 flag 时
+    /// claude 落到 `default` 模式，headless 下碰权限会卡死等不存在的终端，所以
+    /// 一律带一个明确的档。
+    public let permissionMode: AgentPermissionMode
+
     public init(
         kind: LocalCodingAgentKind,
         executableURL: URL,
@@ -46,7 +104,11 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
         taskBrief: String,
         initialPrompt: String,
         model: String? = nil,
-        additionalEnv: [String: String] = [:]
+        additionalEnv: [String: String] = [:],
+        argvOverride: [String]? = nil,
+        claudeSettingsPath: String? = nil,
+        claudeMcpConfigPath: String? = nil,
+        permissionMode: AgentPermissionMode = .standard
     ) {
         self.kind = kind
         self.executableURL = executableURL
@@ -55,6 +117,66 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
         self.initialPrompt = initialPrompt
         self.model = model
         self.additionalEnv = additionalEnv
+        self.argvOverride = argvOverride
+        self.claudeSettingsPath = claudeSettingsPath
+        self.claudeMcpConfigPath = claudeMcpConfigPath
+        self.permissionMode = permissionMode
+    }
+
+    /// 构造一个 **resume 续跑回合** 的 spec（T4.5 send_prompt 跨端遥控）。
+    ///
+    /// 复用 agent 已有的 session，所以模型保留完整上下文；新 prompt 跟首回合
+    /// 一样走 stdin，转写仍是 `--output-format=stream-json`，现有解析层无需改。
+    /// 缓存前缀复用，所以一次 resume turn 很便宜（2026-06-02 实测，见
+    /// `docs/crew-runner-steering.md`）。
+    ///
+    /// **目前仅 Claude** —— Codex 的续跑是另一个子命令（`codex exec resume`），
+    /// 这里对 Codex 返回 nil，让上层 fail loud，而不是悄悄起一个丢了上下文的
+    /// 全新 Codex run（那是埋雷）。
+    public func makingResumeTurn(agentSessionId: String, prompt: String) -> LocalCodingAgentLaunchSpec? {
+        guard kind == .claudeCode, !agentSessionId.isEmpty else { return nil }
+        var resumeArgv: [String] = [
+            "--resume", agentSessionId,
+            "--print", "--output-format=stream-json", "--verbose",
+        ]
+        if let model, !model.isEmpty {
+            resumeArgv.append("--model")
+            resumeArgv.append(model)
+        }
+        // Resume turns keep the same permission mode + ambient-steering hook as
+        // the first turn (so a follow-up doesn't silently fall back to a
+        // headless-blocking default, and a standing note keeps injecting).
+        resumeArgv.append(contentsOf: permissionMode.argv(for: .claudeCode))
+        resumeArgv.append(contentsOf: claudeSettingsArgs())
+        resumeArgv.append(contentsOf: claudeMcpConfigArgs())
+        return LocalCodingAgentLaunchSpec(
+            kind: kind,
+            executableURL: executableURL,
+            workingDirectory: workingDirectory,
+            taskBrief: taskBrief,
+            initialPrompt: prompt,
+            model: model,
+            additionalEnv: additionalEnv,
+            argvOverride: resumeArgv,
+            claudeSettingsPath: claudeSettingsPath,
+            claudeMcpConfigPath: claudeMcpConfigPath,
+            permissionMode: permissionMode
+        )
+    }
+
+    /// `--settings <path>` for the ambient-steering hook, or `[]` when unset.
+    /// Shared by the first-turn argv + the resume argv so a standing note
+    /// injects on every turn.
+    private func claudeSettingsArgs() -> [String] {
+        guard let claudeSettingsPath, !claudeSettingsPath.isEmpty else { return [] }
+        return ["--settings", claudeSettingsPath]
+    }
+
+    /// `--mcp-config <path>` for the ask_human interaction tool, or `[]`.
+    /// On first + resume turns so the agent can always raise an interaction.
+    private func claudeMcpConfigArgs() -> [String] {
+        guard let claudeMcpConfigPath, !claudeMcpConfigPath.isEmpty else { return [] }
+        return ["--mcp-config", claudeMcpConfigPath]
     }
 
     // MARK: - argv
@@ -71,6 +193,9 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
     /// 具体 flag 选择见各 case 注释 —— Claude Code / Codex 的 CLI 都在持续演进，
     /// 这里挑了**当前文档里最稳的非交互模式 flag**，新版若改了需要回头复核。
     public func argv() -> [String] {
+        // A resume turn (or any caller-built command) bypasses the standard
+        // per-kind argv. The default path below is unchanged + still verified.
+        if let argvOverride { return argvOverride }
         switch kind {
         case .claudeCode:
             // Claude Code CLI: 非交互模式 = `claude -p <prompt>` 或 `claude --print`
@@ -96,6 +221,9 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
                 args.append("--model")
                 args.append(model)
             }
+            args.append(contentsOf: permissionMode.argv(for: .claudeCode))
+            args.append(contentsOf: claudeSettingsArgs())
+            args.append(contentsOf: claudeMcpConfigArgs())
             return args
 
         case .codex:
@@ -120,6 +248,7 @@ public struct LocalCodingAgentLaunchSpec: Sendable, Hashable {
                 "exec",
                 "--json",
             ]
+            args.append(contentsOf: permissionMode.argv(for: .codex)) // --sandbox <mode>
             if let model, !model.isEmpty {
                 args.append("--model")
                 args.append(model)

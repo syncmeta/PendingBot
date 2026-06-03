@@ -52,6 +52,21 @@ struct CrewSessionServerLink: Sendable {
         }
     }
 
+    /// Build the realtime proxy client for this session (runner role). The
+    /// WS upgrade reuses the HTTP client's base URL + device-grant bearer; the
+    /// route authenticates the bearer and stamps trusted facts onto the DO
+    /// upgrade. This is the live sibling of `publish`/`finish` above — where
+    /// those mirror the durable transcript, the proxy pushes low-latency
+    /// `session.state` and receives remote commands/decisions.
+    func makeProxyClient() -> SessionProxyClient {
+        SessionProxyClient(
+            baseURL: api.baseURL,
+            sessionId: sessionId,
+            role: .runner,
+            token: api.bearerToken
+        )
+    }
+
     /// Map a RunnerEvent to the server's (event_type, visibility) enums.
     static func map(_ e: RunnerEvent) -> (String, String) {
         switch e {
@@ -105,6 +120,11 @@ final class CrewSessionRunner: ObservableObject {
         /// value just gets recorded server-side so the crew chat card
         /// + the agent's system prompt see it.
         permissionModeOverride: String? = nil,
+        /// spec v2 §10.1 — the CLI permission/sandbox 档 threaded into argv
+        /// (claude `--permission-mode` / codex `--sandbox`). Default `.standard`
+        /// (= claude `auto`); never nil so headless never falls into the
+        /// blocking `default` mode.
+        permissionMode: AgentPermissionMode = .standard,
         /// T4.5 — when logged in, the caller prepares a server-side session
         /// (register host → create → claim) and hands the link here so the run
         /// mirrors its transcript to the server. `nil` = BYOK / local-only.
@@ -114,7 +134,34 @@ final class CrewSessionRunner: ObservableObject {
         guard let executable = await service.resolveExecutable(kind) else {
             throw RunnerError.toolNotInstalled(kind: kind)
         }
-        // 2. 构造 spec
+        let runID = UUID()
+        // 2a. T4.5 ambient steering — for a logged Claude session, set up the
+        //     out-of-tree hook channel so a viewer can post a standing note that
+        //     injects into every turn. Best-effort: a setup failure just means no
+        //     ambient steering, the run is otherwise unaffected. BYOK/local + Codex
+        //     get no channel (and `--settings` stays off → verified argv).
+        var steeringChannel: SteeringChannel? = nil
+        if serverLink != nil, kind == .claudeCode {
+            steeringChannel = try? SteeringChannel.create(
+                parent: SteeringChannel.defaultParent(), sessionId: runID.uuidString)
+        }
+        // 2a'. T4.5 交互 — for a logged Claude session, set up the ask_human MCP
+        //      channel so the agent can raise an interaction (ask the human via
+        //      captain→DAG escalation). Needs the bundled server script + the
+        //      device-grant token + server session id. Best-effort.
+        var interactionChannel: InteractionChannel? = nil
+        if let serverLink, kind == .claudeCode,
+           let scriptPath = Bundle.main.url(forResource: "ask-human-mcp", withExtension: "cjs")?.path,
+           let token = serverLink.api.bearerToken {
+            interactionChannel = try? InteractionChannel.create(
+                parent: InteractionChannel.defaultParent(),
+                sessionId: runID.uuidString,
+                serverScriptPath: scriptPath,
+                edgeURL: serverLink.api.baseURL.absoluteString,
+                token: token,
+                edgeSessionId: serverLink.sessionId)
+        }
+        // 2b. 构造 spec
         let spec = LocalCodingAgentLaunchSpec(
             kind: kind,
             executableURL: executable,
@@ -122,10 +169,12 @@ final class CrewSessionRunner: ObservableObject {
             taskBrief: taskBrief,
             initialPrompt: initialPrompt,
             model: model,
-            additionalEnv: additionalEnv
+            additionalEnv: additionalEnv,
+            claudeSettingsPath: steeringChannel?.settingsPath,
+            claudeMcpConfigPath: interactionChannel?.mcpConfigPath,
+            permissionMode: permissionMode
         )
         // 3. 起进程
-        let runID = UUID()
         let handle = try await service.runSession(runID: runID, spec: spec)
         // 4. 包成 view model + 接 streams
         let run = CrewSessionRun(
@@ -137,7 +186,10 @@ final class CrewSessionRunner: ObservableObject {
             model: model,
             permissionModeOverride: permissionModeOverride,
             handle: handle,
-            serverLink: serverLink
+            service: service,
+            serverLink: serverLink,
+            steeringChannel: steeringChannel,
+            interactionChannel: interactionChannel
         )
         current = run
         run.observeStreams()
@@ -198,16 +250,57 @@ final class CrewSessionRun: ObservableObject, Identifiable {
     /// fallback tab. Claude Code / Codex schemas both collapse into here.
     @Published private(set) var events: [RunnerEvent] = []
     @Published private(set) var exitCode: Int32?
+    /// Last remote command received over the proxy socket, for UI surfacing.
+    /// `nil` until a cross-device viewer sends one.
+    @Published private(set) var lastRemoteCommand: String?
+    /// The agent CLI's own session id, captured from the first `.started`
+    /// transcript event (claude emits it in its init line). This is what a
+    /// `--resume` follow-up turn keys on for T4.5 send_prompt steering — the
+    /// agent keeps full context + the cached prefix. nil until the first
+    /// started event arrives, or for runners that don't report one (Codex).
+    @Published private(set) var agentSessionId: String?
 
-    private let handle: LocalCodingAgentRunHandle
+    /// The handle for the **current** turn. A session is normally one turn, but
+    /// a remote `send_prompt` runs a `--resume` follow-up turn (T4.5) and this
+    /// re-points to it. `cancel()` always targets the in-flight turn.
+    private var currentHandle: LocalCodingAgentRunHandle
+    /// Service used to spawn `--resume` follow-up turns for send_prompt steering.
+    private let service: LocalCodingAgentService
+    /// Pending remote steering prompts. A `send_prompt` arriving while a turn is
+    /// in flight queues here and drains as `--resume` turns when the turn exits
+    /// (see `turnDidExit`). Empty in the common no-steering case → the run
+    /// finalizes exactly as the verified one-shot path.
+    private var followUpQueue: [String] = []
+    /// Set once the session truly ends (queue drained / cancelled). Guards
+    /// double-finalize and rejects steering after the session is over.
+    private var finalized = false
+    /// T4.5 ambient steering channel (logged Claude only). A viewer's standing
+    /// note writes here; every turn's `--settings` hook injects it as context.
+    /// Torn down when the session ends.
+    private let steeringChannel: SteeringChannel?
+    /// T4.5 交互 channel (logged Claude only). The session's `ask_human` MCP
+    /// server uses it; torn down when the session ends.
+    private let interactionChannel: InteractionChannel?
+    /// The current standing steering note, surfaced for the viewer UI.
+    @Published private(set) var steeringNote: String = ""
     /// T4.5 server mirror (logged mode only; nil for BYOK/local-only runs).
     private let serverLink: CrewSessionServerLink?
+    /// T4.5 realtime proxy socket (logged mode only). Built from `serverLink`;
+    /// pushes live `session.state` to viewers and receives their commands /
+    /// permission decisions. nil for BYOK/local-only runs.
+    private let proxyClient: SessionProxyClient?
+    private var proxyConnectTask: Task<Void, Never>?
+    private var proxyInboundTask: Task<Void, Never>?
     /// Serializes server publishes so transcript events land in stream order
     /// (each publish awaits the previous). Best-effort — see CrewSessionServerLink.
     private var publishChain: Task<Void, Never>?
     private var observeStdoutTask: Task<Void, Never>?
     private var observeStderrTask: Task<Void, Never>?
     private var observeExitTask: Task<Void, Never>?
+    /// T4.1/§9.2 — polls the session inbox (whiteboard + mailbox) and writes a
+    /// digest into the steering channel's crew-context slot so every turn's hook
+    /// injects it. Logged Claude only (needs serverLink + steeringChannel).
+    private var crewContextPollTask: Task<Void, Never>?
     private var cancelled = false
 
     nonisolated var id: UUID { runID }
@@ -221,7 +314,10 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         model: String? = nil,
         permissionModeOverride: String? = nil,
         handle: LocalCodingAgentRunHandle,
-        serverLink: CrewSessionServerLink? = nil
+        service: LocalCodingAgentService,
+        serverLink: CrewSessionServerLink? = nil,
+        steeringChannel: SteeringChannel? = nil,
+        interactionChannel: InteractionChannel? = nil
     ) {
         self.runID = runID
         self.crewId = crewId
@@ -231,8 +327,12 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         self.model = model
         self.permissionModeOverride = permissionModeOverride
         self.startedAt = Date()
-        self.handle = handle
+        self.currentHandle = handle
+        self.service = service
         self.serverLink = serverLink
+        self.steeringChannel = steeringChannel
+        self.interactionChannel = interactionChannel
+        self.proxyClient = serverLink?.makeProxyClient()
     }
 
     /// 起后台 task 把 handle 的 stream / exit code 同步进 @Published。
@@ -242,6 +342,84 @@ final class CrewSessionRun: ObservableObject, Identifiable {
     /// 所以 `self.appendStdout` / `self.finish` 是同步调用 —— Swift 编译器会
     /// 警告多余的 await。
     func observeStreams() {
+        observe(currentHandle)
+        // T4.5 — bring up the realtime proxy socket (logged mode only). Connect
+        // publishes session.state live; the inbound loop consumes remote
+        // commands / permission decisions on the MainActor.
+        if let proxyClient {
+            proxyConnectTask = Task { await proxyClient.connect() }
+            proxyInboundTask = Task { [weak self] in
+                for await frame in proxyClient.inbound {
+                    self?.handleRemoteInbound(frame)
+                }
+            }
+        }
+        // §9.2 — keep the crew-context slot fed so the agent sees the whiteboard
+        // + its unread mailbox on every turn. Logged Claude only.
+        if serverLink != nil, steeringChannel != nil {
+            crewContextPollTask = Task { [weak self] in await self?.runCrewContextPoll() }
+        }
+    }
+
+    /// Poll the session inbox and refresh the steering channel's crew-context
+    /// slot. Each pass: fetch whiteboard + unread mailbox, build a digest,
+    /// inject it, and mark the mailbox items delivered so they don't repeat.
+    /// Best-effort throughout — a fetch failure just keeps the prior digest.
+    private func runCrewContextPoll() async {
+        guard let link = serverLink, let channel = steeringChannel else { return }
+        let ownSessionId = link.sessionId
+        while !finalized && !cancelled && !Task.isCancelled {
+            if let inbox = try? await link.api.getSessionInbox(sessionId: ownSessionId) {
+                let digest = Self.buildCrewContextDigest(inbox: inbox, ownSessionId: ownSessionId)
+                channel.setCrewContext(digest)
+                let mailboxIds = inbox.mailbox.map(\.id)
+                if !mailboxIds.isEmpty {
+                    _ = try? await link.api.markInboxDelivered(sessionId: ownSessionId, itemIds: mailboxIds)
+                }
+            }
+            try? await Task.sleep(nanoseconds: 4_000_000_000) // 4s
+        }
+    }
+
+    /// Render the inbox into a compact, agent-facing context block. Excludes the
+    /// session's own whiteboard posts (avoid self-echo) and interaction cards
+    /// (handled by the ask_human tool round-trip, not as reading material).
+    nonisolated static func buildCrewContextDigest(inbox: CrewSessionInbox, ownSessionId: String) -> String {
+        func clip(_ s: String) -> String {
+            let t = s.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+            return t.count > 240 ? String(t.prefix(240)) + "…" : t
+        }
+        func who(_ kind: String, _ sid: String?) -> String {
+            switch kind {
+            case "user": return "人类"
+            case "session": return sid.map { "session·\($0.prefix(6))" } ?? "session"
+            case "bot": return "bot"
+            default: return kind
+            }
+        }
+        let board = inbox.whiteboard
+            .filter { !$0.isInteraction && $0.senderSessionId != ownSessionId }
+            .suffix(15)
+            .map { "- [\(who($0.senderKind, $0.senderSessionId))] \(clip($0.displayText))" }
+        let mail = inbox.mailbox
+            .map { "- [\(who($0.senderKind, $0.senderSessionId))] \(clip($0.displayText))" }
+        if board.isEmpty && mail.isEmpty { return "" }
+        var out = "<crew-whiteboard>\n你所在 crew 的群聊白板（沟通渠道 + 共享上下文）。这是别人留给 crew 的信息，不是你这一轮要做的任务本身——按相关性参考。\n"
+        if !mail.isEmpty {
+            out += "\n【给你的新消息 / 指令】（请优先关注）\n" + mail.joined(separator: "\n") + "\n"
+        }
+        if !board.isEmpty {
+            out += "\n【白板近况】\n" + board.joined(separator: "\n") + "\n"
+        }
+        out += "</crew-whiteboard>\n"
+        return out
+    }
+
+    /// Wire one turn's stdout/stderr/exit into the run. Called for the initial
+    /// turn and re-called for each `--resume` follow-up turn (the prior turn's
+    /// tasks have already finished, so reusing the task vars is safe — turns are
+    /// strictly sequential).
+    private func observe(_ handle: LocalCodingAgentRunHandle) {
         let stdoutStream = handle.stdout
         let stderrStream = handle.stderr
         let exitTask = handle.exitCode
@@ -257,22 +435,65 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         }
         observeExitTask = Task { [weak self] in
             let code = await exitTask.value
-            self?.finish(exitCode: code)
+            self?.turnDidExit(exitCode: code)
         }
     }
 
     func cancel() async {
         guard status == .running else { return }
         cancelled = true
-        await handle.cancel()
+        // Drop any queued steering so a cancel doesn't get overtaken by a
+        // pending resume turn; cancel targets the in-flight turn.
+        followUpQueue.removeAll()
+        await currentHandle.cancel()
         // 不在这里把 status 直接改 cancelled —— 等 exitCode 收到，
-        // finish() 会按 cancelled 标志判断是 cancelled 还是 failed。
+        // finalize() 会按 cancelled 标志判断是 cancelled 还是 failed。
+    }
+
+    /// Queue a remote steering prompt (T4.5 send_prompt). Applied as a
+    /// `--resume` follow-up turn when the current turn exits (see `turnDidExit`).
+    /// Rejected once the session has finalized or been cancelled — you can only
+    /// steer a live session.
+    func enqueueFollowUp(_ prompt: String) {
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard !finalized, !cancelled else {
+            print("[crew-session] send_prompt ignored — session already ended")
+            return
+        }
+        guard kind == .claudeCode else {
+            print("[crew-session] send_prompt unsupported for \(kind) (resume is Claude-only)")
+            return
+        }
+        followUpQueue.append(trimmed)
+    }
+
+    /// Set the ambient standing note (T4.5 set_steering). Persisted to the
+    /// steering channel so every turn's `--settings` hook injects it; empty
+    /// clears it. Takes effect from the next turn (a turn already in flight
+    /// keeps its snapshot). No-op without a channel (BYOK/local/Codex).
+    func setSteeringNote(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        steeringNote = trimmed
+        steeringChannel?.setNote(trimmed)
+        print("[crew-session] ambient steering note " + (trimmed.isEmpty ? "cleared" : "set (\(trimmed.count) chars)"))
     }
 
     deinit {
         observeStdoutTask?.cancel()
         observeStderrTask?.cancel()
         observeExitTask?.cancel()
+        crewContextPollTask?.cancel()
+        proxyConnectTask?.cancel()
+        proxyInboundTask?.cancel()
+        // Close the socket if the run is torn down before finish() ran (e.g.
+        // window dismissed mid-run). close() is idempotent + best-effort.
+        if let proxyClient {
+            Task { await proxyClient.close() }
+        }
+        // Clean up the steering hook dir if finalize() never ran.
+        steeringChannel?.teardown()
+        interactionChannel?.teardown()
     }
 
     // MARK: - private mutators
@@ -286,7 +507,78 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         let parsed = RunnerEventParser.parse(line: line, kind: kind)
         if !parsed.isEmpty {
             events.append(contentsOf: parsed)
+            captureAgentSessionId(from: parsed)
             publishToServer(parsed)
+            publishStateToProxy()
+        }
+    }
+
+    /// Latch the agent's session id from the first `.started` event that
+    /// carries one. Stable across resume turns (claude reuses the id), so we
+    /// only take the first.
+    private func captureAgentSessionId(from parsed: [RunnerEvent]) {
+        guard agentSessionId == nil else { return }
+        for case let .started(_, sid?) in parsed where !sid.isEmpty {
+            agentSessionId = sid
+            return
+        }
+    }
+
+    /// Push the run's current state over the realtime proxy (logged mode only).
+    /// Best-effort + fire-and-forget — the client only sends when subscribed
+    /// and a failure never affects the local run. Each parsed line publishes
+    /// the latest state; the client also re-publishes it on reconnect.
+    private func publishStateToProxy() {
+        guard let proxyClient else { return }
+        let state = SessionState.from(status: Self.wireStatus(status), events: events)
+        Task { await proxyClient.publish(state) }
+    }
+
+    /// Map the local lifecycle to the wire status SessionState carries. Mirrors
+    /// CrewSessionServerLink.finish's mapping (running stays running).
+    static func wireStatus(_ status: Status) -> String {
+        switch status {
+        case .running: return "running"
+        case .completed: return "completed"
+        case .cancelled: return "cancelled"
+        case .failed: return "failed"
+        }
+    }
+
+    /// Handle a runner-actionable frame from a cross-device viewer.
+    ///
+    /// - `cancel` → `cancel()`: stop a runaway session from any device.
+    /// - `send_prompt` → `enqueueFollowUp`: inject a steering instruction that
+    ///   runs as a `--resume` follow-up turn (payload `{ "text": "…" }`).
+    /// - `permission.decision` is not yet routed to a paused action (manual-mode
+    ///   pause/resume is a separate follow-up).
+    private func handleRemoteInbound(_ frame: SessionProxyInbound) {
+        switch frame {
+        case let .command(commandId, kind, payload, queued):
+            lastRemoteCommand = queued ? "\(kind)（离线补发）" : kind
+            switch kind {
+            case "cancel":
+                print("[crew-session] remote command \(commandId): cancel — cancelling local run")
+                Task { await cancel() }
+            case "send_prompt":
+                if case let .string(text)? = payload?["text"], !text.isEmpty {
+                    print("[crew-session] remote send_prompt \(commandId): queueing resume turn")
+                    enqueueFollowUp(text)
+                } else {
+                    print("[crew-session] send_prompt \(commandId) missing string payload.text — ignored")
+                }
+            case "set_steering":
+                // Ambient standing note — injected into every turn via the hook.
+                // Empty text clears it. Takes effect from the next turn onward.
+                let text = { if case let .string(t)? = payload?["text"] { return t } else { return "" } }()
+                setSteeringNote(text)
+            default:
+                print("[crew-session] remote command \(commandId) kind=\(kind) queued=\(queued) — not applied")
+            }
+        case let .permissionDecision(requestId, decision):
+            print("[crew-session] remote permission decision \(requestId): \(decision) — not applied yet")
+        case .subscribed, .error, .unknown:
+            break // handled inside SessionProxyClient
         }
     }
 
@@ -307,8 +599,65 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         stderrText.append(line)
     }
 
-    private func finish(exitCode: Int32) {
+    /// A turn's process exited. If a steering follow-up is queued (and the run
+    /// is resumable + not cancelled), start the next `--resume` turn and stay
+    /// `.running`. Otherwise the session is done — finalize.
+    ///
+    /// In the common no-steering case the queue is empty here, so this falls
+    /// straight through to `finalize`, exactly matching the verified one-shot
+    /// behaviour.
+    private func turnDidExit(exitCode: Int32) {
         self.exitCode = exitCode
+        if !cancelled, !followUpQueue.isEmpty {
+            let prompt = followUpQueue.removeFirst()
+            startResumeTurn(prompt: prompt)
+            return
+        }
+        finalize(exitCode: exitCode)
+    }
+
+    /// Spawn a `--resume` follow-up turn carrying a steering prompt, re-point
+    /// `currentHandle`, and observe its streams (which feed the same events /
+    /// server log / proxy state). Status stays `.running`. A non-resumable run
+    /// (no agent session id yet, or Codex) can't steer → finalize instead.
+    private func startResumeTurn(prompt: String) {
+        guard let agentSessionId,
+              let resumeSpec = currentHandle.spec.makingResumeTurn(
+                  agentSessionId: agentSessionId, prompt: prompt) else {
+            print("[crew-session] cannot resume (no agent session id / unsupported runner) — finalizing")
+            finalize(exitCode: exitCode ?? 0)
+            return
+        }
+        print("[crew-session] starting resume turn for steering prompt")
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let handle = try await self.service.runSession(runID: UUID(), spec: resumeSpec)
+                self.adoptResumeTurn(handle)
+            } catch {
+                print("[crew-session] resume turn failed to launch: \(error)")
+                self.finalize(exitCode: self.exitCode ?? 1)
+            }
+        }
+    }
+
+    /// Re-point to the resume turn's handle + wire its streams. Separate so the
+    /// MainActor mutation happens in one hop after the async launch.
+    private func adoptResumeTurn(_ handle: LocalCodingAgentRunHandle) {
+        currentHandle = handle
+        observe(handle)
+        publishStateToProxy()
+    }
+
+    /// The session is truly over — set terminal status, close the server row,
+    /// push terminal state + close the proxy socket. Idempotent.
+    private func finalize(exitCode: Int32) {
+        guard !finalized else { return }
+        finalized = true
+        crewContextPollTask?.cancel()
+        // Remove the out-of-tree steering + interaction dirs now the session is over.
+        steeringChannel?.teardown()
+        interactionChannel?.teardown()
         if cancelled {
             status = .cancelled
         } else if exitCode == 0 {
@@ -328,6 +677,15 @@ final class CrewSessionRun: ObservableObject, Identifiable {
             publishChain = Task {
                 await prev?.value
                 await link.finish(localStatus: finalStatus, summary: summary)
+            }
+        }
+        // T4.5 — push the terminal state to viewers, then close the socket.
+        // Independent of the HTTP publishChain; the proxy is best-effort.
+        if let proxyClient {
+            let finalState = SessionState.from(status: Self.wireStatus(status), events: events)
+            Task {
+                await proxyClient.publish(finalState)
+                await proxyClient.close()
             }
         }
     }

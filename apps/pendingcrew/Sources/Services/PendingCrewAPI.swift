@@ -299,6 +299,82 @@ struct PendingCrewAPI {
         return resp.ok
     }
 
+    // MARK: - Crew interactions (T4.5 ask_human / 人在回路)
+
+    /// `GET /v1/sessions/:sessionId/interactions` — list this session's pending
+    /// `ask_human` interactions awaiting a human reply. The operator's viewer
+    /// polls this to surface "the agent is asking you something".
+    func listSessionInteractions(sessionId: String) async throws -> [CrewInteraction] {
+        struct Response: Decodable { let items: [CrewInteraction] }
+        let resp: Response = try await get(path: "v1/sessions/\(sessionId)/interactions")
+        return resp.items
+    }
+
+    /// `POST /v1/interactions/:reqId/answer` — answer an interaction with free
+    /// text. The session's blocked `ask_human` tool picks it up and continues.
+    @discardableResult
+    func answerInteraction(reqId: String, reply: String) async throws -> Bool {
+        struct Body: Encodable { let reply: String }
+        struct Response: Decodable { let ok: Bool }
+        let resp: Response = try await post(path: "v1/interactions/\(reqId)/answer", body: Body(reply: reply))
+        return resp.ok
+    }
+
+    // MARK: - Crew group chat / whiteboard (spec §9 中栏)
+
+    /// `GET /v1/crews/:crewId/messages` — the crew's whiteboard (group chat
+    /// timeline) for the middle pane. crewId == crew_conversation_id. Oldest
+    /// first. Needs `crew:read`.
+    func listCrewWhiteboard(crewId: String) async throws -> [CrewWhiteboardEntry] {
+        struct Response: Decodable { let whiteboard: [CrewWhiteboardEntry] }
+        let resp: Response = try await get(path: "v1/crews/\(crewId)/messages")
+        return resp.whiteboard
+    }
+
+    /// `POST /v1/crews/:crewId/messages` — drop a message on the crew
+    /// whiteboard. `mentions` routes it: `@session <id>` → that session's
+    /// mailbox; `@captain`; empty/`@broadcast` → all sessions. Needs `crew:write`.
+    @discardableResult
+    func postCrewMessage(crewId: String, text: String, mentions: [CrewMention] = []) async throws -> String? {
+        struct Body: Encodable { let content: String; let mentions: [CrewMention] }
+        struct Response: Decodable { let announcementId: String? }
+        let resp: Response = try await post(
+            path: "v1/crews/\(crewId)/messages",
+            body: Body(content: text, mentions: mentions)
+        )
+        return resp.announcementId
+    }
+
+    /// `GET /v1/crews/:crewId/members` — the crew roster (spec §9: everyone is a
+    /// member — human / captain / code_session / temp bot). Needs `crew:read`.
+    func listCrewMembers(crewId: String) async throws -> CrewRoster {
+        try await get(path: "v1/crews/\(crewId)/members")
+    }
+
+    // MARK: - Session inbox (runner per-turn context: whiteboard + mailbox)
+
+    /// `GET /v1/sessions/:sessionId/inbox` — the per-turn context bundle the
+    /// runner injects into the agent's prompt (spec §9.2/§9.5): the crew
+    /// whiteboard + this session's unread mailbox. Needs `crew:read`.
+    func getSessionInbox(sessionId: String) async throws -> CrewSessionInbox {
+        try await get(path: "v1/sessions/\(sessionId)/inbox")
+    }
+
+    /// `POST /v1/sessions/:sessionId/inbox/mark-delivered` — mark mailbox items
+    /// as delivered once they've been folded into a prompt turn, so they don't
+    /// re-inject next turn. Needs `crew:write`.
+    @discardableResult
+    func markInboxDelivered(sessionId: String, itemIds: [String]) async throws -> Bool {
+        guard !itemIds.isEmpty else { return true }
+        struct Body: Encodable { let itemIds: [String]; enum CodingKeys: String, CodingKey { case itemIds = "item_ids" } }
+        struct Response: Decodable { let ok: Bool? }
+        let resp: Response = try await post(
+            path: "v1/sessions/\(sessionId)/inbox/mark-delivered",
+            body: Body(itemIds: itemIds)
+        )
+        return resp.ok ?? true
+    }
+
     // MARK: - Internals
 
     private func get<Response: Decodable>(path: String) async throws -> Response {
@@ -392,6 +468,151 @@ struct CrewSessionEvent: Decodable, Identifiable, Equatable {
         case visibility
         case summary
         case createdAt = "created_at"
+    }
+}
+
+/// One pending `ask_human` interaction (T4.5). The agent is blocked waiting on
+/// `question`; the operator answers with free text.
+struct CrewInteraction: Decodable, Identifiable, Equatable {
+    let id: String
+    let question: String
+    let requestedAt: String?
+}
+
+// MARK: - Crew whiteboard / group chat models (spec §9)
+
+/// A mention target for a crew message. `@session <id>` routes to that
+/// session's mailbox; `@captain` to the captain's session; empty list or
+/// `broadcast` fans out to all sessions.
+struct CrewMention: Encodable, Equatable {
+    let kind: String          // 'session' | 'captain' | 'broadcast' | 'human'
+    let targetId: String?
+
+    enum CodingKeys: String, CodingKey {
+        case kind
+        case targetId = "target_id"
+    }
+
+    static func session(_ id: String) -> CrewMention { .init(kind: "session", targetId: id) }
+    static let captain = CrewMention(kind: "captain", targetId: nil)
+    static let broadcast = CrewMention(kind: "broadcast", targetId: nil)
+}
+
+/// One whiteboard entry (a crew_announcements row) rendered in the middle-pane
+/// group chat. `summary` is the display line; `payload.kind == "interaction"`
+/// marks an ask_human card (T4.5) so the timeline can render it specially.
+struct CrewWhiteboardEntry: Decodable, Identifiable, Equatable {
+    let id: String
+    let senderKind: String          // 'session' | 'user' | 'bot' | ...
+    let senderSessionId: String?
+    let messageKind: String         // 'instruction' | 'announcement' | 'permission_request' | ...
+    let summary: String?
+    let createdAt: String
+    let payload: Payload?
+
+    struct Payload: Decodable, Equatable {
+        let text: String?
+        let kind: String?                // 'interaction' for ask_human cards
+        let question: String?
+        let status: String?
+        let permissionRequestId: String?
+
+        enum CodingKeys: String, CodingKey {
+            case text, kind, question, status
+            case permissionRequestId = "permission_request_id"
+        }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case senderKind = "sender_kind"
+        case senderSessionId = "sender_session_id"
+        case messageKind = "message_kind"
+        case summary
+        case createdAt = "created_at"
+        case payload
+    }
+
+    /// Best display text: explicit payload text → summary → empty.
+    var displayText: String { payload?.text ?? summary ?? "" }
+    /// True if this row is an ask_human interaction card.
+    var isInteraction: Bool { payload?.kind == "interaction" }
+}
+
+/// The crew roster (`listCrewMembers`). `captainBotId` lets the UI tag which
+/// bot member is the captain.
+struct CrewRoster: Decodable {
+    let captainBotId: String?
+    let members: [CrewMember]
+
+    enum CodingKeys: String, CodingKey {
+        case captainBotId = "captainBotId"
+        case members
+    }
+}
+
+/// One crew member (a row of `temporary_group_members`). `memberKind` ∈
+/// human / bot / captain / code_session.
+struct CrewMember: Decodable, Identifiable, Equatable {
+    let id: String
+    let memberKind: String
+    let userId: String?
+    let botId: String?
+    let codeSessionId: String?
+    let displayName: String?
+    let role: String?
+    let status: String
+    let representsCrewId: String?
+    /// For code_session members: the live crew_session status (running/queued/…).
+    /// nil for non-session members. Terminal sessions are already filtered out
+    /// server-side, so a present value here is non-terminal.
+    let sessionStatus: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case memberKind = "member_kind"
+        case userId = "user_id"
+        case botId = "bot_id"
+        case codeSessionId = "code_session_id"
+        case displayName = "display_name"
+        case role
+        case status
+        case representsCrewId = "represents_crew_id"
+        case sessionStatus
+    }
+}
+
+/// The per-turn context bundle (`getSessionInbox`): crew whiteboard + this
+/// session's unread mailbox. Only the two fields the runner injects are
+/// decoded; `session` / `crew` in the response are ignored.
+struct CrewSessionInbox: Decodable {
+    let whiteboard: [CrewWhiteboardEntry]
+    let mailbox: [CrewMailboxItem]
+}
+
+/// One unread mailbox item targeted at this session (a `@session` / broadcast
+/// message someone dropped on the crew, fanned out to this session's mailbox).
+struct CrewMailboxItem: Decodable, Identifiable, Equatable {
+    let id: String
+    let senderKind: String
+    let senderSessionId: String?
+    let messageKind: String
+    let summary: String?
+    let status: String
+    let createdAt: String
+    let payload: CrewWhiteboardEntry.Payload?
+
+    var displayText: String { payload?.text ?? summary ?? "" }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case senderKind = "sender_kind"
+        case senderSessionId = "sender_session_id"
+        case messageKind = "message_kind"
+        case summary
+        case status
+        case createdAt = "created_at"
+        case payload
     }
 }
 

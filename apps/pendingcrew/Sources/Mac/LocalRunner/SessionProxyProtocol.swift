@@ -138,6 +138,43 @@ public struct SessionState: Equatable, Sendable {
     }
 }
 
+// MARK: - SessionStateSnapshot (viewer ← runner, inbound decode)
+
+/// The viewer-side decode of a runner's `session.state` fan-out. The runner
+/// publishes `SessionState.dict()` (`{status, eventCount, lastEvent?}`) and the
+/// DO broadcasts it verbatim inside `{type:"session.state", state:{…}}`. This
+/// is the mirror image of `SessionState`: where that *builds* the wire payload,
+/// this *reads* it on a watching client. Sendable so the proxy client can hand
+/// it across the actor boundary to the SwiftUI viewer.
+public struct SessionStateSnapshot: Equatable, Sendable {
+    public var status: String
+    public var eventCount: Int
+    public var lastEvent: String?
+
+    public init(status: String, eventCount: Int, lastEvent: String?) {
+        self.status = status
+        self.eventCount = eventCount
+        self.lastEvent = lastEvent
+    }
+
+    /// Parse one inbound `session.state` frame. Returns nil for any other frame
+    /// type / malformed JSON so a caller can cheaply try this on `.unknown`
+    /// frames without a separate type check. `eventCount` tolerates the JSON
+    /// number being a double.
+    public static func parse(_ raw: String) -> SessionStateSnapshot? {
+        guard let data = raw.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              obj["type"] as? String == "session.state",
+              let state = obj["state"] as? [String: Any] else {
+            return nil
+        }
+        let status = (state["status"] as? String) ?? ""
+        let count = (state["eventCount"] as? NSNumber)?.intValue ?? 0
+        let last = state["lastEvent"] as? String
+        return SessionStateSnapshot(status: status, eventCount: count, lastEvent: last)
+    }
+}
+
 // MARK: - Outbound (runner → DO)
 
 /// A frame the runner sends to the DO.
@@ -168,6 +205,36 @@ public enum SessionProxyOutbound: Sendable {
     }
 
     /// Serialize to a UTF-8 JSON frame ready for `WebSocket.send`.
+    public func jsonData() throws -> Data {
+        try JSONSerialization.data(withJSONObject: wireDict(), options: [.sortedKeys])
+    }
+}
+
+// MARK: - Outbound (viewer → DO)
+
+/// A frame a **viewer** sends up to the DO — the mirror of `SessionProxyOutbound`
+/// for the watching/controlling side. The DO routes `session.command` to the
+/// runner (assigning a `commandId` if absent) and persists it; it routes
+/// `permission.decision` to the runner + back to other viewers. Shapes match the
+/// TS `SessionCommandMsg` / `PermissionDecisionMsg`.
+public enum SessionProxyViewerOutbound: Sendable {
+    /// Send a command to the session's runner (e.g. `cancel`, `send_prompt`).
+    /// `payload` is free-form; the DO assigns the `commandId`.
+    case command(kind: String, payload: [String: JSONValue]?)
+    /// Approve/reject a pending permission request raised by the runner.
+    case permissionDecision(requestId: String, decision: String)
+
+    public func wireDict() -> [String: Any] {
+        switch self {
+        case let .command(kind, payload):
+            var cmd: [String: Any] = ["kind": kind]
+            if let payload { cmd["payload"] = JSONValue.object(payload).anyValue }
+            return ["type": "session.command", "command": cmd]
+        case let .permissionDecision(requestId, decision):
+            return ["type": "permission.decision", "requestId": requestId, "decision": decision]
+        }
+    }
+
     public func jsonData() throws -> Data {
         try JSONSerialization.data(withJSONObject: wireDict(), options: [.sortedKeys])
     }
