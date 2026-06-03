@@ -33,6 +33,14 @@
 
 ## 🟡 拆东墙补西墙
 
+### 🟡 metabase_ro BI 角色读不了 RLS 受限表 — Grafana 财务看板多个 panel 取不到数
+- **发现**: 2026-06-03 · chore/dashboard-sql-repoint（#238 看板重指 Polar schema）
+- **位置**: `supabase/migrations/20260602051354_metabase_readonly_role.sql`（角色 NOBYPASSRLS + 无函数 EXECUTE）;受影响表 `group_pledges`/`group_pools`/`group_contributions`/`bots`/`group_join_requests` 的成员域 RLS policy
+- **问题**: `metabase_ro`（Grafana Postgres 数据源连接角色，pooler 形式 `metabase_ro.<ref>`）是 NOBYPASSRLS,且没有 grant 任何函数 EXECUTE。这些表的 RLS policy 要么 `TO authenticated`(无 auth.uid() 时 0 行匹配),要么 `USING <fn>(...)` 调 `_grp_caller_role`/`is_bot_invitee`/`is_participant`(角色无 EXECUTE → SELECT 直接 42501 报错)。实测:`group_pools`/`group_contributions` 返回 200 但**永远 0 行**;`group_pledges`/`bots`/`group_join_requests` 直接 **500 permission denied for function**。
+- **影响**: 看板 03(群池/认缴/实缴)在补 policy 前**全空或报错**;看板 05 的"创建 bot""加入群"两 stage 也一直报错(早于本次改动、与计费重指无关)。BI"看(只读)和改(可写)分家"的设计在 RLS 表上没打通——只读角色拿不到聚合数据。
+- **建议**: 已起草 `supabase/migrations/20260603094114_metabase_ro_group_billing_read.sql`(给 metabase_ro 在 3 张群计费表加 `FOR SELECT TO metabase_ro USING (true)` 的宽松读 policy),但 `db push` 被 auto-mode 当作未授权的生产权限变更拦下,**未 apply**(文件留在主 worktree `/dev` 未跟踪,待用户审阅)。`bots`/`group_join_requests` 同类问题需另起一摊(本任务范围外)。决策口径:要么给 metabase_ro 逐表加只读 policy + grant 相关函数 EXECUTE,要么为 BI 单独建 `security definer` 聚合视图。
+- **状态**: 待办（看板 SQL 已按真实 schema 写对并重导;数据落地等 RLS 读权限收口）
+
 ### 🟡 Mac 端消息历史查询仍是 iOS inline 的手抄复刻（其余 4 条已收口）
 - **发现**: 2026-06-03 · feat/t45-ios-viewer（#212 真复用收口）
 - **位置**: `apps/pendingbot/Sources/Networking/ChatDataSource.swift:loadMessages`；对照 iOS `Features/Message/ConversationView+Loading.swift:402`（18 列超集 → `Row` → cache）

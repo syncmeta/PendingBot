@@ -26,7 +26,7 @@
       }
     ]
   },
-  "description": "Group pool funding (实缴池 = group subject wallet balance) and member pledge/cap usage (认缴 = SUM(group_member_billing.cap_credits)). NOTE: there is no dedicated pledge/pool table in the schema; this is reconstructed from subject_wallets (group subjects) + group_member_billing. See README caveats.",
+  "description": "Group pool funding (实缴池 = pendingbot.group_pools.total_remaining_pnc_micros, with fairness share_index), member contributions (pendingbot.group_contributions, active rows) and pledges (认缴 = pendingbot.group_pledges.pledge_pnc_micros, active). All amounts PNC = *_pnc_micros / 1e6. The pool balance mirrors Polar (Polar is the balance source of truth). NOTE: group_pools/group_contributions/group_pledges have RLS scoped to group members; the metabase_ro BI role needs a permissive read policy (see supabase migration 20260603094114_metabase_ro_group_billing_read.sql) or these panels return no rows.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
@@ -35,13 +35,13 @@
   "panels": [
     {
       "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
-      "description": "实缴池: total credits sitting in group-subject wallets (subjects.subject_type = 'group').",
+      "description": "实缴池: total remaining PNC across all group pools (group_pools.total_remaining_pnc_micros). Mirrors Polar.",
       "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }, "unit": "locale" }, "overrides": [] },
       "gridPos": { "h": 4, "w": 8, "x": 0, "y": 0 },
       "id": 1,
       "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
       "pluginVersion": "12.0.0",
-      "title": "Group pool funded balance (实缴池)",
+      "title": "Group pool remaining balance (实缴池, PNC)",
       "type": "stat",
       "targets": [
         {
@@ -49,20 +49,20 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COALESCE(SUM(w.balance_credits), 0) AS group_pool_balance\nFROM pendingbot.subject_wallets w\nJOIN pendingbot.subjects s ON s.id = w.subject_id\nWHERE s.subject_type = 'group';",
+          "rawSql": "SELECT COALESCE(SUM(total_remaining_pnc_micros), 0) / 1e6 AS group_pool_remaining_pnc\nFROM pendingbot.group_pools;",
           "refId": "A"
         }
       ]
     },
     {
       "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
-      "description": "认缴: sum of per-member spend caps across all groups (group_member_billing.cap_credits; NULL cap = uncapped, excluded from this sum).",
+      "description": "认缴: sum of active member pledges across all groups (group_pledges.pledge_pnc_micros WHERE status = 'active'). Pledge = the spend cap a member authorises; the money stays in their personal wallet.",
       "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }, "unit": "locale" }, "overrides": [] },
       "gridPos": { "h": 4, "w": 8, "x": 8, "y": 0 },
       "id": 2,
       "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
       "pluginVersion": "12.0.0",
-      "title": "Pledged member caps (认缴)",
+      "title": "Active pledges (认缴, PNC)",
       "type": "stat",
       "targets": [
         {
@@ -70,20 +70,20 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COALESCE(SUM(cap_credits), 0) AS pledged_caps\nFROM pendingbot.group_member_billing\nWHERE participates = true\n  AND cap_credits IS NOT NULL;",
+          "rawSql": "SELECT COALESCE(SUM(pledge_pnc_micros), 0) / 1e6 AS pledged_pnc\nFROM pendingbot.group_pledges\nWHERE status = 'active';",
           "refId": "A"
         }
       ]
     },
     {
       "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
-      "description": "Alert-friendly: pledge usage rate = SUM(spent_credits) / SUM(cap_credits) across capped, participating members. >100% means caps overspent in aggregate.",
-      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "max": 1.5, "min": 0, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.8 }, { "color": "red", "value": 1 }] }, "unit": "percentunit" }, "overrides": [] },
+      "description": "Active member contributions (实缴): total contributed PNC across all groups (group_contributions WHERE status = 'active'). The funded backing behind the pool balance.",
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }, "unit": "locale" }, "overrides": [] },
       "gridPos": { "h": 4, "w": 8, "x": 16, "y": 0 },
       "id": 3,
-      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
       "pluginVersion": "12.0.0",
-      "title": "Pledge usage rate (认缴使用率)",
+      "title": "Active contributions (实缴, PNC)",
       "type": "stat",
       "targets": [
         {
@@ -91,14 +91,14 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT CASE\n  WHEN COALESCE(SUM(cap_credits), 0) = 0 THEN 0\n  ELSE SUM(spent_credits)::numeric / NULLIF(SUM(cap_credits), 0)\nEND AS pledge_usage_rate\nFROM pendingbot.group_member_billing\nWHERE participates = true\n  AND cap_credits IS NOT NULL;",
+          "rawSql": "SELECT COALESCE(SUM(contributed_pnc_micros), 0) / 1e6 AS contributed_pnc\nFROM pendingbot.group_contributions\nWHERE status = 'active';",
           "refId": "A"
         }
       ]
     },
     {
       "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
-      "description": "Per-group pool: funded balance, member count, total spent, total capped, usage rate. Highest usage first.",
+      "description": "Per-group pool: remaining balance + share_index (fairness factor), active contribution count/total, active pledge count/total. Largest pools first. Amounts in PNC.",
       "fieldConfig": { "defaults": { "custom": { "align": "auto", "cellOptions": { "type": "auto" }, "inspect": false }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } }, "overrides": [] },
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 4 },
       "id": 4,
@@ -112,7 +112,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT\n  gmb.conversation_id,\n  c.title AS group_title,\n  COUNT(*) AS member_count,\n  COUNT(*) FILTER (WHERE gmb.participates) AS participating_members,\n  COUNT(*) FILTER (WHERE gmb.overdrawn) AS overdrawn_members,\n  COALESCE(SUM(gmb.spent_credits), 0) AS total_spent,\n  COALESCE(SUM(gmb.cap_credits), 0) AS total_capped,\n  CASE WHEN COALESCE(SUM(gmb.cap_credits), 0) = 0 THEN NULL\n       ELSE ROUND(SUM(gmb.spent_credits)::numeric / NULLIF(SUM(gmb.cap_credits), 0), 4)\n  END AS usage_rate\nFROM pendingbot.group_member_billing gmb\nLEFT JOIN pendingbot.conversations c ON c.id = gmb.conversation_id\nGROUP BY gmb.conversation_id, c.title\nORDER BY usage_rate DESC NULLS LAST\nLIMIT 200;",
+          "rawSql": "SELECT\n  gp.subject_id,\n  s.display_name AS group_name,\n  gp.total_remaining_pnc_micros / 1e6 AS remaining_pnc,\n  gp.share_index,\n  COALESCE(con.active_contributors, 0) AS active_contributors,\n  COALESCE(con.contributed_pnc, 0) AS contributed_pnc,\n  COALESCE(pl.active_pledgers, 0) AS active_pledgers,\n  COALESCE(pl.pledged_pnc, 0) AS pledged_pnc,\n  gp.updated_at\nFROM pendingbot.group_pools gp\nLEFT JOIN pendingbot.subjects s ON s.id = gp.subject_id\nLEFT JOIN (\n  SELECT subject_id,\n    COUNT(DISTINCT contributor_user_id) AS active_contributors,\n    SUM(contributed_pnc_micros) / 1e6 AS contributed_pnc\n  FROM pendingbot.group_contributions\n  WHERE status = 'active'\n  GROUP BY subject_id\n) con ON con.subject_id = gp.subject_id\nLEFT JOIN (\n  SELECT subject_id,\n    COUNT(*) AS active_pledgers,\n    SUM(pledge_pnc_micros) / 1e6 AS pledged_pnc\n  FROM pendingbot.group_pledges\n  WHERE status = 'active'\n  GROUP BY subject_id\n) pl ON pl.subject_id = gp.subject_id\nORDER BY gp.total_remaining_pnc_micros DESC\nLIMIT 200;",
           "refId": "A"
         }
       ]

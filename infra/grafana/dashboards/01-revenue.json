@@ -26,7 +26,7 @@
       }
     ]
   },
-  "description": "Topups, refunds, net revenue and refund rate. Source: pendingbot.topups (paid_amount_minor / paid_currency / status / channel) + pendingbot.billing_ledger (entry_type, delta_credits).",
+  "description": "Topups, refunds, net revenue and refund rate. Source: pendingbot.pnc_ledger (kind topup/refund, source = channel, delta_pnc_micros). USD is derived from credits: PNC = delta_pnc_micros / 1e6; USD = PNC / 27 (27 PNC = 1 USD). gross_paid_usd_cents/net_revenue_usd_cents are mostly NULL on the credit-in path, so $ amounts are computed from delta_pnc_micros, not the cents columns.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
@@ -63,7 +63,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COALESCE(SUM(paid_amount_minor), 0) / 100.0 AS gross_paid\nFROM pendingbot.topups\nWHERE status = 'verified'\n  AND paid_amount_minor IS NOT NULL\n  AND is_sandbox = false\n  AND $__timeFilter(created_at);",
+          "rawSql": "SELECT COALESCE(SUM(delta_pnc_micros), 0) / 1e6 / 27.0 AS gross_paid\nFROM pendingbot.pnc_ledger\nWHERE kind = 'topup'\n  AND $__timeFilter(created_at);",
           "refId": "A"
         }
       ]
@@ -98,7 +98,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COALESCE(SUM(paid_amount_minor), 0) / 100.0 AS refunded\nFROM pendingbot.topups\nWHERE status = 'refunded'\n  AND paid_amount_minor IS NOT NULL\n  AND is_sandbox = false\n  AND $__timeFilter(created_at);",
+          "rawSql": "SELECT COALESCE(SUM(ABS(delta_pnc_micros)), 0) / 1e6 / 27.0 AS refunded\nFROM pendingbot.pnc_ledger\nWHERE kind = 'refund'\n  AND $__timeFilter(created_at);",
           "refId": "A"
         }
       ]
@@ -133,7 +133,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT (\n  COALESCE(SUM(paid_amount_minor) FILTER (WHERE status = 'verified'), 0)\n  - COALESCE(SUM(paid_amount_minor) FILTER (WHERE status = 'refunded'), 0)\n) / 100.0 AS net_revenue\nFROM pendingbot.topups\nWHERE paid_amount_minor IS NOT NULL\n  AND is_sandbox = false\n  AND $__timeFilter(created_at);",
+          "rawSql": "SELECT (\n  COALESCE(SUM(delta_pnc_micros) FILTER (WHERE kind = 'topup'), 0)\n  - COALESCE(SUM(ABS(delta_pnc_micros)) FILTER (WHERE kind = 'refund'), 0)\n) / 1e6 / 27.0 AS net_revenue\nFROM pendingbot.pnc_ledger\nWHERE kind IN ('topup', 'refund')\n  AND $__timeFilter(created_at);",
           "refId": "A"
         }
       ]
@@ -178,14 +178,14 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT CASE\n  WHEN COALESCE(SUM(paid_amount_minor) FILTER (WHERE status = 'verified'), 0) = 0 THEN 0\n  ELSE COALESCE(SUM(paid_amount_minor) FILTER (WHERE status = 'refunded'), 0)::numeric\n       / NULLIF(SUM(paid_amount_minor) FILTER (WHERE status = 'verified'), 0)\nEND AS refund_rate\nFROM pendingbot.topups\nWHERE paid_amount_minor IS NOT NULL\n  AND is_sandbox = false\n  AND $__timeFilter(created_at);",
+          "rawSql": "SELECT CASE\n  WHEN COALESCE(SUM(delta_pnc_micros) FILTER (WHERE kind = 'topup'), 0) = 0 THEN 0\n  ELSE COALESCE(SUM(ABS(delta_pnc_micros)) FILTER (WHERE kind = 'refund'), 0)::numeric\n       / NULLIF(SUM(delta_pnc_micros) FILTER (WHERE kind = 'topup'), 0)\nEND AS refund_rate\nFROM pendingbot.pnc_ledger\nWHERE kind IN ('topup', 'refund')\n  AND $__timeFilter(created_at);",
           "refId": "A"
         }
       ]
     },
     {
       "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
-      "description": "Daily gross paid vs refunded (fiat, USD-normalised by paid_currency assumption — see README caveat on multi-currency).",
+      "description": "Daily gross paid vs refunded (USD, derived from pnc_ledger delta_pnc_micros / 1e6 / 27).",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -230,20 +230,20 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT\n  $__timeGroup(created_at, '1d') AS time,\n  SUM(paid_amount_minor) FILTER (WHERE status = 'verified') / 100.0 AS \"gross_paid\",\n  SUM(paid_amount_minor) FILTER (WHERE status = 'refunded') / 100.0 AS \"refunded\"\nFROM pendingbot.topups\nWHERE paid_amount_minor IS NOT NULL\n  AND is_sandbox = false\n  AND $__timeFilter(created_at)\nGROUP BY 1\nORDER BY 1;",
+          "rawSql": "SELECT\n  $__timeGroup(created_at, '1d') AS time,\n  COALESCE(SUM(delta_pnc_micros) FILTER (WHERE kind = 'topup'), 0) / 1e6 / 27.0 AS \"gross_paid\",\n  COALESCE(SUM(ABS(delta_pnc_micros)) FILTER (WHERE kind = 'refund'), 0) / 1e6 / 27.0 AS \"refunded\"\nFROM pendingbot.pnc_ledger\nWHERE kind IN ('topup', 'refund')\n  AND $__timeFilter(created_at)\nGROUP BY 1\nORDER BY 1;",
           "refId": "A"
         }
       ]
     },
     {
       "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
-      "description": "Topup count + paid amount by channel (apple_iap / stripe / redemption / admin_grant / signup_bonus / adjust).",
+      "description": "Ledger count + USD + credits by source (channel: polar_checkout / iap_ios / group_topup / group_refund / group_withdraw / chargeback_clawback / admin / redemption ...) and kind (topup / refund / admin / redemption).",
       "fieldConfig": { "defaults": { "custom": { "align": "auto", "cellOptions": { "type": "auto" }, "inspect": false }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } }, "overrides": [] },
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 13 },
       "id": 6,
       "options": { "cellHeight": "sm", "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false }, "showHeader": true },
       "pluginVersion": "12.0.0",
-      "title": "Topups by channel & status (window)",
+      "title": "Ledger by source & kind (window)",
       "type": "table",
       "targets": [
         {
@@ -251,7 +251,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT\n  channel,\n  status,\n  COUNT(*) AS topup_count,\n  COALESCE(SUM(paid_amount_minor), 0) / 100.0 AS paid_amount,\n  COALESCE(SUM(credits_granted), 0) AS credits_granted\nFROM pendingbot.topups\nWHERE is_sandbox = false\n  AND $__timeFilter(created_at)\nGROUP BY channel, status\nORDER BY channel, status;",
+          "rawSql": "SELECT\n  source,\n  kind,\n  COUNT(*) AS entry_count,\n  COALESCE(SUM(delta_pnc_micros), 0) / 1e6 / 27.0 AS net_usd,\n  COALESCE(SUM(delta_pnc_micros), 0) / 1e6 AS net_pnc\nFROM pendingbot.pnc_ledger\nWHERE $__timeFilter(created_at)\nGROUP BY source, kind\nORDER BY source, kind;",
           "refId": "A"
         }
       ]
