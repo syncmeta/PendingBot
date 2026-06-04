@@ -17,6 +17,7 @@ struct CrewChatView: View {
 
     @State private var entries: [CrewWhiteboardEntry] = []
     @State private var draft = ""
+    @State private var pendingAttachments: [PendingComposerAttachment] = []
     @State private var loadError: String?
     @State private var sending = false
     /// Per-interaction reply drafts, keyed by permission_request_id.
@@ -35,7 +36,12 @@ struct CrewChatView: View {
             }
             timeline
             Divider()
-            CrewComposer(draft: $draft, sending: sending, errorText: loadError) {
+            CrewComposer(
+                draft: $draft,
+                attachments: $pendingAttachments,
+                sending: sending,
+                errorText: loadError
+            ) {
                 Task { await send() }
             }
         }
@@ -128,12 +134,26 @@ struct CrewChatView: View {
 
     private func send() async {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, let api = try? appModel.loggedAPIClient() else { return }
+        let toUpload = pendingAttachments
+        // Allow attachment-only sends (no text) as long as something is present.
+        guard !text.isEmpty || !toUpload.isEmpty,
+              let api = try? appModel.loggedAPIClient() else { return }
         sending = true
         defer { sending = false }
         do {
-            try await api.postCrewMessage(crewId: crewId, text: text, mentions: [])
+            // Upload each picked file first → collect the attachment ids. Any
+            // failure aborts the send and leaves the tray intact so the user can
+            // retry without re-picking.
+            var attachmentIds: [String] = []
+            for att in toUpload {
+                let id = try await api.uploadAttachment(
+                    data: att.data, filename: att.filename, mime: att.mime)
+                attachmentIds.append(id)
+            }
+            try await api.postCrewMessage(
+                crewId: crewId, text: text, mentions: [], attachmentIds: attachmentIds)
             draft = ""
+            pendingAttachments = []
             await refresh()
         } catch {
             loadError = error.localizedDescription

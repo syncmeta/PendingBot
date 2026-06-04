@@ -342,16 +342,71 @@ struct PendingCrewAPI {
 
     /// `POST /v1/crews/:crewId/messages` — drop a message on the crew
     /// whiteboard. `mentions` routes it: `@session <id>` → that session's
-    /// mailbox; `@captain`; empty/`@broadcast` → all sessions. Needs `crew:write`.
+    /// mailbox; `@captain`; empty/`@broadcast` → all sessions. `attachmentIds`
+    /// are ids returned by `uploadAttachment`, persisted on the message as
+    /// `{ ids: [...] }` and hydrated → renderable objects on read. Needs
+    /// `crew:write`.
     @discardableResult
-    func postCrewMessage(crewId: String, text: String, mentions: [CrewMention] = []) async throws -> String? {
-        struct Body: Encodable { let content: String; let mentions: [CrewMention] }
-        struct Response: Decodable { let announcementId: String? }
+    func postCrewMessage(
+        crewId: String,
+        text: String,
+        mentions: [CrewMention] = [],
+        attachmentIds: [String] = []
+    ) async throws -> String? {
+        struct Body: Encodable {
+            let content: String
+            let mentions: [CrewMention]
+            let attachmentIds: [String]?
+        }
+        // The handler returns `{ messageId }`; `announcementId` stays nil (this
+        // endpoint never emitted one). Decode both leniently so neither shape
+        // throws — callers only care that the POST succeeded.
+        struct Response: Decodable { let announcementId: String?; let messageId: String? }
         let resp: Response = try await post(
             path: "v1/crews/\(crewId)/messages",
-            body: Body(content: text, mentions: mentions)
+            body: Body(
+                content: text,
+                mentions: mentions,
+                attachmentIds: attachmentIds.isEmpty ? nil : attachmentIds
+            )
         )
-        return resp.announcementId
+        return resp.messageId ?? resp.announcementId
+    }
+
+    // MARK: - Attachment upload (compose half)
+
+    /// `POST /v1/upload` — multipart upload of one file. The endpoint accepts a
+    /// device-grant bearer with `crew:write` (PendingCrew's grant has it) and
+    /// returns the attachment `id`, which is then passed to `postCrewMessage`
+    /// via `attachmentIds`. Owner + quota attribute to the user who granted
+    /// PendingCrew (server-side `effectiveOwnerUserId`).
+    ///
+    /// Wire: multipart/form-data with a single `file` part. We deliberately
+    /// omit `conversationId` — the server binds the id to a crew message at
+    /// send time and re-checks membership on every `/v1/uploads/:id` read, and
+    /// the device-grant path rejects a `conversationId` it can't RLS-probe.
+    func uploadAttachment(data: Data, filename: String, mime: String) async throws -> String {
+        let boundary = "PendingCrewBoundary-\(UUID().uuidString)"
+        var body = Data()
+        func append(_ string: String) { body.append(string.data(using: .utf8)!) }
+        append("--\(boundary)\r\n")
+        // `filename` lands on the File's name → attachments.filename server-side.
+        append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n")
+        append("Content-Type: \(mime)\r\n\r\n")
+        body.append(data)
+        append("\r\n--\(boundary)--\r\n")
+
+        var request = URLRequest(url: baseURL.appendingPathComponent("v1/upload"))
+        request.httpMethod = "POST"
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.httpBody = body
+        attachAuth(to: &request)
+
+        // Response: `{ id, r2_key, mime, size, filename, url, created_at, deduped? }`
+        // (routes/upload.ts) — we only need the id.
+        struct Response: Decodable { let id: String }
+        let resp: Response = try await perform(request)
+        return resp.id
     }
 
     /// `GET /v1/crews/:crewId/members` — the crew roster (spec §9: everyone is a
