@@ -5,7 +5,11 @@
 > **2026-06-04 captain 编排续做 + 对账（`feat/crew-captain-orchestration`，off main，未合）**
 > - **对账**：核 main 代码发现 **#241(Phase J: captain 被群消息唤醒,dispatchGroupTurn 接进 POST /messages) 和 #242(Phase K: start_session tool + open_crew_session_by_captain RPC + Mac autoClaimLoop) 其实已落地**（编译/部署，真机未验），task 系统 #241/#242 标 pending 是 **stale**。判断口径：代码在、真机验归 T5.3。
 > - **续做（本分支新落，typecheck 0 / edge 500 tests 过）**：① **J-e** —— `post_to_crew` 两路径(bot-reply tool + session HTTP)在写 crew_announcements 后**也镜像一条 messages**，session/bot 发言终于进群聊显示（之前只进白板 announcements、群聊读 messages 看不到）。② **captain persona** —— `prompts/zh/crew-captain.md`(prompt-loader) + `builder.ts` 注入(gated crew+captain+inGroup,best-effort)，机长被唤醒时知道自己是机长 + 何时调 start_session。
-> - **待**：`create_child_crew` / `recruit_temp_bot` 两个 captain 工具(RPC 已有,tool 没接)；T5.3 真机验整链(captain 真编排 + Mac 接住跑 + 群显示)。
+> - **dynamic loop 续做（2026-06-05，typecheck 0 / edge 500 tests / macOS build 绿）**：
+>   - ✅ **captain 工具补全** `create_child_crew`(用 `_for_actor` service-role RPC 变体,责任份额走 crew_parent_links 结构继承,无 bps 参) + `recruit_temp_bot`(纯 service-role insert ephemeral_bot,确认无触发器冲突)。两者门控 captain,接进 tool-defs/tool-runner/index.ts。commit `f2d5146c`。⚠️ recruit 的 ephemeral_bot 暂无消费方(花名册/turn 路径未建)——记 tech-debt 🟡。
+>   - ✅ **localUserId 自气泡** edge `/v1/me/subject` 多返 `user_id`(device grant 的 granted_by_user_id) → `AppModel.currentUserId`(CrewStore.refreshSubjects 填) → CrewChatView.localUserId。多人 crew 里别人的话不再误显成"我"。commit `e9acb871`。**销了 localUserId tech-debt**。
+>   - ⏸️ **crew 聊天附件渲染 — 停在决策点未做**：与 chat-align 设计冲突(那份明确"crew composer 无附件、省 + 按钮")→ 现在没发附件入口,单做渲染是空的;要做是 composer+上传+发送+渲染整套 M+ 且推翻早先决定,需用户拍板。
+> - **待**：crew 附件(需决策,见上)；recruit_temp_bot 消费方;T5.3 真机验整链(captain 真编排 + Mac 接住跑 + 群显示)。
 
 > **2026-06-04 PendingCrew 中栏群聊 UI 对齐 PendingBot iOS（`feat/pendingcrew-chat-align`，未合）**
 > - **动机**：中栏群聊原是自绘简易气泡（圆角 12、两色填充、无头像、行内文字标签），与 PendingBot **iOS** 那套打磨过的群聊（头像+名字抬头+连续圆角+hairline+暖色 token+时间分隔 pill）观感脱节。**原生重画**对齐，数据仍绑 `CrewWhiteboardEntry`，不抽共享包、不引 PendingBot 私有代码（保 PendingCrew 可独立开源定位）。spec/plan 见 `docs/superpowers/{specs,plans}/2026-06-04-pendingcrew-chat-*`。

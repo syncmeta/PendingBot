@@ -44,6 +44,14 @@
 
 ## 🟡 拆东墙补西墙
 
+### 🟡 captain `recruit_temp_bot` 招的 ephemeral_bot 暂无消费方
+- **发现**: 2026-06-05 · feat/crew-captain-orchestration（captain 工具补全）
+- **位置**: `apps/edge/src/lib/bot-reply/tools/recruit-temp-bot.ts`（写 `temporary_group_members.member_kind='ephemeral_bot'` + `ephemeral_spec`）
+- **问题**: 工具结构上对（无触发器、service-role insert 安全），但招进来的 ephemeral_bot 行**没有任何 edge / iOS 代码读或渲染**——`ephemeral_bot`/`ephemeral_spec` 目前只出现在生成的 schema.ts。即招了也不会在花名册显示、更不会在群里发言/被唤醒。
+- **影响**: `recruit_temp_bot` 当前是"结构有效但端到端无效"的半截工具。captain 调它不会出错，但临时 bot 不会真的参与。
+- **建议**: 要让它端到端可用，需补：① 花名册渲染 ephemeral_bot 成员；② 一条让 ephemeral 参与者能被唤醒发言的 turn 路径（类似 captain dispatch）。归 captain 编排后续 + T5.3。
+- **状态**: 待办（工具已落，消费方待建）
+
 ### 🟡 normalize_email 双实现（SQL + TS）须手动保持同步
 - **发现**: 2026-06-04 · fix/billing-tails-email-norm（#252 email 规范化）
 - **位置**: `pendingbot.normalize_email`（迁移 20260604102812）+ `apps/edge/src/lib/billing-grant.ts:normalizeEmail()`
