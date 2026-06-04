@@ -35,6 +35,8 @@ function auditMessage() {
       providerCostUsd: 0.01,
       inputTokens: 100,
       outputTokens: 20,
+      promptBody: [{ role: 'user', content: 'hi' }],
+      completionBody: 'hello there',
     },
   } as never;
 }
@@ -42,7 +44,7 @@ function auditMessage() {
 describe('persistAuditMessage → Langfuse trace wiring', () => {
   beforeEach(() => traceMock.mockClear());
 
-  it('emits one generation per turn with model/tokens/cost/latency (no content)', async () => {
+  it('emits one generation per turn with model/tokens/cost/latency + full input/output content', async () => {
     const db = makeFakeDb({
       conversations: [
         { id: 'conv-1', conversation_type: 'user_bot', responsible_subject_id: null },
@@ -68,9 +70,10 @@ describe('persistAuditMessage → Langfuse trace wiring', () => {
       latency_ms: 42,
       cost_usd: 0.01,
     });
-    // Privacy: structural only — no prompt/completion content fields.
-    expect(args).not.toHaveProperty('input');
-    expect(args).not.toHaveProperty('output');
+    // Full-functionality tracing (#248): Langfuse is first-party in the stack,
+    // so traces carry the full prompt/completion bodies for debugging.
+    expect(args.input).toEqual([{ role: 'user', content: 'hi' }]);
+    expect(args.output).toEqual('hello there');
   });
 
   // NOTE on idempotency: the trace call sits AFTER persistAuditMessage's
