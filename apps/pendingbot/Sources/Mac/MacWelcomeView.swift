@@ -29,7 +29,7 @@ struct MacRootGate: View {
                     ProgressView()
                     Text("加载中…").font(.callout).foregroundStyle(.secondary)
                 }
-                .frame(minWidth: 640, minHeight: 300)
+                .frame(minWidth: 740, minHeight: 420)
             } else if store.current == nil {
                 MacWelcomeView()
             } else {
@@ -84,8 +84,8 @@ struct MacWelcomeView: View {
             .frame(width: 280)
         }
         .padding(44)
-        // 默认尺寸:更宽更扁,横向给 logo↔表单留出呼吸空间。
-        .frame(minWidth: 640, minHeight: 300, alignment: .center)
+        // 默认尺寸:窗口整体放大,内容簇保持原大小、居中,四周留更多空白。
+        .frame(minWidth: 740, minHeight: 420, alignment: .center)
         .background(Theme.Palette.canvas.ignoresSafeArea())
         .background(MacLoginWindowStyler())
         .onChange(of: vm.otpSent) { _, sent in
