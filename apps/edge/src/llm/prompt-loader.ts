@@ -147,7 +147,9 @@ export async function ensurePromptOverridesLoaded(env: Env): Promise<void> {
       overrideCache.clear();
       for (const [k, v] of next) overrideCache.set(k, v);
       cacheLoadedAt = Date.now();
-      await langfuse.shutdownAsync().catch(() => {});
+      // Flush any pending ingestion (prompt fetches don't ingest, but the
+      // client may have buffered telemetry) before the isolate moves on.
+      await langfuse.flushAsync().catch(() => {});
     } catch (err) {
       console.warn('[prompt-loader] langfuse override load failed, using bundled', err);
     } finally {
