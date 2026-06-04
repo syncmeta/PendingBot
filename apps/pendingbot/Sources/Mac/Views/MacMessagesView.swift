@@ -63,11 +63,17 @@ struct MacConversationListColumn: View {
             }
         }
         .navigationTitle("消息")
-        // 和 iOS MessageTabView 同款:先拉一次,再订阅 user-level RealtimeHub。
-        // 每条 user_unread_counts 变更(任何会话来新消息)即刷新列表 —— 顺序 /
-        // 预览 / 未读数实时更新,无轮询。user channel 是常驻的,startUserChannel
-        // 幂等(已开则 no-op),所以这里不在 disappear 关它。
+        // 和 iOS MessageTabView 同款:先出本地缓存秒开,再拉服务端,再订阅
+        // user-level RealtimeHub。每条 user_unread_counts 变更(任何会话来新消息)
+        // 即刷新列表 —— 顺序 / 预览 / 未读数实时更新,无轮询。user channel 是常驻的,
+        // startUserChannel 幂等(已开则 no-op),所以这里不在 disappear 关它。
         .task {
+            // cache-first:先从共享 LocalDatabase 读上次的会话列表即时渲染
+            // (对齐 iOS MessageTabView.load 的首屏 hydrate),再让网络刷新覆盖。
+            if conversations.isEmpty {
+                let cached = ChatDataSource.cachedConversations()
+                if !cached.isEmpty { conversations = cached }
+            }
             await refresh()
             didLoad = true
             if let userId = AccountStore.shared.current?.id {
@@ -129,6 +135,14 @@ struct MacChatView: View {
         // 对端 / bot 写入 messages 即刷新(自己正在发的那条由 SSE 流接管,
         // 发完会 reload 拿 server 真值,所以 sending 期间忽略实时事件防抖动)。
         .task(id: conversationId) {
+            // cache-first:先从共享 LocalDatabase 读缓存即时渲染(对齐 iOS
+            // ConversationView.loadHistory 的首屏 hydrate),再认会话类型 +
+            // 拉服务端历史覆盖。缓存行无附件元数据(纯文字),图片/文件由
+            // reload 的网络往返解析 —— 和 iOS 缓存 hydrate(attachments: nil)一致。
+            if messages.isEmpty {
+                let cached = ChatDataSource.cachedMessages(conversationId: conversationId)
+                if !cached.isEmpty { messages = cached }
+            }
             // 先认会话类型(决定发送路径 + 是否画群抬头),再拉历史 + 群成员。
             conversationType = (try? await ChatDataSource.conversationType(conversationId: conversationId)) ?? conversationType
             await reload()
@@ -380,7 +394,11 @@ struct MacChatView: View {
             loadError = nil
         } catch is CancellationError {
         } catch {
-            loadError = error.localizedDescription
+            // 网络挂了但缓存已 hydrate 出内容:保持安静(缓存消息仍在屏上),
+            // 只有什么都没得显示时才报错 —— 对齐 iOS loadHistory 的 error 策略。
+            if messages.isEmpty {
+                loadError = error.localizedDescription
+            }
         }
         didLoad = true
     }

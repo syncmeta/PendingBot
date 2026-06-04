@@ -650,3 +650,9 @@
   - **无头像选择器**:建/管机器人都没头像上传(iOS 走 iOS-only 图片选择器),Mac 仅 emoji 占位。可后续用 NSOpenPanel 接。
   - **MacBotSlugRule 是 iOS `BotSlugRule` 的手抄副本**(后者在 `#if os(iOS)` 里不可见)。两处规则需手动保持同步;服务端 slug 约束才是真源。
   **均为真机/真账号才能端到端验**:写操作(建/改/删 bot、发好友申请)本 session 只编译校验,未跑真实回合。
+
+- 🟡 **Mac 聊天/会话列表已接 cache-first(复用 iOS LocalDatabase),但"把编排抽成共享 store 两端共用"仍待 iOS 真机回归** — `feat/mac-login-align`(2026-06-05,#212)。Mac `MacChatView`(消息)+ `MacConversationListColumn`(会话列表)现在镜像 iOS 的 cache-first:打开先从跨平台 `LocalDatabase` 读缓存秒开 → 拉服务端 → 用 iOS 同款 `replaceMessages`(单事务 / cmid-aware upsert)+ `upsertConversations` 写回。编排落在跨平台 `ChatDataSource`(`cachedConversations`/`cachedMessages` 读缓存,`listConversations`/`loadMessages` 写回),复用 `MessagesFetch`/`ConversationFetch`/`LocalDatabase`,**没有新建 Mac-only 缓存表**。双端 BUILD SUCCEEDED。**缺口 / follow-up**:
+  - **未跑真机回归**:cache-first 的"先缓存秒开 → 网络覆盖 → 写回"在本 session 只编译校验,**没在真实登录态 / 真机上跑过**(秒开是否真即时、写回与 Realtime 刷新是否有竞态、离线再开是否仍有内容、replaceMessages 删-插事务中途无空窗——均未观测)。需用户在场做一次。
+  - **编排仍是两套(iOS 在 `ConversationView+Loading`/`MessageTabView` 里内联,Mac 在 `ChatDataSource` 里镜像)**:本 session **刻意未动 iOS shipping 代码**(避免无真机回归时改已验证的 iOS View)。把两端的 cache-first 编排抽成一个**完全共享的 store**(读+网络+diff/merge+写回一处,两端只接 UI)是正经的下一步,但那是重构 iOS 已验证路径,**必须等用户在场做 iOS 真机回归**再动。当前镜像有结构性重复:cache 写回的 row 映射、error 抑制策略、sender 解析在 iOS 与 Mac 各写了一遍,column/policy 改了要两处同步。
+  - **未读数 cached 首屏为 0**:`cachedConversations` 缓存行不带 unread(iOS 的未读真源是 server-truth unread store / `user_unread_counts`,不在 conversations 表),所以纯缓存首屏的红点要等网络刷新才出。可接受(和 preview/排序一拍 settle),但和 iOS 完全一致需把未读也落进某个 Mac 可读的缓存通道。
+  - **缓存消息无附件**:`LocalDatabase.messages` 没有附件列,cached 行是纯文字,图片/文件 chip 等 `loadMessages` 网络往返解析——与 iOS 缓存 hydrate(`attachments: nil`)一致,非 Mac 独有缺口。

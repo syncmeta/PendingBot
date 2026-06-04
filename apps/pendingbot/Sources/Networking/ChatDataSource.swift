@@ -10,10 +10,13 @@ import Supabase
 // iOS's equivalent logic is inlined inside `MessageTabView` / `ConversationView`
 // (a verified but UIKit-coupled View), so it can't be reused as-is; rather than
 // refactor the iOS 范本 (regression risk while it's the proven baseline), this
-// is a fresh minimal service that mirrors the same Supabase queries + reuses the
-// verified `ChatStream` SSE for sending. The macOS 第一版 deliberately drops:
-// unread badges, group/user_user peer resolution, attachments, Realtime push
-// (poll instead). iOS can migrate onto this service later for DRY.
+// is a fresh minimal service that mirrors the same Supabase queries, reuses the
+// verified `ChatStream` SSE for sending, and now mirrors iOS's cache-first
+// `LocalDatabase` editing too: `cachedConversations` / `cachedMessages` paint
+// last-known state instantly, and `listConversations` / `loadMessages` write the
+// authoritative set back into the SAME shared GRDB cache iOS uses (no second
+// cache, no Mac-only table). Unifying the *editing* itself into one shared store
+// both platforms drive is a later refactor (needs an iOS device regression).
 //
 // 时间戳规避: the queries intentionally DON'T `select` any timestamptz column
 // (updated_at / created_at). `order(...)` still sorts on them server-side; the
@@ -78,13 +81,45 @@ struct ChatMessageRow: Identifiable, Equatable, Hashable {
 enum ChatDataSource {
     // MARK: conversation list
 
+    /// Cache-first conversation list — read the last-known rows out of the
+    /// shared `LocalDatabase` GRDB cache (the SAME table iOS's `MessageTabView`
+    /// hydrates from) so the macOS 消息 tab paints instantly on entry, before
+    /// any network round-trip. Mirrors iOS's first-paint hydrate in
+    /// `MessageTabView.load()`; the network `listConversations()` then
+    /// overwrites with the authoritative set and refreshes the cache.
+    @MainActor
+    static func cachedConversations() -> [ChatConversationSummary] {
+        LocalDatabase.shared.loadConversations().map { row in
+            let title = [row.title, row.bot_name]
+                .compactMap { $0 }
+                .first { !$0.isEmpty } ?? "未命名"
+            let preview = (row.last_message_content ?? "")
+                .replacingOccurrences(of: "\n", with: " ")
+                .trimmingCharacters(in: .whitespaces)
+            // The cache row carries no unread count (that's owned by the
+            // server-truth unread store on iOS, not the conversations table),
+            // so a cached-only paint shows no badge until the network refresh
+            // lands a beat later — same settle as the preview / order.
+            return ChatConversationSummary(
+                id: row.id,
+                title: title,
+                preview: preview,
+                conversationType: row.conversation_type,
+                unreadCount: 0
+            )
+        }
+    }
+
     /// The conversation list (most-recent first), projected to a thin summary.
     /// Runs the SAME query as iOS's `MessageTabView.load()` via the shared
     /// `ConversationFetch.list()` — no hand-copied query here anymore — and just
     /// keeps the columns the macOS list renders (title / preview / unread).
+    /// After a successful fetch, reconciles the shared `LocalDatabase` cache
+    /// (same `upsertConversations` iOS uses) so the next entry paints from
+    /// cache instantly.
     static func listConversations() async throws -> [ChatConversationSummary] {
         let rows = try await ConversationFetch.list()
-        return rows.map { row in
+        let summaries: [ChatConversationSummary] = rows.map { row in
             let title = [row.title, row.bot?.display_name]
                 .compactMap { $0 }
                 .first { !$0.isEmpty } ?? "未命名"
@@ -99,15 +134,77 @@ enum ChatDataSource {
                 unreadCount: row.unread?.first?.unread_count ?? 0
             )
         }
+        // Reconcile the cache with the authoritative list, mirroring iOS's
+        // `LocalDatabase.shared.upsertConversations(...)` in `MessageTabView`.
+        // `asConversation` collapses each row exactly as iOS does, so the
+        // cached preview / activity time / bot name agree across platforms.
+        let cacheRows: [LocalDatabase.ConversationRow] = rows.map { row in
+            let c = row.asConversation
+            return LocalDatabase.ConversationRow(
+                id: c.id,
+                bot_id: c.bot_id.isEmpty ? nil : c.bot_id,
+                user_id: c.user_id.isEmpty ? nil : c.user_id,
+                title: c.title,
+                conversation_type: c.conversation_type,
+                feature: c.feature_type,
+                round_count: c.round_count,
+                last_activity_at: c.last_activity_at,
+                bot_name: c.bot_name,
+                last_message_content: c.last_message_content,
+                last_message_sender_type: c.last_message_sender_type
+            )
+        }
+        await MainActor.run {
+            LocalDatabase.shared.upsertConversations(cacheRows)
+        }
+        return summaries
     }
 
     // MARK: message history
+
+    /// Cache-first message hydrate — read the conversation's last-known rows out
+    /// of the shared `LocalDatabase` GRDB cache (the SAME table iOS's
+    /// `ConversationView.loadHistory()` writes back to) so the chat opens with
+    /// content on the first frame, even offline, before any network round-trip.
+    /// Mirrors iOS's `loadHistory` cache hydrate. Attachments aren't cached
+    /// (no columns for them), so cached rows are text-only until the network
+    /// `loadMessages()` reload resolves attachment metadata — same as iOS, whose
+    /// cache hydrate builds rows with `attachments: nil`.
+    @MainActor
+    static func cachedMessages(conversationId: String, limit: Int = 200) -> [ChatMessageRow] {
+        LocalDatabase.shared.loadMessages(conversationId: conversationId, limit: limit)
+            .map { r in
+                // The cache stores `role` as `bot` / `user` and the populated
+                // sender id — rebuild the same sender resolution the network
+                // path produces so group bubble headers paint from cache too.
+                let senderType: String
+                let senderId: String
+                if let botId = r.sender_bot_id, !botId.isEmpty {
+                    senderType = "bot"; senderId = botId
+                } else if let uid = r.user_id, !uid.isEmpty {
+                    senderType = "user"; senderId = uid
+                } else {
+                    senderType = ""; senderId = ""
+                }
+                return ChatMessageRow(
+                    id: r.id,
+                    role: r.role,
+                    content: r.content ?? "",
+                    seq: r.message_seq,
+                    senderType: senderType,
+                    senderId: senderId
+                )
+            }
+    }
 
     /// Messages for one conversation, oldest→newest, via the shared
     /// `MessagesFetch.latest()` (same query as iOS). Filters the rows iOS's
     /// dispatch also drops — soft-deleted, voice-call recaps, and `log`
     /// tool-trace/control rows (macOS doesn't render those yet) — and resolves
-    /// image attachments into `ServerImage` paths.
+    /// image attachments into `ServerImage` paths. After a successful fetch,
+    /// reconciles the shared `LocalDatabase` cache in one atomic transaction
+    /// (same `replaceMessages` cmid-aware upsert iOS's `loadHistory` uses) so
+    /// the next open hydrates from cache instantly.
     static func loadMessages(conversationId: String, limit: Int = 200) async throws -> [ChatMessageRow] {
         let rows = try await MessagesFetch.latest(conversationId: conversationId, limit: limit)
 
@@ -115,7 +212,9 @@ enum ChatDataSource {
         let allIds = Array(Set(rows.flatMap { $0.attachments?.ids ?? [] }))
         let meta = (try? await MessagesFetch.attachmentMeta(ids: allIds)) ?? [:]
 
-        return rows.compactMap { r -> ChatMessageRow? in
+        var cacheRows: [LocalDatabase.MessageRow] = []
+        cacheRows.reserveCapacity(rows.count)
+        let viewRows = rows.compactMap { r -> ChatMessageRow? in
             if r.status == "deleted" { return nil }
             if r.metadata?.objectValue?["source"]?.stringValue == "voice_call_summary" { return nil }
             if r.role == "log" { return nil }
@@ -134,6 +233,25 @@ enum ChatDataSource {
             } else {
                 senderType = ""; senderId = ""
             }
+            // Mirror iOS loadHistory's cache policy: only the real bot/user
+            // bubbles we render belong in the cache (log / deleted / voice
+            // recaps are already filtered out above). Map to the same
+            // `LocalDatabase.MessageRow` shape iOS persists.
+            cacheRows.append(LocalDatabase.MessageRow(
+                id: r.id,
+                client_message_id: r.client_message_id,
+                conversation_id: r.conversation_id,
+                user_id: r.user_id,
+                sender_bot_id: r.sender_bot_id,
+                role: r.role,
+                content: r.content ?? "",
+                status: r.status,
+                created_at: ServerTimestamp.epochSeconds(r.created_at, default: 0),
+                message_seq: r.message_seq,
+                parent_message_id: r.parent_message_id,
+                bubble_group_id: r.bubble_group_id,
+                model_slug: r.model_slug
+            ))
             return ChatMessageRow(
                 id: r.id,
                 role: r.role,
@@ -145,6 +263,13 @@ enum ChatDataSource {
                 senderId: senderId
             )
         }
+        // Reconcile the cache atomically (delete-then-insert in one txn) so the
+        // cache exactly mirrors the server view with no empty/partial window —
+        // identical contract to iOS's `LocalDatabase.shared.replaceMessages`.
+        await MainActor.run {
+            LocalDatabase.shared.replaceMessages(conversationId: conversationId, cacheRows)
+        }
+        return viewRows
     }
 
     // MARK: conversation type
