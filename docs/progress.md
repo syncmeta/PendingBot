@@ -2,6 +2,11 @@
 
 **最近对账：2026-06-04**（对照实际代码 / 迁移 / git，不是看 task 标记）
 
+> **2026-06-04 captain 编排续做 + 对账（`feat/crew-captain-orchestration`，off main，未合）**
+> - **对账**：核 main 代码发现 **#241(Phase J: captain 被群消息唤醒,dispatchGroupTurn 接进 POST /messages) 和 #242(Phase K: start_session tool + open_crew_session_by_captain RPC + Mac autoClaimLoop) 其实已落地**（编译/部署，真机未验），task 系统 #241/#242 标 pending 是 **stale**。判断口径：代码在、真机验归 T5.3。
+> - **续做（本分支新落，typecheck 0 / edge 500 tests 过）**：① **J-e** —— `post_to_crew` 两路径(bot-reply tool + session HTTP)在写 crew_announcements 后**也镜像一条 messages**，session/bot 发言终于进群聊显示（之前只进白板 announcements、群聊读 messages 看不到）。② **captain persona** —— `prompts/zh/crew-captain.md`(prompt-loader) + `builder.ts` 注入(gated crew+captain+inGroup,best-effort)，机长被唤醒时知道自己是机长 + 何时调 start_session。
+> - **待**：`create_child_crew` / `recruit_temp_bot` 两个 captain 工具(RPC 已有,tool 没接)；T5.3 真机验整链(captain 真编排 + Mac 接住跑 + 群显示)。
+
 > **2026-06-04 PendingCrew 中栏群聊 UI 对齐 PendingBot iOS（`feat/pendingcrew-chat-align`，未合）**
 > - **动机**：中栏群聊原是自绘简易气泡（圆角 12、两色填充、无头像、行内文字标签），与 PendingBot **iOS** 那套打磨过的群聊（头像+名字抬头+连续圆角+hairline+暖色 token+时间分隔 pill）观感脱节。**原生重画**对齐，数据仍绑 `CrewWhiteboardEntry`，不抽共享包、不引 PendingBot 私有代码（保 PendingCrew 可独立开源定位）。spec/plan 见 `docs/superpowers/{specs,plans}/2026-06-04-pendingcrew-chat-*`。
 > - **edge（零迁移）**：核到中栏白板端点 `GET /v1/crews/:id/messages` 读的是 conversation 的 `messages` 表（经 `mapMessageToEntry`），sender 身份本就在行里（`user_id`/`sender_bot_id`/`log_payload.session_id`），只是映射没透出 → 纯序列化补 `sender_user_id`/`sender_bot_id`/`sender_session_id`（commit `788614c8`，+3 vitest，17 passed）。
