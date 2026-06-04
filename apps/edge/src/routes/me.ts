@@ -220,8 +220,15 @@ meRoutes.get('/subject', requireSubjectAuth(['subject:read']), async (c) => {
   } catch (err) {
     console.warn('[me/subject] wallet.gate failed, returning 0 balance', err);
   }
+  // The PendingCrew (auth.users) user behind this call. For a device grant
+  // that's grantedByUserId; for a user JWT it's the authenticated userId.
+  // PendingCrew compares this against CrewWhiteboardEntry.senderUserId
+  // (= messages.user_id = auth.users.id) to right-align the local user's
+  // own crew-chat bubbles.
+  const userId = isDeviceGrant ? (deviceGrant?.grantedByUserId ?? null) : (c.var.userId ?? null);
   return c.json({
     subject,
+    user_id: userId,
     wallet: {
       balance_credits: balanceMicros,
       lifetime_topup_credits: 0,

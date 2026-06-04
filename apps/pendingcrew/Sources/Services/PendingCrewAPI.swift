@@ -90,6 +90,10 @@ struct PendingCrewAPI {
     func listMySubjects() async throws -> [UserSubject] {
         struct Response: Decodable {
             let subject: Row
+            // 登录这台机的 PendingCrew 用户(auth.users.id) —— device grant
+            // 路径是 grant 的 granted_by_user_id,user-JWT 路径是 caller 自己。
+            // 群聊用它区分"自己的消息"。subject row 之外的顶层字段。
+            let userId: String?
             struct Row: Decodable {
                 let id: String
                 let subjectType: String
@@ -105,13 +109,18 @@ struct PendingCrewAPI {
                     case displayName = "display_name"
                 }
             }
+            enum CodingKeys: String, CodingKey {
+                case subject
+                case userId = "user_id"
+            }
         }
         let resp: Response = try await get(path: "v1/me/subject")
         return [UserSubject(
             id: resp.subject.id,
             kind: resp.subject.subjectType,
             displayName: resp.subject.displayName,
-            role: nil
+            role: nil,
+            userId: resp.userId
         )]
     }
 

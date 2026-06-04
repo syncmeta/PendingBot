@@ -43,7 +43,10 @@ struct CrewChatView: View {
         .task(id: crewId) { await pollLoop() }
     }
 
-    private var localUserId: String? { nil }   // 见 Step 2 注
+    // 登录用户 id(auth.users.id) —— AppModel 在 subject 解析时回填。
+    // CrewSenderResolver 用它把 senderUserId 等于本值的 user 消息识别成
+    // "自己"(右对齐、无头像);nil(尚未解析 / BYOK)时退化为旧行为。
+    private var localUserId: String? { appModel.currentUserId }
 
     private var timeline: some View {
         ScrollViewReader { proxy in

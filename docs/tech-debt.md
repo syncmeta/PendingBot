@@ -60,13 +60,14 @@
 - **建议**: 独立 chore —— 先重写这批 RPC 去掉对两表的写/读，再发 DROP 迁移。别夹在别的 lane 顺手做。
 - **状态**: 待办（#226 物理 drop 专项）
 
-### 🟡 PendingCrew 群聊 user 作者无法区分是哪个人 — AppModel 不暴露登录 user id
+### 🟡 PendingCrew 群聊 user 作者无法区分是哪个人 — AppModel 不暴露登录 user id — ✅ 已解决 2026-06-05（feat/crew-captain-orchestration）
+- **解决**: `GET /v1/me/subject` 新增 `user_id`(device grant → `granted_by_user_id`;user JWT → `c.var.userId`);iOS `UserSubject.userId` 透出,`CrewStore.refreshSubjects` 回填 `AppModel.currentUserId`,`CrewChatView.localUserId` 改指过去。多人 crew 现可区分自己 vs 其他人类。
 - **发现**: 2026-06-04 · feat/pendingcrew-chat-align（中栏群聊 UI 对齐，Task 12）
 - **位置**: `apps/pendingcrew/Sources/Mac/Views/CrewChatView.swift`（`localUserId` 取 nil）；根因 `apps/pendingcrew/Sources/Stores/AppModel.swift` + `PendingCrewAuthCredential.swift`（只有 `kind`+`token`，opaque `pdg_` device-grant，无 user id）
 - **问题**: 新群聊行 `CrewSenderResolver.resolve(...)` 设计支持用 `sender_user_id == localUserId` 区分"我"vs 其他人类成员（左右对齐 + 头像）。但 PendingCrew 的 `AppModel` 没暴露当前登录 user 的 id（device-grant token 不可解出 sub），故 `localUserId` 只能传 nil → **所有 `user` 作者一律落"我"/右对齐**。
 - **影响**: BYOK 单人场景**正确**（就一个 human）；但 crew 里有多个真人成员时，别人发的话也会显示成"我"右对齐、不显头像/名字——多人群里人类作者归属错。edge 已把 `sender_user_id` 透出（白板序列化），缺口纯在客户端拿不到本地 user id。
 - **建议**: 让 `AppModel` 暴露 `currentUserId`（device-grant 换 token 时一并取/存 user id，或加一个 `/me` 拉一次缓存），再把 `CrewChatView.localUserId` 指过去即可——解析逻辑已就位。
-- **状态**: 待办（多人 crew 才暴露；单人无感）
+- **状态**: ✅ 已解决（走 `/v1/me/subject` 的 `user_id` 通道,best-effort 在 refreshSubjects 时回填）
 
 ### 🟢 bi_ro BI 角色读不了 RLS 受限表 — ✅ 已解决 2026-06-04（#246：security-definer 视图全覆盖 bi_cost_by_category/bi_subjects/bi_group_pool_*；角色已正名 bi_ro）
 - **发现**: 2026-06-03 · chore/dashboard-sql-repoint（#238 看板重指 Polar schema）

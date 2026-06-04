@@ -130,7 +130,8 @@ final class LocalBackend: PendingCrewBackend {
             id: Self.localSubjectId,
             kind: "byok",
             displayName: "本机 (BYOK)",
-            role: nil
+            role: nil,
+            userId: nil
         )]
     }
 
