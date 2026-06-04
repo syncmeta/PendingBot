@@ -10,6 +10,16 @@
 > - **附带发现**：supabase storage **空**（附件走 R2），换区零影响，少一摊。`feature flags` 经评估**不迁 PostHog**——现有 `*_ENABLED` 是运维 kill-switch，故意零运行时依赖，迁 PostHog 是反模式（循环依赖）。
 > - **待**：Phase 4 控制台 Auth（Site URL / Apple+Google OAuth / Turnstile secret / SMTP / email 模板，用户配）；Phase 5 iOS 端到端验证（真机注册登录→写库→realtime）；旧 US 库删除；Langfuse 发本文 + prompt→Langfuse Prompt Mgmt（#247）+ arena Elo→Bradley-Terry（#249）。
 > - **Grafana 解卡**：建 4 个 security-definer 聚合视图绕 RLS（不给宽松 policy），dashboard 03/05 SQL 指向视图（迁移 `20260604044057`，已 apply EU）。看板端到端待 Grafana Cloud 账号 + datasource。`metabase_ro` 正名 `bi_ro` 未做（成本铺开到 README，搁置）。
+> - **Phase 4 Auth 已配+验**：Site URL / Apple / Google / Turnstile / SMTP(Resend) 全配好；`/auth/v1/settings` 实测 apple+google+email 全 enabled。
+> - **signup P0 修复**：EU 重建逼出潜伏 bug —— 计费退役 drop 了 `group_billing_config` 表却漏改 `bootstrap_user_id`（仍往里 insert），空库每次注册都 500「Database error saving new user」；US 库同样潜在坏，只是没真注册没暴露。`CREATE OR REPLACE` 去掉死 insert（迁移 `20260604085445`，commit `fe4a8920`），admin `generate_link` 验证 signup 通、返回 OTP。
+> - **prompt→Langfuse 第一步**：15 个 .md（zh 14 + en 1）已推进 Langfuse Prompt Management（命名 `<name>/<locale>` + production label），管道验证通。**loader 换源 + 退役 `i18n_prompts` 未做**（#247，留新 session）。
+> - **登录决策**：评估过"纯 OAuth"（能省 SMTP/收件箱/email 滥用），**最终决定留 email OTP + Apple + Google 三种并存**（不把退路交第三方、email 触达、覆盖面）。改为"把防滥用做好"；`reject_disposable_email` / Turnstile **留着**（现在是防滥用一环，别删）。
+
+> **📋 `feat/managed-config` 接手清单（新 session 按序做）**
+> - **块1 · EU 收尾**：Phase 5 iOS 真机端到端（email OTP 登录 → 写库 → realtime）→ 验过**删旧 US 库** `sslzhblojwkxfdyisity` → `feat/managed-config` **合 main**。清 `devtest@pendingname.com` 测试用户。
+> - **块2 · 防滥用（发计费前）**：welcome bonus（35 PNC）薅羊毛 —— 主力 **iOS DeviceCheck/App Attest 绑 bonus（一设备一次，跨账号无效）** + 辅助 **email 规范化（gmail 去 `+`/`.` 归一查重）**。详见 tech-debt 🔴 条。email 规范化零风险可随手先加。
+> - **块3 · 托管化续做**：#247 prompt→Langfuse loader 换源（prompt 已推好）/ #248 Langfuse 发本文 + 开 `LANGFUSE_ENABLED` / #249 arena Elo→Bradley-Terry + 喂 Langfuse score / #246 Grafana 看板出图（待 Grafana Cloud 账号）。
+> - **测试账号**：登录留 email；测试用免费 Google 账号一键登 / `你的邮箱+别名`（Resend 已接能收码）/ Apple 用 Sandbox tester。本地开发可 `supabase start` + Inbucket(`:54324`)看邮件。
 
 > **2026-06-04 计费/观测上线收口 + 全项目死代码清理（计费 lane，已部署）**
 > - **送/兑换全改走 Polar**：新用户 welcome **35 PNC**（= 旧 3500 PND 原值）via `lib/billing-grant.ts:grantSignupBonus`（挂 `/me/profile`，幂等 + 仅 BILLING_ENABLED 时种）；兑换码 `billing_redeem` RPC 退化为只校验+标记 used，入账走 `creditRedemptionToPolar`（ensureCustomer+grantCredits）；`/redeem` 受 BILLING_ENABLED 门控（关时拒绝、不消耗码）。

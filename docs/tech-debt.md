@@ -38,7 +38,8 @@
 - **位置**: signup 链路（`auth.users` 唯一性按 email **原文**）+ `apps/edge/src/lib/billing-grant.ts:grantSignupBonus`（welcome 35 PNC ≈ $1.30）
 - **问题**: 注册只按 email 原文查重，没有规范化。`user+1@gmail.com` / `user+2@...`（Gmail 还忽略 `.`：`u.s.e.r@gmail.com`）对系统是**不同用户**、对邮箱是**同一个收件箱** → 一个真实 Gmail 能注册无限账号、每个都真实收到 OTP 走完整链路。已有的 `reject_disposable_email`（迁移 0050/0053）只挡一次性邮箱**域名**，挡不住正常域名的 `+`/`.` 别名。
 - **影响**: 上线**开计费（`BILLING_ENABLED`）后**，welcome bonus 变成 Sybil / 薅羊毛向量 —— 一个邮箱无限薅 $1.30/账号 的 LLM 额度，规模化就是真金白银损失。现在 kill-switch 关着、bonus 休眠未暴露（**没在烧钱**），但这是**发计费前必须堵的洞**。
-- **建议**: 两层。① 注册时 **email 规范化**：对已知大邮箱商（gmail/googlemail）去 `+后缀` + 去 `.`，归一后再做唯一性查重——堵 `+`/`.` 别名（只对已知规则的商做，别一刀切误伤小众商）。② 更根本：welcome bonus **绑门槛**（首充 / 手机验证 / 真实使用量），别"注册即送"，多账号也薅不到；手机号验证比 email 强。
+- **建议**: 两层。① **抬高造号成本**：注册时 email 规范化（gmail/googlemail 去 `+后缀`+`.`、归一后查重，堵 `+`/`.` 别名；只对已知规则大商做、别误伤小众商）+ 维护 disposable 黑名单 + 注册 rate limit。② **断薅羊毛收益（根本，移动 app 标准做法）**：welcome bonus **绑设备** —— iOS **DeviceCheck / App Attest** 让一台设备只领一次 bonus，跨多少账号都无效（比 email 规范化彻底，攻击者绕不过设备指纹）；或更狠 **绑首充**。**主力做 DeviceCheck，email 规范化当辅助**。
+- **决策（2026-06-04）**: 登录**留 email OTP + Apple + Google 并存**（评估过纯 OAuth，最终为不把退路交第三方/email 触达/覆盖面而保留 email）→ 所以防滥用是**明确要做的路线**，不是靠砍 email 规避。
 - **状态**: 待办（发计费前）
 
 ## 🟡 拆东墙补西墙
