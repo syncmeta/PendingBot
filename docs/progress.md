@@ -18,12 +18,12 @@
 
 > **2026-06-04 Supabase 迁 EU 区（Frankfurt）+ 观测三件套上线（`feat/managed-config`，已部署）**
 > - **动机**：用户数据 GDPR/EU 驻留。主库原在 US（us-west-2），pre-launch 无真实数据 → **EU 新建项目 `zafhoiwwpanpuashtnxy`（eu-central-1）、全套迁移重跑、不迁数据**。旧 US 库 `sslzhblojwkxfdyisity` 留作回退，EU 端到端全验后再删。
-> - **Phase 1 库**：180 迁移干净 apply（87 表 + 4 BI 视图 + `ensure_rls` event trigger + `metabase_ro` 角色）、seed（6 preset bots + 19683 地名）、schema regen、edge typecheck 全绿。**修了一个账本漂移**：`public.rls_auto_enable`（public schema 建表自动开 RLS 的安全网）早于 `0001_init` squash、只活在 US 库从未进账本，空库重跑撞 42883；已把 live 定义逐字补回迁移 `20260524175632`，账本自洽（任何空库可重建）。
+> - **Phase 1 库**：180 迁移干净 apply（87 表 + 4 BI 视图 + `ensure_rls` event trigger + `bi_ro` 角色）、seed（6 preset bots + 19683 地名）、schema regen、edge typecheck 全绿。**修了一个账本漂移**：`public.rls_auto_enable`（public schema 建表自动开 RLS 的安全网）早于 `0001_init` squash、只活在 US 库从未进账本，空库重跑撞 42883；已把 live 定义逐字补回迁移 `20260524175632`，账本自洽（任何空库可重建）。
 > - **Phase 2/3 代码+部署**：硬编码仅 3 处（wrangler `SUPABASE_URL` + iOS `HostedConfig` URL/anon key）。worker secret 换 EU anon/service + 新 `REALTIME_WEBHOOK_SECRET`（worker secret + EU vault 两边同值）；**deploy 切 EU**（health=production、AASA 200、`/b/*` 查库 404 非 500 = 连库成功）。
 > - **观测**：**Sentry + PostHog 生产启用**（EU host：`eu.i.posthog.com` / `cloud.langfuse.com`）。Langfuse keys 已备但 `LANGFUSE_ENABLED` 暂 false —— 用户要全功能（发完整 input/output 本文），等 `traceGeneration` 发本文（#247/#248）再开，免得先发半成品指标 trace。
 > - **附带发现**：supabase storage **空**（附件走 R2），换区零影响，少一摊。`feature flags` 经评估**不迁 PostHog**——现有 `*_ENABLED` 是运维 kill-switch，故意零运行时依赖，迁 PostHog 是反模式（循环依赖）。
 > - **待**：Phase 4 控制台 Auth（Site URL / Apple+Google OAuth / Turnstile secret / SMTP / email 模板，用户配）；Phase 5 iOS 端到端验证（真机注册登录→写库→realtime）；旧 US 库删除；Langfuse 发本文 + prompt→Langfuse Prompt Mgmt（#247）+ arena Elo→Bradley-Terry（#249）。
-> - **Grafana 解卡**：建 4 个 security-definer 聚合视图绕 RLS（不给宽松 policy），dashboard 03/05 SQL 指向视图（迁移 `20260604044057`，已 apply EU）。看板端到端待 Grafana Cloud 账号 + datasource。`metabase_ro` 正名 `bi_ro` 未做（成本铺开到 README，搁置）。
+> - **Grafana 解卡**：建 4 个 security-definer 聚合视图绕 RLS（不给宽松 policy），dashboard 03/05 SQL 指向视图（迁移 `20260604044057`，已 apply EU）。看板端到端待 Grafana Cloud 账号 + datasource。`bi_ro` 已正名 `bi_ro`（2026-06-04，迁移 20260604143012 + 全仓引用更新；Grafana datasource 用户名改 `bi_ro.<ref>`）。
 > - **Phase 4 Auth 已配+验**：Site URL / Apple / Google / Turnstile / SMTP(Resend) 全配好；`/auth/v1/settings` 实测 apple+google+email 全 enabled。
 > - **signup P0 修复**：EU 重建逼出潜伏 bug —— 计费退役 drop 了 `group_billing_config` 表却漏改 `bootstrap_user_id`（仍往里 insert），空库每次注册都 500「Database error saving new user」；US 库同样潜在坏，只是没真注册没暴露。`CREATE OR REPLACE` 去掉死 insert（迁移 `20260604085445`，commit `fe4a8920`），admin `generate_link` 验证 signup 通、返回 OTP。
 > - **prompt→Langfuse 第一步**：15 个 .md（zh 14 + en 1）已推进 Langfuse Prompt Management（命名 `<name>/<locale>` + production label），管道验证通。**loader 换源 + 退役 `i18n_prompts` 未做**（#247，留新 session）。
@@ -144,8 +144,8 @@
   - **PostHog**（block 1）：新 `lib/track.ts` `trackEvent(c,...)`（fire-and-forget，无 PII），接在 `message_sent / group_created / group_joined / voice_call_started(1v1+群) / voice_call_ended(群) / topup_succeeded(iap+lemon webhook)`。无 server seam 的事件（`signed_up` 触发器、`bot_created` 客户端直写、1v1 通话结束在 MeterDO、群注资/认缴在被改造的文件）记 tech-debt 留 iOS SDK/后续补，没造假。
   - **Langfuse**（block 2）：`traceGeneration` 接在 `persistAuditMessage`（每回合 model/tokens/cost/latency 都齐的唯一点），dedup 之后只发一次；隐私：只发结构指标不发 prompt/completion。装的是 v3 legacy SDK（Workers 友好）。
   - **Refine 后台**（block 4，`apps/admin`）：Refine v5 + react-router v7 SPA，custom dataProvider 走 edge（不直连 PG）、Supabase Auth、CF Pages 部署。**但 edge 没有 `/v1/admin/*` 面**——11 个端点缺口已记 tech-debt，dataProvider 逐条 `exists:false` 标注，不是无声 stub。
-  - **Grafana**（block 5，`infra/grafana`）：5 张 provisioning dashboard（营收/钱包/群池/成本/转化），datasource 走只读 `metabase_ro`。SQL 全部基于真实列（agent 发现 spec 的 `pnc_ledger` 不存在，实表是 `billing_ledger`）。
-- **待用户**：开 PostHog(EU)/Langfuse/Sentry/Grafana Cloud/CF Pages 账号、`wrangler secret put` 填 secret、建 `metabase_ro` 角色、连 Grafana→Supabase。详见 session 末清单。
+  - **Grafana**（block 5，`infra/grafana`）：5 张 provisioning dashboard（营收/钱包/群池/成本/转化），datasource 走只读 `bi_ro`。SQL 全部基于真实列（agent 发现 spec 的 `pnc_ledger` 不存在，实表是 `billing_ledger`）。
+- **待用户**：开 PostHog(EU)/Langfuse/Sentry/Grafana Cloud/CF Pages 账号、`wrangler secret put` 填 secret、建 `bi_ro` 角色、连 Grafana→Supabase。详见 session 末清单。
 
 ---
 

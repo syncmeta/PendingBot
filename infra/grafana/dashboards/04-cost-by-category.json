@@ -2,7 +2,7 @@
   "__inputs": [
     {
       "name": "DS_SUPABASE",
-      "label": "Supabase Postgres (metabase_ro)",
+      "label": "Supabase Postgres (bi_ro)",
       "description": "Read-only Supabase Postgres datasource",
       "type": "datasource",
       "pluginId": "postgres",

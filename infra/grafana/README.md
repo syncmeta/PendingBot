@@ -8,7 +8,7 @@ infra/grafana/
 ├── README.md                                   ← this file
 ├── provisioning/
 │   ├── datasources/
-│   │   └── supabase-postgres.yaml              ← Postgres datasource (metabase_ro)
+│   │   └── supabase-postgres.yaml              ← Postgres datasource (bi_ro)
 │   └── dashboards/
 │       └── pendingbot-revenue.yaml             ← file provider (self-hosted only)
 └── dashboards/
@@ -74,8 +74,8 @@ Cloud UI → **Connections → Data sources → Add data source → PostgreSQL**
 values from `provisioning/datasources/supabase-postgres.yaml`:
 - Host: `<supabase-db-host>:<port>` (session pooler / connection pooler host, port 5432)
 - Database: `postgres`
-- User: `metabase_ro`
-- Password: the `metabase_ro` password (kept out of git)
+- User: `bi_ro`
+- Password: the `bi_ro` password (kept out of git)
 - TLS/SSL Mode: `require`
 
 Give it the **uid `supabase_pendingbot_ro`** if the UI lets you set one, or just note the
@@ -95,7 +95,7 @@ API alternative (legacy create endpoint, still supported):
 
 ## Datasource setup details
 
-- **Role:** `metabase_ro` — a SELECT-only Postgres role (name reused from the Metabase era).
+- **Role:** `bi_ro` — a SELECT-only Postgres role (renamed 2026-06-04 from `bi_ro`, the Metabase-era name).
 - **Host / password:** never committed. Self-hosted provisioning reads `${SUPABASE_DB_HOST}`,
   `${SUPABASE_DB_PORT}`, `${SUPABASE_DB_PASSWORD}` from Grafana's process env. Cloud takes them
   via the UI.
@@ -187,7 +187,7 @@ Every SQL target below references **only** columns verified against
 
 ## Preconditions the user must do before these work
 
-- [ ] **Create the `metabase_ro` SELECT-only role** + grant `USAGE` on schema `pendingbot` and
+- [ ] **Create the `bi_ro` SELECT-only role** + grant `USAGE` on schema `pendingbot` and
   `SELECT` on the tables above. **No migration named `*metabase_readonly_role*` exists in this
   worktree** — this role is a prerequisite and must be applied separately (own migration or
   manual SQL). Until then the datasource cannot connect.

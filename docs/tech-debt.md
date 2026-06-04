@@ -68,12 +68,12 @@
 - **建议**: 让 `AppModel` 暴露 `currentUserId`（device-grant 换 token 时一并取/存 user id，或加一个 `/me` 拉一次缓存），再把 `CrewChatView.localUserId` 指过去即可——解析逻辑已就位。
 - **状态**: 待办（多人 crew 才暴露；单人无感）
 
-### 🟡 metabase_ro BI 角色读不了 RLS 受限表 — Grafana 财务看板多个 panel 取不到数
+### 🟢 bi_ro BI 角色读不了 RLS 受限表 — ✅ 已解决 2026-06-04（#246：security-definer 视图全覆盖 bi_cost_by_category/bi_subjects/bi_group_pool_*；角色已正名 bi_ro）
 - **发现**: 2026-06-03 · chore/dashboard-sql-repoint（#238 看板重指 Polar schema）
 - **位置**: `supabase/migrations/20260602051354_metabase_readonly_role.sql`（角色 NOBYPASSRLS + 无函数 EXECUTE）;受影响表 `group_pledges`/`group_pools`/`group_contributions`/`bots`/`group_join_requests` 的成员域 RLS policy
-- **问题**: `metabase_ro`（Grafana Postgres 数据源连接角色，pooler 形式 `metabase_ro.<ref>`）是 NOBYPASSRLS,且没有 grant 任何函数 EXECUTE。这些表的 RLS policy 要么 `TO authenticated`(无 auth.uid() 时 0 行匹配),要么 `USING <fn>(...)` 调 `_grp_caller_role`/`is_bot_invitee`/`is_participant`(角色无 EXECUTE → SELECT 直接 42501 报错)。实测:`group_pools`/`group_contributions` 返回 200 但**永远 0 行**;`group_pledges`/`bots`/`group_join_requests` 直接 **500 permission denied for function**。
+- **问题**: `bi_ro`（Grafana Postgres 数据源连接角色，pooler 形式 `bi_ro.<ref>`）是 NOBYPASSRLS,且没有 grant 任何函数 EXECUTE。这些表的 RLS policy 要么 `TO authenticated`(无 auth.uid() 时 0 行匹配),要么 `USING <fn>(...)` 调 `_grp_caller_role`/`is_bot_invitee`/`is_participant`(角色无 EXECUTE → SELECT 直接 42501 报错)。实测:`group_pools`/`group_contributions` 返回 200 但**永远 0 行**;`group_pledges`/`bots`/`group_join_requests` 直接 **500 permission denied for function**。
 - **影响**: 看板 03(群池/认缴/实缴)在补 policy 前**全空或报错**;看板 05 的"创建 bot""加入群"两 stage 也一直报错(早于本次改动、与计费重指无关)。BI"看(只读)和改(可写)分家"的设计在 RLS 表上没打通——只读角色拿不到聚合数据。
-- **建议**: 已起草 `supabase/migrations/20260603094114_metabase_ro_group_billing_read.sql`(给 metabase_ro 在 3 张群计费表加 `FOR SELECT TO metabase_ro USING (true)` 的宽松读 policy),但 `db push` 被 auto-mode 当作未授权的生产权限变更拦下,**未 apply**(文件留在主 worktree `/dev` 未跟踪,待用户审阅)。`bots`/`group_join_requests` 同类问题需另起一摊(本任务范围外)。决策口径:要么给 metabase_ro 逐表加只读 policy + grant 相关函数 EXECUTE,要么为 BI 单独建 `security definer` 聚合视图。
+- **建议**: 已起草 `supabase/migrations/20260603094114_bi_ro_group_billing_read.sql`(给 bi_ro 在 3 张群计费表加 `FOR SELECT TO bi_ro USING (true)` 的宽松读 policy),但 `db push` 被 auto-mode 当作未授权的生产权限变更拦下,**未 apply**(文件留在主 worktree `/dev` 未跟踪,待用户审阅)。`bots`/`group_join_requests` 同类问题需另起一摊(本任务范围外)。决策口径:要么给 bi_ro 逐表加只读 policy + grant 相关函数 EXECUTE,要么为 BI 单独建 `security definer` 聚合视图。
 - **状态**: 待办（看板 SQL 已按真实 schema 写对并重导;数据落地等 RLS 读权限收口）
 
 ### 🟡 Mac 端消息历史查询仍是 iOS inline 的手抄复刻（其余 4 条已收口）
@@ -556,12 +556,12 @@
 
 
 
-### 🟡 Grafana BI 依赖 `metabase_ro` 只读角色，但该角色无 migration
+### 🟢 Grafana BI 依赖 `bi_ro` 只读角色 — ✅ 已解决（migration 20260602051354 建角色 + 20260604143012 正名 bi_ro）
 - **发现**: 2026-06-03 · feat/dashboard-wiring
-- **位置**: infra/grafana/（datasource provisioning 指向 `metabase_ro`）
-- **问题**: dashboard stack 第 5 块（Grafana 营收/钱包 BI）的数据源用 SELECT-only 角色 `metabase_ro`，但本 worktree 里没有任何 `*metabase_readonly_role*` migration——角色不存在则数据源连不上。属于「依赖一个未落库的前置」。
+- **位置**: infra/grafana/（datasource provisioning 指向 `bi_ro`）
+- **问题**: dashboard stack 第 5 块（Grafana 营收/钱包 BI）的数据源用 SELECT-only 角色 `bi_ro`，但本 worktree 里没有任何 `*metabase_readonly_role*` migration——角色不存在则数据源连不上。属于「依赖一个未落库的前置」。
 - **影响**: Grafana 面板全部依赖此角色；未建角色前所有 dashboard 都是空的/连接失败。不影响主程序运行。
-- **建议**: 补一条 migration 建 `metabase_ro` 角色 + `GRANT USAGE ON SCHEMA pendingbot` + `GRANT SELECT` on（至少）`topups, billing_ledger, subject_wallets, subjects, group_member_billing, conversations, audit_log, users, bots, group_join_requests`；或手工 SQL 建角色。建好后在 Grafana Cloud 填 datasource 密码 + 确认 Supabase 网络放行（pooler 公网可达或配 PDC）。
+- **建议**: 补一条 migration 建 `bi_ro` 角色 + `GRANT USAGE ON SCHEMA pendingbot` + `GRANT SELECT` on（至少）`topups, billing_ledger, subject_wallets, subjects, group_member_billing, conversations, audit_log, users, bots, group_join_requests`；或手工 SQL 建角色。建好后在 Grafana Cloud 填 datasource 密码 + 确认 Supabase 网络放行（pooler 公网可达或配 PDC）。
 - **状态**: 待办（前置依赖，需用户落库角色 + 配 datasource）
 
 ### 🟡 admin 控制台（apps/admin）依赖的 edge admin 端点尚不存在 —— dataProvider 指向"意图路径"，调用即 404

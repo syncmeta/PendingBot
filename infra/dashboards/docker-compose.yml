@@ -72,7 +72,7 @@ services:
       timeout: 10s
       retries: 5
       start_period: 120s
-    # NOTE: the read-only Supabase connection (metabase_ro) is NOT configured
+    # NOTE: the read-only Supabase connection (bi_ro) is NOT configured
     # here — it is added through the Metabase UI after first-run setup, using
     # MB_DB_SUPABASE_* values from .env. See runbook.
 
