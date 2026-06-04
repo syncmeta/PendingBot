@@ -6,8 +6,9 @@
 > - **背景**：用户「钱包什么的 已经迁移了的 都重新弄一下 ios 也一起」。核查现状：iOS 个人钱包 `WalletV2View` 已是新 PNC/Polar 模型（活，挂 MeTab）；`GroupWalletView` 也是新模型但**零入口**（#227）；老 `WalletView`(billing v1) 已零引用=死；**Mac 完全没有钱包**。数据层 `BillingService`/`GroupWalletService`/`APIClient` 本就跨平台。
 > - **Mac 个人钱包**：新 `MacWalletView`（原生 List `.inset` 镜像 iOS 钱包：余额/包/账本，Theme token），作为 sheet 从 `MacMeView` 弹出；MacMeView 加钱包概览（余额+阈值）。抽跨平台 `WalletV2Format`（formatPnc/各 label/阈值·过期文案/formatters），iOS `WalletV2View` 删自带 static helper 改复用 —— 两端同源不复制。
 > - **iOS 清理**：删死的 `WalletView.swift`；`BillingService` 砍掉只被它用的 v1 成员（Balance/fetchBalance/applySilentUpdate/redeem/Summary/fetchSummary/Log*/fetchLog），只留 `WalletV2 + fetchWalletV2`。双端 build 印证无他处引用。
-> - **缺口（记 tech-debt 🟡）**：① 删 v1 钱包连带删了**兑换码入口**，新钱包两端都没有兑换 UI（后端仍能兑换）——待定是否在新钱包补；② **群钱包两端入口位置未定**：iOS #227 一直 pending、Mac 没有 crew 详情页可挂 → 群钱包 Mac 端重画 + 两端接入口**待用户拍板入口位置**后再做。
-> - **验证**：iOS Simulator + macOS 双端 `xcodebuild` BUILD SUCCEEDED。未合 main。
+> - **群钱包（用户「iOS+Mac 都现在做」）**：抽跨平台 `GroupWalletShared`（`GroupWalletFormat` + `AmountForm`），iOS `GroupWalletView` 删自带 static/本地 enum 改复用。新 `MacGroupWalletView`（原生 List `.inset` 镜像 iOS：群池/份额/认缴/成员/操作 + 充值·认缴·取出 sheet + 退群/解散确认），`crewId→subjectId` 走跨平台 `listCrewsV2`（`CrewAPI.getCrewV2` 是 iOS-only）。**接入口**：iOS `CrewDetailV2View` 加「账户 > 群钱包」NavigationLink（#227 收口）；Mac `MacRemoteSessionsView` 工具栏「群钱包」按钮 → sheet。
+> - **缺口（记 tech-debt 🟡）**：删 v1 钱包连带删了**兑换码入口**，新钱包两端都没有兑换 UI（后端仍能兑换）——待定是否在新钱包补。
+> - **验证**：iOS Simulator + macOS 双端 `xcodebuild` BUILD SUCCEEDED（个人钱包 + 群钱包 + 入口）。未合 main。真机/真账号视觉与写操作（充值/认缴/取出/退群/解散）回合未实测。
 
 > **2026-06-04 PendingBot Mac 登录界面对齐 iOS（`feat/mac-login-align`，未合，#253/#212）**
 > - **动机**：用户「开 Mac 我看看 → 登录界面要和 iOS 统一」，选了**完全对齐三种登录**（Apple+Google+邮箱）。Mac 原本是极简 email-only（一个 SF Symbol + 验证码），iOS 是打磨过的完整版（BrandMark logo + 三登录 + 「你是？」人机验证分步 + Turnstile + 验证码 + 机器人彩蛋）。
