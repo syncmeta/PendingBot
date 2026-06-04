@@ -1,0 +1,341 @@
+{
+  "apiVersion": "dashboard.grafana.app/v0alpha1",
+  "kind": "Dashboard",
+  "metadata": {
+    "name": "pendingbot-cost-by-category",
+    "annotations": {
+      "grafana.app/folder": "pendingbot"
+    }
+  },
+  "spec": {
+    "annotations": {
+      "list": [
+        {
+          "builtIn": 1,
+          "datasource": {
+            "type": "grafana",
+            "uid": "-- Grafana --"
+          },
+          "enable": true,
+          "hide": true,
+          "iconColor": "rgba(0, 211, 255, 1)",
+          "name": "Annotations & Alerts",
+          "type": "dashboard"
+        }
+      ]
+    },
+    "description": "Consumption cost grouped by category. Primary source: pendingbot.audit_log (task_type = category, model_id, cost_credits, cost_usd, tool_cost_usd). Secondary: pendingbot.pnc_ledger grouped by kind/source for credit issue/refund movements (delta_pnc_micros).",
+    "editable": true,
+    "fiscalYearStartMonth": 0,
+    "graphTooltip": 0,
+    "links": [],
+    "liveNow": false,
+    "panels": [
+      {
+        "datasource": {
+          "type": "postgres",
+          "uid": "cfo4bmc9o50xsc"
+        },
+        "description": "Cost (credits) by task_type \u2014 the real per-call category column in audit_log.",
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "cellOptions": {
+                "type": "auto"
+              },
+              "inspect": false
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                }
+              ]
+            }
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 0
+        },
+        "id": 1,
+        "options": {
+          "cellHeight": "sm",
+          "footer": {
+            "countRows": false,
+            "fields": "",
+            "reducer": [
+              "sum"
+            ],
+            "show": true
+          },
+          "showHeader": true
+        },
+        "pluginVersion": "12.0.0",
+        "title": "Cost by task_type (audit_log)",
+        "type": "table",
+        "targets": [
+          {
+            "datasource": {
+              "type": "postgres",
+              "uid": "cfo4bmc9o50xsc"
+            },
+            "editorMode": "code",
+            "format": "table",
+            "rawQuery": true,
+            "rawSql": "SELECT\n  task_type,\n  COUNT(*) AS calls,\n  COALESCE(SUM(cost_credits), 0) AS cost_credits,\n  COALESCE(SUM(cost_usd), 0) AS cost_usd,\n  COALESCE(SUM(tool_cost_usd), 0) AS tool_cost_usd,\n  COALESCE(SUM(total_tokens), 0) AS total_tokens\nFROM pendingbot.audit_log\nWHERE $__timeFilter(created_at)\nGROUP BY task_type\nORDER BY cost_credits DESC;",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "datasource": {
+          "type": "postgres",
+          "uid": "cfo4bmc9o50xsc"
+        },
+        "description": "Cost (credits) by model_id \u2014 which models burn the most.",
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "cellOptions": {
+                "type": "auto"
+              },
+              "inspect": false
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                }
+              ]
+            }
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 12,
+          "y": 0
+        },
+        "id": 2,
+        "options": {
+          "cellHeight": "sm",
+          "footer": {
+            "countRows": false,
+            "fields": "",
+            "reducer": [
+              "sum"
+            ],
+            "show": true
+          },
+          "showHeader": true
+        },
+        "pluginVersion": "12.0.0",
+        "title": "Cost by model_id (audit_log)",
+        "type": "table",
+        "targets": [
+          {
+            "datasource": {
+              "type": "postgres",
+              "uid": "cfo4bmc9o50xsc"
+            },
+            "editorMode": "code",
+            "format": "table",
+            "rawQuery": true,
+            "rawSql": "SELECT\n  model_id,\n  COUNT(*) AS calls,\n  COALESCE(SUM(cost_credits), 0) AS cost_credits,\n  COALESCE(SUM(cost_usd), 0) AS cost_usd,\n  COALESCE(SUM(input_tokens), 0) AS input_tokens,\n  COALESCE(SUM(output_tokens), 0) AS output_tokens\nFROM pendingbot.audit_log\nWHERE $__timeFilter(created_at)\nGROUP BY model_id\nORDER BY cost_credits DESC\nLIMIT 50;",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "datasource": {
+          "type": "postgres",
+          "uid": "cfo4bmc9o50xsc"
+        },
+        "description": "Daily cost (credits) stacked by task_type.",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "drawStyle": "bars",
+              "fillOpacity": 70,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "never",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "normal"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                }
+              ]
+            },
+            "unit": "locale"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 24,
+          "x": 0,
+          "y": 9
+        },
+        "id": 3,
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": true
+          },
+          "tooltip": {
+            "mode": "multi",
+            "sort": "desc"
+          }
+        },
+        "pluginVersion": "12.0.0",
+        "title": "Daily cost (credits) by task_type",
+        "type": "timeseries",
+        "targets": [
+          {
+            "datasource": {
+              "type": "postgres",
+              "uid": "cfo4bmc9o50xsc"
+            },
+            "editorMode": "code",
+            "format": "time_series",
+            "rawQuery": true,
+            "rawSql": "SELECT\n  $__timeGroup(created_at, '1d') AS time,\n  task_type AS metric,\n  COALESCE(SUM(cost_credits), 0) AS cost_credits\nFROM pendingbot.audit_log\nWHERE $__timeFilter(created_at)\nGROUP BY 1, task_type\nORDER BY 1;",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "datasource": {
+          "type": "postgres",
+          "uid": "cfo4bmc9o50xsc"
+        },
+        "description": "Credit ledger movements by kind (topup / refund / admin / redemption) and source (channel). Positive delta = credit issued, negative = refund/clawback. Amounts PNC = delta_pnc_micros / 1e6.",
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "cellOptions": {
+                "type": "auto"
+              },
+              "inspect": false
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                }
+              ]
+            }
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 18
+        },
+        "id": 4,
+        "options": {
+          "cellHeight": "sm",
+          "footer": {
+            "countRows": false,
+            "fields": "",
+            "reducer": [
+              "sum"
+            ],
+            "show": false
+          },
+          "showHeader": true
+        },
+        "pluginVersion": "12.0.0",
+        "title": "Credit ledger movements by kind & source (pnc_ledger)",
+        "type": "table",
+        "targets": [
+          {
+            "datasource": {
+              "type": "postgres",
+              "uid": "cfo4bmc9o50xsc"
+            },
+            "editorMode": "code",
+            "format": "table",
+            "rawQuery": true,
+            "rawSql": "SELECT\n  kind,\n  source,\n  COUNT(*) AS entries,\n  COALESCE(SUM(delta_pnc_micros), 0) / 1e6 AS net_delta_pnc,\n  COALESCE(SUM(delta_pnc_micros) FILTER (WHERE delta_pnc_micros > 0), 0) / 1e6 AS credited_pnc,\n  COALESCE(SUM(delta_pnc_micros) FILTER (WHERE delta_pnc_micros < 0), 0) / 1e6 AS debited_pnc\nFROM pendingbot.pnc_ledger\nWHERE $__timeFilter(created_at)\nGROUP BY kind, source\nORDER BY net_delta_pnc DESC;",
+            "refId": "A"
+          }
+        ]
+      }
+    ],
+    "refresh": "5m",
+    "schemaVersion": 41,
+    "tags": [
+      "pendingbot",
+      "cost",
+      "consumption"
+    ],
+    "templating": {
+      "list": []
+    },
+    "time": {
+      "from": "now-30d",
+      "to": "now"
+    },
+    "timepicker": {},
+    "timezone": "",
+    "title": "PendingBot \u2014 Cost by Category",
+    "uid": "pendingbot-cost-by-category",
+    "version": 1,
+    "weekStart": "",
+    "id": null
+  }
+}
