@@ -87,10 +87,40 @@ beforeEach(async () => {
   ({ uploadRoutes } = await import('../src/routes/upload'));
 });
 
+// SHA-256 a device-grant token the way lib/device-grants.ts hashes it, so a
+// seeded `subject_device_grants.token_hash` matches `Bearer <token>`.
+async function sha256HexString(input: string): Promise<string> {
+  const bytes = new TextEncoder().encode(input);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Seed an active PendingCrew-style device grant. `grantedByUserId` is the
+// effective owner the upload should attribute the attachment row to.
+async function makeDeviceGrant(
+  token: string,
+  grantedByUserId: string,
+  scopes: string[],
+): Promise<Row> {
+  return {
+    id: 'grant-1',
+    subject_id: 'subject-1',
+    granted_by_user_id: grantedByUserId,
+    token_hash: await sha256HexString(token),
+    grant_kind: 'pendingcrew_control',
+    scopes,
+    app_kind: 'pendingcrew_macos',
+    status: 'active',
+    expires_at: '2099-01-01T00:00:00Z',
+    last_used_at: null,
+  };
+}
+
 async function post(
   env: ReturnType<typeof makeFakeEnv>,
   userId: string,
   formFields: Record<string, string | { file: Uint8Array; name: string; type: string }>,
+  opts?: { bearer?: string },
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const app = new Hono<AppBindings>();
   app.route('/v1/upload', uploadRoutes);
@@ -104,9 +134,16 @@ async function post(
     }
   }
 
+  // A `pdg_*` bearer drives the real device-grant branch of requireSubjectAuth
+  // (the requireSession mock only kicks in when no such bearer is present), so
+  // these two auth paths exercise different code without a second mock.
+  const headers: Record<string, string> = opts?.bearer
+    ? { authorization: `Bearer ${opts.bearer}` }
+    : { 'x-test-user-id': userId };
+
   const res = await app.request(
     '/v1/upload',
-    { method: 'POST', headers: { 'x-test-user-id': userId }, body: fd },
+    { method: 'POST', headers, body: fd },
     env,
   );
   let body: Record<string, unknown> = {};
@@ -306,6 +343,46 @@ describe('POST /v1/upload — happy path', () => {
     expect(row.user_id).toBe('alice');
     expect(row.r2_key).toBe(expectedKey);
     expect(row.content_sha256).toBe(hash);
+  });
+});
+
+describe('POST /v1/upload — device-grant (PendingCrew) path', () => {
+  it('attributes the attachment row to the grant\'s granted_by_user_id', async () => {
+    const token = 'pdg_upload_test_token';
+    const grant = await makeDeviceGrant(token, 'owner-user', ['subject:read', 'crew:read', 'crew:write']);
+    const env = makeFakeEnv(makeFakeDb({
+      attachments: [],
+      billing_config: [],
+      subject_device_grants: [grant],
+    }));
+    const r2 = makeR2Mock();
+    bindR2(env as unknown as Record<string, unknown>, r2);
+
+    const r = await post(env, 'unused', {
+      file: { file: BYTES_B, name: 'crew.png', type: 'image/png' },
+    }, { bearer: token });
+    expect(r.status).toBe(200);
+
+    const db = (env as unknown as { __fakeDb: FakeDb }).__fakeDb;
+    expect(db.inserts).toHaveLength(1);
+    // Owner is the user who granted PendingCrew, not the subject/device.
+    expect((db.inserts[0].row as { user_id: string }).user_id).toBe('owner-user');
+  });
+
+  it('rejects a device grant lacking crew:write with 403', async () => {
+    const token = 'pdg_no_crew_write';
+    const grant = await makeDeviceGrant(token, 'owner-user', ['subject:read', 'crew:read']);
+    const env = makeFakeEnv(makeFakeDb({
+      attachments: [],
+      billing_config: [],
+      subject_device_grants: [grant],
+    }));
+    bindR2(env as unknown as Record<string, unknown>, makeR2Mock());
+
+    const r = await post(env, 'unused', {
+      file: { file: BYTES_A, name: 'a.png', type: 'image/png' },
+    }, { bearer: token });
+    expect(r.status).toBe(403);
   });
 });
 

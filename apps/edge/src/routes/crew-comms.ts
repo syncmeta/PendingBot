@@ -230,6 +230,10 @@ const CrewMessageBody = z.object({
   // text (e.g. attachment refs, structured action data). Kept under the
   // hood as crew_announcements.payload.
   payload: z.record(z.string(), z.unknown()).optional(),
+  // Attachment ids already uploaded via POST /v1/upload (device-grant path).
+  // Stored on the messages row as `{ ids: [...] }` (mirror routes/messages.ts)
+  // and hydrated → full renderable objects on read by hydrateCrewAttachments.
+  attachmentIds: z.array(z.string().uuid()).max(16).optional(),
 });
 
 /// Translate the spec-v2 mention shape into recipient_session_ids the
@@ -354,6 +358,9 @@ crewMessagesRoutes.post('/:crewId/messages', requireSubjectAuth(['crew:write']),
     role: 'user',
     content: parsed.content,
     status: 'done',
+    // Mirror routes/messages.ts: persist attachment refs as `{ ids: [...] }`
+    // (null when none) so hydrateCrewAttachments can resolve them on read.
+    attachments: parsed.attachmentIds?.length ? { ids: parsed.attachmentIds } : null,
   } as never);
   if (insErr) return jsonError(c, 500, 'database_error', { detail: insErr.message });
 
