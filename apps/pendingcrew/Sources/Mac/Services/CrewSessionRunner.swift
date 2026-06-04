@@ -102,6 +102,9 @@ final class CrewSessionRunner: ObservableObject {
             terminalSession: terminalSession,
             serverLink: serverLink
         )
+        // 切到新 run 前先停掉上一个 —— 否则旧 agent 进程没有任何 UI 能停，变成
+        // orphan 一直跑（"停不掉"的一半）。MVP 一个窗口只跑一个 run。
+        current?.stop()
         current = run
     }
 
