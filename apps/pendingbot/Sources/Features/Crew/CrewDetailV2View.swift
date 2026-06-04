@@ -181,6 +181,16 @@ private struct CrewDetailSheet: View {
                 }
 
                 Section {
+                    NavigationLink {
+                        GroupWalletView(subjectId: detail.crew.responsibleSubjectId)
+                    } label: {
+                        Label("群钱包", systemImage: "wallet.pass")
+                    }
+                } header: {
+                    Text("账户")
+                }
+
+                Section {
                     if let captain = detail.captain {
                         HStack {
                             ZStack {

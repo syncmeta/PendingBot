@@ -123,6 +123,7 @@
 		BBBB6FB5770D8E3EB3080CCE /* JoinRequestsInboxView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F898044EDF181328CD4C946F /* JoinRequestsInboxView.swift */; };
 		BBE709B9F7E9D22EA452BDED /* BotManagement.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69B9DBAF15442620F6137B0F /* BotManagement.swift */; };
 		BC1CCF7E6090730EF93B7BF0 /* MathRendering.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2FF6CBBDD7A1F3222907A47 /* MathRendering.swift */; };
+		BC5C3C8B82FDABE15170EABE /* MacGroupWalletView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 512494761C7ECD20BFA8BB34 /* MacGroupWalletView.swift */; };
 		BDA62B07A10DB14681C37A5D /* ChatComposerAccessory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3717FA37BE983343D22F54C1 /* ChatComposerAccessory.swift */; };
 		BDDDE8F25B3B11A420609162 /* LocalDatabase.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EFE46C6B281742A271B9202 /* LocalDatabase.swift */; };
 		BF1A43D6762B6F732360A79D /* GroupCallView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C49D5C2273CF903796CDB250 /* GroupCallView.swift */; };
@@ -168,6 +169,7 @@
 		FAECF2B5BD0A3A5A114A1851 /* PendingBotApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BD3256170D29AD9138939C3 /* PendingBotApp.swift */; };
 		FB00D4A903E342738907E282 /* GroupWalletView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D2B2B8D8BD1DE4D364525C4 /* GroupWalletView.swift */; };
 		FC8F6706A2705C7F8913F790 /* GroupInviteAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6007B7AC7A2508EA9C7C04C9 /* GroupInviteAPI.swift */; };
+		FCD54979BEFA6D687994FF09 /* GroupWalletShared.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54EA631014F4D2F3E5F0B510 /* GroupWalletShared.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -226,7 +228,9 @@
 		4AA1FB293BD301008D3819AD /* EnvelopeTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvelopeTabView.swift; sourceTree = "<group>"; };
 		4D8EFC98BB125FA73157E5A2 /* MacMeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacMeView.swift; sourceTree = "<group>"; };
 		508FBAF36D83C0824F8073F4 /* CallFloatingPill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallFloatingPill.swift; sourceTree = "<group>"; };
+		512494761C7ECD20BFA8BB34 /* MacGroupWalletView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacGroupWalletView.swift; sourceTree = "<group>"; };
 		538B09D7D56B20AA7BCE1E50 /* RealtimeSocket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeSocket.swift; sourceTree = "<group>"; };
+		54EA631014F4D2F3E5F0B510 /* GroupWalletShared.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWalletShared.swift; sourceTree = "<group>"; };
 		550414C4E1E5D5C11397ABA1 /* ConversationView+CrewProposal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConversationView+CrewProposal.swift"; sourceTree = "<group>"; };
 		56BFB3EBF959D378BC6BC313 /* EnvelopeFeedRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvelopeFeedRow.swift; sourceTree = "<group>"; };
 		58C7852B0C9D1F1A7346DDCB /* BotVisibilityTag.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotVisibilityTag.swift; sourceTree = "<group>"; };
@@ -497,6 +501,7 @@
 		484E51BC2157D35C6C8DB11E /* Mac */ = {
 			isa = PBXGroup;
 			children = (
+				512494761C7ECD20BFA8BB34 /* MacGroupWalletView.swift */,
 				4D8EFC98BB125FA73157E5A2 /* MacMeView.swift */,
 				C2B98AFCAEB4DAF5903E44D0 /* MacRootView.swift */,
 				CA812051DC5CDCA9D1D41712 /* MacWalletView.swift */,
@@ -623,6 +628,7 @@
 				9010CC63D1CC724A55770E7A /* GroupJoinView.swift */,
 				7B48A6EDBF639ED658DB2493 /* GroupQRCard.swift */,
 				E2EDC1669F416D3C59723D25 /* GroupSettingsView.swift */,
+				54EA631014F4D2F3E5F0B510 /* GroupWalletShared.swift */,
 				6D2B2B8D8BD1DE4D364525C4 /* GroupWalletView.swift */,
 				F898044EDF181328CD4C946F /* JoinRequestsInboxView.swift */,
 			);
@@ -851,6 +857,7 @@
 				C47DDDD2BAD3AD2DA4EC51A0 /* GroupQRCard.swift in Sources */,
 				A22D46B0B364248079A08775 /* GroupSettingsView.swift in Sources */,
 				5A482C1B8A6167FDA5CB3C16 /* GroupWalletService.swift in Sources */,
+				FCD54979BEFA6D687994FF09 /* GroupWalletShared.swift in Sources */,
 				FB00D4A903E342738907E282 /* GroupWalletView.swift in Sources */,
 				EAF59E8B7CEB265E5E78C39C /* Haptics.swift in Sources */,
 				D6BA5491F9DE20519ACE28CD /* HostedConfig.swift in Sources */,
@@ -862,6 +869,7 @@
 				E81BA5D57A39095B26E2EE89 /* Log.swift in Sources */,
 				09D4746AF1AD5616504DC333 /* MacEnvelopeView.swift in Sources */,
 				939B2ECABC9E20A928E7ABCD /* MacFriendsView.swift in Sources */,
+				BC5C3C8B82FDABE15170EABE /* MacGroupWalletView.swift in Sources */,
 				D75770E01905BA3C3A8D4119 /* MacMeView.swift in Sources */,
 				C52090D1049289B1C5AC862A /* MacMessagesView.swift in Sources */,
 				82A8EEB896FD422C7064FFB2 /* MacRemoteSessionsView.swift in Sources */,

@@ -90,6 +90,7 @@ struct MacRemoteSessionsView: View {
     @State private var liveClient: SessionProxyClient?
     @State private var liveSnapshot: SessionStateSnapshot?
     @State private var sentCancel = false
+    @State private var groupWalletShown = false
 
     private let api = APIClient()
     private let pollInterval: UInt64 = 3_000_000_000 // 3s
@@ -113,6 +114,19 @@ struct MacRemoteSessionsView: View {
                 .frame(minWidth: 360, maxWidth: .infinity)
         }
         .navigationTitle("服务端 session")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    groupWalletShown = true
+                } label: {
+                    Label("群钱包", systemImage: "wallet.pass")
+                }
+                .help("群钱包(实缴池 / 认缴 / 取出)")
+            }
+        }
+        .sheet(isPresented: $groupWalletShown) {
+            MacGroupWalletView(crewId: crewId)
+        }
         .task(id: crewId) { await pollLoop() }
         .onChange(of: selectedSessionId) { _, newValue in subscribeLive(to: newValue) }
         .onDisappear { teardownLive() }
