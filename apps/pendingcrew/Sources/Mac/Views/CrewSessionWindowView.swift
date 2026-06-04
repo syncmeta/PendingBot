@@ -1,14 +1,13 @@
 #if os(macOS)
 import SwiftUI
 
-/// 右栏：当前 session 的 stdout/stderr 实时视图。
+/// 右栏：当前 session 的内嵌终端视图。
 ///
-/// 这一层只观察 `CrewSessionRunner.current`（哪个 run 在前台）。具体
-/// run 的 stdout/stderr/status 变化由内层 `SessionRunContentView` 通过
-/// `@ObservedObject` 观察 —— **必须分两层**：`CrewSessionRun` 是嵌套的
-/// ObservableObject，父 view 只 `@EnvironmentObject` 持有 runner 时不会
-/// 订阅到 run 自己的 `@Published`，否则 stdout/status 更新了 UI 不刷新
-/// （会卡在 "running" / "(空)"）。
+/// 这一层只观察 `CrewSessionRunner.current`（哪个 run 在前台）。具体 run 的
+/// status 变化由内层 `SessionRunContentView` 通过 `@ObservedObject` 观察 ——
+/// **必须分两层**：`CrewSessionRun` 是嵌套的 ObservableObject，父 view 只
+/// `@EnvironmentObject` 持有 runner 时不会订阅到 run 自己的 `@Published`，否则
+/// status 更新了 UI 不刷新。
 struct CrewSessionWindowView: View {
     @EnvironmentObject private var sessionRunner: CrewSessionRunner
     @EnvironmentObject private var appModel: AppModel
@@ -26,7 +25,7 @@ struct CrewSessionWindowView: View {
     /// spec §9.3 + 用户心智：右栏是**常驻**和 claude/codex 交互的面（像 Codex
     /// Desktop）。没有 session 时就地给一个 composer —— **第一条消息即开始
     /// session**（零配置，用 crew 默认目录/runner/权限模式；无标题、无单独的
-    /// 「新建」表单）。运行中再发 = `send_prompt` 续跑回合。
+    /// 「新建」表单）。运行中再发 = 直接把文本注入终端续聊。
     var body: some View {
         VStack(spacing: 0) {
             if let run = sessionRunner.current {
@@ -107,8 +106,9 @@ struct CrewSessionWindowView: View {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         if let run = sessionRunner.current, run.status == .running {
-            // Running session → queue as a send_prompt resume turn (T4.5).
-            run.enqueueFollowUp(text)
+            // Running session → inject the text straight into the embedded
+            // terminal (the agent's interactive prompt picks it up).
+            run.send(text)
             draft = ""
         } else {
             await startSession(firstPrompt: text)
@@ -118,7 +118,8 @@ struct CrewSessionWindowView: View {
     /// Zero-config start: crew default dir + runner kind + permission mode, with
     /// `firstPrompt` as the initial turn. No title, no task brief. Replicates the
     /// logged server-link prep (register host → create → claim) so cross-device
-    /// viewers can follow it; BYOK stays local.
+    /// viewers can follow it; BYOK stays local. The first prompt is injected into
+    /// the terminal once the agent's REPL is up.
     private func startSession(firstPrompt: String) async {
         guard let detail = crewStore.selectedDetail else { return }
         guard let wd = detail.crew.workingDirectory, !wd.isEmpty else {
@@ -145,9 +146,16 @@ struct CrewSessionWindowView: View {
                 kind: selectedKind,
                 workingDirectory: dir,
                 taskBrief: "",
-                initialPrompt: firstPrompt,
                 serverLink: serverLink
             )
+            // First instruction → inject into the freshly-spawned REPL. A short
+            // delay lets the agent finish booting before the prompt lands.
+            if let run = sessionRunner.current {
+                Task {
+                    try? await Task.sleep(nanoseconds: 600_000_000) // 0.6s
+                    run.send(firstPrompt)
+                }
+            }
             draft = ""
         } catch {
             localError = error.localizedDescription
@@ -200,9 +208,15 @@ struct CrewSessionWindowView: View {
                 kind: kind,
                 workingDirectory: dir,
                 taskBrief: s.taskBrief,
-                initialPrompt: s.taskBrief,
                 serverLink: link
             )
+            if let run = sessionRunner.current {
+                let brief = s.taskBrief
+                Task {
+                    try? await Task.sleep(nanoseconds: 600_000_000)
+                    run.send(brief)
+                }
+            }
         } catch {
             localError = "自动认领 session 失败: \(error.localizedDescription)"
             handledSessionIds.remove(s.id) // allow a retry next poll
@@ -236,40 +250,19 @@ struct CrewSessionWindowView: View {
     }
 }
 
-/// 单个 run 的内容视图。`@ObservedObject` 订阅 run 的 `@Published`
-/// （stdoutText / stderrText / status / exitCode），保证流式输出和状态
-/// 变化能驱动 UI 刷新。
+/// 单个 run 的内容视图。`@ObservedObject` 订阅 run 的 `@Published`（status /
+/// exitCode）驱动 header 刷新；内容区是内嵌的真终端（`AgentTerminalView`），
+/// agent 的输出原样渲染、键盘直接可输入。
 private struct SessionRunContentView: View {
     @ObservedObject var run: CrewSessionRun
-
-    enum OutputTab: String, CaseIterable, Identifiable {
-        case transcript, stdout, stderr
-        var id: String { rawValue }
-        var label: String {
-            switch self {
-            case .transcript: return "转写"
-            case .stdout: return "stdout"
-            case .stderr: return "stderr"
-            }
-        }
-    }
-
-    @State private var selectedTab: OutputTab = .transcript
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
-            Picker("", selection: $selectedTab) {
-                ForEach(OutputTab.allCases) { tab in
-                    Text(tab.label).tag(tab)
-                }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            Divider()
-            outputView
+            AgentTerminalView(session: run.terminalSession)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(nsColor: .textBackgroundColor))
         }
     }
 
@@ -292,7 +285,7 @@ private struct SessionRunContentView: View {
             statusBadge(run.status, exitCode: run.exitCode)
             if run.status == .running {
                 Button(role: .destructive) {
-                    Task { await run.cancel() }
+                    run.stop()
                 } label: {
                     Label("停止", systemImage: "stop.fill")
                 }
@@ -329,152 +322,6 @@ private struct SessionRunContentView: View {
             .padding(.vertical, 3)
             .background(color.opacity(0.15), in: Capsule())
             .foregroundStyle(color)
-    }
-
-    @ViewBuilder
-    private var outputView: some View {
-        if selectedTab == .transcript {
-            transcriptView
-        } else {
-            rawTextView(selectedTab == .stdout ? run.stdoutText : run.stderrText)
-        }
-    }
-
-    // Parsed, runner-agnostic transcript (the default tab). Falls back to the
-    // raw stdout tab when nothing has been parsed yet (e.g. a CLI that printed
-    // only non-JSONL warnings, or output not yet arrived).
-    @ViewBuilder
-    private var transcriptView: some View {
-        if run.events.isEmpty {
-            VStack(spacing: 8) {
-                if run.status == .running {
-                    ProgressView().controlSize(.small)
-                    Text("等待 agent 输出…").font(.caption).foregroundStyle(.secondary)
-                } else {
-                    Text("没有可转写的事件").font(.caption).foregroundStyle(.secondary)
-                    Text("查看 stdout 标签页看原始输出").font(.caption2).foregroundStyle(.tertiary)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(nsColor: .textBackgroundColor))
-        } else {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 8) {
-                        ForEach(Array(run.events.enumerated()), id: \.offset) { idx, event in
-                            RunnerEventRow(event: event)
-                                .id(idx)
-                        }
-                        Color.clear.frame(height: 1).id(tailID)
-                    }
-                    .padding(12)
-                }
-                .background(Color(nsColor: .textBackgroundColor))
-                .onChange(of: run.events.count) { _, _ in
-                    withAnimation(.linear(duration: 0.05)) {
-                        proxy.scrollTo(tailID, anchor: .bottom)
-                    }
-                }
-                .onAppear { proxy.scrollTo(tailID, anchor: .bottom) }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func rawTextView(_ text: String) -> some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(text.isEmpty ? "(空)" : text)
-                        .font(.system(.callout, design: .monospaced))
-                        .textSelection(.enabled)
-                        .foregroundStyle(text.isEmpty ? .secondary : .primary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(12)
-                    // sentinel —— scrollTo 用
-                    Color.clear.frame(height: 1).id(tailID)
-                }
-            }
-            .background(Color(nsColor: .textBackgroundColor))
-            .onChange(of: text) { _, _ in
-                // 自动滚到末尾。若用户向上滚了我们也强行回底 —— MVP
-                // 阶段简单粗暴；后续可按 scroll position 判定是否粘底。
-                withAnimation(.linear(duration: 0.05)) {
-                    proxy.scrollTo(tailID, anchor: .bottom)
-                }
-            }
-            .onAppear {
-                proxy.scrollTo(tailID, anchor: .bottom)
-            }
-        }
-    }
-
-    private var tailID: String { "session-tail" }
-}
-
-/// One transcript line. Each `RunnerEvent` case gets a distinct visual
-/// grammar (icon + tint + body) so a glance separates assistant prose from
-/// tool calls / reasoning / errors — independent of which CLI produced it.
-private struct RunnerEventRow: View {
-    let event: RunnerEvent
-
-    var body: some View {
-        switch event {
-        case let .started(model, _):
-            label("bolt.horizontal.circle", .secondary,
-                  model.map { "会话开始 · \($0)" } ?? "会话开始", mono: false)
-        case let .reasoning(text):
-            label("brain", .purple, text, mono: false, secondary: true)
-        case let .assistant(text):
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "sparkles").foregroundStyle(.tint)
-                Text(text)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        case let .toolCall(title, detail):
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "wrench.and.screwdriver").foregroundStyle(.orange)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.callout.weight(.semibold))
-                    if let detail, !detail.isEmpty {
-                        Text(detail)
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        case let .toolResult(text, isError):
-            label("arrow.turn.down.right", isError ? .red : .secondary,
-                  text, mono: true, secondary: !isError)
-        case let .finished(summary, isError, costUSD):
-            let parts = [summary, costUSD.map { String(format: "$%.4f", $0) }]
-                .compactMap { $0 }.filter { !$0.isEmpty }
-            label(isError ? "xmark.seal" : "checkmark.seal",
-                  isError ? .red : .green,
-                  parts.isEmpty ? (isError ? "失败" : "完成")
-                                : ((isError ? "失败 · " : "完成 · ") + parts.joined(separator: " · ")),
-                  mono: false)
-        case let .failed(text):
-            label("exclamationmark.triangle.fill", .red, text, mono: false)
-        case let .unknown(raw):
-            label("questionmark.circle", .secondary, raw, mono: true, secondary: true)
-        }
-    }
-
-    @ViewBuilder
-    private func label(_ icon: String, _ tint: Color, _ text: String,
-                       mono: Bool, secondary: Bool = false) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: icon).foregroundStyle(tint)
-            Text(text)
-                .font(mono ? .system(.caption, design: .monospaced) : .callout)
-                .foregroundStyle(secondary ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
     }
 }
 #endif

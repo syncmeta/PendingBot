@@ -51,33 +51,6 @@ final class SessionProxyProtocolTests: XCTestCase {
         XCTAssertEqual((p?["bytes"] as? NSNumber)?.intValue, 42)
     }
 
-    // MARK: - SessionState.from(events:)
-
-    func testSessionStateFromTranscriptTail() {
-        let events: [RunnerEvent] = [
-            .started(model: "claude-sonnet-4-6", sessionId: "s1"),
-            .assistant("Let me check the directory."),
-            .toolCall(title: "Bash", detail: "ls -la"),
-        ]
-        let state = SessionState.from(status: "running", events: events)
-        XCTAssertEqual(state.status, "running")
-        XCTAssertEqual(state.eventCount, 3)
-        XCTAssertEqual(state.lastEvent, "Bash：ls -la")
-    }
-
-    func testSessionStateFromEmptyTranscript() {
-        let state = SessionState.from(status: "running", events: [])
-        XCTAssertEqual(state.eventCount, 0)
-        XCTAssertNil(state.lastEvent)
-    }
-
-    func testSessionStateClipsLongAssistantText() {
-        let long = String(repeating: "x", count: 200)
-        let state = SessionState.from(status: "completed", events: [.assistant(long)])
-        XCTAssertEqual(state.lastEvent?.count, 81, "clip to 80 chars + ellipsis")
-        XCTAssertTrue(state.lastEvent?.hasSuffix("…") ?? false)
-    }
-
     // MARK: - inbound
 
     func testParseSubscribedAck() {
