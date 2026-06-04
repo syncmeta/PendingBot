@@ -698,6 +698,13 @@ export type Database = {
             foreignKeyName: "bots_responsible_subject_id_fkey"
             columns: ["responsible_subject_id"]
             isOneToOne: false
+            referencedRelation: "bi_subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bots_responsible_subject_id_fkey"
+            columns: ["responsible_subject_id"]
+            isOneToOne: false
             referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
@@ -874,6 +881,13 @@ export type Database = {
             foreignKeyName: "conversations_responsible_subject_id_fkey"
             columns: ["responsible_subject_id"]
             isOneToOne: false
+            referencedRelation: "bi_subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "conversations_responsible_subject_id_fkey"
+            columns: ["responsible_subject_id"]
+            isOneToOne: false
             referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
@@ -930,6 +944,13 @@ export type Database = {
             columns: ["crew_conversation_id"]
             isOneToOne: false
             referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crew_announcement_mentions_responsible_subject_id_fkey"
+            columns: ["responsible_subject_id"]
+            isOneToOne: false
+            referencedRelation: "bi_subjects"
             referencedColumns: ["id"]
           },
           {
@@ -1010,6 +1031,13 @@ export type Database = {
             columns: ["crew_conversation_id"]
             isOneToOne: false
             referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crew_announcements_responsible_subject_id_fkey"
+            columns: ["responsible_subject_id"]
+            isOneToOne: false
+            referencedRelation: "bi_subjects"
             referencedColumns: ["id"]
           },
           {
@@ -1190,6 +1218,13 @@ export type Database = {
             foreignKeyName: "crew_responsibility_shares_subject_id_fkey"
             columns: ["subject_id"]
             isOneToOne: false
+            referencedRelation: "bi_subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crew_responsibility_shares_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
             referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
@@ -1280,6 +1315,13 @@ export type Database = {
             columns: ["initiating_member_id"]
             isOneToOne: false
             referencedRelation: "temporary_group_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crew_sessions_responsible_subject_id_fkey"
+            columns: ["responsible_subject_id"]
+            isOneToOne: false
+            referencedRelation: "bi_subjects"
             referencedColumns: ["id"]
           },
           {
@@ -1625,6 +1667,13 @@ export type Database = {
             foreignKeyName: "group_contributions_subject_id_fkey"
             columns: ["subject_id"]
             isOneToOne: false
+            referencedRelation: "bi_subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "group_contributions_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
             referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
@@ -1872,6 +1921,13 @@ export type Database = {
             foreignKeyName: "group_pledges_subject_id_fkey"
             columns: ["subject_id"]
             isOneToOne: false
+            referencedRelation: "bi_subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "group_pledges_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
             referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
@@ -1904,6 +1960,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "group_pools_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: true
+            referencedRelation: "bi_subjects"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "group_pools_subject_id_fkey"
             columns: ["subject_id"]
@@ -1959,6 +2022,13 @@ export type Database = {
             foreignKeyName: "group_subject_members_subject_id_fkey"
             columns: ["subject_id"]
             isOneToOne: false
+            referencedRelation: "bi_subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "group_subject_members_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
             referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
@@ -2004,6 +2074,13 @@ export type Database = {
             columns: ["requester_member_id"]
             isOneToOne: false
             referencedRelation: "temporary_group_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "human_help_requests_responsible_subject_id_fkey"
+            columns: ["responsible_subject_id"]
+            isOneToOne: false
+            referencedRelation: "bi_subjects"
             referencedColumns: ["id"]
           },
           {
@@ -2325,6 +2402,13 @@ export type Database = {
             foreignKeyName: "permission_requests_responsible_subject_id_fkey"
             columns: ["responsible_subject_id"]
             isOneToOne: false
+            referencedRelation: "bi_subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "permission_requests_responsible_subject_id_fkey"
+            columns: ["responsible_subject_id"]
+            isOneToOne: false
             referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
@@ -2386,6 +2470,13 @@ export type Database = {
           subject_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "pnc_ledger_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "bi_subjects"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "pnc_ledger_subject_id_fkey"
             columns: ["subject_id"]
@@ -2633,6 +2724,13 @@ export type Database = {
             foreignKeyName: "runner_hosts_responsible_subject_id_fkey"
             columns: ["responsible_subject_id"]
             isOneToOne: false
+            referencedRelation: "bi_subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "runner_hosts_responsible_subject_id_fkey"
+            columns: ["responsible_subject_id"]
+            isOneToOne: false
             referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
@@ -2681,6 +2779,13 @@ export type Database = {
             columns: ["crew_session_id"]
             isOneToOne: false
             referencedRelation: "crew_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "runner_leases_responsible_subject_id_fkey"
+            columns: ["responsible_subject_id"]
+            isOneToOne: false
+            referencedRelation: "bi_subjects"
             referencedColumns: ["id"]
           },
           {
@@ -2901,6 +3006,13 @@ export type Database = {
             columns: ["recipient_session_id"]
             isOneToOne: false
             referencedRelation: "crew_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_mailbox_items_responsible_subject_id_fkey"
+            columns: ["responsible_subject_id"]
+            isOneToOne: false
+            referencedRelation: "bi_subjects"
             referencedColumns: ["id"]
           },
           {
@@ -3128,6 +3240,13 @@ export type Database = {
             foreignKeyName: "subject_device_grants_subject_id_fkey"
             columns: ["subject_id"]
             isOneToOne: false
+            referencedRelation: "bi_subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subject_device_grants_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
             referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
@@ -3199,6 +3318,13 @@ export type Database = {
             foreignKeyName: "subject_device_login_challenges_approved_subject_id_fkey"
             columns: ["approved_subject_id"]
             isOneToOne: false
+            referencedRelation: "bi_subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subject_device_login_challenges_approved_subject_id_fkey"
+            columns: ["approved_subject_id"]
+            isOneToOne: false
             referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
@@ -3207,6 +3333,13 @@ export type Database = {
             columns: ["issued_grant_id"]
             isOneToOne: false
             referencedRelation: "subject_device_grants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subject_device_login_challenges_requested_subject_id_fkey"
+            columns: ["requested_subject_id"]
+            isOneToOne: false
+            referencedRelation: "bi_subjects"
             referencedColumns: ["id"]
           },
           {
@@ -3487,6 +3620,13 @@ export type Database = {
             foreignKeyName: "temporary_group_meta_responsible_subject_id_fkey"
             columns: ["responsible_subject_id"]
             isOneToOne: false
+            referencedRelation: "bi_subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "temporary_group_meta_responsible_subject_id_fkey"
+            columns: ["responsible_subject_id"]
+            isOneToOne: false
             referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
@@ -3627,6 +3767,13 @@ export type Database = {
             columns: ["conversation_id"]
             isOneToOne: false
             referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "usage_events_owner_subject_id_fkey"
+            columns: ["owner_subject_id"]
+            isOneToOne: false
+            referencedRelation: "bi_subjects"
             referencedColumns: ["id"]
           },
           {
@@ -3961,6 +4108,13 @@ export type Database = {
             foreignKeyName: "welcome_bonus_grants_subject_id_fkey"
             columns: ["subject_id"]
             isOneToOne: false
+            referencedRelation: "bi_subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "welcome_bonus_grants_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
             referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
@@ -3980,6 +4134,42 @@ export type Database = {
         Update: {
           created_at?: string | null
           creator_id?: string | null
+        }
+        Relationships: []
+      }
+      bi_cost_by_category: {
+        Row: {
+          cost_credits: number | null
+          cost_usd: number | null
+          created_at: string | null
+          input_tokens: number | null
+          model_id: string | null
+          output_tokens: number | null
+          task_type: string | null
+          tool_cost_usd: number | null
+          total_tokens: number | null
+        }
+        Insert: {
+          cost_credits?: number | null
+          cost_usd?: number | null
+          created_at?: string | null
+          input_tokens?: number | null
+          model_id?: string | null
+          output_tokens?: number | null
+          task_type?: string | null
+          tool_cost_usd?: number | null
+          total_tokens?: number | null
+        }
+        Update: {
+          cost_credits?: number | null
+          cost_usd?: number | null
+          created_at?: string | null
+          input_tokens?: number | null
+          model_id?: string | null
+          output_tokens?: number | null
+          task_type?: string | null
+          tool_cost_usd?: number | null
+          total_tokens?: number | null
         }
         Relationships: []
       }
@@ -4018,6 +4208,13 @@ export type Database = {
             foreignKeyName: "group_pools_subject_id_fkey"
             columns: ["subject_id"]
             isOneToOne: true
+            referencedRelation: "bi_subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "group_pools_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: true
             referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
@@ -4030,6 +4227,30 @@ export type Database = {
           active_pledge_groups: number | null
           active_pledged_micros: number | null
           pool_remaining_micros: number | null
+        }
+        Relationships: []
+      }
+      bi_subjects: {
+        Row: {
+          display_name: string | null
+          id: string | null
+          kind: string | null
+          subject_type: string | null
+          user_id: string | null
+        }
+        Insert: {
+          display_name?: string | null
+          id?: string | null
+          kind?: string | null
+          subject_type?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          display_name?: string | null
+          id?: string | null
+          kind?: string | null
+          subject_type?: string | null
+          user_id?: string | null
         }
         Relationships: []
       }
