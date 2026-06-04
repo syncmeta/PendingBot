@@ -24,15 +24,18 @@ struct MacRootGate: View {
         Group {
             if !store.sessionHydrated {
                 // 冷启动 hydrate 持久化 session 期间的占位,避免闪 "未登录"。
+                // 用登录页同款紧凑尺寸,免得 hydrate→登录 时窗口跳大小。
                 VStack(spacing: 10) {
                     ProgressView()
                     Text("加载中…").font(.callout).foregroundStyle(.secondary)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(minWidth: 560, minHeight: 420)
             } else if store.current == nil {
                 MacWelcomeView()
             } else {
+                // 登录后才声明主 app 尺寸 → 窗口从登录小窗长到 1100×700。
                 MacRootView()
+                    .frame(minWidth: 1100, minHeight: 700)
             }
         }
     }
@@ -47,17 +50,17 @@ struct MacWelcomeView: View {
     private let resendTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        HStack(spacing: 48) {
-            // Left half: brand mark, centered.
+        // Logo + form sit as one centered cluster (not pushed to opposite
+        // edges), on a compact window — much smaller than the main app's
+        // 1100×700 (which is restored once signed in via MacRootGate).
+        HStack(spacing: 28) {
             Image("BrandMark")
                 .resizable()
                 .aspectRatio(contentMode: .fit)
-                .frame(width: 148, height: 148)
-                .clipShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
-                .shadow(color: .black.opacity(0.06), radius: 22, y: 6)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(width: 124, height: 124)
+                .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+                .shadow(color: .black.opacity(0.06), radius: 20, y: 6)
 
-            // Right half: login controls, vertically + horizontally centered.
             VStack(alignment: .leading, spacing: 0) {
                 if vm.stage == .humanCheck {
                     backButton
@@ -78,12 +81,12 @@ struct MacWelcomeView: View {
                         .padding(.top, 12)
                 }
             }
-            .frame(width: 320)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            .frame(width: 300)
         }
-        .padding(40)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(44)
+        .frame(minWidth: 560, minHeight: 420, alignment: .center)
         .background(Theme.Palette.canvas.ignoresSafeArea())
+        .background(MacLoginWindowStyler())
         .onChange(of: vm.otpSent) { _, sent in
             if sent { focusedField = .code }
         }
@@ -592,6 +595,100 @@ struct MacTurnstileWebView: NSViewRepresentable {
                 onInteractive()
             default:
                 break
+            }
+        }
+    }
+}
+
+/// Reaches the host `NSWindow` to give the login screen two cosmetic touches
+/// the standard `.windowStyle(.hiddenTitleBar)` can't:
+///   1. **Bigger rounded corners** — the window is made transparent and the
+///      content layer is corner-clipped, so the whole panel reads as a rounded
+///      card (rounder than AppKit's default ~10pt) with a matching shadow.
+///   2. **Roomier traffic lights** — the close / minimise / zoom buttons are
+///      nudged in from the corner and spaced further apart.
+/// Constants are kept here so they're easy to tune by eye.
+struct MacLoginWindowStyler: NSViewRepresentable {
+    var cornerRadius: CGFloat = 22
+    var trafficInsetLeft: CGFloat = 20
+    var trafficInsetTop: CGFloat = 20
+    var trafficSpacing: CGFloat = 12
+
+    func makeNSView(context: Context) -> NSView {
+        let v = NSView(frame: .zero)
+        context.coordinator.styler = self
+        DispatchQueue.main.async { [weak v] in
+            if let w = v?.window { context.coordinator.attach(to: w) }
+        }
+        return v
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.styler = self
+        DispatchQueue.main.async { [weak nsView] in
+            if let w = nsView?.window { context.coordinator.attach(to: w) }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    @MainActor
+    final class Coordinator {
+        var styler: MacLoginWindowStyler?
+        private weak var window: NSWindow?
+        private var observed = false
+
+        func attach(to window: NSWindow) {
+            self.window = window
+            applyRounding(window)
+            layoutTrafficLights(window)
+            guard !observed else { return }
+            observed = true
+            let nc = NotificationCenter.default
+            for name: NSNotification.Name in [
+                NSWindow.didResizeNotification,
+                NSWindow.didBecomeKeyNotification,
+                NSWindow.didBecomeMainNotification,
+            ] {
+                nc.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated {
+                        guard let self, let w = self.window else { return }
+                        self.layoutTrafficLights(w)
+                    }
+                }
+            }
+        }
+
+        private func applyRounding(_ window: NSWindow) {
+            let radius = styler?.cornerRadius ?? 22
+            window.isOpaque = false
+            window.backgroundColor = .clear
+            window.hasShadow = true
+            if let content = window.contentView {
+                content.wantsLayer = true
+                content.layer?.cornerRadius = radius
+                content.layer?.cornerCurve = .continuous
+                content.layer?.masksToBounds = true
+            }
+            window.invalidateShadow()
+        }
+
+        private func layoutTrafficLights(_ window: NSWindow) {
+            let left = styler?.trafficInsetLeft ?? 20
+            let top = styler?.trafficInsetTop ?? 20
+            let spacing = styler?.trafficSpacing ?? 12
+            let buttons = [NSWindow.ButtonType.closeButton,
+                           .miniaturizeButton,
+                           .zoomButton].compactMap { window.standardWindowButton($0) }
+            guard buttons.count == 3, let bar = buttons[0].superview else { return }
+            var x = left
+            for button in buttons {
+                let size = button.frame.size
+                // Titlebar view is flipped-from-top in AppKit window coords, so
+                // measure `top` down from the container's top edge.
+                let y = bar.bounds.height - top - size.height
+                button.setFrameOrigin(NSPoint(x: x, y: y))
+                x += size.width + spacing
             }
         }
     }
