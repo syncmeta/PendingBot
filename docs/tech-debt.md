@@ -627,3 +627,8 @@
   - **过时常量**:`Features/Me/WalletV2View.swift` 的 `channelLabel` 还留 `iap_ios`/`iap_macos`/`lemon_squeezy` 分支(渠道已转 Polar/RevenueCat)。
   - **构建产物入库**:`apps/ios/build/**`(.xcarchive/.ipa)疑被 git 跟踪——应 gitignore + 移除。
   建议各 session 在自己分支用 Xcode 的 unused 检查/编译告警逐个核掉,别由计费 lane 跨改。
+
+- 🟡 **Mac 三种登录已接通+编译过,但 Apple/Google 真实登录回合未验(邮箱 OTP 已可信)** — `feat/mac-login-align`(2026-06-04,#253/#212)。Mac `MacWelcomeView` 重画对齐 iOS,三种登录代码都接上:邮箱 OTP 走跨平台 `EmailSignIn`(**已可信**,与 iOS 同一条路);Apple 走原生 `ASAuthorizationController`(NSWindow anchor),Google 走 GoogleSignIn-iOS 的 macOS target(`signIn(withPresenting: NSWindow)`)。iOS+macOS 双端 `xcodebuild` 均 BUILD SUCCEEDED,但**Apple/Google 在 Mac 上的真实 sign-in 回合没跑过**(本 session TCC 屏幕录制权限被拒,连截图都做不了,更没做真登录)。两个**外部配置依赖**会决定它们能否真的成功,启用前必须坐实:
+  - **Google macOS OAuth client**:`Info.plist` 的 `GIDClientID`(`842392349572-…apps.googleusercontent.com`)+ reversed URL scheme 是当初按 **iOS 型** OAuth client 配的。Google 原生 macOS 登录要求 client 的平台/bundle 匹配,iOS 型 client 在 macOS 上**可能**报 redirect_uri_mismatch / invalid_client。需在 Google Cloud Console 给 `com.pendingname.pendingbot` 加/确认一个 **macOS 型** OAuth client(或确认现有 client 接受 macOS bundle),并把其 client id 填进 Supabase Authorized Client IDs。**没验证过 = 可能一点就挂**。
+  - **Sign in with Apple**:entitlement(`com.apple.developer.applesignin`)已在共享 `PendingBot.entitlements`,EU 库 `/auth/v1/settings` 实测 apple enabled(见 progress 2026-06-04 Phase 4)。Mac App ID 需带 SIWA capability(自动签名通常带);真机/真账号点一次确认即可。
+  **验证清单(启用 Mac 端 Apple/Google 前必跑)**:① Mac GUI 构建(非 headless,否则签名回落 ad-hoc → Keychain -34018,session 存不住,和反复误诊的那个坑同源)② 真点 Apple → 成功落 supabase session ③ 真点 Google → 同上(先确认 macOS OAuth client)。**在坐实前别对外声称 Mac 三种登录可用**——当前只到"编译过 + 邮箱 OTP 同路可信"。

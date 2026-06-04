@@ -2,6 +2,14 @@
 
 **最近对账：2026-06-04**（对照实际代码 / 迁移 / git，不是看 task 标记）
 
+> **2026-06-04 PendingBot Mac 登录界面对齐 iOS（`feat/mac-login-align`，未合，#253/#212）**
+> - **动机**：用户「开 Mac 我看看 → 登录界面要和 iOS 统一」，选了**完全对齐三种登录**（Apple+Google+邮箱）。Mac 原本是极简 email-only（一个 SF Symbol + 验证码），iOS 是打磨过的完整版（BrandMark logo + 三登录 + 「你是？」人机验证分步 + Turnstile + 验证码 + 机器人彩蛋）。
+> - **跨平台基座**（commit 1）：`Theme`/`Platform`/`Haptics` 去掉 `#if os(iOS)` 整体围栏 → 原生 macOS 拿到同一套 `Palette/Fonts/Metrics` 设计 token（UIFont 辅助用 `canImport(UIKit)` 精确围）；`Platform.isMac` 原生 Mac 为 true（0.88 桌面字号）；`Haptics` Mac 端 no-op。`AppleSignIn`/`GoogleSignIn` 放开到 macOS：Apple 原生 `ASAuthorizationController`（NSWindow anchor），Google 走 GoogleSignIn-iOS 的 **macOS target**（`signIn(withPresenting: NSWindow)`，该包对 macOS 本就链接）。
+> - **共享逻辑**（commit 2）：抽跨平台 `WelcomeViewModel`（stage/Turnstile token 时序/resend 冷却/test-email 后门/Apple/Google/邮箱 OTP 全套），iOS `WelcomeView` 改薄渲染层、**顺手删掉内联的 Apple SIWA ~90 行**改走共享 `AppleSignIn.run()`。两端登录逻辑不再各写一份（避开 copy-paste 债）。
+> - **Mac 重画**（commit 3）：`MacWelcomeView` 逐块原生镜像 iOS（同 logo/排版/pill/箭头行/人机验证/彩蛋/Theme token），渲染层 AppKit + `MacTurnstileWebView`（NSViewRepresentable），glass 用 macOS 26 `.glassEffect` + `.regularMaterial` 回退。
+> - **验证**：iOS Simulator + macOS **双端 `xcodebuild` BUILD SUCCEEDED**；Mac app 已启动到桌面。**未做（记 tech-debt 🟡）**：① 本 session TCC 屏幕录制权限被拒，**截不了图 → 视觉确认待用户**；② **Apple/Google 在 Mac 上的真实 sign-in 回合未跑**（邮箱 OTP 与 iOS 同路、可信）——Google 还依赖一个 **macOS 型 OAuth client** 配置（现有 GIDClientID 是 iOS 型，Mac 上可能 invalid_client），启用前必须按 tech-debt 清单坐实。
+> - **合 main**：待用户（且 Mac 三登录真验证前别对外声称可用）。
+
 > **2026-06-04 PendingCrew 中栏群聊 UI 对齐 PendingBot iOS（`feat/pendingcrew-chat-align`，未合）**
 > - **动机**：中栏群聊原是自绘简易气泡（圆角 12、两色填充、无头像、行内文字标签），与 PendingBot **iOS** 那套打磨过的群聊（头像+名字抬头+连续圆角+hairline+暖色 token+时间分隔 pill）观感脱节。**原生重画**对齐，数据仍绑 `CrewWhiteboardEntry`，不抽共享包、不引 PendingBot 私有代码（保 PendingCrew 可独立开源定位）。spec/plan 见 `docs/superpowers/{specs,plans}/2026-06-04-pendingcrew-chat-*`。
 > - **edge（零迁移）**：核到中栏白板端点 `GET /v1/crews/:id/messages` 读的是 conversation 的 `messages` 表（经 `mapMessageToEntry`），sender 身份本就在行里（`user_id`/`sender_bot_id`/`log_payload.session_id`），只是映射没透出 → 纯序列化补 `sender_user_id`/`sender_bot_id`/`sender_session_id`（commit `788614c8`，+3 vitest，17 passed）。
