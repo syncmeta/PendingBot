@@ -22,12 +22,29 @@ vi.mock('@pendingbot/identity', () => ({
   },
 }));
 
+// #226 retired the subject_wallets snapshot; /me/subject now sources the
+// balance from WalletDO via wallet.gate (same source as /wallet/v2). Mock only
+// wallet.gate, keep the rest of the module real.
+const gateMock = vi.fn(async () => ({ balanceMicros: 0, thresholdState: 'sufficient' as const }));
+vi.mock('../src/billing/wallet-client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/billing/wallet-client')>();
+  return {
+    ...actual,
+    wallet: {
+      ...actual.wallet,
+      gate: (env: unknown, id: string) => gateMock(env as never, id as never),
+    },
+  };
+});
+
 installFakeSupabaseMock();
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let meRoutes: any;
 
 beforeEach(async () => {
+  gateMock.mockReset();
+  gateMock.mockResolvedValue({ balanceMicros: 0, thresholdState: 'sufficient' as const });
   ({ meRoutes } = await import('../src/routes/me'));
 });
 
@@ -61,29 +78,20 @@ async function sha256Hex(input: string): Promise<string> {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
+const ALICE = {
+  id: 'subject-1',
+  subject_type: 'user_account',
+  user_id: 'user-1',
+  display_name: 'Alice',
+  status: 'active',
+  created_at: '2026-05-24T00:00:00Z',
+  updated_at: '2026-05-24T00:00:00Z',
+};
+
 describe('GET /v1/me/subject', () => {
-  it('returns the caller personal subject with its wallet', async () => {
-    const db = makeFakeDb({
-      subjects: [
-        {
-          id: 'subject-1',
-          subject_type: 'user_account',
-          user_id: 'user-1',
-          display_name: 'Alice',
-          status: 'active',
-          created_at: '2026-05-24T00:00:00Z',
-          updated_at: '2026-05-24T00:00:00Z',
-        },
-      ],
-      subject_wallets: [
-        {
-          subject_id: 'subject-1',
-          balance_credits: 1200,
-          lifetime_topup_credits: 2000,
-          lifetime_spent_credits: 800,
-        },
-      ],
-    });
+  it('returns the caller personal subject with its WalletDO balance', async () => {
+    gateMock.mockResolvedValue({ balanceMicros: 1200, thresholdState: 'sufficient' as const });
+    const db = makeFakeDb({ subjects: [ALICE] });
 
     const r = await call(db);
 
@@ -94,27 +102,18 @@ describe('GET /v1/me/subject', () => {
       display_name: 'Alice',
       status: 'active',
     });
+    // balance_credits is now PNC micros from WalletDO; lifetime_* no longer
+    // materialized per-subject (ledger detail lives in pnc_ledger), kept 0.
     expect(r.body.wallet).toEqual({
       balance_credits: 1200,
-      lifetime_topup_credits: 2000,
-      lifetime_spent_credits: 800,
+      lifetime_topup_credits: 0,
+      lifetime_spent_credits: 0,
     });
   });
 
-  it('returns a zero wallet when the subject exists but wallet row is hidden', async () => {
-    const db = makeFakeDb({
-      subjects: [
-        {
-          id: 'subject-1',
-          subject_type: 'user_account',
-          user_id: 'user-1',
-          display_name: 'Alice',
-          status: 'active',
-          created_at: '2026-05-24T00:00:00Z',
-          updated_at: '2026-05-24T00:00:00Z',
-        },
-      ],
-    });
+  it('returns a zero wallet when WalletDO is unreachable (fail-open)', async () => {
+    gateMock.mockRejectedValue(new Error('DO unreachable'));
+    const db = makeFakeDb({ subjects: [ALICE] });
 
     const r = await call(db);
 
@@ -139,6 +138,7 @@ describe('GET /v1/me/subject', () => {
   });
 
   it('accepts a device grant and returns the granted subject', async () => {
+    gateMock.mockResolvedValue({ balanceMicros: 1200, thresholdState: 'sufficient' as const });
     const token = 'pdg_subject_read_token';
     const db = makeFakeDb({
       subject_device_grants: [
@@ -154,25 +154,7 @@ describe('GET /v1/me/subject', () => {
           last_used_at: null,
         },
       ],
-      subjects: [
-        {
-          id: 'subject-1',
-          subject_type: 'user_account',
-          user_id: 'user-1',
-          display_name: 'Alice',
-          status: 'active',
-          created_at: '2026-05-24T00:00:00Z',
-          updated_at: '2026-05-24T00:00:00Z',
-        },
-      ],
-      subject_wallets: [
-        {
-          subject_id: 'subject-1',
-          balance_credits: 1200,
-          lifetime_topup_credits: 2000,
-          lifetime_spent_credits: 800,
-        },
-      ],
+      subjects: [ALICE],
     });
 
     const r = await callWithHeaders(db, { authorization: `Bearer ${token}` });
@@ -186,8 +168,8 @@ describe('GET /v1/me/subject', () => {
     });
     expect(r.body.wallet).toEqual({
       balance_credits: 1200,
-      lifetime_topup_credits: 2000,
-      lifetime_spent_credits: 800,
+      lifetime_topup_credits: 0,
+      lifetime_spent_credits: 0,
     });
   });
 });
