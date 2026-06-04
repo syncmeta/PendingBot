@@ -40,6 +40,30 @@ provisioning resolves the same variable from the provider.
 
 ## Import into Grafana Cloud (the realistic path)
 
+### Automated push (recommended over clicking — repo stays source of truth)
+
+`infra/grafana/push-dashboards.sh` pushes all five dashboard JSONs via the
+Grafana API in one shot (idempotent — `overwrite:true`, resolves the
+`${DS_SUPABASE}` input to your datasource uid). Use this instead of importing
+one-by-one, and re-run it whenever you edit a dashboard JSON:
+
+```sh
+GRAFANA_URL=https://<org>.grafana.net \
+GRAFANA_TOKEN=<service-account-token> \
+GRAFANA_DS_UID=supabase_pendingbot_ro \
+infra/grafana/push-dashboards.sh
+```
+
+Token: Grafana Cloud → Administration → Users and access → Service accounts →
+new account (role **Editor**) → add token. **Source-of-truth discipline:** the
+repo JSON is canonical; don't hand-edit in the Grafana UI (this script
+overwrites). If you do tweak in the UI, export the JSON back into `dashboards/`.
+
+> Heavier IaC alternatives (if you outgrow the script): the Grafana Terraform
+> provider (`grafana_dashboard`/`grafana_data_source`) or `grizzly` — both take
+> the same JSON. Overkill for five dashboards, noted for later.
+
+
 Grafana **Cloud cannot read local provisioning files** — there's no filesystem you control
 under `/etc/grafana/provisioning`. So the `provisioning/*.yaml` files are the source of truth
 for a **self-hosted** Grafana (or for replication via Terraform / grizzly), and Cloud uses
