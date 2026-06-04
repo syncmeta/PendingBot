@@ -1,148 +1,106 @@
-# PendingCrew Runner 改造 — Claude PTY + Codex app-server + 统一 RunnerBackend
+# PendingCrew Runner 改造 — 内嵌真终端跑交互式 claude/codex（统一生终端 + 自动审批）
 
 **日期**：2026-06-04
 **分支**：`feat/pendingcrew-runner-backends`
-**定位**：让 PendingCrew "比较完整地编排/控制/使用 Claude Code + Codex"——持久多轮 session、原生逐动作权限审批、结构化事件，收进一个统一抽象。**推翻** spec v2 §8.1"只用裸 CLI、不用 Agent SDK、一次性 exec"。
+**定位**：让 PendingCrew "比较完整地编排/控制/使用 Claude Code + Codex"——**能读、能控**。显示用生 TUI 即可，不追求结构化 UI。**推翻** spec v2 §8.1"一次性裸 CLI exec"。
+
+> **本 spec 已按用户 steer 大幅简化**（2026-06-04）：放弃 Codex app-server JSON-RPC + Claude TUI 状态机 + 原生权限卡片那套（见 git 历史的初版）。核心洞察：**把交互式 CLI 直接内嵌进一个真终端视图**——读=终端显示原样、控=转发按键 + 程序化字节注入。两端对称、零协议解析、最健壮。
 
 ---
 
-## 1. 背景与动机（为什么推翻一次性裸 CLI）
+## 1. 背景与铁律
 
-现状（`apps/pendingcrew/Sources/Mac/LocalRunner/`）：`LocalCodingAgentProcess` 一次性 spawn `claude --print --output-format=stream-json` / `codex exec --json`，prompt 写 stdin 后即关闭。多轮靠 `--resume`+hook 尾注入（`SteeringChannel`），权限只有 auto/bypass 两档，human-in-loop 靠自建 `ask_human` MCP（`InteractionChannel`）。`RunnerEventParser` 把两家 JSONL 各自解析成 `RunnerEvent`。
+现状（`apps/pendingcrew/Sources/Mac/LocalRunner/`）：`LocalCodingAgentProcess` 一次性 spawn `claude --print` / `codex exec --json`，写 stdin 即关；多轮靠 `--resume`+hook，权限只 auto/bypass，human-in-loop 靠自建 ask_human MCP，`RunnerEventParser` 解析两家 JSONL。**撑不起"编排/控制 coding agent"的定位**。
 
-够"看一眼"，但**撑不起编排/控制 coding agent 的定位**：没有真正的交互式多轮（每轮重启进程）、没有原生逐动作权限弹窗、转向靠 hack。
-
-### 1.1 计费/认证铁律（决定两端各自的接法）
-- **Claude → PTY 交互式**（不用 Agent SDK / 不用 `claude -p`）。官方 headless 文档明载：**2026-06-15 起 Agent SDK 和 `claude -p` 在订阅计划走一个单独的月度 "Agent SDK credit" 小额度池，与交互用量分开**。只有**真正的交互式 TUI** 吃订阅主交互额度 → 必须 PTY 跑交互式 `claude`。代价：交互式是 ANSI TUI，得在伪终端里跑终端模拟器维护屏幕模型、检测 UI 态、注入按键（**最大脆弱点**）。
-- **Codex → app-server**（JSON-RPC over stdio）。官方文档齐全（developers.openai.com/codex/app-server）：`codex app-server`，newline-delimited JSON-RPC 2.0（线上省略 `"jsonrpc":"2.0"`）；`account/login/start type:chatgpt` = ChatGPT 订阅登录，不走 API 计费。结构化、稳。
-
-### 1.2 决策（已与用户确认）
-1. **Codex app-server 先行**（结构化、低风险，先验证 `RunnerBackend` 抽象），Claude PTY 第二。
-2. **Claude PTY 底座 = SwiftTerm 的 headless `Terminal` 引擎**（MIT，对可开源定位无碍）维护屏幕模型，我们读其 buffer 检测状态 + 注入按键。
-3. **Claude PTY v1 范围 = Parity+**：发 prompt · 渲染流式输出 · 检测并回答权限弹窗(y/n/always) · 中途 steer · interrupt(Esc) · resume。**不做**：slash 命令 / plan mode / 模型切换 / `/clear` 等全量 TUI（记 tech-debt 作为后续）。
+**计费铁律（决定必须交互式 + PTY）**：官方 headless 文档明载 **2026-06-15 起 Agent SDK 和 `claude -p` 在订阅计划走单独的小额度池**，只有**真正的交互式 TUI** 吃订阅主交互额度 → 必须 PTY 跑交互式 `claude`。Codex 交互式同理走 ChatGPT 订阅。交互式 = ANSI TUI = 必须有终端模拟器宿主。
 
 ---
 
-## 2. 目标 / 非目标
+## 2. 核心设计：一个终端会话，按 kind 参数化
 
-**目标**：
-- 统一 `RunnerBackend` protocol：start/resume session · 发 turn · 流式归一事件 · 权限请求回调 · 中途 steer · interrupt · stop。
-- `CodexAppServerBackend`（Phase 1）：JSON-RPC over stdio，持久 thread，原生 approval。
-- `ClaudePTYBackend`（Phase 2）：SwiftTerm headless + 屏幕状态机，Parity+。
-- 原生权限审批 UI + steering 接进右栏 session 窗口（替掉 ask_human MCP 在本地 runner 路径上的角色）。
-- 与既有 T4.5 跨端遥控（`SessionProxyClient`/DO）整合：远端 steer/cancel/approve 经同一 backend。
+**不要** `RunnerBackend` 双实现抽象（两端只差 binary + flags + resume 语法，YAGNI）。一个类型搞定。
 
-**非目标**：
-- 不动 peer_device / fly_machine 远端 runner（未实装）。
-- 不动 edge / DB（除非 T4.5 跨端权限审批需要小改，见 §7）。
-- 不做 Claude 全量 TUI（v1 只 Parity+）。
-- 不碰中栏群聊 UI（上一轮已做）。
+### 2.1 依赖：SwiftTerm（SPM）
+- 用 SwiftTerm 的 **`LocalProcessTerminalView`**（macOS/AppKit）——它本就是"在 PTY 里跑子进程并渲染终端"的现成组件，自带终端模拟、PTY 管理、`startProcess(executable:args:environment:)` 和向子进程发字节的 API。
+- **project.yml 当前无任何 SPM 依赖** → 加 `packages: SwiftTerm: {url: https://github.com/migueldeicaza/SwiftTerm, from: <ver>}` + target `dependencies: - package: SwiftTerm`，再 `xcodegen`。MIT，对可开源定位无碍。
+- 实施第一步**核查 SwiftTerm 真实 API**（`LocalProcessTerminalView.startProcess` 签名、向子进程发数据的方法名 `send(...)` / `feed`、process 退出 delegate），以官方为准（[[feedback_official_docs_for_integrations]]）。
 
----
+### 2.2 `AgentTerminalSession`（新）
+`apps/pendingcrew/Sources/Mac/LocalRunner/AgentTerminalSession.swift`，`@MainActor` ObservableObject（持有 NSView 需主线程）。
+- 持有一个 `LocalProcessTerminalView`，按 `LocalCodingAgentKind`（已有：claude_code / codex）+ 工作目录启动交互式 CLI。
+- **argv（交互式 + 自动审批）**，实施时**核 `--help` 定确切 flag**：
+  - claude：交互式 + 跳过权限（`--dangerously-skip-permissions` 或等价的全自动 permission-mode）。**不设** `ANTHROPIC_API_KEY`（保订阅认证）。
+  - codex：交互式 + 自动审批 + sandbox（`--dangerously-bypass-approvals-and-sandbox` / `--full-auto` / `-a never` 一类，核确切 flag）。
+- env 白名单 + `TERM=xterm-256color`（复用现有 `LocalCodingAgentSpec.env()` 白名单思路）。
+- 控制 API（程序化，供 captain 编排 + 跨端 + 手动注入）：
+  - `send(_ text: String)` —— 写文本 + 回车到 PTY（发 prompt / steer，本质都是"往终端打字"）。
+  - `interrupt()` —— 发 Esc（或 Ctrl-C）。
+  - `stop()` —— 终止子进程（SIGTERM→grace→SIGKILL，复用现有骨架）。
+  - `resume(sessionId:)` —— 以 `claude --resume <id>` / codex 对应 resume 起交互式进程。
+- 状态：`running / exited(code)`（来自 SwiftTerm process-terminated delegate）。
 
-## 3. `RunnerBackend` 统一抽象
+### 2.3 权限 = 不处理（真终端天然解决）
+- 默认全自动审批（上面的 flag）。
+- 万一仍冒出权限提示：**它就显示在真终端里**，人直接按键回答。**不建**任何原生权限卡片 / 审批协议 / `ask_human` MCP。这是放弃 app-server/状态机后最大的化简红利。
 
-新建 `apps/pendingcrew/Sources/Mac/LocalRunner/RunnerBackend.swift`。协议（async 流 + 回调）：
-
-```swift
-protocol RunnerBackend: Actor {
-    /// 启动新 session(或 resume 已有)。返回 backend 解析出的 sessionId。
-    func start(_ spec: RunnerLaunchSpec) async throws -> String
-    func resume(sessionId: String, _ spec: RunnerLaunchSpec) async throws
-
-    /// 提交一轮用户输入(prompt / 图片 / steer 文本)。
-    func sendTurn(_ input: RunnerTurnInput) async throws
-    /// 中途追加输入到进行中的 turn(steer)。
-    func steer(_ text: String) async throws
-    /// 取消进行中的 turn。
-    func interrupt() async throws
-    /// 终止 session(SIGTERM→grace→SIGKILL / app-server shutdown)。
-    func stop() async
-
-    /// 归一事件流(两家映射到同一 RunnerEvent)。
-    var events: AsyncStream<RunnerEvent> { get }
-    /// 权限请求流——UI 消费、调 resolve(decision) 回灌。
-    var permissionRequests: AsyncStream<RunnerPermissionRequest> { get }
-}
-```
-
-**归一模型**（演进现有 `RunnerEventParser.RunnerEvent`，加权限/turn 生命周期）：
-- `RunnerEvent`：`.started(model,sessionId)` · `.turnStarted` · `.reasoning(String)` · `.assistantDelta(String)` · `.toolCall(title,detail)` · `.commandOutput(String)` · `.fileChange(path,diff)` · `.turnCompleted(status,costUSD?)` · `.failed(String)`。
-- `RunnerPermissionRequest`：`id` · `kind`(command/fileChange/tool) · `title` · `detail`(命令/diff) · `options`([accept, acceptForSession, decline])，附 `resolve(RunnerPermissionDecision) async`。
-- `RunnerLaunchSpec` / `RunnerTurnInput`：复用并精简现有 `LocalCodingAgentLaunchSpec`（kind / cwd / model / permissionMode / 初始 prompt）。
-
-两家 backend 各自把原生事件/请求映射到这套——UI 与 `CrewSessionRunner` 只认归一模型，不再 `if kind == .codex`。
+### 2.4 读 = 终端显示；结构化回报另有其道
+- "读"对人 = 看真终端。
+- "读"对 captain（程序化）= **走已有的 crew 回报通道**（agent 用 `post_to_crew` 工具把关键节点发白板；runner 每轮注入白板/mailbox 上下文，task G3 已做）——**不靠解析 TUI**。本 spec 不动这条通道。
 
 ---
 
-## 4. Phase 1 — `CodexAppServerBackend`
+## 3. UI：右栏 session 窗口换成终端
 
-新建 `apps/pendingcrew/Sources/Mac/LocalRunner/CodexAppServerBackend.swift` + `CodexAppServerProtocol.swift`（线型）。
-
-- **进程**：spawn `codex app-server`（默认 stdio）。复用 `LocalCodingAgentExecutable.resolve("codex")` + `LocalCodingAgentProcess` 的子进程/管道骨架（env 白名单、SIGTERM→grace→SIGKILL 保留）。
-- **传输**：newline-delimited JSON-RPC 2.0（**省略** `"jsonrpc":"2.0"`）。一个 actor 维护 `id→continuation` 表（request/response 配对）+ notification 分发 + **服务端发起请求**（approval）处理。
-- **握手**：`initialize`（clientInfo + `capabilities.optOutNotificationMethods` 屏蔽噪声通知）→ `initialized`。
-- **认证**：`account/read` 查状态；未登录 → 走 `account/login/start type:chatgpt`（复用 Mac 上已有的 `codex login`，多数情况已登录）。
-- **session**：`thread/start`（新）/`thread/resume`（按 threadId）→ `turn/start`（发 input）/`turn/steer`/`turn/interrupt`。
-- **流式通知 → RunnerEvent**：`item/agentMessage/delta`→assistantDelta；`item/commandExecution/outputDelta`→commandOutput；`item/fileChange`→fileChange；`item/started|completed`→toolCall/turn 状态；`turn/started|completed`→turnStarted/turnCompleted；`turn/plan/updated`→(可选)reasoning。
-- **原生 approval → RunnerPermissionRequest**：服务端发起请求 `item/commandExecution/requestApproval` / `item/fileChange/requestApproval` / `tool/requestUserInput` → 包成 `RunnerPermissionRequest` 抛给 UI；UI 决策回 JSON-RPC response（`accept`/`acceptForSession`/`decline`/`cancel`）。
-
-测试：JSON-RPC framing/dispatch 用 fixture（录制真实 app-server stdout）做 TDD（PendingCrewTests 是 macOS XCTest bundle，纯 Foundation 逻辑可直接测）。
+- 新建 `AgentTerminalView.swift`：`NSViewRepresentable` 把 `AgentTerminalSession` 的 `LocalProcessTerminalView` 宿主进 SwiftUI。
+- `CrewSessionWindowView.swift`：把现在渲染 `RunnerEvent` 的结构化 transcript **换成** `AgentTerminalView`（生终端）。底部可留一个**程序化输入框**（手动给会话发 prompt/steer，调 `session.send`）——也可省，直接在终端里打字。
+- 用户在终端里键盘交互 = SwiftTerm 原生转发，零额外代码。
 
 ---
 
-## 5. Phase 2 — `ClaudePTYBackend`（Parity+）
+## 4. 退役 / 复用
 
-新建 `apps/pendingcrew/Sources/Mac/LocalRunner/ClaudePTYBackend.swift` + `ClaudeTUIStateMachine.swift`。
-
-- **依赖**：加 SwiftTerm（SPM）。**project.yml 当前无任何 SPM 依赖** → 配 `packages: SwiftTerm: {url, from}` + target `dependencies: - package: SwiftTerm`，再 `xcodegen`。
-- **PTY**：`forkpty`/`posix_openpt` 起伪终端，spawn 交互式 `claude`（cwd=工作目录，env 白名单 + `TERM=xterm-256color`，**不设** `ANTHROPIC_API_KEY**（保订阅认证）。
-- **屏幕模型**：把 PTY 输出喂 SwiftTerm headless `Terminal` 引擎，维护 cols×rows 字符 buffer + 光标。
-- **状态机** `ClaudeTUIStateMachine`：从 buffer 锚点检测态——`promptReady`（输入框出现）/ `streaming`（"esc to interrupt" 页脚）/ `permissionPrompt`（权限框 + 选项行）/ `idle`。检测到权限框 → 解析选项 → 抛 `RunnerPermissionRequest`；UI 决策 → 注入对应按键（数字/↑↓+Enter）。
-- **动作 → 按键注入**：sendTurn=写文本+Enter；steer=streaming 态写文本+Enter；interrupt=Esc；resume=`claude --resume <id>` 起进程（仍 PTY 交互式）。
-- **流式输出 → assistantDelta**：从 buffer 新增区域 diff 出 assistant 文本（锚定输出区，排除页脚/输入框）。
-
-> **脆弱性是本 spec 的头号风险**（§8）。缓解：锚定稳定 UI 元素而非绝对坐标；pin 测过的 claude 版本；录制真实 TUI 会话做快照集成测试；状态机识别不了的态 → fail-loud（不静默猜）。
+- **退役**：`LocalCodingAgentProcess`（一次性）、`RunnerEventParser`（结构化解析）、`SteeringChannel`（hook 尾注入）、`InteractionChannel`（ask_human MCP）、`LocalCodingAgentSpec.argv()` 的 `--print`/`exec --json` 分支。
+  - 删 `InteractionChannel` 前**确认 ask_human MCP 仅 runner 本地路径用**（grep 别处引用）。
+- **复用**：`LocalCodingAgentKind`、`LocalCodingAgentExecutable`（resolve binary）、env 白名单思路、`CrewSessionRunner` 里非进程的 session 状态/接线（改成持 `AgentTerminalSession`）。
+- `CrewSessionRun`（`CrewSessionRunner.swift`）的 `events: [RunnerEvent]` / stdout 累积 → 改为持有 `AgentTerminalSession`；transcript 不再由它攒。
 
 ---
 
-## 6. 迁移现有 LocalRunner
+## 5. T4.5 跨端遥控（本期范围外，记账）
 
-- `LocalCodingAgentService.runSession` 的调用方（`CrewSessionRunner.swift` 的 `CrewSessionRun`）改为持有 `RunnerBackend`，消费 `events`/`permissionRequests`。
-- `RunnerEventParser` 的 Codex/Claude 解析逻辑**退役**（Codex 改 app-server 结构化、Claude 改 PTY 状态机）；`RunnerEvent` 枚举**保留并演进**（§3）。
-- 一次性 `argv()`（`--print`/`exec --json` 分支）退役；env 白名单 + 子进程生命周期骨架（`LocalCodingAgentProcess` / `LocalCodingAgentExecutable`）**复用**。
-- `SteeringChannel`（hook 尾注入）+ `InteractionChannel`（ask_human MCP）在本地 runner 路径**退役**——steer 走 `backend.steer`，权限走原生 `permissionRequests`。（注意：ask_human MCP 若别处也用，先确认仅 runner 路径用再删。）
-
----
-
-## 7. UI + T4.5 跨端整合
-
-- **右栏 session 窗口** `CrewSessionWindowView.swift`：transcript 渲染归一 `RunnerEvent`（reasoning 折叠 / assistant 流式 / toolCall 可展开 / fileChange diff）；底部加 **steer 输入条** + **原生权限卡片**（命令/diff + accept/always/decline，复用上一轮 PendingBot 视觉语言的卡片风格）。
-- **T4.5 跨端**（`SessionProxyClient`/`SessionProxyDO`）：远端 viewer 的 `session.command`（cancel/send_prompt/set_steering）映射到 `backend.interrupt/sendTurn/steer`；**新增**远端 approve/deny 命令 → `RunnerPermissionRequest.resolve`。`session.state` 广播改发归一事件摘要。edge 侧可能需在 `session-proxy-protocol.ts` 加 approve/deny 命令类型（小改，Phase 3 再定）。
+现有 `SessionProxyClient`/DO 广播的是结构化 `SessionState` 摘要 + 接收 `session.command`。生终端化后：
+- **控**（远端→本机）：`session.command`（send_prompt/steer/cancel）映射到 `AgentTerminalSession.send/interrupt` —— 仍成立，简单。
+- **读**（本机→远端 viewer）：远端要看"生终端"需传终端屏幕内容（ANSI/快照），比传结构化摘要复杂。**本期不做**，记 tech-debt：跨端 viewer 的终端镜像留作后续（iPad 遥控 Mac session 时再设计）。
 
 ---
 
-## 8. 风险 / tech-debt
+## 6. 风险 / tech-debt
 
-- 🔴 **Claude PTY 解析脆弱**：claude TUI 升级可能改 UI 锚点 → 状态机失配。缓解见 §5；上线前 tech-debt 登记 + pin 版本 + 快照测试。**这是全 spec 最大不确定点**。
-- 🟡 **Parity+ 砍了全量 TUI**：slash/plan mode/模型切换不做，记 tech-debt（后续按需补）。
-- 🟡 **app-server / claude 版本漂移**：两者协议/TUI 都在演进，接入层要能 fail-loud 报"不认识的协议版本/UI 态"，别静默错。
-- 真机验证：两端都需用户已 `codex login` / `claude` 订阅登录 + 本机有可跑的工作目录；headless CI 验不全，最终验在 Xcode GUI + 真实 CLI。
-
----
-
-## 9. 验证
-
-- Phase 1：JSON-RPC framing/dispatch 单测（fixture）；macOS build；**真跑** `codex app-server` 起一个 session 发一轮、看流式 + 触发一次命令 approval 回 accept 跑通。
-- Phase 2：状态机快照测试（录制 TUI）；macOS build；**真跑**交互式 `claude` 发一轮、看流式、触发权限框回答、steer 一次、interrupt 一次。
-- 整体：右栏 session 窗口端到端肉眼核对（需用户登录态 + 真实 CLI）。
+- 🟡 **跨端 viewer 看不到生终端**（§5）——本期只做本机；跨端镜像后补。记 tech-debt。
+- 🟡 **自动审批 = 放权**：全自动跑 coding agent 有误删/误改风险。但这是 coding agent 工具的固有取舍，且工作目录隔离（git worktree，`GitWorktreeService` 已有）。默认自动、真终端可人工介入兜底。
+- 🟢 **CLI flag/版本漂移**：claude/codex 的自动审批 flag 可能改名 → 启动失败要 fail-loud（报"agent 启动失败 + stderr"），别静默。
+- 真机验证：需用户已 `claude`/`codex` 订阅登录 + 本机装了两个 CLI；headless 验不全，最终验在 Xcode GUI 跑起来真起一个 session。
 
 ---
 
-## 10. 分期
+## 7. 验证
 
-1. **Phase 1（先）**：`RunnerBackend` protocol + 归一模型 + `CodexAppServerBackend` + 单测 + `CrewSessionRun` 接线 + 右栏渲染归一事件 + 原生权限卡片（先服务 Codex approval）。**自成可用闭环**。
-2. **Phase 2**：SwiftTerm 依赖 + `ClaudePTYBackend`（Parity+）+ 状态机 + 快照测试 + 复用同一权限卡片/steering UI。
-3. **Phase 3**：退役 `RunnerEventParser`/`SteeringChannel`/`InteractionChannel` 旧路径 + T4.5 跨端 approve/deny 整合（含 edge 小改）。
+- macOS build（含 SwiftTerm SPM 接入）。
+- **真跑**（需用户登录态 + 本机 CLI）：右栏起一个 claude session，终端显示其 TUI、能打字交互、`send()` 程序化发一条 prompt 跑通、interrupt 能断、stop 能终止；codex 同样起一个验一遍。
+- 账本：progress / tech-debt 更新。
 
-每期自成 spec→plan 不必，但**每期独立 plan + 验证 + 合并**。
+---
+
+## 8. 文件清单
+
+| 文件 | 动作 |
+|---|---|
+| `apps/pendingcrew/project.yml` | 加 SwiftTerm SPM 依赖 + 重跑 xcodegen |
+| `Sources/Mac/LocalRunner/AgentTerminalSession.swift` | 新建：终端会话(按 kind 起交互式 CLI + 字节注入控制) |
+| `Sources/Mac/Views/AgentTerminalView.swift` | 新建：NSViewRepresentable 宿主 LocalProcessTerminalView |
+| `Sources/Mac/Views/CrewSessionWindowView.swift` | 改：结构化 transcript → 生终端视图 |
+| `Sources/Mac/Services/CrewSessionRunner.swift` | 改：CrewSessionRun 持 AgentTerminalSession |
+| `Sources/Mac/LocalRunner/{LocalCodingAgentProcess,RunnerEventParser,SteeringChannel,InteractionChannel}.swift` | 退役(确认无他用后删) |
+| `Sources/Mac/LocalRunner/LocalCodingAgentSpec.swift` | 改：去掉一次性 argv 分支,保留 kind/cwd/env |
+
+单一 phase（不分期了——简化后体量小）。
