@@ -84,6 +84,14 @@
 - **建议**: 等 Mac 接附件/citations 渲染时，把 `ConversationView+Loading` 的 `Row`+查询抽进共享 `MessagesFetch`（iOS 缓存派发叠在上、Mac 投影），收口时进模拟器验 iOS 不回归。
 - **状态**: ✅ **已解决（2026-06-03）** —— Mac 接图片附件渲染时顺势收口:新增 `Networking/MessagesFetch.swift`（`MessageRow` 18 列超集 + `AttachmentRef` 从 iOS-only 移来 + `latest()` + `attachmentMeta()`）;iOS `ConversationView+Loading` 改调它（删局部 Row + 内联 attachments 查询,200 行 dispatch 字节级不变）;Mac `ChatDataSource` 改调 + 投影 + 滤 log/deleted/语音 recap + 解析图片附件。**至此 Mac 5 条查询（会话/bot好友/人类好友/来信/消息）全部两端同一份,零手抄复刻**。两端编译过;iOS 消息列表模拟器冒烟无回归（会话内消息因无 tap 工具未点验,改动逐字搬迁+dispatch 未动,风险极低）。剩余 Mac 缺口:bot/会话/来信头像（数据层补 avatar_path）、非图片附件的 icon+name chip、Mac 全屏看图 viewer。
 
+### 🟡 Mac 聊天附件 / 群聊补全 — 未真机验 + 三处未对齐 iOS
+- **发现**: 2026-06-04 · feat/mac-login-align（#212 聊天补全：附件 + 群聊）
+- **位置**: `apps/pendingbot/Sources/Mac/Views/MacMessagesView.swift`（MacChatView）；`apps/pendingbot/Sources/Networking/ChatDataSource.swift`（`upload`/`loadGroupSenders`/`conversationType`/`sendPeerMessage`/`sendMessage(attachmentIds:)`）
+- **问题**: Mac 端补了图片/文件附件（NSOpenPanel → 复用跨平台 `/v1/upload`）+ 群聊渲染（发送者抬头 + 按 type 路由发送：user_bot/self/group 走 SSE，user_user 直插 Supabase）。双端编译过，但**只做了编译校验，没进真机/真账号验**：附件上传回合、群消息收发、user_user 直插的 canonical realtime 行回填都是写操作回合，headless build 回落 ad-hoc 签名跑不了登录态，需 Xcode GUI 构建 + 真账号点验。三处刻意**未对齐 iOS**：(1) 上传图片**无客户端压缩**——iOS `encodeImageForUpload` 把库内 HEIC/大图降到 2048px JPEG，Mac 直传原图（大图慢 + 可能超 vision 内联上限，bot 看不到图但 chip 仍在）；(2) **无 @提及**（iOS 这块也未定型，本轮明确不做）；(3) **无附件全屏查看器**（iOS 有 `ImageViewer` 但 iOS-only，Mac 点图不放大）。另外群发送者 `loadGroupSenders` 无本地缓存预热（iOS 有 GRDB `hydrateGroupSendersFromCache` 先画再网络刷新），Mac 首帧群抬头会闪一下 seed 头像再补真名。
+- **影响**: 中。附件/群聊的"骨架可用"已具备且复用经验证的后端通道，但 (a) 整条写路径未真机验，(b) 无图片压缩在弱网/大图下体验差且可能触发"上传了但 bot 看不见"的隐性失败。
+- **建议**: 真机验三条写回合（附件发送、群收发、user_user 1:1）；把 iOS `encodeImageForUpload` 的 2048px JPEG 压缩抽成跨平台 helper（用 `PlatformImage` / CoreGraphics，避开 UIKit），Mac 上传图片前走它；@提及 / 全屏看图待 iOS 这两块定型后再镜像。
+- **状态**: 待真机验 + 三处对齐缺口未补
+
 ## 🔴 根基级
 
 ### 🔴 Bot 公开分享链路被 `bots` 表 RLS 堵死 — 陌生人扫码/点链接解析 public_invite bot 命中 0 行
