@@ -47,18 +47,24 @@ struct MacWelcomeView: View {
     private let resendTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Top half: brand mark, vertically centered (mirror iOS).
+        HStack(spacing: 48) {
+            // Left half: brand mark, centered.
             Image("BrandMark")
                 .resizable()
                 .aspectRatio(contentMode: .fit)
-                .frame(width: 96, height: 96)
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                .shadow(color: .black.opacity(0.05), radius: 16, y: 5)
+                .frame(width: 148, height: 148)
+                .clipShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
+                .shadow(color: .black.opacity(0.06), radius: 22, y: 6)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            // Bottom half: branches by stage.
+            // Right half: login controls, vertically + horizontally centered.
             VStack(alignment: .leading, spacing: 0) {
+                if vm.stage == .humanCheck {
+                    backButton
+                        .padding(.bottom, 18)
+                        .transition(.opacity)
+                }
+
                 switch vm.stage {
                 case .enteringEmail:
                     enteringEmailBody
@@ -71,23 +77,13 @@ struct MacWelcomeView: View {
                     errorBlock(text: errorText)
                         .padding(.top, 12)
                 }
-                Spacer(minLength: 0)
             }
-            .frame(maxWidth: 300)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .padding(.top, 8)
+            .frame(width: 320)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         }
-        .padding(.horizontal, 28)
+        .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.Palette.canvas.ignoresSafeArea())
-        .overlay(alignment: .topLeading) {
-            if vm.stage == .humanCheck {
-                backButton
-                    .padding(.leading, 12)
-                    .padding(.top, 12)
-                    .transition(.opacity)
-            }
-        }
         .onChange(of: vm.otpSent) { _, sent in
             if sent { focusedField = .code }
         }

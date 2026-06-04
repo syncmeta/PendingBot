@@ -209,6 +209,9 @@ struct PendingBotApp: App {
                     await accountStore.bootstrap()
                 }
         }
+        // 去掉窗口标题栏那条「大绿豆」标题条,让内容(尤其登录页)成一整片
+        // full-bleed 画布;红绿灯交通灯按钮仍浮在左上角内容之上。
+        .windowStyle(.hiddenTitleBar)
     }
 }
 
