@@ -57,20 +57,30 @@
 
 ---
 
-## 4. 退役 / 复用
+## 4. 退役 / 复用（Phase 1 范围）
 
-- **退役**：`LocalCodingAgentProcess`（一次性）、`RunnerEventParser`（结构化解析）、`SteeringChannel`（hook 尾注入）、`InteractionChannel`（ask_human MCP）、`LocalCodingAgentSpec.argv()` 的 `--print`/`exec --json` 分支。
+- **退役**：`LocalCodingAgentProcess`（一次性 pipe 子进程）、`RunnerEventParser`（JSONL 结构化解析）、`SteeringChannel`（hook 尾注入）、`InteractionChannel`（ask_human MCP）、`LocalCodingAgentSpec.argv()` 的 `--print`/`exec --json` 分支。
   - 删 `InteractionChannel` 前**确认 ask_human MCP 仅 runner 本地路径用**（grep 别处引用）。
-- **复用**：`LocalCodingAgentKind`、`LocalCodingAgentExecutable`（resolve binary）、env 白名单思路、`CrewSessionRunner` 里非进程的 session 状态/接线（改成持 `AgentTerminalSession`）。
-- `CrewSessionRun`（`CrewSessionRunner.swift`）的 `events: [RunnerEvent]` / stdout 累积 → 改为持有 `AgentTerminalSession`；transcript 不再由它攒。
+- **复用**：`LocalCodingAgentKind`、`LocalCodingAgentExecutable`（resolve binary）、env 白名单思路。
+- `CrewSessionRun`（`CrewSessionRunner.swift`）改为持有 `AgentTerminalSession`；`events: [RunnerEvent]`/stdout 累积/`RunnerEventParser` 调用去掉，transcript 改由生终端承载。
+- **`SessionProxy` 推送暂留、降级**（不删，避免破 #204 传输）：Phase 1 里 `CrewSessionRun` 给服务器只发**粗粒度生命周期**（started / exited(code)），`session.command`(远端→本机) 映射到 `AgentTerminalSession.send/interrupt`（远端控仍通）。`RunnerEvent` 类型保留作这层粗粒度 + Phase 2 改载终端字节帧。逐 token 结构化推送在 Phase 2 被终端字节隧道取代（§5）。
 
 ---
 
-## 5. T4.5 跨端遥控（本期范围外，记账）
+## 5. T4.5 跨端遥控 = 终端字节隧道（SSH-like）
 
-现有 `SessionProxyClient`/DO 广播的是结构化 `SessionState` 摘要 + 接收 `session.command`。生终端化后：
-- **控**（远端→本机）：`session.command`（send_prompt/steer/cancel）映射到 `AgentTerminalSession.send/interrupt` —— 仍成立，简单。
-- **读**（本机→远端 viewer）：远端要看"生终端"需传终端屏幕内容（ANSI/快照），比传结构化摘要复杂。**本期不做**，记 tech-debt：跨端 viewer 的终端镜像留作后续（iPad 遥控 Mac session 时再设计）。
+**重新定位**（2026-06-04 用户 steer）：跨端不再发结构化 `SessionState` 摘要，而是把 PTY 当成一条 SSH 式的字节隧道——`RunnerEvent`/parser/结构化 state 这套被**整体替掉**。两端都是"接在同一个 PTY 上的终端"，完全对称。
+
+- **读（本机→远端）**：本机 PTY 输出字节，除喂本地 SwiftTerm，也经现有 `SessionProxyClient`/`SessionProxyDO` WebSocket 流给远端；远端用**自己的 SwiftTerm 终端**（iOS/iPad 用 UIKit `TerminalView`）渲染原样 ANSI。
+- **控（远端→本机）**：远端键盘字节回传 → 本机 `AgentTerminalSession` 注入 PTY。`session.command`(send_prompt/steer/cancel) 仍保留作高层命令。
+- **协议**：`session-proxy-protocol.ts` + `SessionProxyProtocol.swift` 加 `terminal.output`(本机→远端，base64 字节块) / `terminal.input`(远端→本机，按键字节) 两类帧；退役逐 `RunnerEvent` 帧。
+- **断连重放**：远端重连时本机重发当前屏幕快照（SwiftTerm `Terminal` 可导出 buffer），或简单地从头不重放只接续（v1 接续即可，记 tech-debt）。
+
+### 5.1 分期
+- **Phase 1（先，本机闭环）**：PendingCrew Mac 本地终端——PTY host + 显示 + 键盘/程序化控制 + 退役旧一次性路径。**不动 edge / 远端**，本机自成可用。
+- **Phase 2（隧道）**：`SessionProxy` 协议改载终端字节 + 本机收发接线 + 远端 viewer（iOS/iPad PendingBot Crew tab / PendingCrew iPad 加 SwiftTerm 终端）。跨端 SSH-like 打通。
+
+> **本 spec 的 §2–§4、§8 主要描述 Phase 1**；Phase 2 待 Phase 1 落地、本机终端验稳后单独出 plan。
 
 ---
 
