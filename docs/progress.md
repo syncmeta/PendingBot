@@ -1,6 +1,17 @@
 # PendingBot / PendingCrew 进度账本 (Progress Ledger)
 
-**最近对账：2026-06-04**（对照实际代码 / 迁移 / git，不是看 task 标记）
+**最近对账：2026-06-05**（对照实际代码 / 迁移 / git，不是看 task 标记）
+
+> **2026-06-05 Mac 全面对齐 iOS（dynamic workflow，`feat/mac-login-align`，未合，#212）**
+> - **背景**：用户「都做，开 dynamic workflow 做完」。用 Workflow 顺序流水线（共享工作树，每块端到端：原生重画 + 接线 + xcodegen + iOS/macOS 双端编译到绿 + commit），4 个 area agent 串行。**逻辑全复用跨平台层，纯 SwiftUI 原生重画**；iOS-only 选择器（PhotosUI/UIImagePicker）用 NSOpenPanel 替代。
+> - **① 设置/我页**（commit `d091f8cf`）：`MacSettingsView`（锁屏通知预览 + 通话连接模式，Form `.grouped`，sheet）、`MacProfileEditView`（改名 + 头像 seed 轮换 + NSOpenPanel 自定义图 → /v1/upload）、`MacNameCorpus`（iOS NameCorpus 被 `#if os(iOS)` 圈住后读同一 names.txt 的镜像）；MacMeView 接入设置/资料/注销（`request_account_deletion` RPC + 两档 sentiment），头像换 ServerImage/BrandAvatar。
+> - **② 加好友 + 机器人**（`4850f853`+`11055362`）：`MacBotManagement.swift`（MacAddFriendSheet 输入号码 lookup→/v1/friend-requests、MacCreateBotSheet 单模型/可见性/公开 slug 直写 bots+user_bot_contacts、MacManageBotSheet 改名/模型/可见性/slug/删除、MacModelPickerSheet 基于跨平台 ModelCatalog）；MacFriendsColumn 加「+」+ bot 行右键「管理…」；PendingBotApp Mac 入口注入 `ModelCatalog.shared`。
+> - **③ 聊天补全**（`e1a3bfb4`）：MacChatView 加附件（NSOpenPanel→`ChatDataSource.upload`→待发预览→带 attachmentIds 发送；气泡内图走 ServerImage、文件走 chip）+ 群聊渲染（按 conversation_type 路由发送，user_user 直插 Supabase，群非自己气泡画发送者头像+名；新增跨平台 `ChatDataSource.loadGroupSenders`）。
+> - **④ Crew 群聊**（`b9c20958`）：`MacCrewChatView`（复用跨平台 getCrewAnnouncements/getCrewMembers/postCrewMessage + RealtimeManager；冷拉+realtime+乐观发送+发送者抬头+session 状态条+简单 @mention）、`MacCreateCrewSheet`（同 CreateCrewRequestV2 wire，NSOpenPanel 选工作目录）、`MacCrewDetailSheet`（只读）；MacRemoteSessionsView 右栏分段「群聊 / 服务端 session」，MacCrewListColumn 加「+」建 crew。**为复用把 crew 数据层去 iOS 门禁**：`CrewAPI.swift` 整体 + `CrewChatModels` 几个 index 类型 + `PermissionRequestCard` 的 payload/enum 改成跨平台（仅依赖 GroupBubbleSender 的 CrewChatAdapter 仍 iOS-only）。
+> - **验证**：合并方（我）跑了 `xcodegen` + iOS Simulator + macOS **双端 BUILD SUCCEEDED**（整合态）。Mac app 已启动到桌面。
+> - **缺口（agents 已记 tech-debt 🟡）**：**全部只编译校验，没真机/真账号验**——所有写回合（资料保存/注销、建管 bot/发好友申请、附件上传、群消息收发、建 crew、crew 发消息）需 Xcode GUI 构建 + 真账号点验；视觉像素未截图核对。功能性缺口：Mac 建 bot 无 arena 多模型池、无机器人配置子面（识图/搜索/写信/技能/语音 toggle/分段气泡/时区/邀请管理/分享）；加好友/机器人无扫码（Mac 无摄像头，只输入码）、加机器人未接 invite token resolve；附件无客户端压缩（iOS 降 2048 JPEG，Mac 直传原图）、无全屏查看器、无 @mention 富文本；Crew 无 inline 权限卡批准/拒绝（要批切回 iOS——**需用户定是否补 AppKit 权限卡**）、建 crew 无多 subject、详情 sheet 只读无写设置。**未合 main。**
+
+
 
 > **2026-06-04 Mac 个人钱包原生重画 + iOS 钱包死代码清理（`feat/mac-login-align` 续，#253/#212）**
 > - **背景**：用户「钱包什么的 已经迁移了的 都重新弄一下 ios 也一起」。核查现状：iOS 个人钱包 `WalletV2View` 已是新 PNC/Polar 模型（活，挂 MeTab）；`GroupWalletView` 也是新模型但**零入口**（#227）；老 `WalletView`(billing v1) 已零引用=死；**Mac 完全没有钱包**。数据层 `BillingService`/`GroupWalletService`/`APIClient` 本就跨平台。
