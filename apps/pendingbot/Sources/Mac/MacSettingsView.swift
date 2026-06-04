@@ -61,8 +61,8 @@ struct MacSettingsView: View {
                         }
                     }
                     Text("锁屏推送显示内容：「新消息」最隐私；「发送者名字」便于识别来源；「名字：内容预览」最方便但会泄露消息文本。")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .font(Theme.Fonts.footnote)
+                        .foregroundStyle(Theme.Palette.inkMuted)
                 } header: {
                     Text("通知")
                 }
@@ -75,8 +75,8 @@ struct MacSettingsView: View {
                         Text("WebSocket").tag("websocket")
                     }
                     Text("「自动」依次尝试 WebRTC、WebRTC（TURN中转）、WebSocket。WebRTC 直连延迟最低，但受 OpenAI 地区限制；TURN 中转经 Cloudflare 转发，不受地区限制；WebSocket 全程经服务器中转，兜底用。")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .font(Theme.Fonts.footnote)
+                        .foregroundStyle(Theme.Palette.inkMuted)
                 } header: {
                     Text("语音通话")
                 }
@@ -100,11 +100,12 @@ struct MacSettingsView: View {
     private var header: some View {
         HStack {
             Text("设置")
-                .font(.system(size: 17, weight: .semibold))
+                .font(Theme.Fonts.headline)
                 .foregroundStyle(Theme.Palette.ink)
             Spacer()
             Button("完成") { dismiss() }
                 .keyboardShortcut(.defaultAction)
+                .tint(Theme.Palette.accent)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)

@@ -5,7 +5,7 @@ import SwiftUI
 ///
 /// 直接消费 `AccountStore`(已是 Mac-compatible: 纯 Foundation + Combine
 /// + supabase-swift,Storage 整目录不动)。当前展示:
-///   - 头像区(简化 — Mac 端还没接 UserAvatar / BotAvatar,先 monogram)
+///   - 头像区(ServerImage 上传头像优先,退化到确定性 BrandAvatar(seed:))
 ///   - 显示名(profileDisplayName 优先,退化到 Account.displayName)
 ///   - 邮箱
 ///   - Account ID(便于诊断)
@@ -62,6 +62,7 @@ struct MacMeView: View {
             .frame(maxWidth: 720, alignment: .leading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Theme.Palette.canvas)
         .task { await loadWallet() }
         .sheet(isPresented: $walletShown) { MacWalletView() }
         .sheet(isPresented: $settingsShown) { MacSettingsView() }
@@ -109,20 +110,23 @@ struct MacMeView: View {
                 } else {
                     BrandAvatar(seed: seed, size: 72)
                 }
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 6) {
                     Text(displayName(account))
-                        .font(.system(size: 22, weight: .semibold))
+                        .font(Theme.Fonts.serif(size: 24, weight: .semibold))
                         .foregroundStyle(Theme.Palette.ink)
+                        .lineLimit(1)
                     if let email = account.email, !email.isEmpty {
                         Text(email)
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
+                            .font(Theme.Fonts.monoSmall)
+                            .foregroundStyle(Theme.Palette.inkMuted)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                     }
                 }
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.tertiary)
+                    .font(Theme.Fonts.glyph(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.Palette.inkMuted.opacity(0.55))
             }
             .contentShape(Rectangle())
         }
@@ -134,12 +138,14 @@ struct MacMeView: View {
             Button {
                 settingsShown = true
             } label: {
-                HStack {
-                    Label("设置", systemImage: "gearshape")
-                    Spacer()
+                HStack(spacing: 8) {
+                    Text("设置")
+                        .font(Theme.Fonts.system(size: 15, weight: .medium))
+                        .foregroundStyle(Theme.Palette.ink)
+                    Spacer(minLength: 0)
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.tertiary)
+                        .font(Theme.Fonts.glyph(size: 12, weight: .medium))
+                        .foregroundStyle(Theme.Palette.inkMuted.opacity(0.55))
                 }
                 .contentShape(Rectangle())
             }
@@ -153,11 +159,13 @@ struct MacMeView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 Text("钱包")
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
+                    .font(Theme.Fonts.headline)
+                    .foregroundStyle(Theme.Palette.ink)
                 Spacer()
                 Button("钱包明细") { walletShown = true }
                     .buttonStyle(.link)
+                    .tint(Theme.Palette.accent)
+                    .font(Theme.Fonts.footnote)
             }
 
             HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -188,8 +196,8 @@ struct MacMeView: View {
     private func infoSection(account: Account) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("账号信息")
-                .font(.headline)
-                .foregroundStyle(.secondary)
+                .font(Theme.Fonts.headline)
+                .foregroundStyle(Theme.Palette.ink)
             row("用户 ID", account.id)
             row("Worker", account.workerURL.absoluteString)
             if let seed = store.avatarSeed, !seed.isEmpty {
@@ -219,10 +227,11 @@ struct MacMeView: View {
             }
             .disabled(deleting)
             .buttonStyle(.link)
+            .tint(Color(hex: 0xB14B3C))
 
             Text("v\(appVersion) (\(appBuild))")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+                .font(Theme.Fonts.monoSmall)
+                .foregroundStyle(Theme.Palette.inkMuted)
                 .padding(.top, 16)
         }
     }
@@ -245,21 +254,23 @@ struct MacMeView: View {
     private var notSignedIn: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("未登录")
-                .font(.system(size: 22, weight: .semibold))
+                .font(Theme.Fonts.serif(size: 22, weight: .semibold))
+                .foregroundStyle(Theme.Palette.ink)
             Text("Mac 端的登录入口还在路上。请先在 iOS 上登录,Mac 端通过同一 Supabase session 同步进入。")
-                .font(.callout)
-                .foregroundStyle(.secondary)
+                .font(Theme.Fonts.body)
+                .foregroundStyle(Theme.Palette.inkMuted)
         }
     }
 
     private func row(_ label: String, _ value: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             Text(label)
-                .font(.callout)
-                .foregroundStyle(.secondary)
+                .font(Theme.Fonts.body)
+                .foregroundStyle(Theme.Palette.inkMuted)
                 .frame(width: 96, alignment: .leading)
             Text(value)
-                .font(.callout.monospaced())
+                .font(Theme.Fonts.monoSmall)
+                .foregroundStyle(Theme.Palette.ink)
                 .textSelection(.enabled)
             Spacer(minLength: 0)
         }
@@ -269,12 +280,6 @@ struct MacMeView: View {
         store.profileDisplayName?.isEmpty == false
             ? store.profileDisplayName!
             : account.displayName
-    }
-
-    private func monogram(for name: String) -> String {
-        let trimmed = name.trimmingCharacters(in: .whitespaces)
-        guard let first = trimmed.first else { return "?" }
-        return String(first).uppercased()
     }
 
     private var appVersion: String {

@@ -45,7 +45,7 @@ struct MacProfileEditView: View {
                     nameField
                     if let error {
                         Text(error)
-                            .font(.footnote)
+                            .font(Theme.Fonts.footnote)
                             .foregroundStyle(.red)
                             .padding(.horizontal, 22)
                     }
@@ -64,8 +64,8 @@ struct MacProfileEditView: View {
 
     private var header: some View {
         HStack {
-            Text("编辑资料")
-                .font(.system(size: 17, weight: .semibold))
+            Text("自定义")
+                .font(Theme.Fonts.headline)
                 .foregroundStyle(Theme.Palette.ink)
             Spacer()
             Button("取消") { dismiss() }
@@ -73,9 +73,10 @@ struct MacProfileEditView: View {
                 Task { await save() }
             } label: {
                 if saving { ProgressView().controlSize(.small) }
-                else { Text("保存") }
+                else { Text("完成") }
             }
             .keyboardShortcut(.defaultAction)
+            .tint(Theme.Palette.accent)
             .disabled(!canSave)
         }
         .padding(.horizontal, 20)
@@ -138,16 +139,17 @@ struct MacProfileEditView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text("昵称")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(Theme.Fonts.rounded(size: 12, weight: .medium))
                     .foregroundStyle(Theme.Palette.inkMuted)
                 Spacer()
                 Button {
                     name = MacNameCorpus.shared.random()
                 } label: {
                     Label("随机名字", systemImage: "die.face.5")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(Theme.Fonts.rounded(size: 12, weight: .medium))
                 }
                 .buttonStyle(.link)
+                .tint(Theme.Palette.accent)
             }
             TextField("起一个吧", text: $name)
                 .textFieldStyle(.plain)
@@ -170,9 +172,9 @@ struct MacProfileEditView: View {
     private func actionChip(systemImage: String, label: String) -> some View {
         HStack(spacing: 6) {
             Image(systemName: systemImage)
-                .font(.system(size: 13, weight: .medium))
+                .font(Theme.Fonts.glyph(size: 13, weight: .medium))
             Text(label)
-                .font(.system(size: 13, weight: .medium))
+                .font(Theme.Fonts.rounded(size: 13, weight: .medium))
         }
         .foregroundStyle(Theme.Palette.accent)
         .padding(.horizontal, 14)
