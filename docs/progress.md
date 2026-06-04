@@ -2,6 +2,15 @@
 
 **最近对账：2026-06-04**（对照实际代码 / 迁移 / git，不是看 task 标记）
 
+> **2026-06-04 Supabase 迁 EU 区（Frankfurt）+ 观测三件套上线（`feat/managed-config`，已部署）**
+> - **动机**：用户数据 GDPR/EU 驻留。主库原在 US（us-west-2），pre-launch 无真实数据 → **EU 新建项目 `zafhoiwwpanpuashtnxy`（eu-central-1）、全套迁移重跑、不迁数据**。旧 US 库 `sslzhblojwkxfdyisity` 留作回退，EU 端到端全验后再删。
+> - **Phase 1 库**：180 迁移干净 apply（87 表 + 4 BI 视图 + `ensure_rls` event trigger + `metabase_ro` 角色）、seed（6 preset bots + 19683 地名）、schema regen、edge typecheck 全绿。**修了一个账本漂移**：`public.rls_auto_enable`（public schema 建表自动开 RLS 的安全网）早于 `0001_init` squash、只活在 US 库从未进账本，空库重跑撞 42883；已把 live 定义逐字补回迁移 `20260524175632`，账本自洽（任何空库可重建）。
+> - **Phase 2/3 代码+部署**：硬编码仅 3 处（wrangler `SUPABASE_URL` + iOS `HostedConfig` URL/anon key）。worker secret 换 EU anon/service + 新 `REALTIME_WEBHOOK_SECRET`（worker secret + EU vault 两边同值）；**deploy 切 EU**（health=production、AASA 200、`/b/*` 查库 404 非 500 = 连库成功）。
+> - **观测**：**Sentry + PostHog 生产启用**（EU host：`eu.i.posthog.com` / `cloud.langfuse.com`）。Langfuse keys 已备但 `LANGFUSE_ENABLED` 暂 false —— 用户要全功能（发完整 input/output 本文），等 `traceGeneration` 发本文（#247/#248）再开，免得先发半成品指标 trace。
+> - **附带发现**：supabase storage **空**（附件走 R2），换区零影响，少一摊。`feature flags` 经评估**不迁 PostHog**——现有 `*_ENABLED` 是运维 kill-switch，故意零运行时依赖，迁 PostHog 是反模式（循环依赖）。
+> - **待**：Phase 4 控制台 Auth（Site URL / Apple+Google OAuth / Turnstile secret / SMTP / email 模板，用户配）；Phase 5 iOS 端到端验证（真机注册登录→写库→realtime）；旧 US 库删除；Langfuse 发本文 + prompt→Langfuse Prompt Mgmt（#247）+ arena Elo→Bradley-Terry（#249）。
+> - **Grafana 解卡**：建 4 个 security-definer 聚合视图绕 RLS（不给宽松 policy），dashboard 03/05 SQL 指向视图（迁移 `20260604044057`，已 apply EU）。看板端到端待 Grafana Cloud 账号 + datasource。`metabase_ro` 正名 `bi_ro` 未做（成本铺开到 README，搁置）。
+
 > **2026-06-04 计费/观测上线收口 + 全项目死代码清理（计费 lane，已部署）**
 > - **送/兑换全改走 Polar**：新用户 welcome **35 PNC**（= 旧 3500 PND 原值）via `lib/billing-grant.ts:grantSignupBonus`（挂 `/me/profile`，幂等 + 仅 BILLING_ENABLED 时种）；兑换码 `billing_redeem` RPC 退化为只校验+标记 used，入账走 `creditRedemptionToPolar`（ensureCustomer+grantCredits）；`/redeem` 受 BILLING_ENABLED 门控（关时拒绝、不消耗码）。
 > - **退役老路径**：A 段 billing-v2/v1 孤儿已 **drop 到生产**（7 表 + 8 RPC + signup 触发器，迁移 `20260603112148`）；删 `apps/board`（旧自制后台，改用 dashboard 栈）；删一批死代码（balance-cache / getThreshold / gateUsage / decayShareIndex / SessionUser / 废错误码 / dev:web 等）。B 段（`subject_wallets` / `group_member_billing` + invite 流）留 #226。
