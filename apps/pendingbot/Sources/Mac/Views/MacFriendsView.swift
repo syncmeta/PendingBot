@@ -14,6 +14,13 @@ struct MacFriendsColumn: View {
     @State private var notice: String?
     @State private var didLoad = false
 
+    // 加好友 / 建机器人 / 管机器人(#212 Mac 原生重画)。
+    @State private var showingAddFriend = false
+    @State private var showingAddBot = false
+    @State private var showingCreateBot = false
+    /// 选中一个自己创建的 bot → 管理 sheet。
+    @State private var managingBot: MacBotPick?
+
     var body: some View {
         List {
             if let loadError {
@@ -43,6 +50,13 @@ struct MacFriendsColumn: View {
                     }
                     .buttonStyle(.plain)
                     .padding(.vertical, 5)
+                    .contextMenu {
+                        Button("打开会话") { openBot(bot) }
+                        // 管理只对自己创建的 bot 有意义;开管理前拉一次 bots 行
+                        // 确认 creator_id == 我,再 seed MacBotPick。RLS 也会
+                        // 兜底(非创建者 UPDATE/DELETE 会被拒)。
+                        Button("管理机器人…") { Task { await openManage(bot) } }
+                    }
                 }
             }
 
@@ -60,7 +74,78 @@ struct MacFriendsColumn: View {
             }
         }
         .navigationTitle("好友")
+        .toolbar {
+            ToolbarItem {
+                Menu {
+                    Button { showingAddFriend = true } label: {
+                        Label("加好友", systemImage: "person.badge.plus")
+                    }
+                    Button { showingAddBot = true } label: {
+                        Label("加机器人", systemImage: "plus.bubble")
+                    }
+                    Divider()
+                    Button { showingCreateBot = true } label: {
+                        Label("新建机器人", systemImage: "wand.and.stars")
+                    }
+                } label: {
+                    Image(systemName: "plus")
+                }
+            }
+        }
+        .sheet(isPresented: $showingAddFriend) {
+            MacAddFriendSheet(onAdded: { Task { await load() } })
+        }
+        .sheet(isPresented: $showingAddBot) {
+            MacAddBotSheet()
+        }
+        .sheet(isPresented: $showingCreateBot) {
+            MacCreateBotSheet(onCreated: { _ in Task { await load() } })
+        }
+        .sheet(item: $managingBot) { pick in
+            MacManageBotSheet(
+                onChanged: { Task { await load() } },
+                onDeleted: { _ in Task { await load() } },
+                initial: pick
+            )
+        }
         .task { await load() }
+    }
+
+    /// Resolve a tapped bot's full row (creator_id / model_id / visibility) and,
+    /// if the current user created it, open the manage sheet. Otherwise surface
+    /// a notice — non-creators can't manage (RLS would reject anyway).
+    private func openManage(_ bot: BotContact) async {
+        notice = nil
+        struct Row: Decodable {
+            let id: String
+            let display_name: String
+            let model_id: String?
+            let visibility: String?
+            let creator_id: String?
+        }
+        do {
+            let row: Row = try await SupabaseStack.shared
+                .from("bots")
+                .select("id, display_name, model_id, visibility, creator_id")
+                .eq("id", value: bot.id)
+                .single()
+                .execute()
+                .value
+            let me = AccountStore.shared.current?.id
+            guard let creator = row.creator_id, creator == me else {
+                notice = "只有创建者本人能管理「\(bot.displayName)」"
+                return
+            }
+            managingBot = MacBotPick(
+                id: row.id,
+                displayName: row.display_name,
+                modelId: row.model_id,
+                visibility: row.visibility,
+                creatorId: row.creator_id
+            )
+        } catch {
+            notice = error.localizedDescription
+        }
     }
 
     private func load() async {

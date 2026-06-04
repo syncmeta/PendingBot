@@ -113,6 +113,7 @@
 		A2E9CBC1BBEC585F2594DFAC /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = 23AC5D1A6CD4C748003E6936 /* MarkdownUI */; };
 		A356B62C725A74F8C0DDB244 /* SubjectPickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A19A4D76A2D17FD422DA74D /* SubjectPickerSheet.swift */; };
 		A7ADFAD7B076861A93C987D1 /* UserAvatar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A4C4C281584EA9A3D270E66 /* UserAvatar.swift */; };
+		AA4C55367C3F0EB61C9CE0D6 /* MacBotManagement.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A874FB0CB3D8792D7DBDAD7 /* MacBotManagement.swift */; };
 		ACB7DE5BB4722BC475D80C54 /* BrandAvatar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C5FC1E414D4CABC226AD902 /* BrandAvatar.swift */; };
 		AD4913CC001344F2013796AB /* WalletV2Format.swift in Sources */ = {isa = PBXBuildFile; fileRef = 199916D33039F4F07FC95D7D /* WalletV2Format.swift */; };
 		AE2E39CEFC00A4D6517ABAE9 /* SwiftMath in Frameworks */ = {isa = PBXBuildFile; productRef = 6F86D21C91A9BC3B4CA176D0 /* SwiftMath */; };
@@ -182,6 +183,7 @@
 		0767E4C8060BA86E1484AB2E /* SupabaseStack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseStack.swift; sourceTree = "<group>"; };
 		0952FBAFFA7B0819B8B70672 /* CallSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallSession.swift; sourceTree = "<group>"; };
 		0A39758A2179809248593753 /* ConversationSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationSettingsView.swift; sourceTree = "<group>"; };
+		0A874FB0CB3D8792D7DBDAD7 /* MacBotManagement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacBotManagement.swift; sourceTree = "<group>"; };
 		0BD194A0682C2BC1E950991E /* TurnstileChallenge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TurnstileChallenge.swift; sourceTree = "<group>"; };
 		0C772BAA4B0D29D2620E67CF /* ConversationView+Streaming.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConversationView+Streaming.swift"; sourceTree = "<group>"; };
 		0D559B8D3970D7B444980F3C /* MessageTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageTabView.swift; sourceTree = "<group>"; };
@@ -520,6 +522,7 @@
 		4B6ED05D5BC8BD3EDAD14EF6 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				0A874FB0CB3D8792D7DBDAD7 /* MacBotManagement.swift */,
 				7013EADBDCDA5C670AA6DBB9 /* MacEnvelopeView.swift */,
 				F6C7BA77C498838A64F51382 /* MacFriendsView.swift */,
 				40B3AC8D204D37CE4A7DE319 /* MacMessagesView.swift */,
@@ -873,6 +876,7 @@
 				A0D13A30C3F770CF9B9505E1 /* LetterSenderAvatar.swift in Sources */,
 				BDDDE8F25B3B11A420609162 /* LocalDatabase.swift in Sources */,
 				E81BA5D57A39095B26E2EE89 /* Log.swift in Sources */,
+				AA4C55367C3F0EB61C9CE0D6 /* MacBotManagement.swift in Sources */,
 				09D4746AF1AD5616504DC333 /* MacEnvelopeView.swift in Sources */,
 				939B2ECABC9E20A928E7ABCD /* MacFriendsView.swift in Sources */,
 				BC5C3C8B82FDABE15170EABE /* MacGroupWalletView.swift in Sources */,

@@ -194,6 +194,9 @@ private struct SplashView: View {
 @main
 struct PendingBotApp: App {
     @StateObject private var accountStore = AccountStore.shared
+    // 跟 iOS 一致:把 ModelCatalog.shared 当 environmentObject 注入,供
+    // Mac 端建/管机器人的模型选择器(MacModelPickerSheet 等)读目录。
+    @StateObject private var modelCatalog = ModelCatalog.shared
 
     var body: some Scene {
         WindowGroup {
@@ -202,6 +205,7 @@ struct PendingBotApp: App {
             // 但没有登录入口,导致没会话、所有 /v1/* 401。
             MacRootGate()
                 .environmentObject(accountStore)
+                .environmentObject(modelCatalog)
                 .task {
                     // 跟 iOS 入口对齐:.task 里 hydrate 持久化的 supabase
                     // session,避免冷启动直接闪过 "未登录" 态。
