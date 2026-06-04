@@ -1172,6 +1172,11 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       cacheWriteTokens: usage.cacheWrite,
       ...providerUsage,
       webTools: webMeter.snapshot(),
+      // Full conversation → Langfuse generation input/output (#248). The
+      // assistant turn was pushed onto `messages` above, so it carries the
+      // whole prompt; `totalContent` is the raw model output.
+      promptBody: messages,
+      completionBody: totalContent,
       metadata: {
         bot_id: bot.id,
         status: finalStatus,
@@ -1247,6 +1252,10 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
         // still be billed — the upstream provider already consumed
         // those quotas regardless of how the turn ended.
         webTools: webMeter.snapshot(),
+        // Full prompt + whatever output streamed before the error → Langfuse,
+        // so a failed turn is debuggable from the trace (#248).
+        promptBody: messages,
+        completionBody: totalContent,
         metadata: { bot_id: bot.id, status, message: message.slice(0, 200) },
       });
     } catch (auditErr) {
