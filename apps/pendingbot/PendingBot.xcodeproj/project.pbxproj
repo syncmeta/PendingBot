@@ -127,7 +127,6 @@
 		BDDDE8F25B3B11A420609162 /* LocalDatabase.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EFE46C6B281742A271B9202 /* LocalDatabase.swift */; };
 		BF1A43D6762B6F732360A79D /* GroupCallView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C49D5C2273CF903796CDB250 /* GroupCallView.swift */; };
 		BF2751532E8C693A578DA8F2 /* ConversationFetch.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1CFD768DF0BEA583893EE69 /* ConversationFetch.swift */; };
-		C066D6618A9F478DD483752D /* WalletView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67A4B5DE6232D0385E0BDF55 /* WalletView.swift */; };
 		C388351781EFDB16D477FE8A /* CallDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB83A6154A7226DF743254BE /* CallDiagnostics.swift */; };
 		C3FB687D0DF351B15AF2A2A2 /* ContactsFetch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 125E5FD0E43ECEEB291F2BC2 /* ContactsFetch.swift */; };
 		C47DDDD2BAD3AD2DA4EC51A0 /* GroupQRCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B48A6EDBF639ED658DB2493 /* GroupQRCard.swift */; };
@@ -240,7 +239,6 @@
 		6541D1291535650ACAD4D6F1 /* CallDiagnosticsLogic.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallDiagnosticsLogic.swift; sourceTree = "<group>"; };
 		669D712A76A1F12D4F8171E8 /* SplitNav.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplitNav.swift; sourceTree = "<group>"; };
 		67959B4A15D5CFF20CADAAA6 /* WalletV2View.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletV2View.swift; sourceTree = "<group>"; };
-		67A4B5DE6232D0385E0BDF55 /* WalletView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletView.swift; sourceTree = "<group>"; };
 		69B9DBAF15442620F6137B0F /* BotManagement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotManagement.swift; sourceTree = "<group>"; };
 		6A5442547F63F7CF41B54C46 /* BotInviteAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotInviteAPI.swift; sourceTree = "<group>"; };
 		6CF743A2BD19523CAF11ECC6 /* CrewAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewAPI.swift; sourceTree = "<group>"; };
@@ -579,7 +577,6 @@
 				1E0533AC3090836219CA2A47 /* SettingsView.swift */,
 				199916D33039F4F07FC95D7D /* WalletV2Format.swift */,
 				67959B4A15D5CFF20CADAAA6 /* WalletV2View.swift */,
-				67A4B5DE6232D0385E0BDF55 /* WalletView.swift */,
 			);
 			path = Me;
 			sourceTree = "<group>";
@@ -919,7 +916,6 @@
 				709467D9E6B366E16CAE1B43 /* VoiceCallAPI.swift in Sources */,
 				AD4913CC001344F2013796AB /* WalletV2Format.swift in Sources */,
 				598A32DFDD15BC85C9A1E90A /* WalletV2View.swift in Sources */,
-				C066D6618A9F478DD483752D /* WalletView.swift in Sources */,
 				4D643B36DC9C4F4911A4B845 /* WelcomeView.swift in Sources */,
 				7BA4C1304CD5FF6B589685DE /* WelcomeViewModel.swift in Sources */,
 			);
