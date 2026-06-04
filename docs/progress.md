@@ -2,6 +2,13 @@
 
 **最近对账：2026-06-04**（对照实际代码 / 迁移 / git，不是看 task 标记）
 
+> **2026-06-04 Mac 个人钱包原生重画 + iOS 钱包死代码清理（`feat/mac-login-align` 续，#253/#212）**
+> - **背景**：用户「钱包什么的 已经迁移了的 都重新弄一下 ios 也一起」。核查现状：iOS 个人钱包 `WalletV2View` 已是新 PNC/Polar 模型（活，挂 MeTab）；`GroupWalletView` 也是新模型但**零入口**（#227）；老 `WalletView`(billing v1) 已零引用=死；**Mac 完全没有钱包**。数据层 `BillingService`/`GroupWalletService`/`APIClient` 本就跨平台。
+> - **Mac 个人钱包**：新 `MacWalletView`（原生 List `.inset` 镜像 iOS 钱包：余额/包/账本，Theme token），作为 sheet 从 `MacMeView` 弹出；MacMeView 加钱包概览（余额+阈值）。抽跨平台 `WalletV2Format`（formatPnc/各 label/阈值·过期文案/formatters），iOS `WalletV2View` 删自带 static helper 改复用 —— 两端同源不复制。
+> - **iOS 清理**：删死的 `WalletView.swift`；`BillingService` 砍掉只被它用的 v1 成员（Balance/fetchBalance/applySilentUpdate/redeem/Summary/fetchSummary/Log*/fetchLog），只留 `WalletV2 + fetchWalletV2`。双端 build 印证无他处引用。
+> - **缺口（记 tech-debt 🟡）**：① 删 v1 钱包连带删了**兑换码入口**，新钱包两端都没有兑换 UI（后端仍能兑换）——待定是否在新钱包补；② **群钱包两端入口位置未定**：iOS #227 一直 pending、Mac 没有 crew 详情页可挂 → 群钱包 Mac 端重画 + 两端接入口**待用户拍板入口位置**后再做。
+> - **验证**：iOS Simulator + macOS 双端 `xcodebuild` BUILD SUCCEEDED。未合 main。
+
 > **2026-06-04 PendingBot Mac 登录界面对齐 iOS（`feat/mac-login-align`，未合，#253/#212）**
 > - **动机**：用户「开 Mac 我看看 → 登录界面要和 iOS 统一」，选了**完全对齐三种登录**（Apple+Google+邮箱）。Mac 原本是极简 email-only（一个 SF Symbol + 验证码），iOS 是打磨过的完整版（BrandMark logo + 三登录 + 「你是？」人机验证分步 + Turnstile + 验证码 + 机器人彩蛋）。
 > - **跨平台基座**（commit 1）：`Theme`/`Platform`/`Haptics` 去掉 `#if os(iOS)` 整体围栏 → 原生 macOS 拿到同一套 `Palette/Fonts/Metrics` 设计 token（UIFont 辅助用 `canImport(UIKit)` 精确围）；`Platform.isMac` 原生 Mac 为 true（0.88 桌面字号）；`Haptics` Mac 端 no-op。`AppleSignIn`/`GoogleSignIn` 放开到 macOS：Apple 原生 `ASAuthorizationController`（NSWindow anchor），Google 走 GoogleSignIn-iOS 的 **macOS target**（`signIn(withPresenting: NSWindow)`，该包对 macOS 本就链接）。
