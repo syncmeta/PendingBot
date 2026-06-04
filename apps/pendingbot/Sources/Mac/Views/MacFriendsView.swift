@@ -25,31 +25,32 @@ struct MacFriendsColumn: View {
         List {
             if let loadError {
                 Label(loadError, systemImage: "exclamationmark.triangle")
-                    .font(.caption).foregroundStyle(.red)
+                    .font(Theme.Fonts.footnote)
+                    .foregroundStyle(Theme.Palette.plum)
             }
             if let notice {
                 Label(notice, systemImage: "info.circle")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(Theme.Fonts.footnote)
+                    .foregroundStyle(Theme.Palette.inkMuted)
             }
 
-            Section("机器人") {
+            // 分区标题字体对齐 iOS Section header 语气(serif 小标题)。
+            Section {
                 if bots.isEmpty && didLoad {
-                    Text("还没有添加机器人").font(.caption).foregroundStyle(.secondary)
+                    Text("还没有添加机器人")
+                        .font(Theme.Fonts.footnote)
+                        .foregroundStyle(Theme.Palette.inkMuted)
                 }
                 ForEach(bots) { bot in
                     Button { openBot(bot) } label: {
-                        HStack(spacing: 9) {
-                            BrandAvatar(seed: bot.id, size: 30)
-                            Text(bot.displayName).lineLimit(1)
-                            Spacer(minLength: 4)
-                            if bot.visibility == "public_invite" {
-                                Text("公开").font(.caption2).foregroundStyle(.secondary)
-                            }
-                        }
+                        MacFriendRow(
+                            avatar: AnyView(BrandAvatar(seed: bot.id, size: 36)),
+                            name: bot.displayName,
+                            trailing: AnyView(MacBotVisibilityTag(visibility: bot.visibility))
+                        )
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .padding(.vertical, 5)
                     .contextMenu {
                         Button("打开会话") { openBot(bot) }
                         // 管理只对自己创建的 bot 有意义;开管理前拉一次 bots 行
@@ -58,19 +59,32 @@ struct MacFriendsColumn: View {
                         Button("管理机器人…") { Task { await openManage(bot) } }
                     }
                 }
+            } header: {
+                Text("机器人")
+                    .font(Theme.Fonts.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.inkMuted)
             }
 
-            Section("好友") {
+            Section {
                 if humans.isEmpty && didLoad {
-                    Text("还没有好友").font(.caption).foregroundStyle(.secondary)
+                    // 逐字对齐 iOS 好友空态文案(FriendsTabView.emptyTextForFilter
+                    // 的 .humans 分支)。
+                    Text("还没有人类朋友")
+                        .font(Theme.Fonts.footnote)
+                        .foregroundStyle(Theme.Palette.inkMuted)
                 }
                 ForEach(humans) { human in
-                    HStack(spacing: 9) {
-                        MacContactAvatar(avatarPath: human.avatarPath, seed: human.avatarSeed, size: 30)
-                        Text(human.shownName).lineLimit(1)
-                    }
-                    .padding(.vertical, 5)
+                    MacFriendRow(
+                        avatar: AnyView(MacContactAvatar(avatarPath: human.avatarPath,
+                                                         seed: human.avatarSeed, size: 36)),
+                        name: human.shownName,
+                        trailing: AnyView(MacHumanKindTag())
+                    )
                 }
+            } header: {
+                Text("好友")
+                    .font(Theme.Fonts.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.inkMuted)
             }
         }
         .navigationTitle("好友")
@@ -81,11 +95,11 @@ struct MacFriendsColumn: View {
                         Label("加好友", systemImage: "person.badge.plus")
                     }
                     Button { showingAddBot = true } label: {
-                        Label("加机器人", systemImage: "plus.bubble")
+                        Label("加机器人", systemImage: "rectangle.badge.plus")
                     }
                     Divider()
                     Button { showingCreateBot = true } label: {
-                        Label("新建机器人", systemImage: "wand.and.stars")
+                        Label("新建机器人", systemImage: "sparkles")
                     }
                 } label: {
                     Image(systemName: "plus")
@@ -149,7 +163,36 @@ struct MacFriendsColumn: View {
     }
 
     private func load() async {
+        // cache-first:首屏先从共享 LocalDatabase 读上次的 bot / 好友列表即时渲染
+        // (对齐 iOS FriendsTabView.load 的 hydrate),再让网络刷新覆盖。首屏 fallback
+        // only —— 仅在两列都空时填,避免热屏刷新把新数据回退到缓存。bot 缓存以
+        // newest-first 呈现(对齐 listBotContacts 的 reversed())。
+        if bots.isEmpty && humans.isEmpty {
+            let cachedBots = LocalDatabase.shared.loadBots()
+            let cachedContacts = LocalDatabase.shared.loadContacts()
+            if !cachedBots.isEmpty {
+                bots = cachedBots
+                    .filter { !($0.id.hasPrefix("self-")) }
+                    .reversed()
+                    .map { BotContact(id: $0.id,
+                                      displayName: $0.display_name.isEmpty ? "未命名机器人" : $0.display_name,
+                                      visibility: $0.visibility) }
+            }
+            if !cachedContacts.isEmpty {
+                humans = cachedContacts.map {
+                    HumanContact(id: $0.id, displayName: $0.display_name, alias: $0.alias,
+                                 avatarPath: $0.avatar_path, avatarSeed: $0.avatar_seed ?? $0.id)
+                }
+            }
+        }
+
         // 两个数据源独立拉,任一失败不挡另一个。
+        //
+        // 缓存策略:只读不写。bot/contact 缓存是 iOS 写入的富行(model_id /
+        // creator_id / added_at / avatar_seed),iOS 侧 ownsBot / 模型标签 / 排序
+        // 都依赖这些列。Mac 的 FriendsDataSource 只投影 id/display_name/visibility,
+        // 若在此整表 replaceBots/replaceContacts 会把 iOS 的列抹成 null(共享单机
+        // 缓存),破坏 iOS。所以 Mac 只 hydrate-on-read,写回交给 iOS。
         async let humansResult = FriendsDataSource.listHumanContacts()
         async let botsResult = FriendsDataSource.listBotContacts()
         do { humans = try await humansResult } catch { loadError = error.localizedDescription }
@@ -172,6 +215,63 @@ struct MacFriendsColumn: View {
                 notice = error.localizedDescription
             }
         }
+    }
+}
+
+// MARK: - Friend row (对齐 iOS FriendsTabView.FriendRow)
+
+/// 头像 + 名称 + 右侧类型 pill 的好友/机器人行。排版逐项对齐 iOS `FriendRow`:
+/// 36pt 头像、`serif(16, .semibold)` ink 名称、行内 10pt 垂直 padding、右侧
+/// 满色 tag pill。avatar / trailing 用 `AnyView` 抹平 bot(BrandAvatar +
+/// 机器人 visibility pill)与 human(头像 + 人类 pill)两种来源。
+private struct MacFriendRow: View {
+    let avatar: AnyView
+    let name: String
+    let trailing: AnyView
+
+    var body: some View {
+        HStack(spacing: 10) {
+            avatar
+            Text(name)
+                .font(Theme.Fonts.serif(size: 16, weight: .semibold))
+                .foregroundStyle(Theme.Palette.ink)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            trailing
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+/// 机器人 visibility tag pill —— 逐字 / 逐色对齐 iOS `BotVisibilityTag`:
+/// 私有机器人(plum / plumBg)、公有机器人(amber / amberBg)。传 `bots.visibility`
+/// 原值;nil 落到公有样式(schema 默认)。
+private struct MacBotVisibilityTag: View {
+    let visibility: String?
+
+    var body: some View {
+        let isPrivate = visibility == "private"
+        let text = isPrivate ? "私有机器人" : "公有机器人"
+        let fg: Color = isPrivate ? Theme.Palette.plum : Theme.Palette.amber
+        let bg: Color = isPrivate ? Theme.Palette.plumBg : Theme.Palette.amberBg
+        Text(text)
+            .font(Theme.Fonts.system(size: 10, weight: .semibold))
+            .foregroundStyle(fg)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(bg))
+    }
+}
+
+/// 人类 tag pill —— 逐字 / 逐色对齐 iOS `HumanKindTag`(accent / accentBg)。
+private struct MacHumanKindTag: View {
+    var body: some View {
+        Text("人类")
+            .font(Theme.Fonts.system(size: 10, weight: .semibold))
+            .foregroundStyle(Theme.Palette.accent)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(Theme.Palette.accentBg))
     }
 }
 
