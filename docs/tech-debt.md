@@ -44,6 +44,18 @@
 
 ## 🟡 拆东墙补西墙
 
+### 🟡 PendingCrew runner 生终端化 Phase 1 的尾巴
+- **发现**: 2026-06-04 · feat/pendingcrew-runner-backends（runner 改内嵌真终端 Phase 1）
+- **位置**: `apps/pendingcrew/Sources/Mac/{LocalRunner/AgentTerminalSession.swift, Views/{AgentTerminalView,CrewSessionWindowView}.swift, Services/CrewSessionRunner.swift}`
+- **背景**: runner 从一次性 `claude --print`/`codex exec --json` 改成 SwiftTerm `LocalProcessTerminalView` 内嵌交互式 CLI（自动审批 `--dangerously-skip-permissions` / `-a never`），保订阅计费 + 完整交互。spec/plan 见 `docs/superpowers/{specs,plans}/2026-06-04-pendingcrew-runner-*`。Phase 1 只本机闭环。
+- **遗留**:
+  1. **跨端"看 agent 输出内容"降级**：拔掉了结构化 `RunnerEvent` 推送（旧路径没人验证过、按用户授权干净拔）。远端仍能**控**（命令），但**看不到 agent 具体输出**——待 Phase 2 把 PTY 当 SSH 式字节隧道补回（spec §5）。
+  2. **首条 prompt 注入用固定 sleep**（`CrewSessionWindowView.swift` 0.6s/4s）等终端 REPL 启动——脆。正解=检测终端就绪（prompt 锚点）再注入。
+  3. **自动审批=放权**：全自动跑 coding agent 有误删风险；靠工作目录 git worktree 隔离 + 真终端可人工介入兜底。
+  4. **CLI flag 漂移**：claude/codex 自动审批 flag 写死，升级改名会启动失败——应 fail-loud。
+  5. `PendingCrewAPI.appendSessionEvent` 现 caller-less，留作 Phase 2 复用；不用则删。
+- **状态**: 待办（Phase 2 隧道补 #1）。**Phase 1 像素级真验未做**——需用户本机 claude/codex 登录态起 app 验终端托管/注入/交互。
+
 ### 🟡 normalize_email 双实现（SQL + TS）须手动保持同步
 - **发现**: 2026-06-04 · fix/billing-tails-email-norm（#252 email 规范化）
 - **位置**: `pendingbot.normalize_email`（迁移 20260604102812）+ `apps/edge/src/lib/billing-grant.ts:normalizeEmail()`

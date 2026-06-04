@@ -2,6 +2,11 @@
 
 **最近对账：2026-06-04**（对照实际代码 / 迁移 / git，不是看 task 标记）
 
+> **2026-06-04 PendingCrew runner 改内嵌真终端 Phase 1（`feat/pendingcrew-runner-backends`，未合）**
+> - **动机+铁律**：runner 要"完整编排/控制 claude/codex"，不是一次性 exec。计费铁律：6-15 起 Agent SDK + `claude -p` 在订阅计划走单独小额度池，只有**交互式 TUI** 吃订阅主额度 → 必须 PTY 跑交互式。设计大简化（用户 steer）：**两端统一内嵌真终端**（SwiftTerm `LocalProcessTerminalView` 跑交互式 CLI + 字节注入），权限**默认自动审批**（真终端天然可人工兜底），跨端=**SSH 式字节隧道**（Phase 2）。spec/plan：`docs/superpowers/{specs,plans}/2026-06-04-pendingcrew-runner-*`。
+> - **Phase 1 做了（本机闭环，build+27 tests 真绿）**：接 SwiftTerm SPM(v1.13，Package.resolved 钉版)；`AgentTerminalSession`（按 kind 起交互式 claude `--dangerously-skip-permissions` / codex `-a never --sandbox`，`send/interrupt/stop` 字节注入，flag 本机实测）；`AgentTerminalView`(NSViewRepresentable)；`CrewSessionRunner`/`CrewSessionWindowView` 改用之；**干净拔掉**旧一次性路径（`LocalCodingAgentProcess`/`RunnerEventParser`/`SteeringChannel`/`InteractionChannel` + 结构化推送，旧路径没人验证过、用户授权清拔）。保留 session-row 生命周期 + viewer 侧 `SessionProxyClient`。
+> - **待**：① **像素级真验未做**——需用户本机 claude/codex 登录态起 app 验终端托管/注入/交互（computer-use 断、我验不了）；② Phase 2：SessionProxy 改载终端字节(SSH 隧道) + 远端 viewer 加 SwiftTerm 终端，跨端"看 agent 输出"补回（现降级只看状态）；③ 首 prompt 注入固定 sleep 等就绪→改就绪检测。详见 tech-debt 🟡。③ 合 main 待用户。
+
 > **2026-06-04 PendingCrew 中栏群聊 UI 对齐 PendingBot iOS（`feat/pendingcrew-chat-align`，未合）**
 > - **动机**：中栏群聊原是自绘简易气泡（圆角 12、两色填充、无头像、行内文字标签），与 PendingBot **iOS** 那套打磨过的群聊（头像+名字抬头+连续圆角+hairline+暖色 token+时间分隔 pill）观感脱节。**原生重画**对齐，数据仍绑 `CrewWhiteboardEntry`，不抽共享包、不引 PendingBot 私有代码（保 PendingCrew 可独立开源定位）。spec/plan 见 `docs/superpowers/{specs,plans}/2026-06-04-pendingcrew-chat-*`。
 > - **edge（零迁移）**：核到中栏白板端点 `GET /v1/crews/:id/messages` 读的是 conversation 的 `messages` 表（经 `mapMessageToEntry`），sender 身份本就在行里（`user_id`/`sender_bot_id`/`log_payload.session_id`），只是映射没透出 → 纯序列化补 `sender_user_id`/`sender_bot_id`/`sender_session_id`（commit `788614c8`，+3 vitest，17 passed）。
