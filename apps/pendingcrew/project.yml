@@ -40,6 +40,10 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.pendingname.pendingcrew
         PRODUCT_NAME: PendingCrew
+        # keychain-access-groups entitlement —— 让 KeychainStore 的
+        # data-protection 钥匙串项落进 app 自己的 access group(entitlement-gated)，
+        # macOS 上不再反复弹"存取钥匙串"授权框。对齐 PendingBot。
+        CODE_SIGN_ENTITLEMENTS: Resources/PendingCrew.entitlements
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

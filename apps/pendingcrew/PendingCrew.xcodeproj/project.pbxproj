@@ -99,6 +99,7 @@
 		4452E801174262B66265E9B7 /* PendingCrewAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingCrewAPI.swift; sourceTree = "<group>"; };
 		476A276CBDA4640936A8B817 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		486ABCF7EEB8DF24CA6EDF11 /* CrewStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewStore.swift; sourceTree = "<group>"; };
+		4DF58D7679507FB67097F1EC /* PendingCrew.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PendingCrew.entitlements; sourceTree = "<group>"; };
 		5606C4F79E94AFA8F76F6273 /* codex_stream.jsonl */ = {isa = PBXFileReference; path = codex_stream.jsonl; sourceTree = "<group>"; };
 		5857EBAF956D4104D4FBCBB2 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		5D4475F4F6F662461F71C1B9 /* CrewRosterBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewRosterBar.swift; sourceTree = "<group>"; };
@@ -237,6 +238,7 @@
 			children = (
 				C9F99B4F33889915CDD44633 /* ask-human-mcp.cjs */,
 				476A276CBDA4640936A8B817 /* Assets.xcassets */,
+				4DF58D7679507FB67097F1EC /* PendingCrew.entitlements */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -550,6 +552,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Resources/PendingCrew.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -573,6 +576,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Resources/PendingCrew.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
