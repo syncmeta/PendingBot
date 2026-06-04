@@ -1,15 +1,26 @@
-#if os(iOS)
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#endif
 
-/// Mac Catalyst detection. Compile-time `targetEnvironment(macCatalyst)`
-/// is the only reliable signal — `UIDevice.current.userInterfaceIdiom`
-/// returns `.pad` on Catalyst when the binary ships without "Optimize
-/// Interface for Mac", which silently dropped MacTabRoot back into the
-/// iOS `TabView` branch and the bottom-bar-rendered-at-the-top
-/// regression that follows.
+/// Platform detection shared across iOS (incl. Mac Catalyst) and the native
+/// macOS build.
+///
+/// On iOS the only reliable "is this running on a Mac" signal is the
+/// compile-time `targetEnvironment(macCatalyst)` flag —
+/// `UIDevice.current.userInterfaceIdiom` returns `.pad` on Catalyst when the
+/// binary ships without "Optimize Interface for Mac", which silently dropped
+/// MacTabRoot back into the iOS `TabView` branch and the
+/// bottom-bar-rendered-at-the-top regression that follows.
+///
+/// On the native macOS build (`#if os(macOS)`) we're unambiguously on a Mac,
+/// so `isMac` is simply `true`. This lets the shared `Theme` font-scale and
+/// `readableColumnWidth` logic apply the desktop-density treatment on the
+/// real macOS app too, not just Catalyst.
 enum Platform {
-    #if targetEnvironment(macCatalyst)
+    #if os(macOS)
+    static let isMac: Bool = true
+    #elseif targetEnvironment(macCatalyst)
     static let isMac: Bool = true
     #else
     static let isMac: Bool = false
@@ -22,4 +33,3 @@ enum Platform {
     /// sites don't have to know they're on Mac.
     static let macFontScale: CGFloat = 0.88
 }
-#endif

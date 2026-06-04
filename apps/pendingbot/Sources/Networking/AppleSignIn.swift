@@ -1,9 +1,18 @@
-#if os(iOS)
 import Foundation
 import AuthenticationServices
 import Supabase
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 /// Sign in with Apple → Supabase session.
+///
+/// **Cross-platform:** `ASAuthorizationController` is available on both iOS
+/// and macOS — only the presentation anchor differs (a `UIWindow` on iOS, an
+/// `NSWindow` on macOS). The whole flow below compiles on both; the anchor
+/// lookup branches on `canImport(UIKit)` vs `canImport(AppKit)`.
 ///
 /// We hand Apple's identity token to supabase-swift's `signInWithIdToken`,
 /// which verifies the JWT against Apple's JWKS server-side and returns a
@@ -115,8 +124,9 @@ private final class AppleSignInDelegate: NSObject, ASAuthorizationControllerDele
 
     nonisolated func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
         // ASAuthorizationController guarantees this is called on main, so it
-        // is safe to assume MainActor isolation for the UIKit lookup.
+        // is safe to assume MainActor isolation for the window lookup.
         MainActor.assumeIsolated {
+            #if canImport(UIKit)
             let scenes = UIApplication.shared.connectedScenes
                 .compactMap { $0 as? UIWindowScene }
             for scene in scenes {
@@ -125,6 +135,13 @@ private final class AppleSignInDelegate: NSObject, ASAuthorizationControllerDele
                 }
             }
             return ASPresentationAnchor()
+            #elseif canImport(AppKit)
+            return NSApplication.shared.keyWindow
+                ?? NSApplication.shared.windows.first
+                ?? ASPresentationAnchor()
+            #else
+            return ASPresentationAnchor()
+            #endif
         }
     }
 }
@@ -191,8 +208,3 @@ private func sha256Compute(_ message: [UInt8], into out: inout [UInt8]) {
         out[i*4 + 3] = UInt8(h[i] & 0xff)
     }
 }
-
-#if canImport(UIKit)
-import UIKit
-#endif
-#endif

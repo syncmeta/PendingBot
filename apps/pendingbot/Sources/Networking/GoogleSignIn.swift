@@ -1,8 +1,11 @@
-#if os(iOS)
 import Foundation
-import UIKit
 import GoogleSignIn
 import Supabase
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 /// Native Google Sign-In → Supabase session.
 ///
@@ -47,17 +50,29 @@ enum PendingGoogleSignIn {
     /// ID token for a Supabase session.
     static func run() async throws -> Session {
         try configureIfNeeded()
-        guard let presenter = topViewController() else {
-            throw Error.underlying(URLError(.badServerResponse))
-        }
 
         let result: GIDSignInResult
         do {
-            result = try await GIDSignIn.sharedInstance.signIn(
-                withPresenting: presenter
-            )
+            #if canImport(UIKit)
+            guard let presenter = topViewController() else {
+                throw Error.underlying(URLError(.badServerResponse))
+            }
+            result = try await GIDSignIn.sharedInstance.signIn(withPresenting: presenter)
+            #elseif canImport(AppKit)
+            // macOS: the GoogleSignIn-iOS SDK ships a native macOS target whose
+            // `signIn(withPresenting:)` takes an `NSWindow` instead of a
+            // `UIViewController`. Same in-process flow, no Safari handoff.
+            guard let window = presentingWindow() else {
+                throw Error.underlying(URLError(.badServerResponse))
+            }
+            result = try await GIDSignIn.sharedInstance.signIn(withPresenting: window)
+            #else
+            throw Error.underlying(URLError(.badServerResponse))
+            #endif
         } catch let err as NSError where err.code == GIDSignInError.canceled.rawValue {
             throw Error.userCancelled
+        } catch let err as Error {
+            throw err
         } catch {
             throw Error.underlying(error)
         }
@@ -97,6 +112,7 @@ enum PendingGoogleSignIn {
         GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: trimmed)
     }
 
+    #if canImport(UIKit)
     private static func topViewController() -> UIViewController? {
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
         for scene in scenes {
@@ -108,5 +124,9 @@ enum PendingGoogleSignIn {
         }
         return nil
     }
+    #elseif canImport(AppKit)
+    private static func presentingWindow() -> NSWindow? {
+        NSApplication.shared.keyWindow ?? NSApplication.shared.windows.first
+    }
+    #endif
 }
-#endif
