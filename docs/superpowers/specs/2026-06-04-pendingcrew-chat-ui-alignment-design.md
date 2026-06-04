@@ -34,16 +34,15 @@
 
 **决策（已定）**：补 edge，让白板端点返回 sender 身份，每个作者都能贴对头像+名字，真正对齐 PendingBot。
 
-### 2.1 Edge 改动
-- 白板读端点（`GET /v1/crews/:crewId/messages`，对应 `crew_announcements` 行）在返回的每条 entry 上多带：
-  - `sender_user_id: string | null`
-  - `sender_bot_id: string | null`
-- 数据来源：`crew_announcements` 行写入时本就知道发起方。**先核查** `crew_announcements` 表是否已存这两列（`apps/edge/src/db/schema.ts`）：
-  - **若已存** → 仅在序列化层补字段，零迁移。
-  - **若未存** → 加一条 timestamp 迁移补两列 + 回填历史行的 sender 身份（历史行尽力回填，回填不到的留 null，客户端 fallback 见 §4.3）。迁移后 `types:db` regen schema.ts。
-- 同步更新 `CrewWhiteboardEntry`（iOS）解码这两个可选字段。
+### 2.1 Edge 改动（已核实：纯序列化，零迁移）
+**核实结论**：中栏白板端点 `GET /v1/crews/:crewId/messages`（`apps/edge/src/routes/crew-comms.ts:295`）其实读的是 conversation 的 **`messages`** 表（spec §9 统一存储），经 `mapMessageToEntry`（`crew-comms.ts:71`）映射成白板 entry 线型。`messages` 行**已带** sender 身份：`user_id`（user role）、`sender_bot_id`（bot role，`schema.ts:2151`）；session 卡在 `log_payload` 里。当前映射函数把这些丢掉了（`sender_session_id: null`，user_id/sender_bot_id 不透出）。
 
-> 实施第一步必须先读 `crew_announcements` 的真实 schema 再决定走"仅序列化"还是"序列化+迁移"，别凭印象。
+所以**不需要迁移**，改动是纯序列化：
+- 扩 `CHAT_SELECT`（`crew-comms.ts:92`）加 `sender_bot_id`。
+- `mapMessageToEntry` 多 emit：`sender_user_id`（user role = `m.user_id`）、`sender_bot_id`（bot role = `m.sender_bot_id`）、`sender_session_id`（log/session 卡从 `log_payload.session_id` 取，无则 null）。
+- 同步更新 `CrewWhiteboardEntry`（iOS）解码 `sender_user_id` / `sender_bot_id`（可选）。
+
+历史行天然带这些列（messages 一直在写），故无回填问题——§4.3 的 fallback 仅兜 null 边角。
 
 ---
 
