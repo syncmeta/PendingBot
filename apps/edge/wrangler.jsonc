@@ -71,7 +71,7 @@
         "SENTRY_ENABLED": "false",
         "POSTHOG_ENABLED": "false",
         "LANGFUSE_ENABLED": "false",
-        "SUPABASE_URL": "https://sslzhblojwkxfdyisity.supabase.co",
+        "SUPABASE_URL": "https://zafhoiwwpanpuashtnxy.supabase.co",
         "ALLOWED_ORIGIN": "https://bot.pendingname.com",
         // AI Gateway coordinates — the worker reads the gateway's
         // computed per-request cost from the Logs API when a provider
