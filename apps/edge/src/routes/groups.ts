@@ -54,37 +54,17 @@ function rpcError(err: unknown, fallback = 'database error') {
   return { status: 500 as const, body: { error: 'database', detail: msg } };
 }
 
-async function groupBillingInviteSnapshot(c: Parameters<typeof jsonError>[0], convId: string) {
-  const supa = serviceClient(c.env);
-  const { data: humanRows, error } = await supa
-    .from('conversation_participants')
-    .select('participant_id')
-    .eq('conversation_id', convId)
-    .eq('participant_type', 'user');
-  if (error) throw error;
-  const humanIds = (humanRows ?? []).map((r) => r.participant_id as string);
-  const { data: billingRows, error: billingErr } = await supa
-    .from('group_member_billing')
-    .select('user_id, participates')
-    .eq('conversation_id', convId);
-  if (billingErr) throw billingErr;
-  const participates = new Set(
-    (billingRows ?? [])
-      .filter((r) => r.participates !== false)
-      .map((r) => r.user_id as string),
-  );
-  const everyoneParticipates = humanIds.length === 0 || humanIds.every((id) => participates.has(id));
-  const inviteeParticipates = everyoneParticipates;
-  const payerCountAfter = participates.size + (inviteeParticipates ? 1 : 0);
-  const modeLabel = everyoneParticipates ? '所有人 A' : '部分人 A / 群主全包';
-  const text = inviteeParticipates
-    ? `接受邀请后会加入当前「${modeLabel}」分摊，预计 ${payerCountAfter} 人共同承担机器人 Token。`
-    : `当前群不是所有人分摊；接受邀请后默认不承担机器人 Token，管理员可在群设置里调整。`;
+// 群邀请卡片的"计费提示"文案。
+//
+// 旧实现读 per-conversation 分摊表(group_member_billing)算"N 人共担"，那套
+// 模型已退役 —— 群消费改由责任 subject 的实缴池+认缴结算(billing/group-wallet.ts），
+// 不再有 per-member 分摊。这里不再读任何分摊状态，返回一句与新模型一致的中性提示，
+// 让邀请卡片有话可说但不再误导。billing_snapshot 列保留(iOS 仍解码 .text)，
+// invitee_participates 写常量 true(列尚未物理 drop；#226 物理 drop 时连列一起清）。
+function groupInviteBillingHint() {
   return {
-    mode_label: modeLabel,
-    invitee_participates: inviteeParticipates,
-    payer_count_after: payerCountAfter,
-    text,
+    invitee_participates: true,
+    text: '加入后，机器人 Token 由群钱包统一结算。',
   };
 }
 
@@ -134,12 +114,7 @@ groupRoutes.post('/', async (c) => {
   const invitationIds: string[] = [];
   if (data && parsed.memberUserIds.length > 0) {
     const supaSvc = serviceClient(c.env);
-    let snapshot: Awaited<ReturnType<typeof groupBillingInviteSnapshot>> | null = null;
-    try {
-      snapshot = await groupBillingInviteSnapshot(c, data as string);
-    } catch (err) {
-      return jsonError(c, 500, 'database_error', { detail: err instanceof Error ? err.message : String(err) });
-    }
+    const hint = groupInviteBillingHint();
     for (const inviteeId of parsed.memberUserIds) {
       if (inviteeId === c.var.userId!) continue;
       const { data: invite, error: inviteErr } = await supaSvc
@@ -149,8 +124,8 @@ groupRoutes.post('/', async (c) => {
           inviter_id: c.var.userId!,
           invitee_id: inviteeId,
           status: 'pending',
-          billing_snapshot: snapshot,
-          invitee_participates: snapshot.invitee_participates,
+          billing_snapshot: hint,
+          invitee_participates: hint.invitee_participates,
         })
         .select('id')
         .single();
@@ -267,12 +242,7 @@ groupRoutes.post('/:id/invite-user', async (c) => {
   if (!target) return jsonError(c, 404, 'peer_not_found', { message: '用户不存在' });
   if (existing) return jsonError(c, 409, 'conflict', { message: '对方已经在群里' });
 
-  let snapshot: Awaited<ReturnType<typeof groupBillingInviteSnapshot>>;
-  try {
-    snapshot = await groupBillingInviteSnapshot(c, convId);
-  } catch (err) {
-    return jsonError(c, 500, 'database_error', { detail: err instanceof Error ? err.message : String(err) });
-  }
+  const hint = groupInviteBillingHint();
 
   const { data: pendingExisting, error: pendingErr } = await supa
     .from('group_member_invitations')
@@ -292,8 +262,8 @@ groupRoutes.post('/:id/invite-user', async (c) => {
         inviter_id: inviterId,
         invitee_id: parsed.userId,
         status: 'pending',
-        billing_snapshot: snapshot,
-        invitee_participates: snapshot.invitee_participates,
+        billing_snapshot: hint,
+        invitee_participates: hint.invitee_participates,
         decided_at: null,
       })
       .select('id')
@@ -304,7 +274,7 @@ groupRoutes.post('/:id/invite-user', async (c) => {
     ok: true,
     pending: true,
     invitationId: data.id,
-    billing: snapshot,
+    billing: hint,
   });
 });
 
@@ -368,7 +338,7 @@ groupRoutes.post('/invitations/:inviteId/decide', async (c) => {
   const supa = serviceClient(c.env);
   const { data: invite, error: inviteErr } = await supa
     .from('group_member_invitations')
-    .select('id, conversation_id, invitee_id, status, invitee_participates')
+    .select('id, conversation_id, invitee_id, status')
     .eq('id', inviteId)
     .maybeSingle();
   if (inviteErr) return jsonError(c, 500, 'database_error', { detail: inviteErr.message });
@@ -393,6 +363,10 @@ groupRoutes.post('/invitations/:inviteId/decide', async (c) => {
     if ((count ?? 0) >= (meta?.max_members ?? 100)) {
       return jsonError(c, 400, 'conflict', { message: '群成员已满' });
     }
+    // group_member_billing 行仍要建:它不再承载分摊(那套已退役)，但 mute/freeze
+    // 等 RPC(group_set_member_mute 等)还 UPDATE 这张表的 muted/frozen_at —— 没行
+    // 会让那些操作在本表侧静默 no-op。participates 不再来自已废的 invite snapshot，
+    // 走表默认(true)。表/列的物理 drop 见 #226 报告(被 mute/join RPC 牵住，未删）。
     const [{ error: partErr }, { error: billingErr }] = await Promise.all([
       supa.from('conversation_participants').insert({
         conversation_id: invite.conversation_id,
@@ -403,7 +377,6 @@ groupRoutes.post('/invitations/:inviteId/decide', async (c) => {
       supa.from('group_member_billing').insert({
         conversation_id: invite.conversation_id,
         user_id: userId,
-        participates: invite.invitee_participates,
       }),
     ]);
     if (partErr || billingErr) {
