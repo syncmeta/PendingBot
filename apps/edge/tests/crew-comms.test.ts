@@ -21,6 +21,7 @@ import {
   type FakeDb,
 } from './_helpers/fake-supabase';
 import type { AppBindings } from '../src/types';
+import type { mapMessageToEntry as MapMessageToEntry } from '../src/routes/crew-comms';
 
 // requireSession stub — supabase_jwt branch picks up x-test-user-id.
 vi.mock('@pendingbot/identity', () => ({
@@ -50,9 +51,10 @@ installFakeSupabaseMock();
 let crewMessagesRoutes: any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let sessionInboxRoutes: any;
+let mapMessageToEntry: typeof MapMessageToEntry;
 
 beforeEach(async () => {
-  ({ crewMessagesRoutes, sessionInboxRoutes } = await import('../src/routes/crew-comms'));
+  ({ crewMessagesRoutes, sessionInboxRoutes, mapMessageToEntry } = await import('../src/routes/crew-comms'));
 });
 
 function appFor(db: FakeDb) {
@@ -167,6 +169,31 @@ describe('POST /v1/crews/:crewId/messages', () => {
     });
     expect(res.status).toBe(403);
     expect(((await res.json()) as { error: { code: string } }).error.code).toBe('forbidden');
+  });
+});
+
+describe('mapMessageToEntry sender identity', () => {
+  const base = { id: 'm1', conversation_id: 'c1', created_at: '2026-06-04T00:00:00Z', log_kind: null, log_payload: null };
+
+  it('user prose carries sender_user_id', () => {
+    const e = mapMessageToEntry({ ...base, role: 'user', content: 'hi', user_id: 'u1', sender_bot_id: null } as any);
+    expect(e.sender_kind).toBe('user');
+    expect(e.sender_user_id).toBe('u1');
+    expect(e.sender_bot_id).toBeNull();
+  });
+
+  it('bot reply carries sender_bot_id', () => {
+    const e = mapMessageToEntry({ ...base, role: 'bot', content: 'yo', user_id: null, sender_bot_id: 'b1' } as any);
+    expect(e.sender_kind).toBe('bot');
+    expect(e.sender_bot_id).toBe('b1');
+    expect(e.sender_user_id).toBeNull();
+  });
+
+  it('log/session card pulls session id from log_payload', () => {
+    const e = mapMessageToEntry({ ...base, role: 'log', content: null, user_id: null, sender_bot_id: null,
+      log_kind: 'interaction', log_payload: { kind: 'interaction', session_id: 's1', question: 'ok?' } } as any);
+    expect(e.sender_kind).toBe('session');
+    expect(e.sender_session_id).toBe('s1');
   });
 });
 
