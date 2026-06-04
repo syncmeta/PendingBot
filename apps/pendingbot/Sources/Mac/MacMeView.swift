@@ -18,11 +18,18 @@ struct MacMeView: View {
     @EnvironmentObject private var store: AccountStore
     @State private var signingOut = false
 
+    // 钱包概览(余额 + 阈值提示) + 明细 sheet。数据走跨平台 BillingService。
+    @State private var wallet: BillingService.WalletV2?
+    @State private var walletLoading = false
+    @State private var walletShown = false
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 if let account = store.current {
                     header(account: account)
+                    Divider()
+                    walletSection
                     Divider()
                     infoSection(account: account)
                     Divider()
@@ -35,6 +42,8 @@ struct MacMeView: View {
             .frame(maxWidth: 720, alignment: .leading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .task { await loadWallet() }
+        .sheet(isPresented: $walletShown) { MacWalletView() }
     }
 
     private func header(account: Account) -> some View {
@@ -59,6 +68,44 @@ struct MacMeView: View {
             }
             Spacer(minLength: 0)
         }
+    }
+
+    // MARK: - Wallet
+
+    private var walletSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("钱包")
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("钱包明细") { walletShown = true }
+                    .buttonStyle(.link)
+            }
+
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(WalletV2Format.formatPnc(wallet?.totalPncMicros ?? 0))
+                    .font(Theme.Fonts.serif(size: 30, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.ink)
+                    .monospacedDigit()
+                    .redacted(reason: (wallet == nil && walletLoading) ? .placeholder : [])
+                Text("PNC")
+                    .font(Theme.Fonts.monoSmall)
+                    .foregroundStyle(Theme.Palette.inkMuted)
+            }
+
+            if let state = wallet?.thresholdState, let notice = WalletV2Format.thresholdNotice(state) {
+                Label(notice.text, systemImage: notice.icon)
+                    .font(Theme.Fonts.monoSmall)
+                    .foregroundStyle(notice.color)
+            }
+        }
+    }
+
+    private func loadWallet() async {
+        walletLoading = true
+        defer { walletLoading = false }
+        wallet = try? await BillingService.fetchWalletV2()
     }
 
     private func infoSection(account: Account) -> some View {

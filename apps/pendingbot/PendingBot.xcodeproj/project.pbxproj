@@ -113,6 +113,7 @@
 		A356B62C725A74F8C0DDB244 /* SubjectPickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A19A4D76A2D17FD422DA74D /* SubjectPickerSheet.swift */; };
 		A7ADFAD7B076861A93C987D1 /* UserAvatar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A4C4C281584EA9A3D270E66 /* UserAvatar.swift */; };
 		ACB7DE5BB4722BC475D80C54 /* BrandAvatar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C5FC1E414D4CABC226AD902 /* BrandAvatar.swift */; };
+		AD4913CC001344F2013796AB /* WalletV2Format.swift in Sources */ = {isa = PBXBuildFile; fileRef = 199916D33039F4F07FC95D7D /* WalletV2Format.swift */; };
 		AE2E39CEFC00A4D6517ABAE9 /* SwiftMath in Frameworks */ = {isa = PBXBuildFile; productRef = 6F86D21C91A9BC3B4CA176D0 /* SwiftMath */; };
 		AEF24DAC89A4BDB1F89EB53F /* CrewProposalCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE4AD56378500470C3FFCB27 /* CrewProposalCard.swift */; };
 		B502735FC12E0BB52BB19368 /* MarkdownText.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F8C48D5CD8682E938D093C /* MarkdownText.swift */; };
@@ -154,6 +155,7 @@
 		E668154C26F72C7C4CD2CE01 /* ConversationView+ToolTrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = C87A0A38056F5029C934F737 /* ConversationView+ToolTrace.swift */; };
 		E81BA5D57A39095B26E2EE89 /* Log.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E8968AA681D3F8FCDCF3160 /* Log.swift */; };
 		EA718CA41F77A4324BF6052E /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA294EB07B639F1E0785B3D9 /* Theme.swift */; };
+		EAB07C90F63F81DBC6FD3AED /* MacWalletView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA812051DC5CDCA9D1D41712 /* MacWalletView.swift */; };
 		EAF59E8B7CEB265E5E78C39C /* Haptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6E8A6BE1816A51145EF8FA6 /* Haptics.swift */; };
 		EB466D1F40BA6D52461B9FE5 /* ConversationView+Recall.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BD4BD3319B91CCFCAFEE846 /* ConversationView+Recall.swift */; };
 		EE863961CB326031C1287703 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E0533AC3090836219CA2A47 /* SettingsView.swift */; };
@@ -190,6 +192,7 @@
 		161466ECAC938388BC8F72E3 /* CrewChildSummaryCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewChildSummaryCard.swift; sourceTree = "<group>"; };
 		17979E6D0A17BE0BEFD3BB38 /* TabHeaderBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabHeaderBar.swift; sourceTree = "<group>"; };
 		186A7AED372BD3345AEC8273 /* MacRemoteSessionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacRemoteSessionsView.swift; sourceTree = "<group>"; };
+		199916D33039F4F07FC95D7D /* WalletV2Format.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletV2Format.swift; sourceTree = "<group>"; };
 		1C5FC1E414D4CABC226AD902 /* BrandAvatar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrandAvatar.swift; sourceTree = "<group>"; };
 		1E0533AC3090836219CA2A47 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		1E4D5D35B59A08A4E8E6B167 /* EnvelopeFetch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvelopeFetch.swift; sourceTree = "<group>"; };
@@ -295,6 +298,7 @@
 		C86ED7FEA6F6BBBFA222E483 /* BlinkingCursor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlinkingCursor.swift; sourceTree = "<group>"; };
 		C87A0A38056F5029C934F737 /* ConversationView+ToolTrace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConversationView+ToolTrace.swift"; sourceTree = "<group>"; };
 		C9E0A1F2EEFADA0D94998172 /* ServerTimestamp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerTimestamp.swift; sourceTree = "<group>"; };
+		CA812051DC5CDCA9D1D41712 /* MacWalletView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacWalletView.swift; sourceTree = "<group>"; };
 		CAB29CAABC38BF9B5380C3DE /* ToolTraceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolTraceView.swift; sourceTree = "<group>"; };
 		CB83A6154A7226DF743254BE /* CallDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallDiagnostics.swift; sourceTree = "<group>"; };
 		CD5D4A454D7F9C17F498BD8A /* TabTitle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabTitle.swift; sourceTree = "<group>"; };
@@ -497,6 +501,7 @@
 			children = (
 				4D8EFC98BB125FA73157E5A2 /* MacMeView.swift */,
 				C2B98AFCAEB4DAF5903E44D0 /* MacRootView.swift */,
+				CA812051DC5CDCA9D1D41712 /* MacWalletView.swift */,
 				954AA26D0420171081DFA5EA /* MacWelcomeView.swift */,
 				4B6ED05D5BC8BD3EDAD14EF6 /* Views */,
 			);
@@ -572,6 +577,7 @@
 				E4E8F2C116FE4E4C091C20C5 /* AddMeMethodsView.swift */,
 				3E5FAF02329124FA16CFC943 /* MeTabView.swift */,
 				1E0533AC3090836219CA2A47 /* SettingsView.swift */,
+				199916D33039F4F07FC95D7D /* WalletV2Format.swift */,
 				67959B4A15D5CFF20CADAAA6 /* WalletV2View.swift */,
 				67A4B5DE6232D0385E0BDF55 /* WalletView.swift */,
 			);
@@ -863,6 +869,7 @@
 				C52090D1049289B1C5AC862A /* MacMessagesView.swift in Sources */,
 				82A8EEB896FD422C7064FFB2 /* MacRemoteSessionsView.swift in Sources */,
 				3E951E7D1064806A8CEB148B /* MacRootView.swift in Sources */,
+				EAB07C90F63F81DBC6FD3AED /* MacWalletView.swift in Sources */,
 				95771EBFA9FE35E196DBAB95 /* MacWelcomeView.swift in Sources */,
 				B502735FC12E0BB52BB19368 /* MarkdownText.swift in Sources */,
 				BC1CCF7E6090730EF93B7BF0 /* MathRendering.swift in Sources */,
@@ -910,6 +917,7 @@
 				DEEEA17C68F8489062C8985D /* UnreadStore.swift in Sources */,
 				A7ADFAD7B076861A93C987D1 /* UserAvatar.swift in Sources */,
 				709467D9E6B366E16CAE1B43 /* VoiceCallAPI.swift in Sources */,
+				AD4913CC001344F2013796AB /* WalletV2Format.swift in Sources */,
 				598A32DFDD15BC85C9A1E90A /* WalletV2View.swift in Sources */,
 				C066D6618A9F478DD483752D /* WalletView.swift in Sources */,
 				4D643B36DC9C4F4911A4B845 /* WelcomeView.swift in Sources */,
