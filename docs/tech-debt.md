@@ -40,9 +40,25 @@
 - **影响**: 上线**开计费（`BILLING_ENABLED`）后**，welcome bonus 变成 Sybil / 薅羊毛向量 —— 一个邮箱无限薅 $1.30/账号 的 LLM 额度，规模化就是真金白银损失。现在 kill-switch 关着、bonus 休眠未暴露（**没在烧钱**），但这是**发计费前必须堵的洞**。
 - **建议**: 两层。① **抬高造号成本**：注册时 email 规范化（gmail/googlemail 去 `+后缀`+`.`、归一后查重，堵 `+`/`.` 别名；只对已知规则大商做、别误伤小众商）+ 维护 disposable 黑名单 + 注册 rate limit。② **断薅羊毛收益（根本，移动 app 标准做法）**：welcome bonus **绑设备** —— iOS **DeviceCheck / App Attest** 让一台设备只领一次 bonus，跨多少账号都无效（比 email 规范化彻底，攻击者绕不过设备指纹）；或更狠 **绑首充**。**主力做 DeviceCheck，email 规范化当辅助**。
 - **决策（2026-06-04）**: 登录**留 email OTP + Apple + Google 并存**（评估过纯 OAuth，最终为不把退路交第三方/email 触达/覆盖面而保留 email）→ 所以防滥用是**明确要做的路线**，不是靠砍 email 规避。
-- **状态**: 待办（发计费前）
+- **状态**: 🟡 进行中 —— **email 规范化半已落**（迁移 20260604102812：`normalize_email` + `welcome_bonus_grants` dedup 账本 + billing-grant `claimWelcomeBonus`；已 push EU + typecheck/497 测试绿，commit 6ab22018）。**DeviceCheck/App Attest 主力半仍待办**（硬卡真机，见 task #252）。
 
 ## 🟡 拆东墙补西墙
+
+### 🟡 normalize_email 双实现（SQL + TS）须手动保持同步
+- **发现**: 2026-06-04 · fix/billing-tails-email-norm（#252 email 规范化）
+- **位置**: `pendingbot.normalize_email`（迁移 20260604102812）+ `apps/edge/src/lib/billing-grant.ts:normalizeEmail()`
+- **问题**: 同一套规范化规则（lowercase / 去 `+tag` / gmail 去点统域）在 SQL 和 TS 各写一遍。实际跑 welcome-bonus dedup 的是 **TS 版**；SQL 版供未来 DB 侧 hook/对账。两者漂移会出现"DB 认为不同、edge 认为相同"的 Sybil 判定缺口。
+- **影响**: 规则演进（新增某大邮箱商别名规则）时漏改一边 → 防薅羊毛静默漏判。
+- **建议**: 长期收敛到单一事实源（纯 DB 触发器 或 纯 edge），删另一份；短期两处注释互指（已加）。
+- **状态**: 待办
+
+### 🟡 subject_wallets / group_member_billing 物理 drop 卡在多-RPC 重写（#226 尾巴）
+- **发现**: 2026-06-04 · fix/billing-tails-email-norm（#226）
+- **位置**: 两表 + 写它们的 live SECURITY DEFINER RPC：`open_group_conv`(0048) / 群 join RPC / `bootstrap_user_id` / `group_set_member_mute`(0045) / freeze 触发器 / `grp_create_group_subject` / `getSubjectBalance`
+- **问题**: 旧 per-conversation 分摊退役后这两表已无业务读路径（invite 流已解耦，commit 75a3fd10），但仍被一批 live RPC 无脑 INSERT/UPDATE/SELECT，直接 DROP 会断建群/加群/静音/群账号创建。A 段孤儿清理 20260603112148 当初正因此把它们留给 #226。
+- **影响**: 迁移账本留两张"僵而不死"的表 + 一摊写它们的死路径，长期 dead-weight + 账本噪声。
+- **建议**: 独立 chore —— 先重写这批 RPC 去掉对两表的写/读，再发 DROP 迁移。别夹在别的 lane 顺手做。
+- **状态**: 待办（#226 物理 drop 专项）
 
 ### 🟡 PendingCrew 群聊 user 作者无法区分是哪个人 — AppModel 不暴露登录 user id
 - **发现**: 2026-06-04 · feat/pendingcrew-chat-align（中栏群聊 UI 对齐，Task 12）
@@ -367,6 +383,14 @@
 - **状态**: 部分修复 —— ① live push + ② inline 权限卡已于 T4.5 落地；③ 附件、④ 自我高亮仍未修（待读侧补字段 / crew upload 通道）
 
 ## 🟢 不规范
+
+### 🟢 iOS FriendsTabView 群邀请兜底文案仍是旧分摊口径
+- **发现**: 2026-06-04 · fix/billing-tails-email-norm（#226 解耦）
+- **位置**: `apps/pendingbot/Sources/Features/Friends/FriendsTabView.swift:827`
+- **问题**: `billing_snapshot` 为 null 时兜底显示「接受后会按当前群设置参与机器人 Token 分摊。」——新群钱包模型下该口径已过时。edge 现总填中性 hint（`groupInviteBillingHint`），兜底极少触发，但文案该改。
+- **影响**: 极少触发的过时文案，纯一致性。
+- **建议**: iOS lane 顺手把兜底串改成中性/新模型口径。
+- **状态**: 待办
 
 ### 🟢 PendingCrew 双轨 backend(EdgeBackend / LocalBackend)没有单元测试覆盖
 - **发现**: 2026-05-29 · T5.2 dual-track routing wiring

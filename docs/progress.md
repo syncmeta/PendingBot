@@ -9,6 +9,13 @@
 > - **过程坑**：计划误判"新文件被 project.yml glob 自动纳入、无需 xcodegen"——实际 `.xcodeproj` 已 commit，加文件**必须重跑 xcodegen**，否则文件不进 target、build 假绿。Task 12 重生 pbxproj 收口（commit `a01c74f6`）；干净构建已独立核实真绿（9 文件全编译 → BUILD SUCCEEDED）。
 > - **待**：① 真机/真用视觉核对（需用户登录态 + 有 session/bot/多消息的 crew）；② `localUserId` 暂 nil（AppModel 不暴露 user id）→ 多人 crew 里人类作者归属错，已记 tech-debt 🟡；③ 合 main 待用户。
 
+> **2026-06-04（夜）观测/计费尾巴三 lane 落地 + 应用到 EU（本 session，已合 main，未部署）**
+> - **背景**：用户「都做」→ dynamic workflow 三 lane 并行（隔离 worktree），由合并方串行 integrate。**PendingCrew 按用户指示不碰**：Lane C（captain/crew #241/#242）整条 **parked**，未合并（另有 `feat/pendingcrew-chat-align` 活跃 session）。
+> - **观测/prompt（#247/#248/#249，合 `feat/observability-langfuse-finish`）**：① prompt-loader override 源从 `i18n_prompts` 表切到 **Langfuse Prompt Management**（`<name>/<locale>` production label，bundled `.md` 仍兜底，`LANGFUSE_ENABLED` 关时纯本地）+ **DROP i18n_prompts**（迁移 20260604103403）；② traceGeneration 发**完整 prompt/completion 本文**（router.ts:580；**反转**早先"只发结构指标"隐私口径——Langfuse 第一方，用户要全功能）；③ arena Elo→**Bradley-Terry MLE**（`lib/arena-bradley-terry.ts`，response shape 不变，iOS 解码不动）+ 每票喂 `langfuse.score`。
+> - **计费尾巴（#252/#228/#226，合 `fix/billing-tails-email-norm`）**：① welcome-bonus **email 规范化**防薅（迁移 20260604102812：`normalize_email` + `welcome_bonus_grants` dedup 账本 + `claimWelcomeBonus`）；② `topup_succeeded` PostHog 事件**改接 Polar/RC webhook**（原接在已删的 lemon/iap）；③ group-invite 流**解耦旧分摊**死表（`groupBillingInviteSnapshot`→中性 hint）。
+> - **验证**：edge typecheck 0 + **497 vitest 全绿**（把 `router-trace.test` 从"无 content"断言改为"校验完整 input/output 转发"，匹配 #248 新行为）。两迁移已 **push EU**——**main worktree 顺手从旧 US 库 relink 到 EU `zafhoiwwpanpuashtnxy`**，db push 走 **session pooler**（`aws-1-eu-central-1.pooler:5432`；直连 `db.<ref>` 在本网络 TLS EOF）。schema regen 干净（i18n_prompts 去 / welcome_bonus_grants 入）。
+> - **未做/blocked**：#248 运行时（部署 + 开 prod `LANGFUSE_ENABLED` + 真实一轮 trace 到达面板，可用 PostHog/Sentry MCP 自动核）；#252 **DeviceCheck 主力**（真机）；#226 **物理 drop**（subject_wallets/group_member_billing 仍被 live RPC 写，需多-RPC 重写专项）；Lane C parked。新增 **3 条 tech-debt**（normalize_email 双实现、B 段表 drop 卡 RPC、iOS 兜底文案）。**未部署 worker、未 push main**（按约定等用户）。
+
 > **2026-06-04 Supabase 迁 EU 区（Frankfurt）+ 观测三件套上线（`feat/managed-config`，已部署）**
 > - **动机**：用户数据 GDPR/EU 驻留。主库原在 US（us-west-2），pre-launch 无真实数据 → **EU 新建项目 `zafhoiwwpanpuashtnxy`（eu-central-1）、全套迁移重跑、不迁数据**。旧 US 库 `sslzhblojwkxfdyisity` 留作回退，EU 端到端全验后再删。
 > - **Phase 1 库**：180 迁移干净 apply（87 表 + 4 BI 视图 + `ensure_rls` event trigger + `metabase_ro` 角色）、seed（6 preset bots + 19683 地名）、schema regen、edge typecheck 全绿。**修了一个账本漂移**：`public.rls_auto_enable`（public schema 建表自动开 RLS 的安全网）早于 `0001_init` squash、只活在 US 库从未进账本，空库重跑撞 42883；已把 live 定义逐字补回迁移 `20260524175632`，账本自洽（任何空库可重建）。
