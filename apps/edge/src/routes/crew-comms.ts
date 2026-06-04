@@ -64,11 +64,12 @@ type ChatMessageRow = {
   role: string;
   content: string | null;
   user_id: string | null;
+  sender_bot_id: string | null;
   log_kind: string | null;
   log_payload: Record<string, unknown> | null;
   created_at: string;
 };
-function mapMessageToEntry(m: ChatMessageRow): Record<string, unknown> {
+export function mapMessageToEntry(m: ChatMessageRow): Record<string, unknown> {
   const lp = (m.log_payload ?? {}) as Record<string, unknown>;
   const senderKind =
     m.role === 'user' || m.role === 'human' ? 'user'
@@ -77,11 +78,14 @@ function mapMessageToEntry(m: ChatMessageRow): Record<string, unknown> {
     : m.role;
   // For log rows (cards) the payload IS the card; for prose the text is content.
   const payload = m.role === 'log' ? lp : { text: m.content ?? '' };
+  const sessionId = typeof lp.session_id === 'string' ? lp.session_id : null;
   return {
     id: m.id,
     crew_conversation_id: m.conversation_id,
     sender_kind: senderKind,
-    sender_session_id: null,
+    sender_user_id: senderKind === 'user' ? m.user_id : null,
+    sender_bot_id: senderKind === 'bot' ? m.sender_bot_id : null,
+    sender_session_id: sessionId,
     message_kind: m.log_kind ?? 'text',
     summary: m.content ?? (typeof lp.question === 'string' ? lp.question : null),
     payload,
@@ -89,7 +93,7 @@ function mapMessageToEntry(m: ChatMessageRow): Record<string, unknown> {
   };
 }
 const CHAT_ROLES = ['user', 'human', 'bot', 'assistant', 'log'];
-const CHAT_SELECT = 'id, conversation_id, role, content, user_id, log_kind, log_payload, created_at';
+const CHAT_SELECT = 'id, conversation_id, role, content, user_id, sender_bot_id, log_kind, log_payload, created_at';
 
 // schema.ts hasn't been regenerated against this branch's migration yet
 // (the main session applies the DB push + regen). Cast the RPC surface

@@ -2,6 +2,13 @@
 
 **最近对账：2026-06-04**（对照实际代码 / 迁移 / git，不是看 task 标记）
 
+> **2026-06-04 PendingCrew 中栏群聊 UI 对齐 PendingBot iOS（`feat/pendingcrew-chat-align`，未合）**
+> - **动机**：中栏群聊原是自绘简易气泡（圆角 12、两色填充、无头像、行内文字标签），与 PendingBot **iOS** 那套打磨过的群聊（头像+名字抬头+连续圆角+hairline+暖色 token+时间分隔 pill）观感脱节。**原生重画**对齐，数据仍绑 `CrewWhiteboardEntry`，不抽共享包、不引 PendingBot 私有代码（保 PendingCrew 可独立开源定位）。spec/plan 见 `docs/superpowers/{specs,plans}/2026-06-04-pendingcrew-chat-*`。
+> - **edge（零迁移）**：核到中栏白板端点 `GET /v1/crews/:id/messages` 读的是 conversation 的 `messages` 表（经 `mapMessageToEntry`），sender 身份本就在行里（`user_id`/`sender_bot_id`/`log_payload.session_id`），只是映射没透出 → 纯序列化补 `sender_user_id`/`sender_bot_id`/`sender_session_id`（commit `788614c8`，+3 vitest，17 passed）。
+> - **PendingCrew（9 个新文件 + 重构）**：`CrewTheme`（搬 iOS Theme 数值）、`CrewColorHash`（搬 iOS 头像配色算法，subagent 发现并纠正了计划里的错误常量）、`CrewSenderResolver`/`CrewAvatar`（bot/session/human 三态）、`CrewBubbleRow`/`CrewTimeSeparator`/`CrewInteractionCard`/`CrewComposer`/`CrewRosterBar`；`CrewChatView` 重构成瘦容器。
+> - **过程坑**：计划误判"新文件被 project.yml glob 自动纳入、无需 xcodegen"——实际 `.xcodeproj` 已 commit，加文件**必须重跑 xcodegen**，否则文件不进 target、build 假绿。Task 12 重生 pbxproj 收口（commit `a01c74f6`）；干净构建已独立核实真绿（9 文件全编译 → BUILD SUCCEEDED）。
+> - **待**：① 真机/真用视觉核对（需用户登录态 + 有 session/bot/多消息的 crew）；② `localUserId` 暂 nil（AppModel 不暴露 user id）→ 多人 crew 里人类作者归属错，已记 tech-debt 🟡；③ 合 main 待用户。
+
 > **2026-06-04 Supabase 迁 EU 区（Frankfurt）+ 观测三件套上线（`feat/managed-config`，已部署）**
 > - **动机**：用户数据 GDPR/EU 驻留。主库原在 US（us-west-2），pre-launch 无真实数据 → **EU 新建项目 `zafhoiwwpanpuashtnxy`（eu-central-1）、全套迁移重跑、不迁数据**。旧 US 库 `sslzhblojwkxfdyisity` 留作回退，EU 端到端全验后再删。
 > - **Phase 1 库**：180 迁移干净 apply（87 表 + 4 BI 视图 + `ensure_rls` event trigger + `metabase_ro` 角色）、seed（6 preset bots + 19683 地名）、schema regen、edge typecheck 全绿。**修了一个账本漂移**：`public.rls_auto_enable`（public schema 建表自动开 RLS 的安全网）早于 `0001_init` squash、只活在 US 库从未进账本，空库重跑撞 42883；已把 live 定义逐字补回迁移 `20260524175632`，账本自洽（任何空库可重建）。
