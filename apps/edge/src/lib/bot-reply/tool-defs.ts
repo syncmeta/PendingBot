@@ -508,6 +508,68 @@ export const START_SESSION_TOOL: ChatCompletionTool = {
   },
 };
 
+// `create_child_crew` — spec §6.4. The crew CAPTAIN spawns a CHILD crew that
+// inherits a share of this crew's responsibility (linked via crew_parent_links,
+// responsibility_mode='inherit'). Captain-only: the handler verifies this
+// conversation is a crew and this bot is its captain. There is no numeric split
+// argument — inheritance is structural; resolve_crew_responsibility_shares walks
+// the DAG to compute effective shares.
+export const CREATE_CHILD_CREW_TOOL: ChatCompletionTool = {
+  type: 'function',
+  function: {
+    name: 'create_child_crew',
+    description:
+      '作为本 crew 的机长，拆出一个「子 crew」。子 crew 自动继承本 crew 的责任份额（不用你分百分比），适合把一块相对独立的子任务交给一个新机组去专门干。只有机长能调。',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description: '子 crew 的名字（标题），1–80 字。要让人一眼看出这个子机组负责干什么。',
+        },
+        brief: {
+          type: 'string',
+          description: '可选，子 crew 的目标 / 职责说明，≤4000 字。仅用于你自己组织思路，不会改变责任继承。',
+        },
+      },
+      required: ['name'],
+    },
+  },
+};
+
+// `recruit_temp_bot` — spec §6.4. The crew CAPTAIN pulls a TEMPORARY (ephemeral)
+// bot into the crew as a non-responsibility-bearing participant
+// (temporary_group_members.member_kind='ephemeral_bot'). It is NOT a registered
+// bot reference — it's described by a name + optional persona / model. Captain-
+// only: the handler verifies this conversation is a crew and this bot is its
+// captain.
+export const RECRUIT_TEMP_BOT_TOOL: ChatCompletionTool = {
+  type: 'function',
+  function: {
+    name: 'recruit_temp_bot',
+    description:
+      '作为本 crew 的机长，拉一个「临时 bot」进 crew 当参与者。临时 bot 不承担责任份额、不计费主体，只是个临时帮手角色。用名字 + 可选人设/模型来描述它。只有机长能调。',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description: '临时 bot 的显示名，1–80 字。同一 crew 里不能有同名的活跃临时 bot。',
+        },
+        persona: {
+          type: 'string',
+          description: '可选，一句话人设 / 职责（例如「负责盯排期的项目助理」），≤2000 字。',
+        },
+        model_slug: {
+          type: 'string',
+          description: '可选，期望这个临时 bot 用的模型 slug（例如「claude-opus-4.7」）。≤200 字。',
+        },
+      },
+      required: ['name'],
+    },
+  },
+};
+
 // `request_permission` — spec v2 §10. Agent (or captain bot acting in
 // the crew context) asks for human approval before performing a
 // high-risk action. Files a permission_requests row + writes a special
