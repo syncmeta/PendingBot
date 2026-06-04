@@ -2022,33 +2022,6 @@ export type Database = {
           },
         ]
       }
-      i18n_prompts: {
-        Row: {
-          body_md: string
-          locale: string
-          name: string
-          updated_at: string
-          updated_by: string | null
-          version: number
-        }
-        Insert: {
-          body_md: string
-          locale: string
-          name: string
-          updated_at?: string
-          updated_by?: string | null
-          version?: number
-        }
-        Update: {
-          body_md?: string
-          locale?: string
-          name?: string
-          updated_at?: string
-          updated_by?: string | null
-          version?: number
-        }
-        Relationships: []
-      }
       invites: {
         Row: {
           code: string
@@ -4002,6 +3975,32 @@ export type Database = {
         }
         Relationships: []
       }
+      welcome_bonus_grants: {
+        Row: {
+          granted_at: string
+          normalized_email: string
+          subject_id: string
+        }
+        Insert: {
+          granted_at?: string
+          normalized_email: string
+          subject_id: string
+        }
+        Update: {
+          granted_at?: string
+          normalized_email?: string
+          subject_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "welcome_bonus_grants_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       bi_bot_creations: {
@@ -4697,6 +4696,7 @@ export type Database = {
         Args: { p_item_ids: string[]; p_session_id: string }
         Returns: number
       }
+      normalize_email: { Args: { p_email: string }; Returns: string }
       open_crew_conv: {
         Args: { p_responsible_subject_id: string; p_title?: string }
         Returns: string
