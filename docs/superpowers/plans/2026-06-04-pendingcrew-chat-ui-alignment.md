@@ -17,7 +17,7 @@
 - Edge 单测：`cd apps/edge && ./node_modules/.bin/vitest run tests/crew-comms.test.ts`
 - macOS 构建：`cd apps/pendingcrew && xcodebuild -project PendingCrew.xcodeproj -scheme PendingCrew -destination 'platform=macOS' -derivedDataPath /tmp/pendingcrew-dd build 2>&1 | tail -5`
 
-> XcodeGen 注意：本计划新增的 `.swift` 文件都落在 `Sources/Mac/**`，已被 `project.yml` 的 `sources: - path: Sources` 覆盖，**无需** 改 `project.yml` 或重跑 `xcodegen`。新文件加进去后直接 `xcodebuild` 即可（Xcode 文件系统同步 group）。
+> ⚠️ XcodeGen 注意（实施中已纠正）：本计划新增的 `.swift` 文件落在 `Sources/Mac/**`。**最初误以为 project.yml 的 `sources` glob 会让 xcodebuild 自动纳入——错。** `PendingCrew.xcodeproj` 已 commit，glob 在 **xcodegen 生成时**展开、不在 build 时；新增文件后**必须 `cd apps/pendingcrew && xcodegen` 重生 `project.pbxproj` 并提交**，否则文件不进编译 target、build 出现"假绿"（不报错只是没编它们）。每加一批新文件就重跑 xcodegen + 提交 pbxproj，再 `xcodebuild` 才是真验证。
 
 ---
 

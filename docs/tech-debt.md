@@ -44,6 +44,14 @@
 
 ## 🟡 拆东墙补西墙
 
+### 🟡 PendingCrew 群聊 user 作者无法区分是哪个人 — AppModel 不暴露登录 user id
+- **发现**: 2026-06-04 · feat/pendingcrew-chat-align（中栏群聊 UI 对齐，Task 12）
+- **位置**: `apps/pendingcrew/Sources/Mac/Views/CrewChatView.swift`（`localUserId` 取 nil）；根因 `apps/pendingcrew/Sources/Stores/AppModel.swift` + `PendingCrewAuthCredential.swift`（只有 `kind`+`token`，opaque `pdg_` device-grant，无 user id）
+- **问题**: 新群聊行 `CrewSenderResolver.resolve(...)` 设计支持用 `sender_user_id == localUserId` 区分"我"vs 其他人类成员（左右对齐 + 头像）。但 PendingCrew 的 `AppModel` 没暴露当前登录 user 的 id（device-grant token 不可解出 sub），故 `localUserId` 只能传 nil → **所有 `user` 作者一律落"我"/右对齐**。
+- **影响**: BYOK 单人场景**正确**（就一个 human）；但 crew 里有多个真人成员时，别人发的话也会显示成"我"右对齐、不显头像/名字——多人群里人类作者归属错。edge 已把 `sender_user_id` 透出（白板序列化），缺口纯在客户端拿不到本地 user id。
+- **建议**: 让 `AppModel` 暴露 `currentUserId`（device-grant 换 token 时一并取/存 user id，或加一个 `/me` 拉一次缓存），再把 `CrewChatView.localUserId` 指过去即可——解析逻辑已就位。
+- **状态**: 待办（多人 crew 才暴露；单人无感）
+
 ### 🟡 metabase_ro BI 角色读不了 RLS 受限表 — Grafana 财务看板多个 panel 取不到数
 - **发现**: 2026-06-03 · chore/dashboard-sql-repoint（#238 看板重指 Polar schema）
 - **位置**: `supabase/migrations/20260602051354_metabase_readonly_role.sql`（角色 NOBYPASSRLS + 无函数 EXECUTE）;受影响表 `group_pledges`/`group_pools`/`group_contributions`/`bots`/`group_join_requests` 的成员域 RLS policy
