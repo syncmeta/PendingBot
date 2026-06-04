@@ -181,7 +181,7 @@ async function buildBotSpec(
   // turn-taking) via surface 'group-voice' below. Per-group prompt knobs
   // (nicknames, per-group descriptions) still land with the wider work.
   const instructions = await buildSystemPrompt(
-    supaSvc,
+    c.env,
     {
       bot: {
         id: bot.id,

@@ -227,6 +227,15 @@ export interface AuditCallOpts extends AuditUsage {
   /// and sum(costUsd) folds into audit_log.tool_cost_usd + cost_credits
   /// so the single billing_debit covers both LLM and tool spend.
   webTools?: WebToolUsage[];
+  /// Full prompt body sent to the model (message array or rendered string).
+  /// Forwarded to Langfuse as the generation `input` so traces carry the
+  /// real conversation, not just metrics. Never read by billing/DB — it
+  /// only rides the queue message to traceGeneration. Omitted on paths
+  /// that don't capture it (the trace still records metrics-only).
+  promptBody?: unknown;
+  /// Full completion text returned by the model. Forwarded to Langfuse as
+  /// the generation `output`. Same lifecycle as promptBody.
+  completionBody?: unknown;
 }
 
 const PER_MILLION = 1_000_000;
@@ -553,16 +562,23 @@ export async function persistAuditMessage(
   // row + billing land, on the fresh-insert path only (a duplicate queue
   // delivery returned early at the dedup guard above), so each turn traces
   // exactly once. Awaited — this is the queue consumer, not a request path —
-  // but no-op + instant when Langfuse keys are unset, and it never throws.
-  // Privacy: model / tokens / cost / latency + structural metadata only —
-  // NEVER prompt or completion content (the design forbids sending chat
-  // content to any external analytics platform).
+  // but no-op + instant when Langfuse is disabled/unconfigured, and never
+  // throws.
+  //
+  // Content: full prompt + completion bodies are forwarded when the caller
+  // captured them (promptBody / completionBody), so Langfuse traces carry
+  // the real conversation for debugging — not just metrics. Paths that
+  // don't pass them (system cascades that didn't wire it up) still trace
+  // metrics-only. Langfuse is self-hosted in the project's stack, so this
+  // is first-party observability, not a third-party analytics export.
   await traceGeneration(env, {
     name: opts.taskType ?? 'llm_turn',
     model: route?.modelToCall ?? opts.tag ?? undefined,
     traceId: auditId,
     userId: opts.userId ?? undefined,
     sessionId: opts.conversationId ?? undefined,
+    input: opts.promptBody,
+    output: opts.completionBody,
     usage: {
       input: opts.inputTokens ?? 0,
       output: opts.outputTokens ?? 0,

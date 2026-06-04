@@ -34,7 +34,7 @@ export interface RunTitleInput {
 export async function runTitle(input: RunTitleInput): Promise<void> {
   const { env, conversationId } = input;
   const supa = serviceClient(env);
-  await ensurePromptOverridesLoaded(supa);
+  await ensurePromptOverridesLoaded(env);
   const startedAt = Date.now();
   const turnId = uuidv7();
 

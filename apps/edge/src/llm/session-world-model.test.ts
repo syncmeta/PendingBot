@@ -145,7 +145,6 @@ function seedHappyPath(db: FakeDb) {
     { id: PARENT_SUBJECT_ID, display_name: '工程团队' },
   ];
   db.rows.bots = [{ id: CAPTAIN_BOT_ID, display_name: '机长小蓝' }];
-  db.rows.i18n_prompts = []; // no overrides
 }
 
 describe('renderSessionWorldModel', () => {
@@ -217,7 +216,6 @@ describe('renderSessionWorldModel', () => {
     ];
     db.rows.temporary_group_members = [];
     db.rows.crew_responsibility_shares = [];
-    db.rows.i18n_prompts = [];
     const env = makeFakeEnv(db);
     const out = await renderSessionWorldModel(env, SESSION_ID);
     expect(out).toBeTruthy();

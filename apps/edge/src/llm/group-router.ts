@@ -141,11 +141,11 @@ export async function runGroupRouter(
     .map((b) => `- ${b.label} (id=${b.id}): ${b.description}`)
     .join('\n');
 
-  // prompt template lives in prompts/zh/group-router.md (or DB override);
-  // split on the `\n\n---\n\n` boundary into system + user halves.
+  // prompt template lives in prompts/zh/group-router.md (or Langfuse
+  // override); split on the `\n\n---\n\n` boundary into system + user halves.
   // Group router runs against the whole group so we use DEFAULT_LOCALE
   // here — per-user locale would require picking one participant.
-  const groupRouterPrompt = await loadPrompt(supa, 'group-router');
+  const groupRouterPrompt = await loadPrompt(env, 'group-router');
   const [systemPart, userTemplate] = groupRouterPrompt.split(/\n---\n/);
   const systemPrompt = systemPart.trim();
   const userPrompt = userTemplate

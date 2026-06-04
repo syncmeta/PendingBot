@@ -5,8 +5,8 @@
 // 槽,返回填好的字符串。
 //
 // 设计原则:
-//   * 模板字符串严格走 prompt-loader → DB i18n_prompts override 链(永远
-//     不要在 .ts 里内联 prompt 文本 —— 见 memory feedback_no_hardcoded_prompts)
+//   * 模板字符串严格走 prompt-loader → Langfuse Prompt Management override 链
+//     (永远不要在 .ts 里内联 prompt 文本 —— 见 memory feedback_no_hardcoded_prompts)
 //   * 缺数据时降级到清晰的占位文案(中文:「(暂无)」/英文:「(none yet)」),
 //     绝不输出 "{{var}}" 字面值
 //   * permission_mode 这个字段 DB 还没建(待 T4.3 加列),先用默认值
@@ -43,7 +43,7 @@ export async function renderSessionWorldModel(
 ): Promise<string | null> {
   const locale: Locale = options.locale ?? 'zh';
   const svc = serviceClient(env);
-  await ensurePromptOverridesLoaded(svc).catch(() => {
+  await ensurePromptOverridesLoaded(env).catch(() => {
     // override load failure is non-fatal; we fall back to bundled.
   });
 
