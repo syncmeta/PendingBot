@@ -80,3 +80,68 @@ export async function traceGeneration(env: Env, args: TraceGenerationArgs): Prom
     console.error('[llm-trace] traceGeneration failed', err);
   }
 }
+
+export interface RecordScoreArgs {
+  /** Score name, e.g. 'arena_preference'. Becomes the Langfuse score key. */
+  name: string;
+  /**
+   * Score value. Numeric (any float) or categorical (string label). For an
+   * arena A/B/tie vote we use a categorical label ('a' | 'b' | 'tie') plus a
+   * numeric mapping so the score is both filterable and aggregatable.
+   */
+  value: number | string;
+  /** Optional explicit dataType; inferred from `value` when omitted. */
+  dataType?: 'NUMERIC' | 'CATEGORICAL' | 'BOOLEAN';
+  /** Trace this score attaches to. A fresh trace is created if it doesn't exist. */
+  traceId: string;
+  /** Trace display name when this call creates the trace. */
+  traceName?: string;
+  userId?: string;
+  sessionId?: string;
+  /** Free-form note surfaced on the score in the Langfuse UI. */
+  comment?: string;
+  /** Metadata attached to the (auto-created) trace. */
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Emit a single Langfuse score, ensuring a trace exists for it to hang on.
+ *
+ * Same env-gating + best-effort contract as traceGeneration: no-op when
+ * Langfuse is disabled / unconfigured, never throws. Used for human-feedback
+ * signals (e.g. arena A/B preference votes) that aren't tied to a generation.
+ */
+export async function recordScore(env: Env, args: RecordScoreArgs): Promise<void> {
+  if (!langfuseEnabled(env) || !env.LANGFUSE_PUBLIC_KEY || !env.LANGFUSE_SECRET_KEY) return;
+
+  const langfuse = new Langfuse({
+    publicKey: env.LANGFUSE_PUBLIC_KEY,
+    secretKey: env.LANGFUSE_SECRET_KEY,
+    baseUrl: env.LANGFUSE_BASE_URL,
+  });
+
+  try {
+    // Ensure the trace exists so the score has an anchor in the UI. trace()
+    // is an upsert on id, so re-voting (same traceId) updates rather than
+    // duplicates.
+    langfuse.trace({
+      id: args.traceId,
+      name: args.traceName ?? args.name,
+      userId: args.userId,
+      sessionId: args.sessionId,
+      metadata: args.metadata,
+    });
+
+    langfuse.score({
+      traceId: args.traceId,
+      name: args.name,
+      value: args.value,
+      dataType: args.dataType,
+      comment: args.comment,
+    });
+
+    await langfuse.flushAsync();
+  } catch (err) {
+    console.error('[llm-trace] recordScore failed', err);
+  }
+}

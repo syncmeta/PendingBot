@@ -4,14 +4,15 @@ import { requireSession } from '@pendingbot/identity';
 import { serviceClient, userClient } from '../lib/supabase';
 import { deleteCachedConv, resolveConv } from '../lib/conv-cache';
 import { safeWaitUntil } from '../lib/safe-wait-until';
-import { computeLeaderboard, type Outcome } from '../lib/arena-elo';
+import { computeLeaderboard, type Outcome } from '../lib/arena-bradley-terry';
+import { recordScore } from '../lib/llm-trace';
 import { jsonError } from '../lib/http-error';
 import type { AppBindings } from '../types';
 
 // Pairwise blind choice + a per-user model leaderboard.
 //
 //   POST /v1/arena/compare       — record one A/B vote
-//   GET  /v1/arena/leaderboard   — replay Elo over the caller's votes
+//   GET  /v1/arena/leaderboard   — Bradley-Terry fit over the caller's votes
 //
 // Blindness is enforced client-side; choosing A/B also switches the current
 // conversation main model to the chosen answer's model. The response does not
@@ -150,6 +151,37 @@ arenaRoutes.post('/compare', async (c) => {
     if (switchErr) return jsonError(c, 500, 'database_error', { detail: switchErr.message });
     await deleteCachedConv(c.env, parsed.conversationId).catch(() => undefined);
   }
+
+  // Feed the preference vote into Langfuse as a score (#249). Numeric value
+  // is from model_a's perspective on the normalised pair: a=1 (A preferred),
+  // tie=0.5, b=0 — so averaging the score across many votes for a pair reads
+  // as A's win rate. The categorical winner + slugs ride in the comment for
+  // human-readable filtering. Deterministic traceId per (user, pair) so a
+  // re-vote updates the same trace's score rather than piling up duplicates,
+  // matching the idempotent DB upsert above. Best-effort + off-path.
+  const scoreValue = outcome === 'a' ? 1 : outcome === 'tie' ? 0.5 : 0;
+  safeWaitUntil(
+    c,
+    recordScore(c.env, {
+      name: 'arena_preference',
+      value: scoreValue,
+      dataType: 'NUMERIC',
+      traceId: `arena:${userId}:${gA}:${gB}`,
+      traceName: 'arena_vote',
+      userId,
+      sessionId: parsed.conversationId,
+      comment: `winner=${outcome} a=${pA.model_slug} b=${pB.model_slug}`,
+      metadata: {
+        model_a: pA.model_slug,
+        model_b: pB.model_slug,
+        provider_a: pA.model_provider,
+        provider_b: pB.model_provider,
+        outcome,
+        conversation_id: parsed.conversationId,
+        parent_message_id: parsed.parentMessageId,
+      },
+    }),
+  );
 
   return c.json({ ok: true });
 });
