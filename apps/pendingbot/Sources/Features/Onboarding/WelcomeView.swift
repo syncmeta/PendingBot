@@ -214,28 +214,23 @@ struct WelcomeView: View {
             .contentShape(Capsule())
     }
 
-    /// Always-mounted Turnstile widget for real addresses. Stays at
-    /// 1pt height + opacity 0 for silent passes; only animates open if
-    /// Cloudflare actually fires the `before-interactive-callback`.
-    /// Test-domain addresses bypass it entirely so we don't burn CF
-    /// quota on accounts that aren't going through email at all.
-    @ViewBuilder
+    /// Always-mounted Turnstile widget. Stays at 1pt height + opacity 0 for
+    /// silent passes; only animates open if Cloudflare actually fires the
+    /// `before-interactive-callback`.
     private var turnstileWidget: some View {
-        if !vm.isTestEmail {
-            let visible = vm.humanChoice == .human && !vm.codeBlockShown && vm.turnstileInteractive
-            TurnstileWebView(
-                siteKey: HostedConfig.environment.turnstileSiteKey,
-                host: HostedConfig.environment.turnstileHost,
-                onToken: { token in vm.handleTurnstileToken(token) },
-                onError: { msg in vm.handleTurnstileError(msg) },
-                onInteractive: { vm.markTurnstileInteractive() }
-            )
-            .frame(maxWidth: .infinity)
-            .frame(height: visible ? 80 : 1)
-            .opacity(visible ? 1 : 0)
-            .allowsHitTesting(visible)
-            .id(vm.turnstileWidgetID)
-        }
+        let visible = vm.humanChoice == .human && !vm.codeBlockShown && vm.turnstileInteractive
+        return TurnstileWebView(
+            siteKey: HostedConfig.environment.turnstileSiteKey,
+            host: HostedConfig.environment.turnstileHost,
+            onToken: { token in vm.handleTurnstileToken(token) },
+            onError: { msg in vm.handleTurnstileError(msg) },
+            onInteractive: { vm.markTurnstileInteractive() }
+        )
+        .frame(maxWidth: .infinity)
+        .frame(height: visible ? 80 : 1)
+        .opacity(visible ? 1 : 0)
+        .allowsHitTesting(visible)
+        .id(vm.turnstileWidgetID)
     }
 
     private var verifyingHint: some View {
@@ -252,7 +247,7 @@ struct WelcomeView: View {
     private var codeBlock: some View {
         VStack(spacing: 14) {
             codeStatusRow
-            if vm.otpSent || vm.isTestEmail {
+            if vm.otpSent {
                 codeRow
                     .transition(.opacity)
             }
@@ -292,7 +287,7 @@ struct WelcomeView: View {
                 .buttonStyle(.plain)
                 .font(Theme.Fonts.caption)
                 .foregroundStyle(Theme.Palette.accent.opacity(0.85))
-                .disabled(vm.isVerifying || (!vm.isTestEmail && vm.turnstileToken == nil))
+                .disabled(vm.isVerifying || vm.turnstileToken == nil)
             } else {
                 Button("重发") {
                     Task { await vm.resend() }

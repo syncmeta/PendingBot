@@ -64,25 +64,11 @@ final class WelcomeViewModel: ObservableObject {
 
     // MARK: - Derived state
 
-    /// Test-account back door: any `@pendingname.com` address (case-
-    /// insensitive, after trimming) skips Turnstile *and* the actual
-    /// `signInWithOTP` call. The verify-code UI flows exactly as it
-    /// would for a real address — same labels, same cooldown — but no
-    /// CF challenge is mounted and no email is sent. Codes are pulled
-    /// out-of-band via the Supabase admin API for these accounts.
-    var isTestEmail: Bool {
-        email
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .hasSuffix("@pendingname.com")
-    }
-
-    /// True once we're ready to surface the verify-code block: either
-    /// the address is a test domain (instant), Turnstile has handed us
-    /// a token (we just need the user to tap 发送), an OTP request is
-    /// already in flight, or one has been sent at least once.
+    /// True once we're ready to surface the verify-code block: Turnstile
+    /// has handed us a token (we just need the user to tap 发送), an OTP
+    /// request is already in flight, or one has been sent at least once.
     var codeBlockShown: Bool {
-        humanChoice == .human && (isTestEmail || turnstileToken != nil || otpSent || isVerifying)
+        humanChoice == .human && (turnstileToken != nil || otpSent || isVerifying)
     }
 
     var isBusy: Bool { isVerifying }
@@ -99,7 +85,7 @@ final class WelcomeViewModel: ObservableObject {
         case .enteringEmail:
             return emailLooksValid
         case .humanCheck:
-            return (otpSent || isTestEmail) && code.count >= 4
+            return otpSent && code.count >= 4
         }
     }
 
@@ -199,17 +185,11 @@ final class WelcomeViewModel: ObservableObject {
         turnstileInteractive = true
     }
 
-    /// First-tap 发送 in the status row: consume the token already in hand
-    /// (or none, for the test back door) and fire the initial OTP.
+    /// First-tap 发送 in the status row: consume the Turnstile token already
+    /// in hand and fire the initial OTP.
     func tapSend() {
-        let token: String?
-        if isTestEmail {
-            token = nil
-        } else {
-            guard let t = turnstileToken else { return }
-            turnstileToken = nil
-            token = t
-        }
+        guard let token = turnstileToken else { return }
+        turnstileToken = nil
         // Flip isVerifying synchronously so SwiftUI's next render already
         // sees an in-flight state — otherwise there's a one-frame gap where
         // the code block falls back to "正在验证…".
@@ -219,7 +199,7 @@ final class WelcomeViewModel: ObservableObject {
 
     // MARK: - Email-code flow
 
-    func sendCode(captchaToken: String?) async {
+    func sendCode(captchaToken: String) async {
         isVerifying = true
         defer { isVerifying = false }
         do {
@@ -239,11 +219,6 @@ final class WelcomeViewModel: ObservableObject {
     func resend() async {
         if resendCooldown > 0 || isVerifying { return }
         errorText = nil
-        if isTestEmail {
-            // Re-send straight through with no captcha token.
-            await sendCode(captchaToken: nil)
-            return
-        }
         // Fresh Turnstile token: bump widget id, then either reuse a
         // newly-arrived token or wait for one (revealing the widget if
         // CF demands an interaction).
@@ -255,7 +230,7 @@ final class WelcomeViewModel: ObservableObject {
     }
 
     func verifyCode() async {
-        guard otpSent || isTestEmail else { return }
+        guard otpSent else { return }
         isVerifying = true
         defer { isVerifying = false }
         do {

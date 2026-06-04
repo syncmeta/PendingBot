@@ -216,26 +216,23 @@ struct MacWelcomeView: View {
             .contentShape(Capsule())
     }
 
-    /// Always-mounted Turnstile widget for real addresses. Collapsed to a
-    /// 1pt sliver for silent passes; only animates open if Cloudflare fires
-    /// the `before-interactive-callback`. Test-domain addresses bypass it.
-    @ViewBuilder
+    /// Always-mounted Turnstile widget. Collapsed to a 1pt sliver for silent
+    /// passes; only animates open if Cloudflare fires the
+    /// `before-interactive-callback`.
     private var turnstileWidget: some View {
-        if !vm.isTestEmail {
-            let visible = vm.humanChoice == .human && !vm.codeBlockShown && vm.turnstileInteractive
-            MacTurnstileWebView(
-                siteKey: HostedConfig.environment.turnstileSiteKey,
-                host: HostedConfig.environment.turnstileHost,
-                onToken: { token in vm.handleTurnstileToken(token) },
-                onError: { msg in vm.handleTurnstileError(msg) },
-                onInteractive: { vm.markTurnstileInteractive() }
-            )
-            .frame(maxWidth: .infinity)
-            .frame(height: visible ? 72 : 1)
-            .opacity(visible ? 1 : 0)
-            .allowsHitTesting(visible)
-            .id(vm.turnstileWidgetID)
-        }
+        let visible = vm.humanChoice == .human && !vm.codeBlockShown && vm.turnstileInteractive
+        return MacTurnstileWebView(
+            siteKey: HostedConfig.environment.turnstileSiteKey,
+            host: HostedConfig.environment.turnstileHost,
+            onToken: { token in vm.handleTurnstileToken(token) },
+            onError: { msg in vm.handleTurnstileError(msg) },
+            onInteractive: { vm.markTurnstileInteractive() }
+        )
+        .frame(maxWidth: .infinity)
+        .frame(height: visible ? 72 : 1)
+        .opacity(visible ? 1 : 0)
+        .allowsHitTesting(visible)
+        .id(vm.turnstileWidgetID)
     }
 
     private var verifyingHint: some View {
@@ -252,7 +249,7 @@ struct MacWelcomeView: View {
     private var codeBlock: some View {
         VStack(spacing: 14) {
             codeStatusRow
-            if vm.otpSent || vm.isTestEmail {
+            if vm.otpSent {
                 codeRow
                     .transition(.opacity)
             }
@@ -288,7 +285,7 @@ struct MacWelcomeView: View {
                 .buttonStyle(.plain)
                 .font(Theme.Fonts.caption)
                 .foregroundStyle(Theme.Palette.accent.opacity(0.85))
-                .disabled(vm.isVerifying || (!vm.isTestEmail && vm.turnstileToken == nil))
+                .disabled(vm.isVerifying || vm.turnstileToken == nil)
             } else {
                 Button("重发") {
                     Task { await vm.resend() }
