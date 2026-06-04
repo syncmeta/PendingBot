@@ -2,6 +2,14 @@
 
 **最近对账：2026-06-05**（对照实际代码 / 迁移 / git，不是看 task 标记）
 
+> **2026-06-05（夜，无人值守 workflow）Mac 精细对齐 iOS：缓存 + 逐屏文案/排版/元素（`feat/mac-login-align`，未合，#212）**
+> - **背景**：用户「全都对齐、持续推进、开 dynamic workflow、中途不要等我、去睡觉、拿不准的等起床」。第 2 个顺序流水线 workflow（7 块），合并方（我）跑了 `xcodegen` + iOS/macOS **双端 BUILD SUCCEEDED**（整合态），**收尾扫描确认 `Sources/Mac` 系统默认字体残留 = 0**（全部走 `Theme.Fonts`）。
+> - **缓存**（`1b55d44d`）：Mac 聊天（MacChatView）+ 会话列表接 **cache-first，复用跨平台 `LocalDatabase`**（打开先出本地缓存秒开 → 拉服务端 → iOS 同款 `replaceMessages` 单事务/cmid-aware 写回）。**刻意没碰 iOS shipping 代码**（按安全约束，无人值守不重构已验证的 iOS 加载路径）；「把编排抽成两端完全共享 store」是 follow-up，**需用户在场做 iOS 真机回归再动**（tech-debt 已记）。`ProtectedURLCache`（iOS-only）未在 Mac 调。
+> - **逐屏对齐**（`4f8de4c3` 聊天 / `ce02d530` 好友 / `ba26feb5` 来信 / `237c4325` 我页·设置·资料 / `d260b0e4` 加好友·机器人 / `17652cfd` 根壳+收尾）：字体全换 `Theme.Fonts`、颜色 `Theme.Palette`、文案逐字对 iOS、元素/间距/空态/头像/pill 贴 iOS。例：聊天气泡走 userBubble/surface/hairline + bubbleRadius、未读红点换 iOS 绿胶囊、输入区换 iOS「+」附件钮 + accent 发送圆钮；好友行/可见性 pill/空态对齐；来信 feed 卡片 + 文章版式 + markdown 块渲染 + 空态逐字；我页/设置/注销文案逐字；根壳 tab 命名/空态对齐。
+> - **剩余分歧（醒来清单，agents 已记 tech-debt）— 都属"功能移植/带设计取舍/需在场"，本轮刻意未做**：① **Mac 聊天 bot 气泡仍纯 `Text`**，iOS 是 `MarkdownText`（markdown 渲染 + 流式光标 + web 引用）——`MarkdownText` 是 iOS-only 且依赖 UIFont/UIColor，要移植得另写 Mac MarkdownUI 主题（功能+设计取舍）。② 好友屏仍两段分区，iOS 是单列 + filter pill + 排序菜单 + 好友申请/群邀请分区（IA 重构）。③ 图片无全屏查看器、用户气泡无 sending/failed 三态。④ **缓存编排抽共享 store**（碰 iOS，需在场回归）。⑤ 所有写回合 + 视觉像素**未真机/真账号验**。
+> - **未合 main。** 分支累计 ~30 commit。
+
+
 > **2026-06-05 Mac 全面对齐 iOS（dynamic workflow，`feat/mac-login-align`，未合，#212）**
 > - **背景**：用户「都做，开 dynamic workflow 做完」。用 Workflow 顺序流水线（共享工作树，每块端到端：原生重画 + 接线 + xcodegen + iOS/macOS 双端编译到绿 + commit），4 个 area agent 串行。**逻辑全复用跨平台层，纯 SwiftUI 原生重画**；iOS-only 选择器（PhotosUI/UIImagePicker）用 NSOpenPanel 替代。
 > - **① 设置/我页**（commit `d091f8cf`）：`MacSettingsView`（锁屏通知预览 + 通话连接模式，Form `.grouped`，sheet）、`MacProfileEditView`（改名 + 头像 seed 轮换 + NSOpenPanel 自定义图 → /v1/upload）、`MacNameCorpus`（iOS NameCorpus 被 `#if os(iOS)` 圈住后读同一 names.txt 的镜像）；MacMeView 接入设置/资料/注销（`request_account_deletion` RPC + 两档 sentiment），头像换 ServerImage/BrandAvatar。
