@@ -1,8 +1,6 @@
 #if os(iOS)
 import SwiftUI
 import UIKit
-import AuthenticationServices
-import CryptoKit
 
 /// First-launch / signed-out screen. Logo on top, three sign-in methods below
 /// (Apple, Google, email-code). Email path uses an inline TextField with a
@@ -11,66 +9,12 @@ import CryptoKit
 /// background, then drops the user straight into a code-entry row once
 /// the OTP has been sent.
 ///
-/// Auth wiring goes through the supabase-swift helpers AppleSignIn /
-/// PendingGoogleSignIn / EmailSignIn.
+/// All flow/auth logic lives in the cross-platform `WelcomeViewModel` (shared
+/// with the native macOS `MacWelcomeView`); this view owns only the iOS-native
+/// rendering — glass capsules, the `TurnstileWebView` representable, keyboard
+/// types, and `@FocusState`.
 struct WelcomeView: View {
-    enum Stage {
-        case enteringEmail
-        case humanCheck
-    }
-
-    enum HumanChoice {
-        case undecided
-        case human
-        case robot
-    }
-
-    @Environment(\.dismiss) private var dismiss
-    @EnvironmentObject private var store: AccountStore
-
-    @State private var stage: Stage = .enteringEmail
-    /// Orthogonal to `stage`: true during any in-flight auth round-trip
-    /// (email-code verify, Apple SIWA token exchange, Google sign-in).
-    /// Kept separate from `stage` so Apple/Google verification doesn't
-    /// flip the UI into the email-code step.
-    @State private var isVerifying: Bool = false
-    @State private var email: String = ""
-    @State private var code: String = ""
-
-    // MARK: Human-check stage state
-
-    @State private var humanChoice: HumanChoice = .undecided
-    /// Latest Turnstile token. Captured silently as soon as Cloudflare
-    /// emits one; cleared once consumed by `sendCode`.
-    @State private var turnstileToken: String?
-    /// True between "user tapped 人类" and "we issued a sendCode call" —
-    /// flips back to false the moment a token is consumed. Lets the
-    /// async token callback know it should fire sendCode immediately.
-    @State private var awaitingTurnstileSend: Bool = false
-    /// Cloudflare actually wants the user to interact (rare). Until this
-    /// flips true, the widget stays collapsed to a 1pt sliver and the
-    /// user only sees a "正在验证…" affordance.
-    @State private var turnstileInteractive: Bool = false
-    /// Set on hard widget failure (script load timeout, expired, etc).
-    @State private var turnstileFailed: Bool = false
-    /// Bumping this id remounts the underlying `WKWebView` so we get a
-    /// fresh token — used on resend, since Turnstile tokens are
-    /// single-use.
-    @State private var turnstileWidgetID: UUID = UUID()
-    /// True after the first successful `sendCode`. Used to flip the
-    /// status row from "码将发至" / 发送 → "码已发至" / 重发, and to
-    /// reveal the code-entry input.
-    @State private var otpSent: Bool = false
-    /// Seconds remaining on the resend cooldown. >0 ⇒ button is the
-    /// grey countdown; ==0 ⇒ "重发" is tappable again.
-    @State private var resendCooldown: Int = 0
-
-    /// Random nonce mixed into the SIWA request. Apple bakes its SHA-256
-    /// hash into the identity token; Supabase verifies replay-protection.
-    /// Generated once per appearance — must not change mid-flow.
-    @State private var siwaNonce: String = WelcomeView.randomNonce()
-    @State private var errorText: String?
-    @State private var appleCoordinator: AppleSignInCoordinator?
+    @StateObject private var vm = WelcomeViewModel()
     @FocusState private var focusedField: Field?
 
     enum Field { case email, code }
@@ -90,7 +34,7 @@ struct WelcomeView: View {
 
             // Bottom half: branches by stage.
             VStack(alignment: .leading, spacing: 0) {
-                switch stage {
+                switch vm.stage {
                 case .enteringEmail:
                     enteringEmailBody
                 case .humanCheck:
@@ -98,7 +42,7 @@ struct WelcomeView: View {
                         .transition(.opacity)
                 }
 
-                if let errorText {
+                if let errorText = vm.errorText {
                     errorBlock(text: errorText)
                         .padding(.top, 12)
                 }
@@ -117,7 +61,7 @@ struct WelcomeView: View {
             Color.clear.frame(height: 24)
         }
         .overlay(alignment: .topLeading) {
-            if stage == .humanCheck {
+            if vm.stage == .humanCheck {
                 backButton
                     .padding(.leading, 12)
                     .padding(.top, 4)
@@ -127,16 +71,19 @@ struct WelcomeView: View {
         .onAppear {
             // Don't grab focus for the email field — let users tap it
             // explicitly so the keyboard doesn't fly up on launch.
-            if otpSent { focusedField = .code }
+            if vm.otpSent { focusedField = .code }
+        }
+        .onChange(of: vm.otpSent) { _, sent in
+            if sent { focusedField = .code }
         }
         .onReceive(resendTimer) { _ in
-            if resendCooldown > 0 { resendCooldown -= 1 }
+            vm.tickResendCooldown()
         }
-        .animation(.easeInOut(duration: 0.28), value: stage)
-        .animation(.easeInOut(duration: 0.28), value: humanChoice)
-        .animation(.easeInOut(duration: 0.28), value: otpSent)
-        .animation(.easeInOut(duration: 0.28), value: codeBlockShown)
-        .animation(.easeInOut(duration: 0.28), value: turnstileInteractive)
+        .animation(.easeInOut(duration: 0.28), value: vm.stage)
+        .animation(.easeInOut(duration: 0.28), value: vm.humanChoice)
+        .animation(.easeInOut(duration: 0.28), value: vm.otpSent)
+        .animation(.easeInOut(duration: 0.28), value: vm.codeBlockShown)
+        .animation(.easeInOut(duration: 0.28), value: vm.turnstileInteractive)
     }
 
     // MARK: - Stage: entering email
@@ -157,7 +104,7 @@ struct WelcomeView: View {
                 }
                 emailRow
             }
-            .disabled(isBusy)
+            .disabled(vm.isBusy)
         }
     }
 
@@ -175,7 +122,7 @@ struct WelcomeView: View {
                 humanButton
                 robotButton
             }
-            .disabled(isBusy || codeBlockShown)
+            .disabled(vm.isBusy || vm.codeBlockShown)
 
             // The Turnstile widget is mounted as soon as we land on this
             // stage so it can pre-load while the user reads the prompt.
@@ -190,13 +137,13 @@ struct WelcomeView: View {
             // actually fires the OTP. While CF is still working on a
             // silent pass, show a small loading hint instead.
             Group {
-                if codeBlockShown {
+                if vm.codeBlockShown {
                     codeBlock
                         .transition(.opacity)
-                } else if humanChoice == .robot {
+                } else if vm.humanChoice == .robot {
                     robotEasterEgg
                         .transition(.opacity)
-                } else if humanChoice == .human && !turnstileInteractive && !turnstileFailed {
+                } else if vm.humanChoice == .human && !vm.turnstileInteractive && !vm.turnstileFailed {
                     verifyingHint
                         .transition(.opacity)
                 }
@@ -204,36 +151,14 @@ struct WelcomeView: View {
         }
     }
 
-    /// Test-account back door: any `@pendingname.com` address (case-
-    /// insensitive, after trimming) skips Turnstile *and* the actual
-    /// `signInWithOTP` call. The verify-code UI flows exactly as it
-    /// would for a real address — same labels, same cooldown — but no
-    /// CF challenge is mounted and no email is sent. Codes are pulled
-    /// out-of-band via the Supabase admin API for these accounts.
-    private var isTestEmail: Bool {
-        email
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .hasSuffix("@pendingname.com")
-    }
-
-    /// True once we're ready to surface the verify-code block: either
-    /// the address is a test domain (instant), Turnstile has handed us
-    /// a token (we just need the user to tap 发送), an OTP request is
-    /// already in flight, or one has been sent at least once. Including
-    /// `isVerifying` covers the gap between consuming the token and
-    /// `otpSent` flipping true — without
-    /// it the block would briefly drop back to "正在验证…" while the
-    /// network round-trip is in progress.
-    private var codeBlockShown: Bool {
-        humanChoice == .human && (isTestEmail || turnstileToken != nil || otpSent || isVerifying)
-    }
-
     /// Top-left chevron back to the email-entry stage. Native glass on
     /// iOS 26+ via `.glassEffect`; pre-26 falls back to a thin material
     /// circle so it still reads as a button.
     private var backButton: some View {
-        Button { backToEmailEntry() } label: {
+        Button {
+            vm.backToEmailEntry()
+            focusedField = .email
+        } label: {
             Image(systemName: "chevron.left")
                 .font(Theme.Fonts.glyph(size: 16, weight: .semibold))
                 .foregroundStyle(Theme.Palette.ink)
@@ -242,24 +167,24 @@ struct WelcomeView: View {
                 .shadow(color: .black.opacity(0.06), radius: 6, y: 2)
         }
         .buttonStyle(.plain)
-        .disabled(isVerifying)
+        .disabled(vm.isVerifying)
         .accessibilityLabel("返回")
     }
 
     private var humanButton: some View {
         Button {
-            tapHuman()
+            vm.tapHuman()
         } label: {
-            choicePill(text: "人类", filled: humanChoice == .human)
+            choicePill(text: "人类", filled: vm.humanChoice == .human)
         }
         .buttonStyle(.plain)
     }
 
     private var robotButton: some View {
         Button {
-            humanChoice = .robot
+            vm.tapRobot()
         } label: {
-            choicePill(text: "机器人", filled: humanChoice == .robot)
+            choicePill(text: "机器人", filled: vm.humanChoice == .robot)
         }
         .buttonStyle(.plain)
     }
@@ -296,20 +221,20 @@ struct WelcomeView: View {
     /// quota on accounts that aren't going through email at all.
     @ViewBuilder
     private var turnstileWidget: some View {
-        if !isTestEmail {
-            let visible = humanChoice == .human && !codeBlockShown && turnstileInteractive
+        if !vm.isTestEmail {
+            let visible = vm.humanChoice == .human && !vm.codeBlockShown && vm.turnstileInteractive
             TurnstileWebView(
                 siteKey: HostedConfig.environment.turnstileSiteKey,
                 host: HostedConfig.environment.turnstileHost,
-                onToken: { token in handleTurnstileToken(token) },
-                onError: { msg in handleTurnstileError(msg) },
-                onInteractive: { turnstileInteractive = true }
+                onToken: { token in vm.handleTurnstileToken(token) },
+                onError: { msg in vm.handleTurnstileError(msg) },
+                onInteractive: { vm.markTurnstileInteractive() }
             )
             .frame(maxWidth: .infinity)
             .frame(height: visible ? 80 : 1)
             .opacity(visible ? 1 : 0)
             .allowsHitTesting(visible)
-            .id(turnstileWidgetID)
+            .id(vm.turnstileWidgetID)
         }
     }
 
@@ -327,7 +252,7 @@ struct WelcomeView: View {
     private var codeBlock: some View {
         VStack(spacing: 14) {
             codeStatusRow
-            if otpSent || isTestEmail {
+            if vm.otpSent || vm.isTestEmail {
                 codeRow
                     .transition(.opacity)
             }
@@ -339,7 +264,7 @@ struct WelcomeView: View {
             Image(systemName: "envelope")
                 .font(Theme.Fonts.glyph(size: 13))
                 .foregroundStyle(Theme.Palette.inkMuted)
-            Text("\(otpSent ? "码已发至：" : "码将发至：")\(email)")
+            Text("\(vm.otpSent ? "码已发至：" : "码将发至：")\(vm.email)")
                 .font(Theme.Fonts.footnote)
                 .foregroundStyle(Theme.Palette.inkMuted)
                 .lineLimit(1)
@@ -356,42 +281,26 @@ struct WelcomeView: View {
     /// fresh single-use token). Greyed-out countdown when on cooldown.
     private var sendOrResendButton: some View {
         Group {
-            if resendCooldown > 0 {
-                Text("\(resendCooldown)s")
+            if vm.resendCooldown > 0 {
+                Text("\(vm.resendCooldown)s")
                     .font(Theme.Fonts.caption)
                     .foregroundStyle(Theme.Palette.inkMuted.opacity(0.7))
-            } else if !otpSent {
+            } else if !vm.otpSent {
                 Button("发送") {
-                    let token: String?
-                    if isTestEmail {
-                        // Test back door — call signInWithOTP with no
-                        // captcha token so we can observe whether the
-                        // Supabase backend actually enforces it.
-                        token = nil
-                    } else {
-                        guard let t = turnstileToken else { return }
-                        turnstileToken = nil
-                        token = t
-                    }
-                    // Flip isVerifying synchronously so SwiftUI's next
-                    // render already sees an in-flight state — otherwise
-                    // there's a one-frame gap where the code block
-                    // falls back to "正在验证…".
-                    isVerifying = true
-                    Task { await sendCode(captchaToken: token) }
+                    vm.tapSend()
                 }
                 .buttonStyle(.plain)
                 .font(Theme.Fonts.caption)
                 .foregroundStyle(Theme.Palette.accent.opacity(0.85))
-                .disabled(isVerifying || (!isTestEmail && turnstileToken == nil))
+                .disabled(vm.isVerifying || (!vm.isTestEmail && vm.turnstileToken == nil))
             } else {
                 Button("重发") {
-                    Task { await resend() }
+                    Task { await vm.resend() }
                 }
                 .buttonStyle(.plain)
                 .font(Theme.Fonts.caption)
                 .foregroundStyle(Theme.Palette.accent.opacity(0.85))
-                .disabled(isVerifying)
+                .disabled(vm.isVerifying)
             }
         }
     }
@@ -419,11 +328,10 @@ struct WelcomeView: View {
     /// `SignInWithAppleButton` ships fixed Apple-localized labels only
     /// ("通过 Apple 继续" etc.) and we want the single word "Apple" so it
     /// pairs visually with the Google pill — both labels then have similar
-    /// widths and the logos line up naturally. The actual SIWA flow is
-    /// still driven through Apple's own `ASAuthorizationController` API;
-    /// only the button styling is custom.
+    /// widths and the logos line up naturally. The actual SIWA flow runs
+    /// through the cross-platform `AppleSignIn` helper.
     private var appleButton: some View {
-        Button { triggerAppleSignIn() } label: {
+        Button { Task { await vm.beginApple() } } label: {
             brandPillContent(logo: appleLogoImage, text: "Apple", textColor: .white)
                 .frame(maxWidth: .infinity)
                 .frame(height: 52)
@@ -437,7 +345,7 @@ struct WelcomeView: View {
     /// Google sign-in button. Same internal pill layout as `appleButton`,
     /// so the logos sit at matching X positions.
     private var googleButton: some View {
-        Button { Task { await beginGoogle() } } label: {
+        Button { Task { await vm.beginGoogle() } } label: {
             brandPillContent(
                 logo: AnyView(Image("GoogleG").resizable().scaledToFit()),
                 text: "Google",
@@ -495,25 +403,25 @@ struct WelcomeView: View {
 
     private var emailRow: some View {
         inputRow {
-            TextField("邮箱", text: $email)
+            TextField("邮箱", text: $vm.email)
                 .textInputAutocapitalization(.never)
                 .keyboardType(.emailAddress)
                 .textContentType(.emailAddress)
                 .autocorrectionDisabled()
                 .focused($focusedField, equals: .email)
                 .submitLabel(.continue)
-                .onSubmit { advanceToHumanCheck() }
+                .onSubmit { advance() }
         }
     }
 
     private var codeRow: some View {
         inputRow {
-            TextField("码可能在垃圾邮件里", text: $code)
+            TextField("码可能在垃圾邮件里", text: $vm.code)
                 .keyboardType(.numberPad)
                 .textContentType(.oneTimeCode)
                 .focused($focusedField, equals: .code)
                 .submitLabel(.go)
-                .onSubmit { Task { await verifyCode() } }
+                .onSubmit { Task { await vm.verifyCode() } }
         }
     }
 
@@ -541,13 +449,13 @@ struct WelcomeView: View {
 
     private var submitArrowButton: some View {
         Button {
-            switch stage {
-            case .enteringEmail: advanceToHumanCheck()
-            case .humanCheck:    Task { await verifyCode() }
+            switch vm.stage {
+            case .enteringEmail: advance()
+            case .humanCheck:    Task { await vm.verifyCode() }
             }
         } label: {
             Group {
-                if isBusy {
+                if vm.isBusy {
                     ProgressView()
                         .tint(.white)
                 } else {
@@ -558,12 +466,12 @@ struct WelcomeView: View {
             }
             .frame(width: 38, height: 38)
             .background(
-                Circle().fill(canSubmit ? Theme.Palette.accent : Theme.Palette.accent.opacity(0.28))
+                Circle().fill(vm.canSubmit ? Theme.Palette.accent : Theme.Palette.accent.opacity(0.28))
             )
         }
         .buttonStyle(.plain)
-        .disabled(!canSubmit || isBusy)
-        .animation(.easeInOut(duration: 0.15), value: canSubmit)
+        .disabled(!vm.canSubmit || vm.isBusy)
+        .animation(.easeInOut(duration: 0.15), value: vm.canSubmit)
     }
 
     private func errorBlock(text: String) -> some View {
@@ -573,283 +481,14 @@ struct WelcomeView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    // MARK: - Derived state
+    // MARK: - Actions bridging view focus → view model
 
-    private var isBusy: Bool { isVerifying }
-
-    private var canSubmit: Bool {
-        if isVerifying { return false }
-        switch stage {
-        case .enteringEmail:
-            return email.contains("@") && email.contains(".")
-        case .humanCheck:
-            return (otpSent || isTestEmail) && code.count >= 4
+    /// Advance email → human-check, dismissing the keyboard only if the
+    /// address actually validated.
+    private func advance() {
+        if vm.advanceToHumanCheck() {
+            focusedField = nil
         }
-    }
-
-    // MARK: - Email-code flow
-
-    private func backToEmailEntry() {
-        if isVerifying { return }
-        errorText = nil
-        humanChoice = .undecided
-        turnstileToken = nil
-        awaitingTurnstileSend = false
-        turnstileInteractive = false
-        turnstileFailed = false
-        otpSent = false
-        code = ""
-        resendCooldown = 0
-        // Drop the WebView so it stops loading; it'll be remounted with
-        // a fresh id next time the user advances.
-        turnstileWidgetID = UUID()
-        stage = .enteringEmail
-        focusedField = .email
-    }
-
-    private func advanceToHumanCheck() {
-        guard email.contains("@") && email.contains(".") else { return }
-        errorText = nil
-        focusedField = nil
-        humanChoice = .undecided
-        turnstileToken = nil
-        awaitingTurnstileSend = false
-        turnstileInteractive = false
-        turnstileFailed = false
-        otpSent = false
-        // New widget instance ⇒ fresh token. Cheap because the WebView
-        // hasn't been mounted yet (we're about to enter humanCheck).
-        turnstileWidgetID = UUID()
-        stage = .humanCheck
-    }
-
-    @MainActor
-    private func tapHuman() {
-        if codeBlockShown { return }
-        humanChoice = .human
-        errorText = nil
-        if turnstileFailed {
-            // Force a fresh widget — the previous one already errored.
-            turnstileFailed = false
-            turnstileInteractive = false
-            turnstileToken = nil
-            turnstileWidgetID = UUID()
-        }
-    }
-
-    @MainActor
-    private func handleTurnstileToken(_ token: String) {
-        turnstileToken = token
-        // Resend path: the user has already implicitly authorized a send,
-        // so consume the fresh token immediately.
-        if awaitingTurnstileSend {
-            awaitingTurnstileSend = false
-            turnstileToken = nil
-            Task { await sendCode(captchaToken: token) }
-        }
-    }
-
-    @MainActor
-    private func handleTurnstileError(_ msg: String) {
-        turnstileFailed = true
-        turnstileInteractive = false
-        // Drop any prior token — error/expired callbacks invalidate it,
-        // and we don't want the 发送 button to remain tappable with a
-        // stale value (which the Supabase backend may or may not reject
-        // depending on whether captcha-secret is configured).
-        turnstileToken = nil
-        if humanChoice == .human {
-            errorText = "人机验证失败：\(msg)"
-            Haptics.error()
-        }
-        awaitingTurnstileSend = false
-    }
-
-    @MainActor
-    private func sendCode(captchaToken: String?) async {
-        let trimmed = email.trimmingCharacters(in: .whitespaces)
-        isVerifying = true
-        defer { isVerifying = false }
-        do {
-            try await EmailSignIn.requestCode(
-                email: trimmed,
-                captchaToken: captchaToken
-            )
-            otpSent = true
-            resendCooldown = 60
-            focusedField = .code
-            Haptics.tap()
-        } catch {
-            errorText = error.localizedDescription
-            Haptics.error()
-        }
-    }
-
-    @MainActor
-    private func resend() async {
-        if resendCooldown > 0 || isVerifying { return }
-        errorText = nil
-        if isTestEmail {
-            // Re-send straight through with no captcha token.
-            await sendCode(captchaToken: nil)
-            return
-        }
-        // Fresh Turnstile token: bump widget id, then either reuse a
-        // newly-arrived token or wait for one (revealing the widget if
-        // CF demands an interaction).
-        turnstileToken = nil
-        turnstileInteractive = false
-        turnstileFailed = false
-        turnstileWidgetID = UUID()
-        awaitingTurnstileSend = true
-    }
-
-    @MainActor
-    private func verifyCode() async {
-        guard otpSent || isTestEmail else { return }
-        isVerifying = true
-        defer { isVerifying = false }
-        do {
-            _ = try await EmailSignIn.verify(
-                email: email.trimmingCharacters(in: .whitespacesAndNewlines),
-                code: code.trimmingCharacters(in: .whitespaces)
-            )
-            Haptics.success()
-        } catch {
-            errorText = error.localizedDescription
-            Haptics.error()
-        }
-    }
-
-    // MARK: - SIWA helpers
-
-    private static func randomNonce(length: Int = 32) -> String {
-        let charset: [Character] = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-._")
-        return String((0..<length).map { _ in charset.randomElement()! })
-    }
-
-    private func sha256Hex(_ s: String) -> String {
-        let digest = SHA256.hash(data: Data(s.utf8))
-        return digest.map { String(format: "%02x", $0) }.joined()
-    }
-
-    // MARK: - Apple SIWA
-
-    /// Custom-button replacement for `SignInWithAppleButton`. Drives the
-    /// same Apple flow (`ASAuthorizationAppleIDProvider`) the SwiftUI
-    /// wrapper uses; we just lose Apple's pre-styled button.
-    @MainActor
-    private func triggerAppleSignIn() {
-        let request = ASAuthorizationAppleIDProvider().createRequest()
-        request.requestedScopes = [.email, .fullName]
-        request.nonce = sha256Hex(siwaNonce)
-
-        let coordinator = AppleSignInCoordinator { result in
-            Task { await handleAppleResult(result) }
-        }
-        let controller = ASAuthorizationController(authorizationRequests: [request])
-        controller.delegate = coordinator
-        controller.presentationContextProvider = coordinator
-        // Hold a strong ref — ASAuthorizationController doesn't retain
-        // its delegate, and the coordinator must outlive performRequests().
-        self.appleCoordinator = coordinator
-        // performRequests() internally waits on a Default-QoS thread, which
-        // Xcode flags as a hang risk when invoked from the userInteractive
-        // main actor. Hop to a userInitiated queue to avoid the priority
-        // inversion; the controller dispatches presentation back to main via
-        // its presentationContextProvider.
-        nonisolated(unsafe) let unsafeController = controller
-        DispatchQueue.global(qos: .userInitiated).async {
-            unsafeController.performRequests()
-        }
-    }
-
-    @MainActor
-    private func handleAppleResult(_ result: Result<ASAuthorization, Error>) async {
-        errorText = nil
-        switch result {
-        case .failure(let err):
-            if (err as NSError).code == ASAuthorizationError.canceled.rawValue { return }
-            errorText = err.localizedDescription
-        case .success(let auth):
-            guard let cred = auth.credential as? ASAuthorizationAppleIDCredential,
-                  let tokenData = cred.identityToken,
-                  let idToken = String(data: tokenData, encoding: .utf8) else {
-                errorText = "Apple 没返回 identity token"
-                return
-            }
-            isVerifying = true
-            defer { isVerifying = false }
-            do {
-                _ = try await SupabaseStack.shared.auth.signInWithIdToken(
-                    credentials: .init(provider: .apple,
-                                       idToken: idToken,
-                                       nonce: siwaNonce)
-                )
-                Haptics.success()
-            } catch {
-                errorText = error.localizedDescription
-                Haptics.error()
-            }
-        }
-    }
-
-    // MARK: - Google
-
-    @MainActor
-    private func beginGoogle() async {
-        errorText = nil
-        isVerifying = true
-        defer { isVerifying = false }
-        do {
-            _ = try await PendingGoogleSignIn.run()
-            Haptics.success()
-        } catch PendingGoogleSignIn.Error.userCancelled {
-            // user backed out of the Google sheet — silent, stay put
-        } catch {
-            errorText = error.localizedDescription
-            Haptics.error()
-        }
-    }
-}
-
-/// Bridges `ASAuthorizationController`'s Objective-C delegate callbacks
-/// into the SwiftUI-friendly `Result` closure that `WelcomeView` already
-/// understands. One instance per sign-in attempt; the view holds it
-/// strongly until the controller finishes.
-fileprivate final class AppleSignInCoordinator: NSObject,
-    ASAuthorizationControllerDelegate,
-    ASAuthorizationControllerPresentationContextProviding {
-
-    private let completion: (Result<ASAuthorization, Error>) -> Void
-
-    init(completion: @escaping (Result<ASAuthorization, Error>) -> Void) {
-        self.completion = completion
-    }
-
-    func authorizationController(
-        controller: ASAuthorizationController,
-        didCompleteWithAuthorization authorization: ASAuthorization
-    ) {
-        completion(.success(authorization))
-    }
-
-    func authorizationController(
-        controller: ASAuthorizationController,
-        didCompleteWithError error: Error
-    ) {
-        completion(.failure(error))
-    }
-
-    func presentationAnchor(
-        for controller: ASAuthorizationController
-    ) -> ASPresentationAnchor {
-        let scenes = UIApplication.shared.connectedScenes
-        let window = scenes
-            .compactMap { $0 as? UIWindowScene }
-            .flatMap(\.windows)
-            .first(where: \.isKeyWindow)
-        return window ?? ASPresentationAnchor()
     }
 }
 
