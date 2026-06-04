@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# ⚠️ LEGACY / SUPERSEDED — dashboards are now managed as code via gcx:
+#     ~/go/bin/gcx resources push -p infra/grafana/gcx
+#   (see infra/grafana/README.md). This curl/import script is kept only as a
+#   token+jq fallback if gcx is unavailable; the gcx manifests are the source of truth.
 # Push every dashboard JSON in ./dashboards to a Grafana instance via the API.
 #
 # WHY: Grafana Cloud cannot read local provisioning files (no filesystem under
