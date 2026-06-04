@@ -81,7 +81,7 @@ struct MacWelcomeView: View {
                         .padding(.top, 12)
                 }
             }
-            .frame(width: 300)
+            .frame(width: 280)
         }
         .padding(44)
         // 默认尺寸:更宽更扁,横向给 logo↔表单留出呼吸空间。
@@ -193,10 +193,10 @@ struct MacWelcomeView: View {
 
     private func choicePill(text: String, filled: Bool) -> some View {
         Text(text)
-            .font(Theme.Fonts.system(size: 17, weight: .medium))
+            .font(Theme.Fonts.system(size: 16, weight: .medium))
             .foregroundStyle(filled ? .white : Theme.Palette.ink)
             .frame(maxWidth: .infinity)
-            .frame(height: 52)
+            .frame(height: 48)
             .background(
                 Group {
                     if filled {
@@ -321,7 +321,7 @@ struct MacWelcomeView: View {
         Button { Task { await vm.beginApple() } } label: {
             brandPillContent(logo: appleLogoImage, text: "Apple", textColor: .white)
                 .frame(maxWidth: .infinity)
-                .frame(height: 52)
+                .frame(height: 48)
                 .background(Capsule().fill(.black))
                 .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
         }
@@ -337,7 +337,7 @@ struct MacWelcomeView: View {
                 textColor: Color(red: 0.18, green: 0.18, blue: 0.20)
             )
             .frame(maxWidth: .infinity)
-            .frame(height: 52)
+            .frame(height: 48)
             .macGlassCapsule()
             .shadow(color: .black.opacity(0.08), radius: 10, y: 4)
         }
@@ -370,9 +370,9 @@ struct MacWelcomeView: View {
         logo: AnyView, text: String, textColor: Color
     ) -> some View {
         HStack(spacing: 10) {
-            logo.frame(width: 19, height: 19)
+            logo.frame(width: 18, height: 18)
             Text(text)
-                .font(Theme.Fonts.system(size: 19, weight: .medium))
+                .font(Theme.Fonts.system(size: 18, weight: .medium))
                 .foregroundStyle(textColor)
         }
     }
@@ -405,15 +405,15 @@ struct MacWelcomeView: View {
     ) -> some View {
         HStack(spacing: 0) {
             field()
-                .font(Theme.Fonts.system(size: 17))
-                .padding(.leading, 20)
-                .padding(.vertical, 14)
+                .font(Theme.Fonts.system(size: 16))
+                .padding(.leading, 18)
+                .padding(.vertical, 13)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             submitArrowButton
                 .padding(.trailing, 7)
         }
-        .frame(height: 52)
+        .frame(height: 48)
         .macGlassCapsule()
         .shadow(color: .black.opacity(0.08), radius: 10, y: 4)
     }
@@ -432,11 +432,11 @@ struct MacWelcomeView: View {
                         .tint(.white)
                 } else {
                     Image(systemName: "arrow.right")
-                        .font(Theme.Fonts.glyph(size: 15, weight: .bold))
+                        .font(Theme.Fonts.glyph(size: 14, weight: .bold))
                         .foregroundStyle(.white)
                 }
             }
-            .frame(width: 38, height: 38)
+            .frame(width: 35, height: 35)
             .background(
                 Circle().fill(vm.canSubmit ? Theme.Palette.accent : Theme.Palette.accent.opacity(0.28))
             )
