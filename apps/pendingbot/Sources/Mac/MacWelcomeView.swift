@@ -29,7 +29,7 @@ struct MacRootGate: View {
                     ProgressView()
                     Text("加载中…").font(.callout).foregroundStyle(.secondary)
                 }
-                .frame(minWidth: 560, minHeight: 420)
+                .frame(minWidth: 548, minHeight: 360)
             } else if store.current == nil {
                 MacWelcomeView()
             } else {
@@ -53,13 +53,13 @@ struct MacWelcomeView: View {
         // Logo + form sit as one centered cluster (not pushed to opposite
         // edges), on a compact window — much smaller than the main app's
         // 1100×700 (which is restored once signed in via MacRootGate).
-        HStack(spacing: 28) {
+        HStack(spacing: 56) {
             Image("BrandMark")
                 .resizable()
                 .aspectRatio(contentMode: .fit)
-                .frame(width: 124, height: 124)
-                .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-                .shadow(color: .black.opacity(0.06), radius: 20, y: 6)
+                .frame(width: 92, height: 92)
+                .clipShape(RoundedRectangle(cornerRadius: 21, style: .continuous))
+                .shadow(color: .black.opacity(0.06), radius: 18, y: 5)
 
             VStack(alignment: .leading, spacing: 0) {
                 if vm.stage == .humanCheck {
@@ -84,7 +84,8 @@ struct MacWelcomeView: View {
             .frame(width: 300)
         }
         .padding(44)
-        .frame(minWidth: 560, minHeight: 420, alignment: .center)
+        // 默认尺寸贴合 logo+表单这一簇,不留多余空白;比例约 3:2。
+        .frame(minWidth: 548, minHeight: 360, alignment: .center)
         .background(Theme.Palette.canvas.ignoresSafeArea())
         .background(MacLoginWindowStyler())
         .onChange(of: vm.otpSent) { _, sent in
