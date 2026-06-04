@@ -69,7 +69,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COUNT(DISTINCT creator_id) AS users_with_bot\nFROM pendingbot.bots\nWHERE creator_id IS NOT NULL\n  AND $__timeFilter(created_at);",
+          "rawSql": "SELECT COUNT(DISTINCT creator_id) AS users_with_bot\nFROM pendingbot.bi_bot_creations\nWHERE $__timeFilter(created_at);",
           "refId": "A"
         }
       ]
@@ -90,7 +90,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COUNT(DISTINCT requester_id) AS users_joined_group\nFROM pendingbot.group_join_requests\nWHERE status = 'approved'\n  AND $__timeFilter(COALESCE(decided_at, created_at));",
+          "rawSql": "SELECT COUNT(DISTINCT requester_id) AS users_joined_group\nFROM pendingbot.bi_group_joins_approved\nWHERE $__timeFilter(COALESCE(decided_at, created_at));",
           "refId": "A"
         }
       ]
@@ -132,7 +132,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "WITH stages AS (\n  SELECT 1 AS ord, 'registrations' AS stage,\n    (SELECT COUNT(*) FROM pendingbot.users WHERE $__timeFilter(created_at)) AS users\n  UNION ALL\n  SELECT 2, 'created_bot',\n    (SELECT COUNT(DISTINCT creator_id) FROM pendingbot.bots WHERE creator_id IS NOT NULL AND $__timeFilter(created_at))\n  UNION ALL\n  SELECT 3, 'joined_group',\n    (SELECT COUNT(DISTINCT requester_id) FROM pendingbot.group_join_requests WHERE status = 'approved' AND $__timeFilter(COALESCE(decided_at, created_at)))\n  UNION ALL\n  SELECT 4, 'paid',\n    (SELECT COUNT(DISTINCT s.user_id) FROM pendingbot.pnc_ledger l JOIN pendingbot.subjects s ON s.id = l.subject_id WHERE l.kind = 'topup' AND l.source IN ('polar_checkout','iap_ios') AND s.user_id IS NOT NULL AND $__timeFilter(l.created_at))\n)\nSELECT\n  stage,\n  users,\n  ROUND(100.0 * users / NULLIF(FIRST_VALUE(users) OVER (ORDER BY ord), 0), 2) AS pct_of_registrations,\n  ROUND(100.0 * users / NULLIF(LAG(users) OVER (ORDER BY ord), 0), 2) AS pct_of_prev_stage\nFROM stages\nORDER BY ord;",
+          "rawSql": "WITH stages AS (\n  SELECT 1 AS ord, 'registrations' AS stage,\n    (SELECT COUNT(*) FROM pendingbot.users WHERE $__timeFilter(created_at)) AS users\n  UNION ALL\n  SELECT 2, 'created_bot',\n    (SELECT COUNT(DISTINCT creator_id) FROM pendingbot.bi_bot_creations WHERE $__timeFilter(created_at))\n  UNION ALL\n  SELECT 3, 'joined_group',\n    (SELECT COUNT(DISTINCT requester_id) FROM pendingbot.bi_group_joins_approved WHERE $__timeFilter(COALESCE(decided_at, created_at)))\n  UNION ALL\n  SELECT 4, 'paid',\n    (SELECT COUNT(DISTINCT s.user_id) FROM pendingbot.pnc_ledger l JOIN pendingbot.subjects s ON s.id = l.subject_id WHERE l.kind = 'topup' AND l.source IN ('polar_checkout','iap_ios') AND s.user_id IS NOT NULL AND $__timeFilter(l.created_at))\n)\nSELECT\n  stage,\n  users,\n  ROUND(100.0 * users / NULLIF(FIRST_VALUE(users) OVER (ORDER BY ord), 0), 2) AS pct_of_registrations,\n  ROUND(100.0 * users / NULLIF(LAG(users) OVER (ORDER BY ord), 0), 2) AS pct_of_prev_stage\nFROM stages\nORDER BY ord;",
           "refId": "A"
         }
       ]

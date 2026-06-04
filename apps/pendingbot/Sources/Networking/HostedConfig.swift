@@ -9,7 +9,8 @@ import Foundation
 ///                  `HostedConfig.environment = .dev` to verify end-to-end
 ///                  without touching the deployed stack.
 ///   - `.remote`  — the one deployed env: Cloudflare Worker at
-///                  api.pendingname.com + Supabase project sslzhblojwkxfdyisity.
+///                  api.pendingname.com + Supabase project zafhoiwwpanpuashtnxy
+///                  (EU / Frankfurt eu-central-1).
 ///                  Called `.remote` (not `.production`) on purpose: there are
 ///                  no real users yet, so labelling it "production" overstates
 ///                  what it is. After v1 ships we'll split this into
@@ -34,7 +35,7 @@ enum HostedConfig {
         var supabaseURL: URL {
             switch self {
             case .dev:    return URL(string: "http://localhost:54321")!
-            case .remote: return URL(string: "https://sslzhblojwkxfdyisity.supabase.co")!
+            case .remote: return URL(string: "https://zafhoiwwpanpuashtnxy.supabase.co")!
             }
         }
 
@@ -47,7 +48,7 @@ enum HostedConfig {
             case .dev:
                 return "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
             case .remote:
-                return "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNzbHpoYmxvandreGZkeWlzaXR5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc2MTUwNzAsImV4cCI6MjA5MzE5MTA3MH0.GqN92fAn67SpeaaLNyrW5gFjlS0hhb41d5ziIwnfeHk"
+                return "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InphZmhvaXd3cGFucHVhc2h0bnh5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1MzA2ODgsImV4cCI6MjA5NjEwNjY4OH0.P-mpklkOj07OC3fJyD9-DHuu46yHmlDdNZoyoFDWSXE"
             }
         }
 

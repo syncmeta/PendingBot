@@ -4004,6 +4004,71 @@ export type Database = {
       }
     }
     Views: {
+      bi_bot_creations: {
+        Row: {
+          created_at: string | null
+          creator_id: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          creator_id?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          creator_id?: string | null
+        }
+        Relationships: []
+      }
+      bi_group_joins_approved: {
+        Row: {
+          created_at: string | null
+          decided_at: string | null
+          requester_id: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          decided_at?: string | null
+          requester_id?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          decided_at?: string | null
+          requester_id?: string | null
+        }
+        Relationships: []
+      }
+      bi_group_pool_detail: {
+        Row: {
+          active_contributors: number | null
+          active_pledgers: number | null
+          contributed_micros: number | null
+          group_name: string | null
+          pledged_micros: number | null
+          pool_remaining_micros: number | null
+          share_index: number | null
+          subject_id: string | null
+          updated_at: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "group_pools_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: true
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bi_group_pool_summary: {
+        Row: {
+          active_contributed_micros: number | null
+          active_contributor_groups: number | null
+          active_pledge_groups: number | null
+          active_pledged_micros: number | null
+          pool_remaining_micros: number | null
+        }
+        Relationships: []
+      }
       crew_link_summaries: {
         Row: {
           captain_bot_id: string | null

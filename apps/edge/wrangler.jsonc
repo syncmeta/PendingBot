@@ -68,10 +68,14 @@
         //   POSTHOG_ENABLED  — product events (scales with user actions)
         //   LANGFUSE_ENABLED — LLM traces (1/LLM call — burns quota fastest)
         "BILLING_ENABLED": "false",
-        "SENTRY_ENABLED": "false",
-        "POSTHOG_ENABLED": "false",
+        "SENTRY_ENABLED": "true",
+        "POSTHOG_ENABLED": "true",
+        // Langfuse stays off until traceGeneration sends full input/output
+        // (not just metrics) — see #247/#248. Flip to "true" then.
         "LANGFUSE_ENABLED": "false",
-        "SUPABASE_URL": "https://sslzhblojwkxfdyisity.supabase.co",
+        "SUPABASE_URL": "https://zafhoiwwpanpuashtnxy.supabase.co",
+        "POSTHOG_HOST": "https://eu.i.posthog.com",
+        "LANGFUSE_BASE_URL": "https://cloud.langfuse.com",
         "ALLOWED_ORIGIN": "https://bot.pendingname.com",
         // AI Gateway coordinates — the worker reads the gateway's
         // computed per-request cost from the Logs API when a provider
