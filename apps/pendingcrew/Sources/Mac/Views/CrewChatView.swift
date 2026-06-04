@@ -19,7 +19,6 @@ struct CrewChatView: View {
     @State private var draft = ""
     @State private var loadError: String?
     @State private var sending = false
-    @State private var didInitialLoad = false
     /// Per-interaction reply drafts, keyed by permission_request_id.
     @State private var replyDrafts: [String: String] = [:]
     /// Crew roster (spec §9 — everyone is a member): rendered as a participant strip.
@@ -100,10 +99,8 @@ struct CrewChatView: View {
 
     private func pollLoop() async {
         entries = []
-        didInitialLoad = false
         while !Task.isCancelled {
             await refresh()
-            didInitialLoad = true
             try? await Task.sleep(nanoseconds: pollInterval)
         }
     }
