@@ -53,9 +53,11 @@ struct MacWelcomeView: View {
         // Logo + form sit as one centered cluster (not pushed to opposite
         // edges), on a compact window — much smaller than the main app's
         // 1100×700 (which is restored once signed in via MacRootGate).
-        HStack(spacing: 80) {
+        HStack(spacing: 96) {
             Image("BrandMark")
                 .resizable()
+                .interpolation(.high)
+                .antialiased(true)
                 .aspectRatio(contentMode: .fit)
                 .frame(width: 92, height: 92)
                 .clipShape(RoundedRectangle(cornerRadius: 21, style: .continuous))
