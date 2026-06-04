@@ -1,0 +1,472 @@
+{
+  "apiVersion": "dashboard.grafana.app/v0alpha1",
+  "kind": "Dashboard",
+  "metadata": {
+    "name": "pendingbot-revenue",
+    "annotations": {
+      "grafana.app/folder": "pendingbot"
+    }
+  },
+  "spec": {
+    "annotations": {
+      "list": [
+        {
+          "builtIn": 1,
+          "datasource": {
+            "type": "grafana",
+            "uid": "-- Grafana --"
+          },
+          "enable": true,
+          "hide": true,
+          "iconColor": "rgba(0, 211, 255, 1)",
+          "name": "Annotations & Alerts",
+          "type": "dashboard"
+        }
+      ]
+    },
+    "description": "Topups, refunds, net revenue and refund rate. Source: pendingbot.pnc_ledger (kind topup/refund, source = channel, delta_pnc_micros). USD is derived from credits: PNC = delta_pnc_micros / 1e6; USD = PNC / 27 (27 PNC = 1 USD). gross_paid_usd_cents/net_revenue_usd_cents are mostly NULL on the credit-in path, so $ amounts are computed from delta_pnc_micros, not the cents columns.",
+    "editable": true,
+    "fiscalYearStartMonth": 0,
+    "graphTooltip": 0,
+    "links": [],
+    "liveNow": false,
+    "panels": [
+      {
+        "datasource": {
+          "type": "postgres",
+          "uid": "cfo4bmc9o50xsc"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                }
+              ]
+            },
+            "unit": "currencyUSD"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 0,
+          "y": 0
+        },
+        "id": 1,
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "justifyMode": "auto",
+          "orientation": "auto",
+          "reduceOptions": {
+            "calcs": [
+              "lastNotNull"
+            ],
+            "fields": "",
+            "values": false
+          },
+          "textMode": "auto"
+        },
+        "pluginVersion": "12.0.0",
+        "title": "Gross paid (verified topups, window)",
+        "type": "stat",
+        "targets": [
+          {
+            "datasource": {
+              "type": "postgres",
+              "uid": "cfo4bmc9o50xsc"
+            },
+            "editorMode": "code",
+            "format": "table",
+            "rawQuery": true,
+            "rawSql": "SELECT COALESCE(SUM(delta_pnc_micros), 0) / 1e6 / 27.0 AS gross_paid\nFROM pendingbot.pnc_ledger\nWHERE kind = 'topup'\n  AND $__timeFilter(created_at);",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "datasource": {
+          "type": "postgres",
+          "uid": "cfo4bmc9o50xsc"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "red",
+                  "value": null
+                }
+              ]
+            },
+            "unit": "currencyUSD"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 6,
+          "y": 0
+        },
+        "id": 2,
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "justifyMode": "auto",
+          "orientation": "auto",
+          "reduceOptions": {
+            "calcs": [
+              "lastNotNull"
+            ],
+            "fields": "",
+            "values": false
+          },
+          "textMode": "auto"
+        },
+        "pluginVersion": "12.0.0",
+        "title": "Refunded amount (window)",
+        "type": "stat",
+        "targets": [
+          {
+            "datasource": {
+              "type": "postgres",
+              "uid": "cfo4bmc9o50xsc"
+            },
+            "editorMode": "code",
+            "format": "table",
+            "rawQuery": true,
+            "rawSql": "SELECT COALESCE(SUM(ABS(delta_pnc_micros)), 0) / 1e6 / 27.0 AS refunded\nFROM pendingbot.pnc_ledger\nWHERE kind = 'refund'\n  AND $__timeFilter(created_at);",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "datasource": {
+          "type": "postgres",
+          "uid": "cfo4bmc9o50xsc"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                }
+              ]
+            },
+            "unit": "currencyUSD"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 12,
+          "y": 0
+        },
+        "id": 3,
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "justifyMode": "auto",
+          "orientation": "auto",
+          "reduceOptions": {
+            "calcs": [
+              "lastNotNull"
+            ],
+            "fields": "",
+            "values": false
+          },
+          "textMode": "auto"
+        },
+        "pluginVersion": "12.0.0",
+        "title": "Net revenue (gross \u2212 refunds)",
+        "type": "stat",
+        "targets": [
+          {
+            "datasource": {
+              "type": "postgres",
+              "uid": "cfo4bmc9o50xsc"
+            },
+            "editorMode": "code",
+            "format": "table",
+            "rawQuery": true,
+            "rawSql": "SELECT (\n  COALESCE(SUM(delta_pnc_micros) FILTER (WHERE kind = 'topup'), 0)\n  - COALESCE(SUM(ABS(delta_pnc_micros)) FILTER (WHERE kind = 'refund'), 0)\n) / 1e6 / 27.0 AS net_revenue\nFROM pendingbot.pnc_ledger\nWHERE kind IN ('topup', 'refund')\n  AND $__timeFilter(created_at);",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "datasource": {
+          "type": "postgres",
+          "uid": "cfo4bmc9o50xsc"
+        },
+        "description": "Alert-friendly: refund rate = refunded amount / gross paid amount over the window. Wire a Grafana alert on this panel (see README 'Alerting').",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "mappings": [],
+            "max": 1,
+            "min": 0,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "yellow",
+                  "value": 0.05
+                },
+                {
+                  "color": "red",
+                  "value": 0.1
+                }
+              ]
+            },
+            "unit": "percentunit"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 18,
+          "y": 0
+        },
+        "id": 4,
+        "options": {
+          "colorMode": "background",
+          "graphMode": "none",
+          "justifyMode": "auto",
+          "orientation": "auto",
+          "reduceOptions": {
+            "calcs": [
+              "lastNotNull"
+            ],
+            "fields": "",
+            "values": false
+          },
+          "textMode": "auto"
+        },
+        "pluginVersion": "12.0.0",
+        "title": "Refund rate (alert candidate)",
+        "type": "stat",
+        "targets": [
+          {
+            "datasource": {
+              "type": "postgres",
+              "uid": "cfo4bmc9o50xsc"
+            },
+            "editorMode": "code",
+            "format": "table",
+            "rawQuery": true,
+            "rawSql": "SELECT CASE\n  WHEN COALESCE(SUM(delta_pnc_micros) FILTER (WHERE kind = 'topup'), 0) = 0 THEN 0\n  ELSE COALESCE(SUM(ABS(delta_pnc_micros)) FILTER (WHERE kind = 'refund'), 0)::numeric\n       / NULLIF(SUM(delta_pnc_micros) FILTER (WHERE kind = 'topup'), 0)\nEND AS refund_rate\nFROM pendingbot.pnc_ledger\nWHERE kind IN ('topup', 'refund')\n  AND $__timeFilter(created_at);",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "datasource": {
+          "type": "postgres",
+          "uid": "cfo4bmc9o50xsc"
+        },
+        "description": "Daily gross paid vs refunded (USD, derived from pnc_ledger delta_pnc_micros / 1e6 / 27).",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "drawStyle": "bars",
+              "fillOpacity": 60,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "never",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                }
+              ]
+            },
+            "unit": "currencyUSD"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 24,
+          "x": 0,
+          "y": 4
+        },
+        "id": 5,
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": true
+          },
+          "tooltip": {
+            "mode": "multi",
+            "sort": "none"
+          }
+        },
+        "pluginVersion": "12.0.0",
+        "title": "Daily gross paid vs refunded",
+        "type": "timeseries",
+        "targets": [
+          {
+            "datasource": {
+              "type": "postgres",
+              "uid": "cfo4bmc9o50xsc"
+            },
+            "editorMode": "code",
+            "format": "time_series",
+            "rawQuery": true,
+            "rawSql": "SELECT\n  $__timeGroup(created_at, '1d') AS time,\n  COALESCE(SUM(delta_pnc_micros) FILTER (WHERE kind = 'topup'), 0) / 1e6 / 27.0 AS \"gross_paid\",\n  COALESCE(SUM(ABS(delta_pnc_micros)) FILTER (WHERE kind = 'refund'), 0) / 1e6 / 27.0 AS \"refunded\"\nFROM pendingbot.pnc_ledger\nWHERE kind IN ('topup', 'refund')\n  AND $__timeFilter(created_at)\nGROUP BY 1\nORDER BY 1;",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "datasource": {
+          "type": "postgres",
+          "uid": "cfo4bmc9o50xsc"
+        },
+        "description": "Ledger count + USD + credits by source (channel: polar_checkout / iap_ios / group_topup / group_refund / group_withdraw / chargeback_clawback / admin / redemption ...) and kind (topup / refund / admin / redemption).",
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "cellOptions": {
+                "type": "auto"
+              },
+              "inspect": false
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                }
+              ]
+            }
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 13
+        },
+        "id": 6,
+        "options": {
+          "cellHeight": "sm",
+          "footer": {
+            "countRows": false,
+            "fields": "",
+            "reducer": [
+              "sum"
+            ],
+            "show": false
+          },
+          "showHeader": true
+        },
+        "pluginVersion": "12.0.0",
+        "title": "Ledger by source & kind (window)",
+        "type": "table",
+        "targets": [
+          {
+            "datasource": {
+              "type": "postgres",
+              "uid": "cfo4bmc9o50xsc"
+            },
+            "editorMode": "code",
+            "format": "table",
+            "rawQuery": true,
+            "rawSql": "SELECT\n  source,\n  kind,\n  COUNT(*) AS entry_count,\n  COALESCE(SUM(delta_pnc_micros), 0) / 1e6 / 27.0 AS net_usd,\n  COALESCE(SUM(delta_pnc_micros), 0) / 1e6 AS net_pnc\nFROM pendingbot.pnc_ledger\nWHERE $__timeFilter(created_at)\nGROUP BY source, kind\nORDER BY source, kind;",
+            "refId": "A"
+          }
+        ]
+      }
+    ],
+    "refresh": "5m",
+    "schemaVersion": 41,
+    "tags": [
+      "pendingbot",
+      "revenue",
+      "billing"
+    ],
+    "templating": {
+      "list": []
+    },
+    "time": {
+      "from": "now-30d",
+      "to": "now"
+    },
+    "timepicker": {},
+    "timezone": "",
+    "title": "PendingBot \u2014 Revenue",
+    "uid": "pendingbot-revenue",
+    "version": 1,
+    "weekStart": "",
+    "id": null
+  }
+}

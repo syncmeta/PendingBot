@@ -1,0 +1,448 @@
+{
+  "apiVersion": "dashboard.grafana.app/v0alpha1",
+  "kind": "Dashboard",
+  "metadata": {
+    "name": "pendingbot-wallet-quota",
+    "annotations": {
+      "grafana.app/folder": "pendingbot"
+    }
+  },
+  "spec": {
+    "annotations": {
+      "list": [
+        {
+          "builtIn": 1,
+          "datasource": {
+            "type": "grafana",
+            "uid": "-- Grafana --"
+          },
+          "enable": true,
+          "hide": true,
+          "iconColor": "rgba(0, 211, 255, 1)",
+          "name": "Annotations & Alerts",
+          "type": "dashboard"
+        }
+      ]
+    },
+    "description": "Cumulative credits issued vs refunded per subject, derived from pendingbot.pnc_ledger (the integer shadow ledger). NOTE: real-time wallet balances live in Polar / WalletDO, NOT in Postgres \u2014 Postgres only has the issue/refund shadow rows. The 'net' figures here = cumulative credits in (topup/admin/redemption) minus refunds; they are NOT live balances (consumption is debited in Polar/WalletDO and audit_log, not pnc_ledger). PNC = delta_pnc_micros / 1e6.",
+    "editable": true,
+    "fiscalYearStartMonth": 0,
+    "graphTooltip": 0,
+    "links": [],
+    "liveNow": false,
+    "panels": [
+      {
+        "type": "text",
+        "id": 7,
+        "gridPos": {
+          "h": 3,
+          "w": 24,
+          "x": 0,
+          "y": 0
+        },
+        "options": {
+          "mode": "markdown",
+          "content": "**Real-time wallet balance lives in Polar / WalletDO, not in Postgres.** This dashboard shows the *cumulative credits issued \u2212 refunded* shadow ledger (`pendingbot.pnc_ledger`) as a rough proxy. Consumption is debited in Polar/WalletDO + recorded in `audit_log`, so a subject's live balance is NOT issued \u2212 refunded here. For authoritative balances, query Polar."
+        }
+      },
+      {
+        "datasource": {
+          "type": "postgres",
+          "uid": "cfo4bmc9o50xsc"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                }
+              ]
+            },
+            "unit": "locale"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 0,
+          "y": 3
+        },
+        "id": 1,
+        "options": {
+          "colorMode": "value",
+          "graphMode": "none",
+          "justifyMode": "auto",
+          "orientation": "auto",
+          "reduceOptions": {
+            "calcs": [
+              "lastNotNull"
+            ],
+            "fields": "",
+            "values": false
+          },
+          "textMode": "auto"
+        },
+        "pluginVersion": "12.0.0",
+        "title": "Net credits issued (topups \u2212 refunds, PNC)",
+        "type": "stat",
+        "targets": [
+          {
+            "datasource": {
+              "type": "postgres",
+              "uid": "cfo4bmc9o50xsc"
+            },
+            "editorMode": "code",
+            "format": "table",
+            "rawQuery": true,
+            "rawSql": "SELECT COALESCE(SUM(delta_pnc_micros), 0) / 1e6 AS net_credits_pnc\nFROM pendingbot.pnc_ledger;",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "datasource": {
+          "type": "postgres",
+          "uid": "cfo4bmc9o50xsc"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                }
+              ]
+            },
+            "unit": "short"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 6,
+          "y": 3
+        },
+        "id": 2,
+        "options": {
+          "colorMode": "value",
+          "graphMode": "none",
+          "justifyMode": "auto",
+          "orientation": "auto",
+          "reduceOptions": {
+            "calcs": [
+              "lastNotNull"
+            ],
+            "fields": "",
+            "values": false
+          },
+          "textMode": "auto"
+        },
+        "pluginVersion": "12.0.0",
+        "title": "Subjects with positive net credits",
+        "type": "stat",
+        "targets": [
+          {
+            "datasource": {
+              "type": "postgres",
+              "uid": "cfo4bmc9o50xsc"
+            },
+            "editorMode": "code",
+            "format": "table",
+            "rawQuery": true,
+            "rawSql": "SELECT COUNT(*) AS funded_subjects\nFROM (\n  SELECT subject_id, SUM(delta_pnc_micros) AS net\n  FROM pendingbot.pnc_ledger\n  GROUP BY subject_id\n) t\nWHERE t.net > 0;",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "datasource": {
+          "type": "postgres",
+          "uid": "cfo4bmc9o50xsc"
+        },
+        "description": "Total refunded credits (PNC) across all subjects. (Live overdraft can't be computed from Postgres \u2014 balances live in Polar/WalletDO.)",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                }
+              ]
+            },
+            "unit": "locale"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 12,
+          "y": 3
+        },
+        "id": 3,
+        "options": {
+          "colorMode": "value",
+          "graphMode": "none",
+          "justifyMode": "auto",
+          "orientation": "auto",
+          "reduceOptions": {
+            "calcs": [
+              "lastNotNull"
+            ],
+            "fields": "",
+            "values": false
+          },
+          "textMode": "auto"
+        },
+        "pluginVersion": "12.0.0",
+        "title": "Total refunded (PNC)",
+        "type": "stat",
+        "targets": [
+          {
+            "datasource": {
+              "type": "postgres",
+              "uid": "cfo4bmc9o50xsc"
+            },
+            "editorMode": "code",
+            "format": "table",
+            "rawQuery": true,
+            "rawSql": "SELECT COALESCE(SUM(ABS(delta_pnc_micros)), 0) / 1e6 AS refunded_pnc\nFROM pendingbot.pnc_ledger\nWHERE kind = 'refund';",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "datasource": {
+          "type": "postgres",
+          "uid": "cfo4bmc9o50xsc"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                }
+              ]
+            },
+            "unit": "locale"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 18,
+          "y": 3
+        },
+        "id": 4,
+        "options": {
+          "colorMode": "value",
+          "graphMode": "none",
+          "justifyMode": "auto",
+          "orientation": "auto",
+          "reduceOptions": {
+            "calcs": [
+              "lastNotNull"
+            ],
+            "fields": "",
+            "values": false
+          },
+          "textMode": "auto"
+        },
+        "pluginVersion": "12.0.0",
+        "title": "Subjects with ledger activity",
+        "type": "stat",
+        "targets": [
+          {
+            "datasource": {
+              "type": "postgres",
+              "uid": "cfo4bmc9o50xsc"
+            },
+            "editorMode": "code",
+            "format": "table",
+            "rawQuery": true,
+            "rawSql": "SELECT COUNT(DISTINCT subject_id) AS subjects_with_activity\nFROM pendingbot.pnc_ledger;",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "datasource": {
+          "type": "postgres",
+          "uid": "cfo4bmc9o50xsc"
+        },
+        "description": "Net credits issued (topups \u2212 refunds) per subject, from pnc_ledger. NOT a live balance (no consumption here). Highest net first.",
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "cellOptions": {
+                "type": "auto"
+              },
+              "inspect": false
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                }
+              ]
+            }
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 24,
+          "x": 0,
+          "y": 7
+        },
+        "id": 5,
+        "options": {
+          "cellHeight": "sm",
+          "footer": {
+            "countRows": false,
+            "fields": "",
+            "reducer": [
+              "sum"
+            ],
+            "show": false
+          },
+          "showHeader": true
+        },
+        "pluginVersion": "12.0.0",
+        "title": "Net credits issued by subject (issued \u2212 refunded)",
+        "type": "table",
+        "targets": [
+          {
+            "datasource": {
+              "type": "postgres",
+              "uid": "cfo4bmc9o50xsc"
+            },
+            "editorMode": "code",
+            "format": "table",
+            "rawQuery": true,
+            "rawSql": "SELECT\n  s.id AS subject_id,\n  s.display_name,\n  s.subject_type,\n  s.kind,\n  COALESCE(SUM(l.delta_pnc_micros) FILTER (WHERE l.kind = 'topup'), 0) / 1e6 AS topup_pnc,\n  COALESCE(SUM(ABS(l.delta_pnc_micros)) FILTER (WHERE l.kind = 'refund'), 0) / 1e6 AS refund_pnc,\n  COALESCE(SUM(l.delta_pnc_micros), 0) / 1e6 AS net_pnc,\n  MAX(l.created_at) AS last_activity\nFROM pendingbot.pnc_ledger l\nJOIN pendingbot.subjects s ON s.id = l.subject_id\nGROUP BY s.id, s.display_name, s.subject_type, s.kind\nORDER BY net_pnc DESC\nLIMIT 200;",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "datasource": {
+          "type": "postgres",
+          "uid": "cfo4bmc9o50xsc"
+        },
+        "description": "Net credits issued / refunded aggregated by subject_type (human vs group vs whatever subject_type values exist), from pnc_ledger.",
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "cellOptions": {
+                "type": "auto"
+              },
+              "inspect": false
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                }
+              ]
+            }
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 16
+        },
+        "id": 6,
+        "options": {
+          "cellHeight": "sm",
+          "footer": {
+            "countRows": false,
+            "fields": "",
+            "reducer": [
+              "sum"
+            ],
+            "show": false
+          },
+          "showHeader": true
+        },
+        "pluginVersion": "12.0.0",
+        "title": "Net credits by subject_type",
+        "type": "table",
+        "targets": [
+          {
+            "datasource": {
+              "type": "postgres",
+              "uid": "cfo4bmc9o50xsc"
+            },
+            "editorMode": "code",
+            "format": "table",
+            "rawQuery": true,
+            "rawSql": "SELECT\n  s.subject_type,\n  COUNT(DISTINCT l.subject_id) AS subject_count,\n  COALESCE(SUM(l.delta_pnc_micros) FILTER (WHERE l.kind = 'topup'), 0) / 1e6 AS total_topup_pnc,\n  COALESCE(SUM(ABS(l.delta_pnc_micros)) FILTER (WHERE l.kind = 'refund'), 0) / 1e6 AS total_refund_pnc,\n  COALESCE(SUM(l.delta_pnc_micros), 0) / 1e6 AS net_pnc\nFROM pendingbot.pnc_ledger l\nJOIN pendingbot.subjects s ON s.id = l.subject_id\nGROUP BY s.subject_type\nORDER BY net_pnc DESC;",
+            "refId": "A"
+          }
+        ]
+      }
+    ],
+    "refresh": "5m",
+    "schemaVersion": 41,
+    "tags": [
+      "pendingbot",
+      "wallet",
+      "quota"
+    ],
+    "templating": {
+      "list": []
+    },
+    "time": {
+      "from": "now-30d",
+      "to": "now"
+    },
+    "timepicker": {},
+    "timezone": "",
+    "title": "PendingBot \u2014 Wallet & Quota",
+    "uid": "pendingbot-wallet-quota",
+    "version": 1,
+    "weekStart": "",
+    "id": null
+  }
+}

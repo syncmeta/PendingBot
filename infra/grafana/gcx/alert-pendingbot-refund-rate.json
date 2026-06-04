@@ -1,0 +1,107 @@
+{
+  "apiVersion": "rules.alerting.grafana.app/v0alpha1",
+  "kind": "AlertRule",
+  "metadata": {
+    "name": "pendingbot-refund-rate",
+    "annotations": {
+      "grafana.app/folder": "pendingbot"
+    }
+  },
+  "spec": {
+    "title": "PendingBot \u2014 Refund rate high",
+    "trigger": {
+      "interval": "1m"
+    },
+    "noDataState": "OK",
+    "execErrState": "Error",
+    "for": "5m",
+    "labels": {
+      "app": "pendingbot",
+      "severity": "warning"
+    },
+    "annotations": {
+      "summary": "Refund rate over the last 30 days is above 10% (refunded PNC / topped-up PNC).",
+      "__dashboardUid__": "pendingbot-revenue",
+      "__panelId__": "4"
+    },
+    "panelRef": {
+      "dashboardUID": "pendingbot-revenue",
+      "panelID": 4
+    },
+    "expressions": {
+      "A": {
+        "queryType": "",
+        "relativeTimeRange": {
+          "from": "600s",
+          "to": "0s"
+        },
+        "datasourceUID": "cfo4bmc9o50xsc",
+        "model": {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "cfo4bmc9o50xsc"
+          },
+          "rawSql": "SELECT CASE\n  WHEN COALESCE(SUM(delta_pnc_micros) FILTER (WHERE kind = 'topup'), 0) = 0 THEN 0\n  ELSE COALESCE(SUM(ABS(delta_pnc_micros)) FILTER (WHERE kind = 'refund'), 0)::numeric\n       / NULLIF(SUM(delta_pnc_micros) FILTER (WHERE kind = 'topup'), 0)\nEND AS refund_rate\nFROM pendingbot.pnc_ledger\nWHERE kind IN ('topup', 'refund')\n  AND created_at >= now() - interval '30 days';",
+          "rawQuery": true,
+          "format": "table",
+          "editorMode": "code",
+          "intervalMs": 1000,
+          "maxDataPoints": 43200
+        }
+      },
+      "B": {
+        "datasourceUID": "__expr__",
+        "model": {
+          "refId": "B",
+          "type": "reduce",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "A",
+          "reducer": "last",
+          "settings": {
+            "mode": "dropNN"
+          }
+        }
+      },
+      "C": {
+        "datasourceUID": "__expr__",
+        "source": true,
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "B",
+          "conditions": [
+            {
+              "type": "query",
+              "evaluator": {
+                "type": "gt",
+                "params": [
+                  0.1
+                ]
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "C"
+                ]
+              },
+              "reducer": {
+                "type": "last",
+                "params": []
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

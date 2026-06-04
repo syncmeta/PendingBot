@@ -1,23 +1,75 @@
 # Grafana — PendingBot revenue / wallet BI (block 5 of the dashboard stack)
 
-Checked-in Grafana provisioning + dashboard JSON for the read-only revenue / wallet
+Checked-in Grafana dashboards + alert rules for the read-only revenue / wallet
 dashboards, pointing at Supabase Postgres (schema `pendingbot`) via a SELECT-only role.
 
 ```
 infra/grafana/
 ├── README.md                                   ← this file
-├── provisioning/
+├── gcx/                                         ← ★ SOURCE OF TRUTH (gcx manifests, synced to Grafana Cloud)
+│   ├── folder-pendingbot.json                  ← "PendingBot" folder
+│   ├── pendingbot-revenue.json                 ← topups / refunds / net / refund rate
+│   ├── pendingbot-wallet-quota.json            ← net credits + per-subject balances
+│   ├── pendingbot-group-pool.json              ← group pool (实缴池) + pledge usage (认缴)
+│   ├── pendingbot-cost-by-category.json        ← consumption by task_type / model / entry_type
+│   ├── pendingbot-conversion-funnel.json       ← registrations → bot → group → paid
+│   ├── alert-pendingbot-refund-rate.json       ← refund rate (30d) > 0.1
+│   ├── alert-pendingbot-overdrawn-wallets.json ← net-negative subjects > 0
+│   └── alert-pendingbot-pledge-usage-rate.json ← 实缴/认缴 ratio > 0.9
+├── provisioning/                               ← LEGACY (self-hosted file provisioning; not used by Cloud)
 │   ├── datasources/
 │   │   └── supabase-postgres.yaml              ← Postgres datasource (bi_ro)
 │   └── dashboards/
 │       └── pendingbot-revenue.yaml             ← file provider (self-hosted only)
-└── dashboards/
+└── dashboards/                                 ← LEGACY export-form JSON (superseded by gcx/, see below)
     ├── 01-revenue.json                         ← topups / refunds / net / refund rate
     ├── 02-wallet-quota.json                    ← balances + overdraft list
     ├── 03-group-pool.json                      ← group pool (实缴池) + pledge usage (认缴)
     ├── 04-cost-by-category.json                ← consumption by task_type / model / entry_type
     └── 05-conversion-funnel.json               ← registrations → bot → group → paid
 ```
+
+## ★ Source of truth: `gcx/` — dashboards & alerts as code
+
+The `gcx/` directory is the **live source of truth**. It holds [gcx](https://github.com/grafana/gcx)
+resource manifests (Grafana's k8s-tier API form) and is pushed straight into Grafana Cloud —
+no manual UI import, no `${DS_SUPABASE}` placeholder to resolve on each import. Each dashboard
+manifest is `{ apiVersion, kind: Dashboard, metadata.name: <stable-uid>, spec: <dashboard model> }`
+with the datasource already resolved to its real uid.
+
+### Sync to Grafana Cloud (the only command you need)
+
+```bash
+~/go/bin/gcx resources push -p infra/grafana/gcx
+```
+
+That pushes the `PendingBot` folder, all 5 dashboards, and the 3 alert rules. Preview first
+with `--dry-run`, validate with `gcx resources validate -p infra/grafana/gcx`. Verify with
+`gcx resources get dashboards` / `gcx resources get alertrules`.
+
+To edit: change the JSON under `gcx/`, then re-run the push. To pull live state back into the
+repo (e.g. after a UI edit you want to capture): `gcx resources pull dashboards -p infra/grafana/gcx`.
+
+| Resource | `metadata.name` / uid | Threshold (alerts) |
+|---|---|---|
+| Folder | `pendingbot` (title "PendingBot") | — |
+| Dashboard | `pendingbot-revenue` | — |
+| Dashboard | `pendingbot-wallet-quota` | — |
+| Dashboard | `pendingbot-group-pool` | — |
+| Dashboard | `pendingbot-cost-by-category` | — |
+| Dashboard | `pendingbot-conversion-funnel` | — |
+| AlertRule | `pendingbot-refund-rate` | refund rate (30d) **> 0.1** |
+| AlertRule | `pendingbot-overdrawn-wallets` | net-negative subjects **> 0** |
+| AlertRule | `pendingbot-pledge-usage-rate` | 实缴/认缴 ratio **> 0.9** |
+
+All resources reference the Postgres datasource uid `cfo4bmc9o50xsc`
+(name `grafana-postgresql-datasource`, host `aws-1-eu-central-1.pooler.supabase.com:5432`,
+db `postgres`, role `bi_ro`).
+
+> **The `dashboards/*.json` (export form) and `provisioning/*.yaml` files below are LEGACY.**
+> They predate the gcx adoption and are kept only as reference / for self-hosted replication.
+> Do **not** hand-import them into Cloud anymore — `gcx resources push` is the path. If you
+> change a dashboard, change it in `gcx/` (or pull from live), not in `dashboards/`.
 
 ## Versions targeted (confirmed from official docs)
 
@@ -38,7 +90,12 @@ provisioning resolves the same variable from the provider.
 > are **YAML** by spec — there is no JSON variant. Only the dashboard *models* are JSON.
 > The two `.yaml` files follow `apiVersion: 1` exactly as documented.
 
-## Import into Grafana Cloud (the realistic path)
+## Import into Grafana Cloud — LEGACY manual path (superseded by `gcx resources push`)
+
+> This whole section is the **old** manual-import flow. It is kept for historical / self-hosted
+> reference only. The live path is `gcx resources push -p infra/grafana/gcx` (see the
+> "Source of truth" section above). The datasource (step 1) is still set up once in the UI;
+> the manual dashboard import (step 2) is no longer used.
 
 ### Automated push (recommended over clicking — repo stays source of truth)
 
@@ -105,24 +162,38 @@ API alternative (legacy create endpoint, still supported):
   to a private endpoint. Confirm Supabase network settings allow Grafana Cloud's egress, or set
   up PDC, before the datasource will connect.
 
-## Alerting (refund-rate panel + overdraft panel)
+## Alerting — as code via gcx (`gcx/alert-*.json`)
 
-Two panels are built to be alert sources:
-- `01-revenue.json` → **"Refund rate (alert candidate)"** (panel id 4)
-- `02-wallet-quota.json` → **"Overdrawn wallets (balance < 0)"** (panel id 3)
-- `03-group-pool.json` → **"Pledge usage rate (认缴使用率)"** (panel id 3)
+The 3 alert rules now ship **as code** under `gcx/` and are pushed by the same
+`gcx resources push -p infra/grafana/gcx` command. Each is an `AlertRule`
+(`rules.alerting.grafana.app/v0alpha1`) in folder `pendingbot`, evaluating every `1m` with a
+`5m` `for`, using an `A (postgres SQL) → B (reduce last) → C (threshold)` expression chain
+against datasource `cfo4bmc9o50xsc`:
 
-Grafana Cloud alerting is configured in the UI (not provisioned by these files). To wire it:
-1. **Alerting → Alert rules → New alert rule**.
-2. Query: reuse the panel's SQL against the `supabase_pendingbot_ro` datasource (it must return
-   a single numeric value — these panels already reduce to one row).
-3. Expression: `WHEN last() OF A IS ABOVE 0.1` (refund rate 10%) / `IS ABOVE 0` (overdrawn count).
-4. Set evaluation interval + contact point.
+| Rule | SQL source | Fires when |
+|---|---|---|
+| `pendingbot-refund-rate` | `pendingbot.pnc_ledger` refund/topup ratio over 30d | `> 0.1` |
+| `pendingbot-overdrawn-wallets` | `pendingbot.pnc_ledger` count of subjects with net `delta_pnc_micros < 0` | `> 0` |
+| `pendingbot-pledge-usage-rate` | `pendingbot.bi_group_pool_summary` `active_contributed / active_pledged` | `> 0.9` |
 
-> Note: Grafana SQL-backed (data source–managed) alert rules require the datasource to support
-> backend alerting; the Postgres data source does. If you prefer fully-as-code alerts, use the
-> Terraform `grafana_rule_group` resource — out of scope for this block, documented here for the
-> user to wire in the UI.
+> **Note — these no longer map 1:1 to old panel ids.** The dashboards were rewritten to use the
+> `pnc_ledger` / `bi_*` BI views, so the original "panel id 4 / id 3" anchors in earlier drafts
+> are stale. The alert SQL above is self-contained and verified against the live schema; it does
+> not depend on a specific panel id. (`panelRef` annotations still link each rule to its
+> dashboard for the "go to panel" deep-link.)
+
+### ⚠ Contact point still required (one-time, in the UI)
+
+There is **no contact point** configured yet — the default notification policy routes to the
+built-in `empty` receiver. The rules will **evaluate and fire**, but notifications go nowhere
+until you add a destination:
+
+1. **Alerting → Contact points → Add contact point** (email / Slack / webhook — your choice; not
+   committed to git so no real address leaks into the repo).
+2. **Alerting → Notification policies** → point the default policy (or a `app=pendingbot` matcher)
+   at that contact point.
+
+No placeholder contact point was invented on your behalf — that's a deliberate boundary.
 
 ---
 
