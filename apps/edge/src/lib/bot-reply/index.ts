@@ -29,6 +29,7 @@ import { openAnthropicStream } from '../../llm/anthropic-adapter';
 import { openGeminiStream } from '../../llm/gemini-adapter';
 import { buildMessages, type BuildMessagesInput } from '../../llm/builder';
 import { resolveLocale } from '../../i18n/locale';
+import { loadPrompt } from '../../i18n/prompts';
 import {
   loadAttachmentAsFilePart,
   loadAttachmentAsImagePart,
@@ -490,6 +491,31 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     }
   }
 
+  // Crew-captain persona: inject the orchestrator framing ONLY when this
+  // conversation is an active crew AND the replying bot is that crew's
+  // captain. Best-effort (one cheap query, gated to group turns); any lookup
+  // failure → no persona, never breaks the reply.
+  let crewCaptainPersona: string | null = null;
+  if (input.inGroup) {
+    try {
+      const { data: crewMeta } = await supa
+        .from('temporary_group_meta')
+        .select('captain_bot_id, temporary_kind, status')
+        .eq('conversation_id', conversationId)
+        .maybeSingle();
+      if (
+        crewMeta &&
+        crewMeta.temporary_kind === 'crew' &&
+        crewMeta.status === 'active' &&
+        crewMeta.captain_bot_id === bot.id
+      ) {
+        crewCaptainPersona = await loadPrompt(env, 'crew-captain', locale);
+      }
+    } catch (e) {
+      console.warn('[bot-reply] crew-captain persona lookup failed', e);
+    }
+  }
+
   // 2. Build prompt. The builder marks the cache breakpoint per plan/02
   // (every 4 rounds; see llm/builder.ts). activeLookbacks become an
   // additional system block so the bot sees its prior fact-check notes.
@@ -509,6 +535,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       openRelayInquiries: inquiryContext.openRelayInquiries.length > 0
         ? inquiryContext.openRelayInquiries
         : undefined,
+      crewCaptainPersona,
       clientTz: input.clientTz,
     },
     locale,
