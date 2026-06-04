@@ -12,6 +12,9 @@ import { resolvePack } from '../lib/billing-packs';
 import { pncToMicros } from '../billing/pnc';
 import { wallet } from '../billing/wallet-client';
 import { clawbackFromGroups } from '../billing/group-wallet';
+import { capture } from '../lib/analytics';
+import { AnalyticsEvent } from '../lib/track';
+import { safeWaitUntil } from '../lib/safe-wait-until';
 import type { CustomerState } from '@polar-sh/sdk/models/components/customerstate.js';
 
 // Billing credit-in webhooks (see docs/superpowers/specs/2026-06-01-billing-engine-design.md).
@@ -49,6 +52,30 @@ async function pushWalletCredit(env: AppBindings['Bindings'], subjectId: string,
   }
 }
 
+// 充值成功后上报 PostHog topup_succeeded(#228)。原先挂在已删除的 lemon/iap
+// webhook 上,现重新挂到 Polar / RevenueCat 入账成功路径。只在 applied(首次入账,
+// 非幂等重放)时上报,避免重发 webhook 重复计数。fire-and-forget、无 PII:
+// distinctId=subjectId(=用户/主体 id),properties 只放 channel/额度/pack。
+// capture() 在 POSTHOG 未配置时是 no-op,自带吞错,绝不阻塞 webhook 的 200。
+function trackTopupSucceeded(
+  c: Parameters<typeof jsonError>[0],
+  args: { subjectId: string; channel: string; pncMicros: number; packId: string },
+): void {
+  safeWaitUntil(
+    c,
+    capture(c.env, {
+      distinctId: args.subjectId,
+      event: AnalyticsEvent.TopupSucceeded,
+      properties: {
+        channel: args.channel,
+        owner_kind: 'user',
+        pnc_micros: args.pncMicros,
+        pack_id: args.packId,
+      },
+    }),
+  );
+}
+
 billingWebhookRoutes.post('/polar/webhook', async (c) => {
   const secret = c.env.POLAR_WEBHOOK_SECRET;
   if (!secret) return jsonError(c, 501, 'webhook_not_configured');
@@ -82,7 +109,10 @@ billingWebhookRoutes.post('/polar/webhook', async (c) => {
         pncMicros, markupSnapshot: pack.markupSnapshot, raw: order,
       });
       // 实时把入账推进 WalletDO 缓存(best-effort;失败由 alarm 对账纠偏,不可阻塞 200)。
-      if (applied) await pushWalletCredit(c.env, subjectId, pncMicros);
+      if (applied) {
+        await pushWalletCredit(c.env, subjectId, pncMicros);
+        trackTopupSucceeded(c, { subjectId, channel: 'polar_checkout', pncMicros, packId: productId });
+      }
     }
     return c.json({ ok: true });
   }
@@ -162,7 +192,10 @@ billingWebhookRoutes.post('/revenuecat/webhook', async (c) => {
       subjectId, kind: 'topup', source: 'iap_ios', externalRef: String(ev.transaction_id),
       pncMicros, markupSnapshot: pack.markupSnapshot, raw: ev,
     });
-    if (applied) await pushWalletCredit(c.env, subjectId, pncMicros);
+    if (applied) {
+      await pushWalletCredit(c.env, subjectId, pncMicros);
+      trackTopupSucceeded(c, { subjectId, channel: 'iap_ios', pncMicros, packId: String(ev.product_id) });
+    }
     return c.json({ ok: true });
   }
   if (ev.type === 'CANCELLATION') {

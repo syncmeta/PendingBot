@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   grantSignupBonus,
   creditRedemptionToPolar,
+  normalizeEmail,
   SIGNUP_BONUS_PNC,
   PND_TO_PNC_MICROS,
 } from './billing-grant';
@@ -38,6 +39,33 @@ describe('billing-grant', () => {
       // supa.from(...).select(...).eq(...)... throws → caught, logged, no throw.
       await expect(grantSignupBonus(env, explodingSupa, 'u1')).resolves.toBeUndefined();
       warn.mockRestore();
+    });
+  });
+
+  describe('normalizeEmail (welcome-bonus anti-abuse, #252)', () => {
+    it('lowercases and trims', () => {
+      expect(normalizeEmail('  Foo@Example.COM ')).toBe('foo@example.com');
+    });
+
+    it('strips +tag sub-addressing on any domain', () => {
+      expect(normalizeEmail('foo+anything@example.com')).toBe('foo@example.com');
+      expect(normalizeEmail('foo+a+b@example.com')).toBe('foo@example.com');
+    });
+
+    it('collapses gmail dot + plus tricks to one identity', () => {
+      const canonical = 'foobar@gmail.com';
+      expect(normalizeEmail('foo.bar@gmail.com')).toBe(canonical);
+      expect(normalizeEmail('f.o.o.b.a.r@gmail.com')).toBe(canonical);
+      expect(normalizeEmail('foo.bar+promo@gmail.com')).toBe(canonical);
+      expect(normalizeEmail('FooBar@googlemail.com')).toBe(canonical); // googlemail → gmail
+    });
+
+    it('does NOT strip dots for non-gmail domains (dots are significant there)', () => {
+      expect(normalizeEmail('foo.bar@outlook.com')).toBe('foo.bar@outlook.com');
+    });
+
+    it('returns lowercased input unchanged when there is no @', () => {
+      expect(normalizeEmail('notanemail')).toBe('notanemail');
     });
   });
 
