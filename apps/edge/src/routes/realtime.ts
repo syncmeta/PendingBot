@@ -254,7 +254,7 @@ async function assembleInstructions(
     // Voice calls don't carry images yet — leave the inventory undefined
     // so the section drops out of the assembled prompt entirely.
   };
-  return buildSystemPrompt(supa, sysInput, ctx.locale, 'voice');
+  return buildSystemPrompt(env, sysInput, ctx.locale, 'voice');
 }
 
 // =============================================================================

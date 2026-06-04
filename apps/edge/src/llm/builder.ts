@@ -5,7 +5,7 @@ import type {
 import { classifyAttachment } from '../lib/attachments';
 import { loadPrompt } from '../i18n/prompts';
 import { DEFAULT_LOCALE, type Locale } from '../i18n/types';
-import type { SupabaseClient } from '../lib/supabase';
+import type { Env } from '../types';
 import type { Memory } from '../lib/memory';
 
 export interface BuildMessagesInput {
@@ -183,12 +183,12 @@ function toLlmRole(role: 'user' | 'bot' | 'human' | 'log'): 'user' | 'assistant'
 // start (no memory yet) we hand the bot the identity-quest meta-prompt — a
 // motive, not a persona.
 async function buildSelfSection(
-  supa: SupabaseClient,
+  env: Env,
   botMemory: BuildMessagesInput['botMemory'],
   locale: Locale,
 ): Promise<string> {
   const hasMemory = !!botMemory && botMemory.representation.trim().length > 0;
-  if (!hasMemory) return loadPrompt(supa, 'identity-quest', locale);
+  if (!hasMemory) return loadPrompt(env, 'identity-quest', locale);
   return `## How I observe myself (passive)\n${botMemory!.representation.trim()}`;
 }
 
@@ -561,19 +561,18 @@ const PLATFORM_PROMPT_BY_SURFACE = {
 // on an hours-scale, not per-turn), so it sits BEFORE the cache breakpoint.
 // modeInstr rides here too: it's a fixed per-bot fact, not per-turn context.
 async function buildStablePersona(
-  supa: SupabaseClient,
+  env: Env,
   input: BuildSystemPromptInput,
   locale: Locale,
   surface: PromptSurface,
 ): Promise<string> {
   const [platform, selfSection, socialGraphSkillSection] = await Promise.all([
-    loadPrompt(supa, PLATFORM_PROMPT_BY_SURFACE[surface], locale),
-    buildSelfSection(supa, input.botMemory, locale),
-    // bot-social-graph skill body — always-on, board-editable via
-    // i18n_prompts. Loaded through the same prompt-loader cache as the
-    // platform prompt, so per-isolate this is a Map lookup after the
-    // first turn.
-    loadPrompt(supa, 'bot-social-graph', locale),
+    loadPrompt(env, PLATFORM_PROMPT_BY_SURFACE[surface], locale),
+    buildSelfSection(env, input.botMemory, locale),
+    // bot-social-graph skill body — always-on, editable via Langfuse Prompt
+    // Management. Loaded through the same prompt-loader cache as the platform
+    // prompt, so per-isolate this is a Map lookup after the first turn.
+    loadPrompt(env, 'bot-social-graph', locale),
   ]);
   const identitySection = buildIdentitySection(input.bot.display_name);
   const botTzSection = buildBotTzSection(input.bot.tz);
@@ -625,7 +624,7 @@ function buildVolatileContext(input: BuildSystemPromptInput): string {
 }
 
 export async function buildSystemPrompt(
-  supa: SupabaseClient,
+  env: Env,
   input: BuildSystemPromptInput,
   locale: Locale = DEFAULT_LOCALE,
   surface: PromptSurface = 'text',
@@ -634,14 +633,14 @@ export async function buildSystemPrompt(
   // stable persona + volatile context concatenated — there's no message
   // array to spread the cache breakpoint across, so the split is moot here.
   const [stable, volatile] = await Promise.all([
-    buildStablePersona(supa, input, locale, surface),
+    buildStablePersona(env, input, locale, surface),
     Promise.resolve(buildVolatileContext(input)),
   ]);
   return [stable, volatile].filter(Boolean).join('\n\n');
 }
 
 export async function buildMessages(
-  supa: SupabaseClient,
+  env: Env,
   input: BuildMessagesInput,
   locale: Locale = DEFAULT_LOCALE,
 ): Promise<ChatCompletionMessageParam[]> {
@@ -662,7 +661,7 @@ export async function buildMessages(
   // cache (Anthropic only caches all-or-nothing up to a breakpoint; OpenAI
   // caches the longest stable prefix — either way, volatile content in the
   // system block would near-zero the hit rate).
-  const stablePersona = await buildStablePersona(supa, input, locale, 'text');
+  const stablePersona = await buildStablePersona(env, input, locale, 'text');
   const volatileContext = buildVolatileContext(input);
 
   // System message: cached. Stable across turns until the persona changes.

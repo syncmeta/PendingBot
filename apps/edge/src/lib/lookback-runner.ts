@@ -56,7 +56,7 @@ export interface RunLookbackInput {
 export async function runLookback(input: RunLookbackInput): Promise<void> {
   const { env, conversationId, botId } = input;
   const supa = serviceClient(env);
-  await ensurePromptOverridesLoaded(supa);
+  await ensurePromptOverridesLoaded(env);
   const startedAt = Date.now();
   const turnId = uuidv7();
 

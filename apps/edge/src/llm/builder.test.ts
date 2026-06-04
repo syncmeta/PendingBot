@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Memory } from '../lib/memory';
-import type { SupabaseClient } from '../lib/supabase';
+import type { Env } from '../types';
 import { buildMessages } from './builder';
 
 vi.mock('../i18n/prompts', () => ({
-  loadPrompt: vi.fn(async (_supa: unknown, name: string) => `prompt:${name}`),
+  loadPrompt: vi.fn(async (_env: unknown, name: string) => `prompt:${name}`),
 }));
 
-const supa = {} as SupabaseClient;
+const env = {} as Env;
 const botMemory: Memory = {
   card: [],
   representation: 'I am a bot.',
@@ -26,7 +26,7 @@ function systemText(content: unknown): string {
 
 describe('buildMessages identity section', () => {
   it('injects the bot display name as a system section', async () => {
-    const messages = await buildMessages(supa, {
+    const messages = await buildMessages(env, {
       bot: { id: 'bot-1', output_mode: 'single', display_name: '小绿' },
       botMemory,
       skills: [],
@@ -42,7 +42,7 @@ describe('buildMessages identity section', () => {
   });
 
   it('omits the identity section when the bot has no name', async () => {
-    const messages = await buildMessages(supa, {
+    const messages = await buildMessages(env, {
       bot: { id: 'bot-1', output_mode: 'single' },
       botMemory,
       skills: [],
@@ -58,7 +58,7 @@ describe('buildMessages identity section', () => {
 
 describe('buildMessages bot self-tz', () => {
   it('renders the "你所在的时区" system block when the bot has a tz', async () => {
-    const messages = await buildMessages(supa, {
+    const messages = await buildMessages(env, {
       bot: { id: 'bot-1', output_mode: 'single', tz: 'Asia/Shanghai' },
       botMemory,
       skills: [],
@@ -76,7 +76,7 @@ describe('buildMessages bot self-tz', () => {
   it('falls back to the bot tz for the time hint when clientTz is absent (group dispatch)', async () => {
     // Group dispatch never has clientTz on the request — the bot's own
     // tz drives the per-message timestamp instead of dropping to UTC.
-    const messages = await buildMessages(supa, {
+    const messages = await buildMessages(env, {
       bot: { id: 'bot-1', output_mode: 'single', tz: 'Asia/Shanghai' },
       botMemory,
       skills: [],
@@ -91,7 +91,7 @@ describe('buildMessages bot self-tz', () => {
   });
 
   it('uses clientTz over bot.tz when both are present (1:1 chat)', async () => {
-    const messages = await buildMessages(supa, {
+    const messages = await buildMessages(env, {
       bot: { id: 'bot-1', output_mode: 'single', tz: 'Etc/UTC' },
       botMemory,
       skills: [],
@@ -114,7 +114,7 @@ describe('buildMessages cache prefix', () => {
   // per-turn volatile context (lookbacks, attachment inventory) must NOT be
   // in it, or it busts the cached prefix every round.
   it('marks the system message with a cache_control breakpoint', async () => {
-    const messages = await buildMessages(supa, {
+    const messages = await buildMessages(env, {
       bot: { id: 'bot-1', output_mode: 'single' },
       botMemory,
       skills: [],
@@ -133,7 +133,7 @@ describe('buildMessages cache prefix', () => {
   });
 
   it('keeps lookbacks out of the system prefix and on the current turn', async () => {
-    const messages = await buildMessages(supa, {
+    const messages = await buildMessages(env, {
       bot: { id: 'bot-1', output_mode: 'single' },
       botMemory,
       skills: [],
@@ -155,7 +155,7 @@ describe('buildMessages cache prefix', () => {
   });
 
   it('keeps the attachment inventory out of the system prefix', async () => {
-    const messages = await buildMessages(supa, {
+    const messages = await buildMessages(env, {
       bot: { id: 'bot-1', output_mode: 'single' },
       botMemory,
       skills: [],
@@ -181,7 +181,7 @@ describe('buildMessages cache prefix', () => {
 
 describe('buildMessages time hints', () => {
   it('includes the full year for the current user turn in the client timezone', async () => {
-    const messages = await buildMessages(supa, {
+    const messages = await buildMessages(env, {
       bot: { id: 'bot-1', output_mode: 'single' },
       botMemory,
       skills: [],
@@ -197,7 +197,7 @@ describe('buildMessages time hints', () => {
   });
 
   it('includes the full year for historical user turns with explicit offsets', async () => {
-    const messages = await buildMessages(supa, {
+    const messages = await buildMessages(env, {
       bot: { id: 'bot-1', output_mode: 'single' },
       botMemory,
       skills: [],

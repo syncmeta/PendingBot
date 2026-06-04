@@ -494,7 +494,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   // (every 4 rounds; see llm/builder.ts). activeLookbacks become an
   // additional system block so the bot sees its prior fact-check notes.
   const messages: ChatCompletionMessageParam[] = await buildMessages(
-    supa,
+    env,
     {
       bot, botMemory, botViewOfUser, userViewOfBot, skills, botNote, chatMemo,
       lookbacks: activeLookbacks,

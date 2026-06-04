@@ -209,7 +209,7 @@ function summarizeTurn(i: number, newMessages: ChatCompletionMessageParam[]): Tu
 export async function runEnvelope(input: RunEnvelopeInput): Promise<void> {
   const { env, envelopeRunId, conversationId, userId, botId, settings } = input;
   const supa = serviceClient(env);
-  await ensurePromptOverridesLoaded(supa);
+  await ensurePromptOverridesLoaded(env);
   const startedAt = Date.now();
   const turnId = uuidv7();
 
