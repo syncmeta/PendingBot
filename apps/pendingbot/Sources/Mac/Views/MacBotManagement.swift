@@ -220,6 +220,8 @@ struct MacCreateBotSheet: View {
                                       ? "largecircle.fill.circle" : "circle")
                                     .foregroundStyle(visibility == v
                                                      ? Theme.Palette.accent : Theme.Palette.inkMuted)
+                                    .font(Theme.Fonts.system(size: 18, weight: .medium))
+                                    .padding(.top, 2)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(v.label)
                                         .font(Theme.Fonts.rounded(size: 14, weight: .semibold))
@@ -230,6 +232,7 @@ struct MacCreateBotSheet: View {
                                 }
                                 Spacer()
                             }
+                            .padding(.vertical, 2)
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -858,7 +861,7 @@ struct MacAddBotSheet: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Label("机器人是邀请制的", systemImage: "person.badge.shield.checkmark")
                             .font(Theme.Fonts.headline)
-                        Text("没法靠输入标识直接加机器人。让认识它的人把邀请链接或二维码发给你 —— 在手机上打开链接或扫码就能加入。")
+                        Text("没法靠输入标识直接加机器人。让认识它的人把**邀请链接**或**二维码**发给你 —— 打开链接就能加入。")
                             .font(Theme.Fonts.footnote)
                             .foregroundStyle(Theme.Palette.inkMuted)
                     }
