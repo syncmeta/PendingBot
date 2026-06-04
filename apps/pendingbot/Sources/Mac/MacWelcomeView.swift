@@ -27,7 +27,9 @@ struct MacRootGate: View {
                 // 用登录页同款紧凑尺寸,免得 hydrate→登录 时窗口跳大小。
                 VStack(spacing: 10) {
                     ProgressView()
-                    Text("加载中…").font(.callout).foregroundStyle(.secondary)
+                    Text("加载中…")
+                        .font(Theme.Fonts.footnote)
+                        .foregroundStyle(Theme.Palette.inkMuted)
                 }
                 .frame(minWidth: 740, minHeight: 420)
             } else if store.current == nil {

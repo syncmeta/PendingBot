@@ -195,13 +195,14 @@ private struct MacEmptyColumn: View {
         VStack(spacing: 8) {
             if prominent {
                 Image(systemName: "sparkles")
-                    .font(.system(size: 32, weight: .light))
-                    .foregroundStyle(.tertiary)
+                    .font(Theme.Fonts.glyph(size: 32, weight: .light))
+                    .foregroundStyle(Theme.Palette.inkMuted.opacity(0.6))
             }
             Text(message)
-                .font(prominent ? .title3 : .callout)
-                .foregroundStyle(.secondary)
+                .font(prominent ? Theme.Fonts.title3 : Theme.Fonts.footnote)
+                .foregroundStyle(Theme.Palette.inkMuted)
                 .multilineTextAlignment(.center)
+                .lineSpacing(4)
         }
         .padding(32)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

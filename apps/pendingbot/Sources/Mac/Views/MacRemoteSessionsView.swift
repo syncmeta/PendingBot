@@ -32,17 +32,17 @@ struct MacCrewListColumn: View {
         List(selection: $selectedCrewId) {
             if let loadError {
                 Label(loadError, systemImage: "exclamationmark.triangle")
-                    .font(.caption).foregroundStyle(.red)
+                    .font(Theme.Fonts.caption).foregroundStyle(.red)
             }
             if crews.isEmpty && didLoad && loadError == nil {
-                Text("还没有可见的机组").font(.callout).foregroundStyle(.secondary)
+                Text("还没有可见的机组").font(Theme.Fonts.subheadline).foregroundStyle(Theme.Palette.inkMuted)
             }
             ForEach(crews) { crew in
                 HStack(spacing: 10) {
                     BrandAvatar(seed: crew.id, size: 34)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(crew.title.isEmpty ? "未命名机组" : crew.title)
-                            .font(.body).lineLimit(1)
+                            .font(Theme.Fonts.body).lineLimit(1)
                         HStack(spacing: 5) {
                             if let kind = crew.runtimeLocationKind {
                                 Label(kind.shortLabel, systemImage: kind.sfSymbol)
@@ -53,7 +53,7 @@ struct MacCrewListColumn: View {
                                 Text("· \(tag)")
                             }
                         }
-                        .font(.caption2).foregroundStyle(.secondary)
+                        .font(Theme.Fonts.caption2).foregroundStyle(Theme.Palette.inkMuted)
                     }
                 }
                 .padding(.vertical, 3)
@@ -138,10 +138,10 @@ struct MacRemoteSessionsView: View {
         List(selection: $selectedSessionId) {
             if let loadError {
                 Label(loadError, systemImage: "exclamationmark.triangle")
-                    .font(.caption).foregroundStyle(.red)
+                    .font(Theme.Fonts.caption).foregroundStyle(.red)
             }
             if sessions.isEmpty && didInitialLoad && loadError == nil {
-                Text("这个机组还没有服务端 session").font(.caption).foregroundStyle(.secondary)
+                Text("这个机组还没有服务端 session").font(Theme.Fonts.caption).foregroundStyle(Theme.Palette.inkMuted)
             }
             ForEach(sessions) { s in
                 VStack(alignment: .leading, spacing: 3) {
@@ -151,7 +151,7 @@ struct MacRemoteSessionsView: View {
                             .lineLimit(1)
                     }
                     Text("\(SessionStatusStyle.runnerLabel(s.runner_kind)) · \(SessionStatusStyle.statusLabel(s.status))")
-                        .font(.caption2).foregroundStyle(.secondary)
+                        .font(Theme.Fonts.caption2).foregroundStyle(Theme.Palette.inkMuted)
                 }
                 .padding(.vertical, 2)
                 .tag(s.id)
@@ -162,7 +162,9 @@ struct MacRemoteSessionsView: View {
     @ViewBuilder
     private var transcriptPane: some View {
         if selectedSessionId == nil {
-            Text("选一个 session 看转写").foregroundStyle(.secondary)
+            Text("选一个 session 看转写")
+                .font(Theme.Fonts.footnote)
+                .foregroundStyle(Theme.Palette.inkMuted)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             VStack(spacing: 0) {
@@ -171,7 +173,7 @@ struct MacRemoteSessionsView: View {
                 if events.isEmpty {
                     VStack(spacing: 8) {
                         ProgressView().controlSize(.small)
-                        Text("拉取事件…").font(.caption).foregroundStyle(.secondary)
+                        Text("拉取事件…").font(Theme.Fonts.caption).foregroundStyle(Theme.Palette.inkMuted)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
@@ -187,16 +189,16 @@ struct MacRemoteSessionsView: View {
         HStack(spacing: 6) {
             Circle().fill(SessionStatusStyle.tint(currentStatus)).frame(width: 7, height: 7)
             if liveSnapshot != nil {
-                Text("实时").font(.caption.weight(.semibold)).foregroundStyle(SessionStatusStyle.tint(currentStatus))
+                Text("实时").font(Theme.Fonts.system(size: 12, weight: .semibold)).foregroundStyle(SessionStatusStyle.tint(currentStatus))
             }
-            Text(SessionStatusStyle.statusLabel(currentStatus)).font(.caption).foregroundStyle(.secondary)
+            Text(SessionStatusStyle.statusLabel(currentStatus)).font(Theme.Fonts.caption).foregroundStyle(Theme.Palette.inkMuted)
             if let last = liveSnapshot?.lastEvent, !last.isEmpty {
-                Text("·").foregroundStyle(.secondary)
-                Text(last).font(.caption).lineLimit(1).truncationMode(.tail)
+                Text("·").foregroundStyle(Theme.Palette.inkMuted)
+                Text(last).font(Theme.Fonts.caption).lineLimit(1).truncationMode(.tail)
             }
             Spacer(minLength: 8)
             if let snap = liveSnapshot {
-                Text("\(snap.eventCount) 事件").font(.caption2).foregroundStyle(.secondary)
+                Text("\(snap.eventCount) 事件").font(Theme.Fonts.caption2).foregroundStyle(Theme.Palette.inkMuted)
             }
             if SessionStatusStyle.isStoppable(currentStatus) {
                 Button(role: .destructive) {
@@ -236,10 +238,10 @@ struct MacRemoteSessionsView: View {
             Image(systemName: SessionStatusStyle.eventIcon(ev.event_type))
                 .foregroundStyle(SessionStatusStyle.eventTint(ev.event_type))
             VStack(alignment: .leading, spacing: 2) {
-                Text(SessionStatusStyle.eventLabel(ev.event_type)).font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                Text(SessionStatusStyle.eventLabel(ev.event_type)).font(Theme.Fonts.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.inkMuted)
                 if let s = ev.summary, !s.isEmpty {
-                    Text(s).font(.callout).textSelection(.enabled)
+                    Text(s).font(Theme.Fonts.subheadline).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
