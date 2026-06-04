@@ -634,3 +634,11 @@
   **验证清单(启用 Mac 端 Apple/Google 前必跑)**:① Mac GUI 构建(非 headless,否则签名回落 ad-hoc → Keychain -34018,session 存不住,和反复误诊的那个坑同源)② 真点 Apple → 成功落 supabase session ③ 真点 Google → 同上(先确认 macOS OAuth client)。**在坐实前别对外声称 Mac 三种登录可用**——当前只到"编译过 + 邮箱 OTP 同路可信"。
 
 - 🟡 **新钱包(WalletV2View / MacWalletView)无兑换码入口** — `feat/mac-login-align`(2026-06-04,#253)。删死的 v1 `WalletView` 时连带删了它独有的兑换码 UI(`BillingService.redeem`)。新钱包 `WalletV2View`(iOS)/`MacWalletView`(Mac)都**没有**兑换入口。后端 `billing_redeem` 已退化为只校验、送/兑换入账走 `lib/billing-grant.ts`(见 billing 退役条目),即后端仍能兑换,但**两端 App 都没有让用户输入兑换码的地方**了。删除本身不算回归(v1 WalletView 早已零引用、不可达),但"用户如何兑换码"是个产品缺口:要么在新钱包加兑换入口(iOS+Mac),要么确认兑换只走别的渠道(如深链/网页)。待用户定。
+
+- 🟡 **Mac 加好友/建管机器人原生重画落地,但裁掉了 iOS 的若干高级面 + 无扫码** — `feat/mac-login-align`(2026-06-04,#212)。`Sources/Mac/Views/MacBotManagement.swift` 新增 macOS 原生 `MacAddFriendSheet`/`MacAddBotSheet`/`MacCreateBotSheet`/`MacManageBotSheet`/`MacModelPickerSheet`,逻辑全复用跨平台 SupabaseStack/APIClient/AccountStore/ModelCatalog,沿用同一 RLS。双端 BUILD SUCCEEDED。**有意未对齐 iOS 的部分(缺口)**:
+  - **建机器人只支持单模型**:iOS `CreateBotSheet` 的 step1 是 `ArenaModelPoolEditor`(价格区间池 / 多模型竞技场,iOS-only),Mac 没移植——Mac 建的 bot 一律单模型。建/管里都没有 arena 入口。要补需把 arena 池编辑器抽成跨平台或 Mac 重画一版。
+  - **管机器人裁掉多项 iOS 子面**:iOS `ManageBotSheet` 还有 语音通话 toggle、分段气泡(output_mode,走 PATCH /v1/bots 拍 KV 缓存)、机器人时区 picker、被邀请人管理(InviteListEditor / InviteContactPickerSheet)、分享机器人(BotSharePage 邀请链接/二维码)、以及 BotConfigView(主/识图模型、联网搜索、写信设置、自动回看、技能)。Mac 第一版**只做** 改名/模型/可见性升级/slug/删除。其余 Mac 端均缺。
+  - **加好友/加机器人无扫码**:Mac 无摄像头,`MacAddFriendSheet` 只做输入号码/隐私号路径;`MacAddBotSheet` 只是邀请制说明页——iOS 的 QR 扫码 + universal-link 兑换 invite token 流(resolve/redeem /v1/bot-invites)在 Mac 没接。后续可补「粘贴邀请链接」入口走同一 resolve/redeem(BotInviteAPI 已跨平台)。
+  - **无头像选择器**:建/管机器人都没头像上传(iOS 走 iOS-only 图片选择器),Mac 仅 emoji 占位。可后续用 NSOpenPanel 接。
+  - **MacBotSlugRule 是 iOS `BotSlugRule` 的手抄副本**(后者在 `#if os(iOS)` 里不可见)。两处规则需手动保持同步;服务端 slug 约束才是真源。
+  **均为真机/真账号才能端到端验**:写操作(建/改/删 bot、发好友申请)本 session 只编译校验,未跑真实回合。
