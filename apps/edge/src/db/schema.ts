@@ -3218,41 +3218,6 @@ export type Database = {
           },
         ]
       }
-      subject_wallets: {
-        Row: {
-          balance_credits: number
-          balance_updated_at: string | null
-          lifetime_spent_credits: number
-          lifetime_topup_credits: number
-          subject_id: string
-          updated_at: string | null
-        }
-        Insert: {
-          balance_credits?: number
-          balance_updated_at?: string | null
-          lifetime_spent_credits?: number
-          lifetime_topup_credits?: number
-          subject_id: string
-          updated_at?: string | null
-        }
-        Update: {
-          balance_credits?: number
-          balance_updated_at?: string | null
-          lifetime_spent_credits?: number
-          lifetime_topup_credits?: number
-          subject_id?: string
-          updated_at?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "subject_wallets_subject_id_fkey"
-            columns: ["subject_id"]
-            isOneToOne: true
-            referencedRelation: "subjects"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       subjects: {
         Row: {
           created_at: string
@@ -4207,10 +4172,6 @@ export type Database = {
         }
         Returns: string
       }
-      apply_audit_split: {
-        Args: { p_audit_log_id: string; p_splits: Json }
-        Returns: undefined
-      }
       apply_group_contribution: {
         Args: { p_amount_micros: number; p_subject_id: string }
         Returns: number
@@ -4627,24 +4588,12 @@ export type Database = {
         Args: { p_conv_id: string; p_policy: string }
         Returns: undefined
       }
-      group_set_member_cap: {
-        Args: { p_cap_credits: number; p_conv_id: string }
-        Returns: undefined
-      }
       group_set_member_mute: {
         Args: { p_conv_id: string; p_muted: boolean }
         Returns: undefined
       }
       group_set_member_nickname: {
         Args: { p_conv_id: string; p_nickname: string }
-        Returns: undefined
-      }
-      group_set_member_participates: {
-        Args: {
-          p_conv_id: string
-          p_participates: boolean
-          p_target_user_id: string
-        }
         Returns: undefined
       }
       group_set_member_role: {
