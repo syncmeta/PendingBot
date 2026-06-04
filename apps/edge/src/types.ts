@@ -72,9 +72,12 @@ export interface Env {
   ENVIRONMENT: 'dev' | 'production';
   /// Kill-switches (lib/feature-flags.ts). Plain vars, default OFF: only the
   /// exact string 'true' enables. BILLING_ENABLED gates the live billing
-  /// gate + debit; OBSERVABILITY_ENABLED gates Sentry + PostHog + Langfuse.
+  /// gate + debit. Observability is PER-SERVICE so each vendor's quota can be
+  /// controlled independently (each ALSO needs its own key/DSN to emit).
   BILLING_ENABLED?: string;
-  OBSERVABILITY_ENABLED?: string;
+  SENTRY_ENABLED?: string;
+  POSTHOG_ENABLED?: string;
+  LANGFUSE_ENABLED?: string;
   SUPABASE_URL: string;
   ALLOWED_ORIGIN: string;
   /// AI Gateway coordinates for the Logs API cost lookup (lib/ai-gateway.ts).

@@ -4,7 +4,7 @@ import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import type { AppBindings, Env } from './types';
 import { jsonError } from './lib/http-error';
-import { observabilityEnabled } from './lib/feature-flags';
+import { sentryEnabled } from './lib/feature-flags';
 import { healthRoutes } from './routes/health';
 import { messageRoutes } from './routes/messages';
 import { botRoutes } from './routes/bots';
@@ -203,15 +203,15 @@ const handler = {
 
 // Sentry error tracking — wraps the whole handler (fetch + scheduled +
 // queue) so unhandled exceptions across every entry point are captured.
-// Gated twice: OBSERVABILITY_ENABLED must be 'true' (kill-switch, default OFF
-// so dev / pre-launch doesn't flood Sentry's quota) AND SENTRY_DSN must be
+// Gated twice: SENTRY_ENABLED must be 'true' (per-service kill-switch, default
+// OFF so dev / pre-launch doesn't flood Sentry's quota) AND SENTRY_DSN must be
 // set. When either is off the options callback returns undefined, which tells
 // withSentry to skip SDK initialization entirely — a true no-op, so every
 // captureException() downstream is also dormant. See feature-flags.ts and
 // docs/superpowers/specs/2026-06-01-dashboard-stack-design.md.
 export default Sentry.withSentry<Env, AuditMessage>(
   (env: Env) =>
-    observabilityEnabled(env) && env.SENTRY_DSN
+    sentryEnabled(env) && env.SENTRY_DSN
       ? {
           dsn: env.SENTRY_DSN,
           // Sample rate for performance tracing. Errors are always

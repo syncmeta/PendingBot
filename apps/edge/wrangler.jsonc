@@ -48,8 +48,11 @@
   "vars": {
     "ENVIRONMENT": "dev",
     // Kill-switches (lib/feature-flags.ts). Default OFF: only "true" enables.
+    // Observability is per-service so each vendor's quota toggles independently.
     "BILLING_ENABLED": "false",
-    "OBSERVABILITY_ENABLED": "false"
+    "SENTRY_ENABLED": "false",
+    "POSTHOG_ENABLED": "false",
+    "LANGFUSE_ENABLED": "false"
   },
 
   "env": {
@@ -59,10 +62,15 @@
         // Kill-switches (lib/feature-flags.ts). Default OFF: only "true"
         // enables. Flip to "true" + redeploy when ready; flip back to disable.
         // BILLING_ENABLED gates the live billing gate + debit (off = nobody
-        // blocked, nothing charged). OBSERVABILITY_ENABLED gates Sentry +
-        // PostHog + Langfuse (off = no vendor quota burned).
+        // blocked, nothing charged). Observability is PER-SERVICE so each
+        // vendor's quota toggles independently (each also needs its key/DSN):
+        //   SENTRY_ENABLED   — errors (flood risk on error bursts)
+        //   POSTHOG_ENABLED  — product events (scales with user actions)
+        //   LANGFUSE_ENABLED — LLM traces (1/LLM call — burns quota fastest)
         "BILLING_ENABLED": "false",
-        "OBSERVABILITY_ENABLED": "false",
+        "SENTRY_ENABLED": "false",
+        "POSTHOG_ENABLED": "false",
+        "LANGFUSE_ENABLED": "false",
         "SUPABASE_URL": "https://sslzhblojwkxfdyisity.supabase.co",
         "ALLOWED_ORIGIN": "https://bot.pendingname.com",
         // AI Gateway coordinates — the worker reads the gateway's

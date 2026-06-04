@@ -56,7 +56,7 @@ describe('llm-trace traceGeneration()', () => {
 
   it('records a trace + generation and flushes when both keys are set', async () => {
     const env = {
-      OBSERVABILITY_ENABLED: 'true',
+      LANGFUSE_ENABLED: 'true',
       LANGFUSE_PUBLIC_KEY: 'pk',
       LANGFUSE_SECRET_KEY: 'sk',
       LANGFUSE_BASE_URL: 'https://lf.example.com',

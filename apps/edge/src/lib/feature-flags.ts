@@ -25,11 +25,25 @@ export function billingEnabled(env: Env): boolean {
   return env.BILLING_ENABLED === 'true';
 }
 
+// Observability kill-switches are PER-SERVICE (independent) so each vendor's
+// quota can be controlled on its own. Default OFF. Each still ALSO requires its
+// own key/DSN to be set before it actually emits.
+
+/** Sentry error tracking. High flood risk: an error burst = an event burst. */
+export function sentryEnabled(env: Env): boolean {
+  return env.SENTRY_ENABLED === 'true';
+}
+
+/** PostHog product analytics. Volume scales with user actions (medium). */
+export function posthogEnabled(env: Env): boolean {
+  return env.POSTHOG_ENABLED === 'true';
+}
+
 /**
- * Sentry + PostHog + Langfuse are LIVE. When false (default), all three are a
- * true no-op — so dev / pre-launch traffic doesn't burn each vendor's free
- * quota (Langfuse especially: one trace per LLM call) or flood Sentry.
+ * Langfuse LLM tracing. HIGH volume: one trace per LLM generation, including
+ * system cascades (title / lookback / memo / group routing) — burns the
+ * observations quota fastest. Keep off until you actually want traces.
  */
-export function observabilityEnabled(env: Env): boolean {
-  return env.OBSERVABILITY_ENABLED === 'true';
+export function langfuseEnabled(env: Env): boolean {
+  return env.LANGFUSE_ENABLED === 'true';
 }

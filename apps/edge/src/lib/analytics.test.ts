@@ -37,7 +37,7 @@ describe('analytics capture()', () => {
   });
 
   it('is a no-op when the observability kill-switch is off (even with a key)', async () => {
-    const env = { POSTHOG_KEY: 'phc_test' } as Env; // OBSERVABILITY_ENABLED unset → off
+    const env = { POSTHOG_KEY: 'phc_test' } as Env; // POSTHOG_ENABLED unset → off
 
     await capture(env, baseArgs);
 
@@ -46,7 +46,7 @@ describe('analytics capture()', () => {
   });
 
   it('sends the event immediately + flushes when POSTHOG_KEY is set', async () => {
-    const env = { OBSERVABILITY_ENABLED: 'true', POSTHOG_KEY: 'phc_test', POSTHOG_HOST: 'https://eu.i.posthog.com' } as Env;
+    const env = { POSTHOG_ENABLED: 'true', POSTHOG_KEY: 'phc_test', POSTHOG_HOST: 'https://eu.i.posthog.com' } as Env;
 
     await capture(env, baseArgs);
 
@@ -63,7 +63,7 @@ describe('analytics capture()', () => {
   });
 
   it('swallows send failures (never throws into the caller)', async () => {
-    const env = { OBSERVABILITY_ENABLED: 'true', POSTHOG_KEY: 'phc_test' } as Env;
+    const env = { POSTHOG_ENABLED: 'true', POSTHOG_KEY: 'phc_test' } as Env;
     captureImmediateMock.mockRejectedValueOnce(new Error('network down'));
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
