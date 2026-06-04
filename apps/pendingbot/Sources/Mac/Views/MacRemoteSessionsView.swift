@@ -25,6 +25,7 @@ struct MacCrewListColumn: View {
     @State private var crews: [CrewSummaryV2] = []
     @State private var loadError: String?
     @State private var didLoad = false
+    @State private var showingCreate = false
 
     private let api = APIClient()
 
@@ -61,6 +62,24 @@ struct MacCrewListColumn: View {
             }
         }
         .navigationTitle("Crew")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    showingCreate = true
+                } label: {
+                    Label("新建机组", systemImage: "plus")
+                }
+                .help("新建一个机组")
+            }
+        }
+        .sheet(isPresented: $showingCreate) {
+            MacCreateCrewSheet { newCrewId in
+                Task {
+                    await load()
+                    selectedCrewId = newCrewId
+                }
+            }
+        }
         .task { await load() }
     }
 
@@ -80,6 +99,14 @@ struct MacCrewListColumn: View {
 struct MacRemoteSessionsView: View {
     let crewId: String
 
+    /// 右栏分段:群聊(默认,对齐 iOS crew 详情主体)/ 服务端 session(跨端 viewer)。
+    enum DetailMode: String, CaseIterable, Identifiable {
+        case chat = "群聊"
+        case sessions = "服务端 session"
+        var id: String { rawValue }
+    }
+    @State private var mode: DetailMode = .chat
+
     @State private var sessions: [CrewSessionRow] = []
     @State private var selectedSessionId: String?
     @State private var events: [CrewSessionLogEvent] = []
@@ -91,6 +118,10 @@ struct MacRemoteSessionsView: View {
     @State private var liveSnapshot: SessionStateSnapshot?
     @State private var sentCancel = false
     @State private var groupWalletShown = false
+
+    // crew 详情(captain 名 + 基本信息只读 sheet)。
+    @State private var detail: CrewDetailV2?
+    @State private var detailShown = false
 
     private let api = APIClient()
     private let pollInterval: UInt64 = 3_000_000_000 // 3s
@@ -107,14 +138,36 @@ struct MacRemoteSessionsView: View {
     }
 
     var body: some View {
-        HSplitView {
-            sessionList
-                .frame(minWidth: 240, idealWidth: 280, maxWidth: 360)
-            transcriptPane
-                .frame(minWidth: 360, maxWidth: .infinity)
+        VStack(spacing: 0) {
+            Picker("", selection: $mode) {
+                ForEach(DetailMode.allCases) { m in Text(m.rawValue).tag(m) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            .frame(maxWidth: 320)
+            Divider()
+            switch mode {
+            case .chat:
+                // 群聊主体 —— 自带 realtime 订阅 + 自己的 .task(id:),
+                // crewId 变了用 .id() 强制重建。
+                MacCrewChatView(crewId: crewId, captainName: detail?.captain?.displayName)
+                    .id(crewId)
+            case .sessions:
+                serverSessionsPane
+            }
         }
-        .navigationTitle("服务端 session")
+        .navigationTitle(detail?.crew.title ?? "机组")
         .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    detailShown = true
+                } label: {
+                    Label("机组详情", systemImage: "info.circle")
+                }
+                .help("机组基本信息 / 机长")
+                .disabled(detail == nil)
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     groupWalletShown = true
@@ -127,9 +180,29 @@ struct MacRemoteSessionsView: View {
         .sheet(isPresented: $groupWalletShown) {
             MacGroupWalletView(crewId: crewId)
         }
+        .sheet(isPresented: $detailShown) {
+            if let detail {
+                MacCrewDetailSheet(detail: detail)
+            }
+        }
+        .task(id: crewId) { await loadDetail() }
         .task(id: crewId) { await pollLoop() }
         .onChange(of: selectedSessionId) { _, newValue in subscribeLive(to: newValue) }
         .onDisappear { teardownLive() }
+    }
+
+    /// 服务端 session 跨端 viewer —— 原 T4.5 的 session 列表 + transcript。
+    private var serverSessionsPane: some View {
+        HSplitView {
+            sessionList
+                .frame(minWidth: 240, idealWidth: 280, maxWidth: 360)
+            transcriptPane
+                .frame(minWidth: 360, maxWidth: .infinity)
+        }
+    }
+
+    private func loadDetail() async {
+        detail = try? await api.getCrewV2(crewId)
     }
 
     // MARK: panes
@@ -303,6 +376,142 @@ struct MacRemoteSessionsView: View {
         let client = liveClient
         liveClient = nil
         Task { await client?.close() }
+    }
+}
+
+// MARK: - 机组详情(只读)— 对齐 iOS CrewDetailSheet 的基本信息 / 机长
+
+/// crew 元数据只读 sheet。镜像 iOS `CrewDetailSheet` 的基本信息 + 机长 +
+/// 父/子机组 + 责任比例。写设置(permission mode / share 调整)留 gap
+/// (见 docs/tech-debt.md #212)。
+struct MacCrewDetailSheet: View {
+    let detail: CrewDetailV2
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("机组详情").font(.headline)
+                Spacer()
+                Button("完成") { dismiss() }.keyboardShortcut(.defaultAction)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 12)
+            Divider()
+            Form {
+                Section("基本信息") {
+                    labeledRow("标题", detail.crew.title)
+                    labeledRow("状态", detail.crew.status ?? "—")
+                    labeledRow("运行位置", runtimeLabel(detail.crew))
+                    if let tag = detail.crew.tag, !tag.isEmpty {
+                        labeledRow("标签", "#\(tag)")
+                    }
+                    if let cwd = detail.crew.workingDirectory, !cwd.isEmpty {
+                        labeledRow("工作目录", cwd, monospaced: true)
+                    }
+                    labeledRow("责任主体 ID", String(detail.crew.responsibleSubjectId.prefix(8)) + "…",
+                               monospaced: true)
+                }
+
+                Section("机长") {
+                    if let captain = detail.captain {
+                        HStack(spacing: 10) {
+                            Image(systemName: "person.crop.circle.badge.checkmark")
+                                .foregroundStyle(Color.accentColor)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(captain.displayName).font(.body.weight(.medium))
+                                Text("机长(captain)").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    } else {
+                        Text("还没有指定机长").foregroundStyle(.secondary)
+                    }
+                }
+
+                Section("父机组") {
+                    if detail.parents.isEmpty {
+                        Text("没有父机组").foregroundStyle(.secondary)
+                    } else {
+                        ForEach(detail.parents) { link in crewLinkRow(link) }
+                    }
+                }
+
+                Section("子机组") {
+                    if detail.children.isEmpty {
+                        Text("没有子机组").foregroundStyle(.secondary)
+                    } else {
+                        ForEach(detail.children) { link in crewLinkRow(link) }
+                    }
+                }
+
+                Section {
+                    if detail.shares.isEmpty {
+                        Text("没有责任分配").foregroundStyle(.secondary)
+                    } else {
+                        ForEach(detail.shares) { share in shareRow(share) }
+                    }
+                } header: {
+                    Text("责任比例")
+                } footer: {
+                    Text("总和恒为 10000 bps(100%)。带 ★ 的是拍板方。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .formStyle(.grouped)
+        }
+        .frame(width: 460, height: 560)
+    }
+
+    private func labeledRow(_ label: String, _ value: String, monospaced: Bool = false) -> some View {
+        HStack {
+            Text(label).foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+                .font(monospaced ? .callout.monospaced() : .callout)
+                .multilineTextAlignment(.trailing)
+                .textSelection(.enabled)
+        }
+    }
+
+    private func crewLinkRow(_ link: CrewLinkV2) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(link.title).font(.body).lineLimit(1)
+                Text("子方保留 \(bpsAsPercent(link.childShareBps))")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text(String(link.crewId.prefix(8)) + "…")
+                .font(.caption.monospaced()).foregroundStyle(.tertiary)
+        }
+    }
+
+    private func shareRow(_ share: CrewShareV2) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: share.kind == "group_account" ? "person.3.fill" : "person.crop.circle.fill")
+                .foregroundStyle(.tint).frame(width: 22)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    Text(share.displayName.isEmpty ? String(share.subjectId.prefix(8)) + "…" : share.displayName)
+                        .font(.body).lineLimit(1)
+                    if share.isTiebreaker {
+                        Text("★").foregroundStyle(.orange).font(.body.weight(.bold))
+                    }
+                }
+                Text(share.kind == "group_account" ? "群账号" : "本人账号")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text(bpsAsPercent(share.shareBps))
+                .font(.callout.monospacedDigit())
+        }
+    }
+
+    private func bpsAsPercent(_ bps: Int) -> String {
+        String(format: "%.1f%%", Double(bps) / 100.0)
+    }
+
+    private func runtimeLabel(_ crew: CrewBodyV2) -> String {
+        crew.runtimeLocationKind?.shortLabel ?? crew.runtimeLocation
     }
 }
 #endif

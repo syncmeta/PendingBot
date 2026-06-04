@@ -1,5 +1,4 @@
-#if os(iOS)
-import SwiftUI
+import Foundation
 
 // PendingBot rendering for a session's `request_permission` card
 // (spec v2 §10). Sister card to CrewProposalCard — mostly the same
@@ -148,6 +147,8 @@ enum JSONScalar: Decodable, Hashable {
 }
 
 #if os(iOS)
+import SwiftUI
+
 /// Centered card rendered inline in the timeline (or the crew
 /// announcement stream once T4.6 lands the unified renderer). Same
 /// surface area as `CrewProposalCardView` — same status badge, same
@@ -339,5 +340,4 @@ struct PermissionRequestCardView: View {
         }
     }
 }
-#endif
 #endif
