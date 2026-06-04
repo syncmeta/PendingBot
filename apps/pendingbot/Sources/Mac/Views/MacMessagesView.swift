@@ -33,29 +33,43 @@ struct MacConversationListColumn: View {
         List(selection: $selectedConversationId) {
             if let loadError {
                 Label(loadError, systemImage: "exclamationmark.triangle")
-                    .font(.caption).foregroundStyle(.red)
+                    .font(Theme.Fonts.footnote).foregroundStyle(.red)
             }
+            // 对齐 iOS MessageTabView 空态:EmptyHint 文案 "和 AI 聊天",footnote + inkMuted。
             if conversations.isEmpty && didLoad && loadError == nil {
-                Text("还没有会话").font(.callout).foregroundStyle(.secondary)
+                Text("和 AI 聊天")
+                    .font(Theme.Fonts.footnote)
+                    .foregroundStyle(Theme.Palette.inkMuted)
             }
             ForEach(conversations) { c in
-                HStack(spacing: 12) {
-                    BrandAvatar(seed: c.id, size: 40)
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 6) {
-                            Text(c.title).font(.body).lineLimit(1)
-                            Spacer(minLength: 4)
+                HStack(alignment: .top, spacing: 10) {
+                    // 对齐 iOS ConversationListRow:头像 36。
+                    BrandAvatar(seed: c.id, size: 36)
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            // 标题:iOS 用 serif 16 semibold + ink。
+                            Text(c.title)
+                                .font(Theme.Fonts.serif(size: 16, weight: .semibold))
+                                .foregroundStyle(Theme.Palette.ink)
+                                .lineLimit(1)
+                            Spacer(minLength: 8)
+                            // 未读徽标:iOS 是绿色(accent)胶囊 + 白字 bold 11,>99 显示 99+。
                             if c.unreadCount > 0 {
-                                Text("\(c.unreadCount)")
-                                    .font(.caption2.weight(.semibold))
-                                    .padding(.horizontal, 6).padding(.vertical, 1)
-                                    .background(Capsule().fill(.red))
+                                Text(c.unreadCount > 99 ? "99+" : "\(c.unreadCount)")
+                                    .font(Theme.Fonts.system(size: 11, weight: .bold))
                                     .foregroundStyle(.white)
+                                    .padding(.horizontal, 5)
+                                    .frame(minWidth: 18)
+                                    .frame(height: 18)
+                                    .background(Capsule().fill(Theme.Palette.accent))
                             }
                         }
-                        if !c.preview.isEmpty {
-                            Text(c.preview).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                        }
+                        // 预览:iOS 空预览回落 "还没有消息",footnote + inkMuted。
+                        Text(c.preview.isEmpty ? "还没有消息" : c.preview)
+                            .font(Theme.Fonts.footnote)
+                            .foregroundStyle(Theme.Palette.inkMuted)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
                     }
                 }
                 .padding(.vertical, 6)
@@ -129,7 +143,7 @@ struct MacChatView: View {
             Divider()
             composer
         }
-        .background(Color(hex: 0xFDFCFA)) // 对齐 iOS canvas 米白,白 bot 气泡浮其上
+        .background(Theme.Palette.canvas) // 对齐 iOS canvas 米白,白 bot 气泡浮其上
         .navigationTitle("对话")
         // 和 iOS ConversationView 同款:拉历史 + 订阅 conv-level RealtimeHub。
         // 对端 / bot 写入 messages 即刷新(自己正在发的那条由 SSE 流接管,
@@ -170,9 +184,12 @@ struct MacChatView: View {
     private var transcript: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
+                // 气泡间距对齐 iOS:每个 BubbleView 自带 vertical 4 padding,
+                // 横向走 Theme.Metrics.gutter(16),所以这里 LazyVStack spacing 8、
+                // 外层不再额外加横向内距(bubble() 里自带 gutter)。
+                LazyVStack(alignment: .leading, spacing: 8) {
                     if let loadError {
-                        Text(loadError).font(.caption).foregroundStyle(.red)
+                        Text(loadError).font(Theme.Fonts.footnote).foregroundStyle(.red)
                     }
                     ForEach(visibleMessages) { m in
                         bubble(row: m).id(m.id)
@@ -183,7 +200,7 @@ struct MacChatView: View {
                     }
                     Color.clear.frame(height: 1).id("tail")
                 }
-                .padding(.horizontal, 22).padding(.vertical, 18)
+                .padding(.vertical, 12)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .onChange(of: messages.count) { _, _ in scrollToTail(proxy) }
@@ -209,69 +226,81 @@ struct MacChatView: View {
         let imagePaths = row.imagePaths
         let files = row.fileAttachments
         let sender = groupSender(for: row)
-        HStack(alignment: .top, spacing: 10) {
+        // 对齐 iOS BubbleView:bot/对方 气泡 spacing 8(头像↔内容),user 用 Spacer 推到右侧。
+        HStack(alignment: .top, spacing: isMine ? 0 : 8) {
             if isMine {
-                Spacer(minLength: 56)
+                Spacer(minLength: 48)
             } else if let sender {
                 // 群:对方头像用其本人 avatar(有上传图走 ServerImage,否则 seed emoji)。
                 senderAvatar(sender, size: 30)
+                    .padding(.top, 2)
             } else {
                 BrandAvatar(seed: conversationId, size: 30)
+                    .padding(.top, 2)
             }
-            VStack(alignment: isMine ? .trailing : .leading, spacing: 6) {
-                // 群:非自己气泡顶部显示发送者名字(对齐 iOS 群气泡抬头)。
+            // iOS bot 抬头↔内容 spacing 4、user 内容 spacing 6。
+            VStack(alignment: isMine ? .trailing : .leading, spacing: isMine ? 6 : 4) {
+                // 群:非自己气泡顶部显示发送者名字(对齐 iOS 群气泡抬头:rounded 11 semibold + inkMuted)。
                 if let sender, !isMine {
                     Text(sender.displayName)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(Color(hex: 0x6E6B5E))
-                        .padding(.leading, 4)
+                        .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.Palette.inkMuted)
                 }
-                // 图片附件:复用 iOS 同一个 auth-gated ServerImage 加载器。
+                // 图片附件:复用 iOS 同一个 auth-gated ServerImage 加载器(iOS AttachmentGrid 用 cell 110,radius 12)。
                 ForEach(imagePaths, id: \.self) { path in
                     ServerImage(path: path,
                                 serverURL: HostedConfig.environment.workerURL,
                                 contentMode: .fill)
                         .frame(maxWidth: 240, maxHeight: 240)
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
-                // 非图片附件:图标 + 文件名 chip(对齐 iOS 的 file chip)。
+                // 非图片附件:图标 + 文件名 chip(对齐 iOS FileAttachmentChip)。
                 ForEach(files) { att in
-                    HStack(spacing: 8) {
+                    HStack(spacing: 10) {
                         Image(systemName: "doc.fill")
-                            .font(.system(size: 18))
-                            .foregroundStyle(Color(hex: 0x6E6B5E))
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(att.filename ?? "文件").font(.callout).lineLimit(1)
-                                .foregroundStyle(Color(hex: 0x1B1A14))
+                            .font(Theme.Fonts.glyph(size: 22))
+                            .foregroundStyle(Theme.Palette.accent)
+                            .frame(width: 30)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(att.filename ?? "文件")
+                                .font(Theme.Fonts.system(size: 14, weight: .medium))
+                                .foregroundStyle(Theme.Palette.ink)
+                                .lineLimit(2)
+                                .truncationMode(.middle)
                             if let size = att.size {
                                 Text(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))
-                                    .font(.caption2).foregroundStyle(.secondary)
+                                    .font(Theme.Fonts.system(size: 11))
+                                    .foregroundStyle(Theme.Palette.inkMuted)
                             }
                         }
                     }
-                    .padding(.horizontal, 12).padding(.vertical, 9)
-                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color(hex: 0xFFFFFF)))
+                    .padding(.horizontal, 12).padding(.vertical, 10)
+                    .frame(maxWidth: 260, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.Palette.surface))
                     .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(Color(hex: 0xE2E0D7), lineWidth: 0.5))
+                        .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5))
                 }
                 if !content.isEmpty {
                     Text(content)
                         .textSelection(.enabled)
-                        .padding(.horizontal, 14).padding(.vertical, 11)
+                        .font(Theme.Fonts.body)
+                        .padding(.horizontal, 14).padding(.vertical, 10)
                         .background(
-                            // 对齐 iOS:用户气泡淡绿(accentBg 0xE3EEEA)、bot 气泡白(surface)+ hairline 描边,圆角 18。
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .fill(isMine ? Color(hex: 0xE3EEEA) : Color(hex: 0xFFFFFF))
+                            // 对齐 iOS:用户气泡淡绿(userBubble = accentBg)、bot 气泡白(surface)+ hairline 描边,圆角 bubbleRadius(18)。
+                            RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
+                                .fill(isMine ? Theme.Palette.userBubble : Theme.Palette.surface)
                         )
                         .overlay(
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .strokeBorder(isMine ? Color.clear : Color(hex: 0xE2E0D7), lineWidth: 0.5)
+                            RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
+                                .strokeBorder(isMine ? Color.clear : Theme.Palette.hairline, lineWidth: 0.5)
                         )
-                        .foregroundStyle(Color(hex: 0x1B1A14)) // ink 深字,两种气泡都用
+                        .foregroundStyle(Theme.Palette.ink) // ink 深字,两种气泡都用
                 }
             }
-            if !isMine { Spacer(minLength: 60) }
+            if !isMine { Spacer(minLength: 32) }
         }
+        .padding(.horizontal, Theme.Metrics.gutter)
+        .padding(.vertical, 4)
         .frame(maxWidth: .infinity, alignment: isMine ? .trailing : .leading)
     }
 
@@ -285,7 +314,7 @@ struct MacChatView: View {
                         contentMode: .fill)
                 .frame(width: size, height: size)
                 .clipShape(Circle())
-                .overlay(Circle().strokeBorder(Color(hex: 0xE2E0D7), lineWidth: 0.5))
+                .overlay(Circle().strokeBorder(Theme.Palette.hairline, lineWidth: 0.5))
         } else {
             BrandAvatar(seed: sender.avatarSeed, size: size)
         }
@@ -298,36 +327,66 @@ struct MacChatView: View {
             if !pendingAttachments.isEmpty || uploadingCount > 0 {
                 pendingAttachmentStrip
             }
-            HStack(spacing: 8) {
-                // 附件按钮 → NSOpenPanel(图片/文件)。iOS 用 PhotosPicker +
-                // UIDocumentPicker;Mac 等价物是 NSOpenPanel,复用同一上传通道。
+            HStack(alignment: .bottom, spacing: 8) {
+                // 附件按钮 → NSOpenPanel(图片/文件)。iOS 用 "+" 圆钮打开附件面板
+                // (PhotosPicker + UIDocumentPicker);Mac 等价物是 NSOpenPanel,
+                // 复用同一上传通道。样式对齐 iOS:inkMuted 的 "+" glyph 圆钮。
                 Button {
                     pickAttachments()
                 } label: {
-                    Image(systemName: "paperclip").font(.title3)
-                        .foregroundStyle(Color(hex: 0x6E6B5E))
+                    Image(systemName: "plus")
+                        .font(Theme.Fonts.glyph(size: 18, weight: .medium))
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                        .frame(width: 38, height: 38)
+                        .background(Circle().fill(Theme.Palette.surface))
+                        .overlay(Circle().strokeBorder(Theme.Palette.hairline, lineWidth: 0.5))
                 }
                 .buttonStyle(.plain)
                 .disabled(sending)
                 .help("添加图片或文件")
 
-                TextField("发消息…", text: $input, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .lineLimit(1...6)
-                    .padding(.horizontal, 10).padding(.vertical, 7)
-                    .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .textBackgroundColor)))
-                    .onSubmit { send() }
-                Button {
-                    send()
-                } label: {
-                    if sending { ProgressView().controlSize(.small) }
-                    else { Image(systemName: "arrow.up.circle.fill").font(.title2) }
+                HStack(alignment: .bottom, spacing: 6) {
+                    // 输入框 placeholder 对齐 iOS:"发消息…";字体 body + ink。
+                    TextField("发消息…", text: $input, axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .font(Theme.Fonts.body)
+                        .foregroundStyle(Theme.Palette.ink)
+                        .lineLimit(1...6)
+                        .padding(.leading, 14)
+                        .padding(.vertical, 8)
+                        .onSubmit { send() }
+
+                    // 发送钮对齐 iOS:可发时 accent 实心圆 + 白上箭头,否则 surfaceMuted + 弱化箭头。
+                    Button {
+                        send()
+                    } label: {
+                        if sending {
+                            ProgressView().controlSize(.small)
+                                .frame(width: 30, height: 30)
+                        } else {
+                            Image(systemName: "arrow.up")
+                                .font(Theme.Fonts.glyph(size: 15, weight: .bold))
+                                .foregroundStyle(canSend ? .white : Theme.Palette.inkMuted.opacity(0.5))
+                                .frame(width: 30, height: 30)
+                                .background(Circle().fill(canSend ? Theme.Palette.accent : Theme.Palette.surfaceMuted))
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canSend)
+                    .padding(.trailing, 6)
+                    .padding(.bottom, 4)
                 }
-                .buttonStyle(.plain)
-                .disabled(!canSend)
+                .background(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Theme.Palette.surface)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
+                )
             }
         }
-        .padding(12)
+        .padding(.horizontal, Theme.Metrics.gutter)
+        .padding(.vertical, 12)
     }
 
     /// 可发送 = 有正文或已上传附件,且没在发送 / 没有上传中的附件。
@@ -336,50 +395,70 @@ struct MacChatView: View {
         return (hasText || !pendingAttachments.isEmpty) && !sending && uploadingCount == 0
     }
 
+    /// 待发附件预览条,对齐 iOS ComposerView.pendingTray:64×64 cell、
+    /// surfaceMuted 底、radius 10、hairline 描边;文件 chip 用 doc.fill(accent)+
+    /// 文件名(system 9 / inkMuted);删除钮白×半黑底;上传中显示 ProgressView。
     private var pendingAttachmentStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(pendingAttachments) { att in
                     ZStack(alignment: .topTrailing) {
-                        if att.isImage {
-                            ServerImage(path: att.url,
-                                        serverURL: HostedConfig.environment.workerURL,
-                                        contentMode: .fill)
-                                .frame(width: 56, height: 56)
-                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        } else {
-                            HStack(spacing: 6) {
-                                Image(systemName: "doc.fill").foregroundStyle(Color(hex: 0x6E6B5E))
-                                Text(att.filename ?? "文件").font(.caption).lineLimit(1)
-                                    .foregroundStyle(Color(hex: 0x1B1A14))
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Theme.Palette.surfaceMuted)
+                            .frame(width: 64, height: 64)
+                            .overlay {
+                                if att.isImage {
+                                    ServerImage(path: att.url,
+                                                serverURL: HostedConfig.environment.workerURL,
+                                                contentMode: .fill)
+                                        .frame(width: 64, height: 64)
+                                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                } else {
+                                    VStack(spacing: 3) {
+                                        Image(systemName: "doc.fill")
+                                            .font(Theme.Fonts.glyph(size: 20))
+                                            .foregroundStyle(Theme.Palette.accent)
+                                        Text(att.filename ?? "文件")
+                                            .font(Theme.Fonts.system(size: 9))
+                                            .foregroundStyle(Theme.Palette.inkMuted)
+                                            .lineLimit(2)
+                                            .multilineTextAlignment(.center)
+                                            .truncationMode(.middle)
+                                    }
+                                    .padding(.horizontal, 4)
+                                }
                             }
-                            .padding(.horizontal, 10).frame(height: 56)
-                            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color(hex: 0xFFFFFF)))
-                            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .strokeBorder(Color(hex: 0xE2E0D7), lineWidth: 0.5))
-                        }
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
+                            )
                         Button {
                             pendingAttachments.removeAll { $0.id == att.id }
                         } label: {
                             Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 16))
-                                .foregroundStyle(.white, .black.opacity(0.5))
+                                .font(Theme.Fonts.body)
+                                .foregroundStyle(.white, .black.opacity(0.55))
                         }
                         .buttonStyle(.plain)
-                        .padding(2)
+                        .offset(x: 6, y: -6)
                     }
                 }
                 if uploadingCount > 0 {
                     ZStack {
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(Color.secondary.opacity(0.1))
-                            .frame(width: 56, height: 56)
-                        ProgressView().controlSize(.small)
+                            .fill(Theme.Palette.surfaceMuted)
+                            .frame(width: 64, height: 64)
+                        VStack(spacing: 5) {
+                            ProgressView().controlSize(.small)
+                            Text("上传中")
+                                .font(Theme.Fonts.system(size: 9, weight: .medium))
+                                .foregroundStyle(Theme.Palette.inkMuted)
+                        }
                     }
                 }
             }
         }
-        .frame(maxHeight: 60)
+        .frame(maxHeight: 68)
     }
 
     private func scrollToTail(_ proxy: ScrollViewProxy) {
