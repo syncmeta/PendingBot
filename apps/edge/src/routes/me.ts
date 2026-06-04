@@ -7,7 +7,6 @@ import { serviceClient, userClient } from '../lib/supabase';
 import {
   getBalance,
   getConfigInt,
-  getSubjectBalance,
   redeemCode,
   RedemptionError,
 } from '../lib/billing';
@@ -210,13 +209,23 @@ meRoutes.get('/subject', requireSubjectAuth(['subject:read']), async (c) => {
     });
   }
 
-  const subjectWallet = await getSubjectBalance(supa, subject.id);
+  // 余额走 WalletDO(Polar 缓存,强一致;计费 P2)—— 与 /wallet/v2 同源。
+  // 旧的 subject_wallets 表(billing-v1 快照,早已不被扣减)已退役(#226),
+  // 不再读。`balance_credits` 现在是 PNC micros;lifetime_* 在新模型里不再
+  // 按主体物化(账本明细见 pnc_ledger),保留字段为 0 以兼容旧解码。当前没有
+  // 客户端解码本响应的 wallet 字段(iOS CrewSubjectEnvelope 只取 subject)。
+  let balanceMicros = 0;
+  try {
+    ({ balanceMicros } = await wallet.gate(c.env, subject.id));
+  } catch (err) {
+    console.warn('[me/subject] wallet.gate failed, returning 0 balance', err);
+  }
   return c.json({
     subject,
     wallet: {
-      balance_credits: subjectWallet?.balance_credits ?? 0,
-      lifetime_topup_credits: subjectWallet?.lifetime_topup_credits ?? 0,
-      lifetime_spent_credits: subjectWallet?.lifetime_spent_credits ?? 0,
+      balance_credits: balanceMicros,
+      lifetime_topup_credits: 0,
+      lifetime_spent_credits: 0,
     },
   });
 });
