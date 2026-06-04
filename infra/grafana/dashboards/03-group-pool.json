@@ -26,7 +26,7 @@
       }
     ]
   },
-  "description": "Group pool funding (实缴池 = pendingbot.group_pools.total_remaining_pnc_micros, with fairness share_index), member contributions (pendingbot.group_contributions, active rows) and pledges (认缴 = pendingbot.group_pledges.pledge_pnc_micros, active). All amounts PNC = *_pnc_micros / 1e6. The pool balance mirrors Polar (Polar is the balance source of truth). NOTE: group_pools/group_contributions/group_pledges have RLS scoped to group members; the metabase_ro BI role needs a permissive read policy (see supabase migration 20260603094114_metabase_ro_group_billing_read.sql) or these panels return no rows.",
+  "description": "Group pool funding (实缴池 = pendingbot.group_pools.total_remaining_pnc_micros, with fairness share_index), member contributions (pendingbot.group_contributions, active rows) and pledges (认缴 = pendingbot.group_pledges.pledge_pnc_micros, active). All amounts PNC = *_pnc_micros / 1e6. The pool balance mirrors Polar (Polar is the balance source of truth). NOTE: group_pools/group_contributions/group_pledges carry member-scoped RLS, so the BI role reads them only through the security-definer aggregate views bi_group_pool_summary / bi_group_pool_detail (migration 20260604044057_bi_aggregate_views) — never the raw member rows.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
@@ -49,7 +49,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COALESCE(SUM(total_remaining_pnc_micros), 0) / 1e6 AS group_pool_remaining_pnc\nFROM pendingbot.group_pools;",
+          "rawSql": "SELECT pool_remaining_micros / 1e6 AS group_pool_remaining_pnc\nFROM pendingbot.bi_group_pool_summary;",
           "refId": "A"
         }
       ]
@@ -70,7 +70,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COALESCE(SUM(pledge_pnc_micros), 0) / 1e6 AS pledged_pnc\nFROM pendingbot.group_pledges\nWHERE status = 'active';",
+          "rawSql": "SELECT active_pledged_micros / 1e6 AS pledged_pnc\nFROM pendingbot.bi_group_pool_summary;",
           "refId": "A"
         }
       ]
@@ -91,7 +91,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COALESCE(SUM(contributed_pnc_micros), 0) / 1e6 AS contributed_pnc\nFROM pendingbot.group_contributions\nWHERE status = 'active';",
+          "rawSql": "SELECT active_contributed_micros / 1e6 AS contributed_pnc\nFROM pendingbot.bi_group_pool_summary;",
           "refId": "A"
         }
       ]
@@ -112,7 +112,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT\n  gp.subject_id,\n  s.display_name AS group_name,\n  gp.total_remaining_pnc_micros / 1e6 AS remaining_pnc,\n  gp.share_index,\n  COALESCE(con.active_contributors, 0) AS active_contributors,\n  COALESCE(con.contributed_pnc, 0) AS contributed_pnc,\n  COALESCE(pl.active_pledgers, 0) AS active_pledgers,\n  COALESCE(pl.pledged_pnc, 0) AS pledged_pnc,\n  gp.updated_at\nFROM pendingbot.group_pools gp\nLEFT JOIN pendingbot.subjects s ON s.id = gp.subject_id\nLEFT JOIN (\n  SELECT subject_id,\n    COUNT(DISTINCT contributor_user_id) AS active_contributors,\n    SUM(contributed_pnc_micros) / 1e6 AS contributed_pnc\n  FROM pendingbot.group_contributions\n  WHERE status = 'active'\n  GROUP BY subject_id\n) con ON con.subject_id = gp.subject_id\nLEFT JOIN (\n  SELECT subject_id,\n    COUNT(*) AS active_pledgers,\n    SUM(pledge_pnc_micros) / 1e6 AS pledged_pnc\n  FROM pendingbot.group_pledges\n  WHERE status = 'active'\n  GROUP BY subject_id\n) pl ON pl.subject_id = gp.subject_id\nORDER BY gp.total_remaining_pnc_micros DESC\nLIMIT 200;",
+          "rawSql": "SELECT\n  subject_id,\n  group_name,\n  pool_remaining_micros / 1e6 AS remaining_pnc,\n  share_index,\n  active_contributors,\n  contributed_micros / 1e6 AS contributed_pnc,\n  active_pledgers,\n  pledged_micros / 1e6 AS pledged_pnc,\n  updated_at\nFROM pendingbot.bi_group_pool_detail\nORDER BY pool_remaining_micros DESC\nLIMIT 200;",
           "refId": "A"
         }
       ]
