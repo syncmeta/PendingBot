@@ -55,14 +55,6 @@ export async function putCachedChatMemo(
   });
 }
 
-export async function deleteCachedChatMemo(
-  env: Env,
-  botId: string,
-  conversationId: string,
-): Promise<void> {
-  await env.MEMORY.delete(`${MEMO_PREFIX}${botId}:${conversationId}`);
-}
-
 /// Read chat memo via KV, falling back to Supabase on miss.
 export async function resolveChatMemo(
   env: Env,
@@ -109,14 +101,6 @@ export async function putCachedBotNote(
   await env.MEMORY.put(`${NOTE_PREFIX}${botId}:${userId}`, body, {
     expirationTtl: PERSONA_TTL_SEC,
   });
-}
-
-export async function deleteCachedBotNote(
-  env: Env,
-  botId: string,
-  userId: string,
-): Promise<void> {
-  await env.MEMORY.delete(`${NOTE_PREFIX}${botId}:${userId}`);
 }
 
 /// Read bot's private user-note via KV, falling back to Supabase.
