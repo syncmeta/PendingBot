@@ -5,6 +5,10 @@ options:
     iOS: "17.0"
     macOS: "14.0"
   createIntermediateGroups: true
+packages:
+  SwiftTerm:
+    url: https://github.com/migueldeicaza/SwiftTerm
+    from: 1.13.0
 settings:
   base:
     SWIFT_VERSION: "5.0"
@@ -30,6 +34,8 @@ targets:
       testTargets:
         - PendingCrewTests
       gatherCoverageData: false
+    dependencies:
+      - package: SwiftTerm
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.pendingname.pendingcrew
