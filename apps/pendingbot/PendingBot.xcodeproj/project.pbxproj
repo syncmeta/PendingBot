@@ -59,7 +59,6 @@
 		4B8693B2BE0A0352EAC924DE /* CrewDetailV2View.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2426E68B61F7DC57E429193 /* CrewDetailV2View.swift */; };
 		4BB4C2FB26A507B0A0BCBBDA /* SplitNav.swift in Sources */ = {isa = PBXBuildFile; fileRef = 669D712A76A1F12D4F8171E8 /* SplitNav.swift */; };
 		4D643B36DC9C4F4911A4B845 /* WelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F7C3B5C578F1BE2095D0B00 /* WelcomeView.swift */; };
-		4F96F396363AE5C89D8A1D61 /* MacCreateCrewSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10B2A85FF8A1671ACCEC7677 /* MacCreateCrewSheet.swift */; };
 		5042BAAF9E26EC2AFC0226DF /* PlatformImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9142C17F5B4C0AC7A9AA91ED /* PlatformImage.swift */; };
 		5206C9F2F44F35357CB69A70 /* CallKitManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26815F4D8AE1B1CDF63042ED /* CallKitManager.swift */; };
 		54B48FB87D7B73FF585A93FB /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D0542BAF8BA5245F4DD6FA1 /* Keychain.swift */; };
@@ -174,7 +173,6 @@
 		FB00D4A903E342738907E282 /* GroupWalletView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D2B2B8D8BD1DE4D364525C4 /* GroupWalletView.swift */; };
 		FC8F6706A2705C7F8913F790 /* GroupInviteAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6007B7AC7A2508EA9C7C04C9 /* GroupInviteAPI.swift */; };
 		FCD54979BEFA6D687994FF09 /* GroupWalletShared.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54EA631014F4D2F3E5F0B510 /* GroupWalletShared.swift */; };
-		FF82F96671AC171CCA19DEF3 /* MacCrewChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DD3A1C64BBA371246971F30 /* MacCrewChatView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -194,7 +192,6 @@
 		0F21A15DD9477AC940984A06 /* RelativeMessageTime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RelativeMessageTime.swift; sourceTree = "<group>"; };
 		0F7C3B5C578F1BE2095D0B00 /* WelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeView.swift; sourceTree = "<group>"; };
 		106E121F92077F781DEEB6BF /* AccountsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountsView.swift; sourceTree = "<group>"; };
-		10B2A85FF8A1671ACCEC7677 /* MacCreateCrewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacCreateCrewSheet.swift; sourceTree = "<group>"; };
 		125E5FD0E43ECEEB291F2BC2 /* ContactsFetch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactsFetch.swift; sourceTree = "<group>"; };
 		13BCD0D49AA6CCB35BBB0C31 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
 		161466ECAC938388BC8F72E3 /* CrewChildSummaryCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewChildSummaryCard.swift; sourceTree = "<group>"; };
@@ -263,7 +260,6 @@
 		7389F31567A5B0D72BC29CC1 /* Account.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Account.swift; sourceTree = "<group>"; };
 		79ED6E895CA98C76570E0C51 /* LetterSenderAvatar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LetterSenderAvatar.swift; sourceTree = "<group>"; };
 		7B48A6EDBF639ED658DB2493 /* GroupQRCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupQRCard.swift; sourceTree = "<group>"; };
-		7DD3A1C64BBA371246971F30 /* MacCrewChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacCrewChatView.swift; sourceTree = "<group>"; };
 		7E091E71F22CA1A5DE2A1ECE /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		7E8968AA681D3F8FCDCF3160 /* Log.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Log.swift; sourceTree = "<group>"; };
 		7E95667CA42D6EA266907A06 /* SubConversationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubConversationView.swift; sourceTree = "<group>"; };
@@ -527,8 +523,6 @@
 			isa = PBXGroup;
 			children = (
 				0A874FB0CB3D8792D7DBDAD7 /* MacBotManagement.swift */,
-				10B2A85FF8A1671ACCEC7677 /* MacCreateCrewSheet.swift */,
-				7DD3A1C64BBA371246971F30 /* MacCrewChatView.swift */,
 				7013EADBDCDA5C670AA6DBB9 /* MacEnvelopeView.swift */,
 				F6C7BA77C498838A64F51382 /* MacFriendsView.swift */,
 				40B3AC8D204D37CE4A7DE319 /* MacMessagesView.swift */,
@@ -883,8 +877,6 @@
 				BDDDE8F25B3B11A420609162 /* LocalDatabase.swift in Sources */,
 				E81BA5D57A39095B26E2EE89 /* Log.swift in Sources */,
 				AA4C55367C3F0EB61C9CE0D6 /* MacBotManagement.swift in Sources */,
-				4F96F396363AE5C89D8A1D61 /* MacCreateCrewSheet.swift in Sources */,
-				FF82F96671AC171CCA19DEF3 /* MacCrewChatView.swift in Sources */,
 				09D4746AF1AD5616504DC333 /* MacEnvelopeView.swift in Sources */,
 				939B2ECABC9E20A928E7ABCD /* MacFriendsView.swift in Sources */,
 				BC5C3C8B82FDABE15170EABE /* MacGroupWalletView.swift in Sources */,

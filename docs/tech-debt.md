@@ -390,14 +390,6 @@
 - **建议**: 要分"我 vs 别人"需要读侧返回 `sender_user_id` 或在 members 里把 `me` 的 member_id 标出来再比对；附件等 crew upload 通道就绪后把 ComposerView 的 picker 接活。
 - **状态**: 部分修复 —— ① live push + ② inline 权限卡已于 T4.5 落地；③ 附件、④ 自我高亮仍未修（待读侧补字段 / crew upload 通道）
 
-### 🟡 Mac 原生 Crew 群聊 / 建 crew / 详情 — 未真机验 + 三处刻意缺口
-- **发现**: 2026-06-05 · feat/mac-login-align（#212 Crew 群聊 + 建 crew Mac 原生重画）
-- **位置**: `apps/pendingbot/Sources/Mac/Views/{MacCrewChatView,MacCreateCrewSheet,MacRemoteSessionsView}.swift`；解 gate：`apps/pendingbot/Sources/Features/Crew/{CrewAPI,CrewChatModels}.swift` 去 iOS 门禁（数据层跨平台）、`apps/pendingbot/Sources/Features/Message/PermissionRequestCard.swift` 把 payload/enum 类型移出 `#if os(iOS)`（兑现该文件早写下的"types live outside gate"注释）
-- **问题**: Mac 端原生补了 crew 群聊（右栏分段「群聊 / 服务端 session」；`MacCrewChatStore` 复用跨平台 `getCrewAnnouncements`/`getCrewMembers`/`postCrewMessage` + `RealtimeManager.startConvChannel` 实时，hand-port iOS `CrewChatAdapter` 的发送者侧映射到 Mac-native row）+ 建 crew sheet（`MacCreateCrewSheet`，同 `CreateCrewRequestV2` wire，NSOpenPanel 选工作目录）+ 机组详情只读 sheet（基本信息/机长/父子/责任比例）。双端编译过，但**只做编译校验，未进真机/真账号验**：群聊消息收发、realtime 帧回填、建 crew 的 `POST /v1/crews` 都是写/登录态回合，headless build 回落 ad-hoc 签名跑不了，需 Xcode GUI 构建 + 真账号点验。三处刻意缺口（对齐 iOS 取舍但更弱）：(1) **inline 权限卡片未渲染**——iOS 有 `PermissionRequestCardView`（UIKit-coupled，iOS-only），Mac 把 `message_kind=='permission_request'` 行当普通 bot 气泡只显示其 summary，**无批准/拒绝入口**（人答 permission 要回 iOS 或后续补 Mac 卡 + `decidePermissionRequest`）；(2) **@mention 是简单版**——输入尾 `@` 弹候选 chip，无按名字过滤/无富文本 token 内联（iOS 也只到 chip 级，但 Mac 连过滤都没做）；(3) **建 crew 无多 subject 选择 / 无复用已有 bot 作 captain**（同 iOS：默认 caller 个人 subject + system_generated captain）。另外详情 sheet 是**纯只读**——permission mode / share 调整等写设置没做。
-- **影响**: 中。群聊/建 crew "骨架可用"且复用经验证的跨平台后端通道，但 (a) 整条写+登录路径未真机验，(b) Mac 上 crew 里的 agent 权限请求无法在本端批准（要切设备），(c) 详情只读。
-- **建议**: 真机验三条写路径（发群消息 / 建 crew / realtime 回填）；要 Mac 批权限需把 `PermissionRequestPayload` 渲染成 AppKit 友好卡片（payload 类型本轮已跨平台，渲染另起）+ 接 `decidePermissionRequest`；详情写设置接 `setCrewPermissionMode` / share-changes。
-- **状态**: 待办（骨架落地，待真机验 + 三处缺口补齐）
-
 ## 🟢 不规范
 
 ### 🟢 iOS FriendsTabView 群邀请兜底文案仍是旧分摊口径

@@ -1,3 +1,4 @@
+#if os(iOS)
 import Foundation
 
 // T4.6 P1 — adapter that turns the snake_case crew whiteboard feed
@@ -113,7 +114,6 @@ struct CrewSessionIndex {
 
 // MARK: - Adapter
 
-#if os(iOS)
 /// Adapts crew announcement rows + the member/session indexes into the
 /// `(ChatMessage, GroupBubbleSender?)` pairs the message list renders.
 ///

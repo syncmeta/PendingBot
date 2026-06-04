@@ -145,9 +145,9 @@ struct MacRootView: View {
             MacEnvelopeColumn(selectedEnvelopeId: $selectedItemId)
                 .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
         case .crew:
-            // Crew tab 中列接入真实机组列表(+ 工具栏「+」新建机组);选中一个 crew
-            // 后右栏分段「群聊 / 服务端 session」:群聊(MacCrewChatView)+ 跨端
-            // session viewer(MacRemoteSessionsView)+ 机组详情只读 sheet。#212。
+            // T4.5 — Crew tab 中列接入真实机组列表;选中一个 crew 后右栏看它的
+            // 服务端 session(跨端 viewer)。其余 crew 业务(创建 / 群聊 / 详情)
+            // 仍是 iOS-only,Mac 端后续渐进接入。
             MacCrewListColumn(selectedCrewId: $selectedItemId)
                 .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
         default:
