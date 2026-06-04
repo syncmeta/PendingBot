@@ -67,9 +67,92 @@ type ChatMessageRow = {
   sender_bot_id: string | null;
   log_kind: string | null;
   log_payload: Record<string, unknown> | null;
+  // `messages.attachments` jsonb. Worker writes `{ ids: [uuid, ...] }` on
+  // insert (see routes/messages.ts) — NOT the full object array. We hydrate
+  // those ids → renderable objects via `hydrateCrewAttachments` below.
+  attachments: Json | null;
   created_at: string;
 };
-export function mapMessageToEntry(m: ChatMessageRow): Record<string, unknown> {
+
+// One attachment as PendingCrew renders it (mirror of iOS `Attachment`):
+// id + mime + the auth-gated `/v1/uploads/<id>` URL + display metadata.
+// `kind` is "image" | "file"; the client also derives image-ness from `mime`.
+type CrewWireAttachment = {
+  id: string;
+  kind: string;
+  mime: string;
+  size: number | null;
+  width: number | null;
+  height: number | null;
+  url: string;
+  filename: string | null;
+};
+
+// Pull `{ ids: [...] }` out of a messages.attachments jsonb cell. Tolerates
+// the legacy/empty shapes (null, missing `ids`, non-array) → empty list.
+function attachmentIdsOf(raw: Json | null): string[] {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [];
+  const ids = (raw as { ids?: unknown }).ids;
+  if (!Array.isArray(ids)) return [];
+  return ids.filter((x): x is string => typeof x === 'string');
+}
+
+// Batch-resolve every referenced attachment id across a set of messages into
+// full renderable objects, keyed by message id. PendingCrew talks only to the
+// edge (no direct Supabase), so the wire must carry mime/size/url/filename —
+// we mirror exactly what PendingBot's iOS `MessagesFetch.attachmentMeta` builds
+// (`url: /v1/uploads/<id>`), here server-side for the crew whiteboard.
+async function hydrateCrewAttachments(
+  svc: SupabaseClient,
+  rows: ChatMessageRow[],
+): Promise<Map<string, CrewWireAttachment[]>> {
+  const out = new Map<string, CrewWireAttachment[]>();
+  const perMessage = new Map<string, string[]>();
+  const allIds = new Set<string>();
+  for (const r of rows) {
+    const ids = attachmentIdsOf(r.attachments);
+    if (ids.length === 0) continue;
+    perMessage.set(r.id, ids);
+    for (const id of ids) allIds.add(id);
+  }
+  if (allIds.size === 0) return out;
+
+  const { data: attRows, error } = await svc
+    .from('attachments')
+    .select('id, mime_type, filename, byte_size, width, height')
+    .in('id', Array.from(allIds));
+  // Fail soft: a hydration error degrades to "no attachments" rather than
+  // failing the whole whiteboard read. The chat text still renders.
+  if (error || !attRows) return out;
+
+  const metaById = new Map<string, CrewWireAttachment>();
+  for (const a of attRows) {
+    const mime = a.mime_type as string;
+    metaById.set(a.id as string, {
+      id: a.id as string,
+      kind: mime.toLowerCase().startsWith('image/') ? 'image' : 'file',
+      mime,
+      size: (a.byte_size as number | null) ?? null,
+      width: (a.width as number | null) ?? null,
+      height: (a.height as number | null) ?? null,
+      url: `/v1/uploads/${a.id}`,
+      filename: (a.filename as string | null) ?? null,
+    });
+  }
+
+  for (const [msgId, ids] of perMessage) {
+    const resolved = ids
+      .map((id) => metaById.get(id))
+      .filter((x): x is CrewWireAttachment => x != null);
+    if (resolved.length > 0) out.set(msgId, resolved);
+  }
+  return out;
+}
+
+export function mapMessageToEntry(
+  m: ChatMessageRow,
+  resolvedAttachments?: CrewWireAttachment[],
+): Record<string, unknown> {
   const lp = (m.log_payload ?? {}) as Record<string, unknown>;
   const senderKind =
     m.role === 'user' || m.role === 'human' ? 'user'
@@ -89,11 +172,14 @@ export function mapMessageToEntry(m: ChatMessageRow): Record<string, unknown> {
     message_kind: m.log_kind ?? 'text',
     summary: m.content ?? (typeof lp.question === 'string' ? lp.question : null),
     payload,
+    // Renderable attachment objects (hydrated from messages.attachments
+    // `{ ids: [...] }`). null when the message has none.
+    attachments: resolvedAttachments && resolvedAttachments.length > 0 ? resolvedAttachments : null,
     created_at: m.created_at,
   };
 }
 const CHAT_ROLES = ['user', 'human', 'bot', 'assistant', 'log'];
-const CHAT_SELECT = 'id, conversation_id, role, content, user_id, sender_bot_id, log_kind, log_payload, created_at';
+const CHAT_SELECT = 'id, conversation_id, role, content, user_id, sender_bot_id, log_kind, log_payload, attachments, created_at';
 
 // schema.ts hasn't been regenerated against this branch's migration yet
 // (the main session applies the DB push + regen). Cast the RPC surface
@@ -345,7 +431,9 @@ crewMessagesRoutes.get('/:crewId/messages', requireSubjectAuth(['crew:read']), a
   if (sinceParam) q = q.gte('created_at', sinceParam);
   const { data: rows, error: msgErr } = await q.order('created_at', { ascending: true }).limit(500);
   if (msgErr) return jsonError(c, 500, 'database_error', { detail: msgErr.message });
-  const whiteboard = (rows ?? []).map((r) => mapMessageToEntry(r as unknown as ChatMessageRow));
+  const chatRows = (rows ?? []) as unknown as ChatMessageRow[];
+  const attByMsg = await hydrateCrewAttachments(svc, chatRows);
+  const whiteboard = chatRows.map((r) => mapMessageToEntry(r, attByMsg.get(r.id)));
 
   return c.json({ crewId, whiteboard });
 });
@@ -487,7 +575,9 @@ sessionInboxRoutes.get('/:sessionId/inbox', requireSubjectAuth(['crew:read']), a
     .order('created_at', { ascending: true })
     .limit(500);
   if (wbErr) return jsonError(c, 500, 'database_error', { detail: wbErr.message });
-  const whiteboard = (wbRows ?? []).map((r) => mapMessageToEntry(r as unknown as ChatMessageRow));
+  const wbChatRows = (wbRows ?? []) as unknown as ChatMessageRow[];
+  const wbAttByMsg = await hydrateCrewAttachments(svc, wbChatRows);
+  const whiteboard = wbChatRows.map((r) => mapMessageToEntry(r, wbAttByMsg.get(r.id)));
 
   // Mailbox tail for this session — anything not yet processed.
   // We include unread / pending / delivered / read (legacy=unread, new

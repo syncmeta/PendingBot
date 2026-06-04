@@ -195,6 +195,19 @@ describe('mapMessageToEntry sender identity', () => {
     expect(e.sender_kind).toBe('session');
     expect(e.sender_session_id).toBe('s1');
   });
+
+  it('passes resolved attachments through; null when none', () => {
+    const withAtt = mapMessageToEntry(
+      { ...base, role: 'user', content: 'see this', user_id: 'u1', sender_bot_id: null } as any,
+      [{ id: 'att-1', kind: 'image', mime: 'image/png', size: 123, width: 10, height: 20, url: '/v1/uploads/att-1', filename: null }],
+    );
+    expect(withAtt.attachments).toEqual([
+      { id: 'att-1', kind: 'image', mime: 'image/png', size: 123, width: 10, height: 20, url: '/v1/uploads/att-1', filename: null },
+    ]);
+
+    const noAtt = mapMessageToEntry({ ...base, role: 'user', content: 'plain', user_id: 'u1', sender_bot_id: null } as any);
+    expect(noAtt.attachments).toBeNull();
+  });
 });
 
 describe('GET /v1/sessions/:sessionId/inbox', () => {
