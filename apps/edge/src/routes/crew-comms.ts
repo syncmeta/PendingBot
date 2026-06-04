@@ -599,7 +599,7 @@ sessionInboxRoutes.post('/:sessionId/post-to-crew', requireSubjectAuth(['crew:wr
   const svc = serviceClient(c.env);
   const { data: sessionRow, error: sessionErr } = await svc
     .from('crew_sessions')
-    .select('id, responsible_subject_id, runner_host_id, status')
+    .select('id, responsible_subject_id, runner_host_id, status, crew_conversation_id')
     .eq('id', sessionId)
     .maybeSingle();
   if (sessionErr) return jsonError(c, 500, 'database_error', { detail: sessionErr.message });
@@ -638,6 +638,36 @@ sessionInboxRoutes.post('/:sessionId/post-to-crew', requireSubjectAuth(['crew:wr
     if (/invalid|required/i.test(message)) return jsonError(c, 400, 'invalid_body', { message });
     return jsonError(c, 500, 'database_error', { detail: message });
   }
+
+  // Also mirror into the crew group chat (spec §9: the chat IS the crew
+  // conversation's `messages`). The announcement above is the board source of
+  // truth; this row is what renders the post in the group stream as a session
+  // card (role='log' → mapMessageToEntry senderKind='session', attributed via
+  // log_payload.session_id). Best-effort: a failure must NOT fail the request
+  // — the announcement already succeeded.
+  try {
+    const { error: msgErr } = await svc.from('messages').insert({
+      id: crypto.randomUUID(),
+      client_message_id: crypto.randomUUID(),
+      conversation_id: sessionRow.crew_conversation_id,
+      role: 'log',
+      log_kind: 'session_post',
+      log_payload: {
+        kind: 'session_post',
+        session_id: sessionId,
+        text: parsed.content,
+        category: parsed.category ?? null,
+      },
+      content: parsed.content,
+      status: 'done',
+    } as never);
+    if (msgErr) {
+      console.warn('[session post-to-crew] messages mirror insert failed', msgErr.message);
+    }
+  } catch (e) {
+    console.warn('[session post-to-crew] messages mirror insert threw', e);
+  }
+
   return c.json({ announcementId: data, category: parsed.category ?? null });
 });
 

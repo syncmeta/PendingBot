@@ -98,6 +98,28 @@ export async function postToCrewTool(
     return JSON.stringify({ error: 'create_crew_announcement failed', detail: message });
   }
 
+  // Also mirror the post into the crew group chat (spec §9: the chat IS the
+  // conversation's `messages`). The announcement above is the board source of
+  // truth; this extra row is what makes the post visible in the group stream
+  // as a bot card (role='bot', sender_bot_id). Best-effort: a failure here
+  // must NOT fail the tool call — the announcement already succeeded.
+  try {
+    const { error: msgErr } = await supa.from('messages').insert({
+      id: crypto.randomUUID(),
+      client_message_id: crypto.randomUUID(),
+      conversation_id: ctx.conversationId,
+      sender_bot_id: ctx.botId,
+      role: 'bot',
+      content,
+      status: 'done',
+    } as never);
+    if (msgErr) {
+      console.warn('[post_to_crew] messages mirror insert failed', msgErr.message);
+    }
+  } catch (e) {
+    console.warn('[post_to_crew] messages mirror insert threw', e);
+  }
+
   ctx.emit('tool_result', { name: 'post_to_crew', announcement_id: data, category });
   return JSON.stringify({
     ok: true,
