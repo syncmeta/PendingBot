@@ -1,6 +1,15 @@
 # PendingBot / PendingCrew 进度账本 (Progress Ledger)
 
-**最近对账：2026-06-03**（对照实际代码 / 迁移 / git，不是看 task 标记）
+**最近对账：2026-06-04**（对照实际代码 / 迁移 / git，不是看 task 标记）
+
+> **2026-06-04 计费/观测上线收口 + 全项目死代码清理（计费 lane，已部署）**
+> - **送/兑换全改走 Polar**：新用户 welcome **35 PNC**（= 旧 3500 PND 原值）via `lib/billing-grant.ts:grantSignupBonus`（挂 `/me/profile`，幂等 + 仅 BILLING_ENABLED 时种）；兑换码 `billing_redeem` RPC 退化为只校验+标记 used，入账走 `creditRedemptionToPolar`（ensureCustomer+grantCredits）；`/redeem` 受 BILLING_ENABLED 门控（关时拒绝、不消耗码）。
+> - **退役老路径**：A 段 billing-v2/v1 孤儿已 **drop 到生产**（7 表 + 8 RPC + signup 触发器，迁移 `20260603112148`）；删 `apps/board`（旧自制后台，改用 dashboard 栈）；删一批死代码（balance-cache / getThreshold / gateUsage / decayShareIndex / SessionUser / 废错误码 / dev:web 等）。B 段（`subject_wallets` / `group_member_billing` + invite 流）留 #226。
+> - **kill-switch（默认全 OFF）**：`BILLING_ENABLED` + 观测 **per-service** `SENTRY_ENABLED` / `POSTHOG_ENABLED` / `LANGFUSE_ENABLED`（`lib/feature-flags.ts`）。纯 env var、零运行时依赖；**启用步骤见 `deploy.md`**。
+> - **已部署**：worker 上线（kill-switch 全关 = 不挡人/不烧配额，零行为变化）；A 段 drop 已 db push + schema regen。**送/兑换在生产休眠**（计费开关关）。
+> - **死代码全扫**：workflow fan-out 全仓扫 60 处 → 安全区（edge/supabase/packages）清 17 项；Swift 区（iOS/macOS/crew）22 项**只登记交接**（见 tech-debt，owner session 用 xcodebuild 核验后清）。
+> - **未验**：`ensureCustomer` 的 409（已存在客户）分支待 sandbox spike 实测（P0 spike 已验证全新客户 create+grant+balance）；启用计费前用 token 跑一次。
+> - **大扫除**：worktree 30→2、分支 60+→2（只剩 main + 计费分支），死分支全删。
 
 > 2026-06-03 整合分支 `chore/billing-dashboard-specs` = main(#212 Mac) + 计费(P2/认缴/退役/尾巴) + dashboard(观测/Refine/Grafana) + iOS 群钱包。
 > - iOS 钱包/计费 UI 接群钱包（实缴池+认缴）：edge `GET /v1/group-subjects/:id/wallet` 读端点（群池+我的份额/占比/认缴+成员明细）；iOS `GroupWalletService` + `GroupWalletView`（充值/认缴/取出/退群/解散，骨架待视觉定稿）；修个人钱包 `WalletV2` 解码崩溃。**连根拔旧 per-conversation 分摊**做了安全部分（删死 `lib/group-billing.ts`+3 配置路由 + 退役 `GroupBillingSheet`），剩 invite 流解耦 + 表/RPC 物理 drop 留 #226。

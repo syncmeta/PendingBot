@@ -46,6 +46,24 @@ We hit this once already (added `WORLDROUTER_API_KEY` without
 to WR alias, env lookup missed, NoRouteError, fallback to OR — fix
 was re-putting with the flag).
 
+### Kill-switches (计费 + 观测) — 默认全 OFF
+
+四个 deploy-time **var**(`wrangler.jsonc` → `env.production.vars`,**不是 secret**),
+见 `apps/edge/src/lib/feature-flags.ts`。只有精确字符串 `"true"` 才启用;改完**重部署**
+才生效(env var 是部署期定值)。容器没改时可加 `--containers-rollout=none` 跳过 Docker。
+
+| var | 管什么 | 关时(默认) | 备注 |
+|---|---|---|---|
+| `BILLING_ENABLED` | 计费 gate + 扣费 + 送/兑换入 Polar | 不挡人、不扣、`/redeem` 返 503、signup 不发额度 | 开前先种好 Polar 余额逻辑已就绪 |
+| `SENTRY_ENABLED` | Sentry 错误上报 | 不初始化 SDK | 错误突发会烧 event 配额 |
+| `POSTHOG_ENABLED` | PostHog 产品事件 | capture no-op | 随用户行为,量中等 |
+| `LANGFUSE_ENABLED` | Langfuse LLM trace | trace no-op | **每次 LLM 调用 1 条,烧最快**,最后开 |
+
+- **双重门**:观测三家除开关 `"true"` 外,还各需 `SENTRY_DSN`/`POSTHOG_KEY`/`LANGFUSE_*` secret 才真正发数据。
+- **为何用 env var 不用 DB 开关**:观测开关必须零运行时依赖——DB 挂了正是最需要 Sentry 的时候。
+- **启用某个**:改 `wrangler.jsonc` 对应行为 `"true"` → `bun --filter='@pendingbot/edge' run deploy`(或 Docker 没起时 `cd apps/edge && bunx wrangler deploy --env production --containers-rollout=none`)。
+- **启用计费前**:用 sandbox token 跑 `cd apps/edge && POLAR_ACCESS_TOKEN=<t> POLAR_SERVER=sandbox bun run polar:spike` 确认 ensureCustomer 的 409 分支(见 tech-debt)。
+
 ---
 
 ## iOS / iPad / macOS apps (`apps/pendingbot/`)
@@ -188,7 +206,12 @@ cp /path/to/main/supabase/.temp/{project-ref,linked-project.json,pooler-url,*-ve
 
 ---
 
-## LLM seed (`apps/board/scripts/seed-llm-dev.sql`)
+## LLM seed (model + alias catalog)
+
+> ⚠️ 2026-06-04:原脚本 `apps/board/scripts/seed-llm-dev.sql` 随 `apps/board`
+> 一并删除(board 废除)。生产库已 seed 过该目录,数据在线;如需重建 dev,
+> 从生产导出当前 `llm_providers`/模型目录,或在新位置(如 `apps/edge/scripts/`)
+> 重建一份。下面的旧步骤仅作历史参考。
 
 Not a migration — applies the canonical model + alias catalog
 separately because pricing changes more often than schema and
