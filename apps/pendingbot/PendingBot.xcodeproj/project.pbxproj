@@ -96,6 +96,7 @@
 		8DCDDFC943420CE93381525F /* CallView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 213E09F2D1646151DC7BE1C6 /* CallView.swift */; };
 		8E9E5D16A0E2681726E411DB /* MessagesFetch.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDF32066E5F831C3B474EBB7 /* MessagesFetch.swift */; };
 		8FAC3CB10EEC9AD7CE5EEE34 /* CrewAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CF743A2BD19523CAF11ECC6 /* CrewAPI.swift */; };
+		914D5EAC7D1675C8770C5658 /* DataProtectionKeychainStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BE4B8362D82ACBB36C1084D /* DataProtectionKeychainStorage.swift */; };
 		93195F559ABAEBD132E64F17 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 11A77E911EA1D815E90E7BFD /* GRDB */; };
 		939B2ECABC9E20A928E7ABCD /* MacFriendsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6C7BA77C498838A64F51382 /* MacFriendsView.swift */; };
 		95771EBFA9FE35E196DBAB95 /* MacWelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 954AA26D0420171081DFA5EA /* MacWelcomeView.swift */; };
@@ -270,6 +271,7 @@
 		95EAE20F68A86A8C803A0B1E /* ModelPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelPicker.swift; sourceTree = "<group>"; };
 		98EE77602B594DA83ABDCBB6 /* PendingBotSharedModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingBotSharedModels.swift; sourceTree = "<group>"; };
 		9A19A4D76A2D17FD422DA74D /* SubjectPickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubjectPickerSheet.swift; sourceTree = "<group>"; };
+		9BE4B8362D82ACBB36C1084D /* DataProtectionKeychainStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataProtectionKeychainStorage.swift; sourceTree = "<group>"; };
 		9FF3BF57EA0692041B43E25A /* BubbleSplitter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BubbleSplitter.swift; sourceTree = "<group>"; };
 		A0DF072DCFB0786FA83D70F3 /* ChatStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatStream.swift; sourceTree = "<group>"; };
 		A5131104F9620195C8AF448E /* TypingDots.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypingDots.swift; sourceTree = "<group>"; };
@@ -381,6 +383,7 @@
 				F1CFD768DF0BEA583893EE69 /* ConversationFetch.swift */,
 				03D2467ADBD40F4F8755863A /* CrewSessionAPI.swift */,
 				22B3BF0A069E8CE296ED306E /* CrewSessionPresentation.swift */,
+				9BE4B8362D82ACBB36C1084D /* DataProtectionKeychainStorage.swift */,
 				023C318B8EB2B3A4CC9F8594 /* EmailSignIn.swift */,
 				C385DAFA1E0BFEEC5520467A /* EnvelopeDataSource.swift */,
 				1E4D5D35B59A08A4E8E6B167 /* EnvelopeFetch.swift */,
@@ -820,6 +823,7 @@
 				9A4A8A9216FA410B81046949 /* CrewSessionPresentation.swift in Sources */,
 				22DC73D9B52F654B9610BCB3 /* CrewSessionStatusCard.swift in Sources */,
 				0E0FCE983AB9E6DB3447D869 /* CrewTabV2View.swift in Sources */,
+				914D5EAC7D1675C8770C5658 /* DataProtectionKeychainStorage.swift in Sources */,
 				D86D67B77E20704ED320D0F9 /* EmailSignIn.swift in Sources */,
 				E169F0C9CD13280A7A6C92D9 /* EmptyHint.swift in Sources */,
 				CFA38CDEF1AC9937D7C2B65A /* EnvelopeAPI.swift in Sources */,

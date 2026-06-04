@@ -25,6 +25,12 @@ enum SupabaseStack {
                 // on every launch. AccountStore explicitly checks
                 // session.expires_at before flipping `current`.
                 auth: SupabaseClientOptions.AuthOptions(
+                    // Force the data-protection keychain on every platform.
+                    // Native macOS otherwise defaults to the legacy file
+                    // login keychain, whose ACL is bound to the signing
+                    // binary, so every rebuild re-prompts for the keychain
+                    // password. See DataProtectionKeychainStorage.
+                    storage: DataProtectionKeychainStorage(),
                     emitLocalSessionAsInitialSession: true
                 )
             )
