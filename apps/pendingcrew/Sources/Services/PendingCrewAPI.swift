@@ -505,6 +505,8 @@ struct CrewWhiteboardEntry: Decodable, Identifiable, Equatable {
     let id: String
     let senderKind: String          // 'session' | 'user' | 'bot' | ...
     let senderSessionId: String?
+    let senderUserId: String?       // 新增：user 作者
+    let senderBotId: String?        // 新增：bot 作者
     let messageKind: String         // 'instruction' | 'announcement' | 'permission_request' | ...
     let summary: String?
     let createdAt: String
@@ -527,6 +529,8 @@ struct CrewWhiteboardEntry: Decodable, Identifiable, Equatable {
         case id
         case senderKind = "sender_kind"
         case senderSessionId = "sender_session_id"
+        case senderUserId = "sender_user_id"
+        case senderBotId = "sender_bot_id"
         case messageKind = "message_kind"
         case summary
         case createdAt = "created_at"
