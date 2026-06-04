@@ -1,6 +1,14 @@
 # PendingBot / PendingCrew 进度账本 (Progress Ledger)
 
-**最近对账：2026-06-04**（对照实际代码 / 迁移 / git，不是看 task 标记）
+**最近对账：2026-06-05**（对照实际代码 / 迁移 / git，不是看 task 标记）
+
+> **2026-06-05 dynamic loop 续做（`feat/crew-captain-orchestration`，未合；macOS build 绿 / edge typecheck 0 / vitest 绿）**
+> - ✅ **① crew 群聊附件整套已落**（推翻早先"crew composer 无附件"的决定，用户 2026-06-04 拍板"附件做整套"）。**渲染半**(commits `6ba69b37`/`bcb7bf16`)：edge 白板 entry hydrate `messages.attachments.ids` → 可渲染对象、`CrewWhiteboardEntry` 解码、`CrewAttachmentView`(图片网格 + 文件 chip)、`CrewImageLoader` auth 图片。**发送半**(commits `c6c7b1e9`/`4f522f1b`)：upload 端点 `requireSession()`→`requireSubjectAuth(['crew:write'])` + `effectiveOwnerUserId`(device grant 走 granted_by_user_id；session 路径字节不变)、`POST /v1/crews/:id/messages` 接受 `attachmentIds` 写 `attachments:{ids:[]}`、`CrewComposer` + 按钮(`.fileImporter`) + pending tray + 上传。顺手修了 `postCrewMessage` 返回 `{messageId}` 非 `announcementId` 的潜伏 bug。
+> - ✅ **② T4.5 跨端实时 session 状态 —— 核查确认本就已端到端落地，本 loop 仅复验 build 绿**。runner 发布(`CrewSessionRunner` 起 `SessionProxyClient`,边跑边 publish `session.state`)+ viewer 实时 banner(`RemoteSessionsView`)+ 遥控命令(cancel/send_prompt/set_steering 全 apply)+ ask_human 交互卡，都在（tech-debt §514-518 已详记）。**"WS 实时推 session 状态替轮询"这条 = DONE**；3s 轮询保留为持久转写兜底（故意，runner 离线时仍渲染）。
+> - 🧭 **终端字节隧道（SSH-like raw PTY 跨端）记下、本 loop 不做**：依赖 SwiftTerm raw-terminal runner，那在**另一分支** `feat/pendingcrew-runner-backends`（本分支的 runner 是 JSONL 事件级，非字节级）。要等那条合进来 + 真机才能动工。
+> - 🧭 **PendingCrew Mac 群聊仍 3s 轮询（非 session 状态，是聊天消息）—— 升级到 realtime 需先扩 RealtimeHub auth 到 device-grant**：`realtime-hub.ts` 现 `requireSession()` JWT-only + `userClient`/RLS，PendingCrew 拿的是 `pdg_` device grant（无 JWT），**结构上够不到 conv topic**。给 Mac 群聊实时 = 给 RealtimeHub conv 路由加 device-grant 鉴权(按 grant subject + crew 成员判定) + 写 Swift hub client，是新鉴权面 + 中等块，**需用户决策**，不在本 loop 两项内。
+> - **待**：上述两条 🧭；T5.3 两设备 E2E QA(活 session + 任一 viewer 实时看&cancel/steer)；本分支与 `feat/pendingcrew-runner-backends` 两条 crew 线择机合 main。
+
 
 > **2026-06-04 captain 编排续做 + 对账（`feat/crew-captain-orchestration`，off main，未合）**
 > - **对账**：核 main 代码发现 **#241(Phase J: captain 被群消息唤醒,dispatchGroupTurn 接进 POST /messages) 和 #242(Phase K: start_session tool + open_crew_session_by_captain RPC + Mac autoClaimLoop) 其实已落地**（编译/部署，真机未验），task 系统 #241/#242 标 pending 是 **stale**。判断口径：代码在、真机验归 T5.3。
