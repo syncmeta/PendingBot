@@ -25,7 +25,7 @@ vi.mock('@pendingbot/identity', () => ({
 // #226 retired the subject_wallets snapshot; /me/subject now sources the
 // balance from WalletDO via wallet.gate (same source as /wallet/v2). Mock only
 // wallet.gate, keep the rest of the module real.
-const gateMock = vi.fn(async () => ({ balanceMicros: 0, thresholdState: 'sufficient' as const }));
+const gateMock = vi.fn(async (_env: unknown, _id: string) => ({ balanceMicros: 0, thresholdState: 'sufficient' as const }));
 vi.mock('../src/billing/wallet-client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/billing/wallet-client')>();
   return {
