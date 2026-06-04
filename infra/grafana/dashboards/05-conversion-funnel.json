@@ -97,7 +97,7 @@
     },
     {
       "datasource": { "type": "postgres", "uid": "${DS_SUPABASE}" },
-      "description": "Distinct users with a real-money topup in the window: pnc_ledger kind='topup' AND source IN ('polar_checkout','iap_ios'), mapped to the owning user via subjects.user_id.",
+      "description": "Distinct users with a real-money topup in the window: pnc_ledger kind='topup' AND source IN ('polar_checkout','iap_ios'), mapped to the owning user via the security-definer view bi_subjects.user_id (subjects carries authenticated-only RLS so the BI role can't JOIN it directly; migration 20260604131513_bi_views_complete).",
       "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }, "unit": "short" }, "overrides": [] },
       "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
       "id": 4,
@@ -111,7 +111,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COUNT(DISTINCT s.user_id) AS paying_users\nFROM pendingbot.pnc_ledger l\nJOIN pendingbot.subjects s ON s.id = l.subject_id\nWHERE l.kind = 'topup'\n  AND l.source IN ('polar_checkout', 'iap_ios')\n  AND s.user_id IS NOT NULL\n  AND $__timeFilter(l.created_at);",
+          "rawSql": "SELECT COUNT(DISTINCT s.user_id) AS paying_users\nFROM pendingbot.pnc_ledger l\nJOIN pendingbot.bi_subjects s ON s.id = l.subject_id\nWHERE l.kind = 'topup'\n  AND l.source IN ('polar_checkout', 'iap_ios')\n  AND s.user_id IS NOT NULL\n  AND $__timeFilter(l.created_at);",
           "refId": "A"
         }
       ]
@@ -132,7 +132,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "WITH stages AS (\n  SELECT 1 AS ord, 'registrations' AS stage,\n    (SELECT COUNT(*) FROM pendingbot.users WHERE $__timeFilter(created_at)) AS users\n  UNION ALL\n  SELECT 2, 'created_bot',\n    (SELECT COUNT(DISTINCT creator_id) FROM pendingbot.bi_bot_creations WHERE $__timeFilter(created_at))\n  UNION ALL\n  SELECT 3, 'joined_group',\n    (SELECT COUNT(DISTINCT requester_id) FROM pendingbot.bi_group_joins_approved WHERE $__timeFilter(COALESCE(decided_at, created_at)))\n  UNION ALL\n  SELECT 4, 'paid',\n    (SELECT COUNT(DISTINCT s.user_id) FROM pendingbot.pnc_ledger l JOIN pendingbot.subjects s ON s.id = l.subject_id WHERE l.kind = 'topup' AND l.source IN ('polar_checkout','iap_ios') AND s.user_id IS NOT NULL AND $__timeFilter(l.created_at))\n)\nSELECT\n  stage,\n  users,\n  ROUND(100.0 * users / NULLIF(FIRST_VALUE(users) OVER (ORDER BY ord), 0), 2) AS pct_of_registrations,\n  ROUND(100.0 * users / NULLIF(LAG(users) OVER (ORDER BY ord), 0), 2) AS pct_of_prev_stage\nFROM stages\nORDER BY ord;",
+          "rawSql": "WITH stages AS (\n  SELECT 1 AS ord, 'registrations' AS stage,\n    (SELECT COUNT(*) FROM pendingbot.users WHERE $__timeFilter(created_at)) AS users\n  UNION ALL\n  SELECT 2, 'created_bot',\n    (SELECT COUNT(DISTINCT creator_id) FROM pendingbot.bi_bot_creations WHERE $__timeFilter(created_at))\n  UNION ALL\n  SELECT 3, 'joined_group',\n    (SELECT COUNT(DISTINCT requester_id) FROM pendingbot.bi_group_joins_approved WHERE $__timeFilter(COALESCE(decided_at, created_at)))\n  UNION ALL\n  SELECT 4, 'paid',\n    (SELECT COUNT(DISTINCT s.user_id) FROM pendingbot.pnc_ledger l JOIN pendingbot.bi_subjects s ON s.id = l.subject_id WHERE l.kind = 'topup' AND l.source IN ('polar_checkout','iap_ios') AND s.user_id IS NOT NULL AND $__timeFilter(l.created_at))\n)\nSELECT\n  stage,\n  users,\n  ROUND(100.0 * users / NULLIF(FIRST_VALUE(users) OVER (ORDER BY ord), 0), 2) AS pct_of_registrations,\n  ROUND(100.0 * users / NULLIF(LAG(users) OVER (ORDER BY ord), 0), 2) AS pct_of_prev_stage\nFROM stages\nORDER BY ord;",
           "refId": "A"
         }
       ]

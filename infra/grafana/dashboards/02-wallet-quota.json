@@ -26,7 +26,7 @@
       }
     ]
   },
-  "description": "Cumulative credits issued vs refunded per subject, derived from pendingbot.pnc_ledger (the integer shadow ledger). NOTE: real-time wallet balances live in Polar / WalletDO, NOT in Postgres — Postgres only has the issue/refund shadow rows. The 'net' figures here = cumulative credits in (topup/admin/redemption) minus refunds; they are NOT live balances (consumption is debited in Polar/WalletDO and audit_log, not pnc_ledger). PNC = delta_pnc_micros / 1e6.",
+  "description": "Cumulative credits issued vs refunded per subject, derived from pendingbot.pnc_ledger (the integer shadow ledger). NOTE: real-time wallet balances live in Polar / WalletDO, NOT in Postgres — Postgres only has the issue/refund shadow rows. The 'net' figures here = cumulative credits in (topup/admin/redemption) minus refunds; they are NOT live balances (consumption is debited in Polar/WalletDO and audit_log, not pnc_ledger). PNC = delta_pnc_micros / 1e6. NOTE: pnc_ledger is RLS-off and read directly, but subject labels (display_name/subject_type/kind) come from the security-definer view bi_subjects (migration 20260604131513_bi_views_complete) — subjects itself carries authenticated-only RLS so the BI role can't JOIN it directly.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
@@ -139,7 +139,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT\n  s.id AS subject_id,\n  s.display_name,\n  s.subject_type,\n  s.kind,\n  COALESCE(SUM(l.delta_pnc_micros) FILTER (WHERE l.kind = 'topup'), 0) / 1e6 AS topup_pnc,\n  COALESCE(SUM(ABS(l.delta_pnc_micros)) FILTER (WHERE l.kind = 'refund'), 0) / 1e6 AS refund_pnc,\n  COALESCE(SUM(l.delta_pnc_micros), 0) / 1e6 AS net_pnc,\n  MAX(l.created_at) AS last_activity\nFROM pendingbot.pnc_ledger l\nJOIN pendingbot.subjects s ON s.id = l.subject_id\nGROUP BY s.id, s.display_name, s.subject_type, s.kind\nORDER BY net_pnc DESC\nLIMIT 200;",
+          "rawSql": "SELECT\n  s.id AS subject_id,\n  s.display_name,\n  s.subject_type,\n  s.kind,\n  COALESCE(SUM(l.delta_pnc_micros) FILTER (WHERE l.kind = 'topup'), 0) / 1e6 AS topup_pnc,\n  COALESCE(SUM(ABS(l.delta_pnc_micros)) FILTER (WHERE l.kind = 'refund'), 0) / 1e6 AS refund_pnc,\n  COALESCE(SUM(l.delta_pnc_micros), 0) / 1e6 AS net_pnc,\n  MAX(l.created_at) AS last_activity\nFROM pendingbot.pnc_ledger l\nJOIN pendingbot.bi_subjects s ON s.id = l.subject_id\nGROUP BY s.id, s.display_name, s.subject_type, s.kind\nORDER BY net_pnc DESC\nLIMIT 200;",
           "refId": "A"
         }
       ]
@@ -160,7 +160,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT\n  s.subject_type,\n  COUNT(DISTINCT l.subject_id) AS subject_count,\n  COALESCE(SUM(l.delta_pnc_micros) FILTER (WHERE l.kind = 'topup'), 0) / 1e6 AS total_topup_pnc,\n  COALESCE(SUM(ABS(l.delta_pnc_micros)) FILTER (WHERE l.kind = 'refund'), 0) / 1e6 AS total_refund_pnc,\n  COALESCE(SUM(l.delta_pnc_micros), 0) / 1e6 AS net_pnc\nFROM pendingbot.pnc_ledger l\nJOIN pendingbot.subjects s ON s.id = l.subject_id\nGROUP BY s.subject_type\nORDER BY net_pnc DESC;",
+          "rawSql": "SELECT\n  s.subject_type,\n  COUNT(DISTINCT l.subject_id) AS subject_count,\n  COALESCE(SUM(l.delta_pnc_micros) FILTER (WHERE l.kind = 'topup'), 0) / 1e6 AS total_topup_pnc,\n  COALESCE(SUM(ABS(l.delta_pnc_micros)) FILTER (WHERE l.kind = 'refund'), 0) / 1e6 AS total_refund_pnc,\n  COALESCE(SUM(l.delta_pnc_micros), 0) / 1e6 AS net_pnc\nFROM pendingbot.pnc_ledger l\nJOIN pendingbot.bi_subjects s ON s.id = l.subject_id\nGROUP BY s.subject_type\nORDER BY net_pnc DESC;",
           "refId": "A"
         }
       ]
