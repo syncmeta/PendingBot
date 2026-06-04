@@ -86,8 +86,6 @@ export interface BalanceInfo {
   lifetime_spent_credits: number;
 }
 
-export type SubjectBalanceInfo = BalanceInfo;
-
 /**
  * Read the user's current balance + lifetime totals. Uses whichever
  * client is passed (user-scoped JWT for RLS-checked reads from /me, or
@@ -111,30 +109,9 @@ export async function getBalance(
   };
 }
 
-/**
- * Read a responsibility subject's wallet balance + lifetime totals.
- *
- * This is the subject-account mirror of getBalance. It intentionally
- * does not infer the subject from a user: callers must pass the already
- * resolved billing subject so temporary groups, group accounts, and
- * future Crew sessions cannot silently fall back to the wrong owner.
- */
-export async function getSubjectBalance(
-  supa: SupabaseClient,
-  subjectId: string,
-): Promise<SubjectBalanceInfo | null> {
-  const { data, error } = await supa
-    .from('subject_wallets')
-    .select('balance_credits, lifetime_topup_credits, lifetime_spent_credits')
-    .eq('subject_id', subjectId)
-    .maybeSingle();
-  if (error || !data) return null;
-  return {
-    balance_credits: Number(data.balance_credits) || 0,
-    lifetime_topup_credits: Number(data.lifetime_topup_credits) || 0,
-    lifetime_spent_credits: Number(data.lifetime_spent_credits) || 0,
-  };
-}
+// getSubjectBalance(读 subject_wallets)已删(#226):subject_wallets 表退役,
+// 主体余额统一走 WalletDO(Polar 缓存,见 billing/wallet-client.ts:wallet.gate)。
+// /me/subject 已改为直接读 WalletDO。
 
 /**
  * Read an integer scalar from billing_config. Returns null when the key
