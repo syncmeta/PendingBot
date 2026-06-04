@@ -507,6 +507,26 @@ struct CrewMention: Encodable, Equatable {
     static let broadcast = CrewMention(kind: "broadcast", targetId: nil)
 }
 
+/// One image / file attachment on a whiteboard message. Mirror of PendingBot
+/// iOS `Attachment` — the server hydrates these from `messages.attachments`
+/// `{ ids: [...] }` into full objects, so the wire already carries mime / size /
+/// url / filename (PendingCrew has no direct Supabase access to resolve ids).
+/// `url` is the auth-gated `/v1/uploads/<id>` path, fetched with the
+/// device-grant bearer token.
+struct CrewAttachment: Decodable, Identifiable, Equatable, Hashable {
+    let id: String
+    let kind: String?
+    let mime: String
+    let size: Int?
+    let width: Int?
+    let height: Int?
+    let url: String
+    let filename: String?
+
+    /// True when this attachment renders as an inline image (vs a file chip).
+    var isImage: Bool { mime.lowercased().hasPrefix("image/") }
+}
+
 /// One whiteboard entry (a crew_announcements row) rendered in the middle-pane
 /// group chat. `summary` is the display line; `payload.kind == "interaction"`
 /// marks an ask_human card (T4.5) so the timeline can render it specially.
@@ -520,6 +540,12 @@ struct CrewWhiteboardEntry: Decodable, Identifiable, Equatable {
     let summary: String?
     let createdAt: String
     let payload: Payload?
+    /// Image / file attachments on this message. Optional → entries without
+    /// attachments (and older server builds) decode fine. Server hydrates
+    /// these from `messages.attachments` `{ ids: [...] }` into full objects;
+    /// `url` is the auth-gated `/v1/uploads/<id>` path `CrewRemoteImage`
+    /// fetches with the device-grant bearer token.
+    let attachments: [CrewAttachment]?
 
     struct Payload: Decodable, Equatable {
         let text: String?
@@ -544,6 +570,7 @@ struct CrewWhiteboardEntry: Decodable, Identifiable, Equatable {
         case summary
         case createdAt = "created_at"
         case payload
+        case attachments
     }
 
     /// Best display text: explicit payload text → summary → empty.

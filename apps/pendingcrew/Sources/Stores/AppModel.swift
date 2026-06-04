@@ -139,6 +139,16 @@ final class AppModel: ObservableObject {
     /// 懒注册,之后复用;重启后重新注册。
     private var cachedRunnerHostId: String?
 
+    /// auth-gated 图片加载所需的 (baseURL, device-grant token)。群聊附件
+    /// `CrewRemoteImage` 用它给 `/v1/uploads/<id>` 带上 `Authorization: Bearer`。
+    /// 非登录态(无 device grant)或 baseURL 无效时返回 nil —— 调用方降级到
+    /// 占位图,不崩。
+    var imageAuth: (baseURL: URL, token: String)? {
+        guard let credential, credential.kind == .deviceGrant,
+              let url = URL(string: apiBaseURL) else { return nil }
+        return (url, credential.token)
+    }
+
     /// 用当前 device-grant 凭据构造一个 `PendingCrewAPI`。非登录态抛错。
     func loggedAPIClient() throws -> PendingCrewAPI {
         guard let credential, credential.kind == .deviceGrant else {
