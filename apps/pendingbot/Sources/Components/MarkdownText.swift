@@ -1,6 +1,10 @@
-#if os(iOS)
 import SwiftUI
 import MarkdownUI
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 // `Theme` is ambiguous at file scope (PendingBot has one, MarkdownUI has one).
 // File-private aliases keep call sites readable without leaning on module
@@ -50,12 +54,17 @@ struct MarkdownText: View {
             // `\(…\)` / `$$…$$` etc. into `pendingbot-math://` image refs,
             // and these providers typeset them; non-math images fall through
             // to MarkdownUI's defaults.
+            // iOS-only: MathRendering 走 SwiftMath → UIImage(MTMathUILabel),
+            // 是 iOS 专属。macOS 上暂不内联渲染 LaTeX(公式按原文显示),
+            // SwiftMath 本身跨平台,后续可把 provider 移植到 NSImage 再放开。
+            #if os(iOS)
             .markdownImageProvider(
                 MathBlockImageProvider(textColor: AppTheme.Palette.ink, fontSize: mathFontSize)
             )
             .markdownInlineImageProvider(
                 MathInlineImageProvider(textColor: AppTheme.Palette.ink, fontSize: mathFontSize)
             )
+            #endif
             .textSelection(.enabled)
             .environment(\.openURL, OpenURLAction { url in
                 // Citation taps go through a fake `pendingbot-cite://N`
@@ -79,10 +88,13 @@ struct MarkdownText: View {
         var t = text
         // Math first: turns LaTeX spans into `![](pendingbot-math://…)` image
         // refs. Citation rewrite only touches `[N]` markers, so the two
-        // passes don't collide.
+        // passes don't collide. iOS-only(同上,MathMarkup 在 MathRendering.swift
+        // 的 iOS 门禁内);macOS 不重写,LaTeX 按原文显示。
+        #if os(iOS)
         if MathMarkup.containsMath(t) {
             t = MathMarkup.rewrite(t)
         }
+        #endif
         if !citations.isEmpty {
             t = CitationScheme.rewrite(t, citations: citations)
         }
@@ -428,8 +440,10 @@ private struct CitationSheet: View {
             .padding(.top, 4)
         }
         .padding(20)
+        #if os(iOS)
         .presentationDetents([.medium])
         .presentationDragIndicator(.visible)
+        #endif
     }
 }
 
@@ -487,9 +501,11 @@ private struct ChatCodeBlock: View {
                 .strokeBorder(AppTheme.Palette.hairline, lineWidth: 0.5)
         )
         .padding(.vertical, variant == .article ? 10 : 4)
+        #if os(iOS)
         .sheet(isPresented: $runnerSheet) {
             CodeRunnerSheet(content: content, language: language ?? "")
         }
+        #endif
     }
 
     @ViewBuilder
@@ -522,7 +538,12 @@ private struct ChatCodeBlock: View {
                 }
                 Spacer(minLength: 0)
                 Button {
+                    #if canImport(UIKit)
                     UIPasteboard.general.string = content
+                    #elseif canImport(AppKit)
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(content, forType: .string)
+                    #endif
                     Haptics.tap()
                     copied = true
                     Task {
@@ -535,6 +556,7 @@ private struct ChatCodeBlock: View {
                         .foregroundStyle(AppTheme.Palette.inkMuted)
                 }
                 .buttonStyle(.plain)
+                #if os(iOS)
                 if canRun {
                     Button {
                         Haptics.tap()
@@ -546,6 +568,7 @@ private struct ChatCodeBlock: View {
                     }
                     .buttonStyle(.plain)
                 }
+                #endif
             }
             .padding(.horizontal, 10)
             .padding(.top, 6)
@@ -553,4 +576,3 @@ private struct ChatCodeBlock: View {
         }
     }
 }
-#endif

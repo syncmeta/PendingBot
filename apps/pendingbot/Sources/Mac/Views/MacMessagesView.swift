@@ -281,12 +281,13 @@ struct MacChatView: View {
                         .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5))
                 }
                 if !content.isEmpty {
-                    Text(content)
-                        .textSelection(.enabled)
-                        .font(Theme.Fonts.body)
+                    // 对齐 iOS:正文走共享 MarkdownText(完整 markdown 渲染),不再纯
+                    // Text。MarkdownText 已跨平台(放开后);allowCodeRun=false(Mac 无
+                    // 代码运行 sheet)、citations=[](Mac 暂未接 web 引用)。气泡底/描边
+                    // 沿用:用户淡绿(userBubble)、bot 白(surface)+ hairline,圆角 18。
+                    MarkdownText(text: content, allowCodeRun: false, citations: [])
                         .padding(.horizontal, 14).padding(.vertical, 10)
                         .background(
-                            // 对齐 iOS:用户气泡淡绿(userBubble = accentBg)、bot 气泡白(surface)+ hairline 描边,圆角 bubbleRadius(18)。
                             RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
                                 .fill(isMine ? Theme.Palette.userBubble : Theme.Palette.surface)
                         )
@@ -294,7 +295,6 @@ struct MacChatView: View {
                             RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
                                 .strokeBorder(isMine ? Color.clear : Theme.Palette.hairline, lineWidth: 0.5)
                         )
-                        .foregroundStyle(Theme.Palette.ink) // ink 深字,两种气泡都用
                 }
             }
             if !isMine { Spacer(minLength: 32) }
