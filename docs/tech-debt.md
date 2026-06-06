@@ -44,6 +44,14 @@
 
 ## 🟡 拆东墙补西墙
 
+### 🟡 Langfuse prompt 分发的已知取舍（真源切 Langfuse + KV，弃用 bundled .md）
+- **发现**: 2026-06-06 · chore/prompt-langfuse-kv
+- **位置**: `apps/edge/src/llm/prompt-loader.ts` · `routes/langfuse-prompts.ts`（webhook）· `PROMPTS_KV`
+- **问题**: prompt 真源从 bundled `.md` 迁到 Langfuse，运行时经 `PROMPTS_KV` 分发（webhook 推 + pull-on-miss），删了 `.md` 兜底、改 fail-loud。几个明知的尾巴：① **prompt 后端成硬依赖**——Langfuse keys 未配且 KV 空时 `getPrompt` 抛错（LLM 调用 5xx），无 kill-switch（`LANGFUSE_ENABLED` 现在只 gate trace 上报，不再 gate prompt 读取）；② **KV 无 TTL**——webhook 漏了某次更新则 KV 永久 stale（直到 isolate 重启或手动 `invalidatePromptCache`/重灌），`pull-on-miss` 只在 KV 完全无此 key 时触发；③ **webhook 无 version guard**——只认含 `production` label 的事件、正常 label 移动不回退，但乱序投递理论上可写旧版本；④ **发布非全网瞬时一致**——每 isolate 30s 内存 TTL + KV 最终一致传播。另：删 `.md` + Text rule 后 `wrangler deploy --dry-run` 因容器需 Docker（本地未跑）未端到端验证，JS bundle 正确性由 typecheck + 零 `.md` import + 512 vitest 保证。
+- **影响**: pre-launch 单人、无真实用户，全部可接受（用户明确「空了就空了、不管中途可用性」）。有真实流量后：①是可用性单点（Langfuse/KV 故障 = prompt 不可用），②可能让线上静默跑陈旧 prompt。
+- **建议**: 上线前评估：KV value 加长 TTL（如 6h）作 webhook 漏更新的兜底定期校准；webhook 加 version guard（KV 现有 version 更高则忽略）；或 cron 定期从 Langfuse 重新 seeding KV。
+- **状态**: 待办（pre-launch 接受现状）
+
 ### 🟡 PendingCrew runner 生终端化 Phase 1 的尾巴
 - **发现**: 2026-06-04 · feat/pendingcrew-runner-backends（runner 改内嵌真终端 Phase 1）
 - **位置**: `apps/pendingcrew/Sources/Mac/{LocalRunner/AgentTerminalSession.swift, Views/{AgentTerminalView,CrewSessionWindowView}.swift, Services/CrewSessionRunner.swift}`

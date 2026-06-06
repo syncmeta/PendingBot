@@ -1,7 +1,9 @@
-// Pure constant export of prompt names. Separate file (no .md imports) so
-// Board can import it without pulling in wrangler-specific text loaders.
+// Pure constant export of prompt names + descriptions.
 //
-// Edits here must match the PROMPTS_ZH map in prompt-loader.ts.
+// Langfuse is the source of truth for prompt *bodies* (keyed `<name>/<locale>`,
+// production label). This list is the manifest the loader warms from KV and
+// what the Board lists. Adding a prompt: add its name here, then create the
+// `<name>/<locale>` prompt in Langfuse under the production label.
 
 export const PROMPT_NAMES = [
   'system',
