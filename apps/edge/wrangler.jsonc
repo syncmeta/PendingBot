@@ -14,14 +14,8 @@
   "compatibility_date": "2026-05-01",
   "compatibility_flags": ["nodejs_compat"],
 
-  // Treat .md as raw text, importable as string. Powers prompts/*.md.
-  "rules": [
-    {
-      "type": "Text",
-      "globs": ["**/*.md"],
-      "fallthrough": true
-    }
-  ],
+  // (No Text module rule: prompts are no longer bundled as .md — Langfuse is
+  // the source of truth, distributed via PROMPTS_KV. See llm/prompt-loader.ts.)
 
   "observability": {
     "enabled": true
