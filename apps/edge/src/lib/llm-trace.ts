@@ -5,9 +5,11 @@
 // deploys without Langfuse configured behave exactly as before. See
 // docs/superpowers/specs/2026-06-01-dashboard-stack-design.md.
 //
-// This file intentionally only exposes a thin `traceGeneration()` helper.
-// Wiring it into the actual LLM path (src/llm/*) is a separate, later step —
-// this is just the seam, so the main chat loop is untouched for now.
+// Wired into the LLM path via the audit queue: enqueueAudit (src/llm/router.ts)
+// forwards the prompt/completion/usage, and persistAuditMessage calls
+// traceGeneration() off the response path. A generation can also link to its
+// Langfuse prompt version (args.prompt) for version-level analytics. The
+// shared Langfuse client lives in ./langfuse-client (reused by prompt-loader).
 //
 // Workers note: the Langfuse SDK batches ingestion and flushes on a
 // background timer that doesn't survive a torn-down isolate. We therefore

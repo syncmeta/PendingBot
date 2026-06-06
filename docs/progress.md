@@ -1,8 +1,16 @@
 # PendingBot / PendingCrew 进度账本 (Progress Ledger)
 
-**最近对账：2026-06-05**（对照实际代码 / 迁移 / git，不是看 task 标记）
+**最近对账：2026-06-06**（对照实际代码 / 迁移 / git，不是看 task 标记）
 
 
+> **2026-06-06 prompt 真源切 Langfuse + KV 分发（`chore/prompt-langfuse-kv`，未合 main）**
+> - ✅ **弃用 bundled `.md`，Langfuse 成 prompt 唯一真源**（用户拍板：pre-launch 可激进、不留旧兜底、"空了就空了"）。先把 16 个现有 `.md` 一次性 seed 进 Langfuse（production label，幂等脚本，已跑），再删 `prompts/{zh,en}/*.md` + wrangler Text rule + seed 脚本。`prompts/skills/*` 是另一套 public-skills（mjs seed），保留。
+> - ✅ **prompt-loader 重写为 KV 分发 + fail-loud**：读路径 L1 内存(30s) → `PROMPTS_KV`(跨 isolate) → pull-on-miss 从 Langfuse 拉并回写 KV → 全空则**抛错**（不再 serve 陈旧 bundled）。新建共享单例 Langfuse client（prompt-loader + llm-trace 复用，去掉 per-call `new`）。**prompt 读取与 `LANGFUSE_ENABLED` 解耦**——该 flag 现在只 gate trace 上报。
+> - ✅ **Langfuse prompt-version webhook**（`POST /v1/langfuse/prompt-webhook`）：HMAC-SHA256 验签 + 只认 production text → 写 KV，prompt 改完不发版即生效。新 secret `LANGFUSE_WEBHOOK_SECRET`。
+> - ✅ **generation 关联 prompt 版本**：traceGeneration 接 `{name,version}` → generation link；bot-reply 经 audit 队列透传 `getPromptMeta('system',locale)`。off 时 no-op。
+> - **验证**：edge typecheck 0 + 512 vitest 绿（新增 prompt-loader 4 + webhook 5 测试）。`wrangler dry-run` 因容器需 Docker 未端到端跑（JS bundle 由 typecheck + 零 .md import 保证，记 tech-debt）。建了 KV namespace `PROMPTS_KV`（id af0b9597…）。
+> - **遗留给你**：① 配 `LANGFUSE_WEBHOOK_SECRET`（worker secret + Langfuse webhook 后台），webhook 指向 `https://api.pendingname.com/v1/langfuse/prompt-webhook`；② 翻 `LANGFUSE_ENABLED=true` 才开始上报 trace（prompt 读取已独立于它）；③ KV stale / version-guard 等取舍见 tech-debt；④ 本分支未合 main、未 push（按约定）。
+>
 > **2026-06-05 两条 crew 线已合 main（merge-back，build/typecheck 绿，dirty 文件未动）**
 > - ✅ **`feat/crew-captain-orchestration` → main**（`--no-ff` 87d5fcae）：captain 编排 persona/工具 + 群聊附件整套 + T4.5 状态实时复验。
 > - ✅ **`feat/pendingcrew-runner-backends` → main**（`--no-ff` caee11f1；先把 main 并进该分支 1c97313c 解了 2 处冲突：pbxproj 重 xcodegen、tech-debt 两新条目 union）：runner 生终端化（SwiftTerm 内嵌 PTY）+ 停不掉/签名/keychain/TLS/图标 5 个修复。**这批修复 + PTY runner 现在进了 main**（之前只在那条没合的分支上）。
