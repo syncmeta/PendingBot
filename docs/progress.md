@@ -2,6 +2,16 @@
 
 **最近对账：2026-06-05**（对照实际代码 / 迁移 / git，不是看 task 标记）
 
+> **2026-06-05（续）Mac 对齐 iOS 收尾：markdown/公式/图片查看器/发送态/好友 IA（`feat/mac-login-align`，未合，#212）**
+> - 用户连问带做几轮。全部 iOS+macOS 双端 BUILD SUCCEEDED（合并方每拍自跑 xcodegen+双端构建坐实）。**核心思路一以贯之：iOS 的渲染器/查看器多数本就跨平台，被无谓 `#if os(iOS)` 圈住 → 放开复用，而非给 Mac 另写。**
+> - **Markdown**（`MarkdownText` 放开跨平台）：iOS bot 气泡走 `MarkdownText`，Mac 原是纯 `Text`。`MarkdownText` 唯一 iOS-only 触点是一行 `UIPasteboard`（+ 代码运行 sheet + presentationDetents）→ 各加 `#if` guard，Mac 聊天气泡换上 `MarkdownText`。Mac 现在 bot 回复完整 markdown 渲染。
+> - **LaTeX 公式**（`MathRendering` 放开跨平台）：iOS 方案=`MathMarkup` 重写→MarkdownUI image provider→**SwiftMath** `MTMathImage.asImage()` 排图。SwiftMath 本就跨平台（macOS 返回 NSImage）→ `MathMarkup` 纯 Foundation 直接复用，图片层 `UIImage/UIColor/UIGraphicsImageRenderer`→平台分支（NSImage/NSColor/lockFocus），复用全局 `PlatformImage`。Mac 公式与 iOS 同源内联渲染。
+> - **图片全屏查看器**（`ImageViewer` 放开跨平台）：手势本就跨平台（捏合/双击/拖拽），仅 `fullScreenCover` iOS-only → Mac 用大 `.sheet` + Esc 关闭，附件图 `.onTapGesture` 打开。不走 QuickLook（鉴权流式字节无磁盘 URL）。
+> - **用户气泡发送态**（`b8bef664`，仅 Mac 文件）：发送中(userBubbleSending 淡绿)/失败(红 wash + 重发钮)/成功(reload 用 server canonical 行替换)三态，对齐 iOS 色值/文案；失败原地重发（保留 localId + 原附件）。**缺口**：Mac 的 ChatDataSource 通道未透传 `client_message_id`，重发无 cmid 去重兜底（iOS 有）；若"请求已落库但响应丢"理论可能双投——根治要在 ChatDataSource 层加 cmid（跨平台改动），已记。
+> - **好友屏 IA**（`27c3c8c0`，含共享 FriendsDataSource 扩 API）：从"机器人/好友两段只读"重构成对齐 iOS 的**单列 + filter pill（全部/人类/私有/公有/群）+ 排序菜单（名称/最近聊天/加好友时间，@AppStorage 与 iOS 共享键）+ 好友申请/群邀请分区（同意/拒绝）+ SelfRow**。`FriendsDataSource` 扩出 friend-requests/group-invitations 的 list/respond（跨平台，iOS 调用面不变）+ 富化 BotContact/HumanContact（addedAt/modelId/creatorId）。**缺口**：SelfRow 仅视觉（无自聊/QR——Mac 无对应后端路径）；接受/拒绝写回合 + 像素未真机验。
+> - **剩余（需用户在场，未做）**：① 缓存编排抽成两端完全共享 store（碰 iOS 已验证路径，要真机回归）；② cmid 透传根治重发双投；③ 全部写路径 + 像素真机/真账号验。**未合 main，分支 40 commit。**
+
+
 > **2026-06-05（夜，无人值守 workflow）Mac 精细对齐 iOS：缓存 + 逐屏文案/排版/元素（`feat/mac-login-align`，未合，#212）**
 > - **背景**：用户「全都对齐、持续推进、开 dynamic workflow、中途不要等我、去睡觉、拿不准的等起床」。第 2 个顺序流水线 workflow（7 块），合并方（我）跑了 `xcodegen` + iOS/macOS **双端 BUILD SUCCEEDED**（整合态），**收尾扫描确认 `Sources/Mac` 系统默认字体残留 = 0**（全部走 `Theme.Fonts`）。
 > - **缓存**（`1b55d44d`）：Mac 聊天（MacChatView）+ 会话列表接 **cache-first，复用跨平台 `LocalDatabase`**（打开先出本地缓存秒开 → 拉服务端 → iOS 同款 `replaceMessages` 单事务/cmid-aware 写回）。**刻意没碰 iOS shipping 代码**（按安全约束，无人值守不重构已验证的 iOS 加载路径）；「把编排抽成两端完全共享 store」是 follow-up，**需用户在场做 iOS 真机回归再动**（tech-debt 已记）。`ProtectedURLCache`（iOS-only）未在 Mac 调。
