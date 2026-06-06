@@ -102,6 +102,8 @@ describe('GET /v1/me/subject', () => {
       display_name: 'Alice',
       status: 'active',
     });
+    // user_id surfaces the authenticated user (user-JWT path → c.var.userId).
+    expect(r.body.user_id).toBe('user-1');
     // balance_credits is now PNC micros from WalletDO; lifetime_* no longer
     // materialized per-subject (ledger detail lives in pnc_ledger), kept 0.
     expect(r.body.wallet).toEqual({
@@ -145,6 +147,7 @@ describe('GET /v1/me/subject', () => {
         {
           id: 'grant-1',
           subject_id: 'subject-1',
+          granted_by_user_id: 'user-1',
           token_hash: await sha256Hex(token),
           grant_kind: 'pendingcrew_control',
           scopes: ['subject:read'],
@@ -166,6 +169,8 @@ describe('GET /v1/me/subject', () => {
       display_name: 'Alice',
       status: 'active',
     });
+    // device-grant path surfaces granted_by_user_id (the PendingCrew user).
+    expect(r.body.user_id).toBe('user-1');
     expect(r.body.wallet).toEqual({
       balance_credits: 1200,
       lifetime_topup_credits: 0,

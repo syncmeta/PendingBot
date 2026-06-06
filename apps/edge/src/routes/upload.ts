@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { requireSession } from '@pendingbot/identity';
+import { requireSubjectAuth, effectiveOwnerUserId } from '../lib/device-grants';
 import { serviceClient, userClient } from '../lib/supabase';
 import {
   DEFAULT_ATTACHMENT_QUOTA_BYTES,
@@ -16,15 +16,27 @@ import type { AppBindings } from '../types';
 
 export const uploadRoutes = new Hono<AppBindings>();
 
-// Apply auth to every route in this sub-app.
-uploadRoutes.use('*', requireSession());
+// Apply auth to every route in this sub-app. Accepts EITHER a supabase user
+// JWT (PendingBot iOS) OR a device grant with `crew:write` (PendingCrew macOS,
+// which authenticates with a `pdg_*` bearer and has no user JWT). The grant's
+// `grantedByUserId` becomes the effective owner for the attachment row + quota
+// (see effectiveOwnerUserId) — so a crew upload lands as a normal per-user
+// attachment owned by the person who granted PendingCrew. The session path is
+// unchanged: requireSubjectAuth falls through to requireSession when the bearer
+// isn't `pdg_*`, sets authKind='supabase_jwt', and userId/userJwt as before.
+uploadRoutes.use('*', requireSubjectAuth(['crew:write']));
 
 // POST /v1/upload — multipart form with field 'file' (one image).
 // Optional 'conversationId' field associates the attachment with a conv;
 // callers leave it off if the upload precedes the conversation creation.
 uploadRoutes.post('/', async (c) => {
-  const userId = c.var.userId!;
-  const userJwt = c.var.userJwt!;
+  // Effective owner: the session user (JWT path) or the grant's
+  // grantedByUserId (device-grant path). Everything below — dedup key,
+  // quota, the attachments row owner — keys off this id.
+  const userId = effectiveOwnerUserId(c);
+  if (!userId) return jsonError(c, 401, 'unauthorized');
+  // Only the session path carries a user JWT; the device-grant path has none.
+  const userJwt = c.var.userJwt ?? null;
 
   // Quick reject by Content-Length (full multipart parse is expensive)
   const cl = c.req.header('content-length');
@@ -58,7 +70,19 @@ uploadRoutes.post('/', async (c) => {
 
   // If a conversationId is present, verify the user is a participant via RLS:
   // a select using the user JWT will return zero rows otherwise. Cheap probe.
+  //
+  // Only the session (user-JWT) path runs this probe — the device-grant path
+  // has no user JWT to drive RLS. PendingCrew crew uploads don't pass a
+  // conversationId (the attachment id is bound to a crew message at send time,
+  // and `/v1/uploads/:id` re-checks membership server-side per request), so a
+  // device-grant caller that *does* send one is rejected here rather than
+  // silently binding it unauthenticated.
   if (conversationIdStr) {
+    if (!userJwt) {
+      return jsonError(c, 400, 'invalid_body', {
+        message: 'conversationId is not supported on device-grant uploads',
+      });
+    }
     const supa = userClient(c.env, userJwt);
     const { data, error } = await supa
       .from('conversations')
@@ -345,7 +369,11 @@ uploadRoutes.post('/', async (c) => {
 // `attachments` is uploader-only now (migration 20260512042940), so a
 // direct DB read by anyone other than the uploader fails-closed.
 uploadRoutes.get('/:id', async (c) => {
-  const userId = c.var.userId!;
+  // Effective viewer: session user, or the user the device grant acts for.
+  // The participant / avatar checks below all key off this id, so a
+  // PendingCrew device grant sees exactly what its granting user would.
+  const userId = effectiveOwnerUserId(c);
+  if (!userId) return jsonError(c, 401, 'unauthorized');
   const id = c.req.param('id');
 
   const supa = serviceClient(c.env);

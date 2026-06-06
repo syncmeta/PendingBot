@@ -39,9 +39,10 @@
   - **edge→Mac 通道 = Mac auto-claim 轮询**(`CrewSessionWindowView.autoClaimLoop`):poll `listCrewSessions` 看到 `queued` + 本机空闲 → claim + 用 crew 默认起。captain 在云建 queued 行,Mac 当 executor 跑。**无新 WS/DO**。
   - **无 human-confirm**(人正在跟 captain 聊,local_host 算力免费;只 LLM token 扣 crew 钱包)。
   - **真机未验**:要真 captain LLM 调到 tool + Mac 真接住跑。归 T5.3。
+- ✅ **J-e 已落**(2026-06-04,`feat/crew-captain-orchestration`):`post_to_crew` 两路径(bot-reply tool + session HTTP 端点)在写 `crew_announcements` 后**也镜像一条 `messages`**(bot→role='bot'+sender_bot_id;session→role='log'+log_payload.session_id),→ session/bot 发言进群聊显示。best-effort(镜像失败不挡)。
+- ✅ **captain persona 已落**(2026-06-04):`apps/edge/prompts/zh/crew-captain.md`(走 prompt-loader)+ `builder.ts` 注入,gated 在 `inGroup && temporary_kind='crew' && status='active' && captain_bot_id==bot.id`,best-effort。让机长被唤醒时知道自己是机长 + 先搞清意图 + 该动手时调 `start_session`。
 - **待**:`create_child_crew`(已有 RPC `create_child_crew_inheriting_responsibility_*`)+ `recruit_temp_bot`(member_kind=`ephemeral_bot`,非责任主体)。
-- **待 J-e**:session 的 `post_to_crew` 也落 `messages`(现写老 crew_announcements,不显示在群)。
-- **待**:captain persona(让它知道自己是机长 + 何时该 start_session)。
+- **真机验(归 T5.3)**:captain 真被唤醒会不会调 start_session、Mac 接住跑、session 发言进群显示。
 
 ### Phase L（later）— 跟 captain 1:1 私聊视图（默认仍群聊）
 

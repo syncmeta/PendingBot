@@ -52,6 +52,7 @@ import sessionWorldModel_zh from '../../prompts/zh/session-world-model.md';
 import sessionWorldModel_en from '../../prompts/en/session-world-model.md';
 import startCrewToolResult_zh from '../../prompts/zh/start-crew-tool-result.md';
 import requestPermissionToolResult_zh from '../../prompts/zh/request-permission-tool-result.md';
+import crewCaptain_zh from '../../prompts/zh/crew-captain.md';
 
 const PROMPTS_ZH = {
   'system': system_zh,
@@ -68,6 +69,7 @@ const PROMPTS_ZH = {
   'session-world-model': sessionWorldModel_zh,
   'start-crew-tool-result': startCrewToolResult_zh,
   'request-permission-tool-result': requestPermissionToolResult_zh,
+  'crew-captain': crewCaptain_zh,
 } as const;
 
 export { PROMPT_NAMES, type PromptName } from './prompt-names';

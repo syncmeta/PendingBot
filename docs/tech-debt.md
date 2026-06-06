@@ -44,6 +44,14 @@
 
 ## 🟡 拆东墙补西墙
 
+### 🟡 captain `recruit_temp_bot` 招的 ephemeral_bot 暂无消费方
+- **发现**: 2026-06-05 · feat/crew-captain-orchestration（captain 工具补全）
+- **位置**: `apps/edge/src/lib/bot-reply/tools/recruit-temp-bot.ts`（写 `temporary_group_members.member_kind='ephemeral_bot'` + `ephemeral_spec`）
+- **问题**: 工具结构上对（无触发器、service-role insert 安全），但招进来的 ephemeral_bot 行**没有任何 edge / iOS 代码读或渲染**——`ephemeral_bot`/`ephemeral_spec` 目前只出现在生成的 schema.ts。即招了也不会在花名册显示、更不会在群里发言/被唤醒。
+- **影响**: `recruit_temp_bot` 当前是"结构有效但端到端无效"的半截工具。captain 调它不会出错，但临时 bot 不会真的参与。
+- **建议**: 要让它端到端可用，需补：① 花名册渲染 ephemeral_bot 成员；② 一条让 ephemeral 参与者能被唤醒发言的 turn 路径（类似 captain dispatch）。归 captain 编排后续 + T5.3。
+- **状态**: 待办（工具已落，消费方待建）
+
 ### 🟡 normalize_email 双实现（SQL + TS）须手动保持同步
 - **发现**: 2026-06-04 · fix/billing-tails-email-norm（#252 email 规范化）
 - **位置**: `pendingbot.normalize_email`（迁移 20260604102812）+ `apps/edge/src/lib/billing-grant.ts:normalizeEmail()`
@@ -60,13 +68,14 @@
 - **建议**: 独立 chore —— 先重写这批 RPC 去掉对两表的写/读，再发 DROP 迁移。别夹在别的 lane 顺手做。
 - **状态**: 待办（#226 物理 drop 专项）
 
-### 🟡 PendingCrew 群聊 user 作者无法区分是哪个人 — AppModel 不暴露登录 user id
+### 🟡 PendingCrew 群聊 user 作者无法区分是哪个人 — AppModel 不暴露登录 user id — ✅ 已解决 2026-06-05（feat/crew-captain-orchestration）
+- **解决**: `GET /v1/me/subject` 新增 `user_id`(device grant → `granted_by_user_id`;user JWT → `c.var.userId`);iOS `UserSubject.userId` 透出,`CrewStore.refreshSubjects` 回填 `AppModel.currentUserId`,`CrewChatView.localUserId` 改指过去。多人 crew 现可区分自己 vs 其他人类。
 - **发现**: 2026-06-04 · feat/pendingcrew-chat-align（中栏群聊 UI 对齐，Task 12）
 - **位置**: `apps/pendingcrew/Sources/Mac/Views/CrewChatView.swift`（`localUserId` 取 nil）；根因 `apps/pendingcrew/Sources/Stores/AppModel.swift` + `PendingCrewAuthCredential.swift`（只有 `kind`+`token`，opaque `pdg_` device-grant，无 user id）
 - **问题**: 新群聊行 `CrewSenderResolver.resolve(...)` 设计支持用 `sender_user_id == localUserId` 区分"我"vs 其他人类成员（左右对齐 + 头像）。但 PendingCrew 的 `AppModel` 没暴露当前登录 user 的 id（device-grant token 不可解出 sub），故 `localUserId` 只能传 nil → **所有 `user` 作者一律落"我"/右对齐**。
 - **影响**: BYOK 单人场景**正确**（就一个 human）；但 crew 里有多个真人成员时，别人发的话也会显示成"我"右对齐、不显头像/名字——多人群里人类作者归属错。edge 已把 `sender_user_id` 透出（白板序列化），缺口纯在客户端拿不到本地 user id。
 - **建议**: 让 `AppModel` 暴露 `currentUserId`（device-grant 换 token 时一并取/存 user id，或加一个 `/me` 拉一次缓存），再把 `CrewChatView.localUserId` 指过去即可——解析逻辑已就位。
-- **状态**: 待办（多人 crew 才暴露；单人无感）
+- **状态**: ✅ 已解决（走 `/v1/me/subject` 的 `user_id` 通道,best-effort 在 refreshSubjects 时回填）
 
 ### 🟢 bi_ro BI 角色读不了 RLS 受限表 — ✅ 已解决 2026-06-04（#246：security-definer 视图全覆盖 bi_cost_by_category/bi_subjects/bi_group_pool_*；角色已正名 bi_ro）
 - **发现**: 2026-06-03 · chore/dashboard-sql-repoint（#238 看板重指 Polar schema）
