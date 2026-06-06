@@ -5,17 +5,20 @@
 // deploys without Langfuse configured behave exactly as before. See
 // docs/superpowers/specs/2026-06-01-dashboard-stack-design.md.
 //
-// This file intentionally only exposes a thin `traceGeneration()` helper.
-// Wiring it into the actual LLM path (src/llm/*) is a separate, later step —
-// this is just the seam, so the main chat loop is untouched for now.
+// Wired into the LLM path via the audit queue: enqueueAudit (src/llm/router.ts)
+// forwards the prompt/completion/usage, and persistAuditMessage calls
+// traceGeneration() off the response path. A generation can also link to its
+// Langfuse prompt version (args.prompt) for version-level analytics. The
+// shared Langfuse client lives in ./langfuse-client (reused by prompt-loader).
 //
 // Workers note: the Langfuse SDK batches ingestion and flushes on a
 // background timer that doesn't survive a torn-down isolate. We therefore
 // call `flushAsync()` after recording, which awaits the pending batch send.
 
-import { Langfuse } from 'langfuse';
+import type { LangfusePromptRecord } from 'langfuse';
 import type { Env } from '../types';
 import { langfuseEnabled } from './feature-flags';
+import { getLangfuseClient } from './langfuse-client';
 
 export interface TraceGenerationArgs {
   /** Generation/observation name, e.g. 'chat_reply', 'title'. */
@@ -34,6 +37,11 @@ export interface TraceGenerationArgs {
   traceId?: string;
   userId?: string;
   sessionId?: string;
+  /**
+   * Link this generation to its Langfuse prompt version (enables analytics by
+   * prompt version). `name` is the Langfuse prompt name (`<name>/<locale>`).
+   */
+  prompt?: { name: string; version: number };
 }
 
 /**
@@ -47,13 +55,9 @@ export interface TraceGenerationArgs {
  * observing. Failures are logged and swallowed.
  */
 export async function traceGeneration(env: Env, args: TraceGenerationArgs): Promise<void> {
-  if (!langfuseEnabled(env) || !env.LANGFUSE_PUBLIC_KEY || !env.LANGFUSE_SECRET_KEY) return;
-
-  const langfuse = new Langfuse({
-    publicKey: env.LANGFUSE_PUBLIC_KEY,
-    secretKey: env.LANGFUSE_SECRET_KEY,
-    baseUrl: env.LANGFUSE_BASE_URL,
-  });
+  if (!langfuseEnabled(env)) return;
+  const langfuse = getLangfuseClient(env);
+  if (!langfuse) return;
 
   try {
     const trace = langfuse.trace({
@@ -64,6 +68,21 @@ export async function traceGeneration(env: Env, args: TraceGenerationArgs): Prom
       metadata: args.metadata,
     });
 
+    // Minimal record carrying just name + version — the SDK lifts those onto
+    // the generation's promptName/promptVersion for version-level analytics.
+    const promptLink: LangfusePromptRecord | undefined = args.prompt
+      ? {
+          name: args.prompt.name,
+          version: args.prompt.version,
+          prompt: '',
+          type: 'text',
+          config: {},
+          labels: [],
+          tags: [],
+          isFallback: false,
+        }
+      : undefined;
+
     trace.generation({
       name: args.name,
       model: args.model,
@@ -71,6 +90,7 @@ export async function traceGeneration(env: Env, args: TraceGenerationArgs): Prom
       output: args.output,
       usage: args.usage,
       metadata: args.metadata,
+      ...(promptLink ? { prompt: promptLink } : {}),
     });
 
     // Await the batch send — the background flush timer won't fire once the
@@ -112,13 +132,9 @@ export interface RecordScoreArgs {
  * signals (e.g. arena A/B preference votes) that aren't tied to a generation.
  */
 export async function recordScore(env: Env, args: RecordScoreArgs): Promise<void> {
-  if (!langfuseEnabled(env) || !env.LANGFUSE_PUBLIC_KEY || !env.LANGFUSE_SECRET_KEY) return;
-
-  const langfuse = new Langfuse({
-    publicKey: env.LANGFUSE_PUBLIC_KEY,
-    secretKey: env.LANGFUSE_SECRET_KEY,
-    baseUrl: env.LANGFUSE_BASE_URL,
-  });
+  if (!langfuseEnabled(env)) return;
+  const langfuse = getLangfuseClient(env);
+  if (!langfuse) return;
 
   try {
     // Ensure the trace exists so the score has an anchor in the UI. trace()

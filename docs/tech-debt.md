@@ -44,6 +44,34 @@
 
 ## 🟡 拆东墙补西墙
 
+### 🟡 Langfuse prompt 分发的已知取舍（真源切 Langfuse + KV，弃用 bundled .md）
+- **发现**: 2026-06-06 · chore/prompt-langfuse-kv
+- **位置**: `apps/edge/src/llm/prompt-loader.ts` · `routes/langfuse-prompts.ts`（webhook）· `PROMPTS_KV`
+- **问题**: prompt 真源从 bundled `.md` 迁到 Langfuse，运行时经 `PROMPTS_KV` 分发（webhook 推 + pull-on-miss），删了 `.md` 兜底、改 fail-loud。几个明知的尾巴：① **prompt 后端成硬依赖**——Langfuse keys 未配且 KV 空时 `getPrompt` 抛错（LLM 调用 5xx），无 kill-switch（`LANGFUSE_ENABLED` 现在只 gate trace 上报，不再 gate prompt 读取）；② **KV 无 TTL**——webhook 漏了某次更新则 KV 永久 stale（直到 isolate 重启或手动 `invalidatePromptCache`/重灌），`pull-on-miss` 只在 KV 完全无此 key 时触发；③ **webhook 无 version guard**——只认含 `production` label 的事件、正常 label 移动不回退，但乱序投递理论上可写旧版本；④ **发布非全网瞬时一致**——每 isolate 30s 内存 TTL + KV 最终一致传播。另：删 `.md` + Text rule 后 `wrangler deploy --dry-run` 因容器需 Docker（本地未跑）未端到端验证，JS bundle 正确性由 typecheck + 零 `.md` import + 512 vitest 保证。
+- **影响**: pre-launch 单人、无真实用户，全部可接受（用户明确「空了就空了、不管中途可用性」）。有真实流量后：①是可用性单点（Langfuse/KV 故障 = prompt 不可用），②可能让线上静默跑陈旧 prompt。
+- **建议**: 上线前评估：KV value 加长 TTL（如 6h）作 webhook 漏更新的兜底定期校准；webhook 加 version guard（KV 现有 version 更高则忽略）；或 cron 定期从 Langfuse 重新 seeding KV。
+- **状态**: 待办（pre-launch 接受现状）
+
+### 🟡 PendingCrew runner 生终端化 Phase 1 的尾巴
+- **发现**: 2026-06-04 · feat/pendingcrew-runner-backends（runner 改内嵌真终端 Phase 1）
+- **位置**: `apps/pendingcrew/Sources/Mac/{LocalRunner/AgentTerminalSession.swift, Views/{AgentTerminalView,CrewSessionWindowView}.swift, Services/CrewSessionRunner.swift}`
+- **背景**: runner 从一次性 `claude --print`/`codex exec --json` 改成 SwiftTerm `LocalProcessTerminalView` 内嵌交互式 CLI（自动审批 `--dangerously-skip-permissions` / `-a never`），保订阅计费 + 完整交互。spec/plan 见 `docs/superpowers/{specs,plans}/2026-06-04-pendingcrew-runner-*`。Phase 1 只本机闭环。
+- **遗留**:
+  1. **跨端"看 agent 输出内容"降级**：拔掉了结构化 `RunnerEvent` 推送（旧路径没人验证过、按用户授权干净拔）。远端仍能**控**（命令），但**看不到 agent 具体输出**——待 Phase 2 把 PTY 当 SSH 式字节隧道补回（spec §5）。
+  2. **首条 prompt 注入用固定 sleep**（`CrewSessionWindowView.swift` 0.6s/4s）等终端 REPL 启动——脆。正解=检测终端就绪（prompt 锚点）再注入。
+  3. **自动审批=放权**：全自动跑 coding agent 有误删风险；靠工作目录 git worktree 隔离 + 真终端可人工介入兜底。
+  4. **CLI flag 漂移**：claude/codex 自动审批 flag 写死，升级改名会启动失败——应 fail-loud。
+  5. `PendingCrewAPI.appendSessionEvent` 现 caller-less，留作 Phase 2 复用；不用则删。
+- **状态**: 待办（Phase 2 隧道补 #1）。**Phase 1 像素级真验未做**——需用户本机 claude/codex 登录态起 app 验终端托管/注入/交互。
+
+### 🟡 captain `recruit_temp_bot` 招的 ephemeral_bot 暂无消费方
+- **发现**: 2026-06-05 · feat/crew-captain-orchestration（captain 工具补全）
+- **位置**: `apps/edge/src/lib/bot-reply/tools/recruit-temp-bot.ts`（写 `temporary_group_members.member_kind='ephemeral_bot'` + `ephemeral_spec`）
+- **问题**: 工具结构上对（无触发器、service-role insert 安全），但招进来的 ephemeral_bot 行**没有任何 edge / iOS 代码读或渲染**——`ephemeral_bot`/`ephemeral_spec` 目前只出现在生成的 schema.ts。即招了也不会在花名册显示、更不会在群里发言/被唤醒。
+- **影响**: `recruit_temp_bot` 当前是"结构有效但端到端无效"的半截工具。captain 调它不会出错，但临时 bot 不会真的参与。
+- **建议**: 要让它端到端可用，需补：① 花名册渲染 ephemeral_bot 成员；② 一条让 ephemeral 参与者能被唤醒发言的 turn 路径（类似 captain dispatch）。归 captain 编排后续 + T5.3。
+- **状态**: 待办（工具已落，消费方待建）
+
 ### 🟡 normalize_email 双实现（SQL + TS）须手动保持同步
 - **发现**: 2026-06-04 · fix/billing-tails-email-norm（#252 email 规范化）
 - **位置**: `pendingbot.normalize_email`（迁移 20260604102812）+ `apps/edge/src/lib/billing-grant.ts:normalizeEmail()`
@@ -60,20 +88,21 @@
 - **建议**: 独立 chore —— 先重写这批 RPC 去掉对两表的写/读，再发 DROP 迁移。别夹在别的 lane 顺手做。
 - **状态**: 待办（#226 物理 drop 专项）
 
-### 🟡 PendingCrew 群聊 user 作者无法区分是哪个人 — AppModel 不暴露登录 user id
+### 🟡 PendingCrew 群聊 user 作者无法区分是哪个人 — AppModel 不暴露登录 user id — ✅ 已解决 2026-06-05（feat/crew-captain-orchestration）
+- **解决**: `GET /v1/me/subject` 新增 `user_id`(device grant → `granted_by_user_id`;user JWT → `c.var.userId`);iOS `UserSubject.userId` 透出,`CrewStore.refreshSubjects` 回填 `AppModel.currentUserId`,`CrewChatView.localUserId` 改指过去。多人 crew 现可区分自己 vs 其他人类。
 - **发现**: 2026-06-04 · feat/pendingcrew-chat-align（中栏群聊 UI 对齐，Task 12）
 - **位置**: `apps/pendingcrew/Sources/Mac/Views/CrewChatView.swift`（`localUserId` 取 nil）；根因 `apps/pendingcrew/Sources/Stores/AppModel.swift` + `PendingCrewAuthCredential.swift`（只有 `kind`+`token`，opaque `pdg_` device-grant，无 user id）
 - **问题**: 新群聊行 `CrewSenderResolver.resolve(...)` 设计支持用 `sender_user_id == localUserId` 区分"我"vs 其他人类成员（左右对齐 + 头像）。但 PendingCrew 的 `AppModel` 没暴露当前登录 user 的 id（device-grant token 不可解出 sub），故 `localUserId` 只能传 nil → **所有 `user` 作者一律落"我"/右对齐**。
 - **影响**: BYOK 单人场景**正确**（就一个 human）；但 crew 里有多个真人成员时，别人发的话也会显示成"我"右对齐、不显头像/名字——多人群里人类作者归属错。edge 已把 `sender_user_id` 透出（白板序列化），缺口纯在客户端拿不到本地 user id。
 - **建议**: 让 `AppModel` 暴露 `currentUserId`（device-grant 换 token 时一并取/存 user id，或加一个 `/me` 拉一次缓存），再把 `CrewChatView.localUserId` 指过去即可——解析逻辑已就位。
-- **状态**: 待办（多人 crew 才暴露；单人无感）
+- **状态**: ✅ 已解决（走 `/v1/me/subject` 的 `user_id` 通道,best-effort 在 refreshSubjects 时回填）
 
-### 🟡 metabase_ro BI 角色读不了 RLS 受限表 — Grafana 财务看板多个 panel 取不到数
+### 🟢 bi_ro BI 角色读不了 RLS 受限表 — ✅ 已解决 2026-06-04（#246：security-definer 视图全覆盖 bi_cost_by_category/bi_subjects/bi_group_pool_*；角色已正名 bi_ro）
 - **发现**: 2026-06-03 · chore/dashboard-sql-repoint（#238 看板重指 Polar schema）
 - **位置**: `supabase/migrations/20260602051354_metabase_readonly_role.sql`（角色 NOBYPASSRLS + 无函数 EXECUTE）;受影响表 `group_pledges`/`group_pools`/`group_contributions`/`bots`/`group_join_requests` 的成员域 RLS policy
-- **问题**: `metabase_ro`（Grafana Postgres 数据源连接角色，pooler 形式 `metabase_ro.<ref>`）是 NOBYPASSRLS,且没有 grant 任何函数 EXECUTE。这些表的 RLS policy 要么 `TO authenticated`(无 auth.uid() 时 0 行匹配),要么 `USING <fn>(...)` 调 `_grp_caller_role`/`is_bot_invitee`/`is_participant`(角色无 EXECUTE → SELECT 直接 42501 报错)。实测:`group_pools`/`group_contributions` 返回 200 但**永远 0 行**;`group_pledges`/`bots`/`group_join_requests` 直接 **500 permission denied for function**。
+- **问题**: `bi_ro`（Grafana Postgres 数据源连接角色，pooler 形式 `bi_ro.<ref>`）是 NOBYPASSRLS,且没有 grant 任何函数 EXECUTE。这些表的 RLS policy 要么 `TO authenticated`(无 auth.uid() 时 0 行匹配),要么 `USING <fn>(...)` 调 `_grp_caller_role`/`is_bot_invitee`/`is_participant`(角色无 EXECUTE → SELECT 直接 42501 报错)。实测:`group_pools`/`group_contributions` 返回 200 但**永远 0 行**;`group_pledges`/`bots`/`group_join_requests` 直接 **500 permission denied for function**。
 - **影响**: 看板 03(群池/认缴/实缴)在补 policy 前**全空或报错**;看板 05 的"创建 bot""加入群"两 stage 也一直报错(早于本次改动、与计费重指无关)。BI"看(只读)和改(可写)分家"的设计在 RLS 表上没打通——只读角色拿不到聚合数据。
-- **建议**: 已起草 `supabase/migrations/20260603094114_metabase_ro_group_billing_read.sql`(给 metabase_ro 在 3 张群计费表加 `FOR SELECT TO metabase_ro USING (true)` 的宽松读 policy),但 `db push` 被 auto-mode 当作未授权的生产权限变更拦下,**未 apply**(文件留在主 worktree `/dev` 未跟踪,待用户审阅)。`bots`/`group_join_requests` 同类问题需另起一摊(本任务范围外)。决策口径:要么给 metabase_ro 逐表加只读 policy + grant 相关函数 EXECUTE,要么为 BI 单独建 `security definer` 聚合视图。
+- **建议**: 已起草 `supabase/migrations/20260603094114_bi_ro_group_billing_read.sql`(给 bi_ro 在 3 张群计费表加 `FOR SELECT TO bi_ro USING (true)` 的宽松读 policy),但 `db push` 被 auto-mode 当作未授权的生产权限变更拦下,**未 apply**(文件留在主 worktree `/dev` 未跟踪,待用户审阅)。`bots`/`group_join_requests` 同类问题需另起一摊(本任务范围外)。决策口径:要么给 bi_ro 逐表加只读 policy + grant 相关函数 EXECUTE,要么为 BI 单独建 `security definer` 聚合视图。
 - **状态**: 待办（看板 SQL 已按真实 schema 写对并重导;数据落地等 RLS 读权限收口）
 
 ### 🟡 Mac 端消息历史查询仍是 iOS inline 的手抄复刻（其余 4 条已收口）
@@ -564,12 +593,12 @@
 
 
 
-### 🟡 Grafana BI 依赖 `metabase_ro` 只读角色，但该角色无 migration
+### 🟢 Grafana BI 依赖 `bi_ro` 只读角色 — ✅ 已解决（migration 20260602051354 建角色 + 20260604143012 正名 bi_ro）
 - **发现**: 2026-06-03 · feat/dashboard-wiring
-- **位置**: infra/grafana/（datasource provisioning 指向 `metabase_ro`）
-- **问题**: dashboard stack 第 5 块（Grafana 营收/钱包 BI）的数据源用 SELECT-only 角色 `metabase_ro`，但本 worktree 里没有任何 `*metabase_readonly_role*` migration——角色不存在则数据源连不上。属于「依赖一个未落库的前置」。
+- **位置**: infra/grafana/（datasource provisioning 指向 `bi_ro`）
+- **问题**: dashboard stack 第 5 块（Grafana 营收/钱包 BI）的数据源用 SELECT-only 角色 `bi_ro`，但本 worktree 里没有任何 `*metabase_readonly_role*` migration——角色不存在则数据源连不上。属于「依赖一个未落库的前置」。
 - **影响**: Grafana 面板全部依赖此角色；未建角色前所有 dashboard 都是空的/连接失败。不影响主程序运行。
-- **建议**: 补一条 migration 建 `metabase_ro` 角色 + `GRANT USAGE ON SCHEMA pendingbot` + `GRANT SELECT` on（至少）`topups, billing_ledger, subject_wallets, subjects, group_member_billing, conversations, audit_log, users, bots, group_join_requests`；或手工 SQL 建角色。建好后在 Grafana Cloud 填 datasource 密码 + 确认 Supabase 网络放行（pooler 公网可达或配 PDC）。
+- **建议**: 补一条 migration 建 `bi_ro` 角色 + `GRANT USAGE ON SCHEMA pendingbot` + `GRANT SELECT` on（至少）`topups, billing_ledger, subject_wallets, subjects, group_member_billing, conversations, audit_log, users, bots, group_join_requests`；或手工 SQL 建角色。建好后在 Grafana Cloud 填 datasource 密码 + 确认 Supabase 网络放行（pooler 公网可达或配 PDC）。
 - **状态**: 待办（前置依赖，需用户落库角色 + 配 datasource）
 
 ### 🟡 admin 控制台（apps/admin）依赖的 edge admin 端点尚不存在 —— dataProvider 指向"意图路径"，调用即 404

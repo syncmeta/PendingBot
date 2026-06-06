@@ -36,7 +36,7 @@
 
 | 域 | 工具 | 形态 | 成本 |
 |---|---|---|---|
-| 收入/钱包 BI(固定看板) | **Grafana Cloud Free** | 纯托管,直连 Supabase(`metabase_ro` 只读角色) | 免费 |
+| 收入/钱包 BI(固定看板) | **Grafana Cloud Free** | 纯托管,直连 Supabase(`bi_ro` 只读角色) | 免费 |
 | ad-hoc SQL 探索 | **Supabase Studio**(SQL editor + saved snippets) | 已含在 Supabase | 免费 |
 | 行为分析/留存/replay/灰度 | **PostHog** | Cloud(EU 区)免费档 | ~100 万事件/月免费 |
 | LLM 成本/trace/eval | **Langfuse** | Cloud 免费 Hobby | 免费起 |
@@ -49,8 +49,8 @@
 ## 各域设计
 
 ### 1. Grafana Cloud Free + Supabase Studio —— 收入/钱包 BI + ad-hoc(只读)
-- **接入**:Grafana Cloud(免费档)加一个 **PostgreSQL datasource** 指向 Supabase,用**只读角色 `metabase_ro`**(迁移 `20260602051354_metabase_readonly_role.sql` 已建,仅 `SELECT`,无写;上线时设其密码 + 把 Grafana Cloud 出口 IP 加进 Supabase 网络允许,或用 Grafana **PDC**)。
-  > 角色名沿用 `metabase_ro`(历史命名),现给 Grafana 用,功能不变。
+- **接入**:Grafana Cloud(免费档)加一个 **PostgreSQL datasource** 指向 Supabase,用**只读角色 `bi_ro`**(迁移 `20260602051354_metabase_readonly_role.sql` 已建,仅 `SELECT`,无写;上线时设其密码 + 把 Grafana Cloud 出口 IP 加进 Supabase 网络允许,或用 Grafana **PDC**)。
+  > 角色名 `bi_ro`(由历史 `bi_ro` 于 2026-06-04 正名),给 Grafana 用,功能不变。
 - **覆盖**(读已落库事实,SQL 面板):
   - 收入:Polar 的支付审计 + edge 影子账 `pnc_ledger`(充值/退款流水、净收入、退款率)。
   - 钱包/配额:`pnc_ledger` 余额聚合、负余额/overdraft 名单。
@@ -95,14 +95,14 @@
 > 隐私:**不发**消息内容/prompt/PII;session replay 默认遮罩输入框;PostHog 走 EU。
 
 ## 部署（零 VPS）
-- **BI**:Grafana Cloud（注册免费档）+ datasource 指 Supabase（`metabase_ro`）。
+- **BI**:Grafana Cloud（注册免费档）+ datasource 指 Supabase（`bi_ro`）。
 - **控制台**:Refine SPA → `wrangler pages deploy`（CF Pages）。
 - **PostHog / Langfuse / Sentry**：各家免费云。
 - **无 VPS、无 Docker Compose 常驻。**
   > `infra/dashboards/docker-compose.yml`（Metabase+Appsmith）+ `docs/dashboards-setup.md` **降级为可选 fallback**:仅当将来确实要"点选式自助 BI"且愿意养 VPS 时才用;主路径不走它。
 
 ## 隐私 / 安全
-- Grafana 用 **只读** `metabase_ro` 角色;Supabase 网络限源(Grafana Cloud 出口 IP / PDC)。
+- Grafana 用 **只读** `bi_ro` 角色;Supabase 网络限源(Grafana Cloud 出口 IP / PDC)。
 - PostHog 走 EU,不发内容/PII,replay 遮罩。
 - Refine 控制台写一律经 edge(鉴权 + 审计);后台登录 2FA。
 - 聊天/账单真身只在 Supabase / Polar。
@@ -111,7 +111,7 @@
 - **$0 基线**(全免费档 + 已有 CF);规模上来第一笔 ≈ Langfuse Core $29/月。
 
 ## 开放问题
-1. `metabase_ro` 角色密码 + Grafana Cloud 连接方式(出口 IP allowlist vs PDC)。
+1. `bi_ro` 角色密码 + Grafana Cloud 连接方式(出口 IP allowlist vs PDC)。
 2. PostHog iOS SDK 接入点(App 启动、登录 identify 时机)。
 3. Refine vs react-admin 二选一(都可;react-admin 自定义 dataProvider 文档更全)。
 4. 事件规范评审:主线是否够。
@@ -119,7 +119,7 @@
 
 ## 分阶段落地 checklist
 > 设计阶段,待办。
-- [ ] **P0** Grafana Cloud 账号 + 设 `metabase_ro` 密码 + datasource 连 Supabase;Supabase Studio 存几条 ad-hoc snippet。
+- [ ] **P0** Grafana Cloud 账号 + 设 `bi_ro` 密码 + datasource 连 Supabase;Supabase Studio 存几条 ad-hoc snippet。
 - [ ] **P1** Grafana:收入/退款/钱包/转化骨架几张图(零 app 改动)。
 - [ ] **P2** Sentry 设 DSN(代码已就绪)。
 - [ ] **P3** Langfuse:接 `lib/llm-trace.ts` 到 `apps/edge/src/llm/` 调用点(随计费 P2 一起,避免重复动 llm 路径)。

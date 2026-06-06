@@ -1,7 +1,9 @@
-// Pure constant export of prompt names. Separate file (no .md imports) so
-// Board can import it without pulling in wrangler-specific text loaders.
+// Pure constant export of prompt names + descriptions.
 //
-// Edits here must match the PROMPTS_ZH map in prompt-loader.ts.
+// Langfuse is the source of truth for prompt *bodies* (keyed `<name>/<locale>`,
+// production label). This list is the manifest the loader warms from KV and
+// what the Board lists. Adding a prompt: add its name here, then create the
+// `<name>/<locale>` prompt in Langfuse under the production label.
 
 export const PROMPT_NAMES = [
   'system',
@@ -18,6 +20,7 @@ export const PROMPT_NAMES = [
   'session-world-model',
   'start-crew-tool-result',
   'request-permission-tool-result',
+  'crew-captain',
 ] as const;
 
 export type PromptName = (typeof PROMPT_NAMES)[number];
@@ -39,4 +42,5 @@ export const PROMPT_DESCRIPTIONS: Record<PromptName, string> = {
   'session-world-model': 'Crew session 世界观（spec v2 §9.5）：身份/IO/群聊定位/captain/拍板方/post_to_crew/读白板/permission 模式。每个 session 启动时由 edge 渲染填值后注入。',
   'start-crew-tool-result': 'start_crew 工具调用成功后返回给 bot 的提示（已发出 crew 创建提议，等用户确认）',
   'request-permission-tool-result': 'request_permission 工具调用成功后返回给 agent 的提示（已发出权限申请卡片，manual 模式下等批准）',
+  'crew-captain': 'crew 机长人格：仅当回复 bot 是某个活跃 crew 的 captain 时注入，告诉它自己是这个 crew 的机长、要理解人类意图并用 start_session 编排编码任务',
 };

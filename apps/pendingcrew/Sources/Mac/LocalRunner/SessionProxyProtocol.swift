@@ -12,15 +12,12 @@ import Foundation
 /// other end and are out of scope here.
 ///
 /// Only JSON framing lives in this file — pure value transforms, no
-/// networking. The WebSocket transport + connection lifecycle + the
-/// server-session row prerequisite are the next (device-verified) slice;
-/// keeping the codec separate makes it unit-testable without a live socket,
-/// the same split RunnerEventParser uses.
+/// networking. Keeping the codec separate from `SessionProxyClient` makes it
+/// unit-testable without a live socket.
 ///
-/// Frames are encoded/decoded with `JSONSerialization` (matching
-/// RunnerEventParser's style) rather than Codable, because the protocol's
-/// `payload` / `state` fields are deliberately free-form `Record<string,
-/// unknown>` on the wire.
+/// Frames are encoded/decoded with `JSONSerialization` rather than Codable,
+/// because the protocol's `payload` / `state` fields are deliberately free-form
+/// `Record<string, unknown>` on the wire.
 
 public enum ProxyRole: String, Sendable {
     case viewer
@@ -85,9 +82,13 @@ public enum JSONValue: Equatable, Sendable {
 // MARK: - SessionState (runner → viewers payload)
 
 /// The runner's published `session.state`. The wire field is free-form; this
-/// is the shape PendingCrew owns. Viewers render best-effort. Built from the
-/// live `[RunnerEvent]` transcript so a viewer mirrors what the session
-/// window shows.
+/// is the shape PendingCrew owns. Viewers render best-effort.
+///
+/// **Phase 1**: the runner no longer publishes this (structured transcript
+/// events were ripped out with the one-shot runner; the embedded terminal is
+/// the source of truth). The struct + its outbound encode path stay so the
+/// SessionProxy codec compiles whole; Phase 2's byte tunnel will repopulate
+/// live state. The viewer side decodes via `SessionStateSnapshot`, not this.
 public struct SessionState: Equatable, Sendable {
     /// running / completed / cancelled / failed — the run's lifecycle.
     public var status: String
@@ -103,38 +104,10 @@ public struct SessionState: Equatable, Sendable {
         self.lastEvent = lastEvent
     }
 
-    /// Derive the state from a run's status + its transcript tail.
-    public static func from(status: String, events: [RunnerEvent]) -> SessionState {
-        SessionState(status: status,
-                     eventCount: events.count,
-                     lastEvent: events.last.map(Self.summarize))
-    }
-
     public func dict() -> [String: Any] {
         var d: [String: Any] = ["status": status, "eventCount": eventCount]
         if let lastEvent { d["lastEvent"] = lastEvent }
         return d
-    }
-
-    /// One-line label for a transcript event (mirrors the window's grammar).
-    static func summarize(_ event: RunnerEvent) -> String {
-        switch event {
-        case let .started(model, _): return model.map { "会话开始 · \($0)" } ?? "会话开始"
-        case let .reasoning(t): return "思考：\(Self.clip(t))"
-        case let .assistant(t): return Self.clip(t)
-        case let .toolCall(title, detail):
-            return detail.map { "\(title)：\(Self.clip($0))" } ?? title
-        case let .toolResult(t, isError): return (isError ? "工具失败：" : "工具结果：") + Self.clip(t)
-        case let .finished(summary, isError, _):
-            return summary.map { (isError ? "失败 · " : "完成 · ") + Self.clip($0) } ?? (isError ? "失败" : "完成")
-        case let .failed(t): return "错误：\(Self.clip(t))"
-        case let .unknown(t): return Self.clip(t)
-        }
-    }
-
-    private static func clip(_ s: String, _ max: Int = 80) -> String {
-        let oneLine = s.replacingOccurrences(of: "\n", with: " ")
-        return oneLine.count <= max ? oneLine : String(oneLine.prefix(max)) + "…"
     }
 }
 

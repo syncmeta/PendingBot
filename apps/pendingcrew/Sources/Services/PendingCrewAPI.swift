@@ -90,6 +90,10 @@ struct PendingCrewAPI {
     func listMySubjects() async throws -> [UserSubject] {
         struct Response: Decodable {
             let subject: Row
+            // 登录这台机的 PendingCrew 用户(auth.users.id) —— device grant
+            // 路径是 grant 的 granted_by_user_id,user-JWT 路径是 caller 自己。
+            // 群聊用它区分"自己的消息"。subject row 之外的顶层字段。
+            let userId: String?
             struct Row: Decodable {
                 let id: String
                 let subjectType: String
@@ -105,13 +109,18 @@ struct PendingCrewAPI {
                     case displayName = "display_name"
                 }
             }
+            enum CodingKeys: String, CodingKey {
+                case subject
+                case userId = "user_id"
+            }
         }
         let resp: Response = try await get(path: "v1/me/subject")
         return [UserSubject(
             id: resp.subject.id,
             kind: resp.subject.subjectType,
             displayName: resp.subject.displayName,
-            role: nil
+            role: nil,
+            userId: resp.userId
         )]
     }
 
@@ -333,16 +342,71 @@ struct PendingCrewAPI {
 
     /// `POST /v1/crews/:crewId/messages` — drop a message on the crew
     /// whiteboard. `mentions` routes it: `@session <id>` → that session's
-    /// mailbox; `@captain`; empty/`@broadcast` → all sessions. Needs `crew:write`.
+    /// mailbox; `@captain`; empty/`@broadcast` → all sessions. `attachmentIds`
+    /// are ids returned by `uploadAttachment`, persisted on the message as
+    /// `{ ids: [...] }` and hydrated → renderable objects on read. Needs
+    /// `crew:write`.
     @discardableResult
-    func postCrewMessage(crewId: String, text: String, mentions: [CrewMention] = []) async throws -> String? {
-        struct Body: Encodable { let content: String; let mentions: [CrewMention] }
-        struct Response: Decodable { let announcementId: String? }
+    func postCrewMessage(
+        crewId: String,
+        text: String,
+        mentions: [CrewMention] = [],
+        attachmentIds: [String] = []
+    ) async throws -> String? {
+        struct Body: Encodable {
+            let content: String
+            let mentions: [CrewMention]
+            let attachmentIds: [String]?
+        }
+        // The handler returns `{ messageId }`; `announcementId` stays nil (this
+        // endpoint never emitted one). Decode both leniently so neither shape
+        // throws — callers only care that the POST succeeded.
+        struct Response: Decodable { let announcementId: String?; let messageId: String? }
         let resp: Response = try await post(
             path: "v1/crews/\(crewId)/messages",
-            body: Body(content: text, mentions: mentions)
+            body: Body(
+                content: text,
+                mentions: mentions,
+                attachmentIds: attachmentIds.isEmpty ? nil : attachmentIds
+            )
         )
-        return resp.announcementId
+        return resp.messageId ?? resp.announcementId
+    }
+
+    // MARK: - Attachment upload (compose half)
+
+    /// `POST /v1/upload` — multipart upload of one file. The endpoint accepts a
+    /// device-grant bearer with `crew:write` (PendingCrew's grant has it) and
+    /// returns the attachment `id`, which is then passed to `postCrewMessage`
+    /// via `attachmentIds`. Owner + quota attribute to the user who granted
+    /// PendingCrew (server-side `effectiveOwnerUserId`).
+    ///
+    /// Wire: multipart/form-data with a single `file` part. We deliberately
+    /// omit `conversationId` — the server binds the id to a crew message at
+    /// send time and re-checks membership on every `/v1/uploads/:id` read, and
+    /// the device-grant path rejects a `conversationId` it can't RLS-probe.
+    func uploadAttachment(data: Data, filename: String, mime: String) async throws -> String {
+        let boundary = "PendingCrewBoundary-\(UUID().uuidString)"
+        var body = Data()
+        func append(_ string: String) { body.append(string.data(using: .utf8)!) }
+        append("--\(boundary)\r\n")
+        // `filename` lands on the File's name → attachments.filename server-side.
+        append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n")
+        append("Content-Type: \(mime)\r\n\r\n")
+        body.append(data)
+        append("\r\n--\(boundary)--\r\n")
+
+        var request = URLRequest(url: baseURL.appendingPathComponent("v1/upload"))
+        request.httpMethod = "POST"
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.httpBody = body
+        attachAuth(to: &request)
+
+        // Response: `{ id, r2_key, mime, size, filename, url, created_at, deduped? }`
+        // (routes/upload.ts) — we only need the id.
+        struct Response: Decodable { let id: String }
+        let resp: Response = try await perform(request)
+        return resp.id
     }
 
     /// `GET /v1/crews/:crewId/members` — the crew roster (spec §9: everyone is a
@@ -402,8 +466,43 @@ struct PendingCrewAPI {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
     }
 
+    /// 发请求，对**连接建立阶段**的瞬时失败重试。
+    ///
+    /// 病根：Cloudflare 广告 `alt-svc h3`，macOS URLSession 会机会性升级到
+    /// HTTP/3(QUIC over UDP)。某些网络路径（TUN 模式代理只转 TCP 不转 UDP、弱网、
+    /// UDP/443 被挡）下 QUIC 握手失败 → `URLError.secureConnectionFailed`
+    /// （"A TLS error caused the secure connection to fail"），而 HTTP/2(TCP)
+    /// 完全正常。重试时 URLSession 会把该 host 降级回 HTTP/2 → 成功。
+    ///
+    /// **只重试连接建立类错误**（secureConnectionFailed / cannotConnectToHost /
+    /// DNS）—— 这些必然发生在请求送达服务器**之前**，所以对非幂等 POST
+    /// （createSession 等）也安全，不会重复创建。
+    private func dataWithConnectRetry(
+        for request: URLRequest, attempts: Int = 3
+    ) async throws -> (Data, URLResponse) {
+        var lastError: Error = PendingCrewAPIError.invalidResponse
+        for i in 0..<attempts {
+            do { return try await session.data(for: request) }
+            catch let e as URLError where Self.isConnectStageTransient(e) {
+                lastError = e
+                if i < attempts - 1 { try? await Task.sleep(nanoseconds: 350_000_000) }
+            }
+        }
+        throw lastError
+    }
+
+    private static func isConnectStageTransient(_ e: URLError) -> Bool {
+        switch e.code {
+        case .secureConnectionFailed, .cannotConnectToHost,
+             .cannotFindHost, .dnsLookupFailed:
+            return true
+        default:
+            return false
+        }
+    }
+
     private func perform<Response: Decodable>(_ request: URLRequest) async throws -> Response {
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await dataWithConnectRetry(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw PendingCrewAPIError.invalidResponse
         }
@@ -498,6 +597,26 @@ struct CrewMention: Encodable, Equatable {
     static let broadcast = CrewMention(kind: "broadcast", targetId: nil)
 }
 
+/// One image / file attachment on a whiteboard message. Mirror of PendingBot
+/// iOS `Attachment` — the server hydrates these from `messages.attachments`
+/// `{ ids: [...] }` into full objects, so the wire already carries mime / size /
+/// url / filename (PendingCrew has no direct Supabase access to resolve ids).
+/// `url` is the auth-gated `/v1/uploads/<id>` path, fetched with the
+/// device-grant bearer token.
+struct CrewAttachment: Decodable, Identifiable, Equatable, Hashable {
+    let id: String
+    let kind: String?
+    let mime: String
+    let size: Int?
+    let width: Int?
+    let height: Int?
+    let url: String
+    let filename: String?
+
+    /// True when this attachment renders as an inline image (vs a file chip).
+    var isImage: Bool { mime.lowercased().hasPrefix("image/") }
+}
+
 /// One whiteboard entry (a crew_announcements row) rendered in the middle-pane
 /// group chat. `summary` is the display line; `payload.kind == "interaction"`
 /// marks an ask_human card (T4.5) so the timeline can render it specially.
@@ -511,6 +630,12 @@ struct CrewWhiteboardEntry: Decodable, Identifiable, Equatable {
     let summary: String?
     let createdAt: String
     let payload: Payload?
+    /// Image / file attachments on this message. Optional → entries without
+    /// attachments (and older server builds) decode fine. Server hydrates
+    /// these from `messages.attachments` `{ ids: [...] }` into full objects;
+    /// `url` is the auth-gated `/v1/uploads/<id>` path `CrewRemoteImage`
+    /// fetches with the device-grant bearer token.
+    let attachments: [CrewAttachment]?
 
     struct Payload: Decodable, Equatable {
         let text: String?
@@ -535,6 +660,7 @@ struct CrewWhiteboardEntry: Decodable, Identifiable, Equatable {
         case summary
         case createdAt = "created_at"
         case payload
+        case attachments
     }
 
     /// Best display text: explicit payload text → summary → empty.

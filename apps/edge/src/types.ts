@@ -10,6 +10,12 @@ export interface Env {
   // ── Bindings declared in wrangler.jsonc ────────────────────────
   UPLOADS: R2Bucket;
   MEMORY: KVNamespace;
+  // Prompt library distribution cache. Langfuse is the source of truth for
+  // prompts; they reach the worker via this KV (webhook-pushed on change +
+  // pull-on-miss). See llm/prompt-loader.ts. May be undefined under bare
+  // `wrangler dev` (default env declares no binding) — the loader degrades
+  // to direct Langfuse pulls then.
+  PROMPTS_KV: KVNamespace;
   /// Per-group debounce + small-model routing DO (M4 of group chat).
   /// One instance per conversation_id; routes via env.GROUP_ROUTER.get(
   /// env.GROUP_ROUTER.idFromName(conversationId)). See
@@ -186,6 +192,11 @@ export interface Env {
   LANGFUSE_PUBLIC_KEY?: string;
   LANGFUSE_SECRET_KEY?: string;
   LANGFUSE_BASE_URL?: string;
+  // Shared secret for Langfuse prompt-version webhooks. Requests carry an
+  // HMAC-SHA256 signature over `${timestamp}.${rawBody}` in x-langfuse-signature.
+  // Set this both in the Langfuse webhook config and as a worker secret.
+  // Unset → the webhook endpoint returns 501. See routes/langfuse-prompts.ts.
+  LANGFUSE_WEBHOOK_SECRET?: string;
 }
 
 // Hono's c.var slot — populated by middleware (auth, version, etc.)

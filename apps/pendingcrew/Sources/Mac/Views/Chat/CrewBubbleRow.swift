@@ -7,24 +7,44 @@ struct CrewBubbleRow: View {
     let entry: CrewWhiteboardEntry
     let sender: CrewSender
 
+    private var attachments: [CrewAttachment] { entry.attachments ?? [] }
+    /// Image-only messages (e.g. a sent screenshot) carry no prose — skip the
+    /// empty text bubble so we don't render a blank green pill above the grid.
+    private var hasText: Bool { !entry.displayText.isEmpty }
+
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             if sender.isMine {
                 Spacer(minLength: 48)
-                bubble(mine: true)
+                content(mine: true)
             } else {
                 CrewAvatar(sender: sender)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(sender.displayName)
                         .font(CrewTheme.Fonts.rounded(11, weight: .semibold))
                         .foregroundStyle(CrewTheme.Palette.inkMuted)
-                    bubble(mine: false)
+                    content(mine: false)
                 }
                 Spacer(minLength: 32)
             }
         }
         .padding(.horizontal, CrewTheme.Metrics.gutter)
         .padding(.vertical, 4)
+    }
+
+    /// Text bubble (when present) stacked above the attachment grid, both
+    /// aligned to the bubble's side.
+    @ViewBuilder
+    private func content(mine: Bool) -> some View {
+        VStack(alignment: mine ? .trailing : .leading, spacing: 6) {
+            if hasText {
+                bubble(mine: mine)
+            }
+            if !attachments.isEmpty {
+                CrewAttachmentView(attachments: attachments,
+                                   alignment: mine ? .trailing : .leading)
+            }
+        }
     }
 
     private func bubble(mine: Bool) -> some View {

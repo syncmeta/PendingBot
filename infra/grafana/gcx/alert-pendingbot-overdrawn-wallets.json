@@ -1,0 +1,107 @@
+{
+  "apiVersion": "rules.alerting.grafana.app/v0alpha1",
+  "kind": "AlertRule",
+  "metadata": {
+    "name": "pendingbot-overdrawn-wallets",
+    "annotations": {
+      "grafana.app/folder": "pendingbot"
+    }
+  },
+  "spec": {
+    "title": "PendingBot \u2014 Overdrawn wallets",
+    "trigger": {
+      "interval": "1m"
+    },
+    "noDataState": "OK",
+    "execErrState": "Error",
+    "for": "5m",
+    "labels": {
+      "app": "pendingbot",
+      "severity": "warning"
+    },
+    "annotations": {
+      "summary": "One or more subjects have a negative net PNC balance (overdrawn wallet).",
+      "__dashboardUid__": "pendingbot-wallet-quota",
+      "__panelId__": "2"
+    },
+    "panelRef": {
+      "dashboardUID": "pendingbot-wallet-quota",
+      "panelID": 2
+    },
+    "expressions": {
+      "A": {
+        "queryType": "",
+        "relativeTimeRange": {
+          "from": "600s",
+          "to": "0s"
+        },
+        "datasourceUID": "cfo4bmc9o50xsc",
+        "model": {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "cfo4bmc9o50xsc"
+          },
+          "rawSql": "SELECT COUNT(*) AS overdrawn_subjects\nFROM (\n  SELECT subject_id, SUM(delta_pnc_micros) AS net\n  FROM pendingbot.pnc_ledger\n  GROUP BY subject_id\n) t\nWHERE t.net < 0;",
+          "rawQuery": true,
+          "format": "table",
+          "editorMode": "code",
+          "intervalMs": 1000,
+          "maxDataPoints": 43200
+        }
+      },
+      "B": {
+        "datasourceUID": "__expr__",
+        "model": {
+          "refId": "B",
+          "type": "reduce",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "A",
+          "reducer": "last",
+          "settings": {
+            "mode": "dropNN"
+          }
+        }
+      },
+      "C": {
+        "datasourceUID": "__expr__",
+        "source": true,
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "B",
+          "conditions": [
+            {
+              "type": "query",
+              "evaluator": {
+                "type": "gt",
+                "params": [
+                  0.0
+                ]
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": [
+                  "C"
+                ]
+              },
+              "reducer": {
+                "type": "last",
+                "params": []
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

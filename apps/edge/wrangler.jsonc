@@ -2,8 +2,9 @@
   // PendingBot Edge Worker — Hono on Cloudflare Workers
   // ──────────────────────────────────────────────────────────────
   // Resources used (each env binds its own instance):
-  //   UPLOADS  — R2 bucket (attachments)
-  //   MEMORY   — KV namespace (Honcho representation cache)
+  //   UPLOADS    — R2 bucket (attachments)
+  //   MEMORY     — KV namespace (Honcho representation cache)
+  //   PROMPTS_KV — KV namespace (Langfuse prompt distribution cache)
   //
   // Markdown text imports for the prompt library: see [[rules]].
 
@@ -13,14 +14,8 @@
   "compatibility_date": "2026-05-01",
   "compatibility_flags": ["nodejs_compat"],
 
-  // Treat .md as raw text, importable as string. Powers prompts/*.md.
-  "rules": [
-    {
-      "type": "Text",
-      "globs": ["**/*.md"],
-      "fallthrough": true
-    }
-  ],
+  // (No Text module rule: prompts are no longer bundled as .md — Langfuse is
+  // the source of truth, distributed via PROMPTS_KV. See llm/prompt-loader.ts.)
 
   "observability": {
     "enabled": true
@@ -121,6 +116,12 @@
         {
           "binding": "MEMORY",
           "id": "54b50e85e1884503b0d2c2884d531163"
+        },
+        {
+          // Langfuse prompt distribution cache. Source of truth = Langfuse;
+          // entries written by the prompt-version webhook + pull-on-miss.
+          "binding": "PROMPTS_KV",
+          "id": "af0b95974e48433abb95b92a2137aca7"
         }
       ],
       // Per-group debounce + small-model routing (M4 of group chat).

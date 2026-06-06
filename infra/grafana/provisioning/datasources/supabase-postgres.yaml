@@ -15,7 +15,7 @@
 apiVersion: 1
 
 datasources:
-  - name: Supabase Postgres (metabase_ro)
+  - name: Supabase Postgres (bi_ro)
     uid: supabase_pendingbot_ro
     type: postgres
     access: proxy
@@ -23,7 +23,7 @@ datasources:
     # or the connection pooler host from the Supabase dashboard. Set via env.
     url: ${SUPABASE_DB_HOST}:${SUPABASE_DB_PORT}
     # Read-only role. Must be created first (see README precondition).
-    user: metabase_ro
+    user: bi_ro
     secureJsonData:
       password: ${SUPABASE_DB_PASSWORD}
     jsonData:

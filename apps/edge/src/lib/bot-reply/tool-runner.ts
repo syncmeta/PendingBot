@@ -20,6 +20,8 @@ import { sendImagesTool } from './tools/send-images';
 import { postToCrewTool } from './tools/post-to-crew';
 import { startSessionTool } from './tools/start-session';
 import { startCrewTool } from './tools/start-crew';
+import { createChildCrewTool } from './tools/create-child-crew';
+import { recruitTempBotTool } from './tools/recruit-temp-bot';
 import { requestPermissionTool } from './tools/request-permission';
 
 /// Single web-search citation. Stored on each bubble row's `citations`
@@ -155,6 +157,12 @@ export async function runTool(
     }
     if (name === 'start_session') {
       return await startSessionTool(env, args, ctx);
+    }
+    if (name === 'create_child_crew') {
+      return await createChildCrewTool(env, args, ctx);
+    }
+    if (name === 'recruit_temp_bot') {
+      return await recruitTempBotTool(env, args, ctx);
     }
     if (name === 'request_permission') {
       return await requestPermissionTool(env, args, ctx);

@@ -119,7 +119,7 @@ public enum GitWorktreeService {
     ///   nil = `git worktree add <path> <branch>`(共享已有分支)
     /// - `worktreeNameHint`: 目录命名前缀。最终名字 `<hint>-<8 char uuid>` 避免碰撞。
     ///
-    /// 返回新 worktree 的绝对 URL,可直接当 `LocalCodingAgentLaunchSpec.workingDirectory` 用。
+    /// 返回新 worktree 的绝对 URL,可直接当 session 的 working directory 用。
     @discardableResult
     public static func addWorktree(
         sourceRepository: URL,
@@ -283,7 +283,7 @@ public enum GitWorktreeService {
         process.executableURL = git
         process.arguments = argv
         process.currentDirectoryURL = cwd
-        // env 白名单同 LocalCodingAgentLaunchSpec(git 需要 HOME 读 ~/.gitconfig)。
+        // env 白名单同 LocalCodingAgentEnv(git 需要 HOME 读 ~/.gitconfig)。
         var env: [String: String] = [:]
         let parent = ProcessInfo.processInfo.environment
         for key in ["PATH", "HOME", "SHELL", "LANG", "TERM", "USER", "LOGNAME", "TMPDIR"] {

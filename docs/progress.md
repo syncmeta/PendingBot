@@ -1,6 +1,6 @@
 # PendingBot / PendingCrew 进度账本 (Progress Ledger)
 
-**最近对账：2026-06-05**（对照实际代码 / 迁移 / git，不是看 task 标记）
+**最近对账：2026-06-06**（对照实际代码 / 迁移 / git，不是看 task 标记）
 
 > **2026-06-05（续）Mac 对齐 iOS 收尾：markdown/公式/图片查看器/发送态/好友 IA（`feat/mac-login-align`，未合，#212）**
 > - 用户连问带做几轮。全部 iOS+macOS 双端 BUILD SUCCEEDED（合并方每拍自跑 xcodegen+双端构建坐实）。**核心思路一以贯之：iOS 的渲染器/查看器多数本就跨平台，被无谓 `#if os(iOS)` 圈住 → 放开复用，而非给 Mac 另写。**
@@ -47,6 +47,43 @@
 > - **验证**：iOS Simulator + macOS **双端 `xcodebuild` BUILD SUCCEEDED**；Mac app 已启动到桌面。**未做（记 tech-debt 🟡）**：① 本 session TCC 屏幕录制权限被拒，**截不了图 → 视觉确认待用户**；② **Apple/Google 在 Mac 上的真实 sign-in 回合未跑**（邮箱 OTP 与 iOS 同路、可信）——Google 还依赖一个 **macOS 型 OAuth client** 配置（现有 GIDClientID 是 iOS 型，Mac 上可能 invalid_client），启用前必须按 tech-debt 清单坐实。
 > - **合 main**：待用户（且 Mac 三登录真验证前别对外声称可用）。
 
+> **2026-06-06 prompt 真源切 Langfuse + KV 分发（`chore/prompt-langfuse-kv`，未合 main）**
+> - ✅ **弃用 bundled `.md`，Langfuse 成 prompt 唯一真源**（用户拍板：pre-launch 可激进、不留旧兜底、"空了就空了"）。先把 16 个现有 `.md` 一次性 seed 进 Langfuse（production label，幂等脚本，已跑），再删 `prompts/{zh,en}/*.md` + wrangler Text rule + seed 脚本。`prompts/skills/*` 是另一套 public-skills（mjs seed），保留。
+> - ✅ **prompt-loader 重写为 KV 分发 + fail-loud**：读路径 L1 内存(30s) → `PROMPTS_KV`(跨 isolate) → pull-on-miss 从 Langfuse 拉并回写 KV → 全空则**抛错**（不再 serve 陈旧 bundled）。新建共享单例 Langfuse client（prompt-loader + llm-trace 复用，去掉 per-call `new`）。**prompt 读取与 `LANGFUSE_ENABLED` 解耦**——该 flag 现在只 gate trace 上报。
+> - ✅ **Langfuse prompt-version webhook**（`POST /v1/langfuse/prompt-webhook`）：HMAC-SHA256 验签 + 只认 production text → 写 KV，prompt 改完不发版即生效。新 secret `LANGFUSE_WEBHOOK_SECRET`。
+> - ✅ **generation 关联 prompt 版本**：traceGeneration 接 `{name,version}` → generation link；bot-reply 经 audit 队列透传 `getPromptMeta('system',locale)`。off 时 no-op。
+> - **验证**：edge typecheck 0 + 512 vitest 绿（新增 prompt-loader 4 + webhook 5 测试）。`wrangler dry-run` 因容器需 Docker 未端到端跑（JS bundle 由 typecheck + 零 .md import 保证，记 tech-debt）。建了 KV namespace `PROMPTS_KV`（id af0b9597…）。
+> - **遗留给你**：① 配 `LANGFUSE_WEBHOOK_SECRET`（worker secret + Langfuse webhook 后台），webhook 指向 `https://api.pendingname.com/v1/langfuse/prompt-webhook`；② 翻 `LANGFUSE_ENABLED=true` 才开始上报 trace（prompt 读取已独立于它）；③ KV stale / version-guard 等取舍见 tech-debt；④ 本分支未合 main、未 push（按约定）。
+>
+> **2026-06-05 两条 crew 线已合 main（merge-back，build/typecheck 绿，dirty 文件未动）**
+> - ✅ **`feat/crew-captain-orchestration` → main**（`--no-ff` 87d5fcae）：captain 编排 persona/工具 + 群聊附件整套 + T4.5 状态实时复验。
+> - ✅ **`feat/pendingcrew-runner-backends` → main**（`--no-ff` caee11f1；先把 main 并进该分支 1c97313c 解了 2 处冲突：pbxproj 重 xcodegen、tech-debt 两新条目 union）：runner 生终端化（SwiftTerm 内嵌 PTY）+ 停不掉/签名/keychain/TLS/图标 5 个修复。**这批修复 + PTY runner 现在进了 main**（之前只在那条没合的分支上）。
+> - **验证**：合并后 macOS build SUCCEEDED（runner PTY 重写与 captain 附件视图共存编译过）+ edge typecheck 0 + lefthook（schema-regen + typecheck-edge）双绿。main 末树 == 已 build 绿的 runner 末树。
+> - **🧭 退框（之前写错的两条纠正）**：① **终端字节隧道不再"跨分支阻塞"** —— runner PTY 已在 main，字节隧道是 main 上的 Phase 2 前向工作（spec §5），仍硬卡真机。② runner **Phase 1 像素级真机未验**（终端托管/prompt 注入/交互）这条 caveat 随之进 main，tech-debt 已记。
+> - **遗留给你**：本次为合 runner 新建了 worktree `.claude/worktrees/pendingcrew-runner-backends`（按约定不自动删）；main 未 push（按约定不自动 push）；T5.3 两设备 E2E + runner Phase 1 真机验仍待。
+
+> **2026-06-05 dynamic loop 续做（`feat/crew-captain-orchestration`，未合；macOS build 绿 / edge typecheck 0 / vitest 绿）**
+> - ✅ **① crew 群聊附件整套已落**（推翻早先"crew composer 无附件"的决定，用户 2026-06-04 拍板"附件做整套"）。**渲染半**(commits `6ba69b37`/`bcb7bf16`)：edge 白板 entry hydrate `messages.attachments.ids` → 可渲染对象、`CrewWhiteboardEntry` 解码、`CrewAttachmentView`(图片网格 + 文件 chip)、`CrewImageLoader` auth 图片。**发送半**(commits `c6c7b1e9`/`4f522f1b`)：upload 端点 `requireSession()`→`requireSubjectAuth(['crew:write'])` + `effectiveOwnerUserId`(device grant 走 granted_by_user_id；session 路径字节不变)、`POST /v1/crews/:id/messages` 接受 `attachmentIds` 写 `attachments:{ids:[]}`、`CrewComposer` + 按钮(`.fileImporter`) + pending tray + 上传。顺手修了 `postCrewMessage` 返回 `{messageId}` 非 `announcementId` 的潜伏 bug。
+> - ✅ **② T4.5 跨端实时 session 状态 —— 核查确认本就已端到端落地，本 loop 仅复验 build 绿**。runner 发布(`CrewSessionRunner` 起 `SessionProxyClient`,边跑边 publish `session.state`)+ viewer 实时 banner(`RemoteSessionsView`)+ 遥控命令(cancel/send_prompt/set_steering 全 apply)+ ask_human 交互卡，都在（tech-debt §514-518 已详记）。**"WS 实时推 session 状态替轮询"这条 = DONE**；3s 轮询保留为持久转写兜底（故意，runner 离线时仍渲染）。
+> - 🧭 **终端字节隧道（SSH-like raw PTY 跨端）记下、本 loop 不做**：依赖 SwiftTerm raw-terminal runner，那在**另一分支** `feat/pendingcrew-runner-backends`（本分支的 runner 是 JSONL 事件级，非字节级）。要等那条合进来 + 真机才能动工。
+> - 🧭 **PendingCrew Mac 群聊仍 3s 轮询（非 session 状态，是聊天消息）—— 升级到 realtime 需先扩 RealtimeHub auth 到 device-grant**：`realtime-hub.ts` 现 `requireSession()` JWT-only + `userClient`/RLS，PendingCrew 拿的是 `pdg_` device grant（无 JWT），**结构上够不到 conv topic**。给 Mac 群聊实时 = 给 RealtimeHub conv 路由加 device-grant 鉴权(按 grant subject + crew 成员判定) + 写 Swift hub client，是新鉴权面 + 中等块，**需用户决策**，不在本 loop 两项内。
+> - **待**：上述两条 🧭；T5.3 两设备 E2E QA(活 session + 任一 viewer 实时看&cancel/steer)；本分支与 `feat/pendingcrew-runner-backends` 两条 crew 线择机合 main。
+
+
+> **2026-06-04 captain 编排续做 + 对账（`feat/crew-captain-orchestration`，off main，未合）**
+> - **对账**：核 main 代码发现 **#241(Phase J: captain 被群消息唤醒,dispatchGroupTurn 接进 POST /messages) 和 #242(Phase K: start_session tool + open_crew_session_by_captain RPC + Mac autoClaimLoop) 其实已落地**（编译/部署，真机未验），task 系统 #241/#242 标 pending 是 **stale**。判断口径：代码在、真机验归 T5.3。
+> - **续做（本分支新落，typecheck 0 / edge 500 tests 过）**：① **J-e** —— `post_to_crew` 两路径(bot-reply tool + session HTTP)在写 crew_announcements 后**也镜像一条 messages**，session/bot 发言终于进群聊显示（之前只进白板 announcements、群聊读 messages 看不到）。② **captain persona** —— `prompts/zh/crew-captain.md`(prompt-loader) + `builder.ts` 注入(gated crew+captain+inGroup,best-effort)，机长被唤醒时知道自己是机长 + 何时调 start_session。
+> - **dynamic loop 续做（2026-06-05，typecheck 0 / edge 500 tests / macOS build 绿）**：
+>   - ✅ **captain 工具补全** `create_child_crew`(用 `_for_actor` service-role RPC 变体,责任份额走 crew_parent_links 结构继承,无 bps 参) + `recruit_temp_bot`(纯 service-role insert ephemeral_bot,确认无触发器冲突)。两者门控 captain,接进 tool-defs/tool-runner/index.ts。commit `f2d5146c`。⚠️ recruit 的 ephemeral_bot 暂无消费方(花名册/turn 路径未建)——记 tech-debt 🟡。
+>   - ✅ **localUserId 自气泡** edge `/v1/me/subject` 多返 `user_id`(device grant 的 granted_by_user_id) → `AppModel.currentUserId`(CrewStore.refreshSubjects 填) → CrewChatView.localUserId。多人 crew 里别人的话不再误显成"我"。commit `e9acb871`。**销了 localUserId tech-debt**。
+>   - ⏸️ **crew 聊天附件渲染 — 停在决策点未做**：与 chat-align 设计冲突(那份明确"crew composer 无附件、省 + 按钮")→ 现在没发附件入口,单做渲染是空的;要做是 composer+上传+发送+渲染整套 M+ 且推翻早先决定,需用户拍板。
+> - **待**：crew 附件(需决策,见上)；recruit_temp_bot 消费方;T5.3 真机验整链(captain 真编排 + Mac 接住跑 + 群显示)。
+
+> **2026-06-04 PendingCrew runner 改内嵌真终端 Phase 1（`feat/pendingcrew-runner-backends`，未合）**
+> - **动机+铁律**：runner 要"完整编排/控制 claude/codex"，不是一次性 exec。计费铁律：6-15 起 Agent SDK + `claude -p` 在订阅计划走单独小额度池，只有**交互式 TUI** 吃订阅主额度 → 必须 PTY 跑交互式。设计大简化（用户 steer）：**两端统一内嵌真终端**（SwiftTerm `LocalProcessTerminalView` 跑交互式 CLI + 字节注入），权限**默认自动审批**（真终端天然可人工兜底），跨端=**SSH 式字节隧道**（Phase 2）。spec/plan：`docs/superpowers/{specs,plans}/2026-06-04-pendingcrew-runner-*`。
+> - **Phase 1 做了（本机闭环，build+27 tests 真绿）**：接 SwiftTerm SPM(v1.13，Package.resolved 钉版)；`AgentTerminalSession`（按 kind 起交互式 claude `--dangerously-skip-permissions` / codex `-a never --sandbox`，`send/interrupt/stop` 字节注入，flag 本机实测）；`AgentTerminalView`(NSViewRepresentable)；`CrewSessionRunner`/`CrewSessionWindowView` 改用之；**干净拔掉**旧一次性路径（`LocalCodingAgentProcess`/`RunnerEventParser`/`SteeringChannel`/`InteractionChannel` + 结构化推送，旧路径没人验证过、用户授权清拔）。保留 session-row 生命周期 + viewer 侧 `SessionProxyClient`。
+> - **待**：① **像素级真验未做**——需用户本机 claude/codex 登录态起 app 验终端托管/注入/交互（computer-use 断、我验不了）；② Phase 2：SessionProxy 改载终端字节(SSH 隧道) + 远端 viewer 加 SwiftTerm 终端，跨端"看 agent 输出"补回（现降级只看状态）；③ 首 prompt 注入固定 sleep 等就绪→改就绪检测。详见 tech-debt 🟡。③ 合 main 待用户。
+
 > **2026-06-04 PendingCrew 中栏群聊 UI 对齐 PendingBot iOS（`feat/pendingcrew-chat-align`，未合）**
 > - **动机**：中栏群聊原是自绘简易气泡（圆角 12、两色填充、无头像、行内文字标签），与 PendingBot **iOS** 那套打磨过的群聊（头像+名字抬头+连续圆角+hairline+暖色 token+时间分隔 pill）观感脱节。**原生重画**对齐，数据仍绑 `CrewWhiteboardEntry`，不抽共享包、不引 PendingBot 私有代码（保 PendingCrew 可独立开源定位）。spec/plan 见 `docs/superpowers/{specs,plans}/2026-06-04-pendingcrew-chat-*`。
 > - **edge（零迁移）**：核到中栏白板端点 `GET /v1/crews/:id/messages` 读的是 conversation 的 `messages` 表（经 `mapMessageToEntry`），sender 身份本就在行里（`user_id`/`sender_bot_id`/`log_payload.session_id`），只是映射没透出 → 纯序列化补 `sender_user_id`/`sender_bot_id`/`sender_session_id`（commit `788614c8`，+3 vitest，17 passed）。
@@ -63,12 +100,12 @@
 
 > **2026-06-04 Supabase 迁 EU 区（Frankfurt）+ 观测三件套上线（`feat/managed-config`，已部署）**
 > - **动机**：用户数据 GDPR/EU 驻留。主库原在 US（us-west-2），pre-launch 无真实数据 → **EU 新建项目 `zafhoiwwpanpuashtnxy`（eu-central-1）、全套迁移重跑、不迁数据**。旧 US 库 `sslzhblojwkxfdyisity` 留作回退，EU 端到端全验后再删。
-> - **Phase 1 库**：180 迁移干净 apply（87 表 + 4 BI 视图 + `ensure_rls` event trigger + `metabase_ro` 角色）、seed（6 preset bots + 19683 地名）、schema regen、edge typecheck 全绿。**修了一个账本漂移**：`public.rls_auto_enable`（public schema 建表自动开 RLS 的安全网）早于 `0001_init` squash、只活在 US 库从未进账本，空库重跑撞 42883；已把 live 定义逐字补回迁移 `20260524175632`，账本自洽（任何空库可重建）。
+> - **Phase 1 库**：180 迁移干净 apply（87 表 + 4 BI 视图 + `ensure_rls` event trigger + `bi_ro` 角色）、seed（6 preset bots + 19683 地名）、schema regen、edge typecheck 全绿。**修了一个账本漂移**：`public.rls_auto_enable`（public schema 建表自动开 RLS 的安全网）早于 `0001_init` squash、只活在 US 库从未进账本，空库重跑撞 42883；已把 live 定义逐字补回迁移 `20260524175632`，账本自洽（任何空库可重建）。
 > - **Phase 2/3 代码+部署**：硬编码仅 3 处（wrangler `SUPABASE_URL` + iOS `HostedConfig` URL/anon key）。worker secret 换 EU anon/service + 新 `REALTIME_WEBHOOK_SECRET`（worker secret + EU vault 两边同值）；**deploy 切 EU**（health=production、AASA 200、`/b/*` 查库 404 非 500 = 连库成功）。
 > - **观测**：**Sentry + PostHog 生产启用**（EU host：`eu.i.posthog.com` / `cloud.langfuse.com`）。Langfuse keys 已备但 `LANGFUSE_ENABLED` 暂 false —— 用户要全功能（发完整 input/output 本文），等 `traceGeneration` 发本文（#247/#248）再开，免得先发半成品指标 trace。
 > - **附带发现**：supabase storage **空**（附件走 R2），换区零影响，少一摊。`feature flags` 经评估**不迁 PostHog**——现有 `*_ENABLED` 是运维 kill-switch，故意零运行时依赖，迁 PostHog 是反模式（循环依赖）。
 > - **待**：Phase 4 控制台 Auth（Site URL / Apple+Google OAuth / Turnstile secret / SMTP / email 模板，用户配）；Phase 5 iOS 端到端验证（真机注册登录→写库→realtime）；旧 US 库删除；Langfuse 发本文 + prompt→Langfuse Prompt Mgmt（#247）+ arena Elo→Bradley-Terry（#249）。
-> - **Grafana 解卡**：建 4 个 security-definer 聚合视图绕 RLS（不给宽松 policy），dashboard 03/05 SQL 指向视图（迁移 `20260604044057`，已 apply EU）。看板端到端待 Grafana Cloud 账号 + datasource。`metabase_ro` 正名 `bi_ro` 未做（成本铺开到 README，搁置）。
+> - **Grafana 解卡**：建 4 个 security-definer 聚合视图绕 RLS（不给宽松 policy），dashboard 03/05 SQL 指向视图（迁移 `20260604044057`，已 apply EU）。看板端到端待 Grafana Cloud 账号 + datasource。`bi_ro` 已正名 `bi_ro`（2026-06-04，迁移 20260604143012 + 全仓引用更新；Grafana datasource 用户名改 `bi_ro.<ref>`）。
 > - **Phase 4 Auth 已配+验**：Site URL / Apple / Google / Turnstile / SMTP(Resend) 全配好；`/auth/v1/settings` 实测 apple+google+email 全 enabled。
 > - **signup P0 修复**：EU 重建逼出潜伏 bug —— 计费退役 drop 了 `group_billing_config` 表却漏改 `bootstrap_user_id`（仍往里 insert），空库每次注册都 500「Database error saving new user」；US 库同样潜在坏，只是没真注册没暴露。`CREATE OR REPLACE` 去掉死 insert（迁移 `20260604085445`，commit `fe4a8920`），admin `generate_link` 验证 signup 通、返回 OTP。
 > - **prompt→Langfuse 第一步**：15 个 .md（zh 14 + en 1）已推进 Langfuse Prompt Management（命名 `<name>/<locale>` + production label），管道验证通。**loader 换源 + 退役 `i18n_prompts` 未做**（#247，留新 session）。
@@ -189,8 +226,8 @@
   - **PostHog**（block 1）：新 `lib/track.ts` `trackEvent(c,...)`（fire-and-forget，无 PII），接在 `message_sent / group_created / group_joined / voice_call_started(1v1+群) / voice_call_ended(群) / topup_succeeded(iap+lemon webhook)`。无 server seam 的事件（`signed_up` 触发器、`bot_created` 客户端直写、1v1 通话结束在 MeterDO、群注资/认缴在被改造的文件）记 tech-debt 留 iOS SDK/后续补，没造假。
   - **Langfuse**（block 2）：`traceGeneration` 接在 `persistAuditMessage`（每回合 model/tokens/cost/latency 都齐的唯一点），dedup 之后只发一次；隐私：只发结构指标不发 prompt/completion。装的是 v3 legacy SDK（Workers 友好）。
   - **Refine 后台**（block 4，`apps/admin`）：Refine v5 + react-router v7 SPA，custom dataProvider 走 edge（不直连 PG）、Supabase Auth、CF Pages 部署。**但 edge 没有 `/v1/admin/*` 面**——11 个端点缺口已记 tech-debt，dataProvider 逐条 `exists:false` 标注，不是无声 stub。
-  - **Grafana**（block 5，`infra/grafana`）：5 张 provisioning dashboard（营收/钱包/群池/成本/转化），datasource 走只读 `metabase_ro`。SQL 全部基于真实列（agent 发现 spec 的 `pnc_ledger` 不存在，实表是 `billing_ledger`）。
-- **待用户**：开 PostHog(EU)/Langfuse/Sentry/Grafana Cloud/CF Pages 账号、`wrangler secret put` 填 secret、建 `metabase_ro` 角色、连 Grafana→Supabase。详见 session 末清单。
+  - **Grafana**（block 5，`infra/grafana`）：5 张 provisioning dashboard（营收/钱包/群池/成本/转化），datasource 走只读 `bi_ro`。SQL 全部基于真实列（agent 发现 spec 的 `pnc_ledger` 不存在，实表是 `billing_ledger`）。
+- **待用户**：开 PostHog(EU)/Langfuse/Sentry/Grafana Cloud/CF Pages 账号、`wrangler secret put` 填 secret、建 `bi_ro` 角色、连 Grafana→Supabase。详见 session 末清单。
 
 ---
 

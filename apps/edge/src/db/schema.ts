@@ -698,6 +698,13 @@ export type Database = {
             foreignKeyName: "bots_responsible_subject_id_fkey"
             columns: ["responsible_subject_id"]
             isOneToOne: false
+            referencedRelation: "bi_subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bots_responsible_subject_id_fkey"
+            columns: ["responsible_subject_id"]
+            isOneToOne: false
             referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
@@ -874,6 +881,13 @@ export type Database = {
             foreignKeyName: "conversations_responsible_subject_id_fkey"
             columns: ["responsible_subject_id"]
             isOneToOne: false
+            referencedRelation: "bi_subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "conversations_responsible_subject_id_fkey"
+            columns: ["responsible_subject_id"]
+            isOneToOne: false
             referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
@@ -930,6 +944,13 @@ export type Database = {
             columns: ["crew_conversation_id"]
             isOneToOne: false
             referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crew_announcement_mentions_responsible_subject_id_fkey"
+            columns: ["responsible_subject_id"]
+            isOneToOne: false
+            referencedRelation: "bi_subjects"
             referencedColumns: ["id"]
           },
           {
@@ -1010,6 +1031,13 @@ export type Database = {
             columns: ["crew_conversation_id"]
             isOneToOne: false
             referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crew_announcements_responsible_subject_id_fkey"
+            columns: ["responsible_subject_id"]
+            isOneToOne: false
+            referencedRelation: "bi_subjects"
             referencedColumns: ["id"]
           },
           {
@@ -1190,6 +1218,13 @@ export type Database = {
             foreignKeyName: "crew_responsibility_shares_subject_id_fkey"
             columns: ["subject_id"]
             isOneToOne: false
+            referencedRelation: "bi_subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crew_responsibility_shares_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
             referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
@@ -1280,6 +1315,13 @@ export type Database = {
             columns: ["initiating_member_id"]
             isOneToOne: false
             referencedRelation: "temporary_group_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crew_sessions_responsible_subject_id_fkey"
+            columns: ["responsible_subject_id"]
+            isOneToOne: false
+            referencedRelation: "bi_subjects"
             referencedColumns: ["id"]
           },
           {
@@ -1625,6 +1667,13 @@ export type Database = {
             foreignKeyName: "group_contributions_subject_id_fkey"
             columns: ["subject_id"]
             isOneToOne: false
+            referencedRelation: "bi_subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "group_contributions_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
             referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
@@ -1872,6 +1921,13 @@ export type Database = {
             foreignKeyName: "group_pledges_subject_id_fkey"
             columns: ["subject_id"]
             isOneToOne: false
+            referencedRelation: "bi_subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "group_pledges_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
             referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
@@ -1904,6 +1960,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "group_pools_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: true
+            referencedRelation: "bi_subjects"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "group_pools_subject_id_fkey"
             columns: ["subject_id"]
@@ -1959,6 +2022,13 @@ export type Database = {
             foreignKeyName: "group_subject_members_subject_id_fkey"
             columns: ["subject_id"]
             isOneToOne: false
+            referencedRelation: "bi_subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "group_subject_members_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
             referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
@@ -2004,6 +2074,13 @@ export type Database = {
             columns: ["requester_member_id"]
             isOneToOne: false
             referencedRelation: "temporary_group_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "human_help_requests_responsible_subject_id_fkey"
+            columns: ["responsible_subject_id"]
+            isOneToOne: false
+            referencedRelation: "bi_subjects"
             referencedColumns: ["id"]
           },
           {
@@ -2325,6 +2402,13 @@ export type Database = {
             foreignKeyName: "permission_requests_responsible_subject_id_fkey"
             columns: ["responsible_subject_id"]
             isOneToOne: false
+            referencedRelation: "bi_subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "permission_requests_responsible_subject_id_fkey"
+            columns: ["responsible_subject_id"]
+            isOneToOne: false
             referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
@@ -2386,6 +2470,13 @@ export type Database = {
           subject_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "pnc_ledger_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "bi_subjects"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "pnc_ledger_subject_id_fkey"
             columns: ["subject_id"]
@@ -2633,6 +2724,13 @@ export type Database = {
             foreignKeyName: "runner_hosts_responsible_subject_id_fkey"
             columns: ["responsible_subject_id"]
             isOneToOne: false
+            referencedRelation: "bi_subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "runner_hosts_responsible_subject_id_fkey"
+            columns: ["responsible_subject_id"]
+            isOneToOne: false
             referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
@@ -2681,6 +2779,13 @@ export type Database = {
             columns: ["crew_session_id"]
             isOneToOne: false
             referencedRelation: "crew_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "runner_leases_responsible_subject_id_fkey"
+            columns: ["responsible_subject_id"]
+            isOneToOne: false
+            referencedRelation: "bi_subjects"
             referencedColumns: ["id"]
           },
           {
@@ -2901,6 +3006,13 @@ export type Database = {
             columns: ["recipient_session_id"]
             isOneToOne: false
             referencedRelation: "crew_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_mailbox_items_responsible_subject_id_fkey"
+            columns: ["responsible_subject_id"]
+            isOneToOne: false
+            referencedRelation: "bi_subjects"
             referencedColumns: ["id"]
           },
           {
@@ -3128,6 +3240,13 @@ export type Database = {
             foreignKeyName: "subject_device_grants_subject_id_fkey"
             columns: ["subject_id"]
             isOneToOne: false
+            referencedRelation: "bi_subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subject_device_grants_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
             referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
@@ -3199,6 +3318,13 @@ export type Database = {
             foreignKeyName: "subject_device_login_challenges_approved_subject_id_fkey"
             columns: ["approved_subject_id"]
             isOneToOne: false
+            referencedRelation: "bi_subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subject_device_login_challenges_approved_subject_id_fkey"
+            columns: ["approved_subject_id"]
+            isOneToOne: false
             referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
@@ -3213,41 +3339,13 @@ export type Database = {
             foreignKeyName: "subject_device_login_challenges_requested_subject_id_fkey"
             columns: ["requested_subject_id"]
             isOneToOne: false
-            referencedRelation: "subjects"
+            referencedRelation: "bi_subjects"
             referencedColumns: ["id"]
           },
-        ]
-      }
-      subject_wallets: {
-        Row: {
-          balance_credits: number
-          balance_updated_at: string | null
-          lifetime_spent_credits: number
-          lifetime_topup_credits: number
-          subject_id: string
-          updated_at: string | null
-        }
-        Insert: {
-          balance_credits?: number
-          balance_updated_at?: string | null
-          lifetime_spent_credits?: number
-          lifetime_topup_credits?: number
-          subject_id: string
-          updated_at?: string | null
-        }
-        Update: {
-          balance_credits?: number
-          balance_updated_at?: string | null
-          lifetime_spent_credits?: number
-          lifetime_topup_credits?: number
-          subject_id?: string
-          updated_at?: string | null
-        }
-        Relationships: [
           {
-            foreignKeyName: "subject_wallets_subject_id_fkey"
-            columns: ["subject_id"]
-            isOneToOne: true
+            foreignKeyName: "subject_device_login_challenges_requested_subject_id_fkey"
+            columns: ["requested_subject_id"]
+            isOneToOne: false
             referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
@@ -3522,6 +3620,13 @@ export type Database = {
             foreignKeyName: "temporary_group_meta_responsible_subject_id_fkey"
             columns: ["responsible_subject_id"]
             isOneToOne: false
+            referencedRelation: "bi_subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "temporary_group_meta_responsible_subject_id_fkey"
+            columns: ["responsible_subject_id"]
+            isOneToOne: false
             referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
@@ -3662,6 +3767,13 @@ export type Database = {
             columns: ["conversation_id"]
             isOneToOne: false
             referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "usage_events_owner_subject_id_fkey"
+            columns: ["owner_subject_id"]
+            isOneToOne: false
+            referencedRelation: "bi_subjects"
             referencedColumns: ["id"]
           },
           {
@@ -3996,6 +4108,13 @@ export type Database = {
             foreignKeyName: "welcome_bonus_grants_subject_id_fkey"
             columns: ["subject_id"]
             isOneToOne: false
+            referencedRelation: "bi_subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "welcome_bonus_grants_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
             referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
@@ -4015,6 +4134,42 @@ export type Database = {
         Update: {
           created_at?: string | null
           creator_id?: string | null
+        }
+        Relationships: []
+      }
+      bi_cost_by_category: {
+        Row: {
+          cost_credits: number | null
+          cost_usd: number | null
+          created_at: string | null
+          input_tokens: number | null
+          model_id: string | null
+          output_tokens: number | null
+          task_type: string | null
+          tool_cost_usd: number | null
+          total_tokens: number | null
+        }
+        Insert: {
+          cost_credits?: number | null
+          cost_usd?: number | null
+          created_at?: string | null
+          input_tokens?: number | null
+          model_id?: string | null
+          output_tokens?: number | null
+          task_type?: string | null
+          tool_cost_usd?: number | null
+          total_tokens?: number | null
+        }
+        Update: {
+          cost_credits?: number | null
+          cost_usd?: number | null
+          created_at?: string | null
+          input_tokens?: number | null
+          model_id?: string | null
+          output_tokens?: number | null
+          task_type?: string | null
+          tool_cost_usd?: number | null
+          total_tokens?: number | null
         }
         Relationships: []
       }
@@ -4053,6 +4208,13 @@ export type Database = {
             foreignKeyName: "group_pools_subject_id_fkey"
             columns: ["subject_id"]
             isOneToOne: true
+            referencedRelation: "bi_subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "group_pools_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: true
             referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
@@ -4065,6 +4227,30 @@ export type Database = {
           active_pledge_groups: number | null
           active_pledged_micros: number | null
           pool_remaining_micros: number | null
+        }
+        Relationships: []
+      }
+      bi_subjects: {
+        Row: {
+          display_name: string | null
+          id: string | null
+          kind: string | null
+          subject_type: string | null
+          user_id: string | null
+        }
+        Insert: {
+          display_name?: string | null
+          id?: string | null
+          kind?: string | null
+          subject_type?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          display_name?: string | null
+          id?: string | null
+          kind?: string | null
+          subject_type?: string | null
+          user_id?: string | null
         }
         Relationships: []
       }
@@ -4206,10 +4392,6 @@ export type Database = {
           p_visibility?: string
         }
         Returns: string
-      }
-      apply_audit_split: {
-        Args: { p_audit_log_id: string; p_splits: Json }
-        Returns: undefined
       }
       apply_group_contribution: {
         Args: { p_amount_micros: number; p_subject_id: string }
@@ -4627,24 +4809,12 @@ export type Database = {
         Args: { p_conv_id: string; p_policy: string }
         Returns: undefined
       }
-      group_set_member_cap: {
-        Args: { p_cap_credits: number; p_conv_id: string }
-        Returns: undefined
-      }
       group_set_member_mute: {
         Args: { p_conv_id: string; p_muted: boolean }
         Returns: undefined
       }
       group_set_member_nickname: {
         Args: { p_conv_id: string; p_nickname: string }
-        Returns: undefined
-      }
-      group_set_member_participates: {
-        Args: {
-          p_conv_id: string
-          p_participates: boolean
-          p_target_user_id: string
-        }
         Returns: undefined
       }
       group_set_member_role: {

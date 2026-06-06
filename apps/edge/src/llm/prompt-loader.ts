@@ -1,157 +1,141 @@
-// Single entry point for the markdown prompt library.
+// Prompt library loader. Langfuse is the SINGLE SOURCE OF TRUTH for prompts;
+// this module only distributes them to the worker and fails loud when a
+// prompt can't be resolved (there is deliberately no bundled fallback).
 //
-// Resolution order (per getPrompt call):
-//   1. In-memory cache populated from Langfuse Prompt Management
-//      (prompt named `<name>/<locale>`, label "production")
-//   2. Bundled .md file under apps/edge/prompts/<locale>/  (wrangler inlines
-//      these at build time via the [[rules]] Text rule in wrangler.jsonc)
-//   3. zh-bundled fallback (DEFAULT_LOCALE)
+// Resolution layers (getPrompt is sync and reads L1 only):
+//   L1  in-process Map (per isolate, 30s TTL)          ← what getPrompt reads
+//   L2  PROMPTS_KV (cross-isolate, webhook-pushed + pull-on-miss)
+//   pull Langfuse getPrompt(production) on KV miss, written back to KV
+// If all come up empty, getPrompt THROWS. A wrong-but-plausible stale prompt
+// is worse than a loud failure, so we don't keep a bundled copy. The worker's
+// LLM paths surface the throw as an error.
 //
-// Langfuse Prompt Management lets the team tune prompts from its UI without
-// redeploying the worker. The push pipeline keeps Langfuse in sync with the
-// bundled .md files, so an empty / unreachable Langfuse = pure bundled
-// behavior (no behavior change). The legacy pendingbot.i18n_prompts DB table
-// has been retired — Langfuse is the single override source now.
+// Editing flow: prompts are edited in the Langfuse console (production label).
+// Changes reach the worker via the prompt-version webhook
+// (routes/langfuse-prompts.ts → writes KV via putPromptRecord). pull-on-miss
+// is just the cold-fill / webhook-missed safety net.
 //
-// Feature flag: when LANGFUSE_ENABLED !== 'true' (or the keys are unset),
-// the loader never touches Langfuse and serves bundled .md directly. So the
-// flag that gates tracing also gates prompt sourcing — one switch, off by
-// default, and the worker behaves identically to the bundled library.
-//
-// Cache lifecycle: each isolate keeps a Map<`${locale}/${name}`, body_md>
-// with a 30s TTL. Concurrent loads dedupe via the inflight Promise. Each
-// async entry point (runChatTurn / runEnvelope / runTitle / runLookback /
-// runGroupRouter) should `await ensurePromptOverridesLoaded(env)` early so
-// subsequent sync getPrompt calls hit the cache.
-//
-// Adding a new prompt:
-//   1. drop a .md file into apps/edge/prompts/<locale>/
-//   2. import it here under the matching locale block
-//   3. add to PROMPTS_BY_LOCALE
-//   4. push it to Langfuse via the prompt-push pipeline (named `<name>/<locale>`)
+// NOTE: prompt sourcing is NOT gated by LANGFUSE_ENABLED — that flag now only
+// gates trace ingestion (lib/llm-trace.ts). Prompts are infrastructure: with
+// keys unset and KV empty, prompts are unavailable and the worker fails loud.
 
-import { Langfuse } from 'langfuse';
 import { DEFAULT_LOCALE, type Locale } from '../i18n/types';
 import type { Env } from '../types';
-import { langfuseEnabled } from '../lib/feature-flags';
+import { getLangfuseClient } from '../lib/langfuse-client';
 import { PROMPT_NAMES, type PromptName } from './prompt-names';
-
-import system_zh from '../../prompts/zh/system.md';
-import voice_zh from '../../prompts/zh/voice.md';
-import groupVoice_zh from '../../prompts/zh/group-voice.md';
-import identityQuest_zh from '../../prompts/zh/identity-quest.md';
-import envelope_zh from '../../prompts/zh/envelope.md';
-import envelopeInjected_zh from '../../prompts/zh/envelope-injected.md';
-import envelopeWrite_zh from '../../prompts/zh/envelope-write.md';
-import envelopeCollaborator_zh from '../../prompts/zh/envelope-collaborator.md';
-import title_zh from '../../prompts/zh/title.md';
-import groupRouter_zh from '../../prompts/zh/group-router.md';
-import botSocialGraph_zh from '../../prompts/zh/bot-social-graph.md';
-import sessionWorldModel_zh from '../../prompts/zh/session-world-model.md';
-
-import sessionWorldModel_en from '../../prompts/en/session-world-model.md';
-import startCrewToolResult_zh from '../../prompts/zh/start-crew-tool-result.md';
-import requestPermissionToolResult_zh from '../../prompts/zh/request-permission-tool-result.md';
-
-const PROMPTS_ZH = {
-  'system': system_zh,
-  'voice': voice_zh,
-  'group-voice': groupVoice_zh,
-  'identity-quest': identityQuest_zh,
-  'envelope': envelope_zh,
-  'envelope-injected': envelopeInjected_zh,
-  'envelope-write': envelopeWrite_zh,
-  'envelope-collaborator': envelopeCollaborator_zh,
-  'title': title_zh,
-  'group-router': groupRouter_zh,
-  'bot-social-graph': botSocialGraph_zh,
-  'session-world-model': sessionWorldModel_zh,
-  'start-crew-tool-result': startCrewToolResult_zh,
-  'request-permission-tool-result': requestPermissionToolResult_zh,
-} as const;
 
 export { PROMPT_NAMES, type PromptName } from './prompt-names';
 
-const PROMPTS_BY_LOCALE: Record<Locale, Partial<Record<PromptName, string>>> = {
-  zh: PROMPTS_ZH,
-  en: {
-    'session-world-model': sessionWorldModel_en,
-  },
-};
-
-// (locale, name) pairs that actually have a bundled .md to override. Only
-// these are fetched from Langfuse — there's no point asking Langfuse for a
-// prompt that has no local fallback (en/* beyond session-world-model).
-const OVERRIDABLE: Array<{ locale: Locale; name: PromptName }> = (
-  Object.entries(PROMPTS_BY_LOCALE) as Array<[Locale, Partial<Record<PromptName, string>>]>
-).flatMap(([locale, map]) =>
-  PROMPT_NAMES.filter((n) => map[n] != null).map((name) => ({ locale, name })),
-);
-
-// ── Langfuse override cache ────────────────────────────────────────────
-const overrideCache = new Map<string, string>(); // key: `${locale}/${name}`
-let cacheLoadedAt = 0;
-let inflightLoad: Promise<void> | null = null;
+const PRODUCTION_LABEL = 'production';
 const CACHE_TTL_MS = 30_000;
 
-// Langfuse Prompt Management naming: one prompt per (name, locale), named
-// `<name>/<locale>`, served from the "production" label.
-const PRODUCTION_LABEL = 'production';
-function langfusePromptName(name: PromptName, locale: Locale): string {
-  return `${name}/${locale}`;
+// Prompts authored in a non-default locale. zh (DEFAULT_LOCALE) always has
+// every prompt; only these have extra locale variants. getPrompt falls back
+// to the zh version when a locale-specific one is absent.
+const LOCALE_VARIANTS: Partial<Record<Locale, readonly PromptName[]>> = {
+  en: ['session-world-model'],
+};
+
+export interface PromptRecord {
+  body: string;
+  version: number;
+}
+
+// ── caches ──────────────────────────────────────────────────────────────
+const mem = new Map<string, PromptRecord>(); // key: `${locale}/${name}`
+let cacheLoadedAt = 0;
+let inflightLoad: Promise<void> | null = null;
+
+const memKey = (name: PromptName, locale: Locale) => `${locale}/${name}`;
+// Langfuse prompt name and KV key share the `<name>/<locale>` shape.
+const langfuseName = (name: PromptName, locale: Locale) => `${name}/${locale}`;
+const kvKey = (name: PromptName, locale: Locale) => `prompt:${name}/${locale}`;
+
+function manifest(): Array<{ name: PromptName; locale: Locale }> {
+  const out: Array<{ name: PromptName; locale: Locale }> = [];
+  for (const name of PROMPT_NAMES) out.push({ name, locale: DEFAULT_LOCALE });
+  for (const [locale, names] of Object.entries(LOCALE_VARIANTS) as Array<
+    [Locale, readonly PromptName[]]
+  >) {
+    for (const name of names) out.push({ name, locale });
+  }
+  return out;
+}
+
+// Resolve one (name, locale): L2 KV → pull Langfuse (writing back to KV).
+// Returns null when neither has it (caller falls back to the default locale,
+// then getPrompt throws).
+async function resolveRecord(
+  env: Env,
+  name: PromptName,
+  locale: Locale,
+): Promise<PromptRecord | null> {
+  const kv = env.PROMPTS_KV;
+  if (kv) {
+    try {
+      const raw = await kv.get(kvKey(name, locale));
+      if (raw) {
+        const rec = JSON.parse(raw) as PromptRecord;
+        if (rec && typeof rec.body === 'string' && rec.body.length > 0) return rec;
+      }
+    } catch (err) {
+      console.warn('[prompt-loader] KV get failed', langfuseName(name, locale), err);
+    }
+  }
+  const lf = getLangfuseClient(env);
+  if (!lf) return null;
+  try {
+    const p = await lf.getPrompt(langfuseName(name, locale), undefined, {
+      label: PRODUCTION_LABEL,
+      type: 'text',
+      cacheTtlSeconds: 0,
+    });
+    const body = typeof p.prompt === 'string' ? p.prompt : null;
+    if (!body) return null;
+    const rec: PromptRecord = { body, version: p.version };
+    if (kv) {
+      try {
+        await kv.put(kvKey(name, locale), JSON.stringify(rec));
+      } catch (err) {
+        console.warn('[prompt-loader] KV put failed', langfuseName(name, locale), err);
+      }
+    }
+    return rec;
+  } catch {
+    // Not found at this locale (or fetch failed); caller falls back.
+    return null;
+  }
 }
 
 /**
- * Warm the override cache from Langfuse Prompt Management.
+ * Warm the in-memory prompt cache from KV (+ pull-on-miss from Langfuse).
  *
- * No-op (cache stays empty → bundled .md serves) when LANGFUSE_ENABLED is
- * off or the keys are unset. Best-effort otherwise: a fetch failure for any
- * single prompt is swallowed (that name falls through to bundled), and a
- * total Langfuse outage leaves the cache empty so nothing breaks.
+ * TTL-gated + inflight-deduped: at most one resolution burst per isolate per
+ * 30s. Each async entry point (runChatTurn / runEnvelope / runTitle /
+ * runLookback / renderSessionWorldModel) should `await` this early so the
+ * subsequent sync getPrompt calls hit memory.
  *
- * TTL-gated + inflight-deduped exactly like the old DB loader, so the hot
- * path pays at most one Langfuse round-trip burst per isolate per 30s.
+ * Best-effort refresh: if a load resolves nothing (total outage) the prior
+ * in-memory cache is kept rather than cleared, so a transient blip doesn't
+ * empty a warm isolate.
  */
 export async function ensurePromptOverridesLoaded(env: Env): Promise<void> {
-  if (!langfuseEnabled(env) || !env.LANGFUSE_PUBLIC_KEY || !env.LANGFUSE_SECRET_KEY) return;
-  if (Date.now() - cacheLoadedAt < CACHE_TTL_MS) return;
+  if (mem.size > 0 && Date.now() - cacheLoadedAt < CACHE_TTL_MS) return;
   if (inflightLoad) return inflightLoad;
   inflightLoad = (async () => {
     try {
-      const langfuse = new Langfuse({
-        publicKey: env.LANGFUSE_PUBLIC_KEY,
-        secretKey: env.LANGFUSE_SECRET_KEY,
-        baseUrl: env.LANGFUSE_BASE_URL,
-      });
-      const next = new Map<string, string>();
+      const next = new Map<string, PromptRecord>();
       await Promise.all(
-        OVERRIDABLE.map(async ({ locale, name }) => {
-          try {
-            const prompt = await langfuse.getPrompt(
-              langfusePromptName(name, locale),
-              undefined,
-              { label: PRODUCTION_LABEL, type: 'text', cacheTtlSeconds: 0 },
-            );
-            // .prompt holds the raw text body for text prompts. We store the
-            // un-compiled template — call sites do their own {{var}} fill via
-            // string replace, same as they did with the bundled .md.
-            const body = prompt.prompt;
-            if (typeof body === 'string' && body.length > 0) {
-              next.set(`${locale}/${name}`, body);
-            }
-          } catch (err) {
-            console.warn('[prompt-loader] langfuse fetch failed, using bundled', name, locale, err);
-          }
+        manifest().map(async ({ name, locale }) => {
+          const rec = await resolveRecord(env, name, locale);
+          if (rec) next.set(memKey(name, locale), rec);
         }),
       );
-      overrideCache.clear();
-      for (const [k, v] of next) overrideCache.set(k, v);
-      cacheLoadedAt = Date.now();
-      // Flush any pending ingestion (prompt fetches don't ingest, but the
-      // client may have buffered telemetry) before the isolate moves on.
-      await langfuse.flushAsync().catch(() => {});
-    } catch (err) {
-      console.warn('[prompt-loader] langfuse override load failed, using bundled', err);
+      if (next.size > 0) {
+        mem.clear();
+        for (const [k, v] of next) mem.set(k, v);
+        cacheLoadedAt = Date.now();
+      }
     } finally {
       inflightLoad = null;
     }
@@ -159,24 +143,54 @@ export async function ensurePromptOverridesLoaded(env: Env): Promise<void> {
   return inflightLoad;
 }
 
-// Manual flush — call this if a prompt was just changed in Langfuse and you
-// want the next read in this isolate to re-fetch without waiting for the TTL.
+// Drop the in-memory cache so the next ensurePromptOverridesLoaded re-resolves.
+// KV is left intact (it's maintained by the webhook).
 export function invalidatePromptCache(): void {
-  overrideCache.clear();
+  mem.clear();
   cacheLoadedAt = 0;
 }
 
-export function getPrompt(name: PromptName, locale: Locale = DEFAULT_LOCALE): string {
-  return (
-    overrideCache.get(`${locale}/${name}`) ??
-    overrideCache.get(`${DEFAULT_LOCALE}/${name}`) ??
-    PROMPTS_BY_LOCALE[locale]?.[name] ??
-    PROMPTS_ZH[name]
-  );
+// Upsert a record into KV + the in-memory cache. Used by the prompt-version
+// webhook so a change is live immediately without waiting for a pull.
+export async function putPromptRecord(
+  env: Env,
+  name: PromptName,
+  locale: Locale,
+  rec: PromptRecord,
+): Promise<void> {
+  const kv = env.PROMPTS_KV;
+  if (kv) await kv.put(kvKey(name, locale), JSON.stringify(rec));
+  mem.set(memKey(name, locale), rec);
 }
 
-// Expose bundled defaults so tooling can preview them when a (name, locale)
-// prompt hasn't been overridden in Langfuse yet.
-export function getBundledPrompt(name: PromptName, locale: Locale = DEFAULT_LOCALE): string {
-  return PROMPTS_BY_LOCALE[locale]?.[name] ?? PROMPTS_ZH[name];
+/**
+ * Synchronous prompt body lookup, reading the in-memory cache filled by
+ * ensurePromptOverridesLoaded. Falls back to the default locale, then THROWS
+ * if unavailable — there is no bundled fallback by design.
+ */
+export function getPrompt(name: PromptName, locale: Locale = DEFAULT_LOCALE): string {
+  const rec = mem.get(memKey(name, locale)) ?? mem.get(memKey(name, DEFAULT_LOCALE));
+  if (!rec) {
+    throw new Error(
+      `[prompt-loader] prompt unavailable: ${name}/${locale} — not in KV or Langfuse. ` +
+        `Ensure a 'production' version exists and ensurePromptOverridesLoaded ran first.`,
+    );
+  }
+  return rec.body;
+}
+
+/**
+ * Prompt version metadata for linking a generation to its prompt version in
+ * Langfuse (analytics by prompt version). Returns null when unknown — callers
+ * treat the link as optional.
+ */
+export function getPromptMeta(
+  name: PromptName,
+  locale: Locale = DEFAULT_LOCALE,
+): { name: string; version: number } | null {
+  const exact = mem.get(memKey(name, locale));
+  if (exact) return { name: langfuseName(name, locale), version: exact.version };
+  const def = mem.get(memKey(name, DEFAULT_LOCALE));
+  if (def) return { name: langfuseName(name, DEFAULT_LOCALE), version: def.version };
+  return null;
 }

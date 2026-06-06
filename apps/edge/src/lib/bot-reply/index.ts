@@ -29,6 +29,7 @@ import { openAnthropicStream } from '../../llm/anthropic-adapter';
 import { openGeminiStream } from '../../llm/gemini-adapter';
 import { buildMessages, type BuildMessagesInput } from '../../llm/builder';
 import { resolveLocale } from '../../i18n/locale';
+import { loadPrompt, getPromptMeta } from '../../i18n/prompts';
 import {
   loadAttachmentAsFilePart,
   loadAttachmentAsImagePart,
@@ -55,6 +56,8 @@ import {
   ASK_FRIEND_TOOL,
   START_CREW_TOOL,
   START_SESSION_TOOL,
+  CREATE_CHILD_CREW_TOOL,
+  RECRUIT_TEMP_BOT_TOOL,
   buildOpenRouterServerTools,
   CHAT_TOOLS,
   DELEGATE_TO_SPECIALIST_TOOL,
@@ -490,6 +493,31 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     }
   }
 
+  // Crew-captain persona: inject the orchestrator framing ONLY when this
+  // conversation is an active crew AND the replying bot is that crew's
+  // captain. Best-effort (one cheap query, gated to group turns); any lookup
+  // failure → no persona, never breaks the reply.
+  let crewCaptainPersona: string | null = null;
+  if (input.inGroup) {
+    try {
+      const { data: crewMeta } = await supa
+        .from('temporary_group_meta')
+        .select('captain_bot_id, temporary_kind, status')
+        .eq('conversation_id', conversationId)
+        .maybeSingle();
+      if (
+        crewMeta &&
+        crewMeta.temporary_kind === 'crew' &&
+        crewMeta.status === 'active' &&
+        crewMeta.captain_bot_id === bot.id
+      ) {
+        crewCaptainPersona = await loadPrompt(env, 'crew-captain', locale);
+      }
+    } catch (e) {
+      console.warn('[bot-reply] crew-captain persona lookup failed', e);
+    }
+  }
+
   // 2. Build prompt. The builder marks the cache breakpoint per plan/02
   // (every 4 rounds; see llm/builder.ts). activeLookbacks become an
   // additional system block so the bot sees its prior fact-check notes.
@@ -509,6 +537,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       openRelayInquiries: inquiryContext.openRelayInquiries.length > 0
         ? inquiryContext.openRelayInquiries
         : undefined,
+      crewCaptainPersona,
       clientTz: input.clientTz,
     },
     locale,
@@ -755,7 +784,16 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   if (allowedTools.has('execute_code')) turnToolsRaw.push(EXECUTE_CODE_TOOL);
   // start_session: crew captain only (handler gates). Exposed on group turns;
   // the captain replies via dispatchGroupTurn (inGroup=true).
-  if (input.inGroup) turnToolsRaw.push(...GROUP_BOT_TOOLS, START_SESSION_TOOL);
+  // create_child_crew / recruit_temp_bot: crew captain only (handlers gate the
+  // same way start_session does). Exposed on group turns alongside it.
+  if (input.inGroup) {
+    turnToolsRaw.push(
+      ...GROUP_BOT_TOOLS,
+      START_SESSION_TOOL,
+      CREATE_CHILD_CREW_TOOL,
+      RECRUIT_TEMP_BOT_TOOL,
+    );
+  }
   // ask_friend / submit_inquiry_answer are public-bot-only. The
   // visibility check piggybacks on socialSnapshot.isPublic — already
   // fetched alongside the social graph data above. Private bots get
@@ -789,7 +827,14 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     DELEGATE_TO_SPECIALIST_TOOL,
     START_CREW_TOOL,
   ];
-  if (input.inGroup) nativeFnToolsRaw.push(...GROUP_BOT_TOOLS, START_SESSION_TOOL);
+  if (input.inGroup) {
+    nativeFnToolsRaw.push(
+      ...GROUP_BOT_TOOLS,
+      START_SESSION_TOOL,
+      CREATE_CHILD_CREW_TOOL,
+      RECRUIT_TEMP_BOT_TOOL,
+    );
+  }
   if (socialSnapshot?.isPublic) {
     nativeFnToolsRaw.push(ASK_FRIEND_TOOL, SUBMIT_INQUIRY_ANSWER_TOOL);
   }
@@ -1177,6 +1222,10 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       // whole prompt; `totalContent` is the raw model output.
       promptBody: messages,
       completionBody: totalContent,
+      // Link the trace to the main system prompt's Langfuse version (text
+      // surface → 'system'); no-op when Langfuse/KV hasn't populated it.
+      promptName: getPromptMeta('system', locale)?.name,
+      promptVersion: getPromptMeta('system', locale)?.version,
       metadata: {
         bot_id: bot.id,
         status: finalStatus,
@@ -1256,6 +1305,8 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
         // so a failed turn is debuggable from the trace (#248).
         promptBody: messages,
         completionBody: totalContent,
+        promptName: getPromptMeta('system', locale)?.name,
+        promptVersion: getPromptMeta('system', locale)?.version,
         metadata: { bot_id: bot.id, status, message: message.slice(0, 200) },
       });
     } catch (auditErr) {
