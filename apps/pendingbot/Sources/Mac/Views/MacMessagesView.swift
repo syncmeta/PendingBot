@@ -131,6 +131,8 @@ struct MacChatView: View {
     @State private var groupSenders: [String: ChatGroupSender] = [:]
     /// 已上传、等待随下一条消息发出的附件(对齐 iOS 的 pendingAttachments)。
     @State private var pendingAttachments: [Attachment] = []
+    /// 点开的图片(驱动大图查看器 sheet,对齐 iOS 的 ZoomTarget + fullScreenCover)。
+    @State private var zoomedImage: MacImageZoom?
     /// 正在上传中的附件数(>0 时禁发送,UI 显示进度,对齐 iOS 上传占位)。
     @State private var uploadingCount = 0
 
@@ -145,6 +147,10 @@ struct MacChatView: View {
         }
         .background(Theme.Palette.canvas) // 对齐 iOS canvas 米白,白 bot 气泡浮其上
         .navigationTitle("对话")
+        // 大图查看器(对齐 iOS:点附件图 → ImageViewer;Mac 无 fullScreenCover,用 sheet)。
+        .sheet(item: $zoomedImage) { z in
+            ImageViewer(path: z.path, serverURL: HostedConfig.environment.workerURL)
+        }
         // 和 iOS ConversationView 同款:拉历史 + 订阅 conv-level RealtimeHub。
         // 对端 / bot 写入 messages 即刷新(自己正在发的那条由 SSE 流接管,
         // 发完会 reload 拿 server 真值,所以 sending 期间忽略实时事件防抖动)。
@@ -253,6 +259,9 @@ struct MacChatView: View {
                                 contentMode: .fill)
                         .frame(maxWidth: 240, maxHeight: 240)
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        // 点开 → 大图查看器(对齐 iOS AttachmentGrid 点开 ImageViewer)。
+                        .onTapGesture { zoomedImage = MacImageZoom(path: path) }
                 }
                 // 非图片附件:图标 + 文件名 chip(对齐 iOS FileAttachmentChip)。
                 ForEach(files) { att in
@@ -578,5 +587,12 @@ struct MacChatView: View {
             uploadingCount -= 1
         }
     }
+}
+
+/// `.sheet(item:)` 需要 Identifiable 载荷 —— 点开的图片路径包一层(对齐 iOS 的
+/// ZoomTarget)。每次点开新建实例,id 唯一,sheet 正确重呈现。
+private struct MacImageZoom: Identifiable {
+    let id = UUID()
+    let path: String
 }
 #endif
