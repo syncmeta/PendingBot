@@ -1,133 +1,139 @@
-# Spec — PendingCrew session 当群成员：启动 / 世界观 / 读未读 / 输出（crew-comms 重接）
+# Spec — PendingCrew session 当群成员：启动 / 世界观 / 读未读 / 输出 / 额度（crew-comms 重接）
 
-**2026-06-05 用户拍板的模型**。承接 PTY 重写（`feat/pendingcrew-runner-backends`，已合 main）——那次把 session 的对外通信接线拔了，本 spec 把它按新心智模型重接。
+**2026-06-05 用户拍板**。承接 PTY 重写（`feat/pendingcrew-runner-backends`，已合 main）——那次把 session 的对外通信接线拔了，本 spec 按新心智模型重接。**本版已纳入：codex 改走 app-server、captain 终止权 + 权能透明、急插三层、额度监控。**
 
 ## 核心模型（钉死）
 
-- **终端 = session 的"家"（私有工作区）**，默认**没人看**。
+- **终端/会话 = session 的"家"（私有工作区）**，默认**没人看**。
 - **群（白板/`messages`）= 主战场（公共广场）**。
-- **session 是一等群成员**：靠**主动调工具往群里发消息**跟人 / captain / 别的 session / bot 沟通，**不靠刮终端输出**。
-- 人**只有要细聊 / 详控 / 针对某活动**时才进终端（"把人拉进自己家详谈"）。
-- session 要有**世界观**：知道群是主战场、终端是自己家、要事往群发、白板里有谁、怎么协作。
+- **session 是一等群成员**：靠**主动调工具往群里发消息**沟通，**不靠刮终端输出**。
+- 人**只有要细聊 / 详控**时才进 session（"把人拉进家详谈"）。
+- session 有**世界观**：群是主战场、家是私有、要事往群发、**知道 captain 能干什么**、怎么跟别的 session/bot 协作。
 
-这是个**反转**：不是"我们去终端抠 output"，而是"让 agent 当群成员主动 push"。
+## Runner 拆成两后端（本版关键变更）
 
-## 现状（PTY 重写后的缺口）
+回最初方向：**claude 走 PTY、codex 走 app-server**，收进一个共同 `RunnerBackend` 抽象（启动 / 注上下文 / 发消息 / 读输出 / 状态 / 停 / 额度 七个口子各自实现）。
 
-- 重写版 `CrewSessionRunner` **完全没接** proxy / 对外通信：不 publish、不消费命令、不发结构化事件。`CrewSessionServerLink` 被砍到只剩 `finish()`（关 server row）。`appendSessionEvent` caller-less。
-- edge 侧通信基建**还在**：`post_to_crew`（T4.1，镜像进群聊 `messages`）、`ask_human` MCP（T4.3 / `ask-human-mcp.cjs`，**正是"agent 调工具往外发"的现成证明**）、session 世界观 prompt（T4.2）、captain 编排（J/K）、whiteboard/mailbox。
-- **本 spec = 把 PTY agent 重新接到这些，用"工具 push"当输出真源**。
-
----
-
-## 1. 启动：指令进 argv（杀掉 0.6s sleep）
-
-两个 CLI 都支持**启动带 prompt 且仍交互式**（实测 help）——交互式 = 订阅主额度，不碰 Agent SDK 池。
-
-- **claude** 2.1.156：`Usage: claude [options] [prompt]`，"starts an interactive session by default"。→ `claude --dangerously-skip-permissions [--model m] "<指令>"`
-- **codex** 0.137.0：`Usage: codex [OPTIONS] [PROMPT]`，无子命令即交互式，`[PROMPT]` = "user prompt to start the session"。→ `codex -a never --sandbox workspace-write [--model m] "<指令>"`
-
-改动（4 处）：
-- `AgentTerminalSession.argv(...)` 加 `initialPrompt:`，作为**最后一个 positional** 追加。
-- `AgentTerminalSession.init` 透传。
-- `CrewSessionRunner.start` 把 `taskBrief` 当 `initialPrompt` 传。
-- `CrewSessionWindowView.startSession` / `runQueuedSession` **删掉 0.6s sleep + `run.send(firstPrompt)`**。
-
-**留作运行中追加用**：已在跑的 session 的追加指令 / steering / 唤醒注入仍走 `run.send()` 字节注入（进程没法重启）。即"启动那一下"进 argv，"跑起来之后"仍注入。
-
-**探针**：
-- claude `--resume <id> "<prompt>"` 大概率 OK；codex `resume` 是子命令（picker 语义），带 positional prompt 行不行**未验** → 验 / 不行就 fallback 回注入。
-- positional prompt 是**自动提交跑**还是**只填进输入框**——help 强烈暗示前者（`claude "fix bug"` 常规行为），但 headless 测不了，**真机确认**。
-- prompt 会出现在 `ps` 进程参数（coding 指令一般不敏感，知会即可）。
+| 维度 | **claude = PTY**（SwiftTerm 内嵌真终端，现状） | **codex = app-server**（JSON-RPC over stdio，新） |
+|---|---|---|
+| 计费 | 交互式 TUI 吃订阅主额度（铁律） | auth 决定（`auth_mode`+ChatGPT tokens）；rollout 里 `rate_limits.limit_id="codex"` = 走订阅。⚠️ app-server 是否仍订阅 = 探针 |
+| "进家细聊" UI | 真终端（人可看可敲） | **无真终端** → 结构化 chat 详情视图（或把结构化事件回灌进一个 SwiftTerm 视图假装终端，保 UI 统一，多点活） |
+| 上下文/急插 | 见 §3（hook + 注入，工具边界粒度） | **原生**：你掌控每条请求的 messages，随时插、每次带最新白板 trivial |
+| 输出 | MCP 工具 push + transcript 辅助（§4） | 结构化事件直出（不用 tail transcript）+ 工具等价物 |
+| 状态 | transcript 回合边界 + 终端 bell（§5） | `notify turn-ended` + 结构化事件 |
+| 额度 | transcript `usage` 累加（只消耗，无剩余，§7） | 协议 `rate_limits`（limit/resets_at/reached，有剩余，§7） |
 
 ---
 
-## 2. 世界观 prompt：极简 + 系统级，不污染
+## 1. 启动：指令随调用一起带
 
-**原则**：静态极简（身份+心智模型），**不塞具体 roster/消息**——那些靠白板进上下文 + 工具按需查。
+两端都**启动即带首条指令**，且都**交互式/订阅计费**（不碰 Agent SDK / 不走 headless exec）。
 
-- **claude**：`--append-system-prompt`（或 `--append-system-prompt-file`）。核过 help：**不在 `--print` 限定组**，交互式可用；追加到系统提示 = always-on 但走 prompt cache、非用户消息、不占对话回合 = 最不污染。
-- **不用 CLAUDE.md**（进用户 repo 污染树 / 或要 `--add-dir` out-of-tree，更麻烦）。
-- **不用 skill 当身份**（skill 是"模型觉得相关才加载"，always-on 身份不可靠）。可选：skill 当"详细协作 playbook"按需加载，v1 先不做。
-- **工具用法说明走注入的 MCP server 自己的 instructions**，不占系统提示。
-
-世界观内容（短）：你是这个 crew 的一名 session 成员；**群是主战场**，要事往群里发（用工具）；白板内容会进你的上下文，别人的昵称/身份/消息都在那；**终端是你家**，只有人来找你细聊时才在这交互；需要更多信息用这些工具查（见 §4）。
-
-**探针（codex）**：codex 没有 `--append-system-prompt`。走 `-c key=value` 改 config / 或 instructions 文件 / 或 `AGENTS.md`。要找**不污染 repo、也不污染全局 `~/.codex/AGENTS.md`** 的 per-session 注入法（可能 `-c experimental_instructions_file=<托管路径>`）——**未验，需探**。
+- **claude（PTY）**：positional `[prompt]`。`claude --dangerously-skip-permissions [--model m] "<指令>"`（help 实证：交互式默认，非 `--print` 限定）。改 `AgentTerminalSession.argv` 加 `initialPrompt:` 作末位 positional；删掉 `CrewSessionWindowView` 的 0.6s sleep + 事后 `send`。
+- **codex（app-server）**：起 app-server 后,首条 user message 即 `<指令>`（你构造协议消息，天然带）。
+- **探针**：claude `--resume <id> "<prompt>"` 大概率 OK；positional 是自动提交还是只填框 → 真机确认。codex app-server resume/初始消息协议形状 → 实接确认。
 
 ---
 
-## 3. 白板进上下文 + 读未读 + 空闲注入
+## 2. 世界观 prompt + captain 权能透明
 
-### 白板每回合进上下文（push，不靠工具）
+**原则**：静态极简（身份 + 心智模型 + **captain 能干什么**），不塞具体 roster/消息（那些靠白板进上下文 + 工具按需查）。
 
-白板内容（昵称/身份/消息）**每回合自动注入上下文** → agent 总能看到当前白板，**读白板不需要工具**。
+世界观内容（短）：你是这个 crew 的一名 session 成员；**群是主战场**，要事用工具往群发；白板内容会进你的上下文，成员昵称/身份/消息都在那；**家是你的私有工作区**，只有人来细聊才在这交互；**captain 是机长，它能：起/终止 session、招临时 bot、建子 crew、编排调度——它叫停你时照做**；需要更多信息用工具查（§4）。← **"captain 能干什么"写进每个 session 的世界观 = 全员透明。**
 
-- **claude**：`UserPromptSubmit` hook（旧 `SteeringChannel` 那套机制：托管目录放 `settings.json` 注册 hook + `hook.sh` 吐白板 digest）。每次提交 prompt 时 hook 把最新白板塞进上下文。**为 PTY 重建**（重写时拔了）。
-- **探针（codex）**：codex 的 per-turn 上下文注入 hook 等价物**未验，需探**。
+- **claude**：`--append-system-prompt`（或 `-file`）——系统级、走 prompt cache、非用户消息、不污染 repo。**不用 CLAUDE.md**（中途改不生效 + 进 repo 污染树）、**不用 skill 当身份**（按需加载不可靠；可选当详细 playbook，v1 不做）。
+- **codex**：app-server 你构造 system/developer message，直接带（比 claude 更直接）。
+- 工具用法说明走注入的 MCP server 自己的 instructions（claude）/ 协议工具定义（codex），不占系统提示。
 
-### 读/未读 + 空闲 → 注入（对齐 PendingBot IM）
+---
 
-- 白板消息对 session S 有**已读游标**（复用 `messages` 表 + 读状态，跟 PendingBot IM 一套）。**agent 回合里读了白板 = 标已读**。
-- **忙 + 未读** → 不管，下一回合白板进上下文它自然收到。
-- **空闲 + 未读** → 它不会自己读，**注入唤醒**：注入**就五个字「看一下白板」**。白板内容本来就在上下文（靠 hook），所以**不贴内容、不调工具**，戳醒它自己看即可。
+## 3. 白板进上下文 + 读未读 + 急插（三层）
+
+### 白板进上下文（per-turn 基线）
+
+白板内容（昵称/身份/消息）**每回合进上下文** → 读白板**不用工具**。
+
+- **claude**：`UserPromptSubmit` hook（旧 `SteeringChannel` 机制，为 PTY 重建）。文档实证：**只在每次提交 prompt 时触发**（非 per-model-request），输出落对话**尾部** → 大前缀继续命中 cache（cache 友好）。**CLAUDE.md 做不到这个**（会话开始读一次、中途改不生效）。
+- **codex**：你掌控每条请求的 messages → 想多新鲜多新鲜，trivial。
+
+### 读/未读 + 空闲注入（对齐 PendingBot IM）
+
+- 白板消息对 session S 有**已读游标**（复用 `messages` 表 + 读状态）。**agent 回合里读了白板 = 标已读**。
+- **忙 + 未读** → 下回合白板进上下文自然收到。
+- **空闲 + 未读** → 注入**就五个字「看一下白板」**唤醒（白板已在上下文，不贴内容不调工具）。
 - **已读** → 不动。
 
-三件套：① 空闲判定（= §5 transcript 回合边界）② 每 session 读游标（edge）③ 空闲+未读时 `run.send("看一下白板")`。
+### 急插：长任务中途被急问（三层升级，文档实证）
+
+| 紧急度 | 机制 | 打断? |
+|---|---|---|
+| routine | 白板随回合进（上面） | 否，下回合见 |
+| **急（任务中）** | **claude**: `run.send("急问…")` 或 `PostToolUse` hook 注入 → 落**同回合下一次模型请求**（工具边界，文档实证非回合末）。**codex**: 协议直接插一条 message（原生） | 否，**中途插入不打断** |
+| 必须立刻停 | **claude**: Esc 取消当前工具 / **captain 强行终止**（§6）。**codex**: 协议中断 / captain 终止 | 是 |
+
+- **限制**：claude 的中途插入是**工具边界**粒度——卡在某个超长单工具里要等它返回；那种就 Esc / captain 终止。
+- **残留待测**：claude 注入到达是"下个工具边界"还是"回合末"，文档措辞略含糊 → 真机量一次钉死。
 
 ---
 
-## 4. 输出：主路径 = 工具 push，辅助 = transcript
+## 4. 输出：主路径 = 工具/结构化 push，辅助 = transcript
 
-### 主路径：注入 MCP crew-comms 工具
+### 主路径
 
-给 agent `--mcp-config` 注入一个 crew-comms MCP server，agent 调工具 = 主动往外发结构化消息，**直接落群**（复活被 PTY 重写搁浅的 `post_to_crew` / 白板 / `ask_human`）：
+- **claude**：`--mcp-config` 注入 crew-comms MCP server，agent 调工具 push 结构化消息直接落群（复活被重写搁浅的 `post_to_crew` / `ask_human`）。
+- **codex**：app-server **结构化事件直出**——assistant 消息 / tool_call / 完成都是协议事件，直接拿，不用 tail transcript。crew-comms 工具走 codex 的 tool/MCP 接口。
 
-- `post_to_crew(text)` — 往群发言（已有 edge 路径）。
-- `message(target, text)` — @ 某个 session / bot。
-- `ask_human(question)` — 阻塞式问人（已有 `ask-human-mcp.cjs`）。
-- **深查类**（按需 pull，§2 世界观里告诉它有这些）：
-  - `list_crew_members()` — 找所有 crew 成员。
-  - `read_board(filter)` — 看不是只 @ 自己的消息等。
-  - `look_at_session(id)` — 拉别的 session 的 transcript「检查工作」（见下）。
+工具集（两端等价）：`post_to_crew(text)`、`message(target,text)`、`ask_human(question)`、深查类 `list_crew_members()` / `read_board(filter)` / `look_at_session(id)`。工具调用**同时喂 `SessionProxyDO`/群** → viewer/captain/群聊都看到 → 用"工具 push"数据源把 T4.5 跨端实时接回来（非刮屏）。
 
-MCP 工具的调用**同时喂 `SessionProxyDO` / 群** → viewer 实时 banner / captain / 群聊都看到 → **用"工具 push"这个数据源把 T4.5 跨端实时接回来**（不是终端刮屏）。
+### 辅助：transcript（主要 claude 用）
 
-### 辅助：transcript
-
-- **on-demand「检查工作」**：别的 session / bot / 人想知道某 session **具体在干啥**，拉它的 transcript 细看。claude 写 `~/.claude/projects/<cwd>/<sid>.jsonl`、codex 写 `~/.codex/sessions/.../rollout-*.jsonl`，**交互式也写**（已实证）。
-- **状态传感**：回合边界喂运行/空闲（§5）。
-- 这俩都是**按需查**，不往群实时推——符合"主战场是群、终端是家"。
+- **on-demand「检查工作」**：别的成员想知道某 session 具体在干啥 → 拉它 transcript 细看（claude `~/.claude/projects/<cwd>/<sid>.jsonl`、codex `~/.codex/sessions/.../rollout-*.jsonl`，交互式也写，已实证）。
+- **claude 状态传感**：回合边界喂运行/空闲（§5）。
+- **更新延迟**：文档只说 "continuously"（近实时），**无 SLA → 真机量**。codex 因结构化直出，状态/输出不靠 tail。
 
 ---
 
-## 5. 状态：运行 / 等待交互 / 空闲
+## 5. 状态：运行 / 等待 / 空闲
 
-**真源 = transcript 回合边界**（确定）：tool_use 在飞 = 运行；assistant 回合结束、无挂起 = 空闲/可输入。
+- **claude**：真源 = transcript 回合边界（tool_use 在飞=运行；assistant 回合结束无挂起=空闲）。**补充** = 终端 BEL/OSC 通知（SwiftTerm delegate 接 `bell`/`setTerminalTitle`，现没接），给"需要注意"。OSC 133（shell 标识）TUI 默认大概率不发 → 真机抓确认。claude 忙时灌输入会**排队**（`queue-operation` 实证）。
+- **codex**：`notify=[..,"turn-ended"]` 出站事件 = **干净的"空闲了"信号**，不用解析。+ 结构化事件直接给细状态。
 
-**终端信号当补充（不当真源）**：
-- 通用的"在 prompt / 可输入"标识是 **OSC 133**（shell integration）——但那给 shell，claude/codex 是全屏 TUI，**默认大概率不发**（真机抓一次确认）。
-- claude 等输入/完成会发 **BEL / OSC 通知**（"需要你了"）→ **SwiftTerm delegate 能抓**（`bell` / `setTerminalTitle`），现在 `AgentTerminalSession.Delegate` 没接 → **接上当 attention 补充信号**。但它给的是"注意我"，不一定干净区分"运行 vs 空闲"。
+---
 
-**可输入性的实证发现**：claude transcript 有 `queue-operation`（enqueue/dequeue）事件——**claude 忙时灌输入会排队不丢**。所以"必须等空闲才能发"对 claude 不成立，可随时发、它排队；空闲状态主要用于 UX + 知道"回合结束了"。codex 排队行为**未验**。
+## 6. captain 终止权 + 编排（全员透明）
+
+- **captain 工具 `terminate_session(session_id, reason)`**：门控 captain（验本 crew 机长）→ 经 **edge→Mac 通道**（复用现有 captain→Mac 的 queued/claim 轮询同款，或 SessionProxyDO command）下发终止 → runner 停（claude `AgentTerminalSession.stop()` SIGTERM→SIGKILL / codex app-server shutdown）。
+- captain 既有编排（起 session / 招临时 bot / 建子 crew）已在；本条加"终止"补全控制面。
+- **透明**：captain 权能写进 §2 每个 session 的世界观 + 可在群花名册/详情对人类展示，让全员知道机长能干什么、会不会被叫停。
+
+---
+
+## 7. 额度监控（剩余 + 消耗）
+
+目标：用户/captain 起新 session 前知道还剩多少订阅额度，别把窗口跑爆。本地 session 跑用户自己的 claude/codex 订阅（"local_host 算力免费"指机器；LLM 额度是用户订阅）。
+
+- **codex（好）**：rollout/协议有 `rate_limits`（`limit_id`、`resets_at`、`rate_limit_reached_type`）→ **直接读剩余 + 重置时间**，app-server 透出。
+- **claude（部分，诚实标限制）**：transcript `usage`（input/output/cache_read/cache_creation tokens）→ **累加算消耗**；但**无"剩余/上限/重置"字段**（只 `service_tier`），官方剩余只在交互式 `/status`，脚本拿不到 → 只能展示"本窗口已消耗 X"，给不了"剩 Y%"。**探针**：有没有别的路拿 claude 订阅剩余（rate-limit header / 未来 API）。
+- **落点**：PendingCrew 展示 per-session + crew 汇总;codex 显剩余+重置,claude 显消耗量 + 标"剩余不可得"。
 
 ---
 
 ## 待探针（实现期验，非设计阻塞）
 
-1. **codex per-session 指令注入通道**（`-c` / instructions 文件 / 不污染的 AGENTS.md）。
-2. **codex per-turn 上下文注入** hook 等价物（白板进上下文）。
-3. **codex `resume` + positional prompt** 行为。
-4. **真机抓 claude/codex 终端发什么**（bell / OSC / title）做 attention 补充 + positional prompt 是否自动提交。
-5. **计费确认**：交互式 + positional prompt 仍走订阅、不碰 Agent SDK（强预期，真机确认）。
+1. **codex app-server**：仍走订阅(非单独计费)？协议形状(initial message / resume / 工具 / 中断 / rate_limits 透出)——`generate-ts`/`generate-json-schema` 出绑定后实接。
+2. **claude positional prompt**：自动提交 vs 只填框；`--resume + prompt`。
+3. **claude 注入到达时机**：下个工具边界 vs 回合末（真机量）。
+4. **claude transcript flush 延迟**（真机量）。
+5. **claude 终端发什么**（bell/OSC/title）做状态补充。
+6. **claude 订阅剩余额度**有没有可脚本化的路。
 
 ## 验证门
 
 - 每块 typecheck / macOS build；edge 改动 typecheck + vitest。
-- 真机（归 T5.3 一类）：起 session 指令进 argl 即跑 → agent 调 `post_to_crew` 群里出现 → 空闲时别的成员 @ 它、注入「看一下白板」唤醒它回话 → 拉它 transcript 看细节。
+- 真机（归 T5.3 一类）：起 session 指令随调用即跑 → agent 调 `post_to_crew` 群里出现 → 空闲时别人 @ 它、注入「看一下白板」唤醒回话 → 长任务中途急插不打断 → captain 终止生效 → 额度面板显 codex 剩余 / claude 消耗。
 
 ## 暂不做 / YAGNI
 
-- **PTY 字节隧道（远端看一模一样终端画面）**：这是另一条重路（spec runner §5 Phase 2），本 spec **不依赖**它——输出靠工具 push、细节靠 transcript，已够。字节隧道留给"真·共享终端"强需求。
+- **PTY 字节隧道（远端看一模一样终端画面）**：本 spec 不依赖（输出靠工具/结构化、细节靠 transcript）。留给"真·共享终端"强需求。
 - 多 session 并行的完整管理。
-- 跨 CLI 的统一抽象层（claude / codex 各自注入通道先各写各的，跑通再看要不要抽）。
+- claude/codex 跨后端的过度统一抽象——`RunnerBackend` 七口子够用，跑通再看要不要抽更多。
