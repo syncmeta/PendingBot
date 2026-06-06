@@ -2,6 +2,14 @@
 
 **最近对账：2026-06-05**（对照实际代码 / 迁移 / git，不是看 task 标记）
 
+
+> **2026-06-05 两条 crew 线已合 main（merge-back，build/typecheck 绿，dirty 文件未动）**
+> - ✅ **`feat/crew-captain-orchestration` → main**（`--no-ff` 87d5fcae）：captain 编排 persona/工具 + 群聊附件整套 + T4.5 状态实时复验。
+> - ✅ **`feat/pendingcrew-runner-backends` → main**（`--no-ff` caee11f1；先把 main 并进该分支 1c97313c 解了 2 处冲突：pbxproj 重 xcodegen、tech-debt 两新条目 union）：runner 生终端化（SwiftTerm 内嵌 PTY）+ 停不掉/签名/keychain/TLS/图标 5 个修复。**这批修复 + PTY runner 现在进了 main**（之前只在那条没合的分支上）。
+> - **验证**：合并后 macOS build SUCCEEDED（runner PTY 重写与 captain 附件视图共存编译过）+ edge typecheck 0 + lefthook（schema-regen + typecheck-edge）双绿。main 末树 == 已 build 绿的 runner 末树。
+> - **🧭 退框（之前写错的两条纠正）**：① **终端字节隧道不再"跨分支阻塞"** —— runner PTY 已在 main，字节隧道是 main 上的 Phase 2 前向工作（spec §5），仍硬卡真机。② runner **Phase 1 像素级真机未验**（终端托管/prompt 注入/交互）这条 caveat 随之进 main，tech-debt 已记。
+> - **遗留给你**：本次为合 runner 新建了 worktree `.claude/worktrees/pendingcrew-runner-backends`（按约定不自动删）；main 未 push（按约定不自动 push）；T5.3 两设备 E2E + runner Phase 1 真机验仍待。
+
 > **2026-06-05 dynamic loop 续做（`feat/crew-captain-orchestration`，未合；macOS build 绿 / edge typecheck 0 / vitest 绿）**
 > - ✅ **① crew 群聊附件整套已落**（推翻早先"crew composer 无附件"的决定，用户 2026-06-04 拍板"附件做整套"）。**渲染半**(commits `6ba69b37`/`bcb7bf16`)：edge 白板 entry hydrate `messages.attachments.ids` → 可渲染对象、`CrewWhiteboardEntry` 解码、`CrewAttachmentView`(图片网格 + 文件 chip)、`CrewImageLoader` auth 图片。**发送半**(commits `c6c7b1e9`/`4f522f1b`)：upload 端点 `requireSession()`→`requireSubjectAuth(['crew:write'])` + `effectiveOwnerUserId`(device grant 走 granted_by_user_id；session 路径字节不变)、`POST /v1/crews/:id/messages` 接受 `attachmentIds` 写 `attachments:{ids:[]}`、`CrewComposer` + 按钮(`.fileImporter`) + pending tray + 上传。顺手修了 `postCrewMessage` 返回 `{messageId}` 非 `announcementId` 的潜伏 bug。
 > - ✅ **② T4.5 跨端实时 session 状态 —— 核查确认本就已端到端落地，本 loop 仅复验 build 绿**。runner 发布(`CrewSessionRunner` 起 `SessionProxyClient`,边跑边 publish `session.state`)+ viewer 实时 banner(`RemoteSessionsView`)+ 遥控命令(cancel/send_prompt/set_steering 全 apply)+ ask_human 交互卡，都在（tech-debt §514-518 已详记）。**"WS 实时推 session 状态替轮询"这条 = DONE**；3s 轮询保留为持久转写兜底（故意，runner 离线时仍渲染）。
