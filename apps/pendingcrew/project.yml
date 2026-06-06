@@ -5,20 +5,24 @@ options:
     iOS: "17.0"
     macOS: "14.0"
   createIntermediateGroups: true
+packages:
+  SwiftTerm:
+    url: https://github.com/migueldeicaza/SwiftTerm
+    from: 1.13.0
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    # 签名策略(与 apps/pendingbot 对齐):
-    # - iPad 真机(iphoneos):Automatic + dev team(为以后装 iPad 真机准备)
-    # - iOS Simulator + macOS:scaffold 阶段不签名(无需 Mac dev cert / sim 本来就不签)
+    # 签名策略(与 apps/pendingbot 对齐 —— 同源的 keychain 坑)：
+    # macOS + iOS Simulator 都用 **Apple Development** 身份(不是 ad-hoc /
+    # "Sign to Run Locally")。`KeychainStore`(device-grant token，默认钥匙串、
+    # kSecAttrService=com.pendingname.pendingcrew)的 ACL 绑当前签名身份；ad-hoc
+    # 每次重构身份就变 → 系统认不出重建的 app → **反复弹"存取钥匙串"授权框 /
+    # -34018 存不住** → 登录态丢失。用 Apple Development(稳定身份)根治。
+    # headless 无证书构建会回落 ad-hoc(仅编译校验用，不影响 GUI/有证书环境正常签名)。
     CODE_SIGN_STYLE: Automatic
     DEVELOPMENT_TEAM: M42BKJN82S
-    "CODE_SIGNING_REQUIRED[sdk=iphonesimulator*]": "NO"
-    "CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]": "NO"
-    "CODE_SIGN_IDENTITY[sdk=iphonesimulator*]": ""
-    "CODE_SIGNING_REQUIRED[sdk=macosx*]": "NO"
-    "CODE_SIGNING_ALLOWED[sdk=macosx*]": "NO"
-    "CODE_SIGN_IDENTITY[sdk=macosx*]": ""
+    "CODE_SIGN_IDENTITY[sdk=iphonesimulator*]": "Apple Development"
+    "CODE_SIGN_IDENTITY[sdk=macosx*]": "Apple Development"
 targets:
   PendingCrew:
     type: application
@@ -30,10 +34,16 @@ targets:
       testTargets:
         - PendingCrewTests
       gatherCoverageData: false
+    dependencies:
+      - package: SwiftTerm
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.pendingname.pendingcrew
         PRODUCT_NAME: PendingCrew
+        # keychain-access-groups entitlement —— 让 KeychainStore 的
+        # data-protection 钥匙串项落进 app 自己的 access group(entitlement-gated)，
+        # macOS 上不再反复弹"存取钥匙串"授权框。对齐 PendingBot。
+        CODE_SIGN_ENTITLEMENTS: Resources/PendingCrew.entitlements
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -53,6 +63,10 @@ targets:
       # LocalRunner 模块是纯 Foundation 代码（不依赖 SwiftUI / NSApplicationMain），
       # 重复编译进 test bundle 完全没问题。
       - path: Sources/Mac/LocalRunner
+    # AgentTerminalSession.swift（在 LocalRunner 里）import SwiftTerm，所以
+    # test bundle 也要链 SwiftTerm，否则编不过。
+    dependencies:
+      - package: SwiftTerm
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.pendingname.pendingcrew.tests

@@ -466,8 +466,43 @@ struct PendingCrewAPI {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
     }
 
+    /// 发请求，对**连接建立阶段**的瞬时失败重试。
+    ///
+    /// 病根：Cloudflare 广告 `alt-svc h3`，macOS URLSession 会机会性升级到
+    /// HTTP/3(QUIC over UDP)。某些网络路径（TUN 模式代理只转 TCP 不转 UDP、弱网、
+    /// UDP/443 被挡）下 QUIC 握手失败 → `URLError.secureConnectionFailed`
+    /// （"A TLS error caused the secure connection to fail"），而 HTTP/2(TCP)
+    /// 完全正常。重试时 URLSession 会把该 host 降级回 HTTP/2 → 成功。
+    ///
+    /// **只重试连接建立类错误**（secureConnectionFailed / cannotConnectToHost /
+    /// DNS）—— 这些必然发生在请求送达服务器**之前**，所以对非幂等 POST
+    /// （createSession 等）也安全，不会重复创建。
+    private func dataWithConnectRetry(
+        for request: URLRequest, attempts: Int = 3
+    ) async throws -> (Data, URLResponse) {
+        var lastError: Error = PendingCrewAPIError.invalidResponse
+        for i in 0..<attempts {
+            do { return try await session.data(for: request) }
+            catch let e as URLError where Self.isConnectStageTransient(e) {
+                lastError = e
+                if i < attempts - 1 { try? await Task.sleep(nanoseconds: 350_000_000) }
+            }
+        }
+        throw lastError
+    }
+
+    private static func isConnectStageTransient(_ e: URLError) -> Bool {
+        switch e.code {
+        case .secureConnectionFailed, .cannotConnectToHost,
+             .cannotFindHost, .dnsLookupFailed:
+            return true
+        default:
+            return false
+        }
+    }
+
     private func perform<Response: Decodable>(_ request: URLRequest) async throws -> Response {
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await dataWithConnectRetry(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw PendingCrewAPIError.invalidResponse
         }
