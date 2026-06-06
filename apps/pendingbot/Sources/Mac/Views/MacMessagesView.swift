@@ -135,6 +135,15 @@ struct MacChatView: View {
     @State private var zoomedImage: MacImageZoom?
     /// 正在上传中的附件数(>0 时禁发送,UI 显示进度,对齐 iOS 上传占位)。
     @State private var uploadingCount = 0
+    /// 乐观气泡的发送态侧表(key = optimistic row 的 `local-…` id)。Mac 端独有,
+    /// 不污染跨平台 `ChatMessageRow`(iOS 三态走 `ChatMessage.status` 字段,Mac
+    /// 的 server 行经 `loadMessages` 拿不到 status,所以用 id→态 的侧表镜像 iOS:
+    /// 发送中→userBubbleSending 淡绿;失败→红 wash + 重发;成功→清表后由 reload
+    /// 用 server canonical 行替换,落回正常 userBubble)。
+    @State private var sendStates: [String: MacSendState] = [:]
+    /// 失败气泡重发所需的原始载荷(text + 附件 id),key 同上。reload 不会带回
+    /// 这些(server 上根本没这条),所以重发要从这里取回原文重走 send。
+    @State private var failedPayloads: [String: MacFailedPayload] = [:]
 
     private var isGroup: Bool { conversationType == "group" }
     private var isPeerUser: Bool { conversationType == "user_user" }
@@ -225,6 +234,27 @@ struct MacChatView: View {
         return groupSenders["\(row.senderType):\(row.senderId)"]
     }
 
+    /// 用户气泡底色,按乐观发送态切换(逐字对齐 iOS BubbleView.userBubbleFill):
+    ///   • 失败    → 红 wash(Color.red.opacity(0.12))
+    ///   • 发送中  → userBubbleSending(比正常更淡的绿)
+    ///   • 成功/nil → userBubble(正常绿)
+    private func userBubbleFill(_ state: MacSendState?) -> Color {
+        switch state {
+        case .failed: return Color.red.opacity(0.12)
+        case .sending: return Theme.Palette.userBubbleSending
+        case .none: return Theme.Palette.userBubble
+        }
+    }
+
+    /// 气泡描边:失败用户气泡走红描边(对齐 iOS Color.red.opacity(0.55));其余
+    /// 用户气泡无描边(.clear),bot 气泡 hairline。
+    private func userBubbleStroke(isMine: Bool, state: MacSendState?) -> Color {
+        if isMine {
+            return state == .failed ? Color.red.opacity(0.55) : .clear
+        }
+        return Theme.Palette.hairline
+    }
+
     @ViewBuilder
     private func bubble(row: ChatMessageRow) -> some View {
         let isMine = row.isMine
@@ -290,20 +320,41 @@ struct MacChatView: View {
                         .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5))
                 }
                 if !content.isEmpty {
-                    // 对齐 iOS:正文走共享 MarkdownText(完整 markdown 渲染),不再纯
-                    // Text。MarkdownText 已跨平台(放开后);allowCodeRun=false(Mac 无
-                    // 代码运行 sheet)、citations=[](Mac 暂未接 web 引用)。气泡底/描边
-                    // 沿用:用户淡绿(userBubble)、bot 白(surface)+ hairline,圆角 18。
-                    MarkdownText(text: content, allowCodeRun: false, citations: [])
-                        .padding(.horizontal, 14).padding(.vertical, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
-                                .fill(isMine ? Theme.Palette.userBubble : Theme.Palette.surface)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
-                                .strokeBorder(isMine ? Color.clear : Theme.Palette.hairline, lineWidth: 0.5)
-                        )
+                    // 用户气泡三态(对齐 iOS BubbleView.userLayout):失败时左侧出
+                    // 重发钮(exclamationmark.circle.fill,红),其余两态(发送中/
+                    // 成功)只是底色差异。bot 气泡无三态,直接画正文。
+                    let state = isMine ? sendStates[row.id] : nil
+                    HStack(alignment: .center, spacing: 6) {
+                        if state == .failed {
+                            Button {
+                                retry(row: row)
+                            } label: {
+                                Image(systemName: "exclamationmark.circle.fill")
+                                    .font(Theme.Fonts.glyph(size: 18))
+                                    .foregroundStyle(Color.red.opacity(0.85))
+                            }
+                            .buttonStyle(.plain)
+                            .help("重新发送")
+                            .accessibilityLabel("重新发送")
+                        }
+                        // 对齐 iOS:正文走共享 MarkdownText(完整 markdown 渲染),不再纯
+                        // Text。MarkdownText 已跨平台(放开后);allowCodeRun=false(Mac 无
+                        // 代码运行 sheet)、citations=[](Mac 暂未接 web 引用)。气泡底/描边
+                        // 沿用:用户气泡底色按 sendState 切(失败红 wash / 发送中淡绿 /
+                        // 成功 userBubble);bot 白(surface)+ hairline,圆角 18。
+                        MarkdownText(text: content, allowCodeRun: false, citations: [])
+                            .padding(.horizontal, 14).padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
+                                    .fill(isMine ? userBubbleFill(state) : Theme.Palette.surface)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
+                                    .strokeBorder(userBubbleStroke(isMine: isMine, state: state),
+                                                  lineWidth: state == .failed ? 1 : 0.5)
+                            )
+                            .animation(.easeInOut(duration: 0.22), value: state)
+                    }
                 }
             }
             if !isMine { Spacer(minLength: 32) }
@@ -478,7 +529,16 @@ struct MacChatView: View {
 
     private func reload() async {
         do {
-            messages = try await ChatDataSource.loadMessages(conversationId: conversationId)
+            let server = try await ChatDataSource.loadMessages(conversationId: conversationId)
+            // 失败的乐观气泡 server 上不存在(请求没成功),reload 不能把它抹掉 ——
+            // 它要保持可见直到用户重发成功。把还处于 .failed 态的本地行接回 server
+            // 列表尾部(对齐 iOS:失败行留在 messages 里,canonical 替换只发生在
+            // 重发成功后)。发送中的乐观行不在这里保留 —— 此刻 sending=true 不会
+            // 走 reload;首发失败才进这条路径。
+            let survivingFailed = messages.filter { row in
+                sendStates[row.id] == .failed && !server.contains(where: { $0.id == row.id })
+            }
+            messages = server + survivingFailed
             loadError = nil
         } catch is CancellationError {
         } catch {
@@ -496,18 +556,32 @@ struct MacChatView: View {
         let attachIds = pendingAttachments.map(\.id)
         guard (!text.isEmpty || !attachIds.isEmpty), !sending, uploadingCount == 0 else { return }
         input = ""
-        sending = true
         // optimistic user 气泡(发送后 reload 会用 server canonical 行替换);带上
         // 已上传附件的本地预览,发送瞬间就能看到自己发的图/文件。
         let optimisticImages = pendingAttachments.filter(\.isImage).map(\.url)
         let optimisticFiles = pendingAttachments.filter { !$0.isImage }
+        let localId = "local-\(UUID().uuidString)"
         messages.append(ChatMessageRow(
-            id: "local-\(UUID().uuidString)", role: "user", content: text, seq: nil,
+            id: localId, role: "user", content: text, seq: nil,
             imagePaths: optimisticImages, fileAttachments: optimisticFiles))
+        // 失败重发要原文重走 send,所以把附件(原始 Attachment,含本地预览)留下来。
         let toSend = pendingAttachments
+        deliver(localId: localId, text: text, attachments: toSend)
+    }
+
+    /// 实际投递一条乐观气泡(首发 / 重发共用):置发送中态 → 走对应通道 →
+    /// 成功清态 + reload 用 server 行替换;失败置红 wash 态并保留可见 + 暂存重发
+    /// 载荷。对齐 iOS ConversationView 的 send / retryFailedMessage 三态流转。
+    private func deliver(localId: String, text: String, attachments: [Attachment]) {
+        let attachIds = attachments.map(\.id)
+        sending = true
+        sendStates[localId] = .sending      // 发送中 → 淡绿
+        failedPayloads[localId] = nil
         pendingAttachments = []
+        loadError = nil
 
         Task {
+            var failed = false
             if isPeerUser {
                 // user_user:直插 Supabase,无 SSE,无 bot 回复;canonical 行靠 reload/realtime。
                 do {
@@ -515,8 +589,7 @@ struct MacChatView: View {
                         conversationId: conversationId, text: text, attachmentIds: attachIds)
                 } catch {
                     loadError = error.localizedDescription
-                    // 发送失败:把附件放回待发条,避免静默丢失。
-                    pendingAttachments = toSend
+                    failed = true
                 }
             } else {
                 // user_bot / self / group:走 SSE /v1/messages(group 的 bot 回复
@@ -534,18 +607,40 @@ struct MacChatView: View {
                             if !total.isEmpty { streamingBotText = total }
                         case .error(let message):
                             loadError = message
+                            failed = true
                         default:
                             break
                         }
                     }
                 } catch {
                     loadError = error.localizedDescription
+                    failed = true
                 }
                 streamingBotText = nil
             }
             sending = false
+
+            if failed {
+                // 失败:把乐观气泡转红 wash 态,保留可见(不被 reload 抹掉),
+                // 暂存原文 + 附件供重发。附件不放回待发条 —— 它跟着失败气泡留在
+                // 原位,重发时连同正文一起重走(对齐 iOS 失败气泡带附件原地重试)。
+                sendStates[localId] = .failed
+                failedPayloads[localId] = MacFailedPayload(text: text, attachments: attachments)
+                return
+            }
+            // 成功:清掉乐观气泡的发送态,reload 拿 server canonical 行原位替换。
+            sendStates[localId] = nil
+            failedPayloads[localId] = nil
             await reload() // server truth(替换 optimistic + 流式临时气泡)
         }
+    }
+
+    /// 重发一条失败的乐观气泡:从暂存载荷取回原文 + 附件,原地翻回发送中态重走
+    /// deliver。沿用同一个 localId(气泡原地不新增),对齐 iOS retryFailedMessage。
+    private func retry(row: ChatMessageRow) {
+        guard sendStates[row.id] == .failed,
+              let payload = failedPayloads[row.id] else { return }
+        deliver(localId: row.id, text: payload.text, attachments: payload.attachments)
     }
 
     // MARK: attachments
@@ -594,5 +689,20 @@ struct MacChatView: View {
 private struct MacImageZoom: Identifiable {
     let id = UUID()
     let path: String
+}
+
+/// 乐观气泡发送态(Mac 端镜像 iOS `ChatMessage.status` 的 sending/failed 两档;
+/// 成功直接从侧表清掉 = nil,落回正常 userBubble)。
+private enum MacSendState: Equatable {
+    case sending
+    case failed
+}
+
+/// 失败气泡重发所需的原始载荷 —— reload 不会带回这条(server 上没有),所以
+/// 暂存原文 + 已上传附件,重发时连同正文一起重走 deliver(对齐 iOS 失败气泡
+/// 原地重试携带原附件)。
+private struct MacFailedPayload {
+    let text: String
+    let attachments: [Attachment]
 }
 #endif
