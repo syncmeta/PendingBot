@@ -236,6 +236,11 @@ export interface AuditCallOpts extends AuditUsage {
   /// Full completion text returned by the model. Forwarded to Langfuse as
   /// the generation `output`. Same lifecycle as promptBody.
   completionBody?: unknown;
+  /// Langfuse prompt name (`<name>/<locale>`) + version of the main system
+  /// prompt this turn used, so the trace links to its prompt version. Same
+  /// lifecycle as promptBody (only rides the queue → traceGeneration).
+  promptName?: string;
+  promptVersion?: number;
 }
 
 const PER_MILLION = 1_000_000;
@@ -579,6 +584,9 @@ export async function persistAuditMessage(
     sessionId: opts.conversationId ?? undefined,
     input: opts.promptBody,
     output: opts.completionBody,
+    ...(opts.promptName && opts.promptVersion != null
+      ? { prompt: { name: opts.promptName, version: opts.promptVersion } }
+      : {}),
     usage: {
       input: opts.inputTokens ?? 0,
       output: opts.outputTokens ?? 0,

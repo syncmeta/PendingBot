@@ -29,7 +29,7 @@ import { openAnthropicStream } from '../../llm/anthropic-adapter';
 import { openGeminiStream } from '../../llm/gemini-adapter';
 import { buildMessages, type BuildMessagesInput } from '../../llm/builder';
 import { resolveLocale } from '../../i18n/locale';
-import { loadPrompt } from '../../i18n/prompts';
+import { loadPrompt, getPromptMeta } from '../../i18n/prompts';
 import {
   loadAttachmentAsFilePart,
   loadAttachmentAsImagePart,
@@ -1222,6 +1222,10 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       // whole prompt; `totalContent` is the raw model output.
       promptBody: messages,
       completionBody: totalContent,
+      // Link the trace to the main system prompt's Langfuse version (text
+      // surface → 'system'); no-op when Langfuse/KV hasn't populated it.
+      promptName: getPromptMeta('system', locale)?.name,
+      promptVersion: getPromptMeta('system', locale)?.version,
       metadata: {
         bot_id: bot.id,
         status: finalStatus,
@@ -1301,6 +1305,8 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
         // so a failed turn is debuggable from the trace (#248).
         promptBody: messages,
         completionBody: totalContent,
+        promptName: getPromptMeta('system', locale)?.name,
+        promptVersion: getPromptMeta('system', locale)?.version,
         metadata: { bot_id: bot.id, status, message: message.slice(0, 200) },
       });
     } catch (auditErr) {

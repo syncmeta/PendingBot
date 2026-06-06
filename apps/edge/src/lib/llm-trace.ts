@@ -13,6 +13,7 @@
 // background timer that doesn't survive a torn-down isolate. We therefore
 // call `flushAsync()` after recording, which awaits the pending batch send.
 
+import type { LangfusePromptRecord } from 'langfuse';
 import type { Env } from '../types';
 import { langfuseEnabled } from './feature-flags';
 import { getLangfuseClient } from './langfuse-client';
@@ -34,6 +35,11 @@ export interface TraceGenerationArgs {
   traceId?: string;
   userId?: string;
   sessionId?: string;
+  /**
+   * Link this generation to its Langfuse prompt version (enables analytics by
+   * prompt version). `name` is the Langfuse prompt name (`<name>/<locale>`).
+   */
+  prompt?: { name: string; version: number };
 }
 
 /**
@@ -60,6 +66,21 @@ export async function traceGeneration(env: Env, args: TraceGenerationArgs): Prom
       metadata: args.metadata,
     });
 
+    // Minimal record carrying just name + version — the SDK lifts those onto
+    // the generation's promptName/promptVersion for version-level analytics.
+    const promptLink: LangfusePromptRecord | undefined = args.prompt
+      ? {
+          name: args.prompt.name,
+          version: args.prompt.version,
+          prompt: '',
+          type: 'text',
+          config: {},
+          labels: [],
+          tags: [],
+          isFallback: false,
+        }
+      : undefined;
+
     trace.generation({
       name: args.name,
       model: args.model,
@@ -67,6 +88,7 @@ export async function traceGeneration(env: Env, args: TraceGenerationArgs): Prom
       output: args.output,
       usage: args.usage,
       metadata: args.metadata,
+      ...(promptLink ? { prompt: promptLink } : {}),
     });
 
     // Await the batch send — the background flush timer won't fire once the
