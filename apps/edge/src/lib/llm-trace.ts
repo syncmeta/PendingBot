@@ -13,9 +13,9 @@
 // background timer that doesn't survive a torn-down isolate. We therefore
 // call `flushAsync()` after recording, which awaits the pending batch send.
 
-import { Langfuse } from 'langfuse';
 import type { Env } from '../types';
 import { langfuseEnabled } from './feature-flags';
+import { getLangfuseClient } from './langfuse-client';
 
 export interface TraceGenerationArgs {
   /** Generation/observation name, e.g. 'chat_reply', 'title'. */
@@ -47,13 +47,9 @@ export interface TraceGenerationArgs {
  * observing. Failures are logged and swallowed.
  */
 export async function traceGeneration(env: Env, args: TraceGenerationArgs): Promise<void> {
-  if (!langfuseEnabled(env) || !env.LANGFUSE_PUBLIC_KEY || !env.LANGFUSE_SECRET_KEY) return;
-
-  const langfuse = new Langfuse({
-    publicKey: env.LANGFUSE_PUBLIC_KEY,
-    secretKey: env.LANGFUSE_SECRET_KEY,
-    baseUrl: env.LANGFUSE_BASE_URL,
-  });
+  if (!langfuseEnabled(env)) return;
+  const langfuse = getLangfuseClient(env);
+  if (!langfuse) return;
 
   try {
     const trace = langfuse.trace({
@@ -112,13 +108,9 @@ export interface RecordScoreArgs {
  * signals (e.g. arena A/B preference votes) that aren't tied to a generation.
  */
 export async function recordScore(env: Env, args: RecordScoreArgs): Promise<void> {
-  if (!langfuseEnabled(env) || !env.LANGFUSE_PUBLIC_KEY || !env.LANGFUSE_SECRET_KEY) return;
-
-  const langfuse = new Langfuse({
-    publicKey: env.LANGFUSE_PUBLIC_KEY,
-    secretKey: env.LANGFUSE_SECRET_KEY,
-    baseUrl: env.LANGFUSE_BASE_URL,
-  });
+  if (!langfuseEnabled(env)) return;
+  const langfuse = getLangfuseClient(env);
+  if (!langfuse) return;
 
   try {
     // Ensure the trace exists so the score has an anchor in the UI. trace()
