@@ -30,6 +30,14 @@ final class AppModel: ObservableObject {
     /// 任意一个 key 非空即认为"已配 BYOK"。
     @Published private(set) var byokConfig: BYOKConfig?
 
+    /// 登录这台机的 PendingCrew 用户(auth.users.id)。best-effort:在
+    /// subject 解析出来(`CrewStore.refreshSubjects` → `/v1/me/subject` 回
+    /// `user_id`)之前为 nil。群聊 `CrewChatView` 用它把
+    /// `CrewWhiteboardEntry.senderUserId` 等于本值的消息识别成"自己的气泡"
+    /// (右对齐、无头像);多 human crew 里其他人的消息因此不会被误判成自己。
+    /// BYOK 假 subject 没有真用户 → 保持 nil。
+    @Published private(set) var currentUserId: String?
+
     private let defaults: UserDefaults
 
     /// 两条 backend 实例,启动时一次性构造,mode 切换只是切引用。
@@ -100,6 +108,15 @@ final class AppModel: ObservableObject {
     func clearAuth() {
         KeychainStore.delete(account: KeychainAccount.deviceGrant)
         credential = nil
+        currentUserId = nil
+    }
+
+    /// 由 `CrewStore.refreshSubjects` 在解析到 subject 时回填(best-effort)。
+    /// 只在拿到非 nil 值时更新,避免 BYOK 假 subject(userId == nil)把已
+    /// 解析出的真实 user id 清掉。
+    func setCurrentUserIdIfResolved(_ userId: String?) {
+        guard let userId, !userId.isEmpty else { return }
+        currentUserId = userId
     }
 
     /// 把 BYOK 配置写到 keychain 并落地到内存态。
@@ -121,6 +138,16 @@ final class AppModel: ObservableObject {
     /// 本 app session 缓存的 runner-host id —— 第一个 logged crew session 时
     /// 懒注册,之后复用;重启后重新注册。
     private var cachedRunnerHostId: String?
+
+    /// auth-gated 图片加载所需的 (baseURL, device-grant token)。群聊附件
+    /// `CrewRemoteImage` 用它给 `/v1/uploads/<id>` 带上 `Authorization: Bearer`。
+    /// 非登录态(无 device grant)或 baseURL 无效时返回 nil —— 调用方降级到
+    /// 占位图,不崩。
+    var imageAuth: (baseURL: URL, token: String)? {
+        guard let credential, credential.kind == .deviceGrant,
+              let url = URL(string: apiBaseURL) else { return nil }
+        return (url, credential.token)
+    }
 
     /// 用当前 device-grant 凭据构造一个 `PendingCrewAPI`。非登录态抛错。
     func loggedAPIClient() throws -> PendingCrewAPI {

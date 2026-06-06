@@ -1,6 +1,6 @@
 # Dashboard stack — self-hosted setup runbook
 
-> ⚠️ **降级为可选 fallback(2026-06-02)**:主方案已改为**零 VPS**——BI 用 Grafana Cloud Free 直连 Supabase、控制台用 Refine 部署 CF Pages(见 `docs/superpowers/specs/2026-06-01-dashboard-stack-design.md`)。本 runbook(自托管 Metabase+Appsmith on VPS)**仅在将来确实需要点选式自助 BI 且愿意养 VPS 时**才用。`metabase_ro` 只读角色已建,现给 Grafana 用。
+> ⚠️ **降级为可选 fallback(2026-06-02)**:主方案已改为**零 VPS**——BI 用 Grafana Cloud Free 直连 Supabase、控制台用 Refine 部署 CF Pages(见 `docs/superpowers/specs/2026-06-01-dashboard-stack-design.md`)。本 runbook(自托管 Metabase+Appsmith on VPS)**仅在将来确实需要点选式自助 BI 且愿意养 VPS 时**才用。`bi_ro` 只读角色已建,现给 Grafana 用。
 
 Stand up the **self-hosted** half of the PendingBot dashboard stack on a single
 VPS: **Metabase** (read-only BI on Supabase) + **Appsmith** (admin/moderation
@@ -17,7 +17,7 @@ R2 so the whole thing can move VPS in an afternoon).
 Infra files:
 - `infra/dashboards/docker-compose.yml`
 - `infra/dashboards/.env.example`
-- `supabase/migrations/<ts>_metabase_readonly_role.sql` (the `metabase_ro` role)
+- `supabase/migrations/<ts>_metabase_readonly_role.sql` (the `bi_ro` role)
 
 ---
 
@@ -25,7 +25,7 @@ Infra files:
 
 - A Cloudflare R2 bucket + S3 API token (for backups).
 - DNS you control (suggested: `metrics.pendingname.com`, `admin.pendingname.com`).
-- The `metabase_ro` migration applied to Supabase (see step 5).
+- The `bi_ro` migration applied to Supabase (see step 5).
 
 ---
 
@@ -107,7 +107,7 @@ Then set the role password out-of-band (NOT in the migration):
 
 ```bash
 supabase db query --linked \
-  "ALTER ROLE metabase_ro WITH PASSWORD '$(openssl rand -base64 32)';"
+  "ALTER ROLE bi_ro WITH PASSWORD '$(openssl rand -base64 32)';"
 ```
 
 Capture that password — it goes into `MB_DB_SUPABASE_PASS` in `.env`. The role
@@ -172,8 +172,8 @@ VPS. Caddy fetches Let's Encrypt certs automatically.
    `MB_DB_SUPABASE_*` values from `.env`:
    - Host: `db.<project-ref>.supabase.co` (direct) or
      `aws-0-<region>.pooler.supabase.com` (session pooler, port 5432; then
-     username is `metabase_ro.<project-ref>`).
-   - Database `postgres`, user `metabase_ro`, the password from step 5.
+     username is `bi_ro.<project-ref>`).
+   - Database `postgres`, user `bi_ro`, the password from step 5.
    - **Schemas: only `pendingbot`.** SSL required.
 3. Build the revenue / wallet questions off `billing_ledger`, `billing_config`,
    `wallets`, etc. **Never use Metabase Actions** — the role can't write anyway,
@@ -271,14 +271,14 @@ mechanical (the "可移植纪律" from the spec):
      sh -c "cd /data && tar xzf /backup/appsmith-stacks-*.tar.gz"
    docker compose --env-file .env up -d
    ```
-5. Repoint DNS A-records at the new IP. The `metabase_ro` Supabase role is
+5. Repoint DNS A-records at the new IP. The `bi_ro` Supabase role is
    unchanged, so BI reconnects with no DB-side work.
 
 ---
 
 ## Security checklist
 
-- [ ] Metabase uses `metabase_ro` (SELECT-only) — verified it cannot write.
+- [ ] Metabase uses `bi_ro` (SELECT-only) — verified it cannot write.
 - [ ] Both 3000/8080 bound to `127.0.0.1`; only 443 (proxy) + scoped SSH open.
 - [ ] Hetzner + ufw firewalls both active; SSH source-restricted.
 - [ ] Admin accounts on both tools have strong passwords + 2FA; public signup off.

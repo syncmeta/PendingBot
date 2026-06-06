@@ -98,6 +98,9 @@ final class CrewStore: ObservableObject {
         defer { loadingSubjects = false }
         do {
             subjects = try await backend.listMySubjects()
+            // 回填登录用户 id(群聊区分"自己的气泡")。best-effort:仅在
+            // subject 带真实 userId 时更新(BYOK 假 subject 是 nil,忽略)。
+            appModel.setCurrentUserIdIfResolved(subjects.first?.userId)
         } catch {
             self.error = "加载 subject 列表失败：\(error.localizedDescription)"
         }

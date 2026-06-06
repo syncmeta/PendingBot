@@ -56,6 +56,19 @@ export function hasDeviceScope(c: Parameters<MiddlewareHandler<AppBindings>>[0],
   return c.var.deviceGrant?.scopes.includes(scope) === true;
 }
 
+/// Resolve the *effective owner user id* for a request gated by
+/// `requireSubjectAuth`. A supabase-JWT caller owns rows under their own
+/// `userId`; a device-grant caller (e.g. PendingCrew with a `pdg_*` bearer)
+/// acts on behalf of the user who granted it, so ownership / quota attribute
+/// to `deviceGrant.grantedByUserId`. Returns null when neither is resolvable
+/// (the caller should treat that as 401/403).
+export function effectiveOwnerUserId(c: Parameters<MiddlewareHandler<AppBindings>>[0]): string | null {
+  if (c.var.authKind === 'device_grant') {
+    return c.var.deviceGrant?.grantedByUserId ?? null;
+  }
+  return c.var.userId ?? null;
+}
+
 export function requireSubjectAuth(requiredScopes: string[] = []): MiddlewareHandler<AppBindings> {
   const sessionMiddleware = requireSession() as unknown as MiddlewareHandler<AppBindings>;
   return async (c, next) => {

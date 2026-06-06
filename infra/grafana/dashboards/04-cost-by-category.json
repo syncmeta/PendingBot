@@ -2,7 +2,7 @@
   "__inputs": [
     {
       "name": "DS_SUPABASE",
-      "label": "Supabase Postgres (metabase_ro)",
+      "label": "Supabase Postgres (bi_ro)",
       "description": "Read-only Supabase Postgres datasource",
       "type": "datasource",
       "pluginId": "postgres",
@@ -26,7 +26,7 @@
       }
     ]
   },
-  "description": "Consumption cost grouped by category. Primary source: pendingbot.audit_log (task_type = category, model_id, cost_credits, cost_usd, tool_cost_usd). Secondary: pendingbot.pnc_ledger grouped by kind/source for credit issue/refund movements (delta_pnc_micros).",
+  "description": "Consumption cost grouped by category. Primary source: pendingbot.audit_log (task_type = category, model_id, cost_credits, cost_usd, tool_cost_usd). NOTE: audit_log carries authenticated-only RLS, so the BI role reads it through the security-definer per-call view bi_cost_by_category (migration 20260604131513_bi_views_complete) — Grafana still applies its own $__timeFilter/$__timeGroup + GROUP BY over those rows. Secondary: pendingbot.pnc_ledger grouped by kind/source for credit issue/refund movements (delta_pnc_micros).",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
@@ -49,7 +49,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT\n  task_type,\n  COUNT(*) AS calls,\n  COALESCE(SUM(cost_credits), 0) AS cost_credits,\n  COALESCE(SUM(cost_usd), 0) AS cost_usd,\n  COALESCE(SUM(tool_cost_usd), 0) AS tool_cost_usd,\n  COALESCE(SUM(total_tokens), 0) AS total_tokens\nFROM pendingbot.audit_log\nWHERE $__timeFilter(created_at)\nGROUP BY task_type\nORDER BY cost_credits DESC;",
+          "rawSql": "SELECT\n  task_type,\n  COUNT(*) AS calls,\n  COALESCE(SUM(cost_credits), 0) AS cost_credits,\n  COALESCE(SUM(cost_usd), 0) AS cost_usd,\n  COALESCE(SUM(tool_cost_usd), 0) AS tool_cost_usd,\n  COALESCE(SUM(total_tokens), 0) AS total_tokens\nFROM pendingbot.bi_cost_by_category\nWHERE $__timeFilter(created_at)\nGROUP BY task_type\nORDER BY cost_credits DESC;",
           "refId": "A"
         }
       ]
@@ -70,7 +70,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT\n  model_id,\n  COUNT(*) AS calls,\n  COALESCE(SUM(cost_credits), 0) AS cost_credits,\n  COALESCE(SUM(cost_usd), 0) AS cost_usd,\n  COALESCE(SUM(input_tokens), 0) AS input_tokens,\n  COALESCE(SUM(output_tokens), 0) AS output_tokens\nFROM pendingbot.audit_log\nWHERE $__timeFilter(created_at)\nGROUP BY model_id\nORDER BY cost_credits DESC\nLIMIT 50;",
+          "rawSql": "SELECT\n  model_id,\n  COUNT(*) AS calls,\n  COALESCE(SUM(cost_credits), 0) AS cost_credits,\n  COALESCE(SUM(cost_usd), 0) AS cost_usd,\n  COALESCE(SUM(input_tokens), 0) AS input_tokens,\n  COALESCE(SUM(output_tokens), 0) AS output_tokens\nFROM pendingbot.bi_cost_by_category\nWHERE $__timeFilter(created_at)\nGROUP BY model_id\nORDER BY cost_credits DESC\nLIMIT 50;",
           "refId": "A"
         }
       ]
@@ -107,7 +107,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT\n  $__timeGroup(created_at, '1d') AS time,\n  task_type AS metric,\n  COALESCE(SUM(cost_credits), 0) AS cost_credits\nFROM pendingbot.audit_log\nWHERE $__timeFilter(created_at)\nGROUP BY 1, task_type\nORDER BY 1;",
+          "rawSql": "SELECT\n  $__timeGroup(created_at, '1d') AS time,\n  task_type AS metric,\n  COALESCE(SUM(cost_credits), 0) AS cost_credits\nFROM pendingbot.bi_cost_by_category\nWHERE $__timeFilter(created_at)\nGROUP BY 1, task_type\nORDER BY 1;",
           "refId": "A"
         }
       ]

@@ -5,7 +5,6 @@ import {
   _resetMarkupCache,
   getBalanceGateState,
   getMarkup,
-  getSubjectBalance,
   redeemCode,
   requireBalance,
   usdToPnd,
@@ -36,9 +35,6 @@ function stubSupa(
     users: (
       userId: string,
     ) => { data: { balance_credits: number; lifetime_topup_credits?: number; lifetime_spent_credits?: number } | null };
-    subject_wallets: (
-      subjectId: string,
-    ) => { data: { balance_credits: number; lifetime_topup_credits?: number; lifetime_spent_credits?: number } | null };
     rpc: (fn: string, args: Record<string, unknown>) => { data?: unknown; error?: { code?: string; message?: string } | null };
   }>,
 ): SupabaseClient {
@@ -59,9 +55,6 @@ function stubSupa(
           }
           if (table === 'users' && handlers.users) {
             return handlers.users((this as { _eq?: string })._eq as string);
-          }
-          if (table === 'subject_wallets' && handlers.subject_wallets) {
-            return handlers.subject_wallets((this as { _eq?: string })._eq as string);
           }
           return { data: null, error: null };
         },
@@ -238,38 +231,8 @@ describe('requireBalance (WalletDO gate)', () => {
   });
 });
 
-describe('subject billing helpers', () => {
-  it('reads a subject wallet balance', async () => {
-    const supa = stubSupa({
-      subject_wallets: (subjectId) => {
-        expect(subjectId).toBe('subject-1');
-        return {
-          data: {
-            balance_credits: 1200,
-            lifetime_topup_credits: 2000,
-            lifetime_spent_credits: 800,
-          },
-          error: null,
-        };
-      },
-    });
-
-    await expect(getSubjectBalance(supa, 'subject-1')).resolves.toEqual({
-      balance_credits: 1200,
-      lifetime_topup_credits: 2000,
-      lifetime_spent_credits: 800,
-    });
-  });
-
-  it('returns null when a subject wallet is not visible', async () => {
-    const supa = stubSupa({
-      subject_wallets: () => ({ data: null, error: null }),
-    });
-
-    await expect(getSubjectBalance(supa, 'subject-1')).resolves.toBeNull();
-  });
-  // billingDebitSubject 已删(死代码,扣费走 WalletDO);对应测试随之移除。
-});
+// subject billing helpers 测试已删(#226):getSubjectBalance/subject_wallets
+// 退役,主体余额走 WalletDO;扣费 billingDebitSubject 早前已删。
 
 describe('redeemCode error mapping', () => {
   // Postgres SQLSTATE codes the RPC raises map to typed RedemptionError
