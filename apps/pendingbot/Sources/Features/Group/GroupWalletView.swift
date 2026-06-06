@@ -74,7 +74,7 @@ struct GroupWalletView: View {
             VStack(alignment: .leading, spacing: 10) {
                 // 群池余额
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(Self.fmt(wallet?.poolPnc ?? 0))
+                    Text(GroupWalletFormat.fmt(wallet?.poolPnc ?? 0))
                         .font(Theme.Fonts.serif(size: 24, weight: .semibold))
                         .foregroundStyle(Theme.Palette.ink)
                         .monospacedDigit()
@@ -83,11 +83,11 @@ struct GroupWalletView: View {
                         .foregroundStyle(Theme.Palette.inkMuted)
                 }
                 Divider().overlay(Theme.Palette.inkMuted.opacity(0.2))
-                statRow("我的份额", value: "\(Self.fmt(wallet?.me.stakePnc ?? 0)) PNC",
-                        sub: "占比 \(Self.pct(wallet?.me.shareRatio ?? 0)) · 实缴 \(Self.fmt(wallet?.me.contributionShareNowPnc ?? 0)) PNC")
-                statRow("我的认缴", value: "\(Self.fmt(wallet?.me.pledgePnc ?? 0)) PNC",
-                        sub: "当前生效 \(Self.fmt(wallet?.me.pledgeEffectivePnc ?? 0)) PNC(= min(认缴, 个人余额))")
-                statRow("分摊基数 S", value: "\(Self.fmt(wallet?.totalStakePnc ?? 0)) PNC",
+                statRow("我的份额", value: "\(GroupWalletFormat.fmt(wallet?.me.stakePnc ?? 0)) PNC",
+                        sub: "占比 \(GroupWalletFormat.pct(wallet?.me.shareRatio ?? 0)) · 实缴 \(GroupWalletFormat.fmt(wallet?.me.contributionShareNowPnc ?? 0)) PNC")
+                statRow("我的认缴", value: "\(GroupWalletFormat.fmt(wallet?.me.pledgePnc ?? 0)) PNC",
+                        sub: "当前生效 \(GroupWalletFormat.fmt(wallet?.me.pledgeEffectivePnc ?? 0)) PNC(= min(认缴, 个人余额))")
+                statRow("分摊基数 S", value: "\(GroupWalletFormat.fmt(wallet?.totalStakePnc ?? 0)) PNC",
                         sub: "= 群池 + 全员生效认缴")
             }
             .padding(.vertical, 4)
@@ -144,14 +144,14 @@ struct GroupWalletView: View {
                 // TODO(待定稿): 成员只返回 user_id,无显示名 —— 暂显示"我"/短 id。
                 Text(m.userId == myUserId ? "我" : String(m.userId.prefix(8)))
                     .font(Theme.Fonts.body).foregroundStyle(Theme.Palette.ink)
-                Text("实缴 \(Self.fmt(m.contributionShareNowPnc)) · 认缴 \(Self.fmt(m.pledgePnc))")
+                Text("实缴 \(GroupWalletFormat.fmt(m.contributionShareNowPnc)) · 认缴 \(GroupWalletFormat.fmt(m.pledgePnc))")
                     .font(Theme.Fonts.monoSmall).foregroundStyle(Theme.Palette.inkMuted)
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
-                Text("\(Self.fmt(m.stakePnc)) PNC")
+                Text("\(GroupWalletFormat.fmt(m.stakePnc)) PNC")
                     .font(Theme.Fonts.body).foregroundStyle(Theme.Palette.ink).monospacedDigit()
-                Text(Self.pct(m.shareRatio))
+                Text(GroupWalletFormat.pct(m.shareRatio))
                     .font(Theme.Fonts.monoSmall).foregroundStyle(Theme.Palette.inkMuted).monospacedDigit()
             }
         }
@@ -218,13 +218,13 @@ struct GroupWalletView: View {
             switch form {
             case .topup:
                 let r = try await GroupWalletService.topup(subjectId: subjectId, credits: credits)
-                actionNotice = "已注资 \(Self.fmt(r.contributedPnc)) PNC。"
+                actionNotice = "已注资 \(GroupWalletFormat.fmt(r.contributedPnc)) PNC。"
             case .pledge:
                 let r = try await GroupWalletService.pledge(subjectId: subjectId, credits: credits)
                 actionNotice = credits == 0 ? "已撤销认缴。" : "认缴已设为 \(r.pledgePnc) PNC。"
             case .withdraw:
                 let r = try await GroupWalletService.withdraw(subjectId: subjectId, credits: credits)
-                actionNotice = "已取出 \(Self.fmt(r.withdrawnPnc)) PNC。"
+                actionNotice = "已取出 \(GroupWalletFormat.fmt(r.withdrawnPnc)) PNC。"
             }
             activeForm = nil
             await reload()
@@ -238,7 +238,7 @@ struct GroupWalletView: View {
         defer { working = false }
         do {
             let r = try await GroupWalletService.leave(subjectId: subjectId)
-            actionNotice = "已退群,退回 \(Self.fmt(r.refundedPnc)) PNC。"
+            actionNotice = "已退群,退回 \(GroupWalletFormat.fmt(r.refundedPnc)) PNC。"
             await reload()
         } catch {
             actionError = GroupWalletService.friendlyMessage(error)
@@ -250,50 +250,16 @@ struct GroupWalletView: View {
         defer { working = false }
         do {
             let r = try await GroupWalletService.dissolve(subjectId: subjectId)
-            actionNotice = "已解散,退回 \(r.refundedContributors) 人共 \(Self.fmt(r.totalRefundedPnc)) PNC。"
+            actionNotice = "已解散,退回 \(r.refundedContributors) 人共 \(GroupWalletFormat.fmt(r.totalRefundedPnc)) PNC。"
             await reload()
         } catch {
             actionError = GroupWalletService.friendlyMessage(error)
         }
     }
 
-    // MARK: - 格式化
-
-    /// PNC 小数 → "1,234.56"。
-    static func fmt(_ pnc: Double) -> String {
-        pncFormatter.string(from: NSNumber(value: pnc)) ?? String(format: "%.2f", pnc)
-    }
-
-    /// 占比 0…1 → "12.3%"。
-    static func pct(_ ratio: Double) -> String {
-        String(format: "%.1f%%", ratio * 100)
-    }
-
-    private static let pncFormatter: NumberFormatter = {
-        let f = NumberFormatter()
-        f.numberStyle = .decimal
-        f.minimumFractionDigits = 2
-        f.maximumFractionDigits = 2
-        return f
-    }()
 }
 
 // MARK: - 金额输入 sheet(充值 / 认缴 / 取出共用)
-
-/// 哪个操作 + 上下文(认缴当前值 / 取出上限)。
-enum AmountForm: Identifiable {
-    case topup
-    case pledge(current: Double)
-    case withdraw(max: Double)
-
-    var id: String {
-        switch self {
-        case .topup: return "topup"
-        case .pledge: return "pledge"
-        case .withdraw: return "withdraw"
-        }
-    }
-}
 
 private struct AmountFormSheet: View {
     let form: AmountForm
@@ -303,28 +269,10 @@ private struct AmountFormSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var text: String = ""
 
-    private var title: String {
-        switch form {
-        case .topup: return "充值(注资进群)"
-        case .pledge: return "设 / 改认缴额度"
-        case .withdraw: return "部分取出"
-        }
-    }
-
-    private var footer: String {
-        switch form {
-        case .topup: return "从你的个人钱包转入群池,按整数 PNC。"
-        case .pledge(let cur): return "钱不动,留在你个人钱包;群消费时按占比直扣。当前认缴 \(GroupWalletView.fmt(cur)) PNC,填 0 撤销。"
-        case .withdraw(let max): return "从群池退回你个人钱包(非提现)。最多可取 \(GroupWalletView.fmt(max)) PNC。"
-        }
-    }
-
-    private var allowsZero: Bool { if case .pledge = form { return true } else { return false } }
-
     private var parsed: Int? { Int(text.trimmingCharacters(in: .whitespaces)) }
     private var valid: Bool {
         guard let v = parsed else { return false }
-        return allowsZero ? v >= 0 : v > 0
+        return form.allowsZero ? v >= 0 : v > 0
     }
 
     var body: some View {
@@ -334,7 +282,7 @@ private struct AmountFormSheet: View {
                     TextField("PNC 整数", text: $text)
                         .keyboardType(.numberPad)
                 } footer: {
-                    Text(footer)
+                    Text(form.footer)
                 }
                 Section {
                     Button {
@@ -350,7 +298,7 @@ private struct AmountFormSheet: View {
                     .buttonStyle(.borderedProminent)
                 }
             }
-            .navigationTitle(title)
+            .navigationTitle(form.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

@@ -113,6 +113,14 @@
 - **建议**: 等 Mac 接附件/citations 渲染时，把 `ConversationView+Loading` 的 `Row`+查询抽进共享 `MessagesFetch`（iOS 缓存派发叠在上、Mac 投影），收口时进模拟器验 iOS 不回归。
 - **状态**: ✅ **已解决（2026-06-03）** —— Mac 接图片附件渲染时顺势收口:新增 `Networking/MessagesFetch.swift`（`MessageRow` 18 列超集 + `AttachmentRef` 从 iOS-only 移来 + `latest()` + `attachmentMeta()`）;iOS `ConversationView+Loading` 改调它（删局部 Row + 内联 attachments 查询,200 行 dispatch 字节级不变）;Mac `ChatDataSource` 改调 + 投影 + 滤 log/deleted/语音 recap + 解析图片附件。**至此 Mac 5 条查询（会话/bot好友/人类好友/来信/消息）全部两端同一份,零手抄复刻**。两端编译过;iOS 消息列表模拟器冒烟无回归（会话内消息因无 tap 工具未点验,改动逐字搬迁+dispatch 未动,风险极低）。剩余 Mac 缺口:bot/会话/来信头像（数据层补 avatar_path）、非图片附件的 icon+name chip、Mac 全屏看图 viewer。
 
+### 🟡 Mac 聊天附件 / 群聊补全 — 未真机验 + 三处未对齐 iOS
+- **发现**: 2026-06-04 · feat/mac-login-align（#212 聊天补全：附件 + 群聊）
+- **位置**: `apps/pendingbot/Sources/Mac/Views/MacMessagesView.swift`（MacChatView）；`apps/pendingbot/Sources/Networking/ChatDataSource.swift`（`upload`/`loadGroupSenders`/`conversationType`/`sendPeerMessage`/`sendMessage(attachmentIds:)`）
+- **问题**: Mac 端补了图片/文件附件（NSOpenPanel → 复用跨平台 `/v1/upload`）+ 群聊渲染（发送者抬头 + 按 type 路由发送：user_bot/self/group 走 SSE，user_user 直插 Supabase）。双端编译过，但**只做了编译校验，没进真机/真账号验**：附件上传回合、群消息收发、user_user 直插的 canonical realtime 行回填都是写操作回合，headless build 回落 ad-hoc 签名跑不了登录态，需 Xcode GUI 构建 + 真账号点验。三处刻意**未对齐 iOS**：(1) 上传图片**无客户端压缩**——iOS `encodeImageForUpload` 把库内 HEIC/大图降到 2048px JPEG，Mac 直传原图（大图慢 + 可能超 vision 内联上限，bot 看不到图但 chip 仍在）；(2) **无 @提及**（iOS 这块也未定型，本轮明确不做）；(3) **无附件全屏查看器**（iOS 有 `ImageViewer` 但 iOS-only，Mac 点图不放大）。另外群发送者 `loadGroupSenders` 无本地缓存预热（iOS 有 GRDB `hydrateGroupSendersFromCache` 先画再网络刷新），Mac 首帧群抬头会闪一下 seed 头像再补真名。
+- **影响**: 中。附件/群聊的"骨架可用"已具备且复用经验证的后端通道，但 (a) 整条写路径未真机验，(b) 无图片压缩在弱网/大图下体验差且可能触发"上传了但 bot 看不见"的隐性失败。
+- **建议**: 真机验三条写回合（附件发送、群收发、user_user 1:1）；把 iOS `encodeImageForUpload` 的 2048px JPEG 压缩抽成跨平台 helper（用 `PlatformImage` / CoreGraphics，避开 UIKit），Mac 上传图片前走它；@提及 / 全屏看图待 iOS 这两块定型后再镜像。
+- **状态**: 待真机验 + 三处对齐缺口未补
+
 ## 🔴 根基级
 
 ### 🔴 Bot 公开分享链路被 `bots` 表 RLS 堵死 — 陌生人扫码/点链接解析 public_invite bot 命中 0 行
@@ -656,3 +664,24 @@
   - **过时常量**:`Features/Me/WalletV2View.swift` 的 `channelLabel` 还留 `iap_ios`/`iap_macos`/`lemon_squeezy` 分支(渠道已转 Polar/RevenueCat)。
   - **构建产物入库**:`apps/ios/build/**`(.xcarchive/.ipa)疑被 git 跟踪——应 gitignore + 移除。
   建议各 session 在自己分支用 Xcode 的 unused 检查/编译告警逐个核掉,别由计费 lane 跨改。
+
+- 🟡 **Mac 三种登录已接通+编译过,但 Apple/Google 真实登录回合未验(邮箱 OTP 已可信)** — `feat/mac-login-align`(2026-06-04,#253/#212)。Mac `MacWelcomeView` 重画对齐 iOS,三种登录代码都接上:邮箱 OTP 走跨平台 `EmailSignIn`(**已可信**,与 iOS 同一条路);Apple 走原生 `ASAuthorizationController`(NSWindow anchor),Google 走 GoogleSignIn-iOS 的 macOS target(`signIn(withPresenting: NSWindow)`)。iOS+macOS 双端 `xcodebuild` 均 BUILD SUCCEEDED,但**Apple/Google 在 Mac 上的真实 sign-in 回合没跑过**(本 session TCC 屏幕录制权限被拒,连截图都做不了,更没做真登录)。两个**外部配置依赖**会决定它们能否真的成功,启用前必须坐实:
+  - **Google macOS OAuth client**:`Info.plist` 的 `GIDClientID`(`842392349572-…apps.googleusercontent.com`)+ reversed URL scheme 是当初按 **iOS 型** OAuth client 配的。Google 原生 macOS 登录要求 client 的平台/bundle 匹配,iOS 型 client 在 macOS 上**可能**报 redirect_uri_mismatch / invalid_client。需在 Google Cloud Console 给 `com.pendingname.pendingbot` 加/确认一个 **macOS 型** OAuth client(或确认现有 client 接受 macOS bundle),并把其 client id 填进 Supabase Authorized Client IDs。**没验证过 = 可能一点就挂**。
+  - **Sign in with Apple**:entitlement(`com.apple.developer.applesignin`)已在共享 `PendingBot.entitlements`,EU 库 `/auth/v1/settings` 实测 apple enabled(见 progress 2026-06-04 Phase 4)。Mac App ID 需带 SIWA capability(自动签名通常带);真机/真账号点一次确认即可。
+  **验证清单(启用 Mac 端 Apple/Google 前必跑)**:① Mac GUI 构建(非 headless,否则签名回落 ad-hoc → Keychain -34018,session 存不住,和反复误诊的那个坑同源)② 真点 Apple → 成功落 supabase session ③ 真点 Google → 同上(先确认 macOS OAuth client)。**在坐实前别对外声称 Mac 三种登录可用**——当前只到"编译过 + 邮箱 OTP 同路可信"。
+
+- 🟡 **新钱包(WalletV2View / MacWalletView)无兑换码入口** — `feat/mac-login-align`(2026-06-04,#253)。删死的 v1 `WalletView` 时连带删了它独有的兑换码 UI(`BillingService.redeem`)。新钱包 `WalletV2View`(iOS)/`MacWalletView`(Mac)都**没有**兑换入口。后端 `billing_redeem` 已退化为只校验、送/兑换入账走 `lib/billing-grant.ts`(见 billing 退役条目),即后端仍能兑换,但**两端 App 都没有让用户输入兑换码的地方**了。删除本身不算回归(v1 WalletView 早已零引用、不可达),但"用户如何兑换码"是个产品缺口:要么在新钱包加兑换入口(iOS+Mac),要么确认兑换只走别的渠道(如深链/网页)。待用户定。
+
+- 🟡 **Mac 加好友/建管机器人原生重画落地,但裁掉了 iOS 的若干高级面 + 无扫码** — `feat/mac-login-align`(2026-06-04,#212)。`Sources/Mac/Views/MacBotManagement.swift` 新增 macOS 原生 `MacAddFriendSheet`/`MacAddBotSheet`/`MacCreateBotSheet`/`MacManageBotSheet`/`MacModelPickerSheet`,逻辑全复用跨平台 SupabaseStack/APIClient/AccountStore/ModelCatalog,沿用同一 RLS。双端 BUILD SUCCEEDED。**有意未对齐 iOS 的部分(缺口)**:
+  - **建机器人只支持单模型**:iOS `CreateBotSheet` 的 step1 是 `ArenaModelPoolEditor`(价格区间池 / 多模型竞技场,iOS-only),Mac 没移植——Mac 建的 bot 一律单模型。建/管里都没有 arena 入口。要补需把 arena 池编辑器抽成跨平台或 Mac 重画一版。
+  - **管机器人裁掉多项 iOS 子面**:iOS `ManageBotSheet` 还有 语音通话 toggle、分段气泡(output_mode,走 PATCH /v1/bots 拍 KV 缓存)、机器人时区 picker、被邀请人管理(InviteListEditor / InviteContactPickerSheet)、分享机器人(BotSharePage 邀请链接/二维码)、以及 BotConfigView(主/识图模型、联网搜索、写信设置、自动回看、技能)。Mac 第一版**只做** 改名/模型/可见性升级/slug/删除。其余 Mac 端均缺。
+  - **加好友/加机器人无扫码**:Mac 无摄像头,`MacAddFriendSheet` 只做输入号码/隐私号路径;`MacAddBotSheet` 只是邀请制说明页——iOS 的 QR 扫码 + universal-link 兑换 invite token 流(resolve/redeem /v1/bot-invites)在 Mac 没接。后续可补「粘贴邀请链接」入口走同一 resolve/redeem(BotInviteAPI 已跨平台)。
+  - **无头像选择器**:建/管机器人都没头像上传(iOS 走 iOS-only 图片选择器),Mac 仅 emoji 占位。可后续用 NSOpenPanel 接。
+  - **MacBotSlugRule 是 iOS `BotSlugRule` 的手抄副本**(后者在 `#if os(iOS)` 里不可见)。两处规则需手动保持同步;服务端 slug 约束才是真源。
+  **均为真机/真账号才能端到端验**:写操作(建/改/删 bot、发好友申请)本 session 只编译校验,未跑真实回合。
+
+- 🟡 **Mac 聊天/会话列表已接 cache-first(复用 iOS LocalDatabase),但"把编排抽成共享 store 两端共用"仍待 iOS 真机回归** — `feat/mac-login-align`(2026-06-05,#212)。Mac `MacChatView`(消息)+ `MacConversationListColumn`(会话列表)现在镜像 iOS 的 cache-first:打开先从跨平台 `LocalDatabase` 读缓存秒开 → 拉服务端 → 用 iOS 同款 `replaceMessages`(单事务 / cmid-aware upsert)+ `upsertConversations` 写回。编排落在跨平台 `ChatDataSource`(`cachedConversations`/`cachedMessages` 读缓存,`listConversations`/`loadMessages` 写回),复用 `MessagesFetch`/`ConversationFetch`/`LocalDatabase`,**没有新建 Mac-only 缓存表**。双端 BUILD SUCCEEDED。**缺口 / follow-up**:
+  - **未跑真机回归**:cache-first 的"先缓存秒开 → 网络覆盖 → 写回"在本 session 只编译校验,**没在真实登录态 / 真机上跑过**(秒开是否真即时、写回与 Realtime 刷新是否有竞态、离线再开是否仍有内容、replaceMessages 删-插事务中途无空窗——均未观测)。需用户在场做一次。
+  - **编排仍是两套(iOS 在 `ConversationView+Loading`/`MessageTabView` 里内联,Mac 在 `ChatDataSource` 里镜像)**:本 session **刻意未动 iOS shipping 代码**(避免无真机回归时改已验证的 iOS View)。把两端的 cache-first 编排抽成一个**完全共享的 store**(读+网络+diff/merge+写回一处,两端只接 UI)是正经的下一步,但那是重构 iOS 已验证路径,**必须等用户在场做 iOS 真机回归**再动。当前镜像有结构性重复:cache 写回的 row 映射、error 抑制策略、sender 解析在 iOS 与 Mac 各写了一遍,column/policy 改了要两处同步。
+  - **未读数 cached 首屏为 0**:`cachedConversations` 缓存行不带 unread(iOS 的未读真源是 server-truth unread store / `user_unread_counts`,不在 conversations 表),所以纯缓存首屏的红点要等网络刷新才出。可接受(和 preview/排序一拍 settle),但和 iOS 完全一致需把未读也落进某个 Mac 可读的缓存通道。
+  - **缓存消息无附件**:`LocalDatabase.messages` 没有附件列,cached 行是纯文字,图片/文件 chip 等 `loadMessages` 网络往返解析——与 iOS 缓存 hydrate(`attachments: nil`)一致,非 Mac 独有缺口。

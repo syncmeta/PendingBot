@@ -2,6 +2,50 @@
 
 **最近对账：2026-06-06**（对照实际代码 / 迁移 / git，不是看 task 标记）
 
+> **2026-06-05（续）Mac 对齐 iOS 收尾：markdown/公式/图片查看器/发送态/好友 IA（`feat/mac-login-align`，未合，#212）**
+> - 用户连问带做几轮。全部 iOS+macOS 双端 BUILD SUCCEEDED（合并方每拍自跑 xcodegen+双端构建坐实）。**核心思路一以贯之：iOS 的渲染器/查看器多数本就跨平台，被无谓 `#if os(iOS)` 圈住 → 放开复用，而非给 Mac 另写。**
+> - **Markdown**（`MarkdownText` 放开跨平台）：iOS bot 气泡走 `MarkdownText`，Mac 原是纯 `Text`。`MarkdownText` 唯一 iOS-only 触点是一行 `UIPasteboard`（+ 代码运行 sheet + presentationDetents）→ 各加 `#if` guard，Mac 聊天气泡换上 `MarkdownText`。Mac 现在 bot 回复完整 markdown 渲染。
+> - **LaTeX 公式**（`MathRendering` 放开跨平台）：iOS 方案=`MathMarkup` 重写→MarkdownUI image provider→**SwiftMath** `MTMathImage.asImage()` 排图。SwiftMath 本就跨平台（macOS 返回 NSImage）→ `MathMarkup` 纯 Foundation 直接复用，图片层 `UIImage/UIColor/UIGraphicsImageRenderer`→平台分支（NSImage/NSColor/lockFocus），复用全局 `PlatformImage`。Mac 公式与 iOS 同源内联渲染。
+> - **图片全屏查看器**（`ImageViewer` 放开跨平台）：手势本就跨平台（捏合/双击/拖拽），仅 `fullScreenCover` iOS-only → Mac 用大 `.sheet` + Esc 关闭，附件图 `.onTapGesture` 打开。不走 QuickLook（鉴权流式字节无磁盘 URL）。
+> - **用户气泡发送态**（`b8bef664`，仅 Mac 文件）：发送中(userBubbleSending 淡绿)/失败(红 wash + 重发钮)/成功(reload 用 server canonical 行替换)三态，对齐 iOS 色值/文案；失败原地重发（保留 localId + 原附件）。**缺口**：Mac 的 ChatDataSource 通道未透传 `client_message_id`，重发无 cmid 去重兜底（iOS 有）；若"请求已落库但响应丢"理论可能双投——根治要在 ChatDataSource 层加 cmid（跨平台改动），已记。
+> - **好友屏 IA**（`27c3c8c0`，含共享 FriendsDataSource 扩 API）：从"机器人/好友两段只读"重构成对齐 iOS 的**单列 + filter pill（全部/人类/私有/公有/群）+ 排序菜单（名称/最近聊天/加好友时间，@AppStorage 与 iOS 共享键）+ 好友申请/群邀请分区（同意/拒绝）+ SelfRow**。`FriendsDataSource` 扩出 friend-requests/group-invitations 的 list/respond（跨平台，iOS 调用面不变）+ 富化 BotContact/HumanContact（addedAt/modelId/creatorId）。**缺口**：SelfRow 仅视觉（无自聊/QR——Mac 无对应后端路径）；接受/拒绝写回合 + 像素未真机验。
+> - **剩余（需用户在场，未做）**：① 缓存编排抽成两端完全共享 store（碰 iOS 已验证路径，要真机回归）；② cmid 透传根治重发双投；③ 全部写路径 + 像素真机/真账号验。**未合 main，分支 40 commit。**
+
+
+> **2026-06-05（夜，无人值守 workflow）Mac 精细对齐 iOS：缓存 + 逐屏文案/排版/元素（`feat/mac-login-align`，未合，#212）**
+> - **背景**：用户「全都对齐、持续推进、开 dynamic workflow、中途不要等我、去睡觉、拿不准的等起床」。第 2 个顺序流水线 workflow（7 块），合并方（我）跑了 `xcodegen` + iOS/macOS **双端 BUILD SUCCEEDED**（整合态），**收尾扫描确认 `Sources/Mac` 系统默认字体残留 = 0**（全部走 `Theme.Fonts`）。
+> - **缓存**（`1b55d44d`）：Mac 聊天（MacChatView）+ 会话列表接 **cache-first，复用跨平台 `LocalDatabase`**（打开先出本地缓存秒开 → 拉服务端 → iOS 同款 `replaceMessages` 单事务/cmid-aware 写回）。**刻意没碰 iOS shipping 代码**（按安全约束，无人值守不重构已验证的 iOS 加载路径）；「把编排抽成两端完全共享 store」是 follow-up，**需用户在场做 iOS 真机回归再动**（tech-debt 已记）。`ProtectedURLCache`（iOS-only）未在 Mac 调。
+> - **逐屏对齐**（`4f8de4c3` 聊天 / `ce02d530` 好友 / `ba26feb5` 来信 / `237c4325` 我页·设置·资料 / `d260b0e4` 加好友·机器人 / `17652cfd` 根壳+收尾）：字体全换 `Theme.Fonts`、颜色 `Theme.Palette`、文案逐字对 iOS、元素/间距/空态/头像/pill 贴 iOS。例：聊天气泡走 userBubble/surface/hairline + bubbleRadius、未读红点换 iOS 绿胶囊、输入区换 iOS「+」附件钮 + accent 发送圆钮；好友行/可见性 pill/空态对齐；来信 feed 卡片 + 文章版式 + markdown 块渲染 + 空态逐字；我页/设置/注销文案逐字；根壳 tab 命名/空态对齐。
+> - **剩余分歧（醒来清单，agents 已记 tech-debt）— 都属"功能移植/带设计取舍/需在场"，本轮刻意未做**：① **Mac 聊天 bot 气泡仍纯 `Text`**，iOS 是 `MarkdownText`（markdown 渲染 + 流式光标 + web 引用）——`MarkdownText` 是 iOS-only 且依赖 UIFont/UIColor，要移植得另写 Mac MarkdownUI 主题（功能+设计取舍）。② 好友屏仍两段分区，iOS 是单列 + filter pill + 排序菜单 + 好友申请/群邀请分区（IA 重构）。③ 图片无全屏查看器、用户气泡无 sending/failed 三态。④ **缓存编排抽共享 store**（碰 iOS，需在场回归）。⑤ 所有写回合 + 视觉像素**未真机/真账号验**。
+> - **未合 main。** 分支累计 ~30 commit。
+
+
+> **2026-06-05 Mac 全面对齐 iOS（dynamic workflow，`feat/mac-login-align`，未合，#212）**
+> - **背景**：用户「都做，开 dynamic workflow 做完」。用 Workflow 顺序流水线（共享工作树，每块端到端：原生重画 + 接线 + xcodegen + iOS/macOS 双端编译到绿 + commit），4 个 area agent 串行。**逻辑全复用跨平台层，纯 SwiftUI 原生重画**；iOS-only 选择器（PhotosUI/UIImagePicker）用 NSOpenPanel 替代。
+> - **① 设置/我页**（commit `d091f8cf`）：`MacSettingsView`（锁屏通知预览 + 通话连接模式，Form `.grouped`，sheet）、`MacProfileEditView`（改名 + 头像 seed 轮换 + NSOpenPanel 自定义图 → /v1/upload）、`MacNameCorpus`（iOS NameCorpus 被 `#if os(iOS)` 圈住后读同一 names.txt 的镜像）；MacMeView 接入设置/资料/注销（`request_account_deletion` RPC + 两档 sentiment），头像换 ServerImage/BrandAvatar。
+> - **② 加好友 + 机器人**（`4850f853`+`11055362`）：`MacBotManagement.swift`（MacAddFriendSheet 输入号码 lookup→/v1/friend-requests、MacCreateBotSheet 单模型/可见性/公开 slug 直写 bots+user_bot_contacts、MacManageBotSheet 改名/模型/可见性/slug/删除、MacModelPickerSheet 基于跨平台 ModelCatalog）；MacFriendsColumn 加「+」+ bot 行右键「管理…」；PendingBotApp Mac 入口注入 `ModelCatalog.shared`。
+> - **③ 聊天补全**（`e1a3bfb4`）：MacChatView 加附件（NSOpenPanel→`ChatDataSource.upload`→待发预览→带 attachmentIds 发送；气泡内图走 ServerImage、文件走 chip）+ 群聊渲染（按 conversation_type 路由发送，user_user 直插 Supabase，群非自己气泡画发送者头像+名；新增跨平台 `ChatDataSource.loadGroupSenders`）。
+> - **④ Crew 群聊** —— workflow 一度做了（`b9c20958`：MacCrewChatView/MacCreateCrewSheet/MacCrewDetailSheet + 右栏分段 + crew 数据层去 iOS 门禁），但**用户决定先别管 Crew**（产品方向/方案未定，等 Crew 那边定型再做），已 **`git revert`**（commit 见下）。Mac crew 右栏回到只有「服务端 session 查看」+ 群钱包；CrewAPI/CrewChatModels/PermissionRequestCard 恢复 `#if os(iOS)` 门禁。**Crew Mac 端 = 暂缓，不在本轮范围。**
+> - **验证**：撤 Crew 后合并方（我）重跑 `xcodegen` + iOS Simulator + macOS **双端 BUILD SUCCEEDED**。Mac app 已启动到桌面。
+> - **缺口（agents 已记 tech-debt 🟡，仅剩①②③）**：**全部只编译校验，没真机/真账号验**——写回合（资料保存/注销、建管 bot/发好友申请、附件上传、群消息收发）需 Xcode GUI 构建 + 真账号点验；视觉像素未截图核对。功能性缺口：Mac 建 bot 无 arena 多模型池、无机器人配置子面（识图/搜索/写信/技能/语音 toggle/分段气泡/时区/邀请管理/分享）；加好友/机器人无扫码（Mac 无摄像头，只输入码）、加机器人未接 invite token resolve；附件无客户端压缩（iOS 降 2048 JPEG，Mac 直传原图）、无全屏查看器、无 @mention 富文本。**未合 main。**
+
+
+
+> **2026-06-04 Mac 个人钱包原生重画 + iOS 钱包死代码清理（`feat/mac-login-align` 续，#253/#212）**
+> - **背景**：用户「钱包什么的 已经迁移了的 都重新弄一下 ios 也一起」。核查现状：iOS 个人钱包 `WalletV2View` 已是新 PNC/Polar 模型（活，挂 MeTab）；`GroupWalletView` 也是新模型但**零入口**（#227）；老 `WalletView`(billing v1) 已零引用=死；**Mac 完全没有钱包**。数据层 `BillingService`/`GroupWalletService`/`APIClient` 本就跨平台。
+> - **Mac 个人钱包**：新 `MacWalletView`（原生 List `.inset` 镜像 iOS 钱包：余额/包/账本，Theme token），作为 sheet 从 `MacMeView` 弹出；MacMeView 加钱包概览（余额+阈值）。抽跨平台 `WalletV2Format`（formatPnc/各 label/阈值·过期文案/formatters），iOS `WalletV2View` 删自带 static helper 改复用 —— 两端同源不复制。
+> - **iOS 清理**：删死的 `WalletView.swift`；`BillingService` 砍掉只被它用的 v1 成员（Balance/fetchBalance/applySilentUpdate/redeem/Summary/fetchSummary/Log*/fetchLog），只留 `WalletV2 + fetchWalletV2`。双端 build 印证无他处引用。
+> - **群钱包（用户「iOS+Mac 都现在做」）**：抽跨平台 `GroupWalletShared`（`GroupWalletFormat` + `AmountForm`），iOS `GroupWalletView` 删自带 static/本地 enum 改复用。新 `MacGroupWalletView`（原生 List `.inset` 镜像 iOS：群池/份额/认缴/成员/操作 + 充值·认缴·取出 sheet + 退群/解散确认），`crewId→subjectId` 走跨平台 `listCrewsV2`（`CrewAPI.getCrewV2` 是 iOS-only）。**接入口**：iOS `CrewDetailV2View` 加「账户 > 群钱包」NavigationLink（#227 收口）；Mac `MacRemoteSessionsView` 工具栏「群钱包」按钮 → sheet。
+> - **缺口（记 tech-debt 🟡）**：删 v1 钱包连带删了**兑换码入口**，新钱包两端都没有兑换 UI（后端仍能兑换）——待定是否在新钱包补。
+> - **验证**：iOS Simulator + macOS 双端 `xcodebuild` BUILD SUCCEEDED（个人钱包 + 群钱包 + 入口）。未合 main。真机/真账号视觉与写操作（充值/认缴/取出/退群/解散）回合未实测。
+
+> **2026-06-04 PendingBot Mac 登录界面对齐 iOS（`feat/mac-login-align`，未合，#253/#212）**
+> - **动机**：用户「开 Mac 我看看 → 登录界面要和 iOS 统一」，选了**完全对齐三种登录**（Apple+Google+邮箱）。Mac 原本是极简 email-only（一个 SF Symbol + 验证码），iOS 是打磨过的完整版（BrandMark logo + 三登录 + 「你是？」人机验证分步 + Turnstile + 验证码 + 机器人彩蛋）。
+> - **跨平台基座**（commit 1）：`Theme`/`Platform`/`Haptics` 去掉 `#if os(iOS)` 整体围栏 → 原生 macOS 拿到同一套 `Palette/Fonts/Metrics` 设计 token（UIFont 辅助用 `canImport(UIKit)` 精确围）；`Platform.isMac` 原生 Mac 为 true（0.88 桌面字号）；`Haptics` Mac 端 no-op。`AppleSignIn`/`GoogleSignIn` 放开到 macOS：Apple 原生 `ASAuthorizationController`（NSWindow anchor），Google 走 GoogleSignIn-iOS 的 **macOS target**（`signIn(withPresenting: NSWindow)`，该包对 macOS 本就链接）。
+> - **共享逻辑**（commit 2）：抽跨平台 `WelcomeViewModel`（stage/Turnstile token 时序/resend 冷却/test-email 后门/Apple/Google/邮箱 OTP 全套），iOS `WelcomeView` 改薄渲染层、**顺手删掉内联的 Apple SIWA ~90 行**改走共享 `AppleSignIn.run()`。两端登录逻辑不再各写一份（避开 copy-paste 债）。
+> - **Mac 重画**（commit 3）：`MacWelcomeView` 逐块原生镜像 iOS（同 logo/排版/pill/箭头行/人机验证/彩蛋/Theme token），渲染层 AppKit + `MacTurnstileWebView`（NSViewRepresentable），glass 用 macOS 26 `.glassEffect` + `.regularMaterial` 回退。
+> - **验证**：iOS Simulator + macOS **双端 `xcodebuild` BUILD SUCCEEDED**；Mac app 已启动到桌面。**未做（记 tech-debt 🟡）**：① 本 session TCC 屏幕录制权限被拒，**截不了图 → 视觉确认待用户**；② **Apple/Google 在 Mac 上的真实 sign-in 回合未跑**（邮箱 OTP 与 iOS 同路、可信）——Google 还依赖一个 **macOS 型 OAuth client** 配置（现有 GIDClientID 是 iOS 型，Mac 上可能 invalid_client），启用前必须按 tech-debt 清单坐实。
+> - **合 main**：待用户（且 Mac 三登录真验证前别对外声称可用）。
 
 > **2026-06-06 prompt 真源切 Langfuse + KV 分发（`chore/prompt-langfuse-kv`，未合 main）**
 > - ✅ **弃用 bundled `.md`，Langfuse 成 prompt 唯一真源**（用户拍板：pre-launch 可激进、不留旧兜底、"空了就空了"）。先把 16 个现有 `.md` 一次性 seed 进 Langfuse（production label，幂等脚本，已跑），再删 `prompts/{zh,en}/*.md` + wrangler Text rule + seed 脚本。`prompts/skills/*` 是另一套 public-skills（mjs seed），保留。

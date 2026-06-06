@@ -72,11 +72,14 @@ private extension String {
     }
 }
 
-#if os(iOS)
-/// Full-screen viewer for a tapped attachment image — pinch to zoom,
-/// drag to pan when zoomed, double-tap to toggle 1×/2×. Tapping the
-/// backdrop or the close button dismisses. iOS-only (uses `Theme` + touch
-/// gestures); Mac doesn't surface a full-screen pinch viewer yet.
+/// Image viewer for a tapped attachment — pinch (trackpad) / double-tap(click)
+/// to toggle 1×/2×, drag to pan when zoomed. Tapping the backdrop, the close
+/// button, or Esc (macOS) dismisses.
+///
+/// Cross-platform: the gestures all work on both (`MagnificationGesture` = a
+/// trackpad pinch on Mac, `onTapGesture(count: 2)` = a double-click). iOS
+/// presents it via `.fullScreenCover`; macOS via a large `.sheet` (no
+/// fullScreenCover on Mac) — so a min frame + Esc-to-dismiss are added there.
 struct ImageViewer: View {
     let path: String
     let serverURL: URL
@@ -133,6 +136,12 @@ struct ImageViewer: View {
             .padding(.top, 12)
             .padding(.trailing, 16)
         }
+        #if os(macOS)
+        // macOS 通过大 sheet 呈现(无 fullScreenCover):给个像样的初始尺寸,
+        // 并支持 Esc 关闭(对齐"点背景/关闭按钮"两条退出路径)。
+        .frame(minWidth: 680, minHeight: 560)
+        .onExitCommand { dismiss() }
+        #endif
     }
 
     private func resetPan() {
@@ -140,4 +149,3 @@ struct ImageViewer: View {
         steadyOffset = .zero
     }
 }
-#endif

@@ -1,193 +1,495 @@
 #if os(macOS)
 import SwiftUI
+import AppKit
 @preconcurrency import WebKit
 
-/// macOS 登录 gate + Email-OTP 登录页。
+/// macOS 登录 gate + 登录页。
 ///
-/// PendingBot Mac 端此前没有任何登录入口（`MacRootView` 直接显示），导致没有
+/// PendingBot Mac 端此前没有任何登录入口(`MacRootView` 直接显示),导致没有
 /// supabase 会话、所有 `/v1/*` 调用 401。这一刀给 macOS 补上 iOS 同款的会话 gate
-/// + 一个最小可用的 Email-OTP 登录界面，让 Mac 端真正能登录（进而 Crew viewer
-/// 能拉到数据）。
+/// + 登录界面。
 ///
-/// 为什么只做 Email OTP：`EmailSignIn` 本就是跨平台纯 async/await，而
-/// Apple/Google 登录都依赖 iOS-only 的 presentation anchor / SDK。Email 一条路
-/// 最省事且全平台可信。Turnstile 人机验证沿用 iOS 的 WKWebView 方案，这里包成
-/// macOS 的 `NSViewRepresentable`（WebKit 本身跨平台）。
+/// **与 iOS 对齐(#253):** 界面逐块原生重画镜像 iOS `WelcomeView` —— 同样的
+/// BrandMark logo 上半屏、「登录 / 注册：」+ Apple/Google 双 pill + 邮箱箭头行,
+/// 第二步「你是？」人机验证(Turnstile)+ 验证码 + 机器人彩蛋,全套走共享的
+/// `Theme` 设计 token。逻辑 100% 复用跨平台 `WelcomeViewModel`(与 iOS 同一个),
+/// 仅渲染层用 AppKit 原生控件 + `MacTurnstileWebView`(NSViewRepresentable)。
+/// 三种登录都通——Apple 走原生 `ASAuthorizationController`(NSWindow anchor),
+/// Google 走 GoogleSignIn-iOS 的 macOS target(`signIn(withPresenting: NSWindow)`),
+/// 邮箱 OTP 走 `EmailSignIn`。
 struct MacRootGate: View {
     @EnvironmentObject private var store: AccountStore
 
     var body: some View {
         Group {
             if !store.sessionHydrated {
-                // 冷启动 hydrate 持久化 session 期间的占位，避免闪 "未登录"。
+                // 冷启动 hydrate 持久化 session 期间的占位,避免闪 "未登录"。
+                // 用登录页同款紧凑尺寸,免得 hydrate→登录 时窗口跳大小。
                 VStack(spacing: 10) {
                     ProgressView()
-                    Text("加载中…").font(.callout).foregroundStyle(.secondary)
+                    Text("加载中…")
+                        .font(Theme.Fonts.footnote)
+                        .foregroundStyle(Theme.Palette.inkMuted)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(minWidth: 740, minHeight: 420)
             } else if store.current == nil {
                 MacWelcomeView()
             } else {
+                // 登录后才声明主 app 尺寸 → 窗口从登录小窗长到 1100×700。
                 MacRootView()
+                    .frame(minWidth: 1100, minHeight: 700)
             }
         }
     }
 }
 
 struct MacWelcomeView: View {
-    private enum Stage { case email, code }
+    @StateObject private var vm = WelcomeViewModel()
+    @FocusState private var focusedField: Field?
 
-    @State private var stage: Stage = .email
-    @State private var email = ""
-    @State private var code = ""
-    /// Turnstile token（~5min、单次使用）。`requestCode` 成功后作废，返回重发会
-    /// bump `turnstileId` 重建 widget 取新 token。
-    @State private var captchaToken: String?
-    @State private var turnstileInteractive = false
-    @State private var turnstileId = 0
-    @State private var busy = false
-    @State private var error: String?
+    enum Field { case email, code }
+
+    private let resendTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        VStack(spacing: 18) {
-            Spacer(minLength: 0)
+        // Logo + form sit as one centered cluster (not pushed to opposite
+        // edges), on a compact window — much smaller than the main app's
+        // 1100×700 (which is restored once signed in via MacRootGate).
+        HStack(spacing: 96) {
+            Image("BrandMark")
+                .resizable()
+                .interpolation(.high)
+                .antialiased(true)
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 92, height: 92)
+                .clipShape(RoundedRectangle(cornerRadius: 21, style: .continuous))
+                .shadow(color: .black.opacity(0.06), radius: 18, y: 5)
 
-            VStack(spacing: 6) {
-                Image(systemName: "bubble.left.and.bubble.right.fill")
-                    .font(.system(size: 40, weight: .light))
-                    .foregroundStyle(.tint)
-                Text("登录 PendingBot").font(.title2.weight(.semibold))
-                Text("用邮箱验证码登录").font(.callout).foregroundStyle(.secondary)
-            }
+            VStack(alignment: .leading, spacing: 0) {
+                if vm.stage == .humanCheck {
+                    backButton
+                        .padding(.bottom, 18)
+                        .transition(.opacity)
+                }
 
-            if stage == .email {
-                emailStage
-            } else {
-                codeStage
-            }
+                switch vm.stage {
+                case .enteringEmail:
+                    enteringEmailBody
+                case .humanCheck:
+                    humanCheckBody
+                        .transition(.opacity)
+                }
 
-            if let error {
-                Text(error).font(.caption).foregroundStyle(.red)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(40)
-    }
-
-    // MARK: - stages
-
-    private var emailStage: some View {
-        VStack(spacing: 12) {
-            TextField("you@example.com", text: $email)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 280)
-                .onSubmit { if canSend { Task { await send() } } }
-
-            // Turnstile widget — 后台预加载;interaction-only 多数静默通过（0 高度），
-            // 只有需要交互时撑开。token 到了 send 按钮才可用。
-            MacTurnstileWebView(
-                siteKey: HostedConfig.environment.turnstileSiteKey,
-                host: HostedConfig.environment.turnstileHost,
-                onToken: { token in captchaToken = token; error = nil },
-                onError: { msg in error = "人机验证失败：\(msg)" },
-                onInteractive: { turnstileInteractive = true }
-            )
-            .id(turnstileId)
-            .frame(width: 300, height: turnstileInteractive ? 72 : 0)
-            .clipped()
-
-            if captchaToken == nil && error == nil {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text("正在验证你不是机器人…").font(.caption).foregroundStyle(.secondary)
+                if let errorText = vm.errorText {
+                    errorBlock(text: errorText)
+                        .padding(.top, 12)
                 }
             }
+            .frame(width: 280)
+        }
+        .padding(44)
+        // 默认尺寸:窗口整体放大,内容簇保持原大小、居中,四周留更多空白。
+        .frame(minWidth: 740, minHeight: 420, alignment: .center)
+        .background(Theme.Palette.canvas.ignoresSafeArea())
+        .background(MacLoginWindowStyler())
+        .onChange(of: vm.otpSent) { _, sent in
+            if sent { focusedField = .code }
+        }
+        .onReceive(resendTimer) { _ in
+            vm.tickResendCooldown()
+        }
+        .animation(.easeInOut(duration: 0.28), value: vm.stage)
+        .animation(.easeInOut(duration: 0.28), value: vm.humanChoice)
+        .animation(.easeInOut(duration: 0.28), value: vm.otpSent)
+        .animation(.easeInOut(duration: 0.28), value: vm.codeBlockShown)
+        .animation(.easeInOut(duration: 0.28), value: vm.turnstileInteractive)
+    }
 
-            Button {
-                Task { await send() }
-            } label: {
-                if busy { ProgressView().controlSize(.small) }
-                else { Text("发送验证码").frame(width: 200) }
+    // MARK: - Stage: entering email
+
+    @ViewBuilder
+    private var enteringEmailBody: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("登录 / 注册：")
+                .font(Theme.Fonts.system(size: 15, weight: .semibold))
+                .foregroundStyle(Theme.Palette.ink)
+                .padding(.leading, 4)
+                .padding(.bottom, 22)
+
+            VStack(spacing: 14) {
+                HStack(spacing: 12) {
+                    appleButton
+                    googleButton
+                }
+                emailRow
             }
-            .keyboardShortcut(.defaultAction)
-            .disabled(!canSend)
+            .disabled(vm.isBusy)
         }
     }
 
-    private var codeStage: some View {
-        VStack(spacing: 12) {
-            Text("验证码已发到 \(email)").font(.callout).foregroundStyle(.secondary)
-            TextField("6 位验证码", text: $code)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 200)
-                .multilineTextAlignment(.center)
-                .onSubmit { if canVerify { Task { await verify() } } }
+    // MARK: - Stage: human check
 
-            Button {
-                Task { await verify() }
-            } label: {
-                if busy { ProgressView().controlSize(.small) }
-                else { Text("登录").frame(width: 200) }
+    @ViewBuilder
+    private var humanCheckBody: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            Text("你是？")
+                .font(Theme.Fonts.system(size: 26, weight: .semibold, design: .serif))
+                .foregroundStyle(Theme.Palette.ink)
+                .padding(.leading, 4)
+
+            HStack(spacing: 12) {
+                humanButton
+                robotButton
             }
-            .keyboardShortcut(.defaultAction)
-            .disabled(!canVerify)
+            .disabled(vm.isBusy || vm.codeBlockShown)
 
-            Button("换个邮箱") {
-                stage = .email
-                code = ""
-                error = nil
-                captchaToken = nil
-                turnstileInteractive = false
-                turnstileId += 1 // 重建 widget 取新 token
+            turnstileWidget
+
+            Group {
+                if vm.codeBlockShown {
+                    codeBlock
+                        .transition(.opacity)
+                } else if vm.humanChoice == .robot {
+                    robotEasterEgg
+                        .transition(.opacity)
+                } else if vm.humanChoice == .human && !vm.turnstileInteractive && !vm.turnstileFailed {
+                    verifyingHint
+                        .transition(.opacity)
+                }
             }
-            .buttonStyle(.link)
-            .disabled(busy)
         }
     }
 
-    private var canSend: Bool {
-        !busy && captchaToken != nil && email.contains("@")
-    }
-    private var canVerify: Bool {
-        !busy && code.trimmingCharacters(in: .whitespaces).count >= 6
+    private var backButton: some View {
+        Button {
+            vm.backToEmailEntry()
+            focusedField = .email
+        } label: {
+            Image(systemName: "chevron.left")
+                .font(Theme.Fonts.glyph(size: 16, weight: .semibold))
+                .foregroundStyle(Theme.Palette.ink)
+                .frame(width: 32, height: 32)
+                .macGlassCircle()
+                .shadow(color: .black.opacity(0.06), radius: 6, y: 2)
+        }
+        .buttonStyle(.plain)
+        .disabled(vm.isVerifying)
+        .accessibilityLabel("返回")
     }
 
-    // MARK: - actions
+    private var humanButton: some View {
+        Button {
+            vm.tapHuman()
+        } label: {
+            choicePill(text: "人类", filled: vm.humanChoice == .human)
+        }
+        .buttonStyle(.plain)
+    }
 
-    private func send() async {
-        guard let token = captchaToken else { return }
-        busy = true; error = nil
-        defer { busy = false }
-        do {
-            try await EmailSignIn.requestCode(email: trimmedEmail, captchaToken: token)
-            stage = .code
-        } catch {
-            self.error = error.localizedDescription
-            // token 可能已被消费/作废 — 重建 widget 以便重试。
-            captchaToken = nil
-            turnstileInteractive = false
-            turnstileId += 1
+    private var robotButton: some View {
+        Button {
+            vm.tapRobot()
+        } label: {
+            choicePill(text: "机器人", filled: vm.humanChoice == .robot)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func choicePill(text: String, filled: Bool) -> some View {
+        Text(text)
+            .font(Theme.Fonts.system(size: 16, weight: .medium))
+            .foregroundStyle(filled ? .white : Theme.Palette.ink)
+            .frame(maxWidth: .infinity)
+            .frame(height: 48)
+            .background(
+                Group {
+                    if filled {
+                        Capsule().fill(Theme.Palette.accent)
+                    } else {
+                        Capsule().fill(Color.clear)
+                    }
+                }
+            )
+            .overlay(
+                Capsule().strokeBorder(
+                    filled ? Color.clear : Theme.Palette.ink.opacity(0.18),
+                    lineWidth: 1
+                )
+            )
+            .shadow(color: filled ? Color.black.opacity(0.18) : .clear, radius: 10, y: 4)
+            .contentShape(Capsule())
+    }
+
+    /// Always-mounted Turnstile widget. Collapsed to a 1pt sliver for silent
+    /// passes; only animates open if Cloudflare fires the
+    /// `before-interactive-callback`.
+    private var turnstileWidget: some View {
+        let visible = vm.humanChoice == .human && !vm.codeBlockShown && vm.turnstileInteractive
+        return MacTurnstileWebView(
+            siteKey: HostedConfig.environment.turnstileSiteKey,
+            host: HostedConfig.environment.turnstileHost,
+            onToken: { token in vm.handleTurnstileToken(token) },
+            onError: { msg in vm.handleTurnstileError(msg) },
+            onInteractive: { vm.markTurnstileInteractive() }
+        )
+        .frame(maxWidth: .infinity)
+        .frame(height: visible ? 72 : 1)
+        .opacity(visible ? 1 : 0)
+        .allowsHitTesting(visible)
+        .id(vm.turnstileWidgetID)
+    }
+
+    private var verifyingHint: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
+            Text("正在验证…")
+                .font(Theme.Fonts.footnote)
+                .foregroundStyle(Theme.Palette.inkMuted)
+        }
+        .padding(.horizontal, 4)
+    }
+
+    private var codeBlock: some View {
+        VStack(spacing: 14) {
+            codeStatusRow
+            if vm.otpSent {
+                codeRow
+                    .transition(.opacity)
+            }
         }
     }
 
-    private func verify() async {
-        busy = true; error = nil
-        defer { busy = false }
-        do {
-            // 成功后 supabase authStateChanges 触发，AccountStore.current 更新，
-            // MacRootGate 自动切到 MacRootView。
-            _ = try await EmailSignIn.verify(email: trimmedEmail, code: code.trimmingCharacters(in: .whitespaces))
-        } catch {
-            self.error = error.localizedDescription
+    private var codeStatusRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "envelope")
+                .font(Theme.Fonts.glyph(size: 13))
+                .foregroundStyle(Theme.Palette.inkMuted)
+            Text("\(vm.otpSent ? "码已发至：" : "码将发至：")\(vm.email)")
+                .font(Theme.Fonts.footnote)
+                .foregroundStyle(Theme.Palette.inkMuted)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer()
+            sendOrResendButton
+        }
+        .padding(.horizontal, 4)
+    }
+
+    private var sendOrResendButton: some View {
+        Group {
+            if vm.resendCooldown > 0 {
+                Text("\(vm.resendCooldown)s")
+                    .font(Theme.Fonts.caption)
+                    .foregroundStyle(Theme.Palette.inkMuted.opacity(0.7))
+            } else if !vm.otpSent {
+                Button("发送") {
+                    vm.tapSend()
+                }
+                .buttonStyle(.plain)
+                .font(Theme.Fonts.caption)
+                .foregroundStyle(Theme.Palette.accent.opacity(0.85))
+                .disabled(vm.isVerifying || vm.turnstileToken == nil)
+            } else {
+                Button("重发") {
+                    Task { await vm.resend() }
+                }
+                .buttonStyle(.plain)
+                .font(Theme.Fonts.caption)
+                .foregroundStyle(Theme.Palette.accent.opacity(0.85))
+                .disabled(vm.isVerifying)
+            }
         }
     }
 
-    private var trimmedEmail: String {
-        email.trimmingCharacters(in: .whitespaces).lowercased()
+    private var robotEasterEgg: some View {
+        VStack(spacing: 22) {
+            Text("😲😲😲")
+                .font(Theme.Fonts.system(size: 56))
+            VStack(spacing: 10) {
+                Text("尊敬的机器人您好，请联系 kipper_yonder.0u@icloud.com")
+                Text("我会稳稳地接住你")
+                Text("我还可以帮你生成我和机器人的关系图")
+            }
+            .font(Theme.Fonts.footnote)
+            .foregroundStyle(Theme.Palette.ink)
+            .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 4)
+    }
+
+    // MARK: - Apple / Google buttons
+
+    private var appleButton: some View {
+        Button { Task { await vm.beginApple() } } label: {
+            brandPillContent(logo: appleLogoImage, text: "Apple", textColor: .white)
+                .frame(maxWidth: .infinity)
+                .frame(height: 48)
+                .background(Capsule().fill(.black))
+                .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Sign in with Apple")
+    }
+
+    private var googleButton: some View {
+        Button { Task { await vm.beginGoogle() } } label: {
+            brandPillContent(
+                logo: AnyView(Image("GoogleG").resizable().scaledToFit()),
+                text: "Google",
+                textColor: Color(red: 0.18, green: 0.18, blue: 0.20)
+            )
+            .frame(maxWidth: .infinity)
+            .frame(height: 48)
+            .macGlassCapsule()
+            .shadow(color: .black.opacity(0.08), radius: 10, y: 4)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Sign in with Google")
+    }
+
+    /// Prefer the Apple-supplied logo-only artwork when present (shared
+    /// asset catalog), falling back to the SF Symbol otherwise — mirrors iOS.
+    private var appleLogoImage: AnyView {
+        if NSImage(named: "AppleSignInLogo") != nil {
+            AnyView(
+                Image("AppleSignInLogo")
+                    .resizable()
+                    .renderingMode(.template)
+                    .foregroundStyle(.white)
+                    .scaledToFit()
+            )
+        } else {
+            AnyView(
+                Image(systemName: "applelogo")
+                    .resizable()
+                    .scaledToFit()
+                    .foregroundStyle(.white)
+            )
+        }
+    }
+
+    private func brandPillContent(
+        logo: AnyView, text: String, textColor: Color
+    ) -> some View {
+        HStack(spacing: 10) {
+            logo.frame(width: 18, height: 18)
+            Text(text)
+                .font(Theme.Fonts.system(size: 18, weight: .medium))
+                .foregroundStyle(textColor)
+        }
+    }
+
+    // MARK: - Email / code rows
+
+    private var emailRow: some View {
+        inputRow {
+            TextField("邮箱", text: $vm.email)
+                .textFieldStyle(.plain)
+                .focused($focusedField, equals: .email)
+                .onSubmit { advance() }
+        }
+    }
+
+    private var codeRow: some View {
+        inputRow {
+            TextField("码可能在垃圾邮件里", text: $vm.code)
+                .textFieldStyle(.plain)
+                .focused($focusedField, equals: .code)
+                .onSubmit { Task { await vm.verifyCode() } }
+        }
+    }
+
+    /// One row: a plain text input on the left, a green circular submit
+    /// button on the right — same shape as the iOS inputRow.
+    @ViewBuilder
+    private func inputRow<Content: View>(
+        @ViewBuilder field: () -> Content
+    ) -> some View {
+        HStack(spacing: 0) {
+            field()
+                .font(Theme.Fonts.system(size: 16))
+                .padding(.leading, 18)
+                .padding(.vertical, 13)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            submitArrowButton
+                .padding(.trailing, 7)
+        }
+        .frame(height: 48)
+        .macGlassCapsule()
+        .shadow(color: .black.opacity(0.08), radius: 10, y: 4)
+    }
+
+    private var submitArrowButton: some View {
+        Button {
+            switch vm.stage {
+            case .enteringEmail: advance()
+            case .humanCheck:    Task { await vm.verifyCode() }
+            }
+        } label: {
+            Group {
+                if vm.isBusy {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(.white)
+                } else {
+                    Image(systemName: "arrow.right")
+                        .font(Theme.Fonts.glyph(size: 14, weight: .bold))
+                        .foregroundStyle(.white)
+                }
+            }
+            .frame(width: 35, height: 35)
+            .background(
+                Circle().fill(vm.canSubmit ? Theme.Palette.accent : Theme.Palette.accent.opacity(0.28))
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(!vm.canSubmit || vm.isBusy)
+        .animation(.easeInOut(duration: 0.15), value: vm.canSubmit)
+    }
+
+    private func errorBlock(text: String) -> some View {
+        Text(text)
+            .font(Theme.Fonts.caption)
+            .foregroundStyle(.red)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: - Actions bridging view focus → view model
+
+    private func advance() {
+        if vm.advanceToHumanCheck() {
+            focusedField = nil
+        }
+    }
+}
+
+/// macOS 26+ uses the Liquid Glass material via `.glassEffect`; older systems
+/// fall back to the standard system material. Twin of the iOS helpers in
+/// `WelcomeView`, scoped here so the Mac login reads identically.
+private extension View {
+    @ViewBuilder
+    func macGlassCapsule() -> some View {
+        if #available(macOS 26.0, *) {
+            self.glassEffect(.regular, in: Capsule())
+        } else {
+            self
+                .background(Capsule().fill(.regularMaterial))
+                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
+        }
+    }
+
+    @ViewBuilder
+    func macGlassCircle() -> some View {
+        if #available(macOS 26.0, *) {
+            self.glassEffect(.regular, in: Circle())
+        } else {
+            self
+                .background(Circle().fill(.regularMaterial))
+                .overlay(Circle().strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
+        }
     }
 }
 
@@ -298,6 +600,100 @@ struct MacTurnstileWebView: NSViewRepresentable {
                 onInteractive()
             default:
                 break
+            }
+        }
+    }
+}
+
+/// Reaches the host `NSWindow` to give the login screen two cosmetic touches
+/// the standard `.windowStyle(.hiddenTitleBar)` can't:
+///   1. **Bigger rounded corners** — the window is made transparent and the
+///      content layer is corner-clipped, so the whole panel reads as a rounded
+///      card (rounder than AppKit's default ~10pt) with a matching shadow.
+///   2. **Roomier traffic lights** — the close / minimise / zoom buttons are
+///      nudged in from the corner and spaced further apart.
+/// Constants are kept here so they're easy to tune by eye.
+struct MacLoginWindowStyler: NSViewRepresentable {
+    var cornerRadius: CGFloat = 22
+    var trafficInsetLeft: CGFloat = 20
+    var trafficInsetTop: CGFloat = 20
+    var trafficSpacing: CGFloat = 12
+
+    func makeNSView(context: Context) -> NSView {
+        let v = NSView(frame: .zero)
+        context.coordinator.styler = self
+        DispatchQueue.main.async { [weak v] in
+            if let w = v?.window { context.coordinator.attach(to: w) }
+        }
+        return v
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.styler = self
+        DispatchQueue.main.async { [weak nsView] in
+            if let w = nsView?.window { context.coordinator.attach(to: w) }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    @MainActor
+    final class Coordinator {
+        var styler: MacLoginWindowStyler?
+        private weak var window: NSWindow?
+        private var observed = false
+
+        func attach(to window: NSWindow) {
+            self.window = window
+            applyRounding(window)
+            layoutTrafficLights(window)
+            guard !observed else { return }
+            observed = true
+            let nc = NotificationCenter.default
+            for name: NSNotification.Name in [
+                NSWindow.didResizeNotification,
+                NSWindow.didBecomeKeyNotification,
+                NSWindow.didBecomeMainNotification,
+            ] {
+                nc.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated {
+                        guard let self, let w = self.window else { return }
+                        self.layoutTrafficLights(w)
+                    }
+                }
+            }
+        }
+
+        private func applyRounding(_ window: NSWindow) {
+            let radius = styler?.cornerRadius ?? 22
+            window.isOpaque = false
+            window.backgroundColor = .clear
+            window.hasShadow = true
+            if let content = window.contentView {
+                content.wantsLayer = true
+                content.layer?.cornerRadius = radius
+                content.layer?.cornerCurve = .continuous
+                content.layer?.masksToBounds = true
+            }
+            window.invalidateShadow()
+        }
+
+        private func layoutTrafficLights(_ window: NSWindow) {
+            let left = styler?.trafficInsetLeft ?? 20
+            let top = styler?.trafficInsetTop ?? 20
+            let spacing = styler?.trafficSpacing ?? 12
+            let buttons = [NSWindow.ButtonType.closeButton,
+                           .miniaturizeButton,
+                           .zoomButton].compactMap { window.standardWindowButton($0) }
+            guard buttons.count == 3, let bar = buttons[0].superview else { return }
+            var x = left
+            for button in buttons {
+                let size = button.frame.size
+                // Titlebar view is flipped-from-top in AppKit window coords, so
+                // measure `top` down from the container's top edge.
+                let y = bar.bounds.height - top - size.height
+                button.setFrameOrigin(NSPoint(x: x, y: y))
+                x += size.width + spacing
             }
         }
     }

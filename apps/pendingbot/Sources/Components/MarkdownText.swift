@@ -1,6 +1,10 @@
-#if os(iOS)
 import SwiftUI
 import MarkdownUI
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 // `Theme` is ambiguous at file scope (PendingBot has one, MarkdownUI has one).
 // File-private aliases keep call sites readable without leaning on module
@@ -50,6 +54,8 @@ struct MarkdownText: View {
             // `\(…\)` / `$$…$$` etc. into `pendingbot-math://` image refs,
             // and these providers typeset them; non-math images fall through
             // to MarkdownUI's defaults.
+            // 跨平台:MathRendering 走 SwiftMath → 平台图片(UIImage/NSImage),
+            // 两端都内联渲染 LaTeX。
             .markdownImageProvider(
                 MathBlockImageProvider(textColor: AppTheme.Palette.ink, fontSize: mathFontSize)
             )
@@ -79,7 +85,7 @@ struct MarkdownText: View {
         var t = text
         // Math first: turns LaTeX spans into `![](pendingbot-math://…)` image
         // refs. Citation rewrite only touches `[N]` markers, so the two
-        // passes don't collide.
+        // passes don't collide. 跨平台(MathMarkup 纯 Foundation)。
         if MathMarkup.containsMath(t) {
             t = MathMarkup.rewrite(t)
         }
@@ -428,8 +434,10 @@ private struct CitationSheet: View {
             .padding(.top, 4)
         }
         .padding(20)
+        #if os(iOS)
         .presentationDetents([.medium])
         .presentationDragIndicator(.visible)
+        #endif
     }
 }
 
@@ -487,9 +495,11 @@ private struct ChatCodeBlock: View {
                 .strokeBorder(AppTheme.Palette.hairline, lineWidth: 0.5)
         )
         .padding(.vertical, variant == .article ? 10 : 4)
+        #if os(iOS)
         .sheet(isPresented: $runnerSheet) {
             CodeRunnerSheet(content: content, language: language ?? "")
         }
+        #endif
     }
 
     @ViewBuilder
@@ -522,7 +532,12 @@ private struct ChatCodeBlock: View {
                 }
                 Spacer(minLength: 0)
                 Button {
+                    #if canImport(UIKit)
                     UIPasteboard.general.string = content
+                    #elseif canImport(AppKit)
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(content, forType: .string)
+                    #endif
                     Haptics.tap()
                     copied = true
                     Task {
@@ -535,6 +550,7 @@ private struct ChatCodeBlock: View {
                         .foregroundStyle(AppTheme.Palette.inkMuted)
                 }
                 .buttonStyle(.plain)
+                #if os(iOS)
                 if canRun {
                     Button {
                         Haptics.tap()
@@ -546,6 +562,7 @@ private struct ChatCodeBlock: View {
                     }
                     .buttonStyle(.plain)
                 }
+                #endif
             }
             .padding(.horizontal, 10)
             .padding(.top, 6)
@@ -553,4 +570,3 @@ private struct ChatCodeBlock: View {
         }
     }
 }
-#endif

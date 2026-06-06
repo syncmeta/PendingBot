@@ -47,4 +47,22 @@ enum Haptics {
     /// Hard failure (auth revoked, server unreachable).
     @MainActor static func error()   { notification.notificationOccurred(.error) }
 }
+#elseif os(macOS)
+
+/// macOS no-op twin of `Haptics`. The native Mac build shares the same
+/// cross-platform logic (e.g. `WelcomeViewModel`) which sprinkles haptic
+/// cues at success/failure points; Macs have no Taptic Engine for general
+/// feedback, so every call is a silent no-op. Keeping the same API surface
+/// means shared code calls `Haptics.tap()` etc. without `#if os` fences.
+enum Haptics {
+    static func warmUp() {}
+    @MainActor static func send() {}
+    @MainActor static func receive() {}
+    @MainActor static func streamTick() {}
+    @MainActor static func tap() {}
+    @MainActor static func connected() {}
+    @MainActor static func success() {}
+    @MainActor static func warning() {}
+    @MainActor static func error() {}
+}
 #endif

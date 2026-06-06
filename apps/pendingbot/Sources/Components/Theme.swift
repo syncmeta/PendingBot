@@ -1,6 +1,7 @@
-#if os(iOS)
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#endif
 
 /// One place to change the look. Mirrors the design language used across
 /// the PendingBot reference + the web `tokens.css`: deep-jade accent on
@@ -8,6 +9,12 @@ import UIKit
 ///
 /// Light-only theme — the brand is two anchor colors (#044735 + #fdfcfa)
 /// and we intentionally don't ship a dark variant for v1.
+///
+/// **Cross-platform:** the palette, the `Font`-based typography, and the
+/// spacing/radii are pure SwiftUI and compile on both iOS and the native
+/// macOS build (`Sources/Mac/*`), so the Mac UI stays visually identical to
+/// iOS. Only the `UIFont`-returning helpers (used by UIKit-backed renderers
+/// like MarkdownUI / SwiftMath) are gated behind `canImport(UIKit)`.
 enum Theme {
 
     // ── Palette ─────────────────────────────────────────────────────────────
@@ -59,7 +66,7 @@ enum Theme {
     // ── Typography ──────────────────────────────────────────────────────────
 
     enum Fonts {
-        /// Per-platform multiplier (1.0 on iOS, ~0.88 on Mac Catalyst).
+        /// Per-platform multiplier (1.0 on iOS, ~0.88 on Mac / Catalyst).
         /// Applied to every size below so the desktop UI doesn't read as
         /// the iOS layout zoomed in.
         private static let scale: CGFloat = Platform.isMac ? Platform.macFontScale : 1.0
@@ -68,9 +75,9 @@ enum Theme {
         /// Exposed for callers that need a raw scaled point size — e.g.
         /// MarkdownUI's `FontSize(...)` which takes a CGFloat, so the
         /// bot's markdown body can match the user bubble's
-        /// `Theme.Fonts.body` size on Mac Catalyst (otherwise the bot
-        /// reads at 16pt while the user reads at ~14pt and the two
-        /// sides look mismatched).
+        /// `Theme.Fonts.body` size on Mac (otherwise the bot reads at
+        /// 16pt while the user reads at ~14pt and the two sides look
+        /// mismatched).
         static func scaled(_ pt: CGFloat) -> CGFloat { sized(pt) }
 
         static func system(
@@ -95,6 +102,7 @@ enum Theme {
             .system(size: size, weight: weight, design: design)
         }
 
+        #if canImport(UIKit)
         static func uiSystem(size: CGFloat, weight: UIFont.Weight = .regular) -> UIFont {
             .systemFont(ofSize: sized(size), weight: weight)
         }
@@ -108,6 +116,7 @@ enum Theme {
         static func uiResolvedMonospaced(size: CGFloat, weight: UIFont.Weight = .regular) -> UIFont {
             .monospacedSystemFont(ofSize: size, weight: weight)
         }
+        #endif
 
         /// Serif display (system New York). Used for titles, header marks,
         /// avatar initials. Feels editorial vs the regular SF Pro UI.
@@ -145,8 +154,8 @@ enum Theme {
         static let pillRadius: CGFloat = 999
 
         /// Cap on a column of long-form content (chat bubbles, list rows).
-        /// Above this width — iPad landscape, Mac Catalyst windows — letting
-        /// the column stretch produces 1500pt-wide bubbles that read poorly.
+        /// Above this width — iPad landscape, Mac windows — letting the
+        /// column stretch produces 1500pt-wide bubbles that read poorly.
         /// 760 keeps lines around 70–80 chars which matches reading research.
         static let readableColumn: CGFloat = 760
     }
@@ -160,7 +169,7 @@ extension View {
     /// on iPad landscape it keeps content from spreading across the window.
     ///
     /// **Mac:** the cap is dropped and the inner frame becomes leading-aligned.
-    /// Catalyst windows are usually narrower than iPad landscape, and the
+    /// Mac windows are usually narrower than iPad landscape, and the
     /// vertical tab rail + NavigationSplitView already chop the content
     /// area into reasonable columns — leaving a centered 760pt island
     /// inside that produces big empty gutters on both sides which read as
@@ -179,5 +188,4 @@ extension View {
     }
 }
 
-// `Color(hex:)` moved to the cross-platform `ColorHex.swift` so macOS shares it.
-#endif
+// `Color(hex:)` lives in the cross-platform `ColorHex.swift` so macOS shares it.
