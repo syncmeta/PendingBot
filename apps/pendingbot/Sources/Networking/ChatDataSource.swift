@@ -110,6 +110,16 @@ enum ChatDataSource {
         }
     }
 
+    /// Raw cached conversation rows (bot_id / last_activity_at / type intact),
+    /// for callers that need columns the thin `ChatConversationSummary` drops —
+    /// e.g. the friends tab seeds its "按最近聊天" sort key from the cached
+    /// bot_id → last_activity_at map. Keeps the single cache-read seam: the
+    /// friends tab no longer reaches into `LocalDatabase` directly.
+    @MainActor
+    static func cachedConversationRows() -> [LocalDatabase.ConversationRow] {
+        LocalDatabase.shared.loadConversations()
+    }
+
     /// The conversation list (most-recent first), projected to a thin summary.
     /// Runs the SAME query as iOS's `MessageTabView.load()` via the shared
     /// `ConversationFetch.list()` — no hand-copied query here anymore — and just

@@ -338,24 +338,14 @@ struct ProfileBootstrapView: View {
         let trimmed = c.name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         saving = true; defer { saving = false }
-        struct Patch: Encodable {
-            let display_name: String
-            let avatar_path: String?
-            let custom_fields: [String: String]
-        }
-        let fields: [String: String] = [
-            "avatar_seed": c.seed,
-            "bootstrapped": "1",
-        ]
-        let aid = (c.customAttachmentId?.isEmpty == false) ? c.customAttachmentId : nil
         do {
-            try await SupabaseStack.shared
-                .from("users")
-                .update(Patch(display_name: trimmed,
-                              avatar_path: aid,
-                              custom_fields: fields))
-                .eq("id", value: userId)
-                .execute()
+            // Shared profile write seam (§10) — same `users` UPDATE Mac runs.
+            try await ProfileDataSource.updateProfile(
+                userId: userId,
+                displayName: trimmed,
+                avatarSeed: c.seed,
+                attachmentId: c.customAttachmentId
+            )
             store.markBootstrapped(displayName: trimmed,
                                    avatarSeed: c.seed,
                                    attachmentId: c.customAttachmentId)

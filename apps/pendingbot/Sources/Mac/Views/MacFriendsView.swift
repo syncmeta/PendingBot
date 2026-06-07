@@ -378,8 +378,8 @@ struct MacFriendsColumn: View {
         // (对齐 iOS FriendsTabView.load 的 hydrate),再让网络刷新覆盖。首屏 fallback
         // only —— 仅在两列都空时填,避免热屏刷新把新数据回退到缓存。
         if bots.isEmpty && humans.isEmpty {
-            let cachedBots = LocalDatabase.shared.loadBots()
-            let cachedContacts = LocalDatabase.shared.loadContacts()
+            let cachedBots = CacheRepository.cachedBots()
+            let cachedContacts = CacheRepository.cachedContacts()
             if !cachedBots.isEmpty {
                 bots = cachedBots
                     .filter { !($0.id.hasPrefix("self-")) }
@@ -399,10 +399,11 @@ struct MacFriendsColumn: View {
                 }
             }
             // 从缓存会话 seed 最近聊天排序键,首屏"按最近聊天"大致对(bot 按 bot_id;
-            // user_user 缓存里不带 peer id,等网络补)。
+            // user_user 缓存里不带 peer id,等网络补)。缓存会话读走共享 ChatDataSource
+            // 门面(与消息 tab 同一条缓存读缝),不再裸碰 LocalDatabase。
             if lastActivity.isEmpty {
                 var seeded: [String: Int] = [:]
-                for conv in LocalDatabase.shared.loadConversations() {
+                for conv in ChatDataSource.cachedConversationRows() {
                     if let botId = conv.bot_id, !botId.isEmpty {
                         seeded["bot:\(botId)"] = max(seeded["bot:\(botId)"] ?? 0, conv.last_activity_at)
                     }
@@ -413,16 +414,48 @@ struct MacFriendsColumn: View {
 
         // 各数据源独立拉,任一失败不挡其它。
         //
-        // 缓存策略:只读不写。bot/contact 缓存是 iOS 写入的富行,iOS 侧 ownsBot /
-        // 模型标签 / 排序都依赖这些列;Mac 这里在此整表 replace 会把 iOS 的列抹成
-        // null(共享单机缓存),破坏 iOS。所以 Mac 只 hydrate-on-read,写回交给 iOS。
+        // 缓存策略:拉成功就写回(走 CacheRepository 门面,与 iOS 同一条缝)。
+        // GRDB 是 per-device 的——每个平台装机各有自己的库文件,互不交叉——所以
+        // "写回交给 iOS"在纯 Mac 装机上永远填不满本机缓存(旧注释里"怕抹掉 iOS 富行"
+        // 的前提对单机共享库才成立,跨设备根本不共享)。而且这里写回的正是 iOS 写的
+        // 那批富列:`listBotContacts` / `listHumanContacts` 底层就是 iOS 用的
+        // `BotContactsFetch` / `ContactsFetch`,projected 出的 BotContact /
+        // HumanContact 已带齐 modelId/creatorId/visibility/addedAt(bot)与
+        // alias/avatarPath/avatarSeed/addedAt(contact),构造正典行无信息损失。
         async let humansResult = FriendsDataSource.listHumanContacts()
         async let botsResult = FriendsDataSource.listBotContacts()
         async let friendReqResult = FriendsDataSource.listIncomingFriendRequests()
         async let groupInviteResult = FriendsDataSource.listIncomingGroupInvitations()
 
-        do { humans = try await humansResult } catch { loadError = error.localizedDescription }
-        do { bots = try await botsResult } catch { if loadError == nil { loadError = error.localizedDescription } }
+        do {
+            humans = try await humansResult
+            // 拉成功才整表替换缓存——server 是好友列表的事实源,partial upsert 会
+            // 留下已删好友的残留行。失败保留旧缓存(不调 persist)。
+            CacheRepository.persistContacts(humans.map {
+                LocalDatabase.ContactRow(
+                    id: $0.id, alias: $0.alias,
+                    display_name: $0.displayName,
+                    avatar_path: $0.avatarPath,
+                    avatar_seed: $0.avatarSeed,
+                    added_at: $0.addedAt
+                )
+            })
+        } catch { loadError = error.localizedDescription }
+        do {
+            bots = try await botsResult
+            // voice_call_enabled 不在 macOS 的 BotContact 投影里(Mac 第一版不画
+            // 语音开关),写回时置 nil——读侧把 nil 当"关",与未迁移老行同义,不破坏
+            // iOS(iOS 自己的写回路径仍带真值;跨设备库不共享,互不覆盖)。
+            CacheRepository.persistBots(bots.map {
+                LocalDatabase.BotRow(
+                    id: $0.id, display_name: $0.displayName,
+                    model_id: $0.modelId, visibility: $0.visibility,
+                    creator_id: $0.creatorId,
+                    voice_call_enabled: nil,
+                    added_at: $0.addedAt
+                )
+            })
+        } catch { if loadError == nil { loadError = error.localizedDescription } }
         // inbox 拉取静默降级(底层失败已返回空数组),不挡好友列表。
         pendingFriendRequests = (try? await friendReqResult) ?? []
         pendingGroupInvitations = (try? await groupInviteResult) ?? []
@@ -455,6 +488,12 @@ struct MacFriendsColumn: View {
 
     /// 把会话行收成 friendId → 最近聊天秒 的 map,键用 "bot:<id>" / "user:<id>"
     /// 与 FriendRowItem.id 对齐。失败返回空 map(只降级"按最近聊天"排序,不挡列表)。
+    ///
+    /// 这条 `.from("conversations")` 不是缓存实体读,而是一道 activity 投影:它要
+    /// unread 的 last_message_at + participants 解出 user_user 对端 id 来拼排序键,
+    /// 这些列 `ChatDataSource.listConversations` 的瘦 summary 不暴露(也不该塞进去)。
+    /// 与 iOS `FriendsTabView.loadConversationActivity()` 同一条专用查询,故保留直查
+    /// (cache 写回不涉及它);要收口需另起一个 activity 门面方法,超出本块范围。
     private func buildActivityMap() async -> [String: Int] {
         let rows: [ConvActivityRow]
         do {

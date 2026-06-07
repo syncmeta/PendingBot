@@ -264,31 +264,21 @@ struct MacProfileEditView: View {
         }
     }
 
-    /// Mirror of iOS `ProfileBootstrapView.save()` — same `users` row update
-    /// and `markBootstrapped` mirror refresh.
+    /// Persist the profile through the shared `ProfileDataSource` (same `users`
+    /// row update iOS's `ProfileBootstrapView.save()` runs — now one seam, not
+    /// two open-coded copies), then refresh the `AccountStore` mirror.
     private func save() async {
         guard let userId = store.current?.id else { return }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         saving = true; defer { saving = false }
-        struct Patch: Encodable {
-            let display_name: String
-            let avatar_path: String?
-            let custom_fields: [String: String]
-        }
-        let fields: [String: String] = [
-            "avatar_seed": avatarSeed,
-            "bootstrapped": "1",
-        ]
-        let aid = (customAttachmentId?.isEmpty == false) ? customAttachmentId : nil
         do {
-            try await SupabaseStack.shared
-                .from("users")
-                .update(Patch(display_name: trimmed,
-                              avatar_path: aid,
-                              custom_fields: fields))
-                .eq("id", value: userId)
-                .execute()
+            try await ProfileDataSource.updateProfile(
+                userId: userId,
+                displayName: trimmed,
+                avatarSeed: avatarSeed,
+                attachmentId: customAttachmentId
+            )
             store.markBootstrapped(displayName: trimmed,
                                    avatarSeed: avatarSeed,
                                    attachmentId: customAttachmentId)
