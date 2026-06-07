@@ -95,7 +95,7 @@
 
 ## 5. 状态：运行 / 等待 / 空闲
 
-- **claude**：真源 = transcript 回合边界（tool_use 在飞=运行；assistant 回合结束无挂起=空闲）。**补充** = 终端 BEL/OSC 通知（SwiftTerm delegate 接 `bell`/`setTerminalTitle`，现没接），给"需要注意"。OSC 133（shell 标识）TUI 默认大概率不发 → 真机抓确认。claude 忙时灌输入会**排队**（`queue-operation` 实证）。
+- **claude**：真源 = transcript 回合边界（tool_use 在飞=运行；assistant 回合结束无挂起=空闲）。**补充1** = §7 的 statusLine 脚本**每条 assistant 消息后触发**（debounce 300ms）= 干净的"回合结束"信号 + 上下文用量，一并到达。**补充2** = 终端 BEL/OSC 通知（SwiftTerm delegate 接 `bell`/`setTerminalTitle`，现没接），给"需要注意"。OSC 133（shell 标识）TUI 默认大概率不发 → 真机抓确认。claude 忙时灌输入会**排队**（`queue-operation` 实证）。
 - **codex**：`notify=[..,"turn-ended"]` 出站事件 = **干净的"空闲了"信号**，不用解析。+ 结构化事件直接给细状态。
 
 ---
@@ -110,11 +110,16 @@
 
 ## 7. 额度监控（剩余 + 消耗）
 
-目标：用户/captain 起新 session 前知道还剩多少订阅额度，别把窗口跑爆。本地 session 跑用户自己的 claude/codex 订阅（"local_host 算力免费"指机器；LLM 额度是用户订阅）。
+目标：用户/captain 起新 session 前知道还剩多少订阅额度，别把窗口跑爆。本地 session 跑用户自己的 claude/codex 订阅。**两端都有官方"剩余+重置"通道**（实证修正了草稿版"claude 给不了剩余"的错判——之前只查 transcript，漏了 statusLine）。
 
-- **codex（好）**：rollout/协议有 `rate_limits`（`limit_id`、`resets_at`、`rate_limit_reached_type`）→ **直接读剩余 + 重置时间**，app-server 透出。
-- **claude（部分，诚实标限制）**：transcript `usage`（input/output/cache_read/cache_creation tokens）→ **累加算消耗**；但**无"剩余/上限/重置"字段**（只 `service_tier`），官方剩余只在交互式 `/status`，脚本拿不到 → 只能展示"本窗口已消耗 X"，给不了"剩 Y%"。**探针**：有没有别的路拿 claude 订阅剩余（rate-limit header / 未来 API）。
-- **落点**：PendingCrew 展示 per-session + crew 汇总;codex 显剩余+重置,claude 显消耗量 + 标"剩余不可得"。
+- **claude = `statusLine` 旁路（v2.1.80+，关键，借鉴 ccstatusline 那批）**：配 `--settings` 的 `statusLine.command` 指向一个小脚本，claude **每条 assistant 消息后**（debounce 300ms、跑本地不耗 token）把一坨 JSON 喂它 stdin：
+  - **`rate_limits.five_hour` / `rate_limits.seven_day`** 各 `{ used_percentage, resets_at(epoch) }` —— **官方剩余 + 重置**（底层是 claude 解析的 `anthropic-ratelimit-unified-*` header 缓存透出；**Agent SDK 不暴露 → 只交互式 statusLine 拿得到**，又一条 PTY 优于 SDK 的理由）。
+  - `cost.total_cost_usd`（本会话累计花费估算）+ `context_window.{used_percentage, current_usage.{input/output/cache_*}}`（上下文用量，比 transcript 重构干净）。
+  - 脚本把整坨 JSON 转写到 per-session 旁路文件/socket，PendingCrew 读 → **一条 push 通道同时拿 cost / 上下文 / 官方剩余**（顺带也是个干净的回合/状态信号，见 §5）。
+  - **坑（实现必处理）**：① 版本门 v2.1.80+（`context_window` 语义 v2.1.132 变过，`total_*` 由累计改当前）；② 仅 Pro/Max 订阅 OAuth 有，API key/Bedrock/Vertex 没有、首响应前缺；③ **bug #52326**：5h 窗口无数据时 `used_percentage` 会漏成 `resets_at` 那个大 epoch 数 → 必须 bounds-check `if(p<0||p>100)p=0`；④ bug #40094 某些 Max 20× 整段缺。
+- **codex = 协议 `rate_limits`**（rollout/app-server，`limit_id`/`resets_at`/`reached`）→ 直接读剩余 + 重置。
+- **兜底 = ccusage 式 JSONL 推断**：没 `rate_limits` 的环境（老版本 / 非订阅），sum `~/.claude/projects/**/*.jsonl` 的 `usage` 四字段 × LiteLLM 价表算消耗，按 5h 窗口 + 自推峰值/已知档位上限估剩余。**当降级路，不当主**。
+- **落点**：PendingCrew per-session + crew 汇总，两端显"剩余 % + 重置时间"；claude 同一 statusLine 旁路顺带 cost + 上下文用量。
 
 ---
 
@@ -125,7 +130,7 @@
 3. **claude 注入到达时机**：下个工具边界 vs 回合末（真机量）。
 4. **claude transcript flush 延迟**（真机量）。
 5. **claude 终端发什么**（bell/OSC/title）做状态补充。
-6. **claude 订阅剩余额度**有没有可脚本化的路。
+6. **claude statusLine `rate_limits`**：本机版本（需 v2.1.80+）+ 用户订阅档（Pro/Max）实际可用？两个 bug（#52326 epoch 泄漏 / #40094 Max20× 缺）真实表现？statusLine→旁路文件 落地形状 —— 真机验。
 
 ## 验证门
 
