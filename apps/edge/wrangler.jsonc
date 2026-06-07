@@ -155,7 +155,13 @@
           { "name": "ROOM_MEDIA", "class_name": "RoomMediaContainerDO" },
           { "name": "SESSION_PROXY_DO", "class_name": "SessionProxyDO" },
           { "name": "Sandbox", "class_name": "Sandbox" },
-          { "name": "WALLET", "class_name": "WalletDO" }
+          { "name": "WALLET", "class_name": "WalletDO" },
+          // T2 边缘读投影(docs/superpowers/plans/2026-06-07-edge-read-offload.md)。
+          // CONV_PROJECTION:per conversation_id,消息尾 + roster + revision。
+          // USER_PROJECTION:per user_id,会话列表 + 未读 + revision。
+          // 都 SQLite-backed(migration tag v9);webhook 写穿 + 冷启动回填。
+          { "name": "CONV_PROJECTION", "class_name": "ConvProjectionDO" },
+          { "name": "USER_PROJECTION", "class_name": "UserProjectionDO" }
         ]
       },
       // Cloudflare Sandbox SDK container. The DO above wraps a real
@@ -232,6 +238,10 @@
         {
           "tag": "v8",
           "new_sqlite_classes": ["WalletDO"]
+        },
+        {
+          "tag": "v9",
+          "new_sqlite_classes": ["ConvProjectionDO", "UserProjectionDO"]
         }
       ],
       // Audit + billing offload. recordAudit used to insert audit_log
