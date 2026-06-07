@@ -234,7 +234,7 @@ async function tailFromSupabase(
   const { data, error } = await supaUser
     .from('messages')
     .select(
-      'id, created_at, role, status, content, bubble_group_id, user_id, sender_bot_id, attachments',
+      'id, client_message_id, created_at, message_seq, role, status, content, log_kind, log_payload, bubble_group_id, parent_message_id, model_slug, user_id, sender_bot_id, attachments, citations, metadata',
     )
     .eq('conversation_id', conversationId)
     .neq('status', 'deleted')
@@ -251,19 +251,29 @@ async function tailFromSupabase(
   }
 
   // DESC 取尾后翻回时间升序(UI 自上而下),与投影 getTail 同序。
+  // 列与热投影 ConvMessageRow 对齐(MessagesFetch.latest 的全部消息自有列);
+  // 冷回落不走 DO 的 2MB 护栏,直接回 Supabase 原值(冷路径单次读,可接受)。
   const rows: ConvMessageRow[] = (data ?? [])
     .map(
       (m): ConvMessageRow => ({
         id: m.id,
+        client_message_id: m.client_message_id,
         created_at: m.created_at,
+        message_seq: m.message_seq,
         role: m.role,
         status: m.status,
         content: m.content ?? '',
+        log_kind: m.log_kind,
+        log_payload: m.log_payload ?? null,
         bubble_group_id: m.bubble_group_id,
+        parent_message_id: m.parent_message_id,
+        model_slug: m.model_slug,
         // messages.user_id 是人类发送者(与投影写穿映射一致)。
         sender_user_id: m.user_id,
         sender_bot_id: m.sender_bot_id,
         attachments: m.attachments ?? null,
+        citations: m.citations ?? null,
+        metadata: m.metadata ?? null,
         rev: 0,
       }),
     )

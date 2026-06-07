@@ -14,10 +14,21 @@
 import type { Env } from '../types';
 import { serviceClient } from '../lib/supabase';
 
-/** 投影里一条会话列表行(对外 JSON 形状)。 */
+/**
+ * 投影里一条会话列表行(对外 JSON 形状)。
+ *
+ * § 核心设计决策:会话列表只加**标量会话列**(bot_id/user_id/feature/
+ * round_count 等 ConversationFetch.list select 的标量列),**绝不**反范式化
+ * bot/peer 的 embed(头像/名字)—— 那会让 bot 改名要 fan-out 刷所有会话行。
+ * bot/peer embed 由客户端用本地 bots/contacts 缓存 hydration(client 的事)。
+ */
 export interface UserConversationRow {
   conv_id: string;
   type: string;
+  bot_id: string | null;
+  user_id: string | null;
+  feature: string | null;
+  round_count: number | null;
   title: string | null;
   last_msg_preview: string | null;
   updated_at: string;
@@ -25,10 +36,14 @@ export interface UserConversationRow {
   rev: number;
 }
 
-/** ingestConversation 的入参。 */
+/** ingestConversation 的入参。标量会话列由 conversations webhook / 回填带入。 */
 export interface IngestConversationInput {
   conv_id: string;
   type: string;
+  bot_id?: string | null;
+  user_id?: string | null;
+  feature?: string | null;
+  round_count?: number | null;
   title?: string | null;
   last_msg_preview?: string | null;
   updated_at: string;
@@ -53,6 +68,10 @@ export interface UserListResult {
 interface ConversationDbRow {
   conv_id: string;
   type: string;
+  bot_id: string | null;
+  user_id: string | null;
+  feature: string | null;
+  round_count: number | null;
   title: string | null;
   last_msg_preview: string | null;
   updated_at: string;
@@ -72,6 +91,10 @@ export class UserProjectionDO {
         CREATE TABLE IF NOT EXISTS conversations (
           conv_id TEXT PRIMARY KEY,
           type TEXT NOT NULL,
+          bot_id TEXT,
+          user_id TEXT,
+          feature TEXT,
+          round_count INTEGER,
           title TEXT,
           last_msg_preview TEXT,
           updated_at TEXT NOT NULL,
@@ -131,24 +154,43 @@ export class UserProjectionDO {
   /**
    * 幂等 upsert 一条会话列表行(按 conv_id)。每次写 ++cur_rev 并盖到该行 rev。
    * unread 未传时保留原值(只更新元数据/预览的场景);新行默认 0。
+   *
+   * 标量会话列(bot_id/user_id/feature/round_count/title)用 COALESCE(excluded,
+   * 现值)保留:participant-join 先建最小行(只带 conv_id/type/updated_at),
+   * conversations webhook 随后补全这些列。COALESCE 防 webhook 乱序时最小行的
+   * NULL 把已补全的标量列冲掉(只在 incoming 为非 NULL 时覆盖)。
    */
   ingestConversation(row: IngestConversationInput): void {
     const rev = this.bumpRev();
+    const botId = row.bot_id ?? null;
+    const userId = row.user_id ?? null;
+    const feature = row.feature ?? null;
+    const roundCount = row.round_count == null ? null : Math.trunc(row.round_count);
+    const title = row.title ?? null;
     if (row.unread === undefined) {
       // 不带 unread:upsert 时保留已存在行的 unread,新行用 0。
       this.state.storage.sql.exec(
         `INSERT INTO conversations
-           (conv_id, type, title, last_msg_preview, updated_at, unread, rev)
-         VALUES (?,?,?,?,?,0,?)
+           (conv_id, type, bot_id, user_id, feature, round_count,
+            title, last_msg_preview, updated_at, unread, rev)
+         VALUES (?,?,?,?,?,?,?,?,?,0,?)
          ON CONFLICT(conv_id) DO UPDATE SET
            type = excluded.type,
-           title = excluded.title,
+           bot_id = COALESCE(excluded.bot_id, conversations.bot_id),
+           user_id = COALESCE(excluded.user_id, conversations.user_id),
+           feature = COALESCE(excluded.feature, conversations.feature),
+           round_count = COALESCE(excluded.round_count, conversations.round_count),
+           title = COALESCE(excluded.title, conversations.title),
            last_msg_preview = excluded.last_msg_preview,
            updated_at = excluded.updated_at,
            rev = excluded.rev`,
         row.conv_id,
         row.type,
-        row.title ?? null,
+        botId,
+        userId,
+        feature,
+        roundCount,
+        title,
         row.last_msg_preview ?? null,
         row.updated_at,
         rev,
@@ -156,18 +198,27 @@ export class UserProjectionDO {
     } else {
       this.state.storage.sql.exec(
         `INSERT INTO conversations
-           (conv_id, type, title, last_msg_preview, updated_at, unread, rev)
-         VALUES (?,?,?,?,?,?,?)
+           (conv_id, type, bot_id, user_id, feature, round_count,
+            title, last_msg_preview, updated_at, unread, rev)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)
          ON CONFLICT(conv_id) DO UPDATE SET
            type = excluded.type,
-           title = excluded.title,
+           bot_id = COALESCE(excluded.bot_id, conversations.bot_id),
+           user_id = COALESCE(excluded.user_id, conversations.user_id),
+           feature = COALESCE(excluded.feature, conversations.feature),
+           round_count = COALESCE(excluded.round_count, conversations.round_count),
+           title = COALESCE(excluded.title, conversations.title),
            last_msg_preview = excluded.last_msg_preview,
            updated_at = excluded.updated_at,
            unread = excluded.unread,
            rev = excluded.rev`,
         row.conv_id,
         row.type,
-        row.title ?? null,
+        botId,
+        userId,
+        feature,
+        roundCount,
+        title,
         row.last_msg_preview ?? null,
         row.updated_at,
         Math.max(0, Math.trunc(row.unread)),
@@ -265,13 +316,16 @@ export class UserProjectionDO {
    * 回填查询(`pendingbot` schema,对齐 iOS ConversationFetch.list 的列与过滤):
    *   FROM user_unread_counts WHERE user_id = <id>
    *     SELECT conversation_id, unread_count, last_message_preview,
-   *            conv:conversations!inner(conversation_type, title, updated_at)
+   *            conv:conversations!inner(conversation_type, bot_id, user_id,
+   *              feature, round_count, title, updated_at)
    *   —— user_unread_counts!inner 等价:只回该用户有未读行的会话(空会话过滤,
    *      与 iOS 的 `!inner` 一致);conversation_type='subagent' 的子会话排除
    *      (子代理对话从父级 tool trace 打开,不作顶层列表行)。
    *
-   * updated_at 取会话的 updated_at(列表排序键,与 webhook 写穿一致);unread
-   * 取 unread_count;预览取 last_message_preview。
+   * 标量会话列(bot_id/user_id/feature/round_count/title)= ConversationFetch.list
+   * select 的标量列,补齐供客户端 hydration;**不投影 bot/peer embed**(那是
+   * 客户端用本地缓存做的事,见 UserConversationRow 文档)。updated_at 取会话的
+   * updated_at(列表排序键);unread 取 unread_count;预览取 last_message_preview。
    *
    * 幂等性:rebuild 前清空 conversations 并把 cur_rev 归零;失败保持
    * backfilled!=1,下次读再试(best-effort,冷路径由 Supabase+RLS 兜底)。
@@ -286,7 +340,7 @@ export class UserProjectionDO {
     const { data, error } = await supa
       .from('user_unread_counts')
       .select(
-        'conversation_id, unread_count, last_message_preview, conv:conversations!inner(conversation_type, title, updated_at)',
+        'conversation_id, unread_count, last_message_preview, conv:conversations!inner(conversation_type, bot_id, user_id, feature, round_count, title, updated_at)',
       )
       .eq('user_id', userId)
       .neq('conv.conversation_type', 'subagent');
@@ -303,6 +357,10 @@ export class UserProjectionDO {
       this.ingestConversation({
         conv_id: r.conversation_id,
         type: conv.conversation_type ?? 'unknown',
+        bot_id: conv.bot_id,
+        user_id: conv.user_id,
+        feature: conv.feature,
+        round_count: conv.round_count == null ? null : Math.trunc(Number(conv.round_count)),
         title: conv.title,
         last_msg_preview: r.last_message_preview,
         updated_at: conv.updated_at,
@@ -325,6 +383,10 @@ export class UserProjectionDO {
     return {
       conv_id: r.conv_id,
       type: r.type,
+      bot_id: r.bot_id,
+      user_id: r.user_id,
+      feature: r.feature,
+      round_count: r.round_count == null ? null : Number(r.round_count),
       title: r.title,
       last_msg_preview: r.last_msg_preview,
       updated_at: r.updated_at,
