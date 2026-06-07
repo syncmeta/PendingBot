@@ -183,7 +183,7 @@ webhook 至少一次、可能乱序/丢。投影喂养必须:
 2. 所有视图(iOS + Mac)只调 Repository,不直接碰 `LocalDatabase`、不裸 `.from()`(Mac `MacBotManagement`/`MacProfileEdit` 的 `.from()` 一并收口)。
 3. T2 的 L1/L2/L3 + delta-sync **挂在 Repository 一层** → 三端自动继承,不 per-platform 接三遍。
 
-**与 #212 对接**:`feat/mac-login-align`(未合,~40 commit)已把"缓存编排抽成两端完全共享 store" + "cmid 透传根治重发双投"记进 tech-debt 作 follow-up——**那个"共享 store"就是这里的 Repository**。本 T2 不另起,接续 #212 的 follow-up,且**碰 iOS 已验证加载路径需用户在场真机回归**(沿用 #212 的安全约束)。
+**与 #212 对接**:`feat/mac-login-align` 已合 main(`a46e2ab2`),Mac cache-first 基础已落;但"缓存编排抽成两端完全共享 store" + "cmid 透传根治重发双投"仍是**开着的** tech-debt follow-up——**那个"共享 store"就是这里的 Repository**。本 T2 不另起,接续这两条 follow-up,且**碰 iOS 已验证加载路径需用户在场真机回归**(沿用 #212 的安全约束)。
 
 ## 11. 留在 Supabase 的(设计,非妥协)
 
