@@ -123,6 +123,17 @@
 
 ---
 
+## 8. 长跑韧性 / 安全闸 / 打包（本轮 Claude Code 扩展面调研，部分待真机核）
+
+session 是**长跑**的，会撞上几个 claude code 机制，提前接：
+
+- **🔴 compaction 韧性（最要紧的新发现）**：长 session 上下文满会**自动 compact（摘要化）** → **注入的动态 crew 上下文（白板 digest）可能被摘掉** → session "忘了"群里最新状态。补：`SessionStart`（matcher 含 `compact`/`resume`）+ `PreCompact` hook → **compact 后重注** crew 世界观 + 当前白板。
+  - 调研称：系统提示 / CLAUDE.md / skill 在 compact 后**会自动重载**（若真，`--append-system-prompt` 的静态世界观能扛过 compact，只动态白板要 PreCompact 重注）——**信心不足，待真机核**。
+- **安全闸（缓解"自动审批=放权误删" tech-debt）**：默认自动审批不变，但 `PreToolUse` hook（exit 2/deny）+ settings `permissions.deny` 可**无提示拦危险动作**（`rm -rf`、碰 `.env`、越界路径）→ 误删风险从"全靠 worktree 隔离"降到"隔离 + 黑名单双保险"，不破"无 human-confirm"体验。
+- **状态信号补强 §5**：`Notification` hook（claude 等输入/权限时触发）= 比刮终端 bell 干净的"需要注意"；`Stop` hook（回合结束）= 干净空闲信号、且能 block 强制等待。
+- **打包形态**：可把 hooks（SessionStart/PreCompact/PreToolUse/Stop）+ crew-comms MCP + 世界观 + 安全闸 settings 收成**一个 plugin**（`--plugin-dir` 非交互加载），而非 --settings/--mcp-config/--append-system-prompt 散一地。维护性好，留作落地容器形态（不阻塞，先散装跑通再收）。
+- **MCP resources（pull 备选）**：深查类（`look_at_session` 等）可建成 MCP **resource**（agent 按需 live-fetch、天然扛 compact），而非纯 tool。白板主路仍走 push（你定的）；resource 给"按需深查"。
+
 ## 待探针（实现期验，非设计阻塞）
 
 1. **codex app-server**：仍走订阅(非单独计费)？协议形状(initial message / resume / 工具 / 中断 / rate_limits 透出)——`generate-ts`/`generate-json-schema` 出绑定后实接。
@@ -131,6 +142,9 @@
 4. **claude transcript flush 延迟**（真机量）。
 5. **claude 终端发什么**（bell/OSC/title）做状态补充。
 6. **claude statusLine `rate_limits`**：本机版本（需 v2.1.80+）+ 用户订阅档（Pro/Max）实际可用？两个 bug（#52326 epoch 泄漏 / #40094 Max20× 缺）真实表现？statusLine→旁路文件 落地形状 —— 真机验。
+
+7. **compaction 韧性**：`PreCompact` hook 能否经 `additionalContext` 把动态白板塞进 compact 后上下文？`--append-system-prompt`/skill 是否真"自动重载"扛过 compact？（§8，调研信心不足，真机核）。
+8. **plugin / settings 精确键**：`--plugin-dir` 非交互加载、`permissions.deny`/`PreToolUse` deny 语法、settings 各键名 —— 调研给的 JSON 样例当方向，落地前逐个核实键名（别凭样例写死）。
 
 ## 验证门
 
