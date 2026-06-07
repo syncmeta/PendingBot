@@ -139,6 +139,7 @@
 		C52090D1049289B1C5AC862A /* MacMessagesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40B3AC8D204D37CE4A7DE319 /* MacMessagesView.swift */; };
 		C63F76F4983663EA07A757EC /* TurnstileChallenge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BD194A0682C2BC1E950991E /* TurnstileChallenge.swift */; };
 		C6F7A651FC9842DE3C2D32A7 /* BubbleSplitter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FF3BF57EA0692041B43E25A /* BubbleSplitter.swift */; };
+		C71186B305DD2EC58206F491 /* EdgeReadSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B89CBE0891C2A9721A1D458 /* EdgeReadSource.swift */; };
 		CCA73E977526BAD000AEBD86 /* ColorHash.swift in Sources */ = {isa = PBXBuildFile; fileRef = C53CFA1DBE04DAEFC59F99DE /* ColorHash.swift */; };
 		CE1CA5E663CF6F7776504BB4 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = E77FBE85BC4F97D333910815 /* Localizable.xcstrings */; };
 		CFA38CDEF1AC9937D7C2B65A /* EnvelopeAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72CE91B5FAEED2B40DF223A1 /* EnvelopeAPI.swift */; };
@@ -287,6 +288,7 @@
 		95EAE20F68A86A8C803A0B1E /* ModelPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelPicker.swift; sourceTree = "<group>"; };
 		98EE77602B594DA83ABDCBB6 /* PendingBotSharedModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingBotSharedModels.swift; sourceTree = "<group>"; };
 		9A19A4D76A2D17FD422DA74D /* SubjectPickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubjectPickerSheet.swift; sourceTree = "<group>"; };
+		9B89CBE0891C2A9721A1D458 /* EdgeReadSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EdgeReadSource.swift; sourceTree = "<group>"; };
 		9BE4B8362D82ACBB36C1084D /* DataProtectionKeychainStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataProtectionKeychainStorage.swift; sourceTree = "<group>"; };
 		9FF3BF57EA0692041B43E25A /* BubbleSplitter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BubbleSplitter.swift; sourceTree = "<group>"; };
 		A0DF072DCFB0786FA83D70F3 /* ChatStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatStream.swift; sourceTree = "<group>"; };
@@ -403,6 +405,7 @@
 				03D2467ADBD40F4F8755863A /* CrewSessionAPI.swift */,
 				22B3BF0A069E8CE296ED306E /* CrewSessionPresentation.swift */,
 				9BE4B8362D82ACBB36C1084D /* DataProtectionKeychainStorage.swift */,
+				9B89CBE0891C2A9721A1D458 /* EdgeReadSource.swift */,
 				023C318B8EB2B3A4CC9F8594 /* EmailSignIn.swift */,
 				C385DAFA1E0BFEEC5520467A /* EnvelopeDataSource.swift */,
 				1E4D5D35B59A08A4E8E6B167 /* EnvelopeFetch.swift */,
@@ -852,6 +855,7 @@
 				22DC73D9B52F654B9610BCB3 /* CrewSessionStatusCard.swift in Sources */,
 				0E0FCE983AB9E6DB3447D869 /* CrewTabV2View.swift in Sources */,
 				914D5EAC7D1675C8770C5658 /* DataProtectionKeychainStorage.swift in Sources */,
+				C71186B305DD2EC58206F491 /* EdgeReadSource.swift in Sources */,
 				D86D67B77E20704ED320D0F9 /* EmailSignIn.swift in Sources */,
 				E169F0C9CD13280A7A6C92D9 /* EmptyHint.swift in Sources */,
 				CFA38CDEF1AC9937D7C2B65A /* EnvelopeAPI.swift in Sources */,
