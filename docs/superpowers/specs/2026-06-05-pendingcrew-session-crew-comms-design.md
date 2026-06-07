@@ -129,7 +129,11 @@ session 是**长跑**的，会撞上几个 claude code 机制，提前接：
 
 - **🔴 compaction 韧性（最要紧的新发现）**：长 session 上下文满会**自动 compact（摘要化）** → **注入的动态 crew 上下文（白板 digest）可能被摘掉** → session "忘了"群里最新状态。补：`SessionStart`（matcher 含 `compact`/`resume`）+ `PreCompact` hook → **compact 后重注** crew 世界观 + 当前白板。
   - 调研称：系统提示 / CLAUDE.md / skill 在 compact 后**会自动重载**（若真，`--append-system-prompt` 的静态世界观能扛过 compact，只动态白板要 PreCompact 重注）——**信心不足，待真机核**。
-- **安全闸（缓解"自动审批=放权误删" tech-debt）**：默认自动审批不变，但 `PreToolUse` hook（exit 2/deny）+ settings `permissions.deny` 可**无提示拦危险动作**（`rm -rf`、碰 `.env`、越界路径）→ 误删风险从"全靠 worktree 隔离"降到"隔离 + 黑名单双保险"，不破"无 human-confirm"体验。
+- **安全/权限 —— 归运行时隔离（Claude Code/OS 的事），不是 PendingCrew 关掉权限系统再重造**（纠正草稿的反向设计）：
+  - **核实结论**：`--dangerously-skip-permissions`（bypass）**关掉全部权限规则含 `permissions.deny`**（只剩 Claude 硬编码 `rm -rf /` / `rm -rf ~` 断路器）→ 草稿"bypass + deny 规则"自相矛盾、deny 不生效。**无任何原生单模式 = "放行除黑名单外一切 + 永不弹框"**：要么弹框（无人值守挂死）、要么 bypass（无 deny）。这正是 Anthropic 文档**点名用 `PreToolUse` hook 桥**的场景（exit 2 在 bypass 下仍拦）——hook 是 Claude Code **给这场景的官方扩展点**，不是另造权限系统。
+  - **codex**：`--sandbox workspace-write` = 真 FS 沙箱，**原生覆盖**，不额外搭。
+  - **claude**：bypass 下**无原生 FS 沙箱**，只 cwd 约定 + 硬编码断路器 → blast radius 比 codex 大。三选（都不是"重造权限"）：① v1 接受 **worktree 隔离 + 断路器**（现 tech-debt 既定边界）；② claude 进程跑在 **OS 沙箱**（macOS `sandbox-exec` / 容器）——最接近"让系统管"；③ 加 Claude Code **官方 `PreToolUse` deny-hook**（可选硬化）。
+  - **落点**：primary = 隔离/沙箱（codex 原生、claude 用 ①，需更强用 ②）；custom deny-hook = **可选硬化，off by default，不进 v1 必做**。
 - **状态信号补强 §5**：`Notification` hook（claude 等输入/权限时触发）= 比刮终端 bell 干净的"需要注意"；`Stop` hook（回合结束）= 干净空闲信号、且能 block 强制等待。
 - **打包形态**：可把 hooks（SessionStart/PreCompact/PreToolUse/Stop）+ crew-comms MCP + 世界观 + 安全闸 settings 收成**一个 plugin**（`--plugin-dir` 非交互加载），而非 --settings/--mcp-config/--append-system-prompt 散一地。维护性好，留作落地容器形态（不阻塞，先散装跑通再收）。
 - **MCP resources（pull 备选）**：深查类（`look_at_session` 等）可建成 MCP **resource**（agent 按需 live-fetch、天然扛 compact），而非纯 tool。白板主路仍走 push（你定的）；resource 给"按需深查"。
