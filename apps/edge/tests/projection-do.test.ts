@@ -14,6 +14,13 @@
 //   - tombstone: markDeleted → getTail returns the id in tombstones, not in rows.
 //   - backfill:  a cold DO's first getTail/isMember triggers a Supabase rebuild.
 //   - trim:      exceeding N_KEEP drops the oldest rows.
+//   - rich cols: getTail round-trips the full message-self columns (citations /
+//                metadata / log_payload / message_seq / parent / model_slug …).
+//   - 2MB guard: an oversized metadata/log_payload row ingests under the limit,
+//                the heaviest JSON column is truncated to the marker, the rest
+//                survive intact, and a backfill carries the same rich columns.
+//   - scalar cols: getList round-trips the scalar conversation columns
+//                  (bot_id / user_id / feature / round_count); backfill too.
 //   - auth gate: userB cannot read userA's tail (group non-member → 403;
 //                single-owner non-owner → 403); member/owner → 200.
 
@@ -186,6 +193,117 @@ describe('ConvProjectionDO — delta / idempotency / tombstone / trim', () => {
     conv.ingestRoster('remove', bob);
     expect(conv.isMember(bob)).toBe(false); // evicted
   });
+
+  it('getTail round-trips the full rich message-self columns', async () => {
+    const conv = await newConv();
+    const citations = [{ url: 'https://a.example', title: 'A' }];
+    const metadata = { source: 'web', tool_trace: [{ tool: 'search', ms: 42 }] };
+    const logPayload = { kind: 'recall', target: 'm0' };
+    const attachments = { ids: ['att-1', 'att-2'] };
+    conv.ingestMessage(
+      msg('m1', '2026-01-01T00:00:01Z', {
+        client_message_id: 'cmid-1',
+        message_seq: 7,
+        log_kind: 'recall',
+        log_payload: logPayload,
+        bubble_group_id: 'bg-1',
+        parent_message_id: 'p-1',
+        model_slug: 'opus-4',
+        sender_user_id: alice,
+        sender_bot_id: null,
+        attachments,
+        citations,
+        metadata,
+      }),
+    );
+
+    const row = conv.getTail().rows[0]!;
+    // scalar self-columns.
+    expect(row.client_message_id).toBe('cmid-1');
+    expect(row.message_seq).toBe(7);
+    expect(row.log_kind).toBe('recall');
+    expect(row.bubble_group_id).toBe('bg-1');
+    expect(row.parent_message_id).toBe('p-1');
+    expect(row.model_slug).toBe('opus-4');
+    expect(row.sender_user_id).toBe(alice);
+    expect(row.sender_bot_id).toBeNull();
+    // JSON self-columns parsed back to structured values, not raw strings.
+    expect(row.citations).toEqual(citations);
+    expect(row.metadata).toEqual(metadata);
+    expect(row.log_payload).toEqual(logPayload);
+    expect(row.attachments).toEqual(attachments);
+  });
+
+  it('absent rich columns come back as null, not the string "undefined"', async () => {
+    const conv = await newConv();
+    conv.ingestMessage(msg('m1', '2026-01-01T00:00:01Z')); // bare: no rich cols
+    const row = conv.getTail().rows[0]!;
+    expect(row.client_message_id).toBeNull();
+    expect(row.message_seq).toBeNull();
+    expect(row.log_kind).toBeNull();
+    expect(row.log_payload).toBeNull();
+    expect(row.parent_message_id).toBeNull();
+    expect(row.model_slug).toBeNull();
+    expect(row.citations).toBeNull();
+    expect(row.metadata).toBeNull();
+    expect(row.attachments).toBeNull();
+  });
+
+  it('2MB guard: oversized metadata is truncated to the marker, other cols intact', async () => {
+    const { ConvProjectionDO, TRUNCATED_MARKER } = await import(
+      '../src/durable-objects/conv-projection'
+    );
+    const env = makeFakeEnv(makeFakeDb());
+    const conv = new ConvProjectionDO(makeSqliteDoState(convId), env);
+
+    // metadata is the single heaviest column (~1.8MB) → over the 1.5MB guard.
+    const hugeMetadata = { blob: 'x'.repeat(1_800_000) };
+    const citations = [{ url: 'https://keep.example' }]; // small → must survive
+    conv.ingestMessage(
+      msg('big', '2026-01-01T00:00:01Z', {
+        metadata: hugeMetadata,
+        citations,
+        content: 'render-me',
+      }),
+    );
+
+    const row = conv.getTail().rows[0]!;
+    // heaviest JSON column replaced by the truncation marker...
+    expect(row.metadata).toEqual(TRUNCATED_MARKER);
+    // ...everything else preserved (content is never truncated; small JSON kept).
+    expect(row.content).toBe('render-me');
+    expect(row.citations).toEqual(citations);
+
+    // and the stored row is genuinely under the 2MB DO hard cap.
+    const storedBytes = new TextEncoder().encode(JSON.stringify(row)).length;
+    expect(storedBytes).toBeLessThan(2_000_000);
+  });
+
+  it('2MB guard: only the heaviest cols are dropped, lighter ones below the line survive', async () => {
+    const { ConvProjectionDO, TRUNCATED_MARKER } = await import(
+      '../src/durable-objects/conv-projection'
+    );
+    const env = makeFakeEnv(makeFakeDb());
+    const conv = new ConvProjectionDO(makeSqliteDoState(convId), env);
+
+    // metadata huge, log_payload medium, citations tiny. Dropping metadata
+    // alone gets us under the line → log_payload + citations should survive.
+    const hugeMetadata = { blob: 'm'.repeat(1_700_000) };
+    const mediumLog = { trace: 'l'.repeat(50_000) };
+    const tinyCitations = [{ url: 'https://x.example' }];
+    conv.ingestMessage(
+      msg('big', '2026-01-01T00:00:01Z', {
+        metadata: hugeMetadata,
+        log_payload: mediumLog,
+        citations: tinyCitations,
+      }),
+    );
+
+    const row = conv.getTail().rows[0]!;
+    expect(row.metadata).toEqual(TRUNCATED_MARKER); // heaviest dropped
+    expect(row.log_payload).toEqual(mediumLog); // survived
+    expect(row.citations).toEqual(tinyCitations); // survived
+  });
 });
 
 describe('ConvProjectionDO — cold backfill from Supabase', () => {
@@ -209,6 +327,9 @@ describe('ConvProjectionDO — cold backfill from Supabase', () => {
           status: 'done',
           content: 'hello',
           user_id: alice,
+          client_message_id: 'cmid-b1',
+          bubble_group_id: 'bg-b1',
+          attachments: { ids: ['att-b1'] },
           metadata: null,
         },
         {
@@ -220,7 +341,10 @@ describe('ConvProjectionDO — cold backfill from Supabase', () => {
           status: 'done',
           content: 'hi back',
           user_id: null,
-          metadata: null,
+          model_slug: 'opus-4',
+          parent_message_id: 'b1',
+          citations: [{ url: 'https://cite.example' }],
+          metadata: { source: 'web' },
         },
         // §7.2 deleted + voice_call_summary must be excluded from the rebuild.
         {
@@ -260,11 +384,33 @@ describe('ConvProjectionDO — cold backfill from Supabase', () => {
       }),
     );
     const tail = (await res.json()) as {
-      rows: Array<{ id: string }>;
+      rows: Array<{
+        id: string;
+        client_message_id: string | null;
+        message_seq: number | null;
+        bubble_group_id: string | null;
+        parent_message_id: string | null;
+        model_slug: string | null;
+        attachments: unknown;
+        citations: unknown;
+        metadata: unknown;
+      }>;
       tombstones: string[];
     };
     // only the two live, non-voice messages, in time order.
     expect(tail.rows.map((r) => r.id)).toEqual(['b1', 'b2']);
+
+    // rich columns survive the cold rebuild (not just the render skeleton).
+    const b1 = tail.rows.find((r) => r.id === 'b1')!;
+    expect(b1.client_message_id).toBe('cmid-b1');
+    expect(b1.message_seq).toBe(1);
+    expect(b1.bubble_group_id).toBe('bg-b1');
+    expect(b1.attachments).toEqual({ ids: ['att-b1'] });
+    const b2 = tail.rows.find((r) => r.id === 'b2')!;
+    expect(b2.model_slug).toBe('opus-4');
+    expect(b2.parent_message_id).toBe('b1');
+    expect(b2.citations).toEqual([{ url: 'https://cite.example' }]);
+    expect(b2.metadata).toEqual({ source: 'web' });
 
     // roster only carries the two human participants.
     expect(conv.getRoster().sort()).toEqual([alice, bob].sort());
@@ -297,6 +443,47 @@ describe('UserProjectionDO — delta + cold backfill', () => {
     expect(stale.rows.map((r) => r.conv_id).sort()).toEqual(['c1', 'c2']);
   });
 
+  it('getList round-trips the scalar conversation columns', async () => {
+    const user = await newUser();
+    user.ingestConversation({
+      conv_id: 'c1',
+      type: 'user_bot',
+      bot_id: 'bot-9',
+      user_id: alice,
+      feature: 'chat',
+      round_count: 12,
+      title: 'My bot',
+      updated_at: '2026-01-01T00:00:01Z',
+    });
+    const row = user.getList().rows.find((r) => r.conv_id === 'c1')!;
+    expect(row.bot_id).toBe('bot-9');
+    expect(row.user_id).toBe(alice);
+    expect(row.feature).toBe('chat');
+    expect(row.round_count).toBe(12);
+    expect(row.title).toBe('My bot');
+  });
+
+  it('scalar columns are preserved via COALESCE when a later upsert omits them', async () => {
+    const user = await newUser();
+    // first the conversations webhook lands the scalar columns...
+    user.ingestConversation({
+      conv_id: 'c1',
+      type: 'user_bot',
+      bot_id: 'bot-9',
+      feature: 'chat',
+      round_count: 3,
+      updated_at: '2026-01-01T00:00:01Z',
+    });
+    // ...then a minimal participant-join upsert arrives without them. COALESCE
+    // must keep the already-filled scalars rather than NULL them out.
+    user.ingestConversation({ conv_id: 'c1', type: 'user_bot', updated_at: '2026-01-01T00:00:02Z' });
+    const row = user.getList().rows.find((r) => r.conv_id === 'c1')!;
+    expect(row.bot_id).toBe('bot-9');
+    expect(row.feature).toBe('chat');
+    expect(row.round_count).toBe(3);
+    expect(row.updated_at).toBe('2026-01-01T00:00:02Z'); // updated_at always overwrites
+  });
+
   it('ingestUnread ignores conversations not in the list; updates existing', async () => {
     const user = await newUser();
     user.ingestUnread('ghost', 5); // no such conv → no row created
@@ -318,14 +505,30 @@ describe('UserProjectionDO — delta + cold backfill', () => {
           conversation_id: 'c1',
           unread_count: 2,
           last_message_preview: 'yo',
-          conv: { conversation_type: 'group', title: 'Team', updated_at: '2026-01-02T00:00:00Z' },
+          conv: {
+            conversation_type: 'group',
+            title: 'Team',
+            bot_id: null,
+            user_id: null,
+            feature: null,
+            round_count: 0,
+            updated_at: '2026-01-02T00:00:00Z',
+          },
         },
         {
           user_id: alice,
           conversation_id: 'c2',
           unread_count: 0,
           last_message_preview: null,
-          conv: { conversation_type: 'user_bot', title: null, updated_at: '2026-01-01T00:00:00Z' },
+          conv: {
+            conversation_type: 'user_bot',
+            title: null,
+            bot_id: 'bot-7',
+            user_id: alice,
+            feature: 'chat',
+            round_count: 5,
+            updated_at: '2026-01-01T00:00:00Z',
+          },
         },
       ],
     });
@@ -340,13 +543,27 @@ describe('UserProjectionDO — delta + cold backfill', () => {
       }),
     );
     const list = (await res.json()) as {
-      rows: Array<{ conv_id: string; unread: number; title: string | null }>;
+      rows: Array<{
+        conv_id: string;
+        unread: number;
+        title: string | null;
+        bot_id: string | null;
+        user_id: string | null;
+        feature: string | null;
+        round_count: number | null;
+      }>;
       full: boolean;
     };
     // ordered by updated_at DESC → c1 (Jan 2) before c2 (Jan 1).
     expect(list.rows.map((r) => r.conv_id)).toEqual(['c1', 'c2']);
     expect(list.rows[0]!.unread).toBe(2);
     expect(list.rows[0]!.title).toBe('Team');
+    // scalar columns survive the cold rebuild (not just title/preview skeleton).
+    const c2 = list.rows.find((r) => r.conv_id === 'c2')!;
+    expect(c2.bot_id).toBe('bot-7');
+    expect(c2.user_id).toBe(alice);
+    expect(c2.feature).toBe('chat');
+    expect(c2.round_count).toBe(5);
     expect(user.getMeta().backfilled).toBe('1');
   });
 });
