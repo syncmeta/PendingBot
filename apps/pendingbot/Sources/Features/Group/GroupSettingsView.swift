@@ -594,10 +594,10 @@ struct GroupSettingsView: View {
             // Persist the resolved snapshot so the next entry into this
             // settings page (and the chat page) paints from cache before
             // the network round-trip lands.
-            LocalDatabase.shared.replaceGroupMembers(
+            CacheRepository.persistGroupMembers(
                 conversationId: conversationId, cacheRows)
             if let m = self.meta {
-                LocalDatabase.shared.upsertGroupMeta(
+                CacheRepository.persistGroupMeta(
                     LocalDatabase.GroupMetaRow(
                         conversation_id: conversationId,
                         title: m.title,
@@ -619,7 +619,7 @@ struct GroupSettingsView: View {
     /// load finishes, but the avatars + names + role hierarchy land
     /// instantly.
     private func hydrateFromCache() {
-        if let cachedMeta = LocalDatabase.shared.loadGroupMeta(conversationId: conversationId) {
+        if let cachedMeta = CacheRepository.cachedGroupMeta(conversationId: conversationId) {
             self.meta = GroupMeta(
                 title: cachedMeta.title,
                 joinPolicy: cachedMeta.join_policy,
@@ -627,7 +627,7 @@ struct GroupSettingsView: View {
             )
             self.numberHandle = cachedMeta.number_handle
         }
-        let cachedMembers = LocalDatabase.shared.loadGroupMembers(conversationId: conversationId)
+        let cachedMembers = CacheRepository.cachedGroupMembers(conversationId: conversationId)
         guard !cachedMembers.isEmpty else { return }
         self.members = cachedMembers.map { r in
             let isBot = r.participant_type == "bot"
@@ -698,7 +698,7 @@ struct GroupSettingsView: View {
                        body: Body(title: val))
         if error == nil, let m = meta {
             meta = GroupMeta(title: val, joinPolicy: m.joinPolicy, maxMembers: m.maxMembers)
-            LocalDatabase.shared.upsertGroupMeta(
+            CacheRepository.persistGroupMeta(
                 LocalDatabase.GroupMetaRow(
                     conversation_id: conversationId,
                     title: val,

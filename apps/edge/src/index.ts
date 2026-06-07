@@ -40,6 +40,7 @@ import { arenaRoutes } from './routes/arena';
 import { realtimeRoutes } from './routes/realtime';
 import { realtimeHubRoutes } from './routes/realtime-hub';
 import { realtimeInternalRoutes } from './routes/realtime-internal';
+import { conversationListRoutes, messageTailRoutes } from './routes/projections';
 import { wellKnownRoutes } from './routes/well-known';
 import { billingWebhookRoutes } from './routes/billing-webhooks';
 import { langfusePromptRoutes } from './routes/langfuse-prompts';
@@ -62,6 +63,9 @@ export { RoomMediaContainerDO } from './durable-objects/room-media';
 export { SessionProxyDO } from './durable-objects/session-proxy';
 // Per-subject 钱包缓存 DO(计费 P2)。WALLET binding 的必需导出。
 export { WalletDO } from './durable-objects/wallet';
+// T2 边缘读投影 DO。CONV_PROJECTION / USER_PROJECTION binding 的必需导出。
+export { ConvProjectionDO } from './durable-objects/conv-projection';
+export { UserProjectionDO } from './durable-objects/user-projection';
 // Container-backed DO from @cloudflare/sandbox. Required export for
 // the `Sandbox` binding declared in wrangler.jsonc.
 export { Sandbox } from '@cloudflare/sandbox';
@@ -113,6 +117,8 @@ app.onError((err, c) => {
 const v1 = new Hono<AppBindings>();
 v1.route('/health', healthRoutes);
 v1.route('/messages', messageRoutes);
+v1.route('/messages', messageTailRoutes);          // GET /v1/messages/tail (T2 边缘读投影 — 消息尾)
+v1.route('/conversations', conversationListRoutes); // GET /v1/conversations (T2 边缘读投影 — 会话列表+未读)
 v1.route('/bots', botRoutes);
 v1.route('/bot-invites', botInviteRoutes);         // GET/:token resolve · POST/:token/redeem · DELETE/:token
 v1.route('/groups', groupInviteLinkRoutes);        // POST/GET /v1/groups/:id/invite-links (D2)

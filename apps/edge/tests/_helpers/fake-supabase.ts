@@ -37,8 +37,15 @@ export interface FakeDb {
 }
 
 interface Filter {
-  kind: 'eq' | 'neq' | 'in' | 'is' | 'jsonb_cs';
+  kind: 'eq' | 'neq' | 'in' | 'is' | 'jsonb_cs' | 'or';
   col: string;
+  value: unknown;
+}
+
+/** One disjunct of a PostgREST `.or(...)` expression. */
+interface OrTerm {
+  col: string;
+  op: 'is' | 'eq' | 'neq';
   value: unknown;
 }
 
@@ -151,7 +158,26 @@ function matches(row: Row, f: Filter): boolean {
       }
       return needles.every((n) => (arr as unknown[]).includes(n));
     }
+    case 'or': {
+      const terms = f.value as OrTerm[];
+      return terms.some((t) => {
+        const actual = readPath(row, t.col);
+        if (t.op === 'is') return actual === t.value; // only null in practice
+        if (t.op === 'neq') return actual !== t.value;
+        return actual === t.value;
+      });
+    }
   }
+}
+
+/** Read a plain column or a PostgREST `a->>b` jsonb path off a row. */
+function readPath(row: Row, col: string): unknown {
+  if (col.includes('->>')) {
+    const [top, sub] = col.split('->>');
+    const obj = row[top] as Record<string, unknown> | null | undefined;
+    return obj == null ? null : obj[sub];
+  }
+  return row[col];
 }
 
 /** 直接拿一个绑定到 db 的 fake supabase client(供直接收 `supa` 参数的单元用)。 */
@@ -203,6 +229,20 @@ function makeClient(db: FakeDb): unknown {
         } else {
           throw new Error(`fake-supabase: unsupported .filter op "${op}"`);
         }
+        return api;
+      },
+      // PostgREST .or('a.is.null,b->>c.neq.x') — keep rows where ANY disjunct
+      // holds. We parse the small subset our code emits (is.null / eq.X /
+      // neq.X over a plain col or an `a->>b` jsonb path).
+      or(expr: string) {
+        const terms: OrTerm[] = expr.split(',').map((part) => {
+          const [col, op, ...rest] = part.split('.');
+          const raw = rest.join('.');
+          if (op === 'is') return { col, op: 'is', value: raw === 'null' ? null : raw };
+          if (op === 'neq') return { col, op: 'neq', value: raw };
+          return { col, op: 'eq', value: raw };
+        });
+        filters.push({ kind: 'or', col: '', value: terms });
         return api;
       },
       order(col: string, opts?: { ascending?: boolean }) {

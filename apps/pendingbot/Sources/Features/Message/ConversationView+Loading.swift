@@ -147,7 +147,7 @@ extension ConversationView {
     func hydrateGroupSendersFromCache() {
         guard conversation.conversation_type == "group" else { return }
         guard !conversation.id.isEmpty, groupSenders.isEmpty else { return }
-        let cached = LocalDatabase.shared.loadGroupMembers(conversationId: conversation.id)
+        let cached = CacheRepository.cachedGroupMembers(conversationId: conversation.id)
         guard !cached.isEmpty else { return }
         var lookup: [String: GroupBubbleSender] = [:]
         for r in cached {
@@ -173,7 +173,7 @@ extension ConversationView {
         // path where senders weren't pre-hydrated. The network refresh below
         // then overwrites with the authoritative roster.
         hydrateGroupSendersFromCache()
-        let cached = LocalDatabase.shared.loadGroupMembers(conversationId: conversation.id)
+        let cached = CacheRepository.cachedGroupMembers(conversationId: conversation.id)
         do {
             struct PartRow: Decodable {
                 let participant_type: String
@@ -256,7 +256,7 @@ extension ConversationView {
                 ))
             }
             self.groupSenders = lookup
-            LocalDatabase.shared.replaceGroupMembers(
+            CacheRepository.persistGroupMembers(
                 conversationId: conversation.id, cacheRows)
         } catch {
             loadingLog.warning("group senders load failed: \(error.localizedDescription, privacy: .public)")

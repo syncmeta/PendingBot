@@ -64,6 +64,18 @@ export interface Env {
   /// Polar 是余额事实源;WalletDO 是边缘强一致缓存 + 门禁闸 + 用量 outbox。
   /// 见 docs/superpowers/specs/2026-06-02-billing-p2-architecture-fork.md。
   WALLET: DurableObjectNamespace;
+  /// T2 边缘读投影 DO(消息尾,per-conversation)。一个实例每
+  /// conversation_id(idFromName(conversationId))。SQLite-backed:存最近
+  /// N_keep 条消息尾 + roster(授权门)+ 单调 revision(delta-sync cursor)。
+  /// Supabase 仍是真源 / 事件源 / 重建源。webhook 写穿 + 冷启动回填。
+  /// 见 src/durable-objects/conv-projection.ts +
+  /// docs/superpowers/plans/2026-06-07-edge-read-offload.md。
+  CONV_PROJECTION: DurableObjectNamespace;
+  /// T2 边缘读投影 DO(会话列表 + 未读,per-user)。一个实例每 user_id
+  /// (idFromName(userId))。SQLite-backed:存会话列表行 + 未读 + 单调
+  /// revision(delta-sync cursor)。webhook 写穿 + 冷启动回填。
+  /// 见 src/durable-objects/user-projection.ts。
+  USER_PROJECTION: DurableObjectNamespace;
   /// Cloudflare ratelimit binding for handle-enumeration endpoints
   /// (friend-request /lookup, group /join, friend-request POST /).
   /// Limit + period live in wrangler.jsonc — call from a route via

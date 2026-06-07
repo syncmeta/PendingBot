@@ -27,6 +27,7 @@
 		12A200D2EF7DE9FE9E8C436C /* BillingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 847B06C1CE436AE865AD9AAE /* BillingService.swift */; };
 		1431C4C1F06DB04B39E9C1FF /* GroupAvatar.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD75C88413B35DD563C0DF45 /* GroupAvatar.swift */; };
 		164BF63BF723B258C2BFD37B /* RealtimeSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 538B09D7D56B20AA7BCE1E50 /* RealtimeSocket.swift */; };
+		198D6B25434CE200E4FD044A /* ProfileDataSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 134ADF0FFA224BE794083B54 /* ProfileDataSource.swift */; };
 		1BA6A36C5DBAB5340DE35AF5 /* Account.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7389F31567A5B0D72BC29CC1 /* Account.swift */; };
 		1D67444A38A55B99E0E21F76 /* EnvelopeTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AA1FB293BD301008D3819AD /* EnvelopeTabView.swift */; };
 		20489485A894E69287ADEEFF /* APIModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1D36E9865F8E358AD4A1B49 /* APIModels.swift */; };
@@ -72,6 +73,7 @@
 		6715ECF7C0A8F33235E8B564 /* FriendsDataSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = C82D486B7EBB27D5882B5844 /* FriendsDataSource.swift */; };
 		677726B63A7F47E39943D767 /* EnvelopeDataSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = C385DAFA1E0BFEEC5520467A /* EnvelopeDataSource.swift */; };
 		67B0E4F2A2C4FE0ACCE07550 /* EnvelopeFeedRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56BFB3EBF959D378BC6BC313 /* EnvelopeFeedRow.swift */; };
+		68647D14BF681211208CE4BB /* CacheRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 737CD8E06DD8AAE4ACE169EB /* CacheRepository.swift */; };
 		68CC7CE5D41AC8BE5940E886 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = 58587B83E149045A770D0833 /* GoogleSignIn */; };
 		6E4DD70ABC53852AB56FCFED /* EnvelopeArticleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F18FB9C392174C32131512F /* EnvelopeArticleView.swift */; };
 		709467D9E6B366E16CAE1B43 /* VoiceCallAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FA08FADEA9A413F05BD5BF4 /* VoiceCallAPI.swift */; };
@@ -193,6 +195,7 @@
 		0F7C3B5C578F1BE2095D0B00 /* WelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeView.swift; sourceTree = "<group>"; };
 		106E121F92077F781DEEB6BF /* AccountsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountsView.swift; sourceTree = "<group>"; };
 		125E5FD0E43ECEEB291F2BC2 /* ContactsFetch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactsFetch.swift; sourceTree = "<group>"; };
+		134ADF0FFA224BE794083B54 /* ProfileDataSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileDataSource.swift; sourceTree = "<group>"; };
 		13BCD0D49AA6CCB35BBB0C31 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
 		161466ECAC938388BC8F72E3 /* CrewChildSummaryCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewChildSummaryCard.swift; sourceTree = "<group>"; };
 		17979E6D0A17BE0BEFD3BB38 /* TabHeaderBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabHeaderBar.swift; sourceTree = "<group>"; };
@@ -257,6 +260,7 @@
 		70EAEDCC6E5ABCC5261A43E3 /* MyQRBusinessCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyQRBusinessCard.swift; sourceTree = "<group>"; };
 		7114A9AF0BBDF033ADE65E67 /* ConversationView+Realtime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConversationView+Realtime.swift"; sourceTree = "<group>"; };
 		72CE91B5FAEED2B40DF223A1 /* EnvelopeAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvelopeAPI.swift; sourceTree = "<group>"; };
+		737CD8E06DD8AAE4ACE169EB /* CacheRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CacheRepository.swift; sourceTree = "<group>"; };
 		7389F31567A5B0D72BC29CC1 /* Account.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Account.swift; sourceTree = "<group>"; };
 		79ED6E895CA98C76570E0C51 /* LetterSenderAvatar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LetterSenderAvatar.swift; sourceTree = "<group>"; };
 		7B48A6EDBF639ED658DB2493 /* GroupQRCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupQRCard.swift; sourceTree = "<group>"; };
@@ -390,6 +394,7 @@
 				847B06C1CE436AE865AD9AAE /* BillingService.swift */,
 				AC6DBF492E7DD84630FAE567 /* BotContactsFetch.swift */,
 				6A5442547F63F7CF41B54C46 /* BotInviteAPI.swift */,
+				737CD8E06DD8AAE4ACE169EB /* CacheRepository.swift */,
 				CD69E5388537288F5E14D3D1 /* ChatDataSource.swift */,
 				A0DF072DCFB0786FA83D70F3 /* ChatStream.swift */,
 				8B8E7132DEAB8AA2580E7DDF /* ContactsAPI.swift */,
@@ -407,6 +412,7 @@
 				0DBBEAE928AB77BE9DBD5029 /* GroupWalletService.swift */,
 				7EEDB9DF3C6B9D1EC67C769F /* HostedConfig.swift */,
 				CDF32066E5F831C3B474EBB7 /* MessagesFetch.swift */,
+				134ADF0FFA224BE794083B54 /* ProfileDataSource.swift */,
 				F2F07903E8E0959584180E65 /* PushService.swift */,
 				6EFB784DC12029E53EB12A5C /* RealtimeManager.swift */,
 				538B09D7D56B20AA7BCE1E50 /* RealtimeSocket.swift */,
@@ -801,6 +807,7 @@
 				ACB7DE5BB4722BC475D80C54 /* BrandAvatar.swift in Sources */,
 				C6F7A651FC9842DE3C2D32A7 /* BubbleSplitter.swift in Sources */,
 				0D14B87E36E28B1C76B152E6 /* BubbleView.swift in Sources */,
+				68647D14BF681211208CE4BB /* CacheRepository.swift in Sources */,
 				583836D442830F875F8C55F2 /* CallCenter.swift in Sources */,
 				C388351781EFDB16D477FE8A /* CallDiagnostics.swift in Sources */,
 				83CDD45BF74B5724F75FC0AD /* CallDiagnosticsLogic.swift in Sources */,
@@ -905,6 +912,7 @@
 				410E4CD407F8295F837084F9 /* Platform.swift in Sources */,
 				5042BAAF9E26EC2AFC0226DF /* PlatformImage.swift in Sources */,
 				32FAAF4A0D4EC4DEAC048497 /* ProfileBootstrapView.swift in Sources */,
+				198D6B25434CE200E4FD044A /* ProfileDataSource.swift in Sources */,
 				433F3178E73B28AAA4D05AA9 /* ProtectedURLCache.swift in Sources */,
 				D6974FC7B55E1BC31FFBB131 /* PushService.swift in Sources */,
 				366C2519D09D1C6CDFEA2562 /* QRScannerView.swift in Sources */,
