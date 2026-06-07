@@ -29,8 +29,8 @@
 
 两端都**启动即带首条指令**，且都**交互式/订阅计费**（不碰 Agent SDK / 不走 headless exec）。
 
-- **claude（PTY）**：positional `[prompt]`。`claude --dangerously-skip-permissions [--model m] "<指令>"`（help 实证：交互式默认，非 `--print` 限定）。改 `AgentTerminalSession.argv` 加 `initialPrompt:` 作末位 positional；删掉 `CrewSessionWindowView` 的 0.6s sleep + 事后 `send`。
-- **codex（app-server）**：起 app-server 后,首条 user message 即 `<指令>`（你构造协议消息，天然带）。
+- **claude（PTY）**：positional `[prompt]`。`claude [--model m] "<指令>"`（help 实证：交互式默认，非 `--print` 限定）。**注意：不带 `--dangerously-skip-permissions`**——权限系统保持开（见 §9，敏感工具弹框=上报触发；routine 走 allow-list）。改 `AgentTerminalSession.argv` 加 `initialPrompt:` 作末位 positional；删掉 `CrewSessionWindowView` 的 0.6s sleep + 事后 `send`。
+- **codex（app-server）**：起 app-server 后,首条 user message 即 `<指令>`（你构造协议消息，天然带）。审批策略**非 `-a never`**——用会上报的模式（敏感动作出 approval 协议事件，见 §9）；`--sandbox workspace-write` 仍保留作containment。
 - **探针**：claude `--resume <id> "<prompt>"` 大概率 OK；positional 是自动提交还是只填框 → 真机确认。codex app-server resume/初始消息协议形状 → 实接确认。
 
 ---
@@ -129,14 +129,33 @@ session 是**长跑**的，会撞上几个 claude code 机制，提前接：
 
 - **🔴 compaction 韧性（最要紧的新发现）**：长 session 上下文满会**自动 compact（摘要化）** → **注入的动态 crew 上下文（白板 digest）可能被摘掉** → session "忘了"群里最新状态。补：`SessionStart`（matcher 含 `compact`/`resume`）+ `PreCompact` hook → **compact 后重注** crew 世界观 + 当前白板。
   - 调研称：系统提示 / CLAUDE.md / skill 在 compact 后**会自动重载**（若真，`--append-system-prompt` 的静态世界观能扛过 compact，只动态白板要 PreCompact 重注）——**信心不足，待真机核**。
-- **安全/权限 —— 归运行时隔离（Claude Code/OS 的事），不是 PendingCrew 关掉权限系统再重造**（纠正草稿的反向设计）：
-  - **核实结论**：`--dangerously-skip-permissions`（bypass）**关掉全部权限规则含 `permissions.deny`**（只剩 Claude 硬编码 `rm -rf /` / `rm -rf ~` 断路器）→ 草稿"bypass + deny 规则"自相矛盾、deny 不生效。**无任何原生单模式 = "放行除黑名单外一切 + 永不弹框"**：要么弹框（无人值守挂死）、要么 bypass（无 deny）。这正是 Anthropic 文档**点名用 `PreToolUse` hook 桥**的场景（exit 2 在 bypass 下仍拦）——hook 是 Claude Code **给这场景的官方扩展点**，不是另造权限系统。
-  - **codex**：`--sandbox workspace-write` = 真 FS 沙箱，**原生覆盖**，不额外搭。
-  - **claude**：bypass 下**无原生 FS 沙箱**，只 cwd 约定 + 硬编码断路器 → blast radius 比 codex 大。三选（都不是"重造权限"）：① v1 接受 **worktree 隔离 + 断路器**（现 tech-debt 既定边界）；② claude 进程跑在 **OS 沙箱**（macOS `sandbox-exec` / 容器）——最接近"让系统管"；③ 加 Claude Code **官方 `PreToolUse` deny-hook**（可选硬化）。
-  - **落点**：primary = 隔离/沙箱（codex 原生、claude 用 ①，需更强用 ②）；custom deny-hook = **可选硬化，off by default，不进 v1 必做**。
+- **安全 = containment（沙箱/隔离），与审批（§9）正交**：containment 管"炸不炸得到物理损害"，审批管"谁来批"。两者都要、互不替代。
+  - **codex**：`--sandbox workspace-write` 真 FS 沙箱，原生覆盖。
+  - **claude**：无原生 FS 沙箱 → v1 靠 **worktree 隔离 + Claude 硬编码 `rm -rf /`/`~` 断路器**；要更强把 claude 进程跑 **OS 沙箱**（`sandbox-exec` / 容器，"让系统管"）。
+  - **不 bypass、不自造权限系统** —— 审批走 §9 组织上报链，**不是**关权限再用 hook 重搭（草稿那条已废）。
 - **状态信号补强 §5**：`Notification` hook（claude 等输入/权限时触发）= 比刮终端 bell 干净的"需要注意"；`Stop` hook（回合结束）= 干净空闲信号、且能 block 强制等待。
 - **打包形态**：可把 hooks（SessionStart/PreCompact/PreToolUse/Stop）+ crew-comms MCP + 世界观 + 安全闸 settings 收成**一个 plugin**（`--plugin-dir` 非交互加载），而非 --settings/--mcp-config/--append-system-prompt 散一地。维护性好，留作落地容器形态（不阻塞，先散装跑通再收）。
 - **MCP resources（pull 备选）**：深查类（`look_at_session` 等）可建成 MCP **resource**（agent 按需 live-fetch、天然扛 compact），而非纯 tool。白板主路仍走 push（你定的）；resource 给"按需深查"。
+
+## 9. 权限/审批 = 组织架构式逐级上报（员工→机长→老板）
+
+**纠正草稿"自动审批=bypass"的错判**：目标不是让 session 无阻碍跑，是**把阻碍方便地路由给该批的人**。权限系统全程开，**绝不 bypass 所有权限请求**。
+
+**模型 = 公司组织架构**：
+- **session = 员工**：自主干活；撞到要签字的（computer-use / MCP 工具权限、风险动作、要问的问题、方向确认）→ 不静默自决、不死在没人看的弹框 → **上报（请示）**。
+- **captain = 主管**：收上报，**自动接管能定的一小撮**——明显能答的问题、它理解错初衷而提的不该提的问题（纠正"你理解错了，实际是 X"）、机长权限内的安全审批；**其余往上递**。
+- **人类 = 老板**：拿到真审批 / 方向确认 / 判断题 → **等人类确认**（请示领导，不催、可慢）。
+- **"自动审批模式"** = 机长把能自动定的自动处理、定不了的逐级递到人；**不是 bypass**。
+
+**两条上报通道，汇同一条 captain→人 链**：
+1. **问题 / 方向确认** → `ask_human` MCP（阻塞 long-poll，T4.3 已有）→ captain triage → 人。
+2. **工具权限审批**（少数敏感场景，"弹框仅限少数"）：
+   - **claude(PTY)**：非 bypass，保留原生弹框 = 上报触发。orchestrator 检测"在等批"（Notification hook / transcript / 终端）→ 路由 captain→人 → 决定回来**注入应答**（原生弹框无限等，天然扛人类慢批）。
+   - **codex(app-server)**：审批是**协议一等事件** → 直接路由 captain→人 → 协议回应（比 claude 干净）。
+   - captain triage：能自动批的秒回；要人的递 PendingBot 审批卡（T4.3 permission-request UI）等人。
+- **routine 安全动作**（读 / workspace 编辑 / 白名单 bash）：不上报、直接走（allow-list / acceptEdits 模式）。
+
+**合流既有件**：这套 = spec §10.3-10.5「机长三角判断 + 沿 DAG 溯源到真人」的落地；复用 `ask_human`（T4.3）+ `permission_requests` 表/RPC（T4.3）+ captain 编排（J/K）。captain 角色从"起/停 session"**扩成"主管：审批/问题 triage"**。
 
 ## 待探针（实现期验，非设计阻塞）
 
@@ -149,6 +168,8 @@ session 是**长跑**的，会撞上几个 claude code 机制，提前接：
 
 7. **compaction 韧性**：`PreCompact` hook 能否经 `additionalContext` 把动态白板塞进 compact 后上下文？`--append-system-prompt`/skill 是否真"自动重载"扛过 compact？（§8，调研信心不足，真机核）。
 8. **plugin / settings 精确键**：`--plugin-dir` 非交互加载、`permissions.deny`/`PreToolUse` deny 语法、settings 各键名 —— 调研给的 JSON 样例当方向，落地前逐个核实键名（别凭样例写死）。
+
+9. **权限上报机制（§9）**：claude 弹框能否被 orchestrator 可靠**检测 + 解析"在批什么"**（Notification hook payload 带不带请求详情 / 从 transcript 读）+ **可靠注入应答**（选项键，brittle?）；"原生弹框无限等"对人类慢批是否真成立；codex app-server approval 事件 + 回应协议形状；claude 非 bypass 下哪个 mode + allow-list 让 routine 不弹、只敏感弹。
 
 ## 验证门
 
