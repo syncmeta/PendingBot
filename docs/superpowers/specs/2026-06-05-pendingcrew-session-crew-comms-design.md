@@ -30,7 +30,7 @@
 两端都**启动即带首条指令**，且都**交互式/订阅计费**（不碰 Agent SDK / 不走 headless exec）。
 
 - **claude（PTY）**：positional `[prompt]`。`claude [--model m] "<指令>"`（help 实证：交互式默认，非 `--print` 限定）。**权限走 auto mode**（`auto` 模式 + `autoMode` 分类器自动裁，**非 `--dangerously-skip-permissions`/bypass**，见 §9）。改 `AgentTerminalSession.argv` 加 `initialPrompt:` 作末位 positional；删掉 `CrewSessionWindowView` 的 0.6s sleep + 事后 `send`。
-- **codex（app-server）**：起 app-server 后,首条 user message 即 `<指令>`（你构造协议消息，天然带）。**权限走 auto-review**（`approval_policy=on-request` + `approvals_reviewer=auto_review`，复核 agent 自动裁，**非 `-a never`**，见 §9）；`--sandbox workspace-write` 作 containment。
+- **codex（app-server）**：起 app-server 后,首条 user message 即 `<指令>`（你构造协议消息，天然带）。**权限**：`--sandbox workspace-write`(护栏) + `approval_policy=on-request`，**不开 `auto_review`**（不要单独复核 agent）——边界审批出协议事件路由 captain（见 §9）。
 - **探针**：claude `--resume <id> "<prompt>"` 大概率 OK；positional 是自动提交还是只填框 → 真机确认。codex app-server resume/初始消息协议形状 → 实接确认。
 
 ---
@@ -137,23 +137,34 @@ session 是**长跑**的，会撞上几个 claude code 机制，提前接：
 - **打包形态**：可把 hooks（SessionStart/PreCompact/PreToolUse/Stop）+ crew-comms MCP + 世界观 + 安全闸 settings 收成**一个 plugin**（`--plugin-dir` 非交互加载），而非 --settings/--mcp-config/--append-system-prompt 散一地。维护性好，留作落地容器形态（不阻塞，先散装跑通再收）。
 - **MCP resources（pull 备选）**：深查类（`look_at_session` 等）可建成 MCP **resource**（agent 按需 live-fetch、天然扛 compact），而非纯 tool。白板主路仍走 push（你定的）；resource 给"按需深查"。
 
-## 9. 权限/审批 = 原生 auto mode（自动审批）+ 人类升级（组织架构）
+## 9. 权限/审批 = 原生护栏（安全，保留）+ captain 审批（不另设复核 agent）
 
-**「自动审批模式」= 两个 CLI 的原生 auto mode**（claude `autoMode` 分类器 / codex `auto_review` 复核 agent），**不是 bypass、也不是"检测弹框+注入"**。auto mode 本身就是"自动接管阻碍"。两层：
+两层：**护栏交给 CLI 原生（研究得好、保留），审批交给 captain**（不是单独复核 agent、更**不是 codex 的 `auto_review`**）。
 
-### Layer 1 — 原生 auto mode（默认自动审批，自动接管 boundary）
-- **claude**：`--permission-mode auto` + `autoMode` settings。每个工具调用过一个**分类器**（在 `permissions` 之后的第二道闸）：**自动放行 routine、自动拦 irreversible/destructive/出环境(exfil)**，**不弹框、不挂起、自动裁**。配 `autoMode.environment`（信任 repo/bucket/域，带 `$defaults`）+ `soft_deny`/`hard_deny`/`allow`（自然语言规则）编码 crew 策略；`permissions.deny`(managed) 是分类器**之前**的硬闸；分类器也读 CLAUDE.md。`claude auto-mode config/defaults/critique` 可查有效规则。
-  - **✅ 本机实证（订阅登录，本 session）**：`--permission-mode auto` 是 `--help` 合法选项、`claude auto-mode config` 返回完整规则集（auto mode **订阅可用**，解了"仅 API?"的疑虑）。**默认 `soft_deny` 已覆盖** `rm -rf` 预存文件 / force-push / push 默认分支 / 生产部署+迁移 / `curl|bash` / 削安全 / 甚至"创建 `--dangerously-skip-permissions` 子 agent" → **误删/放权风险默认就拦，v1 不用自写 deny-list**（按需才加 crew 专属 `soft_deny`/`environment`）。
-- **codex**：`approval_policy="on-request"` + `approvals_reviewer="auto_review"` + `sandbox_mode="workspace-write"`。跨沙箱边界（网络/越界写/MCP/computer-use）时一个**复核 agent** 按 policy（`[auto_review] policy`）自动裁，拒了给主 agent 理由让它找更安全替代或问人；circuit breaker：连拒 3 / 50 内 10。
-- 这层 = 自动接管**绝大多数**工具/权限/边界审批 + 安全复核，**无人、不挂、非 bypass**。computer-use / MCP 权限也走这层自动裁。
+### Layer 1 — 原生安全护栏（只挡危险/越界，保留）
+纯护栏：自动放行 routine、自动**拦**危险/越界，不弹框不挂。**只挡危险，不替人"签字审批"**。
+- **claude**：`--permission-mode auto` + `autoMode` 分类器（permissions 之后第二道闸）。配 `environment`/`soft_deny`/`hard_deny`/`allow`(自然语言)；`permissions.deny`(managed) 是之前的硬闸；也读 CLAUDE.md；`claude auto-mode config` 查有效规则。**✅ 本机实证订阅可用**，默认 `soft_deny` 已覆盖 `rm -rf` 预存 / force-push / push 默认分支 / 生产部署+迁移 / `curl|bash` / 削安全 → **v1 不自写 deny-list**（按需加 crew 专属规则）。
+- **codex**：`--sandbox workspace-write`（FS 沙箱）+ `approval_policy=on-request`。**不开 `auto_review`**（不要那个单独复核 agent）——边界请求出**协议事件**，交 Layer 2 的 captain。
+- 护栏拦下 / 边界请求 → **既不静默放行、也不让单独 agent 批 → 一律上交 captain**。
 
-### Layer 2 — 人类升级（请示上级，仅判断题）
-auto mode 裁不了 / 需人判断的才上人：
-- **问题（ask_human）**：agent 问问题 → **captain triage**：自动答**明显能答的 / 它理解错初衷提的不该提的**（"你理解错了，实际是 X"），**真问题升级到人**（= 你说的"自动接管仅限很明显/理解错的问题"）。
-- **真审批 / 方向确认**：auto mode `soft_deny` 拦下但 agent 确实要的、或方向性判断 → agent `ask_human` → captain → **人类确认**（请示领导，不催、可慢）。
-- 通道复用 `ask_human`（T4.3 long-poll）+ `permission_requests`（T4.3）+ captain 编排（J/K）；是 spec §10.3-10.5「机长三角判断 + DAG 溯源到真人」的落地。captain 角色从"起/停 session"**扩成"主管：问题/升级 triage"**。
+### Layer 2 — captain 审批 + 人类升级（请示上级）
+**captain = 唯一审批者**（替代 codex `auto_review`；claude 这边接 `ask_human`/`PermissionDenied` hook）。按你定的口径：
+- **仅"很明显的"代批**：明显能答的问题、它理解错初衷而提的不该提的 → captain 自决 / 纠正（"你理解错了，实际是 X"）。
+- **一般一律找人类**：真审批、方向确认、判断题 → **像跟领导打报告一样等人类批准**（不催、可慢）。
+- **claude**：autoMode 拦下（soft_deny）或 agent 要越护栏 → 世界观 prompt 让它 `ask_human` / 或 `PermissionDenied` hook 路由 → captain → 人。
+- **codex**：on-request 的边界审批协议事件 → captain → 人。
+- 通道复用 `ask_human`（T4.3 long-poll）+ `permission_requests`（T4.3）+ captain 编排（J/K）；落地 spec §10.3-10.5「机长三角判断 + DAG 溯源到真人」。captain 角色 = **主管 / 审批人**。
 
-**关键简化**：Layer 1 原生自动裁 → **废掉"检测 claude 弹框 + PTY 注入应答"那套脆机制**（上一版我编的）。到人的只有 Layer 2 的 `ask_human`（已是干净 long-poll）。**与沙箱（§8）正交**：auto mode/复核 = 谁批；沙箱 = 炸不炸得到。
+**简化**：废掉"检测 claude 弹框 + PTY 注入"那套脆机制；到人只走 `ask_human` long-poll。**与沙箱（§8）正交**：护栏 = 炸不炸得到；captain 审批 = 谁签字。
+
+## 10. claude / codex 统一为可互通成员（带身份标签）
+
+**不人为分隔两边**——session 是统一成员、互通；但各带身份标签以识别 + 积累经验。
+
+- **互通**：`RunnerBackend` 把两边**归一**成同一套接口（起 / 注上下文 / 发消息 / 读输出 / 状态 / 停 / 额度）。`look_at_session(id)`（§4 深查）**跨 kind 统一读 transcript** —— claude `~/.claude/projects/.../*.jsonl` / codex `~/.codex/sessions/.../rollout-*.jsonl` 归一成同一 event 视图。**任一 session 能看任一 session 在干啥，不管对方是 cc 还是 codex**。
+- **身份标签**：每个 session 带 `{ kind: claude_code | codex, name }`，在花名册 / 群消息 sender / transcript 元数据里都带 → 成员、captain 知道"这是个叫 X 的 codex session"。
+- **经验积累**：有了身份标签，captain / 系统能**总结各 kind 擅长什么**（"cc 擅长 A、codex 擅长 B"），派活时挑合适的 runner。**v1 先把身份标签 + 跨读打通（数据先在）**；strength 总结当 captain emergent 行为，后续可加 crew 级记忆存储沉淀。
+- 注：互通**不抹掉** §1 的后端差异（claude=PTY、codex=app-server）——差异在底层 backend，对上**归一**成统一成员视图。
 
 ## 待探针（实现期验，非设计阻塞）
 
@@ -167,7 +178,7 @@ auto mode 裁不了 / 需人判断的才上人：
 7. **compaction 韧性**：`PreCompact` hook 能否经 `additionalContext` 把动态白板塞进 compact 后上下文？`--append-system-prompt`/skill 是否真"自动重载"扛过 compact？（§8，调研信心不足，真机核）。
 8. **plugin / settings 精确键**：`--plugin-dir` 非交互加载、`permissions.deny`/`PreToolUse` deny 语法、settings 各键名 —— 调研给的 JSON 样例当方向，落地前逐个核实键名（别凭样例写死）。
 
-9. **auto mode（§9）**：① ~~claude auto mode 订阅可用?~~ **✅ 已本机解（订阅可用，`--permission-mode auto` + `auto-mode config` 通）**；② **codex `auto_review` 在 ChatGPT 订阅可用 + reviewer agent 计费**走哪（未验）；③ soft_deny→agent 转 `ask_human`→人批→retry 回路（`PermissionDenied` hook）的接法 + crew 专属 `autoMode.environment` 该填什么（PendingBot 自己的 repo/域/edge）。
+9. **权限/审批（§9）+ 统一（§10）**：① ~~claude auto mode 订阅可用?~~ **✅ 已本机解**；② codex `on-request` 边界审批的**协议事件 + 回应形状**（路由 captain，**不走 auto_review**）；③ claude 护栏拦下 → `ask_human` / `PermissionDenied` hook → captain 的接法 + crew 专属 `autoMode.environment` 填什么（PendingBot repo/域/edge）；④ codex rollout JSONL ↔ claude transcript JSONL **归一成同一 event 视图**的字段映射（§10 跨读）。
 
 ## 验证门
 
